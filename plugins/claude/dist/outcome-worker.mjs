@@ -9,9 +9,9 @@ var __export = (target, all) => {
 import { parentPort } from "node:worker_threads";
 
 // src/core/job-outcomes.ts
-import { createHash as createHash11 } from "node:crypto";
-import { closeSync as closeSync11, existsSync as existsSync17, fstatSync as fstatSync3, lstatSync as lstatSync8, openSync as openSync11, readFileSync as readFileSync22, readSync as readSync3 } from "node:fs";
-import { join as join35 } from "node:path";
+import { createHash as createHash12 } from "node:crypto";
+import { closeSync as closeSync12, existsSync as existsSync17, fstatSync as fstatSync4, lstatSync as lstatSync9, openSync as openSync12, readFileSync as readFileSync23, readSync as readSync3 } from "node:fs";
+import { join as join36 } from "node:path";
 import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
 import { inflateSync } from "node:zlib";
 
@@ -386,11 +386,11 @@ import { basename as basename3, delimiter, dirname as dirname4, isAbsolute as is
 import { posix as posix2 } from "node:path";
 
 // src/mcp/jobs.ts
-import { randomUUID as randomUUID12 } from "node:crypto";
+import { randomUUID as randomUUID13 } from "node:crypto";
 import { setTimeout as delay6 } from "node:timers/promises";
-import { isDeepStrictEqual } from "node:util";
-import { closeSync as closeSync10, constants as fsConstants, copyFileSync as copyFileSync5, fsyncSync as fsyncSync5, openSync as openSync10 } from "node:fs";
-import { dirname as dirname12 } from "node:path";
+import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
+import { closeSync as closeSync11, constants as fsConstants, copyFileSync as copyFileSync5, fsyncSync as fsyncSync6, openSync as openSync11 } from "node:fs";
+import { dirname as dirname13 } from "node:path";
 
 // src/core/codex-subagents.ts
 function codexSubagentConfig(count = DEFAULT_CODEX_SUBAGENTS) {
@@ -729,9 +729,9 @@ var PermissionRelay = class {
     });
     this.server.requestTimeout = 0;
     this.server.headersTimeout = 0;
-    await new Promise((resolve11, reject) => {
+    await new Promise((resolve12, reject) => {
       this.server.once("error", reject);
-      this.server.listen(0, RELAY_HOST, () => resolve11());
+      this.server.listen(0, RELAY_HOST, () => resolve12());
     });
     const { port } = this.server.address();
     this.url = `http://${RELAY_HOST}:${port}${RELAY_PATH}`;
@@ -862,14 +862,14 @@ function killTree(child, reason = "delegate cleanup") {
   const pid = child.pid;
   if (!pid || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
   liveChildren.get(child)?.info("stopping delegate process tree", { pid, reason, method: process.platform === "win32" ? "taskkill /PID /T /F" : "process group signals" });
-  const closed = new Promise((resolve11) => child.once("close", () => resolve11()));
-  return new Promise((resolve11) => {
+  const closed = new Promise((resolve12) => child.once("close", () => resolve12()));
+  return new Promise((resolve12) => {
     if (process.platform === "win32") {
       const tk = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-      tk.on("error", () => (child.kill(), resolve11()));
+      tk.on("error", () => (child.kill(), resolve12()));
       tk.on("close", (code) => {
         if (code !== 0 && child.exitCode === null && child.signalCode === null) child.kill();
-        resolve11();
+        resolve12();
       });
     } else {
       try {
@@ -882,9 +882,9 @@ function killTree(child, reason = "delegate cleanup") {
           process.kill(-pid, "SIGKILL");
         } catch {
         }
-        resolve11();
+        resolve12();
       }, KILL_GRACE_MS);
-      child.once("exit", () => (clearTimeout(force), resolve11()));
+      child.once("exit", () => (clearTimeout(force), resolve12()));
     }
   }).then(() => closed);
 }
@@ -935,7 +935,7 @@ function runProcess(opts) {
   }
   const { resolved, args, needsShell } = command;
   opts.log.debug("spawning delegate", { bin: resolved, args, cwd: opts.cwd, shell: needsShell });
-  return new Promise((resolve11, reject) => {
+  return new Promise((resolve12, reject) => {
     const child = spawn(resolved, args, {
       cwd: opts.cwd,
       // Some CLIs (opencode) take their project folder from PWD rather than the real cwd; keep them in sync.
@@ -998,7 +998,7 @@ ${tail.slice(tail.indexOf("\n") + 1)}` : head;
       stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
     });
     child.on("error", (err) => finish(() => reject(new DelegateError(`failed to start ${opts.bin}: ${err.message}`, "failed"))));
-    child.on("close", (code, signal) => finish(() => resolve11({ code, signal, stdout: captured(), stderr })));
+    child.on("close", (code, signal) => finish(() => resolve12({ code, signal, stdout: captured(), stderr })));
     child.stdin.on("error", () => {
     });
     child.stdin.end(opts.stdin);
@@ -6401,7 +6401,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve11) {
+function isRecursive(inst, stack, resolve12) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -6411,7 +6411,7 @@ function isRecursive(inst, stack, resolve11) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve11);
+      const answer = isRecursive(child, stack, resolve12);
       if (answer > result)
         result = answer;
     }
@@ -6422,7 +6422,7 @@ function isRecursive(inst, stack, resolve11) {
       const desc = Object.getOwnPropertyDescriptor(sh, key2);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve11) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve12) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -6486,7 +6486,7 @@ function isRecursive(inst, stack, resolve11) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve11 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve12 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -21243,8 +21243,8 @@ async function delegateToAntigravity(req) {
     const ended = { allow: false, message: "Antigravity run ended" };
     if (approvals.signal.aborted) return ended;
     let stop;
-    const aborted2 = new Promise((resolve11) => {
-      stop = () => resolve11(ended);
+    const aborted2 = new Promise((resolve12) => {
+      stop = () => resolve12(ended);
     });
     approvals.signal.addEventListener("abort", stop, { once: true });
     try {
@@ -21370,7 +21370,7 @@ function startServe(bin, cwd, env, log) {
     resolved = target.command;
     prefix = target.prefix;
   }
-  return new Promise((resolve11, reject) => {
+  return new Promise((resolve12, reject) => {
     const child = spawn2(resolved, [...prefix, "serve", "--port", "0", "--hostname", "127.0.0.1"], {
       cwd,
       env: { ...env, PWD: cwd },
@@ -21381,7 +21381,7 @@ function startServe(bin, cwd, env, log) {
     trackChild(child, log);
     const output2 = watchServeOutput((url2) => {
       clearTimeout(timer);
-      resolve11({ child, url: url2 });
+      resolve12({ child, url: url2 });
     });
     const timer = setTimeout(() => {
       void killTree(child, "opencode startup timeout");
@@ -21672,9 +21672,9 @@ ${req.prompt}`);
     child.stdin.write(`${JSON.stringify(msg)}
 `);
   };
-  const request = (method, params) => new Promise((resolve11, reject) => {
+  const request = (method, params) => new Promise((resolve12, reject) => {
     const id = nextId++;
-    pending.set(id, { resolve: resolve11, reject });
+    pending.set(id, { resolve: resolve12, reject });
     write({ id, method, params });
   });
   const editPaths = /* @__PURE__ */ new Map();
@@ -22163,26 +22163,33 @@ import { createHash as createHash7, randomUUID as randomUUID11 } from "node:cryp
 import { closeSync as closeSync9, fsyncSync as fsyncSync4, linkSync as linkSync2, lstatSync as lstatSync5, mkdirSync as mkdirSync14, openSync as openSync9, readFileSync as readFileSync19, readdirSync as readdirSync11, renameSync as renameSync5, writeFileSync as writeFileSync8 } from "node:fs";
 import { basename as basename7, dirname as dirname11, join as join30, resolve as resolve7 } from "node:path";
 
+// src/core/job-pending-journal.ts
+import { createHash as createHash8, randomUUID as randomUUID12 } from "node:crypto";
+import { closeSync as closeSync10, constants, fstatSync as fstatSync3, fsyncSync as fsyncSync5, linkSync as linkSync3, lstatSync as lstatSync6, mkdirSync as mkdirSync15, openSync as openSync10, readFileSync as readFileSync20, readdirSync as readdirSync12, renameSync as renameSync6, writeFileSync as writeFileSync9 } from "node:fs";
+import { dirname as dirname12, join as join31, resolve as resolve8 } from "node:path";
+import { isDeepStrictEqual } from "node:util";
+var MAX_RECEIPT_BYTES = 32 * 1024 * 1024;
+
 // src/mcp/jobs.ts
 var INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1e3;
 
 // src/core/worktree.ts
-import { createHash as createHash8, randomUUID as randomUUID13 } from "node:crypto";
-import { existsSync as existsSync15, lstatSync as lstatSync7, mkdirSync as mkdirSync16, readFileSync as readFileSync20, realpathSync as realpathSync7, rmSync as rmSync5 } from "node:fs";
-import { basename as basename9, isAbsolute as isAbsolute7, join as join32, relative as relative5, resolve as resolve9, toNamespacedPath as toNamespacedPath2 } from "node:path";
+import { createHash as createHash9, randomUUID as randomUUID14 } from "node:crypto";
+import { existsSync as existsSync15, lstatSync as lstatSync8, mkdirSync as mkdirSync17, readFileSync as readFileSync21, realpathSync as realpathSync7, rmSync as rmSync5 } from "node:fs";
+import { basename as basename9, isAbsolute as isAbsolute7, join as join33, relative as relative5, resolve as resolve10, toNamespacedPath as toNamespacedPath2 } from "node:path";
 
 // src/core/worktree-links.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
-import { copyFileSync as copyFileSync6, existsSync as existsSync14, lstatSync as lstatSync6, mkdirSync as mkdirSync15, mkdtempSync, readdirSync as readdirSync12, readlinkSync, realpathSync as realpathSync6, rmSync as rmSync4, rmdirSync as rmdirSync2, unlinkSync } from "node:fs";
+import { copyFileSync as copyFileSync6, existsSync as existsSync14, lstatSync as lstatSync7, mkdirSync as mkdirSync16, mkdtempSync, readdirSync as readdirSync13, readlinkSync, realpathSync as realpathSync6, rmSync as rmSync4, rmdirSync as rmdirSync2, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename as basename8, dirname as dirname13, isAbsolute as isAbsolute6, join as join31, relative as relative4, resolve as resolve8, sep as sep3, toNamespacedPath } from "node:path";
+import { basename as basename8, dirname as dirname14, isAbsolute as isAbsolute6, join as join32, relative as relative4, resolve as resolve9, sep as sep3, toNamespacedPath } from "node:path";
 
 // src/core/worktree.ts
 var GIT = "git";
 var LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
 var GIT_TIMEOUT_MS = 18e4;
 function trustArgs(...dirs) {
-  return dirs.flatMap((d) => ["-c", `safe.directory=${resolve9(d).replace(/\\/g, "/")}`]);
+  return dirs.flatMap((d) => ["-c", `safe.directory=${resolve10(d).replace(/\\/g, "/")}`]);
 }
 async function git(args, cwd, log, timeoutMs = GIT_TIMEOUT_MS, env = process.env) {
   const what = `git ${args.filter((a, i) => !a.startsWith("-") && args[i - 1] !== "-c").slice(0, 2).join(" ")}`;
@@ -22192,23 +22199,23 @@ async function git(args, cwd, log, timeoutMs = GIT_TIMEOUT_MS, env = process.env
 }
 
 // src/core/local-result-receipts.ts
-import { createHash as createHash10 } from "node:crypto";
-import { existsSync as existsSync16, readdirSync as readdirSync13 } from "node:fs";
-import { join as join34 } from "node:path";
+import { createHash as createHash11 } from "node:crypto";
+import { existsSync as existsSync16, readdirSync as readdirSync14 } from "node:fs";
+import { join as join35 } from "node:path";
 
 // src/core/read-journal.ts
-import { createHash as createHash9 } from "node:crypto";
-import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync17, readFileSync as readFileSync21 } from "node:fs";
-import { join as join33 } from "node:path";
+import { createHash as createHash10 } from "node:crypto";
+import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync18, readFileSync as readFileSync22 } from "node:fs";
+import { join as join34 } from "node:path";
 var ReadJournal = class {
   constructor(home) {
     this.home = home;
-    this.dir = join33(home, "read-state");
+    this.dir = join34(home, "read-state");
   }
   home;
   dir;
   path(identity) {
-    return join33(this.dir, `${createHash9("sha256").update(identity).digest("hex")}.jsonl`);
+    return join34(this.dir, `${createHash10("sha256").update(identity).digest("hex")}.jsonl`);
   }
   read(identity) {
     return this.entries(identity).flatMap((entry) => entry.ids);
@@ -22221,7 +22228,7 @@ var ReadJournal = class {
   entries(identity) {
     let raw;
     try {
-      raw = readFileSync21(this.path(identity), "utf8");
+      raw = readFileSync22(this.path(identity), "utf8");
     } catch (err) {
       if (err.code === "ENOENT") return [];
       throw err;
@@ -22241,7 +22248,7 @@ var ReadJournal = class {
   append(identity, ids) {
     const release = storageLease(this.home);
     try {
-      mkdirSync17(this.dir, { recursive: true, mode: 448 });
+      mkdirSync18(this.dir, { recursive: true, mode: 448 });
       appendFileSync3(this.path(identity), `
 ${JSON.stringify({ ids, at: Date.now() })}
 `, { mode: 384, flush: true });
@@ -22254,11 +22261,11 @@ ${JSON.stringify({ ids, at: Date.now() })}
 // src/core/local-result-receipts.ts
 var RESULT_HEADER = /^Subagent .+ (?:done|failed) after \d+s\./;
 var LOCAL_RESULTS_DIR = "local-result-receipts";
-var key = (name) => createHash10("sha256").update(name).digest("hex");
+var key = (name) => createHash11("sha256").update(name).digest("hex");
 function localResultReceipt(home, name, owner, after, before) {
-  const dir = join34(home, LOCAL_RESULTS_DIR, key(name));
+  const dir = join35(home, LOCAL_RESULTS_DIR, key(name));
   if (!existsSync16(dir)) return null;
-  const records = readdirSync13(dir).filter((f) => f.endsWith(".json")).map((f) => readJsonStore(join34(dir, f))).filter((r) => isRecord(r) && typeof r.id === "string" && typeof r.recipient === "string" && typeof r.deliveredAt === "number" && (!owner || r.recipient === owner) && r.deliveredAt >= after && r.deliveredAt < before).sort((a, b) => b.deliveredAt - a.deliveredAt);
+  const records = readdirSync14(dir).filter((f) => f.endsWith(".json")).map((f) => readJsonStore(join35(dir, f))).filter((r) => isRecord(r) && typeof r.id === "string" && typeof r.recipient === "string" && typeof r.deliveredAt === "number" && (!owner || r.recipient === owner) && r.deliveredAt >= after && r.deliveredAt < before).sort((a, b) => b.deliveredAt - a.deliveredAt);
   const record2 = records[0];
   if (!record2) return null;
   const receipt = new ReadJournal(home).receipt(`name:${record2.recipient}`, record2.id);
@@ -22276,11 +22283,11 @@ function localHeads(repo, branches) {
   if (["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_NAMESPACE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_SHALLOW_FILE", "GIT_REPLACE_REF_BASE"].some((key2) => process.env[key2])) return null;
   if (branches.some((branch) => !/^[A-Za-z0-9._/-]+$/.test(branch) || branch.split("/").some((part) => !part || part.startsWith(".") || part.endsWith(".") || part.endsWith(".lock") || part.includes("..")))) return null;
   try {
-    const dir = join35(repo, ".git");
-    if (!lstatSync8(dir).isDirectory() || /\brefStorage\s*=|\[\s*include/i.test(readFileSync22(join35(dir, "config"), "utf8"))) return null;
+    const dir = join36(repo, ".git");
+    if (!lstatSync9(dir).isDirectory() || /\brefStorage\s*=|\[\s*include/i.test(readFileSync23(join36(dir, "config"), "utf8"))) return null;
     const packed = /* @__PURE__ */ new Map();
     try {
-      for (const line of readFileSync22(join35(dir, "packed-refs"), "utf8").split("\n")) {
+      for (const line of readFileSync23(join36(dir, "packed-refs"), "utf8").split("\n")) {
         const match = /^((?:[a-f0-9]{40}|[a-f0-9]{64})) (refs\/heads\/.+)$/i.exec(line.trim());
         if (match) packed.set(match[2], match[1]);
       }
@@ -22292,7 +22299,7 @@ function localHeads(repo, branches) {
       const ref = `refs/heads/${branch}`;
       let head = packed.get(ref);
       try {
-        head = readFileSync22(join35(dir, "refs", "heads", branch), "utf8").trim();
+        head = readFileSync23(join36(dir, "refs", "heads", branch), "utf8").trim();
       } catch (err) {
         if (err.code !== "ENOENT") return null;
       }
@@ -22306,23 +22313,23 @@ function localHeads(repo, branches) {
   }
 }
 function localAncestor(repo, ancestor, descendant) {
-  const dir = join35(repo, ".git"), limit = 64 * 1024;
+  const dir = join36(repo, ".git"), limit = 64 * 1024;
   try {
-    if (["shallow", "info/grafts", "refs/replace", "objects/info/alternates"].some((file2) => existsSync17(join35(dir, file2)))) return null;
+    if (["shallow", "info/grafts", "refs/replace", "objects/info/alternates"].some((file2) => existsSync17(join36(dir, file2)))) return null;
     try {
-      if (/ refs\/replace\//m.test(readFileSync22(join35(dir, "packed-refs"), "utf8"))) return null;
+      if (/ refs\/replace\//m.test(readFileSync23(join36(dir, "packed-refs"), "utf8"))) return null;
     } catch (err) {
       if (err.code !== "ENOENT") return null;
     }
     let reads = 0;
     const parents = (head) => {
       if (reads++ >= 16 || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(head)) return null;
-      const file2 = join35(dir, "objects", head.slice(0, 2), head.slice(2));
-      if (!lstatSync8(file2).isFile()) return null;
-      const fd = openSync11(file2, "r");
+      const file2 = join36(dir, "objects", head.slice(0, 2), head.slice(2));
+      if (!lstatSync9(file2).isFile()) return null;
+      const fd = openSync12(file2, "r");
       let compressed;
       try {
-        const stat4 = fstatSync3(fd), size = stat4.size;
+        const stat4 = fstatSync4(fd), size = stat4.size;
         if (!stat4.isFile() || size > limit) return null;
         compressed = Buffer.alloc(size);
         let at = 0;
@@ -22332,10 +22339,10 @@ function localAncestor(repo, ancestor, descendant) {
           at += n;
         }
       } finally {
-        closeSync11(fd);
+        closeSync12(fd);
       }
       const object3 = inflateSync(compressed, { maxOutputLength: limit });
-      if (createHash11(head.length === 40 ? "sha1" : "sha256").update(object3).digest("hex") !== head.toLowerCase()) return null;
+      if (createHash12(head.length === 40 ? "sha1" : "sha256").update(object3).digest("hex") !== head.toLowerCase()) return null;
       const zero = object3.indexOf(0), header = /^commit (\d+)$/.exec(object3.subarray(0, zero).toString("utf8"));
       if (zero < 0 || !header || Number(header[1]) !== object3.length - zero - 1) return null;
       const body = object3.subarray(zero + 1).toString("utf8"), end = body.indexOf("\n\n");
@@ -22373,8 +22380,8 @@ function localAncestor(repo, ancestor, descendant) {
 }
 var JOB_OUTCOMES_DIR = "job-outcomes";
 function decisionPath(home, job) {
-  const key2 = createHash11("sha256").update(`${job.name}:${job.startedAt}`).digest("hex");
-  return join35(home, JOB_OUTCOMES_DIR, `${key2}.json`);
+  const key2 = createHash12("sha256").update(`${job.name}:${job.startedAt}`).digest("hex");
+  return join36(home, JOB_OUTCOMES_DIR, `${key2}.json`);
 }
 function readOutcomeDecision(home, job) {
   const data = readHistoryJson(decisionPath(home, job));
@@ -22464,40 +22471,40 @@ async function deriveJobOutcome(home, job, log, opts = {}) {
 // src/core/outcome-background.ts
 import { Worker } from "node:worker_threads";
 import { mkdir as mkdir2, stat as stat2, readdir } from "node:fs/promises";
-import { createHash as createHash12 } from "node:crypto";
+import { createHash as createHash13 } from "node:crypto";
 import { createRequire } from "node:module";
-import { dirname as dirname14, join as join36 } from "node:path";
+import { dirname as dirname15, join as join37 } from "node:path";
 import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
 var CACHE_LIMIT = 1024;
 var CACHE_BYTES2 = 8 * 1024 * 1024;
 var REFRESH_MS = 1e3;
 var WAIT_MS = 250;
-var digest = (text) => createHash12("sha256").update(text).digest("hex");
+var digest = (text) => createHash13("sha256").update(text).digest("hex");
 async function outcomeSignature(home, inputs, gitPaths2 = []) {
-  const paths = /* @__PURE__ */ new Set([...gitPaths2, join36(home, "jobs.json"), ...["bridge.db", "archive.db"].flatMap((name) => [join36(home, name), join36(home, `${name}-wal`)])]);
+  const paths = /* @__PURE__ */ new Set([...gitPaths2, join37(home, "jobs.json"), ...["bridge.db", "archive.db"].flatMap((name) => [join37(home, name), join37(home, `${name}-wal`)])]);
   for (const input2 of inputs) {
     const job = input2.job;
-    paths.add(join36(home, "job-outcomes", `${digest(`${job.name}:${job.startedAt}`)}.json`));
-    const receipts = join36(home, "local-result-receipts", digest(job.name));
+    paths.add(join37(home, "job-outcomes", `${digest(`${job.name}:${job.startedAt}`)}.json`));
+    const receipts = join37(home, "local-result-receipts", digest(job.name));
     paths.add(receipts);
     try {
-      for (const name of await readdir(receipts)) paths.add(join36(receipts, name));
+      for (const name of await readdir(receipts)) paths.add(join37(receipts, name));
     } catch {
     }
-    if (job.owner) paths.add(join36(home, "read-state", `${digest(`name:${job.owner}`)}.jsonl`));
+    if (job.owner) paths.add(join37(home, "read-state", `${digest(`name:${job.owner}`)}.jsonl`));
     const repo = input2.opts.repoRoot ?? job.worktree?.repoRoot;
     if (repo && !job.remote) {
-      const root = join36(repo, ".git");
+      const root = join37(repo, ".git");
       for (const name of ["", "HEAD", "config", "commondir", "packed-refs", "shallow", "info/grafts", "refs/replace", "objects/info/alternates", "objects/pack"])
-        paths.add(join36(root, name));
+        paths.add(join37(root, name));
       for (const branch of [input2.opts.branch ?? job.worktree?.branch, input2.opts.baseBranch ?? job.worktree?.baseBranch])
-        if (branch && /^[\w./-]+$/.test(branch) && !branch.split("/").includes("..")) paths.add(join36(root, "refs", "heads", branch));
+        if (branch && /^[\w./-]+$/.test(branch) && !branch.split("/").includes("..")) paths.add(join37(root, "refs", "heads", branch));
     }
   }
-  for (const folder of [join36(home, "runs"), join36(home, "runs", "archive")]) {
+  for (const folder of [join37(home, "runs"), join37(home, "runs", "archive")]) {
     paths.add(folder);
     try {
-      for (const name of await readdir(folder)) if (/\.json(?:-\d+-[\w-]+)?$/.test(name)) paths.add(join36(folder, name));
+      for (const name of await readdir(folder)) if (/\.json(?:-\d+-[\w-]+)?$/.test(name)) paths.add(join37(folder, name));
     } catch {
     }
   }
@@ -22537,11 +22544,11 @@ var OutcomeBackground = class {
   async start() {
     let entry = new URL("./outcome-worker.mjs", import.meta.url);
     if (import.meta.url.endsWith(".ts")) {
-      const root = dirname14(dirname14(dirname14(fileURLToPath2(import.meta.url))));
-      const path = join36(root, ".agent-bridge-test", `outcome-worker-${process.pid}.mjs`);
-      await mkdir2(dirname14(path), { recursive: true });
+      const root = dirname15(dirname15(dirname15(fileURLToPath2(import.meta.url))));
+      const path = join37(root, ".agent-bridge-test", `outcome-worker-${process.pid}.mjs`);
+      await mkdir2(dirname15(path), { recursive: true });
       await createRequire(import.meta.url)("esbuild").build({
-        entryPoints: [join36(root, "src/core/outcome-worker.ts")],
+        entryPoints: [join37(root, "src/core/outcome-worker.ts")],
         outfile: path,
         bundle: true,
         platform: "node",
@@ -22584,8 +22591,8 @@ var OutcomeBackground = class {
         });
         const worker = await this.worker;
         const id = ++this.id;
-        const inspected = await new Promise((resolve11, reject) => {
-          this.requests.set(id, { resolve: resolve11, reject });
+        const inspected = await new Promise((resolve12, reject) => {
+          this.requests.set(id, { resolve: resolve12, reject });
           worker.postMessage({ id, home, inputs, signature, gitPaths: cached2?.gitPaths ?? [] });
         });
         if (await outcomeSignature(home, inputs, inspected.gitPaths) !== inspected.signature) return;
@@ -22606,12 +22613,12 @@ var OutcomeBackground = class {
       })().catch(() => log.debug("outcome display refresh deferred")).finally(() => this.pending.delete(key2));
       this.pending.set(key2, refresh);
     }
-    if (refresh) await new Promise((resolve11) => {
-      const timer = setTimeout(resolve11, WAIT_MS);
+    if (refresh) await new Promise((resolve12) => {
+      const timer = setTimeout(resolve12, WAIT_MS);
       timer.unref();
       void refresh.finally(() => {
         clearTimeout(timer);
-        resolve11();
+        resolve12();
       });
     });
     const ready = this.cache.get(key2);
@@ -22628,7 +22635,7 @@ var background = new OutcomeBackground();
 
 // src/core/outcome-worker.ts
 import { stat as stat3, readFile as readFile3 } from "node:fs/promises";
-import { dirname as dirname15, join as join37, resolve as resolve10 } from "node:path";
+import { dirname as dirname16, join as join38, resolve as resolve11 } from "node:path";
 var cache3 = /* @__PURE__ */ new Map();
 var cacheBytes = 0;
 async function gitPaths(inputs) {
@@ -22636,31 +22643,31 @@ async function gitPaths(inputs) {
   for (const input2 of inputs) {
     const repo = input2.opts.repoRoot ?? input2.job.worktree?.repoRoot;
     if (!repo || input2.job.remote) continue;
-    const marker = join37(repo, ".git");
+    const marker = join38(repo, ".git");
     let dir = marker;
     try {
       if ((await stat3(marker)).isFile()) {
         const pointer = /^gitdir:\s*(.+)$/m.exec(await readFile3(marker, "utf8"));
         if (!pointer) continue;
-        dir = resolve10(repo, pointer[1].trim());
+        dir = resolve11(repo, pointer[1].trim());
       }
-      const commonFile = join37(dir, "commondir");
+      const commonFile = join38(dir, "commondir");
       paths.add(marker);
       paths.add(commonFile);
       let common = dir;
       try {
-        common = resolve10(dir, (await readFile3(commonFile, "utf8")).trim());
+        common = resolve11(dir, (await readFile3(commonFile, "utf8")).trim());
       } catch {
       }
       for (const root of /* @__PURE__ */ new Set([dir, common])) {
         for (const name of ["", "HEAD", "config", "packed-refs", "shallow", "info/grafts", "refs/replace", "objects/info/alternates", "objects/pack"])
-          paths.add(join37(root, name));
+          paths.add(join38(root, name));
         for (const branch of [input2.opts.branch ?? input2.job.worktree?.branch, input2.opts.baseBranch ?? input2.job.worktree?.baseBranch]) {
           if (!branch || !/^[\w./-]+$/.test(branch) || branch.split("/").includes("..")) continue;
-          let ref = join37(root, "refs", "heads", branch);
+          let ref = join38(root, "refs", "heads", branch);
           for (let depth = 0; depth < 8; depth++) {
             paths.add(ref);
-            paths.add(dirname15(ref));
+            paths.add(dirname16(ref));
             let symbolic;
             try {
               symbolic = /^ref:\s*(refs\/[\w./-]+)\s*$/.exec(await readFile3(ref, "utf8"));
@@ -22668,7 +22675,7 @@ async function gitPaths(inputs) {
               break;
             }
             if (!symbolic || symbolic[1].split("/").includes("..")) break;
-            ref = join37(root, symbolic[1]);
+            ref = join38(root, symbolic[1]);
           }
         }
       }
@@ -22718,7 +22725,7 @@ parentPort?.on("message", (message) => {
         }
       }
       result[input2.key] = saved?.outcome ?? pendingOutcome(input2);
-      await new Promise((resolve11) => setTimeout(resolve11, 2));
+      await new Promise((resolve12) => setTimeout(resolve12, 2));
     }
     if (await outcomeSignature(message.home, inputs, paths) !== sourceSignature) {
       for (const input2 of inputs) result[input2.key] = pendingOutcome(input2);
