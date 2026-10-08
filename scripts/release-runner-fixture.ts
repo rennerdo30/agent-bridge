@@ -205,7 +205,11 @@ export async function startOldRunnerFixtures(options: NativeRunnerOptions): Prom
   const turnControls=()=>readdirSync(controls).filter(file=>file.startsWith("turn-")&&file.endsWith(".json")).map(file=>JSON.parse(readFileSync(join(controls,file),"utf8")));
   const releaseFiles=(index?:number)=>{for(const control of turnControls()) if(index===undefined || control.index===index) writeFileSync(contained(controls,control.releasePath),"Synthetic turn released.\n");};
   const release=async(index?:number)=>{releaseFiles(index);await until(()=>inspect().filter(info=>index===undefined || info.index===index).every(info=>info.status!=="running"),30000);return inspect();};
-  const result:OldRunnerFixtures={count,home,manifestFile,inspect,assertLive:()=>{const infos=inspect();if(infos.length!==count || processes.some(child=>child.exitCode!==null || child.signalCode!==null) || infos.some(info=>info.status!=="running" || !info.live || !info.contextPreserved || !pidAlive(info.pid) || !pidAlive(info.cliPid))) throw new Error("Genuine old runner live/session/context assertion failed");return infos;},release,stop:async()=>{
+  const result:OldRunnerFixtures={count,home,manifestFile,inspect,assertLive:()=>{
+    const infos=inspect(), witnesses=infos.map(info=>({index:info.index,status:info.status,live:info.live,contextPreserved:info.contextPreserved,pid:info.pid,pidAlive:pidAlive(info.pid),cliPid:info.cliPid,cliPidAlive:pidAlive(info.cliPid),exitCode:processes[info.index]?.exitCode,signalCode:processes[info.index]?.signalCode}));
+    if(infos.length!==count || witnesses.some(info=>info.exitCode!==null || info.signalCode!==null || info.status!=="running" || !info.live || !info.contextPreserved || !info.pidAlive || !info.cliPidAlive)) throw new Error(`Genuine old runner live/session/context assertion failed: ${JSON.stringify(witnesses)}`);
+    return infos;
+  },release,stop:async()=>{
     releaseFiles();
     const stopped=()=>processes.every(child=>child.exitCode!==null || child.signalCode!==null) && inspect().every(info=>!fixturePidAlive(info.pid)&&!fixturePidAlive(info.cliPid)) && turnControls().filter(control=>control.continued).every(control=>{const pid=launchedRunner(lane,control.specFile,control.startedAt);return pid>0&&!fixturePidAlive(pid);});
     try { await until(stopped,30000); }
