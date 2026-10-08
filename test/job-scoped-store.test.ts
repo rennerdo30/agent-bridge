@@ -113,12 +113,14 @@ it("discovers newly handed-off active jobs and removes tracked jobs moved to ano
   expect(jobs.hookJobs().some(record => record.id === "tracked")).toBe(false);
 });
 
-it("metadata persist clones only its selected old archive record and never exposes archive authority arrays", () => {
+it("metadata persist clones only its selected record for mutable metadata and a durable base", () => {
   const tracked = job("tracked"); save([tracked]); const jobs = manager(); save([]);
   const receipt = { id: "handoff", at: Date.now(), from: "other", to: "owner", rootSession: "owner", rootName: "owner", reason: "explicit-handoff" };
   corpus([{ ...tracked, ownershipHistory: [receipt], masters: ["owner"], args: { send_to: ["owner"] } }]);
   jobs.persist();
-  expect(observed.clones).toEqual(["tracked"]);
+  // The shutdown journal also needs an independent durable base. Neither clone
+  // may include the unrelated archive corpus or expose cached authority arrays.
+  expect(observed.clones).toEqual(["tracked", "tracked"]);
   const mutable = jobs.hookJobs()[0]!;
   mutable.masters!.push("changed");
   mutable.ownershipHistory![0]!.note = "changed";
