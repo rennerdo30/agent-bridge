@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve, toNamespacedPath } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { basename, isAbsolute, join, relative, resolve, toNamespacedPath } from "node:path";
 import { DelegateError, runProcess } from "./delegate.js";
 import type { Logger } from "./logger.js";
 import { resolveWorktreeRemovalPath, unlinkLinks } from "./worktree-links.js";
@@ -61,28 +61,28 @@ export async function createWorktree(opts: { cwd: string; home: string; jobId: s
   const baseBranch = (await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "")) || null;
   let branch = `${BRANCH_PREFIX}${opts.jobId}`;
   const dir = join(opts.home, "worktrees");
-  mkdirSync(dir, { recursive: true });
   let path = join(dir, `${basename(repoRoot)}-${opts.jobId}`);
+  if (await worktreeLocationExists(repoRoot, branch, path, opts.log)) {
+    throw new Error(`could not create a worktree for the subagent; existing branch or path retained: ${branch}, ${path}`);
+  }
+  mkdirSync(dir, { recursive: true });
   // This runs in the MCP server (as the user), never inside the sandboxed agent, so the worktree is the user's.
   try {
     await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
   } catch (err) {
-    // A failed add leaves a worktree locked "initializing": remove it, so nothing piles up.
+    // The branch/path may predate this call or contain partial work. A failed add
+    // grants no authority to remove, unlock, prune, or overwrite either of them.
     if (!(err instanceof DelegateError && err.kind === "timeout")) {
-      await removeWorktree(repoRoot, path, branch, opts.log);
-      throw new Error(`could not create a worktree for the subagent: ${(err as Error).message}`);
+      throw new Error(`could not create a worktree for the subagent; retained branch ${branch} and path ${path}: ${(err as Error).message}`);
     }
-    // A slow disk under load: clean up the half-made checkout and try once more.
-    opts.log.warn("git worktree add timed out; retrying once", { path });
-    await removeWorktree(repoRoot, path, branch, opts.log);
-    // Under a fresh name: the slow first attempt may still hold its branch and folder.
-    branch = `${branch}-r2`;
-    path = `${path}-r2`;
+    opts.log.warn("git worktree add timed out; retaining first attempt and retrying once", { branch, path });
+    // Check fresh names without changing the first attempt. Git's non-forcing add
+    // also rejects a collision that occurs after these checks.
+    [branch, path] = await unusedRetryLocation(repoRoot, branch, path, opts.log);
     try {
       await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
     } catch (again) {
-      await removeWorktree(repoRoot, path, branch, opts.log);
-      throw new Error(`could not create a worktree for the subagent (tried twice): ${(again as Error).message}`);
+      throw new Error(`could not create a worktree for the subagent (tried twice); retained both attempts, including branch ${branch} and path ${path}: ${(again as Error).message}`);
     }
   }
   // `worktree add` holds an "initializing" lock while it works; make sure none is left behind.
@@ -99,21 +99,23 @@ async function unlockWorktree(repoRoot: string, path: string, log: Logger): Prom
   await git([...trustArgs(path), "worktree", "unlock", path], repoRoot, log).catch(() => "");
 }
 
-/** Best effort: remove a worktree and its branch (a failed or half-made checkout). */
-async function removeWorktree(repoRoot: string, path: string, branch: string, log: Logger): Promise<void> {
-  // Refuse removal if links cannot be detached; never let Git reach a shared cache.
-  if (existsSync(toNamespacedPath(path))) {
-    try { path = resolveWorktreeRemovalPath(path, dirname(path)); unlinkLinks(path); }
-    catch (err) { log.warn("worktree cleanup refused; preserving checkout and branch", { path, err: (err as Error).message }); return; }
+async function worktreeLocationExists(repoRoot: string, branch: string, path: string, log: Logger): Promise<boolean> {
+  const refs = await git(["for-each-ref", "--format=%(refname)", `refs/heads/${branch}`], repoRoot, log);
+  if (refs.split(/\r?\n/).includes(`refs/heads/${branch}`)) return true;
+  try { lstatSync(toNamespacedPath(path)); return true; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
   }
-  await git([...trustArgs(path), "worktree", "remove", "--force", "--force", path], repoRoot, log).catch(() => {});
-  try {
-    removeWorktreeDirectory(path);
-  } catch {
-    // files still locked: prune below forgets it anyway
+}
+
+async function unusedRetryLocation(repoRoot: string, branch: string, path: string, log: Logger): Promise<[string, string]> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const suffix = `-r2-${randomUUID()}`;
+    const retryBranch = branch + suffix, retryPath = path + suffix;
+    if (!await worktreeLocationExists(repoRoot, retryBranch, retryPath, log)) return [retryBranch, retryPath];
   }
-  await git(["worktree", "prune"], repoRoot, log).catch(() => {});
-  await git(["branch", "-D", branch], repoRoot, log).catch(() => {});
+  throw new Error(`could not select an unused worktree retry location; retained branch ${branch} and path ${path}`);
 }
 
 /** Node's namespaced Windows paths also cover deep ignored folders that Git could not remove. */
