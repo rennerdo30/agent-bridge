@@ -24,6 +24,7 @@ describe("supervisor outcome MCP tool", () => {
       env: { ...childEnv, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_NAME: "supervisor", AGENT_BRIDGE_DASHBOARD: "off" }, stderr: "ignore" });
     try {
       await client.connect(transport);
+      await client.callTool({ name: "peers", arguments: {} });
       const tool = (await client.listTools()).tools.find((t) => t.name === "set_job_outcome");
       expect(tool?.inputSchema.required).toEqual(["job", "state"]);
       // The MCP handshake precedes broker registration and saved-job restoration.
