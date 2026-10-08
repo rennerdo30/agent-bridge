@@ -16,7 +16,7 @@ import { loadOrCreateToken } from "../core/token.js";
 import type { AgentKind, CodingAgent } from "../core/protocol.js";
 import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObservation } from "../core/codex-trust.js";
-import { startRunFeed } from "../core/runfeed.js";
+import { startRunFeed, startRunFeedReady } from "../core/runfeed.js";
 import { ResourceSlots, resourceSlotHint, SLOT_OWNER_ENV, SLOT_PID_ENV, SLOT_RENEW_MS } from "../core/resource-slots.js";
 import { approvalHint, DESK_READ_PATTERNS, isAutoApproved, isHandoffToolCall, isOwnServerCall } from "../core/tool-allow.js";
 import { codexDriveMappings, codexPathReport } from "../core/codex-paths.js";
@@ -271,7 +271,7 @@ async function runDelegateInner(
   });
   let feed: ReturnType<typeof startRunFeed>;
   try {
-    feed = startRunFeed({
+    feed = await startRunFeedReady({
       home: rc.home,
       name: `${target}-${randomUUID().slice(0, 8)}`,
       header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}\n${a.prompt}\n---`,
@@ -296,7 +296,7 @@ async function runDelegateInner(
         jobStartedAt: job?.startedAt,
         continues: a.session_id ?? null,
       },
-    });
+    }, signal);
   } catch (err) {
     await relay?.stop();
     throw err;
