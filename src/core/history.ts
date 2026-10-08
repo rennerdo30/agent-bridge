@@ -1,4 +1,5 @@
 import { conversationProject } from "./project-store.js";
+import { cleanupSavepoint } from "./savepoint.js";
 import { historyReadPath, historyReady, HISTORY_BATCH_MS } from "./history-store.js";
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, fstatSync, openSync, opendirSync, readSync, statSync, type Dir } from "node:fs";
@@ -118,8 +119,7 @@ export class HistoryIndex {
       }
       this.db.exec("RELEASE history_document");
     } catch (err) {
-      this.db.exec("ROLLBACK TO history_document; RELEASE history_document");
-      throw err;
+      cleanupSavepoint(this.db, "history_document", true, err);
     }
   }
   private message(row: Record<string, any>): void {
@@ -134,6 +134,7 @@ export class HistoryIndex {
     // These consumers do only SQL and in-memory work. Keep provider/filesystem
     // reads (including question project resolution) outside writer transactions.
     const batch = ["messages", "history_pending", "decisions"].includes(table);
+    let failed = false;
     if(batch)this.db.exec("SAVEPOINT history_rows");
     try {
       for (const row of db.prepare(`SELECT rowid AS history_rowid, * FROM ${table} WHERE rowid > ? ORDER BY rowid LIMIT ?`).iterate(after,HISTORY_ROWS_PER_SOURCE)) {
@@ -144,7 +145,11 @@ export class HistoryIndex {
       // error, retain prior documents with the old cursor for idempotent replay.
       if(count)this.advance(source,String(cursor));
       return count;
-    } finally { if(batch)this.db.exec("RELEASE history_rows"); }
+    } catch (err) {
+      failed = true;
+      if (batch) cleanupSavepoint(this.db, "history_rows", false, err);
+      throw err;
+    } finally { if(batch && !failed)this.db.exec("RELEASE history_rows"); }
   }
 
   /** Fixed budgets; idempotent documents are written before advancing their cursors. */
@@ -158,6 +163,7 @@ export class HistoryIndex {
       work += this.rows("messages", this.source, "messages", (row) => this.message(row));
       if (this.source !== this.db) work += this.rows("broker-pending", this.source, "history_pending", row => this.message(row));
       let pendingCount=0,pendingBytes=0;
+      let pendingFailed = false;
       this.db.exec("SAVEPOINT history_pending_batch");
       try {
         for (const row of this.db.prepare("SELECT * FROM history_pending LIMIT ?").iterate(HISTORY_ROWS_PER_SOURCE)) {
@@ -165,7 +171,8 @@ export class HistoryIndex {
           this.db.prepare("DELETE FROM history_pending WHERE id=? AND recipient=?").run(String(row.id), String(row.recipient));
           pendingCount++;pendingBytes+=Buffer.byteLength(String(row.body));if(pendingBytes>=HISTORY_BATCH_BODY_BYTES || Date.now()>=this.deadline)break;
         }
-      } finally { this.db.exec("RELEASE history_pending_batch"); }
+      } catch (err) { pendingFailed = true; cleanupSavepoint(this.db, "history_pending_batch", false, err); }
+      finally { if (!pendingFailed) this.db.exec("RELEASE history_pending_batch"); }
       work += pendingCount;
       work += this.rows("decisions", this.source, "decisions", (row) => {
         const scope = parse(row.scope), sessions = Array.isArray(scope.sessions) ? scope.sessions.filter((s: unknown) => typeof s === "string") : [];

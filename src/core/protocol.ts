@@ -46,7 +46,7 @@ export interface SiblingPeer {
   name: string;
   title: string;
   agent: AgentKind;
-  status: "running" | "done" | "failed" | "interrupted";
+  status: "running" | "done" | "failed" | "interrupted" | "cancelled";
   finishedAt?: number;
 }
 

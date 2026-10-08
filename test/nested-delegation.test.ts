@@ -261,7 +261,7 @@ describe("nested delegation", () => {
     await client.callTool({ name: "message_subagent", arguments: { job: name, message: "Wait" } });
     await until(() => enteredCancellation);
     expect(textOf(await client.callTool({ name: "cancel_subagent", arguments: { job: name } }))).toContain(name);
-    await until(() => ctx.jobs!.find(name)!.status === "failed");
+    await until(() => ctx.jobs!.find(name)!.status === "cancelled");
     expect(listPendingApprovals(home)).toEqual([]);
   });
 

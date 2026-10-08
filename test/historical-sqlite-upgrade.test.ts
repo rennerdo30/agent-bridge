@@ -8,7 +8,7 @@ import { migrateSqlite } from "../src/core/sqlite-migrations.js";
 import { nullLogger } from "../src/core/logger.js";
 import { HistoryIndex } from "../src/core/history.js";
 import { ConversationIngestor } from "../src/core/conversations.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { makeEnv, until, type TestEnv } from "./helpers.js";
 
 type Table = { name: string; count: number; sha256: string };
 type Capture = { tag: string; commit: string; storeSourceSha256: string; archiveSourceSha256: string | null; files: { name: string; version: number; sha256: string; tables: Table[] }[] };
@@ -72,7 +72,7 @@ it.each(captures)("preserves every captured table through the $tag schema upgrad
     for (const file of capture.files.filter((file) => file.name === "archive.db")) expect(digest(readFileSync(join(env.home, file.name)))).toBe(file.sha256);
   } finally { db.close(); }
 });
-it.each(captures)("keeps all $tag messages and archival metadata readable and searchable after real startup", (capture) => {
+it.each(captures)("keeps all $tag messages and archival metadata readable and searchable after real startup", async (capture) => {
   install(capture);
   // Captured project metadata must never direct a test mirror into a real outside folder.
   expect(existsSync("D:/retention-witness")).toBe(false);
@@ -91,6 +91,8 @@ it.each(captures)("keeps all $tag messages and archival metadata readable and se
   const index = new HistoryIndex(db, env.home, cli), ingest = new ConversationIngestor(db, env.home, cli);
   try {
     expect(db.prepare("SELECT * FROM messages").all()).toEqual(live);
+    store.startBackups();
+    await until(() => Number(db.prepare("SELECT count(*) AS n FROM archived_messages").get()!.n) === 0);
     const retained = archive.prepare("SELECT * FROM messages").all();
     expect(retained.map(encode).sort()).toEqual([...legacy, ...cold].map(encode).sort());
     for (const row of [...live, ...legacy, ...cold]) expect(store.byId(String(row.id))?.body).toBe(row.body);

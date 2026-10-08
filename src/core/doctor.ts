@@ -139,7 +139,7 @@ export function archiveHome(home: string, confirmed: boolean, now = Date.now()):
         const previous: unknown = JSON.parse(readFileSync(path, "utf8"));
         if (!Array.isArray(previous) && !(isRecord(previous) && Array.isArray(previous.jobs))) throw new Error("invalid jobs store");
         const entries: unknown[] = Array.isArray(previous) ? previous : (previous as Record<string, unknown>).jobs as unknown[];
-        const old = entries.filter((j) => isRecord(j) && (j.status === "done" || j.status === "failed") && typeof j.finishedAt === "number" && j.finishedAt < now - age);
+        const old = entries.filter((j) => isRecord(j) && ["done", "failed", "cancelled"].includes(String(j.status)) && typeof j.finishedAt === "number" && j.finishedAt < now - age);
         if (old.length) {
           archiveJobs(path, old);
           writeJsonStore(path, { ...(isRecord(previous) ? previous : {}), jobs: entries.filter((j) => !old.includes(j)) }, previous);

@@ -50,7 +50,7 @@ export async function git(args: string[], cwd: string, log: Logger, timeoutMs = 
   return res.stdout.trimEnd();
 }
 
-export async function createWorktree(opts: { cwd: string; home: string; jobId: string; log: Logger }): Promise<Worktree> {
+export async function createWorktree(opts: { cwd: string; home: string; jobId: string; log: Logger; worktreeRoot?: string | null }): Promise<Worktree> {
   let repoRoot: string;
   try {
     repoRoot = await git(["rev-parse", "--show-toplevel"], opts.cwd, opts.log);
@@ -60,7 +60,7 @@ export async function createWorktree(opts: { cwd: string; home: string; jobId: s
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = (await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "")) || null;
   let branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join(opts.home, "worktrees");
+  const dir = opts.worktreeRoot ?? join(opts.home, "worktrees");
   let path = join(dir, `${basename(repoRoot)}-${opts.jobId}`);
   if (await worktreeLocationExists(repoRoot, branch, path, opts.log)) {
     throw new Error(`could not create a worktree for the subagent; existing branch or path retained: ${branch}, ${path}`);
@@ -126,7 +126,7 @@ export function removeWorktreeDirectory(path: string, managedRoot = path): void 
   rmSync(toNamespacedPath(resolve(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
 }
 
-type SkippedFile = { path: string; reason: "whitespace only" | "generated noise" };
+type SkippedFile = { path: string; reason: "whitespace only" | "generated noise" | "untracked; not explicitly staged" };
 
 export interface WorktreeOutcome {
   changed: boolean;
@@ -236,6 +236,7 @@ async function autoCommitFiles(wt: Worktree, log: Logger): Promise<SkippedFile[]
     const literal = `:(literal)${file}`;
     let reason: SkippedFile["reason"] | undefined;
     if (generatedNoise(wt.path, file)) reason = "generated noise";
+    else if (entry.startsWith("??")) reason = "untracked; not explicitly staged";
     else if (entry.startsWith("??") || await git([...trust, "diff", "--ignore-all-space", "--ignore-cr-at-eol", "--no-ext-diff", "--no-textconv", "--no-renames", "HEAD", "--", literal], wt.path, log)) {
       // An already staged deletion has no path left in the index for `git add` to match.
       if (!entry.startsWith("D ")) included.push(literal);
@@ -333,12 +334,13 @@ export function worktreeReport(wt: Worktree, outcome: WorktreeOutcome): string {
   const branch = outcome.branch ?? wt.branch;
   const skipped = outcome.skippedFiles ?? [];
   const rule = skipped.length
-    ? `Auto-commit skipped whitespace/line-ending-only changes and known generated noise; left on disk: ${skipped.map((f) => `${f.path} (${f.reason})`).join(", ")}.`
+    ? `Auto-commit skipped whitespace/line-ending-only changes, generated noise and unstaged untracked files; left on disk: ${skipped.map((f) => `${f.path} (${f.reason})`).join(", ")}.`
     : "";
   const remove = "git -c core.longpaths=true worktree remove";
   // Only a worktree without any work of its own may be removed.
   if (!outcome.changed) return [
-    `Worktree ${wt.path} (branch ${branch}) has ${skipped.length ? "no real changes" : "no changes"}; remove it with: ${remove}${skipped.length ? " --force" : ""} "${wt.path}" && git branch -D ${branch}`,
+    skipped.length ? `Worktree ${wt.path} (branch ${branch}) has no real changes committed; excluded files remain on disk. Keep this worktree for review.`
+      : `Worktree ${wt.path} (branch ${branch}) has no changes; remove it with: ${remove} "${wt.path}" && git branch -D ${branch}`,
     rule,
   ].filter(Boolean).join("\n");
   const others = outcome.otherBranches ?? [];

@@ -5,7 +5,7 @@ import { isRecord, readJsonStore, writeJsonStore } from "./json-store.js";
 import type { BridgeMessage } from "./protocol.js";
 import { ReadJournal } from "./read-journal.js";
 
-export const RESULT_HEADER = /^Subagent .+ (?:done|failed) after \d+s\./;
+export const RESULT_HEADER = /^Subagent .+ (?:done|failed|cancelled) after \d+s\./;
 export const LOCAL_RESULTS_DIR = "local-result-receipts";
 const key = (name: string) => createHash("sha256").update(name).digest("hex");
 

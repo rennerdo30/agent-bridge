@@ -382,7 +382,7 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .dot.busy { background: var(--busy); box-shadow: 0 0 0 3px var(--busy-soft); }
 .pill { border-radius: 6px; font-weight: 600; padding: 1px 8px; }
 .pill.running { background: var(--busy-soft); color: var(--busy); }
-.pill.failed, .pill.interrupted { background: var(--warn-soft); color: var(--warn); }
+.pill.failed, .pill.interrupted, .pill.cancelled { background: var(--warn-soft); color: var(--warn); }
 .pill.failed { background: var(--bad-soft); color: var(--bad); }
 .chip { border-radius: 5px; border-color: transparent; background: var(--panel-2); }
 .av { border-radius: 8px; font-weight: 700; letter-spacing: -.02em; }
@@ -1381,11 +1381,12 @@ function groupRow(g, sel, showOwner) {
 /** How many subagents are working, finished, failed (overall and since midnight). */
 function countGroups(groups) {
   const midnight = new Date().setHours(0, 0, 0, 0);
-  const c = { working: 0, done: 0, failed: 0, total: groups.length, today: 0, doneToday: 0, failedToday: 0 };
+  const c = { working: 0, done: 0, failed: 0, cancelled: 0, total: groups.length, today: 0, doneToday: 0, failedToday: 0, cancelledToday: 0 };
   for (const g of groups) {
     const today = g.updatedAt >= midnight;
     if (g.status === "running") c.working++;
     else if (g.status === "done") c.done++, (c.doneToday += today ? 1 : 0);
+    else if (g.status === "cancelled") c.cancelled++, (c.cancelledToday += today ? 1 : 0);
     else c.failed++, (c.failedToday += today ? 1 : 0);
     if (g.startedAt >= midnight) c.today++;
   }
@@ -1393,7 +1394,7 @@ function countGroups(groups) {
 }
 
 function countsLine(c) {
-  return [c.working && '<span class="w">' + c.working + " working</span>", c.done && '<span class="d">' + c.done + " done</span>", c.failed && '<span class="f">' + c.failed + " failed</span>", c.total + " total"].filter(Boolean).join(" · ");
+  return [c.working && '<span class="w">' + c.working + " working</span>", c.done && '<span class="d">' + c.done + " done</span>", c.failed && '<span class="f">' + c.failed + " failed</span>", c.cancelled && '<span>' + c.cancelled + " cancelled</span>", c.total + " total"].filter(Boolean).join(" · ");
 }
 function renderOverview() {
   const retained = state.peers.filter((p) => !p.version || cmpVersion(p.version, newestVersion()) < 0);
@@ -1414,6 +1415,7 @@ function renderOverview() {
     stat(c.today, "started today") +
     stat(c.doneToday, "finished today", c.doneToday ? "ok" : "") +
     stat(c.failedToday, "failed or interrupted today", c.failedToday ? "bad" : "") +
+    stat(c.cancelledToday, "cancelled today", "") +
     stat(c.total, "subagents in the log");
   const card = (x) => {
     const p = x.peer;

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
+import { cleanupSavepoint } from "./savepoint.js";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "./logger.js";
 import { isQuietMessage, SIBLING_CONVERSATION_PREFIX, type AgentKind, type BridgeMessage, type PeerInfo } from "./protocol.js";
@@ -450,8 +451,7 @@ export class MessageStore {
         }
         this.db.exec("RELEASE message_ack");
       } catch (err) {
-        this.db.exec("ROLLBACK TO message_ack; RELEASE message_ack");
-        throw err;
+        cleanupSavepoint(this.db, "message_ack", true, err);
       }
     }
     return changed;

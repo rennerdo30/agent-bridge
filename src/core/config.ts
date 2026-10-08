@@ -1,5 +1,5 @@
 import { readFileSync, unwatchFile, watchFile } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, isAbsolute } from "node:path";
 import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_MAX_JOBS, DEFAULT_MAX_DELEGATE_DEPTH, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV, MAX_DELEGATE_DEPTH_LIMIT, MAX_JOBS_LIMIT } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { AGENT_KINDS, type AgentKind } from "./protocol.js";
@@ -36,12 +36,14 @@ export interface HistoryAnswerConfig {
 const DEFAULT_HISTORY_ANSWER: HistoryAnswerConfig = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
 
 export interface BridgeConfig {
-  history: { ingest: boolean };
+  history: { ingest: boolean; budgetBytes: number };
   questionAlerts: QuestionAlertSettings;
   projectGroups: boolean;
   historyAnswer: HistoryAnswerConfig;
   /** Peer name; defaults to "<agent>-<cwd basename>". */
   name: string | null;
+  /** Absolute root for new job worktrees; saved worktree paths are untouched. */
+  worktreeRoot: string | null;
   autoWake: boolean;
   /** Claude: a message addressed to this session wakes it without general auto-wake. */
   wakeOnDirect: boolean;
@@ -70,7 +72,7 @@ export interface BridgeConfig {
   jobCloseCleanup: boolean;
   /** Reviewer for eligible delegated Codex approvals; does not change the sandbox. */
   codexApprovalsReviewer: CodexApprovalsReviewer;
-  /** Worktree edit runs: null inherits codexSandbox, with workspace-write for a read-only default. */
+  /** Worktree edits: null inherits codexSandbox; read-only default becomes full access on Windows. */
   codexWorktreeSandbox: CodexSandbox | null;
   /** null keeps Codex's own sandbox_workspace_write.network_access setting. */
   codexWorkspaceWriteNetworkAccess: boolean | null;
@@ -101,11 +103,12 @@ export interface BridgeConfig {
 }
 
 export const DEFAULT_CONFIG: BridgeConfig = {
-  history: { ingest: true },
+  history: { ingest: true, budgetBytes: 8 * 1024 ** 3 },
   questionAlerts: DEFAULT_QUESTION_ALERTS,
   projectGroups: true,
   historyAnswer: DEFAULT_HISTORY_ANSWER,
   name: null,
+  worktreeRoot: null,
   autoWake: false,
   wakeOnDirect: true,
   maxHops: DEFAULT_MAX_HOPS,
@@ -298,9 +301,13 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
 
   const d = DEFAULT_CONFIG;
   const cfg: BridgeConfig = {
-    history: { ingest: env.AGENT_BRIDGE_HISTORY_INGEST === "false" || env.AGENT_BRIDGE_HISTORY_INGEST === "0" ? false : !(isRecord(file.history) && file.history.ingest === false) },
+    history: {
+      ingest: env.AGENT_BRIDGE_HISTORY_INGEST === "false" || env.AGENT_BRIDGE_HISTORY_INGEST === "0" ? false : !(isRecord(file.history) && file.history.ingest === false),
+      budgetBytes: isRecord(file.history) && Number.isSafeInteger(file.history.budgetBytes) && Number(file.history.budgetBytes) >= 0 ? Number(file.history.budgetBytes) : d.history.budgetBytes,
+    },
     projectGroups: [localSection.projectGroups, project.projectGroups, section.projectGroups, file.projectGroups].find((v) => v !== undefined) === undefined ? true : [localSection.projectGroups, project.projectGroups, section.projectGroups, file.projectGroups].find((v) => v !== undefined) === true,
     name: pick("name", ENV.name, str) ?? d.name,
+    worktreeRoot: pick("worktreeRoot", "AGENT_BRIDGE_WORKTREE_ROOT", (v) => typeof v === "string" && isAbsolute(v) ? v : undefined) ?? d.worktreeRoot,
     autoWake: pick("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
     wakeOnDirect: pick("wakeOnDirect", ENV.wakeOnDirect, parseBool) ?? d.wakeOnDirect,
     maxHops: pick("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,

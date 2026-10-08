@@ -7,6 +7,16 @@ import { nullLogger } from "../src/core/logger.js";
 import { until } from "./helpers.js";
 
 describe("config file", () => {
+  it("loads an absolute new-worktree root and rejects relative configuration", () => {
+    const home = mkdtempSync(join(tmpdir(), "ab-cfg-")), root = join(home, "new-root");
+    try {
+      writeFileSync(join(home, "config.json"), JSON.stringify({ worktreeRoot: root }));
+      expect(loadConfig(home, "codex", nullLogger, {}).worktreeRoot).toBe(root);
+      writeFileSync(join(home, "config.json"), JSON.stringify({ worktreeRoot: "relative-root" }));
+      expect(loadConfig(home, "codex", nullLogger, {}).worktreeRoot).toBeNull();
+      expect(loadConfig(home, "codex", nullLogger, { AGENT_BRIDGE_WORKTREE_ROOT: root }).worktreeRoot).toBe(root);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
   it("loads worktree sandbox and workspace network options with safe defaults", () => {
     const home = mkdtempSync(join(tmpdir(), "ab-cfg-"));
     try {

@@ -50,7 +50,7 @@ export type RemoteJobRequest = z.infer<typeof remoteJobRequestSchema>;
 const worktreeSchema = z.object({ repoRoot: z.string(), path: z.string(), cwd: z.string(), branch: z.string(), base: z.string(), baseBranch: z.string().nullable().optional() });
 export const remoteJobSnapshotSchema = z.object({
   alive: z.boolean(),
-  state: z.object({ pid: z.number().int().nonnegative(), peer: z.string().regex(NETWORK_NAME_PATTERN), status: z.enum(["running", "done", "failed"]), updatedAt: z.number().nonnegative(),
+  state: z.object({ pid: z.number().int().nonnegative(), peer: z.string().regex(NETWORK_NAME_PATTERN), status: z.enum(["running", "done", "failed", "cancelled"]), updatedAt: z.number().nonnegative(),
     model: z.string().nullable().optional(), sessionId: z.string().nullable().optional(), workdir: z.string().nullable().optional(), worktree: worktreeSchema.nullable().optional(),
     progress: z.string().nullable().optional(), percent: z.number().min(0).max(100).optional(), progressNote: z.string().optional(), etaAt: z.number().finite().nonnegative().optional(), etaReportedAt: z.number().finite().nonnegative().optional(), asking: z.boolean().optional(), live: z.boolean().optional(),
     seen: z.array(z.string()).optional(), report: z.string().optional(), delivered: z.boolean().optional(), finishedAt: z.number().optional() }).nullable(),

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { retryRequest, transientRequestError } from "./request-retry.js";
 import { EventEmitter } from "node:events";
 import { unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -521,11 +522,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         const { messageId: _unused, ...legacy } = args;
         return this.sendRequest(client, "send", legacy);
       }
-      if (!(error instanceof Error) || error.message !== "broker request timed out: trackedSend") {
+      if (!transientRequestError(error)) {
         if (error instanceof BridgeError) throw error;
         throw new BridgeError("internal", `Storage cannot be confirmed for message ${args.messageId}; storage state is unknown: ${(error as Error).message}. Query send_status(message_id="${args.messageId}") or retry send with the same message_id.`, { messageId: args.messageId, state: "unknown" });
       }
-      try { return await client.request("trackedSend", args); }
+      try {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return await client.request("trackedSend", args);
+      }
       catch (retryError) {
         if (retryError instanceof BridgeError && retryError.code !== "internal" && retryError.code !== "timeout") throw retryError;
         try {
@@ -558,7 +562,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         if (err instanceof BridgeError && err.code !== "internal" && err.code !== "timeout") throw err;
         throw new BridgeError(err instanceof BridgeError ? err.code : "internal", `Message storage state is unknown after ${op}: ${(err as Error).message}. This legacy operation has no durable send_status identity; check inbox/history before resending.`, { ...(err instanceof BridgeError ? err.details : {}), state: "unknown", dedupeKey: args.dedupeKey });
       }
-      try { return await client.request(op, args); }
+      try {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return await client.request(op, args);
+      }
       catch (retryError) {
         throw new BridgeError("timeout", `Message storage state is unknown after a timed-out ${op}. This legacy operation has no durable send_status identity; check inbox/history before resending. ${(retryError as Error).message}`, { state: "unknown", dedupeKey: args.dedupeKey });
       }
@@ -593,7 +600,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   projectJobs(): Promise<Record<string, unknown>[]> { return this.withClient((c) => c.request("projectJobs", {})); }
-  jobRecipient(job: string): Promise<string> { return this.withClient((c) => c.request("jobRecipient", { job })); }
+  jobRecipient(job: string): Promise<string> { return retryRequest("jobRecipient (read only; no control submitted)", () => this.withClient((c) => c.request("jobRecipient", { job }))); }
   async setUnavailable(unavailable: boolean): Promise<PeerInfo> {
     const peer = await this.withClient((c) => c.request("coordinatorAvailability", { unavailable }));
     this.unavailable = unavailable;
@@ -612,7 +619,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   jobAuthority(job: string): Promise<import("../mcp/jobs.js").Job | null> {
-    return this.withClient((c) => c.request("jobAuthority", { job }));
+    return retryRequest("jobAuthority (read only; no control submitted)", () => this.withClient((c) => c.request("jobAuthority", { job })));
   }
 
   controlInlineJob(job: string, control: import("../mcp/jobs.js").RunnerControl): Promise<unknown> {

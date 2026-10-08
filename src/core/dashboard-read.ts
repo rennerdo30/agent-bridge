@@ -27,7 +27,7 @@ export interface RunSummary extends RunMeta {
   header: string;
   startedAt: number;
   updatedAt: number;
-  status: "running" | "done" | "failed" | "interrupted";
+  status: "running" | "done" | "failed" | "interrupted" | "cancelled";
   last: string;
   /** Start of the prompt, for lists. */
   task: string;
@@ -53,7 +53,7 @@ export async function finishedRunOutcomes(home: string, log: Logger, names?: Set
   const inputs: OutcomeInput[] = [];
   for (const run of runs) {
     if (names && !names.has(run.name)) continue;
-    if (!run.job || (run.status !== "done" && run.status !== "failed")) continue;
+    if (!run.job || !["done", "failed", "cancelled"].includes(run.status)) continue;
     const stored = jobs.find((j) => j.name === run.job);
     const startedAt = run.jobStartedAt ?? run.startedAt;
     const latest = stored && (run.jobStartedAt !== undefined ? stored.startedAt === startedAt : Math.abs(stored.startedAt - startedAt) < LEGACY_JOB_START_TOLERANCE_MS);
@@ -74,7 +74,7 @@ export async function finishedRunOutcomes(home: string, log: Logger, names?: Set
 
 /** Cached display evidence only; explicit supervisor decisions use fresh deriveJobOutcome. */
 async function dashboardJobOutcomes(home: string, log: Logger, names: Set<string>): Promise<Record<string, { startedAt: number; status: string; outcome: JobOutcome }>> {
-  const jobs = readStore(join(home, JOBS_FILE), log, true).filter(job => names.has(job.name) && (job.status === "done" || job.status === "failed"));
+  const jobs = readStore(join(home, JOBS_FILE), log, true).filter(job => names.has(job.name) && ["done", "failed", "cancelled"].includes(job.status));
   const outcomes = await cachedOutcomes(home, jobs.map(job => ({ key: job.name, kind: "job", opts: {}, job: {
     id: job.id, name: job.name, owner: job.owner, startedAt: job.startedAt, status: job.status, worktree: job.worktree, remote: job.remote,
   } })), log);
@@ -89,7 +89,7 @@ export function summarizeRun(file: string, text: string, mtimeMs: number, now: n
   const status: RunSummary["status"] = finished
     ? / · done$/.test(finished)
       ? "done"
-      : "failed"
+      : / · cancelled$/.test(finished) ? "cancelled" : "failed"
     : now - mtimeMs > STALE_RUN_MS
       ? "interrupted"
       : "running";
@@ -170,7 +170,7 @@ export function listRuns(home: string, now = Date.now(), names?: Set<string>): R
       parentJob: typeof job.parentJob === "string" ? job.parentJob : undefined, rootSession: typeof job.rootSession === "string" ? job.rootSession : undefined,
       startedAt, finishedAt, updatedAt: finishedAt ?? startedAt,
       // A historical snapshot does not prove that an old process is still running.
-      status: job.status === "done" || job.status === "failed" ? job.status : "interrupted",
+      status: job.status === "done" || job.status === "failed" || job.status === "cancelled" ? job.status : "interrupted",
       header: `Recovered ${name}`, last: "Run log unavailable; conversation may be available in the CLI transcript.", recovered: true, hasLog: false,
     });
   }
@@ -280,8 +280,8 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       const before = url.searchParams.get("before");
       if (before !== null && !/^[\w.-]{1,256}$/.test(before)) return reply(400, { error: "invalid outcome cursor" });
       const select = (names: string[]) => [...new Set(names)].sort().filter((name) => before === null || name > before).slice(0, limit);
-      const stored = readStore(join(ctx.home, JOBS_FILE), ctx.log, true).filter((j) => j.status === "done" || j.status === "failed");
-      const runs = listRuns(ctx.home).filter((r) => r.job && (r.status === "done" || r.status === "failed"));
+      const stored = readStore(join(ctx.home, JOBS_FILE), ctx.log, true).filter((j) => ["done", "failed", "cancelled"].includes(j.status));
+      const runs = listRuns(ctx.home).filter((r) => r.job && ["done", "failed", "cancelled"].includes(r.status));
       const names = select([...stored.map((j) => j.name), ...runs.map((r) => r.name)]);
       const next = [...stored.map((j) => j.name), ...runs.map((r) => r.name)].some((name) => names.length > 0 && name > names.at(-1)!) ? names.at(-1) : null;
       const jobs = await dashboardJobOutcomes(ctx.home, ctx.log, new Set(names));

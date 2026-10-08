@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { BridgeClient } from "../src/core/client.js";
 import { MessageStore } from "../src/core/store.js";
@@ -8,6 +10,37 @@ import { makeEnv, until, type TestEnv } from "./helpers.js";
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { vi.restoreAllMocks(); await env.cleanup(); });
+
+it("retries SQLite busy sends with one identity and one retained message", async () => {
+  const sender = env.node("busy-sender"), recipient = env.node("busy-recipient");
+  await sender.start(); await recipient.start();
+  const client = (sender as any).client as BridgeClient, request = client.request.bind(client), attempts: string[] = [];
+  vi.spyOn(client, "request").mockImplementation(async (op, args: any) => {
+    if (op === "trackedSend") {
+      attempts.push(args.messageId);
+      if (attempts.length === 1) throw new BridgeError("internal", "database is locked");
+    }
+    return request(op, args);
+  });
+  const result = await sender.send({ to: recipient.name, body: "Retain under busy pressure" });
+  expect(attempts).toEqual([result.messages[0]!.id, result.messages[0]!.id]);
+  expect(result.storage?.state).toBe("stored");
+  await until(() => recipient.unread().length === 1);
+});
+
+it("retries authority reads through the broker before any job control is submitted", async () => {
+  const owner = env.node("retry-owner"); await owner.start();
+  const job = { id: "authorityfixture", name: "codex-job-authorityfixture", owner: owner.name, agent: "codex", status: "interrupted", startedAt: 1, sessionId: "fixture", prompt: "exact task", args: {} };
+  writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: [job] }));
+  const client = (owner as any).client as BridgeClient, request = client.request.bind(client);
+  let attempts = 0;
+  vi.spyOn(client, "request").mockImplementation(async (op, args: any) => {
+    if (op === "jobAuthority" && ++attempts === 1) throw new Error("broker request timed out: jobAuthority");
+    return request(op, args);
+  });
+  expect(await owner.jobAuthority(job.name)).toMatchObject({ owner: owner.name, prompt: job.prompt });
+  expect(attempts).toBe(2);
+});
 
 it("recovers two lost replies through unindexed broker storage", async () => {
   const sender = env.node("sender"), recipient = env.node("recipient");

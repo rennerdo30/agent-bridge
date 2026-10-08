@@ -100,7 +100,7 @@ export class JobRunners implements JobHost {
         if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync(path).mtimeMs <= keepMs) continue;
         const id = f.replace(/\.json$/, "");
         const state = readRunnerState(home, id);
-        if (state?.status === "done" || state?.status === "failed") {
+        if (state?.status === "done" || state?.status === "failed" || state?.status === "cancelled") {
           archiveFile(path);
           archiveFile(specPath(home, id));
         }

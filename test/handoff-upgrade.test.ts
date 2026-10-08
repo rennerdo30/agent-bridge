@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { commitHandoff, migrateJobOwnership } from "../src/core/job-handoff.js";
 import { writeJsonStore, JSON_STORE_VERSION } from "../src/core/json-store.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { makeEnv, until, type TestEnv } from "./helpers.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import { DatabaseSync } from "node:sqlite";
 import { MessageStore, SQLITE_STORE_VERSION } from "../src/core/store.js";
@@ -54,7 +54,7 @@ it("leaves original records untouched if backup/publication fails", () => {
   vi.mocked(writeJsonStore).mockImplementationOnce(() => { throw new Error("Backup failed"); });
   expect(() => commitHandoff(path, peer("codex-fixture-source"), peer("codex-target"), { to: "codex-target" })).toThrow("Backup failed");
   expect(readFileSync(path, "utf8")).toBe(fixture);
-  expect(readdirSync(env.home)).toEqual(["jobs.json"]);
+  expect(readdirSync(env.home).filter(name => name !== ".metadata-leases")).toEqual(["jobs.json"]);
 });
 
 it("publishes a unique archive without overwriting an interrupted legacy overflow file", () => {
@@ -63,6 +63,7 @@ it("publishes a unique archive without overwriting an interrupted legacy overflo
   vi.stubEnv("AGENT_BRIDGE_JOB_STORE_LIMIT", "1");
   const manager = new JobManager(env.node("codex-fixture-source", "codex"), nullLogger, path);
   manager.restore(() => undefined); manager.persist();
+  expect(manager.setTitle(JSON.parse(fixture).jobs[0].name, "Retained overflow fixture")).toBe(true);
   expect(readFileSync(leftover, "utf8")).toBe('{"original":"untouched"}');
   expect(readStore(path, nullLogger, true).map((j) => j.id).sort()).toEqual(JSON.parse(fixture).jobs.map((j: { id: string }) => j.id).sort());
   expect(readdirSync(join(env.home, "archive")).some((name) => /^jobs-.*\.json$/.test(name))).toBe(true);
@@ -72,7 +73,7 @@ it.each(['{"version":2,"jobs":"bad"}', '{broken'])("does not rename or modify in
   const path = join(env.home, "jobs.json"); writeFileSync(path, bytes);
   expect(() => commitHandoff(path, peer("source"), peer("target"), { to: "target" })).toThrow();
   expect(readFileSync(path, "utf8")).toBe(bytes);
-  expect(readdirSync(env.home)).toEqual(["jobs.json"]);
+  expect(readdirSync(env.home).filter(name => name !== ".metadata-leases")).toEqual(["jobs.json"]);
 });
 
 it("makes old version-2 writers fail closed and preserves unknown fields", () => {
@@ -102,10 +103,14 @@ function oldDatabase() {
   return { file, db, snapshot };
 }
 
-it("upgrades the released 0.29.10 SQLite layout without changing any old table records", () => {
+it("upgrades the released 0.29.10 SQLite layout without changing any old table records", async () => {
   const { file, db, snapshot } = oldDatabase(), original = snapshot();
   db.close();
-  const store = new MessageStore(file, nullLogger); store.close();
+  const store = new MessageStore(file, nullLogger);
+  store.startBackups();
+  const pending = new DatabaseSync(file, { readOnly: true });
+  try { await until(() => Number(pending.prepare("SELECT count(*) AS n FROM archived_messages").get()!.n) === 0); }
+  finally { pending.close(); store.close(); }
   const next = new DatabaseSync(file);
   try {
     expect(next.prepare("PRAGMA user_version").get()!.user_version).toBe(SQLITE_STORE_VERSION);

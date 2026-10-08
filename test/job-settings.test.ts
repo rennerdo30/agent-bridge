@@ -18,10 +18,13 @@ describe("worktree sandbox defaults", () => {
   const cwd = join(home, "worktrees", "repo-job");
   const permission = (a: DelegateArgs, cfg = DEFAULT_CONFIG, dir = cwd) => DELEGATION_TARGETS.codex.permission(cfg, worktreeArgs("codex", a, cfg, dir, home));
 
-  it("keeps plain runs read-only and lets worktrees edit in workspace-write", () => {
+  it("keeps plain runs read-only and resolves the platform worktree edit default", () => {
     expect(permission({ prompt: "task", title: "test" }, DEFAULT_CONFIG, home)).toBe("read-only");
-    expect(permission({ prompt: "task", title: "test", worktree: true }, DEFAULT_CONFIG, home)).toBe("workspace-write");
-    expect(permission({ prompt: "task", title: "test" })).toBe("workspace-write");
+    const expected = process.platform === "win32" ? "danger-full-access" : "workspace-write";
+    expect(permission({ prompt: "task", title: "test", worktree: true }, DEFAULT_CONFIG, home)).toBe(expected);
+    expect(permission({ prompt: "task", title: "test" })).toBe(expected);
+    expect(worktreeArgs("codex", { prompt: "task", title: "test", worktree: true }, DEFAULT_CONFIG, home, home, "win32").sandbox).toBe("danger-full-access");
+    expect(worktreeArgs("codex", { prompt: "task", title: "test", worktree: true }, DEFAULT_CONFIG, home, home, "linux").sandbox).toBe("workspace-write");
   });
 
   it("inherits the configured sandbox and allows a separate worktree default", () => {
