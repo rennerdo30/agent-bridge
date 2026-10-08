@@ -51,9 +51,9 @@ export interface OldRunnerFixtures {
   release(index?: number): Promise<NativeRunnerInfo[]>;
   stop(): Promise<void>;
 }
-const FAKE_CLAUDE = String.raw`
+export const FAKE_CLAUDE = String.raw`
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { constants, setPriority } from "node:os";
 try { setPriority(0,constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* Own synthetic process only. */ }
@@ -68,7 +68,7 @@ process.stdin.on("end", async () => {
   const sessionId = value("--resume") || "synthetic-native-" + process.pid;
   const contextSha256 = createHash("sha256").update(readFileSync(join(process.cwd(),"context.txt"))).digest("hex");
   const state = { pid:process.pid, sessionId, cwd:process.cwd(), contextSha256, args:process.argv.slice(2), receivedLive:[] };
-  const save = () => writeFileSync(marker,JSON.stringify(state));
+  const save = () => { writeFileSync(marker + ".next",JSON.stringify(state)); renameSync(marker + ".next",marker); };
   save(); appendFileSync(marker + ".calls.jsonl",JSON.stringify({...state,at:Date.now()}) + "\n");
   console.log(JSON.stringify({type:"system",subtype:"init",session_id:sessionId,model:"synthetic-native-cli"}));
   const parent = process.env.AGENT_BRIDGE_PARENT_URL, token = process.env.AGENT_BRIDGE_PARENT_TOKEN;
@@ -91,7 +91,7 @@ process.stdin.on("end", async () => {
     await new Promise(resolve => setTimeout(resolve,250));
   }
   state.exited = true; save();
-  console.log(JSON.stringify({type:"result",subtype:"success",is_error:false,result:"Synthetic native turn completed with retained context",session_id:sessionId}));
+  process.stdout.write(JSON.stringify({type:"result",subtype:"success",is_error:false,result:"Synthetic native turn completed with retained context",session_id:sessionId}) + "\n", () => process.exit(0));
 });
 `;
 function contained(root: string, file: string): string {
