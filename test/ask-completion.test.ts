@@ -1,9 +1,10 @@
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { recordAskCompletion, reconcileAskCompletions, observeAskToolRecord } from "../src/core/ask-completion.js";
 import { DatabaseSync } from "node:sqlite";
 import { makeEnv, type TestEnv } from "./helpers.js";
+import { readArchivedJobs } from "../src/core/job-archive.js";
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { await env.cleanup(); });
@@ -39,6 +40,20 @@ it("never treats an older completion as proof for a new continuation", () => {
   recordAskCompletion(env.home, { ...job, finishedAt: 20, status: "done" });
   expect(reconcileAskCompletions(path)).toBe(0);
   expect(readFileSync(path, "utf8")).toBe(raw);
+});
+it("keeps terminal receipt authority in archives while retaining every stale original byte", () => {
+  const path = join(env.home, "jobs.json");
+  writeFileSync(path, JSON.stringify({ version: 4, jobs: [job] }));
+  recordAskCompletion(env.home, { ...job, finishedAt: 20, status: "done" });
+  expect(reconcileAskCompletions(path)).toBe(1);
+  const dir = join(env.home, "archive");
+  const originals = readdirSync(dir).filter(name => name.startsWith("jobs-content-")).map(name => join(dir, name));
+  const stale = originals.find(file => JSON.parse(readFileSync(file, "utf8")).jobs[0].status === "running")!;
+  const bytes = readFileSync(stale);
+  const later = new Date(Date.now() + 60_000); utimesSync(stale, later, later);
+  expect(readArchivedJobs(path).find(record => record.id === job.id)).toMatchObject({ status: "done", finishedAt: 20, prompt: job.prompt });
+  expect(readFileSync(stale)).toEqual(bytes);
+  expect(originals).toHaveLength(2);
 });
 it("retains native JSONL pairing across bounded import chunks and restart", () => {
   const path = join(env.home, "jobs.json"), file = join(env.home, "fixture-history.db");

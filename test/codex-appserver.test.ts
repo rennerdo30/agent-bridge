@@ -212,7 +212,7 @@ describe("Codex denial explanations", () => {
     mkdirSync(root, { recursive: true });
     const dir = mkdtempSync(join(root, "denials-"));
     writeFileSync(join(dir, "app-server"), `
-import { createInterface } from "node:readline";
+const { createInterface } = require("node:readline");
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 const replies = []; const reasons = [];
 function finish() {

@@ -44,7 +44,14 @@ export function readArchivedJobSnapshot(path: string): ArchivedJobSnapshot {
     // A damaged archive must be reported, never silently forgotten or renamed by a read.
     const value = readJsonSnapshot(file, { file, stat: st }).value;
     if (!isRecord(value) || (value.version !== undefined && (!Number.isInteger(value.version) || (value.version as number) < 0 || (value.version as number) > JSON_STORE_VERSION)) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${basename(file)}`);
-    for (const job of value.jobs) if (isRecord(job) && typeof job.id === "string") jobs.set(job.id, job);
+    for (const job of value.jobs) if (isRecord(job) && typeof job.id === "string") {
+      const prior = jobs.get(job.id);
+      // A retained stale active snapshot cannot undo proof that this exact turn ended.
+      if (job.status === "running" && prior && prior.startedAt === job.startedAt &&
+          isRecord(prior.completionReceipt) && prior.completionReceipt.version === 1 &&
+          ["done", "failed", "cancelled"].includes(String(prior.status))) continue;
+      jobs.set(job.id, job);
+    }
   }
   const next = { signature, jobs: [...jobs.values()] };
   snapshots.delete(path);

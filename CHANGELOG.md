@@ -2,7 +2,7 @@
 
 ## 0.30.3
 
-- Authority reads use bounded backoff and explicit retry-later errors. Durable sends reuse their message identity across busy/timeout retries and retain conservative stored/unknown outcomes.
+- Authority reads use bounded backoff and explicit retry-later errors. Durable sends reuse their message identity across busy/timeout retries and retain conservative stored/unknown outcomes. Deferred job-store upgrades retry with bounded backoff so startup cancellation retains its final state.
 - Ask completions retain independent versioned receipts, including recovery from paired native tool records. Stale active records are repaired with a backup and archive; older results cannot finish newer continuations.
 - Unsupported ordinary job mail is rejected visibly before storage. Legacy ordinary envelopes remain unread rather than being silently consumed; granted sibling and supervisor control channels retain their existing contracts.
 - `worktreeRoot` and `AGENT_BRIDGE_WORKTREE_ROOT` select the root for new local and remote jobs. Existing worktrees retain their saved paths.

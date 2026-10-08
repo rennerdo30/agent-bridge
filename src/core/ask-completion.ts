@@ -109,6 +109,8 @@ export function reconcileAskCompletions(path: string): number {
     const fd = openSync(backup, "r+");
     try { fsyncSync(fd); } finally { closeSync(fd); }
     archiveJobs(path, originals);
+    const completedIds = new Set(originals.map(job => job.id));
+    archiveJobs(path, jobs.filter(job => isRecord(job) && completedIds.has(job.id)));
     writeJsonStore(path, { ...(isRecord(previous) ? previous : {}), jobs }, previous);
     return originals.length;
   } finally { release(); }
