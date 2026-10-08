@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
 import { acquireLock, JobManager, readStore, type HostedAdmission, type JobHostInfo, type Run } from "../src/mcp/jobs.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
+import * as compatibility from "../src/core/store-compatibility.js";
 import { until } from "./helpers.js";
 
 let home: string, jobs: JobManager;
@@ -14,7 +15,7 @@ beforeEach(() => {
   jobs = new JobManager(new LocalCoordinator("owner", "owner-session"), nullLogger, join(home, "jobs.json"), 2);
   jobs.runners = { state: () => null, alive: () => true, send: vi.fn(), kill: vi.fn() };
 });
-afterEach(() => { jobs.cancelAll(); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
+afterEach(() => { jobs.setDormant(true); jobs.cancelAll(); vi.restoreAllMocks(); vi.useRealTimers(); rmSync(home, { recursive: true, force: true }); });
 function deferred() {
   let resolve!: (host: JobHostInfo | null) => void, admission!: HostedAdmission;
   const promise = new Promise<JobHostInfo | null>(ready => { resolve = ready; });
@@ -23,6 +24,27 @@ function deferred() {
   return { run, inline, resolve, admission: () => admission };
 }
 const host = { pid: null, peer: "detached-fixture", startedAt: Date.now() };
+
+it("retries protected store admission with bounded backoff and retains the latest cancelled turn", async () => {
+  vi.useFakeTimers();
+  const path = join(home, "jobs.json"), original = JSON.stringify({ version: 0, jobs: [], retained: "original envelope" });
+  writeFileSync(path, original);
+  const admission = vi.spyOn(compatibility, "assertStoreUpgrade").mockImplementation(() => {
+    throw Object.assign(new Error("fixture reader identity pending; retry later"), { code: "STORE_UPGRADE_DEFERRED" });
+  });
+  const pending = deferred(), job = jobs.start("codex", null, "retained cancelled prompt", pending.run);
+  jobs.cancel(job.name); pending.resolve(null);
+  await Promise.resolve(); await Promise.resolve();
+  expect(job.status).toBe("cancelled");
+  expect(readFileSync(path, "utf8")).toBe(original);
+  const calls = admission.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(admission.mock.calls.length - calls).toBeLessThanOrEqual(10);
+  admission.mockRestore();
+  await vi.advanceTimersByTimeAsync(1600);
+  expect(readStore(path).find(saved => saved.id === job.id)).toMatchObject({ status: "cancelled", prompt: "retained cancelled prompt" });
+  expect(JSON.parse(readFileSync(path, "utf8")).retained).toBe("original envelope");
+});
 
 it("keeps queued admission out of inline execution and rejects stale owner/session authority", async () => {
   const pending = deferred(), job = jobs.start("codex", null, "retained queued prompt", pending.run);

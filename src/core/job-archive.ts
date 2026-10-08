@@ -88,7 +88,14 @@ export function* readArchivedJobSteps(path: string, responsive = false): Generat
     // A damaged archive must be reported, never silently forgotten or renamed by a read.
     const value = readJsonSnapshot(file, { file, stat: st }).value;
     if (!isRecord(value) || (value.version !== undefined && (!Number.isInteger(value.version) || (value.version as number) < 0 || (value.version as number) > JSON_STORE_VERSION)) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${basename(file)}`);
-    for (const job of value.jobs) { yield; if (isRecord(job) && typeof job.id === "string") jobs.set(job.id, job); }
+    for (const job of value.jobs) { yield; if (isRecord(job) && typeof job.id === "string") {
+      const prior = jobs.get(job.id);
+      // A retained stale active snapshot cannot undo proof that this exact turn ended.
+      if (job.status === "running" && prior && prior.startedAt === job.startedAt &&
+          isRecord(prior.completionReceipt) && prior.completionReceipt.version === 1 &&
+          ["done", "failed", "cancelled"].includes(String(prior.status))) continue;
+      jobs.set(job.id, job);
+    } }
   }
   if (responsive) for (const file of files) { yield; validateDirectory!(); if (fileSignature(physicalFile(file.path)) !== fileSignature(file.st)) throw new Error("job archive changed during traversal"); }
   validateDirectory?.();
