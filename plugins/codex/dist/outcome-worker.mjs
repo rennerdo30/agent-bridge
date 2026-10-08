@@ -386,6 +386,7 @@ import { posix as posix2 } from "node:path";
 
 // src/mcp/jobs.ts
 import { randomUUID as randomUUID12 } from "node:crypto";
+import { setTimeout as delay5 } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { closeSync as closeSync10, constants as fsConstants, copyFileSync as copyFileSync5, fsyncSync as fsyncSync5, openSync as openSync10 } from "node:fs";
 import { dirname as dirname12 } from "node:path";

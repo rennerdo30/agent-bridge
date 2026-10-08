@@ -297,26 +297,63 @@ function processIdentity(pid) {
 var identities = /* @__PURE__ */ new Map();
 var refreshes = /* @__PURE__ */ new Map();
 var IDENTITY_REFRESH_MS = 1e4;
-async function refreshStorePeerIdentities(home) {
-  const pending2 = refreshes.get(home);
-  if (pending2) return pending2;
-  const dir = join4(home, "storage-capabilities");
-  const pids = existsSync3(dir) ? readdirSync3(dir).filter((file2) => /^\d+\.json$/.test(file2)).map((file2) => Number(file2.slice(0, -5))).filter((pid) => !identities.has(pid) || Date.now() - identities.get(pid).at >= IDENTITY_REFRESH_MS) : [];
-  const refresh = (async () => {
-    const current = await readProcessIdentities(pids.filter((pid) => pid !== process.pid));
-    for (const pid of pids) identities.set(pid, { identity: pid === process.pid ? processIdentity(pid) ?? null : current.get(pid) ?? null, at: Date.now() });
-  })();
-  refreshes.set(home, refresh);
+function presenceSignature(path) {
   try {
-    await refresh;
-  } finally {
-    refreshes.delete(home);
+    const stat = statSync(path);
+    return `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+  } catch {
+    return void 0;
   }
 }
-function cachedIdentity(pid) {
+function refreshStorePeerIdentities(home, signal) {
+  signal?.throwIfAborted();
+  const ready2 = refreshIdentityCache(home);
+  if (!signal) return ready2;
+  return new Promise((resolve6, reject) => {
+    const abort = () => {
+      signal.removeEventListener("abort", abort);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    ready2.then(() => {
+      signal.removeEventListener("abort", abort);
+      resolve6();
+    }, (error62) => {
+      signal.removeEventListener("abort", abort);
+      reject(error62);
+    });
+    if (signal.aborted) abort();
+  });
+}
+async function refreshIdentityCache(home) {
+  for (; ; ) {
+    const pending2 = refreshes.get(home);
+    if (pending2) {
+      await pending2;
+      continue;
+    }
+    const dir = join4(home, "storage-capabilities");
+    const records = existsSync3(dir) ? readdirSync3(dir).filter((file2) => /^\d+\.json$/.test(file2)).flatMap((file2) => {
+      const path = join4(dir, file2), signature = presenceSignature(path), cached2 = identities.get(path);
+      return signature && (!cached2 || cached2.signature !== signature || Date.now() - cached2.at >= IDENTITY_REFRESH_MS) ? [{ pid: Number(file2.slice(0, -5)), path, signature }] : [];
+    }) : [];
+    if (!records.length) return;
+    const refresh = (async () => {
+      const current = await readProcessIdentities(records.filter((record2) => record2.pid !== process.pid).map((record2) => record2.pid));
+      for (const { pid, path, signature } of records) identities.set(path, { identity: pid === process.pid ? processIdentity(pid) ?? null : current.get(pid) ?? null, at: Date.now(), signature });
+    })();
+    refreshes.set(home, refresh);
+    try {
+      await refresh;
+    } finally {
+      refreshes.delete(home);
+    }
+  }
+}
+function cachedIdentity(home, pid) {
   if (pid === process.pid) return processIdentity(pid);
-  const cached2 = identities.get(pid);
-  return cached2 && Date.now() - cached2.at < IDENTITY_REFRESH_MS ? cached2.identity ?? void 0 : void 0;
+  const path = join4(home, "storage-capabilities", `${pid}.json`), cached2 = identities.get(path);
+  return cached2 && cached2.signature === presenceSignature(path) && Date.now() - cached2.at < IDENTITY_REFRESH_MS ? cached2.identity ?? void 0 : void 0;
 }
 function legacyPidReused(identity, recordedAt) {
   if (process.platform === "win32" && /^\d+$/.test(identity)) {
@@ -346,8 +383,10 @@ function liveStorePeers(home) {
       if (error62.code === "ESRCH") return [];
     }
     try {
-      const record2 = JSON.parse(readFileSync3(join4(dir, file2), "utf8"));
-      const identity = cachedIdentity(pid);
+      const path = join4(dir, file2), signature = presenceSignature(path);
+      const record2 = JSON.parse(readFileSync3(path, "utf8"));
+      if (signature !== presenceSignature(path)) throw new Error("Store reader presence changed during observation");
+      const identity = cachedIdentity(home, pid);
       if (identity && typeof record2.processIdentity === "string" && record2.processIdentity !== identity) return [];
       if (identity && !record2.processIdentity && legacyPidReused(identity, statSync(join4(dir, file2)).mtimeMs)) return [];
       if (identity && record2.schemaVersion === 1 && record2.pid === pid && validStoreCapabilities(record2)) return [record2];

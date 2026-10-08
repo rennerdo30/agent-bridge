@@ -29097,26 +29097,63 @@ function isProcessIdentityAlive(pid, identity) {
 var identities = /* @__PURE__ */ new Map();
 var refreshes = /* @__PURE__ */ new Map();
 var IDENTITY_REFRESH_MS = 1e4;
-async function refreshStorePeerIdentities(home) {
-  const pending2 = refreshes.get(home);
-  if (pending2) return pending2;
-  const dir = join9(home, "storage-capabilities");
-  const pids = existsSync7(dir) ? readdirSync4(dir).filter((file2) => /^\d+\.json$/.test(file2)).map((file2) => Number(file2.slice(0, -5))).filter((pid) => !identities.has(pid) || Date.now() - identities.get(pid).at >= IDENTITY_REFRESH_MS) : [];
-  const refresh = (async () => {
-    const current = await readProcessIdentities(pids.filter((pid) => pid !== process.pid));
-    for (const pid of pids) identities.set(pid, { identity: pid === process.pid ? processIdentity(pid) ?? null : current.get(pid) ?? null, at: Date.now() });
-  })();
-  refreshes.set(home, refresh);
+function presenceSignature(path) {
   try {
-    await refresh;
-  } finally {
-    refreshes.delete(home);
+    const stat3 = statSync4(path);
+    return `${stat3.size}:${stat3.mtimeMs}:${stat3.ctimeMs}`;
+  } catch {
+    return void 0;
   }
 }
-function cachedIdentity(pid) {
+function refreshStorePeerIdentities(home, signal) {
+  signal?.throwIfAborted();
+  const ready = refreshIdentityCache(home);
+  if (!signal) return ready;
+  return new Promise((resolve23, reject) => {
+    const abort = () => {
+      signal.removeEventListener("abort", abort);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    ready.then(() => {
+      signal.removeEventListener("abort", abort);
+      resolve23();
+    }, (error62) => {
+      signal.removeEventListener("abort", abort);
+      reject(error62);
+    });
+    if (signal.aborted) abort();
+  });
+}
+async function refreshIdentityCache(home) {
+  for (; ; ) {
+    const pending2 = refreshes.get(home);
+    if (pending2) {
+      await pending2;
+      continue;
+    }
+    const dir = join9(home, "storage-capabilities");
+    const records = existsSync7(dir) ? readdirSync4(dir).filter((file2) => /^\d+\.json$/.test(file2)).flatMap((file2) => {
+      const path = join9(dir, file2), signature2 = presenceSignature(path), cached3 = identities.get(path);
+      return signature2 && (!cached3 || cached3.signature !== signature2 || Date.now() - cached3.at >= IDENTITY_REFRESH_MS) ? [{ pid: Number(file2.slice(0, -5)), path, signature: signature2 }] : [];
+    }) : [];
+    if (!records.length) return;
+    const refresh = (async () => {
+      const current = await readProcessIdentities(records.filter((record3) => record3.pid !== process.pid).map((record3) => record3.pid));
+      for (const { pid, path, signature: signature2 } of records) identities.set(path, { identity: pid === process.pid ? processIdentity(pid) ?? null : current.get(pid) ?? null, at: Date.now(), signature: signature2 });
+    })();
+    refreshes.set(home, refresh);
+    try {
+      await refresh;
+    } finally {
+      refreshes.delete(home);
+    }
+  }
+}
+function cachedIdentity(home, pid) {
   if (pid === process.pid) return processIdentity(pid);
-  const cached3 = identities.get(pid);
-  return cached3 && Date.now() - cached3.at < IDENTITY_REFRESH_MS ? cached3.identity ?? void 0 : void 0;
+  const path = join9(home, "storage-capabilities", `${pid}.json`), cached3 = identities.get(path);
+  return cached3 && cached3.signature === presenceSignature(path) && Date.now() - cached3.at < IDENTITY_REFRESH_MS ? cached3.identity ?? void 0 : void 0;
 }
 function legacyPidReused(identity, recordedAt) {
   if (process.platform === "win32" && /^\d+$/.test(identity)) {
@@ -29147,7 +29184,9 @@ function recordStorePeer(home, peer, options = {}) {
   if (peer.host || !Number.isSafeInteger(peer.pid) || peer.pid <= 0) return;
   const explicit = validStoreCapabilities(peer.storeCapabilities);
   const path = join9(home, "storage-capabilities", `${peer.pid}.json`);
-  let identity = cachedIdentity(peer.pid);
+  let identity = cachedIdentity(home, peer.pid);
+  if (!identity) void refreshStorePeerIdentities(home).catch(() => {
+  });
   if (explicit && existsSync7(path)) {
     try {
       const previous = JSON.parse(readFileSync5(path, "utf8"));
@@ -29183,8 +29222,10 @@ function liveStorePeers(home) {
       if (error62.code === "ESRCH") return [];
     }
     try {
-      const record3 = JSON.parse(readFileSync5(join9(dir, file2), "utf8"));
-      const identity = cachedIdentity(pid);
+      const path = join9(dir, file2), signature2 = presenceSignature(path);
+      const record3 = JSON.parse(readFileSync5(path, "utf8"));
+      if (signature2 !== presenceSignature(path)) throw new Error("Store reader presence changed during observation");
+      const identity = cachedIdentity(home, pid);
       if (identity && typeof record3.processIdentity === "string" && record3.processIdentity !== identity) return [];
       if (identity && !record3.processIdentity && legacyPidReused(identity, statSync4(join9(dir, file2)).mtimeMs)) return [];
       if (identity && record3.schemaVersion === 1 && record3.pid === pid && validStoreCapabilities(record3)) return [record3];
@@ -32541,12 +32582,12 @@ var BackupBackground = class {
       lastError: this.lastError
     };
   }
-  schedule(delay8) {
+  schedule(delay10) {
     if (!this.enabled || this.stopped || this.failed) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       this.start();
-    }, delay8);
+    }, delay10);
     this.timer.unref();
   }
   start() {
@@ -33318,6 +33359,7 @@ import { readFileSync as readFileSync25 } from "node:fs";
 
 // src/mcp/jobs.ts
 import { randomUUID as randomUUID15 } from "node:crypto";
+import { setTimeout as delay7 } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { closeSync as closeSync14, constants as fsConstants, copyFileSync as copyFileSync6, fsyncSync as fsyncSync7, openSync as openSync14 } from "node:fs";
 import { dirname as dirname23 } from "node:path";
@@ -41790,6 +41832,7 @@ var RemoteJobHost = class {
 };
 
 // src/mcp/job-host.ts
+import { setTimeout as delay8 } from "node:timers/promises";
 var RUNNERS_DIR_NAME = "jobs";
 var JOB_PEER_PREFIX = "job:";
 var CONTROL_CONVERSATION_PREFIX = "jobctl-";
@@ -41847,6 +41890,24 @@ var JobRunners = class {
   log;
   remote;
   /** Start a turn of this job in a new runner; null when that is not possible (the turn then runs in the server). */
+  async startAsync(job, spec, admission) {
+    const signal = admission?.signal ?? job.controller.signal;
+    let attempts = 0;
+    for (; ; ) {
+      signal.throwIfAborted();
+      await refreshStorePeerIdentities(this.home, signal);
+      signal.throwIfAborted();
+      if (admission && !admission.isCurrent()) throw new Error("Detached job startup lost its supervisor authority before launch");
+      try {
+        return this.start(job, spec);
+      } catch (error62) {
+        if (error62.code !== "STORE_UPGRADE_DEFERRED") throw error62;
+        job.progress = `queued: ${error62.message}`;
+        if (attempts++ % 30 === 0) this.log.info("job runner start waits for retained store readers", { job: job.name, reason: String(error62) });
+        await delay8(Math.min(1e3, attempts * 100), void 0, { signal });
+      }
+    }
+  }
   start(job, spec) {
     if (spec.args.host) return this.remote.start(job, spec.args.host, spec.target, spec.args);
     try {
@@ -41855,6 +41916,7 @@ var JobRunners = class {
       const file2 = specPath(this.home, job.id);
       assertWritableStore(readJsonStore(statePath2, this.log));
       assertWritableStore(readJsonStore(file2, this.log));
+      assertStoreUpgrade(this.home, "json", 0, JSON_STORE_VERSION);
       archiveFile(statePath2);
       const full = {
         ...spec,
@@ -41905,6 +41967,7 @@ var JobRunners = class {
       info.pid = pid;
       return info;
     } catch (err) {
+      if (err.code === "STORE_UPGRADE_DEFERRED") throw err;
       this.log.warn("job runner unavailable; the subagent runs inside this server", { job: job.name, err: err.message });
       return null;
     }
@@ -41969,6 +42032,7 @@ var RemoteJobs = class {
   approvals = /* @__PURE__ */ new Map();
   publishingApprovals = /* @__PURE__ */ new Set();
   starting = /* @__PURE__ */ new Set();
+  pendingStarts = /* @__PURE__ */ new Map();
   runners;
   closed = false;
   async request(host, peer, raw, supervisor = peer.id, localJobName) {
@@ -42102,21 +42166,46 @@ var RemoteJobs = class {
       const previous = this.records.get(request2.job);
       record3 = { pair: pair.id, peer: peer.supervisor, owner, job, args: { ...args, cwd, _job: job.name } };
       this.records.set(job.id, record3);
+      const staged = record3;
+      const admission = { record: staged, previous, controller: job.controller, cancelRequested: false, committed: false };
+      this.pendingStarts.set(job.id, admission);
+      const timeout = setTimeout(() => admission.controller.abort(new Error("Remote job not_started: store reader admission exceeded 10 seconds; no detached runner was launched")), 1e4);
+      timeout.unref();
       try {
         if (this.closed) throw new Error("Remote broker closed while the job was starting.");
-        const host = this.runners?.start(job, { target: request2.target, args: record3.args, base: record3.args, owner, byAgent: "other", cwd, cfg });
+        const host = await this.runners?.startAsync(job, { target: request2.target, args: staged.args, base: staged.args, owner, byAgent: "other", cwd, cfg }, {
+          signal: admission.controller.signal,
+          isCurrent: () => !this.closed && this.records.get(job.id) === staged && this.pendingStarts.get(job.id) === admission && staged.job === job && staged.owner === owner && staged.peer === peer.supervisor && staged.pair === pair.id
+        });
         if (!host) throw new Error("Remote job runner is unavailable; update the remote broker's bundled CLI.");
         job.host = host;
+        admission.committed = true;
+        if (admission.cancelRequested) {
+          this.persist();
+          await this.control({ owner: staged.owner, name: job.name, id: job.id }, { type: "cancel" });
+        }
       } catch (err) {
-        if (previous) this.records.set(job.id, previous);
-        else this.records.delete(job.id);
+        if (!job.host && this.records.get(job.id) === staged) {
+          if (previous) this.records.set(job.id, previous);
+          else this.records.delete(job.id);
+        }
         throw err;
+      } finally {
+        clearTimeout(timeout);
+        if (this.pendingStarts.get(job.id) === admission) this.pendingStarts.delete(job.id);
       }
       this.persist();
       this.log.info("remote job started", { host: pair.name, owner, job: job.name, cwd });
     } else {
       if (!record3) throw new Error("Unknown remote job.");
       if (request2.op === "control") {
+        const pending2 = this.pendingStarts.get(record3.job.id);
+        if (pending2?.record === record3) {
+          if (request2.control.type !== "cancel") throw new Error("Remote job not_started: storage admission is still queued; no runner can receive this control yet");
+          pending2.cancelRequested = true;
+          pending2.controller.abort(new Error("Remote job not_started: cancelled before detached runner startup"));
+          return { state: null, alive: true, approvals: [] };
+        }
         if (request2.control.type === "settings") {
           const settings = parseJobSettings(request2.control.settings, record3.job.agent);
           if (typeof settings === "string") throw new Error(settings);
@@ -42137,7 +42226,11 @@ var RemoteJobs = class {
     return { state, alive: alive3, approvals: listPendingApprovals(this.home).filter((a) => a.job === record3.job.name && a.owner === record3.owner) };
   }
   persist() {
-    writeJsonStore(join64(this.home, REMOTE_JOBS_FILE), { jobs: [...this.records.values()].map((r) => {
+    const committed = [...this.records.values()].flatMap((record3) => {
+      const pending2 = this.pendingStarts.get(record3.job.id);
+      return pending2?.record === record3 && !pending2.committed ? pending2.previous ? [pending2.previous] : [] : [record3];
+    });
+    writeJsonStore(join64(this.home, REMOTE_JOBS_FILE), { jobs: committed.map((r) => {
       const { controller, queue, ...job } = r.job;
       return { ...r, job };
     }) }, readJsonStore(join64(this.home, REMOTE_JOBS_FILE)));
@@ -42203,6 +42296,7 @@ ${request2.args.prompt}
   }
   close() {
     this.closed = true;
+    for (const pending2 of this.pendingStarts.values()) pending2.controller.abort(new Error("Remote job not_started: broker closed before detached runner startup"));
     for (const p of this.pending.values()) {
       clearTimeout(p.timer);
       p.reject(new Error("Remote jobs link closed."));
@@ -48815,9 +48909,9 @@ var BridgeNode = class extends EventEmitter2 {
   }
   /** Doubling delay for background retries, capped; reset once connected. */
   nextBackoff() {
-    const delay8 = this.reconnectDelay;
-    this.reconnectDelay = Math.min(delay8 * 2, RECONNECT_BACKOFF_MAX_MS);
-    return delay8;
+    const delay10 = this.reconnectDelay;
+    this.reconnectDelay = Math.min(delay10 * 2, RECONNECT_BACKOFF_MAX_MS);
+    return delay10;
   }
   /**
    * Retry the election later until connected or stopped. Also after "unauthorized" / "protocol_mismatch":
@@ -55391,7 +55485,7 @@ Resource must be configured in resourceSlots.`);
 
 // src/network/cli.ts
 import { createInterface as createInterface2 } from "node:readline/promises";
-import { setTimeout as delay7 } from "node:timers/promises";
+import { setTimeout as delay9 } from "node:timers/promises";
 import { Writable } from "node:stream";
 
 // src/network/wizard.ts
@@ -55574,7 +55668,7 @@ async function runNetworkCommand(command, args, home, pipe2, log, out2) {
           clipboard: copyPairingCode,
           now: Date.now,
           signal: cancellation.signal,
-          sleep: (ms) => delay7(ms, void 0, { signal: cancellation.signal })
+          sleep: (ms) => delay9(ms, void 0, { signal: cancellation.signal })
         });
       } catch (error62) {
         if (!cancellation.signal.aborted) throw error62;
