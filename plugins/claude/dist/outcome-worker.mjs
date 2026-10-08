@@ -240,8 +240,9 @@ function cloneJson(value) {
 function fileSignature(st) {
   return `${st.dev}:${st.ino}:${st.birthtimeMs}:${st.ctimeMs}:${st.mtimeMs}:${st.size}`;
 }
-function readJsonSnapshot(file2) {
-  const st = statSync5(file2), signature = fileSignature(st);
+function readJsonSnapshot(file2, scan) {
+  if (scan && scan.file !== file2) throw new Error("JSON snapshot scan belongs to another file");
+  const st = scan?.stat ?? statSync5(file2), signature = fileSignature(st);
   const failure2 = damaged.get(file2);
   if (failure2?.signature === signature) throw failure2.error;
   damaged.delete(file2);
@@ -257,7 +258,14 @@ function readJsonSnapshot(file2) {
   }
   let value;
   try {
-    value = JSON.parse(readFileSync6(file2, "utf8"));
+    if (!scan) value = JSON.parse(readFileSync6(file2, "utf8"));
+    else {
+      const raw = readFileSync6(file2, "utf8");
+      const after = statSync5(file2);
+      if (!after.isFile() || fileSignature(after) !== signature)
+        throw new Error("JSON snapshot identity changed during read");
+      value = JSON.parse(raw);
+    }
   } catch (error62) {
     if (error62 instanceof SyntaxError) {
       damaged.set(file2, { signature, error: error62 });
@@ -340,7 +348,15 @@ async function readRunStarts(home) {
     for (let offset = 0; offset < metadata.length; offset += 32) {
       await Promise.all(metadata.slice(offset, offset + 32).map(async ({ name, runName, file: file2, log }) => {
         try {
-          const meta3 = JSON.parse(await readFile2(file2, "utf8"));
+          const direct = lstatSync2(file2);
+          const readable = direct.isFile() ? file2 : direct.isSymbolicLink() ? safeFile(root, file2, canonicalRoot) : null;
+          if (!readable) return;
+          const before = direct.isFile() ? direct : statSync6(readable);
+          if (!before.isFile()) return;
+          const raw = await readFile2(readable, "utf8");
+          const after = lstatSync2(readable);
+          if (!after.isFile() || fileSignature(after) !== fileSignature(before)) return;
+          const meta3 = JSON.parse(raw);
           if (!isRecord(meta3) || typeof meta3.job !== "string") return;
           const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(name);
           const startedAt = m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : statSync6(log).mtimeMs;

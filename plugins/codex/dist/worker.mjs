@@ -7571,8 +7571,8 @@ function backupPath(path) {
 }
 function retainBackups(path) {
   const prefix = `${basename(path)}.backup-`;
-  const files2 = readdirSync4(dirname3(path)).filter((f) => f.startsWith(prefix)).sort().reverse();
-  for (const file2 of files2.slice(KEEP_STORE_BACKUPS)) {
+  const files = readdirSync4(dirname3(path)).filter((f) => f.startsWith(prefix)).sort().reverse();
+  for (const file2 of files.slice(KEEP_STORE_BACKUPS)) {
     try {
       archiveFile(join5(dirname3(path), file2));
     } catch (error62) {
@@ -7758,8 +7758,8 @@ function pruneOldLogs(dir) {
     archiveOldRuns(join7(dir, ".."));
     const limit = retentionLimit("AGENT_BRIDGE_RUN_LOG_LIMIT", KEEP_RUN_LOGS);
     if (!limit) return;
-    const files2 = readdirSync6(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync3(join7(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
-    for (const { f } of files2.slice(limit)) {
+    const files = readdirSync6(dir).filter((f) => f.endsWith(".log")).map((f) => ({ f, t: statSync3(join7(dir, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+    for (const { f } of files.slice(limit)) {
       const path = join7(dir, f);
       if (Date.now() - statSync3(path).mtimeMs <= STALE_RUN_MS && !finishedRunLine(readFileSync5(path, "utf8"))) continue;
       archiveRun(path);
@@ -8006,8 +8006,9 @@ function cloneJson(value) {
 function fileSignature(st) {
   return `${st.dev}:${st.ino}:${st.birthtimeMs}:${st.ctimeMs}:${st.mtimeMs}:${st.size}`;
 }
-function readJsonSnapshot(file2) {
-  const st = statSync5(file2), signature2 = fileSignature(st);
+function readJsonSnapshot(file2, scan2) {
+  if (scan2 && scan2.file !== file2) throw new Error("JSON snapshot scan belongs to another file");
+  const st = scan2?.stat ?? statSync5(file2), signature2 = fileSignature(st);
   const failure2 = damaged.get(file2);
   if (failure2?.signature === signature2) throw failure2.error;
   damaged.delete(file2);
@@ -8023,7 +8024,14 @@ function readJsonSnapshot(file2) {
   }
   let value;
   try {
-    value = JSON.parse(readFileSync6(file2, "utf8"));
+    if (!scan2) value = JSON.parse(readFileSync6(file2, "utf8"));
+    else {
+      const raw = readFileSync6(file2, "utf8");
+      const after = statSync5(file2);
+      if (!after.isFile() || fileSignature(after) !== signature2)
+        throw new Error("JSON snapshot identity changed during read");
+      value = JSON.parse(raw);
+    }
   } catch (error62) {
     if (error62 instanceof SyntaxError) {
       damaged.set(file2, { signature: signature2, error: error62 });
@@ -8056,13 +8064,6 @@ function readHistoryJson(file2) {
     return null;
   }
 }
-function files(dir) {
-  try {
-    return readdirSync8(dir);
-  } catch {
-    return [];
-  }
-}
 var runLogSnapshots = /* @__PURE__ */ new Map();
 var historyJobSnapshots = /* @__PURE__ */ new Map();
 function readRunLogs(home, namesFilter) {
@@ -8087,12 +8088,18 @@ function readRunLogs(home, namesFilter) {
     }
     const rel = relative2(canonicalRoot, canonicalDir);
     if (rel === ".." || rel.startsWith(`..${sep2}`) || isAbsolute2(rel)) continue;
-    const names = files(canonicalDir).sort();
-    const localFile = (name2) => {
-      const file2 = join9(canonicalDir, name2);
+    let entries;
+    try {
+      entries = readdirSync8(canonicalDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    const localFile = (entry) => {
+      const file2 = join9(canonicalDir, entry.name);
       try {
-        const st = lstatSync2(file2);
-        return st.isFile() ? { file: file2, st } : st.isSymbolicLink() ? (() => {
+        const direct = lstatSync2(file2);
+        return direct.isFile() ? { file: file2, st: direct } : direct.isSymbolicLink() ? (() => {
           const actual = safeFile(root, file2, canonicalRoot);
           return actual ? { file: actual, st: statSync6(actual) } : null;
         })() : null;
@@ -8101,11 +8108,12 @@ function readRunLogs(home, namesFilter) {
       }
     };
     const selected = [];
-    for (const name2 of names) {
+    for (const entry of entries) {
+      const name2 = entry.name;
       const original = archived ? name2.replace(ARCHIVE_SUFFIX, "$1") : name2;
       const extension = original.endsWith(".json") ? ".json" : RUN_LOG_NAME.test(original) ? ".log" : null;
       if (!extension || namesFilter && !namesFilter.has(original.slice(0, -extension.length))) continue;
-      const record2 = localFile(name2);
+      const record2 = localFile(entry);
       if (!record2) continue;
       signatures.push(`${archived}:${name2}:${record2.file}:${fileSignature(record2.st)}`);
       if (extension === ".json") metadataBytes += record2.st.size;
@@ -8116,18 +8124,18 @@ function readRunLogs(home, namesFilter) {
   const key3 = `${canonicalRoot}:${namesFilter ? JSON.stringify([...namesFilter].sort()) : "*"}`;
   const signature2 = signatures.join("\n"), saved = runLogSnapshots.get(key3);
   if (saved?.signature === signature2) return cloneJson(saved.records);
-  for (const { archived, files: files2 } of directories) {
+  for (const { archived, files } of directories) {
     const metadata = /* @__PURE__ */ new Map();
-    for (const { original, file: file2 } of files2) {
+    for (const { original, file: file2, st } of files) {
       if (!original.endsWith(".json")) continue;
       try {
-        const value = readJsonSnapshot(file2).value;
+        const value = readJsonSnapshot(file2, { file: file2, stat: st }).value;
         if (isRecord(value)) metadata.set(original, value);
       } catch {
         complete = false;
       }
     }
-    for (const { original, file: file2, st } of files2) {
+    for (const { original, file: file2, st } of files) {
       if (!RUN_LOG_NAME.test(original)) continue;
       try {
         if (!st.isFile()) continue;
@@ -8170,40 +8178,65 @@ function historyJobsSnapshot(home) {
   } catch {
     return out;
   }
-  const archive = join9(home, "archive");
-  const archived = files(archive).filter((name2) => name2.startsWith(`${JOBS_FILE}.`) || name2.startsWith(`${JOBS_FILE}-`) || /^jobs-.*\.json$/.test(name2)).sort();
-  const backups = files(home).filter((name2) => name2.startsWith(`${JOBS_FILE}.backup-`) || name2 === `${JOBS_FILE}.overflow.json`).sort();
-  const snapshots3 = [...archived.map((name2) => join9(archive, name2)), ...backups.map((name2) => join9(home, name2))];
-  const snapshotTime = (file2) => {
-    const stamp2 = /(?:jobs-|\.backup-|\.overflow\.json-|jobs\.json-)(\d+)/.exec(file2)?.[1];
-    if (stamp2) return Number(stamp2);
+  const snapshots3 = [];
+  const scan2 = (directory2, accept) => {
+    let canonicalDir;
     try {
-      return statSync6(file2).mtimeMs;
+      canonicalDir = realpathSync2.native(directory2);
     } catch {
-      return 0;
+      return;
+    }
+    const rel = relative2(canonicalHome, canonicalDir);
+    if (rel === ".." || rel.startsWith(`..${sep2}`) || isAbsolute2(rel)) return;
+    let entries;
+    try {
+      entries = readdirSync8(canonicalDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    for (const entry of entries) {
+      const name2 = entry.name;
+      if (!accept(name2)) continue;
+      const candidate = join9(canonicalDir, name2);
+      try {
+        const direct = lstatSync2(candidate);
+        const file2 = direct.isFile() ? candidate : direct.isSymbolicLink() ? safeFile(home, candidate, canonicalHome) : null;
+        if (!file2) continue;
+        const st = direct.isFile() ? direct : statSync6(file2);
+        if (!st.isFile()) continue;
+        const stamp2 = /(?:jobs-|\.backup-|\.overflow\.json-|jobs\.json-)(\d+)/.exec(file2)?.[1];
+        snapshots3.push({ file: file2, st, time: stamp2 ? Number(stamp2) : st.mtimeMs });
+      } catch {
+      }
     }
   };
-  snapshots3.sort((a, b) => snapshotTime(a) - snapshotTime(b) || (a < b ? -1 : a > b ? 1 : 0));
-  const sources = [], signatures = [];
+  scan2(join9(canonicalHome, "archive"), (name2) => name2.startsWith(`${JOBS_FILE}.`) || name2.startsWith(`${JOBS_FILE}-`) || /^jobs-.*\.json$/.test(name2));
+  scan2(canonicalHome, (name2) => name2.startsWith(`${JOBS_FILE}.backup-`) || name2 === `${JOBS_FILE}.overflow.json`);
+  snapshots3.sort((a, b) => a.time - b.time || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+  const active = join9(canonicalHome, JOBS_FILE);
+  try {
+    const direct = lstatSync2(active);
+    const file2 = direct.isFile() ? active : direct.isSymbolicLink() ? safeFile(home, active, canonicalHome) : null;
+    if (file2) {
+      const st = direct.isFile() ? direct : statSync6(file2);
+      if (st.isFile()) snapshots3.push({ file: file2, st, time: 0 });
+    }
+  } catch {
+  }
+  const signatures = [];
   let complete = true;
   let bytes2 = 0;
-  for (const candidate of [...snapshots3, join9(home, JOBS_FILE)]) {
-    const file2 = safeFile(home, candidate, canonicalHome);
-    if (!file2) continue;
-    try {
-      const st = statSync6(file2);
-      sources.push(file2);
-      signatures.push(`${file2}:${fileSignature(st)}`);
-      bytes2 += st.size;
-    } catch {
-    }
+  for (const { file: file2, st } of snapshots3) {
+    signatures.push(`${file2}:${fileSignature(st)}`);
+    bytes2 += st.size;
   }
   const signature2 = signatures.join("\n"), saved = historyJobSnapshots.get(canonicalHome);
   if (saved?.signature === signature2) return saved.jobs;
-  for (const file2 of sources) {
+  for (const { file: file2, st } of snapshots3) {
     let value;
     try {
-      value = readJsonSnapshot(file2).value;
+      value = readJsonSnapshot(file2, { file: file2, stat: st }).value;
     } catch {
       complete = false;
       continue;
@@ -9248,14 +9281,14 @@ function readApproval(home, id) {
   }
 }
 function listPendingApprovals(home) {
-  let files2;
+  let files;
   try {
-    files2 = readdirSync9(join16(home, APPROVALS_DIR));
+    files = readdirSync9(join16(home, APPROVALS_DIR));
   } catch {
     return [];
   }
   const jobs = readStore(join16(home, JOBS_FILE));
-  return files2.flatMap((file2) => {
+  return files.flatMap((file2) => {
     if (!file2.endsWith(".json")) return [];
     const r = readApproval(home, file2.slice(0, -5));
     const job = r && jobs.find((j) => j.name === r.job && j.ownershipHistory?.length);
@@ -31759,7 +31792,7 @@ function readArchivedJobSnapshot(path) {
   const dir = join25(dirname10(path), "archive");
   if (!existsSync13(dir)) return EMPTY_SNAPSHOT;
   physicalDirectory(dir);
-  const files2 = [];
+  const files = [];
   const signatures = [];
   let bytes2 = 0;
   for (const file2 of readdirSync10(dir).sort()) {
@@ -31767,15 +31800,15 @@ function readArchivedJobSnapshot(path) {
     const full = join25(dir, file2), st = physicalFile(full);
     const stamp2 = /(?:^jobs-|\.overflow\.json-)(\d+)-/.exec(file2)?.[1];
     signatures.push(`${file2}:${fileSignature(st)}`);
-    files2.push({ path: full, time: stamp2 ? Number(stamp2) : st.mtimeMs });
+    files.push({ path: full, time: stamp2 ? Number(stamp2) : st.mtimeMs, st });
     bytes2 += st.size;
   }
   const signature2 = signatures.join("\n"), saved = snapshots.get(path);
   if (saved?.signature === signature2) return saved;
   const jobs = /* @__PURE__ */ new Map();
-  files2.sort((a, b) => a.time - b.time || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  for (const { path: file2 } of files2) {
-    const value = readJsonSnapshot(file2).value;
+  files.sort((a, b) => a.time - b.time || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  for (const { path: file2, st } of files) {
+    const value = readJsonSnapshot(file2, { file: file2, stat: st }).value;
     if (!isRecord(value) || value.version !== void 0 && (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${basename6(file2)}`);
     for (const job of value.jobs) if (isRecord(job) && typeof job.id === "string") jobs.set(job.id, job);
   }
@@ -32478,9 +32511,9 @@ function readOwner(path, registry2) {
     physicalDirectory2(registry2);
     const dir = join30(registry2, value.ownerDirectory);
     physicalDirectory2(dir);
-    const files2 = readdirSync11(dir);
-    if (files2.length !== 1) return null;
-    const marker = files2[0];
+    const files = readdirSync11(dir);
+    if (files.length !== 1) return null;
+    const marker = files[0];
     const match = MARKER.exec(marker);
     const pid = Number(match?.[1]);
     if (!match || !Number.isSafeInteger(pid) || pid <= 0 || !UUID.test(match[3])) return null;
@@ -34151,9 +34184,9 @@ async function finishWorktree(wt, message, log) {
   const branch = work.has(current) || !work.size ? current : [...work.keys()][0];
   const from = await reviewBase(wt, log, branch);
   const diffStat = await git(["diff", "--stat", `${from}..${branch}`], wt.repoRoot, log);
-  const files2 = (await git(["diff", "--name-only", "-z", `${from}..${branch}`], wt.repoRoot, log)).split("\0").filter(Boolean);
+  const files = (await git(["diff", "--name-only", "-z", `${from}..${branch}`], wt.repoRoot, log)).split("\0").filter(Boolean);
   const otherBranches = [...work].filter(([name2]) => name2 !== branch).map(([name2, commits]) => ({ name: name2, commits }));
-  return { changed: diffStat.length > 0 || otherBranches.length > 0, branch, otherBranches, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS), reviewBase: from, files: files2, skippedFiles };
+  return { changed: diffStat.length > 0 || otherBranches.length > 0, branch, otherBranches, diffStat: diffStat.slice(0, MAX_DIFFSTAT_CHARS), reviewBase: from, files, skippedFiles };
 }
 async function workBranches(wt, current, log) {
   const trust = trustArgs(wt.path);
@@ -34177,8 +34210,8 @@ async function workBranches(wt, current, log) {
   return out;
 }
 var HANDOFF_FILE = /(^|\/)(HANDOFF|TODO)\.md$/i;
-function handoffWarning(files2) {
-  const hit = files2.filter((f) => HANDOFF_FILE.test(f.replace(/\\/g, "/")));
+function handoffWarning(files) {
+  const hit = files.filter((f) => HANDOFF_FILE.test(f.replace(/\\/g, "/")));
   return hit.length ? `WARNING: this job changed ${hit.join(", ")}. Delegated jobs should report in their answer and leave handoff and TODO files to you: check these changes before you take them.` : null;
 }
 function worktreeReport(wt, outcome) {
@@ -34630,8 +34663,8 @@ function worktreeLease(home, wt) {
 // src/core/job-close.ts
 async function recordWorktreeOrigin(home, wt, log) {
   assertPhysicalPath(wt.path);
-  const files2 = (await git([...trustArgs(wt.path), "ls-files", "-z"], wt.path, log)).split("\0").filter(Boolean);
-  const libraries = files2.filter((file2) => /(^|\/)ProjectSettings\/ProjectVersion\.txt$/.test(file2)).map((file2) => join38(dirname16(dirname16(file2)), "Library")).filter((path) => {
+  const files = (await git([...trustArgs(wt.path), "ls-files", "-z"], wt.path, log)).split("\0").filter(Boolean);
+  const libraries = files.filter((file2) => /(^|\/)ProjectSettings\/ProjectVersion\.txt$/.test(file2)).map((file2) => join38(dirname16(dirname16(file2)), "Library")).filter((path) => {
     try {
       lstatSync10(join38(wt.path, path));
       return false;
@@ -46459,7 +46492,7 @@ function indexedRollouts(paths, id, parentId) {
 function rollouts(paths) {
   const root = join50(paths.codex, "sessions"), existing = cache3.get(root);
   if (existing && Date.now() - existing.at < DISCOVERY_CACHE_MS) return existing.files;
-  const files2 = [];
+  const files = [];
   const knownFiles = new Map(existing?.files.map((r) => [r.file, r]));
   for (const year of directory(root).filter((s) => /^\d{4}$/.test(s)).sort().reverse()) {
     for (const month of directory(join50(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
@@ -46470,17 +46503,17 @@ function rollouts(paths) {
           const file2 = safeFile(root, join50(root, year, month, day, name2));
           if (!file2) continue;
           const known = knownFiles.get(file2);
-          files2.push(rollout(file2, id, known?.meta));
-          if (files2.length >= MAX_DISCOVERY_FILES) {
-            cache3.set(root, { at: Date.now(), files: files2 });
-            return files2;
+          files.push(rollout(file2, id, known?.meta));
+          if (files.length >= MAX_DISCOVERY_FILES) {
+            cache3.set(root, { at: Date.now(), files });
+            return files;
           }
         }
       }
     }
   }
-  cache3.set(root, { at: Date.now(), files: files2 });
-  return files2;
+  cache3.set(root, { at: Date.now(), files });
+  return files;
 }
 function parent(meta3) {
   const spawn9 = object(object(object(meta3.source).subagent).thread_spawn);
@@ -46855,8 +46888,8 @@ ${row.body}`,
           }
         }
         work += this.discover();
-        const files2 = this.db.prepare("SELECT * FROM history_files ORDER BY checked,path LIMIT ?").all(HISTORY_FILES_PER_TICK);
-        for (const file2 of files2) {
+        const files = this.db.prepare("SELECT * FROM history_files ORDER BY checked,path LIMIT ?").all(HISTORY_FILES_PER_TICK);
+        for (const file2 of files) {
           if (Date.now() >= this.deadline) break;
           const indexed = this.indexFile(file2);
           work += indexed;
@@ -47190,6 +47223,7 @@ import { createServer as createServer7 } from "node:net";
 import { existsSync as existsSync29, mkdirSync as mkdirSync27, realpathSync as realpathSync9 } from "node:fs";
 import { dirname as dirname27, resolve as resolve16 } from "node:path";
 import { DatabaseSync as DatabaseSync19 } from "node:sqlite";
+import { setTimeout as delay7 } from "node:timers/promises";
 
 // src/core/backup-background.ts
 import { fork } from "node:child_process";
@@ -47211,7 +47245,7 @@ var MANIFEST_NAME = "manifest.json";
 var BACKUP_PREFIX = "snapshot-";
 function jsonStoreFiles(home) {
   if (!existsSync25(home)) return [];
-  const files2 = [];
+  const files = [];
   const visit2 = (dir, recurse) => {
     if (!existsSync25(dir)) return;
     const root = lstatSync12(dir);
@@ -47221,12 +47255,12 @@ function jsonStoreFiles(home) {
       const st = lstatSync12(path);
       if (st.isSymbolicLink()) continue;
       if (st.isDirectory() && recurse) visit2(path, true);
-      else if (st.isFile() && name2 !== "dashboard.json" && /\.jsonl?(?:-\d+-[\w-]+)?$/.test(name2)) files2.push(path);
+      else if (st.isFile() && name2 !== "dashboard.json" && /\.jsonl?(?:-\d+-[\w-]+)?$/.test(name2)) files.push(path);
     }
   };
   visit2(home, false);
   for (const dir of ["jobs", "runs", "archive", "read-state", "job-outcomes", "local-result-receipts"]) visit2(join53(home, dir), true);
-  return files2;
+  return files;
 }
 function listBackups(home) {
   const dir = join53(home, BACKUPS_DIR_NAME);
@@ -47284,12 +47318,12 @@ var BackupBackground = class {
       lastError: this.lastError
     };
   }
-  schedule(delay7) {
+  schedule(delay8) {
     if (!this.enabled || this.stopped || this.failed) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       this.start();
-    }, delay7);
+    }, delay8);
     this.timer.unref();
   }
   start() {
@@ -47541,14 +47575,6 @@ var MessageStore = class {
       this.release();
       throw err;
     }
-    try {
-      archiveMessages(this.db, this.archiveDb, "1", [], "legacy", "archived_messages");
-    } catch (err) {
-      this.archiveDb.close();
-      this.db.close();
-      this.release();
-      throw err;
-    }
     this.decisions = new DecisionStore(this.db);
     this.historyFile = historyDbPath(file2);
     let historyDb;
@@ -47597,6 +47623,13 @@ var MessageStore = class {
   home;
   writeAbort = new AbortController();
   backups = null;
+  archiveTimer = null;
+  legacyArchivePending = true;
+  purgeCutoff = null;
+  purgeCursor = null;
+  purgeHighWater = null;
+  nextPurgeCutoff = null;
+  archiveMaintenanceFailed = false;
   closed = false;
   decisions;
   history;
@@ -47605,6 +47638,7 @@ var MessageStore = class {
   file;
   stmt;
   startBackups() {
+    this.scheduleArchiveMaintenance();
     if (process.env.AGENT_BRIDGE_AUTO_BACKUP === "1" && this.home && !this.backups) this.backups = new BackupBackground(this.home, this.log);
   }
   backupPressure(pending2, lockError = false) {
@@ -47660,7 +47694,7 @@ var MessageStore = class {
   /** Retained registrations include offline sessions, but never worker runners or agent queue keys. */
   broadcastNames() {
     const sessions = this.history.database.prepare("SELECT session FROM history_sessions WHERE alias=?");
-    const files2 = this.history.database.prepare("SELECT DISTINCT cwd FROM history_files WHERE session=? AND cwd<>''");
+    const files = this.history.database.prepare("SELECT DISTINCT cwd FROM history_files WHERE session=? AND cwd<>''");
     return this.db.prepare(`SELECT name,identity FROM peer_name_owners
       WHERE identity NOT LIKE 'unidentified:job:%' ORDER BY name`).all().filter((row) => {
       const identity = String(row.identity);
@@ -47674,7 +47708,7 @@ var MessageStore = class {
       } catch {
       }
       session ??= String(sessions.get(identity.startsWith("unidentified:") ? identity.slice(13) : String(row.name))?.session ?? "") || void 0;
-      const cwds = session ? files2.all(session).map((file2) => String(file2.cwd)) : [];
+      const cwds = session ? files.all(session).map((file2) => String(file2.cwd)) : [];
       return !cwds.length || cwds.some((cwd) => !isPluginCacheCwd(cwd));
     }).map((row) => String(row.name));
   }
@@ -47827,9 +47861,31 @@ var MessageStore = class {
   }
   /** Archive unread mail waiting for a queue key or name that is older than the cutoff. */
   expireQueued(recipient, cutoff) {
+    if (!this.db.prepare("SELECT 1 FROM messages WHERE recipient = ? AND read_at IS NULL AND created_at < ? LIMIT 1").get(recipient, cutoff)) return 0;
     const n = archiveMessages(this.db, this.archiveDb, "recipient = ? AND read_at IS NULL AND created_at < ?", [recipient, cutoff], "stale queue");
     if (n > 0) this.log.info("archived stale queued messages", { recipient, count: n });
     return n;
+  }
+  /** Finish TTL archival before a broker claims/replays a reused queue name. */
+  async expireQueuedAsync(recipient, cutoff) {
+    let count = 0;
+    for (; ; ) {
+      const result = await this.retryWrite(() => {
+        this.archiveDb.exec(`PRAGMA busy_timeout = ${SQLITE_REQUEST_BUSY_MS}`);
+        try {
+          const moved = this.archiveChunk("messages", "recipient = ? AND read_at IS NULL AND created_at < ?", [recipient, cutoff], "stale queue");
+          const remaining = Boolean(this.db.prepare("SELECT 1 FROM messages WHERE recipient = ? AND read_at IS NULL AND created_at < ? LIMIT 1").get(recipient, cutoff));
+          return { moved, remaining };
+        } finally {
+          this.archiveDb.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+        }
+      });
+      count += result.moved;
+      if (!result.remaining) break;
+      await delay7(50, void 0, { signal: this.writeAbort.signal });
+    }
+    if (count) this.log.info("archived stale queued messages", { recipient, count });
+    return count;
   }
   receipts(id) {
     const merged = /* @__PURE__ */ new Map();
@@ -47855,9 +47911,92 @@ var MessageStore = class {
     return [...merged.values()];
   }
   purgeOlderThan(cutoff) {
+    if (!this.db.prepare("SELECT 1 FROM messages WHERE created_at < ? LIMIT 1").get(cutoff)) return 0;
     const n = archiveMessages(this.db, this.archiveDb, "created_at < ?", [cutoff], "expired");
     if (n > 0) this.log.info("archived expired messages", { count: n });
     return n;
+  }
+  /** Broker retention queues bounded work; direct/offline purge remains synchronous. */
+  schedulePurgeOlderThan(cutoff) {
+    if (this.purgeCutoff === null) this.purgeCutoff = cutoff;
+    else if (cutoff > this.purgeCutoff) this.nextPurgeCutoff = Math.max(this.nextPurgeCutoff ?? cutoff, cutoff);
+    this.scheduleArchiveMaintenance();
+  }
+  scheduleArchiveMaintenance(delayMs = 50) {
+    if (this.closed || this.archiveMaintenanceFailed || this.archiveTimer) return;
+    this.archiveTimer = setTimeout(() => {
+      this.archiveTimer = null;
+      if (this.closed) return;
+      let more = false;
+      let retryDelay = 50;
+      try {
+        this.db.exec(`PRAGMA busy_timeout = ${SQLITE_REQUEST_BUSY_MS}`);
+        this.archiveDb.exec(`PRAGMA busy_timeout = ${SQLITE_REQUEST_BUSY_MS}`);
+        if (this.legacyArchivePending) {
+          this.legacyArchivePending = this.archiveChunk("archived_messages", "1", [], "legacy") > 0;
+          more = this.legacyArchivePending;
+        } else if (this.purgeCutoff !== null) {
+          more = this.archivePurgeChunk(this.purgeCutoff);
+          if (!more) {
+            this.purgeCutoff = this.nextPurgeCutoff;
+            this.nextPurgeCutoff = null;
+            this.purgeCursor = this.purgeHighWater = null;
+          }
+        }
+        more ||= this.purgeCutoff !== null;
+      } catch (error62) {
+        if (isSqliteBusy(error62)) {
+          more = true;
+          retryDelay = 250;
+        } else {
+          this.archiveMaintenanceFailed = true;
+          this.log.warn("message archive maintenance stopped; original rows preserved", { err: String(error62) });
+        }
+      } finally {
+        this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+        this.archiveDb.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+      }
+      if (more) this.scheduleArchiveMaintenance(retryDelay);
+    }, delayMs);
+    this.archiveTimer.unref();
+  }
+  archiveChunk(table, where, args, reason) {
+    const rows = this.db.prepare(`SELECT rowid AS id, octet_length(body) AS bytes FROM ${table} WHERE ${where} ORDER BY ${table === "messages" ? "created_at" : "rowid"} LIMIT 16`).all(...args);
+    const ids = [];
+    let bytes2 = 0;
+    for (const row of rows) {
+      if (ids.length && bytes2 + Number(row.bytes) > 256 * 1024) break;
+      ids.push(String(row.id));
+      bytes2 += Number(row.bytes);
+    }
+    if (!ids.length) return 0;
+    return archiveMessages(this.db, this.archiveDb, `rowid IN (${ids.map(() => "?").join(",")}) AND (${where})`, [...ids, ...args], reason, table);
+  }
+  archivePurgeChunk(cutoff) {
+    if (this.purgeHighWater === null) {
+      const high = this.db.prepare("SELECT MAX(rowid) AS id FROM messages");
+      high.setReadBigInts(true);
+      const id = high.get().id;
+      if (id === null) return false;
+      this.purgeHighWater = String(id);
+    }
+    const select = this.db.prepare(`SELECT rowid AS id, created_at AS at, octet_length(body) AS bytes FROM messages WHERE ${this.purgeCursor === null ? "" : "rowid > ? AND "}rowid <= ? ORDER BY rowid LIMIT 16`);
+    select.setReadBigInts(true);
+    const rows = select.all(...this.purgeCursor === null ? [this.purgeHighWater] : [this.purgeCursor, this.purgeHighWater]);
+    const ids = [];
+    let bytes2 = 0;
+    let next = this.purgeCursor;
+    for (const row of rows) {
+      if (Number(row.at) < cutoff) {
+        if (ids.length && bytes2 + Number(row.bytes) > 256 * 1024) break;
+        ids.push(String(row.id));
+        bytes2 += Number(row.bytes);
+      }
+      next = String(row.id);
+    }
+    if (ids.length) archiveMessages(this.db, this.archiveDb, `rowid IN (${ids.map(() => "?").join(",")}) AND created_at < ?`, [...ids, cutoff], "expired");
+    this.purgeCursor = next;
+    return rows.length > 0;
   }
   stopWrites() {
     this.writeAbort.abort();
@@ -47865,6 +48004,8 @@ var MessageStore = class {
   close() {
     if (this.closed) return;
     this.closed = true;
+    if (this.archiveTimer) clearTimeout(this.archiveTimer);
+    this.archiveTimer = null;
     this.stopWrites();
     this.history.close();
     if (this.historyDb !== this.db) this.historyDb.close();
@@ -48417,7 +48558,7 @@ function collectTransfer(paths, cwd, to, from) {
 function validateEntries(transfer) {
   const kinds = /* @__PURE__ */ new Map();
   let bytes2 = 0;
-  let files2 = 0;
+  let files = 0;
   const entries = transfer.entries.map((entry) => {
     const path = entry.path;
     const key3 = path.toLowerCase();
@@ -48427,7 +48568,7 @@ function validateEntries(transfer) {
     const data = Buffer.from(entry.data, "base64");
     if (data.toString("base64") !== entry.data || checksum(data) !== entry.sha256) throw new Error("file checksum or encoding mismatch");
     bytes2 += data.length;
-    files2++;
+    files++;
     if (bytes2 > MAX_TRANSFER_BYTES) throw new Error("transfer exceeds size limit");
     return { path, data };
   });
@@ -48435,11 +48576,11 @@ function validateEntries(transfer) {
     const parts = entry.path.toLowerCase().split("/");
     for (let i = 1; i < parts.length; i++) if (kinds.get(parts.slice(0, i).join("/")) !== "directory") throw new Error("missing directory or file used as parent");
   }
-  return { entries, bytes: bytes2, files: files2 };
+  return { entries, bytes: bytes2, files };
 }
 function receiveTransfer(home, input2) {
   const transfer = transferSchema.parse(input2);
-  const { entries, bytes: bytes2, files: files2 } = validateEntries(transfer);
+  const { entries, bytes: bytes2, files } = validateEntries(transfer);
   assertTransferPath(home);
   const disk = statfsSync(home, { bigint: true });
   if (disk.bavail * disk.bsize < BigInt(bytes2)) throw new Error("insufficient free disk space for transfer");
@@ -48454,7 +48595,7 @@ function receiveTransfer(home, input2) {
     for (const entry of entries.filter((e) => e.data === null).sort((a, b) => a.path.length - b.path.length)) mkdirSync29(join58(staging, ...entry.path.split("/")), { mode: OWNER_DIR_MODE });
     for (const entry of entries) if (entry.data !== null) writeFileSync14(join58(staging, ...entry.path.split("/")), entry.data, { flag: "wx", mode: OWNER_FILE_MODE });
     renameSync9(staging, final);
-    return { id: transfer.id, inbox: final, files: files2, bytes: bytes2 };
+    return { id: transfer.id, inbox: final, files, bytes: bytes2 };
   } catch (err) {
     rmSync8(staging, { recursive: true, force: true });
     throw err;
@@ -56562,7 +56703,7 @@ var Broker = class {
         return { brokerPid: process.pid };
       },
       hello: async (c, a) => {
-        const result = this.onHello(c, a);
+        const result = await this.onHello(c, a);
         const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id);
         if (job?.ownershipHistory) this.refreshJobPeer(job);
         void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
@@ -56600,8 +56741,8 @@ var Broker = class {
       messageReceipt: (c, a) => this.messageReceipt(c, a.id),
       ack: async (c, a) => ({ acked: await this.store.retryWrite(() => this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now())) }),
       pending: (c, a) => this.pendingMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
-      updatePeer: (c, a) => {
-        const peer = this.onUpdatePeer(c, a);
+      updatePeer: async (c, a) => {
+        const peer = await this.onUpdatePeer(c, a);
         const job = this.storedJobs().find((j) => `job:${j.id}` === peer.id);
         if (job?.ownershipHistory) this.refreshJobPeer(job);
         this.store.history.rememberPeer(peer);
@@ -56854,7 +56995,7 @@ var Broker = class {
   purge() {
     try {
       const ttl = retentionLimit("AGENT_BRIDGE_MESSAGE_TTL_MS", MESSAGE_TTL_MS);
-      if (ttl) this.store.purgeOlderThan(this.now() - ttl);
+      if (ttl) this.store.schedulePurgeOlderThan(this.now() - ttl);
     } catch (err) {
       this.log.warn("purge failed", { err });
     }
@@ -56960,14 +57101,16 @@ var Broker = class {
    * Honour stream backpressure so a large retained inbox is not repeatedly disconnected on replay.
    */
   replayMail(conn, peer, before) {
+    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId };
+    const current = () => !conn.socket.destroyed && conn.peer === peer && peer.id === registration.id && peer.name === registration.name && peer.sessionId === registration.sessionId && this.connByName(registration.name) === conn;
     setImmediate(() => {
-      if (conn.socket.destroyed || conn.peer !== peer) return;
+      if (!current()) return;
       try {
         before?.();
         const mail = this.unreadMail(peer.name, PENDING_MAX_LIMIT);
         let at = 0;
         const pump = () => {
-          if (conn.socket.destroyed || conn.peer !== peer) return;
+          if (!current()) return;
           while (at < mail.length) {
             const m = mail[at++];
             if (peer.unavailable && m.from.id.startsWith("job:") && !m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX)) continue;
@@ -57498,7 +57641,7 @@ Call decisions to look up current decisions or their history.`,
       throw new BridgeError("unauthorized", "wrong agent-bridge token");
     }
   }
-  onHello(conn, args) {
+  async onHello(conn, args) {
     this.checkAuth(args.protocol, args.token);
     conn.authed = true;
     const p = args.peer;
@@ -57541,15 +57684,22 @@ Call decisions to look up current decisions or their history.`,
     if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
     this.store.rememberSession(peer, this.now());
     conn.peer = peer;
-    this.replaceStale(conn, peer);
-    this.restoreNames(conn, peer, { reclaim: true, replay: false });
+    const aliases = this.replaceStale(conn, peer);
+    aliases.push(...this.restoreNames(peer, true));
     if (this.jobsPath) recordStorePeer(dirname32(this.jobsPath), peer, { authoritative: true });
-    this.expireStaleQueue(peer.name);
+    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId };
+    await this.expireStaleQueue(peer.name);
+    this.assertQueueRegistration(conn, peer, registration);
+    await this.claimQueueAliases(conn, peer, registration, aliases);
     let claimed = 0;
     if (!peer.jobAgent) {
-      this.expireStaleQueue(agentQueueKey(peer.agent));
-      claimed = this.store.claim(agentQueueKey(peer.agent), peer.name);
+      await this.expireStaleQueue(agentQueueKey(peer.agent));
+      claimed = await this.store.retryWrite(() => {
+        this.assertQueueRegistration(conn, peer, registration);
+        return this.store.claim(agentQueueKey(peer.agent), peer.name);
+      });
     }
+    this.assertQueueRegistration(conn, peer, registration);
     this.log.info("peer joined", { name: name2, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     this.replayMail(conn, peer, () => {
@@ -57576,14 +57726,16 @@ Call decisions to look up current decisions or their history.`,
     }
     return { moved };
   }
-  onUpdatePeer(conn, args) {
+  async onUpdatePeer(conn, args) {
     if (typeof args.cwd === "string" && isPluginCacheCwd(args.cwd)) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const peer = this.requirePeer(conn);
+    const previousName = peer.name;
+    const aliases = [];
+    let replay = args.unavailable === false;
     if (args.unavailable !== void 0) {
       if (peer.jobAgent || typeof args.unavailable !== "boolean") throw new BridgeError("bad_request", "Only masters can change availability.");
       peer.unavailable = args.unavailable;
       void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
-      if (!peer.unavailable) this.replayMail(conn, peer);
     }
     if (peer.jobOwner) {
       if (typeof args.jobParent === "string") peer.jobParent = args.jobParent;
@@ -57593,7 +57745,7 @@ Call decisions to look up current decisions or their history.`,
       const previousKey = this.decisionSessionKey(peer);
       peer.sessionId = args.sessionId;
       this.store.decisions.linkSession(previousKey, this.decisionSessionKey(peer));
-      if (peer.sessionId) this.replaceStale(conn, peer);
+      if (peer.sessionId) aliases.push(...this.replaceStale(conn, peer));
     }
     if (args.autoWake !== void 0) peer.autoWake = Boolean(args.autoWake);
     if (args.wakeOnDirect !== void 0) peer.wakeOnDirect = Boolean(args.wakeOnDirect);
@@ -57607,15 +57759,21 @@ Call decisions to look up current decisions or their history.`,
       this.store.rememberName(peer, this.now());
       peer.name = this.uniqueName(args.name);
       this.log.info("peer renamed", { from: old, to: peer.name });
-      this.expireStaleQueue(peer.name);
-      setImmediate(() => {
-        for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
-      });
+      replay = true;
     }
     this.log.debug("peer updated", { name: peer.name, sessionId: peer.sessionId, autoWake: peer.autoWake, cwd: peer.cwd });
     this.store.rememberSession(peer, this.now());
     this.store.rememberName(peer, this.now());
-    this.restoreNames(conn, peer, { reclaim: args.sessionId !== void 0, replay: true });
+    aliases.push(...this.restoreNames(peer, args.sessionId !== void 0));
+    replay ||= previousName !== peer.name || aliases.length > 0;
+    if (replay || args.sessionId !== void 0) {
+      const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId };
+      await this.expireStaleQueue(peer.name);
+      this.assertQueueRegistration(conn, peer, registration);
+      await this.claimQueueAliases(conn, peer, registration, aliases);
+      this.assertQueueRegistration(conn, peer, registration);
+    }
+    if (replay) this.replayMail(conn, peer);
     for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
     return peer;
   }
@@ -57626,6 +57784,7 @@ Call decisions to look up current decisions or their history.`,
    * replaced (it stops instead of reconnecting) and the new one takes over its name and waiting mail.
    */
   replaceStale(conn, peer) {
+    const aliases = [];
     for (const c of [...this.conns]) {
       const old = c.peer;
       if (c === conn || !old || old.agent !== peer.agent) continue;
@@ -57643,27 +57802,30 @@ Call decisions to look up current decisions or their history.`,
       if (peer.name !== old.name && !this.connByName(old.name)) {
         const oldName = old.name;
         if (peer.name.startsWith(`${oldName}-`) && /^\d+$/.test(peer.name.slice(oldName.length + 1))) peer.name = oldName;
-        this.replayMail(conn, peer, () => {
-          this.store.claim(oldName, peer.name);
-        });
+        aliases.push(oldName);
       }
     }
+    return aliases;
   }
-  restoreNames(conn, peer, options) {
+  restoreNames(peer, reclaim) {
     const names = this.store.namesFor(peer);
-    const previous = peer.name;
-    if (options.reclaim) {
+    if (reclaim) {
       const base2 = peer.name.replace(/-\d+$/, "");
       const original = names.find((name2) => name2.replace(/-\d+$/, "") === base2 && (name2 === peer.name || !this.connByName(name2)));
       if (original) peer.name = original;
     }
-    let moved = 0;
-    for (const name2 of names) {
-      if (name2 === peer.name || this.connByName(name2)) continue;
-      moved += this.store.claim(name2, peer.name);
-    }
     this.store.rememberName(peer, this.now());
-    if (options.replay && (moved || previous !== peer.name)) this.replayMail(conn, peer);
+    return names.filter((name2) => name2 !== peer.name && !this.connByName(name2));
+  }
+  async claimQueueAliases(conn, peer, registration, aliases) {
+    for (const alias of new Set(aliases)) {
+      if (alias === registration.name || this.connByName(alias)) continue;
+      await this.expireStaleQueue(alias);
+      await this.store.retryWrite(() => {
+        this.assertQueueRegistration(conn, peer, registration);
+        if (!this.connByName(alias)) this.store.claim(alias, registration.name);
+      });
+    }
   }
   /** Exact registrations win; an unoccupied retained alias must identify one live session. */
   recipientConn(name2) {
@@ -57678,12 +57840,19 @@ Call decisions to look up current decisions or their history.`,
    * waited longer than QUEUED_MAIL_MAX_AGE_MS most likely belongs to a session that is gone; recent mail
    * still reaches a session that restarted or reconnected after a broker hand-over.
    */
-  expireStaleQueue(key3) {
+  async expireStaleQueue(key3) {
     try {
       const maxAge = retentionLimit("AGENT_BRIDGE_QUEUED_MAIL_MAX_AGE_MS", QUEUED_MAIL_MAX_AGE_MS);
-      if (maxAge) this.store.expireQueued(key3, this.now() - maxAge);
+      if (maxAge) await this.store.expireQueuedAsync(key3, this.now() - maxAge);
     } catch (err) {
       this.log.warn("expiring queued mail failed", { key: key3, err });
+      throw err;
+    }
+  }
+  /** An expiry retry must not grant queued mail to a changed or replaced session. */
+  assertQueueRegistration(conn, peer, registration) {
+    if (conn.socket.destroyed || conn.peer !== peer || peer.id !== registration.id || peer.name !== registration.name || peer.sessionId !== registration.sessionId || this.connByName(registration.name) !== conn) {
+      throw new BridgeError("unauthorized", "Session changed while queued mail was archived; reconnect to claim retained mail.");
     }
   }
   /** Turns a sender-supplied target into live connections and/or offline queue keys. */
@@ -58184,9 +58353,9 @@ var BridgeNode = class extends EventEmitter2 {
   }
   /** Doubling delay for background retries, capped; reset once connected. */
   nextBackoff() {
-    const delay7 = this.reconnectDelay;
-    this.reconnectDelay = Math.min(delay7 * 2, RECONNECT_BACKOFF_MAX_MS);
-    return delay7;
+    const delay8 = this.reconnectDelay;
+    this.reconnectDelay = Math.min(delay8 * 2, RECONNECT_BACKOFF_MAX_MS);
+    return delay8;
   }
   /**
    * Retry the election later until connected or stopped. Also after "unauthorized" / "protocol_mismatch":
@@ -58339,7 +58508,7 @@ var BridgeNode = class extends EventEmitter2 {
     if (this.stopping) return;
     this.log.warn("lost connection to broker; re-electing");
     this.emit("disconnected");
-    this.scheduleReconnect(jitter());
+    this.scheduleReconnect(this.opts.canHostBroker === false ? jitter() : 0);
   }
   onEvent(ev, data) {
     if (ev === "mail_retracted") {

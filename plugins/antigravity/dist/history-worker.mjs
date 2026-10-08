@@ -22247,8 +22247,9 @@ var bytes = 0;
 function fileSignature(st) {
   return `${st.dev}:${st.ino}:${st.birthtimeMs}:${st.ctimeMs}:${st.mtimeMs}:${st.size}`;
 }
-function readJsonSnapshot(file2) {
-  const st = statSync6(file2), signature = fileSignature(st);
+function readJsonSnapshot(file2, scan) {
+  if (scan && scan.file !== file2) throw new Error("JSON snapshot scan belongs to another file");
+  const st = scan?.stat ?? statSync6(file2), signature = fileSignature(st);
   const failure3 = damaged.get(file2);
   if (failure3?.signature === signature) throw failure3.error;
   damaged.delete(file2);
@@ -22264,7 +22265,14 @@ function readJsonSnapshot(file2) {
   }
   let value;
   try {
-    value = JSON.parse(readFileSync9(file2, "utf8"));
+    if (!scan) value = JSON.parse(readFileSync9(file2, "utf8"));
+    else {
+      const raw = readFileSync9(file2, "utf8");
+      const after = statSync6(file2);
+      if (!after.isFile() || fileSignature(after) !== signature)
+        throw new Error("JSON snapshot identity changed during read");
+      value = JSON.parse(raw);
+    }
   } catch (error62) {
     if (error62 instanceof SyntaxError) {
       damaged.set(file2, { signature, error: error62 });
@@ -22309,15 +22317,15 @@ function readArchivedJobSnapshot(path) {
     const full = join20(dir, file2), st = physicalFile(full);
     const stamp = /(?:^jobs-|\.overflow\.json-)(\d+)-/.exec(file2)?.[1];
     signatures.push(`${file2}:${fileSignature(st)}`);
-    files.push({ path: full, time: stamp ? Number(stamp) : st.mtimeMs });
+    files.push({ path: full, time: stamp ? Number(stamp) : st.mtimeMs, st });
     bytes2 += st.size;
   }
   const signature = signatures.join("\n"), saved = snapshots.get(path);
   if (saved?.signature === signature) return saved;
   const jobs = /* @__PURE__ */ new Map();
   files.sort((a, b) => a.time - b.time || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  for (const { path: file2 } of files) {
-    const value = readJsonSnapshot(file2).value;
+  for (const { path: file2, st } of files) {
+    const value = readJsonSnapshot(file2, { file: file2, stat: st }).value;
     if (!isRecord(value) || value.version !== void 0 && (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${basename6(file2)}`);
     for (const job of value.jobs) if (isRecord(job) && typeof job.id === "string") jobs.set(job.id, job);
   }
