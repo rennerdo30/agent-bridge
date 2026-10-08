@@ -5,6 +5,7 @@ import { inspectPluginVersions, listServerProcesses, pluginDoctorPaths } from ".
 import { brokerFailureState, formatHealth, probeBrokerHealth } from "../core/health.js";
 import { resolvePipePath } from "../core/paths.js";
 import { nullLogger } from "../core/logger.js";
+import { windowsUserPathFindings } from "./windows-env-doctor.js";
 
 export type ConfirmDoctor = (question: string) => Promise<boolean>;
 
@@ -44,6 +45,7 @@ export async function runDoctor(args: string[], home: string, out: (text: string
     return null;
   });
   const processes = await listServerProcesses();
+  report.findings.push(...await windowsUserPathFindings());
   report.findings.push(...inspectPluginVersions(pluginDoctorPaths(home), processes ?? []));
   if (processes === null) report.findings.push({ severity: "warning", code: "plugin-process-unavailable", path: home, detail: "Running server process lookup unavailable; rerun agent-bridge doctor from the host account.", fixable: false });
   if (args.includes("--json")) out(JSON.stringify(report));

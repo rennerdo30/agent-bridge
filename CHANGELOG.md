@@ -7,12 +7,12 @@
 - Opt-in daily backups capture only message tables in a single low-priority process with incremental verification and pressure-aware IO pacing. Scoped snapshots cannot replace a full restore; manual full backups remain available.
 - History migration runs outside broker dispatch. History-only snapshots, persisted chunk cursors, incremental verification, pressure pauses and IO pacing preserve originals and resume after interruption. Verification failures require an explicit retry.
 - Worktree leases identify their owners and archive dead-owner lease metadata without touching checkout contents. Unknown legacy leases remain protected. Completed and continuable trees retain ignored cache links.
-- Transient Claude sessions cannot claim a live owner's jobs. Running turns survive owner handover and control failures, and result delivery refreshes its destination while retrying.
+- Transient Claude sessions cannot claim a live owner's jobs. Running turns survive owner handover and control failures; detached runners contain escaped callback exceptions and rejections. Result delivery refreshes its destination while retrying.
 - Ordinary and linked-worktree project discovery reads verified Git metadata without launching Git on broker requests.
 - Paired transfers negotiate larger pipelined windows while messages take priority. Same-content message-id retries return stored delivery status; paired project addresses route to the available main session.
 - Health, status, doctor and the dashboard show cached migration and backup progress. Slow responses are distinguished from a stopped bridge; agent instructions direct status checks to tools.
 - Finished-run outcomes use a background cache; dashboard polls no longer open message databases or invoke git for each run.
-- All delegate and runner environments disable .NET first-run PATH changes by default, preserving explicit user values and the existing PATH.
+- All delegate and runner environments disable .NET first-run PATH changes by default, preserving explicit user values and the existing PATH. Doctor warns about unusually long Windows user PATHs or repeated .NET tools entries without changing them.
 - Requires Node.js 22.16 or newer for incremental native SQLite backups.
 
 ## 0.30.1
