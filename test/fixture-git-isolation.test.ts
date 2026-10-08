@@ -4,6 +4,14 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, it } from "vitest";
 import { canonicalProjectRoot } from "../src/core/project-identity.js";
+import { resolveHome, resolvePipePath } from "../src/core/paths.js";
+
+it("isolates default bridge storage and endpoints from the invoking session", () => {
+  const home = join(process.cwd(), ".agent-bridge-test", "default-home");
+  expect(resolveHome()).toBe(home);
+  expect(process.env.AGENT_BRIDGE_PIPE).toBeUndefined();
+  expect(resolvePipePath(home)).toBe(resolvePipePath(home, {}));
+});
 
 it("prevents empty fixtures from discovering the source repository while allowing fixture repositories", () => {
   const fixtureRoot = join(process.cwd(), ".agent-bridge-test");

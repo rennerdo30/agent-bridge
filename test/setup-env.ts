@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { realpathSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 const fixtureRoot = join(process.cwd(), ".agent-bridge-test");
+process.env.AGENT_BRIDGE_HOME = join(fixtureRoot, "default-home");
+delete process.env.AGENT_BRIDGE_PIPE;
 // Cover every generated checkout fixture, including ones outside the temporary subfolder.
 process.env.GIT_CEILING_DIRECTORIES = fixtureRoot;
 
