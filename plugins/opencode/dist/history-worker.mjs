@@ -21686,7 +21686,7 @@ import { basename as basename5, dirname as dirname11, join as join19 } from "nod
 
 // src/core/file-cache.ts
 import { readFileSync as readFileSync8, statSync as statSync5 } from "node:fs";
-var MAX_BYTES = 8 * 1024 * 1024;
+var MAX_BYTES = 256 * 1024 * 1024;
 var MAX_ENTRIES = 2048;
 var cache2 = /* @__PURE__ */ new Map();
 var bytes = 0;
@@ -21744,7 +21744,7 @@ function readArchivedJobSnapshot(path) {
   }
   const next = { signature, jobs: [...jobs.values()] };
   snapshots.delete(path);
-  if (bytes2 <= 8 * 1024 * 1024) snapshots.set(path, next);
+  if (bytes2 <= 256 * 1024 * 1024) snapshots.set(path, next);
   if (snapshots.size > 4) snapshots.delete(snapshots.keys().next().value);
   return next;
 }

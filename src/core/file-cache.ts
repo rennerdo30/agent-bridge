@@ -5,7 +5,9 @@ import { readFileSync, statSync } from "node:fs";
  * The budget bounds resident data without removing anything from disk.
  */
 export interface JsonSnapshot { signature: string; value: unknown; bytes: number }
-const MAX_BYTES = 8 * 1024 * 1024;
+// Hot dashboard/peers paths revisit every archived job and run snapshot; a budget below that
+// working set evicts on every pass and turns each poll into a full synchronous reread.
+const MAX_BYTES = 256 * 1024 * 1024;
 const MAX_ENTRIES = 2048;
 const cache = new Map<string, JsonSnapshot & { bytes: number }>();
 let bytes = 0;

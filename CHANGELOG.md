@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.30.1
+
+- Hotfix: the broker no longer rereads every archived job and run snapshot on each dashboard poll and peers refresh. The snapshot cache now covers the real working set and merged job history is reused while its files are unchanged, so `jobAuthority`, `pending`, `ack` and the dashboard stay responsive.
+
 ## 0.30.0
 
 Changes since 0.29.17:

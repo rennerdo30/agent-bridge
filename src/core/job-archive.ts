@@ -36,7 +36,7 @@ export function readArchivedJobSnapshot(path: string): ArchivedJobSnapshot {
   }
   const next = { signature, jobs: [...jobs.values()] };
   snapshots.delete(path);
-  if (bytes <= 8 * 1024 * 1024) snapshots.set(path, next);
+  if (bytes <= 256 * 1024 * 1024) snapshots.set(path, next);
   if (snapshots.size > 4) snapshots.delete(snapshots.keys().next().value!);
   return next;
 }

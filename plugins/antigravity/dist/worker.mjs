@@ -7210,7 +7210,7 @@ import { inflateSync } from "node:zlib";
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.30.0";
+var APP_VERSION = "0.30.1";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   internal: "AGENT_BRIDGE_INTERNAL",
@@ -7832,7 +7832,7 @@ function scanJsonl(file2) {
 
 // src/core/file-cache.ts
 import { readFileSync as readFileSync6, statSync as statSync4 } from "node:fs";
-var MAX_BYTES = 8 * 1024 * 1024;
+var MAX_BYTES = 256 * 1024 * 1024;
 var MAX_ENTRIES = 2048;
 var cache = /* @__PURE__ */ new Map();
 var bytes = 0;
@@ -8005,6 +8005,7 @@ async function readRunStarts(home) {
   }
   return [...starts.values()];
 }
+var historyJobs = /* @__PURE__ */ new Map();
 function readHistoryJobs(home) {
   const out = /* @__PURE__ */ new Map();
   let canonicalHome;
@@ -8027,7 +8028,17 @@ function readHistoryJobs(home) {
     }
   };
   snapshots2.sort((a, b) => snapshotTime(a) - snapshotTime(b) || (a < b ? -1 : a > b ? 1 : 0));
-  for (const candidate of [...snapshots2, join9(home, JOBS_FILE)]) {
+  const candidates = [...snapshots2, join9(home, JOBS_FILE)];
+  const signature = candidates.map((file2) => {
+    try {
+      return `${file2}:${fileSignature(statSync5(file2))}`;
+    } catch {
+      return `${file2}:-`;
+    }
+  }).join("\n");
+  const saved = historyJobs.get(home);
+  if (saved?.signature === signature) return new Map(saved.jobs);
+  for (const candidate of candidates) {
     const file2 = safeFile(home, candidate, canonicalHome);
     const value = file2 ? readHistoryJson(file2) : null;
     const jobs = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.jobs) ? value.jobs : [];
@@ -8036,7 +8047,9 @@ function readHistoryJobs(home) {
       out.set(job.name, { ...out.get(job.name), ...job });
     }
   }
-  return out;
+  historyJobs.set(home, { signature, jobs: out });
+  if (historyJobs.size > 4) historyJobs.delete(historyJobs.keys().next().value);
+  return new Map(out);
 }
 function pageRuns(runs, before, limit) {
   let at, name2;
@@ -31448,7 +31461,7 @@ function readArchivedJobSnapshot(path) {
   }
   const next = { signature, jobs: [...jobs.values()] };
   snapshots.delete(path);
-  if (bytes2 <= 8 * 1024 * 1024) snapshots.set(path, next);
+  if (bytes2 <= 256 * 1024 * 1024) snapshots.set(path, next);
   if (snapshots.size > 4) snapshots.delete(snapshots.keys().next().value);
   return next;
 }

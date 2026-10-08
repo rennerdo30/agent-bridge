@@ -128,7 +128,10 @@ export async function readRunStarts(home: string): Promise<{ job: string; jobSta
   return [...starts.values()];
 }
 
-/** All durable job snapshots, oldest first; active records take precedence over archives. */
+const historyJobs = new Map<string, { signature: string; jobs: Map<string, Record<string, unknown>> }>();
+
+/** All durable job snapshots, oldest first; active records take precedence over archives.
+ * The merged result is reused while every source file keeps its identity; callers only read it. */
 export function readHistoryJobs(home: string): Map<string, Record<string, unknown>> {
   const out = new Map<string, Record<string, unknown>>();
   let canonicalHome: string;
@@ -143,7 +146,11 @@ export function readHistoryJobs(home: string): Map<string, Record<string, unknow
     try { return statSync(file).mtimeMs; } catch { return 0; }
   };
   snapshots.sort((a, b) => snapshotTime(a) - snapshotTime(b) || (a < b ? -1 : a > b ? 1 : 0));
-  for (const candidate of [...snapshots, join(home, JOBS_FILE)]) {
+  const candidates = [...snapshots, join(home, JOBS_FILE)];
+  const signature = candidates.map((file) => { try { return `${file}:${fileSignature(statSync(file))}`; } catch { return `${file}:-`; } }).join("\n");
+  const saved = historyJobs.get(home);
+  if (saved?.signature === signature) return new Map(saved.jobs);
+  for (const candidate of candidates) {
     const file = safeFile(home, candidate, canonicalHome);
     const value = file ? readHistoryJson(file) : null;
     const jobs = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.jobs) ? value.jobs : [];
@@ -152,7 +159,9 @@ export function readHistoryJobs(home: string): Map<string, Record<string, unknow
       out.set(job.name, { ...out.get(job.name), ...job });
     }
   }
-  return out;
+  historyJobs.set(home, { signature, jobs: out });
+  if (historyJobs.size > 4) historyJobs.delete(historyJobs.keys().next().value!);
+  return new Map(out);
 }
 
 export interface RunPage<T> { runs: T[]; next: string | null; total: number }
