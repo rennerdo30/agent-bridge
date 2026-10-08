@@ -5,6 +5,7 @@ import { CODING_AGENTS } from "../core/protocol.js";
 import { NETWORK_NAME_PATTERN } from "./constants.js";
 
 export const REMOTE_JOB_CAPABILITY = "remote-jobs-v1";
+export const REMOTE_JOB_CANCELLED_CAPABILITY = "remote-jobs-cancelled-v1";
 export const REMOTE_JOB_FRAME = "remote-job";
 export const REMOTE_JOB_POLL_MS = 2_000;
 export const REMOTE_JOB_REQUEST_TIMEOUT_MS = 30_000;
@@ -47,6 +48,13 @@ export const remoteJobRequestSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("approval"), job: z.string().regex(/^[0-9a-f]{8}$/), id: z.uuid(), decision: z.enum(["allow", "deny"]), reason: z.string().max(4_000).optional() }).strict(),
 ]);
 export type RemoteJobRequest = z.infer<typeof remoteJobRequestSchema>;
+/** Compatibility projection only; retained cancelled records/reports remain authoritative. */
+export function remoteSnapshotForPeer<T extends { state: { status: string; report?: string } | null }>(snapshot: T, supportsCancelled: boolean): T {
+  if (!snapshot.state || snapshot.state.status !== "cancelled" || supportsCancelled) return snapshot;
+  return { ...snapshot, state: { ...snapshot.state, status: "failed", report: snapshot.state.report
+    ? snapshot.state.report.replace(/^(Subagent .+) cancelled after /, "$1 failed after ") + "\n\nCause: cancelled (legacy paired broker status compatibility)."
+    : "Cancelled (legacy paired broker status compatibility)." } };
+}
 const worktreeSchema = z.object({ repoRoot: z.string(), path: z.string(), cwd: z.string(), branch: z.string(), base: z.string(), baseBranch: z.string().nullable().optional() });
 export const remoteJobSnapshotSchema = z.object({
   alive: z.boolean(),

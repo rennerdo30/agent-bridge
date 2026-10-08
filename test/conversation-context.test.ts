@@ -67,7 +67,7 @@ function setup(withTranscripts = true) {
   };
   return { store, index, ingest, db, paths, tick };
 }
-it("retains every recipient envelope, quiet copies, decisions, reports and progress/approval events", async () => {
+it.each(["done", "cancelled"] as const)("retains every recipient envelope, quiet copies, decisions, reports and progress/approval events (%s)", async (status) => {
   const f = setup();
   const cache = join(env.home,".codex","plugins","cache","fixture","1");
   mkdirSync(cache,{recursive:true});
@@ -85,7 +85,7 @@ it("retains every recipient envelope, quiet copies, decisions, reports and progr
       recipient,
       conversationId,
       body: id === "report"
-        ? `Subagent opencode-job-example (opencode) done after 1s.\n\n${"x".repeat(160_000)} context_report_needle`
+        ? `Subagent opencode-job-example (opencode) ${status} after 1s.\n\n${"x".repeat(160_000)} context_report_needle`
         : `context_${id}_needle`,
       from: {
         id: id === "cache" ? "cache-peer" : "ses_child",

@@ -8,7 +8,7 @@
 - `worktreeRoot` and `AGENT_BRIDGE_WORKTREE_ROOT` select the root for new local and remote jobs. Existing worktrees retain their saved paths.
 - History imports run in the isolated worker, verify retained bytes before advancing cursors and pause at the configured storage budget. `history-archive` creates verified compact snapshots and compressed copies while preserving originals and every prior archive. Verification failures latch until explicit retry.
 - Automatic checkpoints include tracked changes and explicitly staged new files. Unstaged untracked build outputs and private files remain on disk and are named in the report.
-- Windows worktree edits default to full access when the general sandbox is unset/read-only. Explicit read/ask and configured sandbox overrides are preserved. Cancelled jobs have their own status across runners, protocols, retained history and the dashboard.
+- Windows worktree edits default to full access when the general sandbox is unset/read-only. Explicit read/ask and configured sandbox overrides are preserved. Cancelled jobs have their own status across runners, protocols, retained history and the dashboard. Older paired brokers receive a compatible status with an explicit cancellation cause; retained records are unchanged.
 - Savepoint cleanup preserves the original SQLite error after automatic rollback.
 - The default test lane is fast; `test:integration` runs native process, pipe and storage fixtures. CI runs both lanes on every platform. Hook tests verify wait/budget behavior without fixed wall-clock assertions.
 - Windows permission repair preserves the original owner, backs up descriptors and reports access refusals without escalation or data removal.

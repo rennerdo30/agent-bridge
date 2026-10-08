@@ -2,7 +2,7 @@
 
 `worktreeRoot` accepts an absolute directory for newly created job worktrees. The environment override is `AGENT_BRIDGE_WORKTREE_ROOT`. Saved worktree paths remain authoritative when continuing old jobs. Changing this setting does not move or clean old worktrees.
 
-Windows Codex worktree edit jobs use `danger-full-access` by default when `codexWorktreeSandbox` is unset and the general sandbox retains its read-only default. Set `codexWorktreeSandbox` to select a restricted sandbox explicitly. Explicit read/ask jobs remain restricted. This setting applies at the next turn; it does not restart running jobs. Cancelled jobs are distinct from failures.
+Windows Codex worktree edit jobs use `danger-full-access` by default when `codexWorktreeSandbox` is unset and the general sandbox retains its read-only default. Set `codexWorktreeSandbox` to select a restricted sandbox explicitly. Explicit read/ask jobs remain restricted. This setting applies at the next turn; it does not restart running jobs. Cancelled jobs are distinct from failures. Paired brokers negotiate this status; older brokers receive a failed-status projection with an explicit cancellation cause, while the original cancelled record and report remain retained.
 
 History import runs in the history worker, outside broker dispatch. `history.ingest=false` pauses it without resetting source or migration cursors. Re-enabling import resumes retained cursors. Each retained raw chunk is read back and compared before its source cursor advances. A verification failure latches; `reindex` explicitly retries while retaining the prior failure evidence.
 

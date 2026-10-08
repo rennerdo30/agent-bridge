@@ -330,7 +330,7 @@ export class NetworkService {
   private discovery: NetworkDiscovery | null = null;
   private timer: NodeJS.Timeout | null = null;
   private closed = false;
-  private readonly extensions = new Map<NetworkExtensionType, { capability: string; handler: NetworkExtensionHandler }>();
+  private readonly extensions = new Map<NetworkExtensionType, { capability: string; aliases: string[]; handler: NetworkExtensionHandler }>();
 
   constructor(private readonly home: string, private readonly cfg: NetworkConfig, private readonly broker: NetworkBroker, private readonly log: Logger, timings: NetworkTimings = {}) {
     this.timings = { refreshMs: timings.refreshMs ?? NETWORK_REFRESH_MS, heartbeatTimeoutMs: timings.heartbeatTimeoutMs ?? NETWORK_HEARTBEAT_TIMEOUT_MS };
@@ -359,13 +359,13 @@ export class NetworkService {
     return address && typeof address !== "string" ? address.port : 0;
   }
 
-  registerExtension(type: NetworkExtensionType, capability: string, handler: NetworkExtensionHandler): void {
+  registerExtension(type: NetworkExtensionType, capability: string, handler: NetworkExtensionHandler, aliases: string[] = []): void {
     if (this.server || this.extensions.has(type)) throw new Error("register extensions once before starting networking");
-    this.extensions.set(type, { capability, handler });
+    this.extensions.set(type, { capability, aliases, handler });
   }
 
   extensionCapabilities(): string[] {
-    return [...this.extensions.values()].map((extension) => extension.capability).concat([FILE_STREAM_WINDOW_CAPABILITY], this.broker.recipientReceipts ? ["recipient-receipts-v1"] : []);
+    return [...this.extensions.values()].flatMap((extension) => [extension.capability, ...extension.aliases]).concat([FILE_STREAM_WINDOW_CAPABILITY], this.broker.recipientReceipts ? ["recipient-receipts-v1"] : []);
   }
 
   receiveExtension(type: NetworkExtensionType, payload: Record<string, unknown>, remote: NetworkPair): void | Promise<void> {

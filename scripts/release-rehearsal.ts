@@ -146,8 +146,12 @@ export async function verifyRehearsalMessageBackup(backupPath: string): Promise<
   return { path, bytes, manifest, conversationHistoryAbsent: true, tableProofsVerified: true };
 }
 function isolate(home: string): void {
+  for (const key of Object.keys(process.env)) if (key.startsWith("AGENT_BRIDGE_PARENT_") || key.startsWith("AGENT_BRIDGE_ROOT_") ||
+    ["AGENT_BRIDGE_DELEGATE_DEPTH", "AGENT_BRIDGE_MAX_DELEGATE_DEPTH", "AGENT_BRIDGE_INTERNAL"].includes(key)) delete process.env[key];
   process.env.AGENT_BRIDGE_HOME = home;
   process.env.AGENT_BRIDGE_BACKUP_INTERVAL_MS = "0";
+  const fixtureTemp = join(fixtureRoot, "temp"); mkdirSync(fixtureTemp, { recursive: true });
+  Object.assign(process.env, process.platform === "win32" ? { TEMP: fixtureTemp, TMP: fixtureTemp, GIT_CEILING_DIRECTORIES: fixtureRoot } : { GIT_CEILING_DIRECTORIES: fixtureRoot });
   for (const [key, child] of Object.entries(cliDirectories)) { const path = join(home, "empty-cli", child); mkdirSync(path, { recursive: true }); process.env[key] = path; }
   try { setPriority(0, priorities.priority.PRIORITY_BELOW_NORMAL); } catch { /* Reported by the caller; no elevation. */ }
 }

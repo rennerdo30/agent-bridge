@@ -329,7 +329,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       job.workdir = res.workdir ?? job.workdir;
       job.worktree = res.worktree ?? job.worktree;
       job.sessionId = res.sessionId ?? job.sessionId;
-      status = res.isError ? "failed" : "done";
+      status = res.status ?? (res.isError ? "failed" : "done");
       text = res.text || "(no answer text returned)";
       cause = res.isError ? failureCause({ result: res }) : null;
     } catch (err) {

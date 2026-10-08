@@ -358,7 +358,8 @@ export function worktreeReport(wt: Worktree, outcome: WorktreeOutcome): string {
     lines.push(`Review: git diff ${outcome.reviewBase.slice(0, 12)}..${branch}`);
     lines.push(`Take them: git merge ${branch}   (or git cherry-pick ${branch})`);
   }
-  lines.push(`Discard: ${remove} --force "${wt.path}" && git branch -D ${[branch, ...others.map((o) => o.name)].join(" ")}`);
+  lines.push(skipped.length ? "Excluded files remain on disk. Keep this worktree until they have been reviewed and preserved."
+    : `Discard: ${remove} --force "${wt.path}" && git branch -D ${[branch, ...others.map((o) => o.name)].join(" ")}`);
   return lines.join("\n");
 }
 

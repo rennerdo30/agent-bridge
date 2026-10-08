@@ -2,17 +2,19 @@ import { vi } from "vitest";
 import { join } from "node:path";
 import { realpathSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
+const fixtureRoot = join(process.cwd(), ".agent-bridge-test");
+// Cover every generated checkout fixture, including ones outside the temporary subfolder.
+process.env.GIT_CEILING_DIRECTORIES = fixtureRoot;
 
 // macOS exposes its temporary root through /var -> /private/var. Fixtures use
 // the physical directory so immutable plugin tests retain strict link rejection.
 if (process.platform !== "win32") process.env.TMPDIR = realpathSync(tmpdir());
 else {
-  const fixtureTemp = join(process.cwd(), ".agent-bridge-test", "temp");
+  const fixtureTemp = join(fixtureRoot, "temp");
   mkdirSync(fixtureTemp, { recursive: true });
   process.env.TEMP = fixtureTemp;
   process.env.TMP = fixtureTemp;
   // Empty fixtures must not discover the containing source checkout as their repository.
-  process.env.GIT_CEILING_DIRECTORIES = fixtureTemp;
 }
 
 // Unit and integration tests inspect commands, never display desktop notifications on the developer's PC.

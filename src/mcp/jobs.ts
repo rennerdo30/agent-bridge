@@ -43,7 +43,7 @@ export const NOTE_CONVERSATION_SUFFIX = ":note";
 export const DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task. Then give your final answer.";
 
 /** A delegated run's result, plus the folder it worked in (a worktree, for example). */
-export type RunResult = DelegateResult & { workdir?: string; worktree?: Worktree };
+export type RunResult = DelegateResult & { workdir?: string; worktree?: Worktree; status?: "done" | "failed" | "cancelled" };
 export interface HostedAdmission { signal: AbortSignal; isCurrent(): boolean }
 /**
  * Runs a subagent turn; `job` is the job it belongs to (its name labels the run in the dashboard).
@@ -1146,7 +1146,7 @@ export class JobManager {
         job.etaAt = undefined;
         job.etaReportedAt = undefined;
         job.finishedAt = Date.now();
-        job.status = job.controller.signal.aborted ? "cancelled" : outcome?.result && !outcome.result.isError ? "done" : "failed";
+        job.status = job.controller.signal.aborted ? "cancelled" : outcome?.result?.status ?? (outcome?.result && !outcome.result.isError ? "done" : "failed");
         if (this.storePath) notifyJobEvent(dirname(this.storePath), job.status === "done" ? "finish" : "fail", this.log);
         job.sessionId = outcome?.result?.sessionId ?? sessionOfError(outcome?.error) ?? job.sessionId;
         job.workdir = outcome?.result?.workdir ?? job.workdir;
@@ -1490,7 +1490,7 @@ export class JobManager {
       (res) => {
         job.workdir = res.workdir ?? job.workdir;
         job.worktree = res.worktree ?? job.worktree;
-        this.finish(job, res.isError ? "failed" : "done", res.text || "(no answer text returned)", res.sessionId, res.isError ? failureCause({ result: res }) : null);
+        this.finish(job, res.status ?? (res.isError ? "failed" : "done"), res.text || "(no answer text returned)", res.sessionId, res.isError ? failureCause({ result: res }) : null);
       },
       // The cause is the whole report here: the error says what happened (and, for a worktree, where the work is).
       (err) => this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err })),
