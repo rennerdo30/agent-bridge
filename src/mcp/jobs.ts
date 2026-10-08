@@ -575,7 +575,14 @@ export class JobManager {
       if (!this.canRestoreSaved(s)) continue;
       if (this.lineage && s.parentJob !== this.lineage.parentJob) continue;
       if (!this.lineage && s.parentJob) continue;
-      if (this.history.has(s.id)) continue;
+      const existing = this.history.get(s.id);
+      if (existing) {
+        // Connected/job events can expose saved jobs before delayed launch
+        // classification installs the continuation factory. Preserve their
+        // controller and runtime facts while making that eligible turn resumable.
+        existing.resume ??= makeResume(existing.agent, existing.args ?? {});
+        continue;
+      }
       const hosted = s.status === "running" && Boolean(s.host);
       const mine = this.isMine(s.owner);
       const job: Job = {

@@ -85,3 +85,28 @@ it("does not project a previous finished host into a queued continuation when it
   expect(first.host).toBeNull(); expect(first.status).toBe("running"); expect(pending.admission().isCurrent()).toBe(true);
   pending.resolve(host); await until(() => first.host === host); expect(pending.inline).not.toHaveBeenCalled();
 });
+
+it("hydrates a continuation exposed by an early ownership refresh before connected restoration", async () => {
+  const first = jobs.start("claude", null, "original retained context", async () => result, undefined, { send_to: ["reviewer"] });
+  await until(() => first.status === "done"); jobs.cancelAll();
+  jobs = new JobManager(new LocalCoordinator("owner", "owner-session"), nullLogger, join(home, "jobs.json"), 2);
+  jobs.refreshOwnership();
+  const observed = jobs.find(first.id)!; expect(observed.resume).toBeUndefined();
+  const controller = observed.controller, continuation = vi.fn(async () => result), factory = vi.fn(() => () => continuation);
+  jobs.restore(factory);
+  expect(jobs.find(first.id)?.controller).toBe(controller);
+  expect(factory).toHaveBeenCalledWith("claude", expect.objectContaining({ send_to: ["reviewer"] }));
+  expect(jobs.followUp(first.id, "continue with exact grants").outcome).toBe("started");
+  await until(() => continuation.mock.calls.length === 1);
+});
+
+it.each([true, false])("resumer hydration preserves an already active hosted=%s turn and its controller", hosted => {
+  const run: Run = Object.assign(() => new Promise<typeof result>(() => {}), hosted ? { hosted: () => host } : {});
+  const active = jobs.start("claude", null, "active retained turn", run);
+  active.progress = "live partial response";
+  const controller = active.controller, startedAt = active.startedAt, existingHost = active.host;
+  jobs.restore(() => () => async () => result);
+  expect(active.resume).toBeTypeOf("function"); expect(active.controller).toBe(controller);
+  expect(controller.signal.aborted).toBe(false);
+  expect(active).toMatchObject({ status: "running", startedAt, progress: "live partial response", host: existingHost });
+});

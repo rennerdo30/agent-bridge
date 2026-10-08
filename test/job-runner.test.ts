@@ -121,7 +121,9 @@ beforeEach(() => {
   claudeBin = installFakeClaude(join(home, "bin"));
 });
 
-afterEach(async () => {
+afterEach(async context => {
+  const failed = context.task.result?.state === "fail";
+  if (failed) console.error(`Retained failed job-runner fixture: ${home}`);
   await ui?.close();
   ui = undefined;
   // Let every fake finish, and stop runners a test left behind.
@@ -134,7 +136,7 @@ afterEach(async () => {
   await waitFor(() => pids.every((pid) => !pidAlive(pid)));
   for (const s of sessions.splice(0)) await stopSession(s).catch(() => {});
   for (const n of nodes.splice(0)) await n.stop().catch(() => {});
-  await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  if (!failed) await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
 });
 
 describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () => {
@@ -204,7 +206,8 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     const release = join(home, "release-continued");
     const link = `${release}.link.json`;
     releases.push(release);
-    await call(replacement, "message_subagent", { job: a.job, message: `release=${release} link=${link} continue the review` });
+    const continuation = await call(replacement, "message_subagent", { job: a.job, message: `release=${release} link=${link} continue the review` });
+    writeFileSync(join(home, "continuation-response.txt"), continuation);
     await waitFor(() => existsSync(link));
     const continued = parentFromEnv(JSON.parse(readFileSync(link, "utf8")))!;
     expect((await continued.siblings.policy!()).sendTo).toEqual([external.name]);
