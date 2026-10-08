@@ -54,7 +54,7 @@ export interface OldRunnerFixtures {
   release(index?: number): Promise<NativeRunnerInfo[]>;
   stop(): Promise<void>;
 }
-const FAKE_CLAUDE = String.raw`
+export const FAKE_CLAUDE = String.raw`
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -105,7 +105,7 @@ process.stdin.on("end", async () => {
     await new Promise(resolve => setTimeout(resolve,250));
   }
   state.exited = true; await save();
-  console.log(JSON.stringify({type:"result",subtype:"success",is_error:false,result:"Synthetic native turn completed with retained context",session_id:sessionId}));
+  process.stdout.write(JSON.stringify({type:"result",subtype:"success",is_error:false,result:"Synthetic native turn completed with retained context",session_id:sessionId}) + "\n", () => process.exit(0));
 });
 `;
 function contained(root: string, file: string): string {
