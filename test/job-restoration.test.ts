@@ -54,6 +54,34 @@ describe("transient coordinator restoration", () => {
     expect(jobs.adoptStandIns(new Set(["claude-project-2"]))).toEqual([]);
   });
 
+  it("restores an old live runner to an eligible reloaded suffix only after its base owner is verified gone", () => {
+    const job = { ...records()[0]!, supervisor: "session", rootSession: "session", nativeContext: { preserve: "old runner context" } };
+    writeFileSync(join(home, "jobs.json"), JSON.stringify({ version: JSON_STORE_VERSION, jobs: [job] }));
+    const { jobs } = manager(() => true, () => true, "claude-project-2");
+    jobs.restore(() => undefined);
+    expect(jobs.list()).toEqual([]);
+    expect(jobs.standInOwners(new Set(["claude-project-2"]))).toEqual(["claude-project"]);
+    expect(jobs.adoptStandIns(new Set(["claude-project-2"]))).toEqual([]);
+    expect(jobs.runners!.send).not.toHaveBeenCalled();
+    expect(jobs.adoptStandIns(new Set(["claude-project-2"]), new Set(["claude-project"]))).toEqual(["claude-project"]);
+    expect(jobs.find(job.name)).toMatchObject({ owner: "claude-project-2", rootSession: "session", status: "running", sessionId: "native-context", nativeContext: { preserve: "old runner context" } });
+    expect(jobs.list()).toHaveLength(1);
+  });
+
+  it("an ineligible second session cannot restore or attach the old main runner even with owner death proof", () => {
+    const raw = JSON.stringify({ version: JSON_STORE_VERSION, jobs: [records()[0]!] });
+    const path = join(home, "jobs.json"); writeFileSync(path, raw);
+    const { jobs } = manager(() => false, () => true, "claude-project-2");
+    jobs.restore(() => undefined);
+    expect(jobs.standInOwners(new Set(["claude-project-2"]))).toEqual([]);
+    expect(jobs.adoptStandIns(new Set(["claude-project-2"]), new Set(["claude-project"]))).toEqual([]);
+    jobs.refreshOwnership(); jobs.persist();
+    expect(jobs.list()).toEqual([]);
+    expect(jobs.hookJobs()).toEqual([]);
+    expect(jobs.runners!.send).not.toHaveBeenCalled();
+    expect(readFileSync(path, "utf8")).toBe(raw);
+  });
+
   it.each(["session", "peer-instance"])("a durable explicit handoff bound to %s can authorize a connected transient target", (session) => {
     const job = { ...records()[0]!, owner: "claude-project-2", rootName: "claude-project-2", supervisor: session, rootSession: session,
       ownershipHistory: [{ id: "handoff", at: Date.now(), from: "claude-project", to: "claude-project-2", reason: "explicit-handoff", rootName: "claude-project-2", rootSession: session }] };
