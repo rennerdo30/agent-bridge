@@ -29,6 +29,7 @@ import { runReindex } from "./reindex.js";
 import { runSlot } from "./slot.js";
 import { runNetworkCommand } from "../network/cli.js";
 import { runDoctor } from "./doctor.js";
+import { brokerFailureState, formatHealth } from "../core/health.js";
 
 const CLI_PEER_NAME = "cli";
 const out = (s: string) => process.stdout.write(s + "\n");
@@ -80,7 +81,9 @@ async function main(argv: string[]): Promise<number> {
         return 1;
       }
       try {
+        const started = performance.now();
         const ping = await client.request("ping", {});
+        if (ping.health) out(formatHealth({ ...ping.health, roundTripMs: performance.now() - started }));
         await client.request("auth", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(home) });
         const peers = await client.request("peers", {});
         out(t("cli.status.broker", { pid: String(ping.brokerPid), protocol: String(ping.protocol), pipe }));
@@ -91,6 +94,9 @@ async function main(argv: string[]): Promise<number> {
         }
         const old = peers.filter((p) => isOld(p.version)).length;
         if (peers.length) out(old ? t("cli.status.outdated", { count: old, version: APP_VERSION }) : t("cli.status.upToDate", { version: APP_VERSION }));
+      } catch (error) {
+        out(`${brokerFailureState(error) === "slow" ? "Bridge responding slowly" : "Bridge status unavailable"}: ${(error as Error).message}`);
+        return 1;
       } finally {
         client.close();
       }

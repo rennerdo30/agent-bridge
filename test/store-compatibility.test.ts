@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { assertStoreUpgrade, recordStorePeer, releasedStoreCapabilities } from "../src/core/store-compatibility.js";
+import { assertStoreUpgrade, liveStorePeers, recordStorePeer, releasedStoreCapabilities } from "../src/core/store-compatibility.js";
 import { readJsonStore, writeJsonStore } from "../src/core/json-store.js";
 import { migrateSqlite } from "../src/core/sqlite-migrations.js";
 import { nullLogger } from "../src/core/logger.js";
@@ -11,6 +11,7 @@ import { archiveJobs } from "../src/core/job-archive.js";
 import { formatPeer, formatVersionSkew } from "../src/mcp/format.js";
 import { APP_VERSION } from "../src/core/constants.js";
 import type { PeerInfo } from "../src/core/protocol.js";
+import * as identity from "../src/core/process-identity.js";
 
 let home: string;
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), "ab-compat-")); });
@@ -61,10 +62,47 @@ it("treats unrecognized legacy formats conservatively", () => {
   expect(releasedStoreCapabilities("0.29.14")).toEqual({ json: 4, sqlite: 7 });
   expect(releasedStoreCapabilities("0.29.15")).toEqual({ json: 4, sqlite: 7 });
   expect(releasedStoreCapabilities("0.29.16")).toEqual({ json: 4, sqlite: 8 });
+  expect(releasedStoreCapabilities("0.29.17")).toEqual({ json: 4, sqlite: 8 });
   expect(releasedStoreCapabilities("0.29.12")).toEqual({ json: 3, sqlite: 7 });
   expect(releasedStoreCapabilities("future")).toEqual({ json: 0, sqlite: 0 });
   recordStorePeer(home, { pid: process.pid, name: "unknown", version: "future" });
   expect(() => assertStoreUpgrade(home, "json", 3, 4)).toThrow("unknown (vfuture");
+});
+
+it("ignores retained capability records after PID reuse without removing their bytes", () => {
+  old();
+  const path = join(home, "storage-capabilities", `${process.pid}.json`);
+  const bytes = readFileSync(path);
+  vi.spyOn(identity, "processIdentity").mockReturnValue("a-different-process-creation");
+  expect(liveStorePeers(home)).toEqual([]);
+  expect(() => assertStoreUpgrade(home, "sqlite", 7, 9)).not.toThrow();
+  expect(readFileSync(path)).toEqual(bytes);
+});
+
+it("does not preserve another PID generation's explicit capabilities over a legacy reader", () => {
+  recordStorePeer(home, { pid: process.pid, name: "previous-generation", version: APP_VERSION, storeCapabilities: { json: 4, sqlite: 9 } });
+  vi.spyOn(identity, "processIdentity").mockReturnValue("reused-pid-generation");
+  old();
+  expect(() => assertStoreUpgrade(home, "sqlite", 7, 9)).toThrow("retained-reader");
+});
+
+it("does not republish identical explicit capability records observed by another node", () => {
+  const peer = { pid: process.pid, name: "authoritative-owner", version: APP_VERSION, storeCapabilities: { json: 4, sqlite: 9 } };
+  recordStorePeer(home, peer);
+  const path = join(home, "storage-capabilities", `${process.pid}.json`), before = readFileSync(path);
+  vi.spyOn(identity, "processIdentity").mockReturnValue(undefined);
+  for (let observer = 0; observer < 10; observer++) recordStorePeer(home, { ...peer, name: "foreign-observation" });
+  expect(readFileSync(path)).toEqual(before);
+  expect(readdirSync(join(home, "storage-capabilities"))).toEqual([`${process.pid}.json`]);
+});
+
+it("refreshes an authoritative resolved name while retaining its process generation", () => {
+  const peer = { pid: process.pid, name: "owner", version: APP_VERSION, storeCapabilities: { json: 4, sqlite: 9 } };
+  recordStorePeer(home, peer);
+  const path = join(home, "storage-capabilities", `${process.pid}.json`), original = JSON.parse(readFileSync(path, "utf8"));
+  vi.spyOn(identity, "processIdentity").mockReturnValue(undefined);
+  recordStorePeer(home, { ...peer, name: "owner-2" }, { authoritative: true });
+  expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ name: "owner-2", processIdentity: original.processIdentity });
 });
 
 it("announces exact versions and retained sessions to agents", () => {

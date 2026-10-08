@@ -41,6 +41,14 @@ links (including internal links and junctions) are skipped without touching targ
 
 ## Close policy
 
+Finished and continuable jobs keep ignored cache links, including Unity `Library`
+and `node_modules`, for follow-up checks. Completing a turn never unlinks them.
+The optional 24-hour close sweep also retains any worktree containing a link,
+even after that continuation window. Job results list the link paths and targets.
+Only an explicit supervisor-approved cleanup may detach those link entries;
+cleanup never removes or modifies their targets. Cache links permit reads only:
+run imports and package installation against a separate writable cache.
+
 `jobCloseCleanup` defaults to `false`. Opt in through bridge configuration:
 
 ```json

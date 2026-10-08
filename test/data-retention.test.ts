@@ -17,7 +17,6 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   // Exclusively created unpublished key staging file; the active key is never removed.
   "cli/dashboard-key.ts": ["unlinkSync(temp)"],
   "core/json-store.ts": ["rmSync(tmp, { force: true })"],
-  "mcp/jobs.ts": ["rmSync(path, { force: true })", "rmSync(path, { force: true })"],
   "core/node.ts": ["unlinkSync(this.opts.pipePath)"],
   "core/storage-lock.ts": ["rmSync(path)", "rmSync(path, { force: true })", "rmSync(join(dir, file))", "rmSync(path, { force: true })", "rmSync(path, { force: true })"],
   "core/migration-lock.ts": ["rmSync(path)", "rmSync(path)", "rmSync(path)", "rmSync(recovery)"],

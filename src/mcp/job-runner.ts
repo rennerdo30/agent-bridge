@@ -11,7 +11,7 @@ import { createLogger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolvePipePath } from "../core/paths.js";
 import { loadOrCreateToken } from "../core/token.js";
-import { ACK_CONVERSATION_SUFFIX, SIBLING_CONVERSATION_PREFIX } from "../core/protocol.js";
+import { ACK_CONVERSATION_SUFFIX, SIBLING_CONVERSATION_PREFIX, type BridgeMessage } from "../core/protocol.js";
 import { isPureAcknowledgement } from "../core/job-messaging.js";
 import { resumeArgs, runDelegate, type JobSink, type RunContext } from "./delegate-run.js";
 import { CONTROL_CONVERSATION_PREFIX, JOB_PEER_PREFIX, RUNNER_HEARTBEAT_MS, writeRunnerState, type RunnerSpec } from "./job-host.js";
@@ -151,10 +151,11 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
   let chain: Promise<boolean> = Promise.resolve(true);
   const deliver = async (body: string, replyTo: string | null, note = false, key?: string): Promise<boolean> => {
     // One key for all attempts: a send that timed out here may still be queued at a slow broker.
-    refreshOwner();
     const dedupeKey = key ?? randomUUID();
     for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
       try {
+        // A retry may cross a handoff or reload. Routing changes never replace the active delegate.
+        refreshOwner();
         const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
         await node.send({ to: owner, body, conversationId: `job-${job.id}${suffix}`, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
         return true;
@@ -189,12 +190,12 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     },
   };
 
-  node.on("message", async (m) => {
+  const handleControl = async (m: BridgeMessage) => {
     // Direct sibling chat is handled by the current turn's SiblingLink, never as supervisor control.
     if (m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX)) return;
-    node.markRead([m.id]);
     if (!m.conversationId.startsWith(CONTROL_CONVERSATION_PREFIX)) {
       log.info("ignoring a message that is not from the job's session", { from: m.from.name });
+      node.markRead([m.id]);
       return;
     }
     // A remote job's supervisor is fixed by the authenticated spawn, never by an incoming message.
@@ -218,17 +219,19 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       const master = peers.find((p) => p.name === m.from.name);
       if (!master || !new ProjectGroups(home).canControl(master, job as unknown as Record<string, unknown>, peers)) return;
     }
-    // The session may be a new server now, maybe under another name: answer where it is.
-    if (m.from.name !== owner) log.info("the job's session is now", { name: m.from.name, was: owner });
+    // A project master can control the job without becoming its durable primary owner.
+    if (m.from.name !== owner) log.info("job control received from another session", { name: m.from.name, owner });
     void node.updateJob({ jobParent: owner }).catch(() => {});
     if (c.type === "message") {
       if (closing) return;
-      seen.push(c.cid);
-      if (job.live) {
-        job.awaitingAnswer = true;
-        job.live.post(c.body);
+      if (!seen.includes(c.cid)) {
+        if (job.live) {
+          job.awaitingAnswer = true;
+          job.live.post(c.body);
+        }
+        else job.queue.push(c.body);
+        seen.push(c.cid);
       }
-      else job.queue.push(c.body);
       save();
     } else if (c.type === "title") {
       job.args = { ...job.args, title: c.title };
@@ -245,7 +248,23 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       job.queue = [];
       job.controller.abort();
     }
-  });
+    node.markRead([m.id]);
+  };
+  let controls: Promise<void> = Promise.resolve();
+  const controlRetries = new Map<string, NodeJS.Timeout>();
+  const onControl = (m: BridgeMessage) => {
+    controls = controls.then(() => handleControl(m)).catch((err) => {
+      // EventEmitter does not observe async listener rejections. A broker timeout must never
+      // become an unhandled rejection that terminates this runner and its active CLI turn.
+      log.warn("job control deferred; active turn kept running", { id: m.id, err: String(err) });
+      if (!closing && !controlRetries.has(m.id)) {
+        const timer = setTimeout(() => { controlRetries.delete(m.id); onControl(m); }, 1_000);
+        timer.unref();
+        controlRetries.set(m.id, timer);
+      }
+    });
+  };
+  node.on("message", onControl);
   const stop = () => {
     job.queue = [];
     job.controller.abort();
@@ -333,6 +352,10 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     break;
   }
   clearInterval(heartbeat);
+  for (const timer of controlRetries.values()) clearTimeout(timer);
+  node.off("message", onControl);
+  process.off("SIGTERM", stop);
+  process.off("SIGINT", stop);
   await node.stop();
   return 0;
 }

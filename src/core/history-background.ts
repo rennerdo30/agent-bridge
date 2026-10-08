@@ -6,11 +6,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Logger } from "./logger.js";
 import { transcriptPaths } from "./transcripts/common.js";
 import type { PeerInfo } from "./protocol.js";
-import { historyDbPath, releaseExitedHistoryLease } from "./history-store.js";
+import { historyDbPath, releaseExitedHistoryLease, HISTORY_IO_BYTES_PER_SECOND, type HistoryMigrationProgress } from "./history-store.js";
 
 type Batch = { work: number; discovering: boolean };
 /** One elected worker; no source I/O or indexing writes on message dispatch. */
 export class HistoryBackground {
+  private progress: HistoryMigrationProgress = { phase: "starting", percent: 0, etaSeconds: null, paused: false, completedRows: 0, totalRows: 0, snapshot: null, ioBytesPerSecond: HISTORY_IO_BYTES_PER_SECOND, error: null };
   private worker!: Worker;
   private stopped = false;
   private exited = false;
@@ -30,6 +31,7 @@ export class HistoryBackground {
       const inputs = [
         "config.ts",
         "history-store.ts",
+        "history-migration.ts",
         "history-schema.ts",
         "conversation-schema.ts",
         "history-worker.ts",
@@ -66,6 +68,7 @@ export class HistoryBackground {
         execArgv: [],
       });
       this.worker.on("message", (message) => {
+        if (message.migrationProgress) { this.progress = message.migrationProgress; return; }
         if ("migrationLease" in message) { this.migrationLease = message.migrationLease; return; }
         if (message.id) {
           const pending = this.pending.get(message.id);
@@ -101,6 +104,7 @@ export class HistoryBackground {
     };
     start();
   }
+  status(): HistoryMigrationProgress { return { ...this.progress }; }
   pressure(pending: boolean, lockError = false): void {
     if (!this.stopped && !this.exited) this.worker.postMessage({ pressure: true, pending, lockError });
   }

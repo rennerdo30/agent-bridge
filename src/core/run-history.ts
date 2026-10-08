@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, realpathSync, statSync, type Stats } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { JOBS_FILE } from "./constants.js";
 import { isRecord } from "./json-store.js";
@@ -23,6 +23,8 @@ function files(dir: string): string[] {
 }
 
 export interface RunLogRecord { name: string; file: string; updatedAt: number; size: number; signature: string; archived: boolean; meta: RunMeta }
+const runLogSnapshots = new Map<string, { signature: string; records: RunLogRecord[] }>();
+const historyJobSnapshots = new Map<string, { signature: string; jobs: Map<string, Record<string, unknown>> }>();
 
 /** Match independently archived metadata by original name, not by its archive timestamp/UUID. */
 export function readRunLogs(home: string, namesFilter?: Set<string>): RunLogRecord[] {
@@ -30,6 +32,9 @@ export function readRunLogs(home: string, namesFilter?: Set<string>): RunLogReco
   let canonicalRoot: string;
   try { canonicalRoot = realpathSync.native(root); } catch { return []; }
   const records = new Map<string, RunLogRecord>();
+  const signatures: string[] = [];
+  let complete = true, metadataBytes = 0;
+  const directories: { archived: boolean; files: { name: string; original: string; file: string; st: Stats }[] }[] = [];
   for (const archived of [true, false]) {
     const dir = archived ? join(root, "archive") : root;
     let canonicalDir: string;
@@ -49,20 +54,33 @@ export function readRunLogs(home: string, namesFilter?: Set<string>): RunLogReco
         })() : null;
       } catch { return null; }
     };
-    const metadata = new Map<string, RunMeta>();
+    const selected: typeof directories[number]["files"] = [];
     for (const name of names) {
       const original = archived ? name.replace(ARCHIVE_SUFFIX, "$1") : name;
-      if (!original.endsWith(".json") || namesFilter && !namesFilter.has(original.slice(0, -5))) continue;
+      const extension = original.endsWith(".json") ? ".json" : RUN_LOG_NAME.test(original) ? ".log" : null;
+      if (!extension || namesFilter && !namesFilter.has(original.slice(0, -extension.length))) continue;
       const record = localFile(name);
-      const value = record ? readHistoryJson(record.file) : null;
-      if (isRecord(value)) metadata.set(original, value as RunMeta);
+      if (!record) continue;
+      signatures.push(`${archived}:${name}:${record.file}:${fileSignature(record.st)}`);
+      if (extension === ".json") metadataBytes += record.st.size;
+      selected.push({ name, original, ...record });
     }
-    for (const name of names) {
-      const original = archived ? name.replace(ARCHIVE_SUFFIX, "$1") : name;
-      if (!RUN_LOG_NAME.test(original) || namesFilter && !namesFilter.has(original.slice(0, -4))) continue;
-      const local = localFile(name);
-      if (!local) continue;
-      const { file, st } = local;
+    directories.push({ archived, files: selected });
+  }
+  const key = `${canonicalRoot}:${namesFilter ? JSON.stringify([...namesFilter].sort()) : "*"}`;
+  const signature = signatures.join("\n"), saved = runLogSnapshots.get(key);
+  if (saved?.signature === signature) return structuredClone(saved.records);
+  for (const { archived, files } of directories) {
+    const metadata = new Map<string, RunMeta>();
+    for (const { original, file } of files) {
+      if (!original.endsWith(".json")) continue;
+      try {
+        const value = readJsonSnapshot(file).value;
+        if (isRecord(value)) metadata.set(original, value as RunMeta);
+      } catch { complete = false; }
+    }
+    for (const { original, file, st } of files) {
+      if (!RUN_LOG_NAME.test(original)) continue;
       try {
         if (!st.isFile()) continue;
         const key = original.slice(0, -".log".length);
@@ -72,7 +90,11 @@ export function readRunLogs(home: string, namesFilter?: Set<string>): RunLogReco
       } catch { /* A concurrent archiver may have moved the file; retry on the next read. */ }
     }
   }
-  return [...records.values()];
+  const result = [...records.values()];
+  runLogSnapshots.delete(key);
+  if (complete && metadataBytes <= 256 * 1024 * 1024) runLogSnapshots.set(key, { signature, records: result });
+  if (runLogSnapshots.size > 8) runLogSnapshots.delete(runLogSnapshots.keys().next().value!);
+  return structuredClone(result);
 }
 
 /** Receipt boundaries need metadata only, not a stat/read of every unrelated log.
@@ -128,10 +150,7 @@ export async function readRunStarts(home: string): Promise<{ job: string; jobSta
   return [...starts.values()];
 }
 
-const historyJobs = new Map<string, { signature: string; jobs: Map<string, Record<string, unknown>> }>();
-
-/** All durable job snapshots, oldest first; active records take precedence over archives.
- * The merged result is reused while every source file keeps its identity; callers only read it. */
+/** All durable job snapshots, oldest first; active records take precedence over archives. */
 export function readHistoryJobs(home: string): Map<string, Record<string, unknown>> {
   const out = new Map<string, Record<string, unknown>>();
   let canonicalHome: string;
@@ -146,22 +165,33 @@ export function readHistoryJobs(home: string): Map<string, Record<string, unknow
     try { return statSync(file).mtimeMs; } catch { return 0; }
   };
   snapshots.sort((a, b) => snapshotTime(a) - snapshotTime(b) || (a < b ? -1 : a > b ? 1 : 0));
-  const candidates = [...snapshots, join(home, JOBS_FILE)];
-  const signature = candidates.map((file) => { try { return `${file}:${fileSignature(statSync(file))}`; } catch { return `${file}:-`; } }).join("\n");
-  const saved = historyJobs.get(home);
-  if (saved?.signature === signature) return new Map(saved.jobs);
-  for (const candidate of candidates) {
+  const sources: string[] = [], signatures: string[] = [];
+  let complete = true;
+  let bytes = 0;
+  for (const candidate of [...snapshots, join(home, JOBS_FILE)]) {
     const file = safeFile(home, candidate, canonicalHome);
-    const value = file ? readHistoryJson(file) : null;
+    if (!file) continue;
+    try {
+      const st = statSync(file);
+      sources.push(file); signatures.push(`${file}:${fileSignature(st)}`); bytes += st.size;
+    } catch { /* Concurrent archival is observed on the next poll. */ }
+  }
+  const signature = signatures.join("\n"), saved = historyJobSnapshots.get(canonicalHome);
+  if (saved?.signature === signature) return structuredClone(saved.jobs);
+  for (const file of sources) {
+    let value: unknown;
+    try { value = readJsonSnapshot(file).value; }
+    catch { complete = false; continue; }
     const jobs = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.jobs) ? value.jobs : [];
     for (const job of jobs) {
       if (!isRecord(job) || typeof job.name !== "string" || !RUN_LOG_NAME.test(`${job.name}.log`)) continue;
       out.set(job.name, { ...out.get(job.name), ...job });
     }
   }
-  historyJobs.set(home, { signature, jobs: out });
-  if (historyJobs.size > 4) historyJobs.delete(historyJobs.keys().next().value!);
-  return new Map(out);
+  historyJobSnapshots.delete(canonicalHome);
+  if (complete && bytes <= 256 * 1024 * 1024) historyJobSnapshots.set(canonicalHome, { signature, jobs: out });
+  if (historyJobSnapshots.size > 4) historyJobSnapshots.delete(historyJobSnapshots.keys().next().value!);
+  return structuredClone(out);
 }
 
 export interface RunPage<T> { runs: T[]; next: string | null; total: number }

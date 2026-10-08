@@ -12,7 +12,8 @@ import type { BridgeMessage } from "../src/core/protocol.js";
 import { runMetaPath, startRunFeed } from "../src/core/runfeed.js";
 import { MessageStore, SQLITE_STORE_VERSION } from "../src/core/store.js";
 import { JobRunners, readRunnerState, runnerStatePath, writeRunnerState } from "../src/mcp/job-host.js";
-import { JobManager, readStore } from "../src/mcp/jobs.js";
+import { acquireLock, JobManager, readStore } from "../src/mcp/jobs.js";
+import { archiveJobs } from "../src/core/job-archive.js";
 
 const V1_SCHEMA = `
 CREATE TABLE messages (
@@ -155,9 +156,9 @@ describe("JSON store upgrades", () => {
     writeFileSync(path, JSON.stringify(entries));
     const manager = new JobManager(stubNode(), nullLogger, path);
     expect(readStore(path)).toHaveLength(1);
-    manager.persist();
+    manager.restore(() => undefined);
     expect(json(path).version).toBe(JSON_STORE_VERSION);
-    expect(json(path).jobs).toEqual(expect.arrayContaining(entries));
+    expect(json(path).jobs).toEqual(expect.arrayContaining(entries.map(entry => expect.objectContaining(entry))));
     const backup = readdirSync(home).find((f) => f.startsWith("jobs.json.backup-"))!;
     expect(JSON.parse(readFileSync(join(home, backup), "utf8"))).toEqual(entries);
     writeFileSync(path, JSON.stringify({ ...json(path), futureEnvelope: "keep" }));
@@ -255,20 +256,55 @@ describe("JSON store upgrades", () => {
 });
 
 describe("retention archives", () => {
+  it("publishes identical job archives once across nodes and retains changed records", () => {
+    const path = join(home, "jobs.json"), old = storedJob("old", 1);
+    const first = archiveJobs(path, [old]);
+    const bytes = readFileSync(first);
+    expect(archiveJobs(path, [{ ...old }])).toBe(first);
+    expect(archiveJobs(path, [Object.fromEntries(Object.entries(old).reverse())])).toBe(first);
+    expect(readFileSync(first)).toEqual(bytes);
+    expect(readdirSync(join(home, "archive")).filter(name => /^jobs-.*\.json$/.test(name))).toHaveLength(1);
+    expect(archiveJobs(path, [{ ...old, prompt: "updated task" }])).not.toBe(first);
+    expect(readFileSync(first)).toEqual(bytes);
+  });
+
+  it("does not let a stale manager rearchive identical finished jobs", () => {
+    vi.stubEnv("AGENT_BRIDGE_JOB_STORE_LIMIT", "1");
+    const path = join(home, "jobs.json"), entries = [storedJob("old", 1), storedJob("new", 2)];
+    for (let i = 0; i < 3; i++) {
+      writeFileSync(path, JSON.stringify({ version: JSON_STORE_VERSION, jobs: entries }));
+      new JobManager(stubNode(), nullLogger, path).restore(() => undefined);
+    }
+    expect(readdirSync(join(home, "archive")).filter(name => /^jobs-.*\.json$/.test(name))).toHaveLength(1);
+    expect(readStore(path).map(job => job.id)).toEqual(["new"]);
+  });
+
+  it("keeps live job-store locks exclusive beyond the old age deadline", () => {
+    const path = join(home, "jobs.json.lock"), release = acquireLock(path, 0);
+    try {
+      utimesSync(path, 0, 0);
+      expect(() => acquireLock(path, 0)).toThrow("locking jobs store");
+      expect(JSON.parse(readFileSync(path, "utf8")).pid).toBe(process.pid);
+    } finally { release(); }
+    acquireLock(path, 0)();
+  });
+
   it("archives only finished overflow jobs and keeps every running or interrupted job", () => {
     vi.stubEnv("AGENT_BRIDGE_JOB_STORE_LIMIT", "1");
     const path = join(home, "jobs.json");
-    writeFileSync(path, JSON.stringify([storedJob("old", 1), storedJob("new", 2), storedJob("running", 0, "running"), storedJob("interrupted", 0, "interrupted")]));
+    writeFileSync(path, JSON.stringify([storedJob("old", 1), storedJob("new", 2), { ...storedJob("running", 0, "running"), host: { pid: process.pid, peer: "codex-job-running", startedAt: 0 } }, storedJob("interrupted", 0, "interrupted")]));
     const manager = new JobManager(stubNode(), nullLogger, path);
-    manager.persist();
+    manager.runners = { alive: () => true, state: () => null, send: () => {}, kill: () => {} };
+    manager.restore(() => undefined);
     expect(readStore(path).map((j) => j.id)).toEqual(["running", "interrupted", "new"]);
     const archive = readdirSync(join(home, "archive")).find((f) => /^jobs-.*\.json$/.test(f))!;
     expect(archive).toBeDefined();
-    expect(json(join(home, "archive", archive)).jobs).toEqual([storedJob("old", 1)]);
+    expect(json(join(home, "archive", archive)).jobs).toEqual([expect.objectContaining(storedJob("old", 1))]);
     vi.stubEnv("AGENT_BRIDGE_JOB_STORE_LIMIT", "0");
     writeFileSync(path, JSON.stringify([storedJob("old", 1), storedJob("new", 2)]));
-    manager.persist();
+    new JobManager(stubNode(), nullLogger, path).restore(() => undefined);
     expect(readStore(path)).toHaveLength(2);
+    manager.cancelAll();
   });
 
   it("archives log and metadata pairs and never prunes a live feed", () => {

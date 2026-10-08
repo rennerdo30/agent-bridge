@@ -1,4 +1,5 @@
 import { HistoryBackground } from "./history-background.js";
+import { HealthMonitor } from "./health.js";
 import { loadConfig } from "./config.js";
 import { conversationPageSchema, readConversation } from "./conversations.js";
 import { historySearchSchema } from "./history.js";
@@ -116,6 +117,7 @@ export class Broker {
   private server: Server | null = null;
   private readonly conns = new Set<Conn>();
   private historyBackground: HistoryBackground | null = null;
+  private readonly healthMonitor = new HealthMonitor();
   private historyPendingRequests = 0;
   private purgeTimer: NodeJS.Timeout | null = null;
   private pendingJobMailRoute: Promise<void> | null = null;
@@ -295,7 +297,9 @@ export class Broker {
         this.pendingMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
       updatePeer: (c, a) => { const peer = this.onUpdatePeer(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === peer.id); if (job?.ownershipHistory) this.refreshJobPeer(job); this.store.history.rememberPeer(peer); return peer; },
       claimMail: (c, a) => this.onClaimMail(c, a),
-      ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION, brokerVersion: APP_VERSION }),
+      health: () => this.healthMonitor.snapshot(APP_VERSION, this.historyBackground?.status() ?? null, this.store.backupStatus()),
+      ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION, brokerVersion: APP_VERSION,
+        health: this.healthMonitor.snapshot(APP_VERSION, this.historyBackground?.status() ?? null, this.store.backupStatus()) }),
       networkStatus: () => this.network?.status() ?? { enabled: false, config: this.networking?.config, discovered: [], paired: [] },
       remoteJob: async (c, a) => {
         const peer = this.requirePeer(c);
@@ -363,10 +367,14 @@ export class Broker {
         server.removeListener("error", onError);
         server.on("error", (err) => this.log.error("broker server error", { err }));
         this.server = server;
+        this.store.startBackups();
+        this.healthMonitor.start();
         this.applyHandoffs();
         this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
         this.purgeTimer.unref();
-        if (this.store.file !== ":memory:" && loadConfig(dirname(this.store.file), "other", this.log).history.ingest) {
+        // Config toggles pause the monitor and later resume its durable cursors.
+        // The environment kill switch intentionally disables even the worker.
+        if (this.store.file !== ":memory:" && !["false", "0"].includes(process.env.AGENT_BRIDGE_HISTORY_INGEST ?? "")) {
           this.historyBackground = new HistoryBackground(this.store.file, this.log);
           this.store.historyPeerSink = (peer) => this.historyBackground?.rememberPeer(peer);
         }
@@ -404,6 +412,7 @@ export class Broker {
   }
 
   async close(): Promise<void> {
+    this.healthMonitor.close();
     this.closing = true;
     this.questions?.close(); this.questions = null;
     this.store.stopWrites();
@@ -411,6 +420,7 @@ export class Broker {
     this.pendingJobMailRetry = null;
     await this.historyBackground?.close();
     this.historyBackground = null;
+    await this.store.closeBackups();
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     await this.networkChange;
     this.remoteDashboard?.close();
@@ -525,9 +535,11 @@ export class Broker {
   }
 
   private async dispatch(conn: Conn, frame: RequestFrame): Promise<void> {
-    const countsPressure = frame.op !== "reindexHistory";
+    // In-memory probes must not pause background work just to observe its status.
+    const countsPressure = !["reindexHistory", "health", "ping"].includes(frame.op);
     if (countsPressure) this.historyPendingRequests++;
     this.historyBackground?.pressure(this.historyPendingRequests > 0);
+    this.store.backupPressure(this.historyPendingRequests > 0);
     const handler = this.handlers[frame.op] as Handler<Op> | undefined;
     try {
       if (!handler) throw new BridgeError("bad_request", `unknown op: ${String(frame.op)}`);
@@ -542,14 +554,19 @@ export class Broker {
       const result = await handler(conn, (frame.args ?? {}) as never);
       this.write(conn, { t: "res", id: frame.id, ok: true, result });
     } catch (err) {
-      if (isSqliteBusy(err)) this.historyBackground?.pressure(true, true);
+      if (isSqliteBusy(err)) {
+        this.historyBackground?.pressure(true, true);
+        this.store.backupPressure(true, true);
+      }
       const be = err instanceof BridgeError ? err : new BridgeError("internal", String((err as Error)?.message ?? err));
+      if (be.code === "internal" || isSqliteBusy(err)) this.healthMonitor.error(frame.op, isSqliteBusy(err) ? "store_busy" : be.code);
       if (be.code === "internal") this.log.error("request failed", { op: frame.op, err });
       else this.log.debug("request rejected", { op: frame.op, code: be.code, message: be.message });
       this.write(conn, { t: "res", id: frame.id, ok: false, error: be.toPayload() });
     } finally {
       if (countsPressure) this.historyPendingRequests--;
       this.historyBackground?.pressure(this.historyPendingRequests > 0);
+      this.store.backupPressure(this.historyPendingRequests > 0);
     }
   }
 
@@ -599,7 +616,8 @@ export class Broker {
   }
 
   private emit<E extends EventName>(conn: Conn, ev: E, data: EventMap[E]): void {
-    const frame: EventFrame<E> = { t: "evt", ev, data };
+    const publicData = ev === "peer_joined" || ev === "peer_left" ? this.publicPeer(data as PeerInfo) as EventMap[E] : data;
+    const frame: EventFrame<E> = { t: "evt", ev, data: publicData };
     this.write(conn, frame as EventFrame);
   }
 
@@ -614,7 +632,15 @@ export class Broker {
 
   /** Local sessions and paired remote peers; local job runners stay hidden (see job-host.ts). */
   private livePeers(): PeerInfo[] {
-    return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []).filter((p) => !isPluginCacheCwd(p.cwd));
+    return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []).filter((p) => !isPluginCacheCwd(p.cwd)).map(peer => this.publicPeer(peer));
+  }
+
+  /** The node's own registration is authoritative. Legacy observers must not
+   * concurrently republish foreign explicit records without creation identity.
+   */
+  private publicPeer(peer: PeerInfo): PeerInfo {
+    const { storeCapabilities: _privateCapabilities, ...publicPeer } = peer;
+    return publicPeer;
   }
 
   private localPeers(): PeerInfo[] { return [...this.conns].flatMap((c) => c.peer ? [c.peer] : []); }
@@ -1066,9 +1092,9 @@ export class Broker {
     if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
     this.store.rememberSession(peer, this.now());
     conn.peer = peer;
-    if (this.jobsPath) recordStorePeer(dirname(this.jobsPath), peer);
     this.replaceStale(conn, peer);
     this.restoreNames(conn, peer, { reclaim: true, replay: false });
+    if (this.jobsPath) recordStorePeer(dirname(this.jobsPath), peer, { authoritative: true });
     this.expireStaleQueue(peer.name);
     // A job runner is no session of its agent kind: it never takes mail waiting for "any <agent>".
     let claimed = 0;
@@ -1298,7 +1324,8 @@ export class Broker {
           !(sender.jobAgent && message.conversationId === args.conversationId.trim() + ":fallback")) {
         throw new BridgeError("bad_request", "Message id already stored with different content; use a new id for a new message.");
       }
-      return { messages: this.store.messagesById(id), deliveredTo: [], queuedFor: [], storage: { id, state: "stored", recovered: true, receipts: state.receipts } };
+      const receipts = message.recipient.includes("/") ? await this.messageReceipt(conn, id).catch(() => state.receipts) : state.receipts;
+      return { messages: this.store.messagesById(id), deliveredTo: [], queuedFor: [], storage: { id, state: "stored", recovered: true, receipts } };
     }
     const fingerprint = JSON.stringify([args.to, args.body, args.replyTo, args.conversationId, args.ifNoNewerThan]);
     const pending = this.trackedSending.get(id);
@@ -1307,14 +1334,14 @@ export class Broker {
       return pending.result;
     }
     const result = this.routeSend(conn, sender, { ...args, messageId: id }).then(sent => ({ ...sent,
-      storage: { id, state: this.store.byId(id) ? "stored" as const : "not_stored" as const, receipts: this.store.receipts(id) } }));
+      storage: { ...sent.storage, id, state: this.store.byId(id) ? "stored" as const : "not_stored" as const, receipts: sent.storage?.receipts ?? this.store.receipts(id) } }));
     this.trackedSending.set(id, { sender: sender.name, fingerprint, result });
     try {
       return await result;
     } catch (error) {
-      const state = this.store.byId(id) ? "stored" : "not_stored";
+      const state = this.store.byId(id) ? "stored" : "unknown";
       throw new BridgeError(error instanceof BridgeError ? error.code : "internal",
-        `Message ${id} is ${state} in this broker; routing failed: ${(error as Error).message}`,
+        `Message ${id} storage state is ${state}; routing failed: ${(error as Error).message}. Query send_status or retry with the same message_id; remote storage may precede its acknowledgement.`,
         { ...(error instanceof BridgeError ? error.details : {}), messageId: id, state });
     } finally { this.trackedSending.delete(id); }
   }
@@ -1411,11 +1438,19 @@ export class Broker {
       createdAt,
       readAt: null,
     };
-    if (to.includes("/")) {
+    let remoteAddress = to.includes("/") ? to : undefined;
+    if (to.startsWith("project:")) {
+      const local = this.localPeers().filter((p) => !p.jobAgent && !p.subagent).map((p) => this.projectPeer(p)).filter((p) => p.projectAddress === to);
+      const remote = this.network?.projectPeers(to) ?? [];
+      const groups = new Set([...local.map((p) => `local/${p.projectGroup}`), ...remote.map((p) => `${p.host}/${p.projectGroup}`)]);
+      if (groups.size > 1) throw new BridgeError("ambiguous_target", "Several projects use this address; use an exact session or host/project address.");
+      if (!local.length && remote.length) remoteAddress = this.requireNetwork().projectTarget(to);
+    }
+    if (remoteAddress) {
       if (anchor && this.store.replyConflicts(sender.name, [to], conversationId, anchor).length) {
         throw new BridgeError("bad_request", "Stale reply refused: newer unread mail exists. Read inbox before replying.");
       }
-      const result = await this.requireNetwork().send({ ...base, recipient: to });
+      const result = await this.requireNetwork().send({ ...base, recipient: remoteAddress });
       for (const message of result.messages) await this.store.retryWrite(() => this.store.insert(message));
       return result;
     }
@@ -1548,7 +1583,10 @@ export class Broker {
 
   private remoteReceipt(id: string, sender: string, recipient?: string): number | null {
     const message = this.store.byId(id);
-    if (!message || message.from.id !== sender) throw new BridgeError("unauthorized", "receipt is only available to the sender");
+    const current = this.network?.peers().find((p) => p.id === sender);
+    const sameSender = message && (message.from.id === sender || sender.includes("/") &&
+      message.from.id.split("/")[0] === sender.split("/")[0] && current?.name === message.from.name && current.agent === message.from.agent);
+    if (!message || !sameSender) throw new BridgeError("unauthorized", "receipt is only available to the sender");
     const receipts = this.store.receipts(id);
     const receipt = recipient ? receipts.find((r) => r.recipient === recipient) : receipts[0];
     // A queued direct envelope may have moved from a retained alias to the reclaimed name.
@@ -1587,17 +1625,24 @@ export class Broker {
     return result;
   }
 
-  private receiveRemote(message: BridgeMessage): { delivered: boolean; recipient: string } {
+  private receiveRemote(message: BridgeMessage): { delivered: boolean; recipient: string; stored: boolean; recovered?: boolean; readAt: number | null } {
     const target = this.recipientConn(message.recipient);
     if (target?.peer) message = { ...message, recipient: target.peer.name };
     const existing = this.store.byId(message.id);
     if (existing) {
       const broadcastCopy = existing.to === BROADCAST && message.to === BROADCAST;
-      if (existing.from.id !== message.from.id || (!broadcastCopy && existing.recipient !== message.recipient) || existing.to !== message.to || existing.body !== message.body || existing.conversationId !== message.conversationId || existing.replyTo !== message.replyTo || existing.hop !== message.hop) throw new BridgeError("bad_request", "message id already used");
-      if (this.store.receipts(message.id).some((r) => r.recipient === message.recipient)) return { delivered: Boolean(target), recipient: message.recipient };
+      // A reloaded sending session has a new process id, but retains its authenticated paired
+      // origin and stable name. Those identities and the full content must still match.
+      const sameSender = existing.from.id === message.from.id || message.from.id.includes("/") &&
+        existing.from.id.split("/")[0] === message.from.id.split("/")[0] && existing.from.name === message.from.name;
+      const projectRetry = message.to.startsWith("project:") || /^[^/]+\/project:/.test(message.to);
+      const sameRecipient = existing.recipient === message.recipient || projectRetry || !broadcastCopy && target?.peer && this.recipientConn(existing.recipient) === target;
+      if (!sameSender || existing.from.name !== message.from.name || existing.from.agent !== message.from.agent || (!broadcastCopy && !sameRecipient) || existing.to !== message.to || existing.body !== message.body || existing.conversationId !== message.conversationId || existing.replyTo !== message.replyTo || existing.hop !== message.hop) throw new BridgeError("bad_request", "Message id already stored with different content; use a new id for a new message.");
+      const receipt = this.store.receipts(message.id).find((r) => (!broadcastCopy && r.recipient === existing.recipient) || r.recipient === message.recipient);
+      if (receipt) return { delivered: Boolean(this.recipientConn(receipt.recipient)), recipient: receipt.recipient, stored: true, recovered: true, readAt: receipt.readAt };
     }
     this.store.insert(message);
     if (target) this.emit(target, "message", message);
-    return { delivered: Boolean(target), recipient: message.recipient };
+    return { delivered: Boolean(target), recipient: message.recipient, stored: true, readAt: null };
   }
 }

@@ -613,6 +613,7 @@ export class ConversationIngestor {
     return 1;
   }
   private envelopes(): number {
+    if (!this.source.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='conversation_envelopes'").get()) return 0;
     const key = "durable-envelope-keys",
       saved = parse(this.cursor(key)),
       after = Number(saved.after ?? 0);

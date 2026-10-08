@@ -19,7 +19,8 @@ import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, APP_VERSION, MAX_BODY_CHA
 import type { Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath } from "../core/paths.js";
-import { BridgeError, CODING_AGENTS, type PeerInfo } from "../core/protocol.js";
+import { BridgeError, CODING_AGENTS, isUnsupportedOperation, type PeerInfo } from "../core/protocol.js";
+import { brokerFailureState } from "../core/health.js";
 import { readModels, type ModelReport } from "../core/models.js";
 import { RUNS_DIR_NAME } from "../core/runfeed.js";
 import { loadOrCreateToken, tokensEqual } from "../core/token.js";
@@ -87,14 +88,24 @@ export function recentMessages(dbPath: string): MessageRow[] {
   return searchMessages(dbPath, { limit: MAX_MESSAGES });
 }
 
-async function brokerPeers(pipe: string, token: string, log: Logger): Promise<{ brokerPid: number | null; peers: PeerInfo[] }> {
+async function brokerPeers(pipe: string, token: string, log: Logger): Promise<{ brokerPid: number | null; peers: PeerInfo[]; brokerState: "running" | "offline" | "slow" | "unavailable"; health: import("../core/health.js").BrokerHealth | null }> {
   let client: BridgeClient | null = null;
+  let brokerPid: number | null = null;
+  let health: import("../core/health.js").BrokerHealth | null = null;
+  const started = performance.now();
   try {
-    client = await BridgeClient.connect(pipe, log);
-    const { brokerPid } = await client.request("auth", { protocol: PROTOCOL_VERSION, token });
-    return { brokerPid, peers: await client.request("dashboardPeers", {}).catch(() => client!.request("peers", {})) };
-  } catch {
-    return { brokerPid: null, peers: [] };
+    client = await BridgeClient.connect(pipe, log, 1_000);
+    const ping = await client.request("ping", {}, 1_000);
+    brokerPid = ping.brokerPid;
+    health = ping.health ? { ...ping.health, roundTripMs: performance.now() - started } : null;
+    await client.request("auth", { protocol: PROTOCOL_VERSION, token }, 1_000);
+    const peers = await client.request("dashboardPeers", {}, 1_000).catch(error => {
+      if (isUnsupportedOperation(error, "dashboardPeers")) return client!.request("peers", {}, 1_000);
+      throw error;
+    });
+    return { brokerPid, peers, health, brokerState: performance.now() - started >= 1_000 ? "slow" : "running" };
+  } catch (error) {
+    return { brokerPid, peers: [], health, brokerState: brokerFailureState(error) };
   } finally {
     client?.close();
   }
@@ -405,7 +416,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       return send(res, 200, { outcome, id: approvalMatch[1], answeredBy: "dashboard", decision: body.decision });
     }
     if (req.method === "GET" && url.pathname === "/api/state") {
-      const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);
+      const { brokerPid, peers, brokerState, health } = await brokerPeers(opts.pipe, token, opts.log);
       const runs = listRuns(opts.home);
       const page = pageRuns(runs, null, DEFAULT_RUN_PAGE_SIZE);
       const remote = await remoteStateNow();
@@ -414,6 +425,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       return send(res, 200, {
         version: APP_VERSION,
         brokerPid,
+        brokerState,
+        health,
         peers: classifyPeers(peers, runs, opts.home),
         runs: [...page.runs, ...remoteStates.flatMap((r) => r.runs)],
         runsNext: page.next,

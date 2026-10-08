@@ -33,7 +33,7 @@ export async function runReindex(home: string, pipe: string, log: Logger, out: (
     } else {
       // Same migration/backup executor as broker startup, without chat-peer or purge side effects.
       store = new MessageStore(resolveDbPath(home), log);
-      await migrateHistoryStore(store.file, store.history.storageDatabase);
+      await migrateHistoryStore(store.file, store.history.storageDatabase, undefined, undefined, undefined, true);
       const index = store.history;
       source = new DatabaseSync(store.file,{readOnly:true,timeout:100});
       ingest=new ConversationIngestor(index.database,home,transcriptPaths(),source);

@@ -30925,7 +30925,7 @@ var StdioClientTransport = class {
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.30.1";
+var APP_VERSION = "0.30.2";
 var ENV = {
   internal: "AGENT_BRIDGE_INTERNAL",
   home: "AGENT_BRIDGE_HOME",

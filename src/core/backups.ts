@@ -1,10 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, copyFileSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { DB_FILE_NAME } from "./constants.js";
 import { isRecord, retentionLimit } from "./json-store.js";
 import { ARCHIVE_DB_NAME, snapshotDatabase } from "./sqlite-maintenance.js";
 import { maintenanceLock, storageLease } from "./storage-lock.js";
+import * as sqlite from "node:sqlite";
+import { open } from "node:fs/promises";
 
 export const BACKUPS_DIR_NAME = "backups";
 export const BACKUP_MANIFEST_VERSION = 1;
@@ -14,6 +16,7 @@ export const BACKUP_RETENTION_ENV = "AGENT_BRIDGE_BACKUP_RETENTION";
 export const BACKUP_INTERVAL_ENV = "AGENT_BRIDGE_BACKUP_INTERVAL_MS";
 const MANIFEST_NAME = "manifest.json";
 const BACKUP_PREFIX = "snapshot-";
+const USER_DATABASES = [DB_FILE_NAME, ARCHIVE_DB_NAME, "history.db", "store-compatibility.db", "owner-questions.db"] as const;
 
 export interface BackupManifest {
   version: number;
@@ -21,7 +24,12 @@ export interface BackupManifest {
   files: { path: string; sha256: string; bytes: number }[];
 }
 
-function digest(path: string): string { return createHash("sha256").update(readFileSync(path)).digest("hex"); }
+function digest(path: string): string {
+  const hash = createHash("sha256"), fd = openSync(path, "r"), buffer = Buffer.allocUnsafe(256 * 1024);
+  try { for (let bytes; (bytes = readSync(fd, buffer, 0, buffer.length, null)) > 0;) hash.update(buffer.subarray(0, bytes)); }
+  finally { closeSync(fd); }
+  return hash.digest("hex");
+}
 
 function syncFile(path: string): void {
   const fd = openSync(path, "r+");
@@ -83,11 +91,10 @@ function createBackupUnlocked(home: string, now: number, rotate: boolean): strin
     if (sqlite) snapshotDatabase(source, target);
     else copyFileSync(source, target);
     syncFile(target);
-    const raw = readFileSync(target);
-    manifest.files.push({ path, sha256: createHash("sha256").update(raw).digest("hex"), bytes: raw.length });
+    manifest.files.push({ path, sha256: digest(target), bytes: statSync(target).size });
   };
   // The archive only grows. Capture it after the primary, even while the broker is archiving.
-  for (const name of [DB_FILE_NAME, ARCHIVE_DB_NAME]) if (existsSync(join(home, name))) capture(join(home, name), true);
+  for (const name of USER_DATABASES) if (existsSync(join(home, name))) capture(join(home, name), true);
   for (const file of jsonStoreFiles(home)) capture(file, false);
   writeFileSync(join(staging, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + "\n", { mode: 0o600 });
   syncFile(join(staging, MANIFEST_NAME));
@@ -110,8 +117,108 @@ export function backupIfDue(home: string, now = Date.now()): string | null {
   return createBackup(home, now);
 }
 
+export interface BackgroundBackupControl {
+  /** Runs in the backup worker, yielding/throttling and observing shared broker pressure. */
+  checkpoint: () => void;
+}
+
+/** Bounded page/file I/O for automatic backups. Partial snapshots remain preserved on every failure. */
+export async function backupIfDueBackground(home: string, control: BackgroundBackupControl, now = Date.now()): Promise<string | null> {
+  const interval = retentionLimit(BACKUP_INTERVAL_ENV, DEFAULT_BACKUP_INTERVAL_MS);
+  if (!interval || now - (listBackups(home)[0]?.createdAt ?? 0) < interval) return null;
+  control.checkpoint();
+  if (typeof sqlite.backup !== "function") throw new Error("Automatic backup deferred: incremental SQLite backup requires a newer Node runtime; existing data is untouched");
+  const release = storageLease(home);
+  const root = join(home, BACKUPS_DIR_NAME);
+  const name = `${BACKUP_PREFIX}${String(now).padStart(13, "0")}-${randomUUID()}`;
+  const staging = join(root, `.pending-${name}`);
+  const manifest: BackupManifest = { version: BACKUP_MANIFEST_VERSION, createdAt: now, files: [] };
+  try {
+    mkdirSync(staging, { recursive: true, mode: 0o700 });
+    const checksum = async (file: string) => {
+      const handle = await open(file, "r");
+      const hash = createHash("sha256");
+      const buffer = Buffer.allocUnsafe(256 * 1024);
+      let bytes = 0;
+      try {
+        for (;;) {
+          control.checkpoint();
+          const read = await handle.read(buffer, 0, buffer.length, bytes);
+          if (!read.bytesRead) break;
+          hash.update(buffer.subarray(0, read.bytesRead)); bytes += read.bytesRead;
+        }
+      } finally { await handle.close(); }
+      return { bytes, sha256: hash.digest("hex") };
+    };
+    const capture = async (source: string, database: boolean) => {
+      control.checkpoint();
+      const path = relative(home, source).split(sep).join("/");
+      const target = join(staging, path);
+      mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+      if (database) {
+        const db = new sqlite.DatabaseSync(source, { readOnly: true, timeout: 100 });
+        try {
+          // Pin a WAL-inclusive source view; sustained pressure aborts and releases it.
+          db.exec("BEGIN"); db.prepare("PRAGMA schema_version").get();
+          const version = db.prepare("PRAGMA user_version").get()!.user_version;
+          await sqlite.backup(db, target, { rate: 32, progress: () => control.checkpoint() });
+          db.exec("ROLLBACK");
+          const copied = new sqlite.DatabaseSync(target, { readOnly: true, timeout: 100 });
+          try {
+            if (copied.prepare("PRAGMA user_version").get()!.user_version !== version) throw new Error(`Backup version verification failed: ${path}`);
+            copied.prepare("SELECT count(*) FROM sqlite_master").get();
+          } finally { copied.close(); }
+        } finally { db.close(); }
+      } else {
+        const sourceHandle = await open(source, "r");
+        let targetHandle: Awaited<ReturnType<typeof open>> | undefined;
+        try {
+          targetHandle = await open(target, "wx", 0o600);
+          const length = (await sourceHandle.stat()).size;
+          const buffer = Buffer.allocUnsafe(256 * 1024);
+          for (let at = 0; at < length;) {
+            control.checkpoint();
+            const chunk = await sourceHandle.read(buffer, 0, Math.min(buffer.length, length - at), at);
+            if (!chunk.bytesRead) throw new Error(`Backup source shortened during capture: ${path}`);
+            for (let written = 0; written < chunk.bytesRead;) {
+              const result = await targetHandle.write(buffer, written, chunk.bytesRead - written, at + written);
+              if (!result.bytesWritten) throw new Error(`Backup write made no progress: ${path}`);
+              written += result.bytesWritten;
+            }
+            at += chunk.bytesRead;
+          }
+          await targetHandle.sync();
+        } finally { await sourceHandle.close(); await targetHandle?.close(); }
+      }
+      control.checkpoint(); syncFile(target);
+      const first = await checksum(target);
+      const verified = await checksum(target);
+      if (first.bytes !== verified.bytes || first.sha256 !== verified.sha256) throw new Error(`Backup checksum verification failed: ${path}`);
+      manifest.files.push({ path, ...verified });
+    };
+    // Source files are immutable snapshots before checksums; archives follow primary capture.
+    for (const name of USER_DATABASES) if (existsSync(join(home, name))) await capture(join(home, name), true);
+    for (const file of jsonStoreFiles(home)) await capture(file, false);
+    control.checkpoint();
+    writeFileSync(join(staging, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+    syncFile(join(staging, MANIFEST_NAME));
+    const published = join(root, name);
+    renameSync(staging, published);
+    const retention = retentionLimit(BACKUP_RETENTION_ENV, DEFAULT_BACKUP_RETENTION);
+    if (retention) for (const previous of listBackups(home).slice(retention)) {
+      control.checkpoint();
+      const cold = join(root, "archive"); mkdirSync(cold, { recursive: true, mode: 0o700 });
+      renameSync(previous.path, join(cold, previous.path.split(/[\\/]/).at(-1)!));
+    }
+    return published;
+  } catch (error) {
+    if (existsSync(staging)) writeFileSync(join(staging, "failure.json"), JSON.stringify({ version: 1, at: Date.now(), error: String(error) }) + "\n", { flag: "wx", mode: 0o600 });
+    throw error;
+  } finally { release(); }
+}
+
 function allowedPath(path: string): boolean {
-  return path === DB_FILE_NAME || path === ARCHIVE_DB_NAME ||
+  return USER_DATABASES.some(name => path === name) ||
     (/^[\w.-]+\.json$/.test(path) && !["dashboard.json"].includes(path)) ||
     /^(jobs|runs|archive|read-state|job-outcomes|local-result-receipts)\/[\w./-]+$/.test(path) && !path.split("/").some((s) => s === ".." || s === ".") &&
       /\.jsonl?(?:-\d+-[\w-]+)?$/.test(path);
@@ -122,7 +229,7 @@ function createRecovery(home: string): string {
   const root = join(home, BACKUPS_DIR_NAME, `recovery-${Date.now()}-${randomUUID()}`);
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const files = jsonStoreFiles(home);
-  for (const name of [DB_FILE_NAME, ARCHIVE_DB_NAME]) for (const suffix of ["", "-wal", "-shm", "-journal"]) {
+  for (const name of USER_DATABASES) for (const suffix of ["", "-wal", "-shm", "-journal"]) {
     const file = join(home, name + suffix);
     if (existsSync(file)) files.push(file);
   }

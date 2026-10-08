@@ -24,19 +24,20 @@ recovery. Repair and restore refuse registered live writers; stop bridge session
 first. Writer leases survive crashes and are checked by PID, never expired just by age. A leftover
 `.maintenance-lock` after a crash must be inspected and removed manually with all processes stopped.
 
-Snapshots use `VACUUM INTO`, verify SQLite integrity, flush files and publish a checksummed
+Manual snapshots use `VACUUM INTO`, verify SQLite integrity, flush files and publish a checksummed
 manifest only after capture succeeds. Incomplete attempts remain under `backups/.pending-*`.
 SQLite snapshots include committed WAL pages; JSON captures preserve complete file bytes.
 Each file is consistent, while separate stores may represent nearby instants during live activity.
 Active stores are captured before archives so archive moves cannot remove the only backup copy.
-Snapshots cover primary/archive databases and JSON stores/metadata, including archived jobs
+Snapshots cover primary/archive, history, owner-question and compatibility databases, plus JSON stores/metadata, including archived jobs
 and the durable read journal.
 Run log text, the bridge authentication token and the dashboard launch secret are not part of the
 rotating snapshot. Keep the entire data directory in normal filesystem backups if you need them.
-The 0.30.0 split adds independently versioned `history.db` and protected
-`.migration-snapshots/`; owner questions use `owner-questions.db`. The rotating
-`doctor --backup` database set covers `bridge.db` and `archive.db`, so retain these
-additional stores with the full data directory too. See [conversation storage](../conversation-storage/).
+Automatic snapshots run in a separate worker after the broker is listening. Incremental
+SQLite page copies and streaming checksum batches yield under broker pressure. They do not
+copy or hash whole databases on the broker's request thread. Protected migration artifacts
+under `.migration-snapshots/` remain outside automatic rotation; retain the full data directory
+in filesystem backups too. See [conversation storage](../conversation-storage/).
 
 | Environment variable | Default | Meaning |
 |---|---|---|
@@ -62,6 +63,10 @@ A savepoint restores the schema and the backup restores original table contents.
 fails, the transaction rolls back and the backup remains available. Message archival commits the
 cold copy before primary removal: an interruption can leave duplicates, never neither copy.
 Conflicting immutable message identities prevent archival instead of overwriting history.
+The additive v8→v9 step retains a specifically labelled schema-and-metadata snapshot of its
+inputs, preserving all legacy history rows without copying the whole database at startup.
+That scoped artifact is never advertised as a full backup. While older readers defer an
+upgrade, a new broker can host the existing schema with retained supplemental metadata.
 Completed approval question metadata also moves into `approvals/archive/`; its private expired
 capability stays out of the active approval list and rotating snapshots.
 
@@ -79,4 +84,4 @@ Authenticated dashboard contracts (existing cookie and Host guards):
 
 Research: [SQLite VACUUM INTO](https://www.sqlite.org/lang_vacuum.html) documents consistent
 snapshots and interruption behavior. [Node SQLite backup API](https://nodejs.org/api/sqlite.html#sqlitebackupsource-db-path-options)
-was added in Node 22.16; `VACUUM INTO` also supports this project's Node 22.13 minimum.
+was added in Node 22.16, the project's minimum supported runtime.

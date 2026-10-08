@@ -6,8 +6,7 @@ import { isQuietMessage, SIBLING_CONVERSATION_PREFIX, type AgentKind, type Bridg
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { archiveDbPath, archiveMessages, openArchive } from "./sqlite-maintenance.js";
 import { storageLease } from "./storage-lock.js";
-import { backupIfDue, BACKUP_INTERVAL_ENV, DEFAULT_BACKUP_INTERVAL_MS } from "./backups.js";
-import { retentionLimit } from "./json-store.js";
+import { BackupBackground } from "./backup-background.js";
 import { historySchema } from "./history-schema.js";
 import { CONVERSATION_MIGRATION } from "./conversation-schema.js";
 import { HistoryIndex } from "./history.js";
@@ -15,8 +14,7 @@ import { historyDbPath, openHistoryStore } from "./history-store.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 import { configureSqlite, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BUSY_MS } from "./sqlite-policy.js";
-
-const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1_000;
+import { attachStoreCompatibility } from "./store-compatibility-overlay.js";
 
 export const SQLITE_STORE_VERSION = 9;
 
@@ -96,7 +94,7 @@ const MIGRATIONS = [
     PRAGMA user_version = 7;
   ` },
   { version: 8, sql: CONVERSATION_MIGRATION },
-  { version: 9, sql: `
+  { version: 9, backupTables: ["peer_names"], sql: `
     CREATE TABLE IF NOT EXISTS peer_last_seen (
       name TEXT PRIMARY KEY, seen_at INTEGER NOT NULL
     );
@@ -159,7 +157,7 @@ export class MessageStore {
   private readonly release: () => void;
   private readonly home: string | null;
   private readonly writeAbort = new AbortController();
-  private backupTimer: ReturnType<typeof setInterval> | null = null;
+  private backups: BackupBackground | null = null;
   private closed = false;
   readonly decisions: DecisionStore;
   readonly history: HistoryIndex;
@@ -187,7 +185,15 @@ export class MessageStore {
     try { this.db = new DatabaseSync(file); }
     catch (err) { this.release(); throw err; }
     try {
-      migrateMessageSchema(this.db, file, existed, log);
+      let deferred = false;
+      try { migrateMessageSchema(this.db, file, existed, log); }
+      catch (error) {
+        const version = Number(this.db.prepare("PRAGMA user_version").get()!.user_version);
+        if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED" || version < 4) throw error;
+        deferred = true;
+        log.info("hosting broker on compatible existing schema while upgrade waits for retained readers", { file, version, target: SQLITE_STORE_VERSION });
+      }
+      if (file !== ":memory:") attachStoreCompatibility(this.db, file, log, deferred);
       configureSqlite(this.db);
     } catch (err) {
       this.db.close();
@@ -229,19 +235,12 @@ export class MessageStore {
         AND conversation_id NOT LIKE 'files-progress-%' ORDER BY created_at, id LIMIT 50`),
     };
     log.debug("message store opened", { file });
-    if (file !== ":memory:") {
-      try { backupIfDue(dirname(file)); }
-      catch (err) { log.warn("automatic backup failed", { err: String(err) }); }
-      const interval = retentionLimit(BACKUP_INTERVAL_ENV, DEFAULT_BACKUP_INTERVAL_MS);
-      if (interval) {
-        this.backupTimer = setInterval(() => {
-          try { backupIfDue(dirname(file)); }
-          catch (err) { log.warn("automatic backup failed", { err: String(err) }); }
-        }, Math.min(interval, BACKUP_CHECK_INTERVAL_MS));
-        this.backupTimer.unref();
-      }
-    }
   }
+
+  startBackups(): void { if (this.home && !this.backups) this.backups = new BackupBackground(this.home, this.log); }
+  backupPressure(pending: boolean, lockError = false): void { this.backups?.pressure(pending, lockError); }
+  backupStatus(): import("./backup-background.js").BackupHealth | null { return this.backups?.status() ?? null; }
+  async closeBackups(): Promise<void> { await this.backups?.close(); this.backups = null; }
 
   /** Append identities learned from hooks; previous session bindings remain retained. */
   rememberSession(peer: PeerInfo, at: number): void {
@@ -502,10 +501,6 @@ export class MessageStore {
   purgeOlderThan(cutoff: number): number {
     const n = archiveMessages(this.db, this.archiveDb, "created_at < ?", [cutoff], "expired");
     if (n > 0) this.log.info("archived expired messages", { count: n });
-    if (this.home) {
-      try { backupIfDue(this.home); }
-      catch (err) { this.log.warn("automatic backup failed", { err: String(err) }); }
-    }
     return n;
   }
 
@@ -517,7 +512,7 @@ export class MessageStore {
     this.stopWrites();
     this.history.close();
     if (this.historyDb !== this.db) this.historyDb.close();
-    if (this.backupTimer) clearInterval(this.backupTimer);
+    void this.closeBackups();
     try {
       this.db.close();
       this.archiveDb.close();

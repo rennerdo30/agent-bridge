@@ -23,7 +23,7 @@ import { ReadJournal } from "./read-journal.js";
 import { recordLocalResult } from "./local-result-receipts.js";
 import { MessageStore, SQLITE_STORE_VERSION } from "./store.js";
 import { JSON_STORE_VERSION } from "./json-store.js";
-import { recordStorePeer } from "./store-compatibility.js";
+import { recordStorePeer, refreshStorePeerIdentities } from "./store-compatibility.js";
 import { parentProcessIdentity } from "./process-identity.js";
 import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import type { NetworkConfig } from "../network/config.js";
@@ -262,6 +262,9 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (this.broker) return true;
     let store: MessageStore;
     try {
+      // Unverified living readers conservatively defer upgrades; process
+      // discovery must not delay hosting their existing compatible schema.
+      if (this.opts.dbPath !== ":memory:") void refreshStorePeerIdentities(dirname(this.opts.dbPath)).catch(error => this.log.debug("store reader identity refresh deferred", { err: String(error) }));
       store = new MessageStore(this.opts.dbPath, this.log.child("store"));
     } catch (err) {
       if (["EBUSY", "SQLITE_BUSY", "STORE_UPGRADE_DEFERRED"].includes(errCode(err)) || /database is locked/.test(String((err as Error).message))) {
@@ -304,14 +307,20 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private async adopt(client: BridgeClient): Promise<void> {
     client.on("event", (ev, data) => this.onEvent(ev, data));
+    let brokerVersion: string | undefined;
     // Read presence before hello can trigger writes in a newer broker.
     try {
       await client.request("auth", { protocol: PROTOCOL_VERSION, token: this.opts.token });
+      brokerVersion = (await client.request("ping", {})).brokerVersion;
       if (this.opts.dbPath !== ":memory:") for (const peer of await client.request("peers", {})) recordStorePeer(dirname(this.opts.dbPath), peer);
     } catch (error) { client.close(); throw error; }
     const agentStartedAt = this.opts.jobAgent ? null : await parentProcessIdentity();
     const args = this.helloArgs();
-    const hello = await client.request("hello", { ...args, peer: { ...args.peer, agentStartedAt } }).catch((err) => {
+    // Older brokers publish hello capabilities directly to their observers,
+    // which then rewrite each foreign PID record using their legacy shape.
+    // Our own explicit record already protects upgrades before registration.
+    const hello = await client.request("hello", { ...args, peer: { ...args.peer, agentStartedAt,
+      storeCapabilities: brokerVersion === APP_VERSION ? args.peer.storeCapabilities : undefined } }).catch((err) => {
       client.close();
       throw err;
     });
@@ -348,6 +357,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number; sessionId?: string | null }): void {
     this.client = client;
     this.currentName = hello.name;
+    this.recordOwnStorePeer();
     if (!this.sessionId && hello.sessionId) {
       this.sessionId = hello.sessionId;
       this.restoreReadState(`session:${this.sessionId}`);
@@ -419,6 +429,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   /** quiet: not part of a conversation of this agent (no listen window, replies are not awaited), e.g. control messages to a job runner. */
   send(args: SendArgs, opts: { quiet?: boolean } = {}): Promise<SendResult> {
+    const request = { ...args, dedupeKey: args.dedupeKey || randomUUID() };
+    const messageId = args.messageId ?? (args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) && this.opts.jobAgent
+      ? completionMessageId(this.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length))
+      : args.dedupeKey ? completionMessageId(`send:${this.name}`, args.dedupeKey) : randomUUID());
+    let submitted = false;
     return this.withClient(async (c) => {
       if (args.ifNoNewerThan) {
         // inbox marks consumed locally before its batched ack. A guarded reply must observe
@@ -430,15 +445,22 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
           ids.forEach(id => this.unflushedAcks.delete(id));
         }
       }
-      const request = { ...args, dedupeKey: args.dedupeKey || randomUUID() };
+      submitted = true;
       const res = args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) && !args.messageId
         ? await this.sendRequest(c, "send", request)
-        : await this.trackedSend(c, { ...request, messageId: args.messageId ?? (args.dedupeKey ? completionMessageId(`send:${this.name}`, args.dedupeKey) : randomUUID()) }, Boolean(args.messageId));
+        : await this.trackedSend(c, { ...request, messageId }, Boolean(args.messageId));
       if (opts.quiet) return res;
       this.lastSent = Date.now();
       if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
       if (this.asked.size > QUESTION_ID_MEMORY) this.asked.delete(this.asked.values().next().value!);
       return res;
+    }).catch((error) => {
+      if (submitted) throw error;
+      // Connection/guarded-ack failure precedes submission. A caller-supplied
+      // identity may nevertheless refer to a previously stored attempt.
+      throw new BridgeError(error instanceof BridgeError ? error.code : "internal",
+        `This send attempt was not submitted; message ${messageId} storage state is unknown: ${(error as Error).message}. Query send_status or retry send with message_id="${messageId}".`,
+        { ...(error instanceof BridgeError ? error.details : {}), messageId, state: "unknown", submitted: false });
     });
   }
 
@@ -457,7 +479,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       }
       if (!(error instanceof Error) || error.message !== "broker request timed out: trackedSend") {
         if (error instanceof BridgeError) throw error;
-        throw new BridgeError("internal", `Storage cannot be confirmed for message ${args.messageId}: ${(error as Error).message}. Query send_status(message_id="${args.messageId}") or retry send with the same message_id.`, { messageId: args.messageId, state: "unconfirmed" });
+        throw new BridgeError("internal", `Storage cannot be confirmed for message ${args.messageId}; storage state is unknown: ${(error as Error).message}. Query send_status(message_id="${args.messageId}") or retry send with the same message_id.`, { messageId: args.messageId, state: "unknown" });
       }
       try { return await client.request("trackedSend", args); }
       catch (retryError) {
@@ -475,10 +497,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
             return { messages: [message], deliveredTo: [], queuedFor: [],
               storage: { id: state.id, state: "stored", recovered: true, receipts: state.receipts } };
           }
-          throw new BridgeError("timeout", `Message ${state.id} is ${state.state} as of ${new Date(state.checkedAt).toISOString()}; an outstanding request can still store it. Query send_status(message_id="${state.id}") or retry send with the same message_id.`, { messageId: state.id, state: state.state });
+          throw new BridgeError("timeout", `Message ${state.id} storage state is unknown; this local broker reports ${state.state} as of ${new Date(state.checkedAt).toISOString()}. An outstanding or remote request can still store it. Query send_status(message_id="${state.id}") or retry send with the same message_id.`, { messageId: state.id, state: "unknown", localState: state.state });
         } catch (lookupError) {
           if (lookupError instanceof BridgeError && lookupError.details?.messageId) throw lookupError;
-          throw new BridgeError("timeout", `Storage cannot be confirmed for message ${args.messageId}: broker lookup unavailable. Query send_status(message_id="${args.messageId}") or retry send with the same message_id; use a new id only for a new message.`, { messageId: args.messageId, state: "unconfirmed", cause: String(retryError) });
+          throw new BridgeError("timeout", `Storage cannot be confirmed for message ${args.messageId}; storage state is unknown: broker lookup unavailable. Query send_status(message_id="${args.messageId}") or retry send with the same message_id; use a new id only for a new message.`, { messageId: args.messageId, state: "unknown", cause: String(retryError) });
         }
       }
     }
@@ -488,10 +510,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private async sendRequest<O extends "send" | "sendSibling" | "guardedSend">(client: BridgeClient, op: O, args: RequestMap[O][0]): Promise<SendResult> {
     try { return await client.request(op, args); }
     catch (err) {
-      if ((err as Error).message !== `broker request timed out: ${op}`) throw err;
+      if ((err as Error).message !== `broker request timed out: ${op}`) {
+        if (err instanceof BridgeError && err.code !== "internal" && err.code !== "timeout") throw err;
+        throw new BridgeError(err instanceof BridgeError ? err.code : "internal", `Message storage state is unknown after ${op}: ${(err as Error).message}. This legacy operation has no durable send_status identity; check inbox/history before resending.`, { ...(err instanceof BridgeError ? err.details : {}), state: "unknown", dedupeKey: args.dedupeKey });
+      }
       try { return await client.request(op, args); }
       catch (retryError) {
-        throw new Error(`Delivery is unconfirmed after a timed-out ${op}. Check inbox/history before resending. ${(retryError as Error).message}`, { cause: retryError });
+        throw new BridgeError("timeout", `Message storage state is unknown after a timed-out ${op}. This legacy operation has no durable send_status identity; check inbox/history before resending. ${(retryError as Error).message}`, { state: "unknown", dedupeKey: args.dedupeKey });
       }
     }
   }
@@ -512,6 +537,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   peers(): Promise<PeerInfo[]> {
     return this.withClient((c) => c.request("peers", {})).then((peers) => peers.filter((p) => !isPluginCacheCwd(p.cwd)));
+  }
+
+  health(): Promise<import("./health.js").BrokerHealth> {
+    const started = performance.now();
+    return this.withClient(c => c.request("health", {})).then(health => ({ ...health, roundTripMs: performance.now() - started }));
   }
 
   brokerLoad() {
@@ -582,7 +612,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   sendSibling(args: SendArgs, maxHops: number): Promise<SendResult> {
-    return this.withClient((c) => this.sendRequest(c, "sendSibling", { ...args, maxHops, dedupeKey: args.dedupeKey || randomUUID() }));
+    let submitted = false;
+    return this.withClient((c) => {
+      submitted = true;
+      return this.sendRequest(c, "sendSibling", { ...args, maxHops, dedupeKey: args.dedupeKey || randomUUID() });
+    }).catch(error => {
+      if (submitted) throw error;
+      throw new BridgeError(error instanceof BridgeError ? error.code : "internal", `This sibling send attempt was not submitted; message storage state is unknown: ${(error as Error).message}. Check inbox/history for previous attempts before resending.`, { state: "unknown", submitted: false });
+    });
   }
 
   async updateJob(patch: { jobParent?: string; jobTitle?: string }): Promise<void> {
@@ -757,6 +794,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.sessionId = sessionId;
     // The broker may hand us the name of an older server of this session that we replace.
     if (this.isConnected) this.currentName = (await this.client!.request("updatePeer", { sessionId })).name;
+    this.recordOwnStorePeer();
     if (sessionId) this.restoreReadState(`session:${sessionId}`);
     this.notificationWaitsChanged();
   }
@@ -803,5 +841,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       const peer = await this.client!.request("updatePeer", { cwd, ...(name ? { name } : {}) });
       this.currentName = peer.name;
     }
+    this.recordOwnStorePeer();
+  }
+
+  private recordOwnStorePeer(): void {
+    if (this.opts.dbPath !== ":memory:") recordStorePeer(dirname(this.opts.dbPath), { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION } }, { authoritative: true });
   }
 }

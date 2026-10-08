@@ -1,7 +1,7 @@
 import { canonicalProjectRoot, migrateProjectJobs } from "../core/project-identity.js";
 import { canControlJob } from "../core/job-ownership.js";
 import { randomUUID } from "node:crypto";
-import { closeSync, mkdirSync, openSync, rmSync, statSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 import { dirname } from "node:path";
 import { DEFAULT_MAX_JOBS, DELEGATION_METADATA_VERSION } from "../core/constants.js";
 import { DelegateError, failureCause, type DelegateResult } from "../core/delegate.js";
@@ -18,6 +18,7 @@ import { notifyJobEvent } from "../core/notifications.js";
 import { RootConcurrency } from "../core/root-concurrency.js";
 import { completionMessageId } from "../core/completion.js";
 import { recoverJobRecord } from "../core/job-recovery.js";
+import { metadataFileLease } from "../core/metadata-file-lease.js";
 
 const JOB_ID_LENGTH = 8;
 const PROMPT_PREVIEW_CHARS = 120;
@@ -305,6 +306,13 @@ export interface JobLineage {
   escalate: (body: string) => Promise<void>;
 }
 
+export interface JobRestorePolicy {
+  /** Automatic restoration requires a settled, interactive session identity. */
+  canRestore: () => boolean;
+  /** A durable explicit handoff may authorize a connected otherwise transient coordinator. */
+  canReceiveHandoff: () => boolean;
+}
+
 export class JobManager {
   private readonly running = new Map<string, Job>();
   private readonly foreground = new Map<string, Job>();
@@ -333,6 +341,7 @@ export class JobManager {
     /** Background subagents running at once (config maxJobs; max_subagents changes it while the session runs). */
     private maxJobs: number = DEFAULT_MAX_JOBS,
     private readonly lineage?: JobLineage,
+    private readonly restorePolicy?: JobRestorePolicy,
   ) {
     node.on("shared_job_control", async ({ job: name, control }: { job: string; control: RunnerControl }) => {
       await this.share(name);
@@ -410,7 +419,7 @@ export class JobManager {
 
   /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
   persist(): void {
-    if (!this.storePath || this.dormant) return;
+    if (!this.storePath || this.dormant || !this.own.size) return;
     if (this.persistTimer) { clearTimeout(this.persistTimer); this.persistTimer = null; }
     let lock = () => {};
     try {
@@ -458,8 +467,13 @@ export class JobManager {
         ...finished.filter((j) => age > 0 && typeof j.finishedAt === "number" && j.finishedAt < Date.now() - age),
       ]);
       if (overflow.size) {
-        archiveJobs(this.storePath, [...overflow]);
-        this.log.info("archived finished jobs", { count: overflow.size });
+        // A stale session may still hold finished records already retained elsewhere.
+        // Preserve changed records, but do not republish identical archives per node.
+        const unpublished = [...overflow].filter(job => !isDeepStrictEqual(archived.get(job.id), job));
+        if (unpublished.length) {
+          archiveJobs(this.storePath, unpublished);
+          this.log.info("archived finished jobs", { count: unpublished.length });
+        }
       }
       writeJsonStore(this.storePath, { ...(isRecord(previous) ? previous : {}), jobs: all.filter((j) => !overflow.has(j as StoredJob)) }, previous);
     } catch (err) {
@@ -482,6 +496,7 @@ export class JobManager {
       if (parent?.rootSession && parent.rootName) { this.lineage.rootSession = parent.rootSession; this.lineage.rootName = parent.rootName; }
     }
     for (const s of stored) {
+      if (!this.own.has(s.id) && !this.canRestoreSaved(s)) continue;
       const directlyOwned = this.lineage ? s.parentJob === this.lineage.parentJob : this.isMine(s.owner) && !s.parentJob;
       if (!s.ownershipHistory?.length && (!directlyOwned || this.running.has(s.id) || this.foreground.has(s.id) || s.status === "running" && !s.host)) continue;
       let job = this.history.get(s.id);
@@ -533,6 +548,7 @@ export class JobManager {
     // The newest ones, plus every job still marked running however old (its runner may still be at work).
     const recentIds = new Set(stored.slice(-HISTORY_LIMIT).map((s) => s.id));
     for (const s of stored.filter((x) => recentIds.has(x.id) || x.status === "running" || x.waitingForStart)) {
+      if (!this.canRestoreSaved(s)) continue;
       if (this.lineage && s.parentJob !== this.lineage.parentJob) continue;
       if (!this.lineage && s.parentJob) continue;
       if (this.history.has(s.id)) continue;
@@ -654,13 +670,27 @@ export class JobManager {
     return owner !== this.node.name && (owner === base || (owner.startsWith(`${base}-`) && /^\d+$/.test(owner.slice(base.length + 1))));
   }
 
+  private canRestoreSaved(job: StoredJob): boolean {
+    if (!this.restorePolicy || this.restorePolicy.canRestore()) return true;
+    const handoff = job.ownershipHistory?.at(-1);
+    const session = this.node.currentSessionId ?? this.node.id;
+    return Boolean(this.restorePolicy.canReceiveHandoff() && handoff?.reason === "explicit-handoff" &&
+      handoff.to === this.node.name && handoff.rootSession === session && this.isMine(job.owner) && !job.parentJob);
+  }
+
+  standInOwners(online: ReadonlySet<string>): string[] {
+    if (this.dormant || this.restorePolicy && !this.restorePolicy.canRestore()) return [];
+    return [...new Set([...this.history.values()].map(j => j.owner).filter((owner): owner is string =>
+      Boolean(owner) && this.isStandIn(owner!) && !online.has(owner!)))];
+  }
+
   /**
    * A reload can run a session briefly under a "-N" stand-in name; jobs started then carry it. Once on the
    * bridge, adopt those whose stand-in name no live peer holds (a live "-2" is another session of the folder).
    */
-  adoptStandIns(online: ReadonlySet<string>): string[] {
+  adoptStandIns(online: ReadonlySet<string>, verifiedGone: ReadonlySet<string> = new Set()): string[] {
     if (this.dormant) return [];
-    const owners = new Set([...this.history.values()].map((j) => j.owner).filter((o): o is string => Boolean(o) && this.isStandIn(o!) && !online.has(o!)));
+    const owners = new Set(this.standInOwners(online).filter(owner => verifiedGone.has(owner)));
     if (!owners.size) return [];
     for (const o of owners) this.adoptedOwners.add(o);
     this.assignLegacySupervisors();
@@ -1350,30 +1380,15 @@ export function readStore(path: string, log?: Logger, includeArchived = false): 
 }
 
 const LOCK_WAIT_MS = 2_000;
-const LOCK_STALE_MS = 10_000;
-const LOCK_RETRY_MS = 20;
 
 /**
  * Serialize read-merge-write of the job store across sessions (processes). Returns the release function.
  * Gives up waiting after a short time (saving is best effort) and breaks locks left by a crashed process.
  */
 export function acquireLock(path: string, waitMs = LOCK_WAIT_MS): () => void {
-  mkdirSync(dirname(path), { recursive: true });
-  const deadline = Date.now() + waitMs;
-  const pause = new Int32Array(new SharedArrayBuffer(4));
-  for (;;) {
-    try {
-      closeSync(openSync(path, "wx"));
-      return () => rmSync(path, { force: true });
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      try {
-        if (Date.now() - statSync(path).mtimeMs > LOCK_STALE_MS) rmSync(path, { force: true });
-      } catch {
-        // gone meanwhile
-      }
-      if (Date.now() >= deadline) throw Object.assign(new Error("timed out locking jobs store"), { code: "EJOBLOCKED" });
-      Atomics.wait(pause, 0, 0, LOCK_RETRY_MS);
-    }
+  try { return metadataFileLease(path, waitMs, waitMs === 0); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ELEASEBUSY") throw error;
+    throw Object.assign(new Error("timed out locking jobs store"), { code: "EJOBLOCKED" });
   }
 }

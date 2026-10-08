@@ -256,7 +256,8 @@ describe("jobs of a session under a stand-in name", () => {
     second.adoptStandIns(new Set(["claude-f", "claude-f-2"]));
     expect(second.recent().map((j) => j.name)).not.toContain(done.name);
     // Gone (a reload's stand-in): its jobs are this session's.
-    second.adoptStandIns(new Set(["claude-f"]));
+    await standIn.stop();
+    second.adoptStandIns(new Set(["claude-f"]), new Set(["claude-f-2"]));
     expect(second.recent().map((j) => j.name)).toContain(done.name);
     second.cancelAll();
     first.cancelAll();

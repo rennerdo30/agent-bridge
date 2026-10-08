@@ -1,11 +1,23 @@
 import { appendFileSync, mkdirSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readJsonSnapshot } from "../src/core/file-cache.js";
 import { listRuns, readStoredJobs } from "../src/core/dashboard-read.js";
 import { readArchivedJobs } from "../src/core/job-archive.js";
 import { readHistoryJobs, readHistoryJson } from "../src/core/run-history.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+const reads = vi.hoisted(() => ({ files: [] as string[], failOnce: "" }));
+vi.mock("node:fs", async (original) => {
+  const fs = await original<typeof import("node:fs")>();
+  return { ...fs, readFileSync: (...args: Parameters<typeof fs.readFileSync>) => {
+    reads.files.push(String(args[0]));
+    if (String(args[0]) === reads.failOnce) {
+      reads.failOnce = "";
+      throw Object.assign(new Error("temporary sharing failure"), { code: "EACCES" });
+    }
+    return fs.readFileSync(...args);
+  } };
+});
 
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
@@ -56,9 +68,56 @@ describe("read-only performance caches", () => {
     const archived = readArchivedJobs(active); archived[0]!.owner = "poisoned";
     expect(readArchivedJobs(active)[0]?.owner).toBe("older");
     store(archive, { jobs: [{ id: "a", name: "job-a", owner: "updated" }] });
-    expect(readArchivedJobs(active)[0]?.owner).toBe("updated");
+    expect(readArchivedJobs(active).find(job => job.id === "a")?.owner).toBe("updated");
     writeFileSync(archive, "corrupt");
     expect(() => readArchivedJobs(active)).toThrow();
     expect(readFileSync(archive, "utf8")).toBe("corrupt");
+  });
+
+  it("checks archive/run stat signatures without rereading an evicted unchanged corpus", () => {
+    const root = join(env.home, "archive"), runs = join(env.home, "runs");
+    mkdirSync(root); mkdirSync(runs);
+    const active = join(env.home, "jobs.json"), archive = join(root, "jobs-1.json");
+    const log = join(runs, "2026-10-01-00-00-00-codex-abc.log"), meta = log.replace(/\.log$/, ".json");
+    store(archive, { jobs: [{ id: "a", name: "job-a", owner: "owner" }] });
+    store(meta, { title: "retained" });
+    writeFileSync(log, "00:00:00 codex\n00:00:01 finished after 1s · done\n");
+    readArchivedJobs(active); listRuns(env.home);
+    // Evict the raw JSON cache with unrelated entries. The projections must still
+    // test their stat signatures before asking that cache to parse any file.
+    for (let i = 0; i < 2050; i++) {
+      const file = join(env.home, `unrelated-${i}.json`); store(file, { i }); readJsonSnapshot(file);
+    }
+    reads.files = [];
+    expect(readArchivedJobs(active)[0]?.name).toBe("job-a");
+    expect(listRuns(env.home).find(run => run.hasLog)?.title).toBe("retained");
+    expect(reads.files.filter(file => [archive, meta, log].includes(file))).toEqual([]);
+    store(meta, { title: "changed" });
+    expect(listRuns(env.home).find(run => run.hasLog)?.title).toBe("changed");
+    expect(reads.files).toContain(meta);
+  });
+
+  it("retries transient job and metadata read failures without needing a stat change", () => {
+    const active = join(env.home, "jobs.json"), root = join(env.home, "runs"); mkdirSync(root);
+    const log = join(root, "2026-10-01-00-00-00-codex-abc.log"), meta = log.replace(/\.log$/, ".json");
+    store(active, { jobs: [{ id: "a", name: "job-a", owner: "present" }] });
+    reads.failOnce = active;
+    expect(readHistoryJobs(env.home).has("job-a")).toBe(false);
+    expect(readHistoryJobs(env.home).get("job-a")?.owner).toBe("present");
+    store(meta, { title: "available" });
+    writeFileSync(log, "00:00:00 codex\n00:00:01 finished after 1s · done\n");
+    reads.failOnce = meta;
+    expect(listRuns(env.home).find(run => run.hasLog)?.title).toBeUndefined();
+    expect(listRuns(env.home).find(run => run.hasLog)?.title).toBe("available");
+  });
+
+  it("retains and reports malformed bytes without rereading them on every poll", () => {
+    const active = join(env.home, "jobs.json");
+    writeFileSync(active, "malformed retained bytes");
+    reads.files = [];
+    for (let i = 0; i < 5; i++) expect(readHistoryJobs(env.home).size).toBe(0);
+    expect(reads.files.filter(file => file === active)).toHaveLength(1);
+    store(active, { jobs: [{ name: "repaired", id: "repaired" }] });
+    expect(readHistoryJobs(env.home).has("repaired")).toBe(true);
   });
 });

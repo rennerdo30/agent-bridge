@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.30.2
+
+- Archive and run-history caches use file metadata before parsing; concurrent nodes publish identical finished-job archives once and preserve existing archives.
+- New sessions can host the existing store while upgrades wait for old runners. Process identities prevent stale reused PIDs from blocking upgrades, and the additive v8→v9 migration backs up only affected metadata.
+- Automatic backups and history migration run outside broker dispatch. History-only snapshots, persisted chunk cursors, incremental verification, pressure pauses and IO pacing preserve originals and resume after interruption. Verification failures require an explicit retry.
+- Worktree leases identify their owners and archive dead-owner lease metadata without touching checkout contents. Unknown legacy leases remain protected. Completed and continuable trees retain ignored cache links.
+- Transient Claude sessions cannot claim a live owner's jobs. Running turns survive owner handover and control failures, and result delivery refreshes its destination while retrying.
+- Paired transfers negotiate larger pipelined windows while messages take priority. Same-content message-id retries return stored delivery status; paired project addresses route to the available main session.
+- Health, status, doctor and the dashboard show cached migration and backup progress. Slow responses are distinguished from a stopped bridge; agent instructions direct status checks to tools.
+- Requires Node.js 22.16 or newer for incremental native SQLite backups.
+
 ## 0.30.1
 
 - Hotfix: the broker no longer rereads every archived job and run snapshot on each dashboard poll and peers refresh. The snapshot cache now covers the real working set and merged job history is reused while its files are unchanged, so `jobAuthority`, `pending`, `ack` and the dashboard stay responsive.

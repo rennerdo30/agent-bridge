@@ -22,7 +22,7 @@ agent-bridge connects the coding agents on your machine, and on PCs you pair, in
 
 ## Install
 
-Requires **Node.js 22.13+**. Install for every supported CLI it finds on your machine:
+Requires **Node.js 22.16+**. Install for every supported CLI it finds on your machine:
 
 ```bash
 npx -y github:rennerdo30/agent-bridge install

@@ -24,7 +24,6 @@ transcript bytes after reads. No automated test uses the owner's actual data roo
 | Source | Permitted removal and why it contains no unique user data |
 | --- | --- |
 | `core/json-store.ts` | Unpublished atomic-write `.tmp` file only. |
-| `mcp/jobs.ts` | Job-store `.lock` files, including stale locks. |
 | `core/storage-lock.ts` | Maintenance lock and empty per-process lease files. |
 | `core/migration-lock.ts` | Exclusive migration lock (PID and nonce only) on release, failed lock publication or confirmed exited owner; empty recovery coordination file. Never the database or snapshot. |
 | `core/notifications.ts` | Empty notification lock directory. |
@@ -42,6 +41,16 @@ transcript bytes after reads. No automated test uses the owner's actual data roo
 Approvals and completed wait records are not exceptions: they are archived.
 Run pruning and job overflow are not exceptions: they are archived. No removal
 or mutation is allowed in `src/core/transcripts/` or the history inspector.
+
+Job-store locks and worktree leases are also archived. Their versioned metadata
+records a process creation identity and a unique nonce. Complete metadata is
+published with an exclusive hard link, so interrupted publication cannot leave an
+empty canonical lock. Confirmed dead owners are claimed by an exact nonce rename
+before the canonical lock moves into its owner directory and that directory moves
+to a unique archive under `.metadata-leases/`. Original metadata bytes are retained;
+worktree contents are untouched. Live, unverifiable, malformed and legacy owners
+stay protected. Recovery never expires a live owner by age. Filesystems without
+hard-link support fail closed.
 
 ## Read-only owner-data audit
 

@@ -1,19 +1,32 @@
-import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { setTimeout as yieldBatch } from "node:timers/promises";
 import { historySchema } from "./history-schema.js";
 import { CONVERSATION_SCHEMA } from "./conversation-schema.js";
-import { configureSqlite } from "./sqlite-policy.js";
+import { configureSqlite, isSqliteBusy } from "./sqlite-policy.js";
 import { migrationLock } from "./migration-lock.js";
-import { snapshotDatabase } from "./sqlite-maintenance.js";
+import { resumableHistoryMigration, type HistoryMigrationOptions } from "./history-migration.js";
+export type { HistoryMigrationOptions } from "./history-migration.js";
 
 export const HISTORY_DB_NAME = "history.db";
 export const HISTORY_STORE_VERSION = 1;
 export const HISTORY_COPY_ROWS = 32;
 export const HISTORY_BATCH_MS = 50;
 export const HISTORY_COPY_BYTES = 512 * 1024;
+// Payload pacing is shared by snapshot, copy, and verification; SQLite's own page
+// and index overhead is additional. Pressure pauses further reduce actual I/O.
+export const HISTORY_IO_BYTES_PER_SECOND = 8 * 1024 * 1024;
+export interface HistoryMigrationProgress {
+  phase: "starting" | "snapshot" | "copy" | "verify" | "paused" | "failed" | "verified";
+  percent: number;
+  etaSeconds: number | null;
+  paused: boolean;
+  completedRows: number;
+  totalRows: number;
+  snapshot: string | null;
+  ioBytesPerSecond: number;
+  error: string | null;
+}
 export const HISTORY_TABLES = ["history_documents", "history_cursors", "history_files", "history_tags", "history_sessions", "history_pending", "conversations", "conversation_sources", "conversation_records", "conversation_parts", "conversation_projects", "conversation_memberships", "conversation_bindings", "conversation_envelopes"] as const;
 const quote = (s: string) => `"${s.replaceAll('"', '""')}"`;
 
@@ -59,87 +72,40 @@ export function openHistoryStore(file: string): DatabaseSync {
   } catch (err) { db.close(); throw err; }
 }
 
-type Row = Record<string, SQLInputValue>;
-function digestRow(hash: ReturnType<typeof createHash>, row: Row): void {
-  for (const [key, value] of Object.entries(row)) {
-    const bytes = value instanceof Uint8Array ? Buffer.from(value) : Buffer.from(String(value));
-    hash.update(`${key.length}:${key}:${value === null ? "null" : value instanceof Uint8Array ? "blob" : typeof value}:${bytes.length}:`);
-    hash.update(bytes);
+/** Durable snapshot/copy/verification chunks run only in the elected worker.
+ * Legacy rows and every interrupted snapshot generation are retained. */
+export async function migrateHistoryStore(bridge: string, target: DatabaseSync, shouldPause: () => boolean = () => false, stopped: () => boolean = () => false, onLease?: (owner: string | null) => void, retryFailed = false, options: HistoryMigrationOptions = {}): Promise<void> {
+  if (historyReady(target)) {
+    options.onProgress?.({ phase: "verified", percent: 100, etaSeconds: 0, paused: false, completedRows: 0, totalRows: 0, snapshot: null, ioBytesPerSecond: options.ioBytesPerSecond ?? HISTORY_IO_BYTES_PER_SECOND, error: null });
+    return;
   }
-}
-/** Copy from a protected WAL-inclusive snapshot, then compare every row and its SHA-256.
- * Never remove/rewrite legacy rows. Interrupted copies resume against the same snapshot.
- * Only the worker calls this: multi-GB snapshot/checksum I/O cannot block broker dispatch.
- */
-export async function migrateHistoryStore(bridge: string, target: DatabaseSync, shouldPause: () => boolean = () => false, stopped: () => boolean = () => false, onLease?: (owner: string | null) => void): Promise<void> {
-  if (historyReady(target)) return;
   const release = migrationLock(historyDbPath(bridge));
-  let source: DatabaseSync | undefined;
   try {
-    onLease?.(readFileSync(`${historyDbPath(bridge)}.migration-lock`,"utf8"));
+    onLease?.(readFileSync(`${historyDbPath(bridge)}.migration-lock`, "utf8"));
     if (historyReady(target)) return;
-    let state = target.prepare("SELECT * FROM history_migration WHERE version=?").get(HISTORY_STORE_VERSION);
-    if (!state) {
-      const folder = join(dirname(bridge), ".migration-snapshots");
-      mkdirSync(folder, { recursive: true, mode: 0o700 });
-      const snapshot = join(folder, `bridge-history-v1-${randomUUID()}.db`);
-      snapshotDatabase(bridge, snapshot);
-      target.prepare("INSERT INTO history_migration VALUES(?,?,'copying',NULL)").run(HISTORY_STORE_VERSION, snapshot);
-      state = target.prepare("SELECT * FROM history_migration WHERE version=?").get(HISTORY_STORE_VERSION)!;
+    const state = target.prepare("SELECT * FROM history_migration WHERE version=?").get(HISTORY_STORE_VERSION);
+    if (state?.status === "failed") {
+      if (!retryFailed) throw Object.assign(new Error("History migration verification failed previously; all originals and snapshots preserved; use agent-bridge reindex for an explicit retry"), { code: "HISTORY_VERIFICATION_FAILED" });
+      const failure = JSON.parse(String(state.manifest));
+      target.prepare("UPDATE history_migration SET status=?,manifest=? WHERE version=?").run(failure.resumeStatus, failure.snapshotManifest, HISTORY_STORE_VERSION);
     }
-    source = new DatabaseSync(String(state.snapshot), { readOnly: true, timeout: 3000 });
-    const manifest: Record<string, { rows: number; sha256: string }> = {};
-    const yieldTurn = async () => {
-      await yieldBatch(10);
-      while (shouldPause() && !stopped()) await yieldBatch(250);
-      if (stopped()) throw new Error("History migration stopped; snapshot and partial copy preserved");
-    };
-    for (const table of HISTORY_TABLES) {
-      if (!source.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
-      const columns = source.prepare(`PRAGMA table_info(${quote(table)})`).all().map(r => String(r.name));
-      const names = ["rowid", ...columns].map(quote).join(",");
-      const insert = target.prepare(`INSERT OR IGNORE INTO ${quote(table)}(${names}) VALUES(${["rowid", ...columns].map(() => "?").join(",")})`);
-      const expected = createHash("sha256"), actual = createHash("sha256");
-      let after = 0, count = 0;
-      for (;;) {
-        await yieldTurn();
-        // Keyset iteration also bounds memory for unusually large legacy records.
-        const input = source.prepare(`SELECT rowid AS __copy_rowid,* FROM ${quote(table)} WHERE rowid>? ORDER BY rowid LIMIT ?`).iterate(after, HISTORY_COPY_ROWS);
-        let batchRows = 0, bytes = 0;
-        const started = Date.now();
-        target.exec("BEGIN IMMEDIATE");
-        try {
-          for (const item of input) {
-            const row = item as Row;
-            insert.run(row.__copy_rowid!, ...columns.map(c => row[c]!));
-            const copied = target.prepare(`SELECT rowid AS __copy_rowid,* FROM ${quote(table)} WHERE rowid=?`).get(row.__copy_rowid!) as Row;
-            digestRow(expected, row); digestRow(actual, copied);
-            after = Number(row.__copy_rowid); count++; batchRows++;
-            bytes += Object.values(row).reduce<number>((n, v) => n + (v instanceof Uint8Array ? v.byteLength : typeof v === "string" ? Buffer.byteLength(v) : 8), 0);
-            if (bytes >= HISTORY_COPY_BYTES || Date.now() - started >= HISTORY_BATCH_MS) break;
-          }
-          target.exec("COMMIT");
-        } catch (err) { target.exec("ROLLBACK"); throw err; }
-        if (!batchRows) break;
-      }
-      const sha256 = expected.digest("hex");
-      const sourceCount = Number(source.prepare(`SELECT count(*) n FROM ${quote(table)}`).get()!.n);
-      const targetCount = Number(target.prepare(`SELECT count(*) n FROM ${quote(table)}`).get()!.n);
-      if (count !== sourceCount || targetCount !== sourceCount || sha256 !== actual.digest("hex")) throw new Error(`History migration verification failed: ${table}; legacy database and backup preserved`);
-      manifest[table] = { rows: count, sha256 };
+    await resumableHistoryMigration(bridge, target, shouldPause, stopped, options);
+  } catch (err) {
+    const state = target.prepare("SELECT * FROM history_migration WHERE version=?").get(HISTORY_STORE_VERSION);
+    const code = (err as { code?: string }).code;
+    if (state && state.status !== "failed" && !isSqliteBusy(err) && code !== "HISTORY_MIGRATION_STOPPED" && code !== "HISTORY_SNAPSHOT_PAUSED") {
+      target.prepare("UPDATE history_migration SET status='failed',manifest=? WHERE version=?").run(JSON.stringify({ error: String(err), resumeStatus: state.status, snapshotManifest: state.manifest }), HISTORY_STORE_VERSION);
     }
-    // Triggers built FTS as the bounded document copies committed; verify its index too.
-    if (target.prepare("SELECT name FROM sqlite_master WHERE name='history_fts'").get()) target.exec("INSERT INTO history_fts(history_fts,rank) VALUES('integrity-check',1)");
-    target.exec("BEGIN IMMEDIATE");
-    try {
-      const max = Number(source.prepare("SELECT coalesce(max(id),0) n FROM conversation_records").get()!.n);
-      target.prepare("INSERT INTO history_cursors VALUES('legacy-record-tail',?) ON CONFLICT(source) DO UPDATE SET cursor=excluded.cursor").run(String(max));
-      target.prepare("UPDATE history_migration SET status='verified',manifest=? WHERE version=?").run(JSON.stringify(manifest), HISTORY_STORE_VERSION);
-      target.exec("COMMIT");
-    } catch (err) { target.exec("ROLLBACK"); throw err; }
-  } finally { source?.close(); release(); onLease?.(null); }
+    throw err;
+  } finally { release(); onLease?.(null); }
 }
 
+export function historyMigrationFailure(db: DatabaseSync): string | null {
+  const state = db.prepare("SELECT status,manifest FROM history_migration WHERE version=?").get(HISTORY_STORE_VERSION);
+  if (state?.status !== "failed") return null;
+  try { return String(JSON.parse(String(state.manifest)).error); }
+  catch { return "History migration failed; protected backup preserved; explicit retry required"; }
+}
 /** A terminated worker shares its parent's PID. Release only its exact recorded nonce,
  * after worker exit; PID-only dead-process recovery cannot detect a dead thread. */
 export function releaseExitedHistoryLease(bridge: string, owner: string): void {
@@ -153,6 +119,7 @@ export function releaseExitedHistoryLease(bridge: string, owner: string): void {
  * Cursor publication follows a committed record, and replay validates its raw bytes.
  */
 export function copyLegacyConversationTail(source: DatabaseSync, target: DatabaseSync): number {
+  if (!source.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='conversation_records'").get()) return 0;
   const after = Number(target.prepare("SELECT cursor FROM history_cursors WHERE source='legacy-record-tail'").get()?.cursor ?? 0);
   const deadline = Date.now() + HISTORY_BATCH_MS;
   let work = 0;

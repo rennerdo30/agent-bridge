@@ -10,7 +10,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { isQuietMessage, type BridgeMessage, type PeerInfo } from "../src/core/protocol.js";
 import { DEFAULT_NETWORK_CONFIG, type NetworkConfig } from "../src/network/config.js";
 import { NetworkService } from "../src/network/link.js";
-import { FILE_STREAM_CAPABILITY, TRANSFER_CHUNK_BYTES } from "../src/network/transfers.js";
+import { FILE_STREAM_CAPABILITY, FILE_STREAM_WINDOW_CAPABILITY, TRANSFER_CHUNK_BYTES, TRANSFER_WINDOW_CHUNKS } from "../src/network/transfers.js";
 
 vi.mock("node:fs/promises", async (original) => {
   const actual = await original<typeof import("node:fs/promises")>();
@@ -49,6 +49,84 @@ async function paired(config: Partial<NetworkConfig> = {}) {
 }
 
 describe("chunked paired-PC file transfers", () => {
+  it("writes ordinary messages ahead of chunks queued behind socket backpressure", async () => {
+    const { a, sender, bMessages } = await paired();
+    const source = join(home, "priority.bin"); const expected = await generate(source, (TRANSFER_WINDOW_CHUNKS + 1) * TRANSFER_CHUNK_BYTES);
+    const socket = (a as unknown as { links: Map<string, { socket: TLSSocket }> }).links.values().next().value!.socket;
+    const write = socket.write.bind(socket); let chunks = 0; let release: (() => void) | undefined;
+    vi.spyOn(socket, "write").mockImplementation((...args) => {
+      const frame = typeof args[0] === "string" ? JSON.parse(args[0]) as { type: string; payload?: { op?: string } } : undefined;
+      if (frame?.type === "file-stream" && frame.payload?.op === "chunk" && ++chunks === 1) {
+        const callback = args.find((arg) => typeof arg === "function") as (error?: Error) => void;
+        return write(args[0] as string, (error) => { release = () => callback(error ?? undefined); });
+      }
+      return write(...args);
+    });
+    const started = a.startFiles("mac/receiver", [source], home, sender);
+    try {
+      await wait(() => Boolean(release), 10_000);
+      const id = randomUUID();
+      await a.send({ id, from: sender, to: "mac/receiver", recipient: "mac/receiver", conversationId: id, replyTo: null, hop: 0, body: "priority over queued writes", createdAt: Date.now(), readAt: null });
+      expect(bMessages.some((m) => m.id === id)).toBe(true);
+      expect(chunks).toBe(1);
+    } finally { release?.(); }
+    await wait(() => a.transfers.list().find((t) => t.id === started.id)?.status === "completed");
+    expect(await hash(join(home, "mac", "inbox", started.id, "priority.bin"))).toBe(expected);
+  });
+
+  it("fills a bounded window before the first ack while ordinary messages bypass busy receivers", async () => {
+    const { a, b, sender, bMessages } = await paired();
+    const source = join(home, "window.bin"); const expected = await generate(source, (TRANSFER_WINDOW_CHUNKS + 1) * TRANSFER_CHUNK_BYTES + 17);
+    const chunkRequests = new Set<string>(); let sent = 0; let held = 0;
+    let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; });
+    const receive = b.receiveExtension.bind(b), send = b.sendExtension.bind(b), aSend = a.sendExtension.bind(a);
+    vi.spyOn(b, "receiveExtension").mockImplementation((type, payload, remote) => {
+      if (payload.op === "chunk") chunkRequests.add(String(payload.rid));
+      return receive(type, payload, remote);
+    });
+    vi.spyOn(b, "sendExtension").mockImplementation(async (remote, type, payload) => {
+      if (payload.kind === "response" && chunkRequests.has(String(payload.rid))) { held++; await gate; }
+      return send(remote, type, payload);
+    });
+    vi.spyOn(a, "sendExtension").mockImplementation((remote, type, payload) => {
+      if (payload.op === "chunk") sent++;
+      return aSend(remote, type, payload);
+    });
+    const started = a.startFiles("mac/receiver", [source], home, sender);
+    try {
+      await wait(() => held === TRANSFER_WINDOW_CHUNKS, 10_000);
+      expect(sent).toBe(TRANSFER_WINDOW_CHUNKS);
+      const id = randomUUID();
+      await a.send({ id, from: sender, to: "mac/receiver", recipient: "mac/receiver", conversationId: id, replyTo: null, hop: 0, body: "priority message", createdAt: Date.now(), readAt: null });
+      expect(bMessages.some((m) => m.id === id)).toBe(true);
+      expect(sent).toBe(TRANSFER_WINDOW_CHUNKS);
+    } finally { release(); }
+    await wait(() => a.transfers.list().find((t) => t.id === started.id)?.status === "completed");
+    expect(await hash(join(home, "mac", "inbox", started.id, "window.bin"))).toBe(expected);
+  });
+
+  it("keeps one chunk in flight for an older peer without window support", async () => {
+    const sender = peer("sender"), receiver = peer("receiver");
+    const a = service("pc", [sender]), b = service("mac", [receiver]);
+    const capabilities = b.extensionCapabilities.bind(b);
+    vi.spyOn(b, "extensionCapabilities").mockImplementation(() => capabilities().filter((c) => c !== FILE_STREAM_WINDOW_CAPABILITY));
+    await a.start(); await b.start(); await a.link(b.keys.invite(), LOOPBACK, b.port);
+    const source = join(home, "legacy-window.bin"); await generate(source, 3 * TRANSFER_CHUNK_BYTES);
+    const chunkRequests = new Set<string>(); let outstanding = 0; let largest = 0;
+    const send = a.sendExtension.bind(a), receive = a.receiveExtension.bind(a);
+    vi.spyOn(a, "sendExtension").mockImplementation((remote, type, payload) => {
+      if (payload.op === "chunk") { chunkRequests.add(String(payload.rid)); largest = Math.max(largest, ++outstanding); }
+      return send(remote, type, payload);
+    });
+    vi.spyOn(a, "receiveExtension").mockImplementation((type, payload, remote) => {
+      if (payload.kind === "response" && chunkRequests.has(String(payload.rid))) outstanding--;
+      return receive(type, payload, remote);
+    });
+    const started = a.startFiles("mac/receiver", [source], home, sender);
+    await wait(() => a.transfers.list().find((t) => t.id === started.id)?.status === "completed");
+    expect(largest).toBe(1);
+  });
+
   it("streams a generated big file and empty folders with bounded chunks and SHA-256", async () => {
     const { a, b, sender, aMessages, bMessages } = await paired();
     const source = join(home, "build"); mkdirSync(join(source, "empty"), { recursive: true });
@@ -119,7 +197,12 @@ describe("chunked paired-PC file transfers", () => {
     const { a, b, sender, receiver } = await paired(); const source = join(home, "link-drop.bin"); const expected = await generate(source, 4 * 1024 * 1024 + 3);
     const original = a.sendExtension.bind(a); const port = b.port; let dropped = false;
     vi.spyOn(a, "sendExtension").mockImplementation(async (remote, type, payload) => {
-      if (payload.op === "chunk" && payload.offset === 2 * TRANSFER_CHUNK_BYTES && !dropped) { dropped = true; await b.close(); }
+      if (payload.op === "chunk" && payload.offset === 2 * TRANSFER_CHUNK_BYTES && !dropped) {
+        dropped = true;
+        // Pipelining reads ahead: wait for the prefix's durable ack before dropping this chunk.
+        await wait(() => b.transfers.list()[0]?.bytes === 2 * TRANSFER_CHUNK_BYTES);
+        await b.close();
+      }
       return original(remote, type, payload);
     });
     const started = a.startFiles("mac/receiver", [source], home, sender);

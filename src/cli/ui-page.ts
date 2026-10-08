@@ -1899,13 +1899,19 @@ function usageCard(rep) {
 async function poll() {  try {
     const r = await fetch("/api/state");
     if (!r.ok) throw new Error(r.status === 403 ? "not authorized: open the link printed by agent-bridge ui" : "HTTP " + r.status);
-    state = await r.json();
-    $("status").innerHTML = state.brokerPid
-      ? '<span class="dot idle"></span>bridge running · v' + esc(state.version)
+    const next = await r.json();
+    if (next.brokerState === "slow" || next.brokerState === "unavailable") next.peers = (state && state.peers) || next.peers;
+    state = next;
+    const h = state.health, m = h && h.history, backup = h && h.backup;
+    const migration = (m ? ' · history ' + esc(m.phase) + ' ~' + esc(Number(m.percent).toFixed(1)) + '% · ' + (m.etaSeconds == null ? 'ETA pending' : 'ETA ~' + Math.ceil(m.etaSeconds / 60) + ' min') : '') + (backup ? ' · backup ' + esc(backup.phase) + (backup.lastError ? ' (' + esc(backup.lastError) + ')' : '') : '');
+    $("status").innerHTML = state.brokerState === "slow"
+      ? '<span class="dot busy"></span>Bridge responding slowly' + migration
+      : state.brokerState === "unavailable" ? '<span class="dot busy"></span>Bridge status unavailable' + migration
+      : state.brokerPid ? '<span class="dot idle"></span>bridge running · v' + esc(state.version) + migration
       : '<span class="dot off"></span>no bridge running';
     render();
   } catch (e) {
-    $("status").innerHTML = '<span class="dot" style="background:var(--bad)"></span>' + esc(e.message);
+    $("status").innerHTML = '<span class="dot busy"></span>Bridge status unavailable · ' + esc(e.message);
   }
 }
 
@@ -2176,7 +2182,7 @@ function renderNetwork() {
   const n = net, cfg = n && n.config;
   if (!n) {
     $("netDot").className = "dot off";
-    $("netState").textContent = netError ? "No bridge running" : "Reading the network status…";
+    $("netState").textContent = netError ? "Bridge network status unavailable" : "Reading the network status…";
     $("netWhere").textContent = netError ? "Start a Claude Code, Codex, opencode or Antigravity session with agent-bridge, then reload." : "";
   } else {
     $("netDot").className = "dot " + (n.enabled ? "idle" : "off");

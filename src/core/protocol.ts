@@ -218,6 +218,7 @@ export interface AuthArgs {
 }
 
 export interface RequestMap {
+  health: [Record<string, never>, import("./health.js").BrokerHealth];
   /** Older brokers must refuse this opcode rather than discard the durable identity. */
   trackedSend: [SendArgs & { messageId: string }, SendResult];
   sendState: [{ id: string }, { id: string; state: "stored" | "pending" | "not_stored"; checkedAt: number; message: BridgeMessage | null; receipts: MessageReceipt[] }];
@@ -254,7 +255,7 @@ export interface RequestMap {
   updatePeer: [UpdatePeerArgs, PeerInfo];
   /** Take over the unread mail of "-N" stand-in names of this peer that no one holds (after a reload). */
   claimMail: [{ names: string[] }, { moved: number }];
-  ping: [Record<string, never>, { brokerPid: number; protocol: number; brokerVersion?: string }];
+  ping: [Record<string, never>, { brokerPid: number; protocol: number; brokerVersion?: string; health?: import("./health.js").BrokerHealth }];
   dashboardRead: [{ host: string; request: DashboardReadRequest }, DashboardReadResult];
   dashboardPeers: [Record<string, never>, PeerInfo[]];
   networkStatus: [Record<string, never>, NetworkStatus];

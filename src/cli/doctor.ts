@@ -2,6 +2,9 @@ import { createInterface } from "node:readline/promises";
 import { doctor, archiveHome, fixDoctor } from "../core/doctor.js";
 import { createBackup, readBackup, restoreBackup } from "../core/backups.js";
 import { inspectPluginVersions, listServerProcesses, pluginDoctorPaths } from "./plugin-doctor.js";
+import { brokerFailureState, formatHealth, probeBrokerHealth } from "../core/health.js";
+import { resolvePipePath } from "../core/paths.js";
+import { nullLogger } from "../core/logger.js";
 
 export type ConfirmDoctor = (question: string) => Promise<boolean>;
 
@@ -35,11 +38,17 @@ export async function runDoctor(args: string[], home: string, out: (text: string
     out(archive ? `Archived: ${JSON.stringify(archiveHome(home, true))}` : `Preserved files: ${JSON.stringify(fixDoctor(home, true))}`);
   }
   const report = doctor(home);
+  report.brokerHealth = await probeBrokerHealth(resolvePipePath(home), nullLogger).catch(error => {
+    if (brokerFailureState(error) !== "offline") report.findings.push({ severity: "warning", code: "broker-health-unconfirmed", path: home,
+      detail: brokerFailureState(error) === "slow" ? "Bridge responding slowly; history-import progress could not be refreshed." : "Bridge health unavailable; broker absence is not confirmed.", fixable: false });
+    return null;
+  });
   const processes = await listServerProcesses();
   report.findings.push(...inspectPluginVersions(pluginDoctorPaths(home), processes ?? []));
   if (processes === null) report.findings.push({ severity: "warning", code: "plugin-process-unavailable", path: home, detail: "Running server process lookup unavailable; rerun agent-bridge doctor from the host account.", fixable: false });
   if (args.includes("--json")) out(JSON.stringify(report));
   else {
+    if (report.brokerHealth) out(formatHealth(report.brokerHealth));
     for (const item of report.schema) out(`${item.path}: schema ${item.actual ?? "absent"}, code ${item.expected}`);
     for (const item of report.findings) out(`${item.severity.toUpperCase()} ${item.code}: ${item.path}: ${item.detail}${item.fixable ? " (--fix)" : ""}`);
     out(`Size: ${report.totalBytes} bytes across ${report.sizes.length} files. Recent backups: ${report.backups.length}.`);

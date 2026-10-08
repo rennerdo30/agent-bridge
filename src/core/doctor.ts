@@ -21,6 +21,7 @@ export interface DoctorFinding {
   fixable: boolean;
 }
 export interface DoctorReport {
+  brokerHealth?: import("./health.js").BrokerHealth | null;
   checkedAt: number;
   ok: boolean;
   schema: { path: string; actual: number | null; expected: number }[];

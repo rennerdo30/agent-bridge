@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, s
 import { createServer, connect, type Socket } from "node:net";
 import { join } from "node:path";
 import { connect as tlsConnect } from "node:tls";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Broker } from "../src/core/broker.js";
 import { BridgeClient } from "../src/core/client.js";
 import { loadConfig } from "../src/core/config.js";
@@ -39,6 +39,7 @@ beforeEach(() => {
 afterEach(async () => {
   for (const close of cleanup.reverse()) await close();
   rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  vi.restoreAllMocks();
 });
 
 const peer = (name: string, jobAgent?: "codex"): PeerInfo => ({ id: randomUUID(), name, agent: "claude", cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false, ...(jobAgent ? { jobAgent } : {}) });
@@ -227,6 +228,85 @@ describe("network pairing", () => {
 });
 
 describe("broker federation", () => {
+  async function makeBroker(name: string) {
+    const dir = join(home, name); mkdirSync(dir, { recursive: true });
+    const pipe = resolvePipePath(dir, {}), store = new MessageStore(join(dir, "bridge.db"), nullLogger);
+    const broker = new Broker(pipe, store, nullLogger, TOKEN, Date.now, undefined, { home: dir, config: { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: LOOPBACK, port: 0, discovery: false } });
+    cleanup.push(() => broker.close()); await broker.listen();
+    const admin = await BridgeClient.connect(pipe, nullLogger); cleanup.push(() => admin.close());
+    await admin.request("auth", { protocol: PROTOCOL_VERSION, token: TOKEN });
+    const node = (name: string, cwd = dir) => {
+      const node = new BridgeNode({ pipePath: pipe, token: TOKEN, dbPath: join(dir, "bridge.db"), agent: "claude", name, cwd, autoWake: false, log: nullLogger, canHostBroker: false });
+      cleanup.push(() => node.stop()); return node;
+    };
+    return { broker, store, admin, node, dir };
+  }
+
+  async function pairBrokers(a: Awaited<ReturnType<typeof makeBroker>>, b: Awaited<ReturnType<typeof makeBroker>>) {
+    const port = (await b.admin.request("networkStatus", {})).port!;
+    await a.admin.request("networkLink", { code: (await b.admin.request("networkPair", {})).code, host: LOOPBACK, port });
+  }
+
+  it("recovers a stored remote message after lost reply and sender reload, retaining read status", async () => {
+    const a = await makeBroker("windows"), b = await makeBroker("mac");
+    const sender = a.node("sender"), recipient = b.node("receiver");
+    await sender.start(); await recipient.start(); await pairBrokers(a, b);
+    const id = randomUUID(); const args = { messageId: id, to: "mac/receiver", body: "recover me" };
+    // Lose the RPC acknowledgement after the receiving broker has durably stored the message.
+    const receiving = b.broker as unknown as { receiveRemote(message: BridgeMessage): { delivered: boolean; recipient: string; stored: boolean; readAt: number | null } };
+    const receive = receiving.receiveRemote.bind(receiving); let lost = false;
+    const spy = vi.spyOn(receiving, "receiveRemote").mockImplementation((message) => {
+      const result = receive(message);
+      if (message.id === id && !lost) { lost = true; throw new Error("simulated lost reply"); }
+      return result;
+    });
+    await expect(sender.send(args)).rejects.toThrow(/simulated lost reply/);
+    expect(a.store.byId(id)).toBeNull(); expect(b.store.byId(id)?.body).toBe(args.body);
+    await until(() => recipient.unread().some((m) => m.id === id));
+    recipient.markRead([id]); await until(() => b.store.receipts(id)[0]?.readAt != null);
+    await sender.stop(); const reloaded = a.node("sender"); await reloaded.start();
+    const recovered = await reloaded.send(args);
+    expect(recovered.storage).toMatchObject({ id, state: "stored", recovered: true, receipts: [{ recipient: "mac/receiver", readAt: expect.any(Number) }] });
+    expect((await reloaded.send(args)).storage?.receipts).toEqual(recovered.storage?.receipts);
+    expect(b.store.messagesById(id)).toHaveLength(1);
+    expect(recipient.unread().filter((m) => m.id === id)).toHaveLength(0);
+    await expect(reloaded.send({ ...args, body: "different" })).rejects.toThrow(/different content/);
+    expect(b.store.byId(id)?.body).toBe(args.body);
+    // Probe the receiving broker's own conflict guard too, after source recovery is complete.
+    const original = b.store.byId(id)!;
+    expect(() => receive({ ...original, body: "different" })).toThrow(/different content/);
+    expect(() => receive({ ...original, from: { ...original.from, id: `${randomUUID()}/${randomUUID()}` } })).toThrow(/different content/);
+    spy.mockRestore();
+  });
+
+  it("routes unique paired project addresses to the available main and refuses ambiguous groups", async () => {
+    const a = await makeBroker("windows"), b = await makeBroker("mac");
+    const project = join(b.dir, "sample"), otherProject = join(b.dir, "another", "sample");
+    mkdirSync(project); mkdirSync(otherProject, { recursive: true });
+    for (const cwd of [project, otherProject]) execFileSync("git", ["init", cwd], { windowsHide: true, stdio: "ignore" });
+    const sender = a.node("sender"), main = b.node("main", project), secondary = b.node("secondary", project);
+    await sender.start(); await main.start(); await secondary.start(); await pairBrokers(a, b);
+    expect((await sender.peers()).find((p) => p.name === "mac/main")).toMatchObject({ projectAddress: "project:sample", projectMain: true });
+    const first = await sender.send({ to: "project:sample", body: "project work" });
+    expect(first.deliveredTo).toEqual(["mac/main"]);
+    expect(b.store.byId(first.messages[0]!.id)).toMatchObject({ to: "project:sample", recipient: "main" });
+    await main.setUnavailable(true);
+    // Fetch fresh advertisements through a normal send before testing availability fallback.
+    await main.send({ to: "windows/sender", body: "main unavailable" });
+    await expect.poll(async () => (await sender.peers()).find((p) => p.name === "mac/main")?.unavailable === true).toBe(true);
+    expect(await sender.send({ to: "project:sample", body: "fallback work" })).toMatchObject({ deliveredTo: ["mac/secondary"] });
+    const receiving = b.broker as unknown as { receiveRemote(message: BridgeMessage): { recipient: string; recovered?: boolean } };
+    const stored = b.store.byId(first.messages[0]!.id)!;
+    expect(receiving.receiveRemote({ ...stored, recipient: "secondary" })).toMatchObject({ recipient: "main", recovered: true });
+    expect(b.store.messagesById(stored.id)).toHaveLength(1);
+    expect(await sender.send({ to: "mac/project:sample", body: "qualified work" })).toMatchObject({ deliveredTo: ["mac/secondary"] });
+    const duplicate = b.node("other-main", otherProject); await duplicate.start();
+    await duplicate.send({ to: "windows/sender", body: "second project joined" });
+    await expect.poll(async () => (await sender.peers()).some((p) => p.name === "mac/other-main")).toBe(true);
+    await expect(sender.send({ to: "project:sample", body: "ambiguous" })).rejects.toMatchObject({ code: "ambiguous_target" });
+    await expect(sender.send({ to: "mac/project:sample", body: "ambiguous qualified" })).rejects.toMatchObject({ code: "ambiguous_target" });
+  });
+
   it("preserves durable inboxes, offline queueing and reply hops across two brokers", async () => {
     const make = async (name: string) => {
       const dir = join(home, name);

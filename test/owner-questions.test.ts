@@ -92,7 +92,16 @@ describe("owner question registry",() => {
     expect(s.list()).toHaveLength(1);
     const originals=legacy.prepare("SELECT * FROM messages ORDER BY id").all();
     legacy.close(); legacyClosed=true;
-    if (SQLITE_STORE_VERSION > 8) expect(() => new MessageStore(env.db,nullLogger)).toThrow("Waiting to upgrade");
+    if (SQLITE_STORE_VERSION > 8) {
+      const deferred = new MessageStore(env.db,nullLogger);
+      try {
+        const existing = new DatabaseSync(env.db,{readOnly:true});
+        try {
+          expect(existing.prepare("PRAGMA user_version").get()?.user_version).toBe(8);
+          expect(existing.prepare("SELECT * FROM messages ORDER BY id").all()).toEqual(originals);
+        } finally { existing.close(); }
+      } finally { deferred.close(); }
+    }
     recordStorePeer(env.home,{pid:process.pid,name:"current-reader",version:"current",storeCapabilities:{json:4,sqlite:SQLITE_STORE_VERSION}});
     const upgraded=new MessageStore(env.db,nullLogger); closers.push(() => upgraded.close());
     const current=new DatabaseSync(env.db,{readOnly:true});

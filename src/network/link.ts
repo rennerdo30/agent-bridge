@@ -10,7 +10,7 @@ import { MAX_NETWORK_FRAME_BYTES, MAX_NETWORK_LINKS, MAX_NETWORK_PEERS, MAX_NETW
 import { NetworkDiscovery, type DiscoveredInstance, type DiscoveryDiagnostics } from "./discovery.js";
 import { decodePairingCode, keyFingerprint, PairingStore, publicIdentitySchema, type NetworkIdentity, type NetworkPair } from "./pairing.js";
 import { receiveTransfer, transferResultSchema, transferSchema, type FileTransfer, type TransferResult } from "./files.js";
-import { FILE_STREAM_CAPABILITY, TransferManager, type TransferStarted } from "./transfers.js";
+import { FILE_STREAM_CAPABILITY, FILE_STREAM_WINDOW_CAPABILITY, TRANSFER_WINDOW_CHUNKS, TransferManager, type TransferStarted } from "./transfers.js";
 
 const MAX_METADATA_CHARS = 4_096;
 const MAX_ID_CHARS = 128;
@@ -34,6 +34,8 @@ const peerSchema = z.object({
   jobParent: z.string().max(MAX_METADATA_CHARS).optional(), jobTitle: z.string().max(MAX_METADATA_CHARS).optional(),
   parentJob: z.string().max(MAX_METADATA_CHARS).optional(), rootSession: z.string().max(MAX_METADATA_CHARS).optional(),
   rootName: z.string().max(MAX_METADATA_CHARS).optional(), subagent: z.boolean().optional(), title: z.string().max(MAX_METADATA_CHARS).optional(),
+  projectGroup: z.string().min(1).max(MAX_METADATA_CHARS).optional(), projectAddress: z.string().min(1).max(MAX_METADATA_CHARS).optional(),
+  projectMain: z.boolean().optional(), unavailable: z.boolean().optional(),
 });
 const peersSchema = z.array(peerSchema).max(MAX_NETWORK_PEERS).refine((peers) => new Set(peers.map((p) => p.name)).size === peers.length && new Set(peers.map((p) => p.id)).size === peers.length);
 const messageSchema = z.object({
@@ -52,7 +54,7 @@ const frameSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("echo"), rid: z.uuid() }),
   z.object({ type: z.literal("receipt"), rid: z.uuid(), id: z.uuid(), sender: textId, recipient: z.string().regex(NETWORK_NAME_PATTERN).optional() }),
   z.object({ type: z.literal("files"), rid: z.uuid(), transfer: transferSchema }),
-  z.object({ type: z.literal("result"), rid: z.uuid(), delivered: z.boolean().optional(), recipient: z.string().regex(NETWORK_NAME_PATTERN).optional(), readAt: z.number().nonnegative().nullable().optional(), transfer: transferResultSchema.optional(), error: z.string().max(MAX_METADATA_CHARS).optional() }),
+  z.object({ type: z.literal("result"), rid: z.uuid(), delivered: z.boolean().optional(), recipient: z.string().regex(NETWORK_NAME_PATTERN).optional(), readAt: z.number().nonnegative().nullable().optional(), stored: z.boolean().optional(), recovered: z.boolean().optional(), transfer: transferResultSchema.optional(), error: z.string().max(MAX_METADATA_CHARS).optional() }),
 ]);
 type NetworkFrame = z.infer<typeof frameSchema>;
 
@@ -60,7 +62,7 @@ export interface NetworkBroker {
   peers(): PeerInfo[];
   receipt?(id: string, sender: string, recipient?: string): number | null;
   recipientReceipts?: boolean;
-  receive(message: BridgeMessage): { delivered: boolean; recipient?: string };
+  receive(message: BridgeMessage): DeliveryResult;
 }
 export interface NetworkStatus {
   enabled: boolean;
@@ -77,7 +79,7 @@ interface Pending {
   timer: NodeJS.Timeout;
   kind: "send" | "files" | "echo" | "receipt";
 }
-interface DeliveryResult { delivered: boolean; recipient?: string }
+interface DeliveryResult { delivered: boolean; recipient?: string; stored?: boolean; recovered?: boolean; readAt?: number | null }
 
 /** Bounded JSON records, only after TLS has authenticated possession of a pairing key. */
 class Link {
@@ -89,6 +91,11 @@ class Link {
   private capabilities: string[] = [];
   private advertisedPeers: string | null = null;
   private extensionHandlers = 0;
+  private readonly incomingExtensions: Extract<NetworkFrame, { type: NetworkExtensionType }>[] = [];
+  private incomingExtensionBytes = 0;
+  private readonly bulkWrites: { data: string; write: () => void }[] = [];
+  private bulkWriteBytes = 0;
+  private bulkWriting = false;
   private buffer = Buffer.alloc(0);
   private readonly pending = new Map<string, Pending>();
   private readonly extensionWrites = new Set<(error: Error) => void>();
@@ -114,6 +121,8 @@ class Link {
       this.pending.clear();
       for (const reject of this.extensionWrites) reject(new Error("network link closed"));
       this.extensionWrites.clear();
+      this.bulkWrites.length = 0; this.bulkWriteBytes = 0;
+      this.incomingExtensions.length = 0; this.incomingExtensionBytes = 0;
       service.detach(this);
     });
     this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers(), echo: true, receipts: Boolean(service.supportsReceipts), capabilities: service.extensionCapabilities() });
@@ -123,7 +132,7 @@ class Link {
     if (this.socket.destroyed) return;
     try {
       let nl: number;
-      while (this.extensionHandlers < MAX_EXTENSION_HANDLERS && (nl = this.buffer.indexOf("\n")) >= 0) {
+      while ((nl = this.buffer.indexOf("\n")) >= 0) {
         if (nl > MAX_NETWORK_FRAME_BYTES) throw new Error("network frame too large");
         const line = this.buffer.subarray(0, nl);
         this.buffer = this.buffer.subarray(nl + 1);
@@ -143,8 +152,6 @@ class Link {
         else this.onFrame(frame);
       }
       if (this.buffer.length > MAX_NETWORK_FRAME_BYTES) throw new Error("network frame too large");
-      if (this.extensionHandlers >= MAX_EXTENSION_HANDLERS) this.socket.pause();
-      else this.socket.resume();
     } catch (error) { this.fail(error as Error); }
   }
 
@@ -157,10 +164,12 @@ class Link {
 
   supports(capability: string): boolean { return this.capabilities.includes(capability); }
 
-  /** Complete only after the stream has consumed this bounded record; callers await each write. */
+  /** Queue bulk chunks separately: control frames can pass all chunks not yet written. */
   writeExtension(type: NetworkExtensionType, payload: Record<string, unknown>): Promise<void> {
     const data = JSON.stringify({ type, payload }) + "\n";
-    if (Buffer.byteLength(data) > MAX_NETWORK_FRAME_BYTES || this.socket.writableLength > MAX_NETWORK_FRAME_BYTES || this.extensionWrites.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("network write limit reached"));
+    const bytes = Buffer.byteLength(data);
+    const bulk = type === "file-stream" && payload.op === "chunk";
+    if (bytes > MAX_NETWORK_FRAME_BYTES || this.bulkWriteBytes + bytes > 8 * MAX_NETWORK_FRAME_BYTES || !bulk && this.socket.writableLength > MAX_NETWORK_FRAME_BYTES || this.extensionWrites.size >= MAX_NETWORK_REQUESTS) return Promise.reject(new Error("network write limit reached"));
     if (this.socket.destroyed) return Promise.reject(new Error("network link closed"));
     return new Promise((resolve, reject) => {
       const failed = (error: Error) => {
@@ -170,9 +179,27 @@ class Link {
         reject(new Error("network link closed", { cause: error }));
       };
       this.extensionWrites.add(failed);
-      try { this.socket.write(data, (error) => { if (error) failed(error); else { this.extensionWrites.delete(failed); resolve(); } }); }
-      catch (error) { failed(error as Error); }
+      const write = () => {
+        try { this.socket.write(data, (error) => {
+          if (error) failed(error); else { this.extensionWrites.delete(failed); resolve(); }
+          if (bulk) { this.bulkWriting = false; setImmediate(() => this.pumpBulkWrites()); }
+        }); }
+        catch (error) { failed(error as Error); }
+      };
+      if (bulk) {
+        this.bulkWrites.push({ data, write }); this.bulkWriteBytes += bytes;
+        setImmediate(() => this.pumpBulkWrites());
+      } else write();
     });
+  }
+
+  private pumpBulkWrites(): void {
+    if (this.bulkWriting || this.socket.destroyed || !this.bulkWrites.length) return;
+    if (this.socket.writableLength > MAX_NETWORK_FRAME_BYTES) {
+      this.socket.once("drain", () => this.pumpBulkWrites()); return;
+    }
+    const next = this.bulkWrites.shift()!;
+    this.bulkWriteBytes -= Buffer.byteLength(next.data); this.bulkWriting = true; next.write();
   }
 
   refresh(): void {
@@ -231,9 +258,9 @@ class Link {
 
   private onFrame(frame: Exclude<NetworkFrame, { type: "hello" }>): void {
     if (frame.type === "file-stream" || frame.type === "remote-job" || frame.type === "dashboard-read") {
-      if (++this.extensionHandlers > MAX_EXTENSION_HANDLERS) throw new Error("too many extension handlers");
-      void Promise.resolve().then(() => this.service.receiveExtension(frame.type, frame.payload, this.remote!))
-        .catch((error: Error) => this.fail(error)).finally(() => { this.extensionHandlers--; this.processBuffer(); });
+      const bytes = Buffer.byteLength(JSON.stringify(frame));
+      if (this.incomingExtensions.length >= MAX_NETWORK_REQUESTS || this.incomingExtensionBytes + bytes > 8 * MAX_NETWORK_FRAME_BYTES) throw new Error("too many queued extension frames");
+      this.incomingExtensions.push(frame); this.incomingExtensionBytes += bytes; this.pumpExtensions();
       return;
     }
     if (frame.type === "peers") { this.peers = frame.peers; return; }
@@ -243,7 +270,7 @@ class Link {
       clearTimeout(pending.timer);
       this.pending.delete(frame.rid);
       if (frame.error) pending.reject(new Error(frame.error));
-      else if (pending.kind === "send" && frame.delivered !== undefined) pending.resolve({ delivered: frame.delivered, recipient: frame.recipient });
+      else if (pending.kind === "send" && frame.delivered !== undefined) pending.resolve({ delivered: frame.delivered, recipient: frame.recipient, stored: frame.stored, recovered: frame.recovered, readAt: frame.readAt });
       else if (pending.kind === "echo" && frame.delivered !== undefined) pending.resolve(frame.delivered);
       else if (pending.kind === "receipt" && frame.readAt !== undefined) pending.resolve(frame.readAt);
       else if (pending.kind === "files" && frame.transfer) pending.resolve(frame.transfer);
@@ -269,9 +296,18 @@ class Link {
       const message = { ...frame.message, from: { ...frame.message.from, id: `${remote.id}/${frame.message.from.id}`, name: `${remote.name}/${frame.message.from.name}` } };
       const result = this.service.receive(message);
       this.refresh();
-      this.write({ type: "result", rid: frame.rid, delivered: result.delivered, recipient: result.recipient });
+      this.write({ type: "result", rid: frame.rid, ...result });
     } catch (err) {
       this.write({ type: "result", rid: frame.rid, error: String((err as Error).message).slice(0, MAX_METADATA_CHARS) });
+    }
+  }
+
+  private pumpExtensions(): void {
+    while (!this.socket.destroyed && this.extensionHandlers < MAX_EXTENSION_HANDLERS && this.incomingExtensions.length) {
+      const frame = this.incomingExtensions.shift()!;
+      this.incomingExtensionBytes -= Buffer.byteLength(JSON.stringify(frame)); this.extensionHandlers++;
+      void Promise.resolve().then(() => this.service.receiveExtension(frame.type, frame.payload, this.remote!))
+        .catch((error: Error) => this.fail(error)).finally(() => { this.extensionHandlers--; this.pumpExtensions(); });
     }
   }
 
@@ -302,6 +338,7 @@ export class NetworkService {
     this.keys = new PairingStore(home, cfg.name);
     this.transfers = new TransferManager(home, {
       supports: (remote) => this.peerSupports(remote, FILE_STREAM_CAPABILITY),
+      window: (remote) => this.peerSupports(remote, FILE_STREAM_WINDOW_CAPABILITY) ? TRANSFER_WINDOW_CHUNKS : 1,
       send: (remote, payload) => {
         if (payload.op === "offer" || payload.op === "fetch") this.instanceLink(remote).refresh();
         return this.sendExtension(remote, "file-stream", payload);
@@ -328,7 +365,7 @@ export class NetworkService {
   }
 
   extensionCapabilities(): string[] {
-    return [...this.extensions.values()].map((extension) => extension.capability).concat(this.broker.recipientReceipts ? ["recipient-receipts-v1"] : []);
+    return [...this.extensions.values()].map((extension) => extension.capability).concat([FILE_STREAM_WINDOW_CAPABILITY], this.broker.recipientReceipts ? ["recipient-receipts-v1"] : []);
   }
 
   receiveExtension(type: NetworkExtensionType, payload: Record<string, unknown>, remote: NetworkPair): void | Promise<void> {
@@ -492,7 +529,23 @@ export class NetworkService {
     const result = await link.send({ ...message, recipient: target });
     const actual = result.recipient ?? target;
     const recipient = `${link.remote!.name}/${actual}`;
-    return { messages: [{ ...message, recipient }], deliveredTo: result.delivered ? [recipient] : [], queuedFor: result.delivered ? [] : [recipient], recipientStates: link.peers.filter((p) => p.name === actual).map((p) => ({ name: recipient, activity: p.activity, autoWake: p.autoWake, wakeOnDirect: p.wakeOnDirect, wakeAvailable: p.wakeAvailable, wakeMaxHops: p.wakeMaxHops })) };
+    return { messages: [{ ...message, recipient }], deliveredTo: result.delivered ? [recipient] : [], queuedFor: result.delivered ? [] : [recipient],
+      ...(result.stored ? { storage: { id: message.id, state: "stored" as const, recovered: result.recovered, receipts: [{ recipient, readAt: result.readAt ?? null }] } } : {}),
+      recipientStates: link.peers.filter((p) => p.name === actual).map((p) => ({ name: recipient, activity: p.activity, autoWake: p.autoWake, wakeOnDirect: p.wakeOnDirect, wakeAvailable: p.wakeAvailable, wakeMaxHops: p.wakeMaxHops })) };
+  }
+
+  /** Advertised remote project hints select an address, never grant local project authority. */
+  projectPeers(address: string): PeerInfo[] {
+    return this.peers().filter((p) => !p.jobAgent && !p.subagent && p.projectGroup && p.projectAddress === address);
+  }
+
+  projectTarget(address: string): string {
+    const peers = this.projectPeers(address);
+    const groups = new Set(peers.map((p) => `${p.host}/${p.projectGroup}`));
+    if (groups.size !== 1) throw new BridgeError(groups.size > 1 ? "ambiguous_target" : "unknown_target", "Use a unique paired project address or an exact host/session name.");
+    const target = peers.filter((p) => !p.unavailable).sort((a, b) => Number(Boolean(b.projectMain)) - Number(Boolean(a.projectMain)) || a.startedAt - b.startedAt || a.name.localeCompare(b.name))[0];
+    if (!target) throw new BridgeError("unknown_target", "No paired project session is available.");
+    return target.name;
   }
 
   private target(address: string): { link: Link; target: string } {
@@ -500,7 +553,15 @@ export class NetworkService {
     const host = address.slice(0, slash);
     const raw = address.slice(slash + 1);
     const link = [...this.links.values()].find((l) => l.remote!.name === host || l.remote!.id === host);
-    const target = link?.peers.find((p) => p.name === raw || p.id === raw)?.name ?? raw;
+    let target = link?.peers.find((p) => p.name === raw || p.id === raw)?.name ?? raw;
+    if (link && raw.startsWith("project:")) {
+      const peers = link.peers.filter((p) => !p.jobAgent && !p.subagent && p.projectGroup && p.projectAddress === raw);
+      const groups = new Set(peers.map((p) => p.projectGroup));
+      if (groups.size !== 1) throw new BridgeError(groups.size > 1 ? "ambiguous_target" : "unknown_target", "Use a unique project address on the paired PC.");
+      const main = peers.filter((p) => !p.unavailable).sort((a, b) => Number(Boolean(b.projectMain)) - Number(Boolean(a.projectMain)) || a.startedAt - b.startedAt || a.name.localeCompare(b.name))[0];
+      if (!main) throw new BridgeError("unknown_target", "No paired project session is available.");
+      target = main.name;
+    }
     if (!link || !NETWORK_NAME_PATTERN.test(target)) throw new BridgeError("unknown_target", "paired instance is not connected or target is invalid");
     return { link, target };
   }
