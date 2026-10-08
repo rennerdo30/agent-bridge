@@ -9,6 +9,7 @@ import { pathToFileURL } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { build } from "esbuild";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
+import { MAX_JOB_TIMEOUT_SEC } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
 import { jobEnvironment } from "../src/core/job-environment.js";
 import { pidAlive } from "../src/core/delegate.js";
@@ -17,10 +18,24 @@ import type { Worktree } from "../src/core/worktree.js";
 import { JobRunners, readRunnerState, type RunnerSpec } from "../src/mcp/job-host.js";
 import { JobManager, type Run } from "../src/mcp/jobs.js";
 import { resumeArgs, runDelegate, type DelegateArgs, type RunContext } from "../src/mcp/delegate-run.js";
+import { verifiedGoneJobOwners } from "../src/core/job-restoration.js";
 
 const CONTEXT = "Synthetic native runner context preserved through supervisor reload and continuation.\n";
 const CONTEXT_SHA256 = createHash("sha256").update(CONTEXT).digest("hex");
 export interface NativeRunnerOptions { checkout: string; home: string; count?: number; owner?: string; rootSession?: string; supervisor?: string }
+
+/** Match the interactive codex MCP server's authenticated reload/adoption lifecycle.
+ * A vanished peer alone never authorizes takeover; process identity must prove exit.
+ */
+export async function settleNativeFixtureOwners(home: string, node: BridgeNode, manager: JobManager): Promise<Record<string, unknown>> {
+  const manifest = JSON.parse(readFileSync(join(home, "native-runner-fixture", "manifest.json"), "utf8")) as Manifest;
+  if (!node.isConnected || node.currentSessionId !== manifest.supervisor) throw new Error(`Native supervisor identity is unsettled: ${JSON.stringify({ connected: node.isConnected, name: node.name, sessionId: node.currentSessionId, expected: manifest.supervisor })}`);
+  const online = new Set((await node.peers()).map(peer => peer.name));
+  const candidates = manager.standInOwners(online), gone = await verifiedGoneJobOwners(home, candidates);
+  const owners = manager.adoptStandIns(online, gone);
+  if (owners.length) await node.claimMail(owners);
+  return { name: node.name, sessionId: node.currentSessionId, expectedSessionId: manifest.supervisor, candidates, independentlyVerifiedGone: [...gone], adoptedOwners: owners, online: [...online] };
+}
 export interface NativeRunnerInfo {
   index: number; id: string; name: string; version: string; pid: number; cliPid: number;
   status: string; live: boolean; sessionId: string | null; workdir: string; worktree: Worktree;
@@ -163,7 +178,7 @@ export async function startOldRunnerFixtures(options: NativeRunnerOptions): Prom
     const worktree:Worktree={repoRoot:repository,path:workdir,cwd:workdir,branch,base,baseBranch};
     const cliMarker=join(lane,`runner-${index}.marker.json`), releasePath=join(controls,`runner-${index}.release`), specFile=join(home,"jobs",`${id}.spec.json`);
     const prompt=`fixture_marker=${cliMarker} fixture_release=${releasePath} Hold this synthetic native turn with its retained context.`;
-    const args:DelegateArgs={prompt,title:`Native release fixture${index}`,cwd:workdir,access:"read",worktree:false,_worktree:worktree,_job:name,timeout_sec:3600};
+    const args:DelegateArgs={prompt,title:`Native release fixture${index}`,cwd:workdir,access:"read",worktree:false,_worktree:worktree,_job:name,timeout_sec:MAX_JOB_TIMEOUT_SEC};
     const job={id,name,agent:"claude",model:null,prompt,startedAt:Date.now(),args,sessionId:null,workdir,worktree,owner,supervisor,metadataVersion:2,rootSession,rootName:owner,allowedServers:[],status:"running",host:{pid:null,peer:name,startedAt:Date.now()}};
     const spec:RunnerSpec={home,target:"claude",args,base:args,job:job as unknown as RunnerSpec["job"],owner,byAgent:"codex",cwd:workdir,cfg};
     runtime.old.writeJsonStore(specFile,{...spec},null);
@@ -190,7 +205,7 @@ export async function startOldRunnerFixtures(options: NativeRunnerOptions): Prom
   const turnControls=()=>readdirSync(controls).filter(file=>file.startsWith("turn-")&&file.endsWith(".json")).map(file=>JSON.parse(readFileSync(join(controls,file),"utf8")));
   const releaseFiles=(index?:number)=>{for(const control of turnControls()) if(index===undefined || control.index===index) writeFileSync(contained(controls,control.releasePath),"Synthetic turn released.\n");};
   const release=async(index?:number)=>{releaseFiles(index);await until(()=>inspect().filter(info=>index===undefined || info.index===index).every(info=>info.status!=="running"),30000);return inspect();};
-  const result:OldRunnerFixtures={count,home,manifestFile,inspect,assertLive:()=>{const infos=inspect();if(infos.length!==count || infos.some(info=>info.status!=="running" || !info.live || !info.contextPreserved || !pidAlive(info.pid) || !pidAlive(info.cliPid))) throw new Error("Genuine old runner live/session/context assertion failed");return infos;},release,stop:async()=>{
+  const result:OldRunnerFixtures={count,home,manifestFile,inspect,assertLive:()=>{const infos=inspect();if(infos.length!==count || processes.some(child=>child.exitCode!==null || child.signalCode!==null) || infos.some(info=>info.status!=="running" || !info.live || !info.contextPreserved || !pidAlive(info.pid) || !pidAlive(info.cliPid))) throw new Error("Genuine old runner live/session/context assertion failed");return infos;},release,stop:async()=>{
     releaseFiles();
     const stopped=()=>processes.every(child=>child.exitCode!==null || child.signalCode!==null) && inspect().every(info=>!fixturePidAlive(info.pid)&&!fixturePidAlive(info.cliPid)) && turnControls().filter(control=>control.continued).every(control=>{const pid=launchedRunner(lane,control.specFile,control.startedAt);return pid>0&&!fixturePidAlive(pid);});
     try { await until(stopped,30000); }
@@ -206,7 +221,10 @@ export async function continueNativeRunnerFixture(options: NativeRunnerOptions &
   const {home,lane}=paths(options), manifest=JSON.parse(readFileSync(join(lane,"manifest.json"),"utf8")) as Manifest;
   const entry=manifest.descriptors[options.index ?? 0]; if(!entry) throw new Error("Native continuation fixture index unavailable");
   const cfg={...DEFAULT_CONFIG,claudeBin:manifest.claudeBin,maxJobs:manifest.descriptors.length+2,dashboard:false,jobCloseCleanup:false,notifications:{approvals:false,finish:false,fail:false}};
-  const node=options.node, manager=new JobManager(node,nullLogger,join(home,"jobs.json"),cfg.maxJobs);
+  const node=options.node, manager=new JobManager(node,nullLogger,join(home,"jobs.json"),cfg.maxJobs,undefined,{
+    canRestore:()=>node.isConnected && node.currentSessionId===manifest.supervisor,
+    canReceiveHandoff:()=>node.isConnected,
+  });
   const runners=new JobRunners(node,home,manifest.currentCli,nullLogger); manager.runners=runners;
   const rc:RunContext={agent:"codex",cfg,home,log:nullLogger,me:()=>node.name,cwd:()=>entry.worktree.cwd,jobs:manager};
   manager.restore((agent,base)=>(message,sessionId,workdir,worktree)=>{
@@ -217,6 +235,7 @@ export async function continueNativeRunnerFixture(options: NativeRunnerOptions &
   let continuedRelease:string|undefined;
   let continuationLaunched=false, continuationStartedAt=0;
   try {
+    const adoption = await settleNativeFixtureOwners(home,node,manager);
     const initial=fixtureInfo(home,entry,manifest.oldVersion), liveBody=`Synthetic native live continuity${randomUUID()}`;
     if(initial.status!=="running" || !initial.live || !initial.contextPreserved) throw new Error("Native held turn was not preserved across supervisor reload");
     const delivered=manager.followUp(entry.name,liveBody);
@@ -240,7 +259,7 @@ export async function continueNativeRunnerFixture(options: NativeRunnerOptions &
     const snapshot=fixtureInfo(home,entry,"current");
     writeFileSync(releasePath,"Synthetic continuation released.\n");
     await until(()=>readRunnerState(home,entry.id)?.status==="done" && !pidAlive(snapshot.pid),30000);
-    return {genuineOldRunJobRunner:true,genuineCurrentRunJobRunner:true,currentJobManagerTakeover:true,nativeLiveMessageConsumed:true,oldVersion:manifest.oldVersion,oldSha:manifest.oldSha,oldPid:initial.pid,newPid:snapshot.pid,job:entry.name,sessionId:entry.sessionId,worktree:entry.worktree.path,contextSha256:CONTEXT_SHA256,contextPreserved:true,continuedViaResume:true};
+    return {genuineOldRunJobRunner:true,genuineCurrentRunJobRunner:true,currentJobManagerTakeover:true,nativeLiveMessageConsumed:true,adoption,oldVersion:manifest.oldVersion,oldSha:manifest.oldSha,oldPid:initial.pid,newPid:snapshot.pid,job:entry.name,sessionId:entry.sessionId,worktree:entry.worktree.path,contextSha256:CONTEXT_SHA256,contextPreserved:true,continuedViaResume:true};
   } finally {
     try {
       if(continuedRelease) {

@@ -1,12 +1,14 @@
 /** Opt-in release rehearsal. Synthetic fixtures and results are retained under the checkout only.
  * Bundle with esbuild (--bundle --platform=node --format=esm --packages=external).
  * Seed: node .agent-bridge-test/release-rehearsal.mjs --seed-only --bytes 20GiB
+ * Clone: node .agent-bridge-test/release-rehearsal.mjs --source-home <stopped fixture> --seed-only --io 256MiB
  * Run:  node .agent-bridge-test/release-rehearsal.mjs --home <printed fixture> --io 8MiB
  * Never included in the normal test suite at production scale.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, fork, type ChildProcess } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { open as openFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { constants as priorities, getPriority, setPriority } from "node:os";
@@ -31,7 +33,7 @@ import { worktreeLease } from "../src/core/worktree-state.js";
 import type { Broker } from "../src/core/broker.js";
 import type { HistoryBackground } from "../src/core/history-background.js";
 import type { Worker } from "node:worker_threads";
-import { startOldRunnerFixtures, continueNativeRunnerFixture, type OldRunnerFixtures } from "./release-runner-fixture.js";
+import { startOldRunnerFixtures, continueNativeRunnerFixture, settleNativeFixtureOwners, type OldRunnerFixtures } from "./release-runner-fixture.js";
 import { listMessageBackups, type MessageBackupManifest } from "../src/core/message-backups.js";
 import type { BackupHealth } from "../src/core/backup-background.js";
 
@@ -50,6 +52,9 @@ const fixtureRoot = join(checkout, ".agent-bridge-test");
 const token = "synthetic-rehearsal-token";
 const sourceId = "synthetic-rehearsal-source";
 const cliDirectories = { CODEX_HOME: "codex", CLAUDE_CONFIG_DIR: "claude", XDG_DATA_HOME: "xdg", ANTIGRAVITY_CLI_HOME: "antigravity" };
+function fixtureIdentities(home: string): { sessions: string[]; rootSession: string } {
+  return JSON.parse(readFileSync(join(home, "rehearsal-identities.json"), "utf8"));
+}
 interface Seed { schema: 1; home: string; oldVersion: string; oldSha: string; payloadBytes: number; rows: number; rawSha256: string; sourceBytes: number; archiveFiles: number; archiveBytes: number; runs: number; createdAt: string }
 function physicalHome(path: string): string {
   const result = resolve(path), rel = relative(fixtureRoot, result);
@@ -115,12 +120,18 @@ export async function seedRehearsal(bytes: number): Promise<Seed> {
     }
     db.exec("PRAGMA wal_checkpoint(FULL)");
   } finally { db.close(); }
+  const archiveBytes = await seedCorpus(home, old.JSON_STORE_VERSION);
+  const seed: Seed = { schema: 1, home, oldVersion: old.APP_VERSION, oldSha, payloadBytes, rows, rawSha256: hash.digest("hex"), sourceBytes: statSync(join(home, "bridge.db")).size, archiveFiles: 307, archiveBytes, runs: 1_024, createdAt: new Date().toISOString() };
+  writeFileSync(join(home, "seed.json"), JSON.stringify(seed, null, 2), { flag: "wx" });
+  console.log(JSON.stringify({ phase: "seed-complete", ...seed })); return seed;
+}
+async function seedCorpus(home: string, jsonVersion: number): Promise<number> {
   mkdirSync(join(home, "archive")); mkdirSync(join(home, "runs"));
   let archiveBytes = 0;
   for (let file = 0; file < 307; file++) {
     // Repeated IDs model retained duplicate archives without changing or removing any file.
     const jobs = Array.from({ length: 75 }, (_, n) => { const id = `archived-${file % 209}-${n}`; return { id, name: `codex-job-${id}`, agent: "codex", owner: "old-session-0", supervisor: "synthetic-root", status: "done", sessionId: `synthetic-${id}`, prompt: "Synthetic retained completed job. ".repeat(18), startedAt: 1_700_000_000_000, finishedAt: 1_700_000_001_000, args: { title: id }, workdir: home, worktree: null }; });
-    const raw = JSON.stringify({ version: old.JSON_STORE_VERSION, jobs }); archiveBytes += Buffer.byteLength(raw);
+    const raw = JSON.stringify({ version: jsonVersion, jobs }); archiveBytes += Buffer.byteLength(raw);
     writeFileSync(join(home, "archive", `jobs-${1_700_000_000_000 + file}-synthetic.json`), raw, { flag: "wx" });
     if (file % 16 === 0) await delay(5);
   }
@@ -130,20 +141,90 @@ export async function seedRehearsal(bytes: number): Promise<Seed> {
     writeFileSync(join(home, "runs", `${name}.log`), "Synthetic retained output\n", { flag: "wx" });
     if (n % 32 === 0) await delay(5);
   }
-  writeFileSync(join(home, "jobs.json"), JSON.stringify({ version: old.JSON_STORE_VERSION, jobs: [] }), { flag: "wx" });
-  const seed: Seed = { schema: 1, home, oldVersion: old.APP_VERSION, oldSha, payloadBytes, rows, rawSha256: hash.digest("hex"), sourceBytes: statSync(join(home, "bridge.db")).size, archiveFiles: 307, archiveBytes, runs: 1_024, createdAt: new Date().toISOString() };
-  writeFileSync(join(home, "seed.json"), JSON.stringify(seed, null, 2), { flag: "wx" });
-  console.log(JSON.stringify({ phase: "seed-complete", ...seed })); return seed;
+  writeFileSync(join(home, "jobs.json"), JSON.stringify({ version: jsonVersion, jobs: [] }), { flag: "wx" });
+  return archiveBytes;
 }
 
-type Reply = { rid?: string; ready?: boolean; result?: unknown; error?: string };
-type Role = "old-session" | "old-runner" | "current-session" | "lease-owner";
+/** Copy only a stopped synthetic source DB+WAL into an entirely fresh namespace.
+ * Original snapshots/reports/worktrees and all original table rows remain retained.
+ */
+export async function cloneRehearsal(sourceHome: string): Promise<Seed> {
+  sourceHome = physicalHome(sourceHome);
+  const original = JSON.parse(readFileSync(join(sourceHome, "seed.json"), "utf8")) as Seed;
+  if (original.schema !== 1 || original.oldVersion !== "0.29.17" || original.home !== sourceHome || !/^[a-f0-9]{64}$/.test(original.rawSha256)) throw new Error("Clone source is not an identified synthetic rehearsal fixture");
+  const sourceReports = (await import("node:fs")).readdirSync(sourceHome).filter(name => /^rehearsal-\d+\.json$/.test(name)).sort();
+  const stopped = sourceReports.length ? JSON.parse(readFileSync(join(sourceHome, sourceReports.at(-1)!), "utf8")) : undefined;
+  if (!stopped?.ownedProcessesStopped) throw new Error("Clone requires the prior rehearsal's explicit owned-process shutdown witness");
+  const home = physicalHome(mkdtempSync(join(fixtureRoot, "release-rehearsal-"))); isolate(home);
+  writeFileSync(join(home, "token"), token, { flag: "wx" });
+  writeFileSync(join(home, "config.json"), JSON.stringify({ history: { ingest: false }, notifications: { approvals: false, finish: false, fail: false } }), { flag: "wx" });
+  process.env.AGENT_BRIDGE_HISTORY_MIGRATION_IO_BYTES_PER_SECOND = String(rehearsalBytes(option("--io") ?? "256MiB"));
+  const source = new DatabaseSync(join(sourceHome, "bridge.db"), { readOnly: true, timeout: 100 });
+  const copied: Record<string, unknown>[] = [];
+  try {
+    if (Number(source.prepare("PRAGMA user_version").get()!.user_version) !== 8) throw new Error("Clone source must retain genuine old SQLite schema8");
+    source.exec("BEGIN");
+    const count = Number(source.prepare("SELECT count(*) n FROM conversation_records WHERE source=?").get(sourceId)!.n);
+    if (count !== original.rows) throw new Error("Synthetic source row count changed before clone");
+    const files = ["bridge.db", ...(existsSync(join(sourceHome, "bridge.db-wal")) ? ["bridge.db-wal"] : [])];
+    const before = files.map(name => {
+      const path = join(sourceHome, name);
+      if (lstatSync(path).isSymbolicLink()) throw new Error("Synthetic source DB/WAL must not be linked");
+      const state = statSync(path);
+      return { name, size: state.size, mtimeMs: state.mtimeMs, ctimeMs: state.ctimeMs, ino: state.ino };
+    });
+    for (const file of before) {
+      const input = await openFile(join(sourceHome, file.name), "r"), output = await openFile(join(home, file.name), "wx", 0o600);
+      const buffer = Buffer.alloc(4 * 1024 * 1024), hash = createHash("sha256"), started = performance.now(); let offset = 0;
+      try {
+        while (offset < file.size) {
+          const { bytesRead } = await input.read(buffer, 0, Math.min(buffer.length, file.size - offset), offset);
+          if (!bytesRead) throw new Error(`Synthetic source file shrank during clone: ${file.name}`);
+          let written = 0;
+          while (written < bytesRead) { const value = await output.write(buffer, written, bytesRead - written, offset + written); if (!value.bytesWritten) throw new Error("Synthetic clone write made no progress"); written += value.bytesWritten; }
+          hash.update(buffer.subarray(0, bytesRead)); offset += bytesRead;
+          const rate = Number(process.env.AGENT_BRIDGE_HISTORY_MIGRATION_IO_BYTES_PER_SECOND);
+          while (performance.now() - started < offset * 1000 / rate) await delay(5);
+          await delay(5);
+          if (offset % (256 * 1024 * 1024) === 0 || offset === file.size) console.log(JSON.stringify({ phase: "clone", home, file: file.name, copiedBytes: offset, sourceBytes: file.size }));
+        }
+        await output.sync(); copied.push({ name: file.name, bytes: offset, sha256: hash.digest("hex") });
+      } finally { await input.close(); await output.close(); }
+    }
+    for (const file of before) { const after = statSync(join(sourceHome, file.name)); if (after.size !== file.size || after.mtimeMs !== file.mtimeMs || after.ctimeMs !== file.ctimeMs || after.ino !== file.ino) throw new Error("Synthetic source changed while copying its DB/WAL; partial copy retained and not used"); }
+    source.exec("ROLLBACK");
+    const restored = await rawHash(join(home, "bridge.db"));
+    if (restored.rows !== original.rows || restored.bytes !== original.payloadBytes || restored.sha256 !== original.rawSha256) throw new Error("Fresh clone does not preserve the original synthetic source hash/count");
+    const old = await oldRuntime(home), archiveBytes = await seedCorpus(home, old.JSON_STORE_VERSION);
+    const seed: Seed = { ...original, home, archiveBytes, sourceBytes: statSync(join(home, "bridge.db")).size, createdAt: new Date().toISOString() };
+    writeFileSync(join(home, "clone-witness.json"), JSON.stringify({ sourceHome, sourceReport: sourceReports.at(-1), copied, restored, previousSnapshotsPreserved: true, freshMigrationNamespace: true }, null, 2), { flag: "wx" });
+    writeFileSync(join(home, "seed.json"), JSON.stringify(seed, null, 2), { flag: "wx" });
+    console.log(JSON.stringify({ phase: "clone-complete", ...seed })); return seed;
+  } catch (error) { writeFileSync(join(home, "clone-failed.json"), JSON.stringify({ sourceHome, copied, error: String(error), stack: (error as Error).stack }), { flag: "wx" }); throw error; }
+  finally { source.close(); }
+}
+
+type Reply = { rid?: string; ready?: boolean; launcherChildExit?: boolean; result?: unknown; error?: string };
+type Role = "old-session" | "old-runner" | "current-session" | "lease-owner" | "session-launcher";
 type NodeInternals = { broker: Broker | null; client: { request(op: string, args: unknown): Promise<unknown> } | null };
 type BrokerInternals = { historyBackground: HistoryBackground | null; store: { backupStatus?: () => BackupHealth | null } };
-interface FixtureChild { process: ChildProcess; role: Role; index: number; request(op: string, data?: Record<string, unknown>): Promise<any>; stop(): Promise<void> }
+interface FixtureChild { process: ChildProcess; role: Role; index: number; ownedChildExit?: boolean; request(op: string, data?: Record<string, unknown>): Promise<any>; stop(): Promise<void> }
 const children: FixtureChild[] = [];
 async function childMain(home: string, role: Role, index: number): Promise<void> {
   isolate(home);
+  if (role === "session-launcher") {
+    const childRole = option("--child-role");
+    if (childRole !== "old-session" && childRole !== "current-session") throw new Error("Unknown owned launcher session role");
+    const owned = fork(fileURLToPath(import.meta.url), ["--role", childRole, "--index", String(index), "--home", home], { cwd: checkout, env: { ...process.env }, stdio: ["ignore", "pipe", "pipe", "ipc"], windowsHide: true });
+    owned.stdout?.on("data", value => process.stdout.write(value)); owned.stderr?.on("data", value => process.stderr.write(value));
+    owned.on("message", value => process.send?.(value));
+    process.on("message", (value: { op?: string }) => {
+      if (value.op === "launcher-stop") owned.kill();
+      else if (owned.connected) owned.send(value);
+    });
+    owned.once("exit", (code, signal) => process.send?.({ launcherChildExit: true, result: { pid: owned.pid, code, signal } }, () => process.exit(code ?? (signal ? 1 : 0))));
+    return;
+  }
   if (role === "lease-owner") {
     const path = option("--worktree"); if (!path || !relative(home, path) || relative(home, path).startsWith("..")) throw new Error("Lease fixture must be below the synthetic home");
     worktreeLease(home, { path }); process.send?.({ ready: true, result: { pid: process.pid } });
@@ -154,30 +235,44 @@ async function childMain(home: string, role: Role, index: number): Promise<void>
   const constructor = legacy ? (await oldRuntime(home)).BridgeNode : BridgeNode;
   const name = role === "old-runner" ? `codex-job-rehearsal-${index}` : `old-session-${index}`;
   const node = new constructor({ pipePath: resolvePipePath(home, {}), dbPath: join(home, "bridge.db"), token, agent: role === "old-runner" ? "other" : "codex", name, cwd: home, autoWake: false, log: nullLogger,
-    ...(role === "old-runner" ? { canHostBroker: false, id: `job:rehearsal-${index}`, jobAgent: "codex" as const, jobParent: "old-session-0", jobOwner: "synthetic-root", rootName: "old-session-0", rootSession: "synthetic-root" } : {}) });
+    ...(role === "old-runner" ? { canHostBroker: false, id: `job:rehearsal-${index}`, jobAgent: "codex" as const, jobParent: "old-session-0", jobOwner: fixtureIdentities(home).rootSession, rootName: "old-session-0", rootSession: fixtureIdentities(home).rootSession } : {}) });
   node.on("message", message => node.markRead([message.id]));
+  const connectionWitnesses: Record<string, unknown>[] = [];
+  node.on("connected", (value: { isBroker?: boolean }) => connectionWitnesses.push({ at: Date.now(), pid: process.pid, parentPid: process.ppid, name: node.name, sessionId: node.currentSessionId, isBroker: value.isBroker }));
   // Distinct synthetic sessions share this harness parent PID. Publish their known session
   // identity before hello so launch reconciliation cannot treat them as one host session.
-  if (role !== "old-runner") await node.setSessionId(`synthetic-session-${index}`);
+  if (role !== "old-runner") await node.setSessionId(fixtureIdentities(home).sessions[index]!);
   await node.start();
   const internals = node as unknown as NodeInternals;
-  process.send?.({ ready: true, result: { pid: process.pid, name: node.name, version: legacy ? "0.29.17" : APP_VERSION } });
+  process.send?.({ ready: true, result: { pid: process.pid, parentPid: process.ppid, name: node.name, sessionId: node.currentSessionId, version: legacy ? "0.29.17" : APP_VERSION } });
   let profiling = false;
   let outcomePolls = 0;
   let toolJobs: JobManager | undefined, subagent: string | undefined, delivered = 0, nativeTool = false;
   const callbacks = new Map<string, (args: Record<string, unknown>, extra: any) => Promise<any>>();
-  const prepareSubagent = () => {
+  let nativeAdoption: Record<string, unknown> | undefined;
+  const prepareSubagent = async () => {
     if (legacy) throw new Error("Tool fixture requires a current supervisor session");
+    // The hosting candidate may listen before this replacement session finishes reauthentication.
+    // A real MCP tool first ensures its authenticated connection, then restores under the final name.
+    await node.ensureConnected();
     if (toolJobs) return;
     const manifestFile = join(home, "native-runner-fixture", "manifest.json");
     const manifest = existsSync(manifestFile) ? JSON.parse(readFileSync(manifestFile, "utf8")) : undefined;
     const lane = join(home, "mcp-tool-fixture"); mkdirSync(lane, { recursive: true });
     nativeTool = Boolean(manifest);
-    toolJobs = new JobManager(node, nullLogger, manifest ? join(home, "jobs.json") : join(lane, "jobs.json"), 16);
+    toolJobs = new JobManager(node, nullLogger, manifest ? join(home, "jobs.json") : join(lane, "jobs.json"), 16, undefined, {
+      canRestore: () => node.isConnected && (!manifest || node.currentSessionId === manifest.supervisor),
+      canReceiveHandoff: () => node.isConnected,
+    });
     if (manifest) toolJobs.runners = new JobRunners(node, home, manifest.currentCli, nullLogger);
     const fakeMcp = { registerTool: (name: string, _config: unknown, callback: (args: Record<string, unknown>, extra: any) => Promise<any>) => { callbacks.set(name, callback); } };
-    registerTools(fakeMcp as Parameters<typeof registerTools>[0], { node, jobs: toolJobs, cfg: { ...DEFAULT_CONFIG, ...(manifest ? { claudeBin: manifest.claudeBin } : {}) }, home, cwd: () => home, agent: "codex", log: nullLogger, channelActive: () => false } as ServerContext, []);
-    if (manifest) { subagent = manifest.descriptors[1].name; return; }
+    registerTools(fakeMcp as Parameters<typeof registerTools>[0], { node, jobs: toolJobs, cfg: { ...DEFAULT_CONFIG, ...(manifest ? { claudeBin: manifest.claudeBin } : {}) }, home, cwd: () => home, agent: "codex", log: nullLogger, channelActive: () => false, launchKnown: Promise.resolve() } as ServerContext, []);
+    await Promise.resolve();
+    if (manifest) {
+      subagent = manifest.descriptors[1].name;
+      nativeAdoption = await settleNativeFixtureOwners(home, node, toolJobs);
+      return;
+    }
     const run: Run = async signal => new Promise(resolve => { signal.addEventListener("abort", () => resolve({ text: "Synthetic held run stopped", sessionId: "synthetic-held-tool-session", isError: false, details: {} }), { once: true }); });
     const job = toolJobs.start("codex", null, "Synthetic held runner; no proprietary CLI", run);
     job.live = { post: () => { delivered++; } }; subagent = job.name;
@@ -186,22 +281,23 @@ async function childMain(home: string, role: Role, index: number): Promise<void>
     const answer = async (): Promise<unknown> => {
       if (raw.op === "stop") { toolJobs?.cancelAll(); await node.stop(); return { stopped: true }; }
       if (raw.op === "probe") {
-        const before = performance.now(), key = randomUUID(), body = `Synthetic continuity probe ${key}`;
+        const startedAt = Date.now(), before = performance.now(), key = randomUUID(), body = `Synthetic continuity probe ${key}`;
+        const connectedBeforeSend = node.isConnected;
         let sendMs = 0;
         try {
           const sent = await node.send({ to: "old-session-0", body, dedupeKey: key });
           sendMs = performance.now() - before; const at = performance.now(); await node.peers();
-          return { sendMs, peersMs: performance.now() - at, id: sent.messages[0]?.id, storageOutcome: { state: "stored", ids: sent.messages.map(message => message.id) } };
+          return { startedAt, finishedAt: Date.now(), connectedBeforeSend, sendMs, peersMs: performance.now() - at, id: sent.messages[0]?.id, storageOutcome: { state: "stored", ids: sent.messages.map(message => message.id) } };
         } catch (error) {
           let copies: Record<string, unknown>[] = [], lookupError: string | undefined;
           try { const db = new DatabaseSync(join(home, "bridge.db"), { readOnly: true, timeout: 100 }); try { copies = db.prepare("SELECT id,recipient,read_at FROM messages WHERE body=? AND from_name=?").all(body, node.name); } finally { db.close(); } }
           catch (lookup) { lookupError = String(lookup); }
-          return { sendMs: sendMs || performance.now() - before, probeError: String(error), storageOutcome: { state: copies.length ? "stored" : "unknown", localState: copies.length ? "stored" : "not_stored", checkedAt: Date.now(), copies, lookupError, legacyOperationHasNoDurableRetryId: true } };
+          return { startedAt, finishedAt: Date.now(), connectedBeforeSend, sendMs: sendMs || performance.now() - before, probeError: String(error), storageOutcome: { state: copies.length ? "stored" : "unknown", localState: copies.length ? "stored" : "not_stored", checkedAt: Date.now(), copies, lookupError, legacyOperationHasNoDurableRetryId: true } };
         }
       }
       if (raw.op === "status") {
         const broker = internals.broker as unknown as BrokerInternals | null;
-        return { broker: Boolean(broker), pid: process.pid, priority: getPriority(0), migration: broker?.historyBackground?.status() ?? null, backup: broker?.store?.backupStatus?.() ?? null, version: legacy ? "0.29.17" : APP_VERSION, name: node.name, id: node.id, sessionId: node.currentSessionId };
+        return { broker: Boolean(broker), pid: process.pid, parentPid: process.ppid, priority: getPriority(0), migration: broker?.historyBackground?.status() ?? null, backup: broker?.store?.backupStatus?.() ?? null, version: legacy ? "0.29.17" : APP_VERSION, name: node.name, id: node.id, sessionId: node.currentSessionId, connectionWitnesses };
       }
       if (raw.op === "interrupt-history") {
         const background = (internals.broker as unknown as BrokerInternals | null)?.historyBackground;
@@ -227,21 +323,27 @@ async function childMain(home: string, role: Role, index: number): Promise<void>
       if (raw.op === "runs") { const at = performance.now(); const runs = listRuns(home); return { milliseconds: performance.now() - at, count: runs.length }; }
       if (raw.op === "dashboard") {
         if (!internals.broker || legacy) throw new Error("Dashboard poll must execute on the current broker main thread");
+        const dashboardStartedAt = Date.now();
         const at = performance.now(), runs = listRuns(home), listRunsMs = performance.now() - at, pollAt = performance.now();
+        const listRunsFinishedAt = Date.now();
         // These are distinct production requests; let pending mail run between them.
         await delay(0);
         const value = await readDashboard({ home, log: nullLogger, peers: () => node.peers() }, { path: "/api/state" });
         if (value.status !== 200 || runs.length < 1000) throw new Error("Dashboard fixture did not load its retained run corpus");
-        return { listRunsMs, dashboardMs: performance.now() - pollAt, runCount: runs.length };
+        return { dashboardStartedAt, listRunsFinishedAt, dashboardFinishedAt: Date.now(), listRunsMs, dashboardMs: performance.now() - pollAt, runCount: runs.length };
       }
-      if (raw.op === "message-subagent") {
-        prepareSubagent(); const at = performance.now(), before = delivered;
+      if (raw.op === "message-subagent" || raw.op === "tool-preflight") {
+        await prepareSubagent(); const at = performance.now(), before = delivered;
+        if (raw.op === "tool-preflight") {
+          const known = toolJobs!.find(subagent!);
+          return { name: node.name, sessionId: node.currentSessionId, target: subagent, targetKnown: Boolean(known), owner: known?.owner, status: known?.status, adoption: nativeAdoption };
+        }
         const value = await callbacks.get("message_subagent")!({ job: subagent!, message: "Synthetic sustained tool probe" }, {});
-        if (value.isError || !nativeTool && delivered !== before + 1) throw new Error(`Actual message_subagent handler did not deliver: ${JSON.stringify(value)}`);
+        if (value.isError || !nativeTool && delivered !== before + 1) throw new Error(`Actual message_subagent handler did not deliver: ${JSON.stringify({ value, name: node.name, sessionId: node.currentSessionId, target: subagent, adoption: nativeAdoption, targetRecord: toolJobs!.hookJobs().find(job => job.name === subagent), knownJobs: toolJobs!.hookJobs().map(job => ({ name: job.name, owner: job.owner, status: job.status })) })}`);
         return { messageSubagentMs: performance.now() - at, delivered, actualRegisteredHandler: true, genuineOldJobRunner: nativeTool, syntheticCli: nativeTool, fakeHeldRunner: !nativeTool, proprietaryCliLaunched: false };
       }
       if (raw.op === "native-continuation") {
-        if (legacy || node.currentSessionId !== "synthetic-session-0") throw new Error("Native continuation requires its retained current supervisor session");
+        if (legacy || node.currentSessionId !== fixtureIdentities(home).sessions[0]) throw new Error("Native continuation requires its retained current supervisor session");
         return continueNativeRunnerFixture({ checkout, home, node, index: 0 });
       }
       if (raw.op === "outcomes") {
@@ -260,7 +362,8 @@ async function childMain(home: string, role: Role, index: number): Promise<void>
   });
 }
 async function startChild(home: string, role: Role, index: number, extra: string[] = []): Promise<FixtureChild> {
-  const processChild = fork(fileURLToPath(import.meta.url), ["--home", home, "--role", role, "--index", String(index), ...extra], { cwd: checkout, env: process.env, stdio: ["ignore", "pipe", "pipe", "ipc"], windowsHide: true });
+  const wrapped = role === "old-session" || role === "current-session";
+  const processChild = fork(fileURLToPath(import.meta.url), ["--home", home, "--role", wrapped ? "session-launcher" : role, ...(wrapped ? ["--child-role", role] : []), "--index", String(index), ...extra], { cwd: checkout, env: process.env, stdio: ["ignore", "pipe", "pipe", "ipc"], windowsHide: true });
   const waiters = new Map<string, { resolve(value: any): void; reject(error: Error): void; timer: NodeJS.Timeout }>();
   const child: FixtureChild = {
     process: processChild, role, index,
@@ -268,7 +371,7 @@ async function startChild(home: string, role: Role, index: number, extra: string
       const rid = randomUUID(), timer = setTimeout(() => { waiters.delete(rid); reject(new Error(`Owned ${role} ${index} request timed out: ${op}`)); }, op === "profile" ? 30_000 : op === "native-continuation" ? 180_000 : 60_000);
       waiters.set(rid, { resolve, reject, timer }); processChild.send({ rid, op, data }, error => { if (error) { clearTimeout(timer); waiters.delete(rid); reject(error); } });
     }),
-    stop: async () => { if (processChild.exitCode !== null || processChild.signalCode !== null) return; try { await child.request("stop"); } catch { if (processChild.exitCode === null) processChild.kill(); } await until(() => processChild.exitCode !== null || processChild.signalCode !== null, 15_000); },
+    stop: async () => { if (processChild.exitCode !== null || processChild.signalCode !== null) return; try { await child.request("stop"); } catch { if (wrapped && processChild.connected) processChild.send({ op: "launcher-stop" }); else if (processChild.exitCode === null) processChild.kill(); } await until(() => processChild.exitCode !== null || processChild.signalCode !== null, 15_000); },
   };
   children.push(child);
   const output = { stdout: "", stderr: "" };
@@ -276,6 +379,7 @@ async function startChild(home: string, role: Role, index: number, extra: string
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Owned ${role} did not start: ${output.stderr}`)), 90_000);
     processChild.on("message", (message: Reply) => {
+      if (message.launcherChildExit) { child.ownedChildExit = true; return; }
       if (message.ready) { clearTimeout(timer); resolve(); }
       if (message.rid) { const pending = waiters.get(message.rid); if (!pending) return; clearTimeout(pending.timer); waiters.delete(message.rid); if (message.error) pending.reject(new Error(message.error)); else pending.resolve(message.result); }
     });
@@ -288,11 +392,26 @@ async function startChild(home: string, role: Role, index: number, extra: string
   return child;
 }
 async function until(check: () => boolean | Promise<boolean>, timeout = 60_000): Promise<void> { const end = Date.now() + timeout; while (!await check()) { if (Date.now() > end) throw new Error("Rehearsal condition timed out"); await delay(100); } }
-function cursor(progress: HistoryMigrationProgress): Record<string, unknown> {
+const checkpointReadWitnesses: Record<string, unknown>[] = [];
+export async function readRehearsalCursor(progress: Pick<HistoryMigrationProgress, "snapshot">, retryMs = 3000): Promise<Record<string, unknown>> {
   if (!progress.snapshot || !existsSync(`${progress.snapshot}.progress.db`)) return {};
-  const db = new DatabaseSync(`${progress.snapshot}.progress.db`, { readOnly: true, timeout: 100 });
-  try { return db.prepare("SELECT generation,snapshot_after,snapshot_rows,snapshot_verify_after,snapshot_verify_rows,copy_after,copy_rows,verify_after,verify_rows FROM table_state WHERE table_name='conversation_records'").get() ?? {}; }
-  finally { db.close(); }
+  const path = `${progress.snapshot}.progress.db`, started = performance.now(); let attempts = 0;
+  while (true) {
+    let db: DatabaseSync | undefined;
+    try {
+      attempts++; db = new DatabaseSync(path, { readOnly: true, timeout: 100 });
+      const value = db.prepare("SELECT generation,snapshot_after,snapshot_rows,snapshot_verify_after,snapshot_verify_rows,copy_after,copy_rows,verify_after,verify_rows FROM table_state WHERE table_name='conversation_records'").get() ?? {};
+      if (attempts > 1) checkpointReadWitnesses.push({ path, attempts, elapsedMs: performance.now() - started, recovered: true });
+      return value;
+    } catch (error) {
+      if (!/database is (?:locked|busy)/i.test(String(error))) throw error;
+      if (performance.now() - started >= retryMs) {
+        checkpointReadWitnesses.push({ path, attempts, elapsedMs: performance.now() - started, recovered: false, error: String(error) });
+        throw new Error(`Checkpoint inspection remained busy after ${attempts} bounded read attempts: ${path}`, { cause: error });
+      }
+    } finally { db?.close(); }
+    await delay(50);
+  }
 }
 async function rawHash(file: string): Promise<{ rows: number; bytes: number; sha256: string }> {
   const db = new DatabaseSync(file, { readOnly: true, timeout: 100 }), hash = createHash("sha256"), start = performance.now(); let rows = 0, bytes = 0;
@@ -344,6 +463,8 @@ export async function rehearse(home: string): Promise<void> {
   const seed = JSON.parse(readFileSync(join(home, "seed.json"), "utf8")) as Seed;
   // Genuine old brokers must begin with ingestion disabled even after a retained failed attempt.
   writeFileSync(join(home, "config.json"), JSON.stringify({ history: { ingest: false }, notifications: { approvals: false, finish: false, fail: false } }));
+  const identities = { sessions: [0, 1].map(index => `synthetic-session-${randomUUID()}-${index}`), rootSession: `synthetic-root-${randomUUID()}` };
+  writeFileSync(join(home, "rehearsal-identities.json"), JSON.stringify(identities), { flag: "wx" });
   const outcomeRuns = Array.from({ length: 5 }, (_, index) => `synthetic-finished-${randomUUID()}-${index}`);
   for (const name of outcomeRuns) {
     writeFileSync(join(home, "runs", `${name}.json`), JSON.stringify({ job: `codex-job-${name}`, jobStartedAt: 1_700_000_000_000, startedAt: 1_700_000_000_000, by: "old-session-0", workdir: home }), { flag: "wx" });
@@ -359,6 +480,7 @@ export async function rehearse(home: string): Promise<void> {
   const samples: { at: number; phase: string; sendMs: number; peersMs: number; listRunsMs?: number; dashboardMs?: number; messageSubagentMs?: number; outcomesMs?: number; outcomeObservation?: string }[] = [], failures: string[] = [], phases: { at: number; progress: HistoryMigrationProgress; cursor: Record<string, unknown> }[] = [];
   const report: Record<string, unknown> = { schema: 1, seed, currentVersion: APP_VERSION, runtimeSha256: createHash("sha256").update(readFileSync(fileURLToPath(import.meta.url))).digest("hex"), workerSha256: createHash("sha256").update(readFileSync(workerOutput)).digest("hex"), sourceHead: execFileSync("git", ["rev-parse", "HEAD"], { cwd: checkout, encoding: "utf8", windowsHide: true }).trim(), fixtureOnly: true, ownerDataAccessed: false, success: false, mainPriority: getPriority(0), startedAt: new Date().toISOString(), oldRunnerCount: 10, limitations: ["Old runner fixtures use genuine 0.29.17 BridgeNode job identities, not proprietary CLI turns", "Managed continuation uses actual JobManager.restore with a synthetic Run", "message_subagent uses the actual registered guarded MCP handler and a held synthetic Run without an MCP transport", "Current sessions join before old sessions retire; broker transition latency and errors are measured rather than a zero-gap socket guarantee"] };
   let sampling = false, sampler: Promise<void> | undefined, phase = "old-baseline";
+  let samplingInvariantFailures = 0, fatalSamplingError: Error | undefined;
   const profiles: unknown[] = []; let activeProfile: Promise<void> | undefined;
   let pollingHost: FixtureChild | undefined;
   let toolSession: FixtureChild | undefined;
@@ -368,7 +490,7 @@ export async function rehearse(home: string): Promise<void> {
     const oldSessions = [await startChild(home, "old-session", 0), await startChild(home, "old-session", 1)];
     const runners: FixtureChild[] = [];
     for (let i = 0; i < 10; i++) { runners.push(await startChild(home, "old-runner", i)); await delay(250); }
-    native = await startOldRunnerFixtures({ checkout, home, count: 11, owner: "old-session-0", rootSession: "synthetic-root", supervisor: "synthetic-session-0" });
+    native = await startOldRunnerFixtures({ checkout, home, count: 11, owner: "old-session-0", rootSession: identities.rootSession, supervisor: identities.sessions[0] });
     report.nativeOldRunners = native.assertLive(); report.oldProtocolIdentityCount = 10; report.oldRunnerCount = 11;
     report.limitations = ["Native fixtures run genuine old/current JobRunner source with synthetic Claude CLI; no proprietary CLI launches", "Sustained message_subagent invokes the actual registered guarded MCP handler without an MCP transport", "Separate dead-lease continuation uses actual JobManager.restore with a synthetic Run", "Current sessions join before old sessions retire; broker transition latency/errors remain strict phase gates"];
     sampling = true;
@@ -385,8 +507,15 @@ export async function rehearse(home: string): Promise<void> {
             Object.assign(sample, await toolSession!.request("message-subagent"));
             Object.assign(sample, await pollingHost.request("outcomes"));
           }
+          samplingInvariantFailures = 0;
         }
-        catch (error) { failures.push(`${phase}: ${String(error)}`); }
+        catch (error) {
+          failures.push(`${phase}: ${String(error)}`);
+          if (/No subagent named|Native supervisor identity is unsettled/.test(String(error)) && ++samplingInvariantFailures >= 3) {
+            fatalSamplingError = new Error(`Repeated native ownership invariant failed; measurements are invalid: ${String(error)}`);
+            return;
+          }
+        }
         await delay(250);
       }
     })();
@@ -395,12 +524,17 @@ export async function rehearse(home: string): Promise<void> {
     const reloadAt = performance.now();
     const current = [await startChild(home, "current-session", 0), await startChild(home, "current-session", 1)];
     report.handoffCandidates = await Promise.all(current.map(child => child.request("status")));
+    const retirementStartedAt = Date.now();
     await Promise.all(oldSessions.map(child => child.stop()));
+    const oldCoordinatorsStoppedAt = Date.now();
     let host: FixtureChild | undefined;
     await until(async () => { for (const child of current) if ((await child.request("status")).broker) { host = child; return true; } return false; });
     report.brokerRecoveryMs = performance.now() - reloadAt;
     const hostStatus = await host!.request("status"); report.brokerPid = hostStatus.pid;
+    report.listenerHandoff = { retirementStartedAt, oldCoordinatorsStoppedAt, currentBrokerObservedAt: Date.now(), current: await Promise.all(current.map(child => child.request("status"))), hostConnections: hostStatus.connectionWitnesses };
     report.coldDashboard = await host!.request("dashboard"); report.warmDashboard = await host!.request("dashboard");
+    report.nativeToolPreflight = await current[0]!.request("tool-preflight");
+    if (!(report.nativeToolPreflight as { targetKnown: boolean }).targetKnown) throw new Error(`Native tool target is not restored after authenticated reload: ${JSON.stringify(report.nativeToolPreflight)}`);
     toolSession = current[0]; pollingHost = host;
     report.retainedOldRunners = await Promise.all(runners.map(child => child.request("status")));
     const bridge = new DatabaseSync(join(home, "bridge.db"), { readOnly: true });
@@ -416,6 +550,7 @@ export async function rehearse(home: string): Promise<void> {
     const phaseStarted = new Map<string, number>(), phaseEnded = new Map<string, number>();
     const profiled = new Set<string>();
     while (Date.now() < deadline) {
+      if (fatalSamplingError) throw fatalSamplingError;
       if (runners.some(child => child.process.exitCode !== null || child.process.signalCode !== null)) throw new Error("A genuine old runner died during the migration rehearsal; inspect retained child evidence");
       native.assertLive();
       const status = await host!.request("status"), progress = status.migration as HistoryMigrationProgress;
@@ -424,26 +559,26 @@ export async function rehearse(home: string): Promise<void> {
       phase = progress.phase; const signature = `${progress.phase}:${progress.completedRows}:${progress.paused}`;
       if (!phaseStarted.has(phase)) phaseStarted.set(phase, Date.now()); phaseEnded.set(phase, Date.now());
       if (signature !== lastProgress) {
-        lastProgress = signature; const point = { at: Date.now(), progress, cursor: cursor(progress) }; phases.push(point);
+        lastProgress = signature; const point = { at: Date.now(), progress, cursor: await readRehearsalCursor(progress) }; phases.push(point);
         console.log(JSON.stringify({ phase: "migration", progress, cursor: point.cursor }));
       }
       if (!activeProfile && !profiled.has(phase) && ["snapshot", "copy", "verify"].includes(phase)) {
         profiled.add(phase); activeProfile = host!.request("profile", { phase, milliseconds: Number(option("--profile-ms") ?? 8000) }).then(value => { profiles.push(value); }, error => { failures.push(`profile: ${String(error)}`); }).finally(() => { activeProfile = undefined; });
       }
       if (progress.phase === "failed" || progress.error) throw new Error(`Migration failed: ${progress.error}`);
-      const checkpoint = cursor(progress);
+      const checkpoint = await readRehearsalCursor(progress);
       if (!toggled && Number(checkpoint.snapshot_rows ?? 0) > 0 && progress.phase !== "verified") {
         config(false); await delay(1500);
-        const first = cursor((await host!.request("status")).migration); await delay(1250);
-        const second = cursor((await host!.request("status")).migration);
+        const first = await readRehearsalCursor((await host!.request("status")).migration); await delay(1250);
+        const second = await readRehearsalCursor((await host!.request("status")).migration);
         if (JSON.stringify(first) !== JSON.stringify(second)) throw new Error("History cursor advanced while ingest=false");
         report.pauseWitness = { first, second, pausedForMs: 1250 }; toggled = true; config(true);
       }
       if (toggled && !interrupted && Number(checkpoint.copy_rows ?? 0) > 0 && progress.phase !== "verified") {
-        const before = cursor(progress), snapshot = progress.snapshot;
+        const before = await readRehearsalCursor(progress), snapshot = progress.snapshot;
         const stopped = await host!.request("interrupt-history");
         await delay(2250);
-        const after = cursor((await host!.request("status")).migration);
+        const after = await readRehearsalCursor((await host!.request("status")).migration);
         if (Number(after.copy_rows ?? 0) < Number(before.copy_rows ?? 0)) throw new Error("Importer restart lost its durable copy cursor");
         report.interruptionWitness = { before, after, snapshot, stopped }; interrupted = true;
       }
@@ -456,6 +591,7 @@ export async function rehearse(home: string): Promise<void> {
     report.phaseTimings = Object.fromEntries([...phaseStarted].map(([name, start]) => [name, { firstAt: start, lastAt: phaseEnded.get(name), observedMs: (phaseEnded.get(name) ?? start) - start }]));
     phase = "post-migration";
     await until(async () => {
+      if (fatalSamplingError) throw fatalSamplingError;
       native!.assertLive(); const status = await host!.request("status");
       if (status.backup) backupProgress.push({ at: Date.now(), phase, backup: status.backup });
       if (status.backup?.phase === "failed") throw new Error(`Automatic message backup failed: ${status.backup.lastError}`);
@@ -489,7 +625,7 @@ export async function rehearse(home: string): Promise<void> {
     report.hashes = hashes;
     report.finalOldRunners = await Promise.all(runners.map(child => child.request("status")));
     report.success = true;
-  } catch (error) { report.error = String(error); throw error; }
+  } catch (error) { report.error = String(error); report.errorStack = (error as Error).stack; throw error; }
   finally {
     sampling = false; await sampler; await activeProfile?.catch(error => { failures.push(`profile: ${String(error)}`); });
     if (native) await native.stop().catch(error => { failures.push(`native stop: ${String(error)}`); });
@@ -499,7 +635,8 @@ export async function rehearse(home: string): Promise<void> {
     const byPhase = Object.fromEntries([...new Set(samples.map(s => s.phase))].map(name => { const group = samples.filter(s => s.phase === name); return [name, { samples: group.length, ...metrics(group) }]; }));
     report.latency = { samples: samples.length, percentileMethod: "nearest rank", ...metrics(samples), sendMaxMs: Math.max(0, ...samples.map(s => s.sendMs)), peersMaxMs: Math.max(0, ...samples.map(s => s.peersMs)), byPhase };
     report.samples = samples; report.failures = failures; report.progress = phases; report.profiles = profiles; report.backupProgress = backupProgress;
-    report.ownedProcessesStopped = children.every(child => child.process.exitCode !== null || child.process.signalCode !== null) && (!native || native.inspect().every(info => info.status !== "running"));
+    report.checkpointReadWitnesses = checkpointReadWitnesses;
+    report.ownedProcessesStopped = children.every(child => (child.process.exitCode !== null || child.process.signalCode !== null) && (!(child.role === "old-session" || child.role === "current-session") || child.ownedChildExit === true)) && (!native || native.inspect().every(info => info.status !== "running"));
     report.finishedAt = new Date().toISOString();
     if (!report.ownedProcessesStopped || failures.length || Object.values(metrics(samples)).some(value => value !== null && value >= 1000) || Object.values(byPhase).some(group => Object.entries(group).some(([key, value]) => key.endsWith("P95Ms") && value !== null && value >= 1000))) report.success = false;
     writeFileSync(output, JSON.stringify(report, null, 2), { flag: "wx" }); console.log(JSON.stringify({ phase: "rehearsal-complete", output, success: report.success, latency: report.latency, failures, ownedProcessesStopped: report.ownedProcessesStopped }));
@@ -510,10 +647,12 @@ export async function rehearse(home: string): Promise<void> {
 if (process.argv[1] && /release-rehearsal\.(?:mjs|ts)$/.test(process.argv[1])) {
   const main = async () => {
     const home = option("--home");
+    const sourceHome = option("--source-home");
     const role = option("--role");
-    if (role) { if (!home || !["old-session", "old-runner", "current-session", "lease-owner"].includes(role)) throw new Error("Unknown child role"); await childMain(physicalHome(home), role as Role, Number(option("--index") ?? 0)); return; }
-    if (argumentsList.includes("--seed-only")) { if (home) throw new Error("Seeding always creates a fresh fixture; --home is execution only"); await seedRehearsal(rehearsalBytes(option("--bytes") ?? "8MiB")); return; }
-    const fixture = home ? { home: physicalHome(home) } : await seedRehearsal(rehearsalBytes(option("--bytes") ?? "8MiB"));
+    if (role) { if (!home || !["old-session", "old-runner", "current-session", "lease-owner", "session-launcher"].includes(role)) throw new Error("Unknown child role"); await childMain(physicalHome(home), role as Role, Number(option("--index") ?? 0)); return; }
+    if (home && sourceHome) throw new Error("Choose existing --home or fresh --source-home clone");
+    if (argumentsList.includes("--seed-only")) { if (home) throw new Error("Seeding always creates a fresh fixture; --home is execution only"); if (sourceHome) await cloneRehearsal(sourceHome); else await seedRehearsal(rehearsalBytes(option("--bytes") ?? "8MiB")); return; }
+    const fixture = home ? { home: physicalHome(home) } : sourceHome ? await cloneRehearsal(sourceHome) : await seedRehearsal(rehearsalBytes(option("--bytes") ?? "8MiB"));
     await rehearse(fixture.home);
   };
   void main().catch((error) => { console.error(error); process.exitCode = 1; });
