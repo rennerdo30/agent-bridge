@@ -33,6 +33,19 @@ it("accounts for DB/WAL, snapshots, backups and mirrors and pauses without remov
   expect(await historyBudget(env.home, 20 * 1024 ** 2)).toMatchObject({ paused: false });
   expect(readFileSync(join(env.home, "history.db"))).toEqual(Buffer.alloc(1024, 17));
 });
+it("retains verification failure evidence across restart and explicit retry", async () => {
+  const store = new MessageStore(env.db, nullLogger), file = join(env.home, "history-import-failure.json");
+  const error = "History import verification failed in retained fixture";
+  writeFileSync(file, JSON.stringify({ version: 4, importVersion: 1, error, futureField: "retained" }));
+  const worker = new HistoryBackground(env.db, nullLogger);
+  try {
+    await expect(worker.tick()).rejects.toThrow(error);
+    expect(worker.status()).toMatchObject({ paused: true, error });
+    await worker.tick(true);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ importVersion: 1, history: [error], futureField: "retained" });
+    expect(worker.status()).toMatchObject({ paused: false, error: null });
+  } finally { await worker.close(); store.close(); }
+});
 it("creates compact verified immutable archives while retaining original history and prior archives", async () => {
   const file = join(env.home, "history.db"), db = new DatabaseSync(file);
   db.exec("CREATE TABLE user_context(raw BLOB)"); db.prepare("INSERT INTO user_context VALUES(?)").run(Buffer.from("complete retained context")); db.close();

@@ -40,6 +40,7 @@ function saveImportState(): void {
 if (migrationFailure) parentPort?.postMessage({ error: migrationFailure });
 const ioBytesPerSecond = Number(process.env.AGENT_BRIDGE_HISTORY_MIGRATION_IO_BYTES_PER_SECOND || HISTORY_IO_BYTES_PER_SECOND);
 let migrationProgress = readHistoryMigrationProgress(db, ioBytesPerSecond);
+if (typeof importState.error === "string") migrationProgress = { ...migrationProgress, error: importState.error, paused: true };
 const pressureWaiters = new Set<() => void>();
 const peers = new Map<string, PeerInfo>();
 function enabled(): boolean { return loadConfig(workerData.home, "other", nullLogger).history.ingest; }
@@ -47,7 +48,7 @@ function reportPaused(paused: boolean): void {
   migrationProgress = { ...migrationProgress, paused, phase: paused && migrationProgress.phase === "starting" ? "paused" : migrationProgress.phase };
   parentPort?.postMessage({ migrationProgress });
 }
-reportPaused(!enabled());
+reportPaused(!enabled() || Boolean(importState.error));
 const paused = () => pending || Date.now() < pauseUntil || !enabled() || storageBudgetPaused;
 async function checkStorageBudget(): Promise<boolean> {
   const config = loadConfig(workerData.home, "other", nullLogger);
@@ -86,13 +87,15 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
     if (await checkStorageBudget()) return { work: 0, discovering: !ready };
     reset = requestedReset;
     requestedReset = false;
-    reportPaused(false);
     if (migrationFailure && !reset) throw new Error(migrationFailure);
     if (importState.error && !reset) throw new Error(importState.error);
     if (reset && importState.error) {
-      importState = { history: [...(importState.history ?? []), importState.error] };
+      const { error: priorError, ...retainedState } = importState;
+      importState = { ...retainedState, history: [...(importState.history ?? []), priorError] };
       saveImportState();
+      migrationProgress = { ...migrationProgress, error: null };
     }
+    reportPaused(false);
     if (!ready) {
       try {
         await migrateHistoryStore(workerData.bridge, db, paused, () => stopped, owner => parentPort?.postMessage({ migrationLease: owner }), reset, { ioBytesPerSecond, onProgress: progress => { migrationProgress = progress; parentPort?.postMessage({ migrationProgress }); } });
@@ -118,6 +121,8 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
   } catch (error) {
     if ((error as { code?: string }).code === "HISTORY_IMPORT_VERIFICATION_FAILED") {
       importState = { ...importState, error: String(error) }; saveImportState();
+      migrationProgress = { ...migrationProgress, error: importState.error!, paused: true };
+      parentPort?.postMessage({ migrationProgress });
     }
     throw error;
   } finally { running = false; }

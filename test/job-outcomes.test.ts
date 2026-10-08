@@ -163,8 +163,9 @@ describe("Git outcome derivation", () => {
     const wt = await createWorktree({ cwd: repo, home, jobId: job().id, log: nullLogger });
     const j = { ...job(), worktree: wt };
     expect((await deriveJobOutcome(home, j, nullLogger, { baseBranch: null })).merge).toMatchObject({ state: "unmerged", baseBranch: null });
-    writeFileSync(join(wt.path, "a.txt"), "work\n");
-    await finishWorktree(wt, "work", nullLogger);
+      writeFileSync(join(wt.path, "a.txt"), "work\n");
+      execFileSync("git", ["add", "a.txt"], { cwd: wt.path, windowsHide: true });
+      await finishWorktree(wt, "work", nullLogger);
     const head = git("rev-parse", wt.branch);
     expect((await deriveJobOutcome(home, j, nullLogger)).merge.state).toBe("unmerged");
     git("branch", "other", head);

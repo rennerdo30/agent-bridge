@@ -134,13 +134,14 @@ it("hands off a blocking ask without returning results or notes to the old calle
   const release = join(env.home, "release"), linkFile = join(env.home, "link.json"); releases.push(release);
   const pending = call(source, "ask_claude", { prompt: `release=${release} link=${linkFile} blocking work`, title: "Blocking inherited job" });
   await until(() => existsSync(linkFile));
+  await until(() => readStore(join(env.home, "jobs.json")).some(j => j.name.startsWith("claude-ask-")));
   const job = readStore(join(env.home, "jobs.json")).find((j) => j.name.startsWith("claude-ask-"))!;
   expect(job).toBeDefined();
   expect((await call(source, "handoff_subagents", { to: "claude-target" })).error).toBeFalsy();
   await call(source, "inbox");
   const child = parentFromEnv(JSON.parse(readFileSync(linkFile, "utf8")))!;
   await child.send("Foreground post-handoff note");
-  expect(readStore(join(env.home, "jobs.json")).find((j) => j.id === job.id)!.deliveryHistory?.some((m) => m.body.includes("Foreground post-handoff note"))).toBe(true);
+  await expect.poll(() => readStore(join(env.home, "jobs.json")).find((j) => j.id === job.id)?.deliveryHistory?.some((m) => m.body.includes("Foreground post-handoff note"))).toBe(true);
   writeFileSync(release, "");
   const originalReply = await pending;
   expect(originalReply.text).toContain("supervised by claude-target");

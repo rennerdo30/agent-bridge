@@ -1,4 +1,4 @@
-import { copyFileSync } from "node:fs";
+import { closeSync, constants as fsConstants, copyFileSync, fsyncSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { metadataFileLease } from "./metadata-file-lease.js";
 import { archiveJobs } from "./job-archive.js";
@@ -104,7 +104,10 @@ export function reconcileAskCompletions(path: string): number {
         completionReceipt: { version: 1, startedAt: job.startedAt, status: final.status } };
     });
     if (!originals.length) return 0;
-    copyFileSync(path, backupPath(path));
+    const backup = backupPath(path);
+    copyFileSync(path, backup, fsConstants.COPYFILE_EXCL);
+    const fd = openSync(backup, "r+");
+    try { fsyncSync(fd); } finally { closeSync(fd); }
     archiveJobs(path, originals);
     writeJsonStore(path, { ...(isRecord(previous) ? previous : {}), jobs }, previous);
     return originals.length;

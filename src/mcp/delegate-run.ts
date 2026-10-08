@@ -436,7 +436,7 @@ async function runDelegateInner(
       },
     );
     feed.meta({ session: res.sessionId });
-    feed.end(res.isError ? "failed" : "done", res.text);
+    feed.end(signal.aborted ? "cancelled" : res.isError ? "failed" : "done", res.text);
     if (!res.isError && res.text.trim()) link?.reportCompleted();
   } catch (err) {
     if (err instanceof DelegateError && err.sessionId) feed.meta({ session: err.sessionId });
@@ -445,7 +445,7 @@ async function runDelegateInner(
       const branchHead = await git([...trustArgs(wt.path), "rev-parse", "HEAD"], wt.path, dlog).catch(() => undefined);
       feed.meta({ branch: branch || wt.branch, branchHead });
     }
-    feed.end(`failed: ${(err as Error)?.message ?? err}`);
+    feed.end(signal.aborted ? "cancelled" : `failed: ${(err as Error)?.message ?? err}`);
     // The worktree keeps whatever the subagent did before failing: say where it is.
     if (wt && err instanceof Error) err.message += `\n\nIts worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
     if (linkRoot && err instanceof Error) {
