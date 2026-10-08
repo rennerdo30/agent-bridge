@@ -287,7 +287,10 @@ async function childMain(home: string, role: Role, index: number): Promise<void>
         let sendMs = 0, probeOperation = "send";
         let acknowledgedMessageIds: string[] = [];
         try {
-          const sent = await node.send({ to: "old-session-0", body, dedupeKey: key, ...(!legacy ? { messageId: key } : {}) });
+          // Plain sends negotiate the older protocol during handover. The current
+          // supervisor's canonical name is old-session-0, so use a distinct held
+          // job peer rather than accidentally measuring a self-send rejection.
+          const sent = await node.send({ to: legacy ? "old-session-0" : "codex-job-rehearsal-1", body, dedupeKey: key });
           sendMs = performance.now() - before;
           acknowledgedMessageIds = sent.messages.map(message => message.id);
           probeOperation = "peers";
@@ -541,6 +544,10 @@ export async function rehearse(home: string): Promise<void> {
     report.brokerRecoveryMs = performance.now() - reloadAt;
     const hostStatus = await host!.request("status"); report.brokerPid = hostStatus.pid;
     report.listenerHandoff = { retirementStartedAt, oldCoordinatorsStoppedAt, currentBrokerObservedAt: Date.now(), current: await Promise.all(current.map(child => child.request("status"))), hostConnections: hostStatus.connectionWitnesses };
+    // brokerRecoveryMs also includes cold replacement-process launches while the
+    // old broker is still reachable. Gate the actual retirement/handover interval
+    // independently and retain both measurements in the raw report.
+    report.reloadHandoffMs = (report.listenerHandoff as { currentBrokerObservedAt: number }).currentBrokerObservedAt - retirementStartedAt;
     report.coldDashboard = await host!.request("dashboard"); report.warmDashboard = await host!.request("dashboard");
     report.nativeToolPreflight = await current[0]!.request("tool-preflight");
     if (!(report.nativeToolPreflight as { targetKnown: boolean }).targetKnown) throw new Error(`Native tool target is not restored after authenticated reload: ${JSON.stringify(report.nativeToolPreflight)}`);
@@ -662,7 +669,7 @@ export async function rehearse(home: string): Promise<void> {
     const latencyGatesPassed = currentComplete && allLatencyGroups.every(group => Object.entries(group).every(([key, value]) =>
       !key.endsWith("P95Ms") || value === null || Number.isFinite(value) && value >= 0 && value < 1000));
     report.acceptance = evaluateRehearsalAcceptance({ functionalVerified, cleanupVerified: report.ownedProcessesStopped === true,
-      latencyGatesPassed, currentClientVersion: APP_VERSION, samples, failures });
+      latencyGatesPassed, reloadHandoffMs: report.reloadHandoffMs as number, currentClientVersion: APP_VERSION, samples, failures });
     report.accepted = (report.acceptance as { accepted: boolean }).accepted;
     writeFileSync(output, JSON.stringify(report, null, 2), { flag: "wx" }); console.log(JSON.stringify({ phase: "rehearsal-complete", output, success: report.success, accepted: report.accepted, acceptance: report.acceptance, latency: report.latency, failures, ownedProcessesStopped: report.ownedProcessesStopped }));
     if (!report.accepted) process.exitCode = 1;

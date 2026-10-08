@@ -4,7 +4,7 @@ import { evaluateRehearsalAcceptance, type RehearsalAcceptanceInput, type Rehear
 const current = (): RehearsalSample => ({ phase: "sessions-reload", clientVersion: "0.30.2", storageOutcome: { state: "stored", ids: ["current-message-1"] } });
 const legacy = (): RehearsalSample => ({ phase: "sessions-reload", clientVersion: "0.29.17", probeError: "Error: connection to broker closed", failure: "sessions-reload: Error: connection to broker closed; stored receipt message-1",
   storageOutcome: { state: "stored", localState: "stored", copies: [{ id: "message-1" }], lookupError: undefined } });
-const green = (): RehearsalAcceptanceInput => ({ functionalVerified: true, cleanupVerified: true, latencyGatesPassed: true, currentClientVersion: "0.30.2", samples: [current()], failures: [] });
+const green = (): RehearsalAcceptanceInput => ({ functionalVerified: true, cleanupVerified: true, latencyGatesPassed: true, reloadHandoffMs: 350, currentClientVersion: "0.30.2", samples: [current()], failures: [] });
 const withLegacy = (): RehearsalAcceptanceInput => { const sample = legacy(); return { ...green(), samples: [current(), sample], failures: [sample.failure!] }; };
 
 it("accepts complete green evidence", () => {
@@ -59,4 +59,14 @@ it("requires current-version samples and rejects an old version labeled current"
 it.each([undefined, { state: 'unknown' }, { state: 'not_stored' }])("blocks unconfirmed non-error samples: %s", storageOutcome => {
   const input = green(); input.samples = [{ ...current(), storageOutcome }];
   expect(evaluateRehearsalAcceptance(input).accepted).toBe(false);
+});
+
+it.each([undefined, NaN, Infinity, -1, 1000, 1001])("independently blocks invalid reload handoff latency: %s", reloadHandoffMs => {
+  const input = { ...withLegacy(), reloadHandoffMs } as RehearsalAcceptanceInput;
+  expect(input.latencyGatesPassed).toBe(true);
+  expect(evaluateRehearsalAcceptance(input).accepted).toBe(false);
+});
+
+it.each([0, 999.99])("accepts finite reload handoff latency below one second: %s", reloadHandoffMs => {
+  expect(evaluateRehearsalAcceptance({ ...withLegacy(), reloadHandoffMs }).accepted).toBe(true);
 });
