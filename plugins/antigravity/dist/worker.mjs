@@ -51995,6 +51995,9 @@ var RemoteJobs = class {
   pending = /* @__PURE__ */ new Map();
   rates = /* @__PURE__ */ new Map();
   feeds = /* @__PURE__ */ new Map();
+  mirrorIntents = /* @__PURE__ */ new Map();
+  mirrorTurns = /* @__PURE__ */ new Map();
+  mirrorStates = /* @__PURE__ */ new Map();
   approvals = /* @__PURE__ */ new Map();
   publishingApprovals = /* @__PURE__ */ new Set();
   starting = /* @__PURE__ */ new Set();
@@ -52003,6 +52006,7 @@ var RemoteJobs = class {
   closed = false;
   async request(host, peer, raw, supervisor = peer.id, localJobName) {
     const request2 = remoteJobRequestSchema.parse(raw);
+    const mirrorKey = `${host}/${request2.job}`, mirrorTurn = this.mirrorTurns.get(mirrorKey);
     if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: install remote-jobs-v1 support and restart its hosting sessions.");
     if (this.pending.size >= REMOTE_JOB_RATE_LIMIT) throw new Error("Too many pending remote job requests.");
     const rid = randomUUID27();
@@ -52018,7 +52022,11 @@ var RemoteJobs = class {
     try {
       await this.network.sendExtension(host, REMOTE_JOB_FRAME, { kind: "request", rid, peer: { id: peer.id, name: peer.name, supervisor }, request: request2 });
       const snapshot = await response;
-      await this.mirror(host, peer, request2, snapshot, supervisor, localJobName);
+      try {
+        if (request2.op === "spawn" || this.mirrorTurns.get(mirrorKey) === mirrorTurn) await this.mirror(host, peer, request2, snapshot, supervisor, localJobName);
+      } catch (error62) {
+        this.log.warn("remote result retained; local run mirror unavailable", { host, job: request2.job, err: String(error62) });
+      }
       return snapshot;
     } catch (err) {
       const p = this.pending.get(rid);
@@ -52202,38 +52210,53 @@ var RemoteJobs = class {
     }) }, readJsonStore(join68(this.home, REMOTE_JOBS_FILE)));
   }
   async mirror(host, peer, request2, snapshot, supervisor, localJobName) {
+    if (this.closed) return;
     const owner = peer.name;
     const key3 = `${host}/${request2.job}`;
     if (request2.op === "spawn") {
+      this.mirrorTurns.set(key3, {});
+      this.mirrorStates.delete(key3);
+      this.mirrorIntents.get(key3)?.controller?.abort(new Error("Remote mirror replaced by a new turn"));
       this.feeds.get(key3)?.end("interrupted");
-      this.feeds.set(key3, startRunFeed({
+      this.feeds.delete(key3);
+      this.mirrorIntents.set(key3, { snapshot, options: {
         home: this.home,
         name: `${request2.target}-${request2.job}`,
         header: `${request2.target} on ${host}, by ${owner}
 ${request2.args.prompt}
 ---`,
-        meta: { by: owner, job: localJobName ?? `${request2.target}-job-${request2.job}`, title: request2.args.title, remote: { host, name: `${request2.target}-job-${request2.job}` }, model: request2.args.model, effort: request2.args.effort, access: request2.args.access ?? (request2.args.worktree ? "edit" : "default"), workdir: request2.args.cwd }
-      }));
+        meta: {
+          by: owner,
+          job: localJobName ?? `${request2.target}-job-${request2.job}`,
+          title: request2.args.title,
+          remote: { host, name: `${request2.target}-job-${request2.job}` },
+          model: request2.args.model,
+          effort: request2.args.effort,
+          access: request2.args.access ?? (request2.args.worktree ? "edit" : "default"),
+          workdir: request2.args.cwd,
+          ...{ remoteSpawnArgs: { ...request2.args } }
+        }
+      } });
       this.log.info("requested remote job", { host, job: request2.job, owner });
     }
+    const previous = this.mirrorStates.get(key3);
+    if (previous && (!snapshot.state || snapshot.state.updatedAt < previous.updatedAt || snapshot.state.updatedAt === previous.updatedAt && previous.status !== "running" && snapshot.state.status === "running")) snapshot = { ...snapshot, state: previous };
     const state = snapshot.state;
-    if (!this.feeds.has(key3) && state?.status === "running") {
-      this.feeds.set(key3, startRunFeed({
+    if (state) this.mirrorStates.set(key3, state);
+    if (!this.feeds.has(key3) && !this.mirrorIntents.has(key3) && state?.status === "running") {
+      this.mirrorIntents.set(key3, { snapshot, options: {
         home: this.home,
         name: state.peer,
         header: `Reattached remote job on ${host}, by ${owner}`,
         meta: { by: owner, job: localJobName ?? state.peer, remote: { host, name: state.peer } }
-      }));
+      } });
     }
-    const feed = this.feeds.get(key3);
-    if (state) {
-      feed?.meta({ session: state.sessionId, workdir: state.workdir ?? void 0, model: state.model, percent: state.percent, progressNote: state.progressNote, etaAt: state.etaAt, etaReportedAt: state.etaReportedAt });
-      if (state.progress) feed?.report(state.progress);
-      if (state.status !== "running") {
-        feed?.end(state.status, state.report);
-        this.feeds.delete(key3);
-      }
+    const intent = this.mirrorIntents.get(key3);
+    if (intent) {
+      intent.snapshot = snapshot;
+      this.prepareMirror(key3, intent);
     }
+    this.updateMirror(key3, snapshot);
     const active = new Set(snapshot.approvals.map((a) => `${key3}/${a.id}`));
     for (const [id, close] of this.approvals) if (id.startsWith(`${key3}/`) && !active.has(id)) {
       close();
@@ -52260,8 +52283,48 @@ ${request2.args.prompt}
       }
     }
   }
+  /** Context admission is local background work, never a second remote spawn or an RPC wait.
+   * A later state poll retries a timed-out intent with its original spawn options and latest facts. */
+  prepareMirror(key3, intent) {
+    if (intent.task || this.closed) return;
+    const controller = new AbortController();
+    intent.controller = controller;
+    const timer = setTimeout(() => controller.abort(new Error("Local remote-run mirror metadata admission exceeded 2 seconds; retry on the next state poll")), 2e3);
+    timer.unref();
+    intent.task = startRunFeedReady(intent.options, controller.signal).then((feed) => {
+      if (this.closed || controller.signal.aborted || this.mirrorIntents.get(key3) !== intent) {
+        feed.end("interrupted");
+        return;
+      }
+      this.feeds.set(key3, feed);
+      this.updateMirror(key3, intent.snapshot);
+      this.mirrorIntents.delete(key3);
+    }).catch((error62) => {
+      if (!this.closed && this.mirrorIntents.get(key3) === intent) this.log.warn("remote result retained; local run mirror context pending", { key: key3, err: String(error62) });
+    }).finally(() => {
+      clearTimeout(timer);
+      if (intent.controller === controller) {
+        intent.controller = void 0;
+        intent.task = void 0;
+      }
+    });
+  }
+  updateMirror(key3, snapshot) {
+    const feed = this.feeds.get(key3), state = snapshot.state;
+    if (!feed || !state) return;
+    feed.meta({ session: state.sessionId, workdir: state.workdir ?? void 0, model: state.model, percent: state.percent, progressNote: state.progressNote, etaAt: state.etaAt, etaReportedAt: state.etaReportedAt });
+    if (state.progress) feed.report(state.progress);
+    if (state.status !== "running") {
+      feed.end(state.status, state.report);
+      this.feeds.delete(key3);
+    }
+  }
   close() {
     this.closed = true;
+    for (const intent of this.mirrorIntents.values()) intent.controller?.abort(new Error("Remote mirror broker closed"));
+    this.mirrorIntents.clear();
+    this.mirrorTurns.clear();
+    this.mirrorStates.clear();
     for (const pending2 of this.pendingStarts.values()) pending2.controller.abort(new Error("Remote job not_started: broker closed before detached runner startup"));
     for (const p of this.pending.values()) {
       clearTimeout(p.timer);
