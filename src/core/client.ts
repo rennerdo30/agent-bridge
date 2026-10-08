@@ -19,6 +19,10 @@ interface Pending {
   timer: NodeJS.Timeout;
 }
 
+export function brokerConnectionClosedError(): Error & { code: string } {
+  return Object.assign(new Error("connection to broker closed"), { code: "BROKER_CONNECTION_CLOSED" });
+}
+
 export interface BridgeClientEvents {
   event: [name: EventName, data: EventMap[EventName]];
   close: [];
@@ -57,7 +61,7 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
       this.closed = true;
       for (const [, p] of this.pending) {
         clearTimeout(p.timer);
-        p.reject(new Error("connection to broker closed"));
+        p.reject(brokerConnectionClosedError());
       }
       this.pending.clear();
       this.emit("close");
@@ -89,7 +93,7 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
   }
 
   request<O extends Op>(op: O, args: RequestMap[O][0], timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<RequestMap[O][1]> {
-    if (this.closed) return Promise.reject(new Error("connection to broker closed"));
+    if (this.closed) return Promise.reject(brokerConnectionClosedError());
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {

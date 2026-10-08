@@ -4,10 +4,11 @@ import { unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { Broker } from "./broker.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
-import { BridgeClient } from "./client.js";
+import { BridgeClient, brokerConnectionClosedError } from "./client.js";
 import {
   ELECTION_MAX_ATTEMPTS,
   ELECTION_RETRY_MAX_MS,
+  CONNECT_TIMEOUT_MS,
   APP_VERSION,
   DEFAULT_MAX_HOPS,
   ELECTION_RETRY_MIN_MS,
@@ -431,6 +432,45 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return fn(this.client!);
   }
 
+  /** A read may cross listener retirement; retry only that actual closed socket once. */
+  private async withReadClient<T>(fn: (c: BridgeClient, timeoutMs?: number) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const cancelled = new AbortController();
+    const stopped = () => cancelled.abort(new Error("bridge node stopped"));
+    const aborted = () => cancelled.abort(signal?.reason);
+    this.on("stopped", stopped);
+    signal?.addEventListener("abort", aborted, { once: true });
+    if (this.stopping) stopped();
+    if (signal?.aborted) aborted();
+    const wait = (pending: Promise<T>) => new Promise<T>((resolve, reject) => {
+      const abort = () => { cancelled.signal.removeEventListener("abort", abort); reject(cancelled.signal.reason); };
+      cancelled.signal.addEventListener("abort", abort, { once: true });
+      pending.then(value => { cancelled.signal.removeEventListener("abort", abort); resolve(value); }, error => { cancelled.signal.removeEventListener("abort", abort); reject(error); });
+      if (cancelled.signal.aborted) abort();
+    });
+    let usedClient: BridgeClient | null = null;
+    const invoke = async (timeoutMs?: number) => {
+      cancelled.signal.throwIfAborted();
+      const before = this.client;
+      await this.ensureConnected();
+      cancelled.signal.throwIfAborted();
+      usedClient = this.client ?? before;
+      if (!usedClient || usedClient.isClosed) throw brokerConnectionClosedError();
+      return fn(usedClient, timeoutMs);
+    };
+    try {
+      try { return await wait(invoke()); }
+      catch (error) {
+        if (cancelled.signal.aborted || this.stopping || errCode(error) !== "BROKER_CONNECTION_CLOSED" || !(usedClient as BridgeClient | null)?.isClosed) throw error;
+      }
+      const timer = setTimeout(() => cancelled.abort(Object.assign(new Error("broker read reconnect timed out"), { code: "ETIMEDOUT" })), CONNECT_TIMEOUT_MS);
+      try { return await wait(invoke(CONNECT_TIMEOUT_MS)); }
+      finally { clearTimeout(timer); }
+    } finally {
+      this.off("stopped", stopped);
+      signal?.removeEventListener("abort", aborted);
+    }
+  }
+
   /** quiet: not part of a conversation of this agent (no listen window, replies are not awaited), e.g. control messages to a job runner. */
   send(args: SendArgs, opts: { quiet?: boolean } = {}): Promise<SendResult> {
     const request = { ...args, dedupeKey: args.dedupeKey || randomUUID() };
@@ -539,8 +579,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return this.withClient((c) => c.request("messageReceipt", { id }));
   }
 
-  peers(): Promise<PeerInfo[]> {
-    return this.withClient((c) => c.request("peers", {})).then((peers) => peers.filter((p) => !isPluginCacheCwd(p.cwd)));
+  peers(signal?: AbortSignal): Promise<PeerInfo[]> {
+    return this.withReadClient((c, timeoutMs) => c.request("peers", {}, timeoutMs), signal).then((peers) => peers.filter((p) => !isPluginCacheCwd(p.cwd)));
   }
 
   health(): Promise<import("./health.js").BrokerHealth> {
