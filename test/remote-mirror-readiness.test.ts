@@ -98,3 +98,41 @@ it.each(["close", "replacement"])("%s fences a late-created owned feed and relea
   expect((remote as any).feeds.get("paired/12345678")).toBe(action === "close" ? undefined : current);
   if (action === "close") expect((remote as any).mirrorIntents.size).toBe(0);
 });
+
+it("does not apply an old poll's late response to a successfully replaced spawn generation", async () => {
+  const first = feed(), replacement = feed();
+  vi.spyOn(runfeed, "startRunFeedReady").mockResolvedValueOnce(first).mockResolvedValue(replacement);
+  await remote.request("paired", peer, spawn); await tick();
+  let oldFrame: any;
+  sends.mockImplementation(async (_host, _type, frame) => {
+    if (frame.request.op === "state") { oldFrame = frame; return; }
+    await (remote as any).receive({ kind: "response", rid: frame.rid, value: snapshot }, { id: "paired-id", name: "paired" });
+  });
+  const oldPoll = remote.request("paired", peer, stateRequest); await tick();
+  snapshot = { ...snapshot, state: { ...snapshot.state!, sessionId: "new-turn", updatedAt: 500 } };
+  await remote.request("paired", peer, { ...spawn, args: { ...spawn.args, prompt: "new turn prompt" } }); await tick();
+  const oldResult = { ...snapshot, state: { ...snapshot.state!, sessionId: "old-turn", updatedAt: 100, status: "done" }, alive: false };
+  await (remote as any).receive({ kind: "response", rid: oldFrame.rid, value: oldResult }, { id: "paired-id", name: "paired" });
+  expect(await oldPoll).toEqual(oldResult); await tick();
+  expect(replacement.meta).not.toHaveBeenCalledWith(expect.objectContaining({ session: "old-turn" }));
+  expect(replacement.end).not.toHaveBeenCalled(); expect((remote as any).feeds.get("paired/12345678")).toBe(replacement);
+});
+
+it("keeps the newest state while metadata is pending and never revives a finished mirror with older facts", async () => {
+  const owned = feed(); let resolve!: (value: RunFeed) => void;
+  const ready = vi.spyOn(runfeed, "startRunFeedReady").mockImplementation(() => new Promise(value => { resolve = value; }));
+  snapshot = { ...snapshot, state: { ...snapshot.state!, updatedAt: 100 } };
+  await remote.request("paired", peer, spawn);
+  snapshot = { ...snapshot, state: { ...snapshot.state!, updatedAt: 300, sessionId: "newest-session" } };
+  await remote.request("paired", peer, stateRequest);
+  snapshot = { ...snapshot, state: { ...snapshot.state!, updatedAt: 200, sessionId: "stale-session", status: "done" }, alive: false };
+  await remote.request("paired", peer, stateRequest);
+  resolve(owned); await tick();
+  expect(owned.meta).toHaveBeenCalledWith(expect.objectContaining({ session: "newest-session" }));
+  expect(owned.end).not.toHaveBeenCalled();
+  snapshot = { ...snapshot, state: { ...snapshot.state!, updatedAt: 400, sessionId: "finished-session", status: "done" } };
+  await remote.request("paired", peer, stateRequest);
+  snapshot = { ...snapshot, state: { ...snapshot.state!, updatedAt: 350, sessionId: "older-running", status: "running" }, alive: true };
+  await remote.request("paired", peer, stateRequest);
+  expect(ready).toHaveBeenCalledTimes(1); expect((remote as any).feeds.size).toBe(0);
+});

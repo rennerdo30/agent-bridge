@@ -283,16 +283,20 @@ async function childMain(home: string, role: Role, index: number): Promise<void>
       if (raw.op === "probe") {
         const startedAt = Date.now(), before = performance.now(), key = randomUUID(), body = `Synthetic continuity probe ${key}`;
         const connectedBeforeSend = node.isConnected;
-        let sendMs = 0;
+        let sendMs = 0, probeOperation = "send";
+        let acknowledgedMessageIds: string[] = [];
         try {
           const sent = await node.send({ to: "old-session-0", body, dedupeKey: key });
-          sendMs = performance.now() - before; const at = performance.now(); await node.peers();
+          sendMs = performance.now() - before;
+          acknowledgedMessageIds = sent.messages.map(message => message.id);
+          probeOperation = "peers";
+          const at = performance.now(); await node.peers();
           return { startedAt, finishedAt: Date.now(), connectedBeforeSend, sendMs, peersMs: performance.now() - at, id: sent.messages[0]?.id, storageOutcome: { state: "stored", ids: sent.messages.map(message => message.id) } };
         } catch (error) {
           let copies: Record<string, unknown>[] = [], lookupError: string | undefined;
           try { const db = new DatabaseSync(join(home, "bridge.db"), { readOnly: true, timeout: 100 }); try { copies = db.prepare("SELECT id,recipient,read_at FROM messages WHERE body=? AND from_name=?").all(body, node.name); } finally { db.close(); } }
           catch (lookup) { lookupError = String(lookup); }
-          return { startedAt, finishedAt: Date.now(), connectedBeforeSend, sendMs: sendMs || performance.now() - before, probeError: String(error), storageOutcome: { state: copies.length ? "stored" : "unknown", localState: copies.length ? "stored" : "not_stored", checkedAt: Date.now(), copies, lookupError, legacyOperationHasNoDurableRetryId: true } };
+          return { startedAt, finishedAt: Date.now(), connectedBeforeSend, sendMs: sendMs || performance.now() - before, probeOperation, acknowledgedMessageIds, probeError: String(error), storageOutcome: { state: copies.length ? "stored" : "unknown", localState: copies.length ? "stored" : lookupError ? "unknown" : "not_stored", checkedAt: Date.now(), copies, lookupError, legacyOperationHasNoDurableRetryId: true } };
         }
       }
       if (raw.op === "status") {

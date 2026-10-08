@@ -43,6 +43,8 @@ export class RemoteJobs {
   private readonly rates = new Map<string, { at: number; requests: number; spawns: number }>();
   private readonly feeds = new Map<string, RunFeed>();
   private readonly mirrorIntents = new Map<string, MirrorIntent>();
+  private readonly mirrorTurns = new Map<string, object>();
+  private readonly mirrorStates = new Map<string, RunnerState>();
   private readonly approvals = new Map<string, () => void>();
   private readonly publishingApprovals = new Set<string>();
   private readonly starting = new Set<string>();
@@ -65,6 +67,7 @@ export class RemoteJobs {
 
   async request(host: string, peer: Pick<PeerInfo, "id" | "name">, raw: RemoteJobRequest, supervisor = peer.id, localJobName?: string): Promise<RemoteJobSnapshot> {
     const request = remoteJobRequestSchema.parse(raw);
+    const mirrorKey = `${host}/${request.job}`, mirrorTurn = this.mirrorTurns.get(mirrorKey);
     if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: install remote-jobs-v1 support and restart its hosting sessions.");
     if (this.pending.size >= REMOTE_JOB_RATE_LIMIT) throw new Error("Too many pending remote job requests.");
     const rid = randomUUID();
@@ -77,7 +80,10 @@ export class RemoteJobs {
       await this.network.sendExtension(host, REMOTE_JOB_FRAME, { kind: "request", rid, peer: { id: peer.id, name: peer.name, supervisor }, request });
       const snapshot = await response;
       // The remote result is authoritative even when this PC cannot yet retain its mirror.
-      try { await this.mirror(host, peer, request, snapshot, supervisor, localJobName); }
+      try {
+        // An older poll remains a valid RPC result, but cannot rewrite a newer turn's mirror.
+        if (request.op === "spawn" || this.mirrorTurns.get(mirrorKey) === mirrorTurn) await this.mirror(host, peer, request, snapshot, supervisor, localJobName);
+      }
       catch (error) { this.log.warn("remote result retained; local run mirror unavailable", { host, job: request.job, err: String(error) }); }
       return snapshot;
     } catch (err) {
@@ -241,6 +247,8 @@ export class RemoteJobs {
     const owner = peer.name;
     const key = `${host}/${request.job}`;
     if (request.op === "spawn") {
+      this.mirrorTurns.set(key, {});
+      this.mirrorStates.delete(key);
       this.mirrorIntents.get(key)?.controller?.abort(new Error("Remote mirror replaced by a new turn"));
       this.feeds.get(key)?.end("interrupted");
       this.feeds.delete(key);
@@ -249,7 +257,11 @@ export class RemoteJobs {
           ...{ remoteSpawnArgs: { ...request.args } } } } });
       this.log.info("requested remote job", { host, job: request.job, owner });
     }
+    const previous = this.mirrorStates.get(key);
+    if (previous && (!snapshot.state || snapshot.state.updatedAt < previous.updatedAt ||
+      snapshot.state.updatedAt === previous.updatedAt && previous.status !== "running" && snapshot.state.status === "running")) snapshot = { ...snapshot, state: previous };
     const state = snapshot.state;
+    if (state) this.mirrorStates.set(key, state);
     if (!this.feeds.has(key) && !this.mirrorIntents.has(key) && state?.status === "running") {
       this.mirrorIntents.set(key, { snapshot, options: { home: this.home, name: state.peer, header: `Reattached remote job on ${host}, by ${owner}`,
         meta: { by: owner, job: localJobName ?? state.peer, remote: { host, name: state.peer } } } });
@@ -315,6 +327,7 @@ export class RemoteJobs {
     this.closed = true;
     for (const intent of this.mirrorIntents.values()) intent.controller?.abort(new Error("Remote mirror broker closed"));
     this.mirrorIntents.clear();
+    this.mirrorTurns.clear(); this.mirrorStates.clear();
     for (const pending of this.pendingStarts.values()) pending.controller.abort(new Error("Remote job not_started: broker closed before detached runner startup"));
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error("Remote jobs link closed.")); }
     this.pending.clear();
