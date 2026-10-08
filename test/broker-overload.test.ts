@@ -30,6 +30,7 @@ describe("broker overload survival", () => {
     const peer = { name: "reader", unavailable: false };
     const write = vi.fn((_frame: unknown) => true);
     const conn = { peer, socket: { destroyed: false, write } };
+    vi.spyOn(broker as any, "connByName").mockImplementation((name: unknown) => name === peer.name ? conn : undefined);
     const replay = () => (broker as unknown as { replayMail(conn: unknown, peer: unknown): void }).replayMail(conn, peer);
     try {
       replay(); peer.unavailable = true;

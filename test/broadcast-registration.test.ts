@@ -66,9 +66,10 @@ it("backs up v8 before adding last-seen registrations and preserves original reg
     const db = (upgraded as unknown as { db: DatabaseSync }).db;
     expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(SQLITE_STORE_VERSION);
     expect(db.prepare("SELECT * FROM peer_last_seen").all()).toEqual([{ name: "retained", seen_at: 42 }]);
-    const snapshots = readdirSync(env.home).filter((name) => name.startsWith("bridge.db.backup-"));
+    const snapshotRoot = join(env.home, ".migration-snapshots");
+    const snapshots = readdirSync(snapshotRoot).filter((name) => name.startsWith("bridge.db.metadata-v8-to-"));
     expect(snapshots.length).toBeGreaterThan(0);
-    const backup = new DatabaseSync(join(env.home, snapshots[0]!), { readOnly: true });
+    const backup = new DatabaseSync(join(snapshotRoot, snapshots[0]!), { readOnly: true });
     try {
       expect(backup.prepare("PRAGMA user_version").get()!.user_version).toBe(8);
       expect(backup.prepare("SELECT name FROM peer_names").get()!.name).toBe("retained");

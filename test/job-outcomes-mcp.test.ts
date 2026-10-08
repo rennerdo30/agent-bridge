@@ -16,7 +16,7 @@ describe("supervisor outcome MCP tool", () => {
       { id: "unfinished", owner: "supervisor", status: "running" },
     ].map((entry) => ({ ...entry, name: `codex-job-${entry.id}`, agent: "codex", model: null, prompt: "task", startedAt: Date.now(), sessionId: "session", workdir: null, worktree: null }));
     writeFileSync(join(env.home, "jobs.json"), JSON.stringify(entries));
-    const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, "--agent=claude"],
+    const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, "--agent=codex"],
       env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_NAME: "supervisor", AGENT_BRIDGE_DASHBOARD: "off" } as Record<string, string>, stderr: "ignore" });
     try {
       await client.connect(transport);

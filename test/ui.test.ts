@@ -396,10 +396,11 @@ describe("summarizeRun", () => {
     expect(summarizeRun(file, `${header}\n${quoted}\n`, 1000, 2000, meta).status).toBe("running");
   });
 
-  it("detects running, failed and interrupted runs", () => {
+  it("detects running, failed, cancelled and interrupted runs", () => {
     const f = "2026-09-29-06-32-18-codex-x.log";
     expect(summarizeRun(f, "06:32:18 h\n06:33:00 1m · step 3 · bash: x\n", 1_000, 2_000).status).toBe("running");
     expect(summarizeRun(f, "06:32:18 h\n06:40:00 finished after 400s · failed: boom\n", 1_000, 2_000).status).toBe("failed");
+    expect(summarizeRun(f, "06:32:18 h\n06:40:00 finished after 400s · cancelled\n", 1_000, 2_000).status).toBe("cancelled");
     expect(summarizeRun(f, "06:32:18 h\n", 0, 10 * 60_000).status).toBe("interrupted");
   });
 
