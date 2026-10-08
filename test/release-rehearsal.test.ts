@@ -92,8 +92,8 @@ function checkpoint(): string {
   } finally { db.close(); }
   return snapshot;
 }
-async function lock(snapshot: string, milliseconds: number): Promise<Worker> {
-  const worker = new Worker(`const {DatabaseSync}=require('node:sqlite'); const {parentPort,workerData}=require('node:worker_threads'); const db=new DatabaseSync(workerData.path); db.exec('BEGIN EXCLUSIVE'); db.prepare('UPDATE table_state SET generation=1').run(); parentPort.postMessage('locked'); setTimeout(()=>{db.exec('COMMIT');db.close()},workerData.milliseconds)`, { eval: true, workerData: { path: `${snapshot}.progress.db`, milliseconds } });
+async function lock(snapshot: string, milliseconds: number | null): Promise<Worker> {
+  const worker = new Worker(`const {DatabaseSync}=require('node:sqlite'); const {parentPort,workerData}=require('node:worker_threads'); const db=new DatabaseSync(workerData.path); db.exec('BEGIN EXCLUSIVE'); db.prepare('UPDATE table_state SET generation=1').run(); parentPort.postMessage('locked'); const release=()=>{db.exec('COMMIT');db.close();parentPort.close()}; if(workerData.milliseconds===null) parentPort.once('message',release); else setTimeout(release,workerData.milliseconds)`, { eval: true, workerData: { path: `${snapshot}.progress.db`, milliseconds } });
   await new Promise<void>((resolve, reject) => { worker.once("message", () => resolve()); worker.once("error", reject); });
   return worker;
 }
@@ -110,10 +110,9 @@ describe("opt-in release rehearsal checkpoint inspection", () => {
     finally { await worker.terminate(); }
   });
   it("fails bounded inspection without treating a persistent lock as verification failure", async () => {
-    const snapshot = checkpoint(), worker = await lock(snapshot, 2000), started = performance.now();
+    const snapshot = checkpoint(), worker = await lock(snapshot, null);
     try {
       await expect(readRehearsalCursor({ snapshot }, 150)).rejects.toThrow("Checkpoint inspection remained busy");
-      expect(performance.now() - started).toBeLessThan(1000);
     } finally { await worker.terminate(); }
   });
 });

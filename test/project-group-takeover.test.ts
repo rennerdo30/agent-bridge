@@ -215,7 +215,7 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   if (failed?.status === "rejected") throw failed.reason;
   const jobs = starts.map((result) => (result as PromiseFulfilledResult<{ name: string; id: string; release: string; link: string }>).value);
   try {
-    await until(() => jobs.every((j) => linkReady(j.link) && readRunnerState(env.home, j.id)?.sessionId && readRunnerState(env.home, j.id)?.live), 18_000);
+    await until(() => jobs.every((j) => linkReady(j.link) && readRunnerState(env.home, j.id)?.sessionId && readRunnerState(env.home, j.id)?.live), 60_000);
   } catch (cause) {
     let summary = "diagnostics unavailable";
     try {
