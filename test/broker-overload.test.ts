@@ -27,9 +27,11 @@ describe("broker overload survival", () => {
       conversationId: "job-worker", body: "Retained report", replyTo: null, hop: 0, createdAt: Date.now(), readAt: null };
     const direct = { ...job, id: randomUUID(), from: { id: "master", name: "master", agent: "codex" as const }, conversationId: "ordinary", body: "Direct peer note" };
     seedInbox(store, [job, direct]);
-    const peer = { name: "reader", unavailable: false };
+    const peer = { id: "reader", name: "reader", sessionId: null, unavailable: false };
     const write = vi.fn((_frame: unknown) => true);
-    const conn = { peer, socket: { destroyed: false, write } };
+    const conn = { peer, socket: { destroyed: false, writableLength: 0, write } };
+    const connections = (broker as unknown as { conns: Set<unknown> }).conns;
+    connections.add(conn);
     const replay = () => (broker as unknown as { replayMail(conn: unknown, peer: unknown): void }).replayMail(conn, peer);
     try {
       replay(); peer.unavailable = true;
@@ -41,7 +43,7 @@ describe("broker overload survival", () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(write).toHaveBeenCalledTimes(2);
       expect(write.mock.calls.some(([frame]) => String(frame).includes("Retained report"))).toBe(true);
-    } finally { await broker.close(); }
+    } finally { connections.delete(conn); await broker.close(); }
   });
   it("retries a deferred durable result route without requiring another connection", async () => {
     const message = { id: randomUUID(), from: { id: "job:deferred", name: "opencode-job-deferred", agent: "opencode" as const },

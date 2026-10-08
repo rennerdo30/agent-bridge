@@ -1,9 +1,10 @@
-import { readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { commitHandoff, migrateJobOwnership } from "../src/core/job-handoff.js";
 import { writeJsonStore, JSON_STORE_VERSION } from "../src/core/json-store.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { makeEnv, until, type TestEnv } from "./helpers.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import { DatabaseSync } from "node:sqlite";
 import { MessageStore, SQLITE_STORE_VERSION } from "../src/core/store.js";
@@ -11,6 +12,7 @@ import { migrateSqlite } from "../src/core/sqlite-migrations.js";
 import { nullLogger } from "../src/core/logger.js";
 import { archiveDbPath } from "../src/core/sqlite-maintenance.js";
 import { JobManager, readStore } from "../src/mcp/jobs.js";
+import { processIdentity } from "../src/core/process-identity.js";
 
 vi.mock("../src/core/json-store.js", async (original) => {
   const actual = await original<typeof import("../src/core/json-store.js")>();
@@ -21,6 +23,26 @@ const fixture = readFileSync(join(import.meta.dirname, "fixtures", "handoff", "j
 beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { vi.mocked(writeJsonStore).mockClear(); vi.unstubAllEnvs(); await env.cleanup(); });
 const peer = (name: string): PeerInfo => ({ id: name, name, agent: "codex", cwd: env.home, pid: process.pid, agentPid: null, sessionId: null, startedAt: 1, autoWake: false });
+
+/** Failure releases the canonical lock while retaining its immutable ownership evidence. */
+function expectRetainedReleasedLock(): void {
+  expect(readdirSync(env.home).sort()).toEqual([".metadata-leases", "jobs.json"]);
+  expect(existsSync(join(env.home, "jobs.json.lock"))).toBe(false);
+  const key = createHash("sha256").update("jobs.json.lock").digest("hex");
+  const namespace = join(env.home, ".metadata-leases"), registry = join(namespace, key);
+  expect(readdirSync(namespace)).toEqual([key]); expect(readdirSync(registry)).toEqual(["archive"]);
+  const archive = join(registry, "archive"), directories = readdirSync(archive);
+  expect(directories).toHaveLength(1);
+  const directory = join(archive, directories[0]!), names = readdirSync(directory);
+  expect(names).toHaveLength(2);
+  expect(names.some(name => name.startsWith("claim-v1."))).toBe(true);
+  expect(names.some(name => name.startsWith("released-v2."))).toBe(true);
+  const records = names.map(name => JSON.parse(readFileSync(join(directory, name), "utf8")));
+  expect(records[0]).toEqual(records[1]);
+  expect(records[0]).toMatchObject({ version: 2, pid: process.pid, identity: processIdentity(process.pid) });
+  expect(records[0].nonce).toMatch(/^owner-v1\./);
+  expect(directories[0]!.startsWith(`${records[0].ownerDirectory}-`)).toBe(true);
+}
 
 it("upgrades the real 0.29.10 job records with a byte-exact backup and preserves every old field", () => {
   const path = join(env.home, "jobs.json"); writeFileSync(path, fixture);
@@ -54,17 +76,31 @@ it("leaves original records untouched if backup/publication fails", () => {
   vi.mocked(writeJsonStore).mockImplementationOnce(() => { throw new Error("Backup failed"); });
   expect(() => commitHandoff(path, peer("codex-fixture-source"), peer("codex-target"), { to: "codex-target" })).toThrow("Backup failed");
   expect(readFileSync(path, "utf8")).toBe(fixture);
-  expect(readdirSync(env.home)).toEqual(["jobs.json"]);
+  expectRetainedReleasedLock();
 });
 
 it("publishes a unique archive without overwriting an interrupted legacy overflow file", () => {
   const path = join(env.home, "jobs.json"), leftover = `${path}.overflow.json`;
-  writeFileSync(path, fixture); writeFileSync(leftover, '{"original":"untouched"}');
+  const seeded = { ...JSON.parse(fixture), futureEnvelope: { retained: ["all", "original", "bytes"] } };
+  seeded.jobs = seeded.jobs.map((job: Record<string, unknown>) => ({ ...job, futureJobField: { id: job.id, retained: true } }));
+  const original = JSON.stringify(seeded);
+  writeFileSync(path, original); writeFileSync(leftover, '{"original":"untouched"}');
   vi.stubEnv("AGENT_BRIDGE_JOB_STORE_LIMIT", "1");
+  vi.stubEnv("AGENT_BRIDGE_ARCHIVE_AGE_MS", "0");
   const manager = new JobManager(env.node("codex-fixture-source", "codex"), nullLogger, path);
-  manager.restore(() => undefined); manager.persist();
+  manager.restore(() => undefined);
+  expect(readFileSync(path, "utf8")).toBe(original);
+  // A real connected owner first refreshes durable authority. Merely loading
+  // already-supervised finished jobs does not claim their write ownership.
+  manager.refreshOwnership(); manager.persist();
   expect(readFileSync(leftover, "utf8")).toBe('{"original":"untouched"}');
-  expect(readStore(path, nullLogger, true).map((j) => j.id).sort()).toEqual(JSON.parse(fixture).jobs.map((j: { id: string }) => j.id).sort());
+  const retained = readStore(path, nullLogger, true);
+  expect(retained.map((j) => j.id).sort()).toEqual(seeded.jobs.map((j: { id: string }) => j.id).sort());
+  for (const record of seeded.jobs) expect(retained.find(job => job.id === record.id)).toMatchObject(record);
+  expect(readStore(path)).toHaveLength(1);
+  expect(JSON.parse(readFileSync(path, "utf8")).futureEnvelope).toEqual(seeded.futureEnvelope);
+  const backups = readdirSync(env.home).filter(name => name.startsWith("jobs.json.backup-"));
+  expect(backups).toHaveLength(1); expect(readFileSync(join(env.home, backups[0]!), "utf8")).toBe(original);
   expect(readdirSync(join(env.home, "archive")).some((name) => /^jobs-.*\.json$/.test(name))).toBe(true);
 });
 
@@ -72,7 +108,7 @@ it.each(['{"version":2,"jobs":"bad"}', '{broken'])("does not rename or modify in
   const path = join(env.home, "jobs.json"); writeFileSync(path, bytes);
   expect(() => commitHandoff(path, peer("source"), peer("target"), { to: "target" })).toThrow();
   expect(readFileSync(path, "utf8")).toBe(bytes);
-  expect(readdirSync(env.home)).toEqual(["jobs.json"]);
+  expectRetainedReleasedLock();
 });
 
 it("makes old version-2 writers fail closed and preserves unknown fields", () => {
@@ -102,24 +138,47 @@ function oldDatabase() {
   return { file, db, snapshot };
 }
 
-it("upgrades the released 0.29.10 SQLite layout without changing any old table records", () => {
-  const { file, db, snapshot } = oldDatabase(), original = snapshot();
+it("upgrades the released 0.29.10 SQLite layout without changing any old table records", async () => {
+  const { file, db, snapshot } = oldDatabase();
+  db.exec(`INSERT INTO archived_messages SELECT 'legacy-only-mail',recipient,from_id,from_name,from_agent,to_target,conversation_id,reply_to,hop,
+    'Original legacy-only evidence',created_at,42,archive_reason,archived_at FROM archived_messages WHERE id='old-mail';
+    CREATE TABLE future_user_metadata (id TEXT PRIMARY KEY, opaque TEXT NOT NULL);
+    INSERT INTO future_user_metadata VALUES ('retained','{"unknown":{"keep":[1,2,3]}}');`);
+  const original = snapshot();
   db.close();
-  const store = new MessageStore(file, nullLogger); store.close();
+  const store = new MessageStore(file, nullLogger);
   const next = new DatabaseSync(file);
+  const archive = new DatabaseSync(archiveDbPath(file), { readOnly: true });
   try {
     expect(next.prepare("PRAGMA user_version").get()!.user_version).toBe(SQLITE_STORE_VERSION);
+    // Startup preserves the complete old source until post-listen maintenance.
+    for (const [table, records] of Object.entries(original)) expect(next.prepare(`SELECT * FROM "${table}" ORDER BY rowid`).all()).toEqual(records);
+    expect(archive.prepare("SELECT * FROM messages ORDER BY rowid").all()).toEqual([]);
+    const visible = () => {
+      expect(store.byId("legacy-only-mail")?.body).toBe("Original legacy-only evidence");
+      expect(store.messagesById("legacy-only-mail").map(message => message.body)).toEqual(["Original legacy-only evidence"]);
+      expect(store.receipts("legacy-only-mail")).toEqual([{ recipient: "codex-source", readAt: 42 }]);
+    };
+    visible();
+    vi.stubEnv("AGENT_BRIDGE_AUTO_BACKUP", "0");
+    store.startBackups();
+    await until(() => Number(next.prepare("SELECT COUNT(*) AS count FROM archived_messages").get()!.count) === 0);
+    visible();
+    expect(archive.prepare("PRAGMA integrity_check").all()).toEqual([{ integrity_check: "ok" }]);
     for (const [table, records] of Object.entries(original)) {
       if (table === "archived_messages") {
-        const archive = new DatabaseSync(archiveDbPath(file), { readOnly: true });
-        try { expect(archive.prepare("SELECT * FROM messages ORDER BY rowid").all()).toEqual(records); } finally { archive.close(); }
+        expect(archive.prepare("SELECT * FROM messages ORDER BY rowid").all()).toEqual(records);
       } else expect(next.prepare(`SELECT * FROM "${table}" ORDER BY rowid`).all()).toEqual(records);
     }
     const backup = readdirSync(env.home).find((name) => name.startsWith("old.db.backup-"))!;
     expect(backup).toBeTruthy();
     const saved = new DatabaseSync(join(env.home, backup), { readOnly: true });
-    try { expect(saved.prepare("PRAGMA user_version").get()!.user_version).toBe(6); } finally { saved.close(); }
-  } finally { next.close(); }
+    try {
+      expect(saved.prepare("PRAGMA user_version").get()!.user_version).toBe(6);
+      for (const [table, records] of Object.entries(original)) expect(saved.prepare(`SELECT * FROM "${table}" ORDER BY rowid`).all()).toEqual(records);
+      expect(saved.prepare("PRAGMA integrity_check").all()).toEqual([{ integrity_check: "ok" }]);
+    } finally { saved.close(); }
+  } finally { archive.close(); next.close(); store.close(); }
   const backups = readdirSync(env.home).filter((name) => name.startsWith("old.db.backup-"));
   const again = new MessageStore(file, nullLogger); again.close();
   expect(readdirSync(env.home).filter((name) => name.startsWith("old.db.backup-"))).toEqual(backups);

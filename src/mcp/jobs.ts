@@ -104,6 +104,8 @@ export interface Job {
   resume?: Resume;
   /** Follow-ups that arrived while the job was running; sent as soon as it finishes. */
   queue: string[];
+  /** A failed continuation factory retains its queue until an explicit retry. */
+  continuationFailure?: { turn: number; error: string } | null;
   /** While it runs: show a new title in the current turn too (dashboard). */
   retitle?: ((title: string) => void) | null;
   /** The subagent's own estimate of how far it is (report_progress), and its note. */
@@ -496,6 +498,33 @@ export class JobManager {
           j.args = { ...j.args, ...(isRecord(old.args) ? { send_to: old.args.send_to } : {}) };
           if ((old.owner !== this.node.name && old.executionOwner !== this.node.name && !(j.executionOwner === this.node.name && canControlJob(old, this.node.name)) && !this.lineage) ||
               (old.executionOwner && old.executionOwner !== this.node.name && old.status === "running" && j.startedAt === old.startedAt)) return old as unknown as StoredJob;
+        }
+        if (isRecord(old) && old.startedAt === j.startedAt && (old.status === "done" || old.status === "failed") && j.status === "running") {
+          // An observer's stale same-turn snapshot cannot revive an executor's
+          // completed turn. Keep every conflicting accepted byte in the existing
+          // immutable journal before reconciling the observer's runtime state.
+          const pending = toStored(j) as unknown as Record<string, unknown>;
+          this.retainOwnedState([mergeStoreFields(old, pending)]);
+          const terminal = mergePendingJob({ ...old, deliveryHistory: j.deliveryHistory },
+            { ...pending, status: old.status, finishedAt: old.finishedAt, sessionId: old.sessionId, host: old.host },
+            this.durableBases.get(j.id) ?? j.recoveredRecord) ?? { ...old, deliveryHistory: j.deliveryHistory };
+          const executing = (this.running.get(j.id) === j || this.foreground.get(j.id) === j) &&
+            (!j.executionOwner || j.executionOwner === this.node.name);
+          if (!executing) {
+            Object.assign(j, terminal);
+            j.queue = [...(Array.isArray(terminal.queuedMessages) ? terminal.queuedMessages as string[] : [])];
+            this.running.delete(j.id); this.waitingJobs.delete(j.id);
+            if (j.queue.length && this.isMine(j.owner) && j.resume) {
+              this.waitForSlot(j);
+              // Launch only after the shared persistence lock has been released.
+              queueMicrotask(() => {
+                if (this.dormant || this.reportsStopped) return;
+                try { this.startWaiting(); }
+                catch (error) { this.log.warn("could not resume completed handoff", { err: String(error) }); }
+              });
+            }
+          }
+          return terminal as unknown as StoredJob;
         }
         return mergeStoreFields(isRecord(old) ? old : {}, toStored(j)) as StoredJob;
       });
@@ -1056,7 +1085,13 @@ export class JobManager {
         }
         // Follow-ups sent while the caller waited continue the session in the background (or wait for a slot).
         if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner)) {
-          if (this.canStart()) this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
+          if (this.canStart()) {
+            let run: Run;
+            try { run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree); }
+            catch (error) { this.failContinuation(job, error); return; }
+            job.queue.splice(0);
+            this.launch(job, run);
+          }
           else this.waitForSlot(job);
         }
       },
@@ -1185,18 +1220,26 @@ export class JobManager {
       return { outcome: "queued", job, approvalPending: Boolean(job.pendingApproval) };
     }
     if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
+    // An explicit retry includes every previously accepted follow-up, in order.
+    job.queue.push(message);
     if (!this.canStart()) {
-      job.queue.push(message);
+      job.continuationFailure = null;
       this.waitForSlot(job);
+      this.persist();
       return { outcome: "waiting", job };
     }
+    let run: Run;
+    try { run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree); }
+    catch (error) { this.failContinuation(job, error); throw error; }
+    job.queue.splice(0);
     this.log.info("subagent resumed", { job: job.name, sessionId: job.sessionId });
-    this.launch(job, job.resume(message, job.sessionId, job.workdir, job.worktree));
+    this.launch(job, run);
     return { outcome: "started", job };
   }
 
   /** Continue this finished job (its queued messages) once a slot frees up. */
   private waitForSlot(job: Job): void {
+    if (job.continuationFailure?.turn === job.startedAt) return;
     this.waitingJobs.set(job.id, job);
     if (this.storePath && !this.rootWaitTimer) {
       this.rootWaitTimer = setInterval(() => {
@@ -1212,10 +1255,11 @@ export class JobManager {
   /** Start waiting continuations while there are free slots, oldest first. */
   private startWaiting(): void {
     for (const job of this.waitingJobs.values()) {
+      if (job.continuationFailure?.turn === job.startedAt) { this.waitingJobs.delete(job.id); continue; }
       if (job.status === "running") continue;
       if (!this.canStart()) return;
-      this.waitingJobs.delete(job.id);
       if (job.waitingForStart) {
+        this.waitingJobs.delete(job.id);
         try {
           const run = job.resume?.(job.prompt, "", job.workdir, job.worktree) ?? this.pendingRuns.get(job.id);
           this.pendingRuns.delete(job.id);
@@ -1227,18 +1271,33 @@ export class JobManager {
         }
         continue;
       }
-      if (!job.queue.length || !job.resume || !job.sessionId) continue;
+      if (!job.queue.length || !job.resume || !job.sessionId) { this.waitingJobs.delete(job.id); continue; }
+      let run: Run;
+      try { run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree); }
+      catch (error) { this.failContinuation(job, error); continue; }
+      this.waitingJobs.delete(job.id);
+      job.queue.splice(0);
       this.log.info("subagent resumed (was waiting for a slot)", { job: job.name, sessionId: job.sessionId });
-      this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
+      this.launch(job, run);
     }
   }
 
+  private failContinuation(job: Job, error: unknown): void {
+    job.continuationFailure = { turn: job.startedAt, error: String(error) };
+    this.waitingJobs.delete(job.id);
+    this.log.warn("subagent continuation could not be prepared; queued messages retained for explicit retry", {
+      job: job.name, queued: job.queue.length, err: String(error),
+    });
+    this.persist();
+  }
+
   private launch(job: Job, run: Run): void {
+    job.continuationFailure = null;
     job.waitingForStart = undefined;
     if (typeof job.args?.model === "string") job.model = job.args.model;
     job.status = "running";
     job.executionOwner = !this.isMine(job.owner) ? this.node.name : undefined;
-    job.startedAt = Date.now();
+    job.startedAt = Math.max(Date.now(), job.startedAt + 1);
     job.controller = new AbortController();
     job.progress = null;
     job.etaAt = undefined;
@@ -1524,10 +1583,18 @@ export class JobManager {
     const message = report === undefined ? jobReport(job, status, seconds, text, cause) : report;
 
     // Follow-ups that arrived meanwhile go out right away, into the same session (it keeps its slot).
-    if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner)) {
-      const queued = job.queue.splice(0).join("\n\n");
+    if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner) && job.continuationFailure?.turn !== job.startedAt) {
+      let run: Run;
+      try { run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree); }
+      catch (error) {
+        this.failContinuation(job, error);
+        if (message !== null) this.post(job, message, null, "", messageId);
+        this.startWaiting();
+        return;
+      }
       if (message !== null) this.post(job, `${message}\n\n${QUEUED_FOLLOW_UP_NOTE}`, null, "", messageId);
-      this.launch(job, job.resume(queued, job.sessionId, job.workdir, job.worktree));
+      job.queue.splice(0);
+      this.launch(job, run);
       return;
     }
     if (message !== null) this.post(job, message, null, "", messageId);
@@ -1598,7 +1665,7 @@ export function sessionOfError(err: unknown): string | null {
   return err instanceof DelegateError ? (err.sessionId ?? null) : null;
 }
 
-type StoredJob = Pick<Job, "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+type StoredJob = Pick<Job, "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
 
 function toStored(j: Job): StoredJob {
   return {
@@ -1620,6 +1687,7 @@ function toStored(j: Job): StoredJob {
     projectRoot: j.projectRoot,
     executionOwner: j.executionOwner,
     queuedMessages: [...j.queue],
+    continuationFailure: j.continuationFailure,
     deliveryHistory: j.deliveryHistory,
     forwarded: j.forwarded,
     supervisor: j.supervisor,

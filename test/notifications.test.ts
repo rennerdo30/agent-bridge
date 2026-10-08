@@ -10,7 +10,7 @@ import { notificationCommands, NotificationLimiter, notifyJobEvent, takeNotifica
 
 // Exercise asynchronous launch with fake child processes; no OS notification helper is executed.
 vi.unmock("../src/core/notifications.js");
-vi.mock("node:child_process", () => ({ spawn: vi.fn() }));
+vi.mock("node:child_process", async original => ({ ...await original<typeof import("node:child_process")>(), spawn: vi.fn() }));
 
 let home: string;
 beforeEach(() => { vi.clearAllMocks(); home = mkdtempSync(join(tmpdir(), "agent-bridge-notifications-")); });

@@ -77,6 +77,9 @@ The additive v8→v9 step retains a specifically labelled schema-and-metadata sn
 inputs, preserving all legacy history rows without copying the whole database at startup.
 That scoped artifact is never advertised as a full backup. While older readers defer an
 upgrade, a new broker can host the existing schema with retained supplemental metadata.
+That listener keeps its compatible schema for its lifetime. A later clean broker election
+can upgrade after old readers exit; reader departure does not trigger a synchronous upgrade
+inside the running broker.
 Completed approval question metadata also moves into `approvals/archive/`; its private expired
 capability stays out of the active approval list and rotating snapshots.
 
@@ -86,6 +89,9 @@ old readers' shared JSON bytes stay unchanged until an upgrade is safe. Shutdown
 latest pending state without sending results or reconnecting after the node stops.
 Recovery follows the ordinary ownership rules. Foreign and transient sessions cannot claim
 receipts, and older snapshots cannot replace newer queues, ownership or completed state.
+If preparing a continuation fails, accepted queued messages and the native session remain
+recorded. A persisted turn-specific failure prevents automatic retries across polling and
+restarts. An explicit follow-up retries all retained messages in their original order.
 Results are sent only after their complete envelope is durably recorded, using the same message
 ID for retries. Verified receipts move intact into the journal's archive with an incorporation
 or supersession manifest; conflicting fields are retained and explicitly marked as not executed.

@@ -1,4 +1,5 @@
-import { readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -60,19 +61,46 @@ it("backs up v8 before adding last-seen registrations and preserves original reg
   const original = new MessageStore(env.db, nullLogger); original.close();
   const old = new DatabaseSync(env.db);
   old.exec("DROP TABLE peer_last_seen; PRAGMA user_version=8;");
-  old.prepare("INSERT INTO peer_names VALUES (?,?,?,?,?)").run("identity", "retained", "native", "codex", 42); old.close();
+  old.prepare("INSERT INTO peer_names VALUES (?,?,?,?,?)").run("identity", "retained", "native", "codex", 42);
+  old.exec("CREATE TABLE retained_owner_data(body TEXT); INSERT INTO retained_owner_data VALUES('original owner bytes');");
+  const registrations = old.prepare("SELECT * FROM peer_names ORDER BY rowid").all();
+  const schema = old.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all();
+  const sourceRows = old.prepare("SELECT rowid AS __migration_rowid__, * FROM peer_names ORDER BY rowid");
+  sourceRows.setReadBigInts(true);
+  const expectedDigest = createHash("sha256");
+  for (const row of sourceRows.iterate()) expectedDigest.update(JSON.stringify(row, (_, value) => typeof value === "bigint" ? { bigint: String(value) } : value));
+  const sha256 = expectedDigest.digest("hex");
+  old.close();
   const upgraded = new MessageStore(env.db, nullLogger);
   try {
     const db = (upgraded as unknown as { db: DatabaseSync }).db;
     expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(SQLITE_STORE_VERSION);
     expect(db.prepare("SELECT * FROM peer_last_seen").all()).toEqual([{ name: "retained", seen_at: 42 }]);
-    const snapshots = readdirSync(env.home).filter((name) => name.startsWith("bridge.db.backup-"));
-    expect(snapshots.length).toBeGreaterThan(0);
-    const backup = new DatabaseSync(join(env.home, snapshots[0]!), { readOnly: true });
+    expect(db.prepare("SELECT * FROM peer_names ORDER BY rowid").all()).toEqual(registrations);
+    expect(db.prepare("SELECT body FROM retained_owner_data").get()!.body).toBe("original owner bytes");
+    const folder = join(env.home, ".migration-snapshots");
+    const snapshots = readdirSync(folder).filter((name) => name.endsWith(".db"));
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]).toMatch(/^bridge\.db\.metadata-v8-to-v9-/);
+    const path = join(folder, snapshots[0]!);
+    const manifest = JSON.parse(readFileSync(`${path}.manifest.json`, "utf8"));
+    expect(manifest).toMatchObject({ version: 1, kind: "sqlite-migration-metadata", sourceVersion: 8, targetVersion: SQLITE_STORE_VERSION });
+    expect(manifest.schema).toEqual(schema);
+    expect(manifest.tables).toEqual([{ name: "peer_names", rows: registrations.length, sha256 }]);
+    const backup = new DatabaseSync(path, { readOnly: true });
     try {
       expect(backup.prepare("PRAGMA user_version").get()!.user_version).toBe(8);
       expect(backup.prepare("SELECT name FROM peer_names").get()!.name).toBe("retained");
+      expect(backup.prepare("SELECT * FROM peer_names ORDER BY rowid").all()).toEqual(registrations);
+      expect(backup.prepare("PRAGMA integrity_check").all()).toEqual([{ integrity_check: "ok" }]);
+      expect(backup.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all()).toEqual([{ name: "peer_names" }]);
+      const snapshotRows = backup.prepare("SELECT rowid AS __migration_rowid__, * FROM peer_names ORDER BY rowid");
+      snapshotRows.setReadBigInts(true);
+      const actualDigest = createHash("sha256");
+      for (const row of snapshotRows.iterate()) actualDigest.update(JSON.stringify(row, (_, value) => typeof value === "bigint" ? { bigint: String(value) } : value));
+      expect(actualDigest.digest("hex")).toBe(sha256);
     } finally { backup.close(); }
+    expect(readdirSync(env.home).filter((name) => name.startsWith("bridge.db.backup-"))).toEqual([]);
   } finally { upgraded.close(); }
 });
 it("returns skipped registrations even when no offline recipient is eligible", async () => {

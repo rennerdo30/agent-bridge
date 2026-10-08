@@ -503,14 +503,15 @@ describe("cleanup", () => {
     writeFileSync(join(foreign, "notes.txt"), "mine\n");
 
     const byBranch = (entries: CleanupEntry[]) => Object.fromEntries(entries.map((e) => [e.branch, e]));
-    const dry = byBranch(await cleanupWorktrees({ cwd: repo, home, all: true, apply: false, log: nullLogger }));
+    const dryEntries = await cleanupWorktrees({ cwd: repo, home, all: true, apply: false, log: nullLogger });
+    const dry = byBranch(dryEntries);
     expect(dry["agent-bridge/done"]!.action).toBe("would remove");
     expect(dry["agent-bridge/unmerged"]!.action).toBe("kept");
     expect(dry["agent-bridge/unmerged"]!.reason).toMatch(/not merged/);
     expect(dry["agent-bridge/dirty"]!.reason).toMatch(/uncommitted/);
     expect(dry["agent-bridge/running"]!.reason).toMatch(/codex-job-running is running/);
     expect(existsSync(done.path)).toBe(true);
-    const leftovers = (await cleanupWorktrees({ cwd: repo, home, all: true, apply: false, log: nullLogger })).filter((e) => !e.branch);
+    const leftovers = dryEntries.filter((e) => !e.branch);
     expect(leftovers.find((e) => e.path === leftover)?.action).toBe("would remove");
     expect(leftovers.find((e) => e.path === foreign)?.action).toBe("kept");
 

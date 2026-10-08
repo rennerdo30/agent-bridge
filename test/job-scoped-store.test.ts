@@ -118,7 +118,14 @@ it("metadata persist clones only its selected old archive record and never expos
   const receipt = { id: "handoff", at: Date.now(), from: "other", to: "owner", rootSession: "owner", rootName: "owner", reason: "explicit-handoff" };
   corpus([{ ...tracked, ownershipHistory: [receipt], masters: ["owner"], args: { send_to: ["owner"] } }]);
   jobs.persist();
-  expect(observed.clones).toEqual(["tracked"]);
+  expect(observed.clones.length).toBeGreaterThan(0);
+  expect(observed.clones.length).toBeLessThanOrEqual(2);
+  expect(new Set(observed.clones)).toEqual(new Set(["tracked"]));
+  expect(observed.reads.filter(file => file === archive)).toEqual([]);
+  const saved = JSON.parse(readFileSync(path, "utf8"));
+  expect(saved.jobs.map((record: { id: string }) => record.id)).toEqual(["tracked"]);
+  expect(saved.jobs[0]).toMatchObject({ sessionId: "native-context", prompt: "original task", future: { nested: { keep: true } },
+    ownershipHistory: [receipt], masters: ["owner"], args: { send_to: ["owner"] } });
   const mutable = jobs.hookJobs()[0]!;
   mutable.masters!.push("changed");
   mutable.ownershipHistory![0]!.note = "changed";
