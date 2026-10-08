@@ -33070,7 +33070,11 @@ var JobManager = class {
       if (!this.canRestoreSaved(s)) continue;
       if (this.lineage && s.parentJob !== this.lineage.parentJob) continue;
       if (!this.lineage && s.parentJob) continue;
-      if (this.history.has(s.id)) continue;
+      const existing = this.history.get(s.id);
+      if (existing) {
+        existing.resume ??= makeResume(existing.agent, existing.args ?? {});
+        continue;
+      }
       const hosted = s.status === "running" && Boolean(s.host);
       const mine = this.isMine(s.owner);
       const job = {
