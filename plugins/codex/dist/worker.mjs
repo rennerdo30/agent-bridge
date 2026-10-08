@@ -33964,8 +33964,9 @@ var JobManager = class {
       return { outcome: "queued", job, approvalPending: Boolean(job.pendingApproval) };
     }
     if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
+    const admitted = this.canStart();
     job.queue.push(message);
-    if (!this.canStart()) {
+    if (!admitted) {
       job.continuationFailure = null;
       this.waitForSlot(job);
       this.persist();
@@ -34057,6 +34058,7 @@ var JobManager = class {
     this.persist();
   }
   launch(job, run) {
+    this.waitingJobs.delete(job.id);
     job.continuationFailure = null;
     job.waitingForStart = void 0;
     if (typeof job.args?.model === "string") job.model = job.args.model;
