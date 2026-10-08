@@ -1220,9 +1220,12 @@ export class JobManager {
       return { outcome: "queued", job, approvalPending: Boolean(job.pendingApproval) };
     }
     if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
+    // Capacity refresh can register durable queued continuations. Do it before
+    // appending this new message, so a direct admission does not become a waiter.
+    const admitted = this.canStart();
     // An explicit retry includes every previously accepted follow-up, in order.
     job.queue.push(message);
-    if (!this.canStart()) {
+    if (!admitted) {
       job.continuationFailure = null;
       this.waitForSlot(job);
       this.persist();
@@ -1292,6 +1295,7 @@ export class JobManager {
   }
 
   private launch(job: Job, run: Run): void {
+    this.waitingJobs.delete(job.id);
     job.continuationFailure = null;
     job.waitingForStart = undefined;
     if (typeof job.args?.model === "string") job.model = job.args.model;

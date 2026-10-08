@@ -162,3 +162,35 @@ it("retains queued messages when the executor's automatic continuation factory t
   expect(controller.signal.aborted).toBe(false);
   expect(readStore(path())[0]).toMatchObject({ status: "done", queuedMessages: ["accepted while executing"], continuationFailure: { turn } });
 });
+
+it("admits a durable local continuation without leaving a waiter that intercepts live messages or cancellation", async () => {
+  const jobs = manager(new LocalCoordinator("executor", "source-root"));
+  const liveMessage = vi.fn();
+  const factory = vi.fn<Resume>(() => async (signal, _progress, active) => {
+    active.live = { post: liveMessage };
+    return new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("current continuation cancelled")), { once: true });
+    });
+  });
+  const job = jobs.start("claude", null, "original durable context", async () => done("first turn complete"), factory);
+  await flush(); await flush();
+  expect(readStore(path())[0]).toMatchObject({ status: "done", sessionId: "retained-native-session" });
+  const firstTurn = job.startedAt;
+  expect(jobs.followUp(job.name, "resume exact context").outcome).toBe("started");
+  expect(factory).toHaveBeenCalledWith("resume exact context", "retained-native-session", home, null);
+  expect(job.startedAt).toBeGreaterThan(firstTurn);
+  expect(jobs.waiting()).toEqual([]);
+  const controller = job.controller;
+  expect(controller.signal.aborted).toBe(false);
+  expect(jobs.followUp(job.name, "steer the current continuation").outcome).toBe("delivered");
+  expect(liveMessage).toHaveBeenCalledWith("steer the current continuation");
+  expect(job.queue).toEqual([]);
+  expect(jobs.waiting()).toEqual([]);
+  expect(jobs.cancel(job.name)).toBe(true);
+  expect(job.controller).toBe(controller);
+  expect(controller.signal.aborted).toBe(true);
+  await flush(); await flush();
+  expect(factory).toHaveBeenCalledTimes(1);
+  expect(job.status).toBe("failed");
+  expect(readStore(path())[0]).toMatchObject({ status: "failed", queuedMessages: [] });
+});

@@ -54,7 +54,9 @@ describe.skipIf(!existsSync(SERVER))("dashboard and Codex jobs through the bundl
   let client: Client;
   let transport: StdioClientTransport;
   let ui: Awaited<ReturnType<typeof startUi>> | undefined;
+  let responses: unknown[];
   beforeEach(async () => {
+    responses = [];
     home = mkdtempSync(join(tmpdir(), "ab-mcp-chat-"));
     writeFileSync(join(home, "app-server"), FAKE_CODEX);
     writeFileSync(join(home, "config.json"), JSON.stringify({ codexModel: "configured-codex" }));
@@ -67,16 +69,37 @@ describe.skipIf(!existsSync(SERVER))("dashboard and Codex jobs through the bundl
     await client.connect(transport);
     await call("peers");
   });
-  afterEach(async () => {
-    await ui?.close();
-    ui = undefined;
+  afterEach(async (context) => {
+    const failed = context.task.result?.state === "fail";
+    const errors: unknown[] = [];
+    const attempt = async (phase: string, action: () => unknown | Promise<unknown>) => {
+      try { await action(); }
+      catch (error) { errors.push(new Error(`${phase} failed`, { cause: error })); }
+    };
     const pid = transport?.pid;
-    const children = new Set(requests().map((r) => r.pid));
-    await client?.close();
-    if (pid) await waitFor(() => !pidAlive(pid));
-    await waitFor(() => [...children].every((p) => !pidAlive(p)));
+    let capturedRequests: any[] = [];
+    await attempt("capture owned children", () => {
+      const file = join(home, "requests.jsonl");
+      if (existsSync(file)) capturedRequests = readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
+    });
+    const children = new Set(capturedRequests.map(request => request.pid));
+    if (failed) {
+      await attempt("capture diagnostics", () => {
+        writeFileSync(join(home, "fixture-diagnostics.json"), JSON.stringify({ responses, requests: capturedRequests }, null, 2));
+      });
+    }
+    await attempt("close fixture UI", () => ui?.close());
+    ui = undefined;
+    await attempt("close fixture client", () => client?.close());
+    await attempt("verify fixture server exited", async () => { if (pid) await waitFor(() => !pidAlive(pid)); });
+    await attempt("verify fixture children exited", () => waitFor(() => [...children].every(child => !pidAlive(child))));
+    if (failed || errors.length) {
+      console.error(`MCP chat fixture retained: ${home}`);
+      if (errors.length) throw new AggregateError([...(context.task.result?.errors ?? []), ...errors], "Fixture capture/teardown failed; original failure and fixture retained");
+      return;
+    }
     // Windows can briefly refuse even the initial directory stat after the last child exits.
-    await waitFor(() => {
+    await attempt("remove verified fixture", () => waitFor(() => {
       try {
         rmSync(home, { recursive: true, force: true });
         return true;
@@ -84,19 +107,29 @@ describe.skipIf(!existsSync(SERVER))("dashboard and Codex jobs through the bundl
         if (["EPERM", "EBUSY", "ENOTEMPTY"].includes((err as NodeJS.ErrnoException).code ?? "")) return false;
         throw err;
       }
-    }, CLEANUP_TIMEOUT_MS);
+    }, CLEANUP_TIMEOUT_MS));
+    if (errors.length) {
+      console.error(`MCP chat fixture cleanup incomplete: ${home}`);
+      throw new AggregateError(errors, "Verified fixture cleanup failed; remaining fixture retained");
+    }
   });
   const requests = (): any[] => {
     try { return readFileSync(join(home, "requests.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)); } catch { return []; }
   };
-  const waitFor = async (fn: () => boolean | Promise<boolean>, timeoutMs = TEST_TIMEOUT_MS): Promise<void> => {
+  const waitFor = async (fn: () => boolean | Promise<boolean>, timeoutMs = TEST_TIMEOUT_MS, phase = "job state"): Promise<void> => {
     const end = Date.now() + timeoutMs;
     while (!(await fn())) {
-      if (Date.now() >= end) throw new Error("job did not reach the expected state");
+      if (Date.now() >= end) throw new Error(`job did not reach the expected state: ${phase}`);
       await new Promise((r) => setTimeout(r, POLL_MS));
     }
   };
-  const call = async (name: string, args = {}) => textOf(await client.callTool({ name, arguments: args }));
+  const call = async (name: string, args = {}) => {
+    const result = await client.callTool({ name, arguments: args });
+    // Polls need only their latest public projection; avoid an unbounded failure artifact.
+    if (name === "peers") responses = responses.filter((entry: any) => entry.name !== "peers");
+    responses.push({ name, args, result });
+    return textOf(result);
+  };
 
   it("includes a cached model list and the configured default on both delegation tools", async () => {
     const tools = (await client.listTools()).tools;
@@ -166,17 +199,17 @@ describe.skipIf(!existsSync(SERVER))("dashboard and Codex jobs through the bundl
   it("renames a running and a finished Codex job when message_subagent changes its title", async () => {
     const spawned = await call("spawn_codex", { prompt: "wait for a message", title: "First job title", cwd: home });
     const job = /Subagent (codex-job-[\da-f]+) started/.exec(spawned)![1]!;
-    await waitFor(() => requests().some((r) => r.method === "turn/start"));
+    await waitFor(() => requests().some((r) => r.method === "turn/start"), TEST_TIMEOUT_MS, "rename first turn started");
     expect(requests().find((r) => r.method === "thread/name/set").params).toEqual({ threadId: "thread-test", name: "First job title" });
     expect(await call("message_subagent", { job, title: "Running job title", message: "finish this turn" })).toContain("gets your message at its next step");
-    await waitFor(async () => (await call("peers")).includes(`${job} "Running job title": done`));
+    await waitFor(async () => (await call("peers")).includes(`${job} "Running job title": done`), TEST_TIMEOUT_MS, "rename first turn completed");
     expect(requests().filter((r) => r.method === "thread/name/set").map((r) => r.params.name)).toContain("Running job title");
     await call("message_subagent", { job, title: "Finished job title", message: "continue" });
-    await waitFor(() => requests().some((r) => r.method === "thread/resume"));
-    await waitFor(() => requests().filter((r) => r.method === "turn/start").length === 2);
+    await waitFor(() => requests().some((r) => r.method === "thread/resume"), TEST_TIMEOUT_MS, "rename continuation resumed");
+    await waitFor(() => requests().filter((r) => r.method === "turn/start").length === 2, TEST_TIMEOUT_MS, "rename continuation started");
     expect(requests().filter((r) => r.method === "thread/name/set").map((r) => r.params.name)).toContain("Finished job title");
     await call("message_subagent", { job, message: "finish again" });
-    await waitFor(async () => (await call("peers")).includes(`${job} "Finished job title": done`));
+    await waitFor(async () => (await call("peers")).includes(`${job} "Finished job title": done`), TEST_TIMEOUT_MS, "rename continuation completed");
   }, TEST_TIMEOUT_MS);
 
   it("routes dashboard messages through the owner to a live job and then continues its finished thread", async () => {
@@ -192,6 +225,7 @@ describe.skipIf(!existsSync(SERVER))("dashboard and Codex jobs through the bundl
     const post = async (body: string) => {
       const r = await fetch(`${base}/api/subagents/message`, { method: "POST", headers: { cookie, "x-agent-bridge": "1", "content-type": "application/json" }, body: JSON.stringify({ run, body }) });
       const data = await r.json();
+      responses.push({ dashboardMessage: body, status: r.status, data });
       expect(r.status, JSON.stringify(data)).toBe(200);
       return data;
     };
@@ -199,7 +233,8 @@ describe.skipIf(!existsSync(SERVER))("dashboard and Codex jobs through the bundl
     await waitFor(async () => (await call("peers")).includes(`${job} "Dashboard job": done`));
     expect(await post("continue the finished thread")).toMatchObject({ outcome: "started" });
     await waitFor(() => requests().filter((r) => r.method === "turn/start").length === 2);
-    expect(await post("finish the continuation")).toMatchObject({ outcome: "delivered" });
+    const finish = await post("finish the continuation");
+    expect(finish, JSON.stringify(finish)).toMatchObject({ outcome: "delivered" });
     await waitFor(async () => (await call("peers")).includes(`${job} "Dashboard job": done`));
     expect(requests().find((r) => r.method === "thread/resume").params.threadId).toBe("thread-test");
     expect((await (await fetch(`${base}/api/state`, { headers: { cookie } })).json()).messages.every((m: any) => !m.body.includes('"requestId"'))).toBe(true);
