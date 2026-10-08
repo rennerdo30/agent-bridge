@@ -36,6 +36,7 @@ import type { Worker } from "node:worker_threads";
 import { startOldRunnerFixtures, continueNativeRunnerFixture, settleNativeFixtureOwners, type OldRunnerFixtures } from "./release-runner-fixture.js";
 import { listMessageBackups, type MessageBackupManifest } from "../src/core/message-backups.js";
 import type { BackupHealth } from "../src/core/backup-background.js";
+import { evaluateRehearsalAcceptance, type RehearsalSample } from "./release-acceptance.js";
 
 const argumentsList = process.argv.slice(2);
 function option(name: string): string | undefined { const i = argumentsList.indexOf(name); return i < 0 ? undefined : argumentsList[i + 1]; }
@@ -286,17 +287,17 @@ async function childMain(home: string, role: Role, index: number): Promise<void>
         let sendMs = 0, probeOperation = "send";
         let acknowledgedMessageIds: string[] = [];
         try {
-          const sent = await node.send({ to: "old-session-0", body, dedupeKey: key });
+          const sent = await node.send({ to: "old-session-0", body, dedupeKey: key, ...(!legacy ? { messageId: key } : {}) });
           sendMs = performance.now() - before;
           acknowledgedMessageIds = sent.messages.map(message => message.id);
           probeOperation = "peers";
           const at = performance.now(); await node.peers();
-          return { startedAt, finishedAt: Date.now(), connectedBeforeSend, sendMs, peersMs: performance.now() - at, id: sent.messages[0]?.id, storageOutcome: { state: "stored", ids: sent.messages.map(message => message.id) } };
+          return { startedAt, finishedAt: Date.now(), connectedBeforeSend, clientVersion: legacy ? "0.29.17" : APP_VERSION, sendMs, peersMs: performance.now() - at, id: sent.messages[0]?.id, storageOutcome: { state: "stored", ids: sent.messages.map(message => message.id) } };
         } catch (error) {
           let copies: Record<string, unknown>[] = [], lookupError: string | undefined;
           try { const db = new DatabaseSync(join(home, "bridge.db"), { readOnly: true, timeout: 100 }); try { copies = db.prepare("SELECT id,recipient,read_at FROM messages WHERE body=? AND from_name=?").all(body, node.name); } finally { db.close(); } }
           catch (lookup) { lookupError = String(lookup); }
-          return { startedAt, finishedAt: Date.now(), connectedBeforeSend, sendMs: sendMs || performance.now() - before, probeOperation, acknowledgedMessageIds, probeError: String(error), storageOutcome: { state: copies.length ? "stored" : "unknown", localState: copies.length ? "stored" : lookupError ? "unknown" : "not_stored", checkedAt: Date.now(), copies, lookupError, legacyOperationHasNoDurableRetryId: true } };
+          return { startedAt, finishedAt: Date.now(), connectedBeforeSend, clientVersion: legacy ? "0.29.17" : APP_VERSION, sendMs: sendMs || performance.now() - before, probeOperation, acknowledgedMessageIds, probeError: String(error), storageOutcome: { state: copies.length ? "stored" : "unknown", localState: copies.length ? "stored" : lookupError ? "unknown" : "not_stored", checkedAt: Date.now(), copies, lookupError, legacyOperationHasNoDurableRetryId: legacy } };
         }
       }
       if (raw.op === "status") {
@@ -481,13 +482,14 @@ export async function rehearse(home: string): Promise<void> {
   await build({ entryPoints: [join(checkout, "src/core/backup-worker.ts")], outfile: join(dirname(workerOutput), "backup-worker.mjs"), bundle: true, platform: "node", format: "esm", target: "node22", packages: "external", logLevel: "silent" });
   await build({ entryPoints: [join(checkout, "src/core/outcome-worker.ts")], outfile: join(dirname(workerOutput), "outcome-worker.mjs"), bundle: true, platform: "node", format: "esm", target: "node22", packages: "external", logLevel: "silent" });
   process.env.AGENT_BRIDGE_HISTORY_MIGRATION_IO_BYTES_PER_SECOND = String(rehearsalBytes(option("--io") ?? "8MiB"));
-  const samples: { at: number; phase: string; sendMs: number; peersMs: number; listRunsMs?: number; dashboardMs?: number; messageSubagentMs?: number; outcomesMs?: number; outcomeObservation?: string }[] = [], failures: string[] = [], phases: { at: number; progress: HistoryMigrationProgress; cursor: Record<string, unknown> }[] = [];
+  const samples: (RehearsalSample & { at: number; phase: string; sendMs: number; peersMs: number; listRunsMs?: number; dashboardMs?: number; messageSubagentMs?: number; outcomesMs?: number; outcomeObservation?: string })[] = [], failures: string[] = [], phases: { at: number; progress: HistoryMigrationProgress; cursor: Record<string, unknown> }[] = [];
   const report: Record<string, unknown> = { schema: 1, seed, currentVersion: APP_VERSION, runtimeSha256: createHash("sha256").update(readFileSync(fileURLToPath(import.meta.url))).digest("hex"), workerSha256: createHash("sha256").update(readFileSync(workerOutput)).digest("hex"), sourceHead: execFileSync("git", ["rev-parse", "HEAD"], { cwd: checkout, encoding: "utf8", windowsHide: true }).trim(), fixtureOnly: true, ownerDataAccessed: false, success: false, mainPriority: getPriority(0), startedAt: new Date().toISOString(), oldRunnerCount: 10, limitations: ["Old runner fixtures use genuine 0.29.17 BridgeNode job identities, not proprietary CLI turns", "Managed continuation uses actual JobManager.restore with a synthetic Run", "message_subagent uses the actual registered guarded MCP handler and a held synthetic Run without an MCP transport", "Current sessions join before old sessions retire; broker transition latency and errors are measured rather than a zero-gap socket guarantee"] };
   let sampling = false, sampler: Promise<void> | undefined, phase = "old-baseline";
   let samplingInvariantFailures = 0, fatalSamplingError: Error | undefined;
   const profiles: unknown[] = []; let activeProfile: Promise<void> | undefined;
   let pollingHost: FixtureChild | undefined;
   let toolSession: FixtureChild | undefined;
+  let currentProbe: FixtureChild | undefined;
   let native: OldRunnerFixtures | undefined;
   const backupProgress: { at: number; phase: string; backup: BackupHealth }[] = [];
   try {
@@ -500,11 +502,12 @@ export async function rehearse(home: string): Promise<void> {
     sampling = true;
     sampler = (async () => {
       while (sampling) {
-        try {
+        for (const probeClient of currentProbe ? [runners[0]!, currentProbe] : [runners[0]!]) try {
           const sampledPhase = phase;
-          const probe = await runners[0]!.request("probe");
-          if (probe.probeError) failures.push(`${sampledPhase}: ${probe.probeError}; storage outcome ${JSON.stringify(probe.storageOutcome)}`);
-          const sample = { at: Date.now(), phase: sampledPhase, ...probe };
+          const probe = await probeClient.request("probe");
+          const failure = probe.probeError ? `${sampledPhase}: ${probe.probeError}; storage outcome ${JSON.stringify(probe.storageOutcome)}` : undefined;
+          if (failure) failures.push(failure);
+          const sample = { at: Date.now(), phase: sampledPhase, ...probe, failure };
           samples.push(sample);
           if (pollingHost) {
             Object.assign(sample, await pollingHost.request("dashboard"));
@@ -526,7 +529,9 @@ export async function rehearse(home: string): Promise<void> {
     await delay(1000);
     phase = "sessions-reload";
     const reloadAt = performance.now();
-    const current = [await startChild(home, "current-session", 0), await startChild(home, "current-session", 1)];
+    const current = [await startChild(home, "current-session", 0)];
+    currentProbe = current[0];
+    current.push(await startChild(home, "current-session", 1));
     report.handoffCandidates = await Promise.all(current.map(child => child.request("status")));
     const retirementStartedAt = Date.now();
     await Promise.all(oldSessions.map(child => child.stop()));
@@ -637,14 +642,30 @@ export async function rehearse(home: string): Promise<void> {
     const percentile = (values: number[]) => { const sorted = [...values].sort((a, b) => a - b); return sorted[Math.ceil(sorted.length * .95) - 1] ?? null; };
     const metrics = (group: typeof samples) => Object.fromEntries(["sendMs", "peersMs", "listRunsMs", "dashboardMs", "messageSubagentMs", "outcomesMs"].map(key => [key.replace("Ms", "P95Ms"), percentile(group.map(s => s[key as keyof typeof s]).filter((value): value is number => typeof value === "number"))]));
     const byPhase = Object.fromEntries([...new Set(samples.map(s => s.phase))].map(name => { const group = samples.filter(s => s.phase === name); return [name, { samples: group.length, ...metrics(group) }]; }));
-    report.latency = { samples: samples.length, percentileMethod: "nearest rank", ...metrics(samples), sendMaxMs: Math.max(0, ...samples.map(s => s.sendMs)), peersMaxMs: Math.max(0, ...samples.map(s => s.peersMs)), byPhase };
+    const currentSamples = samples.filter(sample => sample.clientVersion === APP_VERSION);
+    const currentByPhase = Object.fromEntries([...new Set(currentSamples.map(sample => sample.phase))].map(name => { const group = currentSamples.filter(sample => sample.phase === name); return [name, { samples: group.length, ...metrics(group) }]; }));
+    const currentClients = { samples: currentSamples.length, ...metrics(currentSamples), byPhase: currentByPhase };
+    const legacySamples = samples.filter(sample => sample.clientVersion === "0.29.17");
+    const legacyByPhase = Object.fromEntries([...new Set(legacySamples.map(sample => sample.phase))].map(name => { const group = legacySamples.filter(sample => sample.phase === name); return [name, { samples: group.length, ...metrics(group) }]; }));
+    const legacyClients = { samples: legacySamples.length, ...metrics(legacySamples), byPhase: legacyByPhase };
+    report.latency = { samples: samples.length, percentileMethod: "nearest rank", ...metrics(samples), sendMaxMs: Math.max(0, ...samples.map(s => s.sendMs)), peersMaxMs: Math.max(0, ...samples.map(s => s.peersMs)), byPhase, currentClients, legacyClients };
     report.samples = samples; report.failures = failures; report.progress = phases; report.profiles = profiles; report.backupProgress = backupProgress;
     report.checkpointReadWitnesses = checkpointReadWitnesses;
     report.ownedProcessesStopped = children.every(child => (child.process.exitCode !== null || child.process.signalCode !== null) && (!(child.role === "old-session" || child.role === "current-session") || child.ownedChildExit === true)) && (!native || native.inspect().every(info => info.status !== "running"));
     report.finishedAt = new Date().toISOString();
-    if (!report.ownedProcessesStopped || failures.length || Object.values(metrics(samples)).some(value => value !== null && value >= 1000) || Object.values(byPhase).some(group => Object.entries(group).some(([key, value]) => key.endsWith("P95Ms") && value !== null && value >= 1000))) report.success = false;
-    writeFileSync(output, JSON.stringify(report, null, 2), { flag: "wx" }); console.log(JSON.stringify({ phase: "rehearsal-complete", output, success: report.success, latency: report.latency, failures, ownedProcessesStopped: report.ownedProcessesStopped }));
-    if (!report.success) process.exitCode = 1;
+    const functionalVerified = report.success === true;
+    const originalLatencyFailed = Object.values(metrics(samples)).some(value => value !== null && value >= 1000) || Object.values(byPhase).some(group => Object.entries(group).some(([key, value]) => key.endsWith("P95Ms") && value !== null && value >= 1000));
+    if (!report.ownedProcessesStopped || failures.length || originalLatencyFailed) report.success = false;
+    const currentComplete = currentSamples.length > 0 && currentSamples.every(sample => Number.isFinite(sample.sendMs) && Number.isFinite(sample.peersMs)) &&
+      ["sessions-reload", "snapshot", "copy", "verify", "post-migration"].every(name => currentSamples.some(sample => sample.phase === name));
+    const allLatencyGroups = [metrics(samples), ...Object.values(byPhase), metrics(currentSamples), ...Object.values(currentByPhase), metrics(legacySamples), ...Object.values(legacyByPhase)];
+    const latencyGatesPassed = currentComplete && allLatencyGroups.every(group => Object.entries(group).every(([key, value]) =>
+      !key.endsWith("P95Ms") || value === null || Number.isFinite(value) && value >= 0 && value < 1000));
+    report.acceptance = evaluateRehearsalAcceptance({ functionalVerified, cleanupVerified: report.ownedProcessesStopped === true,
+      latencyGatesPassed, currentClientVersion: APP_VERSION, samples, failures });
+    report.accepted = (report.acceptance as { accepted: boolean }).accepted;
+    writeFileSync(output, JSON.stringify(report, null, 2), { flag: "wx" }); console.log(JSON.stringify({ phase: "rehearsal-complete", output, success: report.success, accepted: report.accepted, acceptance: report.acceptance, latency: report.latency, failures, ownedProcessesStopped: report.ownedProcessesStopped }));
+    if (!report.accepted) process.exitCode = 1;
   }
 }
 

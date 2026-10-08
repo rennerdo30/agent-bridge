@@ -15,6 +15,7 @@
 - Finished-run outcomes use a background cache; dashboard polls no longer open message databases or invoke git for each run.
 - All delegate and runner environments disable .NET first-run PATH changes by default, preserving explicit user values and the existing PATH. Doctor warns about unusually long Windows user PATHs or repeated .NET tools entries without changing them.
 - Requires Node.js 22.16 or newer for incremental native SQLite backups.
+- Release rehearsal retains every raw sample and error. A separate acceptance result may allow only a 0.29.17 broker-retirement connection error whose message is durably confirmed stored; the strict result remains false. Current-client errors, unconfirmed messages, latency gates of one second or more, or failed migration, context or cleanup verification block release.
 
 ## 0.30.1
 
