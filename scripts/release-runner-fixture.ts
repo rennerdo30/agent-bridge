@@ -15,12 +15,12 @@ import { jobEnvironment } from "../src/core/job-environment.js";
 import { pidAlive } from "../src/core/delegate.js";
 import type { BridgeNode } from "../src/core/node.js";
 import type { Worktree } from "../src/core/worktree.js";
-import { JobRunners, readRunnerState, type RunnerSpec } from "../src/mcp/job-host.js";
+import { JobRunners, readRunnerState, runnerStatePath, type RunnerSpec } from "../src/mcp/job-host.js";
 import { JobManager, type Run } from "../src/mcp/jobs.js";
 import { resumeArgs, runDelegate, type DelegateArgs, type RunContext } from "../src/mcp/delegate-run.js";
 import { verifiedGoneJobOwners } from "../src/core/job-restoration.js";
 
-const CONTEXT = "Synthetic native runner context preserved through supervisor reload and continuation.\n";
+export const CONTEXT = "Synthetic native runner context preserved through supervisor reload and continuation.\n";
 const CONTEXT_SHA256 = createHash("sha256").update(CONTEXT).digest("hex");
 export interface NativeRunnerOptions { checkout: string; home: string; count?: number; owner?: string; rootSession?: string; supervisor?: string }
 
@@ -40,6 +40,9 @@ export interface NativeRunnerInfo {
   index: number; id: string; name: string; version: string; pid: number; cliPid: number;
   status: string; live: boolean; sessionId: string | null; workdir: string; worktree: Worktree;
   contextSha256: string; contextPreserved: boolean; cliMarker: string; releasePath: string; receivedLive: string[];
+  markerReadError: string | null; markerPublished: boolean; markerSessionId: string | null; markerCwd: string | null;
+  markerContextSha256: string | null; markerExited: boolean;
+  statePublished: boolean; stateReadError: string | null;
 }
 interface Descriptor { index: number; id: string; name: string; specFile: string; cliMarker: string; releasePath: string; worktree: Worktree; sessionId: string }
 interface Manifest { schema: 1; oldVersion: string; oldSha: string; owner: string; rootSession: string; supervisor: string; descriptors: Descriptor[]; claudeBin: string; currentCli: string }
@@ -52,8 +55,8 @@ export interface OldRunnerFixtures {
   stop(): Promise<void>;
 }
 const FAKE_CLAUDE = String.raw`
-import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { constants, setPriority } from "node:os";
 try { setPriority(0,constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* Own synthetic process only. */ }
@@ -68,8 +71,19 @@ process.stdin.on("end", async () => {
   const sessionId = value("--resume") || "synthetic-native-" + process.pid;
   const contextSha256 = createHash("sha256").update(readFileSync(join(process.cwd(),"context.txt"))).digest("hex");
   const state = { pid:process.pid, sessionId, cwd:process.cwd(), contextSha256, args:process.argv.slice(2), receivedLive:[] };
-  const save = () => writeFileSync(marker,JSON.stringify(state));
-  save(); appendFileSync(marker + ".calls.jsonl",JSON.stringify({...state,at:Date.now()}) + "\n");
+  const save = async () => {
+    const staging = marker + ".stage-" + process.pid + "-" + randomUUID();
+    writeFileSync(staging,JSON.stringify(state),{flag:"wx"});
+    // A failed publication retains staging and the previous complete marker.
+    for (let attempt=0;;attempt++) {
+      try { renameSync(staging,marker); return; }
+      catch (error) {
+        if (!['EPERM','EACCES','EBUSY'].includes(error.code) || attempt>=19) throw error;
+        await new Promise(resolve=>setTimeout(resolve,10));
+      }
+    }
+  };
+  await save(); appendFileSync(marker + ".calls.jsonl",JSON.stringify({...state,at:Date.now()}) + "\n");
   console.log(JSON.stringify({type:"system",subtype:"init",session_id:sessionId,model:"synthetic-native-cli"}));
   const parent = process.env.AGENT_BRIDGE_PARENT_URL, token = process.env.AGENT_BRIDGE_PARENT_TOKEN;
   const call = async (path,body) => {
@@ -83,14 +97,14 @@ process.stdin.on("end", async () => {
     try {
       const result = await call("/inbox",{});
       for (const message of result.messages || []) {
-        state.receivedLive.push(message.body); save();
+        state.receivedLive.push(message.body); await save();
         appendFileSync(marker + ".live.jsonl",JSON.stringify({body:message.body,sessionId,at:Date.now()}) + "\n");
         await call("/message",{body:"Synthetic native CLI consumed: " + message.body,reply_to:message.id});
       }
     } catch (error) { appendFileSync(marker + ".deferred.jsonl",JSON.stringify({error:String(error),at:Date.now()}) + "\n"); }
     await new Promise(resolve => setTimeout(resolve,250));
   }
-  state.exited = true; save();
+  state.exited = true; await save();
   console.log(JSON.stringify({type:"result",subtype:"success",is_error:false,result:"Synthetic native turn completed with retained context",session_id:sessionId}));
 });
 `;
@@ -119,7 +133,7 @@ async function until(check: () => boolean | Promise<boolean>, milliseconds = 90_
   const end = Date.now()+milliseconds;
   while (!await check()) { if (Date.now()>end) throw new Error("Native runner fixture condition timed out"); await delay(100); }
 }
-function installCli(lane: string): string {
+export function installNativeFixtureCli(lane: string): string {
   const bin=join(lane,"bin"); mkdirSync(bin,{recursive:true});
   const script=join(bin,"synthetic-claude.mjs"); writeFileSync(script,`#!/usr/bin/env node\n${FAKE_CLAUDE}`,{flag:"wx"});
   if (process.platform === "win32") { const shim=join(bin,"claude.cmd"); writeFileSync(shim,`@ECHO off\r\n"${process.execPath}" "%~dp0\\synthetic-claude.mjs" %*\r\n`,{flag:"wx"}); return shim; }
@@ -144,11 +158,35 @@ async function bundleRunners(checkout: string, lane: string): Promise<{oldCli:st
   const oldSha=execFileSync("git",["-C",oldRoot,"rev-parse","HEAD"],{encoding:"utf8",windowsHide:true}).trim();
   return {oldCli,currentCli,old,oldSha};
 }
-function fixtureInfo(home:string,entry:Descriptor,version:string): NativeRunnerInfo {
+export function fixtureInfo(home:string,entry:Descriptor,version:string): NativeRunnerInfo {
+  let stateReadError:string|null=null;
+  try { const value=JSON.parse(readFileSync(runnerStatePath(home,entry.id),"utf8")); if(typeof value?.pid!=="number" || typeof value?.status!=="string") stateReadError="invalid public runner state shape"; }
+  catch(error) { stateReadError=String(error).slice(0,1000); }
   const state=readRunnerState(home,entry.id);
-  let marker:Marker|undefined; try { marker=JSON.parse(readFileSync(entry.cliMarker,"utf8")); } catch { /* A marker is published during native CLI startup. */ }
+  if(state) stateReadError=null;
+  else stateReadError ??= "public runner state unavailable";
+  let marker:Marker|undefined, markerReadError:string|null=null;
+  try { marker=JSON.parse(readFileSync(entry.cliMarker,"utf8")); }
+  catch (error) { markerReadError=String(error).slice(0,1000); }
   const context=readFileSync(join(entry.worktree.cwd,"context.txt"));
-  return {index:entry.index,id:entry.id,name:entry.name,version,pid:state?.pid ?? 0,cliPid:marker?.pid ?? 0,status:state?.status ?? "starting",live:Boolean(state?.live),sessionId:state?.sessionId ?? null,workdir:state?.workdir ?? entry.worktree.cwd,worktree:entry.worktree,contextSha256:createHash("sha256").update(context).digest("hex"),contextPreserved:context.equals(Buffer.from(CONTEXT)) && marker?.contextSha256 === CONTEXT_SHA256,cliMarker:entry.cliMarker,releasePath:entry.releasePath,receivedLive:marker?.receivedLive ?? []};
+  return {index:entry.index,id:entry.id,name:entry.name,version,pid:state?.pid ?? 0,cliPid:marker?.pid ?? 0,status:state?.status ?? "starting",live:Boolean(state?.live),sessionId:state?.sessionId ?? null,workdir:state?.workdir ?? entry.worktree.cwd,worktree:entry.worktree,contextSha256:createHash("sha256").update(context).digest("hex"),contextPreserved:context.equals(Buffer.from(CONTEXT)) && marker?.contextSha256 === CONTEXT_SHA256,cliMarker:entry.cliMarker,releasePath:entry.releasePath,receivedLive:marker?.receivedLive ?? [],markerReadError,markerPublished:Boolean(marker),markerSessionId:marker?.sessionId ?? null,markerCwd:marker?.cwd ?? null,markerContextSha256:marker?.contextSha256 ?? null,markerExited:Boolean(marker?.exited),statePublished:Boolean(state),stateReadError};
+}
+export function assertNativeRunnerFixtureLive(infos:NativeRunnerInfo[],count:number,processes:readonly Pick<ChildProcess,"pid"|"exitCode"|"signalCode"|"killed">[]):NativeRunnerInfo[] {
+  const at=new Date().toISOString();
+  const children=processes.map(child=>({pid:child.pid ?? null,exitCode:child.exitCode,signalCode:child.signalCode,killed:child.killed}));
+  const alive=infos.map(info=>({runnerAlive:pidAlive(info.pid),cliAlive:pidAlive(info.cliPid)}));
+  if(infos.length!==count || children.some(child=>child.exitCode!==null || child.signalCode!==null) || infos.some((info,index)=>info.status!=="running" || !info.live || !info.contextPreserved || !alive[index]!.runnerAlive || !alive[index]!.cliAlive)) {
+    const failure=new Error("Genuine old runner live/session/context assertion failed");
+    try {
+      const details={at,expectedCount:count,actualCount:infos.length,children,runners:infos.map((info,index)=>{
+        const {receivedLive,...facts}=info;
+        return {...facts,worktree:{...facts.worktree},...alive[index],child:children[index] ?? null,receivedLiveCount:receivedLive.length,receivedLiveTail:receivedLive.slice(-3).map(body=>body.slice(0,300))};
+      })};
+      failure.message += ": "+JSON.stringify(details); Object.assign(failure,{details});
+    } catch { /* A diagnostic failure must preserve the original strict assertion failure. */ }
+    throw failure;
+  }
+  return infos;
 }
 function fixturePidAlive(pid:number):boolean { return Number.isSafeInteger(pid)&&pid>0&&pidAlive(pid); }
 function launchedRunner(lane:string,specFile:string,startedAt:number):number {
@@ -163,7 +201,7 @@ export async function startOldRunnerFixtures(options: NativeRunnerOptions): Prom
   const {checkout,home,lane}=paths(options), count=options.count ?? 11;
   if (!Number.isInteger(count) || count<1 || count>24) throw new Error("Native rehearsal runner count must be1..24");
   const owner=options.owner ?? "old-session-0", rootSession=options.rootSession ?? "synthetic-root", supervisor=options.supervisor ?? "synthetic-session-0";
-  const claudeBin=installCli(lane), runtime=await bundleRunners(checkout,lane), repository=join(lane,"repository"); mkdirSync(repository);
+  const claudeBin=installNativeFixtureCli(lane), runtime=await bundleRunners(checkout,lane), repository=join(lane,"repository"); mkdirSync(repository);
   const git=(args:string[])=>execFileSync("git",args,{cwd:repository,windowsHide:true,stdio:"pipe",encoding:"utf8"}).trim();
   git(["init","--quiet"]); writeFileSync(join(repository,"context.txt"),CONTEXT,{flag:"wx"}); git(["add","context.txt"]);
   git(["-c","user.name=rennerdo30","-c","user.email=9086097+rennerdo30@users.noreply.github.com","commit","--quiet","-m","Seed synthetic native runner fixture"]);
@@ -205,7 +243,7 @@ export async function startOldRunnerFixtures(options: NativeRunnerOptions): Prom
   const turnControls=()=>readdirSync(controls).filter(file=>file.startsWith("turn-")&&file.endsWith(".json")).map(file=>JSON.parse(readFileSync(join(controls,file),"utf8")));
   const releaseFiles=(index?:number)=>{for(const control of turnControls()) if(index===undefined || control.index===index) writeFileSync(contained(controls,control.releasePath),"Synthetic turn released.\n");};
   const release=async(index?:number)=>{releaseFiles(index);await until(()=>inspect().filter(info=>index===undefined || info.index===index).every(info=>info.status!=="running"),30000);return inspect();};
-  const result:OldRunnerFixtures={count,home,manifestFile,inspect,assertLive:()=>{const infos=inspect();if(infos.length!==count || processes.some(child=>child.exitCode!==null || child.signalCode!==null) || infos.some(info=>info.status!=="running" || !info.live || !info.contextPreserved || !pidAlive(info.pid) || !pidAlive(info.cliPid))) throw new Error("Genuine old runner live/session/context assertion failed");return infos;},release,stop:async()=>{
+  const result:OldRunnerFixtures={count,home,manifestFile,inspect,assertLive:()=>assertNativeRunnerFixtureLive(inspect(),count,processes),release,stop:async()=>{
     releaseFiles();
     const stopped=()=>processes.every(child=>child.exitCode!==null || child.signalCode!==null) && inspect().every(info=>!fixturePidAlive(info.pid)&&!fixturePidAlive(info.cliPid)) && turnControls().filter(control=>control.continued).every(control=>{const pid=launchedRunner(lane,control.specFile,control.startedAt);return pid>0&&!fixturePidAlive(pid);});
     try { await until(stopped,30000); }
