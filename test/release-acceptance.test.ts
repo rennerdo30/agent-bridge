@@ -4,7 +4,7 @@ import { evaluateRehearsalAcceptance, type RehearsalAcceptanceInput, type Rehear
 const current = (): RehearsalSample => ({ phase: "sessions-reload", clientVersion: "0.30.2", storageOutcome: { state: "stored", ids: ["current-message-1"] } });
 const legacy = (): RehearsalSample => ({ phase: "sessions-reload", clientVersion: "0.29.17", probeError: "Error: connection to broker closed", failure: "sessions-reload: Error: connection to broker closed; stored receipt message-1",
   storageOutcome: { state: "stored", localState: "stored", copies: [{ id: "message-1" }], lookupError: undefined } });
-const green = (): RehearsalAcceptanceInput => ({ functionalVerified: true, cleanupVerified: true, latencyGatesPassed: true, reloadHandoffMs: 350, currentClientVersion: "0.30.2", samples: [current()], failures: [] });
+const green = (): RehearsalAcceptanceInput => ({ functionalVerified: true, cleanupVerified: true, latencyGatesPassed: true, authenticatedHandoffVerified: true, reloadHandoffMs: 350, currentClientVersion: "0.30.2", samples: [current()], failures: [] });
 const withLegacy = (): RehearsalAcceptanceInput => { const sample = legacy(); return { ...green(), samples: [current(), sample], failures: [sample.failure!] }; };
 
 it("accepts complete green evidence", () => {
@@ -47,7 +47,7 @@ it("does not mask an unmatched or duplicate global failure", () => {
   expect(evaluateRehearsalAcceptance(input).accepted).toBe(false);
 });
 
-it.each(["functionalVerified", "cleanupVerified", "latencyGatesPassed"] as const)("requires %s even for the legacy exception", gate => {
+it.each(["functionalVerified", "cleanupVerified", "latencyGatesPassed", "authenticatedHandoffVerified"] as const)("requires %s even for the legacy exception", gate => {
   const input = withLegacy(); input[gate] = false; expect(evaluateRehearsalAcceptance(input).accepted).toBe(false);
 });
 
@@ -69,4 +69,11 @@ it.each([undefined, NaN, Infinity, -1, 1000, 1001])("independently blocks invali
 
 it.each([0, 999.99])("accepts finite reload handoff latency below one second: %s", reloadHandoffMs => {
   expect(evaluateRehearsalAcceptance({ ...withLegacy(), reloadHandoffMs }).accepted).toBe(true);
+});
+
+
+it.each([undefined, false, 1, "true", {}])("requires explicit authenticated readiness proof independently of numeric latency: %s", authenticatedHandoffVerified => {
+  const input = { ...green(), authenticatedHandoffVerified } as RehearsalAcceptanceInput;
+  expect(input.reloadHandoffMs).toBeLessThan(1000);
+  expect(evaluateRehearsalAcceptance(input).accepted).toBe(false);
 });

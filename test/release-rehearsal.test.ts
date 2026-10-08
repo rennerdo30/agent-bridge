@@ -2,8 +2,76 @@ import { mkdirSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Worker } from "node:worker_threads";
-import { describe, expect, it } from "vitest";
-import { readRehearsalCursor, rehearsalBytes } from "../scripts/release-rehearsal.js";
+import { describe, expect, it, vi } from "vitest";
+import { confirmRehearsalHandover, readRehearsalCursor, rehearsalBytes } from "../scripts/release-rehearsal.js";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
+}
+function handover() {
+  const identity = { pid: 4100, version: "0.30.2", id: "candidate-id", name: "candidate", sessionId: "synthetic-session" };
+  const ping = deferred<unknown>(), peers = deferred<unknown>();
+  const request = vi.fn((op: string) => op === "ping" ? ping.promise : peers.promise);
+  const state = { broker: {} as object | null, client: { request } as { request: typeof request } | null, connected: true, identity: { ...identity }, connections: [{ at: 101, ...identity, isBroker: true }] };
+  const confirm = () => confirmRehearsalHandover({ capture: () => state, expected: identity, retirementStartedAt: 100, now: () => 450 });
+  return { state, identity, ping, peers, request, confirm };
+}
+
+describe("authenticated release handover witness", () => {
+  it("does not mistake a present listener for its own completed auth and hello", async () => {
+    const fixture = handover(); fixture.state.connected = false;
+    expect(await fixture.confirm()).toBeNull(); expect(fixture.request).not.toHaveBeenCalled();
+    fixture.state.connected = true; fixture.state.connections = [];
+    expect(await fixture.confirm()).toBeNull(); expect(fixture.request).not.toHaveBeenCalled();
+  });
+  it.each(["before-retirement", "other-broker", "other-session", "other-version"])("rejects a %s connection witness", async reason => {
+    const fixture = handover(), witness = fixture.state.connections[0]!;
+    if (reason === "before-retirement") witness.at = 99;
+    if (reason === "other-broker") witness.isBroker = false;
+    if (reason === "other-session") witness.sessionId = "foreign-session";
+    if (reason === "other-version") witness.version = "0.29.17";
+    expect(await fixture.confirm()).toBeNull(); expect(fixture.request).not.toHaveBeenCalled();
+  });
+  it("confirms only after both roundtrips on the captured authenticated client", async () => {
+    const fixture = handover(); let completed = false;
+    const result = fixture.confirm().then(value => { completed = true; return value; });
+    expect(fixture.request.mock.calls.map(call => call[0])).toEqual(["ping"]);
+    expect(completed).toBe(false);
+    fixture.ping.resolve({ brokerPid: 4100, brokerVersion: "0.30.2" }); await Promise.resolve();
+    expect(fixture.request.mock.calls.map(call => call[0])).toEqual(["ping", "peers"]); expect(completed).toBe(false);
+    fixture.peers.resolve([{ ...fixture.identity }]);
+    expect(await result).toMatchObject({ verified: true, confirmedAt: 450, identity: fixture.identity, ownPeer: fixture.identity });
+  });
+  it.each(["broker", "client", "identity", "disconnected"])("rejects %s replacement during ping before trusting peers", async changed => {
+    const fixture = handover(), result = fixture.confirm();
+    if (changed === "broker") fixture.state.broker = {};
+    if (changed === "client") fixture.state.client = { request: vi.fn() };
+    if (changed === "identity") fixture.state.identity = { ...fixture.identity, sessionId: "replacement" };
+    if (changed === "disconnected") fixture.state.connected = false;
+    fixture.ping.resolve({ brokerPid: 4100, brokerVersion: "0.30.2" });
+    await expect(result).rejects.toThrow("changed during readiness");
+    expect(fixture.request.mock.calls.map(call => call[0])).toEqual(["ping"]);
+  });
+  it("rejects identity replacement while authenticated peers is in flight", async () => {
+    const fixture = handover(), result = fixture.confirm();
+    fixture.ping.resolve({ brokerPid: 4100, brokerVersion: "0.30.2" }); await Promise.resolve();
+    fixture.state.identity = { ...fixture.identity, name: "replacement" };
+    fixture.peers.resolve([{ ...fixture.identity }]);
+    await expect(result).rejects.toThrow("changed during readiness");
+  });
+  it.each([{ brokerPid: 4101, brokerVersion: "0.30.2" }, { brokerPid: 4100, brokerVersion: "0.29.17" }])("rejects a listener serving another broker identity %j", async ping => {
+    const fixture = handover(), result = fixture.confirm(); fixture.ping.resolve(ping);
+    await expect(result).rejects.toThrow("ping identifies another broker");
+  });
+  it("requires peers to prove the expected hosting session, not just successful ping", async () => {
+    const fixture = handover(), result = fixture.confirm();
+    fixture.ping.resolve({ brokerPid: 4100, brokerVersion: "0.30.2" });
+    fixture.peers.resolve([{ ...fixture.identity, sessionId: "foreign-session" }]);
+    await expect(result).rejects.toThrow("omit the expected hosting session");
+  });
+});
 
 function checkpoint(): string {
   const root = join(process.cwd(), ".agent-bridge-test"); mkdirSync(root, { recursive: true });

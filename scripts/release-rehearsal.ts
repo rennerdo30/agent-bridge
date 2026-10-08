@@ -48,6 +48,38 @@ export function rehearsalBytes(value: string): number {
   if (!Number.isSafeInteger(n) || n < 1024 || n > 64 * 1024 ** 3) throw new Error("Fixture bytes must be 1 KiB through 64 GiB");
   return n;
 }
+interface HandoverIdentity { pid: number; version: string; id: string; name: string; sessionId: string | null }
+interface HandoverClient { request(op: string, args: unknown): Promise<unknown> }
+interface HandoverConnection { at: number; pid: number; version?: string; name: string; sessionId: string | null; isBroker?: boolean }
+interface HandoverSnapshot {
+  broker: object | null; client: HandoverClient | null; connected: boolean;
+  identity: HandoverIdentity; connections: HandoverConnection[];
+}
+function sameHandoverIdentity(a: HandoverIdentity, b: HandoverIdentity): boolean {
+  return a.pid === b.pid && a.version === b.version && a.id === b.id && a.name === b.name && a.sessionId === b.sessionId;
+}
+/** Listener presence alone does not prove the hosting node completed auth/hello. */
+export async function confirmRehearsalHandover(input: {
+  capture(): HandoverSnapshot; expected: HandoverIdentity; retirementStartedAt: number; now?: () => number;
+}): Promise<{ verified: true; confirmedAt: number; identity: HandoverIdentity; connection: HandoverConnection; ping: { brokerPid: number; brokerVersion: string }; ownPeer: HandoverIdentity } | null> {
+  const expected = { ...input.expected }, captured = { ...input.capture() }, client = captured.client;
+  if (!captured.broker || !client || !captured.connected) return null;
+  if (!sameHandoverIdentity(captured.identity, expected)) throw new Error("Handover candidate identity changed before readiness");
+  const connection = captured.connections.find(value => value.at >= input.retirementStartedAt && value.isBroker === true && value.pid === expected.pid && value.version === expected.version && value.name === expected.name && value.sessionId === expected.sessionId);
+  if (!connection) return null;
+  const unchanged = () => {
+    const latest = input.capture();
+    if (!latest.connected || latest.broker !== captured.broker || latest.client !== client || !sameHandoverIdentity(latest.identity, expected)) throw new Error("Handover broker, client or identity changed during readiness");
+  };
+  const ping = await client.request("ping", {}) as { brokerPid: number; brokerVersion: string };
+  unchanged();
+  if (ping.brokerPid !== expected.pid || ping.brokerVersion !== expected.version) throw new Error("Handover ping identifies another broker");
+  const peers = await client.request("peers", {}) as HandoverIdentity[];
+  unchanged();
+  const ownPeer = peers.find(value => sameHandoverIdentity(value, expected));
+  if (!ownPeer) throw new Error("Handover authenticated peers omit the expected hosting session");
+  return { verified: true, confirmedAt: (input.now ?? Date.now)(), identity: expected, connection: { ...connection }, ping: { brokerPid: ping.brokerPid, brokerVersion: ping.brokerVersion }, ownPeer: { pid: ownPeer.pid, version: ownPeer.version, id: ownPeer.id, name: ownPeer.name, sessionId: ownPeer.sessionId } };
+}
 const checkout = realpathSync.native(process.cwd());
 const fixtureRoot = join(checkout, ".agent-bridge-test");
 const token = "synthetic-rehearsal-token";
@@ -238,8 +270,8 @@ async function childMain(home: string, role: Role, index: number): Promise<void>
   const node = new constructor({ pipePath: resolvePipePath(home, {}), dbPath: join(home, "bridge.db"), token, agent: role === "old-runner" ? "other" : "codex", name, cwd: home, autoWake: false, log: nullLogger,
     ...(role === "old-runner" ? { canHostBroker: false, id: `job:rehearsal-${index}`, jobAgent: "codex" as const, jobParent: "old-session-0", jobOwner: fixtureIdentities(home).rootSession, rootName: "old-session-0", rootSession: fixtureIdentities(home).rootSession } : {}) });
   node.on("message", message => node.markRead([message.id]));
-  const connectionWitnesses: Record<string, unknown>[] = [];
-  node.on("connected", (value: { isBroker?: boolean }) => connectionWitnesses.push({ at: Date.now(), pid: process.pid, parentPid: process.ppid, name: node.name, sessionId: node.currentSessionId, isBroker: value.isBroker }));
+  const connectionWitnesses: (HandoverConnection & { parentPid: number })[] = [];
+  node.on("connected", (value: { isBroker?: boolean }) => connectionWitnesses.push({ at: Date.now(), pid: process.pid, parentPid: process.ppid, version: legacy ? "0.29.17" : APP_VERSION, name: node.name, sessionId: node.currentSessionId, isBroker: value.isBroker }));
   // Distinct synthetic sessions share this harness parent PID. Publish their known session
   // identity before hello so launch reconciliation cannot treat them as one host session.
   if (role !== "old-runner") await node.setSessionId(fixtureIdentities(home).sessions[index]!);
@@ -306,6 +338,13 @@ async function childMain(home: string, role: Role, index: number): Promise<void>
       if (raw.op === "status") {
         const broker = internals.broker as unknown as BrokerInternals | null;
         return { broker: Boolean(broker), pid: process.pid, parentPid: process.ppid, priority: getPriority(0), migration: broker?.historyBackground?.status() ?? null, backup: broker?.store?.backupStatus?.() ?? null, version: legacy ? "0.29.17" : APP_VERSION, name: node.name, id: node.id, sessionId: node.currentSessionId, connectionWitnesses };
+      }
+      if (raw.op === "handover-ready") {
+        if (legacy) throw new Error("Authenticated handover requires a current candidate");
+        return confirmRehearsalHandover({ expected: raw.data!.expected as unknown as HandoverIdentity, retirementStartedAt: Number(raw.data!.retirementStartedAt), capture: () => ({
+          broker: internals.broker, client: internals.client, connected: node.isConnected,
+          identity: { pid: process.pid, version: APP_VERSION, id: node.id, name: node.name, sessionId: node.currentSessionId }, connections: connectionWitnesses,
+        }) });
       }
       if (raw.op === "interrupt-history") {
         const background = (internals.broker as unknown as BrokerInternals | null)?.historyBackground;
@@ -547,7 +586,12 @@ export async function rehearse(home: string): Promise<void> {
     // brokerRecoveryMs also includes cold replacement-process launches while the
     // old broker is still reachable. Gate the actual retirement/handover interval
     // independently and retain both measurements in the raw report.
-    report.reloadHandoffMs = (report.listenerHandoff as { currentBrokerObservedAt: number }).currentBrokerObservedAt - retirementStartedAt;
+    report.listenerHandoffMs = (report.listenerHandoff as { currentBrokerObservedAt: number }).currentBrokerObservedAt - retirementStartedAt;
+    let authenticatedHandoff: Awaited<ReturnType<typeof confirmRehearsalHandover>> = null;
+    const expected = { pid: hostStatus.pid, version: hostStatus.version, id: hostStatus.id, name: hostStatus.name, sessionId: hostStatus.sessionId };
+    await until(async () => { authenticatedHandoff = await host!.request("handover-ready", { expected, retirementStartedAt }); return authenticatedHandoff?.verified === true; });
+    report.authenticatedHandoff = authenticatedHandoff;
+    report.reloadHandoffMs = authenticatedHandoff!.confirmedAt - retirementStartedAt;
     report.coldDashboard = await host!.request("dashboard"); report.warmDashboard = await host!.request("dashboard");
     report.nativeToolPreflight = await current[0]!.request("tool-preflight");
     if (!(report.nativeToolPreflight as { targetKnown: boolean }).targetKnown) throw new Error(`Native tool target is not restored after authenticated reload: ${JSON.stringify(report.nativeToolPreflight)}`);
@@ -669,7 +713,9 @@ export async function rehearse(home: string): Promise<void> {
     const latencyGatesPassed = currentComplete && allLatencyGroups.every(group => Object.entries(group).every(([key, value]) =>
       !key.endsWith("P95Ms") || value === null || Number.isFinite(value) && value >= 0 && value < 1000));
     report.acceptance = evaluateRehearsalAcceptance({ functionalVerified, cleanupVerified: report.ownedProcessesStopped === true,
-      latencyGatesPassed, reloadHandoffMs: report.reloadHandoffMs as number, currentClientVersion: APP_VERSION, samples, failures });
+      latencyGatesPassed, reloadHandoffMs: report.reloadHandoffMs as number,
+      authenticatedHandoffVerified: (report.authenticatedHandoff as { verified?: boolean } | undefined)?.verified === true,
+      currentClientVersion: APP_VERSION, samples, failures });
     report.accepted = (report.acceptance as { accepted: boolean }).accepted;
     writeFileSync(output, JSON.stringify(report, null, 2), { flag: "wx" }); console.log(JSON.stringify({ phase: "rehearsal-complete", output, success: report.success, accepted: report.accepted, acceptance: report.acceptance, latency: report.latency, failures, ownedProcessesStopped: report.ownedProcessesStopped }));
     if (!report.accepted) process.exitCode = 1;

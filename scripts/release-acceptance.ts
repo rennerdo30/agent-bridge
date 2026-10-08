@@ -19,7 +19,9 @@ export interface RehearsalAcceptanceInput {
   cleanupVerified: boolean;
   /** Caller verifies finite, complete global/per-phase/current send/peers/reload p95 < 1000 ms. */
   latencyGatesPassed: boolean;
-  /** Measured from old broker retirement beginning to the current broker being observed. */
+  /** Exact current listener and authenticated session identity confirmed by ping/peers. */
+  authenticatedHandoffVerified: boolean;
+  /** Measured from old broker retirement to confirmed authenticated service readiness. */
   reloadHandoffMs: number;
   currentClientVersion: string;
   samples: readonly RehearsalSample[];
@@ -48,6 +50,7 @@ export function evaluateRehearsalAcceptance(input: RehearsalAcceptanceInput): Re
   if (input.functionalVerified !== true) blockingFailures.push("Functional verification incomplete");
   if (input.cleanupVerified !== true) blockingFailures.push("Owned-process cleanup verification incomplete");
   if (input.latencyGatesPassed !== true) blockingFailures.push("Strict latency gates failed or incomplete");
+  if (input.authenticatedHandoffVerified !== true) blockingFailures.push("Authenticated current-broker handoff readiness unverified");
   if (!Number.isFinite(input.reloadHandoffMs) || input.reloadHandoffMs < 0 || input.reloadHandoffMs >= 1_000)
     blockingFailures.push("Reload handoff latency failed or incomplete (must be finite and below 1000 ms)");
   if (!input.currentClientVersion.trim() || input.currentClientVersion === "0.29.17") blockingFailures.push("Current client version is invalid");
