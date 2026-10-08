@@ -33269,6 +33269,34 @@ var JobManager = class {
           j.args = { ...j.args, ...isRecord(old.args) ? { send_to: old.args.send_to } : {} };
           if (old.owner !== this.node.name && old.executionOwner !== this.node.name && !(j.executionOwner === this.node.name && canControlJob(old, this.node.name)) && !this.lineage || old.executionOwner && old.executionOwner !== this.node.name && old.status === "running" && j.startedAt === old.startedAt) return old;
         }
+        if (isRecord(old) && old.startedAt === j.startedAt && (old.status === "done" || old.status === "failed") && j.status === "running") {
+          const pending2 = toStored(j);
+          this.retainOwnedState([mergeStoreFields(old, pending2)]);
+          const terminal = mergePendingJob(
+            { ...old, deliveryHistory: j.deliveryHistory },
+            { ...pending2, status: old.status, finishedAt: old.finishedAt, sessionId: old.sessionId, host: old.host },
+            this.durableBases.get(j.id) ?? j.recoveredRecord
+          ) ?? { ...old, deliveryHistory: j.deliveryHistory };
+          const executing = (this.running.get(j.id) === j || this.foreground.get(j.id) === j) && (!j.executionOwner || j.executionOwner === this.node.name);
+          if (!executing) {
+            Object.assign(j, terminal);
+            j.queue = [...Array.isArray(terminal.queuedMessages) ? terminal.queuedMessages : []];
+            this.running.delete(j.id);
+            this.waitingJobs.delete(j.id);
+            if (j.queue.length && this.isMine(j.owner) && j.resume) {
+              this.waitForSlot(j);
+              queueMicrotask(() => {
+                if (this.dormant || this.reportsStopped) return;
+                try {
+                  this.startWaiting();
+                } catch (error62) {
+                  this.log.warn("could not resume completed handoff", { err: String(error62) });
+                }
+              });
+            }
+          }
+          return terminal;
+        }
         return mergeStoreFields(isRecord(old) ? old : {}, toStored(j));
       });
       prepared = mine;
@@ -33805,8 +33833,17 @@ var JobManager = class {
           this.post(job, jobReport(job, job.status, Math.round((Date.now() - job.startedAt) / 1e3), outcome?.result?.text ?? "", job.status === "failed" ? failureCause(outcome ?? {}) : null));
         }
         if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner)) {
-          if (this.canStart()) this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
-          else this.waitForSlot(job);
+          if (this.canStart()) {
+            let run;
+            try {
+              run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree);
+            } catch (error62) {
+              this.failContinuation(job, error62);
+              return;
+            }
+            job.queue.splice(0);
+            this.launch(job, run);
+          } else this.waitForSlot(job);
         }
       }
     };
@@ -33927,17 +33964,28 @@ var JobManager = class {
       return { outcome: "queued", job, approvalPending: Boolean(job.pendingApproval) };
     }
     if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
+    job.queue.push(message);
     if (!this.canStart()) {
-      job.queue.push(message);
+      job.continuationFailure = null;
       this.waitForSlot(job);
+      this.persist();
       return { outcome: "waiting", job };
     }
+    let run;
+    try {
+      run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree);
+    } catch (error62) {
+      this.failContinuation(job, error62);
+      throw error62;
+    }
+    job.queue.splice(0);
     this.log.info("subagent resumed", { job: job.name, sessionId: job.sessionId });
-    this.launch(job, job.resume(message, job.sessionId, job.workdir, job.worktree));
+    this.launch(job, run);
     return { outcome: "started", job };
   }
   /** Continue this finished job (its queued messages) once a slot frees up. */
   waitForSlot(job) {
+    if (job.continuationFailure?.turn === job.startedAt) return;
     this.waitingJobs.set(job.id, job);
     if (this.storePath && !this.rootWaitTimer) {
       this.rootWaitTimer = setInterval(() => {
@@ -33958,14 +34006,18 @@ var JobManager = class {
   /** Start waiting continuations while there are free slots, oldest first. */
   startWaiting() {
     for (const job of this.waitingJobs.values()) {
+      if (job.continuationFailure?.turn === job.startedAt) {
+        this.waitingJobs.delete(job.id);
+        continue;
+      }
       if (job.status === "running") continue;
       if (!this.canStart()) return;
-      this.waitingJobs.delete(job.id);
       if (job.waitingForStart) {
+        this.waitingJobs.delete(job.id);
         try {
-          const run = job.resume?.(job.prompt, "", job.workdir, job.worktree) ?? this.pendingRuns.get(job.id);
+          const run2 = job.resume?.(job.prompt, "", job.workdir, job.worktree) ?? this.pendingRuns.get(job.id);
           this.pendingRuns.delete(job.id);
-          if (run) this.launch(job, run);
+          if (run2) this.launch(job, run2);
           else {
             this.waitingJobs.set(job.id, job);
             return;
@@ -33977,17 +34029,40 @@ var JobManager = class {
         }
         continue;
       }
-      if (!job.queue.length || !job.resume || !job.sessionId) continue;
+      if (!job.queue.length || !job.resume || !job.sessionId) {
+        this.waitingJobs.delete(job.id);
+        continue;
+      }
+      let run;
+      try {
+        run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree);
+      } catch (error62) {
+        this.failContinuation(job, error62);
+        continue;
+      }
+      this.waitingJobs.delete(job.id);
+      job.queue.splice(0);
       this.log.info("subagent resumed (was waiting for a slot)", { job: job.name, sessionId: job.sessionId });
-      this.launch(job, job.resume(job.queue.splice(0).join("\n\n"), job.sessionId, job.workdir, job.worktree));
+      this.launch(job, run);
     }
   }
+  failContinuation(job, error62) {
+    job.continuationFailure = { turn: job.startedAt, error: String(error62) };
+    this.waitingJobs.delete(job.id);
+    this.log.warn("subagent continuation could not be prepared; queued messages retained for explicit retry", {
+      job: job.name,
+      queued: job.queue.length,
+      err: String(error62)
+    });
+    this.persist();
+  }
   launch(job, run) {
+    job.continuationFailure = null;
     job.waitingForStart = void 0;
     if (typeof job.args?.model === "string") job.model = job.args.model;
     job.status = "running";
     job.executionOwner = !this.isMine(job.owner) ? this.node.name : void 0;
-    job.startedAt = Date.now();
+    job.startedAt = Math.max(Date.now(), job.startedAt + 1);
     job.controller = new AbortController();
     job.progress = null;
     job.etaAt = void 0;
@@ -34307,12 +34382,21 @@ var JobManager = class {
     this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId, cause });
     if (this.storePath && !job.host) notifyJobEvent(dirname13(this.storePath), status === "done" ? "finish" : "fail", this.log);
     const message = report === void 0 ? jobReport(job, status, seconds, text3, cause) : report;
-    if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner)) {
-      const queued = job.queue.splice(0).join("\n\n");
+    if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner) && job.continuationFailure?.turn !== job.startedAt) {
+      let run;
+      try {
+        run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree);
+      } catch (error62) {
+        this.failContinuation(job, error62);
+        if (message !== null) this.post(job, message, null, "", messageId);
+        this.startWaiting();
+        return;
+      }
       if (message !== null) this.post(job, `${message}
 
 ${QUEUED_FOLLOW_UP_NOTE}`, null, "", messageId);
-      this.launch(job, job.resume(queued, job.sessionId, job.workdir, job.worktree));
+      job.queue.splice(0);
+      this.launch(job, run);
       return;
     }
     if (message !== null) this.post(job, message, null, "", messageId);
@@ -34393,6 +34477,7 @@ function toStored(j) {
     projectRoot: j.projectRoot,
     executionOwner: j.executionOwner,
     queuedMessages: [...j.queue],
+    continuationFailure: j.continuationFailure,
     deliveryHistory: j.deliveryHistory,
     forwarded: j.forwarded,
     supervisor: j.supervisor,
@@ -57288,6 +57373,7 @@ var SIBLING_STATUSES = /* @__PURE__ */ new Set(["running", "done", "failed", "in
 var MAX_INFLIGHT_PER_CONNECTION = 128;
 var PAUSE_INFLIGHT_PER_CONNECTION = 32;
 var MAX_CONNECTION_BUFFER_BYTES = 4 * MAX_FRAME_BYTES;
+var HANDOFF_STORE_READY_MS = 5500;
 var UNAUTHENTICATED_OPS = /* @__PURE__ */ new Set(["hello", "auth", "ping"]);
 var Broker = class {
   constructor(pipePath, store, log, token, now = Date.now, jobsPath, networking) {
@@ -57361,14 +57447,20 @@ var Broker = class {
         if (c.peer && target !== c) throw new BridgeError("unauthorized", "A session can only change its own availability.");
         return this.onUpdatePeer(target, { unavailable: args.unavailable });
       },
-      handoffSubagents: (c, a) => {
+      handoffSubagents: async (c, a) => {
         const parsed2 = handoffSchema.safeParse(a);
         if (!parsed2.success) throw new BridgeError("bad_request", "Invalid handoff arguments.");
         const source = this.requirePeer(c);
         if (parsed2.data.to.includes("/")) throw new BridgeError("bad_request", "Paired-PC handoff is not supported; choose an exact live local session name.");
-        const target = this.connByName(parsed2.data.to)?.peer;
-        if (!target) throw new BridgeError("unknown_target", "The target must be an exact live local session name.");
+        const targetConn = this.connByName(parsed2.data.to), target = targetConn?.peer;
+        if (!target || !targetConn) throw new BridgeError("unknown_target", "The target must be an exact live local session name.");
         if (!this.jobsPath) throw new BridgeError("bad_request", "The job registry is unavailable.");
+        const registration = (peer) => ({ id: peer.id, name: peer.name, sessionId: peer.sessionId, cwd: peer.cwd });
+        const sourceRegistration = registration(source), targetRegistration = registration(target);
+        await this.awaitHandoffReaders(c, targetConn);
+        this.assertHandoffRegistration(c, source, sourceRegistration);
+        this.assertHandoffRegistration(targetConn, target, targetRegistration);
+        this.jobsForDispatch = null;
         if (parsed2.data.switch_project_main && (parsed2.data.jobs !== "all" || !this.projectPeer(source).projectGroup || this.projectPeer(source).projectGroup !== this.projectPeer(target).projectGroup)) {
           throw new BridgeError("unauthorized", "Switching the project main requires all jobs and a target in the same project group.");
         }
@@ -58580,6 +58672,31 @@ Call decisions to look up current decisions or their history.`,
   assertQueueRegistration(conn, peer, registration) {
     if (conn.socket.destroyed || conn.peer !== peer || peer.id !== registration.id || peer.name !== registration.name || peer.sessionId !== registration.sessionId || this.connByName(registration.name) !== conn) {
       throw new BridgeError("unauthorized", "Session changed while queued mail was archived; reconnect to claim retained mail.");
+    }
+  }
+  async awaitHandoffReaders(source, target) {
+    const controller = new AbortController();
+    const closed = () => controller.abort(new BridgeError("unauthorized", "A handoff session disconnected during store reader verification; no job ownership was changed."));
+    const timer = setTimeout(() => controller.abort(new BridgeError("timeout", "Store reader verification timed out before handoff; no job ownership was changed.")), HANDOFF_STORE_READY_MS);
+    source.socket.once("close", closed);
+    target.socket.once("close", closed);
+    let aborted2;
+    const interrupted = new Promise((_, reject) => {
+      aborted2 = () => reject(controller.signal.reason);
+      controller.signal.addEventListener("abort", aborted2, { once: true });
+    });
+    try {
+      await Promise.race([refreshStorePeerIdentities(dirname32(this.jobsPath), controller.signal), interrupted]);
+    } finally {
+      clearTimeout(timer);
+      source.socket.off("close", closed);
+      target.socket.off("close", closed);
+      controller.signal.removeEventListener("abort", aborted2);
+    }
+  }
+  assertHandoffRegistration(conn, peer, registration) {
+    if (this.closing || !conn.authed || !this.conns.has(conn) || conn.socket.destroyed || conn.peer !== peer || peer.id !== registration.id || peer.name !== registration.name || peer.sessionId !== registration.sessionId || peer.cwd !== registration.cwd || this.connByName(registration.name) !== conn) {
+      throw new BridgeError("unauthorized", "Session identity or project changed while store readers were verified; retry from the current sessions. No job ownership was changed.");
     }
   }
   /** Turns a sender-supplied target into live connections and/or offline queue keys. */

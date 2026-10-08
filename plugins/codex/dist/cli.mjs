@@ -47244,6 +47244,7 @@ var SIBLING_STATUSES = /* @__PURE__ */ new Set(["running", "done", "failed", "in
 var MAX_INFLIGHT_PER_CONNECTION = 128;
 var PAUSE_INFLIGHT_PER_CONNECTION = 32;
 var MAX_CONNECTION_BUFFER_BYTES = 4 * MAX_FRAME_BYTES;
+var HANDOFF_STORE_READY_MS = 5500;
 var UNAUTHENTICATED_OPS = /* @__PURE__ */ new Set(["hello", "auth", "ping"]);
 var Broker = class {
   constructor(pipePath, store, log, token, now = Date.now, jobsPath, networking) {
@@ -47317,14 +47318,20 @@ var Broker = class {
         if (c.peer && target !== c) throw new BridgeError("unauthorized", "A session can only change its own availability.");
         return this.onUpdatePeer(target, { unavailable: args.unavailable });
       },
-      handoffSubagents: (c, a) => {
+      handoffSubagents: async (c, a) => {
         const parsed = handoffSchema.safeParse(a);
         if (!parsed.success) throw new BridgeError("bad_request", "Invalid handoff arguments.");
         const source = this.requirePeer(c);
         if (parsed.data.to.includes("/")) throw new BridgeError("bad_request", "Paired-PC handoff is not supported; choose an exact live local session name.");
-        const target = this.connByName(parsed.data.to)?.peer;
-        if (!target) throw new BridgeError("unknown_target", "The target must be an exact live local session name.");
+        const targetConn = this.connByName(parsed.data.to), target = targetConn?.peer;
+        if (!target || !targetConn) throw new BridgeError("unknown_target", "The target must be an exact live local session name.");
         if (!this.jobsPath) throw new BridgeError("bad_request", "The job registry is unavailable.");
+        const registration = (peer) => ({ id: peer.id, name: peer.name, sessionId: peer.sessionId, cwd: peer.cwd });
+        const sourceRegistration = registration(source), targetRegistration = registration(target);
+        await this.awaitHandoffReaders(c, targetConn);
+        this.assertHandoffRegistration(c, source, sourceRegistration);
+        this.assertHandoffRegistration(targetConn, target, targetRegistration);
+        this.jobsForDispatch = null;
         if (parsed.data.switch_project_main && (parsed.data.jobs !== "all" || !this.projectPeer(source).projectGroup || this.projectPeer(source).projectGroup !== this.projectPeer(target).projectGroup)) {
           throw new BridgeError("unauthorized", "Switching the project main requires all jobs and a target in the same project group.");
         }
@@ -48536,6 +48543,31 @@ Call decisions to look up current decisions or their history.`,
   assertQueueRegistration(conn, peer, registration) {
     if (conn.socket.destroyed || conn.peer !== peer || peer.id !== registration.id || peer.name !== registration.name || peer.sessionId !== registration.sessionId || this.connByName(registration.name) !== conn) {
       throw new BridgeError("unauthorized", "Session changed while queued mail was archived; reconnect to claim retained mail.");
+    }
+  }
+  async awaitHandoffReaders(source, target) {
+    const controller = new AbortController();
+    const closed = () => controller.abort(new BridgeError("unauthorized", "A handoff session disconnected during store reader verification; no job ownership was changed."));
+    const timer = setTimeout(() => controller.abort(new BridgeError("timeout", "Store reader verification timed out before handoff; no job ownership was changed.")), HANDOFF_STORE_READY_MS);
+    source.socket.once("close", closed);
+    target.socket.once("close", closed);
+    let aborted2;
+    const interrupted = new Promise((_, reject) => {
+      aborted2 = () => reject(controller.signal.reason);
+      controller.signal.addEventListener("abort", aborted2, { once: true });
+    });
+    try {
+      await Promise.race([refreshStorePeerIdentities(dirname32(this.jobsPath), controller.signal), interrupted]);
+    } finally {
+      clearTimeout(timer);
+      source.socket.off("close", closed);
+      target.socket.off("close", closed);
+      controller.signal.removeEventListener("abort", aborted2);
+    }
+  }
+  assertHandoffRegistration(conn, peer, registration) {
+    if (this.closing || !conn.authed || !this.conns.has(conn) || conn.socket.destroyed || conn.peer !== peer || peer.id !== registration.id || peer.name !== registration.name || peer.sessionId !== registration.sessionId || peer.cwd !== registration.cwd || this.connByName(registration.name) !== conn) {
+      throw new BridgeError("unauthorized", "Session identity or project changed while store readers were verified; retry from the current sessions. No job ownership was changed.");
     }
   }
   /** Turns a sender-supplied target into live connections and/or offline queue keys. */
