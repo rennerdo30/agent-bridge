@@ -22,6 +22,8 @@ import { RootConcurrency } from "../core/root-concurrency.js";
 import { completionMessageId } from "../core/completion.js";
 import { recoverJobRecord } from "../core/job-recovery.js";
 import { metadataFileLease } from "../core/metadata-file-lease.js";
+import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
+import { archivePendingJob, mergePendingJob, readPendingJobs, retainPendingJob, type PendingJobReceipt } from "../core/job-pending-journal.js";
 
 const JOB_ID_LENGTH = 8;
 const PROMPT_PREVIEW_CHARS = 120;
@@ -336,6 +338,18 @@ export class JobManager {
   private restoreResume: ((agent: AgentKind, args: Record<string, unknown>) => Resume | undefined) | null = null;
   private rootWaitTimer: NodeJS.Timeout | null = null;
   private persistTimer: NodeJS.Timeout | null = null;
+  private persistReadiness: Promise<void> | null = null;
+  private persistRetryMs = 25;
+  private readonly pendingReports = new Map<string, { jobId: string; message: BridgeMessage }>();
+  private readonly reporting = new Set<string>();
+  private reportsStopped = false;
+  private reportTimer: NodeJS.Timeout | null = null;
+  private readonly receiptWriter = randomUUID();
+  private readonly retainedSnapshots = new Map<string, string>();
+  private readonly receipts: PendingJobReceipt[] = [];
+  private readonly durableBases = new Map<string, Record<string, unknown>>();
+  private receiptError: string | null = null;
+  private persistenceGeneration = 0;
   private sharedControl = false;
   private readonly sharedGrants = new Set<string>();
 
@@ -386,9 +400,18 @@ export class JobManager {
     });
     // Runners send to this session by name: tell them where it is now (a new server, maybe a new name).
     node.on("connected", () => {
+      this.reportsStopped = false;
       const attached = [...this.running.values()];
       this.refreshOwnership();
       for (const job of attached) if (job.host && this.running.has(job.id)) this.runners?.send(job, { type: "attach" });
+      if (this.pendingReports.size) this.persist();
+    });
+    node.on("stopped", () => {
+      this.retainOwnedState();
+      this.reportsStopped = true;
+      this.persistenceGeneration++;
+      if (this.persistTimer) { clearTimeout(this.persistTimer); this.persistTimer = null; }
+      if (this.reportTimer) { clearTimeout(this.reportTimer); this.reportTimer = null; }
     });
   }
 
@@ -413,22 +436,28 @@ export class JobManager {
 
   setDormant(dormant: boolean): void {
     if (this.dormant === dormant) return;
+    if (dormant) this.retainOwnedState();
     this.dormant = dormant;
+    this.persistenceGeneration++;
     if (dormant) for (const controller of this.pendingHosts.values()) controller.abort(new Error("Detached startup paused because another supervisor took over"));
     if (dormant && this.persistTimer) { clearTimeout(this.persistTimer); this.persistTimer = null; }
+    if (dormant && this.reportTimer) { clearTimeout(this.reportTimer); this.reportTimer = null; }
     this.log.info(dormant ? "another server of this session took over: jobs paused here" : "this server took its place back: jobs resumed");
     if (dormant && this.hostTimer) {
       clearInterval(this.hostTimer);
       this.hostTimer = null;
     }
     if (!dormant && [...this.running.values()].some((j) => j.host)) this.watchHosted();
+    if (!dormant && this.own.size) this.persist();
   }
 
   /** Save this session's jobs, merged with those other sessions saved. Best effort: never breaks a run. */
   persist(): void {
     if (!this.storePath || this.dormant || !this.own.size) return;
+    if (this.reportsStopped) { this.retainOwnedState(); return; }
     if (this.persistTimer) { clearTimeout(this.persistTimer); this.persistTimer = null; }
     let lock = () => {};
+    let prepared: Record<string, unknown>[] | undefined;
     try {
       // Never sleep on the broker's event loop while another session owns the shared store.
       // Retry the latest in-memory state, coalescing progress updates instead of dropping them.
@@ -451,7 +480,11 @@ export class JobManager {
       const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map((j) => {
         const old = byId.get(j.id) ?? (archived.has(j.id) ? cloneJson(archived.get(j.id)!) : j.recoveredRecord);
         if (isRecord(old)) {
-          j.deliveryHistory = [...new Map([...(Array.isArray(old.deliveryHistory) ? old.deliveryHistory as BridgeMessage[] : []), ...(j.deliveryHistory ?? [])].map((m) => [m.id, m])).values()];
+          // A reused ID with conflicting contents must retain both originals.
+          // Delivery proof below compares the complete envelope, never just ID.
+          const envelopes = [...(Array.isArray(old.deliveryHistory) ? old.deliveryHistory as BridgeMessage[] : [])];
+          for (const message of j.deliveryHistory ?? []) if (!envelopes.some(existing => isDeepStrictEqual(existing, message))) envelopes.push(message);
+          j.deliveryHistory = envelopes;
           // A late report from an earlier turn may add delivery evidence, but cannot roll back a continuation.
           if (typeof old.startedAt === "number" && j.startedAt < old.startedAt) return { ...old, deliveryHistory: j.deliveryHistory } as unknown as StoredJob;
         }
@@ -466,6 +499,7 @@ export class JobManager {
         }
         return mergeStoreFields(isRecord(old) ? old : {}, toStored(j)) as StoredJob;
       });
+      prepared = mine as unknown as Record<string, unknown>[];
       const ids = new Set(mine.map((j) => j.id));
       if ([...duplicates].some(id => ids.has(id as string))) {
         // Collapsing owned duplicates must retain their complete conflicting raw
@@ -499,11 +533,17 @@ export class JobManager {
         }
       }
       writeJsonStore(this.storePath, { ...(isRecord(previous) ? previous : {}), jobs: all.filter((j) => !overflow.has(j as StoredJob)) }, previous);
+      this.persistRetryMs = 25;
+      for (const entry of all) if (isRecord(entry) && typeof entry.id === "string" && this.own.has(entry.id)) this.durableBases.set(entry.id, cloneJson(entry));
+      this.verifyRetainedState();
+      this.flushStoredReports(all);
     } catch (err) {
+      this.retainOwnedState(prepared);
       if ((err as NodeJS.ErrnoException).code === "EJOBLOCKED") {
         this.schedulePersist();
         return;
       }
+      if ((err as NodeJS.ErrnoException).code === "STORE_UPGRADE_DEFERRED") this.scheduleReadyPersist();
       this.log.warn("could not save subagent jobs", { err: (err as Error).message });
     } finally {
       lock();
@@ -553,9 +593,95 @@ export class JobManager {
     }
   }
 
-  private schedulePersist(): void {
-    if (this.persistTimer || this.dormant || !this.storePath) return;
-    this.persistTimer = setTimeout(() => { this.persistTimer = null; this.persist(); }, 25 + Math.floor(Math.random() * 50));
+  private schedulePersist(delayMs?: number): void {
+    if (this.persistTimer || this.dormant || this.reportsStopped || !this.storePath) return;
+    this.persistTimer = setTimeout(() => { this.persistTimer = null; this.persist(); }, delayMs ?? 25 + Math.floor(Math.random() * 50));
+  }
+
+  private scheduleReadyPersist(): void {
+    if (this.persistReadiness || this.dormant || this.reportsStopped || !this.storePath) return;
+    const retryMs = this.persistRetryMs;
+    const generation = this.persistenceGeneration;
+    this.persistRetryMs = Math.min(1_000, retryMs * 2);
+    // Start after persist's finally releases the shared metadata lock. A queued
+    // cancellation still needs its final state saved after the identity query.
+    this.persistReadiness = Promise.resolve().then(() => generation !== this.persistenceGeneration || this.dormant || this.reportsStopped ? undefined : refreshStorePeerIdentities(dirname(this.storePath!)))
+      .catch(error => this.log.warn("job persistence reader verification deferred", { err: String(error) }))
+      .then(() => { if (generation === this.persistenceGeneration) this.schedulePersist(retryMs); })
+      .finally(() => { this.persistReadiness = null; });
+  }
+
+  private flushStoredReports(stored: unknown[]): void {
+    if (this.dormant || this.reportsStopped || !this.node.reportInlineJob) return;
+    for (const [id, pending] of this.pendingReports) {
+      if (this.reporting.has(id) || !stored.some(entry => isRecord(entry) && entry.id === pending.jobId &&
+        Array.isArray(entry.deliveryHistory) && entry.deliveryHistory.some(message => isDeepStrictEqual(message, pending.message)))) continue;
+      this.reporting.add(id);
+      const generation = this.persistenceGeneration;
+      // The locked save completes before this microtask can send its exact,
+      // durable envelope. Broker delivery remains idempotent by message ID.
+      void Promise.resolve().then(() => {
+        if (generation !== this.persistenceGeneration || this.dormant || this.reportsStopped) return false;
+        // Recheck current durable authority and the complete immutable envelope,
+        // including body/destination, after any intervening writer or handoff.
+        const durable = this.storePath && readStoredJob(this.storePath, pending.jobId, this.history.get(pending.jobId)?.name ?? "", this.log);
+        if (!durable || durable.id !== pending.jobId || ![durable.owner, durable.executionOwner, durable.rootName].includes(this.node.name) ||
+          !durable.deliveryHistory?.some(message => isDeepStrictEqual(message, pending.message))) return false;
+        return this.node.reportInlineJob!(pending.message).then(() => true);
+      }).then(sent => { if (sent) this.pendingReports.delete(id); }, error => {
+        this.log.warn("inline report delivery failed; retained for replay", { err: String(error) });
+      }).finally(() => { this.reporting.delete(id); this.scheduleReportRetry(); });
+    }
+  }
+
+  private scheduleReportRetry(): void {
+    if (this.reportTimer || this.dormant || this.reportsStopped || !this.storePath || !this.pendingReports.size) return;
+    this.reportTimer = setTimeout(() => {
+      this.reportTimer = null;
+      if (!this.dormant && !this.reportsStopped) this.flushStoredReports(readScopedStore(this.storePath!,
+        new Set([...this.pendingReports.values()].map(report => report.jobId)), new Set(), undefined, this.log));
+    }, 500);
+  }
+
+  /** Small versioned receipts survive incompatible readers and immediate exit. */
+  private retainOwnedState(prepared?: Record<string, unknown>[]): void {
+    // A failed consumption verification pauses archival, never retention of
+    // newly accepted context/results in independent immutable receipts.
+    if (!this.storePath || this.dormant) return;
+    try {
+      const ids = new Set(prepared?.map(job => job.id as string) ?? [...this.history.keys()].filter(id => this.own.has(id)));
+      const existing = new Map(readScopedStore(this.storePath, ids, new Set(), undefined, this.log).map(job => [job.id, job as unknown as Record<string, unknown>]));
+      const snapshots = prepared ?? [...this.history.values()].filter(job => this.own.has(job.id)).map(job =>
+        mergeStoreFields(existing.get(job.id) ?? job.recoveredRecord ?? {}, toStored(job)));
+      for (const snapshot of snapshots) {
+        if (typeof snapshot.id !== "string") continue;
+        const bytes = JSON.stringify(snapshot);
+        if (isDeepStrictEqual(existing.get(snapshot.id), JSON.parse(bytes))) continue;
+        if (this.retainedSnapshots.get(snapshot.id) === bytes) continue;
+        const job = this.history.get(snapshot.id);
+        const base = prepared ? existing.get(snapshot.id) : this.durableBases.get(snapshot.id) ?? job?.recoveredRecord;
+        const receipt = retainPendingJob(this.storePath, { name: this.node.name, session: this.node.currentSessionId ?? null, nonce: this.receiptWriter }, snapshot, base);
+        this.receipts.push(receipt); this.retainedSnapshots.set(snapshot.id, bytes);
+      }
+    } catch (error) {
+      this.receiptError = String(error);
+      this.log.error("pending job retention failed; receipt retained for inspection", { err: this.receiptError });
+    }
+  }
+
+  private verifyRetainedState(): void {
+    if (!this.storePath || this.receiptError || !this.receipts.length) return;
+    try {
+      const durable = new Map(readScopedStore(this.storePath, new Set(this.receipts.map(receipt => receipt.value.job.id as string)),
+        new Set(), undefined, this.log).map(job => [job.id, job as unknown as Record<string, unknown>]));
+      for (let i = this.receipts.length - 1; i >= 0; i--) {
+        const receipt = this.receipts[i]!, job = durable.get(receipt.value.job.id as string);
+        if (job && archivePendingJob(receipt, job)) this.receipts.splice(i, 1);
+      }
+    } catch (error) {
+      this.receiptError = String(error);
+      this.log.error("pending job receipt verification failed; recovery paused", { err: this.receiptError });
+    }
   }
 
   /**
@@ -568,6 +694,37 @@ export class JobManager {
     this.restoreResume = makeResume;
     if (!this.storePath) return;
     const stored = readStore(this.storePath, this.log, true);
+    const durableIds = new Set(stored.map(job => job.id));
+    const appliedReceipts = new Map<string, PendingJobReceipt>();
+    // Receipts are never authority to claim foreign/headless jobs. Apply the
+    // ordinary restore policy and ownership proof before importing any bytes.
+    if (!this.dormant && !this.reportsStopped) for (const receipt of readPendingJobs(this.storePath,
+      error => this.log.warn("pending job receipt retained", { err: String(error) }), index => {
+        const handoff = isRecord(index.handoff) ? index.handoff : undefined;
+        const explicit = this.restorePolicy?.canReceiveHandoff() && handoff?.reason === "explicit-handoff" && handoff.to === this.node.name &&
+          (handoff.rootSession === this.node.currentSessionId || handoff.rootSession === this.node.id);
+        return this.isMine(typeof index.owner === "string" ? index.owner : undefined) &&
+          (this.isMine(index.writerName as string) || Boolean(explicit)) &&
+          (this.lineage ? index.parentJob === this.lineage.parentJob : !index.parentJob) &&
+          (!this.restorePolicy || this.restorePolicy.canRestore() || Boolean(explicit));
+      })) {
+      const saved = receipt.value.job;
+      const handoff = isStoredJob(saved) ? saved.ownershipHistory?.at(-1) : undefined;
+      const explicit = this.restorePolicy?.canReceiveHandoff() && handoff?.reason === "explicit-handoff" && handoff.to === this.node.name &&
+        (handoff.rootSession === this.node.currentSessionId || handoff.rootSession === this.node.id);
+      if (!isStoredJob(saved) || !this.canRestoreSaved(saved) || !this.isMine(saved.owner) || !(this.isMine(receipt.value.writer.name) || explicit) ||
+          (this.lineage ? saved.parentJob !== this.lineage.parentJob : Boolean(saved.parentJob))) continue;
+      const index = stored.findIndex(job => job.id === saved.id);
+      const priorReceipt = appliedReceipts.get(saved.id);
+      const base = !durableIds.has(saved.id) && priorReceipt?.value.writer.nonce === receipt.value.writer.nonce &&
+        priorReceipt.value.sequence < receipt.value.sequence && index >= 0 ? stored[index] as unknown as Record<string, unknown> : receipt.value.baseJob;
+      const merged = mergePendingJob(index < 0 ? undefined : stored[index] as unknown as Record<string, unknown>, saved, base);
+      if (!merged || !isStoredJob(merged)) continue;
+      if (index < 0) stored.push(merged); else stored[index] = merged;
+      appliedReceipts.set(saved.id, receipt);
+      this.own.add(saved.id); this.receipts.push(receipt);
+      for (const message of merged.deliveryHistory ?? []) this.pendingReports.set(message.id, { jobId: saved.id, message });
+    }
     const adopted: Job[] = [];
     // The newest ones, plus every job still marked running however old (its runner may still be at work).
     const recentIds = new Set(stored.slice(-HISTORY_LIMIT).map((s) => s.id));
@@ -577,6 +734,9 @@ export class JobManager {
       if (!this.lineage && s.parentJob) continue;
       const existing = this.history.get(s.id);
       if (existing) {
+        if (this.receipts.some(receipt => receipt.value.job.id === s.id) && !this.running.has(s.id) && !this.foreground.has(s.id) && !this.pendingHosts.has(s.id)) {
+          Object.assign(existing, s, { recoveredRecord: cloneJson(s), queue: [...(s.queuedMessages ?? [])] });
+        }
         // Connected/job events can expose saved jobs before delayed launch
         // classification installs the continuation factory. Preserve their
         // controller and runtime facts while making that eligible turn resumable.
@@ -587,6 +747,7 @@ export class JobManager {
       const mine = this.isMine(s.owner);
       const job: Job = {
         ...s,
+        recoveredRecord: cloneJson(s) as unknown as Record<string, unknown>,
         status: s.status === "running" && !(hosted && !mine) ? "interrupted" : s.status,
         controller: new AbortController(),
         progress: null,
@@ -1425,8 +1586,8 @@ export class JobManager {
     };
     if ((job.ownershipHistory?.length || (this.storePath && !this.lineage)) && this.node.reportInlineJob) {
       job.deliveryHistory = [...(job.deliveryHistory ?? []), m];
+      this.pendingReports.set(m.id, { jobId: job.id, message: m });
       this.persist();
-      void this.node.reportInlineJob(m).catch((err) => this.log.warn("inline report delivery failed", { err: String(err) }));
     } else this.node.deliverLocal(m);
     return m.id;
   }

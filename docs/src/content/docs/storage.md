@@ -80,6 +80,19 @@ upgrade, a new broker can host the existing schema with retained supplemental me
 Completed approval question metadata also moves into `approvals/archive/`; its private expired
 capability stays out of the active approval list and rotating snapshots.
 
+Deferred job saves retain owned context and result envelopes in the independent versioned
+`pending-job-writes/v1/` namespace. Reader identity refresh and save retries run asynchronously;
+old readers' shared JSON bytes stay unchanged until an upgrade is safe. Shutdown retains the
+latest pending state without sending results or reconnecting after the node stops.
+Recovery follows the ordinary ownership rules. Foreign and transient sessions cannot claim
+receipts, and older snapshots cannot replace newer queues, ownership or completed state.
+Results are sent only after their complete envelope is durably recorded, using the same message
+ID for retries. Verified receipts move intact into the journal's archive with an incorporation
+or supersession manifest; conflicting fields are retained and explicitly marked as not executed.
+Partial, damaged and unsupported receipts remain untouched. Automatic payload reads are bounded
+to 32 MiB per receipt; oversized receipts keep their complete bytes and require manual recovery
+if the original writer exits before incorporating them into the main store.
+
 Authenticated dashboard contracts (existing cookie and Host guards):
 
 - `GET /api/storage` returns `DoctorReport`: `checkedAt`, `ok`, `schema[{path,actual,expected}]`,
