@@ -55,10 +55,12 @@ describe("network pairing", () => {
     const b = service("mac");
     const received: unknown[] = [];
     a.registerExtension("remote-job", "remote-jobs-v1", () => {});
-    b.registerExtension("remote-job", "remote-jobs-v1", async (payload, remote) => { await new Promise((resolve) => setTimeout(resolve, 10)); received.push({ payload, id: remote.id }); });
+    b.registerExtension("remote-job", "remote-jobs-v1", async (payload, remote) => { await new Promise((resolve) => setTimeout(resolve, 10)); received.push({ payload, id: remote.id }); }, ["remote-jobs-cancelled-v1"]);
     await a.start(); await b.start();
     await a.link(b.keys.invite(), LOOPBACK, b.port);
     expect(a.peerSupports("mac", "remote-jobs-v1")).toBe(true);
+    expect(a.peerSupports("mac", "remote-jobs-cancelled-v1")).toBe(true);
+    expect(b.peerSupports("windows", "remote-jobs-cancelled-v1")).toBe(false);
     expect(a.peerSupports(b.keys.identity.id, "unknown-extension-v1")).toBe(false);
     await a.sendExtension("mac", "remote-job", { action: "probe", data: "x".repeat(128 * 1024) });
     await until(() => received.length === 1);

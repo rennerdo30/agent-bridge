@@ -60,6 +60,8 @@ describe("worktree isolation", () => {
     expect(readFileSync(join(wt.path, "generated-font.ttf"))).toEqual(Buffer.from([0, 17, 32]));
     expect(readFileSync(join(wt.path, "private.config"), "utf8")).toBe("fixture private content\n");
     expect(worktreeReport(wt, saved)).toContain("private.config");
+    expect(worktreeReport(wt, saved)).toContain("Keep this worktree");
+    expect(worktreeReport(wt, saved)).not.toContain("worktree remove --force");
   });
   it("creates new worktrees under a configured root without relocating existing ones", async () => {
     const original = await createWorktree({ cwd: repo, home, jobId: "oldroot", log: nullLogger });

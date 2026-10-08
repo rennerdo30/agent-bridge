@@ -80,9 +80,9 @@ export function jobNameIn(text: string): string | null {
 }
 
 /** The final result a job posts ("Subagent <name> done after 12s. ..."): its status, else null (a live answer). */
-export function finalStatusOf(job: string, body: string): "done" | "failed" | null {
-  const m = new RegExp(`^Subagent ${job.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\([^)]*\\) (done|failed) after \\d+s\\.`).exec(body.trim());
-  return (m?.[1] as "done" | "failed" | undefined) ?? null;
+export function finalStatusOf(job: string, body: string): "done" | "failed" | "cancelled" | null {
+  const m = new RegExp(`^Subagent ${job.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\([^)]*\\) (done|failed|cancelled) after \\d+s\\.`).exec(body.trim());
+  return (m?.[1] as "done" | "failed" | "cancelled" | undefined) ?? null;
 }
 
 /** The body of the one message a wait_for_message result wraps in <agent-bridge-message ...>. */
@@ -249,7 +249,7 @@ class LiveHost {
   }
 
   /** Wait for the job's final result, skipping other messages. */
-  async result(job: string, timeoutMs: number): Promise<{ status: "done" | "failed"; body: string } | null> {
+  async result(job: string, timeoutMs: number): Promise<{ status: "done" | "failed" | "cancelled"; body: string } | null> {
     const end = Date.now() + timeoutMs;
     for (;;) {
       const body = await this.next(job, end - Date.now());

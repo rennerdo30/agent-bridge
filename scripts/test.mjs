@@ -1,14 +1,22 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 const [lane = "fast", ...args] = process.argv.slice(2);
 if (!["fast", "integration", "all"].includes(lane)) throw new Error("Unknown test lane");
 const env = { ...process.env, AGENT_BRIDGE_TEST_LANE: lane };
+const fixtureRoot = join(process.cwd(), ".agent-bridge-test");
+mkdirSync(fixtureRoot, { recursive: true });
+const fixturePackage = join(fixtureRoot, "package.json");
+try { writeFileSync(fixturePackage, '{"private":true,"type":"commonjs"}\n', { flag: "wx" }); }
+catch (error) {
+  if (error.code !== "EEXIST" || JSON.parse(readFileSync(fixturePackage, "utf8")).type !== "commonjs") throw error;
+}
+env.GIT_CEILING_DIRECTORIES = fixtureRoot;
 if (process.platform === "win32") {
-  const fixtureTemp = join(process.cwd(), ".agent-bridge-test", "temp");
+  const fixtureTemp = join(fixtureRoot, "temp");
   mkdirSync(fixtureTemp, { recursive: true });
-  Object.assign(env, { TEMP: fixtureTemp, TMP: fixtureTemp, GIT_CEILING_DIRECTORIES: fixtureTemp });
+  Object.assign(env, { TEMP: fixtureTemp, TMP: fixtureTemp });
 }
 const child = spawn(process.execPath, [fileURLToPath(new URL("../node_modules/vitest/vitest.mjs", import.meta.url)), "run", ...args], {
   stdio: "inherit", windowsHide: true, env,

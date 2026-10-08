@@ -26,6 +26,18 @@ afterEach(async () => {
 const result = (text: string): DelegateResult => ({ sessionId: "s-9", text, isError: false, details: {} });
 
 describe("background subagents", () => {
+  it("keeps remote cancellation distinct for foreground and background results", async () => {
+    const cancelled = { ...result("retained remote partial answer"), isError: true, status: "cancelled" as const, workdir: "retained-workdir" };
+    const tracked = jobs.track("codex", null, "remote ask");
+    tracked.end({ result: cancelled });
+    expect(tracked.job).toMatchObject({ status: "cancelled", sessionId: "s-9", workdir: "retained-workdir" });
+    expect(tracked.job.controller.signal.aborted).toBe(false);
+    const job = jobs.start("codex", null, "remote turn", async () => cancelled);
+    await until(() => job.status === "cancelled");
+    expect(job).toMatchObject({ sessionId: "s-9", workdir: "retained-workdir" });
+    expect(me.unread()[0]!.body).toContain("cancelled after");
+    expect(me.unread()[0]!.body).toContain("retained remote partial answer");
+  });
   it("persists optional ETA and clears it when a job completes", async () => {
     const { join } = await import("node:path");
     const { readStore } = await import("../src/mcp/jobs.js");
