@@ -48,7 +48,6 @@ foreach ($path in $payload.paths) {
       foreach ($rule in @($acl.Access)) { if (-not $rule.IsInherited) { [void]$acl.RemoveAccessRuleSpecific($rule) } }
       $inherit = if ($item.PSIsContainer) { [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit' } else { [System.Security.AccessControl.InheritanceFlags]::None }
       $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new($sid, 'FullControl', $inherit, 'None', 'Allow'))
-      $acl.SetOwner($sid)
       $item.SetAccessControl($acl)
     }
     $results += @{ path = $path; sddl = $sddl; ok = $true }
