@@ -7,12 +7,12 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, fork, type ChildProcess } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { open as openFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { constants as priorities, getPriority, setPriority } from "node:os";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import { performance } from "node:perf_hooks";
 import { Session } from "node:inspector";
@@ -97,6 +97,53 @@ function physicalHome(path: string): string {
     if (dirname(current) === current) throw new Error("Fixture containment failed");
   }
   return realpathSync.native(result);
+}
+/** Independently check the published message-only backup's existing proof format. */
+export async function verifyRehearsalMessageBackup(backupPath: string): Promise<{ path: string; bytes: number; manifest: MessageBackupManifest; conversationHistoryAbsent: true; tableProofsVerified: true }> {
+  const path = physicalHome(backupPath), manifestPath = physicalHome(join(path, "manifest.json"));
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as MessageBackupManifest;
+  const exclusions = ["conversation-history", "other-tables", "json-stores"];
+  if (manifest.version !== 1 || manifest.kind !== "message-tables" || manifest.restore !== "merge-selected-tables-only" || !Number.isFinite(manifest.createdAt) || !Array.isArray(manifest.excludes) || manifest.excludes.length !== exclusions.length || !exclusions.every(value => manifest.excludes.includes(value as typeof manifest.excludes[number])) || !Array.isArray(manifest.files) || !manifest.files.length) throw new Error("Automatic daily backup manifest scope failed");
+  const publishedFiles = readdirSync(path), expectedFiles = ["manifest.json", ...manifest.files.map(file => file.path)];
+  if (publishedFiles.length !== expectedFiles.length || publishedFiles.some(file => !expectedFiles.includes(file))) throw new Error("Automatic daily backup contains an undeclared file");
+  const sources: Record<string, readonly string[]> = { "bridge.db": ["messages", "archived_messages", "job_delivery_routes"], "archive.db": ["messages"], "store-compatibility.db": ["job_delivery_routes"] };
+  const seen = new Set<string>(); let bytes = 0;
+  const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
+  for (const file of manifest.files) {
+    const allowed = sources[file.source];
+    if (!allowed || seen.has(file.source) || file.path !== file.source.replace(/\.db$/, ".messages.db") || !Number.isSafeInteger(file.bytes) || file.bytes <= 0 || !Number.isSafeInteger(file.sourceVersion) || file.sourceVersion < 0 || !Array.isArray(file.tables) || !file.tables.length) throw new Error("Automatic daily backup manifest file scope failed");
+    seen.add(file.source);
+    const filePath = physicalHome(join(path, file.path)), hash = createHash("sha256"), input = await openFile(filePath, "r"), buffer = Buffer.alloc(256 * 1024); let fileBytes = 0;
+    try {
+      for (;;) {
+        const chunk = await input.read(buffer, 0, buffer.length, fileBytes);
+        if (!chunk.bytesRead) break;
+        hash.update(buffer.subarray(0, chunk.bytesRead)); fileBytes += chunk.bytesRead; await delay(0);
+      }
+    } finally { await input.close(); }
+    if (fileBytes !== file.bytes || hash.digest("hex") !== file.sha256) throw new Error("Automatic daily backup file hash/bytes failed");
+    bytes += fileBytes;
+    const db = new DatabaseSync(filePath, { readOnly: true });
+    try {
+      const actual = db.prepare("SELECT name,sql FROM sqlite_master WHERE type='table' ORDER BY name").all();
+      const names = file.tables.map(table => table.name);
+      if (new Set(names).size !== names.length || actual.length !== names.length || actual.some(row => !allowed.includes(String(row.name)) || !names.includes(String(row.name)))) throw new Error("Automatic daily backup contains a non-message or undeclared table");
+      for (const table of file.tables) {
+        if (!Number.isSafeInteger(table.rows) || table.rows < 0 || actual.find(row => row.name === table.name)?.sql !== table.schema) throw new Error("Automatic daily backup table schema/count proof failed");
+        const columns = db.prepare(`PRAGMA table_xinfo(${quote(table.name)})`).all().filter(column => column.hidden === 0).map(column => String(column.name));
+        const rows = db.prepare(`SELECT rowid AS _ab_backup_rowid,${columns.map(quote).join(",")} FROM ${quote(table.name)} ORDER BY rowid`); rows.setReadBigInts(true);
+        const digest = createHash("sha256"); let count = 0;
+        for (const raw of rows.iterate()) {
+          // Same typed, column-ordered logical-row encoding verified by messageBackupIfDue.
+          const encoded = Object.entries(raw as Record<string, SQLInputValue>).map(([key, value]) => [key, value instanceof Uint8Array ? ["blob", Buffer.from(value).toString("base64")] : [typeof value, String(value)]]);
+          digest.update(JSON.stringify(encoded) + "\n"); count++;
+          if (count % 64 === 0) await delay(0);
+        }
+        if (count !== table.rows || digest.digest("hex") !== table.sha256) throw new Error("Automatic daily backup table row count/digest failed");
+      }
+    } finally { db.close(); }
+  }
+  return { path, bytes, manifest, conversationHistoryAbsent: true, tableProofsVerified: true };
 }
 function isolate(home: string): void {
   process.env.AGENT_BRIDGE_HOME = home;
@@ -237,11 +284,20 @@ export async function cloneRehearsal(sourceHome: string): Promise<Seed> {
   finally { source.close(); }
 }
 
-type Reply = { rid?: string; ready?: boolean; launcherChildExit?: boolean; result?: unknown; error?: string };
+type Reply = { rid?: string; ready?: boolean; launcherChildExit?: boolean; connectionWitness?: boolean; result?: unknown; error?: string };
 type Role = "old-session" | "old-runner" | "current-session" | "lease-owner" | "session-launcher";
+interface RehearsalConnectionEvent { at: number; pid: number; version: string; role: Role; name: string; sessionId: string | null; isBroker: boolean }
+/** Keep only public connection fields, including when a later rehearsal phase fails. */
+export function recordRehearsalConnection(timeline: RehearsalConnectionEvent[], value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const event = value as Partial<RehearsalConnectionEvent>;
+  if (!Number.isFinite(event.at) || !Number.isSafeInteger(event.pid) || event.pid! <= 0 || typeof event.version !== "string" || !["old-session", "old-runner", "current-session", "lease-owner", "session-launcher"].includes(event.role ?? "") || typeof event.name !== "string" || !(event.sessionId === null || typeof event.sessionId === "string") || typeof event.isBroker !== "boolean") return false;
+  timeline.push({ at: event.at!, pid: event.pid!, version: event.version, role: event.role!, name: event.name, sessionId: event.sessionId, isBroker: event.isBroker });
+  return true;
+}
 type NodeInternals = { broker: Broker | null; client: { request(op: string, args: unknown): Promise<unknown> } | null };
 type BrokerInternals = { historyBackground: HistoryBackground | null; store: { backupStatus?: () => BackupHealth | null } };
-interface FixtureChild { process: ChildProcess; role: Role; index: number; ownedChildExit?: boolean; request(op: string, data?: Record<string, unknown>): Promise<any>; stop(): Promise<void> }
+interface FixtureChild { process: ChildProcess; role: Role; index: number; connectionTimeline: RehearsalConnectionEvent[]; ownedChildExit?: boolean; request(op: string, data?: Record<string, unknown>): Promise<any>; stop(): Promise<void> }
 const children: FixtureChild[] = [];
 async function childMain(home: string, role: Role, index: number): Promise<void> {
   isolate(home);
@@ -271,7 +327,11 @@ async function childMain(home: string, role: Role, index: number): Promise<void>
     ...(role === "old-runner" ? { canHostBroker: false, id: `job:rehearsal-${index}`, jobAgent: "codex" as const, jobParent: "old-session-0", jobOwner: fixtureIdentities(home).rootSession, rootName: "old-session-0", rootSession: fixtureIdentities(home).rootSession } : {}) });
   node.on("message", message => node.markRead([message.id]));
   const connectionWitnesses: (HandoverConnection & { parentPid: number })[] = [];
-  node.on("connected", (value: { isBroker?: boolean }) => connectionWitnesses.push({ at: Date.now(), pid: process.pid, parentPid: process.ppid, version: legacy ? "0.29.17" : APP_VERSION, name: node.name, sessionId: node.currentSessionId, isBroker: value.isBroker }));
+  node.on("connected", (value: { isBroker?: boolean }) => {
+    const event = { at: Date.now(), pid: process.pid, version: legacy ? "0.29.17" : APP_VERSION, role, name: node.name, sessionId: node.currentSessionId, isBroker: value.isBroker === true };
+    connectionWitnesses.push({ ...event, parentPid: process.ppid });
+    process.send?.({ connectionWitness: true, result: event });
+  });
   // Distinct synthetic sessions share this harness parent PID. Publish their known session
   // identity before hello so launch reconciliation cannot treat them as one host session.
   if (role !== "old-runner") await node.setSessionId(fixtureIdentities(home).sessions[index]!);
@@ -413,7 +473,7 @@ async function startChild(home: string, role: Role, index: number, extra: string
   const processChild = fork(fileURLToPath(import.meta.url), ["--home", home, "--role", wrapped ? "session-launcher" : role, ...(wrapped ? ["--child-role", role] : []), "--index", String(index), ...extra], { cwd: checkout, env: process.env, stdio: ["ignore", "pipe", "pipe", "ipc"], windowsHide: true });
   const waiters = new Map<string, { resolve(value: any): void; reject(error: Error): void; timer: NodeJS.Timeout }>();
   const child: FixtureChild = {
-    process: processChild, role, index,
+    process: processChild, role, index, connectionTimeline: [],
     request: (op, data) => new Promise((resolve, reject) => {
       const rid = randomUUID(), timer = setTimeout(() => { waiters.delete(rid); reject(new Error(`Owned ${role} ${index} request timed out: ${op}`)); }, op === "profile" ? 30_000 : op === "native-continuation" ? 180_000 : 60_000);
       waiters.set(rid, { resolve, reject, timer }); processChild.send({ rid, op, data }, error => { if (error) { clearTimeout(timer); waiters.delete(rid); reject(error); } });
@@ -426,6 +486,7 @@ async function startChild(home: string, role: Role, index: number, extra: string
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`Owned ${role} did not start: ${output.stderr}`)), 90_000);
     processChild.on("message", (message: Reply) => {
+      if (message.connectionWitness) { recordRehearsalConnection(child.connectionTimeline, message.result); return; }
       if (message.launcherChildExit) { child.ownedChildExit = true; return; }
       if (message.ready) { clearTimeout(timer); resolve(); }
       if (message.rid) { const pending = waiters.get(message.rid); if (!pending) return; clearTimeout(pending.timer); waiters.delete(message.rid); if (message.error) pending.reject(new Error(message.error)); else pending.resolve(message.result); }
@@ -658,18 +719,7 @@ export async function rehearse(home: string): Promise<void> {
       return Boolean(status.backup?.lastVerifiedAt);
     }, 180_000);
     const automatic = listMessageBackups(home)[0]; if (!automatic) throw new Error("Automatic daily backup verified without a published message manifest");
-    const manifest = JSON.parse(readFileSync(join(automatic.path, "manifest.json"), "utf8")) as MessageBackupManifest;
-    const backupBytes = manifest.files.reduce((total, file) => total + file.bytes, 0);
-    if (manifest.kind !== "message-tables" || !manifest.excludes.includes("conversation-history") || backupBytes > 8 * 1024 * 1024) throw new Error("Automatic daily backup copied unrelated synthetic history or exceeded its message fixture bound");
-    const allowed = new Set(["messages", "archived_messages", "job_delivery_routes"]);
-    for (const file of manifest.files) {
-      const path = physicalHome(join(automatic.path, file.path));
-      if (statSync(path).size !== file.bytes || createHash("sha256").update(readFileSync(path)).digest("hex") !== file.sha256) throw new Error("Automatic daily backup file hash/bytes failed");
-      const db = new DatabaseSync(path, { readOnly: true });
-      try { if (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().some(row => !allowed.has(String(row.name)))) throw new Error("Automatic daily backup contains a non-message table"); }
-      finally { db.close(); }
-    }
-    report.automaticDailyBackup = { path: automatic.path, bytes: backupBytes, manifest, conversationHistoryAbsent: true };
+    report.automaticDailyBackup = await verifyRehearsalMessageBackup(automatic.path);
     report.runPoll = await host!.request("runs");
     const identity = await current[0]!.request("status");
     report.managedContinuation = await continuation(home, identity);
@@ -701,6 +751,7 @@ export async function rehearse(home: string): Promise<void> {
     const legacyClients = { samples: legacySamples.length, ...metrics(legacySamples), byPhase: legacyByPhase };
     report.latency = { samples: samples.length, percentileMethod: "nearest rank", ...metrics(samples), sendMaxMs: Math.max(0, ...samples.map(s => s.sendMs)), peersMaxMs: Math.max(0, ...samples.map(s => s.peersMs)), byPhase, currentClients, legacyClients };
     report.samples = samples; report.failures = failures; report.progress = phases; report.profiles = profiles; report.backupProgress = backupProgress;
+    report.childConnectionTimelines = children.map(child => ({ role: child.role, index: child.index, events: child.connectionTimeline }));
     report.checkpointReadWitnesses = checkpointReadWitnesses;
     report.ownedProcessesStopped = children.every(child => (child.process.exitCode !== null || child.process.signalCode !== null) && (!(child.role === "old-session" || child.role === "current-session") || child.ownedChildExit === true)) && (!native || native.inspect().every(info => info.status !== "running"));
     report.finishedAt = new Date().toISOString();

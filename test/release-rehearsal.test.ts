@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Worker } from "node:worker_threads";
 import { describe, expect, it, vi } from "vitest";
-import { confirmRehearsalHandover, readRehearsalCursor, rehearsalBytes } from "../scripts/release-rehearsal.js";
+import { confirmRehearsalHandover, readRehearsalCursor, recordRehearsalConnection, rehearsalBytes } from "../scripts/release-rehearsal.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -20,6 +20,16 @@ function handover() {
 }
 
 describe("authenticated release handover witness", () => {
+  it("retains ordered public IPC connection evidence independently of a later phase failure", () => {
+    const timeline: Parameters<typeof recordRehearsalConnection>[0] = [];
+    const event = { at: 100, pid: 4100, version: "0.29.17", role: "old-runner", name: "synthetic-runner", sessionId: "synthetic-session", isBroker: false };
+    expect(recordRehearsalConnection(timeline, { ...event, requestBody: "must not be retained", token: "synthetic-secret" })).toBe(true);
+    expect(recordRehearsalConnection(timeline, { ...event, at: 450 })).toBe(true);
+    expect(recordRehearsalConnection(timeline, { ...event, pid: null })).toBe(false);
+    expect(timeline).toEqual([event, { ...event, at: 450 }]);
+    const failedReport = { error: "Synthetic later verification failure", childConnectionTimelines: [{ events: timeline }] };
+    expect(JSON.parse(JSON.stringify(failedReport)).childConnectionTimelines[0].events).toEqual(timeline);
+  });
   it("does not mistake a present listener for its own completed auth and hello", async () => {
     const fixture = handover(); fixture.state.connected = false;
     expect(await fixture.confirm()).toBeNull(); expect(fixture.request).not.toHaveBeenCalled();
