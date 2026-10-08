@@ -273,7 +273,7 @@ export async function cloneRehearsal(sourceHome: string): Promise<Seed> {
     }
     for (const file of before) { const after = statSync(join(sourceHome, file.name)); if (after.size !== file.size || after.mtimeMs !== file.mtimeMs || after.ctimeMs !== file.ctimeMs || after.ino !== file.ino) throw new Error("Synthetic source changed while copying its DB/WAL; partial copy retained and not used"); }
     source.exec("ROLLBACK");
-    const restored = await rawHash(join(home, "bridge.db"));
+    const restored = await rehearsalRawHash(join(home, "bridge.db"));
     if (restored.rows !== original.rows || restored.bytes !== original.payloadBytes || restored.sha256 !== original.rawSha256) throw new Error("Fresh clone does not preserve the original synthetic source hash/count");
     const old = await oldRuntime(home), archiveBytes = await seedCorpus(home, old.JSON_STORE_VERSION);
     const seed: Seed = { ...original, home, archiveBytes, sourceBytes: statSync(join(home, "bridge.db")).size, createdAt: new Date().toISOString() };
@@ -521,11 +521,12 @@ export async function readRehearsalCursor(progress: Pick<HistoryMigrationProgres
     await delay(50);
   }
 }
-async function rawHash(file: string): Promise<{ rows: number; bytes: number; sha256: string }> {
+export const REHEARSAL_RAW_HASH_SQL = "SELECT * FROM conversation_records WHERE source=? ORDER BY generation, offset";
+export async function rehearsalRawHash(file: string): Promise<{ rows: number; bytes: number; sha256: string }> {
   const db = new DatabaseSync(file, { readOnly: true, timeout: 100 }), hash = createHash("sha256"), start = performance.now(); let rows = 0, bytes = 0;
   const rate = Number(process.env.AGENT_BRIDGE_HISTORY_MIGRATION_IO_BYTES_PER_SECOND ?? 8 * 1024 * 1024);
   try {
-    for (const row of db.prepare("SELECT * FROM conversation_records WHERE source=? ORDER BY offset").iterate(sourceId)) {
+    for (const row of db.prepare(REHEARSAL_RAW_HASH_SQL).iterate(sourceId)) {
       if (Number(row.id) !== rows + 1 || Number(row.generation) !== 0 || Number(row.offset) !== bytes || row.conversation !== sourceId || Number(row.at) !== 1_700_000_000_000 + rows || row.body !== `Synthetic retained transcript record ${rows}` || row.part !== null) throw new Error("Seeded history row metadata changed");
       const raw = Buffer.from(row.raw as Uint8Array); hash.update(raw); bytes += raw.length; rows++;
       while (performance.now() - start < bytes * 1000 / rate) await delay(Math.min(50, Math.max(1, bytes * 1000 / rate - (performance.now() - start))));
@@ -729,7 +730,7 @@ export async function rehearse(home: string): Promise<void> {
     report.nativeContinuation = await current[0]!.request("native-continuation");
     const hashes: Record<string, unknown> = {};
     for (const [name, file] of [["source", join(home, "bridge.db")], ["backup", String(report.snapshot)], ["target", historyDbPath(join(home, "bridge.db"))]] as const) {
-      const hash = await rawHash(file); hashes[name] = { ...hash, fileBytes: statSync(file).size, walBytes: existsSync(`${file}-wal`) ? statSync(`${file}-wal`).size : 0 };
+      const hash = await rehearsalRawHash(file); hashes[name] = { ...hash, fileBytes: statSync(file).size, walBytes: existsSync(`${file}-wal`) ? statSync(`${file}-wal`).size : 0 };
       if (hash.rows !== seed.rows || hash.bytes !== seed.payloadBytes || hash.sha256 !== seed.rawSha256) throw new Error(`${name} raw history hash/count differs from seed`);
     }
     report.hashes = hashes;
