@@ -30,6 +30,59 @@ it("logs both escaped callback failures without recursion and removes only its o
   } finally { stderr.mockRestore(); }
 });
 
+it("attempts fallback stderr only once when a delayed pipe error escapes after reporting finishes", async () => {
+  const events = new EventEmitter();
+  const error = vi.fn(() => { throw new Error("logger unavailable"); });
+  let delayed!: () => void;
+  const pipeFailure = new Promise<void>(resolve => { delayed = resolve; });
+  const stderr = vi.spyOn(process.stderr, "write").mockImplementationOnce(() => {
+    setImmediate(() => {
+      events.emit("uncaughtException", Object.assign(new Error("broken stderr pipe"), { code: "EPIPE" }), "uncaughtException");
+      delayed();
+    });
+    return true;
+  }).mockImplementation(() => true);
+  const release = guardRunnerErrors({ error }, events as unknown as Pick<NodeJS.Process, "on" | "off">);
+  try {
+    events.emit("unhandledRejection", new Error("escaped broker failure"));
+    await pipeFailure;
+    expect(stderr).toHaveBeenCalledOnce();
+    expect(error).toHaveBeenCalledTimes(2);
+    events.emit("uncaughtException", new Error("later independent callback"), "uncaughtException");
+    expect(error).toHaveBeenCalledTimes(3);
+    expect(stderr).toHaveBeenCalledOnce();
+  } finally { release(); stderr.mockRestore(); }
+});
+
+it("handles delayed normal-logger pipe failures locally and preserves other stderr listeners", async () => {
+  const events = new EventEmitter();
+  const existing = vi.fn();
+  const stderr = Object.assign(new EventEmitter(), { write: vi.fn((_text: string) => {
+    setImmediate(() => stderr.emit("error", Object.assign(new Error("broken logger pipe"), { code: "EPIPE" })));
+    return true;
+  }) });
+  stderr.on("error", existing);
+  const error = vi.fn(() => { stderr.write("normal logger write\n"); });
+  const release = guardRunnerErrors({ error }, events as unknown as Pick<NodeJS.Process, "on" | "off">,
+    stderr as unknown as Pick<NodeJS.WriteStream, "on" | "off" | "write">);
+  try {
+    expect(stderr.listenerCount("error")).toBe(2);
+    events.emit("uncaughtException", new Error("first independent callback"), "uncaughtException");
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(error).toHaveBeenCalledOnce();
+    expect(stderr.write).toHaveBeenCalledOnce();
+    expect(existing).toHaveBeenCalledOnce();
+    events.emit("unhandledRejection", new Error("later independent callback"));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(error).toHaveBeenCalledTimes(2);
+    expect(stderr.write).toHaveBeenCalledTimes(2);
+    expect(existing).toHaveBeenCalledTimes(2);
+  } finally { release(); }
+  expect(stderr.listeners("error")).toEqual([existing]);
+  expect(events.listenerCount("uncaughtException")).toBe(0);
+  expect(events.listenerCount("unhandledRejection")).toBe(0);
+});
+
 it.each(["reject", "throw"])("keeps a real dedicated Node process usable after an escaped %s", async failure => {
   const root = join(process.cwd(), ".agent-bridge-test"); mkdirSync(root, { recursive: true });
   const home = mkdtempSync(join(root, "runner-errors-")); homes.push(home);
