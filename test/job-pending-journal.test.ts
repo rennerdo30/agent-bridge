@@ -47,20 +47,20 @@ it.each([
   expect(readFileSync(path, "utf8")).toBe(original); expect(existsSync(receipt.path)).toBe(true);
 });
 
-it("keeps durable cancelled/final state ahead of a stale same-turn running receipt", () => {
-  const current = snapshot(), stale = { ...current, status: "running", finishedAt: undefined };
+it.each(["done", "failed", "cancelled"])("keeps durable %s state ahead of a stale same-turn running receipt", status => {
+  const current = snapshot({ status }), stale = { ...current, status: "running", finishedAt: undefined };
   expect(mergePendingJob(current, stale)).toBeNull();
 });
 
-it("preserves newer same-turn durable queues, forwarded facts, final status and exact envelopes", () => {
+it.each(["done", "cancelled"])("preserves newer same-turn durable queues, forwarded facts, %s status and exact envelopes", status => {
   const base = snapshot({ status: "running", finishedAt: undefined, queuedMessages: [], forwarded: [], deliveryHistory: [] });
-  const current = { ...base, status: "done", finishedAt: Date.now(), queuedMessages: ["new accepted follow-up"],
+  const current = { ...base, status, finishedAt: Date.now(), queuedMessages: ["new accepted follow-up"],
     forwarded: [{ cid: "new-cid", body: "new live message" }], deliveryHistory: [{ id: "same-id", body: "original durable contents" }] };
   const stale = { ...base, status: "failed", finishedAt: Date.now() - 10, deliveryHistory: [{ id: "same-id", body: "different retained contents" }] };
   const receipt = retainPendingJob(path, { name: "owner", session: "owner-session", nonce: randomUUID() }, stale, base);
   writeFileSync(path, JSON.stringify({ version: 4, jobs: [current] })); manager().restore(() => undefined);
   const saved = readStore(path)[0]!;
-  expect(saved).toMatchObject({ status: "done", finishedAt: current.finishedAt, queuedMessages: current.queuedMessages, forwarded: current.forwarded });
+  expect(saved).toMatchObject({ status, finishedAt: current.finishedAt, queuedMessages: current.queuedMessages, forwarded: current.forwarded });
   expect(saved.deliveryHistory).toEqual([...current.deliveryHistory, ...stale.deliveryHistory]);
   expect(existsSync(receipt.path)).toBe(false);
   const archives = join(pendingJobRoot(path), "archive"), verification = JSON.parse(readFileSync(join(archives, readdirSync(archives)[0]!, "verification.json"), "utf8"));

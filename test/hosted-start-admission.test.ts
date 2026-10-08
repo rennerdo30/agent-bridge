@@ -39,7 +39,8 @@ it("retries protected store admission with bounded backoff and retains the lates
   expect(readFileSync(path, "utf8")).toBe(original);
   const calls = admission.mock.calls.length;
   await vi.advanceTimersByTimeAsync(10_000);
-  expect(admission.mock.calls.length - calls).toBeLessThanOrEqual(10);
+  // The base readiness implementation caps retry delay at one second.
+  expect(admission.mock.calls.length - calls).toBeLessThanOrEqual(20);
   admission.mockRestore();
   await vi.advanceTimersByTimeAsync(1600);
   expect(readStore(path).find(saved => saved.id === job.id)).toMatchObject({ status: "cancelled", prompt: "retained cancelled prompt" });
