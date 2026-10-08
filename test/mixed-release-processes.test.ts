@@ -7,19 +7,20 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { build } from "esbuild";
 import { expect, it } from "vitest";
-import { assertStoreUpgrade } from "../src/core/store-compatibility.js";
+import { assertStoreUpgrade, refreshStorePeerIdentities } from "../src/core/store-compatibility.js";
 import { APP_VERSION } from "../src/core/constants.js";
 import { SQLITE_STORE_VERSION } from "../src/core/store.js";
 import { until } from "./helpers.js";
 
 const textOf = (result: any): string => result.content.map((part: any) => part.text ?? "").join("\n");
 
-it("keeps released and current MCP processes talking until the older reader exits", async () => {
+it("keeps mixed MCP processes talking and upgrades on the next start after old readers exit", async () => {
   const home = mkdtempSync(join(tmpdir(), "ab-real-mixed-"));
   const oldServer = join(home, "release14.mjs"), newServer = join(home, "current-server.mjs");
   // Read the released artifact from Git, never from a live plugin cache or an install command.
   writeFileSync(oldServer, execFileSync("git", ["show", "v0.29.14:plugins/codex/dist/server.mjs"], { cwd: join(import.meta.dirname, ".."), maxBuffer: 20 * 1024 * 1024 }));
   const clients: Client[] = [];
+  const transports = new Map<Client, StdioClientTransport>();
   const env = { ...process.env } as Record<string, string>;
   // Test workers must never inherit a delegated job's live supervisor link or runtime selector.
   for (const key of Object.keys(env)) if (key.startsWith("AGENT_BRIDGE_")) delete env[key];
@@ -28,6 +29,7 @@ it("keeps released and current MCP processes talking until the older reader exit
     const client = new Client({ name: `test-${name}`, version: "1" });
     clients.push(client);
     const transport = new StdioClientTransport({ command: process.execPath, args: [file, `--agent=${agent}`], env: { ...env, AGENT_BRIDGE_NAME: name }, stderr: "pipe" });
+    transports.set(client, transport);
     let errors = "";
     transport.stderr?.on("data", (chunk) => errors += chunk);
     try { await client.connect(transport); } catch (error) { throw new Error(`${name}: ${errors}`, { cause: error }); }
@@ -51,6 +53,7 @@ it("keeps released and current MCP processes talking until the older reader exit
     expect(peers).toContain("v0.29.14");
     expect(peers).toContain("retained code");
     expect(schema()).toBe(7);
+    await refreshStorePeerIdentities(home);
     expect(() => assertStoreUpgrade(home, "sqlite", 7, SQLITE_STORE_VERSION)).toThrow("old-release14 (v0.29.14");
     await current.callTool({ name: "send", arguments: { to: "old-release14", message: "new-to-old protocol2" } });
     expect(textOf(await old.callTool({ name: "inbox", arguments: {} }))).toContain("new-to-old protocol2");
@@ -58,8 +61,17 @@ it("keeps released and current MCP processes talking until the older reader exit
     expect(textOf(await current.callTool({ name: "inbox", arguments: {} }))).toContain("old-to-new protocol2");
     expect(schema()).toBe(7);
     await old.close();
-    await until(() => schema() === SQLITE_STORE_VERSION, 3_000);
-    expect(textOf(await current.callTool({ name: "peers", arguments: {} }))).toContain("current-release");
+    await current.close();
+    await until(() => [old, current].every(client => {
+      const pid = transports.get(client)?.pid;
+      if (!pid) return true;
+      try { process.kill(pid, 0); return false; }
+      catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
+    }), 60_000);
+    const replacement = await start(newServer, "current-release", "codex");
+    await replacement.callTool({ name: "peers", arguments: {} });
+    await until(() => schema() === SQLITE_STORE_VERSION, 60_000);
+    expect(textOf(await replacement.callTool({ name: "peers", arguments: {} }))).toContain("current-release");
     const db = new DatabaseSync(join(home, "bridge.db"), { readOnly: true });
     try {
       expect(db.prepare("SELECT body FROM messages ORDER BY created_at").all().map((row) => row.body)).toEqual(["new-to-old protocol2", "old-to-new protocol2"]);

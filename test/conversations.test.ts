@@ -22,6 +22,19 @@ it("refuses mismatched retained raw bytes during resumable import replay", () =>
   expect(Buffer.from(f.db.prepare("SELECT raw FROM conversation_records WHERE id=?").get(row.id!)!.raw as Uint8Array)).toEqual(retained);
   expect(readFileSync(f.files.claude)).toEqual(source);
 });
+it("retains mutable envelope versions and deduplicates the same replayed state", () => {
+  const f = fixture(true);
+  f.s.insert({ id: "mutable", recipient: "owner", to: "owner", from: { id: "sender", name: "sender", agent: "codex" }, body: "retained envelope", conversationId: "mutable", replyTo: null, hop: 0, createdAt: 1, readAt: null });
+  f.tick();
+  f.s.markRead("owner", ["mutable"], 20);
+  f.index.reset(); f.tick();
+  const records = () => f.db.prepare("SELECT raw FROM conversation_records WHERE source='messages:mutable:owner'").all().map(row => JSON.parse(Buffer.from(row.raw as Uint8Array).toString()));
+  expect(records().map(row => row.read_at)).toEqual(expect.arrayContaining([null, 20]));
+  const count = records().length;
+  f.index.reset(); f.tick();
+  expect(records()).toHaveLength(count);
+  expect(records().every(row => row.body === "retained envelope")).toBe(true);
+});
 
 it("pages complete context, keeps replaced generations and restores index from retained bytes", () => {
   const f = fixture(true);

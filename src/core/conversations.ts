@@ -597,12 +597,18 @@ export class ConversationIngestor {
           "INSERT OR IGNORE INTO conversation_projects(project) VALUES(?)",
         )
         .run(project);
-    const raw = Buffer.from(JSON.stringify(row)),
-      offset = Number(saved.offset ?? 0),
+    // SQL rowid is a cursor alias, not an envelope field. Archive/read-state
+    // changes get deterministic retained versions rather than overwriting raw bytes.
+    const { n: _cursorRowid, ...record } = row;
+    const raw = Buffer.from(JSON.stringify(record)),
+      fingerprint = createHash("sha256").update(raw).digest("hex"),
+      // 48 bits fit SQLite/JavaScript integer limits. Any collision still fails byte verification.
+      generation = 1 + Number.parseInt(fingerprint.slice(0, 12), 16),
+      offset = saved.fingerprint && saved.fingerprint !== fingerprint ? 0 : Number(saved.offset ?? 0),
       chunk = raw.subarray(offset, offset + CONVERSATION_BYTES);
     this.put(
       `${table}:${row.id}:${row.recipient ?? row.revision}`,
-      0,
+      generation,
       offset,
       id,
       chunk,
@@ -614,7 +620,7 @@ export class ConversationIngestor {
       JSON.stringify(
         offset + chunk.length >= raw.length
           ? { after: Number(row.n) }
-          : { after, offset: offset + chunk.length },
+          : { after, offset: offset + chunk.length, fingerprint },
       ),
     );
     return 1;
@@ -679,11 +685,13 @@ export class ConversationIngestor {
     const raw = Buffer.from(
         JSON.stringify({ ...row, recipient: envelope.recipient }),
       ),
-      offset = Number(saved.offset ?? 0),
+      fingerprint = createHash("sha256").update(raw).digest("hex"),
+      generation = 1 + Number.parseInt(fingerprint.slice(0, 12), 16),
+      offset = saved.fingerprint && saved.fingerprint !== fingerprint ? 0 : Number(saved.offset ?? 0),
       chunk = raw.subarray(offset, offset + CONVERSATION_BYTES);
     this.put(
       `messages:${row.id}:${envelope.recipient}`,
-      0,
+      generation,
       offset,
       id,
       chunk,
@@ -695,7 +703,7 @@ export class ConversationIngestor {
       JSON.stringify(
         offset + chunk.length >= raw.length
           ? { after: Number(envelope.id) }
-          : { after, offset: offset + chunk.length },
+          : { after, offset: offset + chunk.length, fingerprint },
       ),
     );
     return 1;

@@ -20,6 +20,7 @@ describe("supervisor outcome MCP tool", () => {
       env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_NAME: "supervisor", AGENT_BRIDGE_DASHBOARD: "off" } as Record<string, string>, stderr: "ignore" });
     try {
       await client.connect(transport);
+      await client.callTool({ name: "peers", arguments: {} });
       const tool = (await client.listTools()).tools.find((t) => t.name === "set_job_outcome");
       expect(tool?.inputSchema.required).toEqual(["job", "state"]);
       const call = (job: string, state: string, reason?: string) => client.callTool({ name: "set_job_outcome", arguments: { job, state, ...(reason === undefined ? {} : { reason }) } });
@@ -28,7 +29,7 @@ describe("supervisor outcome MCP tool", () => {
       expect((await call("codex-job-unknown", "discarded")).isError).toBe(true);
       expect((await call("codex-job-owned", "held", " ")).isError).toBe(true);
       const held = await call("codex-job-owned", "held", "CPU A/B");
-      expect(held.isError).not.toBe(true);
+      expect(held.isError, JSON.stringify(held)).not.toBe(true);
       expect(JSON.stringify(held)).toContain("CPU A/B");
       const discarded = await call("codex-job-owned", "discarded");
       expect(discarded.isError).not.toBe(true);

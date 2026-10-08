@@ -11,6 +11,7 @@
 - Windows worktree edits default to full access when the general sandbox is unset/read-only. Explicit read/ask and configured sandbox overrides are preserved. Cancelled jobs have their own status across runners, protocols, retained history and the dashboard.
 - Savepoint cleanup preserves the original SQLite error after automatic rollback.
 - The default test lane is fast; `test:integration` runs native process, pipe and storage fixtures. CI runs both lanes on every platform. Hook tests verify wait/budget behavior without fixed wall-clock assertions.
+- Windows permission repair preserves the original owner, backs up descriptors and reports access refusals without escalation or data removal.
 
 ## 0.30.2
 
