@@ -27,22 +27,22 @@ export function readArchivedJobSnapshot(path: string): ArchivedJobSnapshot {
   const dir = join(dirname(path), "archive");
   if (!existsSync(dir)) return EMPTY_SNAPSHOT;
   physicalDirectory(dir);
-  const files: { path: string; time: number }[] = [];
+  const files: { path: string; time: number; st: Stats }[] = [];
   const signatures: string[] = [];
   let bytes = 0;
   for (const file of readdirSync(dir).sort()) {
     if (!file.startsWith(`${basename(path)}.overflow.json-`) && !/^jobs-.*\.json$/.test(file)) continue;
     const full = join(dir, file), st = physicalFile(full);
     const stamp = /(?:^jobs-|\.overflow\.json-)(\d+)-/.exec(file)?.[1];
-    signatures.push(`${file}:${fileSignature(st)}`); files.push({ path: full, time: stamp ? Number(stamp) : st.mtimeMs }); bytes += st.size;
+    signatures.push(`${file}:${fileSignature(st)}`); files.push({ path: full, time: stamp ? Number(stamp) : st.mtimeMs, st }); bytes += st.size;
   }
   const signature = signatures.join("\n"), saved = snapshots.get(path);
   if (saved?.signature === signature) return saved;
   const jobs = new Map<string, Record<string, unknown>>();
   files.sort((a, b) => a.time - b.time || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  for (const { path: file } of files) {
+  for (const { path: file, st } of files) {
     // A damaged archive must be reported, never silently forgotten or renamed by a read.
-    const value = readJsonSnapshot(file).value;
+    const value = readJsonSnapshot(file, { file, stat: st }).value;
     if (!isRecord(value) || (value.version !== undefined && (!Number.isInteger(value.version) || (value.version as number) < 0 || (value.version as number) > JSON_STORE_VERSION)) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${basename(file)}`);
     for (const job of value.jobs) if (isRecord(job) && typeof job.id === "string") jobs.set(job.id, job);
   }

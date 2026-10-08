@@ -41,25 +41,28 @@ export function readRunLogs(home: string, namesFilter?: Set<string>): RunLogReco
     try { canonicalDir = realpathSync.native(dir); } catch { continue; }
     const rel = relative(canonicalRoot, canonicalDir);
     if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) continue;
-    const names = files(canonicalDir).sort();
-    // Direct files under a validated canonical directory need only lstat, not a full ancestor
-    // realpath traversal per poll. Internal symlinks retain the existing safeFile check.
-    const localFile = (name: string) => {
-      const file = join(canonicalDir, name);
+    let entries: import("node:fs").Dirent[];
+    try { entries = readdirSync(canonicalDir, { withFileTypes: true }); } catch { continue; }
+    entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    // Fresh lstat validates identity and type, including replacements after enumeration.
+    // Internal symlinks retain the existing safeFile containment check on every scan.
+    const localFile = (entry: import("node:fs").Dirent) => {
+      const file = join(canonicalDir, entry.name);
       try {
-        const st = lstatSync(file);
-        return st.isFile() ? { file, st } : st.isSymbolicLink() ? (() => {
+        const direct = lstatSync(file);
+        return direct.isFile() ? { file, st: direct } : direct.isSymbolicLink() ? (() => {
           const actual = safeFile(root, file, canonicalRoot);
           return actual ? { file: actual, st: statSync(actual) } : null;
         })() : null;
       } catch { return null; }
     };
     const selected: typeof directories[number]["files"] = [];
-    for (const name of names) {
+    for (const entry of entries) {
+      const name = entry.name;
       const original = archived ? name.replace(ARCHIVE_SUFFIX, "$1") : name;
       const extension = original.endsWith(".json") ? ".json" : RUN_LOG_NAME.test(original) ? ".log" : null;
       if (!extension || namesFilter && !namesFilter.has(original.slice(0, -extension.length))) continue;
-      const record = localFile(name);
+      const record = localFile(entry);
       if (!record) continue;
       signatures.push(`${archived}:${name}:${record.file}:${fileSignature(record.st)}`);
       if (extension === ".json") metadataBytes += record.st.size;
@@ -72,10 +75,10 @@ export function readRunLogs(home: string, namesFilter?: Set<string>): RunLogReco
   if (saved?.signature === signature) return cloneJson(saved.records);
   for (const { archived, files } of directories) {
     const metadata = new Map<string, RunMeta>();
-    for (const { original, file } of files) {
+    for (const { original, file, st } of files) {
       if (!original.endsWith(".json")) continue;
       try {
-        const value = readJsonSnapshot(file).value;
+        const value = readJsonSnapshot(file, { file, stat: st }).value;
         if (isRecord(value)) metadata.set(original, value as RunMeta);
       } catch { complete = false; }
     }
@@ -137,8 +140,17 @@ export async function readRunStarts(home: string): Promise<{ job: string; jobSta
     for (let offset = 0; offset < metadata.length; offset += 32) {
       await Promise.all(metadata.slice(offset, offset + 32).map(async ({ name, runName, file, log }) => {
         try {
-          // Read once: a cold 700-run corpus must not perform duplicate metadata/log stats.
-          const meta: unknown = JSON.parse(await readFile(file, "utf8"));
+          // Recheck after enumeration and immediately before an asynchronous read.
+          // A newly inserted link must still pass the same storage-root containment guard.
+          const direct = lstatSync(file);
+          const readable = direct.isFile() ? file : direct.isSymbolicLink() ? safeFile(root, file, canonicalRoot) : null;
+          if (!readable) return;
+          const before = direct.isFile() ? direct : statSync(readable);
+          if (!before.isFile()) return;
+          const raw = await readFile(readable, "utf8");
+          const after = lstatSync(readable);
+          if (!after.isFile() || fileSignature(after) !== fileSignature(before)) return;
+          const meta: unknown = JSON.parse(raw);
           if (!isRecord(meta) || typeof meta.job !== "string") return;
           const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(name);
           const startedAt = m ? Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!) : statSync(log).mtimeMs;
@@ -174,32 +186,53 @@ function historyJobsSnapshot(home: string): Map<string, Record<string, unknown>>
   const out = new Map<string, Record<string, unknown>>();
   let canonicalHome: string;
   try { canonicalHome = realpathSync.native(home); } catch { return out; }
-  const archive = join(home, "archive");
-  const archived = files(archive).filter((name) => name.startsWith(`${JOBS_FILE}.`) || name.startsWith(`${JOBS_FILE}-`) || /^jobs-.*\.json$/.test(name)).sort();
-  const backups = files(home).filter((name) => name.startsWith(`${JOBS_FILE}.backup-`) || name === `${JOBS_FILE}.overflow.json`).sort();
-  const snapshots = [...archived.map((name) => join(archive, name)), ...backups.map((name) => join(home, name))];
-  const snapshotTime = (file: string) => {
-    const stamp = /(?:jobs-|\.backup-|\.overflow\.json-|jobs\.json-)(\d+)/.exec(file)?.[1];
-    if (stamp) return Number(stamp);
-    try { return statSync(file).mtimeMs; } catch { return 0; }
+  const snapshots: { file: string; st: Stats; time: number }[] = [];
+  const scan = (directory: string, accept: (name: string) => boolean) => {
+    let canonicalDir: string;
+    try { canonicalDir = realpathSync.native(directory); } catch { return; }
+    const rel = relative(canonicalHome, canonicalDir);
+    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return;
+    let entries: import("node:fs").Dirent[];
+    try { entries = readdirSync(canonicalDir, { withFileTypes: true }); } catch { return; }
+    entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    for (const entry of entries) {
+      const name = entry.name;
+      if (!accept(name)) continue;
+      const candidate = join(canonicalDir, name);
+      try {
+        // Direct physical entries have no unresolved ancestor within this validated directory.
+        // Links still resolve through the existing containment check on every scan.
+        const direct = lstatSync(candidate);
+        const file = direct.isFile() ? candidate : direct.isSymbolicLink() ? safeFile(home, candidate, canonicalHome) : null;
+        if (!file) continue;
+        const st = direct.isFile() ? direct : statSync(file);
+        if (!st.isFile()) continue;
+        const stamp = /(?:jobs-|\.backup-|\.overflow\.json-|jobs\.json-)(\d+)/.exec(file)?.[1];
+        snapshots.push({ file, st, time: stamp ? Number(stamp) : st.mtimeMs });
+      } catch { /* Concurrent archival is observed on the next poll. */ }
+    }
   };
-  snapshots.sort((a, b) => snapshotTime(a) - snapshotTime(b) || (a < b ? -1 : a > b ? 1 : 0));
-  const sources: string[] = [], signatures: string[] = [];
+  scan(join(canonicalHome, "archive"), name => name.startsWith(`${JOBS_FILE}.`) || name.startsWith(`${JOBS_FILE}-`) || /^jobs-.*\.json$/.test(name));
+  scan(canonicalHome, name => name.startsWith(`${JOBS_FILE}.backup-`) || name === `${JOBS_FILE}.overflow.json`);
+  snapshots.sort((a, b) => a.time - b.time || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+  // Active data always overrides retained snapshots, independent of its modification time.
+  const active = join(canonicalHome, JOBS_FILE);
+  try {
+    const direct = lstatSync(active);
+    const file = direct.isFile() ? active : direct.isSymbolicLink() ? safeFile(home, active, canonicalHome) : null;
+    if (file) { const st = direct.isFile() ? direct : statSync(file); if (st.isFile()) snapshots.push({ file, st, time: 0 }); }
+  } catch { /* Store not created yet. */ }
+  const signatures: string[] = [];
   let complete = true;
   let bytes = 0;
-  for (const candidate of [...snapshots, join(home, JOBS_FILE)]) {
-    const file = safeFile(home, candidate, canonicalHome);
-    if (!file) continue;
-    try {
-      const st = statSync(file);
-      sources.push(file); signatures.push(`${file}:${fileSignature(st)}`); bytes += st.size;
-    } catch { /* Concurrent archival is observed on the next poll. */ }
+  for (const { file, st } of snapshots) {
+    signatures.push(`${file}:${fileSignature(st)}`); bytes += st.size;
   }
   const signature = signatures.join("\n"), saved = historyJobSnapshots.get(canonicalHome);
   if (saved?.signature === signature) return saved.jobs;
-  for (const file of sources) {
+  for (const { file, st } of snapshots) {
     let value: unknown;
-    try { value = readJsonSnapshot(file).value; }
+    try { value = readJsonSnapshot(file, { file, stat: st }).value; }
     catch { complete = false; continue; }
     const jobs = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.jobs) ? value.jobs : [];
     for (const job of jobs) {

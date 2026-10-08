@@ -33,8 +33,11 @@ export function fileSignature(st: { size: number; mtimeMs: number; ctimeMs: numb
   return `${st.dev}:${st.ino}:${st.birthtimeMs}:${st.ctimeMs}:${st.mtimeMs}:${st.size}`;
 }
 
-export function readJsonSnapshot(file: string): JsonSnapshot {
-  const st = statSync(file), signature = fileSignature(st);
+/** A directory scanner may supply the fresh identity it already validated in this call.
+ * Never supply a retained/cached stat: replacement detection still requires a fresh scan. */
+export function readJsonSnapshot(file: string, scan?: { file: string; stat: Parameters<typeof fileSignature>[0] }): JsonSnapshot {
+  if (scan && scan.file !== file) throw new Error("JSON snapshot scan belongs to another file");
+  const st = scan?.stat ?? statSync(file), signature = fileSignature(st);
   const failure = damaged.get(file);
   if (failure?.signature === signature) throw failure.error;
   damaged.delete(file);
@@ -45,7 +48,18 @@ export function readJsonSnapshot(file: string): JsonSnapshot {
   }
   if (saved) { cache.delete(file); bytes -= saved.bytes; }
   let value: unknown;
-  try { value = JSON.parse(readFileSync(file, "utf8")); }
+  try {
+    if (!scan) value = JSON.parse(readFileSync(file, "utf8"));
+    else {
+      // Keep Node's native UTF-8 pathname reader. The scan already checked the
+      // physical entry; verify identity/type again before publishing parsed bytes.
+      const raw = readFileSync(file, "utf8");
+      const after = statSync(file);
+      if (!after.isFile() || fileSignature(after) !== signature)
+        throw new Error("JSON snapshot identity changed during read");
+      value = JSON.parse(raw);
+    }
+  }
   catch (error) {
     // Stable malformed bytes must not be reread at every poll. Sharing/IO failures
     // stay retryable, and a changed file identity always invalidates this witness.
