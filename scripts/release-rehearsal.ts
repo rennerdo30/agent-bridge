@@ -384,9 +384,10 @@ async function childMain(home: string, role: Role, index: number): Promise<void>
         let acknowledgedMessageIds: string[] = [];
         try {
           // Plain sends negotiate the older protocol during handover. The current
-          // supervisor's canonical name is old-session-0, so use a distinct held
-          // job peer rather than accidentally measuring a self-send rejection.
-          const sent = await node.send({ to: legacy ? "old-session-0" : "codex-job-rehearsal-1", body, dedupeKey: key });
+          // supervisor's canonical name is old-session-0. Ordinary job mail is
+          // explicitly rejected; native job traffic is measured by message_subagent.
+          // Use the other retained session for the accepted ordinary-mail probe.
+          const sent = await node.send({ to: legacy ? "old-session-0" : "old-session-1", body, dedupeKey: key });
           sendMs = performance.now() - before;
           acknowledgedMessageIds = sent.messages.map(message => message.id);
           probeOperation = "peers";
@@ -758,6 +759,9 @@ export async function rehearse(home: string): Promise<void> {
     report.samples = samples; report.failures = failures; report.progress = phases; report.profiles = profiles; report.backupProgress = backupProgress;
     report.childConnectionTimelines = children.map(child => ({ role: child.role, index: child.index, events: child.connectionTimeline }));
     report.checkpointReadWitnesses = checkpointReadWitnesses;
+    report.ownedProcessWitnesses = children.map(child => ({ role: child.role, index: child.index, pid: child.process.pid,
+      exitCode: child.process.exitCode, signalCode: child.process.signalCode, ownedChildExit: child.ownedChildExit ?? false }));
+    report.nativeStopWitnesses = native?.inspect().map(info => ({ name: info.name, status: info.status, pid: info.pid, cliPid: info.cliPid }));
     report.ownedProcessesStopped = children.every(child => (child.process.exitCode !== null || child.process.signalCode !== null) && (!(child.role === "old-session" || child.role === "current-session") || child.ownedChildExit === true)) && (!native || native.inspect().every(info => info.status !== "running"));
     report.finishedAt = new Date().toISOString();
     const functionalVerified = report.success === true;
