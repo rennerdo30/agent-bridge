@@ -713,7 +713,7 @@ function migrateLocked(db2, file2, existed, target, migrations, log) {
 // src/core/project-identity.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 import { existsSync as existsSync7, lstatSync as lstatSync2, readFileSync as readFileSync6, realpathSync, statSync as statSync3 } from "node:fs";
-import { basename as basename3, dirname as dirname6, join as join9, relative, resolve as resolve2 } from "node:path";
+import { basename as basename3, delimiter, dirname as dirname6, isAbsolute, join as join9, relative, resolve as resolve2 } from "node:path";
 
 // src/core/session-visibility.ts
 import { posix } from "node:path";
@@ -742,8 +742,34 @@ function canonicalProjectRoot(cwd) {
     return null;
   }
 }
+function discoveryCeiling(physical, configured) {
+  if (!configured) return null;
+  const cwd = physical.replace(/\\/g, "/");
+  let canonicalize = true, ceiling = null;
+  for (const entry of configured.split(delimiter)) {
+    if (!entry) {
+      canonicalize = false;
+      continue;
+    }
+    if (!isAbsolute(entry)) continue;
+    let candidate = entry;
+    if (canonicalize) {
+      try {
+        candidate = realpathSync.native(entry).replace(/\\/g, "/");
+      } catch {
+        continue;
+      }
+    }
+    if (candidate.endsWith("/")) candidate = candidate.slice(0, -1);
+    if (!cwd.startsWith(`${candidate}/`) || cwd.length <= candidate.length + 1) continue;
+    if (ceiling === null || candidate.length > ceiling.length) ceiling = candidate;
+  }
+  return ceiling;
+}
 function discoverProjectRoot(physical) {
-  const markers = [];
+  const configuredCeilings = process.env.GIT_CEILING_DIRECTORIES;
+  const ceiling = discoveryCeiling(physical, configuredCeilings);
+  const markers = [JSON.stringify(["ceiling", configuredCeilings, ceiling])];
   const checkedDirectories = /* @__PURE__ */ new Set();
   const stamp = (path) => {
     const stat = lstatSync2(path);
@@ -791,13 +817,15 @@ function discoverProjectRoot(physical) {
     return unusual || bare !== "false" ? "unusual" : "ordinary";
   };
   for (let root = physical; ; root = dirname6(root)) {
+    if (root !== physical && root.replace(/\\/g, "/").replace(/\/$/, "") === ceiling)
+      return { marker: markers.join("|"), root: physical };
     const pointer = join9(root, ".git");
     let stat;
     try {
       stat = stamp(pointer);
     } catch (error62) {
       if (error62.code === "ENOENT") {
-        if (dirname6(root) === root) return { marker: "", root: physical };
+        if (dirname6(root) === root) return { marker: markers.join("|"), root: physical };
         continue;
       }
       return { marker: markers.join("|"), root: null };
@@ -3576,8 +3604,8 @@ function emoji() {
 }
 var ipv4 = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$/;
 var ipv6 = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$/;
-var mac = (delimiter) => {
-  const escapedDelim = escapeRegex(delimiter ?? ":");
+var mac = (delimiter2) => {
+  const escapedDelim = escapeRegex(delimiter2 ?? ":");
   return new RegExp(`^(?:[0-9A-F]{2}${escapedDelim}){5}[0-9A-F]{2}$|^(?:[0-9a-f]{2}${escapedDelim}){5}[0-9a-f]{2}$`);
 };
 var cidrv4 = /^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\/([0-9]|[1-2][0-9]|3[0-2])$/;
@@ -21253,7 +21281,7 @@ import { dirname as dirname10, join as join14 } from "node:path";
 // src/core/transcripts/common.ts
 import { closeSync as closeSync5, fstatSync, openSync as openSync5, readSync, readdirSync as readdirSync5, realpathSync as realpathSync3, statSync as statSync4 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { isAbsolute, join as join13, relative as relative2, resolve as resolve4, sep } from "node:path";
+import { isAbsolute as isAbsolute2, join as join13, relative as relative2, resolve as resolve4, sep } from "node:path";
 var MAX_TRANSCRIPT_CHUNK_BYTES = 512 * 1024;
 var MAX_TOOL_PREVIEW_CHARS = 1200;
 var MAX_TEXT_CHARS = 16e3;
@@ -21320,7 +21348,7 @@ function fileStat(file2) {
 function safeFile(root, file2, canonicalRoot) {
   try {
     const actual = realpathSync3.native(file2), rel = relative2(canonicalRoot ?? realpathSync3.native(root), actual);
-    return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel) ? actual : null;
+    return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute2(rel) ? actual : null;
   } catch {
     return null;
   }
@@ -23258,7 +23286,7 @@ var CODING_AGENTS = ["claude", "codex", "opencode", "antigravity"];
 // src/network/config.ts
 import { hostname as hostname3 } from "node:os";
 import { readFileSync as readFileSync10 } from "node:fs";
-import { isAbsolute as isAbsolute2, join as join22 } from "node:path";
+import { isAbsolute as isAbsolute3, join as join22 } from "node:path";
 
 // src/network/constants.ts
 var DEFAULT_NETWORK_PORT = 48148;
@@ -23286,7 +23314,7 @@ var networkConfigSchema = external_exports.object({
     allowPeers: external_exports.array(external_exports.string().regex(NETWORK_NAME_PATTERN)).max(50).default([])
   }).default({ enabled: false, allowRoots: [], agents: [], allowPeers: [] }),
   maxTransferBytes: external_exports.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
-  fetchRoots: external_exports.array(external_exports.string().min(1).max(MAX_FETCH_ROOT_CHARS).refine(isAbsolute2, "fetch roots must be absolute paths")).max(MAX_FETCH_ROOTS).optional()
+  fetchRoots: external_exports.array(external_exports.string().min(1).max(MAX_FETCH_ROOT_CHARS).refine(isAbsolute3, "fetch roots must be absolute paths")).max(MAX_FETCH_ROOTS).optional()
 });
 var DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
 function parseNetworkConfig(value) {

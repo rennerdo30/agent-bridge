@@ -10,7 +10,7 @@ import { parentPort } from "node:worker_threads";
 
 // src/core/job-outcomes.ts
 import { createHash as createHash11 } from "node:crypto";
-import { closeSync as closeSync11, existsSync as existsSync17, fstatSync as fstatSync3, lstatSync as lstatSync7, openSync as openSync11, readFileSync as readFileSync22, readSync as readSync3 } from "node:fs";
+import { closeSync as closeSync11, existsSync as existsSync17, fstatSync as fstatSync3, lstatSync as lstatSync8, openSync as openSync11, readFileSync as readFileSync22, readSync as readSync3 } from "node:fs";
 import { join as join35 } from "node:path";
 import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
 import { inflateSync } from "node:zlib";
@@ -380,7 +380,7 @@ function resolveDbPath(home) {
 // src/core/project-identity.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 import { existsSync as existsSync6, lstatSync as lstatSync3, readFileSync as readFileSync7, realpathSync as realpathSync3, statSync as statSync7 } from "node:fs";
-import { basename as basename3, dirname as dirname4, join as join11, relative as relative3, resolve as resolve4 } from "node:path";
+import { basename as basename3, delimiter, dirname as dirname4, isAbsolute as isAbsolute3, join as join11, relative as relative3, resolve as resolve4 } from "node:path";
 
 // src/core/session-visibility.ts
 import { posix as posix2 } from "node:path";
@@ -447,7 +447,7 @@ function jobEnvironment(env = process.env, platform = process.platform) {
 // src/core/delegate.ts
 import { spawn } from "node:child_process";
 import { existsSync as existsSync7, readFileSync as readFileSync12, realpathSync as realpathSync5 } from "node:fs";
-import { delimiter, dirname as dirname6, extname, isAbsolute as isAbsolute3, join as join17, win32 } from "node:path";
+import { delimiter as delimiter2, dirname as dirname6, extname, isAbsolute as isAbsolute4, join as join17, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay2 } from "node:timers/promises";
 
@@ -834,10 +834,10 @@ function resolveBinary(bin, env = process.env, platform = process.platform) {
   const isWin = platform === "win32";
   const exts = isWin ? (env.PATHEXT ?? DEFAULT_PATHEXT).split(";").filter(Boolean) : [""];
   const candidates = (base) => isWin && !extname(base) ? exts.map((e) => base + e.toLowerCase()) : [base];
-  if (isAbsolute3(bin) || bin.includes("/") || bin.includes("\\")) {
+  if (isAbsolute4(bin) || bin.includes("/") || bin.includes("\\")) {
     return candidates(bin).find((c) => existsSync7(c)) ?? null;
   }
-  for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter)) {
+  for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter2)) {
     if (!dir) continue;
     for (const c of candidates(join17(dir, bin))) if (existsSync7(c)) return c;
   }
@@ -1373,7 +1373,7 @@ import { basename as basename5, join as join23 } from "node:path";
 // src/network/config.ts
 import { hostname as hostname3 } from "node:os";
 import { readFileSync as readFileSync13 } from "node:fs";
-import { isAbsolute as isAbsolute4, join as join18 } from "node:path";
+import { isAbsolute as isAbsolute5, join as join18 } from "node:path";
 
 // node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -3372,8 +3372,8 @@ function emoji() {
 }
 var ipv4 = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])$/;
 var ipv6 = /^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:))$/;
-var mac = (delimiter2) => {
-  const escapedDelim = escapeRegex(delimiter2 ?? ":");
+var mac = (delimiter3) => {
+  const escapedDelim = escapeRegex(delimiter3 ?? ":");
   return new RegExp(`^(?:[0-9A-F]{2}${escapedDelim}){5}[0-9A-F]{2}$|^(?:[0-9a-f]{2}${escapedDelim}){5}[0-9a-f]{2}$`);
 };
 var cidrv4 = /^((25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])\/([0-9]|[1-2][0-9]|3[0-2])$/;
@@ -21069,7 +21069,7 @@ var networkConfigSchema = external_exports.object({
     allowPeers: external_exports.array(external_exports.string().regex(NETWORK_NAME_PATTERN)).max(50).default([])
   }).default({ enabled: false, allowRoots: [], agents: [], allowPeers: [] }),
   maxTransferBytes: external_exports.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
-  fetchRoots: external_exports.array(external_exports.string().min(1).max(MAX_FETCH_ROOT_CHARS).refine(isAbsolute4, "fetch roots must be absolute paths")).max(MAX_FETCH_ROOTS).optional()
+  fetchRoots: external_exports.array(external_exports.string().min(1).max(MAX_FETCH_ROOT_CHARS).refine(isAbsolute5, "fetch roots must be absolute paths")).max(MAX_FETCH_ROOTS).optional()
 });
 var DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
 
@@ -22167,15 +22167,15 @@ import { basename as basename7, dirname as dirname11, join as join30, resolve as
 var INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1e3;
 
 // src/core/worktree.ts
-import { createHash as createHash8 } from "node:crypto";
-import { existsSync as existsSync15, mkdirSync as mkdirSync16, readFileSync as readFileSync20, realpathSync as realpathSync7, rmSync as rmSync5 } from "node:fs";
-import { basename as basename9, dirname as dirname14, isAbsolute as isAbsolute6, join as join32, relative as relative5, resolve as resolve9, toNamespacedPath as toNamespacedPath2 } from "node:path";
+import { createHash as createHash8, randomUUID as randomUUID13 } from "node:crypto";
+import { existsSync as existsSync15, lstatSync as lstatSync7, mkdirSync as mkdirSync16, readFileSync as readFileSync20, realpathSync as realpathSync7, rmSync as rmSync5 } from "node:fs";
+import { basename as basename9, isAbsolute as isAbsolute7, join as join32, relative as relative5, resolve as resolve9, toNamespacedPath as toNamespacedPath2 } from "node:path";
 
 // src/core/worktree-links.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
 import { copyFileSync as copyFileSync6, existsSync as existsSync14, lstatSync as lstatSync6, mkdirSync as mkdirSync15, mkdtempSync, readdirSync as readdirSync12, readlinkSync, realpathSync as realpathSync6, rmSync as rmSync4, rmdirSync as rmdirSync2, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename as basename8, dirname as dirname13, isAbsolute as isAbsolute5, join as join31, relative as relative4, resolve as resolve8, sep as sep3, toNamespacedPath } from "node:path";
+import { basename as basename8, dirname as dirname13, isAbsolute as isAbsolute6, join as join31, relative as relative4, resolve as resolve8, sep as sep3, toNamespacedPath } from "node:path";
 
 // src/core/worktree.ts
 var GIT = "git";
@@ -22277,7 +22277,7 @@ function localHeads(repo, branches) {
   if (branches.some((branch) => !/^[A-Za-z0-9._/-]+$/.test(branch) || branch.split("/").some((part) => !part || part.startsWith(".") || part.endsWith(".") || part.endsWith(".lock") || part.includes("..")))) return null;
   try {
     const dir = join35(repo, ".git");
-    if (!lstatSync7(dir).isDirectory() || /\brefStorage\s*=|\[\s*include/i.test(readFileSync22(join35(dir, "config"), "utf8"))) return null;
+    if (!lstatSync8(dir).isDirectory() || /\brefStorage\s*=|\[\s*include/i.test(readFileSync22(join35(dir, "config"), "utf8"))) return null;
     const packed = /* @__PURE__ */ new Map();
     try {
       for (const line of readFileSync22(join35(dir, "packed-refs"), "utf8").split("\n")) {
@@ -22318,7 +22318,7 @@ function localAncestor(repo, ancestor, descendant) {
     const parents = (head) => {
       if (reads++ >= 16 || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(head)) return null;
       const file2 = join35(dir, "objects", head.slice(0, 2), head.slice(2));
-      if (!lstatSync7(file2).isFile()) return null;
+      if (!lstatSync8(file2).isFile()) return null;
       const fd = openSync11(file2, "r");
       let compressed;
       try {
@@ -22466,7 +22466,7 @@ import { Worker } from "node:worker_threads";
 import { mkdir as mkdir2, stat as stat2, readdir } from "node:fs/promises";
 import { createHash as createHash12 } from "node:crypto";
 import { createRequire } from "node:module";
-import { dirname as dirname15, join as join36 } from "node:path";
+import { dirname as dirname14, join as join36 } from "node:path";
 import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
 var CACHE_LIMIT = 1024;
 var CACHE_BYTES2 = 8 * 1024 * 1024;
@@ -22537,9 +22537,9 @@ var OutcomeBackground = class {
   async start() {
     let entry = new URL("./outcome-worker.mjs", import.meta.url);
     if (import.meta.url.endsWith(".ts")) {
-      const root = dirname15(dirname15(dirname15(fileURLToPath2(import.meta.url))));
+      const root = dirname14(dirname14(dirname14(fileURLToPath2(import.meta.url))));
       const path = join36(root, ".agent-bridge-test", `outcome-worker-${process.pid}.mjs`);
-      await mkdir2(dirname15(path), { recursive: true });
+      await mkdir2(dirname14(path), { recursive: true });
       await createRequire(import.meta.url)("esbuild").build({
         entryPoints: [join36(root, "src/core/outcome-worker.ts")],
         outfile: path,
@@ -22628,7 +22628,7 @@ var background = new OutcomeBackground();
 
 // src/core/outcome-worker.ts
 import { stat as stat3, readFile as readFile3 } from "node:fs/promises";
-import { dirname as dirname16, join as join37, resolve as resolve10 } from "node:path";
+import { dirname as dirname15, join as join37, resolve as resolve10 } from "node:path";
 var cache3 = /* @__PURE__ */ new Map();
 var cacheBytes = 0;
 async function gitPaths(inputs) {
@@ -22660,7 +22660,7 @@ async function gitPaths(inputs) {
           let ref = join37(root, "refs", "heads", branch);
           for (let depth = 0; depth < 8; depth++) {
             paths.add(ref);
-            paths.add(dirname16(ref));
+            paths.add(dirname15(ref));
             let symbolic;
             try {
               symbolic = /^ref:\s*(refs\/[\w./-]+)\s*$/.exec(await readFile3(ref, "utf8"));
