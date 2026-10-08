@@ -56,12 +56,12 @@ it("saves an immediate prelaunch cancellation and its exact report after cold id
   const pid = reader(4), send = report(); let release!: (identities: Map<number, string>) => void;
   vi.spyOn(identity, "readProcessIdentities").mockImplementation(() => new Promise(resolve => { release = resolve; }));
   const pending = queued(), job = jobs.start("claude", null, "complete retained paired context", pending.run, undefined, { host: "paired", title: "Cancel startup" });
-  jobs.cancel(job.name); await until(() => job.status === "failed" && Boolean(release));
+  jobs.cancel(job.name); await until(() => job.status === "cancelled" && Boolean(release));
   expect(existsSync(join(home, "jobs.json"))).toBe(false); expect(send).not.toHaveBeenCalled();
   release(new Map([[pid, `generation-${pid}`]]));
   await until(() => send.mock.calls.length === 1);
   const saved = readStore(join(home, "jobs.json")).find(record => record.id === job.id)!;
-  expect(saved).toMatchObject({ status: "failed", prompt: "complete retained paired context", args: { host: "paired", title: "Cancel startup" }, host: null });
+  expect(saved).toMatchObject({ status: "cancelled", prompt: "complete retained paired context", args: { host: "paired", title: "Cancel startup" }, host: null });
   expect(saved.deliveryHistory).toHaveLength(1); expect(saved.deliveryHistory![0]!.body).toContain("cancelled before runner startup");
   expect(send.mock.calls[0]![0].id).toBe(saved.deliveryHistory![0]!.id); expect(pending.inline).not.toHaveBeenCalled();
 });
@@ -95,17 +95,17 @@ it("retains the final durable envelope after shutdown without reconnecting to se
   const pid = reader(4), send = report(); let release!: (identities: Map<number, string>) => void;
   vi.spyOn(identity, "readProcessIdentities").mockImplementation(() => new Promise(resolve => { release = resolve; }));
   const pending = queued(), job = jobs.start("claude", null, "shutdown context", pending.run);
-  jobs.cancel(job.name); await until(() => job.status === "failed" && Boolean(release)); node.emit("stopped");
+  jobs.cancel(job.name); await until(() => job.status === "cancelled" && Boolean(release)); node.emit("stopped");
   release(new Map([[pid, `generation-${pid}`]]));
   await new Promise(resolve => setTimeout(resolve, 100));
   expect(existsSync(join(home, "jobs.json"))).toBe(false);
-  const retained = readPendingJobs(join(home, "jobs.json")).find(receipt => receipt.value.job.status === "failed" && Array.isArray(receipt.value.job.deliveryHistory))!;
+  const retained = readPendingJobs(join(home, "jobs.json")).find(receipt => receipt.value.job.status === "cancelled" && Array.isArray(receipt.value.job.deliveryHistory))!;
   expect(retained.value.job.prompt).toBe("shutdown context"); expect(retained.value.job.deliveryHistory).toHaveLength(1); expect(send).not.toHaveBeenCalled();
   // A new eligible owner recovers the original context and exact stable report.
   jobs = new JobManager(node = new LocalCoordinator("owner", "owner-session"), nullLogger, join(home, "jobs.json"));
   const recoveredSend = report(); jobs.restore(() => undefined);
   await until(() => recoveredSend.mock.calls.length === 1);
-  expect(readStore(join(home, "jobs.json"))[0]).toMatchObject({ prompt: "shutdown context", status: "failed", deliveryHistory: retained.value.job.deliveryHistory });
+  expect(readStore(join(home, "jobs.json"))[0]).toMatchObject({ prompt: "shutdown context", status: "cancelled", deliveryHistory: retained.value.job.deliveryHistory });
   expect(readdirSync(join(pendingJobRoot(join(home, "jobs.json")), "archive")).length).toBeGreaterThan(0);
 });
 

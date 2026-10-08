@@ -128,7 +128,7 @@ export function readPendingJobs(store: string, warn?: (error: unknown) => void, 
 }
 
 const AUTHORITY = ["owner", "supervisor", "rootSession", "rootName", "parentJob", "ownershipHistory", "executionOwner"];
-const final = (job: Record<string, unknown>) => job.status === "done" || job.status === "failed";
+const final = (job: Record<string, unknown>) => job.status === "done" || job.status === "failed" || job.status === "cancelled";
 /** Refuse stale authority/turn/metadata. Final durable state wins over running receipts. */
 export function mergePendingJob(current: Record<string, unknown> | undefined, receipt: Record<string, unknown>, base?: Record<string, unknown>): Record<string, unknown> | null {
   if (!current) return detached(receipt);

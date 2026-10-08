@@ -292,6 +292,16 @@ function processIdentity(pid) {
     return void 0;
   }
 }
+function isProcessIdentityAlive(pid, identity) {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || !identity) return void 0;
+  try {
+    process.kill(pid, 0);
+  } catch (error62) {
+    return error62.code === "ESRCH" ? false : void 0;
+  }
+  const current = processIdentity(pid);
+  return current === void 0 ? void 0 : current === identity;
+}
 
 // src/core/store-compatibility.ts
 var identities = /* @__PURE__ */ new Map();
@@ -309,7 +319,7 @@ function refreshStorePeerIdentities(home, signal) {
   signal?.throwIfAborted();
   const ready2 = refreshIdentityCache(home);
   if (!signal) return ready2;
-  return new Promise((resolve6, reject) => {
+  return new Promise((resolve7, reject) => {
     const abort = () => {
       signal.removeEventListener("abort", abort);
       reject(signal.reason);
@@ -317,7 +327,7 @@ function refreshStorePeerIdentities(home, signal) {
     signal.addEventListener("abort", abort, { once: true });
     ready2.then(() => {
       signal.removeEventListener("abort", abort);
-      resolve6();
+      resolve7();
     }, (error62) => {
       signal.removeEventListener("abort", abort);
       reject(error62);
@@ -405,6 +415,8 @@ function assertStoreUpgrade(home, format, current, target) {
 // src/core/json-store.ts
 var JSON_STORE_VERSION = 4;
 var KEEP_STORE_BACKUPS = 3;
+var RENAME_ATTEMPTS = 50;
+var RENAME_RETRY_MS = 20;
 function warn(log, message, data) {
   if (log) log.warn(message, data);
   else process.stderr.write(`${message}: ${JSON.stringify(data)}
@@ -460,6 +472,53 @@ function readJsonStore(path, log, valid = isRecord) {
     }
     warn(log, "preserved corrupt JSON store", { path, preserved, err: err.message });
     return null;
+  }
+}
+function assertWritableStore(value) {
+  if (!isRecord(value) || value.version === void 0) return;
+  if (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) {
+    throw new Error(`unsupported JSON store version: ${String(value.version)}`);
+  }
+}
+function writeJsonStore(path, value, previous) {
+  const release = storageLease(storeHome(path));
+  try {
+    writeJsonStoreUnlocked(path, value, previous);
+  } finally {
+    release();
+  }
+}
+function writeJsonStoreUnlocked(path, value, previous) {
+  assertWritableStore(previous);
+  assertStoreUpgrade(storeHome(path), "json", isRecord(previous) && typeof previous.version === "number" ? previous.version : 0, JSON_STORE_VERSION);
+  mkdirSync3(dirname3(path), { recursive: true, mode: 448 });
+  if (previous !== null && (!isRecord(previous) || previous.version !== JSON_STORE_VERSION) && existsSync4(path)) {
+    copyFileSync2(path, backupPath(path));
+    retainBackups(path);
+  }
+  const tmp = `${path}.${process.pid}.${randomUUID3()}.tmp`;
+  writeFileSync2(tmp, `${JSON.stringify({ ...value, version: JSON_STORE_VERSION }, null, 2)}
+`, { mode: 384 });
+  const fd = openSync2(tmp, "r+");
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync2(fd);
+  }
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  try {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        renameSync2(tmp, path);
+        return;
+      } catch (err) {
+        const code = err.code;
+        if (!["EPERM", "EBUSY", "EACCES"].includes(code ?? "") || attempt >= RENAME_ATTEMPTS) throw err;
+        Atomics.wait(pause, 0, 0, RENAME_RETRY_MS);
+      }
+    }
+  } finally {
+    rmSync2(tmp, { force: true });
   }
 }
 
@@ -1106,6 +1165,15 @@ function syncProjectMirror(main, project, home) {
   } finally {
     mirror.close();
   }
+}
+
+// src/core/savepoint.ts
+function cleanupSavepoint(db2, name, rollback, original) {
+  try {
+    db2.exec(`${rollback ? `ROLLBACK TO ${name}; ` : ""}RELEASE ${name}`);
+  } catch {
+  }
+  throw original;
 }
 
 // src/core/history-store.ts
@@ -6633,7 +6701,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve6) {
+function isRecursive(inst, stack, resolve7) {
   const cached2 = recursive.get(inst);
   if (cached2 !== void 0)
     return cached2 ? PROVEN : NONE;
@@ -6643,7 +6711,7 @@ function isRecursive(inst, stack, resolve6) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve6);
+      const answer = isRecursive(child, stack, resolve7);
       if (answer > result)
         result = answer;
     }
@@ -6654,7 +6722,7 @@ function isRecursive(inst, stack, resolve6) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve6) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve7) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -6718,7 +6786,7 @@ function isRecursive(inst, stack, resolve6) {
       break;
     // `$ZodLazy` caches its inner on the def, so a resolved edge is followed exactly
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve6 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve7 ? inst._zod.innerType : void 0);
       merge2(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -21863,8 +21931,7 @@ var HistoryIndex = class _HistoryIndex {
       }
       this.db.exec("RELEASE history_document");
     } catch (err) {
-      this.db.exec("ROLLBACK TO history_document; RELEASE history_document");
-      throw err;
+      cleanupSavepoint(this.db, "history_document", true, err);
     }
   }
   message(row) {
@@ -21888,6 +21955,7 @@ var HistoryIndex = class _HistoryIndex {
     const after = Number(this.cursor(source2));
     let count = 0, bytes2 = 0, cursor = after;
     const batch = ["messages", "history_pending", "decisions"].includes(table);
+    let failed = false;
     if (batch) this.db.exec("SAVEPOINT history_rows");
     try {
       for (const row of db2.prepare(`SELECT rowid AS history_rowid, * FROM ${table} WHERE rowid > ? ORDER BY rowid LIMIT ?`).iterate(after, HISTORY_ROWS_PER_SOURCE)) {
@@ -21899,8 +21967,12 @@ var HistoryIndex = class _HistoryIndex {
       }
       if (count) this.advance(source2, String(cursor));
       return count;
+    } catch (err) {
+      failed = true;
+      if (batch) cleanupSavepoint(this.db, "history_rows", false, err);
+      throw err;
     } finally {
-      if (batch) this.db.exec("RELEASE history_rows");
+      if (batch && !failed) this.db.exec("RELEASE history_rows");
     }
   }
   /** Fixed budgets; idempotent documents are written before advancing their cursors. */
@@ -21913,6 +21985,7 @@ var HistoryIndex = class _HistoryIndex {
       work += this.rows("messages", this.source, "messages", (row) => this.message(row));
       if (this.source !== this.db) work += this.rows("broker-pending", this.source, "history_pending", (row) => this.message(row));
       let pendingCount = 0, pendingBytes = 0;
+      let pendingFailed = false;
       this.db.exec("SAVEPOINT history_pending_batch");
       try {
         for (const row of this.db.prepare("SELECT * FROM history_pending LIMIT ?").iterate(HISTORY_ROWS_PER_SOURCE)) {
@@ -21922,8 +21995,11 @@ var HistoryIndex = class _HistoryIndex {
           pendingBytes += Buffer.byteLength(String(row.body));
           if (pendingBytes >= HISTORY_BATCH_BODY_BYTES || Date.now() >= this.deadline) break;
         }
+      } catch (err) {
+        pendingFailed = true;
+        cleanupSavepoint(this.db, "history_pending_batch", false, err);
       } finally {
-        this.db.exec("RELEASE history_pending_batch");
+        if (!pendingFailed) this.db.exec("RELEASE history_pending_batch");
       }
       work += pendingCount;
       work += this.rows("decisions", this.source, "decisions", (row) => {
@@ -22287,30 +22363,207 @@ ${buffer.subarray(0, length).toString("utf8")}`,
 };
 
 // src/core/conversations.ts
-import { createHash as createHash7 } from "node:crypto";
-import {
-  closeSync as closeSync8,
-  existsSync as existsSync15,
-  fstatSync as fstatSync3,
-  openSync as openSync8,
-  readSync as readSync3,
-  watch
-} from "node:fs";
-import { basename as basename7, join as join21 } from "node:path";
-import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
+import { createHash as createHash8 } from "node:crypto";
+
+// src/core/ask-completion.ts
+import { closeSync as closeSync10, constants as fsConstants, copyFileSync as copyFileSync5, fsyncSync as fsyncSync5, openSync as openSync10 } from "node:fs";
+import { dirname as dirname14, join as join25 } from "node:path";
+
+// src/core/metadata-file-lease.ts
+import { createHash as createHash6, randomUUID as randomUUID9 } from "node:crypto";
+import { closeSync as closeSync7, fsyncSync as fsyncSync3, linkSync, lstatSync as lstatSync4, mkdirSync as mkdirSync9, openSync as openSync7, readFileSync as readFileSync9, readdirSync as readdirSync6, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { basename as basename6, dirname as dirname12, join as join20, resolve as resolve6 } from "node:path";
+var VERSION = 2;
+var RETRY_MS = 20;
+var UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+var MARKER = /^(?:owner|claim)-v1\.(\d+)\.([A-Za-z0-9_-]+)\.([a-f0-9-]{36})\.json$/;
+var busy = () => Object.assign(new Error("metadata lease has a live or unknown owner"), { code: "ELEASEBUSY" });
+var exitedIdentities = /* @__PURE__ */ new Set();
+var identityProbes = /* @__PURE__ */ new Set();
+function nonBlockingAlive(owner) {
+  if (owner.pid === process.pid) return isProcessIdentityAlive(owner.pid, owner.identity);
+  try {
+    process.kill(owner.pid, 0);
+  } catch (error62) {
+    return error62.code === "ESRCH" ? false : void 0;
+  }
+  const key = `${owner.pid}:${owner.identity}`;
+  if (exitedIdentities.has(key)) return false;
+  if (!identityProbes.has(key)) {
+    identityProbes.add(key);
+    void readProcessIdentity(owner.pid).then((current) => {
+      if (current !== null && current !== owner.identity) {
+        if (exitedIdentities.size >= 512) exitedIdentities.delete(exitedIdentities.values().next().value);
+        exitedIdentities.add(key);
+      }
+    }).catch(() => {
+    }).finally(() => identityProbes.delete(key));
+  }
+  return void 0;
+}
+function physicalDirectory(path) {
+  const stat = lstatSync4(path);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw busy();
+}
+function physicalAncestors(path) {
+  let current = resolve6(path);
+  for (; ; ) {
+    try {
+      physicalDirectory(current);
+    } catch (error62) {
+      if (error62.code !== "ENOENT") throw error62;
+    }
+    const parent2 = dirname12(current);
+    if (parent2 === current) return;
+    current = parent2;
+  }
+}
+function markerName(identity, claim2 = false) {
+  return `${claim2 ? "claim" : "owner"}-v1.${process.pid}.${Buffer.from(identity).toString("base64url")}.${randomUUID9()}.json`;
+}
+function fileIdentity(path) {
+  const stat = lstatSync4(path);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw busy();
+  return `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
+}
+function readOwner(path, registry2) {
+  try {
+    const file2 = fileIdentity(path);
+    const value = JSON.parse(readFileSync9(path, "utf8"));
+    if (!isRecord(value) || value.version !== VERSION || typeof value.ownerDirectory !== "string" || !UUID.test(value.ownerDirectory)) return null;
+    physicalDirectory(registry2);
+    const dir = join20(registry2, value.ownerDirectory);
+    physicalDirectory(dir);
+    const files = readdirSync6(dir);
+    if (files.length !== 1) return null;
+    const marker = files[0];
+    const match = MARKER.exec(marker);
+    const pid = Number(match?.[1]);
+    if (!match || !Number.isSafeInteger(pid) || pid <= 0 || !UUID.test(match[3])) return null;
+    const identity = Buffer.from(match[2], "base64url").toString("utf8");
+    if (!identity || Buffer.from(identity).toString("base64url") !== match[2]) return null;
+    if (fileIdentity(join20(dir, marker)) !== file2 || fileIdentity(path) !== file2) return null;
+    return { dir, marker, pid, identity, file: file2 };
+  } catch {
+    return null;
+  }
+}
+function archiveOwned(path, registry2, owner, identity) {
+  const current = readOwner(path, registry2);
+  if (!current || current.file !== owner.file || current.marker !== owner.marker || current.dir !== owner.dir) throw busy();
+  const claim2 = markerName(identity, true);
+  renameSync4(join20(owner.dir, owner.marker), join20(owner.dir, claim2));
+  if (fileIdentity(path) !== owner.file) throw busy();
+  renameSync4(path, join20(owner.dir, `released-v2.${randomUUID9()}.json`));
+  archiveFile(owner.dir);
+}
+function metadataFileLease(path, waitMs = 0, nonBlockingRecovery = false) {
+  const identity = processIdentity(process.pid);
+  if (!identity) throw busy();
+  const parent2 = dirname12(path);
+  physicalAncestors(parent2);
+  mkdirSync9(parent2, { recursive: true, mode: 448 });
+  physicalDirectory(parent2);
+  const namespace = join20(parent2, ".metadata-leases");
+  mkdirSync9(namespace, { recursive: true, mode: 448 });
+  physicalDirectory(namespace);
+  const registry2 = join20(namespace, createHash6("sha256").update(basename6(path)).digest("hex"));
+  mkdirSync9(registry2, { recursive: true, mode: 448 });
+  physicalDirectory(registry2);
+  const archive = join20(registry2, "archive");
+  mkdirSync9(archive, { recursive: true, mode: 448 });
+  physicalDirectory(archive);
+  const deadline = Date.now() + waitMs;
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  let staged;
+  try {
+    for (; ; ) {
+      let absent = false;
+      try {
+        lstatSync4(path);
+      } catch (error62) {
+        if (error62.code === "ENOENT") absent = true;
+        else throw error62;
+      }
+      if (absent) {
+        if (!staged) {
+          const ownerDirectory = randomUUID9();
+          const dir = join20(registry2, ownerDirectory);
+          mkdirSync9(dir, { mode: 448 });
+          const marker = markerName(identity);
+          const source2 = join20(dir, marker);
+          try {
+            const fd = openSync7(source2, "wx", 384);
+            try {
+              writeFileSync5(fd, `${JSON.stringify({ version: VERSION, pid: process.pid, identity, nonce: marker, ownerDirectory, createdAt: Date.now() })}
+`);
+              fsyncSync3(fd);
+            } finally {
+              closeSync7(fd);
+            }
+            staged = { dir, marker, pid: process.pid, identity, file: fileIdentity(source2) };
+          } catch (error62) {
+            archiveFile(dir);
+            throw error62;
+          }
+        }
+        try {
+          linkSync(join20(staged.dir, staged.marker), path);
+          const acquired = staged;
+          staged = void 0;
+          let released = false;
+          return () => {
+            if (released) return;
+            const owner2 = readOwner(path, registry2);
+            if (!owner2 || owner2.file !== acquired.file || owner2.dir !== acquired.dir || owner2.marker !== acquired.marker) return;
+            archiveOwned(path, registry2, owner2, identity);
+            released = true;
+          };
+        } catch (error62) {
+          if (error62.code !== "EEXIST") throw error62;
+        }
+      }
+      const owner = readOwner(path, registry2);
+      if (owner && (nonBlockingRecovery ? nonBlockingAlive(owner) : isProcessIdentityAlive(owner.pid, owner.identity)) === false) {
+        try {
+          archiveOwned(path, registry2, owner, identity);
+          continue;
+        } catch {
+        }
+      }
+      if (Date.now() >= deadline) throw busy();
+      Atomics.wait(pause, 0, 0, RETRY_MS);
+    }
+  } finally {
+    if (staged) archiveFile(staged.dir);
+  }
+}
 
 // src/core/job-archive.ts
-import { createHash as createHash6, randomUUID as randomUUID9 } from "node:crypto";
-import { closeSync as closeSync7, existsSync as existsSync14, fsyncSync as fsyncSync3, linkSync, lstatSync as lstatSync4, mkdirSync as mkdirSync9, openSync as openSync7, readdirSync as readdirSync6, writeFileSync as writeFileSync5 } from "node:fs";
-import { basename as basename6, dirname as dirname12, join as join20 } from "node:path";
+import { createHash as createHash7, randomUUID as randomUUID10 } from "node:crypto";
+import { closeSync as closeSync8, existsSync as existsSync14, fsyncSync as fsyncSync4, linkSync as linkSync2, lstatSync as lstatSync5, mkdirSync as mkdirSync10, openSync as openSync8, readdirSync as readdirSync7, writeFileSync as writeFileSync6 } from "node:fs";
+import { basename as basename7, dirname as dirname13, join as join21 } from "node:path";
 
 // src/core/file-cache.ts
-import { readFileSync as readFileSync9, statSync as statSync6 } from "node:fs";
+import { readFileSync as readFileSync10, statSync as statSync6 } from "node:fs";
 var MAX_BYTES = 256 * 1024 * 1024;
 var MAX_ENTRIES = 2048;
 var cache2 = /* @__PURE__ */ new Map();
 var damaged = /* @__PURE__ */ new Map();
 var bytes = 0;
+function cloneJson(value) {
+  if (Array.isArray(value)) return value.map((item) => cloneJson(item));
+  if (value !== null && typeof value === "object") {
+    const copied = {};
+    for (const key of Object.keys(value)) {
+      const item = cloneJson(value[key]);
+      if (key === "__proto__") Object.defineProperty(copied, key, { value: item, writable: true, configurable: true, enumerable: true });
+      else copied[key] = item;
+    }
+    return copied;
+  }
+  return value;
+}
 function fileSignature(st) {
   return `${st.dev}:${st.ino}:${st.birthtimeMs}:${st.ctimeMs}:${st.mtimeMs}:${st.size}`;
 }
@@ -22332,9 +22585,9 @@ function readJsonSnapshot(file2, scan) {
   }
   let value;
   try {
-    if (!scan) value = JSON.parse(readFileSync9(file2, "utf8"));
+    if (!scan) value = JSON.parse(readFileSync10(file2, "utf8"));
     else {
-      const raw = readFileSync9(file2, "utf8");
+      const raw = readFileSync10(file2, "utf8");
       const after = statSync6(file2);
       if (!after.isFile() || fileSignature(after) !== signature)
         throw new Error("JSON snapshot identity changed during read");
@@ -22363,25 +22616,25 @@ function readJsonSnapshot(file2, scan) {
 // src/core/job-archive.ts
 var snapshots = /* @__PURE__ */ new Map();
 var EMPTY_SNAPSHOT = { signature: "", jobs: [] };
-function physicalDirectory(dir) {
-  const st = lstatSync4(dir);
+function physicalDirectory2(dir) {
+  const st = lstatSync5(dir);
   if (!st.isDirectory() || st.isSymbolicLink()) throw new Error("job archive directory must be physical; data kept unchanged");
 }
 function physicalFile(file2) {
-  const st = lstatSync4(file2);
+  const st = lstatSync5(file2);
   if (!st.isFile() || st.isSymbolicLink()) throw new Error("job archive file must be physical; data kept unchanged");
   return st;
 }
 function readArchivedJobSnapshot(path) {
-  const dir = join20(dirname12(path), "archive");
+  const dir = join21(dirname13(path), "archive");
   if (!existsSync14(dir)) return EMPTY_SNAPSHOT;
-  physicalDirectory(dir);
+  physicalDirectory2(dir);
   const files = [];
   const signatures = [];
   let bytes2 = 0;
-  for (const file2 of readdirSync6(dir).sort()) {
-    if (!file2.startsWith(`${basename6(path)}.overflow.json-`) && !/^jobs-.*\.json$/.test(file2)) continue;
-    const full = join20(dir, file2), st = physicalFile(full);
+  for (const file2 of readdirSync7(dir).sort()) {
+    if (!file2.startsWith(`${basename7(path)}.overflow.json-`) && !/^jobs-.*\.json$/.test(file2)) continue;
+    const full = join21(dir, file2), st = physicalFile(full);
     const stamp = /(?:^jobs-|\.overflow\.json-)(\d+)-/.exec(file2)?.[1];
     signatures.push(`${file2}:${fileSignature(st)}`);
     files.push({ path: full, time: stamp ? Number(stamp) : st.mtimeMs, st });
@@ -22393,8 +22646,12 @@ function readArchivedJobSnapshot(path) {
   files.sort((a, b) => a.time - b.time || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   for (const { path: file2, st } of files) {
     const value = readJsonSnapshot(file2, { file: file2, stat: st }).value;
-    if (!isRecord(value) || value.version !== void 0 && (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${basename6(file2)}`);
-    for (const job of value.jobs) if (isRecord(job) && typeof job.id === "string") jobs.set(job.id, job);
+    if (!isRecord(value) || value.version !== void 0 && (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${basename7(file2)}`);
+    for (const job of value.jobs) if (isRecord(job) && typeof job.id === "string") {
+      const prior = jobs.get(job.id);
+      if (job.status === "running" && prior && prior.startedAt === job.startedAt && isRecord(prior.completionReceipt) && prior.completionReceipt.version === 1 && ["done", "failed", "cancelled"].includes(String(prior.status))) continue;
+      jobs.set(job.id, job);
+    }
   }
   const next = { signature, jobs: [...jobs.values()] };
   snapshots.delete(path);
@@ -22402,15 +22659,209 @@ function readArchivedJobSnapshot(path) {
   if (snapshots.size > 4) snapshots.delete(snapshots.keys().next().value);
   return next;
 }
+function archiveJobs(path, jobs) {
+  assertStoreUpgrade(dirname13(path), "json", 0, JSON_STORE_VERSION);
+  const dir = join21(dirname13(path), "archive");
+  mkdirSync10(dir, { recursive: true, mode: 448 });
+  physicalDirectory2(dir);
+  const retained = join21(dir, "archive");
+  mkdirSync10(retained, { recursive: true, mode: 448 });
+  physicalDirectory2(retained);
+  const canonical = (value) => Array.isArray(value) ? value.map(canonical) : isRecord(value) ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value;
+  const records = jobs.map(canonical).sort((a, b) => {
+    const x = JSON.stringify(a), y = JSON.stringify(b);
+    return x < y ? -1 : x > y ? 1 : 0;
+  });
+  const contents = JSON.stringify({ version: JSON_STORE_VERSION, jobs: records }, null, 2) + "\n";
+  const digest2 = createHash7("sha256").update(contents).digest("hex");
+  const target = join21(dir, `jobs-content-${digest2}.json`);
+  const temp = join21(dir, `.jobs-${randomUUID10()}.tmp`);
+  const fd = openSync8(temp, "wx", 384);
+  try {
+    writeFileSync6(fd, contents);
+    fsyncSync4(fd);
+  } finally {
+    closeSync8(fd);
+  }
+  try {
+    try {
+      linkSync2(temp, target);
+    } catch (err) {
+      if (err.code !== "EEXIST") throw err;
+      physicalFile(target);
+      const existing = readJsonSnapshot(target).value;
+      if (JSON.stringify(canonical(existing)) !== JSON.stringify(canonical({ version: JSON_STORE_VERSION, jobs: records }))) throw new Error("job archive identity conflict; active jobs retained");
+    }
+    if (process.platform !== "win32") {
+      const directory2 = openSync8(dir, "r");
+      try {
+        fsyncSync4(directory2);
+      } finally {
+        closeSync8(directory2);
+      }
+    }
+  } finally {
+    archiveFile(temp);
+  }
+  return target;
+}
+
+// src/core/run-history.ts
+import { readFile as readFile2 } from "node:fs/promises";
+import { lstatSync as lstatSync6, readdirSync as readdirSync10, realpathSync as realpathSync4, statSync as statSync9 } from "node:fs";
+import { isAbsolute as isAbsolute3, join as join24, relative as relative3, sep as sep2 } from "node:path";
+
+// src/core/runfeed.ts
+import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync12, readFileSync as readFileSync11, readdirSync as readdirSync9, statSync as statSync8 } from "node:fs";
+import { join as join23 } from "node:path";
+
+// src/core/run-archive.ts
+import { copyFileSync as copyFileSync4, existsSync as existsSync15, mkdirSync as mkdirSync11, readdirSync as readdirSync8, renameSync as renameSync5, statSync as statSync7 } from "node:fs";
+import { basename as basename8, join as join22 } from "node:path";
+
+// src/core/run-log-preview.ts
+import { closeSync as closeSync9, fstatSync as fstatSync3, openSync as openSync9, readSync as readSync3 } from "node:fs";
+var WINDOW_BYTES = 32 * 1024;
+
+// src/core/run-archive.ts
+var DEFAULT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
+
+// src/core/runfeed.ts
+import { setTimeout as delay3 } from "node:timers/promises";
+
+// src/core/run-history.ts
+function readHistoryJson(file2) {
+  try {
+    return cloneJson(readJsonSnapshot(file2).value);
+  } catch {
+    return null;
+  }
+}
+
+// src/core/ask-completion.ts
+import { readFile as readFile3 } from "node:fs/promises";
+function recordAskCompletion(home, job) {
+  if (!job.name.includes("-ask-") || !["done", "failed", "cancelled"].includes(job.status)) return;
+  const path = join25(home, "ask-completions", `${job.id}-${job.startedAt}.json`);
+  writeJsonStore(path, { receiptVersion: 1, ...job }, readHistoryJson(path));
+}
+function observeAskToolRecord(db2, home, source2, generation, raw, at, offset) {
+  if (offset === void 0) {
+    for (const line of raw.toString("utf8").split("\n")) observeAskRow(db2, home, source2, generation, line, at);
+    return;
+  }
+  const key = `ask-jsonl-fragment:${source2}:${generation}`;
+  const saved = JSON.parse(String(db2.prepare("SELECT cursor FROM history_cursors WHERE source=?").get(key)?.cursor ?? "{}"));
+  const lines = ((saved.after === offset ? saved.tail ?? "" : "") + raw.toString("utf8")).split("\n");
+  let tail = lines.pop() ?? "";
+  for (const line of lines) observeAskRow(db2, home, source2, generation, line, at);
+  try {
+    JSON.parse(tail);
+    observeAskRow(db2, home, source2, generation, tail, at);
+    tail = "";
+  } catch {
+  }
+  if (Buffer.byteLength(tail) > 1024 * 1024) tail = "";
+  db2.prepare("INSERT INTO history_cursors VALUES(?,?) ON CONFLICT(source) DO UPDATE SET cursor=excluded.cursor").run(key, JSON.stringify({ after: offset + raw.length, tail }));
+}
+function observeAskRow(db2, home, source2, generation, line, at) {
+  let row;
+  try {
+    row = JSON.parse(line);
+  } catch {
+    return;
+  }
+  if (!isRecord(row) || !isRecord(row.message) || !Array.isArray(row.message.content)) return;
+  const timestamp = typeof row.timestamp === "string" ? Date.parse(row.timestamp) : row.timestamp;
+  if (typeof timestamp === "number" && Number.isFinite(timestamp) && timestamp > 0) at = timestamp;
+  for (const block of row.message.content) {
+    if (!isRecord(block)) continue;
+    if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
+      const target = /(?:^|__)ask_(codex|claude|opencode|antigravity)$/.exec(block.name)?.[1];
+      if (target) db2.prepare("INSERT INTO history_cursors VALUES(?,?) ON CONFLICT(source) DO UPDATE SET cursor=excluded.cursor").run(`ask-tool:${source2}:${generation}:${block.id}`, JSON.stringify({ target, at }));
+    }
+    if (block.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
+    const call = db2.prepare("SELECT cursor FROM history_cursors WHERE source=?").get(`ask-tool:${source2}:${generation}:${block.tool_use_id}`);
+    if (!call) continue;
+    const paired = JSON.parse(String(call.cursor));
+    let text = typeof block.content === "string" ? block.content : Array.isArray(block.content) ? block.content.filter(isRecord).map((item) => typeof item.text === "string" ? item.text : "").join("\n") : "";
+    let failed = block.is_error === true;
+    try {
+      const wrapped = JSON.parse(text);
+      if (isRecord(wrapped) && Array.isArray(wrapped.content)) {
+        text = wrapped.content.filter(isRecord).map((item) => item.text ?? "").join("\n");
+        failed ||= wrapped.isError === true;
+      }
+    } catch {
+    }
+    const match = /^Job: ((codex|claude|opencode|antigravity)-ask-([\w-]+))\r?\n/.exec(text);
+    if (!match || match[2] !== paired.target) continue;
+    const registry2 = readHistoryJson(join25(home, "jobs.json"));
+    const jobs = Array.isArray(registry2) ? registry2 : isRecord(registry2) && Array.isArray(registry2.jobs) ? registry2.jobs : [];
+    const job = jobs.find((job2) => isRecord(job2) && job2.name === match[1]);
+    if (!isRecord(job) || typeof job.startedAt !== "number" || job.startedAt < paired.at || job.startedAt > at) continue;
+    recordAskCompletion(home, { id: match[3], name: match[1], startedAt: job.startedAt, finishedAt: at, status: failed ? "failed" : "done" });
+  }
+}
+function reconcileAskCompletions(path) {
+  const release = metadataFileLease(`${path}.lock`, 0, true);
+  try {
+    const previous = readJsonStore(path, void 0, (value) => Array.isArray(value) || isRecord(value));
+    assertWritableStore(previous);
+    const entries = Array.isArray(previous) ? previous : isRecord(previous) && Array.isArray(previous.jobs) ? previous.jobs : [];
+    const originals = [];
+    const jobs = entries.map((job) => {
+      if (!isRecord(job) || typeof job.id !== "string" || !/^[\w-]+$/.test(job.id) || typeof job.name !== "string" || !job.name.includes("-ask-") || job.status !== "running" || typeof job.startedAt !== "number") return job;
+      const receipt = readHistoryJson(join25(dirname14(path), "ask-completions", `${job.id}-${job.startedAt}.json`));
+      const state = readHistoryJson(join25(dirname14(path), "jobs", `${job.id}.json`));
+      const final = isRecord(receipt) && receipt.receiptVersion === 1 && receipt.name === job.name && receipt.startedAt === job.startedAt ? receipt : isRecord(state) && state.startedAt === job.startedAt ? state : void 0;
+      if (!final || !["done", "failed", "cancelled"].includes(String(final.status)) || typeof (final.finishedAt ?? final.updatedAt) !== "number" || Number(final.finishedAt ?? final.updatedAt) < job.startedAt) return job;
+      originals.push(job);
+      return {
+        ...job,
+        status: final.status,
+        finishedAt: final.finishedAt ?? final.updatedAt,
+        host: null,
+        completionReceipt: { version: 1, startedAt: job.startedAt, status: final.status }
+      };
+    });
+    if (!originals.length) return 0;
+    const backup = backupPath(path);
+    copyFileSync5(path, backup, fsConstants.COPYFILE_EXCL);
+    const fd = openSync10(backup, "r+");
+    try {
+      fsyncSync5(fd);
+    } finally {
+      closeSync10(fd);
+    }
+    archiveJobs(path, originals);
+    const completedIds = new Set(originals.map((job) => job.id));
+    archiveJobs(path, jobs.filter((job) => isRecord(job) && completedIds.has(job.id)));
+    writeJsonStore(path, { ...isRecord(previous) ? previous : {}, jobs }, previous);
+    return originals.length;
+  } finally {
+    release();
+  }
+}
 
 // src/core/conversations.ts
+import {
+  closeSync as closeSync11,
+  existsSync as existsSync16,
+  fstatSync as fstatSync4,
+  openSync as openSync11,
+  readSync as readSync4,
+  watch
+} from "node:fs";
+import { basename as basename9, join as join26 } from "node:path";
+import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
 var CONVERSATION_BYTES = 64 * 1024;
 var conversationPageSchema = external_exports.object({
   id: external_exports.string().min(1).max(512),
   after: external_exports.number().int().nonnegative().optional(),
   limit: external_exports.number().int().min(1).max(100).optional()
 }).strict();
-var hash2 = (b) => createHash7("sha256").update(b).digest("hex");
+var hash2 = (b) => createHash8("sha256").update(b).digest("hex");
 var fold = (s) => s.normalize("NFKD").replace(new RegExp("\\p{M}", "gu"), "").toLowerCase();
 function indexedConversationText(raw) {
   const text = raw.toString("utf8");
@@ -22465,10 +22916,10 @@ var ConversationIngestor = class {
   idleSources = 0;
   watchRoots() {
     for (const root of [
-      join21(this.paths.claude, "projects"),
-      join21(this.paths.codex, "sessions"),
+      join26(this.paths.claude, "projects"),
+      join26(this.paths.codex, "sessions"),
       this.paths.opencode,
-      ...this.paths.antigravity ? [join21(this.paths.antigravity, "brain")] : []
+      ...this.paths.antigravity ? [join26(this.paths.antigravity, "brain")] : []
     ]) {
       if (this.watched.has(root)) continue;
       try {
@@ -22477,7 +22928,7 @@ var ConversationIngestor = class {
           { recursive: true, persistent: false },
           (_, name) => {
             if (name && this.dirty.size < 2048)
-              this.dirty.add(join21(root, String(name)));
+              this.dirty.add(join26(root, String(name)));
           }
         );
         watcher.on("error", () => {
@@ -22533,7 +22984,7 @@ var ConversationIngestor = class {
     for (const file2 of files) {
       const session = String(file2.session), agent = String(file2.agent), child = file2.child ? String(file2.child) : null;
       const kind = String(file2.kind);
-      const id = kind === "transcript" ? this.conversation(agent, session, String(file2.cwd), child) : `bridge:${kind}:${kind === "run" ? basename7(String(file2.path)).replace(/\.(?:log|json)(?:-\d+-[\w-]+)?$/, "") : basename7(String(file2.path))}`;
+      const id = kind === "transcript" ? this.conversation(agent, session, String(file2.cwd), child) : `bridge:${kind}:${kind === "run" ? basename9(String(file2.path)).replace(/\.(?:log|json)(?:-\d+-[\w-]+)?$/, "") : basename9(String(file2.path))}`;
       if (kind !== "transcript")
         this.db.prepare(
           "INSERT OR IGNORE INTO conversations(id,agent,session,kind) VALUES(?,?,?,?)"
@@ -22604,7 +23055,7 @@ var ConversationIngestor = class {
   jobs() {
     if (Date.now() - this.jobsAt < 3e4) return;
     this.jobsAt = Date.now();
-    const path = join21(this.home, "jobs.json");
+    const path = join26(this.home, "jobs.json");
     let active = {};
     try {
       active = object2(readJsonSnapshot(path).value);
@@ -22691,6 +23142,12 @@ var ConversationIngestor = class {
       "INSERT OR IGNORE INTO conversation_records(source,generation,offset,conversation,at,raw,body,part) VALUES(?,?,?,?,?,?,?,?)"
     ).run(source2, generation, offset, conversation, at, raw, body === raw.toString("utf8") ? "" : body, part);
     const record2 = Number(result.changes) ? Number(result.lastInsertRowid) : Number(this.db.prepare("SELECT id FROM conversation_records WHERE source=? AND generation=? AND offset=?").get(source2, generation, offset).id);
+    const retained = this.db.prepare("SELECT raw FROM conversation_records WHERE id=?").get(record2);
+    if (!Buffer.from(retained.raw).equals(raw)) {
+      throw Object.assign(new Error(`History import verification failed at ${source2}:${generation}:${offset}; cursor not advanced, originals retained`), { code: "HISTORY_IMPORT_VERIFICATION_FAILED" });
+    }
+    const native = this.db.prepare("SELECT kind,agent FROM conversations WHERE id=?").get(conversation);
+    if (part === null && native?.kind === "transcript" && native.agent === "claude") observeAskToolRecord(this.db, this.home, source2, generation, raw, at, offset);
     this.indexRecord(
       record2,
       conversation,
@@ -22741,7 +23198,7 @@ var ConversationIngestor = class {
         ).run(recordProject);
       }
       recordJob = binding?.job ?? (/^(claude|codex|opencode|antigravity)-job-/.test(String(metadata.from_name)) ? metadata.from_name : recordSession === c.session ? recordJob : null);
-      const report = /"body"\s*:\s*"Subagent ([A-Za-z0-9][A-Za-z0-9_-]*) \(([a-z][a-z0-9_-]*)(?:, model [^"\r\n]*)?\) (?:done|failed) after \d+s\./.exec(first.slice(0, 8192));
+      const report = /"body"\s*:\s*"Subagent ([A-Za-z0-9][A-Za-z0-9_-]*) \(([a-z][a-z0-9_-]*)(?:, model [^"\r\n]*)?\) (?:done|failed|cancelled) after \d+s\./.exec(first.slice(0, 8192));
       if (c.kind === "message" && report) {
         recordKind = "report";
         recordJob = report[1];
@@ -22794,10 +23251,11 @@ var ConversationIngestor = class {
       this.db.prepare(
         "INSERT OR IGNORE INTO conversation_projects(project) VALUES(?)"
       ).run(project);
-    const raw = Buffer.from(JSON.stringify(row)), offset = Number(saved.offset ?? 0), chunk = raw.subarray(offset, offset + CONVERSATION_BYTES);
+    const { n: _cursorRowid, ...record2 } = row;
+    const raw = Buffer.from(JSON.stringify(record2)), fingerprint = createHash8("sha256").update(raw).digest("hex"), generation = 1 + Number.parseInt(fingerprint.slice(0, 12), 16), offset = saved.fingerprint && saved.fingerprint !== fingerprint ? 0 : Number(saved.offset ?? 0), chunk = raw.subarray(offset, offset + CONVERSATION_BYTES);
     this.put(
       `${table}:${row.id}:${row.recipient ?? row.revision}`,
-      0,
+      generation,
       offset,
       id,
       chunk,
@@ -22807,7 +23265,7 @@ var ConversationIngestor = class {
     this.advance(
       key,
       JSON.stringify(
-        offset + chunk.length >= raw.length ? { after: Number(row.n) } : { after, offset: offset + chunk.length }
+        offset + chunk.length >= raw.length ? { after: Number(row.n) } : { after, offset: offset + chunk.length, fingerprint }
       )
     );
     return 1;
@@ -22823,8 +23281,8 @@ var ConversationIngestor = class {
       "SELECT * FROM messages WHERE id=? ORDER BY recipient=? DESC LIMIT 1"
     ).get(envelope.message, envelope.recipient);
     if (!row) {
-      const path = join21(this.home, "archive.db");
-      if (existsSync15(path)) {
+      const path = join26(this.home, "archive.db");
+      if (existsSync16(path)) {
         const archive = new DatabaseSync12(path, { readOnly: true, timeout: 50 });
         try {
           row = archive.prepare(
@@ -22857,10 +23315,10 @@ var ConversationIngestor = class {
       ).run(project);
     const raw = Buffer.from(
       JSON.stringify({ ...row, recipient: envelope.recipient })
-    ), offset = Number(saved.offset ?? 0), chunk = raw.subarray(offset, offset + CONVERSATION_BYTES);
+    ), fingerprint = createHash8("sha256").update(raw).digest("hex"), generation = 1 + Number.parseInt(fingerprint.slice(0, 12), 16), offset = saved.fingerprint && saved.fingerprint !== fingerprint ? 0 : Number(saved.offset ?? 0), chunk = raw.subarray(offset, offset + CONVERSATION_BYTES);
     this.put(
       `messages:${row.id}:${envelope.recipient}`,
-      0,
+      generation,
       offset,
       id,
       chunk,
@@ -22870,7 +23328,7 @@ var ConversationIngestor = class {
     this.advance(
       key,
       JSON.stringify(
-        offset + chunk.length >= raw.length ? { after: Number(envelope.id) } : { after, offset: offset + chunk.length }
+        offset + chunk.length >= raw.length ? { after: Number(envelope.id) } : { after, offset: offset + chunk.length, fingerprint }
       )
     );
     return 1;
@@ -22881,13 +23339,13 @@ var ConversationIngestor = class {
     if (!root || !safeFile(root, source2.path)) return 0;
     let fd;
     try {
-      fd = openSync8(source2.path, "r");
-      const stat = fstatSync3(fd);
+      fd = openSync11(source2.path, "r");
+      const stat = fstatSync4(fd);
       const identity = `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
       let offset = Number(source2.offset), generation = Number(source2.generation);
       const anchor2 = Buffer.alloc(Math.min(64, offset));
       if (offset && offset <= stat.size)
-        readSync3(fd, anchor2, 0, anchor2.length, offset - anchor2.length);
+        readSync4(fd, anchor2, 0, anchor2.length, offset - anchor2.length);
       if (offset > stat.size || source2.identity && source2.identity !== identity || offset && source2.anchor && source2.anchor !== hash2(anchor2)) {
         offset = 0;
         generation++;
@@ -22895,7 +23353,7 @@ var ConversationIngestor = class {
       const data = Buffer.alloc(
         Math.min(CONVERSATION_BYTES, Math.max(0, stat.size - offset))
       );
-      let bytes2 = readSync3(fd, data, 0, data.length, offset);
+      let bytes2 = readSync4(fd, data, 0, data.length, offset);
       if (source2.format === "approval" && bytes2 && offset + bytes2 < stat.size && stat.size - offset - bytes2 < 1024)
         bytes2 = Math.max(1, bytes2 - 1024);
       if (bytes2 && offset + bytes2 < stat.size) {
@@ -23075,13 +23533,13 @@ var ConversationIngestor = class {
       }
       offset += bytes2;
       const tail = Buffer.alloc(Math.min(64, offset));
-      if (offset) readSync3(fd, tail, 0, tail.length, offset - tail.length);
+      if (offset) readSync4(fd, tail, 0, tail.length, offset - tail.length);
       this.db.prepare(
         "UPDATE conversation_sources SET offset=?,generation=?,identity=?,anchor=? WHERE id=?"
       ).run(offset, generation, identity, hash2(tail), source2.id);
       return bytes2 ? 1 : 0;
     } finally {
-      if (fd !== void 0) closeSync8(fd);
+      if (fd !== void 0) closeSync11(fd);
     }
   }
   journal(source2) {
@@ -23090,7 +23548,7 @@ var ConversationIngestor = class {
   sqlite(source2) {
     const path = safeFile(
       this.paths.opencode,
-      join21(this.paths.opencode, "opencode.db")
+      join26(this.paths.opencode, "opencode.db")
     );
     if (!path) return 0;
     const input2 = new DatabaseSync12(path, { readOnly: true, timeout: 50 });
@@ -23193,8 +23651,8 @@ var ConversationIngestor = class {
       work += this.jobSnapshot();
       work += this.envelopes();
       work += this.events(this.source, "decisions", "durable-decisions");
-      const archive = join21(this.home, "archive.db");
-      if (existsSync15(archive)) {
+      const archive = join26(this.home, "archive.db");
+      if (existsSync16(archive)) {
         const input2 = new DatabaseSync12(archive, {
           readOnly: true,
           timeout: 50
@@ -23276,8 +23734,8 @@ var ConversationIngestor = class {
 };
 
 // src/core/config.ts
-import { readFileSync as readFileSync11, unwatchFile, watchFile } from "node:fs";
-import { basename as basename8, join as join23 } from "node:path";
+import { readFileSync as readFileSync13, unwatchFile, watchFile } from "node:fs";
+import { basename as basename10, join as join28, isAbsolute as isAbsolute5 } from "node:path";
 
 // src/core/protocol.ts
 var AGENT_KINDS = ["claude", "codex", "opencode", "antigravity", "other"];
@@ -23285,8 +23743,8 @@ var CODING_AGENTS = ["claude", "codex", "opencode", "antigravity"];
 
 // src/network/config.ts
 import { hostname as hostname3 } from "node:os";
-import { readFileSync as readFileSync10 } from "node:fs";
-import { isAbsolute as isAbsolute3, join as join22 } from "node:path";
+import { readFileSync as readFileSync12 } from "node:fs";
+import { isAbsolute as isAbsolute4, join as join27 } from "node:path";
 
 // src/network/constants.ts
 var DEFAULT_NETWORK_PORT = 48148;
@@ -23314,7 +23772,7 @@ var networkConfigSchema = external_exports.object({
     allowPeers: external_exports.array(external_exports.string().regex(NETWORK_NAME_PATTERN)).max(50).default([])
   }).default({ enabled: false, allowRoots: [], agents: [], allowPeers: [] }),
   maxTransferBytes: external_exports.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
-  fetchRoots: external_exports.array(external_exports.string().min(1).max(MAX_FETCH_ROOT_CHARS).refine(isAbsolute3, "fetch roots must be absolute paths")).max(MAX_FETCH_ROOTS).optional()
+  fetchRoots: external_exports.array(external_exports.string().min(1).max(MAX_FETCH_ROOT_CHARS).refine(isAbsolute4, "fetch roots must be absolute paths")).max(MAX_FETCH_ROOTS).optional()
 });
 var DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
 function parseNetworkConfig(value) {
@@ -23331,11 +23789,12 @@ var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto
 var DEFAULT_NOTIFICATIONS = { approvals: true, finish: true, fail: true };
 var DEFAULT_HISTORY_ANSWER = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
 var DEFAULT_CONFIG = {
-  history: { ingest: true },
+  history: { ingest: true, budgetBytes: 8 * 1024 ** 3 },
   questionAlerts: DEFAULT_QUESTION_ALERTS,
   projectGroups: true,
   historyAnswer: DEFAULT_HISTORY_ANSWER,
   name: null,
+  worktreeRoot: null,
   autoWake: false,
   wakeOnDirect: true,
   maxHops: DEFAULT_MAX_HOPS,
@@ -23443,7 +23902,7 @@ function toolPatterns(v) {
 }
 function loadConfig(home, agent, log, env = process.env, projectDir) {
   let file2 = {};
-  const path = join23(home, CONFIG_FILE_NAME);
+  const path = join28(home, CONFIG_FILE_NAME);
   try {
     file2 = readJsonStore(path, log) ?? {};
     log.debug("config file loaded", { path });
@@ -23452,9 +23911,9 @@ function loadConfig(home, agent, log, env = process.env, projectDir) {
   }
   let project = {};
   if (projectDir) {
-    const localPath = join23(projectDir, ".agent-bridge", CONFIG_FILE_NAME);
+    const localPath = join28(projectDir, ".agent-bridge", CONFIG_FILE_NAME);
     try {
-      const value = JSON.parse(readFileSync11(localPath, "utf8"));
+      const value = JSON.parse(readFileSync13(localPath, "utf8"));
       if (isRecord(value)) project = value;
     } catch (err) {
       if (err.code !== "ENOENT") log.warn("ignoring unreadable project config", { path: localPath, err: String(err) });
@@ -23475,9 +23934,13 @@ function loadConfig(home, agent, log, env = process.env, projectDir) {
   const str = (v) => typeof v === "string" && v.trim() ? v.trim() : void 0;
   const d = DEFAULT_CONFIG;
   const cfg = {
-    history: { ingest: env.AGENT_BRIDGE_HISTORY_INGEST === "false" || env.AGENT_BRIDGE_HISTORY_INGEST === "0" ? false : !(isRecord(file2.history) && file2.history.ingest === false) },
+    history: {
+      ingest: env.AGENT_BRIDGE_HISTORY_INGEST === "false" || env.AGENT_BRIDGE_HISTORY_INGEST === "0" ? false : !(isRecord(file2.history) && file2.history.ingest === false),
+      budgetBytes: isRecord(file2.history) && Number.isSafeInteger(file2.history.budgetBytes) && Number(file2.history.budgetBytes) >= 0 ? Number(file2.history.budgetBytes) : d.history.budgetBytes
+    },
     projectGroups: [localSection.projectGroups, project.projectGroups, section.projectGroups, file2.projectGroups].find((v) => v !== void 0) === void 0 ? true : [localSection.projectGroups, project.projectGroups, section.projectGroups, file2.projectGroups].find((v) => v !== void 0) === true,
     name: pick2("name", ENV.name, str) ?? d.name,
+    worktreeRoot: pick2("worktreeRoot", "AGENT_BRIDGE_WORKTREE_ROOT", (v) => typeof v === "string" && isAbsolute5(v) ? v : void 0) ?? d.worktreeRoot,
     autoWake: pick2("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
     wakeOnDirect: pick2("wakeOnDirect", ENV.wakeOnDirect, parseBool) ?? d.wakeOnDirect,
     maxHops: pick2("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
@@ -23524,6 +23987,39 @@ function loadConfig(home, agent, log, env = process.env, projectDir) {
 
 // src/core/history-worker.ts
 import { setTimeout as yieldTurn } from "node:timers/promises";
+
+// src/core/history-budget.ts
+import { lstat, readdir } from "node:fs/promises";
+import { join as join29 } from "node:path";
+async function historyBudget(home, budgetBytes, mirrors = []) {
+  let bytes2 = 0, files = 0;
+  const seen = /* @__PURE__ */ new Set();
+  const visit2 = async (path) => {
+    if (seen.has(path)) return;
+    seen.add(path);
+    let st;
+    try {
+      st = await lstat(path);
+    } catch (error62) {
+      if (error62.code === "ENOENT") return;
+      throw error62;
+    }
+    if (st.isSymbolicLink()) throw new Error("History budget cannot account for linked storage; import paused, data retained");
+    if (st.isDirectory()) {
+      for (const entry of await readdir(path)) await visit2(join29(path, entry));
+    } else if (st.isFile()) {
+      bytes2 += st.size;
+      files++;
+    }
+  };
+  for (const entry of await readdir(home)) if (/^history\.db(?:$|[-.])/.test(entry) || entry.startsWith("history-import-") || [".migration-snapshots", "history-archive", "project-mirrors"].includes(entry)) await visit2(join29(home, entry));
+  for (const mirror of mirrors) await visit2(mirror);
+  return { bytes: bytes2, budgetBytes, files, paused: budgetBytes > 0 && bytes2 + 8 * 1024 ** 2 >= budgetBytes, policy: "retain-and-pause" };
+}
+
+// src/core/history-worker.ts
+import { dirname as dirname15 } from "node:path";
+import { join as join30 } from "node:path";
 var db = openHistoryStore(workerData.file);
 var source = new DatabaseSync13(workerData.bridge, { readOnly: true, timeout: 100 });
 source.exec("PRAGMA busy_timeout=100; PRAGMA query_only=ON");
@@ -23537,10 +24033,18 @@ var ready = false;
 var running = false;
 var requestedReset = false;
 var pauseUntil = 0;
+var storageBudgetPaused = false;
 var migrationFailure = historyMigrationFailure(db);
+var importFailurePath = join30(workerData.home, "history-import-failure.json");
+var savedImportFailure = readHistoryJson(importFailurePath);
+var importState = isRecord(savedImportFailure) ? savedImportFailure : {};
+function saveImportState() {
+  writeJsonStore(importFailurePath, { importVersion: 1, ...importState }, readHistoryJson(importFailurePath));
+}
 if (migrationFailure) parentPort?.postMessage({ error: migrationFailure });
 var ioBytesPerSecond = Number(process.env.AGENT_BRIDGE_HISTORY_MIGRATION_IO_BYTES_PER_SECOND || HISTORY_IO_BYTES_PER_SECOND);
 var migrationProgress = readHistoryMigrationProgress(db, ioBytesPerSecond);
+if (typeof importState.error === "string") migrationProgress = { ...migrationProgress, error: importState.error, paused: true };
 var pressureWaiters = /* @__PURE__ */ new Set();
 var peers = /* @__PURE__ */ new Map();
 function enabled() {
@@ -23550,30 +24054,61 @@ function reportPaused(paused2) {
   migrationProgress = { ...migrationProgress, paused: paused2, phase: paused2 && migrationProgress.phase === "starting" ? "paused" : migrationProgress.phase };
   parentPort?.postMessage({ migrationProgress });
 }
-reportPaused(!enabled());
-var paused = () => pending || Date.now() < pauseUntil || !enabled();
+reportPaused(!enabled() || Boolean(importState.error));
+var paused = () => pending || Date.now() < pauseUntil || !enabled() || storageBudgetPaused;
+async function checkStorageBudget() {
+  const config2 = loadConfig(workerData.home, "other", nullLogger);
+  const mirrors = ownsProjectMirrors(workerData.home) ? db.prepare("SELECT DISTINCT project FROM conversations WHERE project != ''").all().map((row) => dirname15(projectDatabasePath(String(row.project), workerData.home))) : [];
+  const budget = await historyBudget(workerData.home, config2.history.budgetBytes, mirrors);
+  storageBudgetPaused = budget.paused;
+  if (budget.paused) {
+    migrationProgress = { ...migrationProgress, paused: true, error: `History storage budget reached (${budget.bytes}/${budget.budgetBytes} bytes); import paused, sources, cursors and all archives retained. Raise history.budgetBytes to resume; never prune user data.` };
+    parentPort?.postMessage({ migrationProgress });
+  } else if (migrationProgress.error?.startsWith("History storage budget reached")) migrationProgress = { ...migrationProgress, error: null };
+  return budget.paused;
+}
+var checkingBudget = false;
+var budgetTimer = setInterval(() => {
+  if (!running || checkingBudget || stopped) return;
+  checkingBudget = true;
+  void checkStorageBudget().catch((error62) => {
+    storageBudgetPaused = true;
+    parentPort?.postMessage({ error: String(error62) });
+  }).finally(() => {
+    checkingBudget = false;
+  });
+}, 1e3);
+budgetTimer.unref();
 async function waitForPressureGap() {
-  while (pending && !stopped) await new Promise((resolve6) => {
-    pressureWaiters.add(resolve6);
+  while (pending && !stopped) await new Promise((resolve7) => {
+    pressureWaiters.add(resolve7);
   });
 }
 function releasePressure() {
-  for (const resolve6 of pressureWaiters) resolve6();
+  for (const resolve7 of pressureWaiters) resolve7();
   pressureWaiters.clear();
 }
 async function tick(reset = false) {
   if (reset) requestedReset = true;
   if (running || stopped) return { work: 0, discovering: !ready };
-  if (paused()) {
+  if (pending || Date.now() < pauseUntil || !enabled()) {
     reportPaused(true);
     return { work: 0, discovering: !ready };
   }
-  reset = requestedReset;
-  requestedReset = false;
-  reportPaused(false);
-  if (migrationFailure && !reset) throw new Error(migrationFailure);
   running = true;
   try {
+    if (await checkStorageBudget()) return { work: 0, discovering: !ready };
+    reset = requestedReset;
+    requestedReset = false;
+    if (migrationFailure && !reset) throw new Error(migrationFailure);
+    if (importState.error && !reset) throw new Error(importState.error);
+    if (reset && importState.error) {
+      const { error: priorError, ...retainedState } = importState;
+      importState = { ...retainedState, history: [...importState.history ?? [], priorError] };
+      saveImportState();
+      migrationProgress = { ...migrationProgress, error: null };
+    }
+    reportPaused(false);
     if (!ready) {
       try {
         await migrateHistoryStore(workerData.bridge, db, paused, () => stopped, (owner) => parentPort?.postMessage({ migrationLease: owner }), reset, { ioBytesPerSecond, onProgress: (progress) => {
@@ -23603,24 +24138,33 @@ async function tick(reset = false) {
     if (stopped || paused()) return { work: legacyWork + rawWork, discovering: true };
     const result = index.tick();
     return { work: legacyWork + rawWork + result.work, discovering: result.discovering || ingest.discovering };
+  } catch (error62) {
+    if (error62.code === "HISTORY_IMPORT_VERIFICATION_FAILED") {
+      importState = { ...importState, error: String(error62) };
+      saveImportState();
+      migrationProgress = { ...migrationProgress, error: importState.error, paused: true };
+      parentPort?.postMessage({ migrationProgress });
+    }
+    throw error62;
   } finally {
     running = false;
   }
 }
-function schedule(delay3 = HISTORY_TICK_MS) {
+function schedule(delay4 = HISTORY_TICK_MS) {
   if (stopped) return;
   timer = setTimeout(async () => {
     try {
       await waitForPressureGap();
-      if (!migrationFailure) await tick();
+      if (!migrationFailure && !importState.error) await tick();
     } catch (err) {
       if (err.code !== "HISTORY_SNAPSHOT_PAUSED" && !stopped) parentPort?.postMessage({ error: String(err) });
       pauseUntil = Date.now() + 5e3;
     }
     schedule();
-  }, delay3);
+  }, delay4);
 }
 function close() {
+  clearInterval(budgetTimer);
   index.close();
   ingest.close();
   source.close();
@@ -23647,6 +24191,10 @@ parentPort?.on("message", async (message) => {
     return;
   }
   try {
+    if (message.reconcileAsks) {
+      parentPort?.postMessage({ id: message.id, result: { work: reconcileAskCompletions(join30(workerData.home, "jobs.json")), discovering: false } });
+      return;
+    }
     while (running && !stopped) await yieldTurn(10);
     parentPort?.postMessage({ id: message.id, result: await tick(message.reset) });
   } catch (err) {
