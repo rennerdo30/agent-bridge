@@ -7832,6 +7832,9 @@ function isUnsupportedOperation(error62, op) {
 }
 
 // src/core/client.ts
+function brokerConnectionClosedError() {
+  return Object.assign(new Error("connection to broker closed"), { code: "BROKER_CONNECTION_CLOSED" });
+}
 var BridgeClient = class _BridgeClient extends EventEmitter {
   constructor(socket, log) {
     super();
@@ -7858,7 +7861,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
       this.closed = true;
       for (const [, p] of this.pending) {
         clearTimeout(p.timer);
-        p.reject(new Error("connection to broker closed"));
+        p.reject(brokerConnectionClosedError());
       }
       this.pending.clear();
       this.emit("close");
@@ -7893,7 +7896,7 @@ var BridgeClient = class _BridgeClient extends EventEmitter {
     return this.closed;
   }
   request(op, args, timeoutMs = REQUEST_TIMEOUT_MS) {
-    if (this.closed) return Promise.reject(new Error("connection to broker closed"));
+    if (this.closed) return Promise.reject(brokerConnectionClosedError());
     const id = this.nextId++;
     return new Promise((resolve23, reject) => {
       const timer = setTimeout(() => {
@@ -49199,6 +49202,57 @@ var BridgeNode = class extends EventEmitter2 {
     await this.ensureConnected();
     return fn(this.client);
   }
+  /** A read may cross listener retirement; retry only that actual closed socket once. */
+  async withReadClient(fn, signal) {
+    const cancelled = new AbortController();
+    const stopped = () => cancelled.abort(new Error("bridge node stopped"));
+    const aborted2 = () => cancelled.abort(signal?.reason);
+    this.on("stopped", stopped);
+    signal?.addEventListener("abort", aborted2, { once: true });
+    if (this.stopping) stopped();
+    if (signal?.aborted) aborted2();
+    const wait = (pending2) => new Promise((resolve23, reject) => {
+      const abort = () => {
+        cancelled.signal.removeEventListener("abort", abort);
+        reject(cancelled.signal.reason);
+      };
+      cancelled.signal.addEventListener("abort", abort, { once: true });
+      pending2.then((value) => {
+        cancelled.signal.removeEventListener("abort", abort);
+        resolve23(value);
+      }, (error62) => {
+        cancelled.signal.removeEventListener("abort", abort);
+        reject(error62);
+      });
+      if (cancelled.signal.aborted) abort();
+    });
+    let usedClient = null;
+    const invoke = async (timeoutMs) => {
+      cancelled.signal.throwIfAborted();
+      const before = this.client;
+      await this.ensureConnected();
+      cancelled.signal.throwIfAborted();
+      usedClient = this.client ?? before;
+      if (!usedClient || usedClient.isClosed) throw brokerConnectionClosedError();
+      return fn(usedClient, timeoutMs);
+    };
+    try {
+      try {
+        return await wait(invoke());
+      } catch (error62) {
+        if (cancelled.signal.aborted || this.stopping || errCode(error62) !== "BROKER_CONNECTION_CLOSED" || !usedClient?.isClosed) throw error62;
+      }
+      const timer = setTimeout(() => cancelled.abort(Object.assign(new Error("broker read reconnect timed out"), { code: "ETIMEDOUT" })), CONNECT_TIMEOUT_MS);
+      try {
+        return await wait(invoke(CONNECT_TIMEOUT_MS));
+      } finally {
+        clearTimeout(timer);
+      }
+    } finally {
+      this.off("stopped", stopped);
+      signal?.removeEventListener("abort", aborted2);
+    }
+  }
   /** quiet: not part of a conversation of this agent (no listen window, replies are not awaited), e.g. control messages to a job runner. */
   send(args, opts = {}) {
     const request2 = { ...args, dedupeKey: args.dedupeKey || randomUUID30() };
@@ -49298,8 +49352,8 @@ var BridgeNode = class extends EventEmitter2 {
   messageReceipt(id) {
     return this.withClient((c) => c.request("messageReceipt", { id }));
   }
-  peers() {
-    return this.withClient((c) => c.request("peers", {})).then((peers) => peers.filter((p) => !isPluginCacheCwd(p.cwd)));
+  peers(signal) {
+    return this.withReadClient((c, timeoutMs) => c.request("peers", {}, timeoutMs), signal).then((peers) => peers.filter((p) => !isPluginCacheCwd(p.cwd)));
   }
   health() {
     const started = performance.now();
