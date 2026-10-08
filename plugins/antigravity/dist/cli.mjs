@@ -32582,12 +32582,12 @@ var BackupBackground = class {
       lastError: this.lastError
     };
   }
-  schedule(delay10) {
+  schedule(delay11) {
     if (!this.enabled || this.stopped || this.failed) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       this.start();
-    }, delay10);
+    }, delay11);
     this.timer.unref();
   }
   start() {
@@ -33359,7 +33359,7 @@ import { readFileSync as readFileSync25 } from "node:fs";
 
 // src/mcp/jobs.ts
 import { randomUUID as randomUUID15 } from "node:crypto";
-import { setTimeout as delay7 } from "node:timers/promises";
+import { setTimeout as delay8 } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { closeSync as closeSync14, constants as fsConstants, copyFileSync as copyFileSync6, fsyncSync as fsyncSync7, openSync as openSync14 } from "node:fs";
 import { dirname as dirname23 } from "node:path";
@@ -36529,6 +36529,7 @@ import { isAbsolute as isAbsolute4, join as join42, relative as relative4, sep a
 // src/core/runfeed.ts
 import { appendFileSync as appendFileSync4, mkdirSync as mkdirSync21, readFileSync as readFileSync22, readdirSync as readdirSync11, statSync as statSync12 } from "node:fs";
 import { join as join41 } from "node:path";
+import { setTimeout as delay7 } from "node:timers/promises";
 var RUNS_DIR_NAME = "runs";
 var HEARTBEAT_MS = 6e4;
 var KEEP_RUN_LOGS = 50;
@@ -36556,11 +36557,33 @@ function pruneOldLogs(dir) {
 `);
   }
 }
+async function startRunFeedReady(opts, signal) {
+  let queued = false;
+  for (; ; ) {
+    signal.throwIfAborted();
+    await refreshStorePeerIdentities(opts.home, signal);
+    signal.throwIfAborted();
+    try {
+      return startRunFeed({ ...opts, requireMetadata: true });
+    } catch (error62) {
+      if (error62.code !== "STORE_UPGRADE_DEFERRED") throw error62;
+      if (!queued) {
+        opts.forward?.("queued: waiting for compatible storage readers to retain run context");
+        queued = true;
+      }
+      try {
+        await delay7(250, void 0, { signal });
+      } catch (error63) {
+        signal.throwIfAborted();
+        throw error63;
+      }
+    }
+  }
+}
 function startRunFeed(opts) {
   const now = opts.now ?? Date.now;
   const release = storageLease(opts.home);
   const dir = join41(opts.home, RUNS_DIR_NAME);
-  mkdirSync21(dir, { recursive: true });
   const logPath = join41(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
   const write = (line) => {
     const [first, ...rest] = line.replace(/\r/g, "").split("\n");
@@ -36572,17 +36595,24 @@ function startRunFeed(opts) {
     }
   };
   let meta3 = { ...opts.meta };
-  const writeMeta = () => {
+  const writeMeta = (required2 = false) => {
     try {
       const path = runMetaPath(logPath);
       const previous = readJsonStore(path);
       writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...meta3 }), previous);
     } catch (err) {
+      if (required2) throw err;
       process.stderr.write(`could not save run metadata: ${String(err)}
 `);
     }
   };
-  writeMeta();
+  try {
+    mkdirSync21(dir, { recursive: true });
+    writeMeta(opts.requireMetadata);
+  } catch (error62) {
+    release();
+    throw error62;
+  }
   write(opts.header);
   pruneOldLogs(dir);
   const started = now();
@@ -41386,7 +41416,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background2, 
   });
   let feed;
   try {
-    feed = startRunFeed({
+    feed = await startRunFeedReady({
       home: rc.home,
       name: `${target}-${randomUUID24().slice(0, 8)}`,
       header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}
@@ -41413,7 +41443,7 @@ ${a.prompt}
         jobStartedAt: job?.startedAt,
         continues: a.session_id ?? null
       }
-    });
+    }, signal);
   } catch (err) {
     await relay?.stop();
     throw err;
@@ -41832,7 +41862,7 @@ var RemoteJobHost = class {
 };
 
 // src/mcp/job-host.ts
-import { setTimeout as delay8 } from "node:timers/promises";
+import { setTimeout as delay9 } from "node:timers/promises";
 var RUNNERS_DIR_NAME = "jobs";
 var JOB_PEER_PREFIX = "job:";
 var CONTROL_CONVERSATION_PREFIX = "jobctl-";
@@ -41904,7 +41934,7 @@ var JobRunners = class {
         if (error62.code !== "STORE_UPGRADE_DEFERRED") throw error62;
         job.progress = `queued: ${error62.message}`;
         if (attempts++ % 30 === 0) this.log.info("job runner start waits for retained store readers", { job: job.name, reason: String(error62) });
-        await delay8(Math.min(1e3, attempts * 100), void 0, { signal });
+        await delay9(Math.min(1e3, attempts * 100), void 0, { signal });
       }
     }
   }
@@ -48909,9 +48939,9 @@ var BridgeNode = class extends EventEmitter2 {
   }
   /** Doubling delay for background retries, capped; reset once connected. */
   nextBackoff() {
-    const delay10 = this.reconnectDelay;
-    this.reconnectDelay = Math.min(delay10 * 2, RECONNECT_BACKOFF_MAX_MS);
-    return delay10;
+    const delay11 = this.reconnectDelay;
+    this.reconnectDelay = Math.min(delay11 * 2, RECONNECT_BACKOFF_MAX_MS);
+    return delay11;
   }
   /**
    * Retry the election later until connected or stopped. Also after "unauthorized" / "protocol_mismatch":
@@ -55485,7 +55515,7 @@ Resource must be configured in resourceSlots.`);
 
 // src/network/cli.ts
 import { createInterface as createInterface2 } from "node:readline/promises";
-import { setTimeout as delay9 } from "node:timers/promises";
+import { setTimeout as delay10 } from "node:timers/promises";
 import { Writable } from "node:stream";
 
 // src/network/wizard.ts
@@ -55668,7 +55698,7 @@ async function runNetworkCommand(command, args, home, pipe2, log, out2) {
           clipboard: copyPairingCode,
           now: Date.now,
           signal: cancellation.signal,
-          sleep: (ms) => delay9(ms, void 0, { signal: cancellation.signal })
+          sleep: (ms) => delay10(ms, void 0, { signal: cancellation.signal })
         });
       } catch (error62) {
         if (!cancellation.signal.aborted) throw error62;

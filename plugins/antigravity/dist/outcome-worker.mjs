@@ -189,6 +189,7 @@ var WINDOW_BYTES = 32 * 1024;
 var DEFAULT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
 
 // src/core/runfeed.ts
+import { setTimeout as delay } from "node:timers/promises";
 var RUNS_DIR_NAME = "runs";
 
 // src/core/transcripts/common.ts
@@ -386,7 +387,7 @@ import { posix as posix2 } from "node:path";
 
 // src/mcp/jobs.ts
 import { randomUUID as randomUUID12 } from "node:crypto";
-import { setTimeout as delay5 } from "node:timers/promises";
+import { setTimeout as delay6 } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { closeSync as closeSync10, constants as fsConstants, copyFileSync as copyFileSync5, fsyncSync as fsyncSync5, openSync as openSync10 } from "node:fs";
 import { dirname as dirname12 } from "node:path";
@@ -448,7 +449,7 @@ import { spawn } from "node:child_process";
 import { existsSync as existsSync7, readFileSync as readFileSync12, realpathSync as realpathSync5 } from "node:fs";
 import { delimiter, dirname as dirname6, extname, isAbsolute as isAbsolute3, join as join17, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
+import { setTimeout as delay2 } from "node:timers/promises";
 
 // src/core/claude-mcp.ts
 import { readFileSync as readFileSync9 } from "node:fs";
@@ -21120,7 +21121,7 @@ var nullLogger = {
 };
 
 // src/core/sqlite-policy.ts
-import { setTimeout as delay2 } from "node:timers/promises";
+import { setTimeout as delay3 } from "node:timers/promises";
 
 // src/core/sqlite-maintenance.ts
 var ARCHIVE_DB_NAME = "archive.db";
@@ -22138,11 +22139,11 @@ import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
 import { mkdirSync as mkdirSync13 } from "node:fs";
 import { join as join27 } from "node:path";
 import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
-import { setTimeout as delay3 } from "node:timers/promises";
+import { setTimeout as delay4 } from "node:timers/promises";
 var SLOT_LEASE_MS = 6 * 60 * 6e4;
 
 // src/core/root-concurrency.ts
-import { setTimeout as delay4 } from "node:timers/promises";
+import { setTimeout as delay5 } from "node:timers/promises";
 
 // src/core/completion.ts
 import { createHash as createHash6 } from "node:crypto";

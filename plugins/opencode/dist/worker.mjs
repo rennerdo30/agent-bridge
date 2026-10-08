@@ -7783,6 +7783,7 @@ function archiveOldRuns(home, now = Date.now()) {
 }
 
 // src/core/runfeed.ts
+import { setTimeout as delay } from "node:timers/promises";
 var RUNS_DIR_NAME = "runs";
 var HEARTBEAT_MS = 6e4;
 var KEEP_RUN_LOGS = 50;
@@ -7810,11 +7811,33 @@ function pruneOldLogs(dir) {
 `);
   }
 }
+async function startRunFeedReady(opts, signal) {
+  let queued = false;
+  for (; ; ) {
+    signal.throwIfAborted();
+    await refreshStorePeerIdentities(opts.home, signal);
+    signal.throwIfAborted();
+    try {
+      return startRunFeed({ ...opts, requireMetadata: true });
+    } catch (error62) {
+      if (error62.code !== "STORE_UPGRADE_DEFERRED") throw error62;
+      if (!queued) {
+        opts.forward?.("queued: waiting for compatible storage readers to retain run context");
+        queued = true;
+      }
+      try {
+        await delay(250, void 0, { signal });
+      } catch (error63) {
+        signal.throwIfAborted();
+        throw error63;
+      }
+    }
+  }
+}
 function startRunFeed(opts) {
   const now = opts.now ?? Date.now;
   const release = storageLease(opts.home);
   const dir = join7(opts.home, RUNS_DIR_NAME);
-  mkdirSync5(dir, { recursive: true });
   const logPath = join7(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
   const write = (line) => {
     const [first, ...rest] = line.replace(/\r/g, "").split("\n");
@@ -7826,17 +7849,24 @@ function startRunFeed(opts) {
     }
   };
   let meta3 = { ...opts.meta };
-  const writeMeta = () => {
+  const writeMeta = (required2 = false) => {
     try {
       const path = runMetaPath(logPath);
       const previous = readJsonStore(path);
       writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...meta3 }), previous);
     } catch (err) {
+      if (required2) throw err;
       process.stderr.write(`could not save run metadata: ${String(err)}
 `);
     }
   };
-  writeMeta();
+  try {
+    mkdirSync5(dir, { recursive: true });
+    writeMeta(opts.requireMetadata);
+  } catch (error62) {
+    release();
+    throw error62;
+  }
   write(opts.header);
   pruneOldLogs(dir);
   const started = now();
@@ -8569,7 +8599,7 @@ function chooseJobRecipient(job, livePeers, groupMasters = []) {
 
 // src/mcp/jobs.ts
 import { randomUUID as randomUUID12 } from "node:crypto";
-import { setTimeout as delay5 } from "node:timers/promises";
+import { setTimeout as delay6 } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { closeSync as closeSync10, constants as fsConstants, copyFileSync as copyFileSync5, fsyncSync as fsyncSync5, openSync as openSync10 } from "node:fs";
 import { dirname as dirname12 } from "node:path";
@@ -8631,7 +8661,7 @@ import { spawn } from "node:child_process";
 import { existsSync as existsSync7, readFileSync as readFileSync12, realpathSync as realpathSync5 } from "node:fs";
 import { delimiter, dirname as dirname6, extname, isAbsolute as isAbsolute3, join as join17, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { setTimeout as delay } from "node:timers/promises";
+import { setTimeout as delay2 } from "node:timers/promises";
 
 // src/core/claude-mcp.ts
 import { readFileSync as readFileSync9 } from "node:fs";
@@ -10086,7 +10116,7 @@ ${res.text}`, details: { ...res.details, retriedAfter: firstCause, retries } };
     req.log.warn("transient provider error; retrying on the selected model", { sessionId, model, cause, retries, waitMs });
     req.onProgress?.(`temporary provider error: ${cause}; retry ${retries}${databaseLock ? "" : `/${limit}`} in ${waitMs / MS_PER_SECOND}s on the same model, ${sessionId ? "preserving session progress" : "before session start"}`);
     try {
-      await delay(waitMs, void 0, { signal: req.signal });
+      await delay2(waitMs, void 0, { signal: req.signal });
     } catch {
       throw new DelegateError("delegate aborted", "aborted", "", "", sessionId);
     }
@@ -30111,7 +30141,7 @@ var nullLogger = {
 };
 
 // src/core/sqlite-policy.ts
-import { setTimeout as delay2 } from "node:timers/promises";
+import { setTimeout as delay3 } from "node:timers/promises";
 var SQLITE_BUSY_TIMEOUT_MS = 3e3;
 var SQLITE_REQUEST_BUSY_MS = 10;
 function configureSqlite(db, busyTimeoutMs = SQLITE_BUSY_TIMEOUT_MS) {
@@ -30130,7 +30160,7 @@ async function retrySqlite(operation, timeoutMs = 8e3, signal) {
       return operation();
     } catch (err) {
       if (!isSqliteBusy(err) || Date.now() >= deadline) throw err;
-      await delay2(Math.min(25 * 2 ** Math.min(attempt++, 4), Math.max(1, deadline - Date.now())), void 0, { signal });
+      await delay3(Math.min(25 * 2 ** Math.min(attempt++, 4), Math.max(1, deadline - Date.now())), void 0, { signal });
     }
   }
 }
@@ -32085,7 +32115,7 @@ import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
 import { mkdirSync as mkdirSync13 } from "node:fs";
 import { join as join27 } from "node:path";
 import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
-import { setTimeout as delay3 } from "node:timers/promises";
+import { setTimeout as delay4 } from "node:timers/promises";
 var SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
 var SLOT_PID_ENV = "AGENT_BRIDGE_SLOT_PID";
 var SLOT_LEASE_MS = 6 * 60 * 6e4;
@@ -32159,7 +32189,7 @@ var ResourceSlots = class {
         } catch (err) {
           if (!isSqliteBusy(err)) throw err;
         }
-        await delay3(SLOT_POLL_MS, void 0, { signal });
+        await delay4(SLOT_POLL_MS, void 0, { signal });
       }
     } catch (err) {
       this.release(owner, resource);
@@ -32200,7 +32230,7 @@ function resourceSlotHint(counts, cli) {
 }
 
 // src/core/root-concurrency.ts
-import { setTimeout as delay4 } from "node:timers/promises";
+import { setTimeout as delay5 } from "node:timers/promises";
 var ROOT_LIMIT_DB = "root-limits.sqlite";
 var LOCK_WAIT_MS2 = 3e3;
 var RootConcurrency = class {
@@ -32246,7 +32276,7 @@ var RootConcurrency = class {
         } catch (err) {
           if (!isSqliteBusy(err)) throw err;
         }
-        await delay4(250, void 0, { signal });
+        await delay5(250, void 0, { signal });
       }
     } catch (err) {
       this.release(owner);
@@ -33657,7 +33687,7 @@ var JobManager = class {
       } finally {
         release();
       }
-      await delay5(50);
+      await delay6(50);
     }
   }
   launchPrepared(job, run, host) {
@@ -45460,7 +45490,7 @@ var StdioServerTransport = class {
 };
 
 // src/mcp/remote-ask.ts
-import { setTimeout as delay6 } from "node:timers/promises";
+import { setTimeout as delay7 } from "node:timers/promises";
 import { randomUUID as randomUUID15 } from "node:crypto";
 
 // src/network/remote-job-protocol.ts
@@ -45577,7 +45607,7 @@ async function runRemoteAsk(node2, target, args, job, signal, onProgress) {
       }
       if (state && state.status !== "running" && !snapshot.alive) return { text: state.report ?? "Remote job ended without a report.", sessionId: state.sessionId ?? null, isError: state.status === "failed", details: {}, workdir: state.workdir ?? void 0, worktree: state.worktree ?? void 0 };
       if (!snapshot.alive) throw new Error("Remote job runner ended without a result.");
-      await delay6(REMOTE_JOB_POLL_MS, void 0, { signal: combined });
+      await delay7(REMOTE_JOB_POLL_MS, void 0, { signal: combined });
       snapshot = await node2.remoteJob(host, { op: "state", job: job.id });
     }
   } finally {
@@ -46035,7 +46065,7 @@ import { createHash as createHash13, randomUUID as randomUUID16 } from "node:cry
 import { existsSync as existsSync19, mkdirSync as mkdirSync21 } from "node:fs";
 import { dirname as dirname17, join as join43 } from "node:path";
 import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
-import { setTimeout as delay7 } from "node:timers/promises";
+import { setTimeout as delay8 } from "node:timers/promises";
 
 // src/core/history-store.ts
 var HISTORY_DB_NAME = "history.db";
@@ -47385,7 +47415,7 @@ import { createServer as createServer7 } from "node:net";
 import { existsSync as existsSync29, mkdirSync as mkdirSync27, realpathSync as realpathSync9 } from "node:fs";
 import { dirname as dirname27, resolve as resolve16 } from "node:path";
 import { DatabaseSync as DatabaseSync19 } from "node:sqlite";
-import { setTimeout as delay8 } from "node:timers/promises";
+import { setTimeout as delay9 } from "node:timers/promises";
 
 // src/core/backup-background.ts
 import { fork } from "node:child_process";
@@ -47480,12 +47510,12 @@ var BackupBackground = class {
       lastError: this.lastError
     };
   }
-  schedule(delay10) {
+  schedule(delay11) {
     if (!this.enabled || this.stopped || this.failed) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       this.start();
-    }, delay10);
+    }, delay11);
     this.timer.unref();
   }
   start() {
@@ -48044,7 +48074,7 @@ var MessageStore = class {
       });
       count += result.moved;
       if (!result.remaining) break;
-      await delay8(50, void 0, { signal: this.writeAbort.signal });
+      await delay9(50, void 0, { signal: this.writeAbort.signal });
     }
     if (count) this.log.info("archived stale queued messages", { recipient, count });
     return count;
@@ -51407,7 +51437,7 @@ async function runDelegateInner(rc, target, a, signal, onProgress, background2, 
   });
   let feed;
   try {
-    feed = startRunFeed({
+    feed = await startRunFeedReady({
       home: rc.home,
       name: `${target}-${randomUUID26().slice(0, 8)}`,
       header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}
@@ -51434,7 +51464,7 @@ ${a.prompt}
         jobStartedAt: job?.startedAt,
         continues: a.session_id ?? null
       }
-    });
+    }, signal);
   } catch (err) {
     await relay?.stop();
     throw err;
@@ -51775,7 +51805,7 @@ var RemoteJobHost = class {
 };
 
 // src/mcp/job-host.ts
-import { setTimeout as delay9 } from "node:timers/promises";
+import { setTimeout as delay10 } from "node:timers/promises";
 var RUNNERS_DIR_NAME = "jobs";
 var CONTROL_CONVERSATION_PREFIX = "jobctl-";
 var START_GRACE_MS = 3e4;
@@ -51840,7 +51870,7 @@ var JobRunners = class {
         if (error62.code !== "STORE_UPGRADE_DEFERRED") throw error62;
         job.progress = `queued: ${error62.message}`;
         if (attempts++ % 30 === 0) this.log.info("job runner start waits for retained store readers", { job: job.name, reason: String(error62) });
-        await delay9(Math.min(1e3, attempts * 100), void 0, { signal });
+        await delay10(Math.min(1e3, attempts * 100), void 0, { signal });
       }
     }
   }
@@ -58567,9 +58597,9 @@ var BridgeNode = class extends EventEmitter2 {
   }
   /** Doubling delay for background retries, capped; reset once connected. */
   nextBackoff() {
-    const delay10 = this.reconnectDelay;
-    this.reconnectDelay = Math.min(delay10 * 2, RECONNECT_BACKOFF_MAX_MS);
-    return delay10;
+    const delay11 = this.reconnectDelay;
+    this.reconnectDelay = Math.min(delay11 * 2, RECONNECT_BACKOFF_MAX_MS);
+    return delay11;
   }
   /**
    * Retry the election later until connected or stopped. Also after "unauthorized" / "protocol_mismatch":
