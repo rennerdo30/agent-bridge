@@ -98,7 +98,7 @@ it("recognizes cancellation of an interrupted job without discarding its resume 
   const jobs = manager(owner); jobs.restore(() => (_body, session) => async () => ({ sessionId: session, text: "done", isError: false, details: {} }));
   await jobs.share(name);
   expect(jobs.cancel(name)).toBe(true);
-  expect(jobs.find(name)).toMatchObject({ status: "failed", sessionId: "original" });
+  expect(jobs.find(name)).toMatchObject({ status: "cancelled", sessionId: "original" });
   expect(jobs.followUp(name, "continue").outcome).toBe("started");
   await until(() => jobs.find(name)?.status === "done");
 });
@@ -130,7 +130,7 @@ it("discovers and controls a connected orphan runner retained only in a backup",
     await runner.start();
     expect((await owner.projectJobs()).map((job) => job.name)).toContain(name);
     expect(await owner.jobAuthority(name)).toMatchObject({ name, owner: owner.name, status: "running" });
-    expect((await owner.send({ to: name, body: "status" })).deliveredTo).toEqual([name]);
+    await expect(owner.send({ to: name, body: "status" })).rejects.toThrow("No message was stored");
   } finally { await runner.stop(); }
 });
 

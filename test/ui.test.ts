@@ -176,14 +176,14 @@ describe("web dashboard", () => {
     expect(state.messages[0]).toMatchObject({ from_name: "you", body: "hello from the dashboard" });
   });
 
-  it("shows restricted job reply guidance in a dashboard send result", async () => {
+  it("visibly rejects unsupported ordinary mail to a foreign job", async () => {
     const peer = env.node("claude-owner", "claude"); await peer.start();
     writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 4, jobs: [{ id: "one", name: "codex-job-one", agent: "codex", owner: peer.name, rootName: peer.name, supervisor: "root", status: "running", workdir: env.home }] }));
     const r = await fetch(`${base()}/api/send`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ to: "codex-job-one", body: "Please answer" }) });
-    expect(r.status).toBe(200);
+    expect(r.status).toBe(400);
     const result = await r.json();
-    expect(result.replyRestrictions).toEqual([{ name: "codex-job-one", supervisor: peer.name }]);
-    expect(result.replyGuidance[0]).toContain("can't reply to you directly. Its replies go to its supervisor claude-owner");
+    expect(result.error).toContain("Ask its supervisor");
+    expect(result.error).toContain("No message was stored");
   });
 
   it("concurrent first sends share one sender peer", async () => {

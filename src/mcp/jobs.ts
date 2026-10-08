@@ -21,6 +21,7 @@ import { notifyJobEvent } from "../core/notifications.js";
 import { RootConcurrency } from "../core/root-concurrency.js";
 import { completionMessageId } from "../core/completion.js";
 import { recoverJobRecord, recoverJobRecordAsync } from "../core/job-recovery.js";
+import { recordAskCompletion } from "../core/ask-completion.js";
 import { metadataFileLease } from "../core/metadata-file-lease.js";
 import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { archivePendingJob, mergePendingJob, readPendingJobs, retainPendingJob, type PendingJobReceipt } from "../core/job-pending-journal.js";
@@ -90,7 +91,7 @@ export interface Job {
   /** ask_* runs: the caller waits for the result itself; shown in peers, no result message. */
   foreground?: boolean;
   /** "interrupted": it was running when its session ended (agent-bridge restarted); it can be recovered. */
-  status: "running" | "done" | "failed" | "interrupted";
+  status: "running" | "done" | "failed" | "interrupted" | "cancelled";
   /** Saved options (access, model, folder, ...), including changes for its next turn. */
   args?: Record<string, unknown>;
   /** Peer name of the session that started it. */
@@ -140,7 +141,7 @@ export interface JobHostInfo {
 export interface RunnerState {
   pid: number;
   peer: string;
-  status: "running" | "done" | "failed";
+  status: "running" | "done" | "failed" | "cancelled";
   /** Heartbeat: a runner that stopped writing is gone, even if its pid was reused. */
   updatedAt: number;
   /** Model of its current turn; saved next-turn settings may differ while it runs. */
@@ -189,7 +190,7 @@ const CANCEL_GRACE_MS = 5_000;
 export const QUEUED_FOLLOW_UP_NOTE = "(Your queued follow-up was sent to it; its answer will arrive as another message.)";
 
 /** The message a finished turn reports: how it ended, why it failed, and what the subagent said. */
-export function jobReport(job: Pick<Job, "name" | "agent" | "model" | "sessionId">, status: "done" | "failed", seconds: number, text: string, cause: string | null): string {
+export function jobReport(job: Pick<Job, "name" | "agent" | "model" | "sessionId">, status: "done" | "failed" | "cancelled", seconds: number, text: string, cause: string | null): string {
   const how = job.sessionId
     ? status === "failed"
       ? ` To recover it with its context, call message_subagent(job="${job.name}") (optionally with a message).`
@@ -547,7 +548,7 @@ export class JobManager {
         const started = (entry: unknown) => isRecord(entry) && typeof entry.startedAt === "number" ? entry.startedAt : 0;
         return started(a) - started(b);
       });
-      const finished = all.filter((j): j is StoredJob => isStoredJob(j) && (j.status === "done" || j.status === "failed"))
+      const finished = all.filter((j): j is StoredJob => isStoredJob(j) && (j.status === "done" || j.status === "failed" || j.status === "cancelled"))
         .sort((a, b) => a.startedAt - b.startedAt);
       const limit = retentionLimit("AGENT_BRIDGE_JOB_STORE_LIMIT", STORE_LIMIT);
       const age = retentionLimit(ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS);
@@ -1145,11 +1146,12 @@ export class JobManager {
         job.etaAt = undefined;
         job.etaReportedAt = undefined;
         job.finishedAt = Date.now();
-        job.status = outcome?.result && !outcome.result.isError ? "done" : "failed";
+        job.status = job.controller.signal.aborted ? "cancelled" : outcome?.result && !outcome.result.isError ? "done" : "failed";
         if (this.storePath) notifyJobEvent(dirname(this.storePath), job.status === "done" ? "finish" : "fail", this.log);
         job.sessionId = outcome?.result?.sessionId ?? sessionOfError(outcome?.error) ?? job.sessionId;
         job.workdir = outcome?.result?.workdir ?? job.workdir;
         job.worktree = outcome?.result?.worktree ?? job.worktree;
+        if (this.storePath) recordAskCompletion(dirname(this.storePath), job);
         this.persist();
         if ((job.foregroundRecipient && job.foregroundRecipient !== this.node.name) || (job.ownershipHistory?.length && !this.isMine(job.owner))) {
           this.post(job, jobReport(job, job.status, Math.round((Date.now() - job.startedAt) / 1000), outcome?.result?.text ?? "", job.status === "failed" ? failureCause(outcome ?? {}) : null));
@@ -1568,12 +1570,12 @@ export class JobManager {
     const pid = job.host?.pid;
     job.host = null;
     if (final) {
-      this.finish(job, final.status === "done" ? "done" : "failed", "", final.sessionId ?? null, null, final.delivered ? null : final.report,
+      this.finish(job, final.status === "done" ? "done" : final.status === "cancelled" ? "cancelled" : "failed", "", final.sessionId ?? null, null, final.delivered ? null : final.report,
         final.reportId ? completionMessageId(`job:${job.id}`, final.reportId) : undefined);
       return;
     }
     const cause = job.controller.signal.aborted ? "cancelled" : `its job runner${pid ? ` (process ${pid})` : ""} ended without reporting a result`;
-    this.finish(job, "failed", "", job.sessionId, cause);
+    this.finish(job, job.controller.signal.aborted ? "cancelled" : "failed", "", job.sessionId, cause);
   }
 
   /** Cancel a background job, a blocking ask_* run or a continuation waiting for a slot, by name or id. */
@@ -1593,7 +1595,7 @@ export class JobManager {
       if (waiting.waitingForStart) {
         waiting.waitingForStart = undefined;
         waiting.controller.abort();
-        this.finish(waiting, "failed", "", null, "cancelled before starting");
+        this.finish(waiting, "cancelled", "", null, "cancelled before starting");
       }
       this.log.info("waiting subagent continuation cancelled", { job: waiting.name });
       return true;
@@ -1603,7 +1605,7 @@ export class JobManager {
       if (owned.status !== "interrupted") return false;
       owned.queue = []; owned.queuedMessages = []; owned.controller.abort();
       this.own.add(owned.id);
-      this.finish(owned, "failed", "", owned.sessionId, "cancelled");
+      this.finish(owned, "cancelled", "", owned.sessionId, "cancelled");
       return true;
     }
     job.queue = [];
@@ -1643,7 +1645,8 @@ export class JobManager {
   }
 
   /** `report`: null when the runner already delivered it, a text to post as it is, or undefined to compose it here. */
-  private finish(job: Job, status: "done" | "failed", text: string, sessionId: string | null, cause: string | null = null, report?: string | null, messageId?: string): void {
+  private finish(job: Job, status: "done" | "failed" | "cancelled", text: string, sessionId: string | null, cause: string | null = null, report?: string | null, messageId?: string): void {
+    if (job.controller.signal.aborted) status = "cancelled";
     denyPendingApprovals(job);
     this.running.delete(job.id);
     job.etaAt = undefined;

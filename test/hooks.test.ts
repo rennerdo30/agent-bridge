@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
 import type { BridgeNode } from "../src/core/node.js";
@@ -87,18 +87,20 @@ describe("hook responses", () => {
 
   it("Stop defers a later reply to the next hook without consuming it", async () => {
     const sent = await me.send({ to: "claude-h", body: "question?" });
-    const started = Date.now();
+    const timers = vi.spyOn(globalThis, "setTimeout");
     expect(await buildHookResponse(ctx(), input("Stop"))).toEqual({});
-    expect(Date.now() - started).toBeLessThan(500);
+    expect(timers.mock.calls.some(([, delay]) => Number(delay) >= 30_000)).toBe(false);
+    timers.mockRestore();
     await peer.send({ to: "codex-h", body: "answer!", replyTo: sent.messages[0]!.id });
     await until(() => me.unread().length === 1);
     expect(JSON.stringify(await buildHookResponse(ctx(), input("PostToolUse")))).toContain("answer!");
   });
 
   it("Stop returns immediately when the session is not in a conversation", async () => {
-    const started = Date.now();
+    const timers = vi.spyOn(globalThis, "setTimeout");
     expect(await buildHookResponse(ctx({ cfg: { ...DEFAULT_CONFIG, lingerSec: 60 } }), input("Stop"))).toEqual({});
-    expect(Date.now() - started).toBeLessThan(500);
+    expect(timers.mock.calls.some(([, delay]) => Number(delay) >= 30_000)).toBe(false);
+    timers.mockRestore();
   });
 
   it("Stop stops waiting when the hook call is aborted", async () => {

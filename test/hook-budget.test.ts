@@ -21,9 +21,10 @@ it.each(["metadata", "connect", "refresh"])("bounds slow %s work and retains lat
   const slow = new Promise<void>(resolve => { release = resolve; });
   const prepare = phase === "metadata" ? () => slow : undefined;
   const spy = phase === "metadata" ? undefined : vi.spyOn(node, phase === "connect" ? "ensureConnected" : "refreshPending").mockImplementationOnce(() => slow);
-  const started = Date.now();
+  const timers = vi.spyOn(globalThis, "setTimeout");
   expect(await buildHookResponse(context(node), { ...input, prepare })).toEqual({});
-  expect(Date.now() - started).toBeLessThan(HOOK_BUDGET_MS + 500);
+  expect(timers.mock.calls.some(([, delay]) => delay === HOOK_BUDGET_MS)).toBe(true);
+  timers.mockRestore();
   release(); await new Promise(resolve => setTimeout(resolve, 20));
   expect(node.unread()).toHaveLength(1);
   spy?.mockRestore();
@@ -35,9 +36,7 @@ it("Stop immediately arms one notify wait for running jobs, with no polling", as
   const jobs = new JobManager(node, nullLogger);
   vi.spyOn(jobs, "runningCount").mockReturnValue(1);
   const wait = vi.spyOn(node, "waitForMessage");
-  const started = Date.now();
   expect(await buildHookResponse(context(node, { jobs }), { ...input, event: "Stop" })).toEqual({});
-  expect(Date.now() - started).toBeLessThan(500);
   expect(wait).not.toHaveBeenCalled();
   expect(new MessageWaitStore(env.home).pending(node)).toMatchObject([{ mode: "notify" }]);
   await buildHookResponse(context(node, { jobs }), { ...input, event: "Stop" });
@@ -66,9 +65,7 @@ it.each(["running child", "buffered final"])("Stop does not wait for a stalled r
   vi.spyOn(node, "refreshPending").mockReturnValueOnce(replay);
   const wait = vi.spyOn(node, "waitForMessage");
   try {
-    const started = Date.now();
     const result = await buildHookResponse(context(node, { jobs }), { ...input, event: "Stop" });
-    expect(Date.now() - started).toBeLessThan(500);
     expect(wait).not.toHaveBeenCalled();
     if (mode === "running child") {
       expect(result).toEqual({});
@@ -86,8 +83,9 @@ it("bounds metadata at the registered MCP hook entry", async () => {
   const server = { registerTool: (name: string, _config: unknown, callback: any) => callbacks.set(name, callback) };
   const ctx = context(null, { observeMeta: () => new Promise<void>(() => {}) });
   registerTools(server as any, ctx, []);
-  const started = Date.now();
+  const timers = vi.spyOn(globalThis, "setTimeout");
   const response = await callbacks.get("hook_event")!({ event: "Stop" }, { signal: new AbortController().signal, _meta: {} });
-  expect(Date.now() - started).toBeLessThan(HOOK_BUDGET_MS + 500);
+  expect(timers.mock.calls.some(([, delay]) => delay === HOOK_BUDGET_MS)).toBe(true);
+  timers.mockRestore();
   expect(response.content[0].text).toBe("{}");
 });

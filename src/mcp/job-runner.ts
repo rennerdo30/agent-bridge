@@ -229,8 +229,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     // Direct sibling chat is handled by the current turn's SiblingLink, never as supervisor control.
     if (m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX)) return;
     if (!m.conversationId.startsWith(CONTROL_CONVERSATION_PREFIX)) {
-      log.info("ignoring a message that is not from the job's session", { from: m.from.name });
-      node.markRead([m.id]);
+      log.warn("unsupported ordinary job mail retained unread", { from: m.from.name, id: m.id });
       return;
     }
     // A remote job's supervisor is fixed by the authenticated spawn, never by an incoming message.
@@ -321,7 +320,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
 
   let args = spec.args;
   for (;;) {
-    let status: "done" | "failed";
+    let status: "done" | "failed" | "cancelled";
     let text = "";
     let cause: string | null = null;
     let processesStopped = false;
@@ -361,6 +360,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       text += `\n\nWorktree close: ${cleanup.action}: ${cleanup.reason}`;
     }
     job.etaReportedAt = undefined;
+    if (job.controller.signal.aborted) status = "cancelled";
     const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause);
     log.info("job turn finished", { status, sessionId: job.sessionId, cause });
     // The supervisor's JobManager emits the finish/fail notification when it settles this

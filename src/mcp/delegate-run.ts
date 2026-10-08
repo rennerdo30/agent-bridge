@@ -111,11 +111,11 @@ export function resumeArgs(a: DelegateArgs, job: string, message: string, sessio
 }
 
 /** Plain jobs stay read-only; worktree edit jobs honor their separate default and exact overrides. */
-export function worktreeArgs(target: CodingAgent, a: DelegateArgs, cfg: BridgeConfig, cwd: string, home: string): DelegateArgs {
+export function worktreeArgs(target: CodingAgent, a: DelegateArgs, cfg: BridgeConfig, cwd: string, home: string, platform = process.platform): DelegateArgs {
   const worktree = Boolean(a.worktree || a._worktree || isBridgeWorktree(cwd, home));
   const access = worktree ? (a.access ?? "edit") : a.access;
   const sandbox = target === "codex" && worktree && access === "edit" && a.sandbox === undefined
-    ? cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox)
+    ? cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? platform === "win32" ? "danger-full-access" : "workspace-write" : cfg.codexSandbox)
     : a.sandbox;
   return { ...a, access, ...(sandbox !== undefined ? { sandbox } : {}) };
 }
@@ -143,7 +143,7 @@ export async function runDelegate(
 async function runWithWorktreeLease(rc: RunContext, target: CodingAgent, a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job): Promise<RunResult> {
   signal.throwIfAborted();
   onProgress?.("preparing run context");
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, jobId: randomUUID().slice(0, 8), log: rc.log }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, worktreeRoot: rc.cfg.worktreeRoot, jobId: randomUUID().slice(0, 8), log: rc.log }) : null);
   const root = wt?.path ?? bridgeWorktreeRoot(a.cwd || rc.cwd(), rc.home);
   if (!root) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
   const release = worktreeLease(rc.home, { path: root });
@@ -177,7 +177,7 @@ async function runDelegateInner(
   a = worktreeArgs(target, a, cfg, cwd, rc.home);
   const access: Access | undefined = a.access;
   // A follow-up to a worktree job keeps working (and committing) in that worktree.
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID().slice(0, 8), log: dlog }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, worktreeRoot: cfg.worktreeRoot, jobId: randomUUID().slice(0, 8), log: dlog }) : null);
   const workdir = wt?.cwd ?? cwd;
   const linkRoot = wt?.path ?? bridgeWorktreeRoot(workdir, rc.home);
   // Codex in "ask" mode can only change files through an approval: watching the folder tells us whether

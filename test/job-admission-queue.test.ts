@@ -34,7 +34,7 @@ it("queues a mass spawn in order, cancels unstarted work and never exceeds its r
   const all = Array.from({ length: 25 }, (_, i) => jobs.start(agents[i % 4]!, null, `task-${i}`, run));
   expect(jobs.runningCount()).toBe(2); expect(jobs.waiting()).toHaveLength(23);
   expect(started).toEqual(["task-0", "task-1"]);
-  expect(jobs.cancel(all[4]!.name)).toBe(true); expect(all[4]!.status).toBe("failed");
+  expect(jobs.cancel(all[4]!.name)).toBe(true); expect(all[4]!.status).toBe("cancelled");
   for (let i = 0; i < 24; i++) {
     finish[i]!(); await until(() => all.filter(j => j.status === "done").length === i + 1);
     expect(jobs.runningCount()).toBeLessThanOrEqual(2);

@@ -51,6 +51,7 @@ import { isRecord, retentionLimit } from "./json-store.js";
 import { readArchivedJobSnapshot } from "./job-archive.js";
 import { readJsonSnapshot, type JsonSnapshot } from "./file-cache.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
+import { projectAskCompletions } from "./ask-completion.js";
 import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "./job-messaging.js";
 import { NetworkService, type NetworkStatus } from "../network/link.js";
 import { readNetworkConfig, writeNetworkConfig, type NetworkConfig } from "../network/config.js";
@@ -79,7 +80,7 @@ const PENDING_MAX_LIMIT = 500;
 const NAME_SUFFIX_LIMIT = 100;
 const MAX_FILE_ADDRESS_CHARS = 256;
 const MAX_FILE_PATH_CHARS = 1_024;
-const SIBLING_STATUSES = new Set<SiblingPeer["status"]>(["running", "done", "failed", "interrupted"]);
+const SIBLING_STATUSES = new Set<SiblingPeer["status"]>(["running", "done", "failed", "interrupted", "cancelled"]);
 const MAX_INFLIGHT_PER_CONNECTION = 128;
 const PAUSE_INFLIGHT_PER_CONNECTION = 32;
 const MAX_CONNECTION_BUFFER_BYTES = 4 * MAX_FRAME_BYTES;
@@ -189,6 +190,10 @@ export class Broker {
       },
       projectJobs: async (c) => {
         const peer = this.requirePeer(c);
+        if (this.jobsPath && this.historyBackground) {
+          try { await this.historyBackground.reconcileAsks(); }
+          catch (error) { this.log.debug("ask reconciliation deferred; records retained", { error: String(error) }); }
+        }
         // Surviving runners may exist only in retained snapshots after an old server overwrote the registry.
         const known = new Set(this.storedJobs().map((job) => job.name));
         for (const runner of this.conns) if (runner.peer?.jobAgent && !known.has(runner.peer.name)) await this.jobForControl(peer, runner.peer.name);
@@ -201,7 +206,9 @@ export class Broker {
           activeIds = new Set(rows.filter(isRecord).map(record => record.id));
         }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return []; }
-        const jobs = this.storedJobs(), retained = this.jobsPath ? selectHistoryJobs(dirname(this.jobsPath), new Set(jobs.filter(job => !activeIds.has(job.id)).map(job => String(job.name)))) : new Map();
+        const stored = this.storedJobs();
+        const jobs = this.jobsPath && !this.historyBackground ? await projectAskCompletions(this.jobsPath, stored) : stored;
+        const retained = this.jobsPath ? selectHistoryJobs(dirname(this.jobsPath), new Set(jobs.filter(job => !activeIds.has(job.id)).map(job => String(job.name)))) : new Map();
         return jobs.map(job => activeIds.has(job.id) ? job : { ...job, ...retained.get(String(job.name)) })
           .filter(job => this.groups.canControl(peer, job, this.localPeers()));
       },
@@ -407,6 +414,7 @@ export class Broker {
         if (this.store.file !== ":memory:" && !["false", "0"].includes(process.env.AGENT_BRIDGE_HISTORY_INGEST ?? "")) {
           this.historyBackground = new HistoryBackground(this.store.file, this.log);
           this.store.historyPeerSink = (peer) => this.historyBackground?.rememberPeer(peer);
+          void this.historyBackground.reconcileAsks().catch(error => this.log.debug("startup ask reconciliation deferred", { error: String(error) }));
         }
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
@@ -1547,6 +1555,12 @@ export class Broker {
       this.refreshJobPeer(own);
     }
     const controlled = this.storedJobs().find((j) => j.name === to);
+    if ((controlled || this.connByName(to)?.peer?.jobAgent) &&
+        !args.conversationId?.startsWith(CONTROL_CONVERSATION_PREFIX) &&
+        !args.conversationId?.startsWith(SIBLING_CONVERSATION_PREFIX)) {
+      throw new BridgeError("bad_request", "Ordinary direct mail to a job is not supported. Ask its supervisor to use message_subagent, or use the granted sibling channel. No message was stored.",
+        { state: "not_stored", recipient: to });
+    }
     if (args.conversationId?.startsWith(CONTROL_CONVERSATION_PREFIX) && controlled && !this.groups.canControl(sender, controlled, this.localPeers())) {
       throw new BridgeError("unauthorized", "Only the current supervisor can control this job runner.");
     }

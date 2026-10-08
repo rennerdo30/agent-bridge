@@ -123,8 +123,8 @@ function finishRecovery(home: string, { id, history, spec, launch, run, meta, na
     sessionId,
     workdir: currentState?.workdir ?? base.workdir ?? meta?.workdir ?? null,
     worktree: currentState?.worktree ?? base.worktree ?? null,
-    status: alive ? "running" : currentState?.status === "done" || currentState?.status === "failed" ? currentState.status
-      : base.status === "done" || base.status === "failed" ? base.status : "interrupted",
+    status: alive ? "running" : ["done", "failed", "cancelled"].includes(String(currentState?.status)) ? currentState!.status
+      : ["done", "failed", "cancelled"].includes(String(base.status)) ? base.status : "interrupted",
     host: alive ? { pid: currentState!.pid, peer: currentState!.peer ?? name, startedAt } : null,
   } as StoredJob;
 }

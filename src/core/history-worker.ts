@@ -9,6 +9,13 @@ import { nullLogger } from "./logger.js";
 import type { PeerInfo } from "./protocol.js";
 import { setTimeout as yieldTurn } from "node:timers/promises";
 import { readHistoryMigrationProgress } from "./history-migration.js";
+import { historyBudget } from "./history-budget.js";
+import { projectDatabasePath, ownsProjectMirrors } from "./project-store.js";
+import { dirname } from "node:path";
+import { reconcileAskCompletions } from "./ask-completion.js";
+import { join } from "node:path";
+import { readHistoryJson } from "./run-history.js";
+import { isRecord, writeJsonStore } from "./json-store.js";
 
 const db = openHistoryStore(workerData.file);
 // This connection can never acquire bridge.db's write lock.
@@ -21,8 +28,15 @@ let timer: NodeJS.Timeout | null = null;
 let stopped = false, pending = false, ready = false, running = false;
 let requestedReset = false;
 let pauseUntil = 0;
+let storageBudgetPaused = false;
 // Persisted failures survive worker/broker restarts. Only an explicit reindex retries.
 let migrationFailure = historyMigrationFailure(db);
+const importFailurePath = join(workerData.home, "history-import-failure.json");
+const savedImportFailure = readHistoryJson(importFailurePath);
+let importState: { error?: string; history?: string[] } = isRecord(savedImportFailure) ? savedImportFailure : {};
+function saveImportState(): void {
+  writeJsonStore(importFailurePath, { importVersion: 1, ...importState }, readHistoryJson(importFailurePath));
+}
 if (migrationFailure) parentPort?.postMessage({ error: migrationFailure });
 const ioBytesPerSecond = Number(process.env.AGENT_BRIDGE_HISTORY_MIGRATION_IO_BYTES_PER_SECOND || HISTORY_IO_BYTES_PER_SECOND);
 let migrationProgress = readHistoryMigrationProgress(db, ioBytesPerSecond);
@@ -34,7 +48,28 @@ function reportPaused(paused: boolean): void {
   parentPort?.postMessage({ migrationProgress });
 }
 reportPaused(!enabled());
-const paused = () => pending || Date.now() < pauseUntil || !enabled();
+const paused = () => pending || Date.now() < pauseUntil || !enabled() || storageBudgetPaused;
+async function checkStorageBudget(): Promise<boolean> {
+  const config = loadConfig(workerData.home, "other", nullLogger);
+  const mirrors = ownsProjectMirrors(workerData.home)
+    ? db.prepare("SELECT DISTINCT project FROM conversations WHERE project != ''").all().map(row => dirname(projectDatabasePath(String(row.project), workerData.home))) : [];
+  const budget = await historyBudget(workerData.home, config.history.budgetBytes, mirrors);
+  storageBudgetPaused = budget.paused;
+  if (budget.paused) {
+    migrationProgress = { ...migrationProgress, paused: true, error: `History storage budget reached (${budget.bytes}/${budget.budgetBytes} bytes); import paused, sources, cursors and all archives retained. Raise history.budgetBytes to resume; never prune user data.` };
+    parentPort?.postMessage({ migrationProgress });
+  } else if (migrationProgress.error?.startsWith("History storage budget reached")) migrationProgress = { ...migrationProgress, error: null };
+  return budget.paused;
+}
+// Migration yields between paced chunks. Recheck admission while it is in progress.
+let checkingBudget = false;
+const budgetTimer = setInterval(() => {
+  if (!running || checkingBudget || stopped) return;
+  checkingBudget = true;
+  void checkStorageBudget().catch(error => { storageBudgetPaused = true; parentPort?.postMessage({ error: String(error) }); })
+    .finally(() => { checkingBudget = false; });
+}, 1000);
+budgetTimer.unref();
 async function waitForPressureGap(): Promise<void> {
   while (pending && !stopped) await new Promise<void>(resolve => { pressureWaiters.add(resolve); });
 }
@@ -45,13 +80,19 @@ function releasePressure(): void {
 async function tick(reset = false): Promise<{ work: number; discovering: boolean }> {
   if (reset) requestedReset = true;
   if (running || stopped) return { work: 0, discovering: !ready };
-  if (paused()) { reportPaused(true); return { work: 0, discovering: !ready }; }
-  reset = requestedReset;
-  requestedReset = false;
-  reportPaused(false);
-  if (migrationFailure && !reset) throw new Error(migrationFailure);
+  if (pending || Date.now() < pauseUntil || !enabled()) { reportPaused(true); return { work: 0, discovering: !ready }; }
   running = true;
   try {
+    if (await checkStorageBudget()) return { work: 0, discovering: !ready };
+    reset = requestedReset;
+    requestedReset = false;
+    reportPaused(false);
+    if (migrationFailure && !reset) throw new Error(migrationFailure);
+    if (importState.error && !reset) throw new Error(importState.error);
+    if (reset && importState.error) {
+      importState = { history: [...(importState.history ?? []), importState.error] };
+      saveImportState();
+    }
     if (!ready) {
       try {
         await migrateHistoryStore(workerData.bridge, db, paused, () => stopped, owner => parentPort?.postMessage({ migrationLease: owner }), reset, { ioBytesPerSecond, onProgress: progress => { migrationProgress = progress; parentPort?.postMessage({ migrationProgress }); } });
@@ -74,6 +115,11 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
     if (stopped || paused()) return { work: legacyWork + rawWork, discovering: true };
     const result = index.tick();
     return { work: legacyWork + rawWork + result.work, discovering: result.discovering || ingest.discovering };
+  } catch (error) {
+    if ((error as { code?: string }).code === "HISTORY_IMPORT_VERIFICATION_FAILED") {
+      importState = { ...importState, error: String(error) }; saveImportState();
+    }
+    throw error;
   } finally { running = false; }
 }
 function schedule(delay = HISTORY_TICK_MS): void {
@@ -82,7 +128,7 @@ function schedule(delay = HISTORY_TICK_MS): void {
     try {
       // Resume on the pressure-clear event; polling can miss short idle gaps.
       await waitForPressureGap();
-      if (!migrationFailure) await tick();
+      if (!migrationFailure && !importState.error) await tick();
     }
     catch (err) {
       if ((err as { code?: string }).code !== "HISTORY_SNAPSHOT_PAUSED" && !stopped) parentPort?.postMessage({ error: String(err) });
@@ -92,7 +138,7 @@ function schedule(delay = HISTORY_TICK_MS): void {
     schedule();
   }, delay);
 }
-function close(): void { index.close(); ingest.close(); source.close(); db.close(); parentPort?.close(); }
+function close(): void { clearInterval(budgetTimer); index.close(); ingest.close(); source.close(); db.close(); parentPort?.close(); }
 parentPort?.on("message", async (message) => {
   if (message.pressure) {
     pending = !!message.pending;
@@ -109,6 +155,10 @@ parentPort?.on("message", async (message) => {
     close(); return;
   }
   try {
+    if (message.reconcileAsks) {
+      parentPort?.postMessage({ id: message.id, result: { work: reconcileAskCompletions(join(workerData.home, "jobs.json")), discovering: false } });
+      return;
+    }
     while (running && !stopped) await yieldTurn(10);
     parentPort?.postMessage({ id: message.id, result: await tick(message.reset) });
   }

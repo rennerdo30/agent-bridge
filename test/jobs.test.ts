@@ -96,6 +96,7 @@ describe("background subagents", () => {
     );
     expect(jobs.cancel(job.id)).toBe(true);
     await until(() => aborted && jobs.runningCount() === 0);
+    expect(job.status).toBe("cancelled");
   });
 
   it.each(["claude", "codex", "opencode", "antigravity"] as const)("resumes a cancelled %s job with a fresh signal", async (agent) => {
@@ -103,7 +104,7 @@ describe("background subagents", () => {
     const job = jobs.start(agent, null, "long", (signal) => new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")))), () => resumed);
     job.sessionId = "saved-session";
     jobs.cancel(job.name);
-    await until(() => job.status === "failed");
+    await until(() => job.status === "cancelled");
     expect(jobs.followUp(job.name, "Continue").outcome).toBe("started");
     await until(() => job.status === "done");
     expect(resumed).toHaveBeenCalledOnce();

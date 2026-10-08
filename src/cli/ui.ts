@@ -596,8 +596,13 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const to = String(body.to ?? "").trim();
       const text = String(body.body ?? "").trim();
       if (!to || !text) return send(res, 400, { error: "to and body are required" });
-      const r = await (await getSender()).send({ to, body: text });
-      return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor, replyRestrictions: r.replyRestrictions, replyGuidance: formatReplyRestrictions(r) });
+      try {
+        const r = await (await getSender()).send({ to, body: text });
+        return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor, replyRestrictions: r.replyRestrictions, replyGuidance: formatReplyRestrictions(r) });
+      } catch (err) {
+        if (err instanceof BridgeError && err.code === "bad_request") return send(res, 400, { error: err.message });
+        throw err;
+      }
     }
     if (req.method === "POST" && url.pathname === "/api/subagents/handoff") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });

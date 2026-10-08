@@ -26,6 +26,7 @@ import { runJobClose } from "./job-close.js";
 import { installOpencode, opencodeSourceDir, uninstallOpencode, type InstallResult } from "./opencode-install.js";
 import { runJobRunner } from "../mcp/job-runner.js";
 import { runReindex } from "./reindex.js";
+import { archiveHistory } from "./history-archive.js";
 import { runSlot } from "./slot.js";
 import { runNetworkCommand } from "../network/cli.js";
 import { runDoctor } from "./doctor.js";
@@ -62,6 +63,10 @@ async function main(argv: string[]): Promise<number> {
     case "reindex":
       if (rest.length) { out("Usage: agent-bridge reindex"); return 2; }
       return runReindex(home, pipe, log, out);
+    case "history-archive":
+      if (rest.length > 1) { out("Usage: agent-bridge history-archive [absolute-archive-root]"); return 2; }
+      out(await archiveHistory(home, rest[0]));
+      return 0;
     case "slot":
       return runSlot(rest, home, loadConfig(home, "other", log), out);
     case "connect":

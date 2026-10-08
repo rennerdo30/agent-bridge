@@ -225,20 +225,20 @@ async function held(client: Client, extra: Record<string, unknown> = {}): Promis
 }
 async function cancelledRemoteJob(local: Client, id: string, title: string, prompt: string): Promise<void> {
   const saved = () => readStore(join(localHome, "jobs.json")).find(job => job.id === id);
-  await waitFor(() => saved()?.status === "failed");
+  await waitFor(() => saved()?.status === "cancelled");
   expect(saved()!.prompt).toBe(prompt);
   const state = readRunnerState(remoteHome, id);
   if (state) {
-    // A real launched runner retains the original native failure and process-exit gates.
-    expect(state.status).toBe("failed");
+    // A real launched runner retains the original native cancellation and process-exit gates.
+    expect(state.status).toBe("cancelled");
     expect(state.pid).toBeGreaterThan(0);
-    expect(state.report).toContain("failed");
+    expect(state.report).toContain("cancelled");
     pids.add(state.pid);
     await waitFor(() => !pidAlive(state.pid));
   } else {
     // Cancellation before admission launches nothing; no synthetic remote PID/state is appropriate.
     expect(saved()!.host).toBeNull();
-    expect(saved()!.deliveryHistory?.some(message => message.body.includes("failed"))).toBe(true);
+    expect(saved()!.deliveryHistory?.some(message => message.body.includes("cancelled"))).toBe(true);
     const registry = join(remoteHome, "remote-jobs.json");
     const records = existsSync(registry) ? JSON.parse(readFileSync(registry, "utf8")).jobs : [];
     expect(records.some((record: { job: { id: string } }) => record.job.id === id)).toBe(false);
@@ -246,12 +246,12 @@ async function cancelledRemoteJob(local: Client, id: string, title: string, prom
   }
   await waitFor(async () => {
     const inbox = await call(local, "inbox", { mark_read: false });
-    return inbox.includes(`claude-job-${id}`) && inbox.includes("failed");
+    return inbox.includes(`claude-job-${id}`) && inbox.includes("cancelled");
   });
   // The remote state file and the requester's cached job state settle independently.
   await waitFor(async () => {
     const peers = await call(local, "peers", {});
-    return peers.includes(`claude-job-${id} "${title}": failed`) &&
+    return peers.includes(`claude-job-${id} "${title}": cancelled`) &&
       (!state || peers.includes(`Remote job claude-job-${id}: mac/claude-job-${id}`));
   });
 }
@@ -454,7 +454,7 @@ rl.on("line", (line) => {
     await waitFor(() => listPendingApprovals(localHome).length === 0 && listPendingApprovals(remoteHome).length === 0);
     expect(await answerPendingApproval(localHome, approval.id, { decision: "allow" })).toBe("expired");
     await call(local, "cancel_subagent", { job: job.name });
-    await waitFor(() => readRunnerState(remoteHome, job.id)?.status === "failed");
+    await waitFor(() => readRunnerState(remoteHome, job.id)?.status === "cancelled");
     await waitFor(() => !pidAlive(readRunnerState(remoteHome, job.id)!.pid));
   }, TEST_TIMEOUT_MS);
 
@@ -467,7 +467,7 @@ rl.on("line", (line) => {
     await cancelledRemoteJob(local, id, "Cancel during startup", prompt);
   }, TEST_TIMEOUT_MS);
 
-  it("cancels an observed remote runner during startup and retains its real failed state", async () => {
+  it("cancels an observed remote runner during startup and retains its real cancelled state", async () => {
     const { local } = await paired();
     const prompt = `release=${join(repo, "never-release")}`;
     const title = "Cancel observed startup";
@@ -480,7 +480,7 @@ rl.on("line", (line) => {
     });
     pids.add(readRunnerState(remoteHome, id)!.pid);
     await call(local, "cancel_subagent", { job: `claude-job-${id}` });
-    await waitFor(() => readRunnerState(remoteHome, id)?.status === "failed");
+    await waitFor(() => readRunnerState(remoteHome, id)?.status === "cancelled");
     await cancelledRemoteJob(local, id, title, prompt);
   }, TEST_TIMEOUT_MS);
 

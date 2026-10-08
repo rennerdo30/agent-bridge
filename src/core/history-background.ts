@@ -18,6 +18,7 @@ export class HistoryBackground {
   private restart: NodeJS.Timeout | null = null;
   private id = 0;
   private migrationLease: string | null = null;
+  private reconcilingAsks: Promise<Batch> | null = null;
   private pending = new Map<
     number,
     { resolve: (b: Batch) => void; reject: (e: Error) => void }
@@ -38,6 +39,9 @@ export class HistoryBackground {
         "history.ts",
         "conversations.ts",
         "project-store.ts",
+        "ask-completion.ts",
+        "history-budget.ts",
+        "savepoint.ts",
       ];
       if (
         !existsSync(path) ||
@@ -121,6 +125,16 @@ export class HistoryBackground {
       this.pending.set(id, { resolve, reject });
       this.worker.postMessage({ id, reset });
     });
+  }
+  reconcileAsks(): Promise<Batch> {
+    if (this.reconcilingAsks) return this.reconcilingAsks;
+    if (this.stopped || this.exited) return Promise.reject(new Error("Job reconciliation worker unavailable; retry later"));
+    this.reconcilingAsks = new Promise<Batch>((resolve, reject) => {
+      const id = ++this.id;
+      this.pending.set(id, { resolve, reject });
+      this.worker.postMessage({ id, reconcileAsks: true });
+    }).finally(() => { this.reconcilingAsks = null; });
+    return this.reconcilingAsks;
   }
   async close(): Promise<void> {
     this.stopped = true;

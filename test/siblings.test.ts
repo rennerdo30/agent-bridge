@@ -240,7 +240,8 @@ describe("sibling job messaging", () => {
     expect(external.unread()[0]!.from.name).toBe(allowed.job.name);
     for (const to of ["*", "claude", "codex", "opencode", "remote/session", "claude-*"]) expect(isJobSendTarget(to)).toBe(false);
     await expect(allowed.child.siblings.send(external.name, "Wrong reply", "missing")).rejects.toThrow(/reply_to/);
-    const unrelated = (await external.send({ to: denied.job.name, body: "Other job request" })).messages[0]!;
+    await expect(external.send({ to: denied.job.name, body: "Other job request" })).rejects.toThrow("No message was stored");
+    const unrelated = (await external.send({ to: "unrelated-session", body: "Other session request" })).messages[0]!;
     await expect(allowed.child.siblings.send(external.name, "Wrong job reply", unrelated.id)).rejects.toThrow(/reply_to/);
     await external.stop();
     await expect.poll(async () => (await supervisor.peers()).map((p) => p.name)).not.toContain(external.name);

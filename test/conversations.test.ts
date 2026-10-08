@@ -10,6 +10,19 @@ import { nullLogger } from "../src/core/logger.js";
 import { CLAUDE_SESSION } from "./transcript-fixtures.js";
 import { env, fixture } from "./conversation-test-fixture.js";
 
+it("refuses mismatched retained raw bytes during resumable import replay", () => {
+  const f = fixture(true);
+  f.tick();
+  const row = f.db.prepare("SELECT * FROM conversation_records WHERE source=? ORDER BY offset LIMIT 1").get(f.files.claude)!;
+  const source = readFileSync(f.files.claude);
+  const retained = Buffer.from(row.raw as Uint8Array);
+  const put = (f.ingest as unknown as { put(source: string, generation: number, offset: number, conversation: string, raw: Buffer, at: number): void }).put.bind(f.ingest);
+  expect(() => put(String(row.source), Number(row.generation), Number(row.offset), String(row.conversation), Buffer.from("mismatched replay fixture"), Number(row.at)))
+    .toThrow("History import verification failed");
+  expect(Buffer.from(f.db.prepare("SELECT raw FROM conversation_records WHERE id=?").get(row.id!)!.raw as Uint8Array)).toEqual(retained);
+  expect(readFileSync(f.files.claude)).toEqual(source);
+});
+
 it("pages complete context, keeps replaced generations and restores index from retained bytes", () => {
   const f = fixture(true);
   f.tick();

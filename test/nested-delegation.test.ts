@@ -284,7 +284,7 @@ describe("nested delegation", () => {
     await call("message_subagent", { job: name, message: "Wait" });
     await stage("cancellable target entered", () => enteredCancellation);
     expect(textOf(await call("cancel_subagent", { job: name }))).toContain(name);
-    await stage("cancelled completion", () => ctx.jobs!.find(name)!.status === "failed");
+    await stage("cancelled completion", () => ctx.jobs!.find(name)!.status === "cancelled");
     expect(listPendingApprovals(home)).toEqual([]);
     } catch (error) {
       try {

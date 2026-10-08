@@ -69,8 +69,9 @@ it("reports unconfirmed delivery after two timeouts and does not retry permanent
   const client = (sender as unknown as { client: BridgeClient }).client;
   const request = vi.spyOn(client, "request").mockRejectedValue(new Error("broker request timed out: trackedSend"));
   await expect(sender.send({ to: "offline", body: "uncertain" })).rejects.toThrow("Storage cannot be confirmed for message");
-  expect(request).toHaveBeenCalledTimes(3);
+  expect(request.mock.calls.filter(([op]) => op === "trackedSend")).toHaveLength(2);
+  expect(request.mock.calls.filter(([op]) => op === "sendState")).toHaveLength(1);
   request.mockClear().mockRejectedValue(new Error("unauthorized target"));
   await expect(sender.send({ to: "offline", body: "denied" })).rejects.toThrow("unauthorized target");
-  expect(request).toHaveBeenCalledTimes(1);
+  expect(request.mock.calls.filter(([op]) => op === "trackedSend")).toHaveLength(1);
 });

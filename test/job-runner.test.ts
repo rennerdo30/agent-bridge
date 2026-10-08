@@ -386,8 +386,8 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     const { job, pid } = await spawnHeld(a);
     expect(await call(a, "cancel_subagent", { job })).toContain(`Cancelled subagent ${job}`);
     await waitFor(() => !pidAlive(pid), 20_000);
-    expect(await call(a, "wait_for_message", { from: job, timeout_sec: 30 })).toContain("failed");
-    await waitFor(async () => (await call(a, "peers")).match(new RegExp(`${job} "Runner test": failed`)) !== null);
+    expect(await call(a, "wait_for_message", { from: job, timeout_sec: 30 })).toContain("cancelled");
+    await waitFor(async () => (await call(a, "peers")).match(new RegExp(`${job} "Runner test": cancelled`)) !== null);
   }, TEST_TIMEOUT_MS);
 
   it("continues a cancelled runner despite legacy cancellation mail", async () => {

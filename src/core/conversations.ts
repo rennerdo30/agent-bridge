@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { observeAskToolRecord } from "./ask-completion.js";
 import {
   closeSync,
   existsSync,
@@ -433,6 +434,12 @@ export class ConversationIngestor {
     const record = Number(result.changes) ? Number(result.lastInsertRowid) : Number(this.db
       .prepare("SELECT id FROM conversation_records WHERE source=? AND generation=? AND offset=?")
       .get(source, generation, offset)!.id);
+    const retained = this.db.prepare("SELECT raw FROM conversation_records WHERE id=?").get(record)!;
+    if (!Buffer.from(retained.raw as Uint8Array).equals(raw)) {
+      throw Object.assign(new Error(`History import verification failed at ${source}:${generation}:${offset}; cursor not advanced, originals retained`), { code: "HISTORY_IMPORT_VERIFICATION_FAILED" });
+    }
+    const native = this.db.prepare("SELECT kind,agent FROM conversations WHERE id=?").get(conversation);
+    if (part === null && native?.kind === "transcript" && native.agent === "claude") observeAskToolRecord(this.db, this.home, source, generation, raw, at, offset);
     this.indexRecord(
       record,
       conversation,
