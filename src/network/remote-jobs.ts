@@ -44,6 +44,7 @@ export class RemoteJobs {
   private readonly approvals = new Map<string, () => void>();
   private readonly publishingApprovals = new Set<string>();
   private readonly starting = new Set<string>();
+  private readonly pendingStarts = new Map<string, { record: RemoteRecord; previous?: RemoteRecord; controller: AbortController; cancelRequested: boolean; committed: boolean }>();
   private readonly runners: JobRunners | null;
   private closed = false;
 
@@ -159,17 +160,46 @@ export class RemoteJobs {
       const previous = this.records.get(request.job);
       record = { pair: pair.id, peer: peer.supervisor, owner, job, args: { ...args, cwd, _job: job.name } };
       this.records.set(job.id, record);
+      const staged = record;
+      const admission = { record: staged, previous, controller: job.controller, cancelRequested: false, committed: false };
+      this.pendingStarts.set(job.id, admission);
+      const timeout = setTimeout(() => admission.controller.abort(new Error("Remote job not_started: store reader admission exceeded 10 seconds; no detached runner was launched")), 10_000);
+      timeout.unref();
       try {
         if (this.closed) throw new Error("Remote broker closed while the job was starting.");
-        const host = this.runners?.start(job, { target: request.target, args: record.args, base: record.args, owner, byAgent: "other", cwd, cfg });
+        const host = await this.runners?.startAsync(job, { target: request.target, args: staged.args, base: staged.args, owner, byAgent: "other", cwd, cfg }, {
+          signal: admission.controller.signal,
+          isCurrent: () => !this.closed && this.records.get(job.id) === staged && this.pendingStarts.get(job.id) === admission &&
+            staged.job === job && staged.owner === owner && staged.peer === peer.supervisor && staged.pair === pair.id,
+        });
         if (!host) throw new Error("Remote job runner is unavailable; update the remote broker's bundled CLI.");
         job.host = host;
-      } catch (err) { if (previous) this.records.set(job.id, previous); else this.records.delete(job.id); throw err; }
+        admission.committed = true;
+        if (admission.cancelRequested) {
+          this.persist();
+          await this.control({ owner: staged.owner, name: job.name, id: job.id }, { type: "cancel" });
+        }
+      } catch (err) {
+        // Admission is ephemeral until the first successful persist. Restore
+        // only this generation; never roll back a newer committed job record.
+        if (!job.host && this.records.get(job.id) === staged) { if (previous) this.records.set(job.id, previous); else this.records.delete(job.id); }
+        throw err;
+      } finally {
+        clearTimeout(timeout);
+        if (this.pendingStarts.get(job.id) === admission) this.pendingStarts.delete(job.id);
+      }
       this.persist();
       this.log.info("remote job started", { host: pair.name, owner, job: job.name, cwd });
     } else {
       if (!record) throw new Error("Unknown remote job.");
       if (request.op === "control") {
+        const pending = this.pendingStarts.get(record.job.id);
+        if (pending?.record === record) {
+          if (request.control.type !== "cancel") throw new Error("Remote job not_started: storage admission is still queued; no runner can receive this control yet");
+          pending.cancelRequested = true;
+          pending.controller.abort(new Error("Remote job not_started: cancelled before detached runner startup"));
+          return { state: null, alive: true, approvals: [] }; // admission/cancellation has not settled yet
+        }
         if (request.control.type === "settings") {
           const settings = parseJobSettings(request.control.settings, record.job.agent);
           if (typeof settings === "string") throw new Error(settings);
@@ -192,7 +222,11 @@ export class RemoteJobs {
   }
 
   private persist(): void {
-    writeJsonStore(join(this.home, REMOTE_JOBS_FILE), { jobs: [...this.records.values()].map((r) => {
+    const committed = [...this.records.values()].flatMap(record => {
+      const pending = this.pendingStarts.get(record.job.id);
+      return pending?.record === record && !pending.committed ? pending.previous ? [pending.previous] : [] : [record];
+    });
+    writeJsonStore(join(this.home, REMOTE_JOBS_FILE), { jobs: committed.map((r) => {
       const { controller, queue, ...job } = r.job;
       return { ...r, job };
     }) }, readJsonStore(join(this.home, REMOTE_JOBS_FILE)));
@@ -239,6 +273,7 @@ export class RemoteJobs {
 
   close(): void {
     this.closed = true;
+    for (const pending of this.pendingStarts.values()) pending.controller.abort(new Error("Remote job not_started: broker closed before detached runner startup"));
     for (const p of this.pending.values()) { clearTimeout(p.timer); p.reject(new Error("Remote jobs link closed.")); }
     this.pending.clear();
     for (const close of this.approvals.values()) close(); this.approvals.clear();

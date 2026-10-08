@@ -11,6 +11,10 @@ import type { Job, JobHost, JobHostInfo, RunnerControl, RunnerState } from "./jo
 import { archiveFile, assertWritableStore, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "../core/json-store.js";
 import { RemoteJobHost } from "./remote-job-host.js";
 import { jobEnvironment } from "../core/job-environment.js";
+import { setTimeout as delay } from "node:timers/promises";
+import { assertStoreUpgrade, refreshStorePeerIdentities } from "../core/store-compatibility.js";
+import { JSON_STORE_VERSION } from "../core/json-store.js";
+import type { HostedAdmission } from "./jobs.js";
 
 /**
  * Job runners: a background subagent runs in a detached process of its own (`agent-bridge job-runner`), not
@@ -107,6 +111,24 @@ export class JobRunners implements JobHost {
   }
 
   /** Start a turn of this job in a new runner; null when that is not possible (the turn then runs in the server). */
+  async startAsync(job: Job, spec: Omit<RunnerSpec, "home" | "job">, admission?: HostedAdmission): Promise<JobHostInfo | null> {
+    const signal = admission?.signal ?? job.controller.signal;
+    let attempts = 0;
+    for (;;) {
+      signal.throwIfAborted();
+      await refreshStorePeerIdentities(this.home, signal);
+      signal.throwIfAborted();
+      if (admission && !admission.isCurrent()) throw new Error("Detached job startup lost its supervisor authority before launch");
+      try { return this.start(job, spec); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED") throw error;
+        job.progress = `queued: ${(error as Error).message}`;
+        if (attempts++ % 30 === 0) this.log.info("job runner start waits for retained store readers", { job: job.name, reason: String(error) });
+        await delay(Math.min(1_000, attempts * 100), undefined, { signal });
+      }
+    }
+  }
+
   start(job: Job, spec: Omit<RunnerSpec, "home" | "job">): JobHostInfo | null {
     if (spec.args.host) return this.remote.start(job, spec.args.host, spec.target, spec.args);
     try {
@@ -116,6 +138,9 @@ export class JobRunners implements JobHost {
       const file = specPath(this.home, job.id);
       assertWritableStore(readJsonStore(statePath, this.log));
       assertWritableStore(readJsonStore(file, this.log));
+      // Check before archiving a previous turn. Unknown readers wait in the
+      // asynchronous admission path, leaving every existing file in place.
+      assertStoreUpgrade(this.home, "json", 0, JSON_STORE_VERSION);
       archiveFile(statePath);
       const full: RunnerSpec = {
         ...spec,
@@ -161,6 +186,7 @@ export class JobRunners implements JobHost {
       info.pid = pid;
       return info;
     } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "STORE_UPGRADE_DEFERRED") throw err;
       this.log.warn("job runner unavailable; the subagent runs inside this server", { job: job.name, err: (err as Error).message });
       return null;
     }

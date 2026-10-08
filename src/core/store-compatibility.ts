@@ -7,29 +7,57 @@ import { processIdentity, readProcessIdentities } from "./process-identity.js";
 export interface StoreCapabilities { json: number; sqlite: number }
 interface Presence extends StoreCapabilities { pid: number; name: string; version: string; explicit: boolean; processIdentity?: string }
 
-const identities = new Map<number, { identity: string | null; at: number }>();
+const identities = new Map<string, { identity: string | null; at: number; signature: string }>();
 const refreshes = new Map<string, Promise<void>>();
 const IDENTITY_REFRESH_MS = 10_000;
 
-/** Process queries are asynchronous and never run on broker request hot paths. */
-export async function refreshStorePeerIdentities(home: string): Promise<void> {
-  const pending = refreshes.get(home);
-  if (pending) return pending;
-  const dir = join(home, "storage-capabilities");
-  const pids = existsSync(dir) ? readdirSync(dir).filter(file => /^\d+\.json$/.test(file)).map(file => Number(file.slice(0, -5)))
-    .filter(pid => !identities.has(pid) || Date.now() - identities.get(pid)!.at >= IDENTITY_REFRESH_MS) : [];
-  const refresh = (async () => {
-    const current = await readProcessIdentities(pids.filter(pid => pid !== process.pid));
-    for (const pid of pids) identities.set(pid, { identity: pid === process.pid ? processIdentity(pid) ?? null : current.get(pid) ?? null, at: Date.now() });
-  })();
-  refreshes.set(home, refresh);
-  try { await refresh; } finally { refreshes.delete(home); }
+function presenceSignature(path: string): string | undefined {
+  try { const stat = statSync(path); return `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`; }
+  catch { return undefined; }
 }
 
-function cachedIdentity(pid: number): string | undefined {
+/** Process queries are asynchronous and never run on broker request hot paths. */
+export function refreshStorePeerIdentities(home: string, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  const ready = refreshIdentityCache(home);
+  if (!signal) return ready;
+  // Cancelling one queued start must not cancel a shared broker identity scan.
+  return new Promise<void>((resolve, reject) => {
+    const abort = () => { signal.removeEventListener("abort", abort); reject(signal.reason); };
+    signal.addEventListener("abort", abort, { once: true });
+    ready.then(() => { signal.removeEventListener("abort", abort); resolve(); }, error => { signal.removeEventListener("abort", abort); reject(error); });
+    if (signal.aborted) abort();
+  });
+}
+
+async function refreshIdentityCache(home: string): Promise<void> {
+  for (;;) {
+    const pending = refreshes.get(home);
+    if (pending) { await pending; continue; }
+    const dir = join(home, "storage-capabilities");
+    const records = existsSync(dir) ? readdirSync(dir).filter(file => /^\d+\.json$/.test(file)).flatMap(file => {
+      const path = join(dir, file), signature = presenceSignature(path), cached = identities.get(path);
+      return signature && (!cached || cached.signature !== signature || Date.now() - cached.at >= IDENTITY_REFRESH_MS)
+        ? [{ pid: Number(file.slice(0, -5)), path, signature }] : [];
+    }) : [];
+    if (!records.length) return;
+    const refresh = (async () => {
+      const current = await readProcessIdentities(records.filter(record => record.pid !== process.pid).map(record => record.pid));
+      // Bind the result to the record observed before the OS query. A new PID
+      // generation published during/after that query must be verified again.
+      for (const { pid, path, signature } of records) identities.set(path, { identity: pid === process.pid ? processIdentity(pid) ?? null : current.get(pid) ?? null, at: Date.now(), signature });
+    })();
+    refreshes.set(home, refresh);
+    try { await refresh; } finally { refreshes.delete(home); }
+    // A new runner can publish presence during the previous batch. An awaited
+    // readiness check must cover that PID too, rather than reuse an older scan.
+  }
+}
+
+function cachedIdentity(home: string, pid: number): string | undefined {
   if (pid === process.pid) return processIdentity(pid);
-  const cached = identities.get(pid);
-  return cached && Date.now() - cached.at < IDENTITY_REFRESH_MS ? cached.identity ?? undefined : undefined;
+  const path = join(home, "storage-capabilities", `${pid}.json`), cached = identities.get(path);
+  return cached && cached.signature === presenceSignature(path) && Date.now() - cached.at < IDENTITY_REFRESH_MS ? cached.identity ?? undefined : undefined;
 }
 
 /** Legacy records have no identity. A process born after its record cannot own it. */
@@ -68,7 +96,8 @@ export function recordStorePeer(home: string, peer: Pick<PeerInfo, "pid" | "name
   if (peer.host || !Number.isSafeInteger(peer.pid) || peer.pid <= 0) return;
   const explicit = validStoreCapabilities(peer.storeCapabilities);
   const path = join(home, "storage-capabilities", `${peer.pid}.json`);
-  let identity = cachedIdentity(peer.pid);
+  let identity = cachedIdentity(home, peer.pid);
+  if (!identity) void refreshStorePeerIdentities(home).catch(() => {});
   if (explicit && existsSync(path)) {
     try {
       const previous = JSON.parse(readFileSync(path, "utf8")) as Presence;
@@ -104,8 +133,10 @@ export function liveStorePeers(home: string): Presence[] {
     try { process.kill(pid, 0); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return []; }
     try {
-      const record = JSON.parse(readFileSync(join(dir, file), "utf8"));
-      const identity = cachedIdentity(pid);
+      const path = join(dir, file), signature = presenceSignature(path);
+      const record = JSON.parse(readFileSync(path, "utf8"));
+      if (signature !== presenceSignature(path)) throw new Error("Store reader presence changed during observation");
+      const identity = cachedIdentity(home, pid);
       if (identity && typeof record.processIdentity === "string" && record.processIdentity !== identity) return [];
       if (identity && !record.processIdentity && legacyPidReused(identity, statSync(join(dir, file)).mtimeMs)) return [];
       if (identity && record.schemaVersion === 1 && record.pid === pid && validStoreCapabilities(record)) return [record as Presence];

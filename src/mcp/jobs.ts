@@ -1,6 +1,7 @@
 import { canonicalProjectRoot, migrateProjectJobs } from "../core/project-identity.js";
 import { canControlJob } from "../core/job-ownership.js";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { closeSync, constants as fsConstants, copyFileSync, fsyncSync, openSync } from "node:fs";
 import { dirname } from "node:path";
@@ -40,12 +41,13 @@ export const DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task
 
 /** A delegated run's result, plus the folder it worked in (a worktree, for example). */
 export type RunResult = DelegateResult & { workdir?: string; worktree?: Worktree };
+export interface HostedAdmission { signal: AbortSignal; isCurrent(): boolean }
 /**
  * Runs a subagent turn; `job` is the job it belongs to (its name labels the run in the dashboard).
  * `hosted`, when given, first tries to start the turn in a detached job runner (see job-host.ts) instead.
  */
 export type Run = ((signal: AbortSignal, onProgress: (message: string, full?: string) => void, job: Job) => Promise<RunResult>) & {
-  hosted?: (job: Job) => JobHostInfo | null;
+  hosted?: (job: Job, admission: HostedAdmission) => JobHostInfo | null | Promise<JobHostInfo | null>;
 };
 /** Continue a subagent's own session with a new message and its saved next-turn settings. */
 export type Resume = (message: string, sessionId: string, workdir: string | null, worktree: Worktree | null) => Run;
@@ -329,6 +331,8 @@ export class JobManager {
   /** Background jobs run in detached job runners where it can (they survive a restart of this server); null: all here. */
   runners: JobHost | null = null;
   private hostTimer: NodeJS.Timeout | null = null;
+  private readonly pendingHosts = new Map<string, AbortController>();
+  private readonly explicitCancellations = new WeakSet<AbortController>();
   private restoreResume: ((agent: AgentKind, args: Record<string, unknown>) => Resume | undefined) | null = null;
   private rootWaitTimer: NodeJS.Timeout | null = null;
   private persistTimer: NodeJS.Timeout | null = null;
@@ -410,6 +414,7 @@ export class JobManager {
   setDormant(dormant: boolean): void {
     if (this.dormant === dormant) return;
     this.dormant = dormant;
+    if (dormant) for (const controller of this.pendingHosts.values()) controller.abort(new Error("Detached startup paused because another supervisor took over"));
     if (dormant && this.persistTimer) { clearTimeout(this.persistTimer); this.persistTimer = null; }
     this.log.info(dormant ? "another server of this session took over: jobs paused here" : "this server took its place back: jobs resumed");
     if (dormant && this.hostTimer) {
@@ -521,7 +526,7 @@ export class JobManager {
       let job = this.history.get(s.id);
       const mine = directlyOwned;
       if (job && (s.executionOwner === this.node.name || mine)) {
-        const executing = s.executionOwner === this.node.name && (this.running.has(s.id) || this.foreground.has(s.id));
+        const executing = s.executionOwner === this.node.name && (this.running.has(s.id) || this.foreground.has(s.id)) || this.pendingHosts.get(s.id) === job.controller;
         Object.assign(job, { owner: s.owner, supervisor: s.supervisor, parentJob: s.parentJob, rootSession: s.rootSession, rootName: s.rootName,
           ownershipHistory: s.ownershipHistory, executionOwner: s.executionOwner, masters: s.masters });
         if (!executing && !job.host) {
@@ -544,7 +549,7 @@ export class JobManager {
         this.runners?.send(job, { type: "attach" }); this.watchHosted();
       } else if (s.status === "running" && s.executionOwner && s.executionOwner !== this.node.name) {
         this.running.set(s.id, job); this.watchHosted();
-      } else if (s.status !== "running") this.running.delete(s.id);
+      } else if (s.status !== "running" && this.pendingHosts.get(s.id) !== job.controller) this.running.delete(s.id);
     }
   }
 
@@ -1071,11 +1076,98 @@ export class JobManager {
     job.etaAt = undefined;
     job.etaReportedAt = undefined;
     job.foreground = false;
+    // A fresh continuation must not poll the previous turn's completed runner
+    // while its new detached startup is still waiting for reader identities.
+    job.host = null;
     this.running.set(job.id, job);
     this.own.add(job.id);
-    // A detached job runner where it can: the turn then survives a restart of this server.
-    try { job.host = this.runners ? (run.hosted?.(job) ?? null) : null; }
+    const controller = job.controller;
+    const authority = () => JSON.stringify([job.startedAt, job.owner, job.supervisor, job.executionOwner, job.rootSession, job.rootName, job.ownershipHistory,
+      this.node.name, this.node.currentSessionId]);
+    const generation = authority();
+    const turn = cloneJson(toStored(job));
+    const executor = this.node.name;
+    const current = () => {
+      if (this.dormant || this.running.get(job.id) !== job || job.controller !== controller || job.status !== "running") return false;
+      this.refreshOwnership();
+      return this.running.get(job.id) === job && job.controller === controller && job.status === "running" && generation === authority();
+    };
+    const admission: HostedAdmission = { signal: controller.signal, isCurrent: () => !controller.signal.aborted && current() };
+    // Only queued admission is cancellable on supervisor replacement. Once a
+    // runner has started, existing ownership handoffs never cancel its turn.
+    let hosted: JobHostInfo | null | Promise<JobHostInfo | null>;
+    try { hosted = this.runners ? (run.hosted?.(job, admission) ?? null) : null; }
     catch (err) { this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err })); return; }
+    if (hosted instanceof Promise) {
+      this.pendingHosts.set(job.id, controller);
+      job.progress = "queued: preparing detached runner storage";
+      this.persist();
+      const abandoned = () => {
+        if (this.running.get(job.id) !== job || job.controller !== controller) return;
+        this.running.delete(job.id);
+        job.status = "interrupted";
+        job.progress = "queued start lost its supervisor authority; no delegate was launched";
+      };
+      hosted.then(async host => {
+        if (host) {
+          // The runner already exists. An authority change after its admission
+          // cannot erase that fact or cancel an otherwise surviving live turn.
+          if (!current()) {
+            await this.retainHostedStart(turn, host, executor);
+            if (job.controller === controller) { job.host = host; job.progress = "runner started; retained for its current supervisor"; }
+            return;
+          }
+          job.progress = null; this.launchPrepared(job, run, host);
+          if (this.explicitCancellations.has(controller)) this.cancel(job.name);
+          return;
+        }
+        if (!current()) { abandoned(); return; }
+        if (controller.signal.aborted) { this.finish(job, "failed", "", null, "cancelled before detached runner startup"); return; }
+        job.progress = null;
+        this.launchPrepared(job, run, host);
+      }, err => {
+        if (!current()) { abandoned(); return; }
+        this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err }));
+      }).catch(err => this.log.warn("detached startup processing failed", { job: job.name, err: String(err) })).finally(() => {
+        if (this.pendingHosts.get(job.id) === controller) this.pendingHosts.delete(job.id);
+      });
+      return;
+    }
+    this.launchPrepared(job, run, hosted);
+  }
+
+  /** Publish a real late launch without rolling durable ownership/turn facts back. */
+  private async retainHostedStart(turn: StoredJob, host: JobHostInfo, executor: string): Promise<void> {
+    if (!this.storePath) return;
+    const fact = { version: 1, turn, host, executor, observedAt: Date.now() };
+    for (;;) {
+      let release = () => {};
+      try {
+        release = acquireLock(`${this.storePath}.lock`, 0);
+        const previous = readJobsDocument(this.storePath, this.log);
+        assertWritableStore(previous);
+        const entries: unknown[] = Array.isArray(previous) ? previous : isRecord(previous) && Array.isArray(previous.jobs) ? previous.jobs : [];
+        const jobs = entries.map(entry => {
+          if (!isRecord(entry) || entry.id !== turn.id) return entry;
+          if (entry.startedAt === turn.startedAt && !entry.host)
+            return { ...entry, host, executionOwner: entry.executionOwner ?? executor,
+              status: entry.status === "interrupted" ? "running" : entry.status };
+          return entry;
+        });
+        const envelope = isRecord(previous) ? previous : {};
+        writeJsonStore(this.storePath, { ...envelope, jobs,
+          retainedHostedStarts: [...(Array.isArray(envelope.retainedHostedStarts) ? envelope.retainedHostedStarts : []), fact] }, previous);
+        this.log.info("retained detached runner launched during supervisor change", { job: turn.name, peer: host.peer });
+        return;
+      } catch (error) {
+        if (!["EBUSY", "EJOBLOCKED", "STORE_UPGRADE_DEFERRED"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+      } finally { release(); }
+      await delay(50);
+    }
+  }
+
+  private launchPrepared(job: Job, run: Run, host: JobHostInfo | null): void {
+    job.host = host;
     job.forwarded = [];
     this.persist();
     if (job.host) {
@@ -1213,6 +1305,7 @@ export class JobManager {
       return true;
     }
     job.queue = [];
+    this.explicitCancellations.add(job.controller);
     job.controller.abort();
     if (this.hostedRunning(job)) {
       // Its runner stops the subagent and reports; one that does not react in time is killed with everything it started.

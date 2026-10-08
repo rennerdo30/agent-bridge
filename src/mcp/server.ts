@@ -1154,10 +1154,10 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
      */
     const background = (args: (job: Job) => DelegateArgs, base: DelegateArgs): Run =>
       Object.assign((signal: AbortSignal, onProgress: (message: string) => void, job: Job) => run(args(job), signal, onProgress, true, job), {
-        hosted: (job: Job) => {
+        hosted: (job: Job, admission: import("./jobs.js").HostedAdmission) => {
           const a = args(job);
           if (!ctx.runners || (a.access === "ask" && !a.host)) return null;
-          return ctx.runners.start(job, { target, args: a, base, owner: node?.name ?? ctx.agent, byAgent: ctx.agent, cwd: ctx.cwd(), cfg });
+          return ctx.runners.startAsync(job, { target, args: a, base, owner: node?.name ?? ctx.agent, byAgent: ctx.agent, cwd: ctx.cwd(), cfg }, admission);
         },
       });
 

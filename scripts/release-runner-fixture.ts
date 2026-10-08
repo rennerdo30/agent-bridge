@@ -230,7 +230,7 @@ export async function continueNativeRunnerFixture(options: NativeRunnerOptions &
   manager.restore((agent,base)=>(message,sessionId,workdir,worktree)=>{
     const args=resumeArgs(base as unknown as DelegateArgs,entry.name,message,sessionId,workdir,worktree,base);
     const run:Run=(signal,onProgress,job)=>runDelegate(rc,agent as "claude",args,signal,onProgress,true,job);
-    run.hosted=job=>runners.start(job,{target:"claude",args,base:base as unknown as DelegateArgs,owner:node.name,byAgent:"codex",cwd:workdir ?? entry.worktree.cwd,cfg}); return run;
+    run.hosted=(job,admission)=>runners.startAsync(job,{target:"claude",args,base:base as unknown as DelegateArgs,owner:node.name,byAgent:"codex",cwd:workdir ?? entry.worktree.cwd,cfg},admission); return run;
   });
   let continuedRelease:string|undefined;
   let continuationLaunched=false, continuationStartedAt=0;
