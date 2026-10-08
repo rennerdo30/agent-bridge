@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
@@ -10,6 +10,16 @@ import { nullLogger } from '../src/core/logger.js';
 import { makeEnv, type TestEnv } from './helpers.js';
 let env: TestEnv;
 beforeEach(()=>{env=makeEnv();}); afterEach(()=>env.cleanup());
+async function ready(read: () => Promise<any>, select: (body: any) => any) {
+  const deadline = Date.now() + 10_000;
+  let result: any;
+  do {
+    result = await read();
+    if (select(result.body)?.observation?.state === 'ready') return result;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  } while (Date.now() < deadline);
+  throw new Error('Outcome inspection did not finish');
+}
 it('derives only the selected job or run from a 700-run corpus in under one second', async()=>{
   const root=join(env.home,'runs');mkdirSync(root);
   const jobs=Array.from({length:700},(_,i)=>({id:String(i),name:`codex-job-${i}`,agent:'codex',owner:'fixture',status:'done',startedAt:1,args:{}}));
@@ -35,8 +45,12 @@ it('derives only the selected job or run from a 700-run corpus in under one seco
       execFileSync('git', ['-C', repo, 'pack-refs', '--all'], {stdio:'ignore'});
     }
     for(const query of [{job:'codex-job-699'},{run:'2026-10-07-10-00-00-codex-699'}]){
-      const start=performance.now(),result=await readDashboard(ctx,{path:'/api/job-outcomes',query});
-      expect(performance.now()-start, `${state} ${JSON.stringify(query)}`).toBeLessThan(1000);expect(result.status).toBe(200);
+      const read = () => readDashboard(ctx,{path:'/api/job-outcomes',query});
+      const start=performance.now(),cold=await read();
+      expect(performance.now()-start, `${state} cold ${JSON.stringify(query)}`).toBeLessThan(1000);expect(cold.status).toBe(200);
+      await ready(read, body => body.jobs['codex-job-699']?.outcome??body.runs['2026-10-07-10-00-00-codex-699']);
+      const warmStart=performance.now(),result=await read();
+      expect(performance.now()-warmStart, `${state} warm ${JSON.stringify(query)}`).toBeLessThan(1000);
       const body=result.body as any;
       expect(body.contractVersion).toBe(1);expect(body.next).toBeNull();
       expect(Object.keys(body.jobs).length+Object.keys(body.runs).length).toBe(1);
@@ -62,10 +76,17 @@ it('keeps next-turn receipt boundaries from independently archived metadata', as
   try {
     for (const at of [200, 500]) store.insert({ id: `result-${at}`, from: { id: 'job:deadbeef', name: 'codex-job-deadbeef', agent: 'codex' }, to: 'fixture', recipient: 'fixture', conversationId: 'job-deadbeef', replyTo: null, hop: 0, body: 'Subagent codex-job-deadbeef (codex) done after 1s.', createdAt: at, readAt: null });
     const ctx = { home: env.home, log: nullLogger, peers: () => [] };
-    const selected = (await readDashboard(ctx, { path: '/api/job-outcomes', query: { run: first } })).body as any;
-    const full = (await readDashboard(ctx, { path: '/api/job-outcomes' })).body as any;
+    const read = () => readDashboard(ctx, { path: '/api/job-outcomes', query: { run: first } });
+    const selected = (await ready(read, body => body.runs[first])).body as any;
+    const full = (await ready(() => readDashboard(ctx, { path: '/api/job-outcomes' }), body => body.runs[first])).body as any;
     expect(selected.runs[first].delivery.messageId).toBe('result-200');
     expect(selected.runs[first].delivery).toEqual(full.runs[first].delivery);
+    const directory = statSync(archive);
+    // Replacing metadata in place must invalidate even without directory changes.
+    writeFileSync(join(archive, `${next}.json-2-metacopy`), JSON.stringify({ job: 'codex-job-deadbeef', jobStartedAt: 600, by: 'fixture' }));
+    utimesSync(archive, directory.atime, directory.mtime);
+    const refreshed = (await ready(read, body => body.runs[first])).body as any;
+    expect(refreshed.runs[first].delivery.messageId).toBe('result-500');
     expect(readFileSync(join(root, `${first}.json`), 'utf8')).toBe(oldMeta);
   } finally { store.close(); }
 });

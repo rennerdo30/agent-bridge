@@ -122,7 +122,7 @@ export interface BackgroundBackupControl {
   checkpoint: () => void;
 }
 
-/** Bounded page/file I/O for automatic backups. Partial snapshots remain preserved on every failure. */
+/** Incremental full snapshots for explicit/offline callers; automatic daily backups use message-backups.ts. */
 export async function backupIfDueBackground(home: string, control: BackgroundBackupControl, now = Date.now()): Promise<string | null> {
   const interval = retentionLimit(BACKUP_INTERVAL_ENV, DEFAULT_BACKUP_INTERVAL_MS);
   if (!interval || now - (listBackups(home)[0]?.createdAt ?? 0) < interval) return null;
@@ -244,7 +244,7 @@ function createRecovery(home: string): string {
 
 export function readBackup(path: string): BackupManifest {
   const value: unknown = JSON.parse(readFileSync(join(path, MANIFEST_NAME), "utf8"));
-  if (!isRecord(value) || value.version !== BACKUP_MANIFEST_VERSION || !Number.isFinite(value.createdAt) || !Array.isArray(value.files)) throw new Error("unsupported backup manifest");
+  if (!isRecord(value) || value.kind !== undefined && value.kind !== "full" || value.version !== BACKUP_MANIFEST_VERSION || !Number.isFinite(value.createdAt) || !Array.isArray(value.files)) throw new Error("unsupported full backup manifest; scoped message snapshots require a table merge");
   const seen = new Set<string>();
   for (const file of value.files) {
     if (!isRecord(file) || typeof file.path !== "string" || !allowedPath(file.path) || seen.has(file.path)) throw new Error("unsafe or duplicate backup path");

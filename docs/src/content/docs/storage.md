@@ -33,16 +33,26 @@ Snapshots cover primary/archive, history, owner-question and compatibility datab
 and the durable read journal.
 Run log text, the bridge authentication token and the dashboard launch secret are not part of the
 rotating snapshot. Keep the entire data directory in normal filesystem backups if you need them.
-Automatic snapshots run in a separate worker after the broker is listening. Incremental
-SQLite page copies and streaming checksum batches yield under broker pressure. They do not
-copy or hash whole databases on the broker's request thread. Protected migration artifacts
+Automatic daily backups are opt-in with `AGENT_BRIDGE_AUTO_BACKUP=1`. They run in a separate
+process at low OS priority after the broker is listening, and capture only message transport
+tables: primary/archived messages and durable job delivery routes. Conversation history,
+other database tables and JSON stores are excluded. Incremental row-copy, verification and
+checksum windows pause under broker pressure; a cross-process SQLite lock permits one
+generation at a time and releases automatically if its process dies. Source files are untouched.
+Scoped snapshots are labelled `kind: message-tables`, require a selected-table merge, and live
+under `message-backups/messages-*`. Full restore explicitly refuses these partial snapshots;
+never replace a whole database with one. Manual snapshots retain the complete five-database
+and JSON coverage described above. Failed scoped attempts remain under
+`message-backups/.pending-*`; verified older sets move to `message-backups/archive/`.
+No automatic copy or checksum runs on the broker's request thread. Protected migration artifacts
 under `.migration-snapshots/` remain outside automatic rotation; retain the full data directory
 in filesystem backups too. See [conversation storage](../conversation-storage/).
 
 | Environment variable | Default | Meaning |
 |---|---|---|
-| `AGENT_BRIDGE_BACKUP_RETENTION` | `7` | Recent published snapshots; older sets move to `backups/archive/` |
-| `AGENT_BRIDGE_BACKUP_INTERVAL_MS` | `86400000` | Automatic snapshots while a message store is open |
+| `AGENT_BRIDGE_AUTO_BACKUP` | disabled | `1` enables the separate-process message-table daily backup |
+| `AGENT_BRIDGE_BACKUP_RETENTION` | `7` | Recent published sets in each namespace; older full/scoped sets move to their respective `archive/` directories |
+| `AGENT_BRIDGE_BACKUP_INTERVAL_MS` | `86400000` | Opt-in message-table snapshot interval after the broker is listening |
 | `AGENT_BRIDGE_ARCHIVE_AGE_MS` | `2592000000` | Finished jobs/run logs and explicit `doctor --archive` age (30 days) |
 
 Values are nonnegative integer milliseconds/counts. Zero disables age/interval processing, or
@@ -50,7 +60,7 @@ keeps unlimited recent backups. Invalid values use named defaults. Existing mess
 age and count limits remain supported; see the [retention table](../data-retention/#retention-configuration-and-upgrade-behavior). Jobs without a reliable
 `finishedAt`, and running/interrupted jobs, are not aged out. Unfinished logs are never moved.
 
-Restore accepts a published snapshot directory, including cold snapshots. It validates hashes and
+Restore accepts a published full snapshot directory, including cold full snapshots. It validates hashes and
 the CLI refuses damaged/unsupported stores. Every current managed file, including a damaged
 database and its sidecars, is copied to a permanent `backups/recovery-*` directory before replacement.
 Displaced originals are retained there too. A caught failure rolls back replaced files and preserves

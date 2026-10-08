@@ -57,7 +57,8 @@ import { readNetworkConfig, writeNetworkConfig, type NetworkConfig } from "../ne
 import { z } from "zod";
 import { basename, dirname, join } from "node:path";
 import { ProjectGroups } from "./project-groups.js";
-import { recoverJobRecord } from "./job-recovery.js";
+import { recoverJobRecordAsync } from "./job-recovery.js";
+import { findHistoryJob, selectHistoryJobs } from "./run-history.js";
 import { collectTransfer, receiveTransfer, type TransferResult } from "../network/files.js";
 import { cancelStoredTransfer, MAX_STREAM_ENTRIES, readTransferHistory, type TransferStarted } from "../network/transfers.js";
 import { MAX_NETWORK_HOST_CHARS, MAX_PAIRING_CODE_CHARS, MAX_PORT } from "../network/constants.js";
@@ -180,12 +181,23 @@ export class Broker {
         const args = z.object({ to: z.string().min(1) }).strict().parse(a);
         return this.switchProjectMain(c.peer, this.connByName(args.to)?.peer ?? undefined);
       },
-      projectJobs: (c) => {
+      projectJobs: async (c) => {
         const peer = this.requirePeer(c);
         // Surviving runners may exist only in retained snapshots after an old server overwrote the registry.
         const known = new Set(this.storedJobs().map((job) => job.name));
-        for (const runner of this.conns) if (runner.peer?.jobAgent && !known.has(runner.peer.name)) this.jobForControl(peer, runner.peer.name);
-        return this.storedJobs().filter((j) => this.groups.canControl(peer, j, this.localPeers()));
+        for (const runner of this.conns) if (runner.peer?.jobAgent && !known.has(runner.peer.name)) await this.jobForControl(peer, runner.peer.name);
+        this.jobsForDispatch = null;
+        let activeIds = new Set<unknown>();
+        try {
+          const data = readJsonSnapshot(this.jobsPath!).value;
+          const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : undefined;
+          if (!rows) return [];
+          activeIds = new Set(rows.filter(isRecord).map(record => record.id));
+        }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return []; }
+        const jobs = this.storedJobs(), retained = this.jobsPath ? selectHistoryJobs(dirname(this.jobsPath), new Set(jobs.filter(job => !activeIds.has(job.id)).map(job => String(job.name)))) : new Map();
+        return jobs.map(job => activeIds.has(job.id) ? job : { ...job, ...retained.get(String(job.name)) })
+          .filter(job => this.groups.canControl(peer, job, this.localPeers()));
       },
       coordinatorAvailability: (c, a) => {
         const args = z.object({ name: z.string().optional(), unavailable: z.boolean() }).strict().parse(a);
@@ -213,18 +225,18 @@ export class Broker {
         for (const conn of this.conns) if (conn.peer) this.emit(conn, "jobs_changed", { withdrawn: conn.peer.name === source.name ? receipt.jobs.map((j) => j.id) : [] });
         return receipt;
       },
-      jobAuthority: (c, a) => {
-        const peer = this.requirePeer(c), job = this.jobForControl(peer, a.job);
+      jobAuthority: async (c, a) => {
+        const peer = this.requirePeer(c), job = this.currentJobAuthority(await this.jobForControl(peer, a.job));
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) return null;
         return job as unknown as import("../mcp/jobs.js").Job;
       },
-      jobRecipient: (c, a) => {
-        const peer = this.requirePeer(c), job = this.jobForControl(peer, a.job);
+      jobRecipient: async (c, a) => {
+        const peer = this.requirePeer(c), job = this.currentJobAuthority(await this.jobForControl(peer, a.job));
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) throw new BridgeError("unauthorized", "Only a master can inspect the job recipient.");
         return this.jobRecipient(job);
       },
       inlineJobControl: async (c, a) => {
-        const peer = this.requirePeer(c), job = this.jobForControl(peer, a.job);
+        const peer = this.requirePeer(c), job = this.currentJobAuthority(await this.jobForControl(peer, a.job));
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) throw new BridgeError("unauthorized", "Only the current supervisor can control this job.");
         if (!a.control || !["message", "title", "settings", "effort", "cancel"].includes(a.control.type)) throw new BridgeError("bad_request", "Invalid inline control.");
         if (job.host && job.status === "running") {
@@ -828,16 +840,57 @@ export class Broker {
     return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && (!target || c.peer.name === target) && (this.sameJobFamily(peer, c.peer, jobs) || this.sharedJobs(peer, c.peer, jobs) || peer.jobSendTo?.includes(c.peer.name)));
   }
 
-  private jobForControl(peer: PeerInfo, ref: string): Record<string, unknown> | undefined {
+  private async jobForControl(peer: PeerInfo, ref: string): Promise<Record<string, unknown> | undefined> {
     const known = this.storedJobs().find((j) => j.name === ref || j.id === ref);
-    if (known?.remote || (isRecord(known?.host) && Date.now() - Number(known.host.startedAt) < 30_000)) return known;
+    let active = false;
+    if (known && this.jobsPath) {
+      try {
+        const data = readJsonSnapshot(this.jobsPath).value;
+        const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
+        active = rows.some(record => isRecord(record) && record.id === known.id);
+      } catch { /* Unknown registry reads cannot authorize a stale archive fast path. */ }
+    }
+    if (active && (known?.remote || (isRecord(known?.host) && Date.now() - Number(known.host.startedAt) < 30_000))) return known;
     // A connected inline executor is the only source of its runtime controller.
-    if (known?.status === "running" && !known.host && this.connByName(String(known.executionOwner ?? known.owner))) return known;
-    const recovered = this.jobsPath ? recoverJobRecord(dirname(this.jobsPath), ref) : undefined;
-    if (!recovered || !this.groups.canControl(peer, recovered as unknown as Record<string, unknown>, this.localPeers())) return known;
+    if (active && known?.status === "running" && !known.host && this.connByName(String(known.executionOwner ?? known.owner))) return known;
+    const recovered = this.jobsPath ? await recoverJobRecordAsync(dirname(this.jobsPath), ref) : undefined;
+    const current = this.storedJobs().find((j) => j.name === ref || j.id === ref);
+    if (!recovered) return typeof current?.prompt === "string" && typeof current.owner === "string" ? current : undefined;
+    if (!this.groups.canControl(peer, recovered as unknown as Record<string, unknown>, this.localPeers())) return current;
     this.recoveredJobs.set(recovered.id, recovered as unknown as Record<string, unknown>);
     this.jobsSnapshot = null; this.jobsForDispatch = null;
     return recovered as unknown as Record<string, unknown>;
+  }
+
+  /** Synchronous authorization fence after the handler's final await. Never use
+   * an earlier generation or stale grants for a control/routing side effect. */
+  private currentJobAuthority(job: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+    if (!job || typeof job.id !== "string" || !this.jobsPath) return undefined;
+    let active: Record<string, unknown> | undefined;
+    try {
+      const data = readJsonSnapshot(this.jobsPath).value;
+      const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : undefined;
+      if (!rows) return undefined;
+      active = rows.filter(isRecord).findLast(record => record.id === job.id);
+    }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined; }
+    this.jobsForDispatch = null;
+    const current = active ?? findHistoryJob(dirname(this.jobsPath), String(job.name), job.id) ?? this.storedJobs().find(record => record.id === job.id);
+    if (!current) return undefined;
+    for (const key of ["id", "name", "agent", "startedAt", "sessionId", "threadId"]) {
+      if (current[key] !== undefined && current[key] !== null && current[key] !== job[key]) return undefined;
+    }
+    const latest = { ...job };
+    for (const key of ["owner", "supervisor", "executionOwner", "rootName", "rootSession", "parentJob", "masters", "ownershipHistory", "remote", "projectRoot", "args"]) {
+      // A retained label-only record can have its owner recovered from the exact header.
+      if ((key === "owner" || key === "args") && current[key] === undefined) continue;
+      // An archive may predate context/grant fields recovered from its run/spec.
+      // Active rows are authoritative about grants removed by a newer handoff.
+      if (!active && !(key in current)) continue;
+      latest[key] = current[key];
+    }
+    if (typeof current.prompt === "string") latest.prompt = current.prompt;
+    return latest;
   }
 
   private storedJobs(): Record<string, unknown>[] {

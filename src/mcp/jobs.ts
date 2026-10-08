@@ -2,6 +2,7 @@ import { canonicalProjectRoot, migrateProjectJobs } from "../core/project-identi
 import { canControlJob } from "../core/job-ownership.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import { closeSync, constants as fsConstants, copyFileSync, fsyncSync, openSync } from "node:fs";
 import { dirname } from "node:path";
 import { DEFAULT_MAX_JOBS, DELEGATION_METADATA_VERSION } from "../core/constants.js";
 import { DelegateError, failureCause, type DelegateResult } from "../core/delegate.js";
@@ -9,9 +10,10 @@ import type { Logger } from "../core/logger.js";
 import { ACK_CONVERSATION_SUFFIX, isQuietMessage, type AgentKind, type BridgeMessage } from "../core/protocol.js";
 import { isPureAcknowledgement } from "../core/job-messaging.js";
 import type { Worktree } from "../core/worktree.js";
-import { assertWritableStore, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "../core/json-store.js";
+import { assertWritableStore, backupPath, isRecord, JSON_STORE_VERSION, mergeStoreFields, readJsonStore, retainBackups, retentionLimit, writeJsonStore } from "../core/json-store.js";
 import { changedJobArgs, type JobSettings } from "./job-settings.js";
-import { archiveJobs, readArchivedJobs } from "../core/job-archive.js";
+import { archiveJobs, readArchivedJobs, readArchivedJobSnapshot } from "../core/job-archive.js";
+import { cloneJson, readJsonSnapshot } from "../core/file-cache.js";
 import { ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS } from "../core/run-archive.js";
 import { newApprovalId, publishApproval, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { notifyJobEvent } from "../core/notifications.js";
@@ -429,13 +431,20 @@ export class JobManager {
       const previous = readJobsDocument(this.storePath, this.log);
       assertWritableStore(previous);
       const entries = Array.isArray(previous) ? previous : isRecord(previous) ? previous.jobs as unknown[] : [];
-      const archived = new Map(readArchivedJobs(this.storePath).map((j) => [j.id, j]));
+      // Comparisons need read-only archive references; only a selected record can
+      // enter mutable job state, so clone that record at the boundary below.
+      const archived = new Map<unknown, Record<string, unknown>>();
+      for (const record of readArchivedJobSnapshot(this.storePath).jobs) archived.set(record.id, record);
       const byId = new Map<unknown, Record<string, unknown>>();
+      const duplicates = new Set<unknown>();
       for (const entry of entries) {
-        if (isRecord(entry) && !byId.has(entry.id)) byId.set(entry.id, entry);
+        if (!isRecord(entry)) continue;
+        if (byId.has(entry.id)) duplicates.add(entry.id);
+        // Match every read projection: the final active record is durable authority.
+        byId.set(entry.id, entry);
       }
       const mine = [...this.history.values()].filter((j) => this.own.has(j.id)).map((j) => {
-        const old = byId.get(j.id) ?? archived.get(j.id) ?? j.recoveredRecord;
+        const old = byId.get(j.id) ?? (archived.has(j.id) ? cloneJson(archived.get(j.id)!) : j.recoveredRecord);
         if (isRecord(old)) {
           j.deliveryHistory = [...new Map([...(Array.isArray(old.deliveryHistory) ? old.deliveryHistory as BridgeMessage[] : []), ...(j.deliveryHistory ?? [])].map((m) => [m.id, m])).values()];
           // A late report from an earlier turn may add delivery evidence, but cannot roll back a continuation.
@@ -453,6 +462,15 @@ export class JobManager {
         return mergeStoreFields(isRecord(old) ? old : {}, toStored(j)) as StoredJob;
       });
       const ids = new Set(mine.map((j) => j.id));
+      if ([...duplicates].some(id => ids.has(id as string))) {
+        // Collapsing owned duplicates must retain their complete conflicting raw
+        // data first, including version-4 records and unknown envelope fields.
+        const backup = backupPath(this.storePath);
+        copyFileSync(this.storePath, backup, fsConstants.COPYFILE_EXCL);
+        const fd = openSync(backup, "r+");
+        try { fsyncSync(fd); } finally { closeSync(fd); }
+        retainBackups(this.storePath);
+      }
       const others = entries.filter((j) => !isRecord(j) || !ids.has(j.id as string));
       const all = migrateProjectJobs([...others, ...mine]).sort((a, b) => {
         const started = (entry: unknown) => isRecord(entry) && typeof entry.startedAt === "number" ? entry.startedAt : 0;
@@ -490,7 +508,8 @@ export class JobManager {
   /** Refresh durable authority without resetting controllers or interrupting inline runs. */
   refreshOwnership(): void {
     if (!this.storePath || this.dormant) return;
-    const stored = readStore(this.storePath, this.log, true);
+    const tracked = new Set([...this.history.keys(), ...this.running.keys(), ...this.foreground.keys(), ...this.waitingJobs.keys()]);
+    const stored = readScopedStore(this.storePath, tracked, new Set([this.node.name, ...this.adoptedOwners]), this.lineage?.parentJob, this.log);
     if (this.lineage) {
       const parent = stored.find((j) => j.name === this.lineage!.parentJob);
       if (parent?.rootSession && parent.rootName) { this.lineage.rootSession = parent.rootSession; this.lineage.rootName = parent.rootName; }
@@ -673,9 +692,9 @@ export class JobManager {
   private canRestoreSaved(job: StoredJob): boolean {
     if (!this.restorePolicy || this.restorePolicy.canRestore()) return true;
     const handoff = job.ownershipHistory?.at(-1);
-    const session = this.node.currentSessionId ?? this.node.id;
     return Boolean(this.restorePolicy.canReceiveHandoff() && handoff?.reason === "explicit-handoff" &&
-      handoff.to === this.node.name && handoff.rootSession === session && this.isMine(job.owner) && !job.parentJob);
+      handoff.to === this.node.name && (handoff.rootSession === this.node.currentSessionId || handoff.rootSession === this.node.id) &&
+      this.isMine(job.owner) && !job.parentJob);
   }
 
   standInOwners(online: ReadonlySet<string>): string[] {
@@ -757,7 +776,7 @@ export class JobManager {
     const current = active.find((j) => j.id === id || j.name === ref)
       ?? this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
     if (current || !this.storePath || !this.restoreResume) return current && (this.sharedGrants.has(current.id) || canControlJob(current as unknown as Record<string, unknown>, this.node.name) || this.isMine(current.owner) || (this.lineage && current.parentJob === this.lineage.parentJob)) ? current : undefined;
-    const saved = readStore(this.storePath, this.log, true).find((j) => j.id === id || j.name === ref)
+    const saved = readStoredJob(this.storePath, id, ref, this.log)
       ?? recoverJobRecord(dirname(this.storePath), ref);
     if (!saved || (!this.lineage && !this.isMine(saved.owner) && !canControlJob(saved as unknown as Record<string, unknown>, this.node.name) && !this.sharedGrants.has(saved.id))) return undefined;
     // The same lineage rule as restore(): a nested coordinator sees only its own children, a session only top-level jobs.
@@ -1377,6 +1396,56 @@ export function readStore(path: string, log?: Logger, includeArchived = false): 
     log?.warn("could not read jobs store", { path, err: String(err) });
     return [];
   }
+}
+
+/** Archive refreshes touch only already tracked jobs; new durable handoffs are active overrides. */
+function readScopedStore(path: string, tracked: ReadonlySet<string>, owners: ReadonlySet<string>, parentName: string | undefined, log?: Logger): StoredJob[] {
+  try {
+    const current = activeJobSnapshot(path);
+    const activeIds = new Set(current.keys());
+    const archived: StoredJob[] = [];
+    for (const record of readArchivedJobSnapshot(path).jobs) {
+      if (!isStoredJob(record) || activeIds.has(record.id)) continue;
+      if (tracked.has(record.id) || parentName !== undefined && record.name === parentName) archived.push(cloneJson(record));
+    }
+    // Inspect every active record for newly assigned jobs, but clone only matching records.
+    for (const record of current.values()) {
+      const owned = parentName !== undefined ? record.parentJob === parentName : !record.parentJob && (!record.owner || owners.has(record.owner));
+      if (tracked.has(record.id) || owned || record.name === parentName) archived.push(cloneJson(record));
+    }
+    return archived;
+  } catch (err) {
+    log?.warn("could not refresh tracked jobs store", { path, err: String(err) });
+    return [];
+  }
+}
+
+/** Select a single durable record before cloning the private archive projection. */
+function readStoredJob(path: string, id: string, name: string, log?: Logger): StoredJob | undefined {
+  try {
+    const current = activeJobSnapshot(path);
+    for (const record of current.values()) if (record.id === id || record.name === name) return cloneJson(record);
+    for (const record of readArchivedJobSnapshot(path).jobs) {
+      if (isStoredJob(record) && !current.has(record.id) && (record.id === id || record.name === name)) return cloneJson(record);
+    }
+  } catch (err) { log?.warn("could not look up stored job", { path, err: String(err) }); }
+  return undefined;
+}
+
+/** Private stat-validated active projection; passive reads never rename corrupt user bytes. */
+function activeJobSnapshot(path: string): Map<string, StoredJob> {
+  let value: unknown;
+  try { value = readJsonSnapshot(path).value; }
+  catch (err) { if ((err as NodeJS.ErrnoException).code === "ENOENT") return new Map(); throw err; }
+  const entries = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.jobs) ? value.jobs : null;
+  if (!entries) {
+    // Match the existing forward-version read behavior without invoking repair/write paths.
+    if (isRecord(value) && typeof value.version === "number" && value.version > JSON_STORE_VERSION) return new Map();
+    throw new Error("invalid jobs store structure");
+  }
+  const jobs = new Map<string, StoredJob>();
+  for (const entry of entries) if (isStoredJob(entry)) jobs.set(entry.id, entry);
+  return jobs;
 }
 
 const LOCK_WAIT_MS = 2_000;

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, writeFileSync, type Stats } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { archiveFile, isRecord, JSON_STORE_VERSION } from "./json-store.js";
-import { fileSignature, readJsonSnapshot } from "./file-cache.js";
+import { cloneJson, fileSignature, readJsonSnapshot } from "./file-cache.js";
 import { assertStoreUpgrade } from "./store-compatibility.js";
 
 interface ArchivedJobSnapshot { signature: string; jobs: Record<string, unknown>[] }
@@ -19,7 +19,7 @@ function physicalFile(file: string): Stats {
 }
 
 export function readArchivedJobs(path: string): Record<string, unknown>[] {
-  return structuredClone(readArchivedJobSnapshot(path).jobs);
+  return cloneJson(readArchivedJobSnapshot(path).jobs);
 }
 
 /** Validate file identities before reusing the projection; parse only a changed corpus. */

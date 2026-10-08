@@ -21,6 +21,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { resolvePipePath } from "../src/core/paths.js";
 import { APP_VERSION } from "../src/core/constants.js";
 import { JobManager, type Run } from "../src/mcp/jobs.js";
+import { JobRunners } from "../src/mcp/job-host.js";
 import { registerTools, type ServerContext } from "../src/mcp/server.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { createWorktree } from "../src/core/worktree.js";
@@ -30,6 +31,9 @@ import { worktreeLease } from "../src/core/worktree-state.js";
 import type { Broker } from "../src/core/broker.js";
 import type { HistoryBackground } from "../src/core/history-background.js";
 import type { Worker } from "node:worker_threads";
+import { startOldRunnerFixtures, continueNativeRunnerFixture, type OldRunnerFixtures } from "./release-runner-fixture.js";
+import { listMessageBackups, type MessageBackupManifest } from "../src/core/message-backups.js";
+import type { BackupHealth } from "../src/core/backup-background.js";
 
 const argumentsList = process.argv.slice(2);
 function option(name: string): string | undefined { const i = argumentsList.indexOf(name); return i < 0 ? undefined : argumentsList[i + 1]; }
@@ -135,7 +139,7 @@ export async function seedRehearsal(bytes: number): Promise<Seed> {
 type Reply = { rid?: string; ready?: boolean; result?: unknown; error?: string };
 type Role = "old-session" | "old-runner" | "current-session" | "lease-owner";
 type NodeInternals = { broker: Broker | null; client: { request(op: string, args: unknown): Promise<unknown> } | null };
-type BrokerInternals = { historyBackground: HistoryBackground | null };
+type BrokerInternals = { historyBackground: HistoryBackground | null; store: { backupStatus?: () => BackupHealth | null } };
 interface FixtureChild { process: ChildProcess; role: Role; index: number; request(op: string, data?: Record<string, unknown>): Promise<any>; stop(): Promise<void> }
 const children: FixtureChild[] = [];
 async function childMain(home: string, role: Role, index: number): Promise<void> {
@@ -146,25 +150,34 @@ async function childMain(home: string, role: Role, index: number): Promise<void>
     setInterval(() => {}, 1000); return;
   }
   const legacy = role.startsWith("old-");
+  if (!legacy) { process.env.AGENT_BRIDGE_AUTO_BACKUP = "1"; process.env.AGENT_BRIDGE_BACKUP_INTERVAL_MS = "3600000"; }
   const constructor = legacy ? (await oldRuntime(home)).BridgeNode : BridgeNode;
   const name = role === "old-runner" ? `codex-job-rehearsal-${index}` : `old-session-${index}`;
   const node = new constructor({ pipePath: resolvePipePath(home, {}), dbPath: join(home, "bridge.db"), token, agent: role === "old-runner" ? "other" : "codex", name, cwd: home, autoWake: false, log: nullLogger,
     ...(role === "old-runner" ? { canHostBroker: false, id: `job:rehearsal-${index}`, jobAgent: "codex" as const, jobParent: "old-session-0", jobOwner: "synthetic-root", rootName: "old-session-0", rootSession: "synthetic-root" } : {}) });
   node.on("message", message => node.markRead([message.id]));
-  await node.start();
+  // Distinct synthetic sessions share this harness parent PID. Publish their known session
+  // identity before hello so launch reconciliation cannot treat them as one host session.
   if (role !== "old-runner") await node.setSessionId(`synthetic-session-${index}`);
+  await node.start();
   const internals = node as unknown as NodeInternals;
   process.send?.({ ready: true, result: { pid: process.pid, name: node.name, version: legacy ? "0.29.17" : APP_VERSION } });
   let profiling = false;
-  let toolJobs: JobManager | undefined, subagent: string | undefined, delivered = 0;
+  let outcomePolls = 0;
+  let toolJobs: JobManager | undefined, subagent: string | undefined, delivered = 0, nativeTool = false;
   const callbacks = new Map<string, (args: Record<string, unknown>, extra: any) => Promise<any>>();
   const prepareSubagent = () => {
-    if (legacy || !internals.broker) throw new Error("Tool fixture requires the current broker session");
+    if (legacy) throw new Error("Tool fixture requires a current supervisor session");
     if (toolJobs) return;
+    const manifestFile = join(home, "native-runner-fixture", "manifest.json");
+    const manifest = existsSync(manifestFile) ? JSON.parse(readFileSync(manifestFile, "utf8")) : undefined;
     const lane = join(home, "mcp-tool-fixture"); mkdirSync(lane, { recursive: true });
-    toolJobs = new JobManager(node, nullLogger, join(lane, "jobs.json"));
+    nativeTool = Boolean(manifest);
+    toolJobs = new JobManager(node, nullLogger, manifest ? join(home, "jobs.json") : join(lane, "jobs.json"), 16);
+    if (manifest) toolJobs.runners = new JobRunners(node, home, manifest.currentCli, nullLogger);
     const fakeMcp = { registerTool: (name: string, _config: unknown, callback: (args: Record<string, unknown>, extra: any) => Promise<any>) => { callbacks.set(name, callback); } };
-    registerTools(fakeMcp as Parameters<typeof registerTools>[0], { node, jobs: toolJobs, cfg: DEFAULT_CONFIG, home, cwd: () => home, agent: "codex", log: nullLogger, channelActive: () => false } as ServerContext, []);
+    registerTools(fakeMcp as Parameters<typeof registerTools>[0], { node, jobs: toolJobs, cfg: { ...DEFAULT_CONFIG, ...(manifest ? { claudeBin: manifest.claudeBin } : {}) }, home, cwd: () => home, agent: "codex", log: nullLogger, channelActive: () => false } as ServerContext, []);
+    if (manifest) { subagent = manifest.descriptors[1].name; return; }
     const run: Run = async signal => new Promise(resolve => { signal.addEventListener("abort", () => resolve({ text: "Synthetic held run stopped", sessionId: "synthetic-held-tool-session", isError: false, details: {} }), { once: true }); });
     const job = toolJobs.start("codex", null, "Synthetic held runner; no proprietary CLI", run);
     job.live = { post: () => { delivered++; } }; subagent = job.name;
@@ -173,14 +186,22 @@ async function childMain(home: string, role: Role, index: number): Promise<void>
     const answer = async (): Promise<unknown> => {
       if (raw.op === "stop") { toolJobs?.cancelAll(); await node.stop(); return { stopped: true }; }
       if (raw.op === "probe") {
-        const before = performance.now();
-        const sent = await node.send({ to: "old-session-0", body: "Synthetic continuity probe", dedupeKey: randomUUID() });
-        const sendMs = performance.now() - before, at = performance.now(); await node.peers();
-        return { sendMs, peersMs: performance.now() - at, id: sent.messages[0]?.id };
+        const before = performance.now(), key = randomUUID(), body = `Synthetic continuity probe ${key}`;
+        let sendMs = 0;
+        try {
+          const sent = await node.send({ to: "old-session-0", body, dedupeKey: key });
+          sendMs = performance.now() - before; const at = performance.now(); await node.peers();
+          return { sendMs, peersMs: performance.now() - at, id: sent.messages[0]?.id, storageOutcome: { state: "stored", ids: sent.messages.map(message => message.id) } };
+        } catch (error) {
+          let copies: Record<string, unknown>[] = [], lookupError: string | undefined;
+          try { const db = new DatabaseSync(join(home, "bridge.db"), { readOnly: true, timeout: 100 }); try { copies = db.prepare("SELECT id,recipient,read_at FROM messages WHERE body=? AND from_name=?").all(body, node.name); } finally { db.close(); } }
+          catch (lookup) { lookupError = String(lookup); }
+          return { sendMs: sendMs || performance.now() - before, probeError: String(error), storageOutcome: { state: copies.length ? "stored" : "unknown", localState: copies.length ? "stored" : "not_stored", checkedAt: Date.now(), copies, lookupError, legacyOperationHasNoDurableRetryId: true } };
+        }
       }
       if (raw.op === "status") {
         const broker = internals.broker as unknown as BrokerInternals | null;
-        return { broker: Boolean(broker), pid: process.pid, priority: getPriority(0), migration: broker?.historyBackground?.status() ?? null, version: legacy ? "0.29.17" : APP_VERSION, name: node.name, id: node.id, sessionId: node.currentSessionId };
+        return { broker: Boolean(broker), pid: process.pid, priority: getPriority(0), migration: broker?.historyBackground?.status() ?? null, backup: broker?.store?.backupStatus?.() ?? null, version: legacy ? "0.29.17" : APP_VERSION, name: node.name, id: node.id, sessionId: node.currentSessionId };
       }
       if (raw.op === "interrupt-history") {
         const background = (internals.broker as unknown as BrokerInternals | null)?.historyBackground;
@@ -200,13 +221,15 @@ async function childMain(home: string, role: Role, index: number): Promise<void>
           const frames = new Map<number, { name: string; samples: number; micros: number }>();
           for (const frame of value.profile.nodes) frames.set(frame.id, { name: frame.callFrame.functionName, samples: 0, micros: 0 });
           for (let i = 0; i < (value.profile.samples?.length ?? 0); i++) { const frame = frames.get(value.profile.samples[i]); if (frame) { frame.samples++; frame.micros += value.profile.timeDeltas?.[i] ?? 0; } }
-          return { phase: raw.data?.phase, path, pid: process.pid, cpuMicros: process.cpuUsage(cpu), samples: value.profile.samples?.length ?? 0, hottestFrames: [...frames.values()].sort((a, b) => b.micros - a.micros).slice(0, 12) };
+          return { phase: raw.data?.phase, path, pid: process.pid, cpuMicros: process.cpuUsage(cpu), cpuScope: "process including history worker", sampleScope: "broker main thread", samples: value.profile.samples?.length ?? 0, hottestFrames: [...frames.values()].sort((a, b) => b.micros - a.micros).slice(0, 12) };
         } finally { inspector.disconnect(); profiling = false; }
       }
       if (raw.op === "runs") { const at = performance.now(); const runs = listRuns(home); return { milliseconds: performance.now() - at, count: runs.length }; }
       if (raw.op === "dashboard") {
         if (!internals.broker || legacy) throw new Error("Dashboard poll must execute on the current broker main thread");
         const at = performance.now(), runs = listRuns(home), listRunsMs = performance.now() - at, pollAt = performance.now();
+        // These are distinct production requests; let pending mail run between them.
+        await delay(0);
         const value = await readDashboard({ home, log: nullLogger, peers: () => node.peers() }, { path: "/api/state" });
         if (value.status !== 200 || runs.length < 1000) throw new Error("Dashboard fixture did not load its retained run corpus");
         return { listRunsMs, dashboardMs: performance.now() - pollAt, runCount: runs.length };
@@ -214,8 +237,20 @@ async function childMain(home: string, role: Role, index: number): Promise<void>
       if (raw.op === "message-subagent") {
         prepareSubagent(); const at = performance.now(), before = delivered;
         const value = await callbacks.get("message_subagent")!({ job: subagent!, message: "Synthetic sustained tool probe" }, {});
-        if (value.isError || delivered !== before + 1) throw new Error(`Actual message_subagent handler did not deliver: ${JSON.stringify(value)}`);
-        return { messageSubagentMs: performance.now() - at, delivered, actualRegisteredHandler: true, fakeHeldRunner: true };
+        if (value.isError || !nativeTool && delivered !== before + 1) throw new Error(`Actual message_subagent handler did not deliver: ${JSON.stringify(value)}`);
+        return { messageSubagentMs: performance.now() - at, delivered, actualRegisteredHandler: true, genuineOldJobRunner: nativeTool, syntheticCli: nativeTool, fakeHeldRunner: !nativeTool, proprietaryCliLaunched: false };
+      }
+      if (raw.op === "native-continuation") {
+        if (legacy || node.currentSessionId !== "synthetic-session-0") throw new Error("Native continuation requires its retained current supervisor session");
+        return continueNativeRunnerFixture({ checkout, home, node, index: 0 });
+      }
+      if (raw.op === "outcomes") {
+        if (legacy || !internals.broker) throw new Error("Outcome polling requires the current broker main thread");
+        const fixture = JSON.parse(readFileSync(join(home, "outcome-fixture.json"), "utf8")), run = fixture.runs[outcomePolls++ % fixture.runs.length];
+        const at = performance.now(), value = await readDashboard({ home, log: nullLogger, peers: () => node.peers() }, { path: "/api/job-outcomes", query: { run } });
+        if (value.status !== 200) throw new Error("Finished-run outcome fixture could not be loaded");
+        const outcome = (value.body as { runs: Record<string, { observation?: { state?: string } }> }).runs[run];
+        return { outcomesMs: performance.now() - at, outcomeObservation: outcome?.observation?.state ?? "missing", run };
       }
       throw new Error(`Unknown rehearsal operation ${raw.op}`);
     };
@@ -230,7 +265,7 @@ async function startChild(home: string, role: Role, index: number, extra: string
   const child: FixtureChild = {
     process: processChild, role, index,
     request: (op, data) => new Promise((resolve, reject) => {
-      const rid = randomUUID(), timer = setTimeout(() => { waiters.delete(rid); reject(new Error(`Owned ${role} ${index} request timed out: ${op}`)); }, op === "profile" ? 30_000 : 60_000);
+      const rid = randomUUID(), timer = setTimeout(() => { waiters.delete(rid); reject(new Error(`Owned ${role} ${index} request timed out: ${op}`)); }, op === "profile" ? 30_000 : op === "native-continuation" ? 180_000 : 60_000);
       waiters.set(rid, { resolve, reject, timer }); processChild.send({ rid, op, data }, error => { if (error) { clearTimeout(timer); waiters.delete(rid); reject(error); } });
     }),
     stop: async () => { if (processChild.exitCode !== null || processChild.signalCode !== null) return; try { await child.request("stop"); } catch { if (processChild.exitCode === null) processChild.kill(); } await until(() => processChild.exitCode !== null || processChild.signalCode !== null, 15_000); },
@@ -309,27 +344,47 @@ export async function rehearse(home: string): Promise<void> {
   const seed = JSON.parse(readFileSync(join(home, "seed.json"), "utf8")) as Seed;
   // Genuine old brokers must begin with ingestion disabled even after a retained failed attempt.
   writeFileSync(join(home, "config.json"), JSON.stringify({ history: { ingest: false }, notifications: { approvals: false, finish: false, fail: false } }));
+  const outcomeRuns = Array.from({ length: 5 }, (_, index) => `synthetic-finished-${randomUUID()}-${index}`);
+  for (const name of outcomeRuns) {
+    writeFileSync(join(home, "runs", `${name}.json`), JSON.stringify({ job: `codex-job-${name}`, jobStartedAt: 1_700_000_000_000, startedAt: 1_700_000_000_000, by: "old-session-0", workdir: home }), { flag: "wx" });
+    writeFileSync(join(home, "runs", `${name}.log`), `10:00:00 codex by old-session-0 in ${home}, access read\nSynthetic retained finished run\n---\n10:00:01 finished after 1s · done\n`, { flag: "wx" });
+  }
+  writeFileSync(join(home, "outcome-fixture.json"), JSON.stringify({ runs: outcomeRuns }), { flag: "wx" });
   const output = join(home, `rehearsal-${Date.now()}.json`);
   const workerOutput = join(dirname(fileURLToPath(import.meta.url)), "history-worker.mjs");
   await build({ entryPoints: [join(checkout, "src/core/history-worker.ts")], outfile: workerOutput, bundle: true, platform: "node", format: "esm", target: "node22", packages: "external", logLevel: "silent" });
+  await build({ entryPoints: [join(checkout, "src/core/backup-worker.ts")], outfile: join(dirname(workerOutput), "backup-worker.mjs"), bundle: true, platform: "node", format: "esm", target: "node22", packages: "external", logLevel: "silent" });
+  await build({ entryPoints: [join(checkout, "src/core/outcome-worker.ts")], outfile: join(dirname(workerOutput), "outcome-worker.mjs"), bundle: true, platform: "node", format: "esm", target: "node22", packages: "external", logLevel: "silent" });
   process.env.AGENT_BRIDGE_HISTORY_MIGRATION_IO_BYTES_PER_SECOND = String(rehearsalBytes(option("--io") ?? "8MiB"));
-  const samples: { at: number; phase: string; sendMs: number; peersMs: number; listRunsMs?: number; dashboardMs?: number; messageSubagentMs?: number }[] = [], failures: string[] = [], phases: { at: number; progress: HistoryMigrationProgress; cursor: Record<string, unknown> }[] = [];
+  const samples: { at: number; phase: string; sendMs: number; peersMs: number; listRunsMs?: number; dashboardMs?: number; messageSubagentMs?: number; outcomesMs?: number; outcomeObservation?: string }[] = [], failures: string[] = [], phases: { at: number; progress: HistoryMigrationProgress; cursor: Record<string, unknown> }[] = [];
   const report: Record<string, unknown> = { schema: 1, seed, currentVersion: APP_VERSION, runtimeSha256: createHash("sha256").update(readFileSync(fileURLToPath(import.meta.url))).digest("hex"), workerSha256: createHash("sha256").update(readFileSync(workerOutput)).digest("hex"), sourceHead: execFileSync("git", ["rev-parse", "HEAD"], { cwd: checkout, encoding: "utf8", windowsHide: true }).trim(), fixtureOnly: true, ownerDataAccessed: false, success: false, mainPriority: getPriority(0), startedAt: new Date().toISOString(), oldRunnerCount: 10, limitations: ["Old runner fixtures use genuine 0.29.17 BridgeNode job identities, not proprietary CLI turns", "Managed continuation uses actual JobManager.restore with a synthetic Run", "message_subagent uses the actual registered guarded MCP handler and a held synthetic Run without an MCP transport", "Current sessions join before old sessions retire; broker transition latency and errors are measured rather than a zero-gap socket guarantee"] };
   let sampling = false, sampler: Promise<void> | undefined, phase = "old-baseline";
   const profiles: unknown[] = []; let activeProfile: Promise<void> | undefined;
   let pollingHost: FixtureChild | undefined;
+  let toolSession: FixtureChild | undefined;
+  let native: OldRunnerFixtures | undefined;
+  const backupProgress: { at: number; phase: string; backup: BackupHealth }[] = [];
   try {
     const oldSessions = [await startChild(home, "old-session", 0), await startChild(home, "old-session", 1)];
     const runners: FixtureChild[] = [];
     for (let i = 0; i < 10; i++) { runners.push(await startChild(home, "old-runner", i)); await delay(250); }
+    native = await startOldRunnerFixtures({ checkout, home, count: 11, owner: "old-session-0", rootSession: "synthetic-root", supervisor: "synthetic-session-0" });
+    report.nativeOldRunners = native.assertLive(); report.oldProtocolIdentityCount = 10; report.oldRunnerCount = 11;
+    report.limitations = ["Native fixtures run genuine old/current JobRunner source with synthetic Claude CLI; no proprietary CLI launches", "Sustained message_subagent invokes the actual registered guarded MCP handler without an MCP transport", "Separate dead-lease continuation uses actual JobManager.restore with a synthetic Run", "Current sessions join before old sessions retire; broker transition latency/errors remain strict phase gates"];
     sampling = true;
     sampler = (async () => {
       while (sampling) {
         try {
           const sampledPhase = phase;
           const probe = await runners[0]!.request("probe");
-          const polls = pollingHost ? { ...await pollingHost.request("dashboard"), ...await pollingHost.request("message-subagent") } : {};
-          samples.push({ at: Date.now(), phase: sampledPhase, ...probe, ...polls });
+          if (probe.probeError) failures.push(`${sampledPhase}: ${probe.probeError}; storage outcome ${JSON.stringify(probe.storageOutcome)}`);
+          const sample = { at: Date.now(), phase: sampledPhase, ...probe };
+          samples.push(sample);
+          if (pollingHost) {
+            Object.assign(sample, await pollingHost.request("dashboard"));
+            Object.assign(sample, await toolSession!.request("message-subagent"));
+            Object.assign(sample, await pollingHost.request("outcomes"));
+          }
         }
         catch (error) { failures.push(`${phase}: ${String(error)}`); }
         await delay(250);
@@ -346,7 +401,7 @@ export async function rehearse(home: string): Promise<void> {
     report.brokerRecoveryMs = performance.now() - reloadAt;
     const hostStatus = await host!.request("status"); report.brokerPid = hostStatus.pid;
     report.coldDashboard = await host!.request("dashboard"); report.warmDashboard = await host!.request("dashboard");
-    pollingHost = host;
+    toolSession = current[0]; pollingHost = host;
     report.retainedOldRunners = await Promise.all(runners.map(child => child.request("status")));
     const bridge = new DatabaseSync(join(home, "bridge.db"), { readOnly: true });
     try { report.schemaWhileLegacyRunnersLive = bridge.prepare("PRAGMA user_version").get()!.user_version; } finally { bridge.close(); }
@@ -362,7 +417,9 @@ export async function rehearse(home: string): Promise<void> {
     const profiled = new Set<string>();
     while (Date.now() < deadline) {
       if (runners.some(child => child.process.exitCode !== null || child.process.signalCode !== null)) throw new Error("A genuine old runner died during the migration rehearsal; inspect retained child evidence");
-      const progress = (await host!.request("status")).migration as HistoryMigrationProgress;
+      native.assertLive();
+      const status = await host!.request("status"), progress = status.migration as HistoryMigrationProgress;
+      if (status.backup) backupProgress.push({ at: Date.now(), phase, backup: status.backup });
       if (!progress) throw new Error("New broker has no history monitor");
       phase = progress.phase; const signature = `${progress.phase}:${progress.completedRows}:${progress.paused}`;
       if (!phaseStarted.has(phase)) phaseStarted.set(phase, Date.now()); phaseEnded.set(phase, Date.now());
@@ -398,9 +455,32 @@ export async function rehearse(home: string): Promise<void> {
     await activeProfile;
     report.phaseTimings = Object.fromEntries([...phaseStarted].map(([name, start]) => [name, { firstAt: start, lastAt: phaseEnded.get(name), observedMs: (phaseEnded.get(name) ?? start) - start }]));
     phase = "post-migration";
+    await until(async () => {
+      native!.assertLive(); const status = await host!.request("status");
+      if (status.backup) backupProgress.push({ at: Date.now(), phase, backup: status.backup });
+      if (status.backup?.phase === "failed") throw new Error(`Automatic message backup failed: ${status.backup.lastError}`);
+      return Boolean(status.backup?.lastVerifiedAt);
+    }, 180_000);
+    const automatic = listMessageBackups(home)[0]; if (!automatic) throw new Error("Automatic daily backup verified without a published message manifest");
+    const manifest = JSON.parse(readFileSync(join(automatic.path, "manifest.json"), "utf8")) as MessageBackupManifest;
+    const backupBytes = manifest.files.reduce((total, file) => total + file.bytes, 0);
+    if (manifest.kind !== "message-tables" || !manifest.excludes.includes("conversation-history") || backupBytes > 8 * 1024 * 1024) throw new Error("Automatic daily backup copied unrelated synthetic history or exceeded its message fixture bound");
+    const allowed = new Set(["messages", "archived_messages", "job_delivery_routes"]);
+    for (const file of manifest.files) {
+      const path = physicalHome(join(automatic.path, file.path));
+      if (statSync(path).size !== file.bytes || createHash("sha256").update(readFileSync(path)).digest("hex") !== file.sha256) throw new Error("Automatic daily backup file hash/bytes failed");
+      const db = new DatabaseSync(path, { readOnly: true });
+      try { if (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().some(row => !allowed.has(String(row.name)))) throw new Error("Automatic daily backup contains a non-message table"); }
+      finally { db.close(); }
+    }
+    report.automaticDailyBackup = { path: automatic.path, bytes: backupBytes, manifest, conversationHistoryAbsent: true };
     report.runPoll = await host!.request("runs");
     const identity = await current[0]!.request("status");
     report.managedContinuation = await continuation(home, identity);
+    report.nativeBeforeContinuation = native.assertLive();
+    if (!samples.some(sample => sample.outcomeObservation === "ready")) throw new Error("Finished-run outcome worker remained pending without any fresh observation");
+    if (!native.inspect()[1]?.receivedLive.length) throw new Error("Actual guarded message_subagent did not reach the genuine old native runner's synthetic CLI");
+    report.nativeContinuation = await current[0]!.request("native-continuation");
     const hashes: Record<string, unknown> = {};
     for (const [name, file] of [["source", join(home, "bridge.db")], ["backup", String(report.snapshot)], ["target", historyDbPath(join(home, "bridge.db"))]] as const) {
       const hash = await rawHash(file); hashes[name] = { ...hash, fileBytes: statSync(file).size, walBytes: existsSync(`${file}-wal`) ? statSync(`${file}-wal`).size : 0 };
@@ -412,15 +492,16 @@ export async function rehearse(home: string): Promise<void> {
   } catch (error) { report.error = String(error); throw error; }
   finally {
     sampling = false; await sampler; await activeProfile?.catch(error => { failures.push(`profile: ${String(error)}`); });
+    if (native) await native.stop().catch(error => { failures.push(`native stop: ${String(error)}`); });
     for (const child of [...children].reverse()) await child.stop().catch(error => { failures.push(`stop: ${String(error)}`); });
-    const percentile = (values: number[]) => { const sorted = [...values].sort((a, b) => a - b); return sorted[Math.floor((sorted.length - 1) * .95)] ?? null; };
-    const metrics = (group: typeof samples) => Object.fromEntries(["sendMs", "peersMs", "listRunsMs", "dashboardMs", "messageSubagentMs"].map(key => [key.replace("Ms", "P95Ms"), percentile(group.map(s => s[key as keyof typeof s]).filter((value): value is number => typeof value === "number"))]));
+    const percentile = (values: number[]) => { const sorted = [...values].sort((a, b) => a - b); return sorted[Math.ceil(sorted.length * .95) - 1] ?? null; };
+    const metrics = (group: typeof samples) => Object.fromEntries(["sendMs", "peersMs", "listRunsMs", "dashboardMs", "messageSubagentMs", "outcomesMs"].map(key => [key.replace("Ms", "P95Ms"), percentile(group.map(s => s[key as keyof typeof s]).filter((value): value is number => typeof value === "number"))]));
     const byPhase = Object.fromEntries([...new Set(samples.map(s => s.phase))].map(name => { const group = samples.filter(s => s.phase === name); return [name, { samples: group.length, ...metrics(group) }]; }));
-    report.latency = { samples: samples.length, ...metrics(samples), sendMaxMs: Math.max(0, ...samples.map(s => s.sendMs)), byPhase };
-    report.samples = samples; report.failures = failures; report.progress = phases; report.profiles = profiles;
-    report.ownedProcessesStopped = children.every(child => child.process.exitCode !== null || child.process.signalCode !== null);
+    report.latency = { samples: samples.length, percentileMethod: "nearest rank", ...metrics(samples), sendMaxMs: Math.max(0, ...samples.map(s => s.sendMs)), peersMaxMs: Math.max(0, ...samples.map(s => s.peersMs)), byPhase };
+    report.samples = samples; report.failures = failures; report.progress = phases; report.profiles = profiles; report.backupProgress = backupProgress;
+    report.ownedProcessesStopped = children.every(child => child.process.exitCode !== null || child.process.signalCode !== null) && (!native || native.inspect().every(info => info.status !== "running"));
     report.finishedAt = new Date().toISOString();
-    if (failures.length || Object.values(metrics(samples)).some(value => value !== null && value >= 1000) || Object.values(byPhase).some(group => Object.entries(group).some(([key, value]) => key.endsWith("P95Ms") && value !== null && value >= 1000))) report.success = false;
+    if (!report.ownedProcessesStopped || failures.length || Object.values(metrics(samples)).some(value => value !== null && value >= 1000) || Object.values(byPhase).some(group => Object.entries(group).some(([key, value]) => key.endsWith("P95Ms") && value !== null && value >= 1000))) report.success = false;
     writeFileSync(output, JSON.stringify(report, null, 2), { flag: "wx" }); console.log(JSON.stringify({ phase: "rehearsal-complete", output, success: report.success, latency: report.latency, failures, ownedProcessesStopped: report.ownedProcessesStopped }));
     if (!report.success) process.exitCode = 1;
   }

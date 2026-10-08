@@ -14,7 +14,7 @@ import { createHash as createHash3 } from "node:crypto";
 import {
   appendFileSync as appendFileSync2,
   existsSync as existsSync8,
-  lstatSync as lstatSync2,
+  lstatSync as lstatSync3,
   mkdirSync as mkdirSync6,
   readFileSync as readFileSync7,
   realpathSync as realpathSync2
@@ -258,7 +258,7 @@ async function readProcessIdentities(pids) {
   if (!valid.length) return result;
   if (process.platform === "win32") {
     try {
-      const { stdout } = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Get-Process -Id @(${valid.join(",")}) -ErrorAction SilentlyContinue | ForEach-Object { try { [string]$_.Id + '|' + [string]$_.StartTime.ToUniversalTime().Ticks } catch {} }`], { windowsHide: true, timeout: 5e3 });
+      const { stdout } = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Get-Process -Id @(${valid.join(",")}) -ErrorAction SilentlyContinue | ForEach-Object { try { [string]$_.Id + '|' + [string]$_.StartTime.ToUniversalTime().Ticks } catch {} }; exit 0`], { windowsHide: true, timeout: 5e3 });
       for (const line of stdout.split(/\r?\n/)) {
         const match = /^(\d+)\|(\d+)$/.exec(line.trim());
         if (match && valid.includes(Number(match[1]))) result.set(Number(match[1]), match[2]);
@@ -673,8 +673,8 @@ function migrateLocked(db2, file2, existed, target, migrations, log) {
 
 // src/core/project-identity.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { existsSync as existsSync7, readFileSync as readFileSync6, realpathSync, statSync as statSync3 } from "node:fs";
-import { dirname as dirname6, join as join9, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync7, lstatSync as lstatSync2, readFileSync as readFileSync6, realpathSync, statSync as statSync3 } from "node:fs";
+import { basename as basename3, dirname as dirname6, join as join9, relative, resolve as resolve2 } from "node:path";
 
 // src/core/session-visibility.ts
 import { posix } from "node:path";
@@ -693,25 +693,104 @@ function canonicalProjectRoot(cwd) {
     const physical = realpathSync.native(cwd);
     if (isPluginCacheCwd(physical)) return null;
     if (!statSync3(physical).isDirectory()) return null;
-    const cached2 = projectRoots.get(physical), now = Date.now(), marker = gitMarker(physical);
-    if (cached2 && cached2.expiresAt > now && cached2.marker === marker) return cached2.root;
-    const root = resolveProjectRoot(physical, visibleRoot);
+    const cached2 = projectRoots.get(physical), now = Date.now(), discovery = discoverProjectRoot(physical);
+    if (cached2 && cached2.expiresAt > now && cached2.marker === discovery.marker) return cached2.root;
+    const root = discovery.fallback ? resolveProjectRoot(physical, visibleRoot) : discovery.root === null ? null : visibleRoot(discovery.root);
     if (projectRoots.size >= 256) projectRoots.delete(projectRoots.keys().next().value);
-    projectRoots.set(physical, { root, expiresAt: now + PROJECT_ROOT_CACHE_MS, marker });
+    projectRoots.set(physical, { root, expiresAt: now + PROJECT_ROOT_CACHE_MS, marker: discovery.marker });
     return root;
   } catch {
     return null;
   }
 }
-function gitMarker(physical) {
-  for (let dir = physical; ; dir = dirname6(dir)) {
-    const path = join9(dir, ".git");
-    try {
-      const s = statSync3(path);
-      return `${path}:${s.ino}:${s.mtimeMs}:${s.size}`;
-    } catch {
+function discoverProjectRoot(physical) {
+  const markers = [];
+  const checkedDirectories = /* @__PURE__ */ new Set();
+  const stamp = (path) => {
+    const stat = lstatSync2(path);
+    markers.push(`${path}:${stat.dev}:${stat.ino}:${stat.birthtimeMs}:${stat.mtimeMs}:${stat.size}`);
+    if (stat.isSymbolicLink()) throw new Error("linked Git metadata");
+    return stat;
+  };
+  const text = (path, maxBytes = 8192) => {
+    const stat = stamp(path);
+    if (!stat.isFile() || stat.size > maxBytes) throw new Error("unsupported Git metadata file");
+    const value = readFileSync6(path, "utf8");
+    markers.push(value);
+    return value.trim();
+  };
+  const directory2 = (path) => {
+    const result = realpathSync.native(path);
+    for (let at = resolve2(path); ; at = dirname6(at)) {
+      if (checkedDirectories.has(at)) break;
+      if (!stamp(at).isDirectory()) throw new Error("unsupported Git metadata directory");
+      checkedDirectories.add(at);
+      if (dirname6(at) === at) break;
     }
-    if (dirname6(dir) === dir) return "";
+    return result;
+  };
+  const samePath = (a, b) => process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+  const repository = (common) => {
+    if (!/^(ref: refs\/[^\r\n]+|[0-9a-fA-F]{40,64})$/.test(text(join9(common, "HEAD")))) throw new Error("invalid Git HEAD");
+    directory2(join9(common, "objects"));
+    directory2(join9(common, "refs"));
+    const config2 = text(join9(common, "config"), 64 * 1024);
+    let core = false, bare, unusual = false;
+    for (const line of config2.split(/\r?\n/)) {
+      const section = /^\s*\[([^\]]+)\]/.exec(line);
+      if (section) {
+        core = section[1].toLowerCase() === "core";
+        if (/^include(?:if)?(?:\s|$)/i.test(section[1])) unusual = true;
+        continue;
+      }
+      if (!core) continue;
+      const option = /^\s*([\w.-]+)\s*=\s*(.*?)\s*(?:[#;].*)?$/.exec(line);
+      if (option?.[1]?.toLowerCase() === "bare") bare = option[2]?.toLowerCase();
+      if (option?.[1]?.toLowerCase() === "worktree") unusual = true;
+    }
+    if (bare === "true") return "bare";
+    return unusual || bare !== "false" ? "unusual" : "ordinary";
+  };
+  for (let root = physical; ; root = dirname6(root)) {
+    const pointer = join9(root, ".git");
+    let stat;
+    try {
+      stat = stamp(pointer);
+    } catch (error62) {
+      if (error62.code === "ENOENT") {
+        if (dirname6(root) === root) return { marker: "", root: physical };
+        continue;
+      }
+      return { marker: markers.join("|"), root: null };
+    }
+    try {
+      if (stat.isDirectory()) {
+        const gitDir2 = directory2(pointer), layout2 = repository(gitDir2);
+        return { marker: markers.join("|"), root: layout2 === "bare" ? physical : root, fallback: layout2 === "unusual" };
+      }
+      const match = /^gitdir:\s+([^\r\n]+)$/.exec(text(pointer));
+      if (!match) throw new Error("invalid Git directory pointer");
+      const gitDir = directory2(resolve2(root, match[1]));
+      if (!/^(ref: refs\/[^\r\n]+|[0-9a-fA-F]{40,64})$/.test(text(join9(gitDir, "HEAD")))) throw new Error("invalid Git worktree HEAD");
+      let commonPointer;
+      try {
+        commonPointer = text(join9(gitDir, "commondir"));
+      } catch (error62) {
+        if (error62.code !== "ENOENT") throw error62;
+        repository(gitDir);
+        return { marker: markers.join("|"), root: null, fallback: true };
+      }
+      if (!commonPointer || /[\r\n]/.test(commonPointer)) throw new Error("invalid Git common directory pointer");
+      const common = directory2(resolve2(gitDir, commonPointer)), layout = repository(common);
+      if (layout !== "ordinary" || basename3(common).toLowerCase() !== ".git") return { marker: markers.join("|"), root: null, fallback: true };
+      const entry = relative(join9(common, "worktrees"), gitDir);
+      if (!entry || entry === ".." || entry.startsWith("..\\") || entry.startsWith("../") || /[\\/]/.test(entry)) throw new Error("Git worktree pointer is outside its common directory");
+      const backPointer = text(join9(gitDir, "gitdir"));
+      if (!backPointer || /[\r\n]/.test(backPointer) || !samePath(realpathSync.native(resolve2(gitDir, backPointer)), realpathSync.native(pointer))) throw new Error("Git worktree pointer does not identify this checkout");
+      return { marker: markers.join("|"), root: dirname6(common) };
+    } catch {
+      return { marker: markers.join("|"), root: null };
+    }
   }
 }
 function resolveProjectRoot(physical, visibleRoot) {
@@ -777,12 +856,12 @@ function conversationProject(cwd) {
 function ensureProjectFolder(project) {
   if (!project || !existsSync8(project)) return null;
   const folder = join10(project, ".agent-bridge");
-  if (existsSync8(folder) && (!lstatSync2(folder).isDirectory() || lstatSync2(folder).isSymbolicLink()))
+  if (existsSync8(folder) && (!lstatSync3(folder).isDirectory() || lstatSync3(folder).isSymbolicLink()))
     return null;
   const fresh = !existsSync8(folder);
   mkdirSync6(folder, { recursive: true, mode: 448 });
-  const gitMarker2 = existsSync8(join10(project, ".git"));
-  if (!fresh && excluded.get(project) === gitMarker2) return folder;
+  const gitMarker = existsSync8(join10(project, ".git"));
+  if (!fresh && excluded.get(project) === gitMarker) return folder;
   try {
     const exclude = execFileSync3(
       "git",
@@ -801,7 +880,7 @@ function ensureProjectFolder(project) {
         timeout: 2e3
       }
     ).trim();
-    if (linkedParent(exclude) || existsSync8(exclude) && lstatSync2(exclude).isSymbolicLink())
+    if (linkedParent(exclude) || existsSync8(exclude) && lstatSync3(exclude).isSymbolicLink())
       return null;
     const text = existsSync8(exclude) ? readFileSync7(exclude, "utf8") : "";
     if (!text.split(/\r?\n/).includes("/.agent-bridge/")) {
@@ -815,7 +894,7 @@ function ensureProjectFolder(project) {
   } catch {
     if (existsSync8(join10(project, ".git"))) return null;
   }
-  excluded.set(project, gitMarker2);
+  excluded.set(project, gitMarker);
   return folder;
 }
 function projectDatabasePath(project, home) {
@@ -844,10 +923,10 @@ function syncProjectMirror(main, project, home) {
   }
   if (!folder) return 0;
   const archive = join10(folder, "archive");
-  if (linkedParent(path) || existsSync8(archive) && lstatSync2(archive).isSymbolicLink() || linkedParent(join10(archive, "backup")))
+  if (linkedParent(path) || existsSync8(archive) && lstatSync3(archive).isSymbolicLink() || linkedParent(join10(archive, "backup")))
     return 0;
   for (const file2 of [path, `${path}-wal`, `${path}-shm`])
-    if (existsSync8(file2) && lstatSync2(file2).isSymbolicLink()) return 0;
+    if (existsSync8(file2) && lstatSync3(file2).isSymbolicLink()) return 0;
   const existed = existsSync8(path), mirror = new DatabaseSync4(path, { timeout: 50 });
   try {
     migrateSqlite(
@@ -964,7 +1043,7 @@ function syncProjectMirror(main, project, home) {
 
 // src/core/history-store.ts
 import { existsSync as existsSync10, readFileSync as readFileSync8, rmSync as rmSync4 } from "node:fs";
-import { basename as basename3, dirname as dirname9, join as join12 } from "node:path";
+import { basename as basename4, dirname as dirname9, join as join12 } from "node:path";
 import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
 
 // src/core/history-migration.ts
@@ -1458,7 +1537,7 @@ function copyLegacyConversationTail(source2, target) {
 // src/core/history.ts
 import { createHash as createHash5 } from "node:crypto";
 import { closeSync as closeSync6, existsSync as existsSync13, fstatSync as fstatSync2, openSync as openSync6, opendirSync, readSync as readSync2, statSync as statSync5 } from "node:fs";
-import { basename as basename4, dirname as dirname11, join as join19 } from "node:path";
+import { basename as basename5, dirname as dirname11, join as join19 } from "node:path";
 import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
 
 // node_modules/zod/v4/classic/external.js
@@ -21135,7 +21214,7 @@ import { dirname as dirname10, join as join14 } from "node:path";
 // src/core/transcripts/common.ts
 import { closeSync as closeSync5, fstatSync, openSync as openSync5, readSync, readdirSync as readdirSync5, realpathSync as realpathSync3, statSync as statSync4 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { isAbsolute, join as join13, relative, resolve as resolve4, sep } from "node:path";
+import { isAbsolute, join as join13, relative as relative2, resolve as resolve4, sep } from "node:path";
 var MAX_TRANSCRIPT_CHUNK_BYTES = 512 * 1024;
 var MAX_TOOL_PREVIEW_CHARS = 1200;
 var MAX_TEXT_CHARS = 16e3;
@@ -21201,7 +21280,7 @@ function fileStat(file2) {
 }
 function safeFile(root, file2, canonicalRoot) {
   try {
-    const actual = realpathSync3.native(file2), rel = relative(canonicalRoot ?? realpathSync3.native(root), actual);
+    const actual = realpathSync3.native(file2), rel = relative2(canonicalRoot ?? realpathSync3.native(root), actual);
     return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel) ? actual : null;
   } catch {
     return null;
@@ -21914,10 +21993,10 @@ ${row.body}`,
         if (entry.agent === "antigravity" && item.name !== "transcript.jsonl") continue;
         const head = this.head(path2), meta3 = entry.agent === "codex" ? object2(head.payload) : head;
         const rolloutId = entry.agent === "codex" ? /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(item.name)?.[1] : void 0;
-        const id = entry.agent === "antigravity" ? basename4(dirname11(dirname11(entry.path))) : rolloutId ?? (typeof meta3.id === "string" ? meta3.id : typeof meta3.sessionId === "string" ? meta3.sessionId : basename4(path2, ".jsonl"));
+        const id = entry.agent === "antigravity" ? basename5(dirname11(dirname11(entry.path))) : rolloutId ?? (typeof meta3.id === "string" ? meta3.id : typeof meta3.sessionId === "string" ? meta3.sessionId : basename5(path2, ".jsonl"));
         if (!TRANSCRIPT_ID.test(id)) continue;
-        const child = entry.agent === "claude" && basename4(entry.path) === "subagents" ? basename4(path2, ".jsonl").replace(/^agent-/, "") : null;
-        this.register({ path: path2, kind: "transcript", agent: entry.agent, session: child ? basename4(dirname11(entry.path)) : id, cwd: typeof meta3.cwd === "string" ? meta3.cwd : "", child });
+        const child = entry.agent === "claude" && basename5(entry.path) === "subagents" ? basename5(path2, ".jsonl").replace(/^agent-/, "") : null;
+        this.register({ path: path2, kind: "transcript", agent: entry.agent, session: child ? basename5(dirname11(entry.path)) : id, cwd: typeof meta3.cwd === "string" ? meta3.cwd : "", child });
       }
     }
     const path = safeFile(this.paths.opencode, join19(this.paths.opencode, "opencode.db"));
@@ -22008,7 +22087,7 @@ ${row.body}`,
           closeSync6(metaFd);
         }
       }
-      const run = basename4(file2.path).replace(/(\.log)-\d+-[\w-]+$/, "$1");
+      const run = basename5(file2.path).replace(/(\.log)-\d+-[\w-]+$/, "$1");
       const start = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(run);
       const at = Number(meta3.jobStartedAt) || (start ? Date.UTC(+start[1], +start[2] - 1, +start[3], +start[4], +start[5], +start[6]) : stat.birthtimeMs);
       const job = typeof meta3.job === "string" ? meta3.job : null, session = typeof meta3.session === "string" ? meta3.session : null;
@@ -22023,7 +22102,7 @@ ${row.body}`,
             agent: file2.agent,
             at,
             body: metaText,
-            link: `/api/runs/${enc(basename4(run, ".log"))}?from=0`,
+            link: `/api/runs/${enc(basename5(run, ".log"))}?from=0`,
             message: null,
             job,
             run,
@@ -22045,7 +22124,7 @@ ${row.body}`,
         at,
         body: `${typeof meta3.title === "string" ? meta3.title : ""}
 ${buffer.subarray(0, length).toString("utf8")}`,
-        link: `/api/runs/${enc(basename4(run, ".log"))}?from=${offset}`,
+        link: `/api/runs/${enc(basename5(run, ".log"))}?from=${offset}`,
         message: null,
         job,
         run,
@@ -22150,13 +22229,13 @@ import {
   readSync as readSync3,
   watch
 } from "node:fs";
-import { basename as basename6, join as join21 } from "node:path";
+import { basename as basename7, join as join21 } from "node:path";
 import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
 
 // src/core/job-archive.ts
 import { createHash as createHash6, randomUUID as randomUUID9 } from "node:crypto";
-import { closeSync as closeSync7, existsSync as existsSync14, fsyncSync as fsyncSync3, linkSync, lstatSync as lstatSync3, mkdirSync as mkdirSync9, openSync as openSync7, readdirSync as readdirSync6, writeFileSync as writeFileSync5 } from "node:fs";
-import { basename as basename5, dirname as dirname12, join as join20 } from "node:path";
+import { closeSync as closeSync7, existsSync as existsSync14, fsyncSync as fsyncSync3, linkSync, lstatSync as lstatSync4, mkdirSync as mkdirSync9, openSync as openSync7, readdirSync as readdirSync6, writeFileSync as writeFileSync5 } from "node:fs";
+import { basename as basename6, dirname as dirname12, join as join20 } from "node:path";
 
 // src/core/file-cache.ts
 import { readFileSync as readFileSync9, statSync as statSync6 } from "node:fs";
@@ -22210,11 +22289,11 @@ function readJsonSnapshot(file2) {
 var snapshots = /* @__PURE__ */ new Map();
 var EMPTY_SNAPSHOT = { signature: "", jobs: [] };
 function physicalDirectory(dir) {
-  const st = lstatSync3(dir);
+  const st = lstatSync4(dir);
   if (!st.isDirectory() || st.isSymbolicLink()) throw new Error("job archive directory must be physical; data kept unchanged");
 }
 function physicalFile(file2) {
-  const st = lstatSync3(file2);
+  const st = lstatSync4(file2);
   if (!st.isFile() || st.isSymbolicLink()) throw new Error("job archive file must be physical; data kept unchanged");
   return st;
 }
@@ -22226,7 +22305,7 @@ function readArchivedJobSnapshot(path) {
   const signatures = [];
   let bytes2 = 0;
   for (const file2 of readdirSync6(dir).sort()) {
-    if (!file2.startsWith(`${basename5(path)}.overflow.json-`) && !/^jobs-.*\.json$/.test(file2)) continue;
+    if (!file2.startsWith(`${basename6(path)}.overflow.json-`) && !/^jobs-.*\.json$/.test(file2)) continue;
     const full = join20(dir, file2), st = physicalFile(full);
     const stamp = /(?:^jobs-|\.overflow\.json-)(\d+)-/.exec(file2)?.[1];
     signatures.push(`${file2}:${fileSignature(st)}`);
@@ -22239,7 +22318,7 @@ function readArchivedJobSnapshot(path) {
   files.sort((a, b) => a.time - b.time || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   for (const { path: file2 } of files) {
     const value = readJsonSnapshot(file2).value;
-    if (!isRecord(value) || value.version !== void 0 && (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${basename5(file2)}`);
+    if (!isRecord(value) || value.version !== void 0 && (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${basename6(file2)}`);
     for (const job of value.jobs) if (isRecord(job) && typeof job.id === "string") jobs.set(job.id, job);
   }
   const next = { signature, jobs: [...jobs.values()] };
@@ -22379,7 +22458,7 @@ var ConversationIngestor = class {
     for (const file2 of files) {
       const session = String(file2.session), agent = String(file2.agent), child = file2.child ? String(file2.child) : null;
       const kind = String(file2.kind);
-      const id = kind === "transcript" ? this.conversation(agent, session, String(file2.cwd), child) : `bridge:${kind}:${kind === "run" ? basename6(String(file2.path)).replace(/\.(?:log|json)(?:-\d+-[\w-]+)?$/, "") : basename6(String(file2.path))}`;
+      const id = kind === "transcript" ? this.conversation(agent, session, String(file2.cwd), child) : `bridge:${kind}:${kind === "run" ? basename7(String(file2.path)).replace(/\.(?:log|json)(?:-\d+-[\w-]+)?$/, "") : basename7(String(file2.path))}`;
       if (kind !== "transcript")
         this.db.prepare(
           "INSERT OR IGNORE INTO conversations(id,agent,session,kind) VALUES(?,?,?,?)"
@@ -23123,7 +23202,7 @@ var ConversationIngestor = class {
 
 // src/core/config.ts
 import { readFileSync as readFileSync11, unwatchFile, watchFile } from "node:fs";
-import { basename as basename7, join as join23 } from "node:path";
+import { basename as basename8, join as join23 } from "node:path";
 
 // src/core/protocol.ts
 var AGENT_KINDS = ["claude", "codex", "opencode", "antigravity", "other"];

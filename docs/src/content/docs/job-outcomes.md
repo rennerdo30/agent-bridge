@@ -10,16 +10,26 @@ They return the same response envelope and `contractVersion`, with one populated
 entry, empty other collection, and `next: null`. An unknown or unfinished name
 returns 404; supplying both filters returns 400. Paired-PC reads accept these
 filters too. Run lookups read only the selected log body and retain next-turn
-receipt boundaries from metadata whenever receipt evidence exists. An empty
-receipt snapshot stays unknown without reading unrelated metadata. Ordinary
-loose and packed Git heads are read directly; symbolic refs and alternate Git
-layouts use Git. The 700-run regression checks both lookups within one second
-for merged and unmerged branches, including packed refs, without a stale cache.
+receipt boundaries from current and archived metadata. A reused background
+worker inspects receipt databases and Git evidence. Dashboard requests use
+asynchronous file-stat signatures and a bounded display cache; they do not open
+receipt databases or spawn Git. Cold inspections wait at most 250 ms for the
+worker before returning pending evidence. Pending delivery is `unknown`, and
+the dashboard labels the merge evidence as checking. Unchanged older evidence
+is marked stale while it refreshes.
+
+Database/WAL files, delivery and read receipts, decisions, run metadata, and
+loose or packed Git refs invalidate the cache. The worker resolves linked Git
+directories and shared common directories, and periodically rechecks ancestry.
+Each cache holds at most 1,024 entries and 8 MB, with at most 32 pending batches.
+These observations are for display only: merge and cleanup authority continue
+to inspect fresh evidence.
 
 It returns JSON with `contractVersion: 1`:
 
 ```ts
 interface Outcome {
+  observation?: { state: "ready" | "pending" | "stale"; checkedAt: number | null };
   delivery: {
     status: "unknown" | "delivered" | "read";
     messageId: string | null;
@@ -94,5 +104,5 @@ old bytes and retains unknown fields through the existing atomic writer. Future
 store versions are not overwritten. Supervisor decisions live in
 `job-outcomes/<hash-of-job-and-start>.json`; local delivery evidence lives in
 `local-result-receipts/<hash-of-job>/<hash-of-message>.json`. Archives remain
-readable. No dashboard page source changes are included; the endpoint is the
-contract for dashboard integration.
+readable. The dashboard shows pending inspections and identifies stale display
+evidence without treating it as cleanup authority.

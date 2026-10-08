@@ -15,6 +15,7 @@ const MANIFESTS = [
   ".claude-plugin/marketplace.json",
 ];
 const ENTRIES = { server: "src/mcp/launcher.ts", worker: "src/mcp/main.ts", cli: "src/cli/main.ts", "history-worker": "src/core/history-worker.ts", "backup-worker": "src/core/backup-worker.ts" };
+ENTRIES["outcome-worker"] = "src/core/outcome-worker.ts";
 const NODE_TARGET = "node22";
 const SHEBANG = "#!/usr/bin/env node\n";
 const REQUIRE_SHIM = "import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);";

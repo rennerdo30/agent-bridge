@@ -237,7 +237,7 @@ export class MessageStore {
     log.debug("message store opened", { file });
   }
 
-  startBackups(): void { if (this.home && !this.backups) this.backups = new BackupBackground(this.home, this.log); }
+  startBackups(): void { if (process.env.AGENT_BRIDGE_AUTO_BACKUP === "1" && this.home && !this.backups) this.backups = new BackupBackground(this.home, this.log); }
   backupPressure(pending: boolean, lockError = false): void { this.backups?.pressure(pending, lockError); }
   backupStatus(): import("./backup-background.js").BackupHealth | null { return this.backups?.status() ?? null; }
   async closeBackups(): Promise<void> { await this.backups?.close(); this.backups = null; }

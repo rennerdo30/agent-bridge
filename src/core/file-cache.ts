@@ -11,6 +11,24 @@ const cache = new Map<string, JsonSnapshot & { bytes: number }>();
 const damaged = new Map<string, { signature: string; error: SyntaxError }>();
 let bytes = 0;
 
+/** Clone JSON containers without serializing/copying large immutable prompt strings.
+ * Only use for parsed JSON and JSON-shaped projections, not arbitrary class instances.
+ */
+export function cloneJson<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(item => cloneJson(item)) as T;
+  if (value !== null && typeof value === "object") {
+    const copied: Record<string, unknown> = {};
+    // Avoid temporary entry arrays for every field in large registry projections.
+    for (const key of Object.keys(value)) {
+      const item = cloneJson((value as Record<string, unknown>)[key]);
+      if (key === "__proto__") Object.defineProperty(copied, key, { value: item, writable: true, configurable: true, enumerable: true });
+      else copied[key] = item;
+    }
+    return copied as T;
+  }
+  return value;
+}
+
 export function fileSignature(st: { size: number; mtimeMs: number; ctimeMs: number; birthtimeMs: number; ino: number; dev: number }): string {
   return `${st.dev}:${st.ino}:${st.birthtimeMs}:${st.ctimeMs}:${st.mtimeMs}:${st.size}`;
 }

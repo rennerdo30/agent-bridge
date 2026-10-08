@@ -1,5 +1,6 @@
 import { codexSubagentConfig } from "./codex-subagents.js";
 import { codexExecutionPrompt } from "./codex-env.js";
+import { jobEnvironment } from "./job-environment.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { delimiter, dirname, extname, isAbsolute, join, win32 } from "node:path";
@@ -267,7 +268,7 @@ export function runProcess(opts: {
     const child = spawn(resolved, args, {
       cwd: opts.cwd,
       // Some CLIs (opencode) take their project folder from PWD rather than the real cwd; keep them in sync.
-      env: { ...opts.env, PWD: opts.cwd },
+      env: { ...jobEnvironment(opts.env), PWD: opts.cwd },
       shell: needsShell,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
@@ -419,7 +420,7 @@ export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
   // Each host selects its own plugin runtime; inheriting a native selector would hide other clients' updates.
   const { CLAUDE_PROJECT_DIR: _parentProject, AGENT_BRIDGE_PLUGIN_RUNTIME_HOME: _parentRuntime,
     AGENT_BRIDGE_LAUNCH_PLUGIN_ROOT: _parentPlugin, ...env } = process.env;
-  return { ...env, ...extra, [ENV.internal]: "1", [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
+  return jobEnvironment({ ...env, ...extra, [ENV.internal]: "1", [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) });
 }
 
 export function checkDepth(max = Number(process.env[ENV.maxDelegateDepth] ?? DEFAULT_MAX_DELEGATE_DEPTH), env: NodeJS.ProcessEnv = process.env): void {

@@ -14,7 +14,7 @@ beforeEach(() => { const root = join(process.cwd(), ".agent-bridge-test"); mkdir
 afterEach(() => { managers.splice(0).forEach(manager => manager.cancelAll()); vi.unstubAllEnvs(); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
 function manager(allowed: () => boolean, handoff = () => true, name = "claude-project") {
   const events = new EventEmitter();
-  const node = Object.assign(events, { name, id: "session", currentSessionId: "session", deliverLocal: vi.fn() }) as JobCoordinator & EventEmitter;
+  const node = Object.assign(events, { name, id: "peer-instance", currentSessionId: "session", deliverLocal: vi.fn() }) as JobCoordinator & EventEmitter;
   const jobs = new JobManager(node, nullLogger, join(home, "jobs.json"), 3, undefined, { canRestore: allowed, canReceiveHandoff: handoff });
   jobs.runners = { alive: () => true, state: () => ({ pid: process.pid, peer: "codex-job-running", status: "running", updatedAt: Date.now(), sessionId: "native-context" }), send: vi.fn(), kill: vi.fn() };
   managers.push(jobs);
@@ -54,9 +54,9 @@ describe("transient coordinator restoration", () => {
     expect(jobs.adoptStandIns(new Set(["claude-project-2"]))).toEqual([]);
   });
 
-  it("a durable explicit handoff can authorize a connected transient target", () => {
-    const job = { ...records()[0]!, owner: "claude-project-2", rootName: "claude-project-2", supervisor: "session", rootSession: "session",
-      ownershipHistory: [{ id: "handoff", at: Date.now(), from: "claude-project", to: "claude-project-2", reason: "explicit-handoff", rootName: "claude-project-2", rootSession: "session" }] };
+  it.each(["session", "peer-instance"])("a durable explicit handoff bound to %s can authorize a connected transient target", (session) => {
+    const job = { ...records()[0]!, owner: "claude-project-2", rootName: "claude-project-2", supervisor: session, rootSession: session,
+      ownershipHistory: [{ id: "handoff", at: Date.now(), from: "claude-project", to: "claude-project-2", reason: "explicit-handoff", rootName: "claude-project-2", rootSession: session }] };
     writeFileSync(join(home, "jobs.json"), JSON.stringify({ version: JSON_STORE_VERSION, jobs: [job] }));
     const { jobs } = manager(() => false, () => true, "claude-project-2");
     jobs.restore(() => undefined);

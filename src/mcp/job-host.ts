@@ -10,6 +10,7 @@ import type { DelegateArgs } from "./delegate-run.js";
 import type { Job, JobHost, JobHostInfo, RunnerControl, RunnerState } from "./jobs.js";
 import { archiveFile, assertWritableStore, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "../core/json-store.js";
 import { RemoteJobHost } from "./remote-job-host.js";
+import { jobEnvironment } from "../core/job-environment.js";
 
 /**
  * Job runners: a background subagent runs in a detached process of its own (`agent-bridge job-runner`), not
@@ -145,13 +146,13 @@ export class JobRunners implements JobHost {
       const info: JobHostInfo = { pid: null, peer: job.name, startedAt: Date.now() };
       let pid: number | null = null;
       if (process.platform === "win32") {
-        const launcher = spawn(process.execPath, ["-e", DETACH_LAUNCHER, ...args], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+        const launcher = spawn(process.execPath, ["-e", DETACH_LAUNCHER, ...args], { env: jobEnvironment(), stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
         let output = "";
         launcher.stdout!.on("data", chunk => { output += chunk; });
         launcher.on("close", () => { const reported = Number(output); if (Number.isSafeInteger(reported) && reported > 0) info.pid = reported; });
         launcher.on("error", (err) => this.log.warn("could not start a job runner", { job: job.name, err: err.message }));
       } else {
-        const child = spawn(process.execPath, args, { detached: true, stdio: "ignore" });
+        const child = spawn(process.execPath, args, { env: jobEnvironment(), detached: true, stdio: "ignore" });
         child.on("error", (err) => this.log.warn("could not start a job runner", { job: job.name, err: err.message }));
         child.unref();
         pid = child.pid ?? null;

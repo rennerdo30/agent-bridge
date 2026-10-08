@@ -1,24 +1,34 @@
-import { parentPort, workerData } from "node:worker_threads";
-import { backupIfDueBackground } from "./backups.js";
+import { constants, getPriority, setPriority } from "node:os";
+import { setTimeout as pause } from "node:timers/promises";
+import { messageBackupIfDue } from "./message-backups.js";
 
-const state = new Int32Array(workerData.pressure, 0, 2);
-const pauseUntil = new BigInt64Array(workerData.pressure, 8, 1);
-let pressureSince = 0;
-const checkpoint = () => {
+let pending = false, stop = false, pauseUntil = 0, pressureSince = 0, started = false;
+process.on("message", (message: { type?: string; pending?: boolean; pauseUntil?: number; home?: string }) => {
+  if (message.type === "pressure") { pending = !!message.pending; pauseUntil = message.pauseUntil ?? 0; }
+  if (message.type === "stop") stop = true;
+  if (message.type === "start" && typeof message.home === "string" && !started) { started = true; void run(message.home); }
+});
+process.once("disconnect", () => { stop = true; });
+
+async function checkpoint(): Promise<void> {
   for (;;) {
-    if (Atomics.load(state, 1)) throw new Error("Automatic backup stopped; incomplete snapshot preserved");
-    const paused = !!Atomics.load(state, 0) || Date.now() < Number(Atomics.load(pauseUntil, 0));
-    if (!paused) { pressureSince = 0; break; }
+    if (stop) throw new Error("Automatic message backup stopped; incomplete snapshot preserved");
+    if (!pending && Date.now() >= pauseUntil) { pressureSince = 0; break; }
     pressureSince ||= Date.now();
-    if (Date.now() - pressureSince >= 5_000) throw new Error("Automatic backup paused for sustained broker pressure; incomplete snapshot preserved");
-    Atomics.wait(state, 0, Atomics.load(state, 0), 100);
+    if (Date.now() - pressureSince >= 5_000) throw new Error("Automatic message backup paused for sustained broker pressure; incomplete snapshot preserved");
+    await pause(100);
   }
-  // Small fixed page/chunk windows keep bulk reads, writes, and verification bounded.
-  Atomics.wait(state, 1, 0, 5);
-};
+  // Each capture/verification window is at most 64 rows or 256 KiB.
+  await pause(5);
+  if (stop) throw new Error("Automatic message backup stopped; incomplete snapshot preserved");
+}
 
-try {
-  const path = await backupIfDueBackground(workerData.home, { checkpoint });
-  parentPort?.postMessage({ path });
-} catch (error) { parentPort?.postMessage({ error: String(error) }); }
-finally { parentPort?.close(); }
+async function run(home: string): Promise<void> {
+  try {
+    setPriority(process.pid, constants.priority.PRIORITY_LOW);
+    const priority = getPriority(process.pid);
+    if (priority < constants.priority.PRIORITY_BELOW_NORMAL) throw new Error("Automatic message backup could not lower its process priority");
+    const result = await messageBackupIfDue(home, { checkpoint });
+    process.send?.({ ...result, priority }, () => process.disconnect?.());
+  } catch (error) { process.send?.({ error: String(error) }, () => process.disconnect?.()); }
+}

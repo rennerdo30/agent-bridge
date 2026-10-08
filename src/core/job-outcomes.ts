@@ -126,6 +126,8 @@ export interface OutcomeDecision {
 }
 
 export interface JobOutcome {
+  /** Display-only cache state. Never use this projection as cleanup or merge authority. */
+  observation?: { state: "ready" | "pending" | "stale"; checkedAt: number | null };
   delivery: {
     status: "unknown" | "delivered" | "read";
     messageId: string | null;

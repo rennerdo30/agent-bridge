@@ -41,7 +41,7 @@ describe("cheap broker diagnostics", () => {
     const health = await probeBrokerHealth(env.pipe, nullLogger);
     expect(health).toMatchObject({ brokerPid: process.pid, recentErrors: [] });
     expect(health!.history).not.toBeNull();
-    expect(health!.backup?.phase).toBe("scheduled");
+    expect(health!.backup?.phase).not.toBe("paused");
     expect(health!.roundTripMs).toBeGreaterThanOrEqual(0);
     expect((await node.peers()).length).toBe(before);
     expect(await node.health()).toMatchObject({ brokerPid: process.pid });

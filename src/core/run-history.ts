@@ -5,7 +5,7 @@ import { JOBS_FILE } from "./constants.js";
 import { isRecord } from "./json-store.js";
 import { RUNS_DIR_NAME, type RunMeta } from "./runfeed.js";
 import { safeFile } from "./transcripts/common.js";
-import { fileSignature, readJsonSnapshot } from "./file-cache.js";
+import { cloneJson, fileSignature, readJsonSnapshot } from "./file-cache.js";
 
 export const DEFAULT_RUN_PAGE_SIZE = 50;
 export const MAX_RUN_PAGE_SIZE = 500;
@@ -15,7 +15,7 @@ const ARCHIVE_SUFFIX = /(\.(?:log|json))-\d+-[\w-]+$/;
 
 /** Unlike readJsonStore, inspection never repairs or renames malformed data. */
 export function readHistoryJson(file: string): unknown {
-  try { return structuredClone(readJsonSnapshot(file).value); } catch { return null; }
+  try { return cloneJson(readJsonSnapshot(file).value); } catch { return null; }
 }
 
 function files(dir: string): string[] {
@@ -69,7 +69,7 @@ export function readRunLogs(home: string, namesFilter?: Set<string>): RunLogReco
   }
   const key = `${canonicalRoot}:${namesFilter ? JSON.stringify([...namesFilter].sort()) : "*"}`;
   const signature = signatures.join("\n"), saved = runLogSnapshots.get(key);
-  if (saved?.signature === signature) return structuredClone(saved.records);
+  if (saved?.signature === signature) return cloneJson(saved.records);
   for (const { archived, files } of directories) {
     const metadata = new Map<string, RunMeta>();
     for (const { original, file } of files) {
@@ -94,7 +94,7 @@ export function readRunLogs(home: string, namesFilter?: Set<string>): RunLogReco
   runLogSnapshots.delete(key);
   if (complete && metadataBytes <= 256 * 1024 * 1024) runLogSnapshots.set(key, { signature, records: result });
   if (runLogSnapshots.size > 8) runLogSnapshots.delete(runLogSnapshots.keys().next().value!);
-  return structuredClone(result);
+  return cloneJson(result);
 }
 
 /** Receipt boundaries need metadata only, not a stat/read of every unrelated log.
@@ -152,6 +152,25 @@ export async function readRunStarts(home: string): Promise<{ job: string; jobSta
 
 /** All durable job snapshots, oldest first; active records take precedence over archives. */
 export function readHistoryJobs(home: string): Map<string, Record<string, unknown>> {
+  return new Map([...historyJobsSnapshot(home)].map(([name, job]) => [name, cloneJson(job)]));
+}
+
+/** Bounded dashboard pages must not clone every retained prompt to display a few settings. */
+export function selectHistoryJobs(home: string, names: ReadonlySet<string>): Map<string, Record<string, unknown>> {
+  const snapshot = historyJobsSnapshot(home), selected = new Map<string, Record<string, unknown>>();
+  for (const name of names) { const job = snapshot.get(name); if (job) selected.set(name, cloneJson(job)); }
+  return selected;
+}
+
+/** Authority recovery needs one record, even when thousands of finished jobs are retained. */
+export function findHistoryJob(home: string, ref: string, id: string): Record<string, unknown> | undefined {
+  for (const job of historyJobsSnapshot(home).values()) {
+    if (job.name === ref || job.id === id) return cloneJson(job);
+  }
+  return undefined;
+}
+
+function historyJobsSnapshot(home: string): Map<string, Record<string, unknown>> {
   const out = new Map<string, Record<string, unknown>>();
   let canonicalHome: string;
   try { canonicalHome = realpathSync.native(home); } catch { return out; }
@@ -177,7 +196,7 @@ export function readHistoryJobs(home: string): Map<string, Record<string, unknow
     } catch { /* Concurrent archival is observed on the next poll. */ }
   }
   const signature = signatures.join("\n"), saved = historyJobSnapshots.get(canonicalHome);
-  if (saved?.signature === signature) return structuredClone(saved.jobs);
+  if (saved?.signature === signature) return saved.jobs;
   for (const file of sources) {
     let value: unknown;
     try { value = readJsonSnapshot(file).value; }
@@ -191,7 +210,7 @@ export function readHistoryJobs(home: string): Map<string, Record<string, unknow
   historyJobSnapshots.delete(canonicalHome);
   if (complete && bytes <= 256 * 1024 * 1024) historyJobSnapshots.set(canonicalHome, { signature, jobs: out });
   if (historyJobSnapshots.size > 4) historyJobSnapshots.delete(historyJobSnapshots.keys().next().value!);
-  return structuredClone(out);
+  return out;
 }
 
 export interface RunPage<T> { runs: T[]; next: string | null; total: number }

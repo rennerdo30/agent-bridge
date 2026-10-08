@@ -1,7 +1,15 @@
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 
 // src/core/backup-worker.ts
-import { parentPort, workerData } from "node:worker_threads";
+import { constants, getPriority, setPriority } from "node:os";
+import { setTimeout as pause } from "node:timers/promises";
+
+// src/core/message-backups.ts
+import { createHash as createHash4, randomUUID as randomUUID7 } from "node:crypto";
+import { closeSync as closeSync6, existsSync as existsSync8, fsyncSync as fsyncSync4, lstatSync as lstatSync3, mkdirSync as mkdirSync7, openSync as openSync6, readFileSync as readFileSync7, readdirSync as readdirSync6, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { open as open2 } from "node:fs/promises";
+import { dirname as dirname7, join as join10, resolve as resolve3 } from "node:path";
+import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
 
 // src/core/backups.ts
 import { createHash as createHash3, randomUUID as randomUUID6 } from "node:crypto";
@@ -13,7 +21,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
 var DEFAULT_HOME = join(homedir(), `.${APP_NAME}`);
-var DB_FILE_NAME = "bridge.db";
 var LOG_FILE_NAME = `${APP_NAME}.log`;
 var MAX_FRAME_BYTES = 4 * 1024 * 1024;
 var MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
@@ -93,191 +100,264 @@ var MAX_LOG_BYTES = 5 * 1024 * 1024;
 // src/core/sqlite-policy.ts
 import { setTimeout as delay } from "node:timers/promises";
 
-// src/core/sqlite-maintenance.ts
-var ARCHIVE_DB_NAME = "archive.db";
-
 // src/core/backups.ts
 import * as sqlite from "node:sqlite";
 import { open } from "node:fs/promises";
-var BACKUPS_DIR_NAME = "backups";
-var BACKUP_MANIFEST_VERSION = 1;
 var DEFAULT_BACKUP_RETENTION = 7;
 var DEFAULT_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1e3;
 var BACKUP_RETENTION_ENV = "AGENT_BRIDGE_BACKUP_RETENTION";
 var BACKUP_INTERVAL_ENV = "AGENT_BRIDGE_BACKUP_INTERVAL_MS";
-var MANIFEST_NAME = "manifest.json";
-var BACKUP_PREFIX = "snapshot-";
-var USER_DATABASES = [DB_FILE_NAME, ARCHIVE_DB_NAME, "history.db", "store-compatibility.db", "owner-questions.db"];
+
+// src/core/message-backups.ts
+var MESSAGE_BACKUPS_DIR = "message-backups";
+var TABLES = {
+  "bridge.db": ["messages", "archived_messages", "job_delivery_routes"],
+  "archive.db": ["messages"],
+  "store-compatibility.db": ["job_delivery_routes"]
+};
+var MAX_ROWS_PER_WINDOW = 64;
+var MAX_BYTES_PER_WINDOW = 256 * 1024;
+var quote = (name) => `"${name.replaceAll('"', '""')}"`;
 function syncFile(path) {
-  const fd = openSync5(path, "r+");
+  const fd = openSync6(path, "r+");
   try {
-    fsyncSync3(fd);
+    fsyncSync4(fd);
   } finally {
-    closeSync5(fd);
+    closeSync6(fd);
   }
 }
-function jsonStoreFiles(home) {
-  if (!existsSync7(home)) return [];
-  const files = [];
-  const visit = (dir, recurse) => {
-    if (!existsSync7(dir)) return;
-    const root = lstatSync2(dir);
-    if (root.isSymbolicLink() || !root.isDirectory()) return;
-    for (const name of readdirSync5(dir).sort()) {
-      const path = join9(dir, name);
-      const st = lstatSync2(path);
-      if (st.isSymbolicLink()) continue;
-      if (st.isDirectory() && recurse) visit(path, true);
-      else if (st.isFile() && name !== "dashboard.json" && /\.jsonl?(?:-\d+-[\w-]+)?$/.test(name)) files.push(path);
-    }
-  };
-  visit(home, false);
-  for (const dir of ["jobs", "runs", "archive", "read-state", "job-outcomes", "local-result-receipts"]) visit(join9(home, dir), true);
-  return files;
-}
-function listBackups(home) {
-  const dir = join9(home, BACKUPS_DIR_NAME);
-  if (!existsSync7(dir)) return [];
-  return readdirSync5(dir).filter((f) => f.startsWith(BACKUP_PREFIX)).flatMap((f) => {
-    const path = join9(dir, f);
+function assertPhysical(path) {
+  for (let at = resolve3(path); ; at = dirname7(at)) {
     try {
-      const manifest = JSON.parse(readFileSync6(join9(path, MANIFEST_NAME), "utf8"));
-      return [{ path, createdAt: manifest.createdAt }];
+      if (lstatSync3(at).isSymbolicLink()) throw new Error("Message backup refuses linked paths");
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    if (dirname7(at) === at) break;
+  }
+}
+function rowDigest(row) {
+  return Buffer.from(JSON.stringify(Object.entries(row).map(([key, value]) => [
+    key,
+    value instanceof Uint8Array ? ["blob", Buffer.from(value).toString("base64")] : [typeof value, String(value)]
+  ])) + "\n");
+}
+function listMessageBackups(home) {
+  const root = join10(home, MESSAGE_BACKUPS_DIR);
+  assertPhysical(root);
+  if (!existsSync8(root)) return [];
+  return readdirSync6(root).filter((name) => name.startsWith("messages-")).flatMap((name) => {
+    const path = join10(root, name);
+    try {
+      if (lstatSync3(path).isSymbolicLink()) return [];
+      const manifestPath = join10(path, "manifest.json");
+      if (lstatSync3(manifestPath).isSymbolicLink()) return [];
+      const manifest = JSON.parse(readFileSync7(manifestPath, "utf8"));
+      return manifest.version === 1 && manifest.kind === "message-tables" && Number.isFinite(manifest.createdAt) ? [{ path, createdAt: manifest.createdAt }] : [];
     } catch {
       return [];
     }
   }).sort((a, b) => b.createdAt - a.createdAt || b.path.localeCompare(a.path));
 }
-async function backupIfDueBackground(home, control, now = Date.now()) {
+async function messageBackupIfDue(home, control, now = Date.now()) {
   const interval = retentionLimit(BACKUP_INTERVAL_ENV, DEFAULT_BACKUP_INTERVAL_MS);
-  if (!interval || now - (listBackups(home)[0]?.createdAt ?? 0) < interval) return null;
-  control.checkpoint();
-  if (typeof sqlite.backup !== "function") throw new Error("Automatic backup deferred: incremental SQLite backup requires a newer Node runtime; existing data is untouched");
+  if (!interval) return { path: null, skipped: "not-due" };
+  await control.checkpoint();
+  for (const path of [home, join10(home, MESSAGE_BACKUPS_DIR), join10(home, ".storage-users"), join10(home, "message-backup-lock.db")]) assertPhysical(path);
   const release = storageLease(home);
-  const root = join9(home, BACKUPS_DIR_NAME);
-  const name = `${BACKUP_PREFIX}${String(now).padStart(13, "0")}-${randomUUID6()}`;
-  const staging = join9(root, `.pending-${name}`);
-  const manifest = { version: BACKUP_MANIFEST_VERSION, createdAt: now, files: [] };
+  let lock;
+  let staging;
   try {
-    mkdirSync6(staging, { recursive: true, mode: 448 });
-    const checksum = async (file) => {
-      const handle = await open(file, "r");
-      const hash = createHash3("sha256");
-      const buffer = Buffer.allocUnsafe(256 * 1024);
+    lock = new DatabaseSync4(join10(home, "message-backup-lock.db"), { timeout: 0 });
+    if (Number(lock.prepare("PRAGMA user_version").get().user_version) > 1) throw new Error("Unsupported message backup coordination schema");
+    try {
+      lock.exec("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS generation(id INTEGER PRIMARY KEY, pid INTEGER NOT NULL, nonce TEXT NOT NULL, started_at INTEGER NOT NULL); PRAGMA user_version=1;");
+      lock.prepare("INSERT INTO generation VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET pid=excluded.pid,nonce=excluded.nonce,started_at=excluded.started_at").run(process.pid, randomUUID7(), now);
+    } catch (error) {
+      if (/database is locked|database is busy/.test(String(error))) return { path: null, skipped: "already-running" };
+      throw error;
+    }
+    if (now - (listMessageBackups(home)[0]?.createdAt ?? 0) < interval) return { path: null, skipped: "not-due" };
+    const root = join10(home, MESSAGE_BACKUPS_DIR), name = `messages-${String(now).padStart(13, "0")}-${randomUUID7()}`;
+    staging = join10(root, `.pending-${name}`);
+    mkdirSync7(staging, { recursive: true, mode: 448 });
+    const manifest = {
+      version: 1,
+      kind: "message-tables",
+      createdAt: now,
+      restore: "merge-selected-tables-only",
+      excludes: ["conversation-history", "other-tables", "json-stores"],
+      files: []
+    };
+    const checksum = async (path) => {
+      const file = await open2(path, "r"), hash = createHash4("sha256"), buffer = Buffer.allocUnsafe(MAX_BYTES_PER_WINDOW);
       let bytes = 0;
       try {
         for (; ; ) {
-          control.checkpoint();
-          const read = await handle.read(buffer, 0, buffer.length, bytes);
-          if (!read.bytesRead) break;
-          hash.update(buffer.subarray(0, read.bytesRead));
-          bytes += read.bytesRead;
+          await control.checkpoint();
+          const chunk = await file.read(buffer, 0, buffer.length, bytes);
+          if (!chunk.bytesRead) break;
+          hash.update(buffer.subarray(0, chunk.bytesRead));
+          bytes += chunk.bytesRead;
         }
       } finally {
-        await handle.close();
+        await file.close();
       }
       return { bytes, sha256: hash.digest("hex") };
     };
-    const capture = async (source, database) => {
-      control.checkpoint();
-      const path = relative(home, source).split(sep).join("/");
-      const target = join9(staging, path);
-      mkdirSync6(dirname6(target), { recursive: true, mode: 448 });
-      if (database) {
-        const db = new sqlite.DatabaseSync(source, { readOnly: true, timeout: 100 });
-        try {
-          db.exec("BEGIN");
-          db.prepare("PRAGMA schema_version").get();
-          const version = db.prepare("PRAGMA user_version").get().user_version;
-          await sqlite.backup(db, target, { rate: 32, progress: () => control.checkpoint() });
-          db.exec("ROLLBACK");
-          const copied = new sqlite.DatabaseSync(target, { readOnly: true, timeout: 100 });
-          try {
-            if (copied.prepare("PRAGMA user_version").get().user_version !== version) throw new Error(`Backup version verification failed: ${path}`);
-            copied.prepare("SELECT count(*) FROM sqlite_master").get();
-          } finally {
-            copied.close();
-          }
-        } finally {
-          db.close();
-        }
-      } else {
-        const sourceHandle = await open(source, "r");
-        let targetHandle;
-        try {
-          targetHandle = await open(target, "wx", 384);
-          const length = (await sourceHandle.stat()).size;
-          const buffer = Buffer.allocUnsafe(256 * 1024);
-          for (let at = 0; at < length; ) {
-            control.checkpoint();
-            const chunk = await sourceHandle.read(buffer, 0, Math.min(buffer.length, length - at), at);
-            if (!chunk.bytesRead) throw new Error(`Backup source shortened during capture: ${path}`);
-            for (let written = 0; written < chunk.bytesRead; ) {
-              const result = await targetHandle.write(buffer, written, chunk.bytesRead - written, at + written);
-              if (!result.bytesWritten) throw new Error(`Backup write made no progress: ${path}`);
-              written += result.bytesWritten;
+    for (const [sourceName, names] of Object.entries(TABLES)) {
+      const sourcePath = join10(home, sourceName);
+      if (!existsSync8(sourcePath)) continue;
+      assertPhysical(sourcePath);
+      await control.checkpoint();
+      const source = new DatabaseSync4(sourcePath, { readOnly: true, timeout: 100 });
+      const path = sourceName.replace(/\.db$/, ".messages.db"), targetPath = join10(staging, path);
+      let target;
+      try {
+        source.exec("BEGIN");
+        const sourceVersion = Number(source.prepare("PRAGMA user_version").get().user_version);
+        const schemas = names.flatMap((name2) => {
+          const row = source.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(name2);
+          return typeof row?.sql === "string" ? [{ name: name2, schema: row.sql }] : [];
+        });
+        if (!schemas.length) continue;
+        target = new DatabaseSync4(targetPath, { timeout: 100 });
+        target.exec("PRAGMA synchronous=FULL;");
+        const tables = [];
+        for (const { name: name2, schema } of schemas) {
+          await control.checkpoint();
+          target.exec(schema);
+          const columns = source.prepare(`PRAGMA table_xinfo(${quote(name2)})`).all().filter((column) => column.hidden === 0).map((column) => String(column.name));
+          const selection = `SELECT rowid AS _ab_backup_rowid,${columns.map(quote).join(",")} FROM ${quote(name2)} ORDER BY rowid`;
+          const read = source.prepare(selection);
+          read.setReadBigInts(true);
+          const insert = target.prepare(`INSERT INTO ${quote(name2)}(rowid,${columns.map(quote).join(",")}) VALUES(${columns.map(() => "?").concat("?").join(",")})`);
+          const hash = createHash4("sha256");
+          let rows = 0, windowRows = 0, windowBytes = 0;
+          target.exec("BEGIN");
+          for (const raw of read.iterate()) {
+            const row = raw, bytes = rowDigest(row);
+            insert.run(row._ab_backup_rowid, ...columns.map((column) => row[column]));
+            hash.update(bytes);
+            rows++;
+            windowRows++;
+            windowBytes += bytes.length;
+            if (windowRows >= MAX_ROWS_PER_WINDOW || windowBytes >= MAX_BYTES_PER_WINDOW) {
+              target.exec("COMMIT");
+              await control.checkpoint();
+              target.exec("BEGIN");
+              windowRows = 0;
+              windowBytes = 0;
             }
-            at += chunk.bytesRead;
           }
-          await targetHandle.sync();
+          target.exec("COMMIT");
+          const expected = hash.digest("hex"), verification = createHash4("sha256");
+          let verifiedRows = 0;
+          const reread = target.prepare(selection);
+          reread.setReadBigInts(true);
+          windowRows = 0;
+          windowBytes = 0;
+          for (const raw of reread.iterate()) {
+            const bytes = rowDigest(raw);
+            verification.update(bytes);
+            verifiedRows++;
+            windowRows++;
+            windowBytes += bytes.length;
+            if (windowRows >= MAX_ROWS_PER_WINDOW || windowBytes >= MAX_BYTES_PER_WINDOW) {
+              await control.checkpoint();
+              windowRows = 0;
+              windowBytes = 0;
+            }
+          }
+          await control.checkpoint();
+          if (rows !== verifiedRows || expected !== verification.digest("hex") || target.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(name2).sql !== schema) throw new Error(`Message backup table verification failed: ${sourceName}/${name2}`);
+          tables.push({ name: name2, schema, rows, sha256: expected });
+        }
+        source.exec("ROLLBACK");
+        target.close();
+        target = void 0;
+        await control.checkpoint();
+        syncFile(targetPath);
+        const copied = await checksum(targetPath), verified = await checksum(targetPath);
+        if (copied.bytes !== verified.bytes || copied.sha256 !== verified.sha256) throw new Error(`Message backup checksum verification failed: ${sourceName}`);
+        manifest.files.push({ path, source: sourceName, sourceVersion, ...verified, tables });
+      } finally {
+        try {
+          target?.close();
         } finally {
-          await sourceHandle.close();
-          await targetHandle?.close();
+          source.close();
         }
       }
-      control.checkpoint();
-      syncFile(target);
-      const first = await checksum(target);
-      const verified = await checksum(target);
-      if (first.bytes !== verified.bytes || first.sha256 !== verified.sha256) throw new Error(`Backup checksum verification failed: ${path}`);
-      manifest.files.push({ path, ...verified });
-    };
-    for (const name2 of USER_DATABASES) if (existsSync7(join9(home, name2))) await capture(join9(home, name2), true);
-    for (const file of jsonStoreFiles(home)) await capture(file, false);
-    control.checkpoint();
-    writeFileSync5(join9(staging, MANIFEST_NAME), JSON.stringify(manifest, null, 2) + "\n", { flag: "wx", mode: 384 });
-    syncFile(join9(staging, MANIFEST_NAME));
-    const published = join9(root, name);
-    renameSync4(staging, published);
-    const retention = retentionLimit(BACKUP_RETENTION_ENV, DEFAULT_BACKUP_RETENTION);
-    if (retention) for (const previous of listBackups(home).slice(retention)) {
-      control.checkpoint();
-      const cold = join9(root, "archive");
-      mkdirSync6(cold, { recursive: true, mode: 448 });
-      renameSync4(previous.path, join9(cold, previous.path.split(/[\\/]/).at(-1)));
     }
-    return published;
+    await control.checkpoint();
+    writeFileSync6(join10(staging, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", { flag: "wx", mode: 384 });
+    syncFile(join10(staging, "manifest.json"));
+    const published = join10(root, name);
+    renameSync5(staging, published);
+    const retention = retentionLimit(BACKUP_RETENTION_ENV, DEFAULT_BACKUP_RETENTION);
+    if (retention) for (const previous of listMessageBackups(home).slice(retention)) {
+      await control.checkpoint();
+      const archive = join10(root, "archive");
+      assertPhysical(archive);
+      mkdirSync7(archive, { recursive: true, mode: 448 });
+      renameSync5(previous.path, join10(archive, previous.path.split(/[\\/]/).at(-1)));
+    }
+    lock.exec("COMMIT");
+    return { path: published };
   } catch (error) {
-    if (existsSync7(staging)) writeFileSync5(join9(staging, "failure.json"), JSON.stringify({ version: 1, at: Date.now(), error: String(error) }) + "\n", { flag: "wx", mode: 384 });
+    if (staging && existsSync8(staging)) writeFileSync6(join10(staging, "failure.json"), JSON.stringify({ version: 1, at: Date.now(), error: String(error) }) + "\n", { flag: "wx", mode: 384 });
     throw error;
   } finally {
-    release();
+    try {
+      lock?.close();
+    } finally {
+      release();
+    }
   }
 }
 
 // src/core/backup-worker.ts
-var state = new Int32Array(workerData.pressure, 0, 2);
-var pauseUntil = new BigInt64Array(workerData.pressure, 8, 1);
+var pending = false;
+var stop = false;
+var pauseUntil = 0;
 var pressureSince = 0;
-var checkpoint = () => {
+var started = false;
+process.on("message", (message) => {
+  if (message.type === "pressure") {
+    pending = !!message.pending;
+    pauseUntil = message.pauseUntil ?? 0;
+  }
+  if (message.type === "stop") stop = true;
+  if (message.type === "start" && typeof message.home === "string" && !started) {
+    started = true;
+    void run(message.home);
+  }
+});
+process.once("disconnect", () => {
+  stop = true;
+});
+async function checkpoint() {
   for (; ; ) {
-    if (Atomics.load(state, 1)) throw new Error("Automatic backup stopped; incomplete snapshot preserved");
-    const paused = !!Atomics.load(state, 0) || Date.now() < Number(Atomics.load(pauseUntil, 0));
-    if (!paused) {
+    if (stop) throw new Error("Automatic message backup stopped; incomplete snapshot preserved");
+    if (!pending && Date.now() >= pauseUntil) {
       pressureSince = 0;
       break;
     }
     pressureSince ||= Date.now();
-    if (Date.now() - pressureSince >= 5e3) throw new Error("Automatic backup paused for sustained broker pressure; incomplete snapshot preserved");
-    Atomics.wait(state, 0, Atomics.load(state, 0), 100);
+    if (Date.now() - pressureSince >= 5e3) throw new Error("Automatic message backup paused for sustained broker pressure; incomplete snapshot preserved");
+    await pause(100);
   }
-  Atomics.wait(state, 1, 0, 5);
-};
-try {
-  const path = await backupIfDueBackground(workerData.home, { checkpoint });
-  parentPort?.postMessage({ path });
-} catch (error) {
-  parentPort?.postMessage({ error: String(error) });
-} finally {
-  parentPort?.close();
+  await pause(5);
+  if (stop) throw new Error("Automatic message backup stopped; incomplete snapshot preserved");
+}
+async function run(home) {
+  try {
+    setPriority(process.pid, constants.priority.PRIORITY_LOW);
+    const priority = getPriority(process.pid);
+    if (priority < constants.priority.PRIORITY_BELOW_NORMAL) throw new Error("Automatic message backup could not lower its process priority");
+    const result = await messageBackupIfDue(home, { checkpoint });
+    process.send?.({ ...result, priority }, () => process.disconnect?.());
+  } catch (error) {
+    process.send?.({ error: String(error) }, () => process.disconnect?.());
+  }
 }

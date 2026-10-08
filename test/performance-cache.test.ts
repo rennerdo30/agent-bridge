@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readJsonSnapshot } from "../src/core/file-cache.js";
+import { cloneJson, readJsonSnapshot } from "../src/core/file-cache.js";
 import { listRuns, readStoredJobs } from "../src/core/dashboard-read.js";
 import { readArchivedJobs } from "../src/core/job-archive.js";
 import { readHistoryJobs, readHistoryJson } from "../src/core/run-history.js";
@@ -25,6 +25,17 @@ afterEach(async () => { await env.cleanup(); });
 const store = (file: string, value: unknown) => writeFileSync(file, JSON.stringify(value));
 
 describe("read-only performance caches", () => {
+  it("isolates nested JSON containers and preserves own prototype-shaped keys", () => {
+    const original = JSON.parse('{"__proto__":{"retained":true},"constructor":"retained","nested":[{"value":"original"}]}');
+    const copied = cloneJson(original);
+    expect(Object.getPrototypeOf(copied)).toBe(Object.prototype);
+    expect(Object.hasOwn(copied, "__proto__")).toBe(true);
+    copied.__proto__.retained = false; copied.nested[0].value = "changed";
+    expect(original.__proto__.retained).toBe(true);
+    expect(original.nested[0].value).toBe("original");
+    expect(copied.constructor).toBe("retained");
+  });
+
   it("reuses unchanged parses and observes same-size atomic replacement with restored mtime", () => {
     const file = join(env.home, "jobs.json"), replacement = `${file}.next`;
     store(file, { jobs: [{ name: "job", args: { title: "old" } }] });

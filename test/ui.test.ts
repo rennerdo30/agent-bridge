@@ -98,9 +98,18 @@ describe("web dashboard", () => {
     const meta = join(env.home, "runs", `${RUN}.json`);
     writeFileSync(meta, legacy);
     setJobOutcome(env.home, job, "supervisor", "held", "CPU A/B", startedAt + 2_000);
-    const response = await fetch(`${base()}/api/job-outcomes`, { headers: { cookie } });
-    expect(response.status).toBe(200);
-    const state = await response.json() as any;
+    const inspected = async () => {
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        const response = await fetch(`${base()}/api/job-outcomes`, { headers: { cookie } });
+        expect(response.status).toBe(200);
+        const state = await response.json() as any;
+        if (state.jobs[job.name].outcome.observation.state === 'ready' && state.runs[RUN].observation.state === 'ready') return state;
+        if (Date.now() > deadline) throw new Error('Dashboard outcome inspection did not finish');
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    };
+    const state = await inspected();
     expect(state.contractVersion).toBe(1);
     expect(state.jobs[job.name].outcome).toMatchObject({ delivery: { status: "unknown" }, merge: { state: "held", branch: job.worktree.branch, reason: "CPU A/B" } });
     expect(state.runs[RUN].merge.state).toBe("held");
@@ -108,7 +117,7 @@ describe("web dashboard", () => {
     expect(readFileSync(meta, "utf8")).toBe(legacy);
     writeFileSync(join(env.home, JOBS_FILE), JSON.stringify([{ ...job, startedAt: startedAt + 10_000, remote: { host: "paired-pc", name: "remote-job" } }]));
     writeFileSync(meta, JSON.stringify({ job: job.name, by: "supervisor", jobStartedAt: startedAt + 10_000, remote: { host: "paired-pc", name: "remote-job" } }));
-    const remote = await (await fetch(`${base()}/api/job-outcomes`, { headers: { cookie } })).json() as any;
+    const remote = await inspected();
     expect(remote.jobs[job.name].outcome.merge.reason).toContain("paired PC");
     expect(remote.runs[RUN].merge.reason).toContain("paired PC");
   });

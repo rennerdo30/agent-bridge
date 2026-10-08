@@ -10,6 +10,12 @@ Inherited author/committer environment overrides are excluded from these checkpo
 
 ## Windows file ownership
 
+Every delegate CLI, detached runner and inherited native child defaults to
+`DOTNET_ADD_GLOBAL_TOOLS_TO_PATH=0` and `DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1`.
+This prevents .NET first-run setup from adding each per-worktree tools directory
+to the persistent user PATH. Explicit user values take precedence, including
+empty values; the bridge never changes PATH or an existing CLI home.
+
 Delegated sandboxed runs use `codexWindowsSandbox: "unelevated"` by default. This backend
 uses a restricted token derived from the bridge user, so new files retain that user's
 ownership instead of belonging to the dedicated elevated-sandbox account. It still

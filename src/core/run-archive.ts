@@ -1,6 +1,7 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { retentionLimit } from "./json-store.js";
+import { readRunLogPreview } from "./run-log-preview.js";
 
 export const DEFAULT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 export const ARCHIVE_AGE_ENV = "AGENT_BRIDGE_ARCHIVE_AGE_MS";
@@ -14,7 +15,7 @@ export function finishedRunLine(text: string): string | null {
 
 /** Preserve the original basename so metadata and log remain addressable as a pair. */
 export function archiveRun(log: string): void {
-  if (!finishedRunLine(readFileSync(log, "utf8"))) return;
+  if (!finishedRunLine(readRunLogPreview(log))) return;
   const dir = join(log, "..", "archive");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const target = join(dir, basename(log));
@@ -53,7 +54,7 @@ export function archiveOldRuns(home: string, now = Date.now()): number {
   if (!age) return 0;
   let count = 0;
   for (const file of runLogFiles(home).filter((p) => !p.includes(`${join("runs", "archive")}`))) {
-    if (statSync(file).mtimeMs < now - age && finishedRunLine(readFileSync(file, "utf8"))) { archiveRun(file); count++; }
+    if (statSync(file).mtimeMs < now - age && finishedRunLine(readRunLogPreview(file))) { archiveRun(file); count++; }
   }
   return count;
 }

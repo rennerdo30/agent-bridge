@@ -33,7 +33,7 @@ export async function readProcessIdentities(pids: number[]): Promise<Map<number,
   if (!valid.length) return result;
   if (process.platform === "win32") {
     try {
-      const { stdout } = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Get-Process -Id @(${valid.join(",")}) -ErrorAction SilentlyContinue | ForEach-Object { try { [string]$_.Id + '|' + [string]$_.StartTime.ToUniversalTime().Ticks } catch {} }`], { windowsHide: true, timeout: 5_000 });
+      const { stdout } = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Get-Process -Id @(${valid.join(",")}) -ErrorAction SilentlyContinue | ForEach-Object { try { [string]$_.Id + '|' + [string]$_.StartTime.ToUniversalTime().Ticks } catch {} }; exit 0`], { windowsHide: true, timeout: 5_000 });
       for (const line of stdout.split(/\r?\n/)) {
         const match = /^(\d+)\|(\d+)$/.exec(line.trim());
         if (match && valid.includes(Number(match[1]))) result.set(Number(match[1]), match[2]!);

@@ -2,10 +2,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isRecord } from "./json-store.js";
 import { AGENT_KINDS } from "./protocol.js";
-import { readHistoryJobs, readHistoryJson, readRunLogs } from "./run-history.js";
+import { findHistoryJob, readHistoryJson, readRunLogs } from "./run-history.js";
 import { safeFile } from "./transcripts/common.js";
 import { pidAlive } from "./delegate.js";
 import type { Job } from "../mcp/jobs.js";
+import { readRecoveryHeader, type RecoveryHeader } from "./job-recovery-feed.js";
 type StoredJob = Omit<Job, "controller" | "progress" | "queue" | "resume">;
 function runStart(run: ReturnType<typeof readRunLogs>[number]): number {
   if (run.meta.jobStartedAt !== undefined) return run.meta.jobStartedAt;
@@ -16,9 +17,37 @@ function runStart(run: ReturnType<typeof readRunLogs>[number]): number {
 /** Read-only recovery from retained 0.29.10 snapshots, launch specs and run feeds.
  * Current registry ownership and grants always take precedence over original run metadata. */
 export function recoverJobRecord(home: string, ref: string): StoredJob | undefined {
+  const recovery = prepareRecovery(home, ref);
+  if (!recovery) return undefined;
+  let payload: RecoveryHeader = { prompt: "", header: "" };
+  if (needsHeader(recovery) && recovery.run) {
+    try {
+      const lines = readFileSync(recovery.run.file, "utf8").split("\n"), end = lines.findIndex(line => line.trim() === "---");
+      payload = { header: lines[0] ?? "", prompt: end > 0 ? lines.slice(1, end).map(line => line.replace(/^ {9}/, "")).join("\n") : "" };
+    } catch { /* Keep the intact spec/snapshot if the run was concurrently archived. */ }
+  }
+  return finishRecovery(home, recovery, payload);
+}
+
+/** Broker recovery never synchronously rereads an entire retained run feed. */
+export async function recoverJobRecordAsync(home: string, ref: string): Promise<StoredJob | undefined> {
+  const recovery = prepareRecovery(home, ref);
+  if (!recovery) return undefined;
+  const payload = needsHeader(recovery) && recovery.run ? await readRecoveryHeader(recovery.run.file) : { prompt: "", header: "" };
+  if (!payload) return undefined;
+  // A handoff or new native turn can update authority while asynchronous IO yields.
+  // Re-read durable facts before publishing/authorizing the recovered context.
+  const latest = prepareRecovery(home, ref);
+  if (!latest) return undefined;
+  if (!needsHeader(latest)) return finishRecovery(home, latest, { prompt: "", header: "" });
+  if (latest.run?.file !== recovery.run?.file || latest.run?.signature !== recovery.run?.signature || contextIdentity(latest) !== contextIdentity(recovery)) return undefined;
+  return finishRecovery(home, latest, payload);
+}
+
+function prepareRecovery(home: string, ref: string) {
   const id = ref.replace(/^.*-(?:job|ask)-/, "");
   if (!/^[\w-]+$/.test(id)) return undefined;
-  const history = [...readHistoryJobs(home).values()].find((j) => j.name === ref || j.id === id);
+  const history = findHistoryJob(home, ref, id);
   const file = safeFile(home, join(home, "jobs", `${id}.spec.json`));
   const spec = file ? readHistoryJson(file) : null;
   const launch = isRecord(spec) && isRecord(spec.job) ? spec.job : undefined;
@@ -29,16 +58,20 @@ export function recoverJobRecord(home: string, ref: string): StoredJob | undefin
   const name = history?.name ?? launch?.name ?? meta?.job ?? (run && /^[\w]+-(?:job|ask)-[\w-]+$/.test(ref) ? ref : undefined);
   const agent = history?.agent ?? launch?.agent ?? ref.split("-")[0];
   if (typeof name !== "string" || !AGENT_KINDS.includes(agent as never)) return undefined;
-  let prompt = "", header = "";
-  if (run) {
-    try {
-      const text = readFileSync(run.file, "utf8"), lines = text.split("\n");
-      header = lines[0] ?? "";
-      const end = lines.findIndex((line) => line.trim() === "---");
-      if (end > 0) prompt = lines.slice(1, end).map((line) => line.replace(/^ {9}/, "")).join("\n");
-    } catch { /* Keep the intact spec/snapshot if the run was concurrently archived. */ }
-  }
   const base = { ...launch, ...history };
+  return { id, history, spec, launch, run, meta, name, agent, base };
+}
+type Recovery = NonNullable<ReturnType<typeof prepareRecovery>>;
+function contextIdentity({ id, name, agent, base, meta }: Recovery): string {
+  // Owner/grant changes may legitimately reuse the same retained native context.
+  // A metadata-only new turn must never reuse bytes read for an earlier session.
+  return JSON.stringify([id, name, agent, base.id, base.startedAt, base.sessionId, base.threadId,
+    meta?.jobStartedAt, meta?.session, meta?.continues, meta?.by, meta?.job]);
+}
+function needsHeader({ run, base, meta }: Recovery): boolean {
+  return Boolean(run && (typeof base.prompt !== "string" || typeof base.owner !== "string" && !meta?.by));
+}
+function finishRecovery(home: string, { id, history, spec, launch, run, meta, name, agent, base }: Recovery, { prompt, header }: RecoveryHeader): StoredJob | undefined {
   const stateFile = safeFile(home, join(home, "jobs", `${id}.json`));
   const rawState = stateFile ? readHistoryJson(stateFile) : null;
   const state = isRecord(rawState) && typeof rawState.pid === "number" ? rawState : undefined;
@@ -53,7 +86,7 @@ export function recoverJobRecord(home: string, ref: string): StoredJob | undefin
   if (!history && !launch && !sessionId) return undefined;
   return {
     ...base, id: typeof base.id === "string" ? base.id : id, name, agent,
-    model: base.model ?? meta?.model ?? null, prompt: base.prompt ?? prompt, startedAt,
+    model: base.model ?? meta?.model ?? null, prompt: typeof base.prompt === "string" ? base.prompt : prompt, startedAt,
     owner, rootName: base.rootName ?? owner, rootSession: base.rootSession ?? meta?.rootSession,
     parentJob: base.parentJob ?? meta?.parentJob,
     projectRoot: base.projectRoot ?? (isRecord(spec) ? spec.cwd : undefined) ?? meta?.byCwd ?? meta?.repoRoot,

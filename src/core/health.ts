@@ -49,7 +49,7 @@ export function formatHealth(health: BrokerHealth): string {
   const eta = history?.etaSeconds == null ? "ETA pending" : `ETA ~${Math.ceil(history.etaSeconds / 60)} min`;
   return `Broker latency: ${health.roundTripMs == null ? "not measured" : `${Math.round(health.roundTripMs)} ms`} round trip; event loop p95 ${health.eventLoopDelayMs.p95} ms. ` +
     (history ? `History import: ${history.phase}, ~${history.percent.toFixed(1)}%, ${eta}${history.paused ? " (paused)" : ""}. ` : "History import: inactive. ") +
-    (health.backup ? `Backup: ${health.backup.phase}${health.backup.lastVerifiedAt == null ? "" : `, last verified ${new Date(health.backup.lastVerifiedAt).toISOString()}`}${health.backup.lastError ? ` (${health.backup.lastError})` : ""}. ` : "") +
+    (health.backup ? `Backup: ${health.backup.phase}${health.backup.lastVerifiedAt == null ? "" : `, last verified ${new Date(health.backup.lastVerifiedAt).toISOString()}`}${health.backup.lastError ? ` (${health.backup.lastError})` : ""}. ` : "Backup: disabled. ") +
     `Recent request errors: ${health.recentErrors.length}.`;
 }
 

@@ -1903,7 +1903,7 @@ async function poll() {  try {
     if (next.brokerState === "slow" || next.brokerState === "unavailable") next.peers = (state && state.peers) || next.peers;
     state = next;
     const h = state.health, m = h && h.history, backup = h && h.backup;
-    const migration = (m ? ' · history ' + esc(m.phase) + ' ~' + esc(Number(m.percent).toFixed(1)) + '% · ' + (m.etaSeconds == null ? 'ETA pending' : 'ETA ~' + Math.ceil(m.etaSeconds / 60) + ' min') : '') + (backup ? ' · backup ' + esc(backup.phase) + (backup.lastError ? ' (' + esc(backup.lastError) + ')' : '') : '');
+    const migration = (m ? ' · history ' + esc(m.phase) + ' ~' + esc(Number(m.percent).toFixed(1)) + '% · ' + (m.etaSeconds == null ? 'ETA pending' : 'ETA ~' + Math.ceil(m.etaSeconds / 60) + ' min') : '') + (backup ? ' · backup ' + esc(backup.phase) + (backup.lastError ? ' (' + esc(backup.lastError) + ')' : '') : h ? ' · backup disabled' : '');
     $("status").innerHTML = state.brokerState === "slow"
       ? '<span class="dot busy"></span>Bridge responding slowly' + migration
       : state.brokerState === "unavailable" ? '<span class="dot busy"></span>Bridge status unavailable' + migration
@@ -2735,8 +2735,9 @@ function outcomeChip(g) {
   const o = g.status !== "running" && g.job && outcomes && outcomes[g.job] && outcomes[g.job].outcome;
   const merge = o && o.merge;
   if (!merge || !OUTCOME_LABEL[merge.state]) return "";
+  if (o.observation && o.observation.state === "pending") return '<span class="chip outcome" title="Outcome verification is running in the background">checking outcome</span>';
   const [label, cls] = OUTCOME_LABEL[merge.state];
-  const tip = [merge.branch && "branch " + merge.branch, merge.baseBranch && "into " + merge.baseBranch, merge.reason].filter(Boolean).join(" · ");
+  const tip = [o.observation && o.observation.state === "stale" && "cached evidence; refresh pending", merge.branch && "branch " + merge.branch, merge.baseBranch && "into " + merge.baseBranch, merge.reason].filter(Boolean).join(" · ");
   return '<span class="chip outcome ' + cls + '" title="' + esc(tip) + '">' + label + "</span>";
 }
 /** Where a run lives: on a paired PC, or rebuilt from its job record after its log was lost. */

@@ -1,4 +1,4 @@
-import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { JOBS_FILE } from "./constants.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
@@ -7,11 +7,14 @@ import { CODING_AGENTS, type PeerInfo } from "./protocol.js";
 import { isRecord } from "./json-store.js";
 import { type RunMeta } from "./runfeed.js";
 import { finishedRunLine } from "./run-archive.js";
-import { DEFAULT_RUN_PAGE_SIZE, MAX_RUN_PAGE_SIZE, pageRuns, readHistoryJobs, readHistoryJson, readRunLogs, readRunStarts } from "./run-history.js";
+import { readRunLogPreview } from "./run-log-preview.js";
+import { DEFAULT_RUN_PAGE_SIZE, MAX_RUN_PAGE_SIZE, pageRuns, readHistoryJobs, readHistoryJson, readRunLogs, selectHistoryJobs } from "./run-history.js";
 import type { Worktree } from "./worktree.js";
 import { listNativeSubagents, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "./transcripts/index.js";
-import { deriveJobOutcome, listJobOutcomes, readResultDelivery, JOB_OUTCOME_CONTRACT_VERSION, type JobOutcome, type OutcomeJob } from "./job-outcomes.js";
+import { JOB_OUTCOME_CONTRACT_VERSION, type JobOutcome, type OutcomeJob } from "./job-outcomes.js";
+import { cachedOutcomes, type OutcomeInput } from "./outcome-background.js";
 import { JOB_SETTING_KEYS } from "../mcp/job-settings.js";
+import { cloneJson } from "./file-cache.js";
 import { readStore } from "../mcp/jobs.js";
 import { dashboardRequestSchema, type DashboardReadRequest, type DashboardReadResult } from "../network/dashboard-protocol.js";
 const TASK_PREVIEW_CHARS = 300;
@@ -47,7 +50,7 @@ export interface RunSummary extends RunMeta {
 export async function finishedRunOutcomes(home: string, log: Logger, names?: Set<string>): Promise<Record<string, JobOutcome>> {
   const runs = listRuns(home, Date.now(), names);
   const jobs = readStore(join(home, JOBS_FILE), log, true);
-  const out: Record<string, JobOutcome> = {};
+  const inputs: OutcomeInput[] = [];
   for (const run of runs) {
     if (names && !names.has(run.name)) continue;
     if (!run.job || (run.status !== "done" && run.status !== "failed")) continue;
@@ -61,19 +64,21 @@ export async function finishedRunOutcomes(home: string, log: Logger, names?: Set
       status: run.status, worktree: stored?.worktree,
       remote: (run as RunSummary & { remote?: OutcomeJob["remote"] }).remote ?? (stored as OutcomeJob | undefined)?.remote,
     };
-    // With no receipt evidence, bounding an empty result needs no unrelated metadata.
-    // Freeze that read so a concurrently arriving later-turn result cannot leak in.
-    const delivery = names ? readResultDelivery(home, job) : undefined;
-    const receiptRuns = names && delivery?.status !== "unknown" ? await readRunStarts(home) : runs;
-    const next = receiptRuns.filter((r) => r.job === run.job && (r.jobStartedAt ?? r.startedAt) > startedAt)
-      .sort((a, b) => (a.jobStartedAt ?? a.startedAt) - (b.jobStartedAt ?? b.startedAt))[0];
-    out[run.name] = await deriveJobOutcome(home, job, log, {
+    inputs.push({ key: run.name, kind: "run", job, opts: {
       branch: run.branch, baseBranch: run.baseBranch, repoRoot: run.repoRoot,
-      branchHead: run.branchHead, before: next?.jobStartedAt ?? next?.startedAt,
-      ...(delivery?.status === "unknown" ? { delivery } : {}),
-    });
+      branchHead: run.branchHead,
+    } });
   }
-  return out;
+  return cachedOutcomes(home, inputs, log);
+}
+
+/** Cached display evidence only; explicit supervisor decisions use fresh deriveJobOutcome. */
+async function dashboardJobOutcomes(home: string, log: Logger, names: Set<string>): Promise<Record<string, { startedAt: number; status: string; outcome: JobOutcome }>> {
+  const jobs = readStore(join(home, JOBS_FILE), log, true).filter(job => names.has(job.name) && (job.status === "done" || job.status === "failed"));
+  const outcomes = await cachedOutcomes(home, jobs.map(job => ({ key: job.name, kind: "job", opts: {}, job: {
+    id: job.id, name: job.name, owner: job.owner, startedAt: job.startedAt, status: job.status, worktree: job.worktree, remote: job.remote,
+  } })), log);
+  return Object.fromEntries(jobs.map(job => [job.name, { startedAt: job.startedAt, status: job.status, outcome: outcomes[job.name]! }]));
 }
 
 /** Parse the head and tail of a run log written by runfeed.ts, plus its metadata (older runs: from the header). */
@@ -122,12 +127,12 @@ export function listRuns(home: string, now = Date.now(), names?: Set<string>): R
       let cached = runSummaries.get(log.file);
       if (cached?.signature !== signature) {
         // Parse once while fresh; derive interrupted/ETA state on every poll, even for unchanged logs.
-        cached = { signature, summary: summarizeRun(`${log.name}.log`, readFileSync(log.file, "utf8"), log.updatedAt, log.updatedAt, log.meta) };
+        cached = { signature, summary: summarizeRun(`${log.name}.log`, readRunLogPreview(log.file), log.updatedAt, log.updatedAt, log.meta) };
         runSummaries.delete(log.file); runSummaries.set(log.file, cached);
         if (runSummaries.size > 2048) runSummaries.delete(runSummaries.keys().next().value!);
       }
       const stale = cached.summary.status === "running" && now - log.updatedAt > STALE_RUN_MS;
-      runs.push({ ...structuredClone(cached.summary), ...(stale ? { status: "interrupted", etaAt: undefined, etaReportedAt: undefined } : {}), archived: log.archived, recovered: false, hasLog: true });
+      runs.push({ ...cloneJson(cached.summary), ...(stale ? { status: "interrupted", etaAt: undefined, etaReportedAt: undefined } : {}), archived: log.archived, recovered: false, hasLog: true });
     }
     catch { /* A concurrent archive operation is retried on the next refresh. */ }
   }
@@ -137,11 +142,15 @@ export function listRuns(home: string, now = Date.now(), names?: Set<string>): R
   const representedJobs = new Set(runs.map((run) => run.job));
   const representedSuffixes = new Set<string>();
   for (const run of runs) for (let at = run.name.indexOf("-"); at >= 0; at = run.name.indexOf("-", at + 1)) representedSuffixes.add(run.name.slice(at));
-  for (const [name, job] of readHistoryJobs(home)) {
+  const current = readHistoryJobs(home);
+  // Filtered outcome pages may recover several jobs. Inspect the log registry once,
+  // rather than repeating all metadata stats and clones for each recovered job.
+  const retainedLogs = names ? readRunLogs(home) : undefined;
+  for (const [name, job] of current) {
     if (names && !names.has(name)) continue;
     // Filtering log bodies must not invent a recovered run for a job whose real
     // retained run simply belongs to a different outcome page.
-    if (names && readRunLogs(home).some((r) => r.meta.job === name ||
+    if (names && retainedLogs!.some((r) => r.meta.job === name ||
       (typeof job.id === "string" && r.name.endsWith(`-${job.agent}-${job.id}`)))) continue;
     // Older logs lack job metadata; their filename still includes the original agent/job id.
     if (representedJobs.has(name) || (typeof job.id === "string" && representedSuffixes.has(`-${job.agent}-${job.id}`))) continue;
@@ -165,7 +174,6 @@ export function listRuns(home: string, now = Date.now(), names?: Set<string>): R
       header: `Recovered ${name}`, last: "Run log unavailable; conversation may be available in the CLI transcript.", recovered: true, hasLog: false,
     });
   }
-  const current = readHistoryJobs(home);
   for (const run of runs) {
     const job = run.job && current.get(run.job);
     if (job && Array.isArray(job.ownershipHistory) && job.ownershipHistory.length) {
@@ -199,9 +207,9 @@ export interface StoredJobView {
 }
 
 /** Jobs from the sessions' store (`{ jobs: [...] }`; before 0.26 a bare array). Read-only and best effort. */
-export function readStoredJobs(home: string): Map<string, StoredJobView> {
+export function readStoredJobs(home: string, names?: ReadonlySet<string>): Map<string, StoredJobView> {
   const out = new Map<string, StoredJobView>();
-  for (const j of readHistoryJobs(home).values()) {
+  for (const j of (names ? selectHistoryJobs(home, names) : readHistoryJobs(home)).values()) {
     if (!j || typeof j !== "object") continue;
     const { name, owner, args, remote } = j as { name?: unknown; owner?: unknown; args?: unknown; remote?: { host: string; name: string } };
     if (typeof name !== "string") continue;
@@ -245,8 +253,8 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
     if (url.pathname === "/api/state") {
       const page = pageRuns(listRuns(ctx.home), null, DEFAULT_RUN_PAGE_SIZE);
       // Only settings for jobs on this bounded run page are needed by its inspector.
-      const names = new Set(page.runs.map((run) => run.job));
-      const jobs = Object.fromEntries([...readStoredJobs(ctx.home)].filter(([name]) => names.has(name)).map(([name, job]) => [name, { next: job.next, ...(job.remote ? { remote: job.remote } : {}) }]));
+      const names = new Set(page.runs.flatMap((run) => run.job ? [run.job] : []));
+      const jobs = Object.fromEntries([...readStoredJobs(ctx.home, names)].map(([name, job]) => [name, { next: job.next, ...(job.remote ? { remote: job.remote } : {}) }]));
       return reply(200, { runs: page.runs, runsNext: page.next, runsTotal: page.total, jobs });
     }
     if (url.pathname === "/api/job-outcomes") {
@@ -256,7 +264,7 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
         const name = jobName ?? runName!;
         if (!/^[\w.-]{1,256}$/.test(name) || name === "." || name === "..") return reply(400, { error: "invalid outcome name" });
         const names = new Set([name]);
-        const jobs = jobName !== null ? await listJobOutcomes(ctx.home, ctx.log, names) : {};
+        const jobs = jobName !== null ? await dashboardJobOutcomes(ctx.home, ctx.log, names) : {};
         const runs = runName !== null ? await finishedRunOutcomes(ctx.home, ctx.log, names) : {};
         if (!Object.hasOwn(jobs, name) && !Object.hasOwn(runs, name)) return reply(404, { error: "no such finished job or run" });
         const groups: Record<string, string[]> = { needsReview: [], held: [], merged: [], discarded: [] };
@@ -276,7 +284,7 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       const runs = listRuns(ctx.home).filter((r) => r.job && (r.status === "done" || r.status === "failed"));
       const names = select([...stored.map((j) => j.name), ...runs.map((r) => r.name)]);
       const next = [...stored.map((j) => j.name), ...runs.map((r) => r.name)].some((name) => names.length > 0 && name > names.at(-1)!) ? names.at(-1) : null;
-      const jobs = await listJobOutcomes(ctx.home, ctx.log, new Set(names));
+      const jobs = await dashboardJobOutcomes(ctx.home, ctx.log, new Set(names));
       const groups: Record<string, string[]> = { needsReview: [], held: [], merged: [], discarded: [] };
       for (const [name, job] of Object.entries(jobs)) {
         const state = job.outcome.merge.state;
