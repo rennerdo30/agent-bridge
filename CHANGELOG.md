@@ -11,7 +11,7 @@
 - Worktree leases identify their owners and archive dead-owner lease metadata without touching checkout contents. Unknown legacy leases remain protected. Completed and continuable trees retain ignored cache links.
 - Failed worktree creation preserves existing branches and partial checkout data; timeout retries use an unused location without cleaning the first attempt.
 - Transient Claude sessions cannot claim a live owner's jobs. Running turns survive owner handover and control failures; detached runners contain escaped callback exceptions and rejections. Result delivery refreshes its destination while retrying.
-- Ordinary and linked-worktree project discovery reads verified Git metadata without launching Git on broker requests.
+- Ordinary and linked-worktree project discovery reads verified Git metadata without launching Git on broker requests, and honors configured Git discovery ceilings.
 - Paired transfers negotiate larger pipelined windows while messages take priority. Same-content message-id retries return stored delivery status; paired project addresses route to the available main session.
 - Health, status, doctor and the dashboard show cached migration and backup progress. Slow responses are distinguished from a stopped bridge; agent instructions direct status checks to tools.
 - Finished-run outcomes use a background cache; dashboard polls no longer open message databases or invoke git for each run.

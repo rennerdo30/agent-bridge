@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isPluginCacheCwd } from "./session-visibility.js";
 
 const projectRoots = new Map<string, { root: string | null; expiresAt: number; marker: string }>();
@@ -25,11 +25,33 @@ export function canonicalProjectRoot(cwd: string): string | null {
 
 interface ProjectDiscovery { marker: string; root: string | null; fallback?: boolean }
 
+/** Git excludes strict ancestor ceilings. Empty list entries disable later canonicalization. */
+function discoveryCeiling(physical: string, configured: string | undefined): string | null {
+  if (!configured) return null;
+  const cwd = physical.replace(/\\/g, "/");
+  let canonicalize = true, ceiling: string | null = null;
+  for (const entry of configured.split(delimiter)) {
+    if (!entry) { canonicalize = false; continue; }
+    if (!isAbsolute(entry)) continue;
+    let candidate = entry;
+    if (canonicalize) {
+      try { candidate = realpathSync.native(entry).replace(/\\/g, "/"); } catch { continue; }
+    }
+    // Git compares uncanonicalized entries literally, including separator/case spelling.
+    if (candidate.endsWith("/")) candidate = candidate.slice(0, -1);
+    if (!cwd.startsWith(`${candidate}/`) || cwd.length <= candidate.length + 1) continue;
+    if (ceiling === null || candidate.length > ceiling.length) ceiling = candidate;
+  }
+  return ceiling;
+}
+
 /** Standard Git layouts have tiny authoritative pointer files. Never spawn Git
  * for ordinary/linked worktrees or damaged known layouts on the broker thread.
  */
 function discoverProjectRoot(physical: string): ProjectDiscovery {
-  const markers: string[] = [];
+  const configuredCeilings = process.env.GIT_CEILING_DIRECTORIES;
+  const ceiling = discoveryCeiling(physical, configuredCeilings);
+  const markers: string[] = [JSON.stringify(["ceiling", configuredCeilings, ceiling])];
   const checkedDirectories = new Set<string>();
   const stamp = (path: string) => {
     const stat = lstatSync(path);
@@ -70,11 +92,13 @@ function discoverProjectRoot(physical: string): ProjectDiscovery {
     return unusual || bare !== "false" ? "unusual" : "ordinary";
   };
   for (let root = physical;; root = dirname(root)) {
+    if (root !== physical && root.replace(/\\/g, "/").replace(/\/$/, "") === ceiling)
+      return { marker: markers.join("|"), root: physical };
     const pointer = join(root, ".git");
     let stat;
     try { stat = stamp(pointer); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") { if (dirname(root) === root) return { marker: "", root: physical }; continue; }
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") { if (dirname(root) === root) return { marker: markers.join("|"), root: physical }; continue; }
       return { marker: markers.join("|"), root: null };
     }
     try {
@@ -182,11 +206,12 @@ const conversationRoots = new Map<string, string>();
 export function conversationProject(cwd: string): string {
   if (!cwd || isPluginCacheCwd(cwd)) return "";
   try { if (isPluginCacheCwd(realpathSync.native(cwd))) return ""; } catch {}
-  const known = conversationRoots.get(cwd);
+  const cacheKey = JSON.stringify([cwd, process.env.GIT_CEILING_DIRECTORIES]);
+  const known = conversationRoots.get(cacheKey);
   if (known !== undefined) return known;
   const canonical = canonicalProjectRoot(cwd);
   const root = canonical ? projectKey(canonical) : existsSync(cwd) ? "" : projectKey(resolve(cwd));
   if (conversationRoots.size >= 256) conversationRoots.delete(conversationRoots.keys().next().value!);
-  conversationRoots.set(cwd, root);
+  conversationRoots.set(cacheKey, root);
   return root;
 }
