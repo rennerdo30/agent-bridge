@@ -51,9 +51,12 @@ it("awaits cold retained-reader identity readiness before any runner state write
 });
 it("keeps state/schema writes deferred if cold identity resolution fails", async () => {
   const { spec, file } = fixture();
+  const rejectionListeners = process.listeners("unhandledRejection"), exceptionListeners = process.listeners("uncaughtException");
   mocks.refresh.mockRejectedValue(new Error("reader identity unavailable"));
   await expect(runJobRunner(file)).rejects.toThrow("reader identity unavailable");
   expect(mocks.writes).not.toHaveBeenCalled();
   expect(mocks.delegate).not.toHaveBeenCalled();
   expect(existsSync(runnerStatePath(home!, spec.job.id))).toBe(false);
+  expect(process.listeners("unhandledRejection")).toEqual(rejectionListeners);
+  expect(process.listeners("uncaughtException")).toEqual(exceptionListeners);
 });

@@ -70,3 +70,57 @@ it("keeps the active turn and lease through owner handoff and control ACK timeou
   expect(readFileSync(userFile, "utf8")).toBe("preserved bytes");
   expect(mocks.delegate).toHaveBeenCalledOnce();
 }, 20_000);
+
+it("keeps the main owner's turn usable through a slow second-session control timeout and escaped callbacks", async () => {
+  const fixtures = join(process.cwd(), ".agent-bridge-test"); mkdirSync(fixtures, { recursive: true });
+  home = mkdtempSync(join(fixtures, "runner-second-session-"));
+  const wt = { path: join(home, "worktree") }; mkdirSync(wt.path);
+  const userFile = join(wt.path, "owner-data.txt"); writeFileSync(userFile, "preserved second-session bytes");
+  const args = { prompt: "Continue", title: "Second session continuity", session_id: "main-native-context" };
+  const spec: RunnerSpec = { home, target: "codex", args, base: args, owner: "claude-main", byAgent: "claude", cwd: home, cfg: DEFAULT_CONFIG,
+    job: { id: "secondsession", name: "codex-job-secondsession", owner: "claude-main", agent: "codex", model: null, prompt: "Original", startedAt: Date.now(), sessionId: "main-native-context", workdir: wt.path, worktree: null, allowedServers: [] } };
+  const store = join(home, "jobs.json"), original = JSON.stringify({ version: 4, jobs: [{ ...spec.job, status: "running", args }] });
+  writeFileSync(store, original);
+  const file = join(home, "runner.spec.json"); writeFileSync(file, JSON.stringify(spec));
+  const live = { post: vi.fn() };
+  const beforeRejection = process.listeners("unhandledRejection"), beforeException = process.listeners("uncaughtException");
+  let finish!: () => void, signal!: AbortSignal;
+  mocks.delegate.mockImplementation(async (_ctx, _target, _args, currentSignal, _progress, _background, job) => {
+    signal = currentSignal; job.live = live;
+    const release = worktreeLease(home!, wt);
+    try { await new Promise<void>(resolve => { finish = resolve; }); }
+    finally { release(); }
+    return { sessionId: "main-native-context", text: "main turn still completed", isError: false };
+  });
+  const running = runJobRunner(file);
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"), { timeout: 10_000 });
+  let rejectPeers!: (error: Error) => void;
+  mocks.node.peers.mockReset().mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectPeers = reject; })).mockResolvedValue([]);
+  mocks.node.markRead.mockReset(); mocks.node.send.mockReset().mockResolvedValue({});
+  const control = (id: string, from: string) => ({ id, from: { id: from, name: from, agent: "claude" }, body: JSON.stringify({ type: "message", cid: id, body: id }), conversationId: "jobctl-secondsession", createdAt: Date.now(), replyTo: null, hop: 0, to: spec.job.name });
+  mocks.node.emit("message", control("secondary-control", "claude-main-2"));
+  await vi.waitFor(() => expect(rejectPeers).toBeTypeOf("function"));
+  expect(signal.aborted).toBe(false);
+  rejectPeers(new Error("slow broker peers validation timed out"));
+  const rejection = process.listeners("unhandledRejection").find(listener => !beforeRejection.includes(listener));
+  const exception = process.listeners("uncaughtException").find(listener => !beforeException.includes(listener));
+  expect(rejection).toBeTypeOf("function"); expect(exception).toBeTypeOf("function");
+  // Invoke only the runner's guards; emitting on Vitest's process would invoke its own fatal-error hooks.
+  rejection!(new Error("escaped request rejection"), Promise.resolve());
+  exception!(new Error("escaped timer exception"), "uncaughtException");
+  await vi.waitFor(() => expect(mocks.node.peers).toHaveBeenCalledTimes(2), { timeout: 5_000 });
+  expect(live.post).not.toHaveBeenCalled();
+  expect(readFileSync(store, "utf8")).toBe(original);
+  expect(mocks.node.updateJob).not.toHaveBeenCalled();
+  expect(signal.aborted).toBe(false);
+  expect(() => worktreeLease(home!, wt)).toThrow("unreconciled lease");
+  mocks.node.emit("message", control("main-control", "claude-main"));
+  await vi.waitFor(() => expect(live.post).toHaveBeenCalledWith("main-control"));
+  finish(); expect(await running).toBe(0);
+  expect(mocks.node.send.mock.calls.at(-1)?.[0]).toMatchObject({ to: "claude-main", body: expect.stringContaining("main turn still completed") });
+  expect(readRunnerState(home, spec.job.id)).toMatchObject({ status: "done", delivered: true, sessionId: "main-native-context", workdir: wt.path });
+  expect(process.listeners("unhandledRejection")).toEqual(beforeRejection);
+  expect(process.listeners("uncaughtException")).toEqual(beforeException);
+  expect(mocks.delegate).toHaveBeenCalledOnce();
+  worktreeLease(home, wt)(); expect(readFileSync(userFile, "utf8")).toBe("preserved second-session bytes");
+}, 20_000);
