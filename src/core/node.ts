@@ -379,7 +379,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (this.stopping) return;
     this.log.warn("lost connection to broker; re-electing");
     this.emit("disconnected");
-    this.scheduleReconnect(jitter());
+    // Established hosts must replace a lost listener immediately. Legacy job
+    // runners already add their own reconnect jitter; delaying the eligible
+    // host as well compounds the outage. Contending hosts still back off in
+    // elect() when another process wins or holds the store migration lock.
+    this.scheduleReconnect(this.opts.canHostBroker === false ? jitter() : 0);
   }
 
   private onEvent(ev: string, data: unknown): void {

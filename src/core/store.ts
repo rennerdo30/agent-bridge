@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
+import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "./logger.js";
 import { isQuietMessage, SIBLING_CONVERSATION_PREFIX, type AgentKind, type BridgeMessage, type PeerInfo } from "./protocol.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
@@ -13,7 +14,7 @@ import { HistoryIndex } from "./history.js";
 import { historyDbPath, openHistoryStore } from "./history-store.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
-import { configureSqlite, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BUSY_MS } from "./sqlite-policy.js";
+import { configureSqlite, isSqliteBusy, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BUSY_MS } from "./sqlite-policy.js";
 import { attachStoreCompatibility } from "./store-compatibility-overlay.js";
 
 export const SQLITE_STORE_VERSION = 9;
@@ -158,6 +159,13 @@ export class MessageStore {
   private readonly home: string | null;
   private readonly writeAbort = new AbortController();
   private backups: BackupBackground | null = null;
+  private archiveTimer: ReturnType<typeof setTimeout> | null = null;
+  private legacyArchivePending = true;
+  private purgeCutoff: number | null = null;
+  private purgeCursor: string | null = null;
+  private purgeHighWater: string | null = null;
+  private nextPurgeCutoff: number | null = null;
+  private archiveMaintenanceFailed = false;
   private closed = false;
   readonly decisions: DecisionStore;
   readonly history: HistoryIndex;
@@ -202,8 +210,8 @@ export class MessageStore {
     }
     try { this.archiveDb = openArchive(archiveDbPath(file)); }
     catch (err) { this.db.close(); this.release(); throw err; }
-    try { archiveMessages(this.db, this.archiveDb, "1", [], "legacy", "archived_messages"); }
-    catch (err) { this.archiveDb.close(); this.db.close(); this.release(); throw err; }
+    // Legacy archived rows stay readable in their original table. Relocation
+    // starts in bounded chunks only after the broker listener is available.
     this.decisions = new DecisionStore(this.db);
     this.historyFile = historyDbPath(file);
     let historyDb: DatabaseSync | undefined;
@@ -237,7 +245,10 @@ export class MessageStore {
     log.debug("message store opened", { file });
   }
 
-  startBackups(): void { if (process.env.AGENT_BRIDGE_AUTO_BACKUP === "1" && this.home && !this.backups) this.backups = new BackupBackground(this.home, this.log); }
+  startBackups(): void {
+    this.scheduleArchiveMaintenance();
+    if (process.env.AGENT_BRIDGE_AUTO_BACKUP === "1" && this.home && !this.backups) this.backups = new BackupBackground(this.home, this.log);
+  }
   backupPressure(pending: boolean, lockError = false): void { this.backups?.pressure(pending, lockError); }
   backupStatus(): import("./backup-background.js").BackupHealth | null { return this.backups?.status() ?? null; }
   async closeBackups(): Promise<void> { await this.backups?.close(); this.backups = null; }
@@ -467,9 +478,31 @@ export class MessageStore {
 
   /** Archive unread mail waiting for a queue key or name that is older than the cutoff. */
   expireQueued(recipient: string, cutoff: number): number {
+    if (!this.db.prepare("SELECT 1 FROM messages WHERE recipient = ? AND read_at IS NULL AND created_at < ? LIMIT 1").get(recipient, cutoff)) return 0;
     const n = archiveMessages(this.db, this.archiveDb, "recipient = ? AND read_at IS NULL AND created_at < ?", [recipient, cutoff], "stale queue");
     if (n > 0) this.log.info("archived stale queued messages", { recipient, count: n });
     return n;
+  }
+
+  /** Finish TTL archival before a broker claims/replays a reused queue name. */
+  async expireQueuedAsync(recipient: string, cutoff: number): Promise<number> {
+    let count = 0;
+    for (;;) {
+      const result = await this.retryWrite(() => {
+        this.archiveDb.exec(`PRAGMA busy_timeout = ${SQLITE_REQUEST_BUSY_MS}`);
+        try {
+          const moved = this.archiveChunk("messages", "recipient = ? AND read_at IS NULL AND created_at < ?", [recipient, cutoff], "stale queue");
+          const remaining = Boolean(this.db.prepare("SELECT 1 FROM messages WHERE recipient = ? AND read_at IS NULL AND created_at < ? LIMIT 1").get(recipient, cutoff));
+          return { moved, remaining };
+        }
+        finally { this.archiveDb.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`); }
+      });
+      count += result.moved;
+      if (!result.remaining) break;
+      await delay(50, undefined, { signal: this.writeAbort.signal });
+    }
+    if (count) this.log.info("archived stale queued messages", { recipient, count });
+    return count;
   }
 
   receipts(id: string): { recipient: string; readAt: number | null }[] {
@@ -499,9 +532,99 @@ export class MessageStore {
   }
 
   purgeOlderThan(cutoff: number): number {
+    if (!this.db.prepare("SELECT 1 FROM messages WHERE created_at < ? LIMIT 1").get(cutoff)) return 0;
     const n = archiveMessages(this.db, this.archiveDb, "created_at < ?", [cutoff], "expired");
     if (n > 0) this.log.info("archived expired messages", { count: n });
     return n;
+  }
+
+  /** Broker retention queues bounded work; direct/offline purge remains synchronous. */
+  schedulePurgeOlderThan(cutoff: number): void {
+    if (this.purgeCutoff === null) this.purgeCutoff = cutoff;
+    else if (cutoff > this.purgeCutoff) this.nextPurgeCutoff = Math.max(this.nextPurgeCutoff ?? cutoff, cutoff);
+    this.scheduleArchiveMaintenance();
+  }
+
+  private scheduleArchiveMaintenance(delayMs = 50): void {
+    if (this.closed || this.archiveMaintenanceFailed || this.archiveTimer) return;
+    this.archiveTimer = setTimeout(() => {
+      this.archiveTimer = null;
+      if (this.closed) return;
+      let more = false;
+      let retryDelay = 50;
+      try {
+        this.db.exec(`PRAGMA busy_timeout = ${SQLITE_REQUEST_BUSY_MS}`);
+        this.archiveDb.exec(`PRAGMA busy_timeout = ${SQLITE_REQUEST_BUSY_MS}`);
+        if (this.legacyArchivePending) {
+          this.legacyArchivePending = this.archiveChunk("archived_messages", "1", [], "legacy") > 0;
+          more = this.legacyArchivePending;
+        } else if (this.purgeCutoff !== null) {
+          more = this.archivePurgeChunk(this.purgeCutoff);
+          if (!more) {
+            this.purgeCutoff = this.nextPurgeCutoff;
+            this.nextPurgeCutoff = null;
+            this.purgeCursor = this.purgeHighWater = null;
+          }
+        }
+        more ||= this.purgeCutoff !== null;
+      } catch (error) {
+        if (isSqliteBusy(error)) { more = true; retryDelay = 250; }
+        else {
+          this.archiveMaintenanceFailed = true;
+          this.log.warn("message archive maintenance stopped; original rows preserved", { err: String(error) });
+        }
+      } finally {
+        this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+        this.archiveDb.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+      }
+      if (more) this.scheduleArchiveMaintenance(retryDelay);
+    }, delayMs);
+    this.archiveTimer.unref();
+  }
+
+  private archiveChunk(table: "messages" | "archived_messages", where: string, args: (string | number)[], reason: string): number {
+    // octet_length reads SQLite's stored length without materializing TEXT.
+    // One unusually large row still makes progress; later rows wait for a yield.
+    const rows = this.db.prepare(`SELECT rowid AS id, octet_length(body) AS bytes FROM ${table} WHERE ${where} ORDER BY ${table === "messages" ? "created_at" : "rowid"} LIMIT 16`).all(...args);
+    const ids: string[] = [];
+    let bytes = 0;
+    for (const row of rows) {
+      if (ids.length && bytes + Number(row.bytes) > 256 * 1024) break;
+      ids.push(String(row.id)); bytes += Number(row.bytes);
+    }
+    if (!ids.length) return 0;
+    // Selection happens before BEGIN IMMEDIATE. Recheck eligibility while
+    // locked so a concurrent claim/receipt update cannot archive fresh mail.
+    return archiveMessages(this.db, this.archiveDb, `rowid IN (${ids.map(() => "?").join(",")}) AND (${where})`, [...ids, ...args], reason, table);
+  }
+
+  private archivePurgeChunk(cutoff: number): boolean {
+    // Older schemas have no global created_at index. Limit the rowid scan
+    // itself so a LIMIT cannot conceal a full-table sort/filter before yield.
+    if (this.purgeHighWater === null) {
+      const high = this.db.prepare("SELECT MAX(rowid) AS id FROM messages");
+      high.setReadBigInts(true);
+      const id = high.get()!.id;
+      if (id === null) return false;
+      this.purgeHighWater = String(id);
+    }
+    const select = this.db.prepare(`SELECT rowid AS id, created_at AS at, octet_length(body) AS bytes FROM messages WHERE ${this.purgeCursor === null ? "" : "rowid > ? AND "}rowid <= ? ORDER BY rowid LIMIT 16`);
+    select.setReadBigInts(true);
+    const rows = select.all(...(this.purgeCursor === null ? [this.purgeHighWater] : [this.purgeCursor, this.purgeHighWater]));
+    const ids: string[] = [];
+    let bytes = 0;
+    let next = this.purgeCursor;
+    for (const row of rows) {
+      if (Number(row.at) < cutoff) {
+        if (ids.length && bytes + Number(row.bytes) > 256 * 1024) break;
+        ids.push(String(row.id)); bytes += Number(row.bytes);
+      }
+      next = String(row.id);
+    }
+    if (ids.length) archiveMessages(this.db, this.archiveDb, `rowid IN (${ids.map(() => "?").join(",")}) AND created_at < ?`, [...ids, cutoff], "expired");
+    // Publish the cursor only after a successful copy+source transaction.
+    this.purgeCursor = next;
+    return rows.length > 0;
   }
 
   stopWrites(): void { this.writeAbort.abort(); }
@@ -509,6 +632,8 @@ export class MessageStore {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    if (this.archiveTimer) clearTimeout(this.archiveTimer);
+    this.archiveTimer = null;
     this.stopWrites();
     this.history.close();
     if (this.historyDb !== this.db) this.historyDb.close();

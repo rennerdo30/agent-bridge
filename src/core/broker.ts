@@ -274,7 +274,7 @@ export class Broker {
         c.authed = true;
         return { brokerPid: process.pid };
       },
-      hello: async (c, a) => { const result = this.onHello(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id); if (job?.ownershipHistory) this.refreshJobPeer(job); void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) })); this.store.history.rememberPeer(c.peer!); return result; },
+      hello: async (c, a) => { const result = await this.onHello(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id); if (job?.ownershipHistory) this.refreshJobPeer(job); void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) })); this.store.history.rememberPeer(c.peer!); return result; },
       send: (c, a) => this.onSend(c, { ...a, messageId: undefined }),
       trackedSend: (c, a) => this.onTrackedSend(c, a),
       sendState: (c, a) => this.sendState(c, z.uuid().parse(a.id).toLowerCase()),
@@ -307,7 +307,7 @@ export class Broker {
       ack: async (c, a) => ({ acked: await this.store.retryWrite(() => this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now())) }),
       pending: (c, a) =>
         this.pendingMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
-      updatePeer: (c, a) => { const peer = this.onUpdatePeer(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === peer.id); if (job?.ownershipHistory) this.refreshJobPeer(job); this.store.history.rememberPeer(peer); return peer; },
+      updatePeer: async (c, a) => { const peer = await this.onUpdatePeer(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === peer.id); if (job?.ownershipHistory) this.refreshJobPeer(job); this.store.history.rememberPeer(peer); return peer; },
       claimMail: (c, a) => this.onClaimMail(c, a),
       health: () => this.healthMonitor.snapshot(APP_VERSION, this.historyBackground?.status() ?? null, this.store.backupStatus()),
       ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION, brokerVersion: APP_VERSION,
@@ -488,7 +488,7 @@ export class Broker {
   private purge(): void {
     try {
       const ttl = retentionLimit("AGENT_BRIDGE_MESSAGE_TTL_MS", MESSAGE_TTL_MS);
-      if (ttl) this.store.purgeOlderThan(this.now() - ttl);
+      if (ttl) this.store.schedulePurgeOlderThan(this.now() - ttl);
     } catch (err) {
       this.log.warn("purge failed", { err });
     }
@@ -603,14 +603,17 @@ export class Broker {
    * Honour stream backpressure so a large retained inbox is not repeatedly disconnected on replay.
    */
   private replayMail(conn: Conn, peer: PeerInfo, before?: () => void): void {
+    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId };
+    const current = () => !conn.socket.destroyed && conn.peer === peer && peer.id === registration.id &&
+      peer.name === registration.name && peer.sessionId === registration.sessionId && this.connByName(registration.name) === conn;
     setImmediate(() => {
-      if (conn.socket.destroyed || conn.peer !== peer) return;
+      if (!current()) return;
       try {
         before?.();
         const mail = this.unreadMail(peer.name, PENDING_MAX_LIMIT);
         let at = 0;
         const pump = () => {
-          if (conn.socket.destroyed || conn.peer !== peer) return;
+          if (!current()) return;
           while (at < mail.length) {
             const m = mail[at++]!;
             // Availability may change after hello scheduled this replay, or while a
@@ -1103,7 +1106,7 @@ export class Broker {
     }
   }
 
-  private onHello(conn: Conn, args: RequestMap["hello"][0]): RequestMap["hello"][1] {
+  private async onHello(conn: Conn, args: RequestMap["hello"][0]): Promise<RequestMap["hello"][1]> {
     this.checkAuth(args.protocol, args.token);
     conn.authed = true;
     const p = args.peer;
@@ -1145,16 +1148,23 @@ export class Broker {
     if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
     this.store.rememberSession(peer, this.now());
     conn.peer = peer;
-    this.replaceStale(conn, peer);
-    this.restoreNames(conn, peer, { reclaim: true, replay: false });
+    const aliases = this.replaceStale(conn, peer);
+    aliases.push(...this.restoreNames(peer, true));
     if (this.jobsPath) recordStorePeer(dirname(this.jobsPath), peer, { authoritative: true });
-    this.expireStaleQueue(peer.name);
+    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId };
+    await this.expireStaleQueue(peer.name);
+    this.assertQueueRegistration(conn, peer, registration);
+    await this.claimQueueAliases(conn, peer, registration, aliases);
     // A job runner is no session of its agent kind: it never takes mail waiting for "any <agent>".
     let claimed = 0;
     if (!peer.jobAgent) {
-      this.expireStaleQueue(agentQueueKey(peer.agent));
-      claimed = this.store.claim(agentQueueKey(peer.agent), peer.name);
+      await this.expireStaleQueue(agentQueueKey(peer.agent));
+      claimed = await this.store.retryWrite(() => {
+        this.assertQueueRegistration(conn, peer, registration);
+        return this.store.claim(agentQueueKey(peer.agent), peer.name);
+      });
     }
+    this.assertQueueRegistration(conn, peer, registration);
     this.log.info("peer joined", { name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
@@ -1182,14 +1192,16 @@ export class Broker {
     return { moved };
   }
 
-  private onUpdatePeer(conn: Conn, args: RequestMap["updatePeer"][0]): PeerInfo {
+  private async onUpdatePeer(conn: Conn, args: RequestMap["updatePeer"][0]): Promise<PeerInfo> {
     if (typeof args.cwd === "string" && isPluginCacheCwd(args.cwd)) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const peer = this.requirePeer(conn);
+    const previousName = peer.name;
+    const aliases: string[] = [];
+    let replay = args.unavailable === false;
     if (args.unavailable !== undefined) {
       if (peer.jobAgent || typeof args.unavailable !== "boolean") throw new BridgeError("bad_request", "Only masters can change availability.");
       peer.unavailable = args.unavailable;
       void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
-      if (!peer.unavailable) this.replayMail(conn, peer);
     }
     if (peer.jobOwner) {
       if (typeof args.jobParent === "string") peer.jobParent = args.jobParent;
@@ -1199,7 +1211,7 @@ export class Broker {
       const previousKey = this.decisionSessionKey(peer);
       peer.sessionId = args.sessionId;
       this.store.decisions.linkSession(previousKey, this.decisionSessionKey(peer));
-      if (peer.sessionId) this.replaceStale(conn, peer);
+      if (peer.sessionId) aliases.push(...this.replaceStale(conn, peer));
     }
     if (args.autoWake !== undefined) peer.autoWake = Boolean(args.autoWake);
     if (args.wakeOnDirect !== undefined) peer.wakeOnDirect = Boolean(args.wakeOnDirect);
@@ -1213,16 +1225,21 @@ export class Broker {
       this.store.rememberName(peer, this.now());
       peer.name = this.uniqueName(args.name);
       this.log.info("peer renamed", { from: old, to: peer.name });
-      this.expireStaleQueue(peer.name);
-      // Mail that was waiting under the new name is now ours.
-      setImmediate(() => {
-        for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
-      });
+      replay = true;
     }
     this.log.debug("peer updated", { name: peer.name, sessionId: peer.sessionId, autoWake: peer.autoWake, cwd: peer.cwd });
     this.store.rememberSession(peer, this.now());
     this.store.rememberName(peer, this.now());
-    this.restoreNames(conn, peer, { reclaim: args.sessionId !== undefined, replay: true });
+    aliases.push(...this.restoreNames(peer, args.sessionId !== undefined));
+    replay ||= previousName !== peer.name || aliases.length > 0;
+    if (replay || args.sessionId !== undefined) {
+      const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId };
+      await this.expireStaleQueue(peer.name);
+      this.assertQueueRegistration(conn, peer, registration);
+      await this.claimQueueAliases(conn, peer, registration, aliases);
+      this.assertQueueRegistration(conn, peer, registration);
+    }
+    if (replay) this.replayMail(conn, peer);
     for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
     return peer;
   }
@@ -1233,7 +1250,8 @@ export class Broker {
    * mail the session no longer sees. So the newest server of a session wins: the old connection is told it was
    * replaced (it stops instead of reconnecting) and the new one takes over its name and waiting mail.
    */
-  private replaceStale(conn: Conn, peer: PeerInfo): void {
+  private replaceStale(conn: Conn, peer: PeerInfo): string[] {
+    const aliases: string[] = [];
     for (const c of [...this.conns]) {
       const old = c.peer;
       if (c === conn || !old || old.agent !== peer.agent) continue;
@@ -1256,26 +1274,32 @@ export class Broker {
         const oldName = old.name;
         if (peer.name.startsWith(`${oldName}-`) && /^\d+$/.test(peer.name.slice(oldName.length + 1))) peer.name = oldName;
         // Either way, mail that waited under the old name is the session's.
-        this.replayMail(conn, peer, () => { this.store.claim(oldName, peer.name); });
+        aliases.push(oldName);
       }
     }
+    return aliases;
   }
 
-  private restoreNames(conn: Conn, peer: PeerInfo, options: { reclaim: boolean; replay: boolean }): void {
+  private restoreNames(peer: PeerInfo, reclaim: boolean): string[] {
     const names = this.store.namesFor(peer);
-    const previous = peer.name;
-    if (options.reclaim) {
+    if (reclaim) {
       const base = peer.name.replace(/-\d+$/, "");
       const original = names.find((name) => name.replace(/-\d+$/, "") === base && (name === peer.name || !this.connByName(name)));
       if (original) peer.name = original;
     }
-    let moved = 0;
-    for (const name of names) {
-      if (name === peer.name || this.connByName(name)) continue;
-      moved += this.store.claim(name, peer.name);
-    }
     this.store.rememberName(peer, this.now());
-    if (options.replay && (moved || previous !== peer.name)) this.replayMail(conn, peer);
+    return names.filter(name => name !== peer.name && !this.connByName(name));
+  }
+
+  private async claimQueueAliases(conn: Conn, peer: PeerInfo, registration: Pick<PeerInfo, "id" | "name" | "sessionId">, aliases: string[]): Promise<void> {
+    for (const alias of new Set(aliases)) {
+      if (alias === registration.name || this.connByName(alias)) continue;
+      await this.expireStaleQueue(alias);
+      await this.store.retryWrite(() => {
+        this.assertQueueRegistration(conn, peer, registration);
+        if (!this.connByName(alias)) this.store.claim(alias, registration.name);
+      });
+    }
   }
 
   /** Exact registrations win; an unoccupied retained alias must identify one live session. */
@@ -1292,12 +1316,21 @@ export class Broker {
    * waited longer than QUEUED_MAIL_MAX_AGE_MS most likely belongs to a session that is gone; recent mail
    * still reaches a session that restarted or reconnected after a broker hand-over.
    */
-  private expireStaleQueue(key: string): void {
+  private async expireStaleQueue(key: string): Promise<void> {
     try {
       const maxAge = retentionLimit("AGENT_BRIDGE_QUEUED_MAIL_MAX_AGE_MS", QUEUED_MAIL_MAX_AGE_MS);
-      if (maxAge) this.store.expireQueued(key, this.now() - maxAge);
+      if (maxAge) await this.store.expireQueuedAsync(key, this.now() - maxAge);
     } catch (err) {
       this.log.warn("expiring queued mail failed", { key, err });
+      throw err;
+    }
+  }
+
+  /** An expiry retry must not grant queued mail to a changed or replaced session. */
+  private assertQueueRegistration(conn: Conn, peer: PeerInfo, registration: Pick<PeerInfo, "id" | "name" | "sessionId">): void {
+    if (conn.socket.destroyed || conn.peer !== peer || peer.id !== registration.id || peer.name !== registration.name ||
+      peer.sessionId !== registration.sessionId || this.connByName(registration.name) !== conn) {
+      throw new BridgeError("unauthorized", "Session changed while queued mail was archived; reconnect to claim retained mail.");
     }
   }
 
