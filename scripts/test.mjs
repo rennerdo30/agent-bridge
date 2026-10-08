@@ -7,6 +7,8 @@ if (!["fast", "integration", "all"].includes(lane)) throw new Error("Unknown tes
 const env = { ...process.env, AGENT_BRIDGE_TEST_LANE: lane };
 const fixtureRoot = join(process.cwd(), ".agent-bridge-test");
 mkdirSync(fixtureRoot, { recursive: true });
+env.AGENT_BRIDGE_HOME = join(fixtureRoot, "default-home");
+delete env.AGENT_BRIDGE_PIPE;
 const fixturePackage = join(fixtureRoot, "package.json");
 try { writeFileSync(fixturePackage, '{"private":true,"type":"commonjs"}\n', { flag: "wx" }); }
 catch (error) {

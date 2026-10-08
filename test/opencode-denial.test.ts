@@ -10,8 +10,8 @@ it("passes the supervisor's denial reason through opencode's permission reply", 
   mkdirSync(root, { recursive: true });
   const dir = mkdtempSync(join(root, "opencode-denial-"));
   writeFileSync(join(dir, "serve"), `
-import { createServer } from "node:http";
-import { writeFileSync } from "node:fs";
+const { createServer } = require("node:http");
+const { writeFileSync } = require("node:fs");
 writeFileSync("serve.pid", String(process.pid));
 let events; let decision;
 const event = (type, properties) => events.write("data: " + JSON.stringify({ type, properties }) + "\\n\\n");

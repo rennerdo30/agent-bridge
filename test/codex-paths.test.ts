@@ -40,9 +40,9 @@ describe("Codex drive aliases", () => {
     const dir = mkdtempSync(join(root, "subst-"));
     const drive = ["Z:", "Y:", "X:", "W:"].find((d) => !existsSync(`${d}\\`));
     if (!drive) throw new Error("No unused drive for the subst regression test");
-    const record = `import fs from "node:fs"; import { createInterface } from "node:readline"; const rl = createInterface({input:process.stdin}); const send = (m) => console.log(JSON.stringify(m)); rl.on("line", (s) => { const m=JSON.parse(s); fs.appendFileSync("requests.jsonl", s+"\\n"); if(m.id===undefined)return; let result={}; if(m.method==="thread/start")result={thread:{id:"thread"}}; if(m.method==="turn/start")result={turn:{id:"turn"}}; send({id:m.id,result}); if(m.method==="turn/start"){send({method:"item/completed",params:{turnId:"turn",item:{type:"agentMessage",text:"done"}}});send({method:"turn/completed",params:{turn:{id:"turn",status:"completed"}}});} });`;
+    const record = `const fs = require("node:fs"); const { createInterface } = require("node:readline"); const rl = createInterface({input:process.stdin}); const send = (m) => console.log(JSON.stringify(m)); rl.on("line", (s) => { const m=JSON.parse(s); fs.appendFileSync("requests.jsonl", s+"\\n"); if(m.id===undefined)return; let result={}; if(m.method==="thread/start")result={thread:{id:"thread"}}; if(m.method==="turn/start")result={turn:{id:"turn"}}; send({id:m.id,result}); if(m.method==="turn/start"){send({method:"item/completed",params:{turnId:"turn",item:{type:"agentMessage",text:"done"}}});send({method:"turn/completed",params:{turn:{id:"turn",status:"completed"}}});} });`;
     writeFileSync(join(dir, "app-server"), record);
-    writeFileSync(join(dir, "exec"), `import fs from "node:fs"; let input=""; process.stdin.on("data",d=>input+=d); process.stdin.on("end",()=>{fs.writeFileSync("prompt.txt",input); console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"done"}}));});`);
+    writeFileSync(join(dir, "exec"), `const fs = require("node:fs"); let input=""; process.stdin.on("data",d=>input+=d); process.stdin.on("end",()=>{fs.writeFileSync("prompt.txt",input); console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"done"}}));});`);
     let mapped = false;
     try {
       execFileSync("subst", [drive, dir]); mapped = true;
