@@ -125,7 +125,9 @@ it("cancels a prepared turn waiting for native admission without launching or lo
   expect(startupSlots()).toHaveLength(STARTUP_CAPACITY);
   expect(leases()).toEqual([]);
   expect(logs()[0]).toContain("Exact context 7");
-  expect(logs()[0]).toContain("failed: The operation was aborted");
+  // A turn cancelled through its job controller is recorded as cancelled, never as a failure.
+  expect(logs()[0]).toMatch(/finished after \d+s · cancelled\n$/);
+  expect(logs()[0]).not.toContain("failed");
   for (const owner of owners) slots.release(owner, STARTUP_RESOURCE);
 });
 
