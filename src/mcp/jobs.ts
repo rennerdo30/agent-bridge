@@ -1210,13 +1210,18 @@ export class JobManager {
     return job;
   }
 
+  /** Steer a job another session executes; a broker refusal (owner offline, unauthorized) is logged (AB-246). */
+  private controlInline(job: string, control: RunnerControl): void {
+    void this.node.controlInlineJob?.(job, control)?.catch((err) => this.log.warn("inline job control failed", { job, control: control.type, err: String(err) }));
+  }
+
   /** Save next-turn settings and send them to a runner that continues the job itself. */
   setSettings(ref: string, settings: JobSettings): boolean {
     const job = this.find(ref);
     if (!job) return false;
     job.args = changedJobArgs(job.args, settings);
     if (settings.model !== undefined && job.status !== "running") job.model = settings.model;
-    if ((!this.sharedControl && !this.isMine(job.owner) && !this.lineage) || (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name)) void this.node.controlInlineJob?.(job.name, { type: "settings", settings });
+    if ((!this.sharedControl && !this.isMine(job.owner) && !this.lineage) || (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name)) this.controlInline(job.name, { type: "settings", settings });
     else if (this.hostedRunning(job)) this.runners!.send(job, { type: "settings", settings });
     else job.remoteControl?.({ type: "settings", settings });
     this.own.add(job.id);
@@ -1230,7 +1235,7 @@ export class JobManager {
     if (!job) return false;
     job.args = { ...job.args, effort };
     // A runner continues queued follow-ups itself: it needs the new level too.
-    if ((!this.sharedControl && !this.isMine(job.owner) && !this.lineage) || (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name)) void this.node.controlInlineJob?.(job.name, { type: "effort", effort });
+    if ((!this.sharedControl && !this.isMine(job.owner) && !this.lineage) || (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name)) this.controlInline(job.name, { type: "effort", effort });
     else if (this.hostedRunning(job)) this.runners!.send(job, { type: "effort", effort });
     else job.remoteControl?.({ type: "effort", effort });
     this.own.add(job.id);
@@ -1244,7 +1249,7 @@ export class JobManager {
     if (!job) return false;
     job.args = { ...job.args, title };
     job.retitle?.(title);
-    if ((!this.sharedControl && !this.isMine(job.owner) && !this.lineage) || (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name)) void this.node.controlInlineJob?.(job.name, { type: "title", title });
+    if ((!this.sharedControl && !this.isMine(job.owner) && !this.lineage) || (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name)) this.controlInline(job.name, { type: "title", title });
     else if (this.hostedRunning(job)) this.runners!.send(job, { type: "title", title });
     else job.remoteControl?.({ type: "title", title });
     this.own.add(job.id);
@@ -1259,7 +1264,7 @@ export class JobManager {
     const job = this.find(ref);
     if (!job) return { outcome: "unknown" };
     if (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name && job.owner === this.node.name) {
-      void this.node.controlInlineJob?.(job.name, { type: "message", body: message, cid: randomUUID() });
+      this.controlInline(job.name, { type: "message", body: message, cid: randomUUID() });
       return { outcome: "delivered", job };
     }
     // Its runner may have finished just now: then this continues it instead.

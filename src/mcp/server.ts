@@ -72,6 +72,7 @@ import { historyFiltersSchema, HISTORY_MAX_QUERY_CHARS, HISTORY_MAX_LIMIT, type 
 
 import { decisionScopeSchema, MAX_DECISION_TOPIC_CHARS, MAX_DECISION_TEXT_CHARS, type DecideArgs, type DecisionsArgs } from "../core/decisions.js";
 import { askOwnerSchema, type AskOwnerArgs } from "../core/owner-questions.js";
+import { guardServerErrors } from "./job-runner-errors.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
 
@@ -256,6 +257,8 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const delegated = currentDelegateDepth() > 0;
   const internal = isInternalBridgeProcess();
   log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, internal, version: APP_VERSION, node: process.version });
+  // A stray rejection (e.g. a refused background broker request) must not end the session or its hosted broker.
+  guardServerErrors(log);
 
   const node = delegated || internal
     ? null

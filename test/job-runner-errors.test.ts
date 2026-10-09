@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { build } from "esbuild";
 import { afterEach, expect, it, vi } from "vitest";
-import { guardRunnerErrors } from "../src/mcp/job-runner-errors.js";
+import { guardRunnerErrors, guardServerErrors } from "../src/mcp/job-runner-errors.js";
 
 const homes: string[] = [];
 afterEach(() => { for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
@@ -102,4 +102,13 @@ it.each(["reject", "throw"])("keeps a real dedicated Node process usable after a
   expect(result.stdout).toContain(failure === "throw" ? "uncaughtException" : "unhandledRejection");
   expect(result.stdout).toContain("later control and active turn finished");
   expect(result.stdout).toContain("guards:0:0");
+});
+
+it("guards the MCP server against a stray rejection with its own message (AB-246)", () => {
+  const events = new EventEmitter(), error = vi.fn();
+  const release = guardServerErrors({ error }, events as unknown as Pick<NodeJS.Process, "on" | "off">);
+  expect(() => events.emit("unhandledRejection", new Error("No job master is currently connected."))).not.toThrow();
+  expect(error).toHaveBeenCalledWith("unexpected background failure; MCP server kept running", expect.objectContaining({ event: "unhandledRejection" }));
+  release();
+  expect(events.listenerCount("unhandledRejection")).toBe(0);
 });
