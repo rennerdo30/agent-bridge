@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeClient } from "../src/core/client.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
@@ -103,8 +104,7 @@ afterEach(async context => {
   // Only this freshly created fixture's published process generation authorizes a kill.
   const generations = await readProcessIdentities([...pids]);
   for (const pid of pids) if (fixtureProcessExists(pid, `Unable to verify fixture runner ${pid}; retained at ${root}`)) {
-    const presence = join(remoteHome, "storage-capabilities", `${pid}.json`);
-    const recorded = existsSync(presence) ? JSON.parse(readFileSync(presence, "utf8")) : null;
+    const recorded = storePresence(remoteHome, pid);
     const refusal = `Fixture runner ${pid} has no matching owned process identity; retained at ${root}`;
     if (!recorded?.processIdentity) throw new Error(refusal);
     if (!await fixtureProcessGeneration(pid, recorded.processIdentity, refusal, {
@@ -132,6 +132,21 @@ afterEach(async context => {
   }
   if (cleanupError) throw cleanupError;
 });
+/** AB-208: a process's presence is a bridge.db metadata row; the file remains only while the store is deferred. */
+function storePresence(home: string, pid: number): Record<string, any> | null {
+  const path = resolveDbPath(home);
+  if (existsSync(path)) {
+    const db = new DatabaseSync(path, { readOnly: true, timeout: 5_000 });
+    try {
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_metadata'").get()) {
+        const row = db.prepare("SELECT value FROM bridge_metadata WHERE domain='storage-capabilities' AND key=?").get(String(pid));
+        if (row) return JSON.parse(String(row.value));
+      }
+    } finally { db.close(); }
+  }
+  const file = join(home, "storage-capabilities", `${pid}.json`);
+  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
+}
 async function stopFixtureRunner(pid: number, identity: string): Promise<void> {
   const refusal = `Refusing to signal changed fixture runner ${pid}; retained at ${root}`;
   const sameGeneration = () => fixtureProcessGeneration(pid, identity, refusal);
