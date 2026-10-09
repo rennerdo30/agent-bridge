@@ -10,7 +10,7 @@ import { processIdentity } from "../src/core/process-identity.js";
 
 let home: string;
 const managers: JobManager[] = [];
-beforeEach(() => { const root = join(process.cwd(), ".agent-bridge-test"); mkdirSync(root, { recursive: true }); home = mkdtempSync(join(root, "restore-policy-")); });
+beforeEach(() => { const root = process.env.AGENT_BRIDGE_TEST_ROOT!; mkdirSync(root, { recursive: true }); home = mkdtempSync(join(root, "restore-policy-")); });
 afterEach(() => { managers.splice(0).forEach(manager => manager.cancelAll()); vi.unstubAllEnvs(); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
 function manager(allowed: () => boolean, handoff = () => true, name = "claude-project") {
   const events = new EventEmitter();

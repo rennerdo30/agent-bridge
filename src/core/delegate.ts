@@ -1,3 +1,4 @@
+import { bundleDirectory } from "./bundle-directory.js";
 import { codexSubagentConfig } from "./codex-subagents.js";
 import { codexExecutionPrompt } from "./codex-env.js";
 import { jobEnvironment } from "./job-environment.js";
@@ -593,7 +594,7 @@ const CLAUDE_READ_ONLY_MODES = new Set<ClaudePermissionMode>(["default", "manual
 
 /** The CLI bundled next to this module (plugins/<x>/dist/cli.mjs next to server.mjs); null when run from source. */
 export function bundledCli(): string | null {
-  const cli = join(dirname(fileURLToPath(import.meta.url)), "cli.mjs");
+  const cli = join(bundleDirectory(import.meta.url), "cli.mjs");
   return existsSync(cli) ? cli : null;
 }
 

@@ -391,11 +391,16 @@ export class TransferManager {
         const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
         const window = Math.max(1, Math.min(TRANSFER_WINDOW_CHUNKS, this.transport.window?.(state.remote) ?? 1));
         const inFlight: Promise<{ end: number; error?: Error }>[] = [];
+        let acknowledgements = 0;
         const acknowledge = async () => {
           const result = await inFlight.shift()!;
           if (result.error) throw result.error;
           if (this.stopped(state)) return;
-          entry.offset = result.end; this.save(state); this.report(state);
+          entry.offset = result.end;
+          // The receiver remains authoritative and durably acknowledges every chunk.
+          // Sender checkpoints need only one snapshot per bounded negotiated window.
+          if (++acknowledgements % window === 0 || entry.offset === entry.size) this.save(state);
+          this.report(state);
         };
         try {
           for (let position = 0; position < entry.size;) {

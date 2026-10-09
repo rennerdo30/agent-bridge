@@ -18,7 +18,7 @@ const stateRequest = { op: "state", job: spawn.job } as const;
 const tick = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 const feed = (): RunFeed => ({ logPath: "synthetic-owned-feed", meta: vi.fn(), report: vi.fn(), end: vi.fn() });
 beforeEach(() => {
-  const root = join(process.cwd(), ".agent-bridge-test"); mkdirSync(root, { recursive: true });
+  const root = process.env.AGENT_BRIDGE_TEST_ROOT!; mkdirSync(root, { recursive: true });
   home = mkdtempSync(join(root, "remote-mirror-ready-"));
   vi.spyOn(delegate, "bundledCli").mockReturnValue(null);
   snapshot = { state: { pid: 123, peer: "codex-job-12345678", status: "running", updatedAt: Date.now(), sessionId: "original-session", workdir: "remote-workdir", model: "current-model" }, alive: true, approvals: [] };

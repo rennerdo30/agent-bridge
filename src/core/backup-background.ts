@@ -1,3 +1,4 @@
+import { bundleDirectory } from "./bundle-directory.js";
 import { fork, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -47,10 +48,10 @@ export class BackupBackground {
   private start(): void {
     if (!this.enabled || this.stopped || this.worker || this.failed) return;
     if (this.pending || Date.now() < this.pauseUntil) { this.schedule(30_000); return; }
-    let entry = new URL("./backup-worker.mjs", import.meta.url);
+    let entry = pathToFileURL(join(bundleDirectory(import.meta.url), "backup-worker.mjs"));
     if (import.meta.url.endsWith(".ts")) {
       const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
-      const path = join(root, ".agent-bridge-test", "backup-worker.mjs");
+      const path = join(process.env.AGENT_BRIDGE_TEST_ROOT ?? join(root, ".agent-bridge-test"), "backup-worker.mjs");
       const inputs = ["backup-worker.ts", "message-backups.ts", "backups.ts", "storage-lock.ts", "json-store.ts"];
       if (!existsSync(path) || inputs.some(name => statSync(join(root, "src/core", name)).mtimeMs > statSync(path).mtimeMs)) {
         mkdirSync(dirname(path), { recursive: true });

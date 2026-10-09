@@ -18,7 +18,8 @@ import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 import { configureSqlite, isSqliteBusy, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BUSY_MS } from "./sqlite-policy.js";
 import { attachStoreCompatibility } from "./store-compatibility-overlay.js";
 
-export const SQLITE_STORE_VERSION = 9;
+import { SQLITE_STORE_VERSION } from "./store-version.js";
+export { SQLITE_STORE_VERSION } from "./store-version.js";
 
 /** Offline broadcasts retain recently observed sessions for one day. */
 export const BROADCAST_RECENT_MS = 24 * 60 * 60 * 1_000;

@@ -8,7 +8,7 @@ import { removeWorktreeDirectory } from "../src/core/worktree.js";
 
 describe("external worktree links", () => {
   it("resolves aliases above the managed boundary while refusing links inside it", () => {
-    const fixtures = join(process.cwd(), ".agent-bridge-test");
+    const fixtures = process.env.AGENT_BRIDGE_TEST_ROOT!;
     mkdirSync(fixtures, { recursive: true });
     const home = realpathSync.native(mkdtempSync(join(fixtures, "ab-alias-cleanup-")));
     const actual = join(home, "actual"), alias = join(home, "alias"), owner = join(home, "owner");
@@ -31,7 +31,7 @@ describe("external worktree links", () => {
   });
 
   it("matches directory-only ignore rules, negations and nested overrides without reading caches", () => {
-    const fixtures = join(process.cwd(), ".agent-bridge-test");
+    const fixtures = process.env.AGENT_BRIDGE_TEST_ROOT!;
     mkdirSync(fixtures, { recursive: true });
     const home = realpathSync.native(mkdtempSync(join(fixtures, "ab-ignore-policy-")));
     const actual = join(home, "actual"), root = join(actual, "repo"), alias = join(home, "alias"), cache = join(home, "cache");

@@ -1,3 +1,4 @@
+import { bundleDirectory } from "../core/bundle-directory.js";
 import { MAX_HOLD_REASON_CHARS, setJobOutcome, deriveJobOutcome } from "../core/job-outcomes.js";
 import { closeJobWorktree } from "../core/job-close.js";
 import { readWorktreeState } from "../core/worktree-state.js";
@@ -53,7 +54,7 @@ import { LocalCoordinator } from "./local-coordinator.js";
 import { saveAutoWake, savedAutoWake } from "../core/auto-wake-pref.js";
 import { describeModels, modelParameterDescription, readModels } from "../core/models.js";
 import { parentFromEnv, type ParentClient } from "../core/parent-link.js";
-import { DashboardController, type DashboardInfo } from "../cli/dashboard.js";
+import type { DashboardInfo } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
 import { MessageWaitStore, matchesNotificationWait, matchesWait, resumeWaitHint, singleWaitTimeoutMs, SINGLE_WAIT_SEC, waitForReadReceipt, type WaitFilters } from "./message-wait.js";
 import { RewakeEndpoint, shouldWakeClaudeMessage } from "./rewake.js";
@@ -65,9 +66,9 @@ import { attachDashboardJobControl } from "./dashboard-control.js";
 import { deriveJobTitle } from "./job-title.js";
 import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "../core/job-messaging.js";
 import { appendContextEvent } from "../core/context-journal.js";
-import { readConversationFile, conversationPageSchema, type ConversationRequest } from "../core/conversations.js";
-import { readHistory, historyFiltersSchema, HISTORY_MAX_QUERY_CHARS, HISTORY_MAX_LIMIT, type HistorySearch } from "../core/history.js";
-import { answerHistory } from "../core/history-answer.js";
+import { conversationPageSchema, type ConversationRequest } from "../core/conversation-query.js";
+import { historyFiltersSchema, HISTORY_MAX_QUERY_CHARS, HISTORY_MAX_LIMIT, type HistorySearch } from "../core/history-query.js";
+
 import { decisionScopeSchema, MAX_DECISION_TOPIC_CHARS, MAX_DECISION_TEXT_CHARS, type DecideArgs, type DecisionsArgs } from "../core/decisions.js";
 import { askOwnerSchema, type AskOwnerArgs } from "../core/owner-questions.js";
 
@@ -87,7 +88,7 @@ const SUBAGENT_TOOLS = new Set(["health", "peers", "send", "report_progress", "h
 const STAND_IN_RECHECK_MS = 30_000;
 const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title", "notes"] as const;
 /** Plugin root: dist/server.mjs lives one level below it. */
-const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const PLUGIN_ROOT = resolve(bundleDirectory(import.meta.url), "..");
 
 /** Accepts a plain path or a file:// URI (Codex serializes PathUri either way depending on version). */
 export function pathFromUriOrPath(v: unknown): string | null {
@@ -424,11 +425,13 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   }
 
   /** Web dashboard hosted by this process, if any. */
-  const dashboard = new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") });
+  let dashboard: Promise<import("../cli/dashboard.js").DashboardController> | null = null;
   const ensureDashboard = async (force: boolean): Promise<DashboardInfo | null> => {
     try {
       if (!force && !cfg.dashboard) return null;
-      return await dashboard.ensure();
+      dashboard ??= import("../cli/dashboard.js").then(({ DashboardController }) =>
+        new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
+      return await (await dashboard).ensure();
     } catch (err) {
       log.warn("could not start the dashboard", { err: (err as Error).message, port: cfg.dashboardPort });
       return null;
@@ -470,7 +473,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     // Stop every delegated CLI this process runs itself, with its whole process tree; nothing may keep working unobserved.
     await killAllDelegates();
     await mcp.close().catch(() => {});
-    await dashboard.close().catch(() => {});
+    await dashboard?.then(controller => controller.close()).catch(() => {});
     await rewake?.stop().catch(() => {});
     await antigravityHooks?.stop().catch(() => {});
     await node?.stop().catch(() => {});
@@ -604,8 +607,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     },
     guarded("search_history", async (a: HistorySearch & { answer?: boolean }) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : readHistory(resolveDbPath(ctx.home),args);
-      return text(JSON.stringify(answer ? { ...result, answer: await answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("../core/history.js")).readHistory(resolveDbPath(ctx.home),args);
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("../core/history-answer.js")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     }),
   );
 
@@ -614,7 +617,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
     inputSchema: conversationPageSchema.shape,
     annotations: { readOnlyHint: true },
-  }, guarded("get_conversation", async (args: ConversationRequest) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : readConversationFile(resolveDbPath(ctx.home),args)))));
+  }, guarded("get_conversation", async (args: ConversationRequest) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("../core/conversations.js")).readConversationFile(resolveDbPath(ctx.home),args)))));
 
   register(
     "decide",

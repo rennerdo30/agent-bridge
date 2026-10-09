@@ -35,7 +35,7 @@ describe("Codex drive aliases", () => {
   });
 
   it.skipIf(process.platform !== "win32")("runs exec and app-server in the real path for a temporary subst drive", async () => {
-    const root = join(process.cwd(), ".agent-bridge-test");
+    const root = process.env.AGENT_BRIDGE_TEST_ROOT!;
     mkdirSync(root, { recursive: true });
     const dir = mkdtempSync(join(root, "subst-"));
     const drive = ["Z:", "Y:", "X:", "W:"].find((d) => !existsSync(`${d}\\`));

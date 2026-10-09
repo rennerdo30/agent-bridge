@@ -10,7 +10,7 @@ import { listOpencodeModels } from "../src/core/opencode-models.js";
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
 function cli(major: number) {
-  const root = join(process.cwd(), ".agent-bridge-test");
+  const root = process.env.AGENT_BRIDGE_TEST_ROOT!;
   mkdirSync(root, { recursive: true });
   const cwd = mkdtempSync(join(root, "opencode-v2-"));
   dirs.push(cwd);

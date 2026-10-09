@@ -1,4 +1,5 @@
 import { ProjectGroups } from "../core/project-groups.js";
+import { worktreeProcesses, worktreeProcessReport } from "../core/worktree-processes.js";
 import { canControlJob } from "../core/job-ownership.js";
 import { join } from "node:path";
 import { JOBS_FILE } from "../core/constants.js";
@@ -352,6 +353,9 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
         log.error("job process cleanup failed", { cause });
         text += "\n\n" + cause + ". Ownership containment remains active until the runner exits.";
       }
+    }
+    if (!scope && job.worktree?.path) {
+      text += "\n\n" + worktreeProcessReport(await worktreeProcesses(job.worktree.path));
     }
     job.etaAt = undefined;
     if (job.worktree) recordWorktreeProcessProof(home, job.worktree, processesStopped);

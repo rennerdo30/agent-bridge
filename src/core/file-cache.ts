@@ -10,6 +10,10 @@ const MAX_ENTRIES = 2048;
 const cache = new Map<string, JsonSnapshot & { bytes: number }>();
 const damaged = new Map<string, { signature: string; error: SyntaxError }>();
 let bytes = 0;
+/** Profiling counts retained source bytes; parsed object/V8 overhead is separate. */
+export function jsonSnapshotCacheUsage(): { bytes: number; entries: number; maxBytes: number } {
+  return { bytes, entries: cache.size, maxBytes: MAX_BYTES };
+}
 
 /** Conservative parsed-container budget, including UTF-16 strings and keys.
  * Stop once over budget; oversized snapshots remain readable without retention. */

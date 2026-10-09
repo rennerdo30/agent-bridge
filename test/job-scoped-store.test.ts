@@ -37,7 +37,7 @@ vi.mock("node:fs", async original => {
 let home: string, path: string, archive: string;
 const managers: JobManager[] = [];
 beforeEach(() => {
-  const root = join(process.cwd(), ".agent-bridge-test"); mkdirSync(root, { recursive: true });
+  const root = process.env.AGENT_BRIDGE_TEST_ROOT!; mkdirSync(root, { recursive: true });
   home = mkdtempSync(join(root, "scoped-job-store-")); path = join(home, "jobs.json");
   mkdirSync(join(home, "archive")); archive = join(home, "archive", "jobs-1.json");
   vi.stubEnv("AGENT_BRIDGE_JOB_STORE_LIMIT", "0"); vi.stubEnv("AGENT_BRIDGE_ARCHIVE_AGE_MS", "0");

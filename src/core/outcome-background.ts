@@ -1,3 +1,4 @@
+import { bundleDirectory } from "./bundle-directory.js";
 import { Worker } from "node:worker_threads";
 import { mkdir, stat, readdir } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -70,10 +71,10 @@ class OutcomeBackground {
   private id = 0;
   private bytes = 0;
   private async start(): Promise<Worker> {
-    let entry = new URL("./outcome-worker.mjs", import.meta.url);
+    let entry = pathToFileURL(join(bundleDirectory(import.meta.url), "outcome-worker.mjs"));
     if (import.meta.url.endsWith(".ts")) {
       const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
-      const path = join(root, ".agent-bridge-test", `outcome-worker-${process.pid}.mjs`);
+      const path = join(process.env.AGENT_BRIDGE_TEST_ROOT ?? join(root, ".agent-bridge-test"), `outcome-worker-${process.pid}.mjs`);
       await mkdir(dirname(path), { recursive: true });
       await createRequire(import.meta.url)("esbuild").build({ entryPoints: [join(root, "src/core/outcome-worker.ts")], outfile: path,
         bundle: true, platform: "node", format: "esm", target: "node22", external: ["node:*"], logLevel: "silent" });

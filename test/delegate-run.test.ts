@@ -16,7 +16,7 @@ import { closeJobWorktree } from "../src/core/job-close.js";
 
 let home: string;
 beforeEach(() => {
-  const root = join(process.cwd(), ".agent-bridge-test");
+  const root = process.env.AGENT_BRIDGE_TEST_ROOT!;
   mkdirSync(root, { recursive: true });
   home = mkdtempSync(join(root, "run-"));
 });

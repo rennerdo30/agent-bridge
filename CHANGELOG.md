@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.30.4
+
+- Verify cancel-then-continue of worktree jobs and preserve archived dead-owner leases. Report associated surviving processes to supervisors without guessing termination authority.
+- Lazy-load broker, dashboard and CLI command modules with split bundles; back off idle history scans and coalesce pressure events.
+- Checkpoint sender transfer progress once per negotiated window; test two-instance throughput and concurrent message fairness. Receiver chunk durability stays unchanged.
+- Add a read-only legacy empty-lock evidence report; no legacy reconciliation or deletion.
+- Refresh eligible GitHub Actions pins; retain dependency upgrades younger than two weeks for a later release.
+- Generate test homes outside source repositories with a Git discovery ceiling.
+
 ## 0.30.3
 
 - Authority reads use bounded backoff and explicit retry-later errors. Durable sends reuse their message identity across busy/timeout retries and retain conservative stored/unknown outcomes. Cancelled final states remain authoritative in deferred job journals and shutdown recovery.

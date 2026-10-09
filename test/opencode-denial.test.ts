@@ -6,7 +6,7 @@ import { delegateToOpencodeServed } from "../src/core/opencode-served.js";
 import { pidAlive } from "../src/core/delegate.js";
 
 it("passes the supervisor's denial reason through opencode's permission reply", async () => {
-  const root = join(process.cwd(), ".agent-bridge-test");
+  const root = process.env.AGENT_BRIDGE_TEST_ROOT!;
   mkdirSync(root, { recursive: true });
   const dir = mkdtempSync(join(root, "opencode-denial-"));
   writeFileSync(join(dir, "serve"), `

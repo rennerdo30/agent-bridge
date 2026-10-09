@@ -1,4 +1,5 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { execFileSync } from "node:child_process";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -388,6 +389,40 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     await waitFor(() => !pidAlive(pid), 20_000);
     expect(await call(a, "wait_for_message", { from: job, timeout_sec: 30 })).toContain("cancelled");
     await waitFor(async () => (await call(a, "peers")).match(new RegExp(`${job} "Runner test": cancelled`)) !== null);
+  }, TEST_TIMEOUT_MS);
+
+  it("cancel_subagent then message_subagent continues the same worktree and archives its lease", async () => {
+    const git = (args: string[]) => execFileSync("git", args, { cwd: home, windowsHide: true, encoding: "utf8", stdio: "pipe" });
+    git(["init", "--quiet"]);
+    writeFileSync(join(home, "kept.txt"), "unique fixture bytes");
+    git(["add", "kept.txt"]);
+    git(["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture"]);
+    const session = await startSession();
+    const release = join(home, "release-worktree"), link = release + ".link.json";
+    releases.push(release);
+    const output = await call(session, "spawn_claude", { prompt: `release=${release} link=${link}`, title: "Cancel worktree regression", worktree: true, cwd: home });
+    const job = /claude-job-([0-9a-f]+)/.exec(output)!;
+    await waitFor(() => existsSync(link) && Boolean(readRunnerState(home, job[1]!)?.sessionId));
+    const first = readRunnerState(home, job[1]!)!;
+    expect(first.worktree).toBeTruthy();
+    const path = first.worktree!.path;
+    writeFileSync(join(path, "retained-untracked.txt"), "retained worktree bytes");
+    expect(await call(session, "cancel_subagent", { job: job[0] })).toContain("Cancelled subagent");
+    await waitFor(() => !pidAlive(first.pid));
+    await call(session, "wait_for_message", { from: job[0], timeout_sec: 10 });
+    const nextRelease = join(home, "release-worktree-next"), nextLink = nextRelease + ".link.json";
+    releases.push(nextRelease);
+    expect(await call(session, "message_subagent", { job: job[0], message: `release=${nextRelease} link=${nextLink} Continue` })).toContain("Sent to");
+    await waitFor(() => existsSync(nextLink));
+    const continued = readRunnerState(home, job[1]!)!;
+    expect(continued.sessionId).toBe(first.sessionId);
+    expect(continued.worktree!.path).toBe(path);
+    expect(readFileSync(join(path, "retained-untracked.txt"), "utf8")).toBe("retained worktree bytes");
+    writeFileSync(nextRelease, "");
+    expect(await call(session, "wait_for_message", { from: job[0], timeout_sec: 20 })).toContain("fake answer: finished");
+    await waitFor(() => !pidAlive(continued.pid));
+    const metadata = join(home, "worktree-leases", ".metadata-leases");
+    expect(readdirSync(metadata).some(key => readdirSync(join(metadata, key, "archive")).length > 0)).toBe(true);
   }, TEST_TIMEOUT_MS);
 
   it("continues a cancelled runner despite legacy cancellation mail", async () => {

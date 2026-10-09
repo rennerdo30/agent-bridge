@@ -12,7 +12,7 @@ import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 let fixture: string;
 const links: string[] = [];
 beforeEach(() => {
-  const root = join(process.cwd(), ".agent-bridge-test");
+  const root = process.env.AGENT_BRIDGE_TEST_ROOT!;
   mkdirSync(root, { recursive: true });
   fixture = realpathSync.native(mkdtempSync(join(root, "cache-lifecycle-")));
   vi.stubEnv("GIT_CONFIG_GLOBAL", join(fixture, "global.gitconfig"));

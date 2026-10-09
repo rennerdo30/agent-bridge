@@ -579,6 +579,7 @@ export class Broker {
   }
 
   private async dispatch(conn: Conn, frame: RequestFrame): Promise<void> {
+    this.healthMonitor.start();
     // In-memory probes must not pause background work just to observe its status.
     const countsPressure = !["reindexHistory", "health", "ping"].includes(frame.op);
     if (countsPressure) this.historyPendingRequests++;

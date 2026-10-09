@@ -1,6 +1,7 @@
 import { canonicalProjectRoot, migrateProjectJobs } from "../core/project-identity.js";
 import { canControlJob } from "../core/job-ownership.js";
 import { randomUUID } from "node:crypto";
+import { worktreeProcesses, worktreeProcessReport } from "../core/worktree-processes.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { closeSync, constants as fsConstants, copyFileSync, fsyncSync, openSync } from "node:fs";
@@ -1582,6 +1583,11 @@ export class JobManager {
     }
     const cause = job.controller.signal.aborted ? "cancelled" : `its job runner${pid ? ` (process ${pid})` : ""} ended without reporting a result`;
     this.finish(job, job.controller.signal.aborted ? "cancelled" : "failed", "", job.sessionId, cause);
+    if (job.worktree?.path) {
+      // Keep lifecycle settlement immediate; read-only orphan evidence follows separately.
+      void worktreeProcesses(job.worktree.path).then(evidence => this.post(job, worktreeProcessReport(evidence)))
+        .catch(error => this.post(job, "Surviving worktree process probe failed; supervisor review required: " + String(error)));
+    }
   }
 
   /** Cancel a background job, a blocking ask_* run or a continuation waiting for a slot, by name or id. */

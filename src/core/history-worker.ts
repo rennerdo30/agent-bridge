@@ -16,6 +16,7 @@ import { reconcileAskCompletions } from "./ask-completion.js";
 import { join } from "node:path";
 import { readHistoryJson } from "./run-history.js";
 import { isRecord, writeJsonStore } from "./json-store.js";
+import { IdleBackoff } from "./idle-backoff.js";
 
 const db = openHistoryStore(workerData.file);
 // This connection can never acquire bridge.db's write lock.
@@ -27,6 +28,7 @@ const ingest = new ConversationIngestor(db, workerData.home, paths, source);
 let timer: NodeJS.Timeout | null = null;
 let stopped = false, pending = false, ready = false, running = false;
 let requestedReset = false;
+const idle = new IdleBackoff(HISTORY_TICK_MS);
 let pauseUntil = 0;
 let storageBudgetPaused = false;
 // Persisted failures survive worker/broker restarts. Only an explicit reindex retries.
@@ -116,7 +118,7 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
     await yieldTurn(10);
     await waitForPressureGap();
     if (stopped || paused()) return { work: legacyWork + rawWork, discovering: true };
-    const result = index.tick();
+    const result = index.tick(true);
     return { work: legacyWork + rawWork + result.work, discovering: result.discovering || ingest.discovering };
   } catch (error) {
     if ((error as { code?: string }).code === "HISTORY_IMPORT_VERIFICATION_FAILED") {
@@ -129,29 +131,36 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
 }
 function schedule(delay = HISTORY_TICK_MS): void {
   if (stopped) return;
+  if (timer) clearTimeout(timer);
   timer = setTimeout(async () => {
+    timer = null;
+    let next = idle.next(0, false);
     try {
       // Resume on the pressure-clear event; polling can miss short idle gaps.
       await waitForPressureGap();
-      if (!migrationFailure && !importState.error) await tick();
+      if (!migrationFailure && !importState.error) {
+        const result = await tick();
+        if (result.work || result.discovering && enabled()) next = idle.next(result.work, result.discovering);
+      }
     }
     catch (err) {
       if ((err as { code?: string }).code !== "HISTORY_SNAPSHOT_PAUSED" && !stopped) parentPort?.postMessage({ error: String(err) });
       pauseUntil = Date.now() + 5000;
     }
     // Backfill gets seconds-scale cadence, never a hot loop.
-    schedule();
+    schedule(next);
   }, delay);
 }
 function close(): void { clearInterval(budgetTimer); index.close(); ingest.close(); source.close(); db.close(); parentPort?.close(); }
 parentPort?.on("message", async (message) => {
   if (message.pressure) {
+    const wasPending = pending;
     pending = !!message.pending;
     if (message.lockError) pauseUntil = Date.now() + 5000;
-    if (!pending) releasePressure();
+    if (!pending) { releasePressure(); if (wasPending && !running) { idle.reset(); schedule(0); } }
     return;
   }
-  if (message.peer) { peers.set(message.peer.id, message.peer); return; }
+  if (message.peer) { peers.set(message.peer.id, message.peer); idle.reset(); if (!running) schedule(0); return; }
   if (message.stop) {
     stopped = true;
     releasePressure();

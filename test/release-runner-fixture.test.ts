@@ -7,7 +7,7 @@ import { expect, it } from "vitest";
 import { FAKE_CLAUDE } from "../scripts/release-runner-fixture.js";
 
 it("flushes synthetic native completion and exits while its parent HTTP listener remains open", async () => {
-  const root = join(process.cwd(), ".agent-bridge-test"); mkdirSync(root, { recursive: true });
+  const root = process.env.AGENT_BRIDGE_TEST_ROOT!; mkdirSync(root, { recursive: true });
   const home = mkdtempSync(join(root, "native-cli-exit-"));
   const script = join(home, "fixture.mjs"), marker = join(home, "marker.json"), release = join(home, "release");
   const context = Buffer.from("Retained synthetic context and completion proof.\n");

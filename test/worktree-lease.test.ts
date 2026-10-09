@@ -32,7 +32,7 @@ const archives = () => readdirSync(join(registry(), "archive")).flatMap(name => 
 });
 
 beforeEach(() => {
-  const fixtures = join(process.cwd(), ".agent-bridge-test");
+  const fixtures = process.env.AGENT_BRIDGE_TEST_ROOT!;
   mkdirSync(fixtures, { recursive: true });
   home = mkdtempSync(join(fixtures, "lease-"));
   wt = { path: join(home, "worktrees", "owner-work") };

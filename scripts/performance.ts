@@ -16,7 +16,7 @@ import { backfillBytes, primeLargeHistoryBackfill, seedLargeHistoryBackfill } fr
 import { Broker } from "../src/core/broker.js";
 import { BridgeClient } from "../src/core/client.js";
 import { MessageStore } from "../src/core/store.js";
-import { nullLogger } from "../src/core/logger.js";
+import { nullLogger, createLogger } from "../src/core/logger.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { resolvePipePath } from "../src/core/paths.js";
 import { startUi } from "../src/cli/ui.js";
@@ -33,9 +33,14 @@ const jobCount = Number(process.env.AB_PERF_JOBS ?? 30);
 if (!Number.isInteger(jobCount) || jobCount < 1 || jobCount > 50) throw new Error("AB_PERF_JOBS must be 1..50");
 const launchCwd = process.cwd();
 const home = fs.realpathSync.native(fs.mkdtempSync(join(tmpdir(), "abp-")));
+process.env.GIT_CEILING_DIRECTORIES = home;
+for (const name of Object.keys(process.env)) {
+  if (name.startsWith("AGENT_BRIDGE_PARENT_") || ["AGENT_BRIDGE_INTERNAL", "AGENT_BRIDGE_DELEGATE_DEPTH", "AGENT_BRIDGE_PARENT_JOB", "AGENT_BRIDGE_ROOT_SESSION", "AGENT_BRIDGE_ROOT_NAME"].includes(name)) delete process.env[name];
+}
 execFileSync("git", ["init", home], { stdio: "ignore", windowsHide: true });
 process.chdir(home);
 process.env.AGENT_BRIDGE_HOME = home;
+process.env.AGENT_BRIDGE_HISTORY_INGEST = "1";
 const pipe = resolvePipePath(home, {}), token = "synthetic-load-token";
 if (process.platform !== "win32" && Buffer.byteLength(pipe) >= 104) throw new Error("socket path too long");
 const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -43,7 +48,9 @@ const samples: Record<string, number[]> = {};
 const io: Record<string, { calls: number; ms: number; bytes: number }> = {};
 const timed = async <T>(name: string, fn: () => T | Promise<T>): Promise<T> => {
   const start = performance.now();
-  try { return await fn(); } finally { (samples[name] ??= []).push(performance.now() - start); }
+  try { return await fn(); }
+  catch (error) { throw new Error(`${name}: ${error instanceof Error ? error.message : String(error)}`, { cause: error }); }
+  finally { (samples[name] ??= []).push(performance.now() - start); }
 };
 // Measure actual synchronous read/write cost, rather than infer it from request latency.
 for (const name of ["readFileSync", "writeFileSync", "statSync", "realpathSync", "readdirSync"] as const) {
@@ -107,12 +114,14 @@ try {
   // Profile an established pairing. Initial Windows ACL subprocesses run before the handshake clock.
   b.keys.accept(decodePairingCode(invitation).key, a.keys.identity);
   await a.link(invitation, "127.0.0.1", b.port);
-  broker = new Broker(pipe, store, nullLogger, token, Date.now, join(home, "jobs.json"));
+  broker = new Broker(pipe, store, createLogger({ home, component: "load-fixture" }), token, Date.now, join(home, "jobs.json"));
   await broker.listen();
   const history = new DatabaseSync(historyDbPath(join(home,"bridge.db")),{timeout:3000});
   try {
-    const deadline = Date.now() + 60_000;
-    while (!historyReady(history)) { if (Date.now()>deadline) throw new Error("history migration did not finish"); await pause(100); }
+    // Fixture setup includes paced, verified copying of 64k history rows. It is
+    // outside the timed load window; request/latency assertions stay unchanged.
+    const deadline = Date.now() + 120_000;
+    while (!historyReady(history)) { if (Date.now()>deadline) throw new Error("history migration did not finish: " + JSON.stringify((broker as unknown as {historyBackground?: {status():unknown}}).historyBackground?.status())); await pause(100); }
     primeLargeHistoryBackfill(history,home,backfillFixture);
   } finally { history.close(); }
   const measureBackfill = () => {
@@ -210,15 +219,18 @@ try {
   // Isolated cross-process store contention: release from another thread after 300ms.
   const coordinator = Object.assign(new EventEmitter(), { name: "load-owner", cwd: home, sessionId: "load-root", send: async () => ({}), deliverLocal: () => {} });
   const manager = new JobManager(coordinator as any, nullLogger, join(home, "jobs.json"));
+  managers.push(manager);
   const tracked = manager.track("codex", null, "synthetic progress");
   const lockPath = join(home, "jobs.json.lock");
   const release = acquireLock(lockPath);
-  const worker = new Worker(`const { workerData, parentPort } = require('node:worker_threads'); const fs = require('node:fs'); setTimeout(() => { fs.rmSync(workerData); parentPort.postMessage('released'); }, 300);`, { eval: true, workerData: lockPath });
-  const workerDone = new Promise<void>((resolve) => worker.once("message", () => resolve()));
+  // The actual owner releases/archives its lease. Renaming just one hard link
+  // from another thread would deliberately leave a live, unreconciled lease.
+  const worker = new Worker(`const { parentPort } = require('node:worker_threads'); setTimeout(() => parentPort.postMessage('release-owner-lease'), 300);`, { eval: true });
+  const workerDone = new Promise<void>((resolve) => worker.once("message", () => { release(); resolve(); }));
   let heartbeat = 0; const heartbeatStart = performance.now();
   const beat = setTimeout(() => { heartbeat = performance.now() - heartbeatStart; }, 20);
   await timed("contendedPersist", () => manager.persist());
-  await workerDone; release(); await pause(30); clearTimeout(beat); tracked.end();
+  await workerDone; manager.persist(); await pause(30); clearTimeout(beat); tracked.end();
   lag.disable();
   const stats = Object.fromEntries(Object.entries(samples).map(([key, values]) => { const sorted = [...values].sort((x, y) => x - y); return [key, { count: values.length, meanMs: values.reduce((x, y) => x + y, 0) / values.length, p95Ms: sorted[Math.floor((sorted.length - 1) * .95)], maxMs: sorted.at(-1) }]; }));
   backfillProgress.push(measureBackfill());
@@ -227,7 +239,9 @@ try {
   if (backfillProgress.at(-1)! <= backfillProgress[0]! || backfillProgress.at(-1)! >= backfillFixture.bytes || JSON.stringify(legacyBefore)!==JSON.stringify(legacyAfter)) { failures++; failureDetails.push("backfill inactive/complete or worker wrote legacy history tables"); }
   const sendP95 = (stats.send as {p95Ms:number}|undefined)?.p95Ms ?? Infinity;
   if (sendP95 > 1000) { failures++; failureDetails.push(`send p95 ${sendP95}ms exceeds 1000ms gate`); }
-  console.log(JSON.stringify({ backfill, durationSeconds: duration, peers: peers.length, jobs: jobCount, logs: 680, retainedMessages: 8000, elapsedMs: elapsed, cpuMs: (usage.user + usage.system) / 1000, cpuPercent: (usage.user + usage.system) / (elapsed * 10), eventLoop: { p95Ms: lag.percentile(95) / 1e6, p99Ms: lag.percentile(99) / 1e6, maxMs: lag.max / 1e6 }, heartbeatMsUnderSqliteContention: sqlHeartbeat, heartbeatMsUnderStoreContention: heartbeat, failures, failureDetails, delivered, quietCopies, stats, io, hot }, null, 2));
+  const report = { backfill, durationSeconds: duration, peers: peers.length, jobs: jobCount, logs: 680, retainedMessages: 8000, elapsedMs: elapsed, cpuMs: (usage.user + usage.system) / 1000, cpuPercent: (usage.user + usage.system) / (elapsed * 10), eventLoop: { p95Ms: lag.percentile(95) / 1e6, p99Ms: lag.percentile(99) / 1e6, maxMs: lag.max / 1e6 }, heartbeatMsUnderSqliteContention: sqlHeartbeat, heartbeatMsUnderStoreContention: heartbeat, failures, failureDetails, delivered, quietCopies, stats, io, hot };
+  fs.writeFileSync(join(home, "performance-report.json"), JSON.stringify(report, null, 2));
+  console.log(JSON.stringify(report, null, 2));
   if (failures) process.exitCode = 1;
 } finally {
   lag.disable(); inspector.disconnect();
@@ -235,8 +249,8 @@ try {
   for (const manager of managers) manager.setDormant(true);
   for (const c of clients) c.close();
   await broker?.close(); store?.close();
-  // Only the fresh synthetic root is removed. No owner data or source links are used.
-  if (!home.startsWith(fs.realpathSync.native(tmpdir()))) throw new Error("unexpected synthetic root");
+  // Retain generated evidence even on failure; the caller owns fixture retention.
   process.chdir(launchCwd);
-  fs.rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  console.error(`Retained synthetic load fixture: ${home}`);
+  console.error("Remaining fixture resources: " + process.getActiveResourcesInfo().join(", "));
 }
