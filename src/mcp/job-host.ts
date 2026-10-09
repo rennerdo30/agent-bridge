@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { BridgeConfig } from "../core/config.js";
 import { killPid, pidAlive } from "../core/delegate.js";
 import { identityStartedAfter, processIdentity } from "../core/process-identity.js";
+import { ownerGone, writtenBeforeBoot } from "../core/boot-time.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
 import type { AgentKind, CodingAgent } from "../core/protocol.js";
@@ -99,7 +100,9 @@ export function runnerProcessAlive(state: Pick<RunnerState, "pid" | "identity" |
   if (!pidAlive(state.pid)) return false;
   let entry = probed.get(state.pid);
   if (fresh || !entry || Date.now() - entry.at >= IDENTITY_CACHE_MS) probed.set(state.pid, entry = { identity: processIdentity(state.pid), at: Date.now() });
-  if (entry.identity === undefined) return !fresh;
+  // Unreadable start time (EPERM, a protected process that reused the PID, a zombie): a runner whose last heartbeat
+  // predates the current boot is gone, since no process survives a reboot; a recent one stays "alive" (AB-256).
+  if (entry.identity === undefined) return !fresh && !ownerGone({ alive: undefined, recordedAt: state.updatedAt });
   if (state.identity) return entry.identity === state.identity;
   return !Number.isFinite(state.updatedAt) || !identityStartedAfter(entry.identity, state.updatedAt + 1_000);
 }
@@ -226,7 +229,8 @@ export class JobRunners implements JobHost {
     if (!state) {
       // Not reported in yet: still starting, for a while.
       const host = job.host;
-      return Boolean(host) && (host!.pid !== null ? pidAlive(host!.pid) : Date.now() - host!.startedAt < START_GRACE_MS);
+      // A launch from before the current boot never reported in: its PID now belongs to another process.
+      return Boolean(host) && !writtenBeforeBoot(host!.startedAt) && (host!.pid !== null ? pidAlive(host!.pid) : Date.now() - host!.startedAt < START_GRACE_MS);
     }
     return runnerProcessAlive(state);
   }

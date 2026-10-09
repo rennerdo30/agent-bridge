@@ -5,6 +5,7 @@ import { findHistoryJob, historyJobsSteps, readRunLogs, readRunLogsResponsive } 
 import { cloneJson } from "./file-cache.js";
 import { drainScanResponsive } from "./responsive-scan.js";
 import { pidAlive } from "./delegate.js";
+import { writtenBeforeBoot } from "./boot-time.js";
 import type { Job } from "../mcp/jobs.js";
 import { readRecoveryHeader, type RecoveryHeader } from "./job-recovery-feed.js";
 import { readPendingRunnerSpec, readRunnerStateRecord } from "./runner-store.js";
@@ -103,7 +104,8 @@ function finishRecovery(home: string, { id, history, spec, launch, run, meta, na
   const startedAt = typeof base.startedAt === "number" ? base.startedAt : run ? runStart(run) : 0;
   // Do not mistake a previous runner's final state for a newer continuation.
   const currentState = state && typeof state.updatedAt === "number" && state.updatedAt >= startedAt ? state : undefined;
-  const alive = currentState?.status === "running" && pidAlive(Number(currentState.pid));
+  // A runner whose last heartbeat predates the current boot is gone even when its PID answers again (AB-256).
+  const alive = currentState?.status === "running" && pidAlive(Number(currentState.pid)) && !writtenBeforeBoot(Number(currentState.updatedAt));
   const owner = typeof base.owner === "string" ? base.owner : meta?.by ?? / by ([\w.-]+)/.exec(header)?.[1];
   if (!owner) return undefined;
   const sessionId = currentState?.sessionId ?? base.sessionId ?? base.threadId ?? meta?.session ?? meta?.continues ?? null;
