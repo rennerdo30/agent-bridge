@@ -1013,16 +1013,16 @@ export class JobManager {
 
   private lookupAllowed(current: Job | undefined): Job | undefined {
     if (!current) return undefined;
-    const durable = this.storePath && readStoredJob(this.storePath, current.id, current.name, this.log);
+    const durable = this.storePath && readStoredJobSnapshot(this.storePath, current.id, current.name, this.log);
     const authority = durable || current;
     const permitted = this.lookupPermitted(authority);
     // Legacy direct-owner rows may be skipped by passive restoration. They still
     // govern a request, including grants removed while asynchronous IO yielded.
     this.recheckSharedGrant(authority);
     if (durable && durable.startedAt > current.startedAt) return undefined;
-    if (durable) Object.assign(current, { owner: durable.owner, masters: durable.masters, ownershipHistory: durable.ownershipHistory,
+    if (durable) Object.assign(current, cloneJson({ owner: durable.owner, masters: durable.masters, ownershipHistory: durable.ownershipHistory,
       parentJob: durable.parentJob, ...(durable.supervisor !== undefined ? { supervisor: durable.supervisor } : {}),
-      ...(durable.rootName !== undefined ? { rootName: durable.rootName } : {}), ...(durable.rootSession !== undefined ? { rootSession: durable.rootSession } : {}) });
+      ...(durable.rootName !== undefined ? { rootName: durable.rootName } : {}), ...(durable.rootSession !== undefined ? { rootSession: durable.rootSession } : {}) }));
     if (!this.sharedGrants.has(current.id) && !permitted) return undefined;
     return current;
   }
@@ -1827,10 +1827,20 @@ function readScopedStore(path: string, tracked: ReadonlySet<string>, owners: Rea
 /** Select a single durable record before cloning the private archive projection. */
 function readStoredJob(path: string, id: string, name: string, log?: Logger): StoredJob | undefined {
   try {
+    const selected = readStoredJobSnapshot(path, id, name, log);
+    return selected ? cloneJson(selected) : undefined;
+  } catch (err) { log?.warn("could not look up stored job", { path, err: String(err) }); }
+  return undefined;
+}
+
+/** Private immutable selection for authority checks. Detach any fields exposed to
+ * runtime/public jobs; never mutate these stat-validated cache records. */
+function readStoredJobSnapshot(path: string, id: string, name: string, log?: Logger): StoredJob | undefined {
+  try {
     const current = activeJobSnapshot(path);
-    for (const record of current.values()) if (record.id === id || record.name === name) return cloneJson(record);
+    for (const record of current.values()) if (record.id === id || record.name === name) return record;
     for (const record of readArchivedJobSnapshot(path).jobs) {
-      if (isStoredJob(record) && !current.has(record.id) && (record.id === id || record.name === name)) return cloneJson(record);
+      if (isStoredJob(record) && !current.has(record.id) && (record.id === id || record.name === name)) return record;
     }
   } catch (err) { log?.warn("could not look up stored job", { path, err: String(err) }); }
   return undefined;

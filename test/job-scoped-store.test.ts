@@ -101,6 +101,22 @@ it("active overrides win before clone selection, including final duplicate activ
   expect(readArchivedJobSnapshot(path).jobs.find(record => record.id === "wanted")!.future).toEqual({ source: "archive" });
 });
 
+it("fresh lookup authority remains detached from returned nested mutations and cannot grant another manager control", () => {
+  const receipt = { id: "handoff-wanted", at: 1, from: "former", to: "owner", rootSession: "owner", rootName: "owner",
+    reason: "explicit-handoff", unknown: { retained: ["original"] } };
+  save([job("wanted", "owner", { masters: ["owner"], ownershipHistory: [receipt] })]);
+  const jobs = manager(); corpus([job("wanted", "other", { masters: ["other"] })]);
+  const found = jobs.find("codex-job-wanted")!;
+  expectWarmOnly(["wanted"]);
+  found.masters!.push("intruder");
+  (found.ownershipHistory![0] as unknown as Record<string, any>).unknown.retained.push("caller mutation");
+  const cached = (readJsonSnapshot(path).value as { jobs: Record<string, any>[] }).jobs[0]!;
+  expect(cached.masters).toEqual(["owner"]);
+  expect(cached.ownershipHistory[0].unknown.retained).toEqual(["original"]);
+  expect(manager("intruder").find("codex-job-wanted")).toBeUndefined();
+  expect(jobs.find("codex-job-wanted")!.masters).toEqual(["owner"]);
+});
+
 it("discovers newly handed-off active jobs and removes tracked jobs moved to another owner", () => {
   save([job("tracked")]); const jobs = manager();
   const receipt = { id: "handoff", at: Date.now(), from: "other", to: "owner", rootSession: "owner", rootName: "owner", reason: "explicit-handoff" };
