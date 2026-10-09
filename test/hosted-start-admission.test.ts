@@ -37,10 +37,12 @@ it("retries protected store admission with bounded backoff and retains the lates
   await Promise.resolve(); await Promise.resolve();
   expect(job.status).toBe("cancelled");
   expect(readFileSync(path, "utf8")).toBe(original);
-  const calls = admission.mock.calls.length;
+  // Each persist attempt checks the jobArchive gate (AB-206) and then the json gate: count attempts.
+  const attempts = () => admission.mock.calls.filter(call => call[1] === "json").length;
+  const calls = attempts();
   await vi.advanceTimersByTimeAsync(10_000);
   // The base readiness implementation caps retry delay at one second.
-  expect(admission.mock.calls.length - calls).toBeLessThanOrEqual(20);
+  expect(attempts() - calls).toBeLessThanOrEqual(20);
   admission.mockRestore();
   await vi.advanceTimersByTimeAsync(1600);
   expect(readStore(path).find(saved => saved.id === job.id)).toMatchObject({ status: "cancelled", prompt: "retained cancelled prompt" });
