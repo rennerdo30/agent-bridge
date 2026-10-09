@@ -108,6 +108,19 @@ describe("run feed", () => {
     }
   });
 
+  it("matches the run name, never the home directory, when finding a run log", () => {
+    // macOS homes live under /var/folders, whose path contains "old" for every run.
+    const home = mkdtempSync(join(tmpdir(), "ab-folders-"));
+    try {
+      const live = startRunFeed({ home, name: "live", header: "codex" });
+      expect(findRunLog(home, "old")).toBeNull();
+      expect(findRunLog(home, "live")).toBe(live.logPath);
+      live.end("done");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("reports a quiet phase", async () => {
     const home = mkdtempSync(join(tmpdir(), "ab-feed-"));
     let t = 0;
