@@ -218,6 +218,16 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       if (this.broker) await this.broker.close();
       this.broker = null;
     }
+    // An election that was already past its stopping check may still finish now. Wait for it, so a broker it
+    // started (listener, bridge.db, archive.db and history.db handles) is closed here instead of outliving stop().
+    const electing = this.electing;
+    if (electing) {
+      await electing.catch(() => {});
+      (this.client as BridgeClient | null)?.close();
+      this.client = null;
+      const late = this.broker as Broker | null;
+      if (closeBroker && late) { await late.close(); this.broker = null; }
+    }
     if (this.presenceTimer) clearTimeout(this.presenceTimer);
     this.presenceTimer = null;
     this.log.info("bridge node stopped");
@@ -293,6 +303,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private async tryBecomeBroker(): Promise<boolean> {
     if (this.broker) return true;
+    if (this.stopping) return false;
     const [{ Broker }, { MessageStore }] = await Promise.all([import("./broker.js"), import("./store.js")]);
     let store: MessageStore;
     try {
@@ -311,6 +322,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join(dirname(this.opts.dbPath), JOBS_FILE), this.opts.network);
     try {
       await broker.listen();
+      if (this.stopping) {
+        // stop() ran while this node was opening the store or listening: never keep a broker nobody will close.
+        await broker.close();
+        return false;
+      }
       this.broker = broker;
       this.log.info("became broker", { pipe: this.opts.pipePath });
       return true;
@@ -389,6 +405,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number; sessionId?: string | null }): void {
+    if (this.stopping) { client.close(); return; }
     this.client = client;
     this.currentName = hello.name;
     this.recordOwnStorePeer();
