@@ -1,5 +1,5 @@
 {
   "name": "agent-bridge",
   "description": "Peer messaging, delegation and conversation history across coding agents.",
-  "version": "0.30.4"
+  "version": "0.30.5"
 }

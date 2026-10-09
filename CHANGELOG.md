@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.30.5
+
+- After a reboot, reader presence records written before the boot no longer block the history and metadata upgrades. Windows reuses low PIDs for protected system processes whose start time cannot be read, so such stale records looked like unidentified live readers and kept every 0.30.4 migration waiting.
+- The metadata import keeps each presence record's original file time instead of the import time, and once restores that time for rows an earlier 0.30.4 import stamped. Values, retained originals and bundles stay unchanged.
+
 ## 0.30.4
 
 0.30.2 and 0.30.3 were not released separately; this release contains them.
