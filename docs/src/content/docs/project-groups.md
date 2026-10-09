@@ -57,7 +57,10 @@ its existing message notification and wake paths.
 
 Set `"projectGroups": false` in the shared main checkout's `.agent-bridge/config.json` or the local
 bridge's global `config.json`. Project settings override global settings; each file's agent section
-overrides its general setting. Agent sections can disable sharing for that agent. The files are
+overrides its general setting. A project file may only set `projectGroups`, `codexSubagents`, `effort`,
+`name`, the model keys, `autoWake`, `wakeOnDirect`, `delivery`, `lingerSec` and `maxHops`; CLI binaries,
+sandboxes, permission modes, auto-approval, network, dashboard and worktree settings come from the global
+file only, and other keys in a project file are ignored with a warning. Agent sections can disable sharing for that agent. The files are
 read without rewriting them. Invalid or unreadable sharing settings deny group authority.
 Explicit handoff grants remain usable when automatic project sharing is disabled.
 
