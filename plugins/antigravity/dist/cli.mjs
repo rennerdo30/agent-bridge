@@ -41616,7 +41616,7 @@ function worktreeArgs(target, a, cfg, cwd, home) {
 }
 async function runDelegate(rc, target, a, signal, onProgress, background2, job) {
   checkDepth(rc.cfg.maxDelegateDepth);
-  if (!job?.rootSession) return runWithStartup(rc, target, a, signal, onProgress, background2, job);
+  if (!job?.rootSession) return runWithWorktreeLease(rc, target, a, signal, onProgress, background2, job);
   const budget = new RootConcurrency(rc.home, job.rootSession);
   const owner = { id: `${job.name}-${randomUUID26()}`, pid: process.pid };
   let timer;
@@ -41632,7 +41632,7 @@ async function runDelegate(rc, target, a, signal, onProgress, background2, job) 
       }
     }, SLOT_RENEW_MS);
     timer.unref();
-    return await runWithStartup(rc, target, a, signal, onProgress, background2, job);
+    return await runWithWorktreeLease(rc, target, a, signal, onProgress, background2, job);
   } finally {
     clearInterval(timer);
     try {
@@ -41642,18 +41642,9 @@ async function runDelegate(rc, target, a, signal, onProgress, background2, job) 
     }
   }
 }
-async function runWithStartup(rc, target, a, signal, onProgress, background2, job) {
-  onProgress?.("queued: waiting for machine startup admission");
-  const release = await acquireStartup(rc.home, signal);
-  try {
-    signal.throwIfAborted();
-    onProgress?.("starting native CLI");
-    return await runWithWorktreeLease({ ...rc, startupReady: release }, target, a, signal, onProgress, background2, job);
-  } finally {
-    release();
-  }
-}
 async function runWithWorktreeLease(rc, target, a, signal, onProgress, background2, job) {
+  signal.throwIfAborted();
+  onProgress?.("preparing run context");
   const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, jobId: randomUUID26().slice(0, 8), log: rc.log }) : null);
   const root = wt?.path ?? bridgeWorktreeRoot(a.cwd || rc.cwd(), rc.home);
   if (!root) return runDelegateInner(rc, target, a, signal, onProgress, background2, job);
@@ -41945,7 +41936,20 @@ ${a.prompt}
           }
         } : void 0
       },
-      (req) => profile.run(cfg, req, { ...a, access, relay: wiring })
+      async (req) => {
+        onProgress?.("queued: waiting for machine startup admission");
+        const release = await acquireStartup(rc.home, signal);
+        try {
+          signal.throwIfAborted();
+          onProgress?.("starting native CLI");
+          return await profile.run(cfg, { ...req, onSession: (id) => {
+            release();
+            req.onSession?.(id);
+          } }, { ...a, access, relay: wiring });
+        } finally {
+          release();
+        }
+      }
     );
     feed.meta({ session: res.sessionId });
     feed.end(res.isError ? "failed" : "done", res.text);

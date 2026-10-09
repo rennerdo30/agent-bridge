@@ -1,7 +1,9 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import { readRunnerState } from "../src/mcp/job-host.js";
@@ -9,6 +11,8 @@ import { readStore } from "../src/mcp/jobs.js";
 import { parentFromEnv } from "../src/core/parent-link.js";
 import { listPendingApprovals } from "../src/core/relay.js";
 import { pidAlive, killPid } from "../src/core/delegate.js";
+import { LOG_DIR_NAME, LOG_FILE_NAME } from "../src/core/constants.js";
+import { STARTUP_CAPACITY } from "../src/core/startup-admission.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 function linkReady(path: string): boolean {
@@ -101,6 +105,78 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
   return { text: (result.content as { text: string }[]).map((c) => c.text ?? "").join("\n"), error: result.isError };
 }
 
+/** Failure evidence only: no specs, parent-link contents, prompts or environment. */
+function diagnosticNumber(value: unknown, min: number, max: number): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max ? value : undefined;
+}
+const diagnosticPid = (value: unknown) => diagnosticNumber(value, 1, 0xffff_ffff);
+const diagnosticTime = (value: unknown) => diagnosticNumber(value, 0, 4_102_444_800_000);
+function diagnosticProgress(value: unknown): string {
+  switch (value) {
+    case "queued: runner startup admission": return "initial-state-published";
+    case "preparing run context": return "context-preparation";
+    case "queued: waiting for root admission": return "root-admission";
+    case "queued: waiting for machine startup admission": return "machine-admission";
+    case "starting native CLI": return "native-starting";
+    case "queued: waiting for compatible storage readers to retain run context": return "run-context-admission";
+    default: return typeof value === "string" && /^started · follow live: agent-bridge watch [\w.-]+$/.test(value) ? "feed-started" : "unreported";
+  }
+}
+function readinessStorage(home: string) {
+  const select = (file: string, sql: string) => {
+    let db: DatabaseSync | undefined;
+    try {
+      db = new DatabaseSync(join(home, file), { readOnly: true });
+      db.exec("PRAGMA busy_timeout=0");
+      return { rows: db.prepare(sql).all() };
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      return { errorCode: ["ERR_SQLITE_ERROR", "ERR_SQLITE_BUSY", "SQLITE_BUSY", "SQLITE_LOCKED", "ENOENT", "EACCES", "EPERM"].includes(code ?? "") ? code : "UNAVAILABLE" };
+    } finally { try { db?.close(); } catch { /* Diagnostics must not mask readiness failure. */ } }
+  };
+  const slots = select("resource-slots.sqlite", "SELECT resource,ticket,pid,held FROM slots ORDER BY ticket LIMIT 64");
+  const limits = select("root-limits.sqlite", "SELECT root,capacity FROM root_limits ORDER BY root LIMIT 32");
+  return {
+    configuredStartupCapacity: diagnosticNumber(STARTUP_CAPACITY, 1, 1024),
+    slots: "rows" in slots ? { rows: slots.rows!.flatMap(row => {
+      const pid = diagnosticPid(row.pid), ticket = diagnosticNumber(row.ticket, 1, Number.MAX_SAFE_INTEGER);
+      return typeof row.resource === "string" && /^(delegate-startup|root-[a-f0-9]{40})$/.test(row.resource) && pid && ticket && (row.held === 0 || row.held === 1)
+        ? [{ resource: row.resource, ticket, pid, held: row.held === 1 }] : [];
+    }) } : slots,
+    rootLimits: "rows" in limits ? { rows: limits.rows!.flatMap(row => {
+      const capacity = diagnosticNumber(row.capacity, 1, 1024);
+      return typeof row.root === "string" && row.root.length <= 256 && capacity
+        ? [{ resource: `root-${createHash("sha256").update(row.root).digest("hex").slice(0, 40)}`, capacity }] : [];
+    }) } : limits,
+  };
+}
+
+function readinessEvents(home: string, names: ReadonlySet<string>, runnerPids: ReadonlySet<number>) {
+  let fd: number | undefined;
+  try {
+    fd = openSync(join(home, LOG_DIR_NAME, LOG_FILE_NAME), "r");
+    const size = fstatSync(fd).size, start = Math.max(0, size - 256 * 1024), bytes = Buffer.alloc(Math.min(size, 256 * 1024));
+    const read = readSync(fd, bytes, 0, bytes.length, start);
+    const lines = bytes.subarray(0, read).toString("utf8").split("\n");
+    if (start) lines.shift();
+    return lines.flatMap(line => {
+      const match = /^(\d{4}-\d\d-\d\dT[\d:.]+Z)\s+\w+\s+\[[^\]]+\] pid=(\d+) (job process ownership established|job runner started) (\{.*\})$/.exec(line);
+      if (!match) return [];
+      try {
+        const value = JSON.parse(match[4]!) as Record<string, unknown>, pid = diagnosticPid(Number(match[2]));
+        if (!pid || diagnosticTime(Date.parse(match[1]!)) === undefined || !runnerPids.has(pid) && !(typeof value.job === "string" && names.has(value.job))) return [];
+        return [{ at: match[1], event: match[3], pid,
+          ...(typeof value.job === "string" && names.has(value.job) ? { job: value.job } : {}),
+          ...(diagnosticPid(value.pid) ? { reportedPid: diagnosticPid(value.pid) } : {}),
+          ...(diagnosticPid(value.runnerPid) ? { runnerPid: diagnosticPid(value.runnerPid) } : {}),
+          ...(diagnosticPid(value.guardianPid) ? { guardianPid: diagnosticPid(value.guardianPid) } : {}),
+        }];
+      } catch { return []; }
+    }).slice(-40);
+  } catch { return []; }
+  finally { try { if (fd !== undefined) closeSync(fd); } catch { /* Keep the original readiness failure. */ } }
+}
+
 it("routes a blocking ask to an available group master without returning its result to the limited caller", async () => {
   await env.node("broker", "other").start();
   const source = await session("claude-master", "claude"), target = await session("codex-master", "codex");
@@ -141,12 +217,33 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   try {
     await until(() => jobs.every((j) => linkReady(j.link) && readRunnerState(env.home, j.id)?.sessionId && readRunnerState(env.home, j.id)?.live), 18_000);
   } catch (cause) {
-    const readiness = jobs.map((job) => {
-      const state = readRunnerState(env.home, job.id);
-      return { name: job.name, status: state?.status, alive: state ? pidAlive(state.pid) : false,
-        session: Boolean(state?.sessionId), live: Boolean(state?.live), link: linkReady(job.link), progress: state?.progressNote };
-    });
-    throw new Error(`Native takeover fixture did not become ready: ${JSON.stringify(readiness)}`, { cause });
+    let summary = "diagnostics unavailable";
+    try {
+      const observedAt = Date.now();
+      const readiness = jobs.map((job) => {
+        const state = readRunnerState(env.home, job.id);
+        const pid = diagnosticPid(state?.pid), updatedAt = diagnosticTime(state?.updatedAt);
+        const status = state && ["running", "done", "failed", "interrupted"].includes(state.status) ? state.status : "unknown";
+        return { name: job.name, status, pid, updatedAt,
+          heartbeatAgeMs: updatedAt !== undefined ? diagnosticNumber(Math.max(0, observedAt - updatedAt), 0, 4_102_444_800_000) : undefined,
+          alive: pid ? pidAlive(pid) : false, session: Boolean(state?.sessionId), live: Boolean(state?.live), link: linkReady(job.link),
+          progress: diagnosticProgress(state?.progress) };
+      });
+      const diagnostics = { version: 1, mode, observedAt, readiness, storage: readinessStorage(env.home),
+        events: readinessEvents(env.home, new Set(jobs.map(job => job.name)), new Set(readiness.flatMap(row => row.pid ? [row.pid] : []))) };
+      const json = JSON.stringify(diagnostics, null, 2) + "\n";
+      const receiptName = `project-group-readiness-${observedAt}-${mode}.json`;
+      // Keep the existing process/fixture teardown; retain only this bounded whitelist.
+      try { writeFileSync(join(env.home, receiptName), json, { flag: "wx" }); }
+      catch { /* Evidence publication must not replace the original failure. */ }
+      try {
+        const retained = join(import.meta.dirname, "..", ".agent-bridge-test"); mkdirSync(retained, { recursive: true });
+        writeFileSync(join(retained, receiptName), json, { flag: "wx" });
+      } catch { /* A fixture write failure must not prevent the retained receipt attempt. */ }
+      summary = JSON.stringify(readiness);
+      console.error(`Native takeover readiness diagnostics: ${JSON.stringify(diagnostics).slice(0, 16_384)}`);
+    } catch { /* Diagnostic construction or output must never replace the readiness cause. */ }
+    throw new Error(`Native takeover fixture did not become ready: ${summary}`, { cause });
   }
   const children = jobs.map((j) => parentFromEnv(JSON.parse(readFileSync(j.link, "utf8")))!);
   // Leave one result and note pending in the starter's inbox before it becomes unavailable.
