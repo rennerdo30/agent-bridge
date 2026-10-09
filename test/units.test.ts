@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { defaultPeerName, loadConfig } from "../src/core/config.js";
 import { parseClaudeJson, parseCodexJsonl } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
-import { resolvePipePath } from "../src/core/paths.js";
+import { maxSocketPathBytes, resolvePipePath } from "../src/core/paths.js";
 import { cmdlineEnablesChannel, cmdlineIsPrintMode } from "../src/core/procinfo.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 import { formatMessage, formatPeer } from "../src/mcp/format.js";
@@ -119,6 +119,27 @@ describe("paths", () => {
     expect(resolvePipePath("C:\\Users\\x\\.agent-bridge", {}, "win32")).toMatch(/^\\\\\.\\pipe\\agent-bridge-[0-9a-f]{12}-p\d+$/);
     expect(resolvePipePath("/home/x/.agent-bridge", {}, "linux")).toMatch(/^\/home\/x\/\.agent-bridge\/bridge-p\d+\.sock$/);
     expect(resolvePipePath("/h", { AGENT_BRIDGE_PIPE: "/tmp/p.sock" }, "linux")).toBe("/tmp/p.sock");
+  });
+
+  it("never builds a Unix socket path longer than the platform accepts", () => {
+    // The macOS CI temp root: 106 bytes in the home, over the 103-byte darwin limit (EINVAL on Node 24).
+    const deep = "/private/var/folders/36/tjdph2t965j8snz9_vkdnw0r0000gn/T/ab-tests-x1x673/temp/doctor-DxU2pR";
+    const other = `${deep.slice(0, -1)}X`;
+    for (const platform of ["darwin", "linux", "freebsd"] as const) {
+      const limit = maxSocketPathBytes(platform);
+      const home = platform === "linux" ? `${deep}/abcd` : deep;
+      const pipe = resolvePipePath(home, {}, platform, 501);
+      expect(Buffer.byteLength(pipe)).toBeLessThanOrEqual(limit);
+      expect(pipe).toMatch(/^\/tmp\/agent-bridge-501\/[0-9a-f]{16}-bridge-p\d+\.sock$/);
+      expect(resolvePipePath(home, {}, platform, 501)).toBe(pipe);
+      expect(resolvePipePath(platform === "linux" ? `${other}/abcd` : other, {}, platform, 501)).not.toBe(pipe);
+      expect(resolvePipePath(home, {}, platform, 502)).not.toBe(pipe);
+    }
+    // A home whose socket exactly fits keeps it, so existing installs never move their endpoint.
+    const fits = `/${"h".repeat(103 - "/bridge-p2.sock".length - 1)}`;
+    expect(resolvePipePath(fits, {}, "darwin", 501)).toBe(`${fits}/bridge-p2.sock`);
+    expect(resolvePipePath(`${fits}h`, {}, "darwin", 501)).toMatch(/^\/tmp\/agent-bridge-501\//);
+    expect(resolvePipePath(`${fits}h`, {}, "linux", 501)).toBe(`${fits}h/bridge-p2.sock`);
   });
 });
 

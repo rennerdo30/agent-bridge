@@ -276,6 +276,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
           throw err;
         }
         const code = errCode(err);
+        // Another user's short-socket directory stays unsafe however often we retry.
+        if (code === "EUNSAFESOCKETDIR") throw err;
         this.log.debug("connect attempt failed", { attempt, code, message: (err as Error).message });
         if (code !== "ENOENT" && code !== "ECONNREFUSED") {
           await sleep(jitter());

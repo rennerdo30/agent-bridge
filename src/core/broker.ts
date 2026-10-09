@@ -72,6 +72,7 @@ import { CONTROL_CONVERSATION_PREFIX } from "../mcp/job-host.js";
 import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, decisionApplies, decisionScopeSchema, type OwnerDecision } from "./decisions.js";
 import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
 import { OwnerQuestionService, OWNER_ADDRESS } from "./owner-question-service.js";
+import { ensurePrivateSocketDirectory } from "./paths.js";
 
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
 export const PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -429,6 +430,7 @@ export class Broker {
       const listening = () => { void onListening(); };
       server.once("error", onError);
       server.once("listening", listening);
+      ensurePrivateSocketDirectory(this.pipePath);
       server.listen(this.pipePath);
     });
   }
