@@ -24,6 +24,7 @@ import { NetworkService } from "../src/network/link.js";
 import { allowedRemoteDirectory, RemoteJobs } from "../src/network/remote-jobs.js";
 import { REMOTE_JOB_RATE_LIMIT, remoteSpawnArgsSchema } from "../src/network/remote-job-protocol.js";
 import { readProcessIdentities } from "../src/core/process-identity.js";
+import { fixtureProcessExists, fixtureProcessGeneration } from "./fixture-process-generation.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 const TEST_TIMEOUT_MS = 90_000;
@@ -98,13 +99,17 @@ afterEach(async context => {
   }
   // Only this freshly created fixture's published process generation authorizes a kill.
   const generations = await readProcessIdentities([...pids]);
-  for (const pid of pids) if (pidAlive(pid)) {
+  for (const pid of pids) if (fixtureProcessExists(pid, `Unable to verify fixture runner ${pid}; retained at ${root}`)) {
     const presence = join(remoteHome, "storage-capabilities", `${pid}.json`);
     const recorded = existsSync(presence) ? JSON.parse(readFileSync(presence, "utf8")) : null;
-    if (!recorded?.processIdentity || recorded.processIdentity !== generations.get(pid)) throw new Error(`Fixture runner ${pid} has no matching owned process identity; retained at ${root}`);
+    const refusal = `Fixture runner ${pid} has no matching owned process identity; retained at ${root}`;
+    if (!recorded?.processIdentity) throw new Error(refusal);
+    if (!await fixtureProcessGeneration(pid, recorded.processIdentity, refusal, {
+      identities: async () => generations, exists: pid => { process.kill(pid, 0); },
+    })) continue;
     await stopFixtureRunner(pid, recorded.processIdentity);
   }
-  await waitFor(() => [...pids].every((pid) => !pidAlive(pid)));
+  await waitFor(() => [...pids].every((pid) => !fixtureProcessExists(pid, `Unable to verify fixture runner exit ${pid}; retained at ${root}`)));
   pids.clear();
   } catch (error) { failed = true; cleanupError ??= error; }
   finally {
@@ -124,26 +129,22 @@ afterEach(async context => {
   if (cleanupError) throw cleanupError;
 });
 async function stopFixtureRunner(pid: number, identity: string): Promise<void> {
-  const sameGeneration = async () => {
-    if (!pidAlive(pid)) return false;
-    if ((await readProcessIdentities([pid])).get(pid) !== identity)
-      throw new Error(`Refusing to signal changed fixture runner ${pid}; retained at ${root}`);
-    return true;
-  };
+  const refusal = `Refusing to signal changed fixture runner ${pid}; retained at ${root}`;
+  const sameGeneration = () => fixtureProcessGeneration(pid, identity, refusal);
   if (!await sameGeneration()) return;
   if (process.platform === "win32") {
     // No numeric-PID fallback is allowed when taskkill cannot start or fails.
     try { execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }); }
-    catch (error) { if (pidAlive(pid)) throw error; }
+    catch (error) { if (fixtureProcessExists(pid, refusal)) throw error; }
     return;
   }
   try { process.kill(pid, "SIGTERM"); }
-  catch (error) { if (pidAlive(pid)) throw error; return; }
+  catch (error) { if (fixtureProcessExists(pid, refusal)) throw error; return; }
   await new Promise(resolve => setTimeout(resolve, 3_000));
   // The initial proof never authorizes a delayed signal after PID reuse.
   if (await sameGeneration()) {
     try { process.kill(pid, "SIGKILL"); }
-    catch (error) { if (pidAlive(pid)) throw error; }
+    catch (error) { if (fixtureProcessExists(pid, refusal)) throw error; }
   }
 }
 async function waitFor(test: () => boolean | Promise<boolean>, ms = 30_000): Promise<void> {
