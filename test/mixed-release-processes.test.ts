@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
 import { build } from "esbuild";
 import { expect, it } from "vitest";
 import { assertStoreUpgrade, liveStorePeers, refreshStorePeerIdentities } from "../src/core/store-compatibility.js";
@@ -92,6 +93,8 @@ it("keeps released and current MCP processes talking until the older reader exit
     const listener = electionLog.findIndex(line => line.includes("broker listening"));
     const admittedSchema = schema();
     const protectedDir = join(home, ".migration-snapshots");
+    // Only bridge.db schema snapshots count here; the AB-208 metadata tables take their own snapshot.
+    const storeSnapshots = () => existsSync(protectedDir) ? readdirSync(protectedDir).filter(name => name.startsWith("bridge.db.backup-")) : [];
     if (admittedSchema === 7) {
       // Election raced with a retained reader, so this listener keeps schema7
       // until a later clean election, without a bulk in-place upgrade.
@@ -99,7 +102,7 @@ it("keeps released and current MCP processes talking until the older reader exit
       expect(compatible).toBeGreaterThanOrEqual(0); expect(compatible).toBeLessThan(listener);
       expect(electionLog[compatible]).toContain('"version":7');
       expect(electionLog[compatible]).toContain(`"target":${SQLITE_STORE_VERSION}`);
-      expect(existsSync(protectedDir) ? readdirSync(protectedDir) : []).toEqual([]);
+      expect(storeSnapshots()).toEqual([]);
     } else {
       // The old reader exited before construction: a backup-first upgrade on
       // this fresh election is equally valid, and must precede the listener.
@@ -107,7 +110,7 @@ it("keeps released and current MCP processes talking until the older reader exit
       const backedUp = electionLog.findIndex(line => line.includes("backed up store before migration"));
       expect(backedUp).toBeGreaterThanOrEqual(0); expect(backedUp).toBeLessThan(listener);
       expect(electionLog[backedUp]).toContain('"version":7');
-      expect(readdirSync(protectedDir)).toHaveLength(1);
+      expect(storeSnapshots()).toHaveLength(1);
     }
     const db = new DatabaseSync(join(home, "bridge.db"), { readOnly: true });
     try {
@@ -128,7 +131,7 @@ it("keeps released and current MCP processes talking until the older reader exit
       expect(upgraded.prepare("SELECT body FROM messages ORDER BY created_at").all().map((row) => row.body)).toEqual(["new-to-old protocol2", "old-to-new protocol2"]);
       expect(upgraded.prepare("PRAGMA integrity_check").get()!.integrity_check).toBe("ok");
     } finally { upgraded.close(); }
-    const snapshots = readdirSync(join(home, ".migration-snapshots"));
+    const snapshots = storeSnapshots();
     expect(snapshots).toHaveLength(1);
     const before = new DatabaseSync(join(home, ".migration-snapshots", snapshots[0]!), { readOnly: true });
     try {
@@ -143,6 +146,8 @@ it("keeps released and current MCP processes talking until the older reader exit
     await Promise.all(clients.map((client) => client.close().catch(() => {})));
     try { await until(() => owned.every(child => exited(child.pid)), 3_000); }
     catch (error) { failure = new AggregateError([failure, error].filter(Boolean), "Owned MCP child exit was not proven; fixture retained."); }
+    // liveStorePeers reads the capability rows through this process's shared metadata connection.
+    closeMetadataDb(home);
     if (!failure) rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
   if (failure) throw new Error(`Mixed-release fixture retained at ${home}\n${owned.map(child => `${child.name} (pid ${child.pid}): ${child.stderr()}`).join("\n")}\n${failure instanceof Error ? failure.stack : String(failure)}`, { cause: failure });
