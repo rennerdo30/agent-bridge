@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { JOBS_FILE } from "../core/constants.js";
 import { readStore } from "./jobs.js";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { COMPLETION_DEDUPE_PREFIX } from "../core/completion.js";
 import { archiveFile, assertWritableStore, readJsonStore } from "../core/json-store.js";
 import { failureCause } from "../core/delegate.js";
@@ -34,6 +35,34 @@ const PROGRESS_SAVE_MS = 1_000;
 const SEEN_LIMIT = 100;
 /** After SIGTERM, a runner that has not wound down by then exits anyway. */
 const STOP_DEADLINE_MS = 15_000;
+/** Initial storage admission is bounded before any native turn starts. */
+const INITIAL_STATE_DEADLINE_MS = 15_000;
+
+async function publishInitialRunnerState(spec: RunnerSpec, log: Logger): Promise<void> {
+  const controller = new AbortController();
+  const stop = () => controller.abort(new Error("Job runner stopped before initial state publication"));
+  const deadline = setTimeout(() => controller.abort(new Error("Job runner initial state publication timed out")), INITIAL_STATE_DEADLINE_MS);
+  process.on("SIGTERM", stop); process.on("SIGINT", stop);
+  try {
+    for (let attempt = 0; ; attempt++) {
+      await refreshStorePeerIdentities(spec.home, controller.signal);
+      controller.signal.throwIfAborted();
+      try {
+        // Another runner can publish presence after the asynchronous scan. Keep
+        // the compatibility guard authoritative and reverify rather than exit.
+        writeRunnerState(spec.home, spec.job.id, { pid: process.pid, peer: spec.job.name, status: "running", updatedAt: Date.now(), progress: "queued: runner startup admission" });
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED") throw error;
+        if (attempt === 0) log.info("initial runner state waits for retained store readers", { job: spec.job.name, reason: String(error) });
+        await delay(Math.min(1_000, (attempt + 1) * 100), undefined, { signal: controller.signal });
+      }
+    }
+  } finally {
+    clearTimeout(deadline);
+    process.off("SIGTERM", stop); process.off("SIGINT", stop);
+  }
+}
 
 /**
  * `agent-bridge job-runner <spec>`: runs one background job, detached from the session's MCP server (see
@@ -56,9 +85,8 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
   try {
     // This detached runner has a cold process cache. Resolve retained reader generations
     // before its first versioned state write; the broker/election hot paths never await this.
-    await refreshStorePeerIdentities(home);
     // Publish the real runner PID before Windows ownership or machine admission can wait.
-    writeRunnerState(home, spec.job.id, { pid: process.pid, peer: spec.job.name, status: "running", updatedAt: Date.now(), progress: "queued: runner startup admission" });
+    await publishInitialRunnerState(spec, log);
     if (process.platform === "win32") {
       const controller = new AbortController();
       const stop = () => controller.abort();
