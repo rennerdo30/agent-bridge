@@ -68,6 +68,23 @@ describe("messaging subagents", () => {
     expect(agent.calls[0]).toMatchObject({ sessionId: "ses-crashed", message: DEFAULT_FOLLOW_UP });
   });
 
+  it("continues a job that was loaded before its continuation factory existed (startup order)", async () => {
+    const agent = fakeAgent();
+    // Loaded without a continuation, as a job seen through a startup event before restore installed the factory.
+    const early = jobs.start("codex", null, "early task", async () => ok("early answer", "ses-early"), undefined as unknown as Resume);
+    await until(() => bodies().some((b) => b.includes("early answer")));
+    jobs.restore(() => agent.resume);
+    expect(jobs.followUp(early.name, "continue the early one").outcome).toBe("started");
+    await until(() => agent.calls.length === 1);
+    expect(agent.calls[0]).toMatchObject({ sessionId: "ses-early", message: "continue the early one" });
+    // A job that still lacks it after restore (outside the restored window) becomes resumable on follow-up.
+    const late = jobs.start("codex", null, "late task", async () => ok("late answer", "ses-late"), undefined as unknown as Resume);
+    await until(() => bodies().some((b) => b.includes("late answer")));
+    expect(jobs.followUp(late.name, "continue the late one").outcome).toBe("started");
+    await until(() => agent.calls.length === 2);
+    expect(agent.calls[1]).toMatchObject({ sessionId: "ses-late", message: "continue the late one" });
+  });
+
   it("explains when a subagent cannot be continued", async () => {
     expect(jobs.followUp("codex-job-nope", "hi").outcome).toBe("unknown");
     const job = jobs.start("codex", null, "task", async () => {

@@ -745,6 +745,9 @@ export class JobManager {
    */
   restore(makeResume: (agent: AgentKind, args: Record<string, unknown>) => Resume | undefined): void {
     this.restoreResume = makeResume;
+    // Jobs loaded before the factory existed (connected/job events during startup) become resumable too,
+    // not only the restored window below.
+    for (const job of this.history.values()) job.resume ??= makeResume(job.agent, job.args ?? {});
     if (!this.storePath) return;
     const stored = readStore(this.storePath, this.log, true);
     const durableIds = new Set(stored.map(job => job.id));
@@ -1275,6 +1278,9 @@ export class JobManager {
   followUp(ref: string, message: string): { outcome: FollowUpOutcome; job?: Job; approvalPending?: boolean } {
     const job = this.find(ref);
     if (!job) return { outcome: "unknown" };
+    // A job loaded before the continuation factory was installed (startup order) and outside the restored window
+    // still has its session: make it resumable here instead of reporting that it has none.
+    if (!job.resume && job.sessionId && this.restoreResume) job.resume = this.restoreResume(job.agent, job.args ?? {});
     if (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name && job.owner === this.node.name) {
       this.controlInline(job.name, { type: "message", body: message, cid: randomUUID() });
       return { outcome: "delivered", job };
