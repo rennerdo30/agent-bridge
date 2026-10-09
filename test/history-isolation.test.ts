@@ -330,3 +330,15 @@ it("cleans a terminated worker lease only when its exact owner nonce still match
   releaseExitedHistoryLease(env.db,other);
   expect(existsSync(path)).toBe(false);
 });
+
+it("verifies regardless of how the copy and verification passes cut rows into batches", async () => {
+  const old = legacy();
+  for (let i = 0; i < 300; i++) old.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('batches',0,?,'codex:legacy',1,?,'x')").run(i, Buffer.from(`row ${i}`));
+  const db = target();
+  // During the copy every row takes "100 ms", so copy batches hold one row; verification batches are large.
+  const real = Date.now.bind(Date); let offset = 0, copying = true;
+  vi.spyOn(Date, "now").mockImplementation(() => copying ? real() + (offset += 100) : real());
+  await migrateHistoryStore(env.db, db, () => false, () => false, undefined, false, { onProgress: progress => { if (progress.phase === "verify") copying = false; } });
+  expect(historyReady(db)).toBe(true);
+  expect(normalize(decoded(db, "conversation_records"))).toEqual(legacyRows(old, "conversation_records"));
+});

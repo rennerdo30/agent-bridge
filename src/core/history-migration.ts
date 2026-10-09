@@ -29,7 +29,12 @@ function digestRows(rows: Row[], names: readonly string[]): string {
   }
   return hash.digest("hex");
 }
-const chain = (previous: string, chunk: string) => createHash("sha256").update(previous).update(chunk).digest("hex");
+/** Chained per row, so the result does not depend on how a pass cut the rows into batches. */
+function chainRows(previous: string, rows: Row[], names: readonly string[]): string {
+  let hash = previous;
+  for (const row of rows) hash = createHash("sha256").update(hash).update(digestRows([row], names)).digest("hex");
+  return hash;
+}
 function rowBytes(row: Row): number { return Object.values(row).reduce<number>((n, v) => n + (v instanceof Uint8Array ? v.byteLength : typeof v === "string" ? Buffer.byteLength(v) : 8), 0); }
 
 /** Legacy row → v2 row. Lossless: anything that cannot be reproduced exactly is stored as-is. */
@@ -196,7 +201,7 @@ export async function resumableHistoryMigration(bridge: string, target: Database
           }
           const copied = targetRange(name, Number(rows[0]!.__rowid), Number(rows.at(-1)!.__rowid), rows.length).map(row => decodeHistoryRow(name, row));
           if (copied.length !== rows.length || digestRows(copied, digestNames) !== expected) throw failure(`${name} rows after ${current.after_rowid ?? 0}`);
-          target.prepare("UPDATE history_copy_state SET after_rowid=?,copied_rows=copied_rows+?,copy_sha256=? WHERE table_name=?").run(Number(rows.at(-1)!.__rowid), rows.length, chain(current.copy_sha256, expected), name);
+          target.prepare("UPDATE history_copy_state SET after_rowid=?,copied_rows=copied_rows+?,copy_sha256=? WHERE table_name=?").run(Number(rows.at(-1)!.__rowid), rows.length, chainRows(current.copy_sha256, rows, digestNames), name);
           target.exec("COMMIT");
         } catch (err) { target.exec("ROLLBACK"); throw err; }
         pace(bytes * 2, since); current = table(name)!; emit({ phase: "copy" });
@@ -218,7 +223,7 @@ export async function resumableHistoryMigration(bridge: string, target: Database
         const expected = digestRows(rows, digestNames);
         const copied = targetRange(name, Number(rows[0]!.__rowid), Number(rows.at(-1)!.__rowid), rows.length).map(row => decodeHistoryRow(name, row));
         if (copied.length !== rows.length || digestRows(copied, digestNames) !== expected) throw failure(`${name} verification after ${current.verify_after ?? 0}`);
-        target.prepare("UPDATE history_copy_state SET verify_after=?,verified_rows=verified_rows+?,verify_sha256=? WHERE table_name=?").run(Number(rows.at(-1)!.__rowid), rows.length, chain(current.verify_sha256, expected), name);
+        target.prepare("UPDATE history_copy_state SET verify_after=?,verified_rows=verified_rows+?,verify_sha256=? WHERE table_name=?").run(Number(rows.at(-1)!.__rowid), rows.length, chainRows(current.verify_sha256, rows, digestNames), name);
         pace(bytes * 2, since); current = table(name)!; emit({ phase: "verify" });
       }
       // An empty table still gets a stable digest (of no rows).
