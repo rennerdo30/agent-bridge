@@ -136,6 +136,7 @@ export class Broker {
   private pendingJobMailRoute: Promise<void> | null = null;
   private pendingJobMailRouteAgain = false;
   private pendingJobMailRetry: NodeJS.Timeout | null = null;
+  private jobMailRerouteTimer: NodeJS.Timeout | null = null;
   private closing = false;
   private requestTurn: Promise<void> = Promise.resolve();
   private network: NetworkService | null = null;
@@ -285,16 +286,21 @@ export class Broker {
       },
       inlineJobReport: async (c, m) => {
         const peer = this.requirePeer(c);
+        let fallback = false;
         await this.store.retryWrite(() => {
           const job = this.storedJobs().find((j) => `job:${j.id}` === m.from?.id);
           if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
           const recipient = this.jobRecipient(job);
+          fallback = recipient !== primaryFor(job);
           const message = { ...m, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) };
           if (this.store.insertJobDelivery(message)) {
             const target = this.connByName(recipient);
             if (target && !target.peer?.unavailable) this.emit(target, "message", message);
           }
         });
+        // A report parked with a previous owner (the new primary was not live yet, e.g. mid-handoff) moves on by itself
+        // once the primary is live, instead of waiting for an unrelated session to connect.
+        if (fallback) this.scheduleJobMailReroute();
         return { saved: true };
       },
       auth: (c, a) => {
@@ -506,6 +512,7 @@ export class Broker {
     this.questions?.close(); this.questions = null;
     this.store.stopWrites();
     if (this.pendingJobMailRetry) clearTimeout(this.pendingJobMailRetry);
+    if (this.jobMailRerouteTimer) { clearTimeout(this.jobMailRerouteTimer); this.jobMailRerouteTimer = null; }
     this.pendingJobMailRetry = null;
     await this.historyBackground?.close();
     await this.jobArchiveBackground?.close();
@@ -834,6 +841,18 @@ export class Broker {
       }
     }
     void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
+  }
+
+  /** Rerun job mail routing a few times (250 ms up to 10 s) after a report went to a fallback recipient. */
+  private scheduleJobMailReroute(delays: readonly number[] = [250, 1_000, 3_000, 10_000]): void {
+    if (this.closing || this.jobMailRerouteTimer || !delays.length) return;
+    this.jobMailRerouteTimer = setTimeout(() => {
+      this.jobMailRerouteTimer = null;
+      if (this.closing) return;
+      void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }))
+        .finally(() => this.scheduleJobMailReroute(delays.slice(1)));
+    }, delays[0]);
+    this.jobMailRerouteTimer.unref();
   }
 
   routePendingJobMail(): Promise<void> {

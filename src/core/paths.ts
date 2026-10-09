@@ -54,7 +54,8 @@ export function resolvePipePath(home: string, env: NodeJS.ProcessEnv = process.e
  * the session token on connect or replace the endpoint. Endpoints anywhere else are left untouched.
  */
 export function ensurePrivateSocketDirectory(pipePath: string, platform: NodeJS.Platform = process.platform): void {
-  if (platform === "win32") return;
+  // Native socket endpoints such as { host, port } have no directory to secure.
+  if (platform === "win32" || typeof pipePath !== "string") return;
   const uid = process.getuid?.();
   const dir = shortSocketDirectory(uid);
   if (posix.dirname(pipePath) !== dir) return;

@@ -60,7 +60,7 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-5RINX7BT.mjs";
+} from "./chunks/chunk-WRQA7KQ4.mjs";
 import {
   codexAppServerCall,
   describeModels,
@@ -88,7 +88,7 @@ import {
   DASHBOARD_JOB_CONVERSATION,
   REMOTE_JOB_POLL_MS,
   remoteSpawnArgsSchema
-} from "./chunks/chunk-APJYU52D.mjs";
+} from "./chunks/chunk-NBNCINBI.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -103,8 +103,8 @@ import {
 import {
   formatHealth,
   probeBrokerHealth
-} from "./chunks/chunk-2VLIQSFC.mjs";
-import "./chunks/chunk-FXE3YU37.mjs";
+} from "./chunks/chunk-EH5AI3KU.mjs";
+import "./chunks/chunk-QFQU7TGT.mjs";
 import "./chunks/chunk-RQUYBZWF.mjs";
 import {
   conversationPageSchema
@@ -119,14 +119,14 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-GZQX7MI4.mjs";
+} from "./chunks/chunk-AYM5B5H6.mjs";
 import "./chunks/chunk-Q3G4DMR2.mjs";
 import "./chunks/chunk-6RB6C67Z.mjs";
 import {
   antigravityAncestor,
   antigravityHookOutput,
   inspectClaudeLaunch
-} from "./chunks/chunk-5WTWITP2.mjs";
+} from "./chunks/chunk-ZBSNRRFM.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   ACCESS_LEVELS,
@@ -166,7 +166,7 @@ import {
   resolveDbPath,
   resolveHome,
   resolvePipePath
-} from "./chunks/chunk-IPUCLIQI.mjs";
+} from "./chunks/chunk-GVOVE4SF.mjs";
 import "./chunks/chunk-JTZGNEMM.mjs";
 import {
   MAX_JOB_SEND_TARGETS,
@@ -2785,7 +2785,7 @@ async function startServer(argv = process.argv.slice(2)) {
   const ensureDashboard = async (force) => {
     try {
       if (!force && !cfg.dashboard) return null;
-      dashboard ??= import("./chunks/dashboard-GA3O2PGR.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
+      dashboard ??= import("./chunks/dashboard-K7DFJUZ5.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
       return await (await dashboard).ensure();
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
