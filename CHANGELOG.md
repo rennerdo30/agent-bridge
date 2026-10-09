@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.30.7
+
+- A session adopts the jobs it started under a "-N" stand-in name during a reload again. Since 0.30.4 the stand-in's presence lives in the metadata database, which the check that the stand-in had exited did not read, so those jobs stayed with the dead stand-in: missing from the session's job list, refused by `message_subagent` as unknown, and their results stuck in its mailbox. Presence written before the current boot also counts as proof that the stand-in exited; a stand-in that may still be alive is never adopted.
+- A handed-off subagent turn that ran inside the old session (an `ask_*` run, or a job without a job runner) no longer stays "running" forever after that session crashed or the PC rebooted. Once the broker no longer lists the executing session and its process is proven gone, the turn is marked interrupted and can be resumed with its session. It no longer counts against the subagent limit.
+- `message_subagent` no longer loses a message to such a turn whose executing session is offline. The message is queued and sent with the resume, or after the running turn ends, and is reported as queued instead of delivered. `cancel_subagent` on such a turn settles it as cancelled once the executing session is proven gone.
+
 ## 0.30.6
 
 - A worktree lease whose holder cannot be verified (legacy or unidentified owner) and whose last heartbeat predates the current boot is archived with its reason and no longer blocks resuming its job after a reboot. Live and recent unverifiable holders are still refused; the legacy lease directory stays in place.
