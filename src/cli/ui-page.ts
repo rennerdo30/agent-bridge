@@ -2580,6 +2580,7 @@ function questionCard(q) {
       '<div class="ap-actions"><input class="ap-why" data-q-text="'+esc(q.id)+'" maxlength="8000" placeholder="Your answer, or a dismissal reason" aria-label="Free-text answer"><button class="ghost" data-q-send="'+esc(q.id)+'"'+disabled+'>Send answer</button></div>'+
       '<div class="ap-actions"><label class="toggle"><input type="checkbox" data-q-pin="'+esc(q.id)+'"><span class="track" aria-hidden="true"></span>This is a lasting rule · pin as decision</label><button class="ghost" data-q-scope="'+esc(q.id)+'">'+(apDrafts.get("scope:"+q.id) === "all" ? "Scope: all projects" : "Scope: this project")+'</button><button class="ghost" data-q-cancel="'+esc(q.id)+'"'+disabled+'>Dismiss with reason</button></div>' :
       q.answer ? '<p class="q-context"><b>Answer:</b> '+esc(q.answer.text)+'</p><p class="small muted">'+esc(q.answer.author.name)+' · '+esc(new Date(q.answer.at).toLocaleString())+' · '+esc(q.answer.source)+(q.answer.decisionId ? ' · Decision '+esc(q.answer.decisionId) : '')+'</p>'+q.deliveries.map(d => '<p class="small">'+esc(d.recipient)+': '+esc(d.readAt ? "read "+new Date(d.readAt).toLocaleString() : d.state)+'. '+esc(d.detail)+'</p>').join("")+(q.mirror ? '<p class="small muted">Pair Desk mirror: '+esc(q.mirror.state+(q.mirror.detail ? " · "+q.mirror.detail : ""))+'</p>' : '') : '<p>'+esc(q.dismissal && q.dismissal.reason || '')+'</p>')+
+    (busy ? '<p class="small muted" role="status">Saving your answer…</p>' : '')+
     '<div class="small muted">'+esc(q.id)+' · An answer is not tool permission or implementation acceptance.</div></article>';
 }
 function focusQuestion() {
@@ -2588,6 +2589,7 @@ function focusQuestion() {
   const card=document.getElementById("question-"+id); if (!card) return;
   card.classList.add("focused"); card.scrollIntoView({block:"center"}); const first=card.querySelector("button,input"); if (first) first.focus(); qFocused=id;
 }
+const ANSWER_TIMEOUT_MS = 15000;
 async function answerQuestion(id, option, dismiss) {
   const q=approvals.find(a => a.id === id); if (!q || apBusy.has(id)) return;
   const text=apDrafts.get("q:"+id) || "";
@@ -2596,18 +2598,22 @@ async function answerQuestion(id, option, dismiss) {
   if (!dismiss && apDrafts.get("pin:"+id)) payload.pin={topic:q.topic,scope:apDrafts.get("scope:"+id) === "all" ? "all" : {project:q.project}};
   apBusy.add(id); renderApprovals();
   try {
-    const r=await fetch("/api/questions/"+encodeURIComponent(id)+(dismiss ? "/dismiss" : ""),{method:"POST",headers:{"content-type":"application/json","x-agent-bridge":"1"},body:JSON.stringify(payload)});
-    const data=await r.json(); apResults.set(id,{kind:r.ok ? "ok" : "err",text:r.ok ? (dismiss ? "Dismissed: " : "Answer saved: ")+q.title : data.error || "Answer failed",at:Date.now()});
+    // A slow broker must never freeze the card: bound the wait and say what is known.
+    const r=await fetch("/api/questions/"+encodeURIComponent(id)+(dismiss ? "/dismiss" : ""),{method:"POST",headers:{"content-type":"application/json","x-agent-bridge":"1"},body:JSON.stringify(payload),signal:AbortSignal.timeout(ANSWER_TIMEOUT_MS)});
+    const data=await r.json().catch(() => ({})); apResults.set(id,{kind:r.ok ? "ok" : "err",text:r.ok ? (dismiss ? "Dismissed: " : "Answer saved: ")+q.title : data.error || "Answer failed",at:Date.now()});
     if (r.ok) apDrafts.delete("q:"+id);
-  } catch (error) { apResults.set(id,{kind:"err",text:"Answer unconfirmed. Refresh before retrying: "+error.message,at:Date.now()}); }
-  finally { apBusy.delete(id); await loadApprovals(); renderApprovals(); }
+  } catch (error) {
+    const timedOut = error && (error.name === "TimeoutError" || error.name === "AbortError");
+    apResults.set(id,{kind:"err",text:timedOut ? "No confirmation yet. The bridge is busy; your answer may still be saved. Check this question again before answering twice." : "Answer unconfirmed. Refresh before retrying: "+error.message,at:Date.now()});
+  }
+  finally { apBusy.delete(id); renderApprovals(); void loadApprovals().then(renderApprovals); }
 }
 
 async function loadApprovals() {
   if (apLoading) return;
   apLoading = true;
   try {
-    const r = await fetch("/api/approvals");
+    const r = await fetch("/api/approvals", { signal: AbortSignal.timeout(ANSWER_TIMEOUT_MS) });
     if (r.ok) {
       const data = await r.json(); approvals = data.approvals || []; questionHistory = data.questions || [];
       const focusId=new URLSearchParams(location.hash.split("?")[1] || "").get("question");
