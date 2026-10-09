@@ -133,7 +133,8 @@ function retainFailedAttempt(target: DatabaseSync): void {
       if (!Number(target.prepare(`SELECT count(*) n FROM ${quote(name)}`).get()!.n)) continue;
       target.exec(`CREATE TABLE ${quote(`retained_${stamp}_${name}`)} AS SELECT rowid AS retained_rowid,* FROM ${quote(name)}`);
       if (name === "conversation_records") target.exec("DROP TRIGGER IF EXISTS conversation_records_no_delete");
-      target.exec(`DELETE FROM ${quote(name)}`);
+      if (name === "history_documents") clearHistoryDocuments(target);
+      else target.exec(`DELETE FROM ${quote(name)}`);
     }
     target.exec(`CREATE TRIGGER IF NOT EXISTS conversation_records_no_delete BEFORE DELETE ON conversation_records BEGIN
  SELECT RAISE(ABORT,'conversation records are append-only'); END`);
@@ -193,4 +194,16 @@ export function copyLegacyConversationTail(source: DatabaseSync, target: Databas
     if (Date.now() >= deadline) break;
   }
   return work;
+}
+
+/** Empty history_documents without the per-row FTS delete trigger: in v2 that trigger decodes every body
+ * through a JavaScript function, and node:sqlite keeps those results alive until the statement ends, which
+ * exhausts the heap on a real history. FTS5's own delete-all clears the index instead. Call inside a transaction. */
+export function clearHistoryDocuments(db: DatabaseSync): void {
+  const trigger = db.prepare("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='history_delete'").get();
+  if (!trigger) { db.exec("DELETE FROM history_documents"); return; }
+  db.exec("DROP TRIGGER history_delete");
+  db.exec("DELETE FROM history_documents");
+  db.exec("INSERT INTO history_fts(history_fts) VALUES('delete-all')");
+  db.exec(String(trigger.sql));
 }

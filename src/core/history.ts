@@ -1,6 +1,6 @@
 import { conversationProject } from "./project-store.js";
 import { cleanupSavepoint } from "./savepoint.js";
-import { historyReadPath, historyReady, openHistoryReader, HISTORY_BATCH_MS } from "./history-store.js";
+import { clearHistoryDocuments, historyReadPath, historyReady, openHistoryReader, HISTORY_BATCH_MS } from "./history-store.js";
 import { decodeText, encodeText, registerHistoryFunctions } from "./history-codec.js";
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, fstatSync, openSync, opendirSync, readSync, statSync, type Dir } from "node:fs";
@@ -414,7 +414,7 @@ export class HistoryIndex {
 
   reset(): void {
     this.db.exec("BEGIN IMMEDIATE");
-    try { this.db.exec("DELETE FROM history_documents; DELETE FROM history_tags; DELETE FROM history_cursors WHERE source<>'legacy-record-tail'; DELETE FROM history_files;"); this.db.exec("COMMIT"); }
+    try { clearHistoryDocuments(this.db); this.db.exec("DELETE FROM history_tags; DELETE FROM history_cursors WHERE source<>'legacy-record-tail'; DELETE FROM history_files;"); this.db.exec("COMMIT"); }
     catch (err) { this.db.exec("ROLLBACK"); throw err; }
     this.close(); this.queue = []; this.lastDiscovery = 0; this.opencodeComplete = false; this.idleFiles = 0;
   }

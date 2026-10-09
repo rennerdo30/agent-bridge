@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { basename, join, relative } from "node:path";
-import { existingMetadataDb, metadataDb, physicalMetadataPath } from "./metadata-db.js";
+import { metadataDb, physicalMetadataPath } from "./metadata-db.js";
+import { DatabaseSync } from "node:sqlite";
 import { retainMetadataFiles } from "./metadata-import.js";
 import { finishedRunLine } from "./run-archive.js";
 import { readRunLogPreview } from "./run-log-preview.js";
@@ -45,9 +46,16 @@ export function indexedFinishedRuns(home: string): Record<string,unknown>[] {
 /** Packed finished runs as run records for the list readers: one indexed query, no directory scan.
  * file points at the retained original in cold storage (moved, never deleted). */
 export function packedRunRecords(home: string, names?: Set<string>): { name: string; file: string; updatedAt: number; size: number; signature: string; archived: true; meta: Record<string, unknown> }[] {
- const db = existingMetadataDb(home);
- if (!db) return [];
- return db.prepare("SELECT key,value FROM bridge_metadata WHERE domain='finished-runs'").all().flatMap(row => {
+ // A short-lived read-only connection: polling readers must not keep bridge.db open (Windows file locks).
+ const file = join(home, "bridge.db");
+ if (!existsSync(file)) return [];
+ let rows: Record<string, unknown>[];
+ const db = new DatabaseSync(file, { readOnly: true, timeout: 1000 });
+ try {
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_metadata'").get()) return [];
+  rows = db.prepare("SELECT key,value FROM bridge_metadata WHERE domain='finished-runs'").all();
+ } finally { db.close(); }
+ return rows.flatMap(row => {
   if (names && !names.has(String(row.key))) return [];
   try {
    const v = JSON.parse(String(row.value)) as Record<string, unknown>;
