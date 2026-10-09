@@ -88,7 +88,12 @@ async function stopOwnedRunner(id: string): Promise<void> {
   const state = readRunnerState(env.home, id);
   if (!state?.pid) return;
   if (!fixtureProcessExists(state.pid, `Refusing unverified fixture runner ${state.pid}; retained at ${env.home}`)) return;
-  const pid = state.pid, presence = storePresence(pid);
+  const pid = state.pid;
+  // A runner still in Windows job-ownership setup has not recorded its store presence yet; wait for it (or its exit)
+  // instead of refusing, so a slow-starting runner is still verified and stopped.
+  await until(() => storePresence(pid) !== null || !pidAlive(pid), 30_000).catch(() => {});
+  if (!pidAlive(pid)) return;
+  const presence = storePresence(pid);
   if (state.peer !== `claude-job-${id}` || presence?.pid !== pid || presence?.name !== state.peer ||
     typeof presence.processIdentity !== "string" || (process.platform === "win32" && !/^\d+$/.test(presence.processIdentity)))
     throw new Error(`Refusing unidentified fixture runner ${pid}; retained at ${env.home}`);
