@@ -3,7 +3,7 @@ import { existsSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { metadataFileLease } from "./metadata-file-lease.js";
-import { liveStorePeers } from "./store-compatibility.js";
+import { liveStorePeers, metadataRelease } from "./store-compatibility.js";
 import { storageLease } from "./storage-lock.js";
 import { snapshotMetadataTables } from "./metadata-snapshot.js";
 
@@ -66,7 +66,7 @@ export function existingMetadataDb(home: string): DatabaseSync | undefined {
 
 /** Old readers must finish naturally before their file-backed domains change authority. */
 export function assertMetadataAdmission(home: string): void {
- const blockers = liveStorePeers(home).filter(peer => !/^0\.30\.(?:[4-9]|[1-9]\d+)$/.test(peer.version));
+ const blockers = liveStorePeers(home).filter(peer => !metadataRelease(peer.version));
  if (blockers.length) throw Object.assign(new Error(`Waiting for metadata upgrade: ${blockers.map(p => `${p.name} (v${p.version}, pid ${p.pid})`).join(", ")}. Existing readers keep their files.`), { code: "STORE_UPGRADE_DEFERRED" });
 }
 

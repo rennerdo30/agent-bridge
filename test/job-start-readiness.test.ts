@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { closeMetadataDbs } from "../src/core/metadata-db.js";
+import { readPendingRunnerSpec } from "../src/core/runner-store.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
 import { APP_VERSION } from "../src/core/constants.js";
@@ -23,7 +25,7 @@ beforeEach(() => {
   spawn.mockReset().mockImplementation(() => Object.assign(new EventEmitter(), { stdout: new EventEmitter(), pid: 123, unref() {} }));
   vi.spyOn(identity, "readProcessIdentities").mockImplementation(async pids => new Map(pids.map(pid => [pid, `generation-${pid}`])));
 });
-afterEach(() => { vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
+afterEach(() => { closeMetadataDbs(); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
 function peer(json = 4) {
   const pid = ++nextPid;
   mkdirSync(join(home, "storage-capabilities"), { recursive: true });
@@ -57,7 +59,7 @@ it("warms a cold second runner and an expired cache before writing each detached
   expect(await host.startAsync(job("third"), args())).not.toBeNull();
   expect(identity.readProcessIdentities).toHaveBeenCalledWith([first.pid, second.pid]);
   expect(spawn).toHaveBeenCalledTimes(3);
-  for (const id of ["first", "second", "third"]) expect(JSON.parse(readFileSync(join(home, "jobs", `${id}.spec.json`), "utf8"))).toMatchObject({ version: 4, job: { id } });
+  for (const id of ["first", "second", "third"]) expect(readPendingRunnerSpec(home, id)).toMatchObject({ version: 4, job: { id } });
 });
 
 it("an awaited refresh covers a PID added while the first batch is in flight", async () => {

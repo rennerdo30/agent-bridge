@@ -15,6 +15,8 @@ import { CONTROL_CONVERSATION_PREFIX } from "../src/mcp/job-host.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { parentFromEnv } from "../src/core/parent-link.js";
 import { readRunnerState } from "../src/mcp/job-host.js";
+import { runnerStateIds } from "../src/core/runner-store.js";
+import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import { readStore } from "../src/mcp/jobs.js";
 import { RootConcurrency } from "../src/core/root-concurrency.js";
 import { startUi } from "../src/cli/ui.js";
@@ -130,14 +132,13 @@ afterEach(async context => {
   ui = undefined;
   // Let every fake finish, and stop runners a test left behind.
   for (const r of releases.splice(0)) writeFileSync(r, "");
-  const runners = join(home, "jobs");
-  const pids = existsSync(runners) ? readdirSync(runners)
-    .filter((file) => file.endsWith(".json") && !file.endsWith(".spec.json"))
-    .map((file) => readRunnerState(home, file.slice(0, -5))?.pid).filter((pid): pid is number => Boolean(pid)) : [];
+  // Runner states are rows (AB-208); files only from older runners.
+  const pids = runnerStateIds(home).map((id) => readRunnerState(home, id)?.pid).filter((pid): pid is number => Boolean(pid));
   for (const pid of pids) if (pidAlive(pid)) killPid(pid);
   await waitFor(() => pids.every((pid) => !pidAlive(pid)));
   for (const s of sessions.splice(0)) await stopSession(s).catch(() => {});
   for (const n of nodes.splice(0)) await n.stop().catch(() => {});
+  closeMetadataDbs();
   if (!failed) await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
 });
 

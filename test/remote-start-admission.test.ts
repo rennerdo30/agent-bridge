@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import * as delegate from "../src/core/delegate.js";
 import * as identity from "../src/core/process-identity.js";
 import * as worktree from "../src/core/worktree.js";
@@ -29,7 +30,7 @@ beforeEach(() => {
   control = vi.fn(async () => {});
   remote = new RemoteJobs({ registerExtension() {} } as any, home, nullLogger, control);
 });
-afterEach(() => { remote.close(); vi.useRealTimers(); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
+afterEach(() => { closeMetadataDbs(); remote.close(); vi.useRealTimers(); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
 function request(id: string, prompt = "retained prompt") { return { op: "spawn", job: id, target: "codex", args: { cwd: home, prompt, title: "Queued" } } as const; }
 function handle(request: unknown) { return (remote as any).handle(pair, peer, request) as Promise<any>; }
 function neverQuery() {

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
+import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { runJobRunner } from "../src/mcp/job-runner.js";
 import { runnerStatePath, type RunnerSpec } from "../src/mcp/job-host.js";
@@ -24,7 +25,7 @@ vi.mock("../src/core/node.js", async () => {
   } };
 });
 let home: string | undefined;
-afterEach(() => { vi.useRealTimers(); if (home) rmSync(home, { recursive: true, force: true }); home = undefined; vi.resetAllMocks(); mocks.order.length = 0; });
+afterEach(() => { closeMetadataDbs(); vi.useRealTimers(); if (home) rmSync(home, { recursive: true, force: true }); home = undefined; vi.resetAllMocks(); mocks.order.length = 0; });
 function fixture() {
   const root = process.env.AGENT_BRIDGE_TEST_ROOT!; mkdirSync(root, { recursive: true });
   home = mkdtempSync(join(root, "runner-startup-"));

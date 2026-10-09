@@ -14,6 +14,7 @@ import { MessageStore, SQLITE_STORE_VERSION } from "../src/core/store.js";
 import { JobRunners, readRunnerState, runnerStatePath, writeRunnerState } from "../src/mcp/job-host.js";
 import { acquireLock, JobManager, readStore } from "../src/mcp/jobs.js";
 import { archiveJobs } from "../src/core/job-archive.js";
+import { closeMetadataDbs } from "../src/core/metadata-db.js";
 
 const V1_SCHEMA = `
 CREATE TABLE messages (
@@ -36,6 +37,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  closeMetadataDbs();
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -239,8 +241,11 @@ describe("JSON store upgrades", () => {
     const path = runnerStatePath(home, "old");
     mkdirSync(join(home, "jobs"));
     writeFileSync(path, JSON.stringify({ pid: 1, peer: "p", status: "running", updatedAt: 1, future: { keep: true } }));
+    const before = readFileSync(path);
     writeRunnerState(home, "old", { pid: 1, peer: "p", status: "done", updatedAt: 2 });
-    expect(json(path)).toMatchObject({ version: JSON_STORE_VERSION, status: "done", future: { keep: true } });
+    // AB-208: the state is a row now; the older file stays byte-identical until its verified import.
+    expect(readRunnerState(home, "old")).toMatchObject({ version: JSON_STORE_VERSION, status: "done", future: { keep: true } });
+    expect(readFileSync(path)).toEqual(before);
     const feed = startRunFeed({ home, name: "meta", header: "test" });
     const metaPath = runMetaPath(feed.logPath);
     writeFileSync(metaPath, JSON.stringify({ version: JSON_STORE_VERSION, future: "keep" }));
@@ -331,7 +336,9 @@ describe("retention archives", () => {
     vi.stubEnv("AGENT_BRIDGE_RUNNER_KEEP_MS", "1");
     const dir = join(home, "jobs");
     for (const [id, status] of [["old", "done"], ["live", "running"]] as const) {
-      writeRunnerState(home, id, { pid: 1, peer: "p", status, updatedAt: 1 });
+      // Files of an older runner (current ones write rows).
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(runnerStatePath(home, id), JSON.stringify({ version: JSON_STORE_VERSION, pid: 1, peer: "p", status, updatedAt: 1 }));
       writeFileSync(join(dir, `${id}.spec.json`), JSON.stringify({ original: id }));
       utimesSync(runnerStatePath(home, id), OLD_TIME, OLD_TIME);
       utimesSync(join(dir, `${id}.spec.json`), OLD_TIME, OLD_TIME);

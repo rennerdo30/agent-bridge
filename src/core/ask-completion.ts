@@ -4,6 +4,7 @@ import { metadataFileLease } from "./metadata-file-lease.js";
 import { archiveJobs } from "./job-archive.js";
 import { assertWritableStore, backupPath, isRecord, readJsonStore, writeJsonStore } from "./json-store.js";
 import { readHistoryJson } from "./run-history.js";
+import { readRunnerStateRecord } from "./runner-store.js";
 import type { DatabaseSync } from "node:sqlite";
 import { readFile } from "node:fs/promises";
 
@@ -94,7 +95,7 @@ export function reconcileAskCompletions(path: string): number {
       if (!isRecord(job) || typeof job.id !== "string" || !/^[\w-]+$/.test(job.id) ||
           typeof job.name !== "string" || !job.name.includes("-ask-") || job.status !== "running" || typeof job.startedAt !== "number") return job;
       const receipt = readHistoryJson(join(dirname(path), "ask-completions", `${job.id}-${job.startedAt}.json`));
-      const state = readHistoryJson(join(dirname(path), "jobs", `${job.id}.json`));
+      const state = readRunnerStateRecord(dirname(path), job.id);
       const final = isRecord(receipt) && receipt.receiptVersion === 1 && receipt.name === job.name && receipt.startedAt === job.startedAt ? receipt
         : isRecord(state) && state.startedAt === job.startedAt ? state : undefined;
       if (!final || !["done", "failed", "cancelled"].includes(String(final.status)) ||

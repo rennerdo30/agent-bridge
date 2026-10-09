@@ -9,7 +9,9 @@ import type { BridgeNode } from "../core/node.js";
 import type { AgentKind, CodingAgent } from "../core/protocol.js";
 import type { DelegateArgs } from "./delegate-run.js";
 import type { Job, JobHost, JobHostInfo, RunnerControl, RunnerState } from "./jobs.js";
-import { archiveFile, assertWritableStore, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "../core/json-store.js";
+import { archiveFile, assertWritableStore, readJsonStore, retentionLimit } from "../core/json-store.js";
+import { existingMetadataDb } from "../core/metadata-db.js";
+import { legacyRunnerPeers, publishRunnerSpec, readRunnerStateRecord, runnerFilesImported, runnerSpecPath, runnerStatePath as storeStatePath, writeRunnerStateRecord } from "../core/runner-store.js";
 import { RemoteJobHost } from "./remote-job-host.js";
 import { jobEnvironment } from "../core/job-environment.js";
 import { setTimeout as delay } from "node:timers/promises";
@@ -58,29 +60,28 @@ export interface RunnerSpec {
 }
 
 export function runnerStatePath(home: string, id: string): string {
-  return join(home, RUNNERS_DIR_NAME, `${id}.json`);
+  return storeStatePath(home, id);
 }
 
 function specPath(home: string, id: string): string {
-  return join(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
+  return runnerSpecPath(home, id);
 }
 
+/** Rows in bridge.db (AB-208); the per-job file only while older processes or unimported files remain. */
 export function readRunnerState(home: string, id: string): RunnerState | null {
   try {
-    const s = readJsonStore(runnerStatePath(home, id), undefined, (value) => isRecord(value) && typeof value.pid === "number" && typeof value.status === "string") as RunnerState | null;
+    const s = readRunnerStateRecord(home, id) as RunnerState | null;
     return s && typeof s.pid === "number" && typeof s.status === "string" ? s : null;
   } catch {
     return null;
   }
 }
 
-/** Atomic, so the server never reads half a file. */
+/** Atomic (one SQLite transaction), so the server never reads half a state. */
 export function writeRunnerState(home: string, id: string, state: RunnerState): void {
-  const path = runnerStatePath(home, id);
-  const previous = readJsonStore(path);
   // The runner's own creation identity: its PID alone may be reused once it is gone (AB-236).
   const identity = state.identity ?? (state.pid === process.pid ? processIdentity(process.pid) : undefined);
-  writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...state, ...(identity ? { identity } : {}) }), previous);
+  writeRunnerStateRecord(home, id, { ...state, ...(identity ? { identity } : {}) });
 }
 
 /** How long a probed identity of a live runner PID is reused by the frequent liveness checks. */
@@ -116,6 +117,8 @@ export class JobRunners implements JobHost {
       const dir = join(home, RUNNERS_DIR_NAME);
       const keepMs = retentionLimit("AGENT_BRIDGE_RUNNER_KEEP_MS", KEEP_FILES_MS);
       if (!keepMs) return;
+      // Imported runner files live in rows and cold storage; only older processes still write files here.
+      if (existingMetadataDb(home) && runnerFilesImported(home) && !legacyRunnerPeers(home)) return;
       for (const f of readdirSync(dir)) {
         const path = join(dir, f);
         if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync(path).mtimeMs <= keepMs) continue;
@@ -162,7 +165,6 @@ export class JobRunners implements JobHost {
       // Check before archiving a previous turn. Unknown readers wait in the
       // asynchronous admission path, leaving every existing file in place.
       assertStoreUpgrade(this.home, "json", 0, JSON_STORE_VERSION);
-      archiveFile(statePath);
       const full: RunnerSpec = {
         ...spec,
         home: this.home,
@@ -186,9 +188,8 @@ export class JobRunners implements JobHost {
           allowedServers: [...(job.allowedServers ?? [])],
         },
       };
-      archiveFile(file);
-      writeJsonStore(file, { ...full }, null);
-      const args = [this.cli, "job-runner", file];
+      // Archives the previous turn's state and spec (rows, and files of older processes), then publishes this one.
+      const args = [this.cli, "job-runner", publishRunnerSpec(this.home, job.id, { ...full })];
       const info: JobHostInfo = { pid: null, peer: job.name, startedAt: Date.now() };
       let pid: number | null = null;
       if (process.platform === "win32") {

@@ -1,14 +1,13 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { isRecord } from "./json-store.js";
 import { AGENT_KINDS } from "./protocol.js";
-import { findHistoryJob, historyJobsSteps, readHistoryJson, readRunLogs, readRunLogsResponsive } from "./run-history.js";
+import { findHistoryJob, historyJobsSteps, readRunLogs, readRunLogsResponsive } from "./run-history.js";
 import { cloneJson } from "./file-cache.js";
 import { drainScanResponsive } from "./responsive-scan.js";
-import { safeFile } from "./transcripts/common.js";
 import { pidAlive } from "./delegate.js";
 import type { Job } from "../mcp/jobs.js";
 import { readRecoveryHeader, type RecoveryHeader } from "./job-recovery-feed.js";
+import { readPendingRunnerSpec, readRunnerStateRecord } from "./runner-store.js";
 type StoredJob = Omit<Job, "controller" | "progress" | "queue" | "resume">;
 function runStart(run: ReturnType<typeof readRunLogs>[number]): number {
   if (run.meta.jobStartedAt !== undefined) return run.meta.jobStartedAt;
@@ -72,8 +71,8 @@ function recoveryId(ref: string): string | undefined {
   return /^[\w-]+$/.test(id) ? id : undefined;
 }
 function recoverySpec(home: string, id: string) {
-  const file = safeFile(home, join(home, "jobs", `${id}.spec.json`));
-  const spec = file ? readHistoryJson(file) : null;
+  // Rows (AB-208), or the file of an older server while it is not imported.
+  const spec = readPendingRunnerSpec(home, id);
   const launch = isRecord(spec) && isRecord(spec.job) ? spec.job : undefined;
   return { spec, launch };
 }
@@ -99,8 +98,7 @@ function needsHeader({ run, base, meta }: Recovery): boolean {
   return Boolean(run && (typeof base.prompt !== "string" || typeof base.owner !== "string" && !meta?.by));
 }
 function finishRecovery(home: string, { id, history, spec, launch, run, meta, name, agent, base }: Recovery, { prompt, header }: RecoveryHeader): StoredJob | undefined {
-  const stateFile = safeFile(home, join(home, "jobs", `${id}.json`));
-  const rawState = stateFile ? readHistoryJson(stateFile) : null;
+  const rawState = readRunnerStateRecord(home, id);
   const state = isRecord(rawState) && typeof rawState.pid === "number" ? rawState : undefined;
   const startedAt = typeof base.startedAt === "number" ? base.startedAt : run ? runStart(run) : 0;
   // Do not mistake a previous runner's final state for a newer continuation.
