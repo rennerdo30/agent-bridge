@@ -57,6 +57,9 @@ function metadataSnapshot(db: DatabaseSync, path: string, tables: string[], vers
 
 /** Every change is versioned. Keep the writer lock through recovery from the pre-migration backup. */
 export function migrateSqlite(db: DatabaseSync, file: string, existed: boolean, target: number, migrations: readonly SqliteMigration[], log: Logger): void {
+  // Already current: nothing to migrate, so never block the event loop on another process's migration lock (AB-223).
+  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+  if (Number(db.prepare("PRAGMA user_version").get()!.user_version) === target) return;
   const release = migrationLock(file);
   try { migrateLocked(db, file, existed, target, migrations, log); } finally { release(); }
 }

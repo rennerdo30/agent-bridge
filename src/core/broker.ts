@@ -400,29 +400,75 @@ export class Broker {
     return new Promise((resolve, reject) => {
       const server = createServer((socket) => this.accept(socket));
       const onError = (err: Error) => {
-        server.removeListener("listening", onListening);
+        server.removeListener("listening", listening);
         reject(err);
+      };
+      /** Optional services: a failure is logged and the broker keeps serving without them (AB-223, AB-239). */
+      const optional = (what: string, step: () => void) => {
+        try { step(); } catch (err) { this.log.warn(`broker startup: ${what} failed; continuing without it`, { err: String(err) }); }
       };
       const onListening = async () => {
         server.removeListener("error", onError);
         server.on("error", (err) => this.log.error("broker server error", { err }));
         this.server = server;
-        if (this.jobsPath && this.store.file !== ":memory:") this.jobArchiveBackground = new JobArchiveBackground(this.jobsPath, this.log);
-        this.store.startBackups();
+        try {
+          await this.startServices(optional);
+          resolve();
+        } catch (err) {
+          // Never leave a bound, half-started broker behind or an unhandled rejection: release the endpoint and let
+          // election retry. The caller owns (and closes) the store.
+          this.log.error("broker startup failed; releasing the endpoint", { err: String(err) });
+          await this.abortStartup().catch((closeErr) => this.log.warn("broker startup cleanup failed", { err: String(closeErr) }));
+          reject(err);
+        }
+      };
+      const listening = () => { void onListening(); };
+      server.once("error", onError);
+      server.once("listening", listening);
+      server.listen(this.pipePath);
+    });
+  }
+
+  /** Undo a failed listen(): background services, timers and the bound server; the store stays open for its owner. */
+  private async abortStartup(): Promise<void> {
+    this.healthMonitor.close();
+    if (this.purgeTimer) clearInterval(this.purgeTimer);
+    this.purgeTimer = null;
+    this.questions?.close(); this.questions = null;
+    await this.historyBackground?.close().catch(() => {});
+    this.historyBackground = null;
+    await this.jobArchiveBackground?.close().catch(() => {});
+    this.jobArchiveBackground = null;
+    await this.store.closeBackups().catch(() => {});
+    this.remoteDashboard?.close(); this.remoteDashboard = null;
+    this.remoteJobs?.close(); this.remoteJobs = null;
+    await this.network?.close().catch(() => {});
+    this.network = null;
+    for (const c of this.conns) c.socket.destroy();
+    this.conns.clear();
+    const server = this.server;
+    this.server = null;
+    if (server) await new Promise<void>((r) => server.close(() => r()));
+  }
+
+  private async startServices(optional: (what: string, step: () => void) => void): Promise<void> {
+        if (this.jobsPath && this.store.file !== ":memory:") optional("job archive worker", () => { this.jobArchiveBackground = new JobArchiveBackground(this.jobsPath!, this.log); });
+        optional("backups", () => this.store.startBackups());
         this.healthMonitor.start();
-        this.applyHandoffs();
+        optional("handoff replay", () => this.applyHandoffs());
         this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
         this.purgeTimer.unref();
         // Config toggles pause the monitor and later resume its durable cursors.
         // The environment kill switch intentionally disables even the worker.
-        if (this.store.file !== ":memory:" && !["false", "0"].includes(process.env.AGENT_BRIDGE_HISTORY_INGEST ?? "")) {
-          this.historyBackground = new HistoryBackground(this.store.file, this.log);
+        if (this.store.file !== ":memory:" && !["false", "0"].includes(process.env.AGENT_BRIDGE_HISTORY_INGEST ?? "")) optional("history worker", () => {
+          const history = new HistoryBackground(this.store.file, this.log);
+          this.historyBackground = history;
           this.store.historyPeerSink = (peer) => this.historyBackground?.rememberPeer(peer);
-          void this.historyBackground.reconcileAsks().catch(error => this.log.debug("startup ask reconciliation deferred", { error: String(error) }));
-        }
+          void history.reconcileAsks().catch(error => this.log.debug("startup ask reconciliation deferred", { error: String(error) }));
+        });
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
-        if (this.store.file !== ":memory:" && existsSync(join(dirname(this.store.file),QUESTIONS_FILE))) this.ownerQuestions();
+        if (this.store.file !== ":memory:" && existsSync(join(dirname(this.store.file),QUESTIONS_FILE))) optional("owner questions", () => { this.ownerQuestions(); });
         // Another broker may have enabled or changed pairing since this session started.
         if (this.networking) this.networking.config = readNetworkConfig(this.networking.home, this.networking.config);
         if (this.networking?.config.enabled) {
@@ -445,12 +491,6 @@ export class Broker {
             this.log.warn("networking could not start; local broker remains available", { message: (err as Error).message });
           }
         }
-        resolve();
-      };
-      server.once("error", onError);
-      server.once("listening", onListening);
-      server.listen(this.pipePath);
-    });
   }
 
   async close(): Promise<void> {
