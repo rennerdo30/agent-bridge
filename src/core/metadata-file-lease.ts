@@ -137,6 +137,17 @@ export function metadataFileLease(path: string, waitMs = 0, nonBlockingRecovery 
   const deadline = Date.now() + waitMs;
   const pause = new Int32Array(new SharedArrayBuffer(4));
   let staged: Owner | undefined;
+  // The identity probe is a synchronous process query (PowerShell on Windows). A live owner's creation identity
+  // does not change while we wait: probe each owner once per acquisition; `kill(pid, 0)` still notices an exit
+  // on every retry (AB-220).
+  const probed = new Map<string, boolean | undefined>();
+  const blockingAlive = (owner: Owner): boolean | undefined => {
+    try { process.kill(owner.pid, 0); }
+    catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH" ? false : undefined; }
+    const key = `${owner.pid}:${owner.identity}:${owner.file}`;
+    if (!probed.has(key)) probed.set(key, isProcessIdentityAlive(owner.pid, owner.identity));
+    return probed.get(key);
+  };
   try {
     for (;;) {
       let absent = false;
@@ -173,7 +184,7 @@ export function metadataFileLease(path: string, waitMs = 0, nonBlockingRecovery 
         } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
       }
       const owner = readOwner(path, registry);
-      if (owner && (nonBlockingRecovery ? nonBlockingAlive(owner) : isProcessIdentityAlive(owner.pid, owner.identity)) === false) {
+      if (owner && (nonBlockingRecovery ? nonBlockingAlive(owner) : blockingAlive(owner)) === false) {
         try { archiveOwned(path, registry, owner, identity); continue; }
         catch { /* A winning claimant or an inaccessible archive is retained. */ }
       }
