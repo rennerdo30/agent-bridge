@@ -26,19 +26,31 @@ export async function readProcessIdentity(pid: number): Promise<string | null> {
   } catch { return null; }
 }
 
-/** One Windows process query rather than one PowerShell process per retained reader. */
+/** A batch identity query that failed or timed out: no PID's absence was observed. */
+export const IDENTITY_QUERY_FAILED = "EIDENTITYQUERY";
+/** The batch query runs off hot paths; under load (many runners starting at once) PowerShell can take seconds. */
+const BATCH_QUERY_TIMEOUT_MS = 15_000;
+
+/**
+ * One Windows process query rather than one PowerShell process per retained reader. A PID missing from the
+ * result was absent from a successful query. A failed or timed-out query throws (code IDENTITY_QUERY_FAILED)
+ * rather than returning an empty map, so callers never mistake it for every process being gone or unknown.
+ */
 export async function readProcessIdentities(pids: number[]): Promise<Map<number, string>> {
   const valid = [...new Set(pids.filter(pid => Number.isSafeInteger(pid) && pid > 0))];
   const result = new Map<number, string>();
   if (!valid.length) return result;
   if (process.platform === "win32") {
+    let stdout: string;
     try {
-      const { stdout } = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Get-Process -Id @(${valid.join(",")}) -ErrorAction SilentlyContinue | ForEach-Object { try { [string]$_.Id + '|' + [string]$_.StartTime.ToUniversalTime().Ticks } catch {} }; exit 0`], { windowsHide: true, timeout: 5_000 });
-      for (const line of stdout.split(/\r?\n/)) {
-        const match = /^(\d+)\|(\d+)$/.exec(line.trim());
-        if (match && valid.includes(Number(match[1]))) result.set(Number(match[1]), match[2]!);
-      }
-    } catch { /* Unknown readers continue to block upgrades. */ }
+      ({ stdout } = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Get-Process -Id @(${valid.join(",")}) -ErrorAction SilentlyContinue | ForEach-Object { try { [string]$_.Id + '|' + [string]$_.StartTime.ToUniversalTime().Ticks } catch {} }; exit 0`], { windowsHide: true, timeout: BATCH_QUERY_TIMEOUT_MS }));
+    } catch (error) {
+      throw Object.assign(new Error(`process identity query failed: ${(error as Error).message}`), { code: IDENTITY_QUERY_FAILED, cause: error });
+    }
+    for (const line of stdout.split(/\r?\n/)) {
+      const match = /^(\d+)\|(\d+)$/.exec(line.trim());
+      if (match && valid.includes(Number(match[1]))) result.set(Number(match[1]), match[2]!);
+    }
   } else {
     await Promise.all(valid.map(async pid => { const identity = await readProcessIdentity(pid); if (identity) result.set(pid, identity); }));
   }
