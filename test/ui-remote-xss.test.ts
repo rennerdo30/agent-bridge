@@ -22,12 +22,13 @@ function page() {
   };
   const fetch = vi.fn(() => new Promise(() => {}));
   const document = { getElementById: element, documentElement: { dataset: {} }, addEventListener() {}, querySelectorAll: () => [] };
-  return new Function("document", "window", "location", "localStorage", "setInterval", "fetch",
-    `${script}\nreturn { pill, esc, renderPaired, setNet: (n) => { net = n; } };`)(
+  const api = new Function("document", "window", "location", "localStorage", "setInterval", "fetch",
+    `${script}\nreturn { pill, esc, renderPaired, poll, setNet: (n) => { net = n; } };`)(
     document, { addEventListener() {} }, { hash: "" }, { setItem() {}, removeItem() {} }, () => 0, fetch) as {
     pill: (status: unknown, percent?: unknown) => string; esc: (s: unknown) => string;
-    renderPaired: () => void; setNet: (n: unknown) => void;
-  } & { element?: never };
+    renderPaired: () => void; poll: () => Promise<void>; setNet: (n: unknown) => void;
+  };
+  return { ...api, fetch };
 }
 
 const PAYLOAD = "<img src=x onerror=alert(1)>";
@@ -54,5 +55,16 @@ describe("dashboard rendering of data from a paired PC (AB-231)", () => {
     expect(out.runs[0]!.etaAt).toBeUndefined();
     expect(out.runs[0]!.startedAt).toBe(0);
     expect(out.runs[1]).toMatchObject({ status: "done", percent: 50 });
+  });
+});
+
+describe("dashboard polling (AB-233)", () => {
+  it("skips a tick while the previous /api/state request is still in flight", () => {
+    const p = page();
+    const stateCalls = () => p.fetch.mock.calls.filter((call: unknown[]) => call[0] === "/api/state").length;
+    // The page polls once on load; that request never answers here (a slow broker).
+    expect(stateCalls()).toBe(1);
+    void p.poll(); void p.poll();
+    expect(stateCalls()).toBe(1);
   });
 });

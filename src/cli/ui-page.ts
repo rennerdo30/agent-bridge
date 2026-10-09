@@ -1951,7 +1951,12 @@ function usageCard(rep) {
   return '<div class="card"><div class="head">' + av(rep.agent, true) + esc(rep.agent) + "</div>" + body + credits + "</div>";
 }
 
-async function poll() {  try {
+/** One /api/state request at a time: a slow broker must not pile up overlapping polls (AB-233). */
+let polling = false;
+async function poll() {
+  if (polling) return;
+  polling = true;
+  try {
     const r = await fetch("/api/state");
     if (!r.ok) throw new Error(r.status === 403 ? "not authorized: open the link printed by agent-bridge ui" : "HTTP " + r.status);
     const next = await r.json();
@@ -1967,6 +1972,8 @@ async function poll() {  try {
     render();
   } catch (e) {
     $("status").innerHTML = '<span class="dot busy"></span>Bridge status unavailable · ' + esc(e.message);
+  } finally {
+    polling = false;
   }
 }
 
