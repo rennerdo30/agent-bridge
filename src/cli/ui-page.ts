@@ -895,7 +895,7 @@ const NET_POLL_MS = 3000, NET_PAIR_POLL_MS = 1500;
 const DEFAULT_NETWORK_PORT = ${DEFAULT_NETWORK_PORT};
 const NETWORK_NAME = /${NETWORK_NAME_PATTERN.source}/;
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 /** Markdown of agent messages (escaped first; see markdown.ts). */
 const md = ${MARKDOWN_SOURCE};
 const time = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -918,7 +918,9 @@ const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : 
       const tip = { low: "can look; changes need approval", mid: "can change files in its workspace", high: "no sandbox: can change anything your account can" }[risk];
       return '<span class="chip perm ' + risk + '" title="permission level: ' + tip + '">' + esc(p) + "</span>";
     }
-    const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working · " + percent + "%" : "working") : status) + "</span>";
+    // Statuses can come from a paired PC: only known ones become a class, and every label is escaped (AB-231).
+    const PILL_STATUSES = new Set(["running", "done", "failed", "interrupted", "cancelled"]);
+    const pill = (status, percent) => '<span class="pill' + (PILL_STATUSES.has(status) ? " " + status : "") + '">' + (status === "running" ? (typeof percent === "number" && Number.isFinite(percent) ? "working · " + percent + "%" : "working") : esc(status)) + "</span>";
 
 /** Next-turn settings the dashboard can change, per agent (the values message_subagent accepts). */
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
@@ -2358,7 +2360,7 @@ function renderPaired() {
     ? list.map((p) => {
         const h = p.health, note = peerNotes.get(p.id);
         const status = p.connected ? "online" : "offline";
-        const health = p.connected && h ? " · checked " + ago(h.lastVerifiedAt) + " · " + h.roundTripMs + " ms" : "";
+        const health = p.connected && h ? " · checked " + ago(h.lastVerifiedAt) + " · " + esc(h.roundTripMs) + " ms" : "";
         const acts = unlinkAsk === p.id
           ? '<span class="small">Unlink ' + esc(p.name) + '? Pairing again needs a new code.</span><button type="button" class="danger" data-act="unlink" data-id="' + esc(p.id) + '">Unlink</button><button type="button" class="ghost" data-act="unlink-cancel">Keep</button>'
           : '<button type="button" class="ghost" data-act="verify" data-id="' + esc(p.id) + '"' + (p.connected ? "" : " disabled") + '>Check</button><button type="button" class="ghost danger" data-act="unlink-ask" data-id="' + esc(p.id) + '">Unlink</button>';
