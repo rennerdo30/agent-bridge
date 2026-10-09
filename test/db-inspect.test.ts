@@ -44,6 +44,15 @@ it("lists tables and views without scanning, decodes compressed text, and shows 
   expect(() => inspectRows(env.home, { db: "elsewhere", table: "x" })).toThrow("Unknown database");
 });
 
+it("bounds a filter scan by time on the request thread and says how far it searched (AB-221)", async () => {
+  await migrated();
+  const bounded = inspectRows(env.home, { db: "history", table: "conversation_records", filter: "no such text", limit: 10, budgetMs: 0 });
+  expect(bounded.rows).toEqual([]);
+  expect(bounded.note).toMatch(/stopped after 1 row/);
+  // A normal budget still searches everything here.
+  expect(inspectRows(env.home, { db: "history", table: "conversation_records", filter: "INSPECTOR NEEDLE", limit: 10 }).rows).toHaveLength(5);
+});
+
 it("runs read-only SQL with the decode functions and exports a plain copy for third-party viewers", async () => {
   await migrated();
   const result = inspectQuery(env.home, "history", "SELECT count(*) n, min(ab_text(raw, raw_codec)) t FROM conversation_records");

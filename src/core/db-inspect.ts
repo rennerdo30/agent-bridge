@@ -14,6 +14,8 @@ export type InspectDb = keyof typeof INSPECT_DATABASES;
 export const MAX_INSPECT_ROWS = 500;
 /** A filter decodes every scanned row; it only searches the newest rows so a request stays bounded. */
 export const FILTER_SCAN_ROWS = 20_000;
+/** Longest a filtered inspector request decodes rows before it answers with what it found. */
+export const FILTER_SCAN_BUDGET_MS = 750;
 const q = (s: string) => `"${s.replaceAll('"', '""')}"`;
 
 export function inspectDbPath(home: string, db: string): string {
@@ -65,7 +67,7 @@ function present(value: SQLInputValue, codec: SQLInputValue | undefined, raw: bo
   return typeof value === "bigint" ? String(value) : value;
 }
 
-export function inspectRows(home: string, input: { db: string; table: string; offset?: number; limit?: number; filter?: string; raw?: boolean }): InspectRows {
+export function inspectRows(home: string, input: { db: string; table: string; offset?: number; limit?: number; filter?: string; raw?: boolean; budgetMs?: number }): InspectRows {
   const path = inspectDbPath(home, input.db);
   if (!existsSync(path)) throw Object.assign(new Error(`Database "${input.db}" does not exist yet`), { status: 404 });
   const conn = openInspector(path);
@@ -89,7 +91,11 @@ export function inspectRows(home: string, input: { db: string; table: string; of
     let skipped = 0, scanned = 0;
     const isTable = conn.prepare("SELECT type FROM sqlite_master WHERE name=?").get(input.table)!.type === "table";
     const scan = isTable ? `SELECT * FROM ${q(input.table)} ORDER BY rowid DESC LIMIT ?` : `SELECT * FROM ${q(input.table)} LIMIT ?`;
+    // Decoding runs on the dashboard's request thread: stop after a time budget as well as a row cap (AB-221).
+    const deadline = Date.now() + Math.max(0, input.budgetMs ?? FILTER_SCAN_BUDGET_MS);
+    let outOfTime = false;
     for (const row of conn.prepare(scan).iterate(FILTER_SCAN_ROWS)) {
+      if (scanned > 0 && Date.now() >= deadline) { outOfTime = true; break; }
       scanned++;
       const values = shown.map(c => present(row[c]!, codecs.has(c) ? row[codecs.get(c)!] : undefined, false));
       if (!values.some(v => (typeof v === "string" ? v : JSON.stringify(v) ?? "").toLowerCase().includes(filter))) continue;
@@ -97,7 +103,8 @@ export function inspectRows(home: string, input: { db: string; table: string; of
       rows.push(raw ? shown.map(c => present(row[c]!, codecs.has(c) ? row[codecs.get(c)!] : undefined, true)) : values);
       if (rows.length >= limit) break;
     }
-    if (scanned >= FILTER_SCAN_ROWS) note = `Filter searched the newest ${FILTER_SCAN_ROWS.toLocaleString("en")} rows; use agent-bridge db query for a full scan.`;
+    if (outOfTime) note = `Filter stopped after ${scanned.toLocaleString("en")} row${scanned === 1 ? "" : "s"} (newest first) to keep the dashboard responsive; narrow the filter or use agent-bridge db query for a full scan.`;
+    else if (scanned >= FILTER_SCAN_ROWS) note = `Filter searched the newest ${FILTER_SCAN_ROWS.toLocaleString("en")} rows; use agent-bridge db query for a full scan.`;
     return { columns: shown, rows, ...(note ? { note } : {}) };
   } finally { conn.close(); }
 }
