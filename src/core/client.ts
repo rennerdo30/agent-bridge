@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { connect, type Socket } from "node:net";
 import { APP_VERSION, CONNECT_TIMEOUT_MS, MAX_FRAME_BYTES, REQUEST_TIMEOUT_MS } from "./constants.js";
 import type { Logger } from "./logger.js";
+import { ensurePrivateSocketDirectory } from "./paths.js";
 import {
   BridgeError,
   encodeFrame,
@@ -71,6 +72,8 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
   /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
   static connect(pipePath: string, log: Logger, timeoutMs: number = CONNECT_TIMEOUT_MS): Promise<BridgeClient> {
     return new Promise((resolve, reject) => {
+      // Never hand the token to an endpoint in a short-socket directory another user controls.
+      ensurePrivateSocketDirectory(pipePath);
       const socket = connect(pipePath);
       const timer = setTimeout(() => {
         socket.destroy();

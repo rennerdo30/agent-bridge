@@ -13,7 +13,9 @@ function outsideRepository(path) {
 
 // A fresh physical directory outside every source checkout, shared by all workers.
 export function testFixtureRoot() {
-  const temporary = process.env.AGENT_BRIDGE_TEST_TEMP_ROOT ?? tmpdir();
+  // macOS's per-user $TMPDIR (/private/var/folders/xx/.../T) alone uses half of the 103-byte socket path
+  // limit, so fixture homes there would all take the hashed short-socket fallback. Use /tmp instead.
+  const temporary = process.env.AGENT_BRIDGE_TEST_TEMP_ROOT ?? (process.platform === "darwin" ? "/tmp" : tmpdir());
   outsideRepository(temporary);
   mkdirSync(temporary, { recursive: true });
   const root = process.env.AGENT_BRIDGE_TEST_ROOT ?? realpathSync.native(mkdtempSync(join(temporary, "ab-tests-")));

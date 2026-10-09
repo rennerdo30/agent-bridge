@@ -1,4 +1,8 @@
+import { mkdirSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
+import { maxSocketPathBytes, resolveDbPath, resolvePipePath } from "../src/core/paths.js";
 import { BridgeClient } from "../src/core/client.js";
 import { PROTOCOL_VERSION, QUEUED_MAIL_MAX_AGE_MS } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
@@ -26,6 +30,30 @@ describe("broker election", () => {
     expect(b.isBroker).toBe(false);
     const peers = await b.peers();
     expect(peers.map((p) => p.name).sort()).toEqual(["claude-proj", "codex-proj"]);
+  });
+
+  it.skipIf(process.platform === "win32")("elects a broker for a home too deep for a Unix socket path", async () => {
+    const home = join(env.home, "a-home-directory-nested-deep-enough".repeat(3));
+    mkdirSync(home, { recursive: true });
+    expect(Buffer.byteLength(join(home, `bridge-p${PROTOCOL_VERSION}.sock`))).toBeGreaterThan(maxSocketPathBytes());
+    const pipe = resolvePipePath(home, {});
+    expect(Buffer.byteLength(pipe)).toBeLessThanOrEqual(maxSocketPathBytes());
+    const opts = { pipePath: pipe, token: loadOrCreateToken(home), dbPath: resolveDbPath(home), cwd: home, autoWake: false, log: nullLogger };
+    const a = new BridgeNode({ ...opts, agent: "claude", name: "deep-a" });
+    const b = new BridgeNode({ ...opts, agent: "codex", name: "deep-b" });
+    try {
+      await a.start();
+      await b.start();
+      expect([a.isBroker, b.isBroker]).toEqual([true, false]);
+      expect((await b.peers()).map((p) => p.name).sort()).toEqual(["deep-a", "deep-b"]);
+      const dir = statSync(dirname(pipe));
+      expect(dir.mode & 0o777).toBe(0o700);
+      expect(dir.uid).toBe(process.getuid!());
+    } finally {
+      await b.stop().catch(() => {});
+      await a.stop().catch(() => {});
+      closeMetadataDb(home);
+    }
   });
 
   it("concurrent starts elect exactly one broker", async () => {
