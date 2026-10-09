@@ -20,7 +20,8 @@
 - A broker socket path longer than macOS or Linux accept moves to a private per-user folder under `/tmp`; homes with short paths keep their socket.
 - Run log lookup by filter matches the run name only, not the home path.
 - An inline job report that another writer's save left out of the store is saved again with backoff instead of waiting for an unrelated save.
-- A late read-journal retry closes the database handle it opened after its session stopped.
+- A late read-journal retry closes the database handle it opened after its session stopped, and a retry timer that fires slightly early still retries instead of stopping.
+- After a handoff, the broker routes a job's reports by the stored job, not by an older recovered copy that still named the previous owner.
 - The README states prominently what agent-bridge may ever delete and that close cleanup is off by default.
 
 ## 0.30.3

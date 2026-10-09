@@ -9,7 +9,7 @@ import {
 } from "./chunks/chunk-BG6KJS4H.mjs";
 import {
   BridgeNode
-} from "./chunks/chunk-NBNCINBI.mjs";
+} from "./chunks/chunk-EV7PMPZ4.mjs";
 import {
   formatMessage,
   formatReplyRestrictions
@@ -22,7 +22,7 @@ import {
   BridgeClient
 } from "./chunks/chunk-QFQU7TGT.mjs";
 import "./chunks/chunk-RQUYBZWF.mjs";
-import "./chunks/chunk-6RB6C67Z.mjs";
+import "./chunks/chunk-XIO6SPAJ.mjs";
 import {
   resolveDbPath,
   resolveHome,
@@ -66,7 +66,7 @@ function printResult(res) {
 async function main(argv) {
   const [command = "help", ...rest] = argv;
   const home = resolveHome();
-  if (command === "job-state") return (await import("./chunks/job-close-2KJ6MRV2.mjs")).runJobClose(command, rest, home, DEFAULT_CONFIG, nullLogger, out);
+  if (command === "job-state") return (await import("./chunks/job-close-CSOZZEP7.mjs")).runJobClose(command, rest, home, DEFAULT_CONFIG, nullLogger, out);
   const pipe = resolvePipePath(home);
   const log = createLogger({ home, component: "cli" });
   const makeNode = () => new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: "other", name: CLI_PEER_NAME, cwd: process.cwd(), autoWake: false, log });
@@ -76,7 +76,7 @@ async function main(argv) {
     case "job-state":
     case "job-close":
     case "close-idle-jobs":
-      return (await import("./chunks/job-close-2KJ6MRV2.mjs")).runJobClose(command, rest, home, loadConfig(home, "other", log), log, out);
+      return (await import("./chunks/job-close-CSOZZEP7.mjs")).runJobClose(command, rest, home, loadConfig(home, "other", log), log, out);
     case "repair-permissions":
       return (await import("./chunks/permission-repair-4CHAOFV4.mjs")).runPermissionRepair(rest, home, log, out);
     case "doctor":
@@ -176,8 +176,8 @@ async function main(argv) {
       return (await import("./chunks/installer-3E2HEDHG.mjs")).runInstaller({ action: command, tools: (await import("./chunks/installer-3E2HEDHG.mjs")).parseInstallerArgs(command, rest), yes: rest.includes("--yes") || rest.includes("-y"), out });
     case "ui": {
       const noOpen = rest.includes("--no-open");
-      if (rest.includes("--reset-key")) (await import("./chunks/dashboard-K7DFJUZ5.mjs")).dashboardKey(home, true);
-      const running = await (await import("./chunks/dashboard-K7DFJUZ5.mjs")).findRunningDashboard(home);
+      if (rest.includes("--reset-key")) (await import("./chunks/dashboard-TYDH3LCX.mjs")).dashboardKey(home, true);
+      const running = await (await import("./chunks/dashboard-TYDH3LCX.mjs")).findRunningDashboard(home);
       if (running) {
         out(t("cli.ui.existing", { url: running.url }));
         if (!noOpen) openBrowser(running.url);
@@ -185,7 +185,7 @@ async function main(argv) {
       }
       const portArg = rest.find((a) => a.startsWith("--port="))?.slice("--port=".length);
       const port = portArg ? Number(portArg) : loadConfig(home, "other", log).dashboardPort;
-      const controller = new (await import("./chunks/dashboard-K7DFJUZ5.mjs")).DashboardController({ home, pipe, port, log });
+      const controller = new (await import("./chunks/dashboard-TYDH3LCX.mjs")).DashboardController({ home, pipe, port, log });
       const info = await controller.ensure();
       out(t("cli.ui.running", { url: info.url }));
       if (!noOpen) openBrowser(info.url);
@@ -211,7 +211,7 @@ async function main(argv) {
     case "permission-hook":
       return (await import("./chunks/permission-hook-UPZK2SKI.mjs")).runPermissionHook(rest[0]);
     case "job-runner":
-      return (await import("./chunks/job-runner-FJON6PBZ.mjs")).runJobRunner(rest[0]);
+      return (await import("./chunks/job-runner-E74DQDH6.mjs")).runJobRunner(rest[0]);
     case "reliability": {
       const picked = rest.filter((a) => CODING_AGENTS.includes(a));
       const only = rest.find((a) => a.startsWith("--only="))?.slice("--only=".length);

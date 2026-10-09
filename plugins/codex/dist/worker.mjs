@@ -60,7 +60,7 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-WRQA7KQ4.mjs";
+} from "./chunks/chunk-NRAKHLUB.mjs";
 import {
   codexAppServerCall,
   describeModels,
@@ -88,7 +88,7 @@ import {
   DASHBOARD_JOB_CONVERSATION,
   REMOTE_JOB_POLL_MS,
   remoteSpawnArgsSchema
-} from "./chunks/chunk-NBNCINBI.mjs";
+} from "./chunks/chunk-EV7PMPZ4.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -119,9 +119,9 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-AYM5B5H6.mjs";
+} from "./chunks/chunk-56UPHJFX.mjs";
 import "./chunks/chunk-Q3G4DMR2.mjs";
-import "./chunks/chunk-6RB6C67Z.mjs";
+import "./chunks/chunk-XIO6SPAJ.mjs";
 import {
   antigravityAncestor,
   antigravityHookOutput,
@@ -2785,7 +2785,7 @@ async function startServer(argv = process.argv.slice(2)) {
   const ensureDashboard = async (force) => {
     try {
       if (!force && !cfg.dashboard) return null;
-      dashboard ??= import("./chunks/dashboard-K7DFJUZ5.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
+      dashboard ??= import("./chunks/dashboard-TYDH3LCX.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
       return await (await dashboard).ensure();
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
