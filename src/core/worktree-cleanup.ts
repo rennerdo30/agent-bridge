@@ -1,3 +1,4 @@
+import { worktreeRoots } from "./worktree.js";
 import { existsSync, lstatSync, realpathSync, readdirSync } from "node:fs";
 import { dirname, join, resolve, toNamespacedPath } from "node:path";
 import { JOBS_FILE } from "./constants.js";
@@ -160,13 +161,16 @@ export async function cleanupWorktrees(opts: {
 }): Promise<CleanupEntry[]> {
   if (opts.all && opts.repo) throw new Error("Use either --all or --repo, not both.");
   const repository = opts.all ? null : await repositoryCommonDir(opts.repo ?? opts.cwd ?? process.cwd(), opts.log);
-  const dir = join(opts.home, "worktrees");
-  if (existsSync(dir)) resolveWorktreeRemovalPath(dir);
   const jobs = readJobs(opts.home);
   const candidates: { path: string; repository: string | null }[] = [];
+  const roots = worktreeRoots(opts.home);
+  for (const [index, dir] of roots.entries()) {
+  if (existsSync(dir)) resolveWorktreeRemovalPath(dir);
   for (const d of existsSync(dir) ? readdirSync(dir, { withFileTypes: true }) : []) {
     const path = join(dir, d.name);
     if (!d.isDirectory() || lstatSync(path).isSymbolicLink()) continue;
+    // A configured worktreeRoot may be shared with other folders: only trees a job created there qualify.
+    if (index > 0 && !jobs.some((j) => j.worktree && samePath(j.worktree.path, path)) && !/-[0-9a-f]{8}$/.test(d.name)) continue;
     let common = existsSync(join(path, ".git")) ? await repositoryCommonDir(path, opts.log).catch(() => null) : null;
     // A removed worktree may still have a durable job record. Never guess by folder/branch name.
     if (!common && !existsSync(join(path, ".git"))) {
@@ -174,6 +178,7 @@ export async function cleanupWorktrees(opts: {
       if (job?.worktree) common = await repositoryCommonDir(job.worktree.repoRoot, opts.log).catch(() => null);
     }
     if (opts.all || (common && repository && samePath(common, repository))) candidates.push({ path, repository: common });
+  }
   }
   const projects: CleanupScope["projects"] = [];
   for (const candidate of candidates) {

@@ -1,3 +1,4 @@
+import { worktreeRoots } from "./worktree.js";
 import { closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import { JOBS_FILE } from "./constants.js";
@@ -299,12 +300,12 @@ export type DashboardPeer = PeerInfo & { subagent: boolean; parent: string | nul
  */
 export function classifyPeers(peers: PeerInfo[], runs: RunSummary[], home: string): DashboardPeer[] {
   const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  const worktrees = `${norm(join(home, "worktrees"))}/`;
+  const roots = worktreeRoots(home).map(root => `${norm(root)}/`);
   const byWorkdir = new Map<string, RunSummary>();
   for (const run of runs) if (run.workdir && !byWorkdir.has(norm(run.workdir))) byWorkdir.set(norm(run.workdir), run);
   return peers.filter((p) => !isPluginCacheCwd(p.cwd)).map((p) => {
     const cwd = norm(p.cwd ?? "");
-    const subagent = cwd.startsWith(worktrees);
+    const subagent = roots.some(root => cwd.startsWith(root));
     const run = subagent ? byWorkdir.get(cwd) : undefined;
     return { ...p, subagent: Boolean(p.jobAgent || p.subagent || subagent), parent: p.parentJob ?? p.jobParent ?? p.rootName ?? run?.by ?? null };
   });

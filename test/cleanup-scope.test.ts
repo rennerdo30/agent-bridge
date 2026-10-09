@@ -28,6 +28,19 @@ afterEach(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retr
 const worktree = (cwd: string, jobId: string) => createWorktree({ cwd, home, jobId, log: nullLogger });
 
 describe("cleanup repository scope", () => {
+  it("finds trees under a configured worktreeRoot but never other folders there (AB-177)", async () => {
+    const custom = join(root, "custom-trees");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "config.json"), JSON.stringify({ worktreeRoot: custom }));
+    const tree = await createWorktree({ cwd: first, home, jobId: "c0ffee01", log: nullLogger, worktreeRoot: custom });
+    mkdirSync(join(custom, "unrelated-folder"));
+    const { isBridgeWorktree } = await import("../src/mcp/delegate-run.js");
+    expect(isBridgeWorktree(join(tree.path, "src"), home)).toBe(true);
+    expect(isBridgeWorktree(join(custom, "unrelated-folder"), home)).toBe(false);
+    const entries = await cleanupWorktrees({ home, cwd: first, apply: false, log: nullLogger });
+    expect(entries.map(e => e.path)).toEqual([tree.path]);
+    expect(existsSync(join(custom, "unrelated-folder"))).toBe(true);
+  });
   it("cleans through a home alias above the container while preserving linked cache sources", async () => {
     const a = await worktree(first, "alias-one");
     const alias = join(root, "home-alias"), cache = join(root, "cache-source");

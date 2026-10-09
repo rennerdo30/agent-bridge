@@ -1,8 +1,9 @@
+import { loadConfig } from "./config.js";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve, toNamespacedPath } from "node:path";
 import { DelegateError, runProcess } from "./delegate.js";
-import type { Logger } from "./logger.js";
+import { nullLogger, type Logger } from "./logger.js";
 import { resolveWorktreeRemovalPath, unlinkLinks } from "./worktree-links.js";
 
 /**
@@ -410,4 +411,13 @@ export function changedFiles(before: Map<string, string>, after: Map<string, str
   for (const [f, fp] of after) if (before.get(f) !== fp) out.add(f);
   for (const f of before.keys()) if (!after.has(f)) out.add(f);
   return [...out].sort();
+}
+
+/** Every root that can hold bridge-managed worktrees: the default and the configured worktreeRoot (AB-177).
+ * Detection, cleanup and the dashboard use all of them, so trees under a custom root are not missed. */
+export function worktreeRoots(home: string): string[] {
+  const roots = [join(home, "worktrees")];
+  const configured = loadConfig(home, "other", nullLogger).worktreeRoot;
+  if (configured && resolve(configured).toLowerCase() !== resolve(roots[0]!).toLowerCase()) roots.push(configured);
+  return roots;
 }

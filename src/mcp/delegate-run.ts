@@ -1,3 +1,4 @@
+import { worktreeRoots } from "../core/worktree.js";
 import { randomUUID } from "node:crypto";
 import { appendContextEvent } from "../core/context-journal.js";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -86,13 +87,19 @@ export interface RunContext {
 
 /** A folder inside ~/.agent-bridge/worktrees (a subagent worktree, possibly from an earlier job). */
 export function isBridgeWorktree(dir: string, home: string): boolean {
-  return isInside(dir, join(home, "worktrees")) && resolve(dir) !== resolve(join(home, "worktrees"));
+  return bridgeWorktreeRoot(dir, home) !== null;
 }
 
 /** A caller may resume from a nested project directory; inspect the whole managed worktree. */
 function bridgeWorktreeRoot(dir: string, home: string): string | null {
-  if (!isBridgeWorktree(dir, home)) return null;
-  return join(home, "worktrees", relative(join(home, "worktrees"), resolve(dir)).split(/[\\/]/)[0]!);
+  for (const [index, root] of worktreeRoots(home).entries()) {
+    if (!isInside(dir, root) || resolve(dir) === resolve(root)) continue;
+    const name = relative(root, resolve(dir)).split(/[\\/]/)[0]!;
+    // A configured worktreeRoot may hold other folders; only job-named trees (<repo>-<job id>) count there.
+    if (index > 0 && !/-[0-9a-f]{8}$/.test(name)) continue;
+    return join(root, name);
+  }
+  return null;
 }
 
 export function isInside(child: string, parent: string): boolean {
