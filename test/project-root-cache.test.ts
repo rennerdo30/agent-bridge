@@ -14,7 +14,7 @@ let env: TestEnv;
 beforeEach(() => { env = makeEnv(); git.mockReset(); });
 afterEach(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); await env.cleanup(); });
 
-const fixtureCeiling = () => realpathSync.native(resolve('.agent-bridge-test')).replace(/\\/g, '/');
+const fixtureCeiling = () => realpathSync.native(resolve(process.env.AGENT_BRIDGE_TEST_ROOT!)).replace(/\\/g, '/');
 function ceiling(...entries: string[]): void { vi.stubEnv('GIT_CEILING_DIRECTORIES', [fixtureCeiling(), ...entries].join(delimiter)); }
 function cli(root: string, args: string[]): string {
   const config = join(env.home, 'empty-git-config'); writeFileSync(config, '');

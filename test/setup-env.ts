@@ -2,7 +2,8 @@ import { vi } from "vitest";
 import { join } from "node:path";
 import { realpathSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-const fixtureRoot = join(process.cwd(), ".agent-bridge-test");
+import { testFixtureRoot } from "../scripts/test-fixture-root.mjs";
+const fixtureRoot = testFixtureRoot();
 process.env.AGENT_BRIDGE_HOME = join(fixtureRoot, "default-home");
 delete process.env.AGENT_BRIDGE_PIPE;
 // Cover every generated checkout fixture, including ones outside the temporary subfolder.
@@ -10,12 +11,12 @@ process.env.GIT_CEILING_DIRECTORIES = fixtureRoot;
 
 // macOS exposes its temporary root through /var -> /private/var. Fixtures use
 // the physical directory so immutable plugin tests retain strict link rejection.
-if (process.platform !== "win32") process.env.TMPDIR = realpathSync(tmpdir());
-else {
+{
   const fixtureTemp = join(fixtureRoot, "temp");
   mkdirSync(fixtureTemp, { recursive: true });
   process.env.TEMP = fixtureTemp;
   process.env.TMP = fixtureTemp;
+  process.env.TMPDIR = fixtureTemp;
   // Empty fixtures must not discover the containing source checkout as their repository.
 }
 
@@ -37,7 +38,7 @@ const INHERITED_LINK_ENV = ["AGENT_BRIDGE_PARENT_URL", "AGENT_BRIDGE_PARENT_TOKE
 for (const name of [...INHERITED_LINK_ENV, "AGENT_BRIDGE_INTERNAL"]) delete process.env[name];
 
 // Background indexing in tests must never inspect or mirror the owner's real CLI stores.
-const transcriptRoot=join(import.meta.dirname,"../.agent-bridge-test/empty-cli-stores");
+const transcriptRoot=join(fixtureRoot,"empty-cli-stores");
 process.env.CLAUDE_CONFIG_DIR=join(transcriptRoot,"claude");
 process.env.CODEX_HOME=join(transcriptRoot,"codex");
 process.env.XDG_DATA_HOME=join(transcriptRoot,"data");

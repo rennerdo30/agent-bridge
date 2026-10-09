@@ -26,7 +26,7 @@ vi.mock("../src/core/node.js", async () => {
 let home: string | undefined;
 afterEach(() => { if (home) rmSync(home, { recursive: true, force: true }); home = undefined; vi.clearAllMocks(); mocks.order.length = 0; });
 function fixture() {
-  const root = join(process.cwd(), ".agent-bridge-test"); mkdirSync(root, { recursive: true });
+  const root = process.env.AGENT_BRIDGE_TEST_ROOT!; mkdirSync(root, { recursive: true });
   home = mkdtempSync(join(root, "runner-startup-"));
   const args = { prompt: "Continue", title: "Cold startup" };
   const spec: RunnerSpec = { home, target: "codex", args, base: args, owner: "parent", byAgent: "claude", cwd: home, cfg: DEFAULT_CONFIG,

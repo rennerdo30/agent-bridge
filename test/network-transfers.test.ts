@@ -49,6 +49,44 @@ async function paired(config: Partial<NetworkConfig> = {}) {
 }
 
 describe("chunked paired-PC file transfers", () => {
+  it("measures negotiated-window throughput while messages stay responsive across two instances", async () => {
+    const { a, b, sender, bMessages } = await paired();
+    const source = join(home, "fairness.bin");
+    const bytes = 8 * 1024 * 1024, expected = await generate(source, bytes);
+    const chunks = new Set<string>();
+    const receive = b.receiveExtension.bind(b), send = b.sendExtension.bind(b);
+    vi.spyOn(b, "receiveExtension").mockImplementation((type, payload, remote) => {
+      if (payload.op === "chunk") chunks.add(String(payload.rid));
+      return receive(type, payload, remote);
+    });
+    vi.spyOn(b, "sendExtension").mockImplementation(async (remote, type, payload) => {
+      if (payload.kind === "response" && chunks.has(String(payload.rid))) await realDelay(60);
+      return send(remote, type, payload);
+    });
+    const transport = (a.transfers as unknown as { transport: { window(remote: string): number } }).transport;
+    const window = vi.spyOn(transport, "window");
+    const measure = async (width: number) => {
+      window.mockReturnValue(width);
+      const began = performance.now(), latencies: number[] = [];
+      const transfer = a.startFiles("mac/receiver", [source], home, sender);
+      while (a.transfers.list().find(t => t.id === transfer.id)?.status !== "completed") {
+        const id = randomUUID(), start = performance.now();
+        await a.send({ id, from: sender, to: "mac/receiver", recipient: "mac/receiver", conversationId: id, replyTo: null, hop: 0, body: "message during transfer", createdAt: Date.now(), readAt: null });
+        expect(bMessages.some(m => m.id === id)).toBe(true);
+        latencies.push(performance.now() - start);
+        if (performance.now() - began > 30_000) throw new Error("fairness transfer deadline");
+        await realDelay(30);
+      }
+      expect(await hash(join(home, "mac", "inbox", transfer.id, "fairness.bin"))).toBe(expected);
+      return { ms: performance.now() - began, maxMessageMs: Math.max(...latencies), messages: latencies.length };
+    };
+    const serial = await measure(1), pipelined = await measure(TRANSFER_WINDOW_CHUNKS);
+    console.info("AB-183 controlled 60ms ACK RTT", JSON.stringify({ bytes, serial, pipelined }));
+    writeFileSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "transfer-fairness.json"), JSON.stringify({ bytes, serial, pipelined }, null, 2));
+    expect(pipelined.ms).toBeLessThan(serial.ms / 1.4);
+    expect(pipelined.maxMessageMs).toBeLessThan(1500);
+    expect(pipelined.messages).toBeGreaterThan(1);
+  });
   it("writes ordinary messages ahead of chunks queued behind socket backpressure", async () => {
     const { a, sender, bMessages } = await paired();
     const source = join(home, "priority.bin"); const expected = await generate(source, (TRANSFER_WINDOW_CHUNKS + 1) * TRANSFER_CHUNK_BYTES);

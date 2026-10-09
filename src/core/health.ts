@@ -25,10 +25,33 @@ export interface BrokerHealth {
 
 /** Bounded in-memory diagnostics. Never load logs, archived records or database tables. */
 export class HealthMonitor {
-  private readonly delay = monitorEventLoopDelay({ resolution: 20 });
+  private readonly delay: Pick<ReturnType<typeof monitorEventLoopDelay>, "enable" | "disable" | "percentile" | "max">;
+  private timer: NodeJS.Timeout | null = null;
+  private lastActivity = 0;
+  private closed = false;
+  constructor(delay = monitorEventLoopDelay({ resolution: 20 })) { this.delay = delay; }
   private readonly errors: BrokerHealth["recentErrors"] = [];
-  start(): void { this.delay.enable(); }
-  close(): void { this.delay.disable(); }
+  /** Sample active request bursts, then stop the native 20 ms idle wakeup. */
+  start(): void {
+    if (this.closed) return;
+    this.lastActivity = Date.now();
+    if (this.timer) return;
+    this.delay.enable();
+    const expire = () => {
+      const remaining = 5_000 - (Date.now() - this.lastActivity);
+      if (remaining > 0) this.timer = setTimeout(expire, remaining);
+      else { this.delay.disable(); this.timer = null; }
+      this.timer?.unref();
+    };
+    this.timer = setTimeout(expire, 5_000);
+    this.timer.unref();
+  }
+  close(): void {
+    this.closed = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.delay.disable();
+  }
   error(operation: string, code: string, at = Date.now()): void {
     this.errors.push({ at, operation, code });
     if (this.errors.length > 10) this.errors.shift();

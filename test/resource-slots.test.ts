@@ -7,7 +7,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { ResourceSlots, resourceSlotHint, SLOT_LEASE_MS, SLOT_OWNER_ENV, SLOT_PID_ENV } from "../src/core/resource-slots.js";
 import { runSlot } from "../src/cli/slot.js";
 
-const TEST_ROOT = join(process.cwd(), ".agent-bridge-test");
+const TEST_ROOT = process.env.AGENT_BRIDGE_TEST_ROOT!;
 const CLI = join(process.cwd(), "plugins/opencode/dist/cli.mjs");
 const owner = (id: string) => ({ id, pid: process.pid });
 let home: string;

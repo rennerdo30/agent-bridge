@@ -35,25 +35,9 @@ const HISTORY_RESCAN_MS = 30_000;
 const HISTORY_READ_TIMEOUT_MS = 100;
 const HISTORY_BATCH_BODY_BYTES = 512 * 1024;
 
-const dateFilter = z.union([z.number().int().nonnegative(), z.iso.datetime({ offset: true })]).transform((v) => typeof v === "number" ? v : Date.parse(v));
-export const historyFiltersSchema = z.object({
-  project: z.string().min(1).max(4096).transform(conversationProject).optional(),
-  session: z.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(), job: z.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(),
-  agent: z.enum(["claude", "codex", "opencode", "antigravity", "other"]).optional(),
-  kind: z.enum(["message", "run", "decision", "transcript", "approval", "progress", "report", "question"]).optional(),
-  since: dateFilter.optional(), until: dateFilter.optional(),
-}).strict();
-export const historySearchSchema = z.object({
-  query: z.string().trim().min(1).max(HISTORY_MAX_QUERY_CHARS),
-  filters: historyFiltersSchema.optional(), limit: z.number().int().min(1).max(HISTORY_MAX_LIMIT).optional(),
-}).strict().refine((a) => a.filters?.since === undefined || a.filters.until === undefined || a.filters.since <= a.filters.until, "since must not be later than until");
-export type HistorySearch = z.input<typeof historySearchSchema>;
-export interface HistoryHit {
-  id: string; kind: "message" | "run" | "decision" | "transcript" | "approval" | "progress" | "report" | "question"; agent: string; at: number;
-  snippet: string; link: string; sourceLink: string; message: string | null; job: string | null; run: string | null;
-  session: string | null; cursor: string | null; conversation?: string | null; project?: string | null;
-}
-export interface HistoryResult { engine: "fts5" | "plain"; hits: HistoryHit[] }
+import { historyFiltersSchema, historySearchSchema, type HistorySearch, type HistoryHit, type HistoryResult } from "./history-query.js";
+export { historyFiltersSchema, historySearchSchema } from "./history-query.js";
+export type { HistorySearch, HistoryHit, HistoryResult } from "./history-query.js";
 interface Document extends Omit<HistoryHit, "snippet" | "sourceLink"> { body: string }
 interface FileRow { path: string; kind: string; agent: string; session: string | null; cwd: string; child: string | null }
 interface WalkRoot { path: string; root: string; kind: string; agent: string }
@@ -153,10 +137,12 @@ export class HistoryIndex {
   }
 
   /** Fixed budgets; idempotent documents are written before advancing their cursors. */
-  tick(): { work: number; discovering: boolean } {
+  tick(idleAware = false): { work: number; discovering: boolean } {
     this.deadline = Date.now() + HISTORY_BATCH_MS;
     const fileCount = Number(this.db.prepare("SELECT count(*) AS n FROM history_files").get()!.n);
-    if (this.idleFiles >= fileCount) this.idleFiles = 0;
+    // Explicit callers still rescan every sweep. Background idle sweeps finish
+    // once, then rediscover changed/unwatched files on the bounded fallback.
+    if (!idleAware && this.idleFiles >= fileCount) this.idleFiles = 0;
     // Do not hold a writer transaction over filesystem/provider reads or Git canonicalization.
     let work = 0;
     {
@@ -199,7 +185,7 @@ export class HistoryIndex {
           finally { archive.close(); }
         }
         work += this.discover();
-        const files = this.db.prepare("SELECT * FROM history_files ORDER BY checked,path LIMIT ?").all(HISTORY_FILES_PER_TICK) as unknown as FileRow[];
+        const files = idleAware && this.idleFiles >= fileCount ? [] : this.db.prepare("SELECT * FROM history_files ORDER BY checked,path LIMIT ?").all(HISTORY_FILES_PER_TICK) as unknown as FileRow[];
         for (const file of files) {
           if (Date.now() >= this.deadline) break;
           const indexed = this.indexFile(file);
@@ -234,6 +220,7 @@ export class HistoryIndex {
   private discover(): number {
     if (!this.walk && !this.queue.length && Date.now() - this.lastDiscovery >= HISTORY_RESCAN_MS) {
       this.lastDiscovery = Date.now();
+      this.idleFiles = 0;
       this.opencodeComplete = false;
       this.queue = [
         { path: join(this.home!, "context-events"), root:this.home!,kind:"context",agent:"other" },

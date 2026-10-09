@@ -11,7 +11,7 @@ let home: string;
 let child: ChildProcess | undefined;
 
 beforeEach(async () => {
-  const root = join(process.cwd(), ".agent-bridge-test");
+  const root = process.env.AGENT_BRIDGE_TEST_ROOT!;
   mkdirSync(root, { recursive: true });
   home = mkdtempSync(join(root, "lease-process-"));
   const bundle = await build({ entryPoints: ["src/core/metadata-file-lease.ts"], bundle: true, platform: "node", format: "esm", packages: "external", write: false });

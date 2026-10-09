@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { readRehearsalCursor, rehearsalBytes } from "../scripts/release-rehearsal.js";
 
 function checkpoint(): string {
-  const root = join(process.cwd(), ".agent-bridge-test"); mkdirSync(root, { recursive: true });
+  const root = process.env.AGENT_BRIDGE_TEST_ROOT!; mkdirSync(root, { recursive: true });
   const snapshot = join(mkdtempSync(join(root, "rehearsal-cursor-")), "snapshot.db");
   const db = new DatabaseSync(`${snapshot}.progress.db`);
   try {

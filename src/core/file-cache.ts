@@ -5,11 +5,15 @@ import { readFileSync, statSync } from "node:fs";
  * The budget bounds resident data without removing anything from disk.
  */
 export interface JsonSnapshot { signature: string; value: unknown; bytes: number }
-const MAX_BYTES = 256 * 1024 * 1024;
+const MAX_BYTES = 32 * 1024 * 1024;
 const MAX_ENTRIES = 2048;
 const cache = new Map<string, JsonSnapshot & { bytes: number }>();
 const damaged = new Map<string, { signature: string; error: SyntaxError }>();
 let bytes = 0;
+/** Profiling counts retained source bytes; parsed object/V8 overhead is separate. */
+export function jsonSnapshotCacheUsage(): { bytes: number; entries: number; maxBytes: number } {
+  return { bytes, entries: cache.size, maxBytes: MAX_BYTES };
+}
 
 /** Clone JSON containers without serializing/copying large immutable prompt strings.
  * Only use for parsed JSON and JSON-shaped projections, not arbitrary class instances.

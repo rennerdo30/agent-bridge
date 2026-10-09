@@ -31,7 +31,7 @@ const TOKEN = "network-test-token";
 let home: string;
 let cleanup: (() => void | Promise<void>)[];
 beforeEach(() => {
-  const root = join(process.cwd(), ".agent-bridge-test");
+  const root = process.env.AGENT_BRIDGE_TEST_ROOT!;
   mkdirSync(root, { recursive: true });
   home = realpathSync.native(mkdtempSync(join(root, "network-")));
   cleanup = [];

@@ -16,7 +16,7 @@ const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "core
 const close = (name = "opencode-job-test", enabled = true) => closeJobWorktree({ home, job: { name, status: "done", worktree: wt }, enabled, log: nullLogger });
 const commit = (message: string) => { git(wt.path, "add", "-A"); git(wt.path, "commit", "-qm", message); return git(wt.path, "rev-parse", "HEAD"); };
 beforeEach(async () => {
-  mkdirSync(".agent-bridge-test", { recursive: true }); home = mkdtempSync(join(process.cwd(), ".agent-bridge-test", "close-"));
+  mkdirSync(process.env.AGENT_BRIDGE_TEST_ROOT!, { recursive: true }); home = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "close-"));
   repo = join(home, "repo"); remote = join(home, "remote.git"); mkdirSync(repo);
   vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, "empty-config")); vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
   git(repo, "init", "-q"); git(repo, "config", "user.name", "Owner"); git(repo, "config", "user.email", "owner@example.test");

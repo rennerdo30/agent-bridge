@@ -47,7 +47,7 @@ if (args[0] === "app-server") {
 }
 `;
 beforeEach(() => {
-  const root = join(process.cwd(), ".agent-bridge-test"); mkdirSync(root, { recursive: true });
+  const root = process.env.AGENT_BRIDGE_TEST_ROOT!; mkdirSync(root, { recursive: true });
   home = mkdtempSync(join(root, "dotnet-environment-"));
   vi.stubEnv("DOTNET_ADD_GLOBAL_TOOLS_TO_PATH", undefined);
   vi.stubEnv("DOTNET_SKIP_FIRST_TIME_EXPERIENCE", undefined);

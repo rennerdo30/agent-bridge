@@ -9,6 +9,10 @@ import { runJobRunner } from "../src/mcp/job-runner.js";
 const mocks = vi.hoisted(() => ({ delegate: vi.fn(), node: null as any }));
 vi.mock("../src/mcp/delegate-run.js", async original => ({ ...await original<typeof import("../src/mcp/delegate-run.js")>(), runDelegate: mocks.delegate }));
 vi.mock("../src/core/windows-job-scope.js", async original => ({ ...await original<typeof import("../src/core/windows-job-scope.js")>(), establishWindowsJobScope: async () => null }));
+vi.mock("../src/core/worktree-processes.js", async original => ({
+  ...await original<typeof import("../src/core/worktree-processes.js")>(),
+  worktreeProcesses: async () => ({ complete: true, processes: [{ pid: 789, identity: "fixture-start-ticks", name: "python.exe" }] }),
+}));
 vi.mock("../src/core/node.js", async () => {
   const { EventEmitter } = await import("node:events");
   return { BridgeNode: class extends EventEmitter {
@@ -25,8 +29,23 @@ vi.mock("../src/core/node.js", async () => {
 let home: string | undefined;
 afterEach(() => { if (home) rmSync(home, { recursive: true, force: true }); home = undefined; vi.clearAllMocks(); });
 
+it("reports surviving worktree tools to the supervisor when a cancelled runner has degraded containment", async () => {
+  home = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "runner-survivors-"));
+  const path = join(home, "worktree"); mkdirSync(path);
+  const wt = { path, cwd: path, repoRoot: home, branch: "fixture", base: "fixture" };
+  const args = { prompt: "Cancelled fixture", title: "Surviving tools", session_id: "retained-context" };
+  const spec: RunnerSpec = { home, target: "codex", args, base: args, owner: "fixture-supervisor", byAgent: "claude", cwd: home, cfg: DEFAULT_CONFIG,
+    job: { id: "survivors", name: "codex-job-survivors", owner: "fixture-supervisor", agent: "codex", model: null, prompt: args.prompt, startedAt: Date.now(), sessionId: args.session_id, workdir: path, worktree: wt, allowedServers: [] } };
+  writeFileSync(join(home, "jobs.json"), JSON.stringify({ version: 4, jobs: [{ ...spec.job, status: "running", args }] }));
+  const file = join(home, "runner.spec.json"); writeFileSync(file, JSON.stringify(spec));
+  mocks.delegate.mockResolvedValue({ sessionId: args.session_id, worktree: wt, status: "cancelled", text: "cancelled", isError: false });
+  expect(await runJobRunner(file)).toBe(0);
+  expect(readRunnerState(home, spec.job.id)?.report).toContain("PID 789, python.exe, creation identity fixture-start-ticks");
+  expect(mocks.node.send.mock.calls.at(-1)?.[0]).toMatchObject({ to: "fixture-supervisor", body: expect.stringContaining("Supervisor review required before cleanup") });
+});
+
 it("keeps the active turn and lease through owner handoff and control ACK timeout, then reports to the new owner", async () => {
-  const fixtures = join(process.cwd(), ".agent-bridge-test"); mkdirSync(fixtures, { recursive: true });
+  const fixtures = process.env.AGENT_BRIDGE_TEST_ROOT!; mkdirSync(fixtures, { recursive: true });
   home = mkdtempSync(join(fixtures, "runner-continuity-"));
   const wt = { path: join(home, "worktree") }; mkdirSync(wt.path);
   const userFile = join(wt.path, "owner-data.txt"); writeFileSync(userFile, "preserved bytes");
@@ -72,7 +91,7 @@ it("keeps the active turn and lease through owner handoff and control ACK timeou
 }, 20_000);
 
 it("keeps the main owner's turn usable through a slow second-session control timeout and escaped callbacks", async () => {
-  const fixtures = join(process.cwd(), ".agent-bridge-test"); mkdirSync(fixtures, { recursive: true });
+  const fixtures = process.env.AGENT_BRIDGE_TEST_ROOT!; mkdirSync(fixtures, { recursive: true });
   home = mkdtempSync(join(fixtures, "runner-second-session-"));
   const wt = { path: join(home, "worktree") }; mkdirSync(wt.path);
   const userFile = join(wt.path, "owner-data.txt"); writeFileSync(userFile, "preserved second-session bytes");

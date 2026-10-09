@@ -208,7 +208,7 @@ rl.on("line", (line) => {
 
 describe("Codex denial explanations", () => {
   for (const askMode of [true, false]) it(`delivers reasons as live input after protocol declines (askMode=${askMode})`, async () => {
-    const root = join(process.cwd(), ".agent-bridge-test");
+    const root = process.env.AGENT_BRIDGE_TEST_ROOT!;
     mkdirSync(root, { recursive: true });
     const dir = mkdtempSync(join(root, "denials-"));
     writeFileSync(join(dir, "app-server"), `

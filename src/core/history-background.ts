@@ -1,3 +1,4 @@
+import { bundleDirectory } from "./bundle-directory.js";
 import { Worker } from "node:worker_threads";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -19,16 +20,17 @@ export class HistoryBackground {
   private id = 0;
   private migrationLease: string | null = null;
   private reconcilingAsks: Promise<Batch> | null = null;
+  private lastPressure: boolean | undefined;
   private pending = new Map<
     number,
     { resolve: (b: Batch) => void; reject: (e: Error) => void }
   >();
   constructor(file: string, log: Logger) {
-    let entry = new URL("./history-worker.mjs", import.meta.url);
+    let entry = pathToFileURL(join(bundleDirectory(import.meta.url), "history-worker.mjs"));
     if (import.meta.url.endsWith(".ts")) {
       // Source-mode tests/dev use their own checkout's dependency and ignored output.
       const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
-      const path = join(root, ".agent-bridge-test", "history-worker.mjs");
+      const path = join(process.env.AGENT_BRIDGE_TEST_ROOT ?? join(root, ".agent-bridge-test"), "history-worker.mjs");
       const inputs = [
         "config.ts",
         "history-store.ts",
@@ -66,6 +68,7 @@ export class HistoryBackground {
       entry = pathToFileURL(path);
     }
     const start = () => {
+      this.lastPressure = undefined;
       this.exited = false;
       this.worker = new Worker(entry, {
         workerData: { file: historyDbPath(file), bridge: file, home: dirname(file), paths: transcriptPaths() },
@@ -110,7 +113,10 @@ export class HistoryBackground {
   }
   status(): HistoryMigrationProgress { return { ...this.progress }; }
   pressure(pending: boolean, lockError = false): void {
-    if (!this.stopped && !this.exited) this.worker.postMessage({ pressure: true, pending, lockError });
+    if (!this.stopped && !this.exited && (this.lastPressure !== pending || lockError)) {
+      this.lastPressure = pending;
+      this.worker.postMessage({ pressure: true, pending, lockError });
+    }
   }
   rememberPeer(peer: PeerInfo): void {
     if (!this.stopped && !this.exited) this.worker.postMessage({ peer });

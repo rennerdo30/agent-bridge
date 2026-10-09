@@ -84,7 +84,7 @@ it("handles delayed normal-logger pipe failures locally and preserves other stde
 });
 
 it.each(["reject", "throw"])("keeps a real dedicated Node process usable after an escaped %s", async failure => {
-  const root = join(process.cwd(), ".agent-bridge-test"); mkdirSync(root, { recursive: true });
+  const root = process.env.AGENT_BRIDGE_TEST_ROOT!; mkdirSync(root, { recursive: true });
   const home = mkdtempSync(join(root, "runner-errors-")); homes.push(home);
   const entry = join(home, "fixture.ts"), outfile = join(home, "fixture.mjs");
   const helper = resolve("src/mcp/job-runner-errors.ts").replaceAll("\\", "/");

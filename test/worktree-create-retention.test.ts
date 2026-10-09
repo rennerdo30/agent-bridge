@@ -17,7 +17,7 @@ const branch = "agent-bridge/retained";
 const attemptPath = () => join(home, "worktrees", `${basename(repo)}-retained`);
 
 beforeEach(async () => {
-  const temporary = resolve(".agent-bridge-test/tmp"); mkdirSync(temporary, { recursive: true });
+  const temporary = resolve(process.env.AGENT_BRIDGE_TEST_ROOT!, "tmp"); mkdirSync(temporary, { recursive: true });
   root = realpathSync.native(mkdtempSync(join(temporary, "worktree-retention-")));
   repo = join(root, "repo"); home = join(root, "home"); mkdirSync(repo); mkdirSync(home);
   // Every Git command has a local discovery ceiling; empty home cannot find the release repository.

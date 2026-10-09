@@ -8,7 +8,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { runPermissionRepair } from "../src/cli/permission-repair.js";
 
 let home: string;
-beforeEach(() => { mkdirSync(".agent-bridge-test", { recursive: true }); home = mkdtempSync(join(process.cwd(), ".agent-bridge-test", "acl-")); });
+beforeEach(() => { mkdirSync(process.env.AGENT_BRIDGE_TEST_ROOT!, { recursive: true }); home = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "acl-")); });
 afterEach(() => { vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }); });
 describe("permission-only repair", () => {
   it("skips links and refuses linked roots or intermediate components without touching targets", async () => {

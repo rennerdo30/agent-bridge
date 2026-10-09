@@ -3,7 +3,7 @@ import { retryRequest, transientRequestError } from "./request-retry.js";
 import { EventEmitter } from "node:events";
 import { unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { Broker } from "./broker.js";
+import type { Broker } from "./broker.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { BridgeClient, brokerConnectionClosedError } from "./client.js";
 import {
@@ -23,7 +23,8 @@ import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, ty
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
 import { ReadJournal } from "./read-journal.js";
 import { recordLocalResult } from "./local-result-receipts.js";
-import { MessageStore, SQLITE_STORE_VERSION } from "./store.js";
+import type { MessageStore } from "./store.js";
+import { SQLITE_STORE_VERSION } from "./store-version.js";
 import { JSON_STORE_VERSION } from "./json-store.js";
 import { recordStorePeer, refreshStorePeerIdentities } from "./store-compatibility.js";
 import { parentProcessIdentity } from "./process-identity.js";
@@ -262,6 +263,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private async tryBecomeBroker(): Promise<boolean> {
     if (this.broker) return true;
+    const [{ Broker }, { MessageStore }] = await Promise.all([import("./broker.js"), import("./store.js")]);
     let store: MessageStore;
     try {
       // Unverified living readers conservatively defer upgrades; process
