@@ -13,6 +13,7 @@ import { answerPendingApproval, listPendingApprovals, type PermissionDecision, t
 import { until } from "./helpers.js";
 import { readWorktreeState, rootId, saveWorktreeState } from "../src/core/worktree-state.js";
 import { closeJobWorktree } from "../src/core/job-close.js";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
 
 let home: string;
 beforeEach(() => {
@@ -20,7 +21,7 @@ beforeEach(() => {
   mkdirSync(root, { recursive: true });
   home = mkdtempSync(join(root, "run-"));
 });
-afterEach(() => { vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); closeMetadataDb(home); rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });
 
 const context = (): RunContext => ({ agent: "claude", cfg: { ...DEFAULT_CONFIG }, home, log: nullLogger, me: () => "parent", cwd: () => home,
   jobs: { askParent: vi.fn(async () => ({ allow: false, reason: "Publish builds only from merged master" })), fromSubagent: vi.fn(), note: vi.fn() },
