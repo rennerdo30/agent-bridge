@@ -32689,12 +32689,12 @@ var BackupBackground = class {
       lastError: this.lastError
     };
   }
-  schedule(delay11) {
+  schedule(delay12) {
     if (!this.enabled || this.stopped || this.failed) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       this.start();
-    }, delay11);
+    }, delay12);
     this.timer.unref();
   }
   start() {
@@ -37326,7 +37326,7 @@ function markerName(identity, claim2 = false) {
 function fileIdentity(path) {
   const stat3 = lstatSync8(path);
   if (!stat3.isFile() || stat3.isSymbolicLink()) throw busy();
-  return `${stat3.dev}:${stat3.ino}:${stat3.birthtimeMs}`;
+  return `${stat3.dev}:${stat3.ino}`;
 }
 function readOwner(path, registry2) {
   try {
@@ -47656,7 +47656,10 @@ var Broker = class {
       },
       messageReceipt: (c, a) => this.messageReceipt(c, a.id),
       ack: async (c, a) => ({ acked: await this.store.retryWrite(() => this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now())) }),
-      pending: (c, a) => this.pendingMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
+      pending: (c, a) => {
+        const peer = this.requirePeer(c);
+        return this.queueReady(c, peer) ? this.pendingMail(peer.name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)) : [];
+      },
       updatePeer: async (c, a) => {
         const peer = await this.onUpdatePeer(c, a);
         const job = this.storedJobs().find((j) => `job:${j.id}` === peer.id);
@@ -47917,7 +47920,7 @@ var Broker = class {
     }
   }
   accept(socket) {
-    const conn = { socket, peer: null, authed: false, inFlight: 0 };
+    const conn = { socket, peer: null, authed: false, inFlight: 0, mailGeneration: 0 };
     this.conns.add(conn);
     socket.setEncoding("utf8");
     const decoder = new FrameDecoder(MAX_FRAME_BYTES);
@@ -48017,8 +48020,8 @@ var Broker = class {
    * Honour stream backpressure so a large retained inbox is not repeatedly disconnected on replay.
    */
   replayMail(conn, peer, before) {
-    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId };
-    const current = () => !conn.socket.destroyed && conn.peer === peer && peer.id === registration.id && peer.name === registration.name && peer.sessionId === registration.sessionId && this.connByName(registration.name) === conn;
+    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: conn.mailGeneration };
+    const current = () => this.queueReady(conn, peer) && conn.mailGeneration === registration.generation && !conn.socket.destroyed && conn.peer === peer && peer.id === registration.id && peer.name === registration.name && peer.sessionId === registration.sessionId && this.connByName(registration.name) === conn;
     setImmediate(() => {
       if (!current()) return;
       try {
@@ -48603,7 +48606,8 @@ Call decisions to look up current decisions or their history.`,
     const aliases = this.replaceStale(conn, peer);
     aliases.push(...this.restoreNames(peer, true));
     if (this.jobsPath) recordStorePeer(dirname32(this.jobsPath), peer, { authoritative: true });
-    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId };
+    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: ++conn.mailGeneration };
+    conn.mailReady = void 0;
     await this.expireStaleQueue(peer.name);
     this.assertQueueRegistration(conn, peer, registration);
     await this.claimQueueAliases(conn, peer, registration, aliases);
@@ -48616,6 +48620,7 @@ Call decisions to look up current decisions or their history.`,
       });
     }
     this.assertQueueRegistration(conn, peer, registration);
+    conn.mailReady = registration;
     this.log.info("peer joined", { name: name2, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     this.replayMail(conn, peer, () => {
@@ -48627,15 +48632,22 @@ Call decisions to look up current decisions or their history.`,
    * Mail sent to a "-N" stand-in of this peer's name (a reload ran the session under it briefly) moves to the
    * peer. Only names of that form, and only while no one holds them: another session's mail stays its own.
    */
-  onClaimMail(conn, args) {
+  async onClaimMail(conn, args) {
     const peer = this.requirePeer(conn);
+    const registration = conn.mailReady;
+    if (!registration || !this.queueReady(conn, peer)) throw new BridgeError("unauthorized", "Queued mail registration is not ready; retry after registration completes.");
     const base2 = peer.name.replace(/-\d+$/, "");
     let moved = 0;
     for (const name2 of new Set(args.names ?? [])) {
       const standIn = name2 !== peer.name && (name2 === base2 || name2.startsWith(`${base2}-`) && /^\d+$/.test(name2.slice(base2.length + 1)));
       if (!standIn || this.connByName(name2)) continue;
-      moved += this.store.claim(name2, peer.name);
+      await this.expireStaleQueue(name2);
+      moved += await this.store.retryWrite(() => {
+        this.assertQueueRegistration(conn, peer, registration);
+        return this.connByName(name2) ? 0 : this.store.claim(name2, registration.name);
+      });
     }
+    this.assertQueueRegistration(conn, peer, registration);
     if (moved) {
       this.log.info("mail of a stand-in name moved to its session", { to: peer.name, moved });
       this.replayMail(conn, peer);
@@ -48683,11 +48695,13 @@ Call decisions to look up current decisions or their history.`,
     aliases.push(...this.restoreNames(peer, args.sessionId !== void 0));
     replay ||= previousName !== peer.name || aliases.length > 0;
     if (replay || args.sessionId !== void 0) {
-      const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId };
+      const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: ++conn.mailGeneration };
+      conn.mailReady = void 0;
       await this.expireStaleQueue(peer.name);
       this.assertQueueRegistration(conn, peer, registration);
       await this.claimQueueAliases(conn, peer, registration, aliases);
       this.assertQueueRegistration(conn, peer, registration);
+      conn.mailReady = registration;
     }
     if (replay) this.replayMail(conn, peer);
     for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
@@ -48767,9 +48781,13 @@ Call decisions to look up current decisions or their history.`,
   }
   /** An expiry retry must not grant queued mail to a changed or replaced session. */
   assertQueueRegistration(conn, peer, registration) {
-    if (conn.socket.destroyed || conn.peer !== peer || peer.id !== registration.id || peer.name !== registration.name || peer.sessionId !== registration.sessionId || this.connByName(registration.name) !== conn) {
+    if (conn.socket.destroyed || conn.peer !== peer || peer.id !== registration.id || peer.name !== registration.name || peer.sessionId !== registration.sessionId || conn.mailGeneration !== registration.generation || this.connByName(registration.name) !== conn) {
       throw new BridgeError("unauthorized", "Session changed while queued mail was archived; reconnect to claim retained mail.");
     }
+  }
+  queueReady(conn, peer) {
+    const ready = conn.mailReady;
+    return Boolean(ready && conn.peer === peer && ready.generation === conn.mailGeneration && ready.id === peer.id && ready.name === peer.name && ready.sessionId === peer.sessionId && this.connByName(peer.name) === conn);
   }
   async awaitHandoffReaders(source, target) {
     const controller = new AbortController();
@@ -49294,9 +49312,9 @@ var BridgeNode = class extends EventEmitter2 {
   }
   /** Doubling delay for background retries, capped; reset once connected. */
   nextBackoff() {
-    const delay11 = this.reconnectDelay;
-    this.reconnectDelay = Math.min(delay11 * 2, RECONNECT_BACKOFF_MAX_MS);
-    return delay11;
+    const delay12 = this.reconnectDelay;
+    this.reconnectDelay = Math.min(delay12 * 2, RECONNECT_BACKOFF_MAX_MS);
+    return delay12;
   }
   /**
    * Retry the election later until connected or stopped. Also after "unauthorized" / "protocol_mismatch":
@@ -55249,6 +55267,7 @@ async function runJobClose(command, args, home, cfg, log, out2) {
 // src/mcp/job-runner.ts
 import { join as join88 } from "node:path";
 import { randomUUID as randomUUID33 } from "node:crypto";
+import { setTimeout as delay10 } from "node:timers/promises";
 
 // src/core/windows-job-scope.ts
 import { spawn as spawn11 } from "node:child_process";
@@ -55502,6 +55521,32 @@ var SEND_RETRY_MAX_MS = 1e4;
 var PROGRESS_SAVE_MS = 1e3;
 var SEEN_LIMIT = 100;
 var STOP_DEADLINE_MS = 15e3;
+var INITIAL_STATE_DEADLINE_MS = 15e3;
+async function publishInitialRunnerState(spec, log) {
+  const controller = new AbortController();
+  const stop = () => controller.abort(new Error("Job runner stopped before initial state publication"));
+  const deadline = setTimeout(() => controller.abort(new Error("Job runner initial state publication timed out")), INITIAL_STATE_DEADLINE_MS);
+  process.on("SIGTERM", stop);
+  process.on("SIGINT", stop);
+  try {
+    for (let attempt = 0; ; attempt++) {
+      await refreshStorePeerIdentities(spec.home, controller.signal);
+      controller.signal.throwIfAborted();
+      try {
+        writeRunnerState(spec.home, spec.job.id, { pid: process.pid, peer: spec.job.name, status: "running", updatedAt: Date.now(), progress: "queued: runner startup admission" });
+        return;
+      } catch (error62) {
+        if (error62.code !== "STORE_UPGRADE_DEFERRED") throw error62;
+        if (attempt === 0) log.info("initial runner state waits for retained store readers", { job: spec.job.name, reason: String(error62) });
+        await delay10(Math.min(1e3, (attempt + 1) * 100), void 0, { signal: controller.signal });
+      }
+    }
+  } finally {
+    clearTimeout(deadline);
+    process.off("SIGTERM", stop);
+    process.off("SIGINT", stop);
+  }
+}
 async function runJobRunner(specFile) {
   if (!specFile) return 2;
   const data = readJsonStore(specFile);
@@ -55514,8 +55559,7 @@ async function runJobRunner(specFile) {
   let scope = null;
   const releaseErrorGuards = guardRunnerErrors(log);
   try {
-    await refreshStorePeerIdentities(home);
-    writeRunnerState(home, spec.job.id, { pid: process.pid, peer: spec.job.name, status: "running", updatedAt: Date.now(), progress: "queued: runner startup admission" });
+    await publishInitialRunnerState(spec, log);
     if (process.platform === "win32") {
       const controller = new AbortController();
       const stop = () => controller.abort();
@@ -55921,7 +55965,7 @@ Resource must be configured in resourceSlots.`);
 
 // src/network/cli.ts
 import { createInterface as createInterface2 } from "node:readline/promises";
-import { setTimeout as delay10 } from "node:timers/promises";
+import { setTimeout as delay11 } from "node:timers/promises";
 import { Writable } from "node:stream";
 
 // src/network/wizard.ts
@@ -56104,7 +56148,7 @@ async function runNetworkCommand(command, args, home, pipe2, log, out2) {
           clipboard: copyPairingCode,
           now: Date.now,
           signal: cancellation.signal,
-          sleep: (ms) => delay10(ms, void 0, { signal: cancellation.signal })
+          sleep: (ms) => delay11(ms, void 0, { signal: cancellation.signal })
         });
       } catch (error62) {
         if (!cancellation.signal.aborted) throw error62;

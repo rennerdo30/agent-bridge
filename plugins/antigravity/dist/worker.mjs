@@ -32765,7 +32765,7 @@ function markerName(identity, claim2 = false) {
 function fileIdentity(path) {
   const stat3 = lstatSync5(path);
   if (!stat3.isFile() || stat3.isSymbolicLink()) throw busy();
-  return `${stat3.dev}:${stat3.ino}:${stat3.birthtimeMs}`;
+  return `${stat3.dev}:${stat3.ino}`;
 }
 function readOwner(path, registry2) {
   try {
@@ -57876,7 +57876,10 @@ var Broker = class {
       },
       messageReceipt: (c, a) => this.messageReceipt(c, a.id),
       ack: async (c, a) => ({ acked: await this.store.retryWrite(() => this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now())) }),
-      pending: (c, a) => this.pendingMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
+      pending: (c, a) => {
+        const peer = this.requirePeer(c);
+        return this.queueReady(c, peer) ? this.pendingMail(peer.name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)) : [];
+      },
       updatePeer: async (c, a) => {
         const peer = await this.onUpdatePeer(c, a);
         const job = this.storedJobs().find((j) => `job:${j.id}` === peer.id);
@@ -58137,7 +58140,7 @@ var Broker = class {
     }
   }
   accept(socket) {
-    const conn = { socket, peer: null, authed: false, inFlight: 0 };
+    const conn = { socket, peer: null, authed: false, inFlight: 0, mailGeneration: 0 };
     this.conns.add(conn);
     socket.setEncoding("utf8");
     const decoder = new FrameDecoder(MAX_FRAME_BYTES);
@@ -58237,8 +58240,8 @@ var Broker = class {
    * Honour stream backpressure so a large retained inbox is not repeatedly disconnected on replay.
    */
   replayMail(conn, peer, before) {
-    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId };
-    const current = () => !conn.socket.destroyed && conn.peer === peer && peer.id === registration.id && peer.name === registration.name && peer.sessionId === registration.sessionId && this.connByName(registration.name) === conn;
+    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: conn.mailGeneration };
+    const current = () => this.queueReady(conn, peer) && conn.mailGeneration === registration.generation && !conn.socket.destroyed && conn.peer === peer && peer.id === registration.id && peer.name === registration.name && peer.sessionId === registration.sessionId && this.connByName(registration.name) === conn;
     setImmediate(() => {
       if (!current()) return;
       try {
@@ -58823,7 +58826,8 @@ Call decisions to look up current decisions or their history.`,
     const aliases = this.replaceStale(conn, peer);
     aliases.push(...this.restoreNames(peer, true));
     if (this.jobsPath) recordStorePeer(dirname32(this.jobsPath), peer, { authoritative: true });
-    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId };
+    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: ++conn.mailGeneration };
+    conn.mailReady = void 0;
     await this.expireStaleQueue(peer.name);
     this.assertQueueRegistration(conn, peer, registration);
     await this.claimQueueAliases(conn, peer, registration, aliases);
@@ -58836,6 +58840,7 @@ Call decisions to look up current decisions or their history.`,
       });
     }
     this.assertQueueRegistration(conn, peer, registration);
+    conn.mailReady = registration;
     this.log.info("peer joined", { name: name2, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     this.replayMail(conn, peer, () => {
@@ -58847,15 +58852,22 @@ Call decisions to look up current decisions or their history.`,
    * Mail sent to a "-N" stand-in of this peer's name (a reload ran the session under it briefly) moves to the
    * peer. Only names of that form, and only while no one holds them: another session's mail stays its own.
    */
-  onClaimMail(conn, args) {
+  async onClaimMail(conn, args) {
     const peer = this.requirePeer(conn);
+    const registration = conn.mailReady;
+    if (!registration || !this.queueReady(conn, peer)) throw new BridgeError("unauthorized", "Queued mail registration is not ready; retry after registration completes.");
     const base2 = peer.name.replace(/-\d+$/, "");
     let moved = 0;
     for (const name2 of new Set(args.names ?? [])) {
       const standIn = name2 !== peer.name && (name2 === base2 || name2.startsWith(`${base2}-`) && /^\d+$/.test(name2.slice(base2.length + 1)));
       if (!standIn || this.connByName(name2)) continue;
-      moved += this.store.claim(name2, peer.name);
+      await this.expireStaleQueue(name2);
+      moved += await this.store.retryWrite(() => {
+        this.assertQueueRegistration(conn, peer, registration);
+        return this.connByName(name2) ? 0 : this.store.claim(name2, registration.name);
+      });
     }
+    this.assertQueueRegistration(conn, peer, registration);
     if (moved) {
       this.log.info("mail of a stand-in name moved to its session", { to: peer.name, moved });
       this.replayMail(conn, peer);
@@ -58903,11 +58915,13 @@ Call decisions to look up current decisions or their history.`,
     aliases.push(...this.restoreNames(peer, args.sessionId !== void 0));
     replay ||= previousName !== peer.name || aliases.length > 0;
     if (replay || args.sessionId !== void 0) {
-      const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId };
+      const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: ++conn.mailGeneration };
+      conn.mailReady = void 0;
       await this.expireStaleQueue(peer.name);
       this.assertQueueRegistration(conn, peer, registration);
       await this.claimQueueAliases(conn, peer, registration, aliases);
       this.assertQueueRegistration(conn, peer, registration);
+      conn.mailReady = registration;
     }
     if (replay) this.replayMail(conn, peer);
     for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
@@ -58987,9 +59001,13 @@ Call decisions to look up current decisions or their history.`,
   }
   /** An expiry retry must not grant queued mail to a changed or replaced session. */
   assertQueueRegistration(conn, peer, registration) {
-    if (conn.socket.destroyed || conn.peer !== peer || peer.id !== registration.id || peer.name !== registration.name || peer.sessionId !== registration.sessionId || this.connByName(registration.name) !== conn) {
+    if (conn.socket.destroyed || conn.peer !== peer || peer.id !== registration.id || peer.name !== registration.name || peer.sessionId !== registration.sessionId || conn.mailGeneration !== registration.generation || this.connByName(registration.name) !== conn) {
       throw new BridgeError("unauthorized", "Session changed while queued mail was archived; reconnect to claim retained mail.");
     }
+  }
+  queueReady(conn, peer) {
+    const ready = conn.mailReady;
+    return Boolean(ready && conn.peer === peer && ready.generation === conn.mailGeneration && ready.id === peer.id && ready.name === peer.name && ready.sessionId === peer.sessionId && this.connByName(peer.name) === conn);
   }
   async awaitHandoffReaders(source, target) {
     const controller = new AbortController();
