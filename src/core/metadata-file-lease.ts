@@ -57,7 +57,10 @@ function markerName(identity: string, claim = false): string {
 function fileIdentity(path: string): string {
   const stat = lstatSync(path);
   if (!stat.isFile() || stat.isSymbolicLink()) throw busy();
-  return `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
+  // Darwin utimes may change birthtime on the same inode. The retained marker
+  // hard link pins this inode; its immutable directory and nonce fence each
+  // owner generation separately from mutable filesystem timestamps.
+  return `${stat.dev}:${stat.ino}`;
 }
 
 interface Owner {

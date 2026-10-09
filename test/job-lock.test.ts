@@ -8,12 +8,18 @@ const state = vi.hoisted(() => ({
   current: vi.fn(), alive: vi.fn(), asyncIdentity: vi.fn(),
   beforeLink: undefined as ((source: string, target: string) => void) | undefined,
   afterRename: undefined as ((source: string, target: string) => void) | undefined,
+  birthtimeOverride: undefined as number | undefined,
 }));
 vi.mock("../src/core/process-identity.js", () => ({ processIdentity: state.current, isProcessIdentityAlive: state.alive, readProcessIdentity: state.asyncIdentity }));
 vi.mock("node:fs", async (original) => {
   const fs = await original<typeof import("node:fs")>();
   return {
     ...fs,
+    lstatSync: ((...args: Parameters<typeof fs.lstatSync>) => {
+      const result = fs.lstatSync(...args);
+      if (result && state.birthtimeOverride !== undefined && result.isFile()) Object.assign(result, { birthtimeMs: state.birthtimeOverride });
+      return result;
+    }) as typeof fs.lstatSync,
     linkSync: (...args: Parameters<typeof fs.linkSync>) => { state.beforeLink?.(String(args[0]), String(args[1])); fs.linkSync(...args); },
     renameSync: (...args: Parameters<typeof fs.renameSync>) => { fs.renameSync(...args); state.afterRename?.(String(args[0]), String(args[1])); },
   };
@@ -39,8 +45,10 @@ beforeEach(() => {
   state.asyncIdentity.mockReset().mockResolvedValue(null);
   state.beforeLink = undefined;
   state.afterRename = undefined;
+  state.birthtimeOverride = undefined;
 });
 afterEach(() => {
+  state.birthtimeOverride = undefined;
   state.beforeLink = undefined;
   state.afterRename = undefined;
   expect(readFileSync(join(home, "owner-data.txt"), "utf8")).toBe("unique user bytes");
@@ -48,6 +56,25 @@ afterEach(() => {
 });
 
 describe("job-store metadata locks", () => {
+  it("releases the same inode after a birthtime change without releasing a newer nonce", () => {
+    const release = acquireLock(path, 0);
+    const original = readFileSync(path, "utf8");
+    // Darwin utimes can move birthtime backwards without changing the inode.
+    state.birthtimeOverride = 0;
+    expect(() => acquireLock(path, 0)).toThrow("locking jobs store");
+    release();
+    expect(existsSync(path)).toBe(false);
+    expect(archives()).toHaveLength(1);
+    expect(readFileSync(archives()[0]!, "utf8")).toBe(original);
+    const next = acquireLock(path, 0);
+    const newer = readFileSync(path, "utf8");
+    release();
+    expect(readFileSync(path, "utf8")).toBe(newer);
+    expect(newer).not.toBe(original);
+    next();
+    expect(archives()).toHaveLength(2);
+  });
+
   it("publishes complete versioned owner metadata exclusively and archives release", () => {
     state.beforeLink = (source, target) => {
       expect(target).toBe(path);
