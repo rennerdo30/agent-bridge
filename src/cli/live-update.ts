@@ -46,6 +46,37 @@ export function updateCodex(source: string, home = process.env.CODEX_HOME || joi
   return root;
 }
 
+/**
+ * Where a TOML table body ends: the first line starting with `[` outside multi-line arrays, inline tables and
+ * strings (AB-237). Throws when the body ends inside an open array or string: such a file is never rewritten.
+ */
+function tomlTableEnd(text: string): number {
+  let depth = 0, multi: '"""' | "'''" | null = null, offset = 0;
+  for (const line of text.split(/(?<=\n)/)) {
+    if (!multi && depth === 0 && /^\s*\[/.test(line)) return offset;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i]!;
+      if (multi) {
+        if (c === "\\" && multi === '"""') { i++; continue; }
+        if (line.startsWith(multi, i)) { multi = null; i += 2; }
+        continue;
+      }
+      if (c === "#") break;
+      if (line.startsWith('"""', i) || line.startsWith("'''", i)) { multi = line.slice(i, i + 3) as '"""' | "'''"; i += 2; continue; }
+      if (c === '"' || c === "'") {
+        // A single-line string: skip to its closing quote (basic strings honour escapes).
+        for (i++; i < line.length && line[i] !== c; i++) if (c === '"' && line[i] === "\\") i++;
+        continue;
+      }
+      if (c === "[" || c === "{") depth++;
+      else if (c === "]" || c === "}") depth = Math.max(0, depth - 1);
+    }
+    offset += line.length;
+  }
+  if (depth || multi) throw new Error("The agent-bridge marketplace table has an unterminated array or string; preserved unchanged");
+  return text.length;
+}
+
 /** Narrow TOML edits; keep all unrelated tables, comments, credentials and plugin preferences. */
 export function codexLiveConfig(config: string, marketplace: string): string {
   const header = /^\s*\[marketplaces\.(?:agent-bridge|"agent-bridge"|'agent-bridge')\]\s*(?:#.*)?$/gm;
@@ -54,7 +85,7 @@ export function codexLiveConfig(config: string, marketplace: string): string {
   const fields = `source_type = "local"\nsource = ${JSON.stringify(marketplace.replaceAll("\\", "/"))}\n`;
   if (matches.length) {
     const match = matches[0]!, start = match.index! + match[0].length;
-    const tail = config.slice(start), end = /^\s*\[/m.exec(tail)?.index ?? tail.length;
+    const tail = config.slice(start), end = tomlTableEnd(tail);
     const body = tail.slice(0, end).replace(/^\s*(?:source_type|source)\s*=.*(?:\r?\n|$)/gm, "");
     config = config.slice(0, start) + "\n" + fields + body + tail.slice(end);
   } else config += `\n[marketplaces.agent-bridge]\n${fields}`;
