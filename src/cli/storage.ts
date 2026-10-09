@@ -18,11 +18,18 @@ export function runStorage(rest: string[], home: string, out: (text: string) => 
     for (const blocker of plan.blockers) out(`  - ${blocker}`);
     return 1;
   }
+  const kept = () => {
+    if (!plan.kept.length) return;
+    out("Kept, because they are not proven redundant row by row:");
+    for (const item of plan.kept) out(`  ${gib(item.bytes).padStart(10)}  ${item.path}  (${item.reason})`);
+  };
   if (!args.has("--yes")) {
     for (const item of plan.items) out(`  ${gib(item.bytes).padStart(10)}  ${item.path}  (${item.reason})`);
+    kept();
     out(`${plan.items.length} items, ${gib(plan.bytes)}. Run again with --yes to remove them.`);
     return 0;
   }
+  kept();
   out(`Removed ${plan.items.length} items, ${gib(plan.bytes)}.`);
   return 0;
 }
