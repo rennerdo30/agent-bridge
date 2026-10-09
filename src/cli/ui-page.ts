@@ -477,6 +477,20 @@ code.addr { font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-
 .disc-table table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 .disc-table th, .disc-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--panel-2); }
 .disc-table th { color: var(--muted); font-weight: 600; }
+.db-layout { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.db-tables { padding: 6px; max-height: 70vh; overflow-y: auto; }
+.db-tables button { display: flex; width: 100%; gap: 8px; align-items: baseline; padding: 6px 8px; border: 0; border-radius: 6px; background: none; color: var(--text); text-align: left; cursor: pointer; font: inherit; font-size: 13px; }
+.db-tables button:hover { background: var(--panel-2); }
+.db-tables button[aria-current="true"] { background: var(--accent-soft); font-weight: 600; }
+.db-tables .db-name { margin: 8px 8px 4px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--faint); }
+.db-tables .meta { margin-left: auto; color: var(--faint); font-size: 11.5px; white-space: nowrap; }
+.db-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.db-bar input[type="search"] { flex: 1 1 220px; min-width: 0; }
+.db-grid td { vertical-align: top; max-width: 420px; }
+.db-grid td.cell { white-space: pre-wrap; word-break: break-word; font-family: var(--mono, ui-monospace, monospace); font-size: 12px; }
+.db-grid td.cell.clip { max-height: 7.5em; overflow: hidden; display: block; cursor: pointer; }
+.db-grid .null { color: var(--faint); font-style: italic; }
+@media (max-width: 760px) { .db-layout { grid-template-columns: minmax(0, 1fr); } .db-tables { max-height: 34vh; } }
 
 .handoff { padding: 16px; border-bottom: 1px solid var(--line); background: var(--panel-2); display: grid; gap: 12px; }
 .handoff-targets { display: grid; gap: 6px; max-height: 220px; overflow: auto; }
@@ -672,6 +686,7 @@ form#send select#to {
     <a href="#/network" id="tabNet"><span class="ico" aria-hidden="true">⇄</span>Network</a>
     <a href="#/decisions" id="tabDecisions"><span class="ico" aria-hidden="true">✓</span>Decisions</a>
     <a href="#/search" id="tabSearch"><span class="ico" aria-hidden="true">⌕</span>Search history</a>
+    <a href="#/db" id="tabDb"><span class="ico" aria-hidden="true">≣</span>Database</a>
   </nav>
   <div class="side-tree" id="sideTree"></div>
   <div class="side-foot">
@@ -741,6 +756,21 @@ form#send select#to {
     </form>
     <div id="sAnswerBox"></div>
     <div id="sResults"></div>
+  </div>
+
+  <div id="db" class="hidden">
+    <div class="page-head"><div><h2>Database</h2><p class="muted">Read-only view of the bridge's databases. Compressed text is shown decoded; switch on "Raw" to see stored values.</p></div></div>
+    <div class="db-layout">
+      <div class="panel db-tables" id="dbTables" aria-label="Tables and views"></div>
+      <div>
+        <form class="db-bar" id="dbForm">
+          <input type="search" id="dbFilter" placeholder="Filter rows (text contained in any column)" autocomplete="off" aria-label="Filter rows">
+          <label class="toggle" title="Show stored values instead of decoded text"><input type="checkbox" id="dbRaw"><span class="track" aria-hidden="true"></span>Raw</label>
+          <button type="submit">Apply</button>
+        </form>
+        <div id="dbRows"></div>
+      </div>
+    </div>
   </div>
 
   <div id="decisions" class="hidden">
@@ -856,7 +886,7 @@ const LOG_PAGES = 20;
 const FOLD_STEPS = 3;
 /** Finished subagents older than this move into the session's archive. */
 const ARCHIVE_AFTER_MS = 30 * 60_000;
-const NETWORK_HASH = "#/network", APPROVALS_HASH = "#/approvals", DECISIONS_HASH = "#/decisions", SEARCH_HASH = "#/search";
+const NETWORK_HASH = "#/network", APPROVALS_HASH = "#/approvals", DECISIONS_HASH = "#/decisions", SEARCH_HASH = "#/search", DB_HASH = "#/db";
 /** Open approval requests are re-read this often (they expire into a "deny" after a few minutes). */
 const APPROVALS_POLL_MS = 3000;
 /** Network status refresh while the tab is open, and faster while a pairing code waits for the other PC. */
@@ -930,6 +960,7 @@ function parseRoute() {
   if (location.hash.split("?")[0] === APPROVALS_HASH) return { session: null, group: null, page: "approvals" };
   if (location.hash === DECISIONS_HASH) return { session: null, group: null, page: "decisions" };
   if (location.hash === SEARCH_HASH) return { session: null, group: null, page: "search" };
+  if (location.hash === DB_HASH) return { session: null, group: null, page: "db" };
   const m = /^#\\/s\\/([^/]+)(?:\\/(.+))?$/.exec(location.hash);
   return m ? { session: decodeURIComponent(m[1]), group: m[2] ? decodeURIComponent(m[2]) : null } : { session: null, group: null };
 }
@@ -1033,10 +1064,12 @@ function render() {
   $("approvals").classList.toggle("hidden", page !== "approvals");
   $("decisions").classList.toggle("hidden", page !== "decisions");
   $("search").classList.toggle("hidden", page !== "search");
+  $("db").classList.toggle("hidden", page !== "db");
   if (inNetwork) renderNetwork();
   else if (page === "approvals") renderApprovals();
   else if (page === "decisions") renderDecisions();
   else if (page === "search") renderSearch();
+  else if (page === "db") renderDb();
   else if (inSession) renderSession();
   else renderOverview();
   renderSendForm(inSession);
@@ -1290,10 +1323,11 @@ function renderSide() {
   $("tabApprovals").className = (route.page === "approvals" ? "on" : "") + (approvals.length ? " attn" : "");
   $("tabDecisions").className = route.page === "decisions" ? "on" : "";
   $("tabSearch").className = route.page === "search" ? "on" : "";
+  $("tabDb").className = route.page === "db" ? "on" : "";
   setHtml("tabNet", '<span class="ico" aria-hidden="true">⇄</span>Network' + networkTabDot());
   setHtml("tabApprovals", '<span class="ico" aria-hidden="true">!</span>Waiting for you' + (approvals.length ? '<span class="count attn">' + approvals.length + "</span>" : ""));
   const cur = route.session && model.byName.get(route.session);
-  $("mTitle").textContent = route.network ? "Network" : route.page === "approvals" ? "Waiting for you" : route.page === "decisions" ? "Decisions" : route.page === "search" ? "Search history" : route.session ? (cur ? sessionTitle(cur) : route.session) : "Overview";
+  $("mTitle").textContent = route.network ? "Network" : route.page === "approvals" ? "Waiting for you" : route.page === "decisions" ? "Decisions" : route.page === "search" ? "Search history" : route.page === "db" ? "Database" : route.session ? (cur ? sessionTitle(cur) : route.session) : "Overview";
   const q = $("sessFilter").value.trim().toLowerCase();
   const groups = sideGroups(q);
   const html = groups.length
@@ -2905,6 +2939,78 @@ $("sResults").addEventListener("click", async (e) => {
     searchSources.set(id, { error: err.message });
   }
   renderSearch();
+});
+/* ---- Database inspector (GET /api/db/tables, /api/db/rows; read-only) ---- */
+const DB_PAGE = 100;
+let dbCatalog = null, dbSel = null, dbResult = null, dbBusy = false, dbOffset = 0;
+const dbOpenCells = new Set();
+function dbSize(n) {
+  if (typeof n !== "number") return "";
+  return n >= 1e9 ? (n / 1e9).toFixed(1) + " GB" : n >= 1e6 ? (n / 1e6).toFixed(1) + " MB" : n >= 1e3 ? Math.round(n / 1e3) + " kB" : n + " B";
+}
+function dbCell(v, key) {
+  if (v === null || v === undefined) return '<td class="cell"><span class="null">NULL</span></td>';
+  const s = typeof v === "string" ? v : JSON.stringify(v);
+  const long = s.length > 400 && !dbOpenCells.has(key);
+  return '<td class="cell' + (long ? " clip" : "") + '" data-cell="' + esc(key) + '" title="' + (long ? "Click to show everything" : "") + '">' + esc(s) + "</td>";
+}
+function renderDb() {
+  if (!dbCatalog) { void loadDbTables(); return setHtml("dbTables", '<div class="empty small muted">Reading tables…</div>'); }
+  if (dbCatalog.error) { setHtml("dbTables", '<div class="empty small muted">' + esc(dbCatalog.error) + "</div>"); return setHtml("dbRows", ""); }
+  setHtml("dbTables", (dbCatalog.dbs || []).map((d) => '<div class="db-name">' + esc(d.db) + (d.bytes ? " · " + dbSize(d.bytes) : "") + "</div>" +
+    (d.tables || []).map((t) => {
+      const cur = dbSel && dbSel.db === d.db && dbSel.table === t.name;
+      return '<button type="button" data-db="' + esc(d.db) + '" data-table="' + esc(t.name) + '" aria-current="' + cur + '"><span class="ell">' + esc(t.name) + "</span>" +
+        '<span class="meta">' + (t.kind === "view" ? "view" : (typeof t.rows === "number" ? t.rows.toLocaleString() + " rows" : "") + (t.bytes ? " · " + dbSize(t.bytes) : "")) + "</span></button>";
+    }).join("")).join(""));
+  if (!dbSel) return setHtml("dbRows", '<div class="panel empty">Pick a table or view.</div>');
+  if (dbBusy) return setHtml("dbRows", '<div class="panel empty">Loading…</div>');
+  if (!dbResult) return setHtml("dbRows", "");
+  if (dbResult.error) return setHtml("dbRows", '<div class="panel empty">' + esc(dbResult.error) + "</div>");
+  const cols = dbResult.columns || [], rows = dbResult.rows || [], total = dbResult.total;
+  const from = rows.length ? dbOffset + 1 : 0, to = dbOffset + rows.length;
+  const pager = '<div class="db-bar small muted"><span>' + from + "–" + to + (typeof total === "number" ? " of " + total.toLocaleString() : "") + "</span>" +
+    '<button type="button" class="ghost" data-db-page="-1"' + (dbOffset ? "" : " disabled") + ">Previous</button>" +
+    '<button type="button" class="ghost" data-db-page="1"' + ((typeof total === "number" ? to < total : rows.length === DB_PAGE) ? "" : " disabled") + ">Next</button></div>";
+  setHtml("dbRows", pager + '<div class="panel disc-table db-grid"><table><thead><tr>' + cols.map((c) => "<th>" + esc(c) + "</th>").join("") + "</tr></thead><tbody>" +
+    (rows.length ? rows.map((r, i) => "<tr>" + r.map((v, j) => dbCell(v, (dbOffset + i) + ":" + j)).join("") + "</tr>").join("") : '<tr><td class="small muted" colspan="' + Math.max(1, cols.length) + '">No rows.</td></tr>') +
+    "</tbody></table></div>");
+}
+async function loadDbTables() {
+  try {
+    const r = await fetch("/api/db/tables");
+    dbCatalog = r.ok ? await r.json() : { error: r.status === 404 ? "The database view is not available in this version yet." : "Could not read the tables (HTTP " + r.status + ")." };
+  } catch (err) { dbCatalog = { error: "Could not read the tables: " + err.message }; }
+  if (route.page === "db") renderDb();
+}
+async function loadDbRows() {
+  if (!dbSel) return;
+  const params = new URLSearchParams({ db: dbSel.db, table: dbSel.table, offset: String(dbOffset), limit: String(DB_PAGE) });
+  const filter = $("dbFilter").value.trim();
+  if (filter) params.set("filter", filter);
+  if ($("dbRaw").checked) params.set("raw", "true");
+  dbBusy = true; dbOpenCells.clear(); renderDb();
+  try {
+    const r = await fetch("/api/db/rows?" + params.toString());
+    const d = await r.json().catch(() => ({}));
+    dbResult = r.ok ? d : { error: d.error || "Could not read the rows (HTTP " + r.status + ")." };
+  } catch (err) { dbResult = { error: "Could not read the rows: " + err.message }; }
+  dbBusy = false;
+  if (route.page === "db") renderDb();
+}
+$("dbTables").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-table]");
+  if (!b) return;
+  dbSel = { db: b.dataset.db, table: b.dataset.table }; dbOffset = 0; dbResult = null;
+  void loadDbRows();
+});
+$("dbForm").addEventListener("submit", (e) => { e.preventDefault(); dbOffset = 0; void loadDbRows(); });
+$("dbRaw").addEventListener("change", () => { if (dbSel) void loadDbRows(); });
+$("dbRows").addEventListener("click", (e) => {
+  const p = e.target.closest("[data-db-page]");
+  if (p) { dbOffset = Math.max(0, dbOffset + Number(p.dataset.dbPage) * DB_PAGE); void loadDbRows(); return; }
+  const c = e.target.closest("td.clip[data-cell]");
+  if (c) { dbOpenCells.add(c.dataset.cell); renderDb(); }
 });
 $("netTransfers").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-xfer-cancel]");
