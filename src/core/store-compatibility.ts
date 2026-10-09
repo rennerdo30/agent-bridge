@@ -58,14 +58,26 @@ async function refreshIdentityCache(home: string): Promise<void> {
         ? [{ pid: Number(file.slice(0, -5)), path, signature }] : [];
     }) : [];
     if (!records.length) return;
+    let failed = false;
     const refresh = (async () => {
-      const current = await readProcessIdentities(records.filter(record => record.pid !== process.pid).map(record => record.pid));
+      let current: Map<number, string>;
+      try { current = await readProcessIdentities(records.filter(record => record.pid !== process.pid).map(record => record.pid)); }
+      catch {
+        // A failed or timed-out query (an overloaded system) observed nothing: keep each reader's last verified
+        // identity for another interval instead of marking every live reader unknown, which blocked upgrades and
+        // job starts. Readers never verified stay unknown until a later query succeeds.
+        failed = true;
+        for (const { path } of records) { const cached = identities.get(path); if (cached) identities.set(path, { ...cached, at: Date.now() }); }
+        return;
+      }
       // Bind the result to the record observed before the OS query. A new PID
       // generation published during/after that query must be verified again.
       for (const { pid, path, signature } of records) identities.set(path, { identity: pid === process.pid ? processIdentity(pid) ?? null : current.get(pid) ?? null, at: Date.now(), signature });
     })();
     refreshes.set(home, refresh);
     try { await refresh; } finally { refreshes.delete(home); }
+    // Do not retry a failed query in a tight loop; the next readiness check or refresh asks again.
+    if (failed) return;
     // A new runner can publish presence during the previous batch. An awaited
     // readiness check must cover that PID too, rather than reuse an older scan.
   }
