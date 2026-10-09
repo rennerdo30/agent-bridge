@@ -7,7 +7,10 @@ import { assertStoreUpgrade, liveStorePeers, recordStorePeer, releasedStoreCapab
 import { readJsonStore, writeJsonStore } from "../src/core/json-store.js";
 import { migrateSqlite } from "../src/core/sqlite-migrations.js";
 import { nullLogger } from "../src/core/logger.js";
-import { archiveJobs } from "../src/core/job-archive.js";
+import { readArchivedJobs } from "../src/core/job-archive.js";
+import { EventEmitter } from "node:events";
+import { JobManager } from "../src/mcp/jobs.js";
+import type { BridgeNode } from "../src/core/node.js";
 import { formatPeer, formatVersionSkew } from "../src/mcp/format.js";
 import { APP_VERSION } from "../src/core/constants.js";
 import type { PeerInfo } from "../src/core/protocol.js";
@@ -16,7 +19,7 @@ import { closeMetadataDb, metadataDb, metadataValue } from "../src/core/metadata
 
 let home: string;
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), "ab-compat-")); });
-afterEach(() => { closeMetadataDb(home); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
+afterEach(() => { closeMetadataDb(home); vi.restoreAllMocks(); vi.unstubAllEnvs(); rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });
 const old = () => recordStorePeer(home, { pid: process.pid, name: "retained-reader", version: "0.29.12" });
 
 it("keeps JSON3 byte-for-byte until its live reader can read JSON4", () => {
@@ -46,8 +49,18 @@ it("defers SQLite7→8 without snapshotting or changing owner data", () => {
 });
 
 it("does not archive unreadable JSON or overwrite explicit capabilities with a legacy observation", () => {
-  old(); expect(() => archiveJobs(join(home, "jobs.json"), [{ id: "keep" }])).toThrow("Waiting to upgrade json");
+  // AB-206: archives are index rows, never JSON files an older reader would miss. While such a reader
+  // lives, overflow jobs are copied into the index but stay in jobs.json (the jobArchive gate defers).
+  vi.stubEnv("AGENT_BRIDGE_JOB_STORE_LIMIT", "1");
+  const path = join(home, "jobs.json"), job = (id: string, startedAt: number) => ({ id, name: `codex-job-${id}`, agent: "codex", prompt: "task", startedAt, status: "done", sessionId: "s1" });
+  writeFileSync(path, JSON.stringify({ version: 2, jobs: [job("keep", 1), job("new", 2)] }));
+  old();
+  const node = Object.assign(new EventEmitter(), { name: "claude-main", deliverLocal: () => {} }) as unknown as BridgeNode;
+  new JobManager(node, nullLogger, path).restore(() => undefined);
+  expect(JSON.parse(readFileSync(path, "utf8")).jobs.map((j: { id: string }) => j.id)).toEqual(["keep", "new"]);
+  expect(readArchivedJobs(path).map((j) => j.id)).toContain("keep");
   expect(existsSync(join(home, "archive"))).toBe(false);
+  expect(() => assertStoreUpgrade(home, "jobArchive", 0, 1)).toThrow("Waiting to upgrade jobArchive");
   recordStorePeer(home, { pid: process.pid, name: "current", version: APP_VERSION, storeCapabilities: { json: 4, sqlite: 8 } });
   old(); expect(() => assertStoreUpgrade(home, "json", 3, 4)).not.toThrow();
 });
