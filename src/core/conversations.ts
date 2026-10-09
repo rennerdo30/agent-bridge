@@ -6,6 +6,7 @@ import {
   fstatSync,
   openSync,
   readSync,
+  statSync,
   watch,
   type FSWatcher,
 } from "node:fs";
@@ -20,7 +21,8 @@ import {
 } from "./transcripts/common.js";
 import { conversationProject, syncProjectMirror } from "./project-store.js";
 import { readArchivedJobSnapshot } from "./job-archive.js";
-import { readJsonSnapshot } from "./file-cache.js";
+import { fileSignature, readJsonSnapshot } from "./file-cache.js";
+import { jobArchivePath } from "./job-archive-index.js";
 import { antigravityItems } from "./transcripts/antigravity.js";
 import { historyReadStatus, openHistoryReader, HISTORY_BATCH_MS } from "./history-store.js";
 import { decodeBytes, encodeBytes, encodeText, registerHistoryFunctions } from "./history-codec.js";
@@ -28,6 +30,7 @@ import { decodeHistoryRow } from "./history-migration.js";
 
 import { CONVERSATION_BYTES, indexedConversationText } from "./conversation-text.js";
 export { CONVERSATION_BYTES, indexedConversationText } from "./conversation-text.js";
+const JOB_SNAPSHOTS_PER_TICK = 16;
 import { conversationPageSchema, type ConversationRequest, type ConversationPage } from "./conversation-query.js";
 export { conversationPageSchema } from "./conversation-query.js";
 export type { ConversationRequest, ConversationPage } from "./conversation-query.js";
@@ -40,6 +43,9 @@ const fold = (s: string) =>
 export class ConversationIngestor {
   private checked = 0;
   private jobsAt = 0;
+  /** Stores seen by the last complete job pass; unchanged stores need no reread and rehash (AB-147). */
+  private jobsSignature = "";
+  private quietArchive = "";
   private jobQueue: {
     job: Record<string, any>;
     raw: Buffer;
@@ -47,6 +53,8 @@ export class ConversationIngestor {
     hash: string;
   }[] = [];
   private watchers: FSWatcher[] = [];
+  /** Called on a watched CLI transcript change, so an idle background worker can wake early (AB-147). */
+  onChange?: () => void;
   private watched = new Set<string>();
   private dirty = new Set<string>();
   private idleSources = 0;
@@ -84,6 +92,7 @@ export class ConversationIngestor {
           (_, name) => {
             if (name && this.dirty.size < 2048)
               this.dirty.add(join(root, String(name)));
+            this.onChange?.();
           },
         );
         watcher.on("error", () => {});
@@ -271,9 +280,15 @@ export class ConversationIngestor {
     }
   }
   private jobs(): void {
-    if (Date.now() - this.jobsAt < 30_000) return;
+    // A pass cut short by the queue bound continues as soon as the queue drains.
+    if (Date.now() - this.jobsAt < 30_000 && (this.jobsSignature || this.jobQueue.length)) return;
     this.jobsAt = Date.now();
     const path = join(this.home, "jobs.json");
+    const archive = jobArchivePath(path);
+    const stores = [path, archive, `${archive}-wal`, join(this.home, "archive")]
+      .map((file) => { try { return fileSignature(statSync(file)); } catch { return "missing"; } }).join("|");
+    if (stores === this.jobsSignature) return;
+    let complete = true;
     let active: Record<string, any> = {};
     try {
       active = object(readJsonSnapshot(path).value);
@@ -286,7 +301,7 @@ export class ConversationIngestor {
     ];
     let queuedBytes = this.jobQueue.reduce((n, item) => n + item.raw.length, 0);
     for (const job of records) {
-      if (this.jobQueue.length >= 100 || queuedBytes >= 8 * 1024 * 1024) break;
+      if (this.jobQueue.length >= 100 || queuedBytes >= 8 * 1024 * 1024) { complete = false; break; }
       if (typeof job.name !== "string") continue;
       const raw = Buffer.from(JSON.stringify(job)),
         signature = hash(raw);
@@ -300,6 +315,7 @@ export class ConversationIngestor {
       this.jobQueue.push({ job, raw, hash: signature, offset: 0 });
       queuedBytes += raw.length;
     }
+    this.jobsSignature = complete ? stores : "";
   }
   private jobSnapshot(): number {
     const next = this.jobQueue[0];
@@ -1071,17 +1087,26 @@ export class ConversationIngestor {
     // Filesystem reads and Git discovery must never hold the shared writer lock.
     let work = 0;
     {
-      work += this.jobSnapshot();
+      // Several queued snapshots per batch (bounded by the batch deadline), so a retained backlog
+      // converges in minutes rather than one job per tick (AB-147).
+      for (let i = 0; i < JOB_SNAPSHOTS_PER_TICK && this.jobQueue.length && Date.now() < deadline; i++) {
+        if (i) { const next = this.jobQueue[0]!.job; conversationProject(String(next.cwd ?? next.workdir ?? "")); }
+        work += this.jobSnapshot();
+      }
       work += this.envelopes();
       work += this.events(this.source, "decisions", "durable-decisions");
       const archive = join(this.home, "archive.db");
-      if (existsSync(archive)) {
+      // The archive database is opened again only after it changes, once a read found nothing new (AB-147).
+      const archiveSignature = [archive, `${archive}-wal`].map((file) => { try { return fileSignature(statSync(file)); } catch { return "missing"; } }).join("|");
+      if (existsSync(archive) && archiveSignature !== this.quietArchive) {
         const input = new DatabaseSync(archive, {
           readOnly: true,
           timeout: 50,
         });
         try {
-          work += this.events(input, "messages", "durable-archive");
+          const archived = this.events(input, "messages", "durable-archive");
+          this.quietArchive = archived ? "" : archiveSignature;
+          work += archived;
         } finally {
           input.close();
         }

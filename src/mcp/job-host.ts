@@ -17,6 +17,7 @@ import { jobEnvironment } from "../core/job-environment.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { assertStoreUpgrade, refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { JSON_STORE_VERSION } from "../core/json-store.js";
+import { cloneJson, fileSignature } from "../core/file-cache.js";
 import type { HostedAdmission } from "./jobs.js";
 
 /**
@@ -69,6 +70,7 @@ function specPath(home: string, id: string): string {
 
 /** Rows in bridge.db (AB-208); the per-job file only while older processes or unimported files remain. */
 export function readRunnerState(home: string, id: string): RunnerState | null {
+  const path = runnerStatePath(home, id);
   try {
     const s = readRunnerStateRecord(home, id, { preserveCorrupt: true }) as RunnerState | null;
     return s && typeof s.pid === "number" && typeof s.status === "string" ? s : null;

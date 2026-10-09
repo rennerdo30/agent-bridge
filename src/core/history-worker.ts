@@ -18,6 +18,10 @@ import { join } from "node:path";
 import { readHistoryJson } from "./run-history.js";
 import { isRecord, writeJsonStore } from "./json-store.js";
 import { IdleBackoff } from "./idle-backoff.js";
+import { statSync } from "node:fs";
+import { fileSignature } from "./file-cache.js";
+import { CONFIG_FILE_NAME } from "./constants.js";
+import type { BridgeConfig } from "./config.js";
 
 const db = openHistoryStore(workerData.file);
 // This connection can never acquire bridge.db's write lock.
@@ -49,7 +53,15 @@ let migrationProgress = readHistoryMigrationProgress(db, ioBytesPerSecond);
 if (typeof importState.error === "string") migrationProgress = { ...migrationProgress, error: importState.error, paused: true };
 const pressureWaiters = new Set<() => void>();
 const peers = new Map<string, PeerInfo>();
-function enabled(): boolean { return loadConfig(workerData.home, "other", nullLogger).history.ingest; }
+/** config.json is read again only when it changes; every tick asks several times (AB-147). */
+let configCache: { signature: string; value: BridgeConfig } | null = null;
+function currentConfig(): BridgeConfig {
+  let signature = "missing";
+  try { signature = fileSignature(statSync(join(workerData.home, CONFIG_FILE_NAME))); } catch { /* defaults */ }
+  if (configCache?.signature !== signature) configCache = { signature, value: loadConfig(workerData.home, "other", nullLogger) };
+  return configCache.value;
+}
+function enabled(): boolean { return currentConfig().history.ingest; }
 function reportPaused(paused: boolean): void {
   migrationProgress = { ...migrationProgress, paused, phase: paused && migrationProgress.phase === "starting" ? "paused" : migrationProgress.phase };
   parentPort?.postMessage({ migrationProgress });
@@ -57,7 +69,7 @@ function reportPaused(paused: boolean): void {
 reportPaused(!enabled() || Boolean(importState.error));
 const paused = () => pending || Date.now() < pauseUntil || !enabled() || storageBudgetPaused;
 async function checkStorageBudget(): Promise<boolean> {
-  const config = loadConfig(workerData.home, "other", nullLogger);
+  const config = currentConfig();
   const mirrors = ownsProjectMirrors(workerData.home)
     ? db.prepare("SELECT DISTINCT project FROM conversations WHERE project != ''").all().map(row => dirname(projectDatabasePath(String(row.project), workerData.home))) : [];
   const budget = await historyBudget(workerData.home, config.history.budgetBytes, mirrors);
@@ -108,7 +120,7 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
         migrationFailure = null;
       } catch (err) { migrationFailure = historyMigrationFailure(db); throw err; }
       index ??= new HistoryIndex(db, workerData.home, paths, source);
-      ingest ??= new ConversationIngestor(db, workerData.home, paths, source);
+      if (!ingest) { ingest = new ConversationIngestor(db, workerData.home, paths, source); ingest.onChange = onTranscriptChange; }
       ready = true;
     }
     if (!index || !ingest) return { work: 0, discovering: true };
@@ -132,6 +144,7 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
     // Preserve raw bytes before spending the next idle gap on derived indexing.
     // Otherwise a full index batch can consume every gap in sustained traffic.
     const rawWork = ingest.tick();
+    if (transcriptsChanged) { transcriptsChanged = false; index.wake(); }
     await yieldTurn(10);
     await waitForPressureGap();
     if (stopped || paused()) return { work: legacyWork + rawWork, discovering: true };
@@ -146,9 +159,19 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
     throw error;
   } finally { running = false; }
 }
+let dueAt = 0, transcriptsChanged = false;
+/** A watched transcript change brings a backed-off worker forward to the normal cadence; it never postpones a tick. */
+function wakeSoon(): void {
+  if (stopped || !timer || dueAt - Date.now() <= HISTORY_TICK_MS) return;
+  idle.reset();
+  schedule(HISTORY_TICK_MS);
+}
+// The ingestor is created once the store is ready; it reports watched transcript changes through this hook.
+const onTranscriptChange = () => { transcriptsChanged = true; wakeSoon(); };
 function schedule(delay = HISTORY_TICK_MS): void {
   if (stopped) return;
   if (timer) clearTimeout(timer);
+  dueAt = Date.now() + delay;
   timer = setTimeout(async () => {
     timer = null;
     let next = idle.next(0, false);

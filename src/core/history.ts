@@ -15,6 +15,7 @@ import { object, parse, readHead, readJsonl, safeFile, TRANSCRIPT_ID } from "./t
 import type { PeerInfo } from "./protocol.js";
 import { ARCHIVE_DB_NAME } from "./sqlite-maintenance.js";
 import { MAX_BODY_CHARS } from "./constants.js";
+import { fileSignature } from "./file-cache.js";
 import { QUESTIONS_FILE, type OwnerQuestion } from "./owner-questions.js";
 
 export const HISTORY_TICK_MS = 2_000;
@@ -33,6 +34,10 @@ const HISTORY_FTS_SNIPPET_TOKENS = 40;
 const HISTORY_FILTER_ID_CHARS = 256;
 const HISTORY_SNIPPET_CONTEXT_CHARS = HISTORY_SNIPPET_CHARS / 4;
 const HISTORY_RESCAN_MS = 30_000;
+/** Idle background sweeps rescan less often while nothing changes (AB-147); any work resets the interval. */
+const HISTORY_RESCAN_MAX_MS = 2 * 60_000;
+/** Unchanged transcripts cost one stat; a background sweep checks this many per batch, indexing at most HISTORY_FILES_PER_TICK. */
+const HISTORY_STAT_FILES_PER_TICK = 64;
 const HISTORY_READ_TIMEOUT_MS = 100;
 const HISTORY_BATCH_BODY_BYTES = 512 * 1024;
 
@@ -54,6 +59,9 @@ export class HistoryIndex {
   private queue: WalkRoot[] = [];
   private walk: { entry: WalkRoot; dir: Dir } | null = null;
   private lastDiscovery = 0;
+  private rescanMs = HISTORY_RESCAN_MS;
+  private sweepWork = 0;
+  private readonly quietSources = new Map<string, string>();
   private checked = 0;
   private idleFiles = 0;
   private opencodeComplete = false;
@@ -170,7 +178,7 @@ export class HistoryIndex {
     // once, then rediscover changed/unwatched files on the bounded fallback.
     if (!idleAware && this.idleFiles >= fileCount) this.idleFiles = 0;
     // Do not hold a writer transaction over filesystem/provider reads or Git canonicalization.
-    let work = 0;
+    let work = 0, walked = 0;
     {
       work += this.rows("messages", this.source, "messages", (row) => this.message(row));
       if (this.source !== this.db) work += this.rows("broker-pending", this.source, "history_pending", row => this.message(row));
@@ -193,9 +201,9 @@ export class HistoryIndex {
       });
       if (this.home) {
         const questionFile = join(this.home, QUESTIONS_FILE);
-        if (existsSync(questionFile)) {
+        if (existsSync(questionFile)) work += this.unlessQuiet(questionFile, () => {
           const questions = new DatabaseSync(questionFile,{readOnly:true,timeout:HISTORY_READ_TIMEOUT_MS});
-          try { work += this.rows("questions",questions,"question_events",row => {
+          try { return this.rows("questions",questions,"question_events",row => {
             const q = JSON.parse(String(row.record)) as OwnerQuestion;
             this.put({ id:`question:${q.id}`,kind:"question",agent:q.askers[0]?.agent ?? "other",at:q.answer?.at ?? q.askedAt,
               body:[q.title,q.context,q.topic,...q.options.map(o => `${o.label}: ${o.consequence}`),q.answer?.text,q.dismissal?.reason].filter(Boolean).join("\n"),
@@ -203,17 +211,25 @@ export class HistoryIndex {
               q.askers.map(a => a.session),q.askers.flatMap(a => a.job ? [a.job] : []));
             for (const project of q.affectedProjects) this.db.prepare("INSERT OR IGNORE INTO history_tags VALUES (?, 'project', ?)").run(`question:${q.id}`,conversationProject(project));
           }); } finally { questions.close(); }
-        }
+        });
         const archivePath = join(this.home, ARCHIVE_DB_NAME);
-        if (existsSync(archivePath)) {
+        if (existsSync(archivePath)) work += this.unlessQuiet(archivePath, () => {
           const archive = new DatabaseSync(archivePath, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
-          try { work += this.rows("archive", archive, "messages", (row) => this.message(row)); }
+          try { return this.rows("archive", archive, "messages", (row) => this.message(row)); }
           finally { archive.close(); }
-        }
-        work += this.discover();
-        const files = idleAware && this.idleFiles >= fileCount ? [] : this.db.prepare("SELECT * FROM history_files ORDER BY checked,path LIMIT ?").all(HISTORY_FILES_PER_TICK) as unknown as FileRow[];
+        });
+        walked = this.discover(idleAware); work += walked;
+        const files = idleAware && this.idleFiles >= fileCount ? [] : this.db.prepare("SELECT * FROM history_files ORDER BY checked,path LIMIT ?")
+          .all(idleAware ? HISTORY_STAT_FILES_PER_TICK : HISTORY_FILES_PER_TICK) as unknown as FileRow[];
+        let opened = 0;
         for (const file of files) {
-          if (Date.now() >= this.deadline) break;
+          if (Date.now() >= this.deadline || opened >= HISTORY_FILES_PER_TICK) break;
+          if (idleAware && this.unchangedTranscript(file)) {
+            this.idleFiles++;
+            this.db.prepare("UPDATE history_files SET checked=? WHERE path=?").run(++this.checked, file.path);
+            continue;
+          }
+          opened++;
           const indexed = this.indexFile(file);
           work += indexed;
           this.idleFiles = indexed ? 0 : this.idleFiles + 1;
@@ -222,6 +238,8 @@ export class HistoryIndex {
       }
     }
     const registered = Number(this.db.prepare("SELECT count(*) AS n FROM history_files").get()!.n);
+    // Walking directories is not a change; new files and indexed content are.
+    this.sweepWork += work - walked + Math.max(0, registered - fileCount);
     return { work, discovering: this.walk !== null || this.queue.length > 0 || this.idleFiles < registered };
   }
 
@@ -240,11 +258,37 @@ export class HistoryIndex {
     this.heads.set(path,{identity,value});return value;
   }
   private register(file: FileRow): void {
+    // A file found after this sweep's idle pass ended still needs its first check in this sweep.
+    if (!this.db.prepare("SELECT 1 FROM history_files WHERE path=?").get(file.path)) this.idleFiles = 0;
     this.db.prepare(`INSERT INTO history_files(path,kind,agent,session,cwd,child) VALUES (?,?,?,?,?,?)
       ON CONFLICT(path) DO UPDATE SET session=excluded.session,cwd=excluded.cwd,child=excluded.child`).run(file.path, file.kind, file.agent, file.session, file.cwd, file.child);
   }
-  private discover(): number {
-    if (!this.walk && !this.queue.length && Date.now() - this.lastDiscovery >= HISTORY_RESCAN_MS) {
+  /** Side databases are opened again only after they change, once a read found nothing new (AB-147). */
+  private unlessQuiet(file: string, read: () => number): number {
+    const signature = [file, `${file}-wal`].map((p) => { try { return fileSignature(statSync(p)); } catch { return "missing"; } }).join("|");
+    if (this.quietSources.get(file) === signature) return 0;
+    const work = read();
+    if (work) this.quietSources.delete(file); else this.quietSources.set(file, signature);
+    return work;
+  }
+  /** A watched transcript changed: rescan at the normal cadence again instead of the idle one. */
+  wake(): void {
+    this.rescanMs = HISTORY_RESCAN_MS;
+    this.sweepWork++;
+  }
+  /** A transcript whose size is its cursor has nothing new; indexFile would read nothing from it either. */
+  private unchangedTranscript(file: FileRow): boolean {
+    if (file.kind !== "transcript" || file.agent === "opencode") return false;
+    const cursor = /^j:(\d+):0$/.exec(this.cursor(file.path));
+    if (!cursor) return false;
+    try { return statSync(file.path).size === Number(cursor[1]); } catch { return false; }
+  }
+  private discover(idleAware = false): number {
+    // Background sweeps that found nothing since the last rescan wait longer for the next one.
+    const interval = idleAware ? this.rescanMs : HISTORY_RESCAN_MS;
+    if (!this.walk && !this.queue.length && Date.now() - this.lastDiscovery >= interval) {
+      this.rescanMs = this.lastDiscovery && !this.sweepWork ? Math.min(HISTORY_RESCAN_MAX_MS, this.rescanMs * 2) : HISTORY_RESCAN_MS;
+      this.sweepWork = 0;
       this.lastDiscovery = Date.now();
       this.idleFiles = 0;
       this.opencodeComplete = false;
@@ -458,6 +502,7 @@ export class HistoryIndex {
     try { clearHistoryDocuments(this.db); this.db.exec("DELETE FROM history_tags; DELETE FROM history_cursors WHERE source<>'legacy-record-tail'; DELETE FROM history_files;"); this.db.exec("COMMIT"); }
     catch (err) { this.db.exec("ROLLBACK"); throw err; }
     this.close(); this.queue = []; this.lastDiscovery = 0; this.opencodeComplete = false; this.packedComplete = false; this.idleFiles = 0;
+    this.quietSources.clear(); this.rescanMs = HISTORY_RESCAN_MS;
   }
   close(): void { this.walk?.dir.closeSync(); this.walk = null; }
 }

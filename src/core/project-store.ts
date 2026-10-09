@@ -7,6 +7,7 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
+  statSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
@@ -19,6 +20,7 @@ import { canonicalProjectRoot, projectKey } from "./project-identity.js";
 import { DEFAULT_HOME } from "./constants.js";
 import { assertUnlinked } from "./plugin-runtime.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
+import { fileSignature } from "./file-cache.js";
 
 const roots = new Map<string, string>();
 const excluded = new Map<string, boolean>();
@@ -110,8 +112,31 @@ export function ownsProjectMirrors(home: string): boolean {
   return projectKey(physical(home)) === projectKey(physical(DEFAULT_HOME));
 }
 
+/**
+ * AB-147: a mirror whose last pass finished a full cycle without copying anything stays closed until a newer
+ * record arrives for its project, its files change, or MIRROR_RECYCLE_MS passes (the next full cycle still
+ * picks up late project associations). This saves opening and migrating the mirror on every history tick.
+ */
+const MIRROR_RECYCLE_MS = 5 * 60_000;
+interface IdleMirror { path: string; project: string; signature: string; newest: number; since: number }
+const idleMirrors = new Map<string, IdleMirror>();
+const mirrorFiles = (path: string): string => [path, `${path}-wal`]
+  .map((file) => { try { return fileSignature(statSync(file)); } catch { return "missing"; } }).join("|");
+const NEWER_PRIMARY = "SELECT 1 FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE c.project=? AND r.id>? LIMIT 1";
+const NEWER_ASSOCIATED = "SELECT 1 FROM conversation_memberships m JOIN conversation_records r ON r.conversation=m.conversation WHERE m.project=? AND r.id>? LIMIT 1";
+function mirrorIdle(main: DatabaseSync, key: string): boolean {
+  const idle = idleMirrors.get(key);
+  if (!idle) return false;
+  const stale = Date.now() - idle.since >= MIRROR_RECYCLE_MS || mirrorFiles(idle.path) !== idle.signature ||
+    main.prepare(NEWER_PRIMARY).get(idle.project, idle.newest) !== undefined || main.prepare(NEWER_ASSOCIATED).get(idle.project, idle.newest) !== undefined;
+  if (stale) idleMirrors.delete(key);
+  return !stale;
+}
+
 /** A bounded append-only replica. Open with readOnly:true in consumers. */
 export function syncProjectMirror(main: DatabaseSync, project: string, home: string): number {
+  const key = JSON.stringify([home, project]);
+  if (mirrorIdle(main, key)) return 0;
   const path = projectDatabasePath(project, home);
   let folder: string | null;
   if (ownsProjectMirrors(home)) folder = ensureProjectFolder(project);
@@ -132,6 +157,7 @@ export function syncProjectMirror(main: DatabaseSync, project: string, home: str
     if (existsSync(file) && lstatSync(file).isSymbolicLink()) return 0;
   const existed = existsSync(path),
     mirror = new DatabaseSync(path, { timeout: 50 });
+  let idle = false;
   try {
     migrateSqlite(
       mirror,
@@ -291,8 +317,13 @@ export function syncProjectMirror(main: DatabaseSync, project: string, home: str
       mirror.exec("ROLLBACK");
       throw err;
     }
+    idle = !candidates.length && !copied;
     return copied;
   } finally {
     mirror.close();
+    if (idle) {
+      const newest = Number(main.prepare("SELECT coalesce(max(id),0) AS n FROM conversation_records").get()!.n);
+      idleMirrors.set(key, { path, project, signature: mirrorFiles(path), newest, since: Date.now() });
+    }
   }
 }
