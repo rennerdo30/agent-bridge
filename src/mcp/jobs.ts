@@ -20,7 +20,7 @@ import { newApprovalId, publishApproval, type PermissionDecision, type Permissio
 import { notifyJobEvent } from "../core/notifications.js";
 import { RootConcurrency } from "../core/root-concurrency.js";
 import { completionMessageId } from "../core/completion.js";
-import { recoverJobRecord } from "../core/job-recovery.js";
+import { recoverJobRecord, recoverJobRecordAsync } from "../core/job-recovery.js";
 import { metadataFileLease } from "../core/metadata-file-lease.js";
 import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { archivePendingJob, mergePendingJob, readPendingJobs, retainPendingJob, type PendingJobReceipt } from "../core/job-pending-journal.js";
@@ -354,6 +354,7 @@ export class JobManager {
   private persistenceGeneration = 0;
   private sharedControl = false;
   private readonly sharedGrants = new Set<string>();
+  private readonly sharedAuthority = new Map<string, string>();
 
   constructor(
     private readonly node: JobCoordinator,
@@ -366,15 +367,17 @@ export class JobManager {
     private readonly restorePolicy?: JobRestorePolicy,
   ) {
     node.on("shared_job_control", async ({ job: name, control }: { job: string; control: RunnerControl }) => {
-      await this.share(name);
-      this.sharedControl = true;
       try {
-        if (control.type === "message") this.followUp(name, control.body);
-        else if (control.type === "cancel") this.cancel(name);
-        else if (control.type === "settings") this.setSettings(name, control.settings);
-        else if (control.type === "title") this.setTitle(name, control.title);
-        else if (control.type === "effort") this.setEffort(name, control.effort);
-      } finally { this.sharedControl = false; }
+        if (!await this.share(name) || !this.find(name, false)) return;
+        this.sharedControl = true;
+        try {
+          if (control.type === "message") this.followUp(name, control.body);
+          else if (control.type === "cancel") this.cancel(name);
+          else if (control.type === "settings") this.setSettings(name, control.settings);
+          else if (control.type === "title") this.setTitle(name, control.title);
+          else if (control.type === "effort") this.setEffort(name, control.effort);
+        } finally { this.sharedControl = false; }
+      } catch (error) { this.log.warn("shared job control failed", { job: name, err: String(error) }); }
     });
     node.on("jobs_changed", () => this.refreshOwnership());
     node.on("inline_job_control", ({ job: name, control }: { job: string; control: RunnerControl }) => {
@@ -595,7 +598,8 @@ export class JobManager {
       let job = this.history.get(s.id);
       const mine = directlyOwned;
       if (job && (s.executionOwner === this.node.name || mine)) {
-        const executing = s.executionOwner === this.node.name && (this.running.has(s.id) || this.foreground.has(s.id)) || this.pendingHosts.get(s.id) === job.controller;
+        const executing = (this.running.get(s.id) === job || this.foreground.get(s.id) === job) &&
+          (!job.executionOwner || job.executionOwner === this.node.name) || this.pendingHosts.get(s.id) === job.controller;
         Object.assign(job, { owner: s.owner, supervisor: s.supervisor, parentJob: s.parentJob, rootSession: s.rootSession, rootName: s.rootName,
           ownershipHistory: s.ownershipHistory, executionOwner: s.executionOwner, masters: s.masters });
         if (!executing && !job.host) {
@@ -942,10 +946,15 @@ export class JobManager {
     const saved = await this.node.jobAuthority?.(ref);
     if (!saved) {
       const old = [...this.history.values()].find((j) => j.id === ref || j.name === ref);
-      if (old) this.sharedGrants.delete(old.id);
-      return this.find(ref);
+      const id = old?.id ?? ref.replace(/^.*-(?:job|ask)-/, "");
+      this.sharedGrants.delete(id); this.sharedAuthority.delete(id);
+      return this.findAsync(ref);
     }
     this.sharedGrants.add(saved.id);
+    this.sharedAuthority.set(saved.id, this.authorityWitness(saved));
+    const durable = this.storePath && readStoredJob(this.storePath, saved.id, saved.name, this.log);
+    if (durable) this.recheckSharedGrant(durable);
+    if (!this.sharedGrants.has(saved.id) || durable && durable.startedAt > saved.startedAt) return this.findAsync(ref);
     const existing = this.history.get(saved.id);
     if (existing && (this.running.has(saved.id) || this.foreground.has(saved.id))) {
       // Durable authority may change during a live turn; recovered snapshots cannot replace its controller/facts.
@@ -969,17 +978,79 @@ export class JobManager {
     return this.node.jobRecipient?.(job.name) ?? Promise.resolve(job.rootName ?? job.owner ?? this.node.name);
   }
 
-  find(ref: string): Job | undefined {
+  find(ref: string, recover = true): Job | undefined {
+    const current = this.lookupCurrent(ref);
+    if (current || !this.storePath || !this.restoreResume) return this.lookupAllowed(current);
+    const id = ref.replace(/^.*-(?:job|ask)-/, "");
+    return this.adoptLookup(readStoredJob(this.storePath, id, ref, this.log)
+      ?? (recover ? recoverJobRecord(dirname(this.storePath), ref) : undefined));
+  }
+
+  /** Request-path recovery yields during retained-feed reads and rechecks authority afterward. */
+  async findAsync(ref: string): Promise<Job | undefined> {
+    let current = this.lookupCurrent(ref);
+    if (current || !this.storePath || !this.restoreResume) return this.lookupAllowed(current);
+    const id = ref.replace(/^.*-(?:job|ask)-/, "");
+    const saved = readStoredJob(this.storePath, id, ref, this.log);
+    if (saved) return this.adoptLookup(saved);
+    const recovered = await recoverJobRecordAsync(dirname(this.storePath), ref);
+    // A live turn, handoff, or newer saved generation may have appeared while IO yielded.
+    current = this.lookupCurrent(ref);
+    if (current) return this.lookupAllowed(current);
+    if (this.dormant || this.reportsStopped) return undefined;
+    return this.adoptLookup(readStoredJob(this.storePath, id, ref, this.log) ?? recovered);
+  }
+
+  private lookupCurrent(ref: string): Job | undefined {
     this.refreshOwnership();
     const id = ref.replace(/^.*-(?:job|ask)-/, "");
     // The bounded history can evict a long-running job while newer jobs finish.
     // Every job listed by peers (including blocking asks and waiting continuations) stays addressable.
     const active = [...this.running.values(), ...this.foreground.values(), ...this.waitingJobs.values()];
-    const current = active.find((j) => j.id === id || j.name === ref)
+    return active.find((j) => j.id === id || j.name === ref)
       ?? this.history.get(id) ?? [...this.history.values()].find((j) => j.name === ref);
-    if (current || !this.storePath || !this.restoreResume) return current && (this.sharedGrants.has(current.id) || canControlJob(current as unknown as Record<string, unknown>, this.node.name) || this.isMine(current.owner) || (this.lineage && current.parentJob === this.lineage.parentJob)) ? current : undefined;
-    const saved = readStoredJob(this.storePath, id, ref, this.log)
-      ?? recoverJobRecord(dirname(this.storePath), ref);
+  }
+
+  private lookupAllowed(current: Job | undefined): Job | undefined {
+    if (!current) return undefined;
+    const durable = this.storePath && readStoredJob(this.storePath, current.id, current.name, this.log);
+    const authority = durable || current;
+    const permitted = this.lookupPermitted(authority);
+    // Legacy direct-owner rows may be skipped by passive restoration. They still
+    // govern a request, including grants removed while asynchronous IO yielded.
+    this.recheckSharedGrant(authority);
+    if (durable && durable.startedAt > current.startedAt) return undefined;
+    if (durable) Object.assign(current, { owner: durable.owner, masters: durable.masters, ownershipHistory: durable.ownershipHistory,
+      parentJob: durable.parentJob, ...(durable.supervisor !== undefined ? { supervisor: durable.supervisor } : {}),
+      ...(durable.rootName !== undefined ? { rootName: durable.rootName } : {}), ...(durable.rootSession !== undefined ? { rootSession: durable.rootSession } : {}) });
+    if (!this.sharedGrants.has(current.id) && !permitted) return undefined;
+    return current;
+  }
+
+  private lookupPermitted(authority: StoredJob): boolean {
+    return canControlJob(authority as unknown as Record<string, unknown>, this.node.name) ||
+      this.isMine(authority.owner) || Boolean(this.lineage && authority.parentJob === this.lineage.parentJob);
+  }
+
+  private authorityWitness(authority: StoredJob): string {
+    // Permission identity survives normal native continuations. Prompt, queued
+    // context and per-turn progress never enter this small local grant witness.
+    return JSON.stringify([authority.id, authority.name, authority.owner, authority.supervisor,
+      authority.masters, authority.ownershipHistory?.map(change => [change.id, change.at, change.from, change.to,
+        change.fromRootName, change.rootName, change.rootSession]), authority.parentJob, authority.rootName,
+      authority.rootSession, authority.projectRoot, authority.remote]);
+  }
+
+  private recheckSharedGrant(authority: StoredJob): void {
+    if (this.sharedGrants.has(authority.id) && !this.lookupPermitted(authority) &&
+        this.sharedAuthority.get(authority.id) !== this.authorityWitness(authority)) {
+      this.sharedGrants.delete(authority.id); this.sharedAuthority.delete(authority.id);
+    }
+  }
+
+  private adoptLookup(saved: StoredJob | undefined): Job | undefined {
+    if (!this.restoreResume) return undefined;
+    if (saved) this.recheckSharedGrant(saved);
     if (!saved || (!this.lineage && !this.isMine(saved.owner) && !canControlJob(saved as unknown as Record<string, unknown>, this.node.name) && !this.sharedGrants.has(saved.id))) return undefined;
     // The same lineage rule as restore(): a nested coordinator sees only its own children, a session only top-level jobs.
     if (!this.sharedGrants.has(saved.id) && (this.lineage ? saved.parentJob !== this.lineage.parentJob : saved.parentJob)) return undefined;

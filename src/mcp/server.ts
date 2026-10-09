@@ -534,6 +534,14 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
 }
 
 export function registerTools(mcp: McpServer, ctx: ServerContext, targets: CodingAgent[]): void {
+  // Real managers use responsive recovery; find-only doubles retain their offline API.
+  const findJob = async (ref: string) => {
+    const jobs = ctx.jobs;
+    if (!jobs || typeof jobs.findAsync !== "function") return jobs?.find(ref);
+    await jobs.findAsync(ref);
+    // The await itself yields: recheck current/durable ownership without another feed read.
+    return jobs.find(ref, false);
+  };
   const { node, log, cfg, home } = ctx;
   const waits = new MessageWaitStore(ctx.home);
   if (node) waits.attach(node);
@@ -628,7 +636,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         if (!a.approval_id || !a.decision || a.topic || a.text || a.scope || a.source_message_id) throw new BridgeError("bad_request", "Supply approval_id and decision only, with an optional reason.");
         const entry = listPendingApprovals(ctx.home).find((entry) => entry.id === a.approval_id);
         if (!entry) return text("Approval expired.", true);
-        const job = ctx.jobs?.find(entry.job);
+        const job = await findJob(entry.job);
         const authority = node ? await node.jobAuthority(entry.job).catch(err => {
           // A legacy broker can lack authority RPCs. Only fresh local ownership can replace that check.
           if (!isUnsupportedOperation(err, "jobAuthority")) throw err;
@@ -801,8 +809,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       if (!node && ctx.parent) {
         if (a.message_id) throw new BridgeError("bad_request", "Durable message IDs require a session broker connection; parent links do not support idempotent retries.");
         if (a.if_no_newer_than) throw new BridgeError("bad_request", "Guarded sends require a session broker connection; read the parent/sibling inbox before replying.");
-        if (ctx.jobs?.find(a.to)) {
-          const result = ctx.jobs.followUp(a.to, a.message);
+        if (await findJob(a.to)) {
+          const result = ctx.jobs!.followUp(a.to, a.message);
           return text(`Child message ${result.outcome}.`);
         }
         if (a.to !== ctx.parent.name && a.to !== "parent") {
@@ -828,14 +836,14 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         return text(t("send.toParent", { name: ctx.parent.name }));
       }
       const n = requireNode();
-      if (a.message_id && (a.to === "*" || a.to === "jobs:*" || ctx.jobs?.find(a.to))) throw new BridgeError("bad_request", "Durable message IDs require an exact session or project broker recipient; running-job links cannot use this id.");
+      const job = a.to === "*" || a.to === "jobs:*" ? undefined : await findJob(a.to);
+      if (a.message_id && (a.to === "*" || a.to === "jobs:*" || job)) throw new BridgeError("bad_request", "Durable message IDs require an exact session or project broker recipient; running-job links cannot use this id.");
       if (a.if_no_newer_than && (a.to === "*" || a.to === "jobs:*")) throw new BridgeError("bad_request", "Use an exact recipient or project for guarded replies; running-job broadcasts cannot be guarded.");
       const jobBroadcast = a.to === "*" || a.to === "jobs:*" ? ctx.jobs?.broadcastRunning(a.message) ?? [] : [];
       const jobLines = jobBroadcast.map((r) => `- ${r.name}: ${r.outcome}`);
       if (a.to === "jobs:*") return text(jobLines.length ? `Running-job broadcast:\n${jobLines.join("\n")}\nPending approvals require an explicit decide; this message does not approve or cancel work.` : "No running jobs owned by this supervisor. Nothing sent.");
       // One of this session's subagents: it is talked to with message_subagent (a finished one would never
       // read a queued message; a running one gets message_subagent live).
-      const job = ctx.jobs?.find(a.to);
       if (job && a.to === job.name) {
         if (a.if_no_newer_than || a.message_kind) throw new BridgeError("bad_request", "Running-job messages use their live control link; reply guards and message_kind require an exact session or project broker recipient.");
         if (a.reply_to) n.markRead([a.reply_to]);
@@ -1348,7 +1356,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
     },
     guarded("set_job_outcome", async (a: { job: string; state: "held" | "discarded"; reason?: string }) => {
       const n = requireNode();
-      const job = ctx.jobs?.find(a.job);
+      const job = await findJob(a.job);
       if (!job) throw new BridgeError("bad_request", "Unknown job.");
       try {
         setJobOutcome(ctx.home, job, n.name, a.state, a.reason);
@@ -1414,6 +1422,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       const existing = await jobs.share(a.job);
+      if (!existing && typeof jobs.findAsync === "function") return text(t("followUp.unknown", { name: a.job }), true);
       if (existing) {
         for (const [key, agent] of Object.entries(PERMISSION_KEY_AGENT) as [keyof typeof PERMISSION_KEY_AGENT, string][]) {
           if (a[key] !== undefined && existing.agent !== agent) throw new BridgeError("bad_request", `${key} applies only to ${agent} jobs.`);
@@ -1454,7 +1463,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
       inputSchema: { job: z.string().min(1) },
     },
     guarded("cancel_subagent", async (a: { job: string }) => {
-      await ctx.jobs?.share(a.job);
+      const existing = await ctx.jobs?.share(a.job);
+      if (!existing && typeof ctx.jobs?.findAsync === "function") return text(t("jobs.unknown", { name: a.job }), true);
       return ctx.jobs?.cancel(a.job) ? text(t("jobs.cancelled", { name: a.job })) : text(t("jobs.unknown", { name: a.job }), true);
     }),
   );
