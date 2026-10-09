@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
+import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import { pidAlive } from "../src/core/delegate.js";
 import { processIdentity } from "../src/core/process-identity.js";
 import { JobRunners, readRunnerState, writeRunnerState } from "../src/mcp/job-host.js";
@@ -15,7 +16,8 @@ beforeEach(async () => {
   child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", windowsHide: true });
   await new Promise((r) => child.once("spawn", r));
 });
-afterEach(() => { child.kill(); rmSync(home, { recursive: true, force: true }); });
+// Runner state lives in the metadata store (AB-208); Windows cannot remove a database that is still open.
+afterEach(() => { child.kill(); closeMetadataDbs(); rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });
 
 const runners = () => new JobRunners({} as never, home, "cli.mjs", nullLogger);
 const job = (id: string) => ({ id, name: `codex-job-${id}`, host: null }) as never;
