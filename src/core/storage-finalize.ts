@@ -19,7 +19,7 @@ export interface FinalizePlan { ready: boolean; blockers: string[]; items: Final
 
 /** Legacy history tables in bridge.db that history store v2 replaces. messages, decisions, history_pending
  * and conversation_envelopes stay: the history worker still reads them. */
-const LEGACY_BRIDGE_TABLES = ["history_fts", "history_documents", "history_tags", "history_files", "history_sessions", "conversation_records", "conversation_sources", "conversation_parts", "conversations", "conversation_projects", "conversation_memberships"];
+export const LEGACY_BRIDGE_TABLES = ["history_fts", "history_documents", "history_tags", "history_files", "history_sessions", "conversation_records", "conversation_sources", "conversation_parts", "conversations", "conversation_projects", "conversation_memberships"];
 const COLD_JOBS = ["cold-storage", "jobs-v1"];
 
 function size(path: string): number {
@@ -44,7 +44,7 @@ function jobArchiveComplete(home: string): boolean {
   finally { db?.close(); }
 }
 
-function historyIsVerified(home: string): boolean {
+export function historyIsVerified(home: string): boolean {
   const history = historyDbPath(join(home, DB_FILE_NAME));
   if (!existsSync(history)) return false;
   const db = new DatabaseSync(history, { readOnly: true, timeout: 1000 });
@@ -52,7 +52,7 @@ function historyIsVerified(home: string): boolean {
 }
 
 /** The live databases a proof may rely on. Legacy bridge.db history tables never count: finalize removes them. */
-function openLive(home: string): { live: LiveDb[]; close: () => void } {
+export function openLive(home: string): { live: LiveDb[]; close: () => void } {
   const live: LiveDb[] = [];
   const bridge = join(home, DB_FILE_NAME), archive = join(home, ARCHIVE_DB_NAME), history = historyDbPath(bridge);
   try {
@@ -87,7 +87,7 @@ function proveHistoryTables(db: DatabaseSync): { name: string; reason: string | 
 }
 
 /** Whole-database backups, migration snapshots and unpublished backup folders. Their contents are proven later. */
-function fileCandidates(home: string): { item: FinalizeItem; copies: string[] }[] {
+export function fileCandidates(home: string): { item: FinalizeItem; copies: string[] }[] {
   const out: { item: FinalizeItem; copies: string[] }[] = [];
   const add = (path: string, reason: string, copies: string[] = []) => {
     const kind = lstatSync(path).isDirectory() ? "directory" : "file";
@@ -187,7 +187,7 @@ export function planFinalize(home: string): FinalizePlan {
     try {
       for (const { item, copies } of found.files) {
         const reasons = proveFile(item.path, live, copies);
-        if (!reasons.length) items.push(item); else kept.push({ ...item, reason: summarize(reasons) });
+        if (!reasons.length) items.push(item); else kept.push({ ...item, reason: withAbsorbHint(summarize(reasons)) });
       }
     } finally { close(); }
   }
@@ -199,6 +199,8 @@ export function planFinalize(home: string): FinalizePlan {
 }
 
 const summarize = (reasons: string[]) => reasons.length > 3 ? `${reasons.slice(0, 3).join("; ")}; and ${reasons.length - 3} more` : reasons.join("; ");
+/** Rows or files that exist nowhere else can be imported losslessly first; conflicts never can. */
+const withAbsorbHint = (reason: string) => /rows are not in|rows, and no live|no identical copy exists/.test(reason) ? `${reason} (run agent-bridge storage absorb to import what exists only here)` : reason;
 
 /** Primary keys used to prove every legacy row of a mutable table still exists in history store v2. */
 const PRESENCE_KEYS: Record<string, string[]> = {
@@ -326,7 +328,7 @@ export function runFinalize(home: string, report: (line: string) => void): Final
     try {
       for (const { item, copies } of found.files) {
         const reasons = proveFile(item.path, live, copies);
-        if (reasons.length) { kept.push({ ...item, reason: summarize(reasons) }); report(`kept ${item.path}: ${summarize(reasons)}`); continue; }
+        if (reasons.length) { const reason = withAbsorbHint(summarize(reasons)); kept.push({ ...item, reason }); report(`kept ${item.path}: ${reason}`); continue; }
         for (const path of [...sidecars(item.path), item.path]) rmSync(path, { recursive: true, force: true });
         removed.push(item);
         report(`removed ${item.path}`);

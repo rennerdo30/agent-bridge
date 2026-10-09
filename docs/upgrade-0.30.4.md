@@ -35,6 +35,15 @@ agent-bridge storage finalize --yes    # verifies again, then removes exactly th
 
 `finalize` refuses while any migration is unverified. Before removing anything it proves again, independently of the migration, that every legacy row exists in the new stores. Anything it cannot prove redundant row by row is kept and reported.
 
+Old whole-database backups and migration snapshots often hold rows that exist nowhere else, for example messages that older versions deleted. Import those first, with every bridge process stopped:
+
+```
+agent-bridge storage absorb            # counts the rows and files that exist only in old copies, and conflicts
+agent-bridge storage absorb --yes      # imports them into archive.db, then run finalize again
+```
+
+`absorb` stores each such row exactly in archive.db (`absorbed_rows`), and messages also go into archive.db `messages`. Files that exist only in an unpublished backup are stored byte-exact (`absorbed_files`). It never changes a live row. If a row's key exists live with different content, that is a conflict: nothing is imported for it, and the backup holding it stays. `absorb` works in small batches and can be interrupted and run again.
+
 Before `finalize`, `agent-bridge storage rollback-history` switches search and transcripts back to the legacy history and keeps the new copy. After `finalize`, rollback is no longer possible.
 
 ## Inspecting the stores
