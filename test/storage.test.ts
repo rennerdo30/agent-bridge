@@ -13,7 +13,8 @@ import { runMetaPath, startRunFeed } from "../src/core/runfeed.js";
 import { MessageStore, SQLITE_STORE_VERSION } from "../src/core/store.js";
 import { JobRunners, readRunnerState, runnerStatePath, writeRunnerState } from "../src/mcp/job-host.js";
 import { acquireLock, JobManager, readStore } from "../src/mcp/jobs.js";
-import { archiveJobs } from "../src/core/job-archive.js";
+import { archiveJobs, readArchivedJobs } from "../src/core/job-archive.js";
+import { readJobVersions } from "../src/core/job-archive-index.js";
 import { closeMetadataDbs } from "../src/core/metadata-db.js";
 
 const V1_SCHEMA = `
@@ -262,25 +263,30 @@ describe("JSON store upgrades", () => {
 
 describe("retention archives", () => {
   it("publishes identical job archives once across nodes and retains changed records", () => {
+    // AB-206: archives are rows of the job index, one version per distinct serialized record.
     const path = join(home, "jobs.json"), old = storedJob("old", 1);
     const first = archiveJobs(path, [old]);
-    const bytes = readFileSync(first);
     expect(archiveJobs(path, [{ ...old }])).toBe(first);
-    expect(archiveJobs(path, [Object.fromEntries(Object.entries(old).reverse())])).toBe(first);
-    expect(readFileSync(first)).toEqual(bytes);
-    expect(readdirSync(join(home, "archive")).filter(name => /^jobs-.*\.json$/.test(name))).toHaveLength(1);
-    expect(archiveJobs(path, [{ ...old, prompt: "updated task" }])).not.toBe(first);
-    expect(readFileSync(first)).toEqual(bytes);
+    expect(readJobVersions(path, "old")).toEqual([old]);
+    expect(existsSync(join(home, "archive"))).toBe(false);
+    expect(archiveJobs(path, [{ ...old, prompt: "updated task" }])).toBe(first);
+    expect(readJobVersions(path, "old")).toEqual([old, { ...old, prompt: "updated task" }]);
+    expect(readArchivedJobs(path)).toEqual([{ ...old, prompt: "updated task" }]);
   });
 
   it("does not let a stale manager rearchive identical finished jobs", () => {
     vi.stubEnv("AGENT_BRIDGE_JOB_STORE_LIMIT", "1");
     const path = join(home, "jobs.json"), entries = [storedJob("old", 1), storedJob("new", 2)];
+    const versions: number[] = [];
     for (let i = 0; i < 3; i++) {
       writeFileSync(path, JSON.stringify({ version: JSON_STORE_VERSION, jobs: entries }));
       new JobManager(stubNode(), nullLogger, path).restore(() => undefined);
+      versions.push(readJobVersions(path, "old").length);
     }
-    expect(readdirSync(join(home, "archive")).filter(name => /^jobs-.*\.json$/.test(name))).toHaveLength(1);
+    // The original and the archived record are retained once; stale managers add no copies.
+    expect(versions).toEqual([versions[0], versions[0], versions[0]]);
+    expect(readJobVersions(path, "old")).toContainEqual(storedJob("old", 1));
+    expect(readArchivedJobs(path).find(job => job.id === "old")).toMatchObject({ ...storedJob("old", 1), status: "done" });
     expect(readStore(path).map(job => job.id)).toEqual(["new"]);
   });
 
@@ -302,13 +308,13 @@ describe("retention archives", () => {
     manager.runners = { alive: () => true, state: () => null, send: () => {}, kill: () => {} };
     manager.restore(() => undefined);
     expect(readStore(path).map((j) => j.id)).toEqual(["running", "interrupted", "new"]);
-    const archive = readdirSync(join(home, "archive")).find((f) => /^jobs-.*\.json$/.test(f))!;
-    expect(archive).toBeDefined();
-    expect(json(join(home, "archive", archive)).jobs).toEqual([expect.objectContaining(storedJob("old", 1))]);
+    expect(readArchivedJobs(path).filter((j) => !readStore(path).some((active) => active.id === j.id)))
+      .toEqual([expect.objectContaining(storedJob("old", 1))]);
     vi.stubEnv("AGENT_BRIDGE_JOB_STORE_LIMIT", "0");
     writeFileSync(path, JSON.stringify([storedJob("old", 1), storedJob("new", 2)]));
     new JobManager(stubNode(), nullLogger, path).restore(() => undefined);
-    expect(readStore(path)).toHaveLength(2);
+    // Nothing is archived without a limit. Indexed jobs this session owns may be restored too.
+    expect(readStore(path).map((j) => j.id)).toEqual(expect.arrayContaining(["old", "new"]));
     manager.cancelAll();
   });
 
