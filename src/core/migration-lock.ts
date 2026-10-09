@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { processIdentity, recordedOwnerAlive } from "./process-identity.js";
+import { processIdentity, recordedOwnerLiveness } from "./process-identity.js";
+import { ownerGone as bootOwnerGone } from "./boot-time.js";
 
 /**
  * Whether the lock file's owner is provably gone: no such process, or (AB-218) the PID now belongs to a different
  * process (identity mismatch, or for identity-less older locks a process started after the lock was written).
- * Unreadable or unverifiable owners count as alive. `null` when the file vanished.
+ * Unreadable or unverifiable owners count as alive, unless the lock was written before the current boot (no process
+ * survives a reboot). `null` when the file vanished.
  */
-function ownerGone(path: string, verdicts: Map<string, boolean>): boolean | null {
+function lockOwnerGone(path: string, verdicts: Map<string, boolean>): boolean | null {
   let text: string, writtenAt: number;
   try { text = readFileSync(path, "utf8"); writtenAt = statSync(path).mtimeMs; }
   catch { return null; }
@@ -15,12 +17,13 @@ function ownerGone(path: string, verdicts: Map<string, boolean>): boolean | null
   try { owner = JSON.parse(text); } catch { return false; /* An opening writer has not published its PID yet. */ }
   const pid = Number(owner.pid);
   if (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid) return false;
+  // EPERM or an unreadable start time is unknown: gone only when the lock predates the current boot (AB-256).
   try { process.kill(pid, 0); }
-  catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
+  catch (error) { return bootOwnerGone({ alive: (error as NodeJS.ErrnoException).code === "ESRCH" ? false : undefined, recordedAt: writtenAt }); }
   // The process identity probe is slow (PowerShell on Windows) and a live owner's identity does not change while
   // we wait: probe each distinct owner record once per acquisition.
   let gone = verdicts.get(text);
-  if (gone === undefined) verdicts.set(text, gone = !recordedOwnerAlive(pid, typeof owner.identity === "string" ? owner.identity : undefined, writtenAt));
+  if (gone === undefined) verdicts.set(text, gone = bootOwnerGone({ alive: recordedOwnerLiveness(pid, typeof owner.identity === "string" ? owner.identity : undefined, writtenAt), recordedAt: writtenAt }));
   return gone;
 }
 
@@ -46,9 +49,9 @@ export function migrationLock(file: string): () => void {
     // Only dead writers need recovery. A separate exclusive file serializes recoverers.
     let recoveryFd: number | undefined;
     try {
-      if (existsSync(path) && ownerGone(path, verdicts)) {
+      if (existsSync(path) && lockOwnerGone(path, verdicts)) {
         recoveryFd = openSync(recovery, "wx", 0o600);
-        if (existsSync(path) && ownerGone(path, verdicts)) rmSync(path);
+        if (existsSync(path) && lockOwnerGone(path, verdicts)) rmSync(path);
       }
     } catch (error) {
       if (!["EEXIST", "ENOENT", "EPERM", "EBUSY", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;

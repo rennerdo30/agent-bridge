@@ -3,6 +3,7 @@ import { closeSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFil
 import { basename, dirname, join, resolve } from "node:path";
 import { archiveFile, isRecord } from "./json-store.js";
 import { isProcessIdentityAlive, processIdentity, readProcessIdentity } from "./process-identity.js";
+import { ownerGone } from "./boot-time.js";
 
 const VERSION = 2;
 const RETRY_MS = 20;
@@ -69,6 +70,8 @@ interface Owner {
   pid: number;
   identity: string;
   file: string;
+  /** When the owner wrote its immutable metadata (epoch ms); undefined for unreadable values. */
+  createdAt?: number;
 }
 
 /** A canonical lock is a hard link to complete immutable metadata, never an opening empty file. */
@@ -89,7 +92,7 @@ function readOwner(path: string, registry: string): Owner | null {
     const identity = Buffer.from(match[2]!, "base64url").toString("utf8");
     if (!identity || Buffer.from(identity).toString("base64url") !== match[2]) return null;
     if (fileIdentity(join(dir, marker)) !== file || fileIdentity(path) !== file) return null;
-    return { dir, marker, pid, identity, file };
+    return { dir, marker, pid, identity, file, ...(typeof value.createdAt === "number" && Number.isFinite(value.createdAt) ? { createdAt: value.createdAt } : {}) };
   } catch { return null; }
 }
 
@@ -184,7 +187,8 @@ export function metadataFileLease(path: string, waitMs = 0, nonBlockingRecovery 
         } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
       }
       const owner = readOwner(path, registry);
-      if (owner && (nonBlockingRecovery ? nonBlockingAlive(owner) : blockingAlive(owner)) === false) {
+      // An unknown owner (EPERM, unreadable start time) is gone only when its lease predates the current boot (AB-256).
+      if (owner && ownerGone({ alive: nonBlockingRecovery ? nonBlockingAlive(owner) : blockingAlive(owner), recordedAt: owner.createdAt })) {
         try { archiveOwned(path, registry, owner, identity); continue; }
         catch { /* A winning claimant or an inaccessible archive is retained. */ }
       }
