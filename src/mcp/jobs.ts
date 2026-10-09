@@ -1458,7 +1458,7 @@ export class JobManager {
   private async retainHostedStart(turn: StoredJob, host: JobHostInfo, executor: string): Promise<void> {
     if (!this.storePath) return;
     const fact = { version: 1, turn, host, executor, observedAt: Date.now() };
-    for (;;) {
+    for (let attempt = 0; ; attempt++) {
       let release = () => {};
       try {
         release = acquireLock(`${this.storePath}.lock`, 0);
@@ -1479,8 +1479,10 @@ export class JobManager {
         return;
       } catch (error) {
         if (!["EBUSY", "EJOBLOCKED", "STORE_UPGRADE_DEFERRED"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+        // An older session can defer store upgrades for hours: keep the fact pending visibly, without spinning.
+        if (attempt === HOSTED_START_NOTICE_ATTEMPT) this.log.warn("retaining a detached runner start waits for the job store", { job: turn.name, reason: String(error) });
       } finally { release(); }
-      await delay(50);
+      await delay(hostedStartRetryMs(attempt));
     }
   }
 
@@ -1905,6 +1907,12 @@ const LOCK_WAIT_MS = 2_000;
  * Serialize read-merge-write of the job store across sessions (processes). Returns the release function.
  * Gives up waiting after a short time (saving is best effort) and breaks locks left by a crashed process.
  */
+/** Bounded backoff for retaining a late detached start (AB-247): 50 ms doubling to at most 5 s. */
+export function hostedStartRetryMs(attempt: number): number {
+  return Math.min(5_000, 50 * 2 ** Math.min(attempt, 7));
+}
+const HOSTED_START_NOTICE_ATTEMPT = 10;
+
 export function acquireLock(path: string, waitMs = LOCK_WAIT_MS): () => void {
   try { return metadataFileLease(path, waitMs, waitMs === 0); }
   catch (error) {
