@@ -1,3 +1,4 @@
+import { readBodyText } from "./http-body.js";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -170,12 +171,7 @@ export class ParentLink {
 }
 
 async function readBody(req: IncomingMessage): Promise<string> {
-  let raw = "";
-  for await (const chunk of req) {
-    raw += chunk;
-    if (raw.length > MAX_REQUEST_BYTES) throw new Error("request too large");
-  }
-  return raw;
+  return readBodyText(req, MAX_REQUEST_BYTES);
 }
 
 /** Child side: the link to the session that runs this subagent, if there is one. */

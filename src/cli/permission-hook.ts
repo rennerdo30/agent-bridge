@@ -1,3 +1,4 @@
+import { readBodyText } from "../core/http-body.js";
 import { askRelay, boundedDetail, RELAY_URL_ENV, type PermissionRequest } from "../core/relay.js";
 
 /**
@@ -35,9 +36,7 @@ export function hookRequest(agent: string, input: Record<string, unknown>): Perm
 }
 
 async function readStdin(): Promise<string> {
-  let raw = "";
-  for await (const chunk of process.stdin) raw += chunk;
-  return raw;
+  return readBodyText(process.stdin);
 }
 
 export async function runPermissionHook(agent = "codex"): Promise<number> {
