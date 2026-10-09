@@ -18,6 +18,7 @@ import { readRunnerState } from "../src/mcp/job-host.js";
 import { readStore } from "../src/mcp/jobs.js";
 import { RootConcurrency } from "../src/core/root-concurrency.js";
 import { startUi } from "../src/cli/ui.js";
+import { DatabaseSync } from "node:sqlite";
 
 /**
  * Background subagents in detached job runners (bundled server and CLI: npm run build first). A fake
@@ -421,8 +422,9 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     writeFileSync(nextRelease, "");
     expect(await call(session, "wait_for_message", { from: job[0], timeout_sec: 20 })).toContain("fake answer: finished");
     await waitFor(() => !pidAlive(continued.pid));
-    const metadata = join(home, "worktree-leases", ".metadata-leases");
-    expect(readdirSync(metadata).some(key => readdirSync(join(metadata, key, "archive")).length > 0)).toBe(true);
+    const metadata = new DatabaseSync(join(home,"bridge.db"), {readOnly:true});
+    try { expect(Number(metadata.prepare("SELECT COUNT(*) AS n FROM worktree_lease_archive").get()!.n)).toBeGreaterThan(0); }
+    finally { metadata.close(); }
   }, TEST_TIMEOUT_MS);
 
   it("continues a cancelled runner despite legacy cancellation mail", async () => {

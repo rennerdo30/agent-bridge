@@ -210,7 +210,7 @@ async function main(argv: string[]): Promise<number> {
     case "-h":
       out(t("cli.usage"));
       out("Network: connect [--yes] [--non-interactive --create | --address <host:port> --code <code>] | network | pair | link <host:port> <code> | unlink <instance-id>");
-      out("Storage: doctor [--json] [--backup | --fix | --archive | --restore <backup>] [--yes]");
+      out("Storage: doctor --migration-plan [--json], or doctor [--json] [--backup | --fix | --archive | --restore <backup>] [--yes]");
       return 0;
     default:
       out(t("cli.unknownCommand", { command }));

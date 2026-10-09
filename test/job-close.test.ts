@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeJobWorktree, prepareWorktreeContinuation, recordWorktreeOrigin } from "../src/core/job-close.js";
 import { createWorktree, type Worktree } from "../src/core/worktree.js";
 import { readWorktreeState, recordWorktreeProcessProof, saveWorktreeState, worktreeLease } from "../src/core/worktree-state.js";
+import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import * as worktreeModule from "../src/core/worktree.js";
 import { setJobOutcome } from "../src/core/job-outcomes.js";
 import { nullLogger } from "../src/core/logger.js";
@@ -29,7 +30,7 @@ beforeEach(async () => {
   await recordWorktreeOrigin(home, wt, nullLogger);
   recordWorktreeProcessProof(home, wt, true);
 });
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }); });
+afterEach(() => { closeMetadataDbs(); vi.restoreAllMocks(); vi.unstubAllEnvs(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }); });
 
 describe("opt-in job close retention", () => {
   it.each(["codex", "claude", "opencode"])("pushes all %s work before dropping its own cache and retains the local branch", async (agent) => {

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { worktreeLease } from "../src/core/worktree-state.js";
+import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import { readRunnerState, type RunnerSpec } from "../src/mcp/job-host.js";
 import { runJobRunner } from "../src/mcp/job-runner.js";
 
@@ -27,7 +28,7 @@ vi.mock("../src/core/node.js", async () => {
   } };
 });
 let home: string | undefined;
-afterEach(() => { if (home) rmSync(home, { recursive: true, force: true }); home = undefined; vi.clearAllMocks(); });
+afterEach(() => { closeMetadataDbs(); if (home) rmSync(home, { recursive: true, force: true }); home = undefined; vi.clearAllMocks(); });
 
 it("reports surviving worktree tools to the supervisor when a cancelled runner has degraded containment", async () => {
   home = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "runner-survivors-"));

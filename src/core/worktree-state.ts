@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { isRecord, JSON_STORE_VERSION, readJsonStore, writeJsonStore } from "./json-store.js";
 import type { Worktree } from "./worktree.js";
 import { readHistoryJson } from "./run-history.js";
-import { metadataFileLease } from "./metadata-file-lease.js";
+import { worktreeRowLease } from "./worktree-row-lease.js";
 
 export const WORKTREE_STATE_CONTRACT = 1;
 export interface WorktreeState {
@@ -52,7 +52,7 @@ export function invalidateWorktreePathProof(home: string, path: string): void {
 const LEASE_BUSY = "Worktree is running, closing, or has an unreconciled lease; kept unchanged.";
 
 /** Run and close share an exclusive physical-folder lease. Busy/unknown leases always retain data. */
-export function worktreeLease(home: string, wt: Pick<Worktree, "path">): () => void {
-  try { return metadataFileLease(join(home, "worktree-leases", key(wt))); }
-  catch { throw new Error(LEASE_BUSY); }
+export function worktreeLease(home: string, wt: Pick<Worktree, "path">, jobId?: string): () => void {
+  try { return worktreeRowLease(home, key(wt), wt.path, jobId); }
+  catch (error) { throw new Error(`${LEASE_BUSY} ${(error as Error).message}`); }
 }

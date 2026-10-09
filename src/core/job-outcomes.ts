@@ -5,13 +5,15 @@ import { DatabaseSync } from "node:sqlite";
 import { inflateSync } from "node:zlib";
 import { JOBS_FILE } from "./constants.js";
 import { readHistoryJson } from "./run-history.js";
-import { isRecord, mergeStoreFields, readJsonStore, writeJsonStore } from "./json-store.js";
+import { assertWritableStore, isRecord, JSON_STORE_VERSION, mergeStoreFields } from "./json-store.js";
 import type { Logger } from "./logger.js";
 import { resolveDbPath } from "./paths.js";
 import { readStore } from "../mcp/jobs.js";
 import { git, trustArgs, type Worktree } from "./worktree.js";
 import { archiveDbPath } from "./sqlite-maintenance.js";
 import { localResultReceipt, RESULT_HEADER } from "./local-result-receipts.js";
+import { metadataValue, saveMetadataValue } from "./metadata-db.js";
+import { importMetadataDomain } from "./metadata-import.js";
 
 /** Resolve the ordinary files ref store without starting Git twice for one receipt.
  * Symbolic refs, linked Git directories and alternate ref stores retain Git's resolver. */
@@ -153,7 +155,8 @@ function decisionPath(home: string, job: Pick<OutcomeJob, "name" | "startedAt">)
 }
 
 export function readOutcomeDecision(home: string, job: OutcomeJob): OutcomeDecision | null {
-  const data = readHistoryJson(decisionPath(home, job));
+  importMetadataDomain(home, JOB_OUTCOMES_DIR);
+  const data = metadataValue(home, JOB_OUTCOMES_DIR, createHash("sha256").update(`${job.name}:${job.startedAt}`).digest("hex"));
   if (!isRecord(data) || !isRecord(data.decision)) return null;
   const d = data.decision;
   return (d.state === "held" || d.state === "discarded") && typeof d.at === "number" && typeof d.by === "string"
@@ -168,13 +171,15 @@ export function setJobOutcome(home: string, job: OutcomeJob, supervisor: string,
   const trimmed = reason?.trim() || null;
   if (state === "held" && !trimmed) throw new Error("A held outcome requires a reason.");
   if (trimmed && trimmed.length > MAX_HOLD_REASON_CHARS) throw new Error(`Reason must be at most ${MAX_HOLD_REASON_CHARS} characters.`);
-  const path = decisionPath(home, job);
-  const previous = readJsonStore(path);
+  importMetadataDomain(home, JOB_OUTCOMES_DIR);
+  const key = createHash("sha256").update(`${job.name}:${job.startedAt}`).digest("hex");
+  const previous = metadataValue(home, JOB_OUTCOMES_DIR, key);
+  assertWritableStore(previous);
   const decision: OutcomeDecision = { state, reason: trimmed, at: now, by: supervisor };
   // Preserve earlier decisions and unknown fields instead of replacing history.
   const history = isRecord(previous) && Array.isArray(previous.history) ? previous.history : [];
   const prior = isRecord(previous) && isRecord(previous.decision) ? [previous.decision] : [];
-  writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { job: job.name, startedAt: job.startedAt, decision, history: [...history, ...prior] }), previous);
+  saveMetadataValue(home, JOB_OUTCOMES_DIR, key, mergeStoreFields(isRecord(previous) ? previous : {}, { version: JSON_STORE_VERSION, job: job.name, startedAt: job.startedAt, decision, history: [...history, ...prior] }));
   return decision;
 }
 

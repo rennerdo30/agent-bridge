@@ -1,9 +1,10 @@
 # AB-208 implementation gate
 
-AB-208 supersedes file ownership leases for 0.30.4. Implement it on the released
-AB-206 job-row and compressed-archive contract. The reviewed base `c5cfd6b`
-still stores jobs in JSON; AB-206 has not landed in that branch object. No new
-SQLite migration number or competing jobs/archive schema is assigned here.
+AB-208 supersedes file ownership leases for 0.30.4. Independent metadata tables
+use `bridge_components` versioning and leave the global SQLite `user_version`
+unchanged. Job specs/state and indexed job/archive consumers remain reserved
+until the tested AB-206 commit is integrated. All fixes ship together as one
+final v0.30.4; no intermediate tag is required.
 
 ## Adapter inventory
 
@@ -63,14 +64,20 @@ SQLite migration number or competing jobs/archive schema is assigned here.
   Repeated jobs/messages add rows, not per-item hot files; cold bundles rotate
   without pruning. Retain fixture and measurements.
 
-All fixtures must be physical directories outside repositories, fenced with
-`GIT_CEILING_DIRECTORIES`. No live bridge storage, installation, release-job
-worktrees or credential files are inputs to these checks.
+Generated fixtures must be physical directories outside repositories, fenced
+with `GIT_CEILING_DIRECTORIES`. AB-209 additionally authorizes a metadata-only
+read-only planner against the real store, followed by a consistent isolated D:
+copy. Only the copy may be migrated. Credential contents and foreign worktrees
+are not implementation-test inputs.
 
 ## Release boundary
 
-Wait for origin `v0.30.3` and green platform CI, rebase `release/0.30.4`, then
-implement and validate this matrix before the remaining AB-147/183/168/187
-gates. Rebuild every plugin, run full tests, audit retention/privacy, and only
-then fast-forward/push/tag through the authorized release sequence. No tag or
-shared branch is moved or force-pushed.
+Commit the independent AB-208/182 domains with regression evidence, then rebase
+onto the coordinator-supplied tested AB-206 commit. Integrate specs/state and
+broker-owned migration. AB-209's real-store-copy rehearsal replaces the
+generated-only 20 GiB release gate: ordered resumable steps, consistent SQLite
+snapshots, job/message count/hash evidence, bundle round trips, copy-only dbstat,
+owner retention decisions and broker p95 below one second throughout.
+Rebuild all plugins, run the full suite and six CI legs, audit privacy and
+retention, then publish one final v0.30.4. Never move a tag or force-push a
+shared branch. The owner performs installation and final live acceptance.

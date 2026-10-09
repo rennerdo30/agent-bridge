@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deriveJobOutcome, listJobOutcomes, JOB_OUTCOMES_DIR, MAX_HOLD_REASON_CHARS, readOutcomeDecision, setJobOutcome, type OutcomeJob } from "../src/core/job-outcomes.js";
 import { recordLocalResult } from "../src/core/local-result-receipts.js";
+import { closeMetadataDb, metadataDb, metadataValue } from "../src/core/metadata-db.js";
 import { JSON_STORE_VERSION } from "../src/core/json-store.js";
 import { ReadJournal } from "../src/core/read-journal.js";
 import { nullLogger } from "../src/core/logger.js";
@@ -27,7 +28,7 @@ let store: MessageStore;
 const job = (): OutcomeJob => ({ id: "deadbeef", name: "codex-job-deadbeef", owner: "supervisor", startedAt: 100, status: "done", worktree: null });
 const message = (at = 200, body = "Subagent codex-job-deadbeef (codex) done after 1s."): BridgeMessage => ({ id: randomUUID(), recipient: "supervisor", to: "supervisor", from: { id: "job:deadbeef", name: job().name, agent: "codex" }, conversationId: "job-deadbeef", replyTo: null, hop: 0, body, createdAt: at, readAt: null });
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), "ab-outcomes-")); store = new MessageStore(resolveDbPath(home), nullLogger); });
-afterEach(() => { store.close(); rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });
+afterEach(() => { store.close(); closeMetadataDb(home); rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });
 
 describe("finished job delivery", () => {
   it("distinguishes unknown, delivered, and supervisor consumption with times", async () => {
@@ -54,16 +55,17 @@ describe("finished job delivery", () => {
 
   it("retains local result receipts and supports legacy journal reads with unknown time", async () => {
     const result = message();
+    const dir = join(home,"read-state"); mkdirSync(dir);
+    const path = join(dir, `${createHash("sha256").update("name:supervisor").digest("hex")}.jsonl`);
+    writeFileSync(path, `${JSON.stringify([result.id])}\n`);
     recordLocalResult(home, result);
-    expect((await deriveJobOutcome(home, job(), nullLogger)).delivery.status).toBe("delivered");
+    expect((await deriveJobOutcome(home, job(), nullLogger)).delivery).toMatchObject({status:"read",readAt:null});
     const journal = new ReadJournal(home);
     journal.append("name:supervisor", [result.id]);
     const outcome = await deriveJobOutcome(home, job(), nullLogger);
     expect(outcome.delivery.status).toBe("read");
     expect(outcome.delivery.readAt).toBeGreaterThan(0);
-    const path = join(home, "read-state", `${createHash("sha256").update("name:supervisor").digest("hex")}.jsonl`);
-    writeFileSync(path, `${JSON.stringify([result.id])}\n`);
-    expect((await deriveJobOutcome(home, job(), nullLogger)).delivery).toMatchObject({ status: "read", readAt: null });
+    expect(metadataDb(home).prepare("SELECT sha256 FROM bridge_imports WHERE path=?").get(`read-state/${createHash("sha256").update("name:supervisor").digest("hex")}.jsonl`)).toBeDefined();
   });
 });
 
@@ -88,8 +90,7 @@ describe("supervisor decisions and migration", () => {
     new ReadJournal(home).append("name:supervisor", [result.id]);
     setJobOutcome(home, job(), "supervisor", "held", "original", 400);
     const backup = createBackup(home);
-    expect(readBackup(backup).files.some((f) => f.path.startsWith("job-outcomes/"))).toBe(true);
-    expect(readBackup(backup).files.some((f) => f.path.startsWith("local-result-receipts/"))).toBe(true);
+    expect(readBackup(backup).files.some((f) => f.path === "bridge.db")).toBe(true);
     expect(doctor(home).findings.some((f) => f.code.startsWith("journal-"))).toBe(false);
     setJobOutcome(home, job(), "supervisor", "discarded", "later", 500);
     restoreBackup(home, backup, true);
@@ -111,21 +112,22 @@ describe("supervisor decisions and migration", () => {
   });
 
   it("preserves decision history, unknown fields, old bytes in backup, and separates turns", async () => {
-    setJobOutcome(home, job(), "supervisor", "held", "wait", 400);
-    const path = join(home, JOB_OUTCOMES_DIR, readdirSync(join(home, JOB_OUTCOMES_DIR))[0]!);
-    const legacy = JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), version: 1, future: { keep: true } });
+    const key = createHash("sha256").update(`${job().name}:${job().startedAt}`).digest("hex");
+    mkdirSync(join(home,JOB_OUTCOMES_DIR));
+    const path = join(home, JOB_OUTCOMES_DIR, `${key}.json`);
+    const legacy = JSON.stringify({version:1,future:{keep:true},decision:{state:"held",at:400,by:"supervisor",reason:"wait"}});
     writeFileSync(path, legacy);
     setJobOutcome(home, job(), "supervisor", "discarded", "superseded", 500);
-    const data = JSON.parse(readFileSync(path, "utf8"));
+    const data = metadataValue(home,JOB_OUTCOMES_DIR,key) as Record<string,unknown>;
     expect(data).toMatchObject({ version: JSON_STORE_VERSION, future: { keep: true }, history: [{ state: "held", at: 400 }], decision: { state: "discarded", at: 500 } });
-    const backup = readdirSync(join(home, JOB_OUTCOMES_DIR)).find((f) => f.includes(".backup-"))!;
-    expect(readFileSync(join(home, JOB_OUTCOMES_DIR, backup), "utf8")).toBe(legacy);
+    const backup = metadataDb(home).prepare("SELECT cold_path FROM bridge_imports WHERE path=?").get(`${JOB_OUTCOMES_DIR}/${key}.json`)!;
+    expect(readFileSync(String(backup.cold_path), "utf8")).toBe(legacy);
     expect(readOutcomeDecision(home, { ...job(), startedAt: 600 })).toBeNull();
     expect((await deriveJobOutcome(home, job(), nullLogger)).merge).toMatchObject({ state: "discarded", decisionAt: 500, decisionBy: "supervisor" });
     const future = JSON.stringify({ version: JSON_STORE_VERSION + 1, decision: data.decision });
-    writeFileSync(path, future);
+    metadataDb(home).prepare("UPDATE bridge_metadata SET value=? WHERE domain=? AND key=?").run(future,JOB_OUTCOMES_DIR,key);
     expect(() => setJobOutcome(home, job(), "supervisor", "held", "wait")).toThrow("unsupported");
-    expect(readFileSync(path, "utf8")).toBe(future);
+    expect(metadataDb(home).prepare("SELECT value FROM bridge_metadata WHERE domain=? AND key=?").get(JOB_OUTCOMES_DIR,key)!.value).toBe(future);
   });
 
   it("backs up v1 run metadata only on write and keeps unknown nested data", () => {

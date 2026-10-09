@@ -1,0 +1,711 @@
+{
+  "version": 1,
+  "readOnly": true,
+  "capturedAt": "2026-10-09T06:16:26.171Z",
+  "home": "~/.agent-bridge",
+  "inventory": [
+    {
+      "path": "bridge.db",
+      "files": 1,
+      "bytes": 21248008192,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "bridge.db-wal",
+      "files": 1,
+      "bytes": 25296832,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "history.db",
+      "files": 1,
+      "bytes": 4096,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "history.db-wal",
+      "files": 1,
+      "bytes": 193672,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "jobs.json",
+      "files": 1,
+      "bytes": 954412,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "jobs",
+      "files": 2193,
+      "bytes": 13544778,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive",
+      "files": 2263,
+      "bytes": 3201674445,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "runs",
+      "files": 1619,
+      "bytes": 87360560,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "job-outcomes",
+      "files": 47,
+      "bytes": 17054,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "local-result-receipts",
+      "files": 80,
+      "bytes": 13791,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "read-state",
+      "files": 410,
+      "bytes": 1445212,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "storage-capabilities",
+      "files": 786,
+      "bytes": 92435,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "worktree-leases",
+      "files": 0,
+      "bytes": 0,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "worktree-state",
+      "files": 109,
+      "bytes": 43289,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": ".migration-snapshots",
+      "files": 6,
+      "bytes": 65320866816,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "backups",
+      "files": 5258,
+      "bytes": 65073428447,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "bridge.db.backup-1791369677415-72cb22b2-302f-4002-8e6f-5f84d5fbce5d",
+      "files": 1,
+      "bytes": 432250880,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "bridge.db.backup-1791379464153-8841d911-2e83-4ec0-9db6-cd3712691728",
+      "files": 1,
+      "bytes": 462454784,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "bridge.db.backup-1791457927901-2eb050f6-b857-4f66-9796-ca92855b0d7b",
+      "files": 1,
+      "bytes": 21199282176,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": ".migration-snapshots/bridge-history-v1-5a21889c-e4f8-44ab-8d7b-27168c2c51e0.db",
+      "files": 1,
+      "bytes": 21198696448,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": ".migration-snapshots/bridge.db.backup-1791379464153-8841d911-2e83-4ec0-9db6-cd3712691728-v7-to-v8",
+      "files": 1,
+      "bytes": 462454784,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": ".migration-snapshots/bridge.db.backup-1791457317699-e7e726c9-d1a6-4e30-9ee2-efa643a99e50-v8-to-v9",
+      "files": 1,
+      "bytes": 21199282176,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": ".migration-snapshots/bridge.db.backup-1791457913768-e12cb385-6052-4e88-9d52-7d4fe891542a-v8-to-v9",
+      "files": 1,
+      "bytes": 1261150208,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": ".migration-snapshots/bridge.db.backup-1791457913768-e12cb385-6052-4e88-9d52-7d4fe891542a-v8-to-v9-journal",
+      "files": 1,
+      "bytes": 1024,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": ".migration-snapshots/bridge.db.backup-1791457927901-2eb050f6-b857-4f66-9796-ca92855b0d7b-v8-to-v9",
+      "files": 1,
+      "bytes": 21199282176,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "backups/.pending-snapshot-1791461992643-34bbecd1-87cc-48cf-8d96-a2a57b1d5a19",
+      "files": 2,
+      "bytes": 19838071808,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "backups/.pending-snapshot-1791462386337-c6d43dda-9412-4aa3-843f-a6e2dbd94baf",
+      "files": 2,
+      "bytes": 8943051776,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "backups/.pending-snapshot-1791462386356-3e794776-732f-40a4-aea1-0a567e53ce96",
+      "files": 2,
+      "bytes": 8945681408,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "backups/.pending-snapshot-1791462386629-bbe04112-b6b8-42e3-baf3-f6fa2f81f198",
+      "files": 2,
+      "bytes": 8946824192,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "backups/.pending-snapshot-1791462386651-5a4e6ae0-dc83-4b80-bff7-582c7bfd1be2",
+      "files": 2,
+      "bytes": 8948777984,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "backups/.pending-snapshot-1791462387443-059fe2c6-40aa-4fe4-b59c-641adeb1d3f4",
+      "files": 2,
+      "bytes": 8950236160,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791272304464-1c4e0fde-81ab-498e-b8b5-4ec8bf55c4f1-1791301991989-1263fffd-2731-42aa-bc3b-820be62d7a45",
+      "files": 1,
+      "bytes": 7598080,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791286144804-c56a02be-fc60-44fa-8001-0cd67e7536da-1791301992959-d6c42c1e-90b8-4e31-bde6-8d015cd97ef8",
+      "files": 1,
+      "bytes": 9134080,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301989943-914a6273-3366-455a-a31f-c27091622f2f-1791301995579-96ee52a4-74ec-4931-a0c3-db305d7d5fcc",
+      "files": 1,
+      "bytes": 116981760,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301991401-a02cab3c-e338-4b18-8fc3-b680fcb1c7bd-1791301995578-955fc1f1-7d69-4d8b-8713-fa7b9da3af34",
+      "files": 1,
+      "bytes": 116981760,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301991991-47133bcc-40b1-400b-a7d9-4f2688e79b78-1791301995577-e9cdf1f4-dd8a-4459-a31c-afbd84db58dc",
+      "files": 1,
+      "bytes": 116985856,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301992961-6576b7de-13f1-4c72-88fa-16525686bc96-1791301995576-edb78d91-e042-43d7-8352-61960acfad4e",
+      "files": 1,
+      "bytes": 117014528,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301994401-5ea2e4fc-38ad-443c-afd9-afeb60d00942-1791301995576-da60418f-b061-4734-94e7-c86557cf6454",
+      "files": 1,
+      "bytes": 117014528,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301994535-df7371fb-7809-415c-8420-1fe0e986fc03-1791301995575-ba400aae-db56-4462-a3dd-fa9b7027bddc",
+      "files": 1,
+      "bytes": 117014528,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301994796-6dbd0756-1bdd-4e7b-b123-886987ba430c-1791301995574-58cef34b-cf4d-46c3-b83e-ab139c077a54",
+      "files": 1,
+      "bytes": 117014528,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301994816-690b609a-73d4-45a9-a8f8-6486f6850ab4-1791301997322-fe292702-5952-4763-8ffb-3a637f04e98e",
+      "files": 1,
+      "bytes": 117014528,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301995072-6683b55c-7ef4-4931-bfc3-328d9f933b41-1791301998245-e7042e49-50d8-4757-8900-8f6b5922ee5f",
+      "files": 1,
+      "bytes": 117014528,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301995767-1e6c1204-fda9-4f2f-841b-b440941cb9a6-1791301999266-48a60dcc-bfee-4f73-8edb-f821ca461294",
+      "files": 1,
+      "bytes": 117039104,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301996370-2d61574a-5769-43d0-a59f-de5fab1ee60e-1791369677230-ae4d59a8-5fd9-469f-b2ca-c025678e8d1d",
+      "files": 1,
+      "bytes": 117039104,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301997325-49e64b70-eb4c-45ee-bdda-eb630027aa92-1791369677227-22abca3b-82e7-4ee2-b641-f17d9b93b43e",
+      "files": 1,
+      "bytes": 117039104,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301998247-f41f7bf2-2a2d-4f66-8681-701b55180ebc-1791369677225-df781814-9d22-4cbc-bee7-f887742a1898",
+      "files": 1,
+      "bytes": 117075968,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791369660919-d82f2546-080f-4add-bc19-489ad587eb8f-1791369677220-4ed75f03-3ece-4f89-b2f5-5f6733433f4e",
+      "files": 1,
+      "bytes": 432242688,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791369661121-8d33d5f5-6932-4e55-9c4a-7d18973ba13a-1791379466961-ec66f3dd-6bb4-4714-8574-04dc0aadb422",
+      "files": 1,
+      "bytes": 432242688,
+      "linked": 0,
+      "unreadable": 0
+    },
+    {
+      "path": "archive/bridge.db.backup-1791369663636-b3c60110-0007-4510-8d38-2767eb405c45-1791458392429-f8012fb4-7f87-4c30-98fd-ba8104d780f0",
+      "files": 1,
+      "bytes": 432242688,
+      "linked": 0,
+      "unreadable": 0
+    }
+  ],
+  "steps": [
+    {
+      "order": 1,
+      "name": "AB-208 metadata tables",
+      "paths": [
+        "bridge.db"
+      ],
+      "files": 1,
+      "bytes": 21248008192,
+      "estimatedSeconds": {
+        "min": 203,
+        "max": 2027
+      },
+      "backup": "Verified protected schema/metadata snapshot before additive DDL; reuse a proven full snapshot when required.",
+      "admission": "Unknown or incompatible live readers defer this step; heartbeat age grants no authority."
+    },
+    {
+      "order": 2,
+      "name": "AB-206 job rows and jobs-copy archive bundle",
+      "paths": [
+        "jobs.json",
+        "archive"
+      ],
+      "files": 2264,
+      "bytes": 3202628857,
+      "estimatedSeconds": {
+        "min": 32,
+        "max": 329
+      },
+      "backup": "Byte-exact SHA256 bundle and versioned SQLite archive backup before cold moves.",
+      "admission": "Unknown or incompatible live readers defer this step; heartbeat age grants no authority."
+    },
+    {
+      "order": 3,
+      "name": "AB-208 small-file import",
+      "paths": [
+        "jobs",
+        "runs",
+        "job-outcomes",
+        "local-result-receipts",
+        "read-state",
+        "storage-capabilities",
+        "worktree-leases",
+        "worktree-state"
+      ],
+      "files": 5244,
+      "bytes": 102517119,
+      "estimatedSeconds": {
+        "min": 4,
+        "max": 63
+      },
+      "backup": "Verified compressed raw-byte manifests before row projection and cold moves; unknown leases stay protected.",
+      "admission": "Unknown or incompatible live readers defer this step; heartbeat age grants no authority."
+    },
+    {
+      "order": 4,
+      "name": "Resumable throttled history import",
+      "paths": [
+        "bridge.db",
+        "history.db"
+      ],
+      "files": 2,
+      "bytes": 21248012288,
+      "estimatedSeconds": {
+        "min": 203,
+        "max": 2027
+      },
+      "backup": "Consistent SQLite snapshot; checkpoints and count/hash verification before history.ingest is enabled.",
+      "admission": "Unknown or incompatible live readers defer this step; heartbeat age grants no authority."
+    },
+    {
+      "order": 5,
+      "name": "AB-176 history budget",
+      "paths": [
+        "history.db"
+      ],
+      "files": 1,
+      "bytes": 4096,
+      "estimatedSeconds": {
+        "min": 1,
+        "max": 1
+      },
+      "backup": "Verified history snapshot and retained archive before any budget operation.",
+      "admission": "Unknown or incompatible live readers defer this step; heartbeat age grants no authority."
+    }
+  ],
+  "ownerDecisions": [
+    {
+      "path": "archive",
+      "files": 2263,
+      "bytes": 3201674445,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": ".migration-snapshots",
+      "files": 6,
+      "bytes": 65320866816,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "backups",
+      "files": 5258,
+      "bytes": 65073428447,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "bridge.db.backup-1791369677415-72cb22b2-302f-4002-8e6f-5f84d5fbce5d",
+      "files": 1,
+      "bytes": 432250880,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "bridge.db.backup-1791379464153-8841d911-2e83-4ec0-9db6-cd3712691728",
+      "files": 1,
+      "bytes": 462454784,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "bridge.db.backup-1791457927901-2eb050f6-b857-4f66-9796-ca92855b0d7b",
+      "files": 1,
+      "bytes": 21199282176,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": ".migration-snapshots/bridge-history-v1-5a21889c-e4f8-44ab-8d7b-27168c2c51e0.db",
+      "files": 1,
+      "bytes": 21198696448,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": ".migration-snapshots/bridge.db.backup-1791379464153-8841d911-2e83-4ec0-9db6-cd3712691728-v7-to-v8",
+      "files": 1,
+      "bytes": 462454784,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": ".migration-snapshots/bridge.db.backup-1791457317699-e7e726c9-d1a6-4e30-9ee2-efa643a99e50-v8-to-v9",
+      "files": 1,
+      "bytes": 21199282176,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": ".migration-snapshots/bridge.db.backup-1791457913768-e12cb385-6052-4e88-9d52-7d4fe891542a-v8-to-v9",
+      "files": 1,
+      "bytes": 1261150208,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": ".migration-snapshots/bridge.db.backup-1791457913768-e12cb385-6052-4e88-9d52-7d4fe891542a-v8-to-v9-journal",
+      "files": 1,
+      "bytes": 1024,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": ".migration-snapshots/bridge.db.backup-1791457927901-2eb050f6-b857-4f66-9796-ca92855b0d7b-v8-to-v9",
+      "files": 1,
+      "bytes": 21199282176,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "backups/.pending-snapshot-1791461992643-34bbecd1-87cc-48cf-8d96-a2a57b1d5a19",
+      "files": 2,
+      "bytes": 19838071808,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "backups/.pending-snapshot-1791462386337-c6d43dda-9412-4aa3-843f-a6e2dbd94baf",
+      "files": 2,
+      "bytes": 8943051776,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "backups/.pending-snapshot-1791462386356-3e794776-732f-40a4-aea1-0a567e53ce96",
+      "files": 2,
+      "bytes": 8945681408,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "backups/.pending-snapshot-1791462386629-bbe04112-b6b8-42e3-baf3-f6fa2f81f198",
+      "files": 2,
+      "bytes": 8946824192,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "backups/.pending-snapshot-1791462386651-5a4e6ae0-dc83-4b80-bff7-582c7bfd1be2",
+      "files": 2,
+      "bytes": 8948777984,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "backups/.pending-snapshot-1791462387443-059fe2c6-40aa-4fe4-b59c-641adeb1d3f4",
+      "files": 2,
+      "bytes": 8950236160,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791272304464-1c4e0fde-81ab-498e-b8b5-4ec8bf55c4f1-1791301991989-1263fffd-2731-42aa-bc3b-820be62d7a45",
+      "files": 1,
+      "bytes": 7598080,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791286144804-c56a02be-fc60-44fa-8001-0cd67e7536da-1791301992959-d6c42c1e-90b8-4e31-bde6-8d015cd97ef8",
+      "files": 1,
+      "bytes": 9134080,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301989943-914a6273-3366-455a-a31f-c27091622f2f-1791301995579-96ee52a4-74ec-4931-a0c3-db305d7d5fcc",
+      "files": 1,
+      "bytes": 116981760,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301991401-a02cab3c-e338-4b18-8fc3-b680fcb1c7bd-1791301995578-955fc1f1-7d69-4d8b-8713-fa7b9da3af34",
+      "files": 1,
+      "bytes": 116981760,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301991991-47133bcc-40b1-400b-a7d9-4f2688e79b78-1791301995577-e9cdf1f4-dd8a-4459-a31c-afbd84db58dc",
+      "files": 1,
+      "bytes": 116985856,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301992961-6576b7de-13f1-4c72-88fa-16525686bc96-1791301995576-edb78d91-e042-43d7-8352-61960acfad4e",
+      "files": 1,
+      "bytes": 117014528,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301994401-5ea2e4fc-38ad-443c-afd9-afeb60d00942-1791301995576-da60418f-b061-4734-94e7-c86557cf6454",
+      "files": 1,
+      "bytes": 117014528,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301994535-df7371fb-7809-415c-8420-1fe0e986fc03-1791301995575-ba400aae-db56-4462-a3dd-fa9b7027bddc",
+      "files": 1,
+      "bytes": 117014528,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301994796-6dbd0756-1bdd-4e7b-b123-886987ba430c-1791301995574-58cef34b-cf4d-46c3-b83e-ab139c077a54",
+      "files": 1,
+      "bytes": 117014528,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301994816-690b609a-73d4-45a9-a8f8-6486f6850ab4-1791301997322-fe292702-5952-4763-8ffb-3a637f04e98e",
+      "files": 1,
+      "bytes": 117014528,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301995072-6683b55c-7ef4-4931-bfc3-328d9f933b41-1791301998245-e7042e49-50d8-4757-8900-8f6b5922ee5f",
+      "files": 1,
+      "bytes": 117014528,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301995767-1e6c1204-fda9-4f2f-841b-b440941cb9a6-1791301999266-48a60dcc-bfee-4f73-8edb-f821ca461294",
+      "files": 1,
+      "bytes": 117039104,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301996370-2d61574a-5769-43d0-a59f-de5fab1ee60e-1791369677230-ae4d59a8-5fd9-469f-b2ca-c025678e8d1d",
+      "files": 1,
+      "bytes": 117039104,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301997325-49e64b70-eb4c-45ee-bdda-eb630027aa92-1791369677227-22abca3b-82e7-4ee2-b641-f17d9b93b43e",
+      "files": 1,
+      "bytes": 117039104,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791301998247-f41f7bf2-2a2d-4f66-8681-701b55180ebc-1791369677225-df781814-9d22-4cbc-bee7-f887742a1898",
+      "files": 1,
+      "bytes": 117075968,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791369660919-d82f2546-080f-4add-bc19-489ad587eb8f-1791369677220-4ed75f03-3ece-4f89-b2f5-5f6733433f4e",
+      "files": 1,
+      "bytes": 432242688,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791369661121-8d33d5f5-6932-4e55-9c4a-7d18973ba13a-1791379466961-ec66f3dd-6bb4-4714-8574-04dc0aadb422",
+      "files": 1,
+      "bytes": 432242688,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "archive/bridge.db.backup-1791369663636-b3c60110-0007-4510-8d38-2767eb405c45-1791458392429-f8012fb4-7f87-4c30-98fd-ba8104d780f0",
+      "files": 1,
+      "bytes": 432242688,
+      "newerCopyVerified": false,
+      "recommendation": "Keep unchanged. Verify hashes and restore coverage on the rehearsal copy, then offer cold storage or a compressed bundle only with explicit owner confirmation."
+    },
+    {
+      "path": "cold/originals",
+      "files": null,
+      "bytes": null,
+      "newerCopyVerified": false,
+      "recommendation": "Retain imported originals until the owner verifies bundle restore coverage and explicitly chooses cold retention."
+    },
+    {
+      "path": "worktrees",
+      "files": null,
+      "bytes": null,
+      "newerCopyVerified": false,
+      "recommendation": "Not traversed or touched by this planner. Finished-worktree retention remains an owner decision after process and provenance evidence."
+    }
+  ],
+  "notices": [
+    "This planner reads directory entries and file metadata only; it never opens credential files or SQLite databases.",
+    "Duration ranges are uncalibrated IO estimates, not measured rehearsal times. Broker p95 must be measured on the consistent D: copy.",
+    "The real store is never migrated by this command. dbstat and content hash/count checks run only on the consistent rehearsal copy.",
+    "Linked/unreadable paths are retained and require review. No item is deleted or automatically reconciled."
+  ]
+}
