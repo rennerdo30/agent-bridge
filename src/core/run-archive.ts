@@ -1,3 +1,4 @@
+import { packArchivedRuns } from "./finished-run-bundles.js";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { retentionLimit } from "./json-store.js";
@@ -56,5 +57,8 @@ export function archiveOldRuns(home: string, now = Date.now()): number {
   for (const file of runLogFiles(home).filter((p) => !p.includes(`${join("runs", "archive")}`))) {
     if (statSync(file).mtimeMs < now - age && finishedRunLine(readRunLogPreview(file))) { archiveRun(file); count++; }
   }
+  // Archived runs are finished; pack a bounded batch so polls stop scanning them (AB-208).
+  // Packing is best effort: anything not packed stays readable where it is.
+  try { packArchivedRuns(home, runLogFiles(home).filter((p) => p.includes(`${join("runs", "archive")}`))); } catch { /* retried on the next archive pass */ }
   return count;
 }

@@ -1,6 +1,6 @@
 import { worktreeRoots } from "./worktree.js";
 import { closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync, type Stats } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { JOBS_FILE } from "./constants.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import type { Logger } from "./logger.js";
@@ -430,7 +430,8 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       if (!/^\d+$/.test(rawFrom) || !Number.isSafeInteger(Number(rawFrom))) return reply(400, { error: "invalid log cursor" });
       const from = Number(rawFrom);
       const witnessed = lstatSync(log.file);
-      if (!unchangedContainedFile(join(ctx.home, "runs"), log.file, witnessed)) return reply(404, { error: "no such run" });
+      const logRoot = isInsideDir(log.file, join(ctx.home, "cold")) ? join(ctx.home, "cold") : join(ctx.home, "runs");
+      if (!unchangedContainedFile(logRoot, log.file, witnessed)) return reply(404, { error: "no such run" });
       const size = witnessed.size;
       const fd = openSync(log.file, "r");
       const buf = Buffer.alloc(Math.min(MAX_LOG_CHUNK + 1, Math.max(0, size - from)));
@@ -444,4 +445,9 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       return reply(200, { text: buf.subarray(0, end).toString("utf8"), next: Math.min(size, from + end), size });
     }
   return reply(404, { error: "not found" });
+}
+
+function isInsideDir(child: string, parent: string): boolean {
+  const rel = relative(parent, child);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }

@@ -1,3 +1,4 @@
+import { packedRunRecords } from "./finished-run-bundles.js";
 import { readFile } from "node:fs/promises";
 import { lstatSync, readdirSync, realpathSync, statSync, type Stats } from "node:fs";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
@@ -83,6 +84,9 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
     }
     directories.push({ archived, files: selected });
   }
+  // Packed finished runs (AB-208) come from one indexed query instead of a directory scan.
+  const packed = packedRunRecords(home, namesFilter);
+  signatures.push(`packed:${packed.length}:${packed.reduce((n, r) => Math.max(n, r.updatedAt), 0)}`);
   const key = `${canonicalRoot}:${namesFilter ? JSON.stringify([...namesFilter].sort()) : "*"}`;
   const signature = signatures.join("\n"), saved = runLogSnapshots.get(key);
   if (saved?.signature === signature) {
@@ -114,6 +118,7 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
       } catch { /* A concurrent archiver may have moved the file; retry on the next read. */ }
     }
   }
+  for (const record of packed) if (!records.has(record.name)) records.set(record.name, record as RunLogRecord);
   const result = [...records.values()];
   if (responsive) complete &&= yield* stableRunFiles(root, directories, canonicalRoot);
   runLogSnapshots.delete(key);
@@ -279,6 +284,11 @@ export async function readRunStarts(home: string): Promise<{ job: string; jobSta
         } catch { /* Concurrent archival or malformed metadata contributes no evidence. */ }
       }));
     }
+  }
+  for (const record of packedRunRecords(home)) {
+    if (starts.has(record.name) || typeof record.meta.job !== "string") continue;
+    const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(record.name);
+    starts.set(record.name, { job: record.meta.job, startedAt: m ? Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!) : record.updatedAt, ...(typeof record.meta.jobStartedAt === "number" ? { jobStartedAt: record.meta.jobStartedAt } : {}) });
   }
   return [...starts.values()];
 }
