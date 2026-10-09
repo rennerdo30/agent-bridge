@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { planFinalize, runFinalize } from "../src/core/storage-finalize.js";
-import { historyDbPath, migrateHistoryStore, openHistoryStore } from "../src/core/history-store.js";
+import { planFinalize, rollbackHistoryStore, runFinalize } from "../src/core/storage-finalize.js";
+import { historyDbPath, historyReadPath, migrateHistoryStore, openHistoryStore } from "../src/core/history-store.js";
 import { decodeHistoryRow } from "../src/core/history-migration.js";
 import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
@@ -45,6 +45,28 @@ it("refuses and removes nothing before the new storage is verified", async () =>
   expect(bridge.prepare("SELECT count(*) n FROM conversation_records").get()!.n).toBe(1);
 });
 
+it("refuses to delete while a late legacy record is not copied yet, and when a copy differs", async () => {
+  const history = await legacyHome(true);
+  await migrateJobArchives(join(env.home, "jobs.json"));
+  const old = new DatabaseSync(env.db); closes.push(() => old.close());
+  old.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('late',0,0,'codex:a',1,?,'late')").run(Buffer.from("late bytes"));
+  const lines: string[] = [];
+  let plan = runFinalize(env.home, line => lines.push(line));
+  expect(plan.ready).toBe(false);
+  expect(plan.blockers.join("\n")).toMatch(/legacy tail has not caught up/);
+  expect(old.prepare("SELECT count(*) n FROM conversation_records").get()!.n).toBe(2);
+  expect(existsSync(join(env.home, ".migration-snapshots", "old-snapshot.db"))).toBe(true);
+  // Catch up, then tamper with the copy: a byte difference must also block.
+  const { copyLegacyConversationTail } = await import("../src/core/history-store.js");
+  expect(copyLegacyConversationTail(old, history)).toBe(1);
+  history.exec("DROP TRIGGER conversation_records_no_update");
+  history.prepare("UPDATE conversation_records SET raw=?, raw_codec=0 WHERE source='s'").run(Buffer.from("tampered"));
+  plan = runFinalize(env.home, () => {});
+  expect(plan.ready).toBe(false);
+  expect(plan.blockers.join("\n")).toMatch(/differ from their copy/);
+  expect(old.prepare("SELECT count(*) n FROM conversation_records").get()!.n).toBe(2);
+});
+
 it("after verification removes exactly the listed old-format data and keeps everything still in use", async () => {
   const history = await legacyHome(true);
   // The real job archive import, on a home without legacy copies, completes immediately.
@@ -67,4 +89,18 @@ it("after verification removes exactly the listed old-format data and keeps ever
   expect(existsSync(join(env.home, "backups", ".pending-snapshot-1"))).toBe(false);
   // The verified copy is untouched.
   expect((decodeHistoryRow("conversation_records", history.prepare("SELECT * FROM conversation_records").get()!).raw as Buffer).toString()).toBe("record bytes");
+});
+
+it("rolls back to the legacy history before finalize, keeps the copy, and refuses once finalize removed the legacy tables", async () => {
+  const history = await legacyHome(true);
+  expect(historyReadPath(env.db)).toBe(historyDbPath(env.db));
+  expect(rollbackHistoryStore(env.home)).toMatch(/Rolled back/);
+  expect(historyReadPath(env.db)).toBe(env.db);
+  expect(history.prepare("SELECT count(*) n FROM conversation_records").get()!.n).toBe(1);
+  await expect(migrateHistoryStore(env.db, history)).rejects.toThrow("explicit retry");
+  await migrateHistoryStore(env.db, history, undefined, undefined, undefined, true);
+  expect(historyReadPath(env.db)).toBe(historyDbPath(env.db));
+  await migrateJobArchives(join(env.home, "jobs.json"));
+  expect(runFinalize(env.home, () => {}).ready).toBe(true);
+  expect(() => rollbackHistoryStore(env.home)).toThrow(/no longer possible/);
 });
