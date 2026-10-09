@@ -103,3 +103,52 @@ it.skipIf(process.platform === "linux")("drops an imported legacy row whose PID 
   await refreshStorePeerIdentities(env.home);
   expect(legacyStorePeers(env.home).map(peer => peer.pid)).toContain(process.ppid);
 });
+
+it("recovers a migration lock of an unknown owner only when it predates the boot", () => {
+  const file = join(env.home, "store.db");
+  for (const pid of [ghosts.eperm, ghosts.zombie]) {
+    writeFileSync(`${file}.migration-lock`, JSON.stringify({ pid, nonce: randomUUID() }));
+    utimesSync(`${file}.migration-lock`, beforeBoot() / 1000, beforeBoot() / 1000);
+    migrationLock(file)();
+  }
+  writeFileSync(`${file}.migration-lock`, JSON.stringify({ pid: ghosts.eperm, nonce: randomUUID() }));
+  expect(() => migrationLock(file)).toThrow(/another session is migrating/);
+});
+
+it("recovers a maintenance lock and storage leases of unknown owners only when they predate the boot", () => {
+  const lock = join(env.home, ".maintenance-lock");
+  writeFileSync(lock, JSON.stringify({ pid: ghosts.eperm, nonce: randomUUID(), createdAt: recent() }));
+  expect(() => storageLease(env.home)).toThrow(/maintenance is in progress/);
+  writeFileSync(lock, JSON.stringify({ pid: ghosts.eperm, nonce: randomUUID(), createdAt: beforeBoot() }));
+  storageLease(env.home)();
+
+  const users = join(env.home, ".storage-users");
+  mkdirSync(users, { recursive: true });
+  const lease = join(users, `${ghosts.zombie}-${randomUUID()}`);
+  writeFileSync(lease, JSON.stringify({ pid: ghosts.zombie, nonce: randomUUID(), createdAt: recent() }));
+  expect(() => maintenanceLock(env.home)).toThrow(/storage is in use/);
+  writeFileSync(lease, JSON.stringify({ pid: ghosts.zombie, nonce: randomUUID(), createdAt: beforeBoot() }));
+  maintenanceLock(env.home)();
+});
+
+function foreignLease(path: string, pid: number, createdAt: number): void {
+  const registry = join(env.home, ".metadata-leases", createHash("sha256").update("jobs.json").digest("hex"));
+  const ownerDirectory = randomUUID(), dir = join(registry, ownerDirectory);
+  mkdirSync(dir, { recursive: true });
+  const marker = `owner-v1.${pid}.${Buffer.from("ghost-start").toString("base64url")}.${randomUUID()}.json`;
+  writeFileSync(join(dir, marker), JSON.stringify({ version: 2, pid, identity: "ghost-start", nonce: marker, ownerDirectory, createdAt }) + "\n");
+  linkSync(join(dir, marker), path);
+}
+
+it("still refuses a recent metadata lease of an unknown owner", () => {
+  const path = join(env.home, "jobs.json");
+  foreignLease(path, ghosts.zombie, recent());
+  expect(() => metadataFileLease(path)).toThrow(/live or unknown owner/);
+  expect(() => metadataFileLease(path, 0, true)).toThrow(/live or unknown owner/);
+});
+
+it("takes over a metadata lease of an unknown owner from before the boot", () => {
+  const path = join(env.home, "jobs.json");
+  foreignLease(path, ghosts.eperm, beforeBoot());
+  metadataFileLease(path)();
+});

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { processStartMs } from "./process-identity.js";
+import { ownerGone as bootOwnerGone } from "./boot-time.js";
 
 const LOCK_FILE = ".maintenance-lock";
 const USERS_DIR = ".storage-users";
@@ -29,13 +30,17 @@ function readOwner(path: string): LockOwner | null {
 }
 
 /** "dead" only with proof: the PID does not exist, or the process now holding it started after the lock was
- * written (PID reuse). Our own PID, access errors and unreadable start times all count as alive. */
+ * written (PID reuse). Our own PID counts as alive. Access errors and unreadable start times count as alive unless
+ * the lock was written before the current boot: no process survives a reboot (AB-256). */
 function ownerGone(pid: number, createdAt: number): boolean {
   if (pid === process.pid) return false;
-  try { process.kill(pid, 0); }
-  catch (err) { return (err as NodeJS.ErrnoException).code === "ESRCH"; }
-  const started = processStartMs(pid);
-  return started !== undefined && started > createdAt + START_SLACK_MS;
+  let alive: boolean | undefined;
+  try {
+    process.kill(pid, 0);
+    const started = processStartMs(pid);
+    alive = started === undefined ? undefined : started <= createdAt + START_SLACK_MS;
+  } catch (err) { alive = (err as NodeJS.ErrnoException).code === "ESRCH" ? false : undefined; }
+  return bootOwnerGone({ alive, recordedAt: createdAt });
 }
 
 /** Removes a maintenance lock whose recorded owner is provably gone. A lock without an owner record
