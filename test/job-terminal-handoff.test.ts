@@ -191,6 +191,7 @@ it("admits a durable local continuation without leaving a waiter that intercepts
   expect(controller.signal.aborted).toBe(true);
   await flush(); await flush();
   expect(factory).toHaveBeenCalledTimes(1);
-  expect(job.status).toBe("failed");
-  expect(readStore(path())[0]).toMatchObject({ status: "failed", queuedMessages: [] });
+  // The owner cancelled the continuation: an aborted controller settles as cancelled, not failed.
+  expect(job.status).toBe("cancelled");
+  expect(readStore(path())[0]).toMatchObject({ status: "cancelled", queuedMessages: [] });
 });
