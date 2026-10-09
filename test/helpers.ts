@@ -10,6 +10,7 @@ import type { AgentKind } from "../src/core/protocol.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 import type { MessageStore } from "../src/core/store.js";
 import { closeMetadataDb } from "../src/core/metadata-db.js";
+import { describeFileLockers } from "./file-lockers.js";
 
 export interface TestEnv {
   home: string;
@@ -40,7 +41,17 @@ export function makeEnv(): TestEnv {
       closeMetadataDb(home);
       // Yield between Windows handle-release retries so pending shutdown callbacks and exiting child processes can
       // finish; linear backoff gives a loaded runner about 5.5 s.
-      await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      try { await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+      catch (error) {
+        // CI keeps only the console: name the process (this test process or a child) that still holds the file.
+        const path = (error as NodeJS.ErrnoException).path;
+        if (process.platform === "win32" && path && ["EBUSY", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+          (error as Error).message += `
+Held by:
+${await describeFileLockers(path)}`;
+        }
+        throw error;
+      }
     },
   };
 }
