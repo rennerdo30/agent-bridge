@@ -352,6 +352,7 @@ export class JobManager {
   private readonly reporting = new Set<string>();
   private reportsStopped = false;
   private reportTimer: NodeJS.Timeout | null = null;
+  private reportRetryMs = 500;
   private readonly receiptWriter = randomUUID();
   private readonly retainedSnapshots = new Map<string, string>();
   private readonly receipts: PendingJobReceipt[] = [];
@@ -656,9 +657,11 @@ export class JobManager {
 
   private flushStoredReports(stored: unknown[]): void {
     if (this.dormant || this.reportsStopped || !this.node.reportInlineJob) return;
+    let unsaved = false;
     for (const [id, pending] of this.pendingReports) {
-      if (this.reporting.has(id) || !stored.some(entry => isRecord(entry) && entry.id === pending.jobId &&
-        Array.isArray(entry.deliveryHistory) && entry.deliveryHistory.some(message => isDeepStrictEqual(message, pending.message)))) continue;
+      if (this.reporting.has(id)) continue;
+      if (!stored.some(entry => isRecord(entry) && entry.id === pending.jobId &&
+        Array.isArray(entry.deliveryHistory) && entry.deliveryHistory.some(message => isDeepStrictEqual(message, pending.message)))) { unsaved = true; continue; }
       this.reporting.add(id);
       const generation = this.persistenceGeneration;
       // The locked save completes before this microtask can send its exact,
@@ -671,19 +674,26 @@ export class JobManager {
         if (!durable || durable.id !== pending.jobId || ![durable.owner, durable.executionOwner, durable.rootName].includes(this.node.name) ||
           !durable.deliveryHistory?.some(message => isDeepStrictEqual(message, pending.message))) return false;
         return this.node.reportInlineJob!(pending.message).then(() => true);
-      }).then(sent => { if (sent) this.pendingReports.delete(id); }, error => {
+      }).then(sent => { if (sent) { this.pendingReports.delete(id); this.reportRetryMs = 500; } }, error => {
         this.log.warn("inline report delivery failed; retained for replay", { err: String(error) });
       }).finally(() => { this.reporting.delete(id); this.scheduleReportRetry(); });
     }
+    // A report whose envelope another writer's save left out of the store is saved again, with backoff, instead of
+    // waiting for an unrelated later save. It stays retained in memory until it is durable and sent.
+    if (unsaved) this.scheduleReportRetry(true);
   }
 
-  private scheduleReportRetry(): void {
+  private scheduleReportRetry(save = false): void {
     if (this.reportTimer || this.dormant || this.reportsStopped || !this.storePath || !this.pendingReports.size) return;
+    const delay = this.reportRetryMs;
+    if (save) this.reportRetryMs = Math.min(delay * 2, 30_000);
     this.reportTimer = setTimeout(() => {
       this.reportTimer = null;
-      if (!this.dormant && !this.reportsStopped) this.flushStoredReports(readScopedStore(this.storePath!,
+      if (this.dormant || this.reportsStopped) return;
+      if (save) this.persist();
+      else this.flushStoredReports(readScopedStore(this.storePath!,
         new Set([...this.pendingReports.values()].map(report => report.jobId)), new Set(), undefined, this.log));
-    }, 500);
+    }, delay);
   }
 
   /** Small versioned receipts survive incompatible readers and immediate exit. */
