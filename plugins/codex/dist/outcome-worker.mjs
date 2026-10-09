@@ -174,52 +174,18 @@ function readJsonStore(path, log, valid = isRecord) {
 }
 
 // src/core/runfeed.ts
-import { appendFileSync, mkdirSync as mkdirSync5, readFileSync as readFileSync5, readdirSync as readdirSync6, statSync as statSync3 } from "node:fs";
+import { appendFileSync, mkdirSync as mkdirSync5, readFileSync as readFileSync6, readdirSync as readdirSync6, statSync as statSync4 } from "node:fs";
 import { join as join7 } from "node:path";
 
 // src/core/run-archive.ts
-import { copyFileSync as copyFileSync3, existsSync as existsSync5, mkdirSync as mkdirSync4, readdirSync as readdirSync5, renameSync as renameSync3, statSync as statSync2 } from "node:fs";
+import { copyFileSync as copyFileSync3, existsSync as existsSync5, mkdirSync as mkdirSync4, readdirSync as readdirSync5, renameSync as renameSync3, statSync as statSync3 } from "node:fs";
 import { basename as basename2, join as join6 } from "node:path";
 
 // src/core/run-log-preview.ts
 import { closeSync as closeSync3, fstatSync, openSync as openSync3, readSync } from "node:fs";
-var WINDOW_BYTES = 32 * 1024;
-
-// src/core/run-archive.ts
-var DEFAULT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
-
-// src/core/runfeed.ts
-import { setTimeout as delay } from "node:timers/promises";
-var RUNS_DIR_NAME = "runs";
-
-// src/core/transcripts/common.ts
-import { closeSync as closeSync4, fstatSync as fstatSync2, openSync as openSync4, readSync as readSync2, readdirSync as readdirSync7, realpathSync, statSync as statSync4 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { isAbsolute, join as join8, relative, resolve as resolve2, sep } from "node:path";
-var MAX_TRANSCRIPT_CHUNK_BYTES = 512 * 1024;
-var MAX_DISCOVERY_BYTES = 8 * 1024 * 1024;
-var INITIAL_HEADER_BYTES = 8 * 1024;
-function object(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-function parse(value) {
-  try {
-    return object(JSON.parse(value));
-  } catch {
-    return {};
-  }
-}
-function safeFile(root, file2, canonicalRoot) {
-  try {
-    const actual = realpathSync.native(file2), rel = relative(canonicalRoot ?? realpathSync.native(root), actual);
-    return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel) ? actual : null;
-  } catch {
-    return null;
-  }
-}
 
 // src/core/file-cache.ts
-import { readFileSync as readFileSync6, statSync as statSync5 } from "node:fs";
+import { readFileSync as readFileSync5, statSync as statSync2 } from "node:fs";
 var MAX_BYTES = 256 * 1024 * 1024;
 var MAX_ENTRIES = 2048;
 var cache = /* @__PURE__ */ new Map();
@@ -243,7 +209,7 @@ function fileSignature(st) {
 }
 function readJsonSnapshot(file2, scan) {
   if (scan && scan.file !== file2) throw new Error("JSON snapshot scan belongs to another file");
-  const st = scan?.stat ?? statSync5(file2), signature = fileSignature(st);
+  const st = scan?.stat ?? statSync2(file2), signature = fileSignature(st);
   const failure2 = damaged.get(file2);
   if (failure2?.signature === signature) throw failure2.error;
   damaged.delete(file2);
@@ -259,10 +225,10 @@ function readJsonSnapshot(file2, scan) {
   }
   let value;
   try {
-    if (!scan) value = JSON.parse(readFileSync6(file2, "utf8"));
+    if (!scan) value = JSON.parse(readFileSync5(file2, "utf8"));
     else {
-      const raw = readFileSync6(file2, "utf8");
-      const after = statSync5(file2);
+      const raw = readFileSync5(file2, "utf8");
+      const after = statSync2(file2);
       if (!after.isFile() || fileSignature(after) !== signature)
         throw new Error("JSON snapshot identity changed during read");
       value = JSON.parse(raw);
@@ -285,6 +251,42 @@ function readJsonSnapshot(file2, scan) {
     }
   }
   return next;
+}
+
+// src/core/run-log-preview.ts
+var WINDOW_BYTES = 32 * 1024;
+
+// src/core/run-archive.ts
+var DEFAULT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
+
+// src/core/runfeed.ts
+import { setTimeout as delay } from "node:timers/promises";
+var RUNS_DIR_NAME = "runs";
+
+// src/core/transcripts/common.ts
+import { closeSync as closeSync4, fstatSync as fstatSync2, openSync as openSync4, readSync as readSync2, readdirSync as readdirSync7, realpathSync, statSync as statSync5 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { isAbsolute, join as join8, relative, resolve as resolve2, sep } from "node:path";
+var MAX_TRANSCRIPT_CHUNK_BYTES = 512 * 1024;
+var MAX_DISCOVERY_BYTES = 8 * 1024 * 1024;
+var INITIAL_HEADER_BYTES = 8 * 1024;
+function object(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function parse(value) {
+  try {
+    return object(JSON.parse(value));
+  } catch {
+    return {};
+  }
+}
+function safeFile(root, file2, canonicalRoot) {
+  try {
+    const actual = realpathSync.native(file2), rel = relative(canonicalRoot ?? realpathSync.native(root), actual);
+    return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel) ? actual : null;
+  } catch {
+    return null;
+  }
 }
 
 // src/core/run-history.ts
@@ -22100,7 +22102,7 @@ ${res.text}` } : res;
 
 // src/core/job-archive.ts
 import { createHash as createHash4, randomUUID as randomUUID10 } from "node:crypto";
-import { closeSync as closeSync8, existsSync as existsSync13, fsyncSync as fsyncSync3, linkSync, lstatSync as lstatSync4, mkdirSync as mkdirSync11, openSync as openSync8, readdirSync as readdirSync10, writeFileSync as writeFileSync6 } from "node:fs";
+import { closeSync as closeSync8, existsSync as existsSync13, fsyncSync as fsyncSync3, linkSync, lstatSync as lstatSync4, mkdirSync as mkdirSync11, openSync as openSync8, readdirSync as readdirSync10, realpathSync as realpathSync6, writeFileSync as writeFileSync6 } from "node:fs";
 import { basename as basename6, dirname as dirname10, join as join25 } from "node:path";
 
 // src/core/notifications.ts
@@ -22175,12 +22177,12 @@ var INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1e3;
 
 // src/core/worktree.ts
 import { createHash as createHash9, randomUUID as randomUUID14 } from "node:crypto";
-import { existsSync as existsSync15, lstatSync as lstatSync8, mkdirSync as mkdirSync17, readFileSync as readFileSync21, realpathSync as realpathSync7, rmSync as rmSync5 } from "node:fs";
+import { existsSync as existsSync15, lstatSync as lstatSync8, mkdirSync as mkdirSync17, readFileSync as readFileSync21, realpathSync as realpathSync8, rmSync as rmSync5 } from "node:fs";
 import { basename as basename9, isAbsolute as isAbsolute7, join as join33, relative as relative5, resolve as resolve10, toNamespacedPath as toNamespacedPath2 } from "node:path";
 
 // src/core/worktree-links.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
-import { copyFileSync as copyFileSync6, existsSync as existsSync14, lstatSync as lstatSync7, mkdirSync as mkdirSync16, mkdtempSync, readdirSync as readdirSync13, readlinkSync, realpathSync as realpathSync6, rmSync as rmSync4, rmdirSync as rmdirSync2, unlinkSync } from "node:fs";
+import { copyFileSync as copyFileSync6, existsSync as existsSync14, lstatSync as lstatSync7, mkdirSync as mkdirSync16, mkdtempSync, readdirSync as readdirSync13, readlinkSync, realpathSync as realpathSync7, rmSync as rmSync4, rmdirSync as rmdirSync2, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename as basename8, dirname as dirname14, isAbsolute as isAbsolute6, join as join32, relative as relative4, resolve as resolve9, sep as sep3, toNamespacedPath } from "node:path";
 

@@ -1219,14 +1219,19 @@ async function resumableHistoryMigration(bridge, target, paused2, stopped2, opti
   let pinned = false, nextAt = 0, pressureSince = 0;
   let meta3, source2, backup;
   let progress = { phase, percent: 0, etaSeconds: null, paused: false, completedRows: 0, totalRows: 0, snapshot: state?.snapshot ?? null, ioBytesPerSecond: limit, error: null };
-  const start = Date.now();
-  let startRows = 0;
+  let start = Date.now(), startRows, lastRows = 0;
+  const resetEta = (rows) => {
+    start = Date.now();
+    startRows = lastRows = rows;
+  };
   const emit = (changes = {}) => {
     if (meta3) {
       const totals = meta3.prepare("SELECT coalesce(sum(snapshot_rows+snapshot_verify_rows+copy_rows+verify_rows),0) done,coalesce(sum(estimate),0)*4 total FROM table_state").get();
       progress.completedRows = Number(totals.done);
       progress.totalRows = Math.max(progress.completedRows, Number(totals.total));
       progress.percent = progress.totalRows ? Math.min(99.99, 100 * progress.completedRows / progress.totalRows) : 0;
+      if (startRows === void 0 || progress.completedRows < lastRows) resetEta(progress.completedRows);
+      lastRows = progress.completedRows;
       const work = progress.completedRows - startRows;
       progress.etaSeconds = work > 0 ? Math.ceil((Date.now() - start) / 1e3 / work * (progress.totalRows - progress.completedRows)) : null;
     }
@@ -1306,7 +1311,6 @@ async function resumableHistoryMigration(bridge, target, paused2, stopped2, opti
         backup.exec("PRAGMA busy_timeout=100; PRAGMA synchronous=FULL; PRAGMA cache_size=-2048; PRAGMA mmap_size=0");
         backup.prepare("ATTACH DATABASE ? AS progress").run(progressFile);
       }
-      startRows = tables().reduce((n, table) => n + table.snapshot_rows + table.snapshot_verify_rows + table.copy_rows + table.verify_rows, 0);
       for (let table of tables()) {
         await gap();
         const guards = table.table_name === "conversation_records" && source2.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND name IN ('conversation_records_no_delete','conversation_records_no_update')").get().n === 2;
@@ -1346,6 +1350,7 @@ async function resumableHistoryMigration(bridge, target, paused2, stopped2, opti
             throw err;
           }
           table = current(table.table_name);
+          resetEta(tables().reduce((n, state2) => n + state2.snapshot_rows + state2.snapshot_verify_rows + state2.copy_rows + state2.verify_rows, 0));
         } else if (!legacySnapshot && !guards && table.upper_rowid !== max) {
           meta3.prepare("UPDATE table_state SET upper_rowid=?,estimate=?,snapshot_done=0,snapshot_verify_done=0 WHERE table_name=?").run(max, Math.max(table.snapshot_rows, max ?? 0), table.table_name);
           table = current(table.table_name);
@@ -22301,7 +22306,7 @@ import { DatabaseSync as DatabaseSync12 } from "node:sqlite";
 
 // src/core/job-archive.ts
 import { createHash as createHash6, randomUUID as randomUUID9 } from "node:crypto";
-import { closeSync as closeSync7, existsSync as existsSync14, fsyncSync as fsyncSync3, linkSync, lstatSync as lstatSync4, mkdirSync as mkdirSync9, openSync as openSync7, readdirSync as readdirSync6, writeFileSync as writeFileSync5 } from "node:fs";
+import { closeSync as closeSync7, existsSync as existsSync14, fsyncSync as fsyncSync3, linkSync, lstatSync as lstatSync4, mkdirSync as mkdirSync9, openSync as openSync7, readdirSync as readdirSync6, realpathSync as realpathSync4, writeFileSync as writeFileSync5 } from "node:fs";
 import { basename as basename6, dirname as dirname12, join as join20 } from "node:path";
 
 // src/core/file-cache.ts
@@ -22360,6 +22365,14 @@ function readJsonSnapshot(file2, scan) {
   return next;
 }
 
+// src/core/responsive-scan.ts
+function drainScan(scan) {
+  for (; ; ) {
+    const step = scan.next();
+    if (step.done) return step.value;
+  }
+}
+
 // src/core/job-archive.ts
 var snapshots = /* @__PURE__ */ new Map();
 var EMPTY_SNAPSHOT = { signature: "", jobs: [] };
@@ -22372,15 +22385,42 @@ function physicalFile(file2) {
   if (!st.isFile() || st.isSymbolicLink()) throw new Error("job archive file must be physical; data kept unchanged");
   return st;
 }
+function archiveDirectoryWitness(dir) {
+  const home = dirname12(dir), canonicalHome = realpathSync4.native(home), canonicalArchive = realpathSync4.native(dir);
+  if (canonicalArchive !== join20(canonicalHome, "archive")) throw new Error("job archive escaped its home; data kept unchanged");
+  const identity = (st) => `${st.dev}:${st.ino}:${st.birthtimeMs}`;
+  const ancestors = [];
+  for (let at = canonicalArchive; ; at = dirname12(at)) {
+    const st = lstatSync4(at);
+    if (!st.isDirectory() || st.isSymbolicLink()) throw new Error("job archive ancestors must be physical; data kept unchanged");
+    ancestors.push({ path: at, identity: identity(st) });
+    if (dirname12(at) === at) break;
+  }
+  return () => {
+    for (const ancestor of ancestors) {
+      const st = lstatSync4(ancestor.path);
+      if (!st.isDirectory() || st.isSymbolicLink() || identity(st) !== ancestor.identity)
+        throw new Error("job archive ancestor changed during traversal; data kept unchanged");
+    }
+    if (realpathSync4.native(home) !== canonicalHome || realpathSync4.native(dir) !== canonicalArchive)
+      throw new Error("job archive path changed during traversal; data kept unchanged");
+  };
+}
 function readArchivedJobSnapshot(path) {
+  return drainScan(readArchivedJobSteps(path));
+}
+function* readArchivedJobSteps(path, responsive = false) {
   const dir = join20(dirname12(path), "archive");
   if (!existsSync14(dir)) return EMPTY_SNAPSHOT;
   physicalDirectory(dir);
+  const validateDirectory = responsive ? archiveDirectoryWitness(dir) : void 0;
   const files = [];
   const signatures = [];
   let bytes2 = 0;
   for (const file2 of readdirSync6(dir).sort()) {
+    yield;
     if (!file2.startsWith(`${basename6(path)}.overflow.json-`) && !/^jobs-.*\.json$/.test(file2)) continue;
+    validateDirectory?.();
     const full = join20(dir, file2), st = physicalFile(full);
     const stamp = /(?:^jobs-|\.overflow\.json-)(\d+)-/.exec(file2)?.[1];
     signatures.push(`${file2}:${fileSignature(st)}`);
@@ -22388,14 +22428,36 @@ function readArchivedJobSnapshot(path) {
     bytes2 += st.size;
   }
   const signature = signatures.join("\n"), saved = snapshots.get(path);
-  if (saved?.signature === signature) return saved;
+  if (saved?.signature === signature) {
+    if (responsive) for (const file2 of files) {
+      yield;
+      validateDirectory();
+      if (fileSignature(physicalFile(file2.path)) !== fileSignature(file2.st)) throw new Error("job archive changed during traversal");
+    }
+    validateDirectory?.();
+    return saved;
+  }
   const jobs = /* @__PURE__ */ new Map();
   files.sort((a, b) => a.time - b.time || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   for (const { path: file2, st } of files) {
+    yield;
+    if (responsive) {
+      validateDirectory();
+      if (fileSignature(physicalFile(file2)) !== fileSignature(st)) throw new Error("job archive changed during traversal");
+    }
     const value = readJsonSnapshot(file2, { file: file2, stat: st }).value;
     if (!isRecord(value) || value.version !== void 0 && (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${basename6(file2)}`);
-    for (const job of value.jobs) if (isRecord(job) && typeof job.id === "string") jobs.set(job.id, job);
+    for (const job of value.jobs) {
+      yield;
+      if (isRecord(job) && typeof job.id === "string") jobs.set(job.id, job);
+    }
   }
+  if (responsive) for (const file2 of files) {
+    yield;
+    validateDirectory();
+    if (fileSignature(physicalFile(file2.path)) !== fileSignature(file2.st)) throw new Error("job archive changed during traversal");
+  }
+  validateDirectory?.();
   const next = { signature, jobs: [...jobs.values()] };
   snapshots.delete(path);
   if (bytes2 <= 256 * 1024 * 1024) snapshots.set(path, next);

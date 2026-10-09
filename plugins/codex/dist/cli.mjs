@@ -8574,14 +8574,19 @@ async function resumableHistoryMigration(bridge, target, paused, stopped, option
   let pinned = false, nextAt = 0, pressureSince = 0;
   let meta3, source, backup2;
   let progress = { phase, percent: 0, etaSeconds: null, paused: false, completedRows: 0, totalRows: 0, snapshot: state?.snapshot ?? null, ioBytesPerSecond: limit, error: null };
-  const start = Date.now();
-  let startRows = 0;
+  let start = Date.now(), startRows, lastRows = 0;
+  const resetEta = (rows) => {
+    start = Date.now();
+    startRows = lastRows = rows;
+  };
   const emit = (changes = {}) => {
     if (meta3) {
       const totals = meta3.prepare("SELECT coalesce(sum(snapshot_rows+snapshot_verify_rows+copy_rows+verify_rows),0) done,coalesce(sum(estimate),0)*4 total FROM table_state").get();
       progress.completedRows = Number(totals.done);
       progress.totalRows = Math.max(progress.completedRows, Number(totals.total));
       progress.percent = progress.totalRows ? Math.min(99.99, 100 * progress.completedRows / progress.totalRows) : 0;
+      if (startRows === void 0 || progress.completedRows < lastRows) resetEta(progress.completedRows);
+      lastRows = progress.completedRows;
       const work = progress.completedRows - startRows;
       progress.etaSeconds = work > 0 ? Math.ceil((Date.now() - start) / 1e3 / work * (progress.totalRows - progress.completedRows)) : null;
     }
@@ -8661,7 +8666,6 @@ async function resumableHistoryMigration(bridge, target, paused, stopped, option
         backup2.exec("PRAGMA busy_timeout=100; PRAGMA synchronous=FULL; PRAGMA cache_size=-2048; PRAGMA mmap_size=0");
         backup2.prepare("ATTACH DATABASE ? AS progress").run(progressFile);
       }
-      startRows = tables().reduce((n, table) => n + table.snapshot_rows + table.snapshot_verify_rows + table.copy_rows + table.verify_rows, 0);
       for (let table of tables()) {
         await gap();
         const guards = table.table_name === "conversation_records" && source.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND name IN ('conversation_records_no_delete','conversation_records_no_update')").get().n === 2;
@@ -8701,6 +8705,7 @@ async function resumableHistoryMigration(bridge, target, paused, stopped, option
             throw err;
           }
           table = current(table.table_name);
+          resetEta(tables().reduce((n, state2) => n + state2.snapshot_rows + state2.snapshot_verify_rows + state2.copy_rows + state2.verify_rows, 0));
         } else if (!legacySnapshot && !guards && table.upper_rowid !== max) {
           meta3.prepare("UPDATE table_state SET upper_rowid=?,estimate=?,snapshot_done=0,snapshot_verify_done=0 WHERE table_name=?").run(max, Math.max(table.snapshot_rows, max ?? 0), table.table_name);
           table = current(table.table_name);
@@ -30045,7 +30050,7 @@ function syncProjectMirror(main2, project, home) {
 
 // src/core/job-archive.ts
 import { createHash as createHash5, randomUUID as randomUUID7 } from "node:crypto";
-import { closeSync as closeSync6, existsSync as existsSync12, fsyncSync as fsyncSync3, linkSync, lstatSync as lstatSync4, mkdirSync as mkdirSync9, openSync as openSync6, readdirSync as readdirSync6, writeFileSync as writeFileSync5 } from "node:fs";
+import { closeSync as closeSync6, existsSync as existsSync12, fsyncSync as fsyncSync3, linkSync, lstatSync as lstatSync4, mkdirSync as mkdirSync9, openSync as openSync6, readdirSync as readdirSync6, realpathSync as realpathSync4, writeFileSync as writeFileSync5 } from "node:fs";
 import { basename as basename5, dirname as dirname11, join as join15 } from "node:path";
 
 // src/core/file-cache.ts
@@ -30117,6 +30122,28 @@ function readJsonSnapshot(file2, scan2) {
   return next;
 }
 
+// src/core/responsive-scan.ts
+function drainScan(scan2) {
+  for (; ; ) {
+    const step = scan2.next();
+    if (step.done) return step.value;
+  }
+}
+async function drainScanResponsive(scan2) {
+  try {
+    for (; ; ) {
+      const started = performance.now();
+      for (let steps = 0; steps < 32 && performance.now() - started < 4; steps++) {
+        const step = scan2.next();
+        if (step.done) return step.value;
+      }
+      await new Promise((resolve24) => setImmediate(resolve24));
+    }
+  } finally {
+    scan2.return(void 0);
+  }
+}
+
 // src/core/job-archive.ts
 var snapshots = /* @__PURE__ */ new Map();
 var EMPTY_SNAPSHOT = { signature: "", jobs: [] };
@@ -30129,18 +30156,45 @@ function physicalFile(file2) {
   if (!st.isFile() || st.isSymbolicLink()) throw new Error("job archive file must be physical; data kept unchanged");
   return st;
 }
+function archiveDirectoryWitness(dir) {
+  const home = dirname11(dir), canonicalHome = realpathSync4.native(home), canonicalArchive = realpathSync4.native(dir);
+  if (canonicalArchive !== join15(canonicalHome, "archive")) throw new Error("job archive escaped its home; data kept unchanged");
+  const identity = (st) => `${st.dev}:${st.ino}:${st.birthtimeMs}`;
+  const ancestors = [];
+  for (let at = canonicalArchive; ; at = dirname11(at)) {
+    const st = lstatSync4(at);
+    if (!st.isDirectory() || st.isSymbolicLink()) throw new Error("job archive ancestors must be physical; data kept unchanged");
+    ancestors.push({ path: at, identity: identity(st) });
+    if (dirname11(at) === at) break;
+  }
+  return () => {
+    for (const ancestor of ancestors) {
+      const st = lstatSync4(ancestor.path);
+      if (!st.isDirectory() || st.isSymbolicLink() || identity(st) !== ancestor.identity)
+        throw new Error("job archive ancestor changed during traversal; data kept unchanged");
+    }
+    if (realpathSync4.native(home) !== canonicalHome || realpathSync4.native(dir) !== canonicalArchive)
+      throw new Error("job archive path changed during traversal; data kept unchanged");
+  };
+}
 function readArchivedJobs(path) {
   return cloneJson(readArchivedJobSnapshot(path).jobs);
 }
 function readArchivedJobSnapshot(path) {
+  return drainScan(readArchivedJobSteps(path));
+}
+function* readArchivedJobSteps(path, responsive = false) {
   const dir = join15(dirname11(path), "archive");
   if (!existsSync12(dir)) return EMPTY_SNAPSHOT;
   physicalDirectory(dir);
+  const validateDirectory = responsive ? archiveDirectoryWitness(dir) : void 0;
   const files = [];
   const signatures = [];
   let bytes2 = 0;
   for (const file2 of readdirSync6(dir).sort()) {
+    yield;
     if (!file2.startsWith(`${basename5(path)}.overflow.json-`) && !/^jobs-.*\.json$/.test(file2)) continue;
+    validateDirectory?.();
     const full = join15(dir, file2), st = physicalFile(full);
     const stamp2 = /(?:^jobs-|\.overflow\.json-)(\d+)-/.exec(file2)?.[1];
     signatures.push(`${file2}:${fileSignature(st)}`);
@@ -30148,14 +30202,36 @@ function readArchivedJobSnapshot(path) {
     bytes2 += st.size;
   }
   const signature2 = signatures.join("\n"), saved = snapshots.get(path);
-  if (saved?.signature === signature2) return saved;
+  if (saved?.signature === signature2) {
+    if (responsive) for (const file2 of files) {
+      yield;
+      validateDirectory();
+      if (fileSignature(physicalFile(file2.path)) !== fileSignature(file2.st)) throw new Error("job archive changed during traversal");
+    }
+    validateDirectory?.();
+    return saved;
+  }
   const jobs = /* @__PURE__ */ new Map();
   files.sort((a, b) => a.time - b.time || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   for (const { path: file2, st } of files) {
+    yield;
+    if (responsive) {
+      validateDirectory();
+      if (fileSignature(physicalFile(file2)) !== fileSignature(st)) throw new Error("job archive changed during traversal");
+    }
     const value = readJsonSnapshot(file2, { file: file2, stat: st }).value;
     if (!isRecord(value) || value.version !== void 0 && (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${basename5(file2)}`);
-    for (const job of value.jobs) if (isRecord(job) && typeof job.id === "string") jobs.set(job.id, job);
+    for (const job of value.jobs) {
+      yield;
+      if (isRecord(job) && typeof job.id === "string") jobs.set(job.id, job);
+    }
   }
+  if (responsive) for (const file2 of files) {
+    yield;
+    validateDirectory();
+    if (fileSignature(physicalFile(file2.path)) !== fileSignature(file2.st)) throw new Error("job archive changed during traversal");
+  }
+  validateDirectory?.();
   const next = { signature: signature2, jobs: [...jobs.values()] };
   snapshots.delete(path);
   if (bytes2 <= 256 * 1024 * 1024) snapshots.set(path, next);
@@ -32379,7 +32455,7 @@ import { existsSync as existsSync37 } from "node:fs";
 import { createServer as createServer5 } from "node:net";
 
 // src/core/store.ts
-import { existsSync as existsSync21, mkdirSync as mkdirSync15, realpathSync as realpathSync4 } from "node:fs";
+import { existsSync as existsSync21, mkdirSync as mkdirSync15, realpathSync as realpathSync5 } from "node:fs";
 import { dirname as dirname18, resolve as resolve8 } from "node:path";
 import { DatabaseSync as DatabaseSync16 } from "node:sqlite";
 import { setTimeout as delay3 } from "node:timers/promises";
@@ -32811,7 +32887,7 @@ function registrationIdentity(peer) {
   if (peer.jobAgent || !Number.isSafeInteger(peer.agentPid) || !peer.agentPid || peer.agentPid <= 0 || !peer.agentStartedAt) return null;
   let cwd = resolve8(peer.cwd);
   try {
-    cwd = realpathSync4.native(cwd);
+    cwd = realpathSync5.native(cwd);
   } catch {
   }
   if (process.platform === "win32") cwd = cwd.toLowerCase();
@@ -33449,7 +33525,7 @@ function jobEnvironment(env = process.env, platform = process.platform) {
 
 // src/core/delegate.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync22, readFileSync as readFileSync17, realpathSync as realpathSync6 } from "node:fs";
+import { existsSync as existsSync22, readFileSync as readFileSync17, realpathSync as realpathSync7 } from "node:fs";
 import { delimiter as delimiter2, dirname as dirname20, extname, isAbsolute as isAbsolute3, join as join33, win32 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { setTimeout as delay4 } from "node:timers/promises";
@@ -34082,8 +34158,8 @@ async function answerPendingApproval(home, id, body) {
 }
 
 // src/core/codex-paths.ts
-import { realpathSync as realpathSync5 } from "node:fs";
-function codexDriveMappings(text2, platform = process.platform, canonical = realpathSync5.native) {
+import { realpathSync as realpathSync6 } from "node:fs";
+function codexDriveMappings(text2, platform = process.platform, canonical = realpathSync6.native) {
   if (platform !== "win32") return [];
   const drives = new Set([...text2.matchAll(/\b([a-z]):[\\/]/gi)].map((m) => `${m[1].toUpperCase()}:\\`));
   const mappings = [];
@@ -34454,7 +34530,7 @@ function parseCodexJsonl(stdout) {
 }
 function realFolder(dir) {
   try {
-    return realpathSync6.native(dir);
+    return realpathSync7.native(dir);
   } catch {
     return dir;
   }
@@ -36112,10 +36188,13 @@ import { basename as basename9, join as join37 } from "node:path";
 // src/core/run-log-preview.ts
 import { closeSync as closeSync12, fstatSync as fstatSync4, openSync as openSync12, readSync as readSync5 } from "node:fs";
 var WINDOW_BYTES = 32 * 1024;
-function readRunLogPreview(file2) {
+function readRunLogPreview(file2, expectedSignature) {
   const fd = openSync12(file2, "r");
   try {
-    const size = fstatSync4(fd).size;
+    const witnessed = fstatSync4(fd);
+    if (!witnessed.isFile() || expectedSignature !== void 0 && fileSignature(witnessed) !== expectedSignature)
+      throw new Error("run log changed before its preview read");
+    const size = witnessed.size;
     const read = (position, length) => {
       const buffer = Buffer.alloc(length);
       const count = readSync5(fd, buffer, 0, length, position);
@@ -36554,7 +36633,7 @@ import { join as join43 } from "node:path";
 
 // src/core/run-history.ts
 import { readFile as readFile2 } from "node:fs/promises";
-import { lstatSync as lstatSync7, readdirSync as readdirSync12, realpathSync as realpathSync7, statSync as statSync13 } from "node:fs";
+import { lstatSync as lstatSync7, readdirSync as readdirSync12, realpathSync as realpathSync8, statSync as statSync13 } from "node:fs";
 import { isAbsolute as isAbsolute5, join as join42, relative as relative4, sep as sep3 } from "node:path";
 
 // src/core/runfeed.ts
@@ -36697,10 +36776,16 @@ function readHistoryJson(file2) {
 var runLogSnapshots = /* @__PURE__ */ new Map();
 var historyJobSnapshots = /* @__PURE__ */ new Map();
 function readRunLogs(home, namesFilter) {
+  return drainScan(readRunLogsSteps(home, namesFilter));
+}
+function readRunLogsResponsive(home, namesFilter) {
+  return drainScanResponsive(readRunLogsSteps(home, namesFilter, true));
+}
+function* readRunLogsSteps(home, namesFilter, responsive = false) {
   const root = join42(home, RUNS_DIR_NAME);
   let canonicalRoot;
   try {
-    canonicalRoot = realpathSync7.native(root);
+    canonicalRoot = realpathSync8.native(root);
   } catch {
     return [];
   }
@@ -36712,7 +36797,7 @@ function readRunLogs(home, namesFilter) {
     const dir = archived ? join42(root, "archive") : root;
     let canonicalDir;
     try {
-      canonicalDir = realpathSync7.native(dir);
+      canonicalDir = realpathSync8.native(dir);
     } catch {
       continue;
     }
@@ -36739,6 +36824,7 @@ function readRunLogs(home, namesFilter) {
     };
     const selected = [];
     for (const entry of entries) {
+      yield;
       const name2 = entry.name;
       const original = archived ? name2.replace(ARCHIVE_SUFFIX, "$1") : name2;
       const extension = original.endsWith(".json") ? ".json" : RUN_LOG_NAME.test(original) ? ".log" : null;
@@ -36753,12 +36839,17 @@ function readRunLogs(home, namesFilter) {
   }
   const key3 = `${canonicalRoot}:${namesFilter ? JSON.stringify([...namesFilter].sort()) : "*"}`;
   const signature2 = signatures.join("\n"), saved = runLogSnapshots.get(key3);
-  if (saved?.signature === signature2) return cloneJson(saved.records);
+  if (saved?.signature === signature2 && (!responsive || (yield* stableRunFiles(root, directories, canonicalRoot)))) return yield* cloneRunRecords(saved.records);
   for (const { archived, files } of directories) {
     const metadata2 = /* @__PURE__ */ new Map();
     for (const { original, file: file2, st } of files) {
+      yield;
       if (!original.endsWith(".json")) continue;
       try {
+        if (responsive && !unchangedContainedFile(root, file2, st, canonicalRoot)) {
+          complete = false;
+          continue;
+        }
         const value = readJsonSnapshot(file2, { file: file2, stat: st }).value;
         if (isRecord(value)) metadata2.set(original, value);
       } catch {
@@ -36766,6 +36857,7 @@ function readRunLogs(home, namesFilter) {
       }
     }
     for (const { original, file: file2, st } of files) {
+      yield;
       if (!RUN_LOG_NAME.test(original)) continue;
       try {
         if (!st.isFile()) continue;
@@ -36778,13 +36870,34 @@ function readRunLogs(home, namesFilter) {
     }
   }
   const result = [...records.values()];
+  if (responsive) complete &&= yield* stableRunFiles(root, directories, canonicalRoot);
   runLogSnapshots.delete(key3);
   if (complete && metadataBytes <= 256 * 1024 * 1024) runLogSnapshots.set(key3, { signature: signature2, records: result });
   if (runLogSnapshots.size > 8) runLogSnapshots.delete(runLogSnapshots.keys().next().value);
-  return cloneJson(result);
+  return yield* cloneRunRecords(result);
 }
-function readHistoryJobs(home) {
-  return new Map([...historyJobsSnapshot(home)].map(([name2, job]) => [name2, cloneJson(job)]));
+function* stableRunFiles(root, directories, canonicalRoot) {
+  for (const directory2 of directories) for (const file2 of directory2.files) {
+    yield;
+    if (!unchangedContainedFile(root, file2.file, file2.st, canonicalRoot)) return false;
+  }
+  return true;
+}
+function* cloneRunRecords(records) {
+  const result = [];
+  for (const record3 of records) {
+    yield;
+    result.push(cloneJson(record3));
+  }
+  return result;
+}
+function unchangedContainedFile(root, file2, before, canonicalRoot) {
+  try {
+    const direct = lstatSync7(file2);
+    return direct.isFile() && fileSignature(direct) === fileSignature(before) && safeFile(root, file2, canonicalRoot) === file2;
+  } catch {
+    return false;
+  }
 }
 function selectHistoryJobs(home, names) {
   const snapshot = historyJobsSnapshot(home), selected = /* @__PURE__ */ new Map();
@@ -36794,6 +36907,17 @@ function selectHistoryJobs(home, names) {
   }
   return selected;
 }
+async function selectHistoryJobsResponsive(home, names) {
+  return drainScanResponsive((function* () {
+    const snapshot = yield* historyJobsSteps(home, true), selected = /* @__PURE__ */ new Map();
+    for (const name2 of names) {
+      yield;
+      const job = snapshot.get(name2);
+      if (job) selected.set(name2, cloneJson(job));
+    }
+    return selected;
+  })());
+}
 function findHistoryJob(home, ref, id) {
   for (const job of historyJobsSnapshot(home).values()) {
     if (job.name === ref || job.id === id) return cloneJson(job);
@@ -36801,18 +36925,21 @@ function findHistoryJob(home, ref, id) {
   return void 0;
 }
 function historyJobsSnapshot(home) {
+  return drainScan(historyJobsSteps(home));
+}
+function* historyJobsSteps(home, responsive = false) {
   const out2 = /* @__PURE__ */ new Map();
   let canonicalHome;
   try {
-    canonicalHome = realpathSync7.native(home);
+    canonicalHome = realpathSync8.native(home);
   } catch {
     return out2;
   }
   const snapshots3 = [];
-  const scan2 = (directory2, accept) => {
+  const scan2 = function* (directory2, accept) {
     let canonicalDir;
     try {
-      canonicalDir = realpathSync7.native(directory2);
+      canonicalDir = realpathSync8.native(directory2);
     } catch {
       return;
     }
@@ -36826,6 +36953,7 @@ function historyJobsSnapshot(home) {
     }
     entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
     for (const entry of entries) {
+      yield;
       const name2 = entry.name;
       if (!accept(name2)) continue;
       const candidate = join42(canonicalDir, name2);
@@ -36841,8 +36969,8 @@ function historyJobsSnapshot(home) {
       }
     }
   };
-  scan2(join42(canonicalHome, "archive"), (name2) => name2.startsWith(`${JOBS_FILE}.`) || name2.startsWith(`${JOBS_FILE}-`) || /^jobs-.*\.json$/.test(name2));
-  scan2(canonicalHome, (name2) => name2.startsWith(`${JOBS_FILE}.backup-`) || name2 === `${JOBS_FILE}.overflow.json`);
+  yield* scan2(join42(canonicalHome, "archive"), (name2) => name2.startsWith(`${JOBS_FILE}.`) || name2.startsWith(`${JOBS_FILE}-`) || /^jobs-.*\.json$/.test(name2));
+  yield* scan2(canonicalHome, (name2) => name2.startsWith(`${JOBS_FILE}.backup-`) || name2 === `${JOBS_FILE}.overflow.json`);
   snapshots3.sort((a, b) => a.time - b.time || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
   const active = join42(canonicalHome, JOBS_FILE);
   try {
@@ -36862,10 +36990,15 @@ function historyJobsSnapshot(home) {
     bytes2 += st.size;
   }
   const signature2 = signatures.join("\n"), saved = historyJobSnapshots.get(canonicalHome);
-  if (saved?.signature === signature2) return saved.jobs;
+  if (saved?.signature === signature2 && (!responsive || (yield* stableHistoryFiles(canonicalHome, snapshots3)))) return saved.jobs;
   for (const { file: file2, st } of snapshots3) {
+    yield;
     let value;
     try {
+      if (responsive && !unchangedContainedFile(canonicalHome, file2, st, canonicalHome)) {
+        complete = false;
+        continue;
+      }
       value = readJsonSnapshot(file2, { file: file2, stat: st }).value;
     } catch {
       complete = false;
@@ -36873,14 +37006,23 @@ function historyJobsSnapshot(home) {
     }
     const jobs = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.jobs) ? value.jobs : [];
     for (const job of jobs) {
+      yield;
       if (!isRecord(job) || typeof job.name !== "string" || !RUN_LOG_NAME.test(`${job.name}.log`)) continue;
       out2.set(job.name, { ...out2.get(job.name), ...job });
     }
   }
   historyJobSnapshots.delete(canonicalHome);
+  if (responsive) complete &&= yield* stableHistoryFiles(canonicalHome, snapshots3);
   if (complete && bytes2 <= 256 * 1024 * 1024) historyJobSnapshots.set(canonicalHome, { signature: signature2, jobs: out2 });
   if (historyJobSnapshots.size > 4) historyJobSnapshots.delete(historyJobSnapshots.keys().next().value);
   return out2;
+}
+function* stableHistoryFiles(home, files) {
+  for (const file2 of files) {
+    yield;
+    if (!unchangedContainedFile(home, file2.file, file2.st, home)) return false;
+  }
+  return true;
 }
 function pageRuns(runs, before, limit) {
   let at, name2;
@@ -37020,24 +37162,49 @@ function recoverJobRecord(home, ref) {
   return finishRecovery(home, recovery, payload);
 }
 async function recoverJobRecordAsync(home, ref) {
-  const recovery = prepareRecovery(home, ref);
+  const recovery = await prepareRecoveryAsync(home, ref);
   if (!recovery) return void 0;
   const payload = needsHeader(recovery) && recovery.run ? await readRecoveryHeader(recovery.run.file) : { prompt: "", header: "" };
   if (!payload) return void 0;
-  const latest = prepareRecovery(home, ref);
+  const latest = await prepareRecoveryAsync(home, ref);
   if (!latest) return void 0;
   if (!needsHeader(latest)) return finishRecovery(home, latest, { prompt: "", header: "" });
   if (latest.run?.file !== recovery.run?.file || latest.run?.signature !== recovery.run?.signature || contextIdentity(latest) !== contextIdentity(recovery)) return void 0;
   return finishRecovery(home, latest, payload);
 }
 function prepareRecovery(home, ref) {
-  const id = ref.replace(/^.*-(?:job|ask)-/, "");
-  if (!/^[\w-]+$/.test(id)) return void 0;
+  const id = recoveryId(ref);
+  if (!id) return void 0;
   const history = findHistoryJob(home, ref, id);
+  const { spec, launch: launch2 } = recoverySpec(home, id);
+  return selectRecovery(ref, id, history, spec, launch2, readRunLogs(home));
+}
+async function prepareRecoveryAsync(home, ref) {
+  const id = recoveryId(ref);
+  if (!id) return void 0;
+  const history = await drainScanResponsive((function* () {
+    const snapshot = yield* historyJobsSteps(home, true);
+    for (const job of snapshot.values()) {
+      yield;
+      if (job.name === ref || job.id === id) return cloneJson(job);
+    }
+    return void 0;
+  })());
+  const { spec, launch: launch2 } = recoverySpec(home, id);
+  return selectRecovery(ref, id, history, spec, launch2, await readRunLogsResponsive(home));
+}
+function recoveryId(ref) {
+  const id = ref.replace(/^.*-(?:job|ask)-/, "");
+  return /^[\w-]+$/.test(id) ? id : void 0;
+}
+function recoverySpec(home, id) {
   const file2 = safeFile(home, join43(home, "jobs", `${id}.spec.json`));
   const spec = file2 ? readHistoryJson(file2) : null;
   const launch2 = isRecord(spec) && isRecord(spec.job) ? spec.job : void 0;
-  const runs = readRunLogs(home).filter((r) => r.meta.job === ref || r.meta.job === history?.name || r.name.endsWith(`-${launch2?.agent ?? history?.agent ?? ref.split("-")[0]}-${id}`)).sort((a, b) => runStart(b) - runStart(a));
+  return { spec, launch: launch2 };
+}
+function selectRecovery(ref, id, history, spec, launch2, runLogs) {
+  const runs = runLogs.filter((r) => r.meta.job === ref || r.meta.job === history?.name || r.name.endsWith(`-${launch2?.agent ?? history?.agent ?? ref.split("-")[0]}-${id}`)).sort((a, b) => runStart(b) - runStart(a));
   const run2 = runs[0], meta3 = run2?.meta;
   const name2 = history?.name ?? launch2?.name ?? meta3?.job ?? (run2 && /^[\w]+-(?:job|ask)-[\w-]+$/.test(ref) ? ref : void 0);
   const agent = history?.agent ?? launch2?.agent ?? ref.split("-")[0];
@@ -39715,7 +39882,7 @@ var ProjectGroups = class {
 import { randomUUID as randomUUID23 } from "node:crypto";
 
 // src/core/dashboard-read.ts
-import { closeSync as closeSync17, openSync as openSync17, readSync as readSync7, statSync as statSync15 } from "node:fs";
+import { closeSync as closeSync17, fstatSync as fstatSync7, lstatSync as lstatSync15, openSync as openSync17, readSync as readSync7, realpathSync as realpathSync11 } from "node:fs";
 import { join as join56 } from "node:path";
 
 // src/core/job-outcomes.ts
@@ -39747,12 +39914,12 @@ function resolveDbPath(home) {
 
 // src/core/worktree.ts
 import { createHash as createHash19, randomUUID as randomUUID22 } from "node:crypto";
-import { existsSync as existsSync29, lstatSync as lstatSync13, mkdirSync as mkdirSync28, readFileSync as readFileSync30, realpathSync as realpathSync9, rmSync as rmSync7 } from "node:fs";
+import { existsSync as existsSync29, lstatSync as lstatSync13, mkdirSync as mkdirSync28, readFileSync as readFileSync30, realpathSync as realpathSync10, rmSync as rmSync7 } from "node:fs";
 import { basename as basename14, isAbsolute as isAbsolute8, join as join52, relative as relative7, resolve as resolve16, toNamespacedPath as toNamespacedPath2 } from "node:path";
 
 // src/core/worktree-links.ts
 import { execFileSync as execFileSync5 } from "node:child_process";
-import { copyFileSync as copyFileSync7, existsSync as existsSync28, lstatSync as lstatSync12, mkdirSync as mkdirSync27, mkdtempSync as mkdtempSync2, readdirSync as readdirSync17, readlinkSync, realpathSync as realpathSync8, rmSync as rmSync6, rmdirSync as rmdirSync2, unlinkSync } from "node:fs";
+import { copyFileSync as copyFileSync7, existsSync as existsSync28, lstatSync as lstatSync12, mkdirSync as mkdirSync27, mkdtempSync as mkdtempSync2, readdirSync as readdirSync17, readlinkSync, realpathSync as realpathSync9, rmSync as rmSync6, rmdirSync as rmdirSync2, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename as basename13, dirname as dirname26, isAbsolute as isAbsolute7, join as join51, relative as relative6, resolve as resolve15, sep as sep6, toNamespacedPath } from "node:path";
 var WORKTREE_LINK_HINT = "(agent-bridge: worktree isolation is mandatory for source and writable files. External directory links may be used only for read-only access to Git-ignored caches: node_modules, .vs, __pycache__, or Library beside a Unity ProjectSettings/ProjectVersion.txt. Never write, delete, truncate or change permissions in a linked source, including through an internal link chain. A junction does not enforce read-only access: do not run Unity imports, package installers or other cache-writing tools through it. Prefer a project's external-cache env/config option (e.g. ANIMASKY_LIBRARY_ROOT) when available; never substitute an incomplete cache copy. Other external links remain forbidden. Cleanup must unlink only the link itself and never recurse into its target. Request cleanup approval through the supervisor and report the link and target if cleanup is denied.)";
@@ -39762,7 +39929,7 @@ function ignoredCacheLink(root, path) {
   if (!cache4 || path === root) return false;
   const rel = relative6(root, path).split(sep6).join("/");
   try {
-    root = realpathSync8.native(root);
+    root = realpathSync9.native(root);
     const args = ["-c", `safe.directory=${root.split(sep6).join("/")}`];
     const tracked = execFileSync5("git", [...args, "ls-files", "-z", "--", `:(literal)${rel}`], { cwd: root, encoding: "utf8", timeout: 1e4, stdio: ["pipe", "pipe", "pipe"] });
     if (tracked) return false;
@@ -39774,7 +39941,7 @@ function ignoredCacheLink(root, path) {
       if (err.status !== 1) throw err;
     }
     const ignoreArgs = excludes ? [...args, "-c", `core.excludesFile=${resolve15(root, excludes)}`] : args;
-    const probe = realpathSync8.native(mkdtempSync2(join51(tmpdir(), "ab-cache-ignore-")));
+    const probe = realpathSync9.native(mkdtempSync2(join51(tmpdir(), "ab-cache-ignore-")));
     try {
       mkdirSync27(join51(probe, rel), { recursive: true });
       const parts = rel.split("/");
@@ -39798,7 +39965,7 @@ function resolveWorktreeRemovalPath(path, managedRoot = path) {
   if (rel === ".." || rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute7(rel) || dirname26(boundary) === boundary) {
     throw new Error(`Refusing cleanup outside the managed worktree area: ${path}`);
   }
-  let checked = join51(realpathSync8.native(dirname26(boundary)), basename13(boundary));
+  let checked = join51(realpathSync9.native(dirname26(boundary)), basename13(boundary));
   for (const part of ["", ...rel ? rel.split(sep6) : []]) {
     checked = join51(checked, part);
     if (lstatSync12(toNamespacedPath(checked)).isSymbolicLink()) throw new Error(`Refusing cleanup through a linked path: ${checked}`);
@@ -39828,7 +39995,7 @@ function unlinkChildren(dir) {
 }
 function scanWorktreeLinks(root) {
   const scan2 = { externalLinks: [], errors: [] };
-  const canonicalRoot = lstatSync12(toNamespacedPath(root)).isSymbolicLink() ? resolve15(root) : realpathSync8.native(root);
+  const canonicalRoot = lstatSync12(toNamespacedPath(root)).isSymbolicLink() ? resolve15(root) : realpathSync9.native(root);
   const inside2 = (target) => {
     const rel = relative6(canonicalRoot, target);
     return rel === "" || rel !== ".." && !rel.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute7(rel);
@@ -39840,7 +40007,7 @@ function scanWorktreeLinks(root) {
         const raw = readlinkSync(toNamespacedPath(path));
         let target = resolve15(dirname26(path), raw);
         try {
-          target = realpathSync8.native(path);
+          target = realpathSync9.native(path);
         } catch {
         }
         if (!inside2(target)) {
@@ -39962,7 +40129,7 @@ async function gitDirsOutside(cwd, log) {
     const [gitDir, common] = (await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], cwd, log)).split(/\r?\n/);
     const real = (p) => {
       try {
-        return realpathSync9.native(p);
+        return realpathSync10.native(p);
       } catch {
         return resolve16(p);
       }
@@ -40378,8 +40545,8 @@ var STALE_RUN_MS2 = 15e4;
 var LEGACY_JOB_START_TOLERANCE_MS = 1e3;
 var MAX_LOG_CHUNK = 128 * 1024;
 async function finishedRunOutcomes(home, log, names) {
-  const runs = listRuns(home, Date.now(), names);
-  const jobs = readStore(join56(home, JOBS_FILE), log, true);
+  const runs = await listRunsResponsive(home, Date.now(), names);
+  const jobs = await readOutcomeJobs(home, log, new Set(runs.flatMap((run2) => run2.job ? [run2.job] : [])));
   const inputs = [];
   for (const run2 of runs) {
     if (names && !names.has(run2.name)) continue;
@@ -40406,7 +40573,7 @@ async function finishedRunOutcomes(home, log, names) {
   return cachedOutcomes(home, inputs, log);
 }
 async function dashboardJobOutcomes(home, log, names) {
-  const jobs = readStore(join56(home, JOBS_FILE), log, true).filter((job) => names.has(job.name) && (job.status === "done" || job.status === "failed"));
+  const jobs = (await readOutcomeJobs(home, log, names)).filter((job) => job.status === "done" || job.status === "failed");
   const outcomes = await cachedOutcomes(home, jobs.map((job) => ({ key: job.name, kind: "job", opts: {}, job: {
     id: job.id,
     name: job.name,
@@ -40417,6 +40584,46 @@ async function dashboardJobOutcomes(home, log, names) {
     remote: job.remote
   } })), log);
   return Object.fromEntries(jobs.map((job) => [job.name, { startedAt: job.startedAt, status: job.status, outcome: outcomes[job.name] }]));
+}
+async function readOutcomeJobs(home, log, names) {
+  const path = join56(home, JOBS_FILE);
+  try {
+    return await drainScanResponsive((function* () {
+      const all = /* @__PURE__ */ new Map();
+      const canonicalHome = realpathSync11.native(home), activePath = join56(canonicalHome, JOBS_FILE);
+      let data = null, activeStat;
+      try {
+        activeStat = lstatSync15(activePath);
+        if (!unchangedContainedFile(canonicalHome, activePath, activeStat, canonicalHome)) throw new Error("outcome job store must be a contained physical file");
+        data = readJsonSnapshot(activePath, { file: activePath, stat: activeStat }).value;
+      } catch (err) {
+        if (err.code !== "ENOENT") throw err;
+      }
+      const active = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
+      for (const job of [...(yield* readArchivedJobSteps(activePath, true)).jobs, ...active]) {
+        yield;
+        if (isRecord(job) && typeof job.id === "string" && typeof job.name === "string") all.set(job.id, job);
+      }
+      const selected = [];
+      for (const job of all.values()) {
+        yield;
+        if (!names || names.has(String(job.name))) selected.push({
+          id: job.id,
+          name: job.name,
+          owner: job.owner,
+          startedAt: job.startedAt,
+          status: job.status,
+          worktree: cloneJson(job.worktree),
+          remote: cloneJson(job.remote)
+        });
+      }
+      if (activeStat && !unchangedContainedFile(canonicalHome, activePath, activeStat, canonicalHome)) throw new Error("outcome job store changed during catalog traversal");
+      return selected;
+    })());
+  } catch (err) {
+    log.warn("could not read outcome jobs", { path, err: String(err) });
+    return [];
+  }
 }
 function summarizeRun(file2, text2, mtimeMs, now, meta3 = {}) {
   const lines = text2.split("\n").filter(Boolean);
@@ -40444,14 +40651,18 @@ function summarizeRun(file2, text2, mtimeMs, now, meta3 = {}) {
     task
   };
 }
-function listRuns(home, now = Date.now(), names) {
+function listRunsResponsive(home, now = Date.now(), names) {
+  return drainScanResponsive(listRunsSteps(home, now, names, true));
+}
+function* listRunsSteps(home, now, names, responsive = false) {
   const runs = [];
-  for (const log of readRunLogs(home, names)) {
+  for (const log of yield* readRunLogsSteps(home, names, responsive)) {
+    yield;
     try {
       const signature2 = `${log.signature}:${JSON.stringify(log.meta)}`;
       let cached3 = runSummaries.get(log.file);
       if (cached3?.signature !== signature2) {
-        cached3 = { signature: signature2, summary: summarizeRun(`${log.name}.log`, readRunLogPreview(log.file), log.updatedAt, log.updatedAt, log.meta) };
+        cached3 = { signature: signature2, summary: summarizeRun(`${log.name}.log`, readRunLogPreview(log.file, log.signature), log.updatedAt, log.updatedAt, log.meta) };
         runSummaries.delete(log.file);
         runSummaries.set(log.file, cached3);
         if (runSummaries.size > 2048) runSummaries.delete(runSummaries.keys().next().value);
@@ -40466,14 +40677,15 @@ function listRuns(home, now = Date.now(), names) {
   const representedJobs = new Set(runs.map((run2) => run2.job));
   const representedSuffixes = /* @__PURE__ */ new Set();
   for (const run2 of runs) for (let at = run2.name.indexOf("-"); at >= 0; at = run2.name.indexOf("-", at + 1)) representedSuffixes.add(run2.name.slice(at));
-  const current = readHistoryJobs(home);
-  const retainedLogs = names ? readRunLogs(home) : void 0;
+  const current = yield* historyJobsSteps(home, responsive);
+  const retainedLogs = names ? yield* readRunLogsSteps(home, void 0, responsive) : void 0;
   for (const [name2, job] of current) {
+    yield;
     if (names && !names.has(name2)) continue;
     if (names && retainedLogs.some((r) => r.meta.job === name2 || typeof job.id === "string" && r.name.endsWith(`-${job.agent}-${job.id}`))) continue;
     if (representedJobs.has(name2) || typeof job.id === "string" && representedSuffixes.has(`-${job.agent}-${job.id}`)) continue;
     const args = isRecord(job.args) ? job.args : {};
-    const worktree = isRecord(job.worktree) ? job.worktree : null;
+    const worktree = isRecord(job.worktree) ? cloneJson(job.worktree) : null;
     const prompt = typeof job.prompt === "string" ? job.prompt : "";
     const owner = typeof job.owner === "string" ? job.owner : null;
     const sessionId = typeof job.sessionId === "string" ? job.sessionId : typeof job.threadId === "string" ? job.threadId : null;
@@ -40508,6 +40720,7 @@ function listRuns(home, now = Date.now(), names) {
     });
   }
   for (const run2 of runs) {
+    yield;
     const job = run2.job && current.get(run2.job);
     if (job && Array.isArray(job.ownershipHistory) && job.ownershipHistory.length) {
       run2.owner = typeof job.owner === "string" ? job.owner : run2.owner;
@@ -40519,18 +40732,27 @@ function listRuns(home, now = Date.now(), names) {
   return pageRuns(runs, null, runs.length).runs;
 }
 var runSummaries = /* @__PURE__ */ new Map();
-function readStoredJobs(home, names) {
+function storedJobViews(jobs) {
+  return drainScan(storedJobViewSteps(jobs));
+}
+function readStoredJobsResponsive(home, names) {
+  return drainScanResponsive((function* () {
+    return yield* storedJobViewSteps(yield* historyJobsSteps(home, true), names);
+  })());
+}
+function* storedJobViewSteps(jobs, names) {
   const out2 = /* @__PURE__ */ new Map();
-  for (const j of (names ? selectHistoryJobs(home, names) : readHistoryJobs(home)).values()) {
+  for (const j of jobs.values()) {
+    yield;
     if (!j || typeof j !== "object") continue;
     const { name: name2, owner, args, remote } = j;
-    if (typeof name2 !== "string") continue;
+    if (typeof name2 !== "string" || names && !names.has(name2)) continue;
     const saved = args && typeof args === "object" ? args : {};
     out2.set(name2, {
       owner: typeof owner === "string" && owner ? owner : null,
       ...typeof j.projectRoot === "string" ? { projectRoot: j.projectRoot } : {},
-      next: Object.fromEntries(JOB_SETTING_KEYS.filter((key3) => saved[key3] !== void 0).map((key3) => [key3, saved[key3]])),
-      ...remote && typeof remote.host === "string" && typeof remote.name === "string" ? { remote } : {}
+      next: cloneJson(Object.fromEntries(JOB_SETTING_KEYS.filter((key3) => saved[key3] !== void 0).map((key3) => [key3, saved[key3]]))),
+      ...remote && typeof remote.host === "string" && typeof remote.name === "string" ? { remote: cloneJson(remote) } : {}
     });
   }
   return out2;
@@ -40553,9 +40775,10 @@ async function readDashboard(ctx, request2) {
   const url2 = new URL(request2.path, "http://localhost");
   for (const [key3, value] of Object.entries(request2.query ?? {})) url2.searchParams.set(key3, value);
   if (url2.pathname === "/api/state") {
-    const page = pageRuns(listRuns(ctx.home), null, DEFAULT_RUN_PAGE_SIZE);
+    const page = pageRuns(await listRunsResponsive(ctx.home), null, DEFAULT_RUN_PAGE_SIZE);
     const names = new Set(page.runs.flatMap((run2) => run2.job ? [run2.job] : []));
-    const jobs = Object.fromEntries([...readStoredJobs(ctx.home, names)].map(([name2, job]) => [name2, { next: job.next, ...job.remote ? { remote: job.remote } : {} }]));
+    const selected = await selectHistoryJobsResponsive(ctx.home, names);
+    const jobs = Object.fromEntries([...storedJobViews(selected)].map(([name2, job]) => [name2, { next: job.next, ...job.remote ? { remote: job.remote } : {} }]));
     return reply(200, { runs: page.runs, runsNext: page.next, runsTotal: page.total, jobs });
   }
   if (url2.pathname === "/api/job-outcomes") {
@@ -40581,8 +40804,8 @@ async function readDashboard(ctx, request2) {
     const before = url2.searchParams.get("before");
     if (before !== null && !/^[\w.-]{1,256}$/.test(before)) return reply(400, { error: "invalid outcome cursor" });
     const select = (names2) => [...new Set(names2)].sort().filter((name2) => before === null || name2 > before).slice(0, limit);
-    const stored = readStore(join56(ctx.home, JOBS_FILE), ctx.log, true).filter((j) => j.status === "done" || j.status === "failed");
-    const runs = listRuns(ctx.home).filter((r) => r.job && (r.status === "done" || r.status === "failed"));
+    const stored = (await readOutcomeJobs(ctx.home, ctx.log)).filter((j) => j.status === "done" || j.status === "failed");
+    const runs = (await listRunsResponsive(ctx.home)).filter((r) => r.job && (r.status === "done" || r.status === "failed"));
     const names = select([...stored.map((j) => j.name), ...runs.map((r) => r.name)]);
     const next = [...stored.map((j) => j.name), ...runs.map((r) => r.name)].some((name2) => names.length > 0 && name2 > names.at(-1)) ? names.at(-1) : null;
     const jobs = await dashboardJobOutcomes(ctx.home, ctx.log, new Set(names));
@@ -40619,7 +40842,7 @@ async function readDashboard(ctx, request2) {
     const limit = rawLimit === null ? DEFAULT_RUN_PAGE_SIZE : /^\d+$/.test(rawLimit) ? Number(rawLimit) : NaN;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_RUN_PAGE_SIZE) return reply(400, { error: `limit must be an integer from 1 to ${MAX_RUN_PAGE_SIZE}` });
     try {
-      return reply(200, pageRuns(listRuns(ctx.home), url2.searchParams.get("before"), limit));
+      return reply(200, pageRuns(await listRunsResponsive(ctx.home), url2.searchParams.get("before"), limit));
     } catch {
       return reply(400, { error: "invalid run cursor" });
     }
@@ -40634,8 +40857,8 @@ async function readDashboard(ctx, request2) {
       return reply(404, { error: "no such job or subagent" });
     }
     if (child !== void 0 && !TRANSCRIPT_ID.test(child)) return reply(404, { error: "no such job or subagent" });
-    const job = readHistoryJobs(ctx.home).get(name2);
-    const run2 = listRuns(ctx.home).find((r) => r.job === name2);
+    const job = (await selectHistoryJobsResponsive(ctx.home, /* @__PURE__ */ new Set([name2]))).get(name2);
+    const run2 = (await listRunsResponsive(ctx.home)).find((r) => r.job === name2);
     if (!job && !run2) return reply(404, { error: "no such job" });
     const agent = typeof job?.agent === "string" ? job.agent : run2?.agent;
     const sessionId = typeof job?.sessionId === "string" ? job.sessionId : typeof job?.threadId === "string" ? job.threadId : run2?.sessionId ?? run2?.session;
@@ -40652,9 +40875,9 @@ async function readDashboard(ctx, request2) {
   if (runChatMatch) {
     const from = url2.searchParams.get("from") ?? "0";
     if (!validTranscriptCursor(from)) return reply(400, { error: "invalid transcript cursor" });
-    const run2 = listRuns(ctx.home).find((r) => r.name === runChatMatch[1] || r.job === runChatMatch[1]);
+    const run2 = (await listRunsResponsive(ctx.home)).find((r) => r.name === runChatMatch[1] || r.job === runChatMatch[1]);
     if (!run2) return reply(404, { error: "no such run" });
-    const job = run2.job ? readHistoryJobs(ctx.home).get(run2.job) : void 0;
+    const job = run2.job ? (await selectHistoryJobsResponsive(ctx.home, /* @__PURE__ */ new Set([run2.job]))).get(run2.job) : void 0;
     const sessionId = run2.sessionId ?? run2.session ?? (typeof job?.sessionId === "string" ? job.sessionId : typeof job?.threadId === "string" ? job.threadId : null);
     if (!sessionId) return reply(409, { error: "This run has no sessionId yet." });
     if (!TRANSCRIPT_ID.test(sessionId) || !CODING_AGENTS.includes(run2.agent)) return reply(404, { error: "no transcript for this run" });
@@ -40663,18 +40886,21 @@ async function readDashboard(ctx, request2) {
   }
   const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url2.pathname);
   if (runMatch) {
-    const log = readRunLogs(ctx.home).find((record3) => record3.name === runMatch[1]);
+    const log = (await drainScanResponsive(readRunLogsSteps(ctx.home, /* @__PURE__ */ new Set([runMatch[1]]), true))).find((record3) => record3.name === runMatch[1]);
     if (!log) {
-      const recovered = listRuns(ctx.home).find((run2) => run2.name === runMatch[1] && run2.recovered);
+      const recovered = (await listRunsResponsive(ctx.home)).find((run2) => run2.name === runMatch[1] && run2.recovered);
       return recovered ? reply(200, { text: "", next: 0, size: 0, recovered: true, hasLog: false }) : reply(404, { error: "no such run" });
     }
     const rawFrom = url2.searchParams.get("from") ?? "0";
     if (!/^\d+$/.test(rawFrom) || !Number.isSafeInteger(Number(rawFrom))) return reply(400, { error: "invalid log cursor" });
     const from = Number(rawFrom);
-    const size = statSync15(log.file).size;
+    const witnessed = lstatSync15(log.file);
+    if (!unchangedContainedFile(join56(ctx.home, "runs"), log.file, witnessed)) return reply(404, { error: "no such run" });
+    const size = witnessed.size;
     const fd = openSync17(log.file, "r");
     const buf = Buffer.alloc(Math.min(MAX_LOG_CHUNK + 1, Math.max(0, size - from)));
     try {
+      if (fileSignature(fstatSync7(fd)) !== fileSignature(witnessed)) return reply(404, { error: "run changed before reading" });
       readSync7(fd, buf, 0, buf.length, from);
     } finally {
       closeSync17(fd);
@@ -40774,7 +41000,7 @@ var RemoteDashboard = class {
 
 // src/network/remote-jobs.ts
 import { randomUUID as randomUUID27 } from "node:crypto";
-import { existsSync as existsSync33, realpathSync as realpathSync10, statSync as statSync17 } from "node:fs";
+import { existsSync as existsSync33, realpathSync as realpathSync12, statSync as statSync16 } from "node:fs";
 import { isAbsolute as isAbsolute11, join as join65 } from "node:path";
 
 // src/mcp/delegate-run.ts
@@ -41059,26 +41285,26 @@ var SiblingLink = class {
 };
 
 // src/core/job-close.ts
-import { existsSync as existsSync32, lstatSync as lstatSync17 } from "node:fs";
+import { existsSync as existsSync32, lstatSync as lstatSync18 } from "node:fs";
 import { dirname as dirname29, isAbsolute as isAbsolute9, join as join61, relative as relative8, resolve as resolve19, sep as sep7 } from "node:path";
 
 // src/core/permission-repair.ts
 import { randomUUID as randomUUID25 } from "node:crypto";
-import { lstatSync as lstatSync15, readdirSync as readdirSync19 } from "node:fs";
+import { lstatSync as lstatSync16, readdirSync as readdirSync19 } from "node:fs";
 import { dirname as dirname28, join as join59, parse as parse5, resolve as resolve17, toNamespacedPath as toNamespacedPath3 } from "node:path";
 function assertPhysicalPath(path) {
   const target = resolve17(path);
   const parts = [];
   for (let p = target; dirname28(p) !== p; p = dirname28(p)) parts.unshift(p);
-  for (const p of parts) if (lstatSync15(toNamespacedPath3(p)).isSymbolicLink()) throw new Error(`Refusing permission changes through a link: ${p}`);
+  for (const p of parts) if (lstatSync16(toNamespacedPath3(p)).isSymbolicLink()) throw new Error(`Refusing permission changes through a link: ${p}`);
   return target;
 }
 function permissionRepairPlan(path) {
   const root = assertPhysicalPath(path);
-  if (root === parse5(root).root || !lstatSync15(root).isDirectory()) throw new Error("Select one physical folder, not a filesystem root.");
+  if (root === parse5(root).root || !lstatSync16(root).isDirectory()) throw new Error("Select one physical folder, not a filesystem root.");
   const paths = [], skipped = [];
   const visit2 = (p) => {
-    const stat3 = lstatSync15(toNamespacedPath3(p));
+    const stat3 = lstatSync16(toNamespacedPath3(p));
     if (stat3.isSymbolicLink()) {
       skipped.push(p);
       return;
@@ -41133,13 +41359,13 @@ async function repairPermissions(opts) {
 
 // src/core/worktree-state.ts
 import { createHash as createHash23 } from "node:crypto";
-import { lstatSync as lstatSync16 } from "node:fs";
+import { lstatSync as lstatSync17 } from "node:fs";
 import { join as join60, resolve as resolve18 } from "node:path";
 var WORKTREE_STATE_CONTRACT = 1;
 var key2 = (wt) => createHash23("sha256").update(resolve18(wt.path).toLowerCase()).digest("hex");
 var statePath = (home, wt) => join60(home, "worktree-state", `${key2(wt)}.json`);
 var rootId = (path) => {
-  const stat3 = lstatSync16(path);
+  const stat3 = lstatSync17(path);
   return `${stat3.dev}:${stat3.ino}:${stat3.birthtimeMs}`;
 };
 function readWorktreeState(home, wt) {
@@ -41177,7 +41403,7 @@ async function recordWorktreeOrigin(home, wt, log) {
   const files = (await git([...trustArgs(wt.path), "ls-files", "-z"], wt.path, log)).split("\0").filter(Boolean);
   const libraries = files.filter((file2) => /(^|\/)ProjectSettings\/ProjectVersion\.txt$/.test(file2)).map((file2) => join61(dirname29(dirname29(file2)), "Library")).filter((path) => {
     try {
-      lstatSync17(join61(wt.path, path));
+      lstatSync18(join61(wt.path, path));
       return false;
     } catch (err) {
       if (err.code !== "ENOENT") throw err;
@@ -41201,7 +41427,7 @@ async function inspect(wt, state, log) {
     const path = resolve19(wt.path, file2);
     if (!inside(path, wt.path) || path === resolve19(wt.path) || !/(^|[\\/])Library$/.test(file2)) throw new Error("Invalid cache provenance; kept.");
     if (!existsSync32(path)) continue;
-    if (!lstatSync17(path).isDirectory() || !existsSync32(join61(dirname29(path), "ProjectSettings", "ProjectVersion.txt"))) throw new Error("Cache is no longer a Unity Library.");
+    if (!lstatSync18(path).isDirectory() || !existsSync32(join61(dirname29(path), "ProjectSettings", "ProjectVersion.txt"))) throw new Error("Cache is no longer a Unity Library.");
     if (await run2(["ls-files", "-z", "--", `:(literal)${file2.replace(/\\/g, "/")}`])) throw new Error("Tracked Library contents are kept.");
     libraries.push(path);
   }
@@ -41750,7 +41976,7 @@ ${notes.join("\n\n")}` : res.text };
 
 // src/mcp/job-host.ts
 import { spawn as spawn5 } from "node:child_process";
-import { mkdirSync as mkdirSync29, readdirSync as readdirSync20, statSync as statSync16 } from "node:fs";
+import { mkdirSync as mkdirSync29, readdirSync as readdirSync20, statSync as statSync15 } from "node:fs";
 import { join as join64 } from "node:path";
 
 // src/mcp/remote-job-host.ts
@@ -41936,7 +42162,7 @@ var JobRunners = class {
       if (!keepMs) return;
       for (const f of readdirSync20(dir)) {
         const path = join64(dir, f);
-        if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync16(path).mtimeMs <= keepMs) continue;
+        if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync15(path).mtimeMs <= keepMs) continue;
         const id = f.replace(/\.json$/, "");
         const state = readRunnerState(home, id);
         if (state?.status === "done" || state?.status === "failed") {
@@ -42064,8 +42290,8 @@ var JobRunners = class {
 var REMOTE_JOBS_FILE = "remote-jobs.json";
 function allowedRemoteDirectory(directory2, roots2) {
   if (!isAbsolute11(directory2)) throw new Error("Remote cwd must be an absolute path on the paired PC.");
-  const canonical = realpathSync10.native(directory2);
-  if (!statSync17(canonical).isDirectory() || !roots2.some((root) => isAbsolute11(root) && isInside(canonical, realpathSync10.native(root)))) {
+  const canonical = realpathSync12.native(directory2);
+  if (!statSync16(canonical).isDirectory() || !roots2.some((root) => isAbsolute11(root) && isInside(canonical, realpathSync12.native(root)))) {
     throw new Error("Remote folder is outside network.remoteJobs.allowRoots.");
   }
   return canonical;
@@ -46026,7 +46252,7 @@ function parseNetworkAddress(address) {
 }
 
 // src/core/doctor.ts
-import { existsSync as existsSync35, lstatSync as lstatSync18, mkdirSync as mkdirSync32, readFileSync as readFileSync36, readdirSync as readdirSync21, renameSync as renameSync13 } from "node:fs";
+import { existsSync as existsSync35, lstatSync as lstatSync19, mkdirSync as mkdirSync32, readFileSync as readFileSync36, readdirSync as readdirSync21, renameSync as renameSync13 } from "node:fs";
 import { basename as basename15, dirname as dirname30, join as join68, relative as relative10 } from "node:path";
 import { randomUUID as randomUUID30 } from "node:crypto";
 import { DatabaseSync as DatabaseSync20 } from "node:sqlite";
@@ -46037,7 +46263,7 @@ function doctor(home, now = Date.now()) {
     if (!existsSync35(dir)) return;
     for (const file2 of readdirSync21(dir)) {
       const path = join68(dir, file2);
-      const st = lstatSync18(path);
+      const st = lstatSync19(path);
       if (st.isSymbolicLink()) {
         finding("warning", "symlink", path, "Skipped symbolic link");
         continue;
@@ -46638,7 +46864,7 @@ async function startUi(opts) {
     }
     if (req.method === "GET" && url2.pathname === "/api/state") {
       const { brokerPid, peers, brokerState, health } = await brokerPeers(opts.pipe, token, opts.log);
-      const runs = listRuns(opts.home);
+      const runs = await listRunsResponsive(opts.home);
       const page = pageRuns(runs, null, DEFAULT_RUN_PAGE_SIZE);
       const remote = await remoteStateNow();
       const remoteStates = Object.values(remote).filter((r) => r.status === 200).map((r) => r.body);
@@ -46656,7 +46882,7 @@ async function startUi(opts) {
         remoteErrors,
         messages: recentMessages(dbPath),
         // Saved next-turn settings per job (message_subagent or the dashboard may have changed them).
-        jobs: { ...Object.fromEntries([...readStoredJobs(opts.home)].map(([name2, j]) => [name2, { next: j.next, projectRoot: j.projectRoot, ...j.remote ? { remote: j.remote } : {} }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) }
+        jobs: { ...Object.fromEntries([...await readStoredJobsResponsive(opts.home)].map(([name2, j]) => [name2, { next: j.next, projectRoot: j.projectRoot, ...j.remote ? { remote: j.remote } : {} }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) }
       });
     }
     if (req.method === "GET" && url2.pathname === "/api/network") {
@@ -46791,7 +47017,7 @@ async function startUi(opts) {
       }
       if (job) {
         if (!child || body.target !== "parent") return send(res, 409, { state: "not-supported", transport: "parent", text: "Direct input to this job's native subagent is not supported. Send to its parent with a note." });
-        const run2 = listRuns(opts.home).find((r) => r.job === name2 && !r.remote);
+        const run2 = (await listRunsResponsive(opts.home)).find((r) => r.job === name2 && !r.remote);
         if (!run2?.by) return send(res, 409, { error: "parent job has no local owning session" });
         try {
           const sender2 = await getSender();
@@ -46853,7 +47079,7 @@ async function startUi(opts) {
       const run2 = typeof body.run === "string" ? body.run : "";
       const command = jobCommand(body);
       if (!RUN_NAME.test(`${run2}.log`) || !command) return send(res, 400, { error: "a valid run and request are required" });
-      const meta3 = listRuns(opts.home).find((r) => r.name === run2);
+      const meta3 = (await listRunsResponsive(opts.home)).find((r) => r.name === run2);
       if (!meta3) return send(res, 404, { error: "no such run" });
       if (!meta3.by || !meta3.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
@@ -49844,14 +50070,14 @@ function removeOwned(targets, configDir) {
 }
 
 // src/cli/antigravity-install.ts
-import { existsSync as existsSync39, readFileSync as readFileSync39, lstatSync as lstatSync19 } from "node:fs";
+import { existsSync as existsSync39, readFileSync as readFileSync39, lstatSync as lstatSync20 } from "node:fs";
 import { dirname as dirname35, isAbsolute as isAbsolute12, join as join75, relative as relative11, resolve as resolve22, parse as parse6, sep as sep8 } from "node:path";
 import { homedir as homedir9 } from "node:os";
 var MARKER2 = ".agent-bridge-owned";
 function unlinked(path) {
   let current = resolve22(path);
   for (; ; ) {
-    if (existsSync39(current) && lstatSync19(current).isSymbolicLink()) throw new Error(`Plugin links are not supported: ${current}`);
+    if (existsSync39(current) && lstatSync20(current).isSymbolicLink()) throw new Error(`Plugin links are not supported: ${current}`);
     const parent2 = dirname35(current);
     if (parent2 === current || current === parse6(current).root) break;
     current = parent2;
@@ -49933,7 +50159,7 @@ function uninstallAntigravity(target = antigravityPluginDir()) {
   unlinked(join75(dirname35(target), "archive"));
   const result = { configDir: target, files: [], skipped: [] };
   if (!existsSync39(target)) return result;
-  if (lstatSync19(target).isSymbolicLink() || !existsSync39(join75(target, MARKER2)) || readFileSync39(join75(target, MARKER2), "utf8").trim() !== "agent-bridge") result.skipped.push(target);
+  if (lstatSync20(target).isSymbolicLink() || !existsSync39(join75(target, MARKER2)) || readFileSync39(join75(target, MARKER2), "utf8").trim() !== "agent-bridge") result.skipped.push(target);
   else {
     archiveFile(target);
     result.files.push(target);
@@ -50531,7 +50757,7 @@ async function runSessionStartHook(log, out2 = (text2) => process.stdout.write(t
 }
 
 // src/cli/watch.ts
-import { closeSync as closeSync18, existsSync as existsSync42, openSync as openSync18, readSync as readSync8, statSync as statSync18 } from "node:fs";
+import { closeSync as closeSync18, existsSync as existsSync42, openSync as openSync18, readSync as readSync8, statSync as statSync17 } from "node:fs";
 import { StringDecoder as StringDecoder2 } from "node:string_decoder";
 import { join as join80 } from "node:path";
 var POLL_MS = 500;
@@ -50539,7 +50765,7 @@ var CHUNK = 64 * 1024;
 function findRunLog(home, filter) {
   const dir = join80(home, RUNS_DIR_NAME);
   if (!existsSync42(dir)) return null;
-  const logs = runLogFiles(home).filter((f) => !filter || f.includes(filter)).map((path) => ({ path, t: statSync18(path).mtimeMs })).sort((a, b) => b.t - a.t);
+  const logs = runLogFiles(home).filter((f) => !filter || f.includes(filter)).map((path) => ({ path, t: statSync17(path).mtimeMs })).sort((a, b) => b.t - a.t);
   return logs[0]?.path ?? null;
 }
 async function watchRunLog(path, out2) {
@@ -50547,7 +50773,7 @@ async function watchRunLog(path, out2) {
   let pending2 = "";
   const decoder = new StringDecoder2("utf8");
   for (; ; ) {
-    const size = statSync18(path).size;
+    const size = statSync17(path).size;
     if (size > offset) {
       const fd = openSync18(path, "r");
       try {
@@ -54782,7 +55008,7 @@ async function runSmoke(opts) {
 import { join as join85 } from "node:path";
 
 // src/core/worktree-cleanup.ts
-import { existsSync as existsSync45, lstatSync as lstatSync20, realpathSync as realpathSync11, readdirSync as readdirSync25 } from "node:fs";
+import { existsSync as existsSync45, lstatSync as lstatSync21, realpathSync as realpathSync13, readdirSync as readdirSync25 } from "node:fs";
 import { dirname as dirname36, join as join84, resolve as resolve23, toNamespacedPath as toNamespacedPath4 } from "node:path";
 function readJobs(home) {
   try {
@@ -54802,7 +55028,7 @@ function onlyFoldersAndLinks(dir) {
   }
   return entries.every((e) => {
     const path = join84(dir, e.name);
-    if (e.isSymbolicLink() || lstatSync20(path).isSymbolicLink()) return true;
+    if (e.isSymbolicLink() || lstatSync21(path).isSymbolicLink()) return true;
     return e.isDirectory() && onlyFoldersAndLinks(path);
   });
 }
@@ -54857,7 +55083,7 @@ ${warning}` : reason, externalLinks: scan2.externalLinks });
   for (const file2 of ignored.split("\0").filter(Boolean)) {
     const ignoredPath = toNamespacedPath4(join84(path, file2.replace(/[\\/]+$/, "")));
     try {
-      const st = lstatSync20(ignoredPath);
+      const st = lstatSync21(ignoredPath);
       if (st.isSymbolicLink() || st.isDirectory() && onlyFoldersAndLinks(ignoredPath)) continue;
       return entry(branch, "kept", "ignored files may contain unique user data; refusing cleanup");
     } catch {
@@ -54888,7 +55114,7 @@ ${warning}` : reason, externalLinks: scan2.externalLinks });
 }
 async function repositoryCommonDir(cwd, log) {
   const common = await git([...trustArgs(cwd), "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd, log);
-  return realpathSync11.native(resolve23(cwd, common));
+  return realpathSync13.native(resolve23(cwd, common));
 }
 async function cleanupWorktrees(opts) {
   if (opts.all && opts.repo) throw new Error("Use either --all or --repo, not both.");
@@ -54899,7 +55125,7 @@ async function cleanupWorktrees(opts) {
   const candidates = [];
   for (const d of existsSync45(dir) ? readdirSync25(dir, { withFileTypes: true }) : []) {
     const path = join84(dir, d.name);
-    if (!d.isDirectory() || lstatSync20(path).isSymbolicLink()) continue;
+    if (!d.isDirectory() || lstatSync21(path).isSymbolicLink()) continue;
     let common = existsSync45(join84(path, ".git")) ? await repositoryCommonDir(path, opts.log).catch(() => null) : null;
     if (!common && !existsSync45(join84(path, ".git"))) {
       const job = jobs.find((j) => j.worktree && samePath(j.worktree.path, path));
