@@ -1,7 +1,7 @@
 import { readJobVersions } from "../src/core/job-archive-index.js";
 import { readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { recordAskCompletion, reconcileAskCompletions, observeAskToolRecord } from "../src/core/ask-completion.js";
 import { DatabaseSync } from "node:sqlite";
 import { makeEnv, type TestEnv } from "./helpers.js";
@@ -9,6 +9,16 @@ import { readArchivedJobs } from "../src/core/job-archive.js";
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { await env.cleanup(); });
+/** The reconcile backup's bytes, in the home or where the archive migration retired it. */
+function retainedBackup(): string | undefined {
+  for (const dir of [env.home, join(env.home, "cold-storage", "jobs-v1", "root-originals")]) {
+    try {
+      const name = readdirSync(dir).find(entry => entry.startsWith("jobs.json.backup-"));
+      if (name) return readFileSync(join(dir, name), "utf8");
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  }
+  return undefined;
+}
 const job = { id: "askfixture", name: "codex-ask-askfixture", owner: "owner", startedAt: 10, status: "running", prompt: "retained context" };
 it("recovers a legacy ask from paired completed native tool records and refuses unpaired results", () => {
   const path = join(env.home, "jobs.json"), db = new DatabaseSync(":memory:");
@@ -30,8 +40,9 @@ it("reconciles a stale active ask from its matching completion receipt without l
   const owner = env.node("owner"); await owner.start();
   expect((await owner.projectJobs()).find(j => j.name === job.name)).toMatchObject({ status: "done", finishedAt: 20, prompt: job.prompt });
   expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ privateField: "retained" });
-  const backup = readdirSync(env.home).find(name => name.startsWith("jobs.json.backup-"))!;
-  expect(readFileSync(join(env.home, backup), "utf8")).toBe(raw);
+  // The broker's job-archive migration may run after the reconcile and retire the backup,
+  // byte-verified, into cold storage. The original must be retained in one of the two places.
+  await vi.waitFor(() => expect(retainedBackup()).toBe(raw));
   expect(readJobVersions(path, job.id)).toHaveLength(2);
   expect(reconcileAskCompletions(path)).toBe(0);
 });
