@@ -339,14 +339,17 @@ function historyJobsSnapshot(home: string): Map<string, Record<string, unknown>>
 export function* historyJobsSteps(home: string, responsive = false, selection: ArchiveSelection = {}): Generator<void, Map<string, Record<string, unknown>>> {
   const out = new Map<string, Record<string, unknown>>(), path = join(home, JOBS_FILE);
   if (responsive) yield;
-  for (const job of readIndexedJobs(path, { ...selection, history: true }).jobs) {
-    if (typeof job.name === "string" && RUN_LOG_NAME.test(job.name + ".log")) out.set(job.name, job);
-  }
-  if (indexedJobProjectionCurrent(path)) return out;
-  // Active compatibility data overrides the index. Validate containment on every
-  // read, including a suspended read after an ancestor replacement.
+  // A stable alias of the home is supported like every other run read: the
+  // index is opened below the resolved home, where it must be physical.
   let canonicalHome: string;
   try { canonicalHome = realpathSync.native(home); } catch { return out; }
+  const indexed = join(canonicalHome, JOBS_FILE);
+  for (const job of readIndexedJobs(indexed, { ...selection, history: true }).jobs) {
+    if (typeof job.name === "string" && RUN_LOG_NAME.test(job.name + ".log")) out.set(job.name, job);
+  }
+  if (indexedJobProjectionCurrent(indexed)) return out;
+  // Active compatibility data overrides the index. Validate containment on every
+  // read, including a suspended read after an ancestor replacement.
   const active = safeFile(home, path, canonicalHome);
   if (!active) return out;
   const st = statSync(active);
