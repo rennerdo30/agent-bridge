@@ -93,6 +93,13 @@ function readOwner(path: string, registry: string): Owner | null {
   } catch { return null; }
 }
 
+/** Read-only migration evidence uses the same hard-link and nonce validation as acquisition. */
+export function readMetadataLeaseOwner(path: string): {pid:number;identity:string} | null {
+ const registry = join(dirname(path),".metadata-leases",createHash("sha256").update(basename(path)).digest("hex"));
+ const owner = readOwner(path,registry);
+ return owner ? {pid:owner.pid,identity:owner.identity} : null;
+}
+
 /** Rename the exact immutable nonce to choose one claimant; a dead claimant is recoverable too. */
 function archiveOwned(path: string, registry: string, owner: Owner, identity: string): void {
   const current = readOwner(path, registry);

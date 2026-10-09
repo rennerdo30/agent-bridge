@@ -3,13 +3,22 @@ import { join } from "node:path";
 import { atomicPluginWrite } from "./plugin-runtime.js";
 import type { PeerInfo } from "./protocol.js";
 import { processIdentity, readProcessIdentities } from "./process-identity.js";
+import { existingMetadataDb, metadataDb, saveMetadataValue } from "./metadata-db.js";
+import { importMetadataDomain } from "./metadata-import.js";
 
 export interface StoreCapabilities { json: number; sqlite: number; jobArchive?: number }
-interface Presence extends StoreCapabilities { pid: number; name: string; version: string; explicit: boolean; processIdentity?: string }
+interface Presence extends StoreCapabilities { pid: number; name: string; version: string; explicit: boolean; processIdentity?: string; observedAt?: number }
 
 const identities = new Map<string, { identity: string | null; at: number; signature: string }>();
 const refreshes = new Map<string, Promise<void>>();
 const IDENTITY_REFRESH_MS = 10_000;
+
+function databasePresence(home: string): {record: Presence; signature: string}[] | undefined {
+  const db = existingMetadataDb(home);
+  if (!db?.prepare("SELECT 1 FROM bridge_components WHERE name='import:storage-capabilities'").get()) return undefined;
+  return db.prepare("SELECT key,value FROM bridge_metadata WHERE domain='storage-capabilities'").all()
+    .filter(row => /^\d+$/.test(String(row.key))).map(row => ({record:JSON.parse(String(row.value)) as Presence,signature:String(row.value)}));
+}
 
 function presenceSignature(path: string): string | undefined {
   try { const stat = statSync(path); return `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`; }
@@ -35,7 +44,11 @@ async function refreshIdentityCache(home: string): Promise<void> {
     const pending = refreshes.get(home);
     if (pending) { await pending; continue; }
     const dir = join(home, "storage-capabilities");
-    const records = existsSync(dir) ? readdirSync(dir).filter(file => /^\d+\.json$/.test(file)).flatMap(file => {
+    const stored = databasePresence(home);
+    const records = stored ? stored.flatMap(({record,signature}) => {
+      const path = join(dir,`${record.pid}.json`), cached = identities.get(path);
+      return !cached || cached.signature !== signature || Date.now()-cached.at >= IDENTITY_REFRESH_MS ? [{pid:record.pid,path,signature}] : [];
+    }) : existsSync(dir) ? readdirSync(dir).filter(file => /^\d+\.json$/.test(file)).flatMap(file => {
       const path = join(dir, file), signature = presenceSignature(path), cached = identities.get(path);
       return signature && (!cached || cached.signature !== signature || Date.now() - cached.at >= IDENTITY_REFRESH_MS)
         ? [{ pid: Number(file.slice(0, -5)), path, signature }] : [];
@@ -54,10 +67,12 @@ async function refreshIdentityCache(home: string): Promise<void> {
   }
 }
 
-function cachedIdentity(home: string, pid: number): string | undefined {
+function cachedIdentity(home: string, pid: number, observedSignature?: string): string | undefined {
   if (pid === process.pid) return processIdentity(pid);
   const path = join(home, "storage-capabilities", `${pid}.json`), cached = identities.get(path);
-  return cached && cached.signature === presenceSignature(path) && Date.now() - cached.at < IDENTITY_REFRESH_MS ? cached.identity ?? undefined : undefined;
+  const stored = observedSignature === undefined ? databasePresence(home) : undefined;
+  const signature = observedSignature ?? (stored ? stored.find(entry=>entry.record.pid===pid)?.signature : presenceSignature(path));
+  return cached && cached.signature === signature && Date.now() - cached.at < IDENTITY_REFRESH_MS ? cached.identity ?? undefined : undefined;
 }
 
 /** Legacy records have no identity. A process born after its record cannot own it. */
@@ -95,6 +110,23 @@ export function validStoreCapabilities(value: unknown): value is StoreCapabiliti
 /** Retain presence after a broker exits, so its older clients protect the next election. */
 export function recordStorePeer(home: string, peer: Pick<PeerInfo, "pid" | "name" | "version" | "host" | "storeCapabilities">, options: { authoritative?: boolean } = {}): void {
   if (peer.host || !Number.isSafeInteger(peer.pid) || peer.pid <= 0) return;
+  const ready = databasePresence(home);
+  if (ready || /^0\.30\.(?:[4-9]|[1-9]\d+)$/.test(peer.version ?? "")) {
+    try {
+      metadataDb(home); importMetadataDomain(home,"storage-capabilities");
+      const explicit = validStoreCapabilities(peer.storeCapabilities), caps = explicit ? peer.storeCapabilities! : releasedStoreCapabilities(peer.version);
+      const prior = databasePresence(home)?.find(entry=>entry.record.pid===peer.pid)?.record;
+      let identity = cachedIdentity(home,peer.pid);
+      if (prior?.explicit && (!identity || prior.processIdentity===identity)) {
+        if (!explicit) return;
+        if (!options.authoritative && prior.version === (peer.version ?? "unknown") && prior.json === caps.json && prior.sqlite === caps.sqlite) return;
+        identity ??= prior.processIdentity;
+      }
+      saveMetadataValue(home,"storage-capabilities",String(peer.pid),{schemaVersion:1,...caps,pid:peer.pid,name:peer.name,version:peer.version ?? "unknown",explicit,observedAt:Date.now(),...(identity ? {processIdentity:identity} : {})});
+      if (!identity) void refreshStorePeerIdentities(home).catch(()=>{});
+      return;
+    } catch (error) { if (ready || (error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED") throw error; }
+  }
   const explicit = validStoreCapabilities(peer.storeCapabilities);
   const path = join(home, "storage-capabilities", `${peer.pid}.json`);
   let identity = cachedIdentity(home, peer.pid);
@@ -126,6 +158,17 @@ export function recordStorePeer(home: string, peer: Pick<PeerInfo, "pid" | "name
 }
 
 export function liveStorePeers(home: string): Presence[] {
+  const stored = databasePresence(home);
+  if (stored) {
+    void refreshStorePeerIdentities(home).catch(()=>{});
+    return stored.flatMap(({record,signature}) => {
+      try { process.kill(record.pid,0); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return []; }
+      const identity = cachedIdentity(home,record.pid,signature);
+      if (identity && record.processIdentity && record.processIdentity !== identity) return [];
+      if (identity && record.processIdentity === identity && validStoreCapabilities(record)) return [record];
+      return [{pid:record.pid,name:record.name ?? `pid ${record.pid}`,version:"unknown",json:0,sqlite:0,explicit:false}];
+    });
+  }
   const dir = join(home, "storage-capabilities");
   if (!existsSync(dir)) return [];
   void refreshStorePeerIdentities(home).catch(() => {});

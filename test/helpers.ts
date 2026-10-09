@@ -9,6 +9,7 @@ import { loadOrCreateToken } from "../src/core/token.js";
 import type { AgentKind } from "../src/core/protocol.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 import type { MessageStore } from "../src/core/store.js";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
 
 export interface TestEnv {
   home: string;
@@ -36,6 +37,7 @@ export function makeEnv(): TestEnv {
     },
     async cleanup() {
       await Promise.all(nodes.map((n) => n.stop().catch(() => {})));
+      closeMetadataDb(home);
       // Yield between Windows handle-release retries so pending shutdown callbacks can finish.
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     },

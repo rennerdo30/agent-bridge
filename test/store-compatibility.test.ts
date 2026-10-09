@@ -12,10 +12,11 @@ import { formatPeer, formatVersionSkew } from "../src/mcp/format.js";
 import { APP_VERSION } from "../src/core/constants.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import * as identity from "../src/core/process-identity.js";
+import { closeMetadataDb, metadataDb, metadataValue } from "../src/core/metadata-db.js";
 
 let home: string;
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), "ab-compat-")); });
-afterEach(() => { vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
+afterEach(() => { closeMetadataDb(home); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
 const old = () => recordStorePeer(home, { pid: process.pid, name: "retained-reader", version: "0.29.12" });
 
 it("keeps JSON3 byte-for-byte until its live reader can read JSON4", () => {
@@ -89,20 +90,20 @@ it("does not preserve another PID generation's explicit capabilities over a lega
 it("does not republish identical explicit capability records observed by another node", () => {
   const peer = { pid: process.pid, name: "authoritative-owner", version: APP_VERSION, storeCapabilities: { json: 4, sqlite: 9 } };
   recordStorePeer(home, peer);
-  const path = join(home, "storage-capabilities", `${process.pid}.json`), before = readFileSync(path);
+  const before = metadataDb(home).prepare("SELECT * FROM bridge_metadata WHERE domain='storage-capabilities' AND key=?").get(String(process.pid));
   vi.spyOn(identity, "processIdentity").mockReturnValue(undefined);
   for (let observer = 0; observer < 10; observer++) recordStorePeer(home, { ...peer, name: "foreign-observation" });
-  expect(readFileSync(path)).toEqual(before);
-  expect(readdirSync(join(home, "storage-capabilities"))).toEqual([`${process.pid}.json`]);
+  expect(metadataDb(home).prepare("SELECT * FROM bridge_metadata WHERE domain='storage-capabilities' AND key=?").get(String(process.pid))).toEqual(before);
+  expect(existsSync(join(home, "storage-capabilities"))).toBe(false);
 });
 
 it("refreshes an authoritative resolved name while retaining its process generation", () => {
   const peer = { pid: process.pid, name: "owner", version: APP_VERSION, storeCapabilities: { json: 4, sqlite: 9 } };
   recordStorePeer(home, peer);
-  const path = join(home, "storage-capabilities", `${process.pid}.json`), original = JSON.parse(readFileSync(path, "utf8"));
+  const original = metadataValue(home,"storage-capabilities",String(process.pid)) as Record<string,unknown>;
   vi.spyOn(identity, "processIdentity").mockReturnValue(undefined);
   recordStorePeer(home, { ...peer, name: "owner-2" }, { authoritative: true });
-  expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ name: "owner-2", processIdentity: original.processIdentity });
+  expect(metadataValue(home,"storage-capabilities",String(process.pid))).toMatchObject({ name: "owner-2", processIdentity: original.processIdentity });
 });
 
 it("announces exact versions and retained sessions to agents", () => {

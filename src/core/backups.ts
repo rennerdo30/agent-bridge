@@ -5,6 +5,7 @@ import { DB_FILE_NAME } from "./constants.js";
 import { isRecord, retentionLimit } from "./json-store.js";
 import { ARCHIVE_DB_NAME, snapshotDatabase } from "./sqlite-maintenance.js";
 import { maintenanceLock, storageLease } from "./storage-lock.js";
+import { closeMetadataDb } from "./metadata-db.js";
 import * as sqlite from "node:sqlite";
 import { open } from "node:fs/promises";
 
@@ -264,6 +265,7 @@ export function restoreBackup(home: string, backup: string, confirmed: boolean):
   const manifest = readBackup(backup);
   const unlock = maintenanceLock(home);
   try {
+    closeMetadataDb(home);
     const recovery = createRecovery(home);
     const displaced = join(recovery, "displaced");
     mkdirSync(displaced, { mode: 0o700 });

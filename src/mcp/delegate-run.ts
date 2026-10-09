@@ -146,7 +146,7 @@ async function runWithWorktreeLease(rc: RunContext, target: CodingAgent, a: Dele
   const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, worktreeRoot: rc.cfg.worktreeRoot, jobId: randomUUID().slice(0, 8), log: rc.log }) : null);
   const root = wt?.path ?? bridgeWorktreeRoot(a.cwd || rc.cwd(), rc.home);
   if (!root) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
-  const release = worktreeLease(rc.home, { path: root });
+  const release = worktreeLease(rc.home, { path: root }, job?.id);
   try {
     if (wt) {
       if (!a._worktree) await recordWorktreeOrigin(rc.home, wt, rc.log);

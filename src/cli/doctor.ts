@@ -17,6 +17,13 @@ async function confirm(question: string): Promise<boolean> {
 }
 
 export async function runDoctor(args: string[], home: string, out: (text: string) => void, ask: ConfirmDoctor = confirm): Promise<number> {
+  if (args.includes("--migration-plan")) {
+    if (args.some(arg=>arg!=="--migration-plan" && arg!=="--json")) { out("Usage: agent-bridge doctor --migration-plan [--json]"); return 2; }
+    const { migrationPlan } = await import("../core/migration-plan.js");
+    const plan = migrationPlan(home);
+    out(JSON.stringify(plan,null,args.includes("--json") ? undefined : 2));
+    return 0;
+  }
   const restoreAt = args.indexOf("--restore");
   const restore = restoreAt >= 0 ? args[restoreAt + 1] : undefined;
   const actions = Number(restoreAt >= 0) + Number(args.includes("--fix")) + Number(args.includes("--archive")) + Number(args.includes("--backup"));

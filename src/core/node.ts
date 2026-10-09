@@ -22,6 +22,7 @@ import type { Logger } from "./logger.js";
 import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
 import { ReadJournal } from "./read-journal.js";
+import { retainMetadataReader } from "./metadata-db.js";
 import { recordLocalResult } from "./local-result-receipts.js";
 import type { MessageStore } from "./store.js";
 import { SQLITE_STORE_VERSION } from "./store-version.js";
@@ -107,6 +108,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private readonly inbox = new Map<string, BridgeMessage>();
   private readonly readIds = new Set<string>();
   private readonly readJournal: ReadJournal;
+  private releaseMetadata: (() => void) | undefined;
   private readonly unflushedAcks = new Set<string>();
   private readonly pendingAcks = new Set<Promise<unknown>>();
   private pendingRefreshTimer: NodeJS.Timeout | null = null;
@@ -135,7 +137,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.autoWake = opts.autoWake;
     this.log = opts.log.child("node");
     if (opts.dbPath !== ":memory:") recordStorePeer(dirname(opts.dbPath), { pid: process.pid, name: opts.name, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 } });
-    this.readJournal = new ReadJournal(dirname(opts.dbPath));
+    if (opts.dbPath !== ":memory:") this.releaseMetadata = retainMetadataReader(dirname(opts.dbPath));
+    this.readJournal = new ReadJournal(opts.dbPath === ":memory:" ? ":memory:" : dirname(opts.dbPath));
     this.restoreReadState(`name:${this.currentName}`);
   }
 
@@ -153,6 +156,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   async start(): Promise<void> {
+    if (!this.releaseMetadata && this.opts.dbPath !== ":memory:") this.releaseMetadata = retainMetadataReader(dirname(this.opts.dbPath));
     await this.ensureConnected();
   }
 
@@ -194,6 +198,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       this.broker = null;
     }
     this.log.info("bridge node stopped");
+    this.releaseMetadata?.(); this.releaseMetadata = undefined;
   }
 
   /**
@@ -754,7 +759,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
    * background subagent. It is handled exactly like a peer message (hooks, wait_for_message, channel).
    */
   deliverLocal(m: BridgeMessage): void {
-    try { recordLocalResult(dirname(this.opts.dbPath), m); }
+    try { if (this.opts.dbPath !== ":memory:") recordLocalResult(dirname(this.opts.dbPath), m); }
     catch (err) { this.log.warn("could not retain local result receipt", { id: m.id, err: String(err) }); }
     this.onEvent("message", m);
   }

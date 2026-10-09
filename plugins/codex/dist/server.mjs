@@ -2,11 +2,12 @@ import { createRequire as __abCreateRequire } from 'node:module'; const require 
 import {
   recordRuntimeSession,
   selectedWorker
-} from "./chunks/chunk-CJPLA2VJ.mjs";
+} from "./chunks/chunk-SFW3GO73.mjs";
 import {
   DEFAULT_HOME,
   ENV
-} from "./chunks/chunk-PEBTAWO6.mjs";
+} from "./chunks/chunk-7EOIPV3B.mjs";
+import "./chunks/chunk-HHAVWD7J.mjs";
 
 // src/mcp/launcher.ts
 import { dirname, join } from "node:path";
