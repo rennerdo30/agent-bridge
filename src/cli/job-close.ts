@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { BridgeConfig } from "../core/config.js";
 import { JOBS_FILE } from "../core/constants.js";
-import { RUNNERS_DIR_NAME } from "../mcp/job-host.js";
+import { readRunnerStateRecord } from "../core/runner-store.js";
 import { closeJobWorktree } from "../core/job-close.js";
 import { readWorktreeState } from "../core/worktree-state.js";
 import type { Logger } from "../core/logger.js";
@@ -26,7 +26,7 @@ export async function runJobClose(command: "job-state" | "job-close" | "close-id
   for (const job of selected) {
     const state = job.worktree ? readWorktreeState(home, job.worktree) : null;
     if (!/^[A-Za-z0-9._-]+$/.test(job.id)) throw new Error("Invalid job id; retained.");
-    const data = readHistoryJson(join(home, RUNNERS_DIR_NAME, `${job.id}.json`));
+    const data = readRunnerStateRecord(home, job.id);
     const runner = isRecord(data) ? data : null;
     const decision = readOutcomeDecision(home, job);
     if (command === "job-state") { out(JSON.stringify({ job: job.name, status: job.status, finishedAt: job.finishedAt ?? null, lastContinuation: state?.lastContinuation ?? null, closedAt: state?.closedAt ?? null, reapedAt: state?.reapedAt ?? null, decision, runnerStatus: runner?.status ?? null })); continue; }

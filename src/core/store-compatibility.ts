@@ -111,7 +111,7 @@ export function validStoreCapabilities(value: unknown): value is StoreCapabiliti
 export function recordStorePeer(home: string, peer: Pick<PeerInfo, "pid" | "name" | "version" | "host" | "storeCapabilities">, options: { authoritative?: boolean } = {}): void {
   if (peer.host || !Number.isSafeInteger(peer.pid) || peer.pid <= 0) return;
   const ready = databasePresence(home);
-  if (ready || /^0\.30\.(?:[4-9]|[1-9]\d+)$/.test(peer.version ?? "")) {
+  if (ready || metadataRelease(peer.version)) {
     try {
       metadataDb(home); importMetadataDomain(home,"storage-capabilities");
       const explicit = validStoreCapabilities(peer.storeCapabilities), caps = explicit ? peer.storeCapabilities! : releasedStoreCapabilities(peer.version);
@@ -187,6 +187,35 @@ export function liveStorePeers(home: string): Presence[] {
     } catch { /* A live unknown reader must not be silently dropped. */ }
     return [{ pid, name: `pid ${pid}`, version: "unknown", json: 0, sqlite: 0, explicit: false }];
   });
+}
+
+/** True for releases that read and write the AB-208 metadata rows (0.30.4 and later). */
+export function metadataRelease(version: string | undefined): boolean {
+  const m = /^(\d+)\.(\d+)\.(\d+)(?:$|[-+])/.exec(version ?? "");
+  if (!m) return false;
+  const [major, minor, patch] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  return major > 0 || minor > 30 || minor === 30 && patch >= 4;
+}
+
+/**
+ * Live processes of an older release (or of an unknown one) that still read and write per-file stores.
+ * Uses the recorded version rather than a verified identity, so an identity cache refresh never makes
+ * a current peer look old. A reused PID can only keep the compatible file projection running longer.
+ */
+export function legacyStorePeers(home: string): { pid: number; name: string; version: string }[] {
+  const stored = databasePresence(home);
+  if (stored) void refreshStorePeerIdentities(home).catch(() => {});
+  const records = stored ? stored.filter(({ record, signature }) => {
+    if (record.pid === process.pid) return false;
+    try { process.kill(record.pid, 0); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; }
+    // A verified different process generation reused the PID: that reader is gone.
+    const identity = cachedIdentity(home, record.pid, signature);
+    if (identity && record.processIdentity && record.processIdentity !== identity) return false;
+    if (identity && !record.processIdentity && typeof record.observedAt === "number" && legacyPidReused(identity, record.observedAt)) return false;
+    return true;
+  }).map(entry => entry.record) : liveStorePeers(home).filter(peer => peer.pid !== process.pid);
+  return records.filter(peer => !metadataRelease(peer.version)).map(({ pid, name, version }) => ({ pid, name: name ?? `pid ${pid}`, version: version ?? "unknown" }));
 }
 
 export function assertStoreUpgrade(home: string, format: keyof StoreCapabilities, current: number, target: number): void {

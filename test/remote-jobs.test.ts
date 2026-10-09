@@ -18,6 +18,8 @@ import { parentFromEnv } from "../src/core/parent-link.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { listRuns, startUi } from "../src/cli/ui.js";
 import { readRunnerState } from "../src/mcp/job-host.js";
+import { runnerStateIds } from "../src/core/runner-store.js";
+import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import { readStore } from "../src/mcp/jobs.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { NetworkService } from "../src/network/link.js";
@@ -93,8 +95,9 @@ afterEach(async context => {
     catch (error) { cleanupError = error; }
   }
   try {
-  if (existsSync(join(remoteHome, "jobs"))) for (const file of readdirSync(join(remoteHome, "jobs")).filter((file) => file.endsWith(".json") && !file.endsWith(".spec.json"))) {
-    const state = readRunnerState(remoteHome, file.replace(/\.json$/, ""));
+  // Runner states are rows (AB-208); files only from older runners.
+  for (const id of runnerStateIds(remoteHome)) {
+    const state = readRunnerState(remoteHome, id);
     if (state?.pid) pids.add(state.pid);
   }
   // Only this freshly created fixture's published process generation authorizes a kill.
@@ -119,6 +122,7 @@ afterEach(async context => {
       catch (error) { failed = true; cleanupError ??= error; }
     }
     vi.useRealTimers();
+    closeMetadataDbs();
     if (failed) {
       try { diagnosticSnapshot("after-cleanup"); }
       catch (error) { cleanupError ??= error; }

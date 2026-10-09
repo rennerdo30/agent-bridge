@@ -7,7 +7,7 @@ import { readStore } from "./jobs.js";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { COMPLETION_DEDUPE_PREFIX } from "../core/completion.js";
-import { archiveFile, assertWritableStore, readJsonStore } from "../core/json-store.js";
+import { takeRunnerSpec } from "../core/runner-store.js";
 import { failureCause } from "../core/delegate.js";
 import { createLogger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
@@ -72,11 +72,10 @@ async function publishInitialRunnerState(spec: RunnerSpec, log: Logger): Promise
  */
 export async function runJobRunner(specFile: string | undefined): Promise<number> {
   if (!specFile) return 2;
-  const data = readJsonStore(specFile);
-  assertWritableStore(data);
+  // The spec row (AB-208), or a spec file written by an older server or a fixture. Taken once.
+  const data = takeRunnerSpec(specFile);
   if (!data) return 2;
   const spec = data as unknown as RunnerSpec;
-  archiveFile(specFile);
   const { home } = spec;
   const log = createLogger({ home, component: "job-runner" }).child(spec.job.name);
   // This is a dedicated runner, never the shared broker/MCP server. Establish ownership

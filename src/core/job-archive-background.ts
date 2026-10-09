@@ -15,7 +15,7 @@ export class JobArchiveBackground {
     if (import.meta.url.endsWith(".ts")) {
       const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
       const output = join(root, ".agent-bridge-test", "job-archive-worker.mjs");
-      const inputs = ["job-archive-worker.ts", "job-archive-index.ts", "job-archive-migration.ts", "archive-bundle.ts", "store-compatibility.ts", "sqlite-migrations.ts"];
+      const inputs = ["job-archive-worker.ts", "job-archive-index.ts", "job-archive-migration.ts", "archive-bundle.ts", "store-compatibility.ts", "sqlite-migrations.ts", "runner-store.ts", "metadata-db.ts", "metadata-import.ts", "json-store.ts"];
       if (!existsSync(output) || inputs.some(name => statSync(join(root, "src/core", name)).mtimeMs > statSync(output).mtimeMs)) {
         mkdirSync(dirname(output), { recursive: true });
         const built = createRequire(import.meta.url)("esbuild").buildSync({ entryPoints: [join(root, "src/core/job-archive-worker.ts")], outfile: output,
@@ -28,7 +28,12 @@ export class JobArchiveBackground {
     }
     this.worker = new Worker(entry, { workerData: { path }, execArgv: [] });
     this.finished = new Promise(resolve => {
-      this.worker.on("message", message => message.error ? log.warn("job archive migration deferred; originals retained", { error: message.error }) : log.info("job archive migration", message.result));
+      this.worker.on("message", message => {
+        if (message.runnerImport) log.info("runner file import", message.runnerImport);
+        else if (message.runnerImportError) log.warn("runner file import deferred; files retained", { error: message.runnerImportError });
+        else if (message.error) log.warn("job archive migration deferred; originals retained", { error: message.error });
+        else log.info("job archive migration", message.result);
+      });
       this.worker.on("error", error => log.warn("job archive worker failed; migration resumes next election", { error: String(error) }));
       this.worker.once("exit", () => resolve());
     });
@@ -37,6 +42,8 @@ export class JobArchiveBackground {
   async close(): Promise<void> {
     // Let the worker release its migration lease. Termination while its process
     // remains alive would strand that lease and obstruct a same-process election.
+    // The runner import loop stops between bounded batches.
+    try { this.worker.postMessage({ stop: true }); } catch { /* Already exited. */ }
     await this.finished;
   }
 }
