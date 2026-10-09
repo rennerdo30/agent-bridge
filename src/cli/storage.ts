@@ -1,0 +1,25 @@
+import { planFinalize, runFinalize } from "../core/storage-finalize.js";
+
+const USAGE = "Usage: agent-bridge storage finalize [--yes] [--json]\n" +
+  "Lists the old-format data that the verified new storage replaces; with --yes it removes exactly that list and compacts bridge.db.";
+
+const gib = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
+
+export function runStorage(rest: string[], home: string, out: (text: string) => void): number {
+  const args = new Set(rest.slice(1));
+  if (rest[0] !== "finalize" || [...args].some(a => a !== "--yes" && a !== "--json")) { out(USAGE); return 2; }
+  const plan = args.has("--yes") ? runFinalize(home, line => { if (!args.has("--json")) out(line); }) : planFinalize(home);
+  if (args.has("--json")) { out(JSON.stringify({ ...plan, removed: args.has("--yes") && plan.ready }, null, 2)); return plan.ready ? 0 : 1; }
+  if (!plan.ready) {
+    out("Not ready; nothing was removed:");
+    for (const blocker of plan.blockers) out(`  - ${blocker}`);
+    return 1;
+  }
+  if (!args.has("--yes")) {
+    for (const item of plan.items) out(`  ${gib(item.bytes).padStart(10)}  ${item.path}  (${item.reason})`);
+    out(`${plan.items.length} items, ${gib(plan.bytes)}. Run again with --yes to remove them.`);
+    return 0;
+  }
+  out(`Removed ${plan.items.length} items, ${gib(plan.bytes)}.`);
+  return 0;
+}

@@ -44,6 +44,8 @@ async function main(argv: string[]): Promise<number> {
       return (await import("./doctor.js")).runDoctor(rest, home, out);
     case "db":
       return (await import("./db.js")).runDb(rest, home, out);
+    case "storage":
+      return (await import("./storage.js")).runStorage(rest, home, out);
     case "reindex":
       if (rest.length) { out("Usage: agent-bridge reindex"); return 2; }
       return (await import("./reindex.js")).runReindex(home, pipe, log, out);
