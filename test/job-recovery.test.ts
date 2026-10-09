@@ -1,5 +1,5 @@
 import { BridgeNode } from "../src/core/node.js";
-import { indexFixtureFile } from "./archive-fixture.js";
+import { indexFixtureFile, retainedRootJobCopy } from "./archive-fixture.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -59,7 +59,8 @@ it("recovers a 0.29.10 backup with current handoff authority and preserves unkno
   expect(jobs.followUp(name, "recover").outcome).toBe("started");
   await until(() => jobs.find(name)?.status === "done");
   expect(JSON.parse(readFileSync(join(env.home, "jobs.json"), "utf8")).jobs[0].custom).toEqual({ future: "keep" });
-  expect(readFileSync(join(env.home, "jobs.json.backup-v2-1"), "utf8")).toBe(snapshot);
+  // The archive worker may already have retired the imported copy into cold storage; its bytes stay intact.
+  expect(retainedRootJobCopy(env.home, "jobs.json.backup-v2-1")).toBe(snapshot);
 });
 
 it("attaches and cancels an orphan live runner instead of starting a second native turn", async () => {

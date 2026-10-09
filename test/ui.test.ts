@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { join } from "node:path";
+import { indexFixtureFile, retainedRootJobCopy } from "./archive-fixture.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { classifyPeers, startUi, summarizeRun, type RunSummary } from "../src/cli/ui.js";
 import type { PeerInfo } from "../src/core/protocol.js";
@@ -46,6 +47,8 @@ describe("web dashboard", () => {
     const name = "codex-job-1234abcd";
     const backup = JSON.stringify({ version: 2, jobs: [{ id: "1234abcd", name, agent: "codex", owner: "claude-offline", projectRoot: env.home, workdir: env.home, startedAt: 1, status: "running", sessionId: "original-native-thread", prompt: "original task" }] });
     writeFileSync(join(env.home, "jobs.json.backup-1"), backup);
+    // AB-206: readers never discover legacy copies; a release-era copy reaches them through the job index.
+    indexFixtureFile(join(env.home, "jobs.json.backup-1"));
     const jobs = new JobManager(master, nullLogger, join(env.home, JOBS_FILE)); managers.push(jobs);
     const sessions: string[] = [];
     jobs.restore(() => (_body, session) => async () => { sessions.push(session); return { sessionId: session, text: "continued", isError: false, details: {} }; });
@@ -57,7 +60,7 @@ describe("web dashboard", () => {
     expect(await r.json()).toMatchObject({ outcome: "delivered", isError: false });
     await until(() => sessions.length === 1);
     expect(sessions).toEqual(["original-native-thread"]);
-    expect(readFileSync(join(env.home, "jobs.json.backup-1"), "utf8")).toBe(backup);
+    expect(retainedRootJobCopy(env.home, "jobs.json.backup-1")).toBe(backup);
   });
 
   it("sets a year-long protected cookie and shows safe recovery for missing or invalid credentials", async () => {
