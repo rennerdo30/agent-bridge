@@ -230,6 +230,9 @@ function instructionsFor(agent: AgentKind, targets: CodingAgent[]): string {
     `Each subagent call takes a model ("model") and a thinking level ("effort", e.g. low/medium/high/xhigh); "list_models" shows what an agent accepts. ` +
     `"max_subagents" changes how many may run at once when your user asks. ` +
     "After you message a peer or spawn a subagent, keep working or end the turn; handle the reply when delivered and answer if needed. " +
+    "If you are a delegated job (subagent) and are blocked, unsure, or about to take a consequential or hard-to-reverse step (release, publication, deletion, migration, larger change), ask your parent session instead of guessing or silently narrowing scope: " +
+    `"send" to your parent with message_kind="question" (the question, options, your recommendation and what you do meanwhile), then "wait_for_message" in notify mode and continue with safe work. ` +
+    `As a parent, answer a job's question promptly with "message_subagent"; if you cannot decide, ask your user with "ask_owner". Answers never grant tool permissions; approvals go through "decide". ` +
     'Never call "hook_event"; it is reserved for agent-bridge hooks.'
   );
 }
@@ -804,14 +807,14 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         "Delivery means queued in the recipient inbox, not read. Project addresses include available live secondaries. Broadcasts wake every live session according to its settings and include recently seen offline local sessions or known project masters, connected paired-PC sessions and your running jobs; jobs:* targets only your running jobs through existing links, even when authority RPCs are unavailable. Per-recipient results report queueing, not consumption. Direct messages wake idle Claude, Codex and opencode sessions according to wakeOnDirect and available CLI transport; other recipients may read them on their next turn. " +
         "Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. " +
         "If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. " +
-        "Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.",
+        "Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. A job that is blocked, unsure or about to take a consequential step asks its parent with message_kind=\"question\" (question, options, recommendation, what it does meanwhile). Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.",
       inputSchema: {
         to: z.string().min(1).describe('Peer name, project address, agent kind, "*" (sessions and your running jobs), or "jobs:*" (only your running jobs)'),
         message: z.string().min(1).max(MAX_BODY_CHARS).describe("Message text (Markdown is fine)"),
         reply_to: z.string().optional().describe("Id of the message you are answering"),
         conversation_id: z.string().optional().describe("Continue an existing conversation"),
         if_no_newer_than: z.string().optional().describe("Refuse this reply if newer unread conversation or recipient mail exists after this message id"),
-        message_kind: z.enum(["note", "question"]).optional().describe("note retains FYI/status in history without waking or injecting context; question requests supervisor attention"),
+        message_kind: z.enum(["note", "question"]).optional().describe("note retains FYI/status in history without waking or injecting context; question requests supervisor attention (a job asking its parent when blocked or before a risky step)"),
         message_id: z.uuid().optional().describe("Stable UUID for an idempotent send or recovery retry. Reuse this id only with the same content; requires an updated broker."),
       },
     },
@@ -1417,6 +1420,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       title: "Message a subagent",
       description:
         "Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. " +
+        "Use it to answer a subagent's question promptly. " +
         "It continues in its own session with its full context, in the same folder or worktree. " +
         "While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. " +
         "The answer arrives as a message from the job. Plain messages never answer pending approvals; use decide or the dashboard. " +
