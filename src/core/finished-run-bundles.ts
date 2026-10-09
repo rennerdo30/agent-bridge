@@ -71,7 +71,7 @@ type CacheEntry = { signature: string; files: string; checkedAt: number; generat
 const cache = new Map<string, CacheEntry>();
 /** Packing in this process invalidates at once; other processes' packing is seen within RECHECK_MS. */
 let generation = 0;
-const RECHECK_MS = 2_000;
+export const RECHECK_MS = 2_000;
 function toRecord(key: string, value: string): PackedRun | null {
  try {
   const v = JSON.parse(value) as Record<string, unknown>;

@@ -8,6 +8,7 @@ import { cachedOutcomes, pendingOutcome, type OutcomeInput } from "../src/core/o
 import { readDashboard } from "../src/core/dashboard-read.js";
 import { nullLogger } from "../src/core/logger.js";
 import { MessageStore } from "../src/core/store.js";
+import { RECHECK_MS } from "../src/core/finished-run-bundles.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 vi.mock("node:sqlite", async original => {
@@ -43,6 +44,18 @@ it("repeated corpus polls perform no receipt/database/Git inspection on the requ
   // revision check (AB-233/245): a short-lived read-only bridge.db open, at most once per change.
   const bridge = join(env.home, "bridge.db");
   for (const args of opens.mock.calls) expect(args).toEqual([bridge, { readOnly: true, timeout: 1000 }]);
+  // The outcome worker creates bridge.db while the first polls run. A change seen within
+  // RECHECK_MS of the last check is confirmed by one deferred open on a later poll; on a
+  // loaded host that later poll can be one of the steady polls below. Let the warmup settle
+  // first: a poll made after the recheck window that needs no open has seen every change.
+  for (let settled = false, round = 0; !settled; round++) {
+    if (round === 5) throw new Error("bridge.db kept changing after the outcome warmup");
+    opens.mockClear();
+    await new Promise(resolve => setTimeout(resolve, RECHECK_MS + 50));
+    await read();
+    for (const args of opens.mock.calls) expect(args).toEqual([bridge, { readOnly: true, timeout: 1000 }]);
+    settled = opens.mock.calls.length === 0;
+  }
   opens.mockClear();
   // Steady polls: no inspection at all on the request thread. Counting the calls proves this
   // independently of how loaded the machine is; wall time only measured the host.
