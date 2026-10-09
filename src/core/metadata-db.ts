@@ -10,6 +10,8 @@ import { snapshotMetadataTables } from "./metadata-snapshot.js";
 const VERSION = 1;
 const connections = new Map<string, DatabaseSync>();
 const readers = new Map<string,number>();
+// Windows paths are case-insensitive: one handle per physical file, whatever spelling of home a caller passes.
+const handleKey = (path: string) => process.platform === "win32" ? path.toLowerCase() : path;
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS bridge_components (name TEXT PRIMARY KEY, version INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS worktree_leases (
@@ -52,7 +54,7 @@ export function physicalMetadataPath(path: string): void {
 
 /** Observe an already admitted component without starting a competing migration. */
 export function existingMetadataDb(home: string): DatabaseSync | undefined {
- const file = join(resolve(home),"bridge.db"), cached = connections.get(file);
+ const file = join(resolve(home),"bridge.db"), cached = connections.get(handleKey(file));
  if (cached) return cached;
  if (!existsSync(file)) return undefined;
  physicalMetadataPath(file);
@@ -60,7 +62,7 @@ export function existingMetadataDb(home: string): DatabaseSync | undefined {
  try {
   if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get() ||
     Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) !== VERSION) { db.close(); return undefined; }
-  db.exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;"); connections.set(file,db); return db;
+  db.exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;"); connections.set(handleKey(file),db); return db;
  } catch (error) { db.close(); throw error; }
 }
 
@@ -73,7 +75,7 @@ export function assertMetadataAdmission(home: string): void {
 /** Additive component versioning leaves AB-206's global user_version untouched. */
 export function metadataDb(home: string): DatabaseSync {
  const file = join(resolve(home), "bridge.db");
- const cached = connections.get(file);
+ const cached = connections.get(handleKey(file));
  if (cached) return cached;
  physicalMetadataPath(file);
  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
@@ -102,19 +104,19 @@ export function metadataDb(home: string): DatabaseSync {
     }
    } finally { release(); }
   }
-  connections.set(file, db);
+  connections.set(handleKey(file), db);
   return db;
  } catch (error) { db.close(); throw error; }
 }
 
 export function closeMetadataDb(home: string): void {
- const file = join(resolve(home), "bridge.db"), db = connections.get(file);
- if (db) { db.close(); connections.delete(file); }
+ const file = join(resolve(home), "bridge.db"), db = connections.get(handleKey(file));
+ if (db) { db.close(); connections.delete(handleKey(file)); }
 }
 
 /** Bridge nodes share one handle per home and close it when the last node stops. */
 export function retainMetadataReader(home: string): () => void {
- const key = resolve(home); readers.set(key,(readers.get(key) ?? 0)+1);
+ const key = handleKey(resolve(home)); readers.set(key,(readers.get(key) ?? 0)+1);
  let released = false;
  return () => {
   if (released) return; released = true;
@@ -126,12 +128,12 @@ export function retainMetadataReader(home: string): () => void {
 
 /** Whether this process currently caches an open metadata handle for home. */
 export function metadataDbOpen(home: string): boolean {
- return connections.has(join(resolve(home), "bridge.db"));
+ return connections.has(handleKey(join(resolve(home), "bridge.db")));
 }
 
 /** Whether a live bridge node in this process still shares the metadata handle for home. */
 export function metadataReaderRetained(home: string): boolean {
- return (readers.get(resolve(home)) ?? 0) > 0;
+ return (readers.get(handleKey(resolve(home))) ?? 0) > 0;
 }
 
 export function metadataValue(home: string, domain: string, key: string): unknown {
