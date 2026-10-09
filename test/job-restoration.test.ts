@@ -7,11 +7,13 @@ import { JSON_STORE_VERSION } from "../src/core/json-store.js";
 import { nullLogger } from "../src/core/logger.js";
 import { verifiedGoneJobOwners } from "../src/core/job-restoration.js";
 import { processIdentity } from "../src/core/process-identity.js";
+import { closeMetadataDbs, existingMetadataDb, metadataDb, saveMetadataValue } from "../src/core/metadata-db.js";
+import { importMetadataDomain } from "../src/core/metadata-import.js";
 
 let home: string;
 const managers: JobManager[] = [];
 beforeEach(() => { const root = process.env.AGENT_BRIDGE_TEST_ROOT!; mkdirSync(root, { recursive: true }); home = mkdtempSync(join(root, "restore-policy-")); });
-afterEach(() => { managers.splice(0).forEach(manager => manager.cancelAll()); vi.unstubAllEnvs(); vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
+afterEach(() => { managers.splice(0).forEach(manager => manager.cancelAll()); vi.unstubAllEnvs(); vi.restoreAllMocks(); closeMetadataDbs(); rmSync(home, { recursive: true, force: true }); });
 function manager(allowed: () => boolean, handoff = () => true, name = "claude-project") {
   const events = new EventEmitter();
   const node = Object.assign(events, { name, id: "peer-instance", currentSessionId: "session", deliverLocal: vi.fn() }) as JobCoordinator & EventEmitter;
@@ -127,5 +129,52 @@ describe("transient coordinator restoration", () => {
     expect(await verifiedGoneJobOwners(home, ["claude-project-2"])).toEqual(new Set(["claude-project-2"]));
     writeFileSync(record, JSON.stringify({ pid: process.pid, name: "claude-project-2" }));
     expect(await verifiedGoneJobOwners(home, ["claude-project-2"])).toEqual(new Set());
+  });
+  describe("database presence (AB-208 layout)", () => {
+    /** The layout every 0.30.4+ home reaches: the storage-capabilities import ran and its files moved to cold storage. */
+    function databasePresence(pid: number, record: Record<string, unknown>, updatedAt?: number): void {
+      metadataDb(home); importMetadataDomain(home, "storage-capabilities");
+      saveMetadataValue(home, "storage-capabilities", String(pid), { schemaVersion: 1, json: 4, sqlite: 9, version: "0.30.6", explicit: true, observedAt: Date.now(), pid, ...record });
+      if (updatedAt !== undefined) existingMetadataDb(home)!.prepare("UPDATE bridge_metadata SET updated_at=? WHERE domain='storage-capabilities' AND key=?").run(updatedAt, String(pid));
+      expect(existsSync(join(home, "storage-capabilities"))).toBe(false);
+    }
+
+    it("proves an exited stand-in from its database row so the reloaded session can adopt its jobs", async () => {
+      const exitedPid = 2_000_000_003;
+      vi.spyOn(process, "kill").mockImplementation(pid => {
+        if (pid === exitedPid) throw Object.assign(new Error("exited"), { code: "ESRCH" });
+        return true;
+      });
+      databasePresence(exitedPid, { name: "claude-project-2" });
+      expect(await verifiedGoneJobOwners(home, ["claude-project-2", "missing"])).toEqual(new Set(["claude-project-2"]));
+    });
+
+    it("never adopts from a stand-in whose database row names a live process", async () => {
+      databasePresence(process.pid, { name: "claude-project-2", processIdentity: processIdentity(process.pid) });
+      expect(await verifiedGoneJobOwners(home, ["claude-project-2"])).toEqual(new Set());
+    });
+
+    it("proves a reused PID from a different recorded identity in the database", async () => {
+      databasePresence(process.pid, { name: "claude-project-2", processIdentity: "old-start:unrelated" });
+      expect(await verifiedGoneJobOwners(home, ["claude-project-2"])).toEqual(new Set(["claude-project-2"]));
+    });
+
+    it("treats presence written before this boot as exited even when its PID now belongs to an unidentifiable process", async () => {
+      databasePresence(process.pid, { name: "claude-project-2" });
+      expect(await verifiedGoneJobOwners(home, ["claude-project-2"])).toEqual(new Set());
+      existingMetadataDb(home)!.prepare("UPDATE bridge_metadata SET updated_at=1 WHERE domain='storage-capabilities'").run();
+      expect(await verifiedGoneJobOwners(home, ["claude-project-2"])).toEqual(new Set(["claude-project-2"]));
+    });
+
+    it("requires every recorded process of a stand-in to be gone", async () => {
+      const exitedPid = 2_000_000_005;
+      vi.spyOn(process, "kill").mockImplementation(pid => {
+        if (pid === exitedPid) throw Object.assign(new Error("exited"), { code: "ESRCH" });
+        return true;
+      });
+      databasePresence(exitedPid, { name: "claude-project-2" });
+      saveMetadataValue(home, "storage-capabilities", String(process.pid), { schemaVersion: 1, json: 4, sqlite: 9, pid: process.pid, name: "claude-project-2", version: "0.30.6", explicit: true, processIdentity: processIdentity(process.pid) });
+      expect(await verifiedGoneJobOwners(home, ["claude-project-2"])).toEqual(new Set());
+    });
   });
 });
