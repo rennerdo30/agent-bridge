@@ -4,6 +4,8 @@
 
 - After a reboot, reader presence records written before the boot no longer block the history and metadata upgrades. Windows reuses low PIDs for protected system processes whose start time cannot be read, so such stale records looked like unidentified live readers and kept every 0.30.4 migration waiting.
 - The metadata import keeps each presence record's original file time instead of the import time, and once restores that time for rows an earlier 0.30.4 import stamped. Values, retained originals and bundles stay unchanged.
+- `message_subagent` continues finished jobs that a session loaded during startup before its continuation factory was installed. They reported "no session to continue" although their session existed.
+- The health tool's event-loop maximum no longer counts the idle time between health checks as one delay.
 
 ## 0.30.4
 
