@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { copyFileSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { copyFileSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
@@ -61,6 +62,23 @@ it("keeps read marks while the metadata store is deferred and imports them once 
     finally { db.close(); }
   }, { timeout: 15_000, interval: 100 });
   expect(new ReadJournal(env.home).read("name:reader")).toEqual(["deferred-mark"]);
+});
+
+it("a background metadata retry after the last reader closed imports the marks without keeping bridge.db open", async () => {
+  const identity = vi.spyOn(identities, "processIdentity").mockReturnValue(undefined);
+  new ReadJournal(env.home).append("name:reader", ["late-retry-mark"]);
+  identity.mockRestore();
+  expect(identities.processIdentity(process.pid)).toBeTruthy();
+  closeMetadataDb(env.home);
+  // The first background retry is due after one second; wait until it has imported the mark.
+  await vi.waitFor(() => {
+    const db = new DatabaseSync(env.db, { readOnly: true });
+    try { expect(db.prepare("SELECT message_id FROM bridge_read_receipts").all().map(r => r.message_id)).toEqual(["late-retry-mark"]); }
+    finally { db.close(); }
+  }, { timeout: 15_000, interval: 100 });
+  // No owner is left to close a handle the retry cached; on Windows it would lock the file.
+  const moved = `${env.db}.moved-fixture`;
+  renameSync(env.db, moved); renameSync(moved, env.db);
 });
 
 function seed(version: number): void {
