@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,17 +21,19 @@ import { JobManager, readStore } from "../src/mcp/jobs.js";
 import { BridgeNode } from "../src/core/node.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { ReadJournal } from "../src/core/read-journal.js";
+import { closeMetadataDb, closeMetadataDbs } from "../src/core/metadata-db.js";
 import { listPendingApprovals, publishApproval } from "../src/core/relay.js";
 import { readArchivedJobs } from "../src/core/job-archive.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 
 let home: string;
 const stores: MessageStore[] = [];
-beforeEach(() => { home = mkdtempSync(join(import.meta.dirname, ".doctor-")); });
+beforeEach(() => { home = mkdtempSync(join(tmpdir(), "doctor-")); });
 afterEach(() => {
   for (const store of stores.splice(0)) store.close();
+  closeMetadataDbs();
   vi.unstubAllEnvs();
-  rmSync(home, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 function store(): MessageStore { const s = new MessageStore(join(home, "bridge.db"), nullLogger); stores.push(s); return s; }
 function message(id: string, createdAt = 1): BridgeMessage {
@@ -329,6 +332,7 @@ describe("lossless, readable archives", () => {
     const recovery = restoreBackup(home, backup, true);
     expect(journal.read("session")).toEqual(["old"]);
     expect(new ReadJournal(recovery).read("session")).toEqual(["old", "new"]);
+    closeMetadataDb(recovery);
     expect(doctor(home).findings.some((f) => f.code.startsWith("journal-"))).toBe(false);
   });
   it("preserves completed approval metadata instead of unlinking user questions", async () => {
