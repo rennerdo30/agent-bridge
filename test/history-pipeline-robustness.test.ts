@@ -7,6 +7,7 @@ import { decodeHistoryRow, HISTORY_V1_PREFIX } from "../src/core/history-migrati
 import { historySchema } from "../src/core/history-schema.js";
 import { CONVERSATION_SCHEMA } from "../src/core/conversation-schema.js";
 import { readHistory } from "../src/core/history.js";
+import { readConversationFile } from "../src/core/conversations.js";
 import { verifyBeforeFinalize } from "../src/core/storage-finalize.js";
 import * as compatibility from "../src/core/store-compatibility.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
@@ -133,7 +134,9 @@ it("tells history readers that the migration is still running and where results 
   const result = readHistory(env.db, { query: "retained" });
   expect(result.migration).toMatchObject({ ready: false, readsFrom: "legacy" });
   expect(result.migration?.notice).toMatch(/migration/i);
+  expect(readConversationFile(env.db, { id: "codex:legacy" }).migration).toMatchObject({ readsFrom: "legacy" });
   await migrateHistoryStore(env.db, db);
   expect(readHistory(env.db, { query: "pecan" }).migration).toBeUndefined();
+  expect(readConversationFile(env.db, { id: "codex:legacy" }).migration).toBeUndefined();
   expect(existsSync(historyDbPath(env.db))).toBe(true);
 });

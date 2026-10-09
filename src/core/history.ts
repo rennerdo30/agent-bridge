@@ -75,6 +75,8 @@ export class HistoryIndex {
   }
 
   get database(): DatabaseSync { return this.source !== this.db && !historyReady(this.db) && !historyV1Readable(this.db) ? this.source : this.db; }
+  /** Why reads currently come from the legacy store, if they do (AB-224). */
+  get legacyReadNotice() { return this.database !== this.db ? legacyReadNotice(this.db) : undefined; }
   /** Writable isolated storage for explicit offline maintenance, regardless of read fallback. */
   get storageDatabase(): DatabaseSync { return this.db; }
 

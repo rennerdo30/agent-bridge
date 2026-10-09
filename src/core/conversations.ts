@@ -22,7 +22,7 @@ import { conversationProject, syncProjectMirror } from "./project-store.js";
 import { readArchivedJobSnapshot } from "./job-archive.js";
 import { readJsonSnapshot } from "./file-cache.js";
 import { antigravityItems } from "./transcripts/antigravity.js";
-import { historyReadPath, openHistoryReader, HISTORY_BATCH_MS } from "./history-store.js";
+import { historyReadStatus, openHistoryReader, HISTORY_BATCH_MS } from "./history-store.js";
 import { decodeBytes, encodeBytes, encodeText, registerHistoryFunctions } from "./history-codec.js";
 import { decodeHistoryRow } from "./history-migration.js";
 
@@ -1255,11 +1255,12 @@ export function readConversationFile(
   file: string,
   input: ConversationRequest,
 ): ConversationPage {
-  file = historyReadPath(file);
-  if (!existsSync(file)) return { conversation: null, records: [], next: null };
+  const status = historyReadStatus(file), migration = status.migration ? { migration: status.migration } : {};
+  file = status.path;
+  if (!existsSync(file)) return { conversation: null, records: [], next: null, ...migration };
   const db = openHistoryReader(file);
   try {
-    return readConversation(db, input);
+    return { ...readConversation(db, input), ...migration };
   } finally {
     db.close();
   }

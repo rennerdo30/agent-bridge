@@ -1,7 +1,7 @@
 import { describeResourceSlots, ResourceSlots } from "../core/resource-slots.js";
 import { inspectCatalog, inspectRows, MAX_INSPECT_ROWS } from "../core/db-inspect.js";
 import { DatabaseSync } from "node:sqlite";
-import { historyReadPath } from "../core/history-store.js";
+import { historyReadStatus } from "../core/history-store.js";
 import { conversationPageSchema, readConversation } from "../core/conversations.js";
 import { formatReplyRestrictions } from "../mcp/format.js";
 import { chooseJobRecipient } from "../core/job-ownership.js";
@@ -327,8 +327,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       let id: string; try { id=decodeURIComponent(url.pathname.slice("/api/conversations/".length)); } catch { return send(res,400,{error:"Invalid conversation id."}); }
       const args=conversationPageSchema.safeParse({id,...(url.searchParams.has("after") ? {after:Number(url.searchParams.get("after"))} : {}),...(url.searchParams.has("limit") ? {limit:Number(url.searchParams.get("limit"))} : {})});
       if (!args.success) return send(res,400,{error:"Invalid conversation page."});
-      const db=new DatabaseSync(historyReadPath(dbPath),{readOnly:true,timeout:100});
-      try { const page=readConversation(db,args.data); return send(res,page.conversation ? 200 : 404,page); } finally { db.close(); }
+      const status=historyReadStatus(dbPath), db=new DatabaseSync(status.path,{readOnly:true,timeout:100});
+      try { const page=readConversation(db,args.data); return send(res,page.conversation ? 200 : 404,status.migration ? {...page,migration:status.migration} : page); } finally { db.close(); }
     }
     if (req.method === "GET" && url.pathname.startsWith("/api/history/")) {
       let id: string;
