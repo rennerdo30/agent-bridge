@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { deriveJobOutcome, type OutcomeJob } from "../src/core/job-outcomes.js";
 import { nullLogger } from "../src/core/logger.js";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
 import * as worktree from "../src/core/worktree.js";
 
 let home: string, base: string, tip: string, job: OutcomeJob;
@@ -21,7 +22,7 @@ beforeEach(() => {
   git("checkout", "main");
   job = { id: "fixture", name: "codex-job-fixture", startedAt: 1, status: "done", worktree: { repoRoot: home, path: home, cwd: home, branch: "fixture", baseBranch: "main", base } };
 });
-afterEach(async () => { vi.restoreAllMocks(); await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
+afterEach(async () => { vi.restoreAllMocks(); closeMetadataDb(home); await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
 
 it("uses complete current loose ancestry without Git startup and sees a changed base", async () => {
   const spy = vi.spyOn(worktree, "git");
