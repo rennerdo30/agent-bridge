@@ -151,6 +151,14 @@ describe("immutable live updates (mock Codex)", () => {
     expect(codexLiveConfig(text, "/safe")).toContain(text);
   });
 
+  it("ends the marketplace table at the next real table, not inside a multi-line array or string (AB-237)", () => {
+    const text = '[marketplaces.agent-bridge]\nsource_type = "git"\nsparse = [\n  ["a", "b"],\n  ["c"],\n]\nnote = """\n[not a table]\n"""\n\n[other]\nkeep = 1\n';
+    const next = codexLiveConfig(text, "/safe");
+    expect(next).toBe('[marketplaces.agent-bridge]\nsource_type = "local"\nsource = "/safe"\nsparse = [\n  ["a", "b"],\n  ["c"],\n]\nnote = """\n[not a table]\n"""\n\n[other]\nkeep = 1\n\n[plugins."agent-bridge@agent-bridge"]\nenabled = true\n');
+    // An unbalanced table body is never rewritten.
+    expect(() => codexLiveConfig('[marketplaces.agent-bridge]\nsparse = [\n  ["a"],\n', "/safe")).toThrow(/preserved unchanged/);
+  });
+
   it("launches the selected worker while preserving the host's plugin root", async () => {
     writeFileSync(join(source, "dist", "worker.mjs"), "console.log(JSON.stringify({version:'selected', launchRoot:process.env.AGENT_BRIDGE_LAUNCH_PLUGIN_ROOT}));\n");
     selectRuntime(dir, "codex", source, "0.1.1");
