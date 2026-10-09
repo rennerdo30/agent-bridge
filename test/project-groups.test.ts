@@ -10,7 +10,8 @@ import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 import { ReadJournal } from "../src/core/read-journal.js";
-import { JobManager } from "../src/mcp/jobs.js";
+import { JobManager, readStore } from "../src/mcp/jobs.js";
+import { metadataFileLease } from "../src/core/metadata-file-lease.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
 import type { ServerContext } from "../src/mcp/server.js";
@@ -77,6 +78,18 @@ describe("local project permission groups", () => {
     await source.handoffSubagents({ to: target.name, jobs: "all", switch_project_main: true });
     expect((await source.peers()).find((p) => p.name === target.name)?.projectMain).toBe(true);
     expect(await source.jobAuthority("codex-job-one")).toBeTruthy();
+  });
+  it("waits for a registry lease held briefly in the broker's own process instead of failing the handoff", async () => {
+    const path = repo(); registry(path);
+    const source = await node("claude-master", path), target = await node("codex-master", path);
+    // The broker's history worker reconciles ask completions under this lease from the same PID (never stale).
+    const release = metadataFileLease(join(env.home, "jobs.json.lock"));
+    const released = new Promise<void>((resolve) => setTimeout(() => { release(); resolve(); }, 300));
+    try {
+      const receipt = await source.handoffSubagents({ to: target.name, jobs: "all" });
+      expect(receipt.jobs.map((j) => j.name)).toContain("codex-job-one");
+    } finally { await released; }
+    expect(readStore(join(env.home, "jobs.json")).find((j) => j.id === "one")?.owner).toBe(target.name);
   });
   it("keeps handoff grants outside the group and falls back to the previous primary first", async () => {
     const path = repo(); const jobs = registry(path);

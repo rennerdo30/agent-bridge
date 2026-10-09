@@ -45,7 +45,8 @@ import {
 } from "./protocol.js";
 import { agentQueueKey, MessageStore, registrationIdentity } from "./store.js";
 import { tokensEqual } from "./token.js";
-import { commitHandoff, handoffJournal, handoffSchema, } from "./job-handoff.js";
+import { commitHandoff, handoffJournal, handoffSchema, type HandoffReceipt } from "./job-handoff.js";
+import { setTimeout as delay } from "node:timers/promises";
 import { canControlJob, mastersFor, chooseJobRecipient, primaryFor } from "./job-ownership.js";
 import { RootConcurrency } from "./root-concurrency.js";
 import { isRecord, retentionLimit } from "./json-store.js";
@@ -115,6 +116,10 @@ type Handler<O extends Op> = (conn: Conn, args: RequestMap[O][0]) => RequestMap[
  * agent-bridge MCP server bound the pipe first. It persists every message so peers that are offline,
  * or a broker hand-over, lose nothing.
  */
+
+/** A handoff commit retries a briefly held registry lease asynchronously, as long as a blocking writer would wait. */
+const HANDOFF_LOCK_WAIT_MS = 2_000;
+const HANDOFF_LOCK_RETRY_MS = 25;
 export class Broker {
   private questions: OwnerQuestionService | null = null;
   private ownerQuestions(): OwnerQuestionService {
@@ -239,15 +244,27 @@ export class Broker {
         // Authentication alone does not prime this broker's foreign-PID cache.
         // No metadata lock is held while the asynchronous OS probe is pending.
         await this.awaitHandoffReaders(c, targetConn);
-        this.assertHandoffRegistration(c, source, sourceRegistration);
-        this.assertHandoffRegistration(targetConn, target, targetRegistration);
-        // Project roles/grants and registry authority may have changed while
-        // waiting. Recompute them immediately before the synchronous commit.
-        this.jobsForDispatch = null;
-        if (parsed.data.switch_project_main && ((parsed.data.jobs !== "all") || !this.projectPeer(source).projectGroup || this.projectPeer(source).projectGroup !== this.projectPeer(target).projectGroup)) {
-          throw new BridgeError("unauthorized", "Switching the project main requires all jobs and a target in the same project group.");
+        let receipt: HandoffReceipt;
+        for (const deadline = Date.now() + HANDOFF_LOCK_WAIT_MS; ; await delay(HANDOFF_LOCK_RETRY_MS)) {
+          this.assertHandoffRegistration(c, source, sourceRegistration);
+          this.assertHandoffRegistration(targetConn, target, targetRegistration);
+          // Project roles/grants and registry authority may have changed while
+          // waiting. Recompute them immediately before the synchronous commit.
+          this.jobsForDispatch = null;
+          if (parsed.data.switch_project_main && ((parsed.data.jobs !== "all") || !this.projectPeer(source).projectGroup || this.projectPeer(source).projectGroup !== this.projectPeer(target).projectGroup)) {
+            throw new BridgeError("unauthorized", "Switching the project main requires all jobs and a target in the same project group.");
+          }
+          try {
+            receipt = commitHandoff(this.jobsPath, source, target, parsed.data, { canControl: (job) => this.groups.canControl(source, job as unknown as Record<string, unknown>, this.localPeers()) });
+            break;
+          } catch (error) {
+            // The commit takes the registry lease without waiting, so the broker thread never blocks. Another holder
+            // keeps it only for one short read-merge-write: this broker's own history worker reconciling ask
+            // completions (same PID, so never "stale"), or a session's job manager. Retry off the thread instead
+            // of failing the handoff; nothing was written by the refused attempt.
+            if ((error as NodeJS.ErrnoException).code !== "EJOBLOCKED" || Date.now() >= deadline) throw error;
+          }
         }
-        const receipt = commitHandoff(this.jobsPath, source, target, parsed.data, { canControl: (job) => this.groups.canControl(source, job as unknown as Record<string, unknown>, this.localPeers()) });
         if (parsed.data.switch_project_main) this.switchProjectMain(source, target);
         this.jobsSnapshot = null; this.jobsForDispatch = null;
         this.applyHandoffs();
