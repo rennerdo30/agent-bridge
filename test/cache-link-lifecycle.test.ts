@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
+import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import { closeJobWorktree } from "../src/core/job-close.js";
 import { readWorktreeState, saveWorktreeState } from "../src/core/worktree-state.js";
 import { runDelegate, type RunContext } from "../src/mcp/delegate-run.js";
@@ -22,6 +23,8 @@ afterEach(() => {
   vi.restoreAllMocks(); vi.unstubAllEnvs();
   // Detach only generated link entries before removing the private fixture tree.
   for (const path of links.splice(0)) if (lstatSync(path).isSymbolicLink()) unlinkSync(path);
+  // Worktree leases live in the metadata store; Windows cannot remove a database file that is still open.
+  closeMetadataDbs();
   rmSync(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
