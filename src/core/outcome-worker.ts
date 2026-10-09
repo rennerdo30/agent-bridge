@@ -2,6 +2,7 @@ import { parentPort } from "node:worker_threads";
 import { deriveJobOutcome } from "./job-outcomes.js";
 import { readRunStarts } from "./run-history.js";
 import { nullLogger } from "./logger.js";
+import { closeMetadataDb } from "./metadata-db.js";
 import { outcomeSignature, pendingOutcome, type OutcomeInput } from "./outcome-background.js";
 import type { JobOutcome } from "./job-outcomes.js";
 import { stat, readFile } from "node:fs/promises";
@@ -81,5 +82,7 @@ parentPort?.on("message", message => {
       for (const input of inputs) result[input.key] = pendingOutcome(input);
     }
     parentPort?.postMessage({ id: message.id, result, signature: sourceSignature, gitPaths: paths });
-  }).catch(() => parentPort?.postMessage({ id: message.id, error: true }));
+  }).catch(() => parentPort?.postMessage({ id: message.id, error: true }))
+    // This worker lives for the whole process: never keep bridge.db open between inspections (Windows file locks).
+    .finally(() => closeMetadataDb(message.home));
 });
