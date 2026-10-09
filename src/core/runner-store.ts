@@ -105,17 +105,21 @@ function fileMode(home: string, db: DatabaseSync): boolean {
   return legacyRunnerPeers(home) || !imported(db);
 }
 
-/** As the per-file store always did: a corrupt file is preserved under a `.corrupt-` name, a newer format is returned. */
-function readStateFileRaw(home: string, id: string): unknown {
+/**
+ * A newer format is returned as is. With `preserve` (the runner host, as the per-file store always did) a corrupt
+ * file is moved aside under a `.corrupt-` name; inspection paths (recovery, job-close) never touch the file.
+ */
+function readStateFileRaw(home: string, id: string, preserve = true): unknown {
   runnerStoreStats.fileReads++;
   const path = runnerStatePath(home, id);
   try { if (lstatSync(path).isSymbolicLink()) return null; }
   catch { return null; }
+  if (!preserve) return readHistoryJson(path);
   return readJsonStore(path, undefined, (v) => isRecord(v) && typeof v.pid === "number" && typeof v.status === "string");
 }
 
-function readStateFile(home: string, id: string): Record<string, unknown> | null {
-  const value = readStateFileRaw(home, id);
+function readStateFile(home: string, id: string, preserve = true): Record<string, unknown> | null {
+  const value = readStateFileRaw(home, id, preserve);
   return isRecord(value) && typeof value.pid === "number" && typeof value.status === "string" && !(Number(value.version) > JSON_STORE_VERSION) ? value : null;
 }
 
@@ -130,6 +134,8 @@ function readLegacyFile(path: string): unknown {
 const stamp = (value: Record<string, unknown> | null) => typeof value?.updatedAt === "number" ? value.updatedAt : typeof value?.turnResetAt === "number" ? value.turnResetAt : -Infinity;
 const hasState = (value: Record<string, unknown> | null) => Boolean(value && typeof value.pid === "number" && typeof value.status === "string");
 const stateBase = (value: Record<string, unknown> | null) => hasState(value) ? value! : {};
+/** A file wins over no row at all, and over a row (or turn reset) it is newer than. */
+const fileWins = (stored: Record<string, unknown> | null, file: Record<string, unknown> | null) => Boolean(file && (!stored || stamp(file) > stamp(stored)));
 
 /**
  * An older runner rewrites its whole state file, so a newer file replaces the row. A row of another runner
@@ -147,23 +153,23 @@ function currentState(home: string, db: DatabaseSync, id: string, write: boolean
   const stored = row(db, STATE, id);
   if (!fileMode(home, db)) return stored;
   const file = readStateFile(home, id);
-  if (!file || stamp(stored) >= stamp(file)) return stored;
-  return write ? adoptFileState(db, id, stored, file) : file;
+  if (!fileWins(stored, file)) return stored;
+  return write ? adoptFileState(db, id, stored, file!) : file;
 }
 
 /** A runner's raw state record (validated by the caller), or null. */
-export function readRunnerStateRecord(home: string, id: string): Record<string, unknown> | null {
+export function readRunnerStateRecord(home: string, id: string, opts: { preserveCorrupt?: boolean } = {}): Record<string, unknown> | null {
   if (!validId(id)) return null;
   const db = rows(home);
-  if (!db) return readStateFile(home, id);
+  if (!db) return readStateFile(home, id, opts.preserveCorrupt ?? false);
   const stored = row(db, STATE, id);
   if (!fileMode(home, db)) return hasState(stored) ? stored : null;
-  const file = readStateFile(home, id);
-  if (!file || stamp(stored) >= stamp(file)) return hasState(stored) ? stored : null;
+  const file = readStateFile(home, id, opts.preserveCorrupt ?? false);
+  if (!fileWins(stored, file)) return hasState(stored) ? stored : null;
   // An older runner wrote a newer state: take it into the row now.
   let merged: Record<string, unknown> | null;
   try { merged = transaction(home, db, () => currentState(home, db, id, true)); }
-  catch { merged = file; }
+  catch { merged = file!; }
   return hasState(merged) ? merged : null;
 }
 

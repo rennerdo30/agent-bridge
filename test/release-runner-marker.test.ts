@@ -87,6 +87,7 @@ it("retains staging and previous marker on actual CLI rename failure, with origi
   writeFileSync(f.entry.cliMarker,"{"); writeFileSync(join(f.home,"jobs",`${f.entry.id}.json`),"{");
   expect(failure.details.runners[0].markerSessionId).toBe("previous-native-session");
   const malformed=fixtureInfo(f.home,f.entry,"synthetic");
-  expect(malformed).toMatchObject({statePublished:false,markerPublished:false,contextPreserved:false});
-  expect(malformed.stateReadError).toMatch(/JSON|position|property/i); expect(malformed.markerReadError).toBeTruthy();
+  // AB-208: the old runner's last valid state was taken into its bridge.db row, which a later damaged file cannot erase.
+  expect(malformed).toMatchObject({statePublished:true,status:"running",sessionId:f.entry.sessionId,markerPublished:false,contextPreserved:false});
+  expect(malformed.markerReadError).toBeTruthy();
 },10_000);

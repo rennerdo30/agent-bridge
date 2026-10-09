@@ -1,6 +1,7 @@
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import { currentDelegateDepth, delegateToClaude, delegateToCodex, delegateToOpencode } from "../src/core/delegate.js";
 import { delegateToAntigravity } from "../src/core/antigravity.js";
 import { delegateToCodexAppServer } from "../src/core/codex-appserver.js";
@@ -54,7 +55,7 @@ beforeEach(() => {
   vi.stubEnv("DOTNET_CLI_HOME", join(home, "selected-dotnet-home"));
   writeFileSync(join(home, "fixture.cjs"), script);
 });
-afterEach(() => { vi.unstubAllEnvs(); rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
+afterEach(() => { vi.unstubAllEnvs(); closeMetadataDbs(); rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
 function cli() {
   const bin = process.platform === "win32" ? join(home, "fixture.cmd") : join(home, "fixture.cjs");
   if (process.platform === "win32") writeFileSync(bin, '@ECHO off\r\n"%dp0%\\fixture.cjs" %*\r\n');

@@ -70,7 +70,7 @@ function specPath(home: string, id: string): string {
 /** Rows in bridge.db (AB-208); the per-job file only while older processes or unimported files remain. */
 export function readRunnerState(home: string, id: string): RunnerState | null {
   try {
-    const s = readRunnerStateRecord(home, id) as RunnerState | null;
+    const s = readRunnerStateRecord(home, id, { preserveCorrupt: true }) as RunnerState | null;
     return s && typeof s.pid === "number" && typeof s.status === "string" ? s : null;
   } catch {
     return null;
