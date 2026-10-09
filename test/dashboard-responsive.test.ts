@@ -8,7 +8,7 @@ import { pageRuns, readHistoryJobs, readHistoryJobsResponsive, readRunLogs, read
 import { nullLogger } from "../src/core/logger.js";
 import * as outcomeBackground from "../src/core/outcome-background.js";
 import * as fileCache from "../src/core/file-cache.js";
-import { readArchivedJobSteps } from "../src/core/job-archive.js";
+import { archiveJobs, readArchivedJobSteps } from "../src/core/job-archive.js";
 import { drainScan } from "../src/core/responsive-scan.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -25,9 +25,16 @@ function job(id: string, changes: Record<string, unknown> = {}) {
 }
 function corpus(archives = 307, logs = 1024) {
   mkdirSync(join(env.home, "archive")); mkdirSync(join(env.home, "runs"));
-  for (let file = 0; file < archives; file++) save(join(env.home, "archive", `jobs-${1700000000000 + file}-fixture.json`), {
-    version: 4, jobs: Array.from({ length: 16 }, (_, row) => job(`${file}-${row}`, { prompt: "Retained context ".repeat(64), future: { nested: [file, row] } })),
-  });
+  // Retain every generated archive file, but index their records in one durable transaction:
+  // 307 separately synced index writes made the fixture, not the reader under test, consume
+  // most of the time budget on a loaded Windows runner.
+  const archived: unknown[] = [];
+  for (let file = 0; file < archives; file++) {
+    const jobs = Array.from({ length: 16 }, (_, row) => job(`${file}-${row}`, { prompt: "Retained context ".repeat(64), future: { nested: [file, row] } }));
+    writeFileSync(join(env.home, "archive", `jobs-${1700000000000 + file}-fixture.json`), JSON.stringify({ version: 4, jobs }));
+    archived.push(...jobs);
+  }
+  if (archived.length) archiveJobs(join(env.home, "jobs.json"), archived);
   save(join(env.home, "jobs.json"), { version: 4, jobs: [job("active", { owner: "current-owner", ownershipHistory: [{ owner: "old-owner" }], rootName: "main", rootSession: "root-session" })] });
   for (let i = 0; i < logs; i++) {
     const name = `2026-10-01-12-00-${String(i % 60).padStart(2, "0")}-codex-${String(i).padStart(5, "0")}`;
