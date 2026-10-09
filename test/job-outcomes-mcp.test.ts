@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeEnv } from "./helpers.js";
@@ -51,10 +52,13 @@ describe("supervisor outcome MCP tool", () => {
       expect(readOutcomeDecision(env.home, entries[0]!)).toMatchObject({ state: "discarded", reason: null, by: "supervisor" });
       expect(readOutcomeDecision(env.home, entries[1]!)).toBeNull();
       expect(readOutcomeDecision(env.home, entries[2]!)).toBeNull();
-      const folder = join(env.home, JOB_OUTCOMES_DIR);
-      const records = readdirSync(folder).filter(name => name.endsWith(".json"));
+      // AB-208: decisions are rows of bridge.db metadata, one per job turn, with their full history.
+      const db = new DatabaseSync(join(env.home, "bridge.db"), { readOnly: true });
+      let records: { value: string }[];
+      try { records = db.prepare("SELECT value FROM bridge_metadata WHERE domain=?").all(JOB_OUTCOMES_DIR) as { value: string }[]; }
+      finally { db.close(); }
       expect(records).toHaveLength(1);
-      const saved = JSON.parse(readFileSync(join(folder, records[0]!), "utf8"));
+      const saved = JSON.parse(records[0]!.value);
       expect(saved.history).toEqual([expect.objectContaining({ state: "held", reason: "CPU A/B", by: "supervisor" })]);
       expect(saved.decision).toMatchObject({ state: "discarded", reason: null, by: "supervisor" });
       verified = true;
