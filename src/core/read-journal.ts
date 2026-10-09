@@ -75,6 +75,9 @@ export class ReadJournal {
    // A handle it opens then would stay cached with no owner left to close it, keeping bridge.db
    // locked on Windows, so it closes what it opened unless a live node still shares the handle.
    const timer = setTimeout(() => {
+    // A timer can fire a little before Date.now() reaches `until`; the retry is due now, or it would never run again.
+    const due = deferrals.get(this.home);
+    if (due?.timer === timer) due.until = 0;
     const opened = !metadataDbOpen(this.home);
     try { this.available(); } catch { /* Retried on the next read or mark. */ }
     finally { if (opened && !metadataReaderRetained(this.home)) closeMetadataDb(this.home); }
