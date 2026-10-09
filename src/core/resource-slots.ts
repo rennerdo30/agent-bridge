@@ -13,6 +13,8 @@ export const SLOT_RENEW_MS = 60_000;
 const SLOT_POLL_MS = 250;
 const SLOT_DB_NAME = "resource-slots.sqlite";
 const LOCK_WAIT_MS = 3_000;
+/** Busy retries of a release, each after the full busy timeout: about 30 s in total. */
+const RELEASE_ATTEMPTS = 10;
 
 export interface SlotOwner { id: string; pid: number }
 export interface SlotEntry extends SlotOwner { resource: string; ticket: number; held: boolean; expiresAt: number }
@@ -76,24 +78,31 @@ export class ResourceSlots {
     }
   }
 
-  private prune(): void {
-    this.db.prepare("DELETE FROM slots WHERE expiresAt <= ?").run(this.now());
+  /**
+   * Owner liveness probes can take seconds (PowerShell on Windows). They run before the write
+   * transaction: holding the slot database lock during them made other processes' writes, including
+   * a startup lease release, fail with SQLITE_BUSY after the busy timeout.
+   */
+  private deadOwners(): { pid: number; identity: string | null; expiresAt: number }[] {
     const owners = this.db.prepare("SELECT pid, identity, MAX(expiresAt) AS expiresAt FROM slots GROUP BY pid, identity").all();
-    for (const row of owners) {
-      // Without an identity, the last renewal is when the owner was last seen alive.
-      if (!this.isAlive(Number(row.pid), row.identity as string | null, Number(row.expiresAt) - SLOT_LEASE_MS)) {
-        this.db.prepare("DELETE FROM slots WHERE pid = ? AND identity IS ?").run(row.pid!, row.identity ?? null);
-      }
-    }
+    // Without an identity, the last renewal is when the owner was last seen alive.
+    return owners.map(row => ({ pid: Number(row.pid), identity: row.identity as string | null, expiresAt: Number(row.expiresAt) }))
+      .filter(row => !this.isAlive(row.pid, row.identity, row.expiresAt - SLOT_LEASE_MS));
+  }
+
+  private prune(dead: { pid: number; identity: string | null; expiresAt: number }[]): void {
+    this.db.prepare("DELETE FROM slots WHERE expiresAt <= ?").run(this.now());
+    // A row renewed after the probe is newer evidence of life: only the observed rows go.
+    for (const row of dead) this.db.prepare("DELETE FROM slots WHERE pid = ? AND identity IS ? AND expiresAt <= ?").run(row.pid, row.identity ?? null, row.expiresAt);
   }
 
   tryAcquire(resource: string, count: number, owner: SlotOwner): boolean {
     if (!RESOURCE_NAME_PATTERN.test(resource) || !Number.isInteger(count) || count < 1) throw new Error("Invalid resource name or capacity.");
     if (!owner.id || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 || !this.isAlive(owner.pid)) throw new Error("A resource slot needs a live owner process.");
     // Probe outside the write transaction: it can take a moment on Windows.
-    const identity = ownerIdentity(owner.pid);
+    const identity = ownerIdentity(owner.pid), dead = this.deadOwners();
     return this.transaction(() => {
-      this.prune();
+      this.prune(dead);
       this.db.prepare("INSERT INTO slots(resource, id, pid, held, expiresAt, identity) VALUES (?, ?, ?, 0, ?, ?) ON CONFLICT(resource, id) DO NOTHING").run(resource, owner.id, owner.pid, this.now() + SLOT_LEASE_MS, identity);
       const own = this.db.prepare("SELECT ticket, pid, held FROM slots WHERE resource = ? AND id = ?").get(resource, owner.id)!;
       if (Number(own.pid) !== owner.pid) throw new Error("Resource slot owner does not match.");
@@ -122,7 +131,17 @@ export class ResourceSlots {
   }
 
   release(owner: SlotOwner, resource?: string): void {
-    this.db.prepare(`DELETE FROM slots WHERE id = ? AND pid = ?${resource ? " AND resource = ?" : ""}`).run(...(resource ? [owner.id, owner.pid, resource] : [owner.id, owner.pid]));
+    // A lease left behind by a live owner would hold its slot until the long lease expires:
+    // keep retrying a busy database for a bounded time instead of giving up after one timeout.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        this.db.prepare(`DELETE FROM slots WHERE id = ? AND pid = ?${resource ? " AND resource = ?" : ""}`).run(...(resource ? [owner.id, owner.pid, resource] : [owner.id, owner.pid]));
+        return;
+      } catch (err) {
+        if (!isSqliteBusy(err) || attempt >= RELEASE_ATTEMPTS) throw err;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, SLOT_POLL_MS);
+      }
+    }
   }
 
   renew(owner: SlotOwner, resource?: string): void {
@@ -131,8 +150,9 @@ export class ResourceSlots {
   }
 
   list(): SlotEntry[] {
+    const dead = this.deadOwners();
     return this.transaction(() => {
-      this.prune();
+      this.prune(dead);
       return this.db.prepare("SELECT * FROM slots ORDER BY ticket").all().map((row) => ({ resource: String(row.resource), id: String(row.id), pid: Number(row.pid), ticket: Number(row.ticket), held: Boolean(row.held), expiresAt: Number(row.expiresAt) }));
     });
   }
