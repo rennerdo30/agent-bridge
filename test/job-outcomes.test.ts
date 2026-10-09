@@ -72,13 +72,13 @@ describe("finished job delivery", () => {
 describe("supervisor decisions and migration", () => {
   it("includes archived jobs without rewriting the archive or losing active precedence", async () => {
     const path = join(home, "jobs.json");
+    // AB-206: the archive is the job index (job-archive.db); listing outcomes only reads it.
     const archived = archiveJobs(path, [{ ...job(), worktree: null, agent: "codex", prompt: "task", model: null, sessionId: null, workdir: null }]);
-    const old = readFileSync(archived, "utf8").replace('"version": 2', '"version": 1');
-    writeFileSync(archived, old);
     writeFileSync(path, JSON.stringify({ version: 1, jobs: [] }));
+    const old = readFileSync(archived);
     setJobOutcome(home, job(), "supervisor", "held", "archive hold");
     expect((await listJobOutcomes(home, nullLogger))[job().name]?.outcome.merge.state).toBe("held");
-    expect(readFileSync(archived, "utf8")).toBe(old);
+    expect(readFileSync(archived)).toEqual(old);
     writeFileSync(path, JSON.stringify({ jobs: [{ ...job(), startedAt: 600, status: "running" }] }));
     expect(await listJobOutcomes(home, nullLogger)).toEqual({});
   });
