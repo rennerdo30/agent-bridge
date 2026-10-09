@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { lstatSync, readdirSync, realpathSync, statSync, type Stats } from "node:fs";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { JOBS_FILE } from "./constants.js";
 import { isRecord } from "./json-store.js";
 import { RUNS_DIR_NAME, type RunMeta } from "./runfeed.js";
@@ -40,9 +40,10 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
   const root = join(home, RUNS_DIR_NAME);
   let canonicalRoot: string;
   try { canonicalRoot = realpathSync.native(root); } catch { return []; }
+  const warmWitness = responsive ? captureWarmRunRoot(root, canonicalRoot) : undefined;
   const records = new Map<string, RunLogRecord>();
   const signatures: string[] = [];
-  let complete = true, metadataBytes = 0;
+  let complete = !responsive || Boolean(warmWitness), metadataBytes = 0;
   const directories: { archived: boolean; files: { name: string; original: string; file: string; st: Stats }[] }[] = [];
   for (const archived of [true, false]) {
     const dir = archived ? join(root, "archive") : root;
@@ -74,6 +75,7 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
       if (!extension || namesFilter && !namesFilter.has(original.slice(0, -extension.length))) continue;
       const record = localFile(entry);
       if (!record) continue;
+      if (warmWitness && !captureWarmRunParents(warmWitness, dirname(record.file))) complete = false;
       signatures.push(`${archived}:${name}:${record.file}:${fileSignature(record.st)}`);
       if (extension === ".json") metadataBytes += record.st.size;
       selected.push({ name, original, ...record });
@@ -82,7 +84,12 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
   }
   const key = `${canonicalRoot}:${namesFilter ? JSON.stringify([...namesFilter].sort()) : "*"}`;
   const signature = signatures.join("\n"), saved = runLogSnapshots.get(key);
-  if (saved?.signature === signature && (!responsive || (yield* stableRunFiles(root, directories, canonicalRoot)))) return yield* cloneRunRecords(saved.records);
+  if (saved?.signature === signature) {
+    if (!responsive || warmWitness && (yield* stableWarmRunFiles(warmWitness, directories))) return yield* cloneRunRecords(saved.records);
+    // Do not reuse discovery paths after a failed witness; the next scan is fresh.
+    runLogSnapshots.delete(key);
+    return [];
+  }
   for (const { archived, files } of directories) {
     const metadata = new Map<string, RunMeta>();
     for (const { original, file, st } of files) {
@@ -112,6 +119,82 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
   if (complete && metadataBytes <= 256 * 1024 * 1024) runLogSnapshots.set(key, { signature, records: result });
   if (runLogSnapshots.size > 8) runLogSnapshots.delete(runLogSnapshots.keys().next().value!);
   return yield* cloneRunRecords(result);
+}
+
+type DirectoryIdentity = { dev: number; ino: number };
+interface WarmRunWitness {
+  root: string; canonicalRoot: string; alias: DirectoryIdentity;
+  parents: Map<string, DirectoryIdentity>; valid: boolean;
+}
+function sameDirectory(st: Stats, identity: DirectoryIdentity): boolean {
+  return st.dev === identity.dev && st.ino === identity.ino;
+}
+function captureWarmRunRoot(root: string, canonicalRoot: string): WarmRunWitness | undefined {
+  try {
+    const alias = lstatSync(root), physical = lstatSync(canonicalRoot);
+    if ((!alias.isDirectory() && !alias.isSymbolicLink()) || !physical.isDirectory() || physical.isSymbolicLink() || realpathSync.native(root) !== canonicalRoot) return undefined;
+    return { root, canonicalRoot, alias: { dev: alias.dev, ino: alias.ino }, parents: new Map([[canonicalRoot, { dev: physical.dev, ino: physical.ino }]]), valid: true };
+  } catch { return undefined; }
+}
+/** Capture each resolved target's physical parent chain before the next suspension. */
+function captureWarmRunParents(witness: WarmRunWitness, parent: string): boolean {
+  if (!witness.valid) return false;
+  const rel = relative(witness.canonicalRoot, parent);
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return witness.valid = false;
+  try {
+    for (let at = parent; !witness.parents.has(at); at = dirname(at)) {
+      const st = lstatSync(at);
+      if (!st.isDirectory() || st.isSymbolicLink()) return witness.valid = false;
+      witness.parents.set(at, { dev: st.dev, ino: st.ino });
+    }
+    return true;
+  } catch { return witness.valid = false; }
+}
+function warmRunBatchParents(witness: WarmRunWitness, files: { file: string }[]): Set<string> | undefined {
+  const parents = new Set([witness.canonicalRoot]);
+  for (const file of files) for (let at = dirname(file.file);; at = dirname(at)) {
+    if (!witness.parents.has(at)) return undefined;
+    parents.add(at);
+    if (at === witness.canonicalRoot) break;
+    if (dirname(at) === at) return undefined;
+  }
+  return parents;
+}
+function unchangedWarmRunParents(witness: WarmRunWitness, parents: Iterable<string> = [witness.canonicalRoot]): boolean {
+  if (!witness.valid) return false;
+  try {
+    const alias = lstatSync(witness.root);
+    if (!sameDirectory(alias, witness.alias) || realpathSync.native(witness.root) !== witness.canonicalRoot) return false;
+    for (const path of parents) {
+      const identity = witness.parents.get(path);
+      if (!identity) return false;
+      const st = path === witness.root ? alias : lstatSync(path);
+      if (!st.isDirectory() || st.isSymbolicLink() || !sameDirectory(st, identity)) return false;
+    }
+    return true;
+  } catch { return false; }
+}
+/** Warm hits read no bytes. Guard ancestors around each bounded, nonsuspending stat batch. */
+function* stableWarmRunFiles(witness: WarmRunWitness, directories: { files: { file: string; st: Stats }[] }[]): Generator<void, boolean> {
+  for (const directory of directories) {
+    let index = 0;
+    while (index < directory.files.length) {
+      yield;
+      const candidates = directory.files.slice(index, index + 32), parents = warmRunBatchParents(witness, candidates);
+      if (!parents || !unchangedWarmRunParents(witness, parents)) return false;
+      const started = performance.now(); let checked = 0;
+      do {
+        const file = directory.files[index++]!;
+        try {
+          const direct = lstatSync(file.file);
+          if (!direct.isFile() || fileSignature(direct) !== fileSignature(file.st)) return false;
+        } catch { return false; }
+        checked++;
+      } while (index < directory.files.length && checked < 32 && performance.now() - started < 4);
+      if (!unchangedWarmRunParents(witness, parents)) return false;
+    }
+  }
+  return unchangedWarmRunParents(witness);
 }
 
 function* stableRunFiles(root: string, directories: { files: { file: string; st: Stats }[] }[], canonicalRoot: string): Generator<void, boolean> {

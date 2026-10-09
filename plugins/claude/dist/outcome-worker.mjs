@@ -61,7 +61,7 @@ var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
 // src/core/run-history.ts
 import { readFile as readFile2 } from "node:fs/promises";
 import { lstatSync as lstatSync2, readdirSync as readdirSync8, realpathSync as realpathSync2, statSync as statSync6 } from "node:fs";
-import { isAbsolute as isAbsolute2, join as join9, relative as relative2, sep as sep2 } from "node:path";
+import { dirname as dirname4, isAbsolute as isAbsolute2, join as join9, relative as relative2, sep as sep2 } from "node:path";
 
 // src/core/json-store.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
@@ -382,7 +382,7 @@ function resolveDbPath(home) {
 // src/core/project-identity.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 import { existsSync as existsSync6, lstatSync as lstatSync3, readFileSync as readFileSync7, realpathSync as realpathSync3, statSync as statSync7 } from "node:fs";
-import { basename as basename3, delimiter, dirname as dirname4, isAbsolute as isAbsolute3, join as join11, relative as relative3, resolve as resolve4 } from "node:path";
+import { basename as basename3, delimiter, dirname as dirname5, isAbsolute as isAbsolute3, join as join11, relative as relative3, resolve as resolve4 } from "node:path";
 
 // src/core/session-visibility.ts
 import { posix as posix2 } from "node:path";
@@ -392,7 +392,7 @@ import { randomUUID as randomUUID13 } from "node:crypto";
 import { setTimeout as delay6 } from "node:timers/promises";
 import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
 import { closeSync as closeSync11, constants as fsConstants, copyFileSync as copyFileSync5, fsyncSync as fsyncSync6, openSync as openSync11 } from "node:fs";
-import { dirname as dirname13 } from "node:path";
+import { dirname as dirname14 } from "node:path";
 
 // src/core/codex-subagents.ts
 function codexSubagentConfig(count = DEFAULT_CODEX_SUBAGENTS) {
@@ -449,7 +449,7 @@ function jobEnvironment(env = process.env, platform = process.platform) {
 // src/core/delegate.ts
 import { spawn } from "node:child_process";
 import { existsSync as existsSync7, readFileSync as readFileSync12, realpathSync as realpathSync5 } from "node:fs";
-import { delimiter as delimiter2, dirname as dirname6, extname, isAbsolute as isAbsolute4, join as join17, win32 } from "node:path";
+import { delimiter as delimiter2, dirname as dirname7, extname, isAbsolute as isAbsolute4, join as join17, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay2 } from "node:timers/promises";
 
@@ -509,7 +509,7 @@ import { createServer } from "node:http";
 // src/core/token.ts
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync as mkdirSync6, openSync as openSync5, readFileSync as readFileSync10, writeSync, closeSync as closeSync5 } from "node:fs";
-import { dirname as dirname5, join as join14 } from "node:path";
+import { dirname as dirname6, join as join14 } from "node:path";
 function tokensEqual(a, b) {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
@@ -1178,7 +1178,7 @@ function isClaudeReadOnly(mode) {
 }
 var CLAUDE_READ_ONLY_MODES = /* @__PURE__ */ new Set(["default", "manual", "plan"]);
 function bundledCli() {
-  const cli = join17(dirname6(fileURLToPath(import.meta.url)), "cli.mjs");
+  const cli = join17(dirname7(fileURLToPath(import.meta.url)), "cli.mjs");
   return existsSync7(cli) ? cli : null;
 }
 function spawnsWithoutShell(bin, log) {
@@ -21099,11 +21099,11 @@ var decisionScopeSchema = external_exports.union([
 import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 import { createHash as createHash3, randomUUID as randomUUID8 } from "node:crypto";
 import { closeSync as closeSync7, copyFileSync as copyFileSync4, fsyncSync as fsyncSync2, mkdirSync as mkdirSync9, openSync as openSync7, writeFileSync as writeFileSync5 } from "node:fs";
-import { basename as basename4, dirname as dirname8, join as join21 } from "node:path";
+import { basename as basename4, dirname as dirname9, join as join21 } from "node:path";
 
 // src/core/sqlite-maintenance.ts
 import { existsSync as existsSync9 } from "node:fs";
-import { dirname as dirname7, join as join20 } from "node:path";
+import { dirname as dirname8, join as join20 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // src/core/logger.ts
@@ -21128,7 +21128,7 @@ import { setTimeout as delay3 } from "node:timers/promises";
 // src/core/sqlite-maintenance.ts
 var ARCHIVE_DB_NAME = "archive.db";
 function archiveDbPath(file2) {
-  return file2 === ":memory:" ? ":memory:" : join20(dirname7(file2), ARCHIVE_DB_NAME);
+  return file2 === ":memory:" ? ":memory:" : join20(dirname8(file2), ARCHIVE_DB_NAME);
 }
 
 // src/core/migration-lock.ts
@@ -21183,12 +21183,12 @@ var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto
 // src/core/antigravity-plugin.ts
 import { existsSync as existsSync12, readFileSync as readFileSync16 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { dirname as dirname9, join as join24 } from "node:path";
+import { dirname as dirname10, join as join24 } from "node:path";
 var antigravityPluginDir = (home = homedir5()) => join24(home, ".gemini", "config", "plugins", "agent-bridge");
-var antigravityRuntimeHome = (dir = antigravityPluginDir()) => join24(dirname9(dir), ".agent-bridge-runtime");
+var antigravityRuntimeHome = (dir = antigravityPluginDir()) => join24(dirname10(dir), ".agent-bridge-runtime");
 function antigravityRuntimeDir(dir = antigravityPluginDir()) {
   const selected = selectedWorker(antigravityRuntimeHome(dir), "antigravity", join24(dir, "dist", "server.mjs"));
-  return dirname9(dirname9(selected.worker));
+  return dirname10(dirname10(selected.worker));
 }
 function antigravityHookCommand(cli, event, node2 = process.execPath, platform = process.platform) {
   const quote = (value) => `'${value.replace(/'/g, "''")}'`;
@@ -22103,7 +22103,7 @@ ${res.text}` } : res;
 // src/core/job-archive.ts
 import { createHash as createHash4, randomUUID as randomUUID10 } from "node:crypto";
 import { closeSync as closeSync8, existsSync as existsSync13, fsyncSync as fsyncSync3, linkSync, lstatSync as lstatSync4, mkdirSync as mkdirSync11, openSync as openSync8, readdirSync as readdirSync10, realpathSync as realpathSync6, writeFileSync as writeFileSync6 } from "node:fs";
-import { basename as basename6, dirname as dirname10, join as join25 } from "node:path";
+import { basename as basename6, dirname as dirname11, join as join25 } from "node:path";
 
 // src/core/notifications.ts
 import { spawn as spawn4 } from "node:child_process";
@@ -22163,12 +22163,12 @@ var CACHE_BYTES = 64 * 1024 * 1024;
 // src/core/metadata-file-lease.ts
 import { createHash as createHash7, randomUUID as randomUUID11 } from "node:crypto";
 import { closeSync as closeSync9, fsyncSync as fsyncSync4, linkSync as linkSync2, lstatSync as lstatSync5, mkdirSync as mkdirSync14, openSync as openSync9, readFileSync as readFileSync19, readdirSync as readdirSync11, renameSync as renameSync5, writeFileSync as writeFileSync8 } from "node:fs";
-import { basename as basename7, dirname as dirname11, join as join30, resolve as resolve7 } from "node:path";
+import { basename as basename7, dirname as dirname12, join as join30, resolve as resolve7 } from "node:path";
 
 // src/core/job-pending-journal.ts
 import { createHash as createHash8, randomUUID as randomUUID12 } from "node:crypto";
 import { closeSync as closeSync10, constants, fstatSync as fstatSync3, fsyncSync as fsyncSync5, linkSync as linkSync3, lstatSync as lstatSync6, mkdirSync as mkdirSync15, openSync as openSync10, readFileSync as readFileSync20, readdirSync as readdirSync12, renameSync as renameSync6, writeFileSync as writeFileSync9 } from "node:fs";
-import { dirname as dirname12, join as join31, resolve as resolve8 } from "node:path";
+import { dirname as dirname13, join as join31, resolve as resolve8 } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 var MAX_RECEIPT_BYTES = 32 * 1024 * 1024;
 
@@ -22184,7 +22184,7 @@ import { basename as basename9, isAbsolute as isAbsolute7, join as join33, relat
 import { execFileSync as execFileSync3 } from "node:child_process";
 import { copyFileSync as copyFileSync6, existsSync as existsSync14, lstatSync as lstatSync7, mkdirSync as mkdirSync16, mkdtempSync, readdirSync as readdirSync13, readlinkSync, realpathSync as realpathSync7, rmSync as rmSync4, rmdirSync as rmdirSync2, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename as basename8, dirname as dirname14, isAbsolute as isAbsolute6, join as join32, relative as relative4, resolve as resolve9, sep as sep3, toNamespacedPath } from "node:path";
+import { basename as basename8, dirname as dirname15, isAbsolute as isAbsolute6, join as join32, relative as relative4, resolve as resolve9, sep as sep3, toNamespacedPath } from "node:path";
 
 // src/core/worktree.ts
 var GIT = "git";
@@ -22475,7 +22475,7 @@ import { Worker } from "node:worker_threads";
 import { mkdir as mkdir2, stat as stat2, readdir } from "node:fs/promises";
 import { createHash as createHash13 } from "node:crypto";
 import { createRequire } from "node:module";
-import { dirname as dirname15, join as join37 } from "node:path";
+import { dirname as dirname16, join as join37 } from "node:path";
 import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
 var CACHE_LIMIT = 1024;
 var CACHE_BYTES2 = 8 * 1024 * 1024;
@@ -22546,9 +22546,9 @@ var OutcomeBackground = class {
   async start() {
     let entry = new URL("./outcome-worker.mjs", import.meta.url);
     if (import.meta.url.endsWith(".ts")) {
-      const root = dirname15(dirname15(dirname15(fileURLToPath2(import.meta.url))));
+      const root = dirname16(dirname16(dirname16(fileURLToPath2(import.meta.url))));
       const path = join37(root, ".agent-bridge-test", `outcome-worker-${process.pid}.mjs`);
-      await mkdir2(dirname15(path), { recursive: true });
+      await mkdir2(dirname16(path), { recursive: true });
       await createRequire(import.meta.url)("esbuild").build({
         entryPoints: [join37(root, "src/core/outcome-worker.ts")],
         outfile: path,
@@ -22637,7 +22637,7 @@ var background = new OutcomeBackground();
 
 // src/core/outcome-worker.ts
 import { stat as stat3, readFile as readFile3 } from "node:fs/promises";
-import { dirname as dirname16, join as join38, resolve as resolve11 } from "node:path";
+import { dirname as dirname17, join as join38, resolve as resolve11 } from "node:path";
 var cache3 = /* @__PURE__ */ new Map();
 var cacheBytes = 0;
 async function gitPaths(inputs) {
@@ -22669,7 +22669,7 @@ async function gitPaths(inputs) {
           let ref = join38(root, "refs", "heads", branch);
           for (let depth = 0; depth < 8; depth++) {
             paths.add(ref);
-            paths.add(dirname16(ref));
+            paths.add(dirname17(ref));
             let symbolic;
             try {
               symbolic = /^ref:\s*(refs\/[\w./-]+)\s*$/.exec(await readFile3(ref, "utf8"));
