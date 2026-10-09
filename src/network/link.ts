@@ -37,6 +37,8 @@ const peerSchema = z.object({
   projectGroup: z.string().min(1).max(MAX_METADATA_CHARS).optional(), projectAddress: z.string().min(1).max(MAX_METADATA_CHARS).optional(),
   projectMain: z.boolean().optional(), unavailable: z.boolean().optional(),
 });
+/** The last set of left-out local peers each service logged, so a persistent one is reported once. */
+const droppedPeersLogged = new WeakMap<object, string>();
 const peersSchema = z.array(peerSchema).max(MAX_NETWORK_PEERS).refine((peers) => new Set(peers.map((p) => p.name)).size === peers.length && new Set(peers.map((p) => p.id)).size === peers.length);
 const messageSchema = z.object({
   id: z.uuid(), from: z.object({ id: textId, name: z.string().regex(NETWORK_NAME_PATTERN), agent: z.enum(AGENT_KINDS) }),
@@ -403,7 +405,26 @@ export class NetworkService {
     return link.receipt(id, sender, target, requireRecipient);
   }
 
-  localPeers(): PeerInfo[] { return peersSchema.parse(this.broker.peers()); }
+  /**
+   * The local sessions advertised to paired PCs. One invalid, duplicate or excess registration is left out (and
+   * logged once) instead of failing the list, which would drop every paired link (AB-242).
+   */
+  localPeers(): PeerInfo[] {
+    const out: PeerInfo[] = [], names = new Set<string>(), ids = new Set<string>(), dropped: string[] = [];
+    for (const raw of this.broker.peers() as unknown[]) {
+      const parsed = peerSchema.safeParse(raw);
+      const label = String((raw as { name?: unknown } | null)?.name ?? "?").slice(0, 80);
+      if (!parsed.success || names.has(parsed.data.name) || ids.has(parsed.data.id) || out.length >= MAX_NETWORK_PEERS) { dropped.push(label); continue; }
+      names.add(parsed.data.name); ids.add(parsed.data.id);
+      out.push(parsed.data as PeerInfo);
+    }
+    const signature = dropped.join("\n");
+    if (dropped.length && signature !== droppedPeersLogged.get(this)) {
+      droppedPeersLogged.set(this, signature);
+      this.log.warn("some local sessions are not advertised to paired PCs", { count: dropped.length, names: dropped.slice(0, 10) });
+    }
+    return out;
+  }
   receive(message: BridgeMessage): DeliveryResult { return this.broker.receive(message); }
 
   async start(): Promise<void> {
