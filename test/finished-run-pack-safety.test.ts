@@ -115,3 +115,18 @@ it("keeps packed runs in history search, including after a reindex (AB-227)", as
   drain();
   expect(index.search({ query: "needle" }).hits.map(h => h.run)).toContain(`${name}.log`);
 });
+
+it("packs archived runs in the broker's job archive worker and in doctor --archive, then releases bridge.db", async () => {
+  const { JobArchiveBackground } = await import("../src/core/job-archive-background.js");
+  const { runDoctor } = await import("../src/cli/doctor.js");
+  const first = "2026-10-01-09-00-00-codex-job-worker";
+  archivedRun(first);
+  const background = new JobArchiveBackground(join(env.home, "jobs.json"), nullLogger);
+  await background.close();
+  expect(packedRunRecords(env.home).map(r => r.name)).toEqual([first]);
+  const second = "2026-10-02-09-00-00-codex-job-doctor";
+  archivedRun(second);
+  expect(await runDoctor(["--archive", "--yes"], env.home, () => {}, async () => true)).toBe(0);
+  expect(packedRunRecords(env.home).map(r => r.name).sort()).toEqual([first, second]);
+  expect(existsSync(join(env.home, "runs", "archive", `${second}.log`))).toBe(false);
+});
