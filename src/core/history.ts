@@ -46,6 +46,7 @@ interface WalkRoot { path: string; root: string; kind: string; agent: string }
 function folded(text: string): string { return text.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase(); }
 function terms(query: string): string[] { return folded(query).match(/[\p{L}\p{N}_]+/gu)?.slice(0, HISTORY_MAX_TERMS) ?? []; }
 const enc = encodeURIComponent;
+const RUN_FILE = /\.log(?:-\d+-[\w-]+)?$/;
 
 /** Owns only derived tables. Source files and cold databases are always opened read-only. */
 export class HistoryIndex {
@@ -56,6 +57,7 @@ export class HistoryIndex {
   private checked = 0;
   private idleFiles = 0;
   private opencodeComplete = false;
+  private packedComplete = false;
   private heads = new Map<string,{identity:string;value:Record<string,any>}>();
   private readonly paths: TranscriptPaths;
   /** History store v2 keeps document bodies compressed (body_codec) and folded only where it differs. */
@@ -235,6 +237,7 @@ export class HistoryIndex {
       this.lastDiscovery = Date.now();
       this.idleFiles = 0;
       this.opencodeComplete = false;
+      this.packedComplete = false;
       this.queue = [
         { path: join(this.home!, "context-events"), root:this.home!,kind:"context",agent:"other" },
         { path: join(this.home!, "approvals"), root:this.home!,kind:"approval",agent:"other" },
@@ -272,6 +275,7 @@ export class HistoryIndex {
         this.register({ path, kind: "transcript", agent: entry.agent, session: child ? basename(dirname(entry.path)) : id, cwd: typeof meta.cwd === "string" ? meta.cwd : "", child });
       }
     }
+    work += this.discoverPackedRuns();
     // opencode's indexed session registry avoids a filesystem crawl.
     const path = safeFile(this.paths.opencode, join(this.paths.opencode, "opencode.db"));
     if (path && !this.opencodeComplete) {
@@ -288,6 +292,29 @@ export class HistoryIndex {
     return work;
   }
 
+  /** Packed finished runs live in cold storage, outside runs/ (AB-208). Their index rows in bridge.db name the
+   * retained originals, so a reindex finds them without walking cold storage (AB-227). */
+  private discoverPackedRuns(): number {
+    if (this.packedComplete || !this.home || this.source === this.db) return 0;
+    if (!this.source.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='bridge_metadata'").get()) { this.packedComplete = true; return 0; }
+    const after = this.cursor("packed-run-discovery");
+    const rows = this.source.prepare("SELECT key,json_extract(value,'$.file') AS file FROM bridge_metadata WHERE domain='finished-runs' AND key>? ORDER BY key LIMIT ?")
+      .all(after === "0" ? "" : after, HISTORY_DISCOVERY_PER_TICK);
+    const cold = join(this.home, "cold", "originals");
+    for (const row of rows) {
+      const file = typeof row.file === "string" ? row.file : "";
+      if (!RUN_FILE.test(file) || !safeFile(cold, file)) continue;
+      this.register({ path: file, kind: "run", agent: /-(claude|codex|opencode|antigravity)-/.exec(String(row.key))?.[1] ?? "other", session: null, cwd: "", child: null });
+    }
+    this.advance("packed-run-discovery", rows.length ? String(rows.at(-1)!.key) : "0");
+    if (!rows.length) this.packedComplete = true;
+    return rows.length;
+  }
+  private runRoot(path: string): string {
+    const cold = join(this.home!, "cold", "originals");
+    return safeFile(cold, path) ? cold : join(this.home!, "runs");
+  }
+
   private transcript(doc: FileRow, item: TranscriptItem, cursor: string, ordinal: number): void {
     const body = item.text ?? [item.tool, item.summary, item.subagent?.title].filter(Boolean).join("\n");
     if (!body) return;
@@ -298,7 +325,7 @@ export class HistoryIndex {
   private indexFile(file: FileRow): number {
     if (file.kind === "context" || file.kind === "approval" || (file.kind === "run" && /\.json(?:-.*)?$/.test(file.path))) return 0;
     if (file.agent !== "opencode") {
-      const root = file.kind === "run" ? join(this.home!, "runs") : this.paths[file.agent as "claude" | "codex" | "antigravity"];
+      const root = file.kind === "run" ? this.runRoot(file.path) : this.paths[file.agent as "claude" | "codex" | "antigravity"];
       if (!root) return 0;
       if (!safeFile(root, file.path)) return 0;
     }
@@ -336,7 +363,7 @@ export class HistoryIndex {
       let meta: Record<string, any> = {};
       let metaText = "";
       const metaPath = file.path.replace(/\.log(?:-\d+-[\w-]+)?$/, ".json");
-      const safeMeta = safeFile(join(this.home!, "runs"), metaPath);
+      const safeMeta = safeFile(this.runRoot(file.path), metaPath);
       if (safeMeta) {
         const metaFd = openSync(safeMeta, "r");
         try {
@@ -416,7 +443,7 @@ export class HistoryIndex {
     this.db.exec("BEGIN IMMEDIATE");
     try { clearHistoryDocuments(this.db); this.db.exec("DELETE FROM history_tags; DELETE FROM history_cursors WHERE source<>'legacy-record-tail'; DELETE FROM history_files;"); this.db.exec("COMMIT"); }
     catch (err) { this.db.exec("ROLLBACK"); throw err; }
-    this.close(); this.queue = []; this.lastDiscovery = 0; this.opencodeComplete = false; this.idleFiles = 0;
+    this.close(); this.queue = []; this.lastDiscovery = 0; this.opencodeComplete = false; this.packedComplete = false; this.idleFiles = 0;
   }
   close(): void { this.walk?.dir.closeSync(); this.walk = null; }
 }
