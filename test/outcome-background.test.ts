@@ -39,12 +39,17 @@ it("repeated corpus polls perform no receipt/database/Git inspection on the requ
   const ctx = { home: env.home, log: nullLogger, peers: () => [] };
   const read = async () => (await readDashboard(ctx, { path: "/api/job-outcomes", query: { limit: "20" } })).body as any;
   await ready(read, value => Object.values(value.runs).every((o: any) => o.observation.state === "ready"));
-  const begin = performance.now();
+  // While the background store appears, the only request-thread database access is the packed-run
+  // revision check (AB-233/245): a short-lived read-only bridge.db open, at most once per change.
+  const bridge = join(env.home, "bridge.db");
+  for (const args of opens.mock.calls) expect(args).toEqual([bridge, { readOnly: true, timeout: 1000 }]);
+  opens.mockClear();
+  // Steady polls: no inspection at all on the request thread. Counting the calls proves this
+  // independently of how loaded the machine is; wall time only measured the host.
   for (let i = 0; i < 12; i++) {
     const value = await read();
     expect(Object.keys(value.jobs).length + Object.keys(value.runs).length).toBe(20);
   }
-  expect(performance.now() - begin).toBeLessThan(3000);
   expect(derive).not.toHaveBeenCalled(); expect(receipts).not.toHaveBeenCalled(); expect(opens).not.toHaveBeenCalled(); expect(git).not.toHaveBeenCalled();
 });
 
