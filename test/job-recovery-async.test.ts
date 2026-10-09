@@ -1,5 +1,6 @@
 import * as feeds from "../src/core/job-recovery-feed.js";
-import { indexFixtureArchives, indexFixtureFile } from "./archive-fixture.js";
+import { indexFixtureFile } from "./archive-fixture.js";
+import { archiveJobs } from "../src/core/job-archive.js";
 import * as io from "node:fs/promises";
 import * as history from "../src/core/run-history.js";
 import * as cache from "../src/core/file-cache.js";
@@ -28,9 +29,11 @@ function fixture(prompt:string, owner:string, id="asynclegacy") {
 it("yields throughout a cold archive/run catalog, matches offline recovery and clones only selected jobs",async()=>{
   mkdirSync(join(env.home,"archive"));mkdirSync(join(env.home,"runs"));mkdirSync(join(env.home,"jobs"));
   const id="responsivecold",name=`codex-job-${id}`, selected={id,name,agent:"codex",owner:"current-owner",rootName:"current-owner",status:"interrupted",startedAt:5,sessionId:"retained-native",prompt:"Exact cold retained context",args:{title:"Retained title",future:{keep:true}},future:{context:["keep"]}};
+  const corpus:Record<string,unknown>[]=[];
   for(let i=0;i<307;i++){
     const jobs=Array.from({length:5},(_,j)=>({id:`foreign-${i}-${j}`,name:`codex-job-foreign-${i}-${j}`,agent:"codex",owner:"foreign-owner",prompt:"retained".repeat(64),future:{keep:true}}));
     writeFileSync(join(env.home,"archive",`jobs-${String(i).padStart(4,"0")}.json`),JSON.stringify({version:4,jobs:i===306?[...jobs,selected]:jobs}));
+    corpus.push(...(i===306?[...jobs,selected]:jobs));
   }
   for(let i=0;i<1024;i++){
     const own=i===1023, run=join(env.home,"runs",`2026-10-08-01-02-03-codex-${own?id:`foreign-${i}`}`);
@@ -38,7 +41,9 @@ it("yields throughout a cold archive/run catalog, matches offline recovery and c
     writeFileSync(`${run}.log`,"01:02:03 header by launch-owner\n         launch context\n         ---\n");
   }
   writeFileSync(join(env.home,"jobs",`${id}.spec.json`),JSON.stringify({cwd:env.home,job:{id,name,agent:"codex",owner:"launch-owner",startedAt:1,prompt:"Old launch context"},base:{access:"ask",futureSpec:"retained"}}));
-  indexFixtureArchives(env.home);
+  // Index the same 1536 records in one transaction: per-file imports cost one durable commit each,
+  // which on a loaded Windows disk exceeded the test budget before recovery even started.
+  archiveJobs(join(env.home,"jobs.json"),corpus);
   const synchronousHistory=vi.spyOn(history,"findHistoryJob"),synchronousRuns=vi.spyOn(history,"readRunLogs"),clones=vi.spyOn(cache,"cloneJson");
   let settled=false,beats=0,scheduled=true;
   const tick=()=>{if(!scheduled)return;beats++;setImmediate(tick);};setImmediate(tick);
