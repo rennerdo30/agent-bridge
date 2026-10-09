@@ -14,6 +14,7 @@ import { jobEnvironment } from "../core/job-environment.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { assertStoreUpgrade, refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { JSON_STORE_VERSION } from "../core/json-store.js";
+import { cloneJson, fileSignature } from "../core/file-cache.js";
 import type { HostedAdmission } from "./jobs.js";
 
 /**
@@ -64,11 +65,22 @@ function specPath(home: string, id: string): string {
   return join(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
 }
 
+/** Supervisors poll runner state every couple of seconds; runners rewrite it on change and every heartbeat.
+ * Unchanged files are answered from memory (AB-147); callers get their own copy. */
+const runnerStates = new Map<string, { signature: string; state: RunnerState | null }>();
 export function readRunnerState(home: string, id: string): RunnerState | null {
+  const path = runnerStatePath(home, id);
   try {
-    const s = readJsonStore(runnerStatePath(home, id), undefined, (value) => isRecord(value) && typeof value.pid === "number" && typeof value.status === "string") as RunnerState | null;
-    return s && typeof s.pid === "number" && typeof s.status === "string" ? s : null;
+    const signature = fileSignature(statSync(path));
+    const saved = runnerStates.get(path);
+    if (saved?.signature === signature) return saved.state ? cloneJson(saved.state) : null;
+    const s = readJsonStore(path, undefined, (value) => isRecord(value) && typeof value.pid === "number" && typeof value.status === "string") as RunnerState | null;
+    const state = s && typeof s.pid === "number" && typeof s.status === "string" ? s : null;
+    if (runnerStates.size >= 256) runnerStates.delete(runnerStates.keys().next().value!);
+    runnerStates.set(path, { signature, state });
+    return state ? cloneJson(state) : null;
   } catch {
+    runnerStates.delete(path);
     return null;
   }
 }

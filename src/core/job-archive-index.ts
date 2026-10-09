@@ -198,13 +198,25 @@ export function markJobProjection(path: string, jobs: readonly unknown[], expect
   } finally { db.close(); }
 }
 
+/** Supervisors ask this on every job poll (AB-147): answer from memory while the active file, the
+ * archive and its WAL are unchanged, instead of opening the archive database each time. */
+const projectionChecks = new Map<string, { signature: string; current: boolean }>();
 export function indexedJobProjectionCurrent(path: string): boolean {
   if (!existsSync(path)) return false;
   physicalArchivePath(path);
+  const file = jobArchivePath(path);
+  const stat = (p: string) => existsSync(p) ? fileSignature(statSync(p)) : "missing";
+  const active = fileSignature(statSync(path)), signature = [active, stat(file), stat(`${file}-wal`)].join("|");
+  const saved = projectionChecks.get(path);
+  if (saved?.signature === signature) return saved.current;
   const db = openJobArchive(path);
   if (!db) return false;
-  try { return db.prepare("SELECT signature FROM archive_projection WHERE version=1").get()?.signature === fileSignature(statSync(path)); }
+  let current: boolean;
+  try { current = db.prepare("SELECT signature FROM archive_projection WHERE version=1").get()?.signature === active; }
   finally { db.close(); }
+  if (projectionChecks.size >= 64) projectionChecks.delete(projectionChecks.keys().next().value!);
+  projectionChecks.set(path, { signature, current });
+  return current;
 }
 
 export function readJobVersions(path: string, id: string): Record<string, unknown>[] {
