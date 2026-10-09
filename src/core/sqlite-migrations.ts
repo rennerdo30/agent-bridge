@@ -119,9 +119,9 @@ function migrateLocked(db: DatabaseSync, file: string, existed: boolean, target:
       try {
         // Virtual tables and their shadows were restored by the savepoint. Never rewrite FTS internals.
         const tables = original.prepare("PRAGMA table_list").all().filter((r) => r.schema === "main" && r.type === "table" && !String(r.name).startsWith("sqlite_"));
+        const quote = (s: string) => `"${s.replaceAll('"', '""')}"`;
         for (const row of tables) {
           const name = String(row.name);
-          const quote = (s: string) => `"${s.replaceAll('"', '""')}"`;
           const quoted = quote(name);
           const columns = original.prepare(`PRAGMA table_xinfo(${quoted})`).all().filter((r) => r.hidden === 0).map((r) => String(r.name));
           let rowidAlias = "__bridge_backup_rowid";
@@ -130,13 +130,16 @@ function migrateLocked(db: DatabaseSync, file: string, existed: boolean, target:
           const hasRowid = row.wr === 0 && rowid !== undefined;
           const select = original.prepare(`SELECT ${hasRowid ? `${quote(rowid)} AS ${quote(rowidAlias)}, ` : ""}${columns.map(quote).join(", ")} FROM ${quoted}`);
           select.setReadBigInts(true);
-          const rows = select.all();
+          // Append-only guards (conversation_records) would abort the restore (AB-235). Lift every trigger on the
+          // table for the restore and recreate it from its own SQL inside this same transaction.
+          const triggers = db.prepare("SELECT name,sql FROM sqlite_master WHERE type='trigger' AND tbl_name=? AND sql IS NOT NULL").all(name);
+          for (const trigger of triggers) db.exec(`DROP TRIGGER ${quote(String(trigger.name))}`);
           db.exec(`DELETE FROM ${quoted}`);
-          for (const data of rows) {
-            const insertColumns = hasRowid ? [rowid, ...columns] : columns;
-            const values = hasRowid ? [data[rowidAlias]!, ...columns.map((s) => data[s]!)] : columns.map((s) => data[s]!);
-            db.prepare(`INSERT INTO ${quoted} (${insertColumns.map(quote).join(", ")}) VALUES (${values.map(() => "?").join(", ")})`).run(...values);
-          }
+          const insertColumns = hasRowid ? [rowid, ...columns] : columns;
+          const insert = db.prepare(`INSERT INTO ${quoted} (${insertColumns.map(quote).join(", ")}) VALUES (${insertColumns.map(() => "?").join(", ")})`);
+          // Stream rows; a large store never materializes a whole table in memory.
+          for (const data of select.iterate()) insert.run(...(hasRowid ? [data[rowidAlias]!, ...columns.map((s) => data[s]!)] : columns.map((s) => data[s]!)));
+          for (const trigger of triggers) db.exec(String(trigger.sql));
         }
         db.exec(`PRAGMA user_version = ${Number(original.prepare("PRAGMA user_version").get()!.user_version)}`);
         db.exec("RELEASE schema_migration; COMMIT");
