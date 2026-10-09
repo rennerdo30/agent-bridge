@@ -23,19 +23,26 @@ export interface BrokerHealth {
   roundTripMs?: number;
 }
 
+type EventLoopDelay = Pick<ReturnType<typeof monitorEventLoopDelay>, "enable" | "disable" | "percentile" | "max">;
+
 /** Bounded in-memory diagnostics. Never load logs, archived records or database tables. */
 export class HealthMonitor {
-  private readonly delay: Pick<ReturnType<typeof monitorEventLoopDelay>, "enable" | "disable" | "percentile" | "max">;
+  private delay: EventLoopDelay;
+  private sampled = false;
   private timer: NodeJS.Timeout | null = null;
   private lastActivity = 0;
   private closed = false;
-  constructor(delay = monitorEventLoopDelay({ resolution: 20 })) { this.delay = delay; }
+  constructor(private readonly createDelay: () => EventLoopDelay = () => monitorEventLoopDelay({ resolution: 20 })) { this.delay = createDelay(); }
   private readonly errors: BrokerHealth["recentErrors"] = [];
   /** Sample active request bursts, then stop the native 20 ms idle wakeup. */
   start(): void {
     if (this.closed) return;
     this.lastActivity = Date.now();
     if (this.timer) return;
+    // A re-enabled histogram measures its first interval from the tick before it was disabled, so the idle gap
+    // would read as one huge delay. Each active window samples into a fresh histogram.
+    if (this.sampled) this.delay = this.createDelay();
+    this.sampled = true;
     this.delay.enable();
     const expire = () => {
       const remaining = 5_000 - (Date.now() - this.lastActivity);

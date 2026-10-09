@@ -12,17 +12,21 @@ import { makeEnv, type TestEnv } from "./helpers.js";
 describe("cheap broker diagnostics", () => {
   it("stops native delay sampling while idle and resumes on request activity", async () => {
     vi.useFakeTimers();
-    const delay = { enable: vi.fn(), disable: vi.fn(), percentile: () => 20_000_000, max: 20_000_000 };
-    const monitor = new HealthMonitor(delay as any);
+    const enable = vi.fn(), disable = vi.fn();
+    // Each histogram reports its own maximum: the first saw a 20 ms delay, a later one only 1 ms.
+    const created: number[] = [20_000_000, 1_000_000];
+    const monitor = new HealthMonitor(() => { const ns = created.shift() ?? 1_000_000; return { enable, disable, percentile: () => ns, max: ns } as any; });
     try {
       monitor.start(); await vi.advanceTimersByTimeAsync(4_000); monitor.start();
-      expect(delay.enable).toHaveBeenCalledTimes(1);
-      await vi.advanceTimersByTimeAsync(4_999); expect(delay.disable).not.toHaveBeenCalled();
-      await vi.advanceTimersByTimeAsync(1); expect(delay.disable).toHaveBeenCalledTimes(1);
+      expect(enable).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(4_999); expect(disable).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1); expect(disable).toHaveBeenCalledTimes(1);
       expect(monitor.snapshot("fixture", null).eventLoopDelayMs).toEqual({ p95: 20, max: 20 });
-      monitor.start(); expect(delay.enable).toHaveBeenCalledTimes(2);
+      // Re-enabling after an idle gap uses a fresh histogram, so the gap never reads as a delay (AB-257).
+      monitor.start(); expect(enable).toHaveBeenCalledTimes(2);
+      expect(monitor.snapshot("fixture", null).eventLoopDelayMs).toEqual({ p95: 1, max: 1 });
       monitor.close(); await vi.advanceTimersByTimeAsync(10_000); monitor.start();
-      expect(delay.enable).toHaveBeenCalledTimes(2); expect(vi.getTimerCount()).toBe(0);
+      expect(enable).toHaveBeenCalledTimes(2); expect(vi.getTimerCount()).toBe(0);
     } finally { monitor.close(); vi.useRealTimers(); }
   });
   let env: TestEnv;
