@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.30.7
+
+- Job starts no longer wait on a json store upgrade when the system is busy. When the Windows process-identity query failed or timed out (for example with about 20 jobs starting at once), every live reader was marked "unknown, reads 0". A failed query now keeps each reader's last verified identity, and the query may take up to 15 s. A reader that a successful query does not find is still unknown.
+- A job runner whose process cannot be verified (its PID answers access denied, or its start time cannot be read) and whose last heartbeat is from before the current boot now counts as gone. Its job becomes interrupted and resumable and frees its slot. Recent unverifiable runners are still kept and never killed.
+- Legacy reader records from before the current boot no longer keep the compatible file stores running. Imported 0.29 reader records now use their file time to detect a reused PID.
+- Migration locks, the storage maintenance lock, storage leases and metadata file leases whose owner cannot be verified and that were written before the current boot are recovered the same way as those of a dead owner. Metadata leases are archived. Recent unverifiable owners are still refused.
+- Resource slots held by an unverifiable owner that last renewed them before the current boot are freed without waiting for the 6-hour expiry.
+- `job-close` and `close-idle-jobs` no longer keep a worktree for a process that only reuses the runner's PID. They check the runner's identity and apply the same boot rule.
+
 ## 0.30.6
 
 - A worktree lease whose holder cannot be verified (legacy or unidentified owner) and whose last heartbeat predates the current boot is archived with its reason and no longer blocks resuming its job after a reboot. Live and recent unverifiable holders are still refused; the legacy lease directory stays in place.
