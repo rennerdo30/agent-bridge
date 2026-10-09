@@ -30,7 +30,7 @@ function digestRows(rows: Row[], names: readonly string[]): string {
   return hash.digest("hex");
 }
 /** Chained per row, so the result does not depend on how a pass cut the rows into batches. */
-function chainRows(previous: string, rows: Row[], names: readonly string[]): string {
+export function chainRows(previous: string, rows: Row[], names: readonly string[]): string {
   let hash = previous;
   for (const row of rows) hash = createHash("sha256").update(hash).update(digestRows([row], names)).digest("hex");
   return hash;

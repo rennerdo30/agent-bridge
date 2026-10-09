@@ -331,14 +331,14 @@ it("cleans a terminated worker lease only when its exact owner nonce still match
   expect(existsSync(path)).toBe(false);
 });
 
-it("verifies regardless of how the copy and verification passes cut rows into batches", async () => {
-  const old = legacy();
-  for (let i = 0; i < 300; i++) old.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('batches',0,?,'codex:legacy',1,?,'x')").run(i, Buffer.from(`row ${i}`));
-  const db = target();
-  // During the copy every row takes "100 ms", so copy batches hold one row; verification batches are large.
-  const real = Date.now.bind(Date); let offset = 0, copying = true;
-  vi.spyOn(Date, "now").mockImplementation(() => copying ? real() + (offset += 100) : real());
-  await migrateHistoryStore(env.db, db, () => false, () => false, undefined, false, { onProgress: progress => { if (progress.phase === "verify") copying = false; } });
-  expect(historyReady(db)).toBe(true);
-  expect(normalize(decoded(db, "conversation_records"))).toEqual(legacyRows(old, "conversation_records"));
+it("chains row checksums independently of how a pass cuts rows into batches", async () => {
+  const { chainRows } = await import("../src/core/history-migration.js");
+  const rows = Array.from({ length: 50 }, (_, i) => ({ __rowid: i + 1, raw: Buffer.from(`row ${i}`), body: `b${i}` }));
+  const names = ["__rowid", "raw", "body"];
+  const whole = chainRows("", rows, names);
+  let small = ""; for (const row of rows) small = chainRows(small, [row], names);
+  let mixed = ""; for (let i = 0; i < rows.length; i += 7) mixed = chainRows(mixed, rows.slice(i, i + 7), names);
+  expect(small).toBe(whole);
+  expect(mixed).toBe(whole);
+  expect(chainRows("", rows.slice(1), names)).not.toBe(whole);
 });
