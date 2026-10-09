@@ -24,7 +24,13 @@ transcript bytes after reads. No automated test uses the owner's actual data roo
 | Source | Permitted removal and why it contains no unique user data |
 | --- | --- |
 | `core/json-store.ts` | Unpublished atomic-write `.tmp` file only. |
-| `core/storage-lock.ts` | Maintenance lock and empty per-process lease files. |
+| `core/storage-lock.ts` | Maintenance lock and per-process lease files (PID, start time and nonce only). A stale lock is moved aside and removed only while its nonce still matches; a lease only after its owner process is gone. |
+| `core/token.ts` | Only the exclusively created, unpublished token staging file (or its duplicate hard link after publication). The active token is never removed. |
+| `core/history-store.ts` | A failed history copy attempt: every row moves into `retained_<stamp>_*` tables in the same transaction before the copy tables are emptied. Derived search documents are cleared with FTS delete-all for that retry or a reindex. |
+| `core/history.ts` | Derived search index only (pending queue, tags, cursors, files); a reindex rebuilds it from the read-only sources. |
+| `core/finished-run-bundles.ts` | The packing failure record of a run that was packed successfully afterwards. |
+| `core/storage-absorb.ts` | The absorb cursor of a table with conflicts, so the next run scans it again. Conflicting rows are kept. |
+| `core/storage-finalize.ts` | Owner decision 2026-10-09: only the explicit, confirmed `agent-bridge storage finalize` command, after the new format is migrated and verified. Each legacy table, file or bundled original is proven redundant (row by row, or byte-exact in a verified bundle) immediately before removal; anything unproven is kept and reported. |
 | `core/migration-lock.ts` | Exclusive migration lock (PID and nonce only) on release, failed lock publication or confirmed exited owner; empty recovery coordination file. Never the database or snapshot. |
 | `core/notifications.ts` | Empty notification lock directory. |
 | `core/node.ts` | Abandoned Unix-domain socket path. |

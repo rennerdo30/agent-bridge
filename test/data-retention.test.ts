@@ -18,10 +18,27 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   "cli/dashboard-key.ts": ["unlinkSync(temp)"],
   "core/json-store.ts": ["rmSync(tmp, { force: true })"],
   "core/node.ts": ["unlinkSync(this.opts.pipePath)"],
-  "core/storage-lock.ts": ["rmSync(path)", "rmSync(path, { force: true })", "rmSync(join(dir, file))", "rmSync(path, { force: true })", "rmSync(path, { force: true })"],
+  // Lock/lease files hold only PID, start time and nonce. A stale lock is moved aside first and its moved copy removed
+  // only when its nonce still matches; a lease is removed only when its owner process is gone.
+  "core/storage-lock.ts": ["rmSync(moved, { force: true })", "rmSync(moved, { force: true })", "rmSync(path)", "rmSync(path, { force: true })", "rmSync(path, { force: true })", "rmSync(lease, { force: true })"],
+  // Exclusively created unpublished token staging file (or a duplicate hard link after publication); the token itself is never removed.
+  "core/token.ts": ["unlinkSync(temp)"],
   "core/migration-lock.ts": ["rmSync(path)", "rmSync(path)", "rmSync(path)", "rmSync(recovery)"],
   // Exited worker's migration lock only: current PID and exact recorded nonce must match.
-  "core/history-store.ts": ["rmSync(path)"],
+  // retainFailedAttempt copies every row into retained_<stamp>_* tables in the same transaction before emptying the copy tables;
+  // clearHistoryDocuments empties the derived search documents (FTS delete-all) for that retained attempt or a reindex.
+  "core/history-store.ts": ["rmSync(path)", "`DELETE FROM ${quote(name)}`",
+    "`CREATE TABLE ${quote(`retained_${stamp}_history_migration`)} AS SELECT * FROM history_migration; DELETE FROM history_migration;`",
+    "`CREATE TABLE ${quote(`retained_${stamp}_history_copy_state`)} AS SELECT * FROM history_copy_state; DELETE FROM history_copy_state;`",
+    '"DELETE FROM history_documents"', '"DELETE FROM history_documents"'],
+  // Packing bookkeeping only: the failure record of a run that has since been packed successfully.
+  "core/finished-run-bundles.ts": ['"DELETE FROM bridge_metadata WHERE domain=? AND key=?"'],
+  // Absorb cursor bookkeeping only: a table with conflicts restarts its scan; the conflicting rows themselves are kept.
+  "core/storage-absorb.ts": ['"DELETE FROM absorb_progress WHERE source=? AND table_name=?"'],
+  // Owner decision 2026-10-09: the explicit, confirmed `storage finalize` removes superseded copies only after the new
+  // format is verified and each item is proven redundant row by row / byte by byte immediately before removal.
+  "core/storage-finalize.ts": ["`DROP TABLE IF EXISTS \"${item.path.slice(\"bridge.db:\".length).replaceAll('\"', '\"\"')}\"`",
+    "`DROP TABLE IF EXISTS \"${name.replaceAll('\"', '\"\"')}\"`", "rmSync(path, { recursive: true, force: true })", "rmSync(path, { force: true })", "rmdirSync(group.dir)"],
   "core/notifications.ts": ["rmdirSync(lock)", "rmdirSync(lock)"],
   "mcp/rewake.ts": ["rmSync(sessionFile(this.home, this.registered), { force: true })", "rmSync(sessionFile(this.home, this.registered), { force: true })"],
   "network/files.ts": ["rmSync(staging, { recursive: true, force: true })"],
@@ -30,13 +47,13 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   "cli/reliability-live.ts": ["rmSync(h, { recursive: true, force: true, maxRetries: 3 })"],
   "core/worktree-links.ts": ["unlinkSync(path)", "rmdirSync(path)", "rmSync(probe, { recursive: true, force: true })"],
   "core/worktree.ts": ["rmSync(toNamespacedPath(resolve(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES })"],
-  "core/resource-slots.ts": ['"DELETE FROM slots WHERE expiresAt <= ?"', '"DELETE FROM slots WHERE pid = ?"', '`DELETE FROM slots WHERE id = ? AND pid = ?${resource ? " AND resource = ?" : ""}`'],
+  "core/resource-slots.ts": ['"DELETE FROM slots WHERE expiresAt <= ?"', '"DELETE FROM slots WHERE pid = ? AND identity IS ?"', '`DELETE FROM slots WHERE id = ? AND pid = ?${resource ? " AND resource = ?" : ""}`'],
   "core/sqlite-maintenance.ts": ["`DELETE FROM ${table} WHERE ${where}`"],
   "core/sqlite-migrations.ts": ["`DELETE FROM ${quoted}`"],
   // Temporary working folder (mkdtempSync) of the low-cost model that answers search questions.
   "core/history-answer.ts": ["rmSync(cwd, { recursive: true, force: true })"],
   // Derived search index only (pending queue, full rebuild by reindex); source messages, logs and transcripts are read-only.
-  "core/history.ts": ['"DELETE FROM history_pending WHERE id=? AND recipient=?"', '"DELETE FROM history_documents; DELETE FROM history_tags; DELETE FROM history_cursors WHERE source<>\'legacy-record-tail\'; DELETE FROM history_files;"'],
+  "core/history.ts": ['"DELETE FROM history_pending WHERE id=? AND recipient=?"', '"DELETE FROM history_tags; DELETE FROM history_cursors WHERE source<>\'legacy-record-tail\'; DELETE FROM history_files;"'],
   // Temporary duplicates after whole-file SHA-256 verification and exclusive publication of the final file; truncation trims
   // only unverified tails of private .part files and their checksum journal on resume. Received files are never removed.
   "network/transfers.ts": ["unlink(part)", "unlink(verified)", "unlink(verifiedPath)", "unlink(verified)", "file.truncate(verified)", "journal.truncate(chunks * SHA_RECORD_BYTES)"],
@@ -70,6 +87,9 @@ describe("owner data retention rule", () => {
     expect(removalOperations('db.exec(`DELETE FROM ${table}`);')).toHaveLength(1);
     expect(removalOperations('db.exec("SELECT 1; DELETE FROM messages");')).toHaveLength(1);
     expect(removalOperations('await fileHandle.truncate(0);')).toMatchObject([{ kind: "file", expression: "fileHandle.truncate(0)" }]);
+    // Quotes inside regular expressions and nested template literals must not hide later statements.
+    expect(removalOperations('const r = s.replace(/"?x"?/, ""); db.exec("DELETE FROM a");')).toMatchObject([{ kind: "sql", expression: '"DELETE FROM a"' }]);
+    expect(removalOperations('db.exec(`CREATE TABLE ${q(`x_${n}`)} AS SELECT * FROM b; DELETE FROM b;`); db.exec("DELETE FROM c");')).toHaveLength(2);
   });
 
   it("requires copy commit before SQL deletion and durable job archival before filtering", () => {
