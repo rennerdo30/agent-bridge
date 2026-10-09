@@ -26,6 +26,38 @@ const MAX_REQUEST_BYTES = 256 * 1024;
 const MAX_NOTE_CHARS = 200;
 /** Child side: a hook must never hang on the parent. */
 const CHILD_REQUEST_TIMEOUT_MS = 5_000;
+/** How long the link waits for a question's routing before answering the child (below the child's deadline). */
+const QUESTION_ROUTE_WAIT_MS = 3_500;
+
+/**
+ * Where a job's question to its parent went (AB-249): straight to the parent, rerouted to the project's
+ * current main session because the parent is not connected, or queued because no session can take it now.
+ * "unconfirmed" means the bridge has not confirmed it yet; the runner keeps retrying delivery.
+ */
+export interface ParentRoute {
+  state: "delivered" | "rerouted" | "queued" | "unconfirmed";
+  parent: string;
+  recipient?: string;
+  /** The rerouted recipient is the project's current main session. */
+  main?: boolean;
+}
+
+/** The send result a job sees for its question. */
+export function formatParentRoute(route: ParentRoute): string {
+  const { parent, recipient } = route;
+  const wait = "Wait in notify mode (wait_for_message) and go on with safe work meanwhile.";
+  const fallback = "Apply your fallback now: continue only with safe, reversible work, or stop and report.";
+  switch (route.state) {
+    case "delivered":
+      return `Question delivered to ${parent}, the session that gave you this task. ${wait}`;
+    case "rerouted":
+      return `${parent}, the session that gave you this task, is not available (not connected, or it handed its jobs to the project). Your question went to ${recipient}${route.main ? ", the project's current main session," : ""} instead. ${wait}`;
+    case "queued":
+      return `${parent}, the session that gave you this task, is not available (not connected, or it handed its jobs to the project), and no project main session is available either. The question waits in ${recipient ?? parent}'s inbox until a session connects. ${fallback}`;
+    default:
+      return `Question handed to your job runner for ${parent}, but the bridge has not confirmed where it went yet; delivery keeps being retried, so do not resend it. ${fallback}`;
+  }
+}
 
 export interface LinkMessage {
   id: string;
@@ -50,8 +82,8 @@ export class ParentLink {
 
   constructor(
     private readonly parentName: string,
-    /** A message from the subagent to its parent. */
-    private readonly onMessage: (body: string, replyTo: string | null, kind?: "note" | "question") => void,
+    /** A message from the subagent to its parent. For a question it may report where the message went. */
+    private readonly onMessage: (body: string, replyTo: string | null, kind?: "note" | "question") => unknown,
     private readonly log: Logger,
     /** The subagent's own estimate of how far it is (report_progress). */
     private readonly onProgress: (percent: number, note: string, eta?: { etaAt: number; etaReportedAt: number }) => void = () => {},
@@ -156,8 +188,15 @@ export class ParentLink {
       if (body.kind !== undefined && body.kind !== "note" && body.kind !== "question") throw new Error("invalid message kind");
       // A routine note or acknowledgement does not consume an unanswered parent instruction.
       if (body.kind !== "note" && !isPureAcknowledgement(text)) this.unanswered = this.unanswered.filter((m) => m.sibling);
-      this.onMessage(text, typeof body.reply_to === "string" ? body.reply_to : null, body.kind);
-      return { ok: true };
+      const routed = this.onMessage(text, typeof body.reply_to === "string" ? body.reply_to : null, body.kind);
+      if (body.kind !== "question" || !(routed instanceof Promise)) return { ok: true };
+      // The routing outcome is part of the answer; past the deadline the child hears it is unconfirmed.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const route = await Promise.race([
+        (routed as Promise<ParentRoute | undefined>).catch(() => undefined),
+        new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), QUESTION_ROUTE_WAIT_MS); }),
+      ]).finally(() => clearTimeout(timer));
+      return { ok: true, route: route ?? { state: "unconfirmed", parent: this.parentName } };
     }
     if (req.method === "POST" && req.url === "/escalate") {
       if (!this.onEscalate) throw new Error("approval escalation unavailable");
@@ -170,6 +209,12 @@ export class ParentLink {
   }
 }
 
+function isParentRoute(value: unknown): value is ParentRoute {
+  const v = value as ParentRoute | null;
+  return Boolean(v) && typeof v === "object" && ["delivered", "rerouted", "queued", "unconfirmed"].includes(v!.state) &&
+    typeof v!.parent === "string" && (v!.recipient === undefined || typeof v!.recipient === "string");
+}
+
 async function readBody(req: IncomingMessage): Promise<string> {
   return readBodyText(req, MAX_REQUEST_BYTES);
 }
@@ -179,7 +224,8 @@ export interface ParentClient {
   escalate?: (body: string) => Promise<void>;
   name: string;
   inbox(): Promise<LinkMessage[]>;
-  send(body: string, replyTo?: string, kind?: "note" | "question"): Promise<void>;
+  /** Resolves with a question's routing when the parent link reports it. */
+  send(body: string, replyTo?: string, kind?: "note" | "question"): Promise<ParentRoute | undefined>;
   progress(percent: number, note: string, etaMinutes?: number): Promise<void>;
   siblings: SiblingClient;
 }
@@ -211,7 +257,10 @@ export function parentFromEnv(env: NodeJS.ProcessEnv = process.env, timeoutMs = 
     name: env[PARENT_NAME_ENV] || "parent",
     inbox: async () => ((await call("/inbox", {})).messages as LinkMessage[]) ?? [],
     // A distinct endpoint makes legacy parents refuse rather than silently discard note/question intent.
-    send: async (body, replyTo, kind) => void (await call(kind ? "/message-kind" : "/message", { body, reply_to: replyTo ?? null, kind })),
+    send: async (body, replyTo, kind) => {
+      const out = await call(kind ? "/message-kind" : "/message", { body, reply_to: replyTo ?? null, kind });
+      return isParentRoute(out.route) ? out.route : undefined;
+    },
     escalate: async (body) => void (await call("/escalate", { body })),
     progress: async (percent, note, etaMinutes) => void (await call("/progress", { percent, note, eta_minutes: etaMinutes })),
     siblings: {

@@ -47,6 +47,7 @@ import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISI
 import { answerPendingApproval, listPendingApprovals, MAX_APPROVAL_REASON_CHARS } from "../core/relay.js";
 import { questionAnswerSchema, questionAlertSettingsSchema, readOwnerQuestions } from "../core/owner-questions.js";
 import { classifyPeers, listRunsResponsive, readStoredJobsResponsive, readDashboard, readMeta } from "../core/dashboard-read.js";
+import { openJobQuestions, type JobQuestion } from "../core/job-questions.js";
 export { classifyPeers, listRuns, readStoredJobs, summarizeRun, finishedRunOutcomes } from "../core/dashboard-read.js";
 export type { RunSummary, DashboardPeer, StoredJobView } from "../core/dashboard-read.js";
 import { dashboardError } from "../network/remote-dashboard.js";
@@ -390,7 +391,14 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (req.method === "GET" && url.pathname === "/api/approvals") {
       let questions = readOwnerQuestions(opts.home);
       try { questions = await networkRequest("ownerQuestions", {}); } catch { /* Legacy brokers cannot answer; retained questions remain visible. */ }
-      return send(res, 200, { approvals: [...listPendingApprovals(opts.home).map(a => ({ ...a, kind: "permission" })), ...questions.filter(q => q.status === "open")], questions });
+      // Unanswered questions from delegated jobs to their parent (or the project main) are listed too (AB-249).
+      let jobQuestions: (JobQuestion & { kind: "job-question"; owner: string | null })[] = [];
+      try {
+        const open = openJobQuestions(dbPath);
+        const owners = open.length ? await readStoredJobsResponsive(opts.home, new Set(open.map((q) => q.job))) : new Map();
+        jobQuestions = open.map((q) => ({ ...q, kind: "job-question", owner: owners.get(q.job)?.owner ?? null }));
+      } catch (err) { opts.log.debug("job questions unavailable", { err: String(err) }); }
+      return send(res, 200, { approvals: [...listPendingApprovals(opts.home).map(a => ({ ...a, kind: "permission" })), ...questions.filter(q => q.status === "open"), ...jobQuestions], questions });
     }
     if (req.method === "POST" && url.pathname === "/api/dashboard/heartbeat") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res,403,{error:"missing header"});

@@ -13,7 +13,8 @@ import { createLogger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolvePipePath } from "../core/paths.js";
 import { loadOrCreateToken } from "../core/token.js";
-import { ACK_CONVERSATION_SUFFIX, SIBLING_CONVERSATION_PREFIX, type BridgeMessage } from "../core/protocol.js";
+import { ACK_CONVERSATION_SUFFIX, QUESTION_CONVERSATION_SUFFIX, SIBLING_CONVERSATION_PREFIX, type BridgeMessage, type SendResult } from "../core/protocol.js";
+import type { ParentRoute } from "../core/parent-link.js";
 import { isPureAcknowledgement } from "../core/job-messaging.js";
 import { resumeArgs, runDelegate, type JobSink, type RunContext } from "./delegate-run.js";
 import { CONTROL_CONVERSATION_PREFIX, JOB_PEER_PREFIX, RUNNER_HEARTBEAT_MS, writeRunnerState, type RunnerSpec } from "./job-host.js";
@@ -183,25 +184,36 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
 
   // Messages to the session, in order. Each is tried until the bridge takes it (the session may be offline:
   // then it waits in the store for the session's next server).
-  let chain: Promise<boolean> = Promise.resolve(true);
-  const deliver = async (body: string, replyTo: string | null, note = false, key?: string): Promise<boolean> => {
+  let chain: Promise<unknown> = Promise.resolve();
+  const deliver = async (body: string, replyTo: string | null, note = false, key?: string, question = false): Promise<SendResult | null> => {
     // One key for all attempts: a send that timed out here may still be queued at a slow broker.
     const dedupeKey = key ?? randomUUID();
     for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
       try {
         // A retry may cross a handoff or reload. Routing changes never replace the active delegate.
         refreshOwner();
-        const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
-        await node.send({ to: owner, body, conversationId: `job-${job.id}${suffix}`, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
-        return true;
+        // A question is marked so the broker can route it to the project main while the parent is offline (AB-249).
+        const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : question ? QUESTION_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
+        return await node.send({ to: owner, body, conversationId: `job-${job.id}${suffix}`, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
       } catch (err) {
         log.warn("could not deliver to the session; retrying", { owner, attempt, err: (err as Error).message });
         await new Promise((r) => setTimeout(r, Math.min(attempt * 1_000, SEND_RETRY_MAX_MS)));
       }
     }
-    return false;
+    return null;
   };
-  const post = (body: string, replyTo: string | null = null, note = false, key?: string): Promise<boolean> => (chain = chain.then(() => deliver(body, replyTo, note, key)));
+  const inOrder = (body: string, replyTo: string | null, note: boolean, key?: string, question = false): Promise<SendResult | null> => {
+    const sent = chain.then(() => deliver(body, replyTo, note, key, question));
+    chain = sent;
+    return sent;
+  };
+  const post = (body: string, replyTo: string | null = null, note = false, key?: string): Promise<boolean> =>
+    inOrder(body, replyTo, note, key).then((result) => result !== null);
+  /** Send a question and say where the broker put it: the parent, the project main, or a queue. */
+  const ask = async (body: string, replyTo: string | null): Promise<ParentRoute> => {
+    const result = await inOrder(body, replyTo, false, undefined, true);
+    return questionRoute(result, owner, async (name) => (await node.peers()).some((p) => p.name === name && p.projectMain === true));
+  };
 
   const sink: JobSink = {
     persist: () => save(),
@@ -212,9 +224,10 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       return answer.finally(() => save());
     },
     // Its own status notes do not wake the session (see JobManager.fromSubagent); answers and replies do.
-    fromSubagent: (j, body, replyTo, isAnswer, forceNote) => {
+    fromSubagent: (j, body, replyTo, isAnswer, forceNote, question) => {
       const answer = !forceNote && (Boolean(isAnswer) || replyTo !== null || j.awaitingAnswer === true);
       if (!forceNote && !isPureAcknowledgement(body)) j.awaitingAnswer = false;
+      if (question && !forceNote && !isPureAcknowledgement(body)) return ask(body, replyTo);
       void post(body, replyTo, !answer);
     },
     note: (j, facts) => {
@@ -401,4 +414,13 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
 /** Legacy 0.29.10 control mail also carries its original broker timestamp. */
 export function isCurrentRunnerCancel(createdAt: number, startedAt: number): boolean {
   return createdAt >= startedAt;
+}
+
+/** Where the broker put a job's question (AB-249), from its send result. */
+export async function questionRoute(result: SendResult | null, parent: string, isMain: (name: string) => Promise<boolean>): Promise<ParentRoute> {
+  if (!result) return { state: "unconfirmed", parent };
+  const delivered = result.deliveredTo[0];
+  if (delivered === parent) return { state: "delivered", parent };
+  if (delivered) return { state: "rerouted", parent, recipient: delivered, main: await isMain(delivered).catch(() => false) };
+  return { state: "queued", parent, recipient: result.queuedFor[0] ?? parent };
 }

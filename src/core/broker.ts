@@ -31,6 +31,7 @@ import {
   SIBLING_CONVERSATION_PREFIX,
   SIBLING_NOTE_SUFFIX,
   isQuietMessage,
+  isJobQuestion,
   type AgentKind,
   type BridgeMessage,
   type EventFrame,
@@ -893,9 +894,17 @@ export class Broker {
     } while (this.pendingJobMailRouteAgain && !this.closing);
   }
 
-  private jobRecipient(job: Record<string, unknown>): string {
+  private jobRecipient(job: Record<string, unknown>, question = false): string {
     if (typeof job.parentJob === "string" && this.connByName(job.parentJob)?.peer?.jobAgent) return job.parentJob;
-    return chooseJobRecipient(job, this.localPeers(), this.groups.members(job, this.localPeers()));
+    const local = this.localPeers(), members = this.groups.members(job, local);
+    const chosen = chooseJobRecipient(job, local, members);
+    // AB-249: a job's question to a parent that is not connected goes to the project's current main session.
+    const parent = question ? this.connByName(primaryFor(job))?.peer : undefined;
+    if (question && (!parent || parent.unavailable)) {
+      const main = members.map((p) => this.projectPeer(p)).find((p) => p.projectMain && !p.unavailable);
+      if (main) return main.name;
+    }
+    return chosen;
   }
 
   private jobConversation(job: Record<string, unknown>, recipient: string, conversationId: string): string {
@@ -1612,8 +1621,9 @@ export class Broker {
     // Durable ownership wins over the old name cached in a still-running parent link.
     const own = sender.jobAgent ? this.storedJobs().find((j) => `job:${j.id}` === sender.id) : undefined;
     const supervisorMail = Boolean(own && (to === sender.jobParent || mastersFor(own).includes(to)));
+    const question = isJobQuestion({ conversationId: args.conversationId ?? "" });
     if (own) {
-      if (to === sender.jobParent || mastersFor(own).includes(to)) to = this.jobRecipient(own);
+      if (to === sender.jobParent || mastersFor(own).includes(to)) to = this.jobRecipient(own, question);
       else if (Array.isArray(own.ownershipHistory) && own.ownershipHistory.some((h) => isRecord(h) && h.fromRootName === to)) to = String(own.rootName);
       this.refreshJobPeer(own);
     }
@@ -1689,7 +1699,7 @@ export class Broker {
     };
     checkReply();
     // With no available master, retain job reports under the primary without waking it.
-    if (own && to === this.jobRecipient(own)) {
+    if (own && to === this.jobRecipient(own, question)) {
       for (let i = live.length - 1; i >= 0; i--) {
         if (live[i]!.peer?.unavailable) queued.push(live.splice(i, 1)[0]!.peer!.name);
       }
@@ -1717,7 +1727,7 @@ export class Broker {
         const current = this.storedJobs().find((job) => `job:${job.id}` === sender.id);
         if (!current) throw new BridgeError("unauthorized", "Job ownership is unavailable.");
         this.refreshJobPeer(current);
-        to = this.jobRecipient(current);
+        to = this.jobRecipient(current, question);
         ({ live, queued } = this.resolveTargets(to, sender));
         for (let i = live.length - 1; i >= 0; i--) {
           if (live[i]!.peer?.unavailable) queued.push(live.splice(i, 1)[0]!.peer!.name);

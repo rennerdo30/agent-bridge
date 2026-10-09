@@ -10,7 +10,7 @@ import { acquireStartup } from "../core/startup-admission.js";
 import { defaultEffort } from "../core/effort.js";
 import { t } from "../core/i18n.js";
 import type { Logger } from "../core/logger.js";
-import { ParentLink } from "../core/parent-link.js";
+import { ParentLink, type ParentRoute } from "../core/parent-link.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolvePipePath } from "../core/paths.js";
 import { loadOrCreateToken } from "../core/token.js";
@@ -59,8 +59,9 @@ export interface JobSink {
   persist?: () => void;
   escalateApproval?: (job: Job, body: string) => Promise<void>;
   askParent(job: Job, question: string, timeoutMs: number, request?: PermissionRequest): Promise<{ allow: boolean; reason: string }>;
-  /** isAnswer: its answer to a live message (wakes the session); else a note unless it replies to something. */
-  fromSubagent(job: Job, body: string, replyTo: string | null, isAnswer?: boolean, forceNote?: boolean): void;
+  /** isAnswer: its answer to a live message (wakes the session); else a note unless it replies to something.
+   * question: send with message_kind="question"; a sink may report where it was routed (AB-249). */
+  fromSubagent(job: Job, body: string, replyTo: string | null, isAnswer?: boolean, forceNote?: boolean, question?: boolean): void | Promise<ParentRoute | undefined>;
   note(job: Job, facts: { sessionId?: string | null; workdir?: string | null; worktree?: Worktree | null }): void;
 }
 
@@ -328,7 +329,7 @@ async function runDelegateInner(
       me,
       (body, replyTo, kind) => {
         feed.report(`answer to ${me}: ${body.split("\n")[0]!.slice(0, 120)}`, `answer to ${me}: ${body}`);
-        jobs.fromSubagent(job, body, replyTo, kind === "question", kind === "note");
+        return jobs.fromSubagent(job, body, replyTo, kind === "question", kind === "note", kind === "question");
       },
       dlog,
       (percent, note, eta) => {

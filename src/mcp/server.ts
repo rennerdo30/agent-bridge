@@ -54,7 +54,7 @@ import { answerPendingApproval, listPendingApprovals, type PermissionDecision, t
 import { LocalCoordinator } from "./local-coordinator.js";
 import { saveAutoWake, savedAutoWake } from "../core/auto-wake-pref.js";
 import { describeModels, modelParameterDescription, readModels } from "../core/models.js";
-import { parentFromEnv, type ParentClient } from "../core/parent-link.js";
+import { formatParentRoute, parentFromEnv, type ParentClient } from "../core/parent-link.js";
 import type { DashboardInfo } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
 import { MessageWaitStore, matchesNotificationWait, matchesWait, resumeWaitHint, singleWaitTimeoutMs, SINGLE_WAIT_SEC, waitForReadReceipt, type WaitFilters } from "./message-wait.js";
@@ -286,7 +286,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     const coordinator = ctx.childInbox = new LocalCoordinator(parentJob, rootSession);
     ctx.jobs = new JobManager(coordinator, log.child("jobs"), join(home, JOBS_FILE), cfg.maxJobs, {
       parentJob, rootSession, rootName: process.env[ROOT_NAME_ENV] || ctx.parent.name,
-      escalate: (body) => ctx.parent!.escalate ? ctx.parent!.escalate(body) : ctx.parent!.send(body),
+      escalate: (body) => ctx.parent!.escalate ? ctx.parent!.escalate(body) : ctx.parent!.send(body).then(() => {}),
     });
   }
   if (node) {
@@ -845,11 +845,12 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           const delivery = result.queuedFor.length ? sibling ? "queued for the sibling's next turn" : "queued for the granted session" : sibling ? "sent to sibling" : "sent to granted session";
           return text(`Message ${m.id} ${delivery} ${a.to} (conversation ${m.conversationId}, hop ${m.hop}).${sibling ? " The supervisor received a quiet copy." : ""}\n${formatReplyRestrictions(result).join("\n")}`);
         }
-        await ctx.parent.send(a.message, a.reply_to, a.message_kind).catch(err => {
+        const route = await ctx.parent.send(a.message, a.reply_to, a.message_kind).catch(err => {
           if (/timed? out|timeout|disconnect|closed/i.test(String(err))) throw new Error(`Supervisor delivery outcome unknown: ${String(err)}. The message may already be stored; inspect history before resending. This link has no durable retry ID.`);
           throw err;
         });
-        return text(t("send.toParent", { name: ctx.parent.name }));
+        // A question reports where it went: the parent, the project main while the parent is offline, or a queue (AB-249).
+        return text(route ? formatParentRoute(route) : t("send.toParent", { name: ctx.parent.name }));
       }
       const n = requireNode();
       const job = a.to === "*" || a.to === "jobs:*" ? undefined : await findJob(a.to);

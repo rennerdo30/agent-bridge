@@ -721,7 +721,7 @@ form#send select#to {
 
   <div id="approvals" class="hidden">
     <div class="page-head">
-      <div><h2>Waiting for you</h2><p class="muted">Owner questions and tool permissions. Questions stay open until answered or dismissed. Answers never grant tool permission or accept implementation.</p></div>
+      <div><h2>Waiting for you</h2><p class="muted">Owner questions, open questions from subagents to their session, and tool permissions. Questions stay open until answered or dismissed. Answers never grant tool permission or accept implementation.</p></div>
       <button type="button" class="ghost" id="notifyBtn">Notify me in this browser</button>
     </div>
     <div class="seg" id="apFilters" role="group" aria-label="Waiting items">
@@ -822,6 +822,7 @@ form#send select#to {
   <div id="session" class="split hidden">
     <div class="side-col">
       <div class="panel sess" id="sHead"></div>
+      <div id="sQBox" class="hidden"><h3>Open questions from subagents <span class="counts" id="sQCount"></span></h3><div id="sQs"></div></div>
       <div><h3>Subagents <span class="counts" id="sCount"></span></h3><div class="panel rows" id="sGroups"></div></div>
       <div id="sMsgBox"><h3>Messages</h3><div class="panel"><div id="sMsgs" class="msgs"></div></div></div>
     </div>
@@ -1510,6 +1511,7 @@ function renderSession() {
     : '<div class="head" style="display:flex;gap:12px;align-items:center">' + av("other") + '<div><div style="font-weight:650">' + esc(x.name) + '</div><div class="small muted">' +
       (x.name === "earlier runs" ? "Runs from before sessions were recorded, or from sessions in other folders." : "This session has ended. Its subagents are kept for reference.") + "</div></div></div>";
   $("sCount").innerHTML = x.groups.length ? countsLine(countGroups(x.groups)) : "";
+  renderSessionQuestions();
   const sel = route.group && x.groups.find((g) => g.key === route.group) ? route.group : x.groups[0] && x.groups[0].key;
   renderSessionList(x, selectedKey(x));
   const mine = state.messages.filter((m) => m.from_name === x.name || m.to_target === x.name || String(m.recipients || "").split(", ").includes(x.name));
@@ -2621,7 +2623,8 @@ async function loadApprovals() {
   if (!model) return;
   renderSide();
   if (route.page === "approvals") renderApprovals();
-  else if (!route.session && !route.page) renderApprovalBanner();
+  else if (route.session) renderSessionQuestions();
+  else if (!route.page) renderApprovalBanner();
 }
 
 /** A browser notification for requests that arrive while this tab is in the background (once allowed). */
@@ -2631,13 +2634,60 @@ function notifyNewApprovals() {
   if (apFirstLoad) { apFirstLoad = false; return; }
   if (!fresh.length || typeof Notification === "undefined" || Notification.permission !== "granted" || !document.hidden) return;
   for (const a of fresh.slice(0, 3)) {
-    const n = new Notification("A subagent is waiting for you", { body: (approvalJob(a) + ": " + (a.command || a.tool || "")).slice(0, 180), tag: "ab-approval-" + a.id });
+    const n = new Notification("A subagent is waiting for you", { body: (approvalJob(a) + ": " + (a.kind === "job-question" ? a.body : a.command || a.tool || "")).slice(0, 180), tag: "ab-approval-" + a.id });
     n.onclick = () => { window.focus(); location.hash = APPROVALS_HASH; };
   }
 }
 
+/* A delegated job's open question to its session (AB-249): the parent, or the project main while the parent is offline. */
+const jobQuestionGroup = (q) => model && [...model.groups.values()].find((g) => g.job === q.job);
+function jobQuestionCard(q) {
+  const g = jobQuestionGroup(q), busy = apBusy.has(q.id), title = (g && g.title) || q.job;
+  const asked = q.rerouted
+    ? '<p class="small"><b>' + esc(q.owner || "Its session") + ' was not connected.</b> Routed to ' + esc(q.recipient) + ', the project main.</p>'
+    : '<p class="small muted">Asked ' + esc(q.recipient) + (q.readAt ? " · read " + esc(ago(q.readAt)) : " · unread") + "</p>";
+  return '<article class="ap-card question-card" id="jq-' + esc(q.id) + '"><div class="q-kind">SUBAGENT QUESTION · open</div>' +
+    '<div class="ap-head">' + av(q.agent) + '<div class="grow"><b class="ell">' + (g ? '<a class="link" href="' + href(g.owner, g.key) + '">' + esc(title) + "</a>" : esc(title)) + '</b><div class="small muted ell">' +
+    esc(q.agent + " subagent" + (q.owner ? " of " + q.owner : "")) + '</div></div><span class="ap-time">' + esc(ago(q.createdAt)) + "</span></div>" + asked +
+    '<div class="q-context">' + esc(q.body) + "</div>" +
+    (g ? '<div class="ap-actions"><input class="ap-why" data-jq-text="' + esc(q.id) + '" maxlength="8000" placeholder="Answer the subagent" aria-label="Answer the subagent"><button class="ghost" data-jq-send="' + esc(q.id) + '"' + (busy ? " disabled" : "") + ">Send to subagent</button></div>"
+      : '<p class="small muted">Its run is not listed here. Its session answers with message_subagent.</p>') +
+    '<div class="small muted">The answer reaches the subagent like message_subagent. It never grants tool permission.</div></article>';
+}
+async function answerJobQuestion(id) {
+  const q = approvals.find((a) => a.id === id), g = q && jobQuestionGroup(q), body = (apDrafts.get("jq:" + id) || "").trim();
+  if (!q || !g || apBusy.has(id)) return;
+  if (!body) { apResults.set(id, { kind: "err", text: "Write your answer first.", at: Date.now() }); return rerenderQuestions(); }
+  apBusy.add(id); rerenderQuestions();
+  try {
+    const r = await fetch("/api/subagents/message", { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify({ run: g.turns[g.turns.length - 1].name, body }) });
+    const d = await r.json();
+    apResults.set(id, { kind: r.ok ? "ok" : "err", text: r.ok ? "Answer sent to " + ((g && g.title) || q.job) + "." : d.error || d.text || "Answer failed", at: Date.now() });
+    if (r.ok) apDrafts.delete("jq:" + id);
+  } catch (error) { apResults.set(id, { kind: "err", text: "Answer unconfirmed. Check the subagent before retrying: " + error.message, at: Date.now() }); }
+  finally { apBusy.delete(id); await loadApprovals(); rerenderQuestions(); }
+}
+function rerenderQuestions() {
+  if (route.page === "approvals") { lastApKey = ""; renderApprovals(); }
+  else if (route.session) renderSessionQuestions();
+}
+/** The session page lists the open questions its subagents asked, or that were routed to it. */
+let lastSessionQKey = "";
+function renderSessionQuestions() {
+  const name = route.session, mine = approvals.filter((a) => a.kind === "job-question" && (a.owner === name || a.recipient === name));
+  $("sQBox").classList.toggle("hidden", !mine.length);
+  const key = JSON.stringify([name, mine, [...apResults].map(([id, r]) => id + r.text), [...apBusy]]);
+  if (key === lastSessionQKey) return;
+  lastSessionQKey = key;
+  $("sQCount").textContent = mine.length ? String(mine.length) : "";
+  $("sQs").innerHTML = mine.map((q) => jobQuestionCard(q) + (apResults.has(q.id) ? '<div class="note ' + apResults.get(q.id).kind + ' ap-note">' + esc(apResults.get(q.id).text) + "</div>" : "")).join("");
+  for (const input of $("sQs").querySelectorAll("[data-jq-text]")) input.value = apDrafts.get("jq:" + input.dataset.jqText) || "";
+}
+const approvalKind = (a) => a.kind === "job-question" ? "question" : (a.kind || "permission");
+
 function approvalCard(a) {
   if (a.kind === "question") return questionCard(a);
+  if (a.kind === "job-question") return jobQuestionCard(a);
   const left = a.deadline - Date.now(), busy = apBusy.has(a.id);
   return '<div class="ap-card">' +
     '<div class="ap-head">' + av(a.agent) + '<div class="grow"><b class="ell">' + esc(approvalJob(a)) + '</b><div class="small muted ell">' + esc(a.agent + " subagent of " + a.owner) + "</div></div>" +
@@ -2654,7 +2704,7 @@ function renderApprovals() {
   for (const [id, r] of apResults) if (Date.now() - r.at > AP_RESULT_KEEP_MS) apResults.delete(id);
   const open = new Set(approvals.map((a) => a.id));
   const done = [...apResults].filter(([id]) => !open.has(id));
-  const items = apFilter === "history" ? questionHistory.filter(q => q.status !== "open") : approvals.filter(a => apFilter === "all" || (a.kind || "permission") === apFilter);
+  const items = apFilter === "history" ? questionHistory.filter(q => q.status !== "open") : approvals.filter(a => apFilter === "all" || approvalKind(a) === apFilter);
   const shown=new Set(items.map(a => a.id));
   for (const tab of $("apFilters").querySelectorAll("button")) tab.setAttribute("aria-pressed",String(tab.dataset.apFilter === apFilter));
   const key = JSON.stringify([items,apFilter, [...apResults].map(([id, r]) => id + r.text), [...apBusy]]);
@@ -2669,6 +2719,7 @@ function renderApprovals() {
   for (const input of $("apList").querySelectorAll("[data-ap-why]")) input.value = apDrafts.get(input.dataset.apWhy) || "";
   for (const input of $("apList").querySelectorAll("[data-q-text]")) input.value = apDrafts.get("q:" + input.dataset.qText) || "";
   for (const input of $("apList").querySelectorAll("[data-q-pin]")) input.checked = apDrafts.get("pin:" + input.dataset.qPin) || false;
+  for (const input of $("apList").querySelectorAll("[data-jq-text]")) input.value = apDrafts.get("jq:" + input.dataset.jqText) || "";
   focusQuestion();
 }
 
@@ -2747,15 +2798,18 @@ function renderDecisions() {
     : '<div class="empty">' + (q ? "No decision matches." : "No decisions yet. When you settle something, ask a session to record it with the decide tool, and every session will see it.") + "</div>");
 }
 
-$("apList").addEventListener("input", (e) => { const d=e.target.dataset || {}; if (d.apWhy) apDrafts.set(d.apWhy,e.target.value); if (d.qText) apDrafts.set("q:"+d.qText,e.target.value); if (d.qPin) apDrafts.set("pin:"+d.qPin,e.target.checked); });
+$("apList").addEventListener("input", (e) => { const d=e.target.dataset || {}; if (d.apWhy) apDrafts.set(d.apWhy,e.target.value); if (d.qText) apDrafts.set("q:"+d.qText,e.target.value); if (d.qPin) apDrafts.set("pin:"+d.qPin,e.target.checked); if (d.jqText) apDrafts.set("jq:"+d.jqText,e.target.value); });
 $("apList").addEventListener("click", (e) => {
   const b=e.target.closest("button"); if (!b) return; const d=b.dataset;
   if (d.apAct) void answerApproval(d.id,d.apAct);
   if (d.qOption) void answerQuestion(d.id,d.qOption,false);
   if (d.qSend) void answerQuestion(d.qSend,null,false);
   if (d.qCancel) void answerQuestion(d.qCancel,null,true);
+  if (d.jqSend) void answerJobQuestion(d.jqSend);
   if (d.qScope) { apDrafts.set("scope:"+d.qScope,apDrafts.get("scope:"+d.qScope) === "all" ? "project" : "all"); lastApKey=""; renderApprovals(); }
 });
+$("sQs").addEventListener("input", (e) => { const d=e.target.dataset || {}; if (d.jqText) apDrafts.set("jq:"+d.jqText,e.target.value); });
+$("sQs").addEventListener("click", (e) => { const b=e.target.closest("button[data-jq-send]"); if (b) void answerJobQuestion(b.dataset.jqSend); });
 $("apFilters").addEventListener("click",e => { const b=e.target.closest("[data-ap-filter]"); if (!b) return; apFilter=b.dataset.apFilter; for (const tab of $("apFilters").querySelectorAll("button")) tab.setAttribute("aria-pressed",String(tab === b)); renderApprovals(); });
 $("questionSound").addEventListener("change",() => { qSettings.sound=$("questionSound").checked; void saveQuestionSettings(); });
 $("questionToast").addEventListener("change",() => { qSettings.toast=$("questionToast").checked; void saveQuestionSettings(); });
