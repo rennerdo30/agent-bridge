@@ -268,6 +268,27 @@ export function saveConfigValue(home: string, key: string, value: unknown): void
   writeJsonStore(path, { ...file, [key]: value }, previous);
 }
 
+/**
+ * Keys a repository's own `.agent-bridge/config.json` may set (AB-232). Everything else (CLI binaries, sandboxes,
+ * permission modes, auto-approval, remote wake, network, dashboard, worktree root and cleanup) is read from the
+ * owner's home config only, so a cloned repository cannot choose executables or loosen approvals.
+ */
+export const PROJECT_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "projectGroups", "codexSubagents", "native_subagents", "effort", "name",
+  "codexModel", "claudeModel", "opencodeModel", "antigravityModel",
+  "autoWake", "wakeOnDirect", "delivery", "lingerSec", "maxHops",
+]);
+
+/** The project-overridable part of a project config record; agent sections are kept and filtered by the caller. */
+function projectOverrides(values: Record<string, unknown>, ignored: Set<string>, sections = false): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (PROJECT_CONFIG_KEYS.has(key) || (sections && (AGENT_KINDS as readonly string[]).includes(key))) out[key] = value;
+    else ignored.add(key);
+  }
+  return out;
+}
+
 /** Config file (~/.agent-bridge/config.json) with optional per-agent sections, overridden by env vars. */
 export function loadConfig(home: string, agent: AgentKind, log: Logger, env: NodeJS.ProcessEnv = process.env, projectDir?: string): BridgeConfig {
   let file: Record<string, unknown> = {};
@@ -284,8 +305,12 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     try { const value: unknown = JSON.parse(readFileSync(localPath, "utf8")); if (isRecord(value)) project = value; }
     catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") log.warn("ignoring unreadable project config", { path: localPath, err: String(err) }); }
   }
+  const ignored = new Set<string>();
+  project = projectOverrides(project, ignored, true);
   const section = isRecord(file[agent]) ? file[agent] : {};
-  const localSection = isRecord(project[agent]) ? project[agent] : {};
+  const localSection = isRecord(project[agent]) ? projectOverrides(project[agent], ignored) : {};
+  for (const kind of AGENT_KINDS) if (kind !== agent && isRecord(project[kind])) projectOverrides(project[kind], ignored);
+  if (ignored.size && projectDir) log.warn("ignoring project config keys that only the home config may set", { project: projectDir, keys: [...ignored].sort() });
   for (const values of [localSection,project]) if (values.codexSubagents===undefined && values.native_subagents!==undefined) values.codexSubagents=typeof values.native_subagents === "boolean" ? (values.native_subagents ? DEFAULT_CODEX_SUBAGENTS : 0) : values.native_subagents;
   /** First valid value wins: env var, then the agent section, then the top level of the file. */
   const pick = <T>(key: keyof BridgeConfig, envKey: string | null, parse: (v: unknown) => T | undefined): T | undefined => {
