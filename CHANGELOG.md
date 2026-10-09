@@ -2,6 +2,14 @@
 
 ## 0.30.4
 
+0.30.2 and 0.30.3 were not released separately; this release contains them.
+
+- History store v2: transcript bytes and search text are stored once and zstd-compressed with a per-row codec. The record body that duplicated its raw bytes and the derivable folded search copy are no longer stored. Search reads decoded text through a view; plain legacy rows stay readable.
+- The history migration takes a consistent snapshot of the legacy store in about a minute instead of a row-by-row copy, copies in batches that are decoded and compared byte-for-byte before their cursor commits, verifies every row a second time, and only then switches readers. It checks free disk space first, resumes after a stop, crash or reboot, latches verification failures until an explicit retry, and keeps a failed attempt's rows. A verified v1 history store is upgraded in place and its tables are kept.
+- Migration snapshots no longer count against `history.budgetBytes`; the default budget is 32 GiB.
+- `agent-bridge db tables | query | export --decompressed` and the dashboard's Database page show the bridge databases read-only, with compressed text decoded.
+- `agent-bridge storage finalize` lists the old-format data that the verified new storage replaces (legacy history tables, migration snapshots, old database backups, incomplete backups, retired job copy originals) and removes exactly that list only with `--yes`, then compacts `bridge.db`. It refuses while any migration is unverified.
+- Job copies are indexed per job version in SQLite and the existing copies are packed into one verified compressed bundle; polls no longer reread archived copies.
 - Verify cancel-then-continue of worktree jobs and preserve archived dead-owner leases. Report associated surviving processes to supervisors without guessing termination authority.
 - Lazy-load broker, dashboard and CLI command modules with split bundles; back off idle history scans and coalesce pressure events.
 - Checkpoint sender transfer progress once per negotiated window; test two-instance throughput and concurrent message fairness. Receiver chunk durability stays unchanged.
