@@ -87,6 +87,7 @@ const MAX_CONNECTION_BUFFER_BYTES = 4 * MAX_FRAME_BYTES;
 const HANDOFF_STORE_READY_MS = 5_500;
 
 type StoredSibling = SiblingPeer & { id: string; report: string | null };
+type QueueRegistration = Pick<PeerInfo, "id" | "name" | "sessionId"> & { generation: number };
 
 interface Conn {
   socket: Socket;
@@ -94,6 +95,9 @@ interface Conn {
   /** Presented the right token (via hello or auth). */
   authed: boolean;
   inFlight: number;
+  mailGeneration: number;
+  /** Published only after this exact registration finished queued-mail expiry. */
+  mailReady?: QueueRegistration;
 }
 
 /** Operations allowed before a connection has authenticated. */
@@ -317,8 +321,10 @@ export class Broker {
       },
       messageReceipt: (c, a) => this.messageReceipt(c, a.id),
       ack: async (c, a) => ({ acked: await this.store.retryWrite(() => this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now())) }),
-      pending: (c, a) =>
-        this.pendingMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
+      pending: (c, a) => {
+        const peer = this.requirePeer(c);
+        return this.queueReady(c, peer) ? this.pendingMail(peer.name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)) : [];
+      },
       updatePeer: async (c, a) => { const peer = await this.onUpdatePeer(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === peer.id); if (job?.ownershipHistory) this.refreshJobPeer(job); this.store.history.rememberPeer(peer); return peer; },
       claimMail: (c, a) => this.onClaimMail(c, a),
       health: () => this.healthMonitor.snapshot(APP_VERSION, this.historyBackground?.status() ?? null, this.store.backupStatus()),
@@ -507,7 +513,7 @@ export class Broker {
   }
 
   private accept(socket: Socket): void {
-    const conn: Conn = { socket, peer: null, authed: false, inFlight: 0 };
+    const conn: Conn = { socket, peer: null, authed: false, inFlight: 0, mailGeneration: 0 };
     this.conns.add(conn);
     socket.setEncoding("utf8");
     const decoder = new FrameDecoder(MAX_FRAME_BYTES);
@@ -615,8 +621,8 @@ export class Broker {
    * Honour stream backpressure so a large retained inbox is not repeatedly disconnected on replay.
    */
   private replayMail(conn: Conn, peer: PeerInfo, before?: () => void): void {
-    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId };
-    const current = () => !conn.socket.destroyed && conn.peer === peer && peer.id === registration.id &&
+    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: conn.mailGeneration };
+    const current = () => this.queueReady(conn, peer) && conn.mailGeneration === registration.generation && !conn.socket.destroyed && conn.peer === peer && peer.id === registration.id &&
       peer.name === registration.name && peer.sessionId === registration.sessionId && this.connByName(registration.name) === conn;
     setImmediate(() => {
       if (!current()) return;
@@ -1163,7 +1169,8 @@ export class Broker {
     const aliases = this.replaceStale(conn, peer);
     aliases.push(...this.restoreNames(peer, true));
     if (this.jobsPath) recordStorePeer(dirname(this.jobsPath), peer, { authoritative: true });
-    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId };
+    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: ++conn.mailGeneration };
+    conn.mailReady = undefined;
     await this.expireStaleQueue(peer.name);
     this.assertQueueRegistration(conn, peer, registration);
     await this.claimQueueAliases(conn, peer, registration, aliases);
@@ -1177,6 +1184,7 @@ export class Broker {
       });
     }
     this.assertQueueRegistration(conn, peer, registration);
+    conn.mailReady = registration;
     this.log.info("peer joined", { name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
@@ -1188,15 +1196,22 @@ export class Broker {
    * Mail sent to a "-N" stand-in of this peer's name (a reload ran the session under it briefly) moves to the
    * peer. Only names of that form, and only while no one holds them: another session's mail stays its own.
    */
-  private onClaimMail(conn: Conn, args: RequestMap["claimMail"][0]): { moved: number } {
+  private async onClaimMail(conn: Conn, args: RequestMap["claimMail"][0]): Promise<{ moved: number }> {
     const peer = this.requirePeer(conn);
+    const registration = conn.mailReady;
+    if (!registration || !this.queueReady(conn, peer)) throw new BridgeError("unauthorized", "Queued mail registration is not ready; retry after registration completes.");
     const base = peer.name.replace(/-\d+$/, "");
     let moved = 0;
     for (const name of new Set(args.names ?? [])) {
       const standIn = name !== peer.name && (name === base || (name.startsWith(`${base}-`) && /^\d+$/.test(name.slice(base.length + 1))));
       if (!standIn || this.connByName(name)) continue;
-      moved += this.store.claim(name, peer.name);
+      await this.expireStaleQueue(name);
+      moved += await this.store.retryWrite(() => {
+        this.assertQueueRegistration(conn, peer, registration);
+        return this.connByName(name) ? 0 : this.store.claim(name, registration.name);
+      });
     }
+    this.assertQueueRegistration(conn, peer, registration);
     if (moved) {
       this.log.info("mail of a stand-in name moved to its session", { to: peer.name, moved });
       this.replayMail(conn, peer);
@@ -1245,11 +1260,13 @@ export class Broker {
     aliases.push(...this.restoreNames(peer, args.sessionId !== undefined));
     replay ||= previousName !== peer.name || aliases.length > 0;
     if (replay || args.sessionId !== undefined) {
-      const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId };
+      const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: ++conn.mailGeneration };
+      conn.mailReady = undefined;
       await this.expireStaleQueue(peer.name);
       this.assertQueueRegistration(conn, peer, registration);
       await this.claimQueueAliases(conn, peer, registration, aliases);
       this.assertQueueRegistration(conn, peer, registration);
+      conn.mailReady = registration;
     }
     if (replay) this.replayMail(conn, peer);
     for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
@@ -1303,7 +1320,7 @@ export class Broker {
     return names.filter(name => name !== peer.name && !this.connByName(name));
   }
 
-  private async claimQueueAliases(conn: Conn, peer: PeerInfo, registration: Pick<PeerInfo, "id" | "name" | "sessionId">, aliases: string[]): Promise<void> {
+  private async claimQueueAliases(conn: Conn, peer: PeerInfo, registration: QueueRegistration, aliases: string[]): Promise<void> {
     for (const alias of new Set(aliases)) {
       if (alias === registration.name || this.connByName(alias)) continue;
       await this.expireStaleQueue(alias);
@@ -1339,11 +1356,17 @@ export class Broker {
   }
 
   /** An expiry retry must not grant queued mail to a changed or replaced session. */
-  private assertQueueRegistration(conn: Conn, peer: PeerInfo, registration: Pick<PeerInfo, "id" | "name" | "sessionId">): void {
+  private assertQueueRegistration(conn: Conn, peer: PeerInfo, registration: QueueRegistration): void {
     if (conn.socket.destroyed || conn.peer !== peer || peer.id !== registration.id || peer.name !== registration.name ||
-      peer.sessionId !== registration.sessionId || this.connByName(registration.name) !== conn) {
+      peer.sessionId !== registration.sessionId || conn.mailGeneration !== registration.generation || this.connByName(registration.name) !== conn) {
       throw new BridgeError("unauthorized", "Session changed while queued mail was archived; reconnect to claim retained mail.");
     }
+  }
+
+  private queueReady(conn: Conn, peer: PeerInfo): boolean {
+    const ready = conn.mailReady;
+    return Boolean(ready && conn.peer === peer && ready.generation === conn.mailGeneration && ready.id === peer.id &&
+      ready.name === peer.name && ready.sessionId === peer.sessionId && this.connByName(peer.name) === conn);
   }
 
   private async awaitHandoffReaders(source: Conn, target: Conn): Promise<void> {

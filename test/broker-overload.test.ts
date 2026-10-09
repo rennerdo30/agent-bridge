@@ -29,7 +29,8 @@ describe("broker overload survival", () => {
     seedInbox(store, [job, direct]);
     const peer = { id: "reader", name: "reader", sessionId: null, unavailable: false };
     const write = vi.fn((_frame: unknown) => true);
-    const conn = { peer, socket: { destroyed: false, writableLength: 0, write } };
+    const conn = { peer, socket: { destroyed: false, writableLength: 0, write }, mailGeneration: 1,
+      mailReady: { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: 1 } };
     const connections = (broker as unknown as { conns: Set<unknown> }).conns;
     connections.add(conn);
     const replay = () => (broker as unknown as { replayMail(conn: unknown, peer: unknown): void }).replayMail(conn, peer);
