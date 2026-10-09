@@ -6,6 +6,7 @@ import { closeJobWorktree } from "../core/job-close.js";
 import { readWorktreeState } from "../core/worktree-state.js";
 import type { Logger } from "../core/logger.js";
 import type { Job } from "../mcp/jobs.js";
+import { runnerProcessAlive } from "../mcp/job-host.js";
 import { readHistoryJson } from "../core/run-history.js";
 import { isRecord, JSON_STORE_VERSION } from "../core/json-store.js";
 import { readOutcomeDecision } from "../core/job-outcomes.js";
@@ -32,8 +33,9 @@ export async function runJobClose(command: "job-state" | "job-close" | "close-id
     if (command === "job-state") { out(JSON.stringify({ job: job.name, status: job.status, finishedAt: job.finishedAt ?? null, lastContinuation: state?.lastContinuation ?? null, closedAt: state?.closedAt ?? null, reapedAt: state?.reapedAt ?? null, decision, runnerStatus: runner?.status ?? null })); continue; }
     if (command === "close-idle-jobs" && (!state || decision?.state === "held" || Math.max(state.lastContinuation, job.finishedAt ?? Date.now()) > Date.now() - DAY_MS)) continue;
     // A live runner is kept even if jobs.json still shows a prior finished turn.
-    let live = false;
-    if (typeof runner?.pid === "number") { try { process.kill(runner.pid, 0); live = true; } catch (err) { live = (err as NodeJS.ErrnoException).code !== "ESRCH"; } }
+    // Same check as takeover: a reused PID (identity mismatch) or an unverifiable runner whose last heartbeat
+    // predates the current boot is not the runner (AB-256); a recent unverifiable one is still kept.
+    const live = typeof runner?.pid === "number" && runnerProcessAlive({ pid: runner.pid, identity: typeof runner.identity === "string" ? runner.identity : undefined, updatedAt: Number(runner.updatedAt) });
     if (!apply) { out(`${job.name}: dry run; no push, cache removal or reap. Config enabled: ${cfg.jobCloseCleanup}`); continue; }
     const result = live || decision?.state === "held" ? { action: "kept", reason: "Live runner or held job retained." } : await closeJobWorktree({ home, job, enabled: cfg.jobCloseCleanup, log });
     out(`${job.name}: ${result.action}: ${result.reason}`);
