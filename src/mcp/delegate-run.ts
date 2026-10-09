@@ -409,7 +409,8 @@ async function runDelegateInner(
         signal,
         onProgress: feed.report,
         extraEnv: { ...link?.childEnv(), [ENV.home]: rc.home, [ENV.maxDelegateDepth]: String(cfg.maxDelegateDepth),
-          ...(job ? { [PARENT_JOB_ENV]: job.name, [ROOT_SESSION_ENV]: job.rootSession ?? job.supervisor ?? me, [ROOT_NAME_ENV]: job.rootName ?? me } : {}),
+          // AGENT_BRIDGE_JOB_ID: the stable job name for tools in the job's processes that prove "same job" ownership.
+          ...(job ? { [PARENT_JOB_ENV]: job.name, AGENT_BRIDGE_JOB_ID: job.name, [ROOT_SESSION_ENV]: job.rootSession ?? job.supervisor ?? me, [ROOT_NAME_ENV]: job.rootName ?? me } : {}),
           ...(slots ? { [SLOT_OWNER_ENV]: slotOwner.id, [SLOT_PID_ENV]: String(slotOwner.pid) } : {}) },
         writableRoots,
         onSession: (id) => {
