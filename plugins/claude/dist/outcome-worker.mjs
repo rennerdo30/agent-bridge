@@ -11,15 +11,15 @@ import { parentPort } from "node:worker_threads";
 // src/core/job-outcomes.ts
 import { createHash as createHash12 } from "node:crypto";
 import { closeSync as closeSync12, existsSync as existsSync17, fstatSync as fstatSync4, lstatSync as lstatSync9, openSync as openSync12, readFileSync as readFileSync23, readSync as readSync3 } from "node:fs";
-import { join as join36 } from "node:path";
-import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
+import { join as join37 } from "node:path";
+import { DatabaseSync as DatabaseSync8 } from "node:sqlite";
 import { inflateSync } from "node:zlib";
 
 // src/core/constants.ts
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.30.2";
+var APP_VERSION = "0.30.3";
 var PROTOCOL_VERSION = 2;
 var ENV = {
   internal: "AGENT_BRIDGE_INTERNAL",
@@ -56,16 +56,123 @@ var MAX_BODY_CHARS = 2e5;
 var MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var PURGE_INTERVAL_MS = 60 * 60 * 1e3;
 var QUEUED_MAIL_MAX_AGE_MS = 24 * 60 * 60 * 1e3;
+var DEFAULT_MAX_HOPS = 6;
 var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
+var DEFAULT_CLAUDE_BIN = "claude";
+var DEFAULT_CODEX_BIN = "codex";
+var DEFAULT_OPENCODE_BIN = "opencode";
+var DEFAULT_DASHBOARD_PORT = 4777;
+var DEFAULT_LINGER_SEC = 300;
+var DEFAULT_MAX_JOBS = 8;
 
 // src/core/run-history.ts
 import { readFile as readFile2 } from "node:fs/promises";
-import { lstatSync as lstatSync2, readdirSync as readdirSync8, realpathSync as realpathSync2, statSync as statSync6 } from "node:fs";
-import { dirname as dirname4, isAbsolute as isAbsolute2, join as join9, relative as relative2, sep as sep2 } from "node:path";
+import { lstatSync as lstatSync3, readdirSync as readdirSync8, realpathSync as realpathSync3, statSync as statSync8 } from "node:fs";
+import { dirname as dirname7, isAbsolute as isAbsolute2, join as join13, relative as relative2, sep as sep2 } from "node:path";
+
+// src/core/job-archive-index.ts
+import { createHash as createHash3 } from "node:crypto";
+import { existsSync as existsSync7, lstatSync as lstatSync2, mkdirSync as mkdirSync6, realpathSync, statSync as statSync4 } from "node:fs";
+import { dirname as dirname6, join as join9 } from "node:path";
+import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
+
+// src/core/file-cache.ts
+import { readFileSync, statSync } from "node:fs";
+var MAX_BYTES = 16 * 1024 * 1024;
+var MAX_ENTRIES = 2048;
+var cache = /* @__PURE__ */ new Map();
+var damaged = /* @__PURE__ */ new Map();
+var bytes = 0;
+function estimatedJsonBytes(value, limit = MAX_BYTES) {
+  const pending = [value];
+  let total = 0;
+  while (pending.length && total <= limit) {
+    const item = pending.pop();
+    if (typeof item === "string") total += 32 + item.length * 2;
+    else if (Array.isArray(item)) {
+      total += 64 + item.length * 16;
+      for (const child of item) pending.push(child);
+    } else if (item !== null && typeof item === "object") {
+      total += 64;
+      for (const key2 of Object.keys(item)) {
+        total += 64 + key2.length * 2;
+        pending.push(item[key2]);
+      }
+    } else total += 16;
+  }
+  return total;
+}
+function cloneJson(value) {
+  if (Array.isArray(value)) return value.map((item) => cloneJson(item));
+  if (value !== null && typeof value === "object") {
+    const copied = {};
+    for (const key2 of Object.keys(value)) {
+      const item = cloneJson(value[key2]);
+      if (key2 === "__proto__") Object.defineProperty(copied, key2, { value: item, writable: true, configurable: true, enumerable: true });
+      else copied[key2] = item;
+    }
+    return copied;
+  }
+  return value;
+}
+function fileSignature(st) {
+  return `${st.dev}:${st.ino}:${st.birthtimeMs}:${st.ctimeMs}:${st.mtimeMs}:${st.size}`;
+}
+function readJsonSnapshot(file2, scan) {
+  if (scan && scan.file !== file2) throw new Error("JSON snapshot scan belongs to another file");
+  const st = scan?.stat ?? statSync(file2), signature = fileSignature(st);
+  const failure2 = damaged.get(file2);
+  if (failure2?.signature === signature) throw failure2.error;
+  damaged.delete(file2);
+  const saved = cache.get(file2);
+  if (saved?.signature === signature) {
+    cache.delete(file2);
+    cache.set(file2, saved);
+    return saved;
+  }
+  if (saved) {
+    cache.delete(file2);
+    bytes -= saved.bytes;
+  }
+  let value;
+  try {
+    if (!scan) value = JSON.parse(readFileSync(file2, "utf8"));
+    else {
+      const raw = readFileSync(file2, "utf8");
+      const after = statSync(file2);
+      if (!after.isFile() || fileSignature(after) !== signature)
+        throw new Error("JSON snapshot identity changed during read");
+      value = JSON.parse(raw);
+    }
+  } catch (error62) {
+    if (error62 instanceof SyntaxError) {
+      damaged.set(file2, { signature, error: error62 });
+      if (damaged.size > 128) damaged.delete(damaged.keys().next().value);
+    }
+    throw error62;
+  }
+  const next = { signature, value, bytes: estimatedJsonBytes(value) };
+  if (next.bytes <= MAX_BYTES) {
+    cache.set(file2, next);
+    bytes += next.bytes;
+    while (bytes > MAX_BYTES || cache.size > MAX_ENTRIES) {
+      const first = cache.keys().next().value;
+      bytes -= cache.get(first).bytes;
+      cache.delete(first);
+    }
+  }
+  return next;
+}
+
+// src/core/sqlite-migrations.ts
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+import { createHash as createHash2, randomUUID as randomUUID5 } from "node:crypto";
+import { closeSync as closeSync4, copyFileSync as copyFileSync3, fsyncSync as fsyncSync2, mkdirSync as mkdirSync5, openSync as openSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { basename as basename2, dirname as dirname5, join as join8 } from "node:path";
 
 // src/core/json-store.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
-import { closeSync as closeSync2, copyFileSync as copyFileSync2, existsSync as existsSync4, fsyncSync, mkdirSync as mkdirSync3, openSync as openSync2, readFileSync as readFileSync4, readdirSync as readdirSync4, renameSync as renameSync2, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { closeSync as closeSync2, copyFileSync as copyFileSync2, existsSync as existsSync4, fsyncSync, mkdirSync as mkdirSync3, openSync as openSync2, readFileSync as readFileSync5, readdirSync as readdirSync4, renameSync as renameSync2, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { basename, dirname as dirname3, join as join5 } from "node:path";
 
 // src/core/storage-lock.ts
@@ -96,12 +203,12 @@ function storeHome(path) {
 }
 
 // src/core/store-compatibility.ts
-import { existsSync as existsSync3, readdirSync as readdirSync3, readFileSync as readFileSync3, statSync } from "node:fs";
+import { existsSync as existsSync3, readdirSync as readdirSync3, readFileSync as readFileSync4, statSync as statSync2 } from "node:fs";
 import { join as join4 } from "node:path";
 
 // src/core/plugin-runtime.ts
 import { randomUUID as randomUUID2, createHash } from "node:crypto";
-import { copyFileSync, existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync2, readdirSync as readdirSync2, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync2, readdirSync as readdirSync2, readFileSync as readFileSync2, renameSync, writeFileSync } from "node:fs";
 import { dirname as dirname2, join as join3, resolve } from "node:path";
 var RUNTIME_SCHEMA = 1;
 var runtimeRoot = (home, client) => join3(home, "plugin-versions", client);
@@ -118,7 +225,7 @@ function selectedWorker(home, client, fallback) {
   const base = runtimeRoot(home, client), path = join3(base, "active.json");
   try {
     assertUnlinked(path);
-    const active = JSON.parse(readFileSync(path, "utf8"));
+    const active = JSON.parse(readFileSync2(path, "utf8"));
     releaseVersion(active.version);
     if (active.schemaVersion !== RUNTIME_SCHEMA || active.protocol !== PROTOCOL_VERSION) throw new Error("Incompatible runtime selector");
     const worker = join3(base, active.version, "dist", "worker.mjs");
@@ -132,7 +239,7 @@ function selectedWorker(home, client, fallback) {
 
 // src/core/process-identity.ts
 import { execFile, execFileSync } from "node:child_process";
-import { readFileSync as readFileSync2 } from "node:fs";
+import { readFileSync as readFileSync3 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 var exec = promisify(execFile);
@@ -150,7 +257,7 @@ function isRecord(value) {
 function readJsonStore(path, log, valid = isRecord) {
   let raw;
   try {
-    raw = readFileSync4(path, "utf8");
+    raw = readFileSync5(path, "utf8");
   } catch (err) {
     if (err.code === "ENOENT") return null;
     throw err;
@@ -173,100 +280,66 @@ function readJsonStore(path, log, valid = isRecord) {
   }
 }
 
+// src/core/sqlite-maintenance.ts
+import { existsSync as existsSync5 } from "node:fs";
+import { dirname as dirname4, join as join7 } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+
+// src/core/logger.ts
+import { appendFileSync, mkdirSync as mkdirSync4, renameSync as renameSync3, statSync as statSync3 } from "node:fs";
+import { join as join6 } from "node:path";
+var MAX_LOG_BYTES = 5 * 1024 * 1024;
+var nullLogger = {
+  debug: () => {
+  },
+  info: () => {
+  },
+  warn: () => {
+  },
+  error: () => {
+  },
+  child: () => nullLogger
+};
+
+// src/core/sqlite-policy.ts
+import { setTimeout as delay } from "node:timers/promises";
+
+// src/core/sqlite-maintenance.ts
+var ARCHIVE_DB_NAME = "archive.db";
+function archiveDbPath(file2) {
+  return file2 === ":memory:" ? ":memory:" : join7(dirname4(file2), ARCHIVE_DB_NAME);
+}
+
+// src/core/migration-lock.ts
+import { randomUUID as randomUUID4 } from "node:crypto";
+import { closeSync as closeSync3, existsSync as existsSync6, openSync as openSync3, readFileSync as readFileSync6, rmSync as rmSync3, writeFileSync as writeFileSync3 } from "node:fs";
+
+// src/core/job-archive-index.ts
+var CACHE_BUDGET = 8 * 1024 * 1024;
+
 // src/core/runfeed.ts
-import { appendFileSync, mkdirSync as mkdirSync5, readFileSync as readFileSync6, readdirSync as readdirSync6, statSync as statSync4 } from "node:fs";
-import { join as join7 } from "node:path";
+import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync8, readFileSync as readFileSync7, readdirSync as readdirSync6, statSync as statSync6 } from "node:fs";
+import { join as join11 } from "node:path";
 
 // src/core/run-archive.ts
-import { copyFileSync as copyFileSync3, existsSync as existsSync5, mkdirSync as mkdirSync4, readdirSync as readdirSync5, renameSync as renameSync3, statSync as statSync3 } from "node:fs";
-import { basename as basename2, join as join6 } from "node:path";
+import { copyFileSync as copyFileSync4, existsSync as existsSync8, mkdirSync as mkdirSync7, readdirSync as readdirSync5, renameSync as renameSync4, statSync as statSync5 } from "node:fs";
+import { basename as basename3, join as join10 } from "node:path";
 
 // src/core/run-log-preview.ts
-import { closeSync as closeSync3, fstatSync, openSync as openSync3, readSync } from "node:fs";
-
-// src/core/file-cache.ts
-import { readFileSync as readFileSync5, statSync as statSync2 } from "node:fs";
-var MAX_BYTES = 256 * 1024 * 1024;
-var MAX_ENTRIES = 2048;
-var cache = /* @__PURE__ */ new Map();
-var damaged = /* @__PURE__ */ new Map();
-var bytes = 0;
-function cloneJson(value) {
-  if (Array.isArray(value)) return value.map((item) => cloneJson(item));
-  if (value !== null && typeof value === "object") {
-    const copied = {};
-    for (const key2 of Object.keys(value)) {
-      const item = cloneJson(value[key2]);
-      if (key2 === "__proto__") Object.defineProperty(copied, key2, { value: item, writable: true, configurable: true, enumerable: true });
-      else copied[key2] = item;
-    }
-    return copied;
-  }
-  return value;
-}
-function fileSignature(st) {
-  return `${st.dev}:${st.ino}:${st.birthtimeMs}:${st.ctimeMs}:${st.mtimeMs}:${st.size}`;
-}
-function readJsonSnapshot(file2, scan) {
-  if (scan && scan.file !== file2) throw new Error("JSON snapshot scan belongs to another file");
-  const st = scan?.stat ?? statSync2(file2), signature = fileSignature(st);
-  const failure2 = damaged.get(file2);
-  if (failure2?.signature === signature) throw failure2.error;
-  damaged.delete(file2);
-  const saved = cache.get(file2);
-  if (saved?.signature === signature) {
-    cache.delete(file2);
-    cache.set(file2, saved);
-    return saved;
-  }
-  if (saved) {
-    cache.delete(file2);
-    bytes -= saved.bytes;
-  }
-  let value;
-  try {
-    if (!scan) value = JSON.parse(readFileSync5(file2, "utf8"));
-    else {
-      const raw = readFileSync5(file2, "utf8");
-      const after = statSync2(file2);
-      if (!after.isFile() || fileSignature(after) !== signature)
-        throw new Error("JSON snapshot identity changed during read");
-      value = JSON.parse(raw);
-    }
-  } catch (error62) {
-    if (error62 instanceof SyntaxError) {
-      damaged.set(file2, { signature, error: error62 });
-      if (damaged.size > 128) damaged.delete(damaged.keys().next().value);
-    }
-    throw error62;
-  }
-  const next = { signature, value, bytes: st.size };
-  if (st.size <= MAX_BYTES) {
-    cache.set(file2, next);
-    bytes += st.size;
-    while (bytes > MAX_BYTES || cache.size > MAX_ENTRIES) {
-      const first = cache.keys().next().value;
-      bytes -= cache.get(first).bytes;
-      cache.delete(first);
-    }
-  }
-  return next;
-}
-
-// src/core/run-log-preview.ts
+import { closeSync as closeSync5, fstatSync, openSync as openSync5, readSync } from "node:fs";
 var WINDOW_BYTES = 32 * 1024;
 
 // src/core/run-archive.ts
 var DEFAULT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
 
 // src/core/runfeed.ts
-import { setTimeout as delay } from "node:timers/promises";
+import { setTimeout as delay2 } from "node:timers/promises";
 var RUNS_DIR_NAME = "runs";
 
 // src/core/transcripts/common.ts
-import { closeSync as closeSync4, fstatSync as fstatSync2, openSync as openSync4, readSync as readSync2, readdirSync as readdirSync7, realpathSync, statSync as statSync5 } from "node:fs";
+import { closeSync as closeSync6, fstatSync as fstatSync2, openSync as openSync6, readSync as readSync2, readdirSync as readdirSync7, realpathSync as realpathSync2, statSync as statSync7 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { isAbsolute, join as join8, relative, resolve as resolve2, sep } from "node:path";
+import { isAbsolute, join as join12, relative, resolve as resolve2, sep } from "node:path";
 var MAX_TRANSCRIPT_CHUNK_BYTES = 512 * 1024;
 var MAX_DISCOVERY_BYTES = 8 * 1024 * 1024;
 var INITIAL_HEADER_BYTES = 8 * 1024;
@@ -282,7 +355,7 @@ function parse(value) {
 }
 function safeFile(root, file2, canonicalRoot) {
   try {
-    const actual = realpathSync.native(file2), rel = relative(canonicalRoot ?? realpathSync.native(root), actual);
+    const actual = realpathSync2.native(file2), rel = relative(canonicalRoot ?? realpathSync2.native(root), actual);
     return rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel) ? actual : null;
   } catch {
     return null;
@@ -300,10 +373,10 @@ function readHistoryJson(file2) {
   }
 }
 async function readRunStarts(home) {
-  const root = join9(home, RUNS_DIR_NAME);
+  const root = join13(home, RUNS_DIR_NAME);
   let canonicalRoot;
   try {
-    canonicalRoot = realpathSync2.native(root);
+    canonicalRoot = realpathSync3.native(root);
   } catch {
     return [];
   }
@@ -311,7 +384,7 @@ async function readRunStarts(home) {
   for (const archived of [true, false]) {
     let dir;
     try {
-      dir = realpathSync2.native(archived ? join9(root, "archive") : root);
+      dir = realpathSync3.native(archived ? join13(root, "archive") : root);
     } catch {
       continue;
     }
@@ -327,13 +400,13 @@ async function readRunStarts(home) {
     entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
     for (const entry of entries) {
       const original = archived ? entry.name.replace(ARCHIVE_SUFFIX, "$1") : entry.name;
-      const file2 = join9(dir, entry.name);
+      const file2 = join13(dir, entry.name);
       const contained = entry.isFile() ? file2 : entry.isSymbolicLink() ? safeFile(root, file2, canonicalRoot) : null;
       if (contained) {
         const previous = paths.get(original);
         if (previous && original.endsWith(".log")) {
           try {
-            if (statSync6(previous).mtimeMs > statSync6(contained).mtimeMs) continue;
+            if (statSync8(previous).mtimeMs > statSync8(contained).mtimeMs) continue;
           } catch {
             continue;
           }
@@ -351,18 +424,18 @@ async function readRunStarts(home) {
     for (let offset = 0; offset < metadata.length; offset += 32) {
       await Promise.all(metadata.slice(offset, offset + 32).map(async ({ name, runName, file: file2, log }) => {
         try {
-          const direct = lstatSync2(file2);
+          const direct = lstatSync3(file2);
           const readable = direct.isFile() ? file2 : direct.isSymbolicLink() ? safeFile(root, file2, canonicalRoot) : null;
           if (!readable) return;
-          const before = direct.isFile() ? direct : statSync6(readable);
+          const before = direct.isFile() ? direct : statSync8(readable);
           if (!before.isFile()) return;
           const raw = await readFile2(readable, "utf8");
-          const after = lstatSync2(readable);
+          const after = lstatSync3(readable);
           if (!after.isFile() || fileSignature(after) !== fileSignature(before)) return;
           const meta3 = JSON.parse(raw);
           if (!isRecord(meta3) || typeof meta3.job !== "string") return;
           const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(name);
-          const startedAt = m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : statSync6(log).mtimeMs;
+          const startedAt = m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : statSync8(log).mtimeMs;
           starts.set(runName, { job: meta3.job, startedAt, ...typeof meta3.jobStartedAt === "number" ? { jobStartedAt: meta3.jobStartedAt } : {} });
         } catch {
         }
@@ -373,26 +446,26 @@ async function readRunStarts(home) {
 }
 
 // src/core/paths.ts
-import { createHash as createHash2 } from "node:crypto";
-import { join as join10, posix, resolve as resolve3 } from "node:path";
+import { createHash as createHash4 } from "node:crypto";
+import { join as join14, posix, resolve as resolve3 } from "node:path";
 function resolveDbPath(home) {
-  return join10(home, DB_FILE_NAME);
+  return join14(home, DB_FILE_NAME);
 }
 
 // src/core/project-identity.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { existsSync as existsSync6, lstatSync as lstatSync3, readFileSync as readFileSync7, realpathSync as realpathSync3, statSync as statSync7 } from "node:fs";
-import { basename as basename3, delimiter, dirname as dirname5, isAbsolute as isAbsolute3, join as join11, relative as relative3, resolve as resolve4 } from "node:path";
+import { existsSync as existsSync9, lstatSync as lstatSync4, readFileSync as readFileSync8, realpathSync as realpathSync4, statSync as statSync9 } from "node:fs";
+import { basename as basename4, delimiter, dirname as dirname8, isAbsolute as isAbsolute3, join as join15, relative as relative3, resolve as resolve4 } from "node:path";
 
 // src/core/session-visibility.ts
 import { posix as posix2 } from "node:path";
 
 // src/mcp/jobs.ts
-import { randomUUID as randomUUID13 } from "node:crypto";
+import { randomUUID as randomUUID12 } from "node:crypto";
 import { setTimeout as delay6 } from "node:timers/promises";
 import { isDeepStrictEqual as isDeepStrictEqual2 } from "node:util";
-import { closeSync as closeSync11, constants as fsConstants, copyFileSync as copyFileSync5, fsyncSync as fsyncSync6, openSync as openSync11 } from "node:fs";
-import { dirname as dirname14 } from "node:path";
+import { closeSync as closeSync11, constants as fsConstants2, copyFileSync as copyFileSync6, fsyncSync as fsyncSync6, openSync as openSync11 } from "node:fs";
+import { dirname as dirname16 } from "node:path";
 
 // src/core/codex-subagents.ts
 function codexSubagentConfig(count = DEFAULT_CODEX_SUBAGENTS) {
@@ -409,14 +482,14 @@ function codexSubagentConfig(count = DEFAULT_CODEX_SUBAGENTS) {
 }
 
 // src/core/codex-env.ts
-import { readFileSync as readFileSync8 } from "node:fs";
+import { readFileSync as readFileSync9 } from "node:fs";
 import { homedir as homedir3 } from "node:os";
-import { join as join12 } from "node:path";
+import { join as join16 } from "node:path";
 function codexWindowsSandbox(home = homedir3(), platform = process.platform) {
   if (platform !== "win32") return null;
   let toml;
   try {
-    toml = readFileSync8(join12(home, ".codex", "config.toml"), "utf8");
+    toml = readFileSync9(join16(home, ".codex", "config.toml"), "utf8");
   } catch {
     return null;
   }
@@ -448,21 +521,21 @@ function jobEnvironment(env = process.env, platform = process.platform) {
 
 // src/core/delegate.ts
 import { spawn } from "node:child_process";
-import { existsSync as existsSync7, readFileSync as readFileSync12, realpathSync as realpathSync5 } from "node:fs";
-import { delimiter as delimiter2, dirname as dirname7, extname, isAbsolute as isAbsolute4, join as join17, win32 } from "node:path";
+import { existsSync as existsSync10, readFileSync as readFileSync13, realpathSync as realpathSync6 } from "node:fs";
+import { delimiter as delimiter2, dirname as dirname10, extname, isAbsolute as isAbsolute4, join as join21, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { setTimeout as delay2 } from "node:timers/promises";
+import { setTimeout as delay3 } from "node:timers/promises";
 
 // src/core/claude-mcp.ts
-import { readFileSync as readFileSync9 } from "node:fs";
+import { readFileSync as readFileSync10 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { join as join13, resolve as resolve5 } from "node:path";
+import { join as join17, resolve as resolve5 } from "node:path";
 var OWN_SERVER_RULE = "mcp__plugin_agent-bridge_bridge";
 var ACCOUNT_CONNECTORS_RULE = "mcp__claude_ai_*";
 var BUILT_IN_RULES = ["mcp__claude-in-chrome"];
 function readJson(path) {
   try {
-    return JSON.parse(readFileSync9(path, "utf8"));
+    return JSON.parse(readFileSync10(path, "utf8"));
   } catch {
     return null;
   }
@@ -471,31 +544,31 @@ function serverNames(mcp) {
   return mcp && typeof mcp === "object" ? Object.keys(mcp) : [];
 }
 function pluginServers(home) {
-  const installed = readJson(join13(home, ".claude", "plugins", "installed_plugins.json"));
+  const installed = readJson(join17(home, ".claude", "plugins", "installed_plugins.json"));
   const out = [];
   for (const [key2, entries] of Object.entries(installed?.plugins ?? {})) {
     const plugin = key2.split("@")[0];
     for (const e of Array.isArray(entries) ? entries : [entries]) {
       const root = e?.installPath;
       if (typeof root !== "string") continue;
-      const manifest = readJson(join13(root, ".claude-plugin", "plugin.json"));
+      const manifest = readJson(join17(root, ".claude-plugin", "plugin.json"));
       const declared = manifest?.mcpServers;
       const servers = typeof declared === "string" ? readJson(resolve5(root, declared))?.mcpServers ?? readJson(resolve5(root, declared)) : declared;
-      const names = /* @__PURE__ */ new Set([...serverNames(servers), ...serverNames(readJson(join13(root, ".mcp.json"))?.mcpServers)]);
+      const names = /* @__PURE__ */ new Set([...serverNames(servers), ...serverNames(readJson(join17(root, ".mcp.json"))?.mcpServers)]);
       for (const s of names) out.push(`mcp__plugin_${plugin}_${s}`);
     }
   }
   return out;
 }
 function claudeMcpDenyRules(cwd, home = homedir4()) {
-  const config2 = readJson(join13(home, ".claude.json"));
+  const config2 = readJson(join17(home, ".claude.json"));
   const norm = (p) => resolve5(p).replace(/\\/g, "/").toLowerCase();
   const project = Object.entries(config2?.projects ?? {}).find(([p]) => norm(p) === norm(cwd))?.[1];
   const names = [
     ...pluginServers(home),
     ...serverNames(config2?.mcpServers).map((s) => `mcp__${s}`),
     ...serverNames(project?.mcpServers).map((s) => `mcp__${s}`),
-    ...serverNames(readJson(join13(cwd, ".mcp.json"))?.mcpServers).map((s) => `mcp__${s}`),
+    ...serverNames(readJson(join17(cwd, ".mcp.json"))?.mcpServers).map((s) => `mcp__${s}`),
     ACCOUNT_CONNECTORS_RULE,
     ...BUILT_IN_RULES
   ];
@@ -503,13 +576,13 @@ function claudeMcpDenyRules(cwd, home = homedir4()) {
 }
 
 // src/core/parent-link.ts
-import { randomBytes as randomBytes2, randomUUID as randomUUID4 } from "node:crypto";
+import { randomBytes as randomBytes2, randomUUID as randomUUID6 } from "node:crypto";
 import { createServer } from "node:http";
 
 // src/core/token.ts
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { chmodSync, mkdirSync as mkdirSync6, openSync as openSync5, readFileSync as readFileSync10, writeSync, closeSync as closeSync5 } from "node:fs";
-import { dirname as dirname6, join as join14 } from "node:path";
+import { chmodSync, mkdirSync as mkdirSync9, openSync as openSync7, readFileSync as readFileSync11, writeSync, closeSync as closeSync7 } from "node:fs";
+import { dirname as dirname9, join as join18 } from "node:path";
 function tokensEqual(a, b) {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
@@ -692,12 +765,12 @@ function progressLineHandler(agent, onProgress) {
 
 // src/core/context-journal.ts
 import { appendFile, mkdir, open } from "node:fs/promises";
-import { join as join15 } from "node:path";
+import { join as join19 } from "node:path";
 
 // src/core/relay.ts
-import { randomBytes as randomBytes3, randomUUID as randomUUID5 } from "node:crypto";
-import { mkdirSync as mkdirSync7, readFileSync as readFileSync11, readdirSync as readdirSync9, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join16 } from "node:path";
+import { randomBytes as randomBytes3, randomUUID as randomUUID7 } from "node:crypto";
+import { mkdirSync as mkdirSync10, readFileSync as readFileSync12, readdirSync as readdirSync9, writeFileSync as writeFileSync5 } from "node:fs";
+import { join as join20 } from "node:path";
 import { createServer as createServer2 } from "node:http";
 var RELAY_URL_ENV = "AGENT_BRIDGE_RELAY_URL";
 var RELAY_TOKEN_ENV = "AGENT_BRIDGE_RELAY_TOKEN";
@@ -774,8 +847,8 @@ var PermissionRelay = class {
 var MAX_APPROVAL_REASON_CHARS = 4e3;
 
 // src/core/codex-paths.ts
-import { realpathSync as realpathSync4 } from "node:fs";
-function codexDriveMappings(text, platform = process.platform, canonical = realpathSync4.native) {
+import { realpathSync as realpathSync5 } from "node:fs";
+function codexDriveMappings(text, platform = process.platform, canonical = realpathSync5.native) {
   if (platform !== "win32") return [];
   const drives = new Set([...text.matchAll(/\b([a-z]):[\\/]/gi)].map((m) => `${m[1].toUpperCase()}:\\`));
   const mappings = [];
@@ -837,18 +910,18 @@ function resolveBinary(bin, env = process.env, platform = process.platform) {
   const exts = isWin ? (env.PATHEXT ?? DEFAULT_PATHEXT).split(";").filter(Boolean) : [""];
   const candidates = (base) => isWin && !extname(base) ? exts.map((e) => base + e.toLowerCase()) : [base];
   if (isAbsolute4(bin) || bin.includes("/") || bin.includes("\\")) {
-    return candidates(bin).find((c) => existsSync7(c)) ?? null;
+    return candidates(bin).find((c) => existsSync10(c)) ?? null;
   }
   for (const dir of (env.PATH ?? env.Path ?? "").split(delimiter2)) {
     if (!dir) continue;
-    for (const c of candidates(join17(dir, bin))) if (existsSync7(c)) return c;
+    for (const c of candidates(join21(dir, bin))) if (existsSync10(c)) return c;
   }
   return null;
 }
-function unwrapNpmShim(shimPath, readFile4 = (p) => readFileSync12(p, "utf8")) {
+function unwrapNpmShim(shimPath, readFile5 = (p) => readFileSync13(p, "utf8")) {
   let text;
   try {
-    text = readFile4(shimPath);
+    text = readFile5(shimPath);
   } catch {
     return null;
   }
@@ -911,7 +984,7 @@ function resolveCommand(bin, argsIn, env, log) {
   let needsShell = process.platform === "win32" && WINDOWS_SHIM_EXTS.has(extname(resolved).toLowerCase());
   if (needsShell) {
     const target = unwrapNpmShim(resolved);
-    if (target && existsSync7(target.command) && target.prefix.every((p) => existsSync7(p))) {
+    if (target && existsSync10(target.command) && target.prefix.every((p) => existsSync10(p))) {
       log.debug("unwrapped npm shim", { shim: resolved, command: target.command, prefix: target.prefix });
       resolved = target.command;
       args = [...target.prefix, ...args];
@@ -1108,7 +1181,7 @@ function parseCodexJsonl(stdout) {
 }
 function realFolder(dir) {
   try {
-    return realpathSync5.native(dir);
+    return realpathSync6.native(dir);
   } catch {
     return dir;
   }
@@ -1178,8 +1251,8 @@ function isClaudeReadOnly(mode) {
 }
 var CLAUDE_READ_ONLY_MODES = /* @__PURE__ */ new Set(["default", "manual", "plan"]);
 function bundledCli() {
-  const cli = join17(dirname7(fileURLToPath(import.meta.url)), "cli.mjs");
-  return existsSync7(cli) ? cli : null;
+  const cli = join21(dirname10(fileURLToPath(import.meta.url)), "cli.mjs");
+  return existsSync10(cli) ? cli : null;
 }
 function spawnsWithoutShell(bin, log) {
   try {
@@ -1370,12 +1443,12 @@ async function withResumeHint(agent, sessionOf, run) {
 
 // src/core/config.ts
 import { readFileSync as readFileSync15, unwatchFile, watchFile } from "node:fs";
-import { basename as basename5, join as join23 } from "node:path";
+import { basename as basename5, join as join24, isAbsolute as isAbsolute6 } from "node:path";
 
 // src/network/config.ts
 import { hostname as hostname3 } from "node:os";
-import { readFileSync as readFileSync13 } from "node:fs";
-import { isAbsolute as isAbsolute5, join as join18 } from "node:path";
+import { readFileSync as readFileSync14 } from "node:fs";
+import { isAbsolute as isAbsolute5, join as join22 } from "node:path";
 
 // node_modules/zod/v4/classic/external.js
 var external_exports = {};
@@ -21077,15 +21150,15 @@ var DEFAULT_NETWORK_CONFIG = networkConfigSchema.parse({});
 
 // src/core/owner-questions.ts
 import { randomUUID as randomUUID9 } from "node:crypto";
-import { existsSync as existsSync11, mkdirSync as mkdirSync10 } from "node:fs";
-import { join as join22 } from "node:path";
-import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
+import { existsSync as existsSync12, mkdirSync as mkdirSync11 } from "node:fs";
+import { join as join23 } from "node:path";
+import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 
 // src/core/decisions.ts
-import { randomUUID as randomUUID6 } from "node:crypto";
-import { existsSync as existsSync8 } from "node:fs";
+import { randomUUID as randomUUID8 } from "node:crypto";
+import { existsSync as existsSync11 } from "node:fs";
 import { resolve as resolve6 } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
 var MAX_DECISION_TEXT_CHARS = MAX_BODY_CHARS - 1024;
 var MAX_SCOPE_SESSIONS = 100;
 var MAX_SCOPE_PATH_CHARS = 4096;
@@ -21094,46 +21167,6 @@ var decisionScopeSchema = external_exports.union([
   external_exports.object({ project: external_exports.string().trim().min(1).max(MAX_SCOPE_PATH_CHARS) }).strict(),
   external_exports.object({ sessions: external_exports.array(external_exports.string().trim().min(1).max(MAX_SCOPE_PATH_CHARS)).min(1).max(MAX_SCOPE_SESSIONS) }).strict()
 ]);
-
-// src/core/sqlite-migrations.ts
-import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
-import { createHash as createHash3, randomUUID as randomUUID8 } from "node:crypto";
-import { closeSync as closeSync7, copyFileSync as copyFileSync4, fsyncSync as fsyncSync2, mkdirSync as mkdirSync9, openSync as openSync7, writeFileSync as writeFileSync5 } from "node:fs";
-import { basename as basename4, dirname as dirname9, join as join21 } from "node:path";
-
-// src/core/sqlite-maintenance.ts
-import { existsSync as existsSync9 } from "node:fs";
-import { dirname as dirname8, join as join20 } from "node:path";
-import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
-
-// src/core/logger.ts
-import { appendFileSync as appendFileSync2, mkdirSync as mkdirSync8, renameSync as renameSync4, statSync as statSync8 } from "node:fs";
-import { join as join19 } from "node:path";
-var MAX_LOG_BYTES = 5 * 1024 * 1024;
-var nullLogger = {
-  debug: () => {
-  },
-  info: () => {
-  },
-  warn: () => {
-  },
-  error: () => {
-  },
-  child: () => nullLogger
-};
-
-// src/core/sqlite-policy.ts
-import { setTimeout as delay3 } from "node:timers/promises";
-
-// src/core/sqlite-maintenance.ts
-var ARCHIVE_DB_NAME = "archive.db";
-function archiveDbPath(file2) {
-  return file2 === ":memory:" ? ":memory:" : join20(dirname8(file2), ARCHIVE_DB_NAME);
-}
-
-// src/core/migration-lock.ts
-import { randomUUID as randomUUID7 } from "node:crypto";
-import { closeSync as closeSync6, existsSync as existsSync10, openSync as openSync6, readFileSync as readFileSync14, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
 
 // src/core/owner-questions.ts
 var short = external_exports.string().trim().min(1).max(500);
@@ -21173,22 +21206,64 @@ var questionAnswerSchema = external_exports.object({
   pin: external_exports.object({ scope: decisionScopeSchema, topic: external_exports.string().trim().min(1).max(160) }).strict().optional()
 }).strict().refine((a) => Boolean(a.option) !== Boolean(a.text), "Choose an option or write an answer");
 var questionAlertSettingsSchema = external_exports.object({ sound: external_exports.boolean(), toast: external_exports.boolean(), reminderMinutes: external_exports.number().int().min(0).max(1440) }).strict();
+var DEFAULT_QUESTION_ALERTS = { sound: true, toast: true, reminderMinutes: 15 };
 
 // src/core/config.ts
 var CODEX_SANDBOXES = ["read-only", "workspace-write", "danger-full-access"];
 var CODEX_APPROVALS_REVIEWERS = ["user", "auto_review"];
 var DEFAULT_CODEX_APPROVALS_REVIEWER = "auto_review";
 var CLAUDE_PERMISSION_MODES = ["default", "manual", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
+var DEFAULT_NOTIFICATIONS = { approvals: true, finish: true, fail: true };
+var DEFAULT_HISTORY_ANSWER = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
+var DEFAULT_CONFIG = {
+  history: { ingest: true, budgetBytes: 8 * 1024 ** 3 },
+  questionAlerts: DEFAULT_QUESTION_ALERTS,
+  projectGroups: true,
+  historyAnswer: DEFAULT_HISTORY_ANSWER,
+  name: null,
+  worktreeRoot: null,
+  autoWake: false,
+  wakeOnDirect: true,
+  maxHops: DEFAULT_MAX_HOPS,
+  maxJobs: DEFAULT_MAX_JOBS,
+  maxDelegateDepth: DEFAULT_MAX_DELEGATE_DEPTH,
+  autoApproveTools: [],
+  resourceSlots: {},
+  delivery: "auto",
+  claudeBin: DEFAULT_CLAUDE_BIN,
+  codexBin: DEFAULT_CODEX_BIN,
+  codexSubagents: DEFAULT_CODEX_SUBAGENTS,
+  codexSandbox: "read-only",
+  codexWindowsSandbox: "unelevated",
+  jobCloseCleanup: false,
+  codexApprovalsReviewer: DEFAULT_CODEX_APPROVALS_REVIEWER,
+  codexWorktreeSandbox: null,
+  codexWorkspaceWriteNetworkAccess: null,
+  claudePermissionMode: "default",
+  lingerSec: DEFAULT_LINGER_SEC,
+  codexModel: null,
+  claudeModel: null,
+  opencodeBin: DEFAULT_OPENCODE_BIN,
+  antigravityBin: "agy",
+  antigravityModel: null,
+  opencodeModel: null,
+  effort: {},
+  opencodeAutoApprove: false,
+  dashboard: true,
+  dashboardPort: DEFAULT_DASHBOARD_PORT,
+  notifications: DEFAULT_NOTIFICATIONS,
+  network: DEFAULT_NETWORK_CONFIG
+};
 
 // src/core/antigravity-plugin.ts
-import { existsSync as existsSync12, readFileSync as readFileSync16 } from "node:fs";
+import { existsSync as existsSync13, readFileSync as readFileSync16 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { dirname as dirname10, join as join24 } from "node:path";
-var antigravityPluginDir = (home = homedir5()) => join24(home, ".gemini", "config", "plugins", "agent-bridge");
-var antigravityRuntimeHome = (dir = antigravityPluginDir()) => join24(dirname10(dir), ".agent-bridge-runtime");
+import { dirname as dirname11, join as join25 } from "node:path";
+var antigravityPluginDir = (home = homedir5()) => join25(home, ".gemini", "config", "plugins", "agent-bridge");
+var antigravityRuntimeHome = (dir = antigravityPluginDir()) => join25(dirname11(dir), ".agent-bridge-runtime");
 function antigravityRuntimeDir(dir = antigravityPluginDir()) {
-  const selected = selectedWorker(antigravityRuntimeHome(dir), "antigravity", join24(dir, "dist", "server.mjs"));
-  return dirname10(dirname10(selected.worker));
+  const selected = selectedWorker(antigravityRuntimeHome(dir), "antigravity", join25(dir, "dist", "server.mjs"));
+  return dirname11(dirname11(selected.worker));
 }
 function antigravityHookCommand(cli, event, node2 = process.execPath, platform = process.platform) {
   const quote = (value) => `'${value.replace(/'/g, "''")}'`;
@@ -21204,8 +21279,8 @@ function requireAntigravityPlugin(dir = antigravityPluginDir()) {
     assertUnlinked(dir);
     const runtime = antigravityRuntimeDir(dir);
     assertUnlinked(runtime);
-    const hooks = JSON.parse(readFileSync16(join24(dir, "hooks.json"), "utf8"))["agent-bridge"];
-    if (readFileSync16(join24(dir, ".agent-bridge-owned"), "utf8").trim() !== "agent-bridge" || hooks?.enabled === false || !hooks?.PreToolUse?.some((group) => group.matcher === "*" && group.hooks?.some((hook) => hook.command === antigravityHookCommand(join24(runtime, "dist", "cli.mjs"), "PreToolUse"))) || !existsSync12(join24(runtime, "dist", "server.mjs")) || !existsSync12(join24(runtime, "dist", "cli.mjs"))) throw new Error("incomplete plugin");
+    const hooks = JSON.parse(readFileSync16(join25(dir, "hooks.json"), "utf8"))["agent-bridge"];
+    if (readFileSync16(join25(dir, ".agent-bridge-owned"), "utf8").trim() !== "agent-bridge" || hooks?.enabled === false || !hooks?.PreToolUse?.some((group) => group.matcher === "*" && group.hooks?.some((hook) => hook.command === antigravityHookCommand(join25(runtime, "dist", "cli.mjs"), "PreToolUse"))) || !existsSync13(join25(runtime, "dist", "server.mjs")) || !existsSync13(join25(runtime, "dist", "cli.mjs"))) throw new Error("incomplete plugin");
   } catch {
     throw new DelegateError("Antigravity needs its enabled agent-bridge plugin: run agent-bridge install antigravity --yes, then restart agy", "failed");
   }
@@ -22101,13 +22176,12 @@ ${res.text}` } : res;
 };
 
 // src/core/job-archive.ts
-import { createHash as createHash4, randomUUID as randomUUID10 } from "node:crypto";
-import { closeSync as closeSync8, existsSync as existsSync13, fsyncSync as fsyncSync3, linkSync, lstatSync as lstatSync4, mkdirSync as mkdirSync11, openSync as openSync8, readdirSync as readdirSync10, realpathSync as realpathSync6, writeFileSync as writeFileSync6 } from "node:fs";
-import { basename as basename6, dirname as dirname11, join as join25 } from "node:path";
+import { realpathSync as realpathSync7 } from "node:fs";
+import { dirname as dirname12 } from "node:path";
 
 // src/core/notifications.ts
 import { spawn as spawn4 } from "node:child_process";
-import { mkdirSync as mkdirSync12, readFileSync as readFileSync17, rmdirSync, statSync as statSync9, writeFileSync as writeFileSync7 } from "node:fs";
+import { mkdirSync as mkdirSync12, readFileSync as readFileSync17, rmdirSync, statSync as statSync10, writeFileSync as writeFileSync6 } from "node:fs";
 import { join as join26 } from "node:path";
 var EVENT_INTERVAL_MS = 5e3;
 var RATE_WINDOW_MS = 6e4;
@@ -22135,12 +22209,12 @@ var limiter = new NotificationLimiter();
 // src/core/root-concurrency.ts
 import { createHash as createHash5 } from "node:crypto";
 import { join as join28 } from "node:path";
-import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
 
 // src/core/resource-slots.ts
 import { mkdirSync as mkdirSync13 } from "node:fs";
 import { join as join27 } from "node:path";
-import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
+import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
 import { setTimeout as delay4 } from "node:timers/promises";
 var SLOT_LEASE_MS = 6 * 60 * 6e4;
 
@@ -22160,15 +22234,22 @@ import { StringDecoder } from "node:string_decoder";
 import { setImmediate as yieldIO } from "node:timers/promises";
 var CACHE_BYTES = 64 * 1024 * 1024;
 
+// src/core/ask-completion.ts
+import { closeSync as closeSync9, constants as fsConstants, copyFileSync as copyFileSync5, fsyncSync as fsyncSync4, openSync as openSync9 } from "node:fs";
+import { dirname as dirname14, join as join31 } from "node:path";
+
 // src/core/metadata-file-lease.ts
-import { createHash as createHash7, randomUUID as randomUUID11 } from "node:crypto";
-import { closeSync as closeSync9, fsyncSync as fsyncSync4, linkSync as linkSync2, lstatSync as lstatSync5, mkdirSync as mkdirSync14, openSync as openSync9, readFileSync as readFileSync19, readdirSync as readdirSync11, renameSync as renameSync5, writeFileSync as writeFileSync8 } from "node:fs";
-import { basename as basename7, dirname as dirname12, join as join30, resolve as resolve7 } from "node:path";
+import { createHash as createHash7, randomUUID as randomUUID10 } from "node:crypto";
+import { closeSync as closeSync8, fsyncSync as fsyncSync3, linkSync, lstatSync as lstatSync5, mkdirSync as mkdirSync14, openSync as openSync8, readFileSync as readFileSync19, readdirSync as readdirSync10, renameSync as renameSync5, writeFileSync as writeFileSync7 } from "node:fs";
+import { basename as basename6, dirname as dirname13, join as join30, resolve as resolve7 } from "node:path";
+
+// src/core/ask-completion.ts
+import { readFile as readFile3 } from "node:fs/promises";
 
 // src/core/job-pending-journal.ts
-import { createHash as createHash8, randomUUID as randomUUID12 } from "node:crypto";
-import { closeSync as closeSync10, constants, fstatSync as fstatSync3, fsyncSync as fsyncSync5, linkSync as linkSync3, lstatSync as lstatSync6, mkdirSync as mkdirSync15, openSync as openSync10, readFileSync as readFileSync20, readdirSync as readdirSync12, renameSync as renameSync6, writeFileSync as writeFileSync9 } from "node:fs";
-import { dirname as dirname13, join as join31, resolve as resolve8 } from "node:path";
+import { createHash as createHash8, randomUUID as randomUUID11 } from "node:crypto";
+import { closeSync as closeSync10, constants, fstatSync as fstatSync3, fsyncSync as fsyncSync5, linkSync as linkSync2, lstatSync as lstatSync6, mkdirSync as mkdirSync15, openSync as openSync10, readFileSync as readFileSync20, readdirSync as readdirSync11, renameSync as renameSync6, writeFileSync as writeFileSync8 } from "node:fs";
+import { dirname as dirname15, join as join32, resolve as resolve8 } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 var MAX_RECEIPT_BYTES = 32 * 1024 * 1024;
 
@@ -22176,15 +22257,15 @@ var MAX_RECEIPT_BYTES = 32 * 1024 * 1024;
 var INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1e3;
 
 // src/core/worktree.ts
-import { createHash as createHash9, randomUUID as randomUUID14 } from "node:crypto";
-import { existsSync as existsSync15, lstatSync as lstatSync8, mkdirSync as mkdirSync17, readFileSync as readFileSync21, realpathSync as realpathSync8, rmSync as rmSync5 } from "node:fs";
-import { basename as basename9, isAbsolute as isAbsolute7, join as join33, relative as relative5, resolve as resolve10, toNamespacedPath as toNamespacedPath2 } from "node:path";
+import { createHash as createHash9, randomUUID as randomUUID13 } from "node:crypto";
+import { existsSync as existsSync15, lstatSync as lstatSync8, mkdirSync as mkdirSync17, readFileSync as readFileSync21, realpathSync as realpathSync9, rmSync as rmSync5 } from "node:fs";
+import { basename as basename8, isAbsolute as isAbsolute8, join as join34, relative as relative5, resolve as resolve10, toNamespacedPath as toNamespacedPath2 } from "node:path";
 
 // src/core/worktree-links.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
-import { copyFileSync as copyFileSync6, existsSync as existsSync14, lstatSync as lstatSync7, mkdirSync as mkdirSync16, mkdtempSync, readdirSync as readdirSync13, readlinkSync, realpathSync as realpathSync7, rmSync as rmSync4, rmdirSync as rmdirSync2, unlinkSync } from "node:fs";
+import { copyFileSync as copyFileSync7, existsSync as existsSync14, lstatSync as lstatSync7, mkdirSync as mkdirSync16, mkdtempSync, readdirSync as readdirSync12, readlinkSync, realpathSync as realpathSync8, rmSync as rmSync4, rmdirSync as rmdirSync2, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename as basename8, dirname as dirname15, isAbsolute as isAbsolute6, join as join32, relative as relative4, resolve as resolve9, sep as sep3, toNamespacedPath } from "node:path";
+import { basename as basename7, dirname as dirname17, isAbsolute as isAbsolute7, join as join33, relative as relative4, resolve as resolve9, sep as sep3, toNamespacedPath } from "node:path";
 
 // src/core/worktree.ts
 var GIT = "git";
@@ -22202,22 +22283,22 @@ async function git(args, cwd, log, timeoutMs = GIT_TIMEOUT_MS, env = process.env
 
 // src/core/local-result-receipts.ts
 import { createHash as createHash11 } from "node:crypto";
-import { existsSync as existsSync16, readdirSync as readdirSync14 } from "node:fs";
-import { join as join35 } from "node:path";
+import { existsSync as existsSync16, readdirSync as readdirSync13 } from "node:fs";
+import { join as join36 } from "node:path";
 
 // src/core/read-journal.ts
 import { createHash as createHash10 } from "node:crypto";
 import { appendFileSync as appendFileSync3, mkdirSync as mkdirSync18, readFileSync as readFileSync22 } from "node:fs";
-import { join as join34 } from "node:path";
+import { join as join35 } from "node:path";
 var ReadJournal = class {
   constructor(home) {
     this.home = home;
-    this.dir = join34(home, "read-state");
+    this.dir = join35(home, "read-state");
   }
   home;
   dir;
   path(identity) {
-    return join34(this.dir, `${createHash10("sha256").update(identity).digest("hex")}.jsonl`);
+    return join35(this.dir, `${createHash10("sha256").update(identity).digest("hex")}.jsonl`);
   }
   read(identity) {
     return this.entries(identity).flatMap((entry) => entry.ids);
@@ -22261,13 +22342,13 @@ ${JSON.stringify({ ids, at: Date.now() })}
 };
 
 // src/core/local-result-receipts.ts
-var RESULT_HEADER = /^Subagent .+ (?:done|failed) after \d+s\./;
+var RESULT_HEADER = /^Subagent .+ (?:done|failed|cancelled) after \d+s\./;
 var LOCAL_RESULTS_DIR = "local-result-receipts";
 var key = (name) => createHash11("sha256").update(name).digest("hex");
 function localResultReceipt(home, name, owner, after, before) {
-  const dir = join35(home, LOCAL_RESULTS_DIR, key(name));
+  const dir = join36(home, LOCAL_RESULTS_DIR, key(name));
   if (!existsSync16(dir)) return null;
-  const records = readdirSync14(dir).filter((f) => f.endsWith(".json")).map((f) => readJsonStore(join35(dir, f))).filter((r) => isRecord(r) && typeof r.id === "string" && typeof r.recipient === "string" && typeof r.deliveredAt === "number" && (!owner || r.recipient === owner) && r.deliveredAt >= after && r.deliveredAt < before).sort((a, b) => b.deliveredAt - a.deliveredAt);
+  const records = readdirSync13(dir).filter((f) => f.endsWith(".json")).map((f) => readJsonStore(join36(dir, f))).filter((r) => isRecord(r) && typeof r.id === "string" && typeof r.recipient === "string" && typeof r.deliveredAt === "number" && (!owner || r.recipient === owner) && r.deliveredAt >= after && r.deliveredAt < before).sort((a, b) => b.deliveredAt - a.deliveredAt);
   const record2 = records[0];
   if (!record2) return null;
   const receipt = new ReadJournal(home).receipt(`name:${record2.recipient}`, record2.id);
@@ -22285,11 +22366,11 @@ function localHeads(repo, branches) {
   if (["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_NAMESPACE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_SHALLOW_FILE", "GIT_REPLACE_REF_BASE"].some((key2) => process.env[key2])) return null;
   if (branches.some((branch) => !/^[A-Za-z0-9._/-]+$/.test(branch) || branch.split("/").some((part) => !part || part.startsWith(".") || part.endsWith(".") || part.endsWith(".lock") || part.includes("..")))) return null;
   try {
-    const dir = join36(repo, ".git");
-    if (!lstatSync9(dir).isDirectory() || /\brefStorage\s*=|\[\s*include/i.test(readFileSync23(join36(dir, "config"), "utf8"))) return null;
+    const dir = join37(repo, ".git");
+    if (!lstatSync9(dir).isDirectory() || /\brefStorage\s*=|\[\s*include/i.test(readFileSync23(join37(dir, "config"), "utf8"))) return null;
     const packed = /* @__PURE__ */ new Map();
     try {
-      for (const line of readFileSync23(join36(dir, "packed-refs"), "utf8").split("\n")) {
+      for (const line of readFileSync23(join37(dir, "packed-refs"), "utf8").split("\n")) {
         const match = /^((?:[a-f0-9]{40}|[a-f0-9]{64})) (refs\/heads\/.+)$/i.exec(line.trim());
         if (match) packed.set(match[2], match[1]);
       }
@@ -22301,7 +22382,7 @@ function localHeads(repo, branches) {
       const ref = `refs/heads/${branch}`;
       let head = packed.get(ref);
       try {
-        head = readFileSync23(join36(dir, "refs", "heads", branch), "utf8").trim();
+        head = readFileSync23(join37(dir, "refs", "heads", branch), "utf8").trim();
       } catch (err) {
         if (err.code !== "ENOENT") return null;
       }
@@ -22315,18 +22396,18 @@ function localHeads(repo, branches) {
   }
 }
 function localAncestor(repo, ancestor, descendant) {
-  const dir = join36(repo, ".git"), limit = 64 * 1024;
+  const dir = join37(repo, ".git"), limit = 64 * 1024;
   try {
-    if (["shallow", "info/grafts", "refs/replace", "objects/info/alternates"].some((file2) => existsSync17(join36(dir, file2)))) return null;
+    if (["shallow", "info/grafts", "refs/replace", "objects/info/alternates"].some((file2) => existsSync17(join37(dir, file2)))) return null;
     try {
-      if (/ refs\/replace\//m.test(readFileSync23(join36(dir, "packed-refs"), "utf8"))) return null;
+      if (/ refs\/replace\//m.test(readFileSync23(join37(dir, "packed-refs"), "utf8"))) return null;
     } catch (err) {
       if (err.code !== "ENOENT") return null;
     }
     let reads = 0;
     const parents = (head) => {
       if (reads++ >= 16 || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(head)) return null;
-      const file2 = join36(dir, "objects", head.slice(0, 2), head.slice(2));
+      const file2 = join37(dir, "objects", head.slice(0, 2), head.slice(2));
       if (!lstatSync9(file2).isFile()) return null;
       const fd = openSync12(file2, "r");
       let compressed;
@@ -22383,7 +22464,7 @@ function localAncestor(repo, ancestor, descendant) {
 var JOB_OUTCOMES_DIR = "job-outcomes";
 function decisionPath(home, job) {
   const key2 = createHash12("sha256").update(`${job.name}:${job.startedAt}`).digest("hex");
-  return join36(home, JOB_OUTCOMES_DIR, `${key2}.json`);
+  return join37(home, JOB_OUTCOMES_DIR, `${key2}.json`);
 }
 function readOutcomeDecision(home, job) {
   const data = readHistoryJson(decisionPath(home, job));
@@ -22400,7 +22481,7 @@ function readResultDelivery(home, job, before = Number.MAX_SAFE_INTEGER) {
     if (!existsSync17(file2)) continue;
     let db;
     try {
-      db = new DatabaseSync7(file2, { readOnly: true, timeout: 50 });
+      db = new DatabaseSync8(file2, { readOnly: true, timeout: 50 });
       for (const table of ["messages", "archived_messages"]) {
         if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table)) continue;
         rows.push(...db.prepare(`SELECT id, recipient, body, created_at, read_at FROM ${table}
@@ -22475,7 +22556,7 @@ import { Worker } from "node:worker_threads";
 import { mkdir as mkdir2, stat as stat2, readdir } from "node:fs/promises";
 import { createHash as createHash13 } from "node:crypto";
 import { createRequire } from "node:module";
-import { dirname as dirname16, join as join37 } from "node:path";
+import { dirname as dirname18, join as join38 } from "node:path";
 import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
 var CACHE_LIMIT = 1024;
 var CACHE_BYTES2 = 8 * 1024 * 1024;
@@ -22483,30 +22564,30 @@ var REFRESH_MS = 1e3;
 var WAIT_MS = 250;
 var digest = (text) => createHash13("sha256").update(text).digest("hex");
 async function outcomeSignature(home, inputs, gitPaths2 = []) {
-  const paths = /* @__PURE__ */ new Set([...gitPaths2, join37(home, "jobs.json"), ...["bridge.db", "archive.db"].flatMap((name) => [join37(home, name), join37(home, `${name}-wal`)])]);
+  const paths = /* @__PURE__ */ new Set([...gitPaths2, join38(home, "jobs.json"), ...["bridge.db", "archive.db"].flatMap((name) => [join38(home, name), join38(home, `${name}-wal`)])]);
   for (const input2 of inputs) {
     const job = input2.job;
-    paths.add(join37(home, "job-outcomes", `${digest(`${job.name}:${job.startedAt}`)}.json`));
-    const receipts = join37(home, "local-result-receipts", digest(job.name));
+    paths.add(join38(home, "job-outcomes", `${digest(`${job.name}:${job.startedAt}`)}.json`));
+    const receipts = join38(home, "local-result-receipts", digest(job.name));
     paths.add(receipts);
     try {
-      for (const name of await readdir(receipts)) paths.add(join37(receipts, name));
+      for (const name of await readdir(receipts)) paths.add(join38(receipts, name));
     } catch {
     }
-    if (job.owner) paths.add(join37(home, "read-state", `${digest(`name:${job.owner}`)}.jsonl`));
+    if (job.owner) paths.add(join38(home, "read-state", `${digest(`name:${job.owner}`)}.jsonl`));
     const repo = input2.opts.repoRoot ?? job.worktree?.repoRoot;
     if (repo && !job.remote) {
-      const root = join37(repo, ".git");
+      const root = join38(repo, ".git");
       for (const name of ["", "HEAD", "config", "commondir", "packed-refs", "shallow", "info/grafts", "refs/replace", "objects/info/alternates", "objects/pack"])
-        paths.add(join37(root, name));
+        paths.add(join38(root, name));
       for (const branch of [input2.opts.branch ?? job.worktree?.branch, input2.opts.baseBranch ?? job.worktree?.baseBranch])
-        if (branch && /^[\w./-]+$/.test(branch) && !branch.split("/").includes("..")) paths.add(join37(root, "refs", "heads", branch));
+        if (branch && /^[\w./-]+$/.test(branch) && !branch.split("/").includes("..")) paths.add(join38(root, "refs", "heads", branch));
     }
   }
-  for (const folder of [join37(home, "runs"), join37(home, "runs", "archive")]) {
+  for (const folder of [join38(home, "runs"), join38(home, "runs", "archive")]) {
     paths.add(folder);
     try {
-      for (const name of await readdir(folder)) if (/\.json(?:-\d+-[\w-]+)?$/.test(name)) paths.add(join37(folder, name));
+      for (const name of await readdir(folder)) if (/\.json(?:-\d+-[\w-]+)?$/.test(name)) paths.add(join38(folder, name));
     } catch {
     }
   }
@@ -22546,11 +22627,11 @@ var OutcomeBackground = class {
   async start() {
     let entry = new URL("./outcome-worker.mjs", import.meta.url);
     if (import.meta.url.endsWith(".ts")) {
-      const root = dirname16(dirname16(dirname16(fileURLToPath2(import.meta.url))));
-      const path = join37(root, ".agent-bridge-test", `outcome-worker-${process.pid}.mjs`);
-      await mkdir2(dirname16(path), { recursive: true });
+      const root = dirname18(dirname18(dirname18(fileURLToPath2(import.meta.url))));
+      const path = join38(root, ".agent-bridge-test", `outcome-worker-${process.pid}.mjs`);
+      await mkdir2(dirname18(path), { recursive: true });
       await createRequire(import.meta.url)("esbuild").build({
-        entryPoints: [join37(root, "src/core/outcome-worker.ts")],
+        entryPoints: [join38(root, "src/core/outcome-worker.ts")],
         outfile: path,
         bundle: true,
         platform: "node",
@@ -22636,8 +22717,8 @@ var OutcomeBackground = class {
 var background = new OutcomeBackground();
 
 // src/core/outcome-worker.ts
-import { stat as stat3, readFile as readFile3 } from "node:fs/promises";
-import { dirname as dirname17, join as join38, resolve as resolve11 } from "node:path";
+import { stat as stat3, readFile as readFile4 } from "node:fs/promises";
+import { dirname as dirname19, join as join39, resolve as resolve11 } from "node:path";
 var cache3 = /* @__PURE__ */ new Map();
 var cacheBytes = 0;
 async function gitPaths(inputs) {
@@ -22645,39 +22726,39 @@ async function gitPaths(inputs) {
   for (const input2 of inputs) {
     const repo = input2.opts.repoRoot ?? input2.job.worktree?.repoRoot;
     if (!repo || input2.job.remote) continue;
-    const marker = join38(repo, ".git");
+    const marker = join39(repo, ".git");
     let dir = marker;
     try {
       if ((await stat3(marker)).isFile()) {
-        const pointer = /^gitdir:\s*(.+)$/m.exec(await readFile3(marker, "utf8"));
+        const pointer = /^gitdir:\s*(.+)$/m.exec(await readFile4(marker, "utf8"));
         if (!pointer) continue;
         dir = resolve11(repo, pointer[1].trim());
       }
-      const commonFile = join38(dir, "commondir");
+      const commonFile = join39(dir, "commondir");
       paths.add(marker);
       paths.add(commonFile);
       let common = dir;
       try {
-        common = resolve11(dir, (await readFile3(commonFile, "utf8")).trim());
+        common = resolve11(dir, (await readFile4(commonFile, "utf8")).trim());
       } catch {
       }
       for (const root of /* @__PURE__ */ new Set([dir, common])) {
         for (const name of ["", "HEAD", "config", "packed-refs", "shallow", "info/grafts", "refs/replace", "objects/info/alternates", "objects/pack"])
-          paths.add(join38(root, name));
+          paths.add(join39(root, name));
         for (const branch of [input2.opts.branch ?? input2.job.worktree?.branch, input2.opts.baseBranch ?? input2.job.worktree?.baseBranch]) {
           if (!branch || !/^[\w./-]+$/.test(branch) || branch.split("/").includes("..")) continue;
-          let ref = join38(root, "refs", "heads", branch);
+          let ref = join39(root, "refs", "heads", branch);
           for (let depth = 0; depth < 8; depth++) {
             paths.add(ref);
-            paths.add(dirname17(ref));
+            paths.add(dirname19(ref));
             let symbolic;
             try {
-              symbolic = /^ref:\s*(refs\/[\w./-]+)\s*$/.exec(await readFile3(ref, "utf8"));
+              symbolic = /^ref:\s*(refs\/[\w./-]+)\s*$/.exec(await readFile4(ref, "utf8"));
             } catch {
               break;
             }
             if (!symbolic || symbolic[1].split("/").includes("..")) break;
-            ref = join38(root, symbolic[1]);
+            ref = join39(root, symbolic[1]);
           }
         }
       }

@@ -4,7 +4,7 @@ import { atomicPluginWrite } from "./plugin-runtime.js";
 import type { PeerInfo } from "./protocol.js";
 import { processIdentity, readProcessIdentities } from "./process-identity.js";
 
-export interface StoreCapabilities { json: number; sqlite: number }
+export interface StoreCapabilities { json: number; sqlite: number; jobArchive?: number }
 interface Presence extends StoreCapabilities { pid: number; name: string; version: string; explicit: boolean; processIdentity?: string }
 
 const identities = new Map<string, { identity: string | null; at: number; signature: string }>();
@@ -88,7 +88,8 @@ export function releasedStoreCapabilities(version?: string): StoreCapabilities {
 
 export function validStoreCapabilities(value: unknown): value is StoreCapabilities {
   const v = value as StoreCapabilities | undefined;
-  return Boolean(v && Number.isSafeInteger(v.json) && v.json >= 0 && Number.isSafeInteger(v.sqlite) && v.sqlite >= 0);
+  return Boolean(v && Number.isSafeInteger(v.json) && v.json >= 0 && Number.isSafeInteger(v.sqlite) && v.sqlite >= 0 &&
+    (v.jobArchive === undefined || Number.isSafeInteger(v.jobArchive) && v.jobArchive >= 0));
 }
 
 /** Retain presence after a broker exits, so its older clients protect the next election. */
@@ -104,7 +105,7 @@ export function recordStorePeer(home: string, peer: Pick<PeerInfo, "pid" | "name
       // An observation adds no authority over the process's own identical record.
       // In particular, an unfilled foreign-PID cache must not erase its identity.
       if (previous.explicit && validStoreCapabilities(previous) && previous.pid === peer.pid &&
-          previous.version === (peer.version ?? "unknown") && previous.json === peer.storeCapabilities!.json && previous.sqlite === peer.storeCapabilities!.sqlite &&
+          previous.version === (peer.version ?? "unknown") && previous.json === peer.storeCapabilities!.json && previous.sqlite === peer.storeCapabilities!.sqlite && previous.jobArchive === peer.storeCapabilities!.jobArchive &&
           (!identity || previous.processIdentity === identity)) {
         if (!options.authoritative || previous.name === peer.name) return;
         // Authenticated hello/self updates may resolve a new session name while
@@ -147,7 +148,7 @@ export function liveStorePeers(home: string): Presence[] {
 
 export function assertStoreUpgrade(home: string, format: keyof StoreCapabilities, current: number, target: number): void {
   if (target <= current) return;
-  const blockers = liveStorePeers(home).filter((peer) => peer[format] < target);
+  const blockers = liveStorePeers(home).filter((peer) => (peer[format] ?? 0) < target);
   if (!blockers.length) return;
   throw Object.assign(new Error(`Waiting to upgrade ${format} store ${current}→${target}: ${blockers.map((p) => `${p.name} (v${p.version}, pid ${p.pid}, reads ${p[format]})`).join(", ")}. Existing sessions keep their code and data; retry when these readers finish naturally.`), { code: "STORE_UPGRADE_DEFERRED" });
 }

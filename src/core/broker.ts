@@ -49,6 +49,8 @@ import { canControlJob, mastersFor, chooseJobRecipient, primaryFor } from "./job
 import { RootConcurrency } from "./root-concurrency.js";
 import { isRecord, retentionLimit } from "./json-store.js";
 import { readArchivedJobSnapshot } from "./job-archive.js";
+import { JobArchiveBackground } from "./job-archive-background.js";
+import { indexedJobProjectionCurrent, readIndexedJobs } from "./job-archive-index.js";
 import { readJsonSnapshot, type JsonSnapshot } from "./file-cache.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
 import { projectAskCompletions } from "./ask-completion.js";
@@ -125,6 +127,7 @@ export class Broker {
   private server: Server | null = null;
   private readonly conns = new Set<Conn>();
   private historyBackground: HistoryBackground | null = null;
+  private jobArchiveBackground: JobArchiveBackground | null = null;
   private readonly healthMonitor = new HealthMonitor();
   private historyPendingRequests = 0;
   private purgeTimer: NodeJS.Timeout | null = null;
@@ -404,6 +407,7 @@ export class Broker {
         server.removeListener("error", onError);
         server.on("error", (err) => this.log.error("broker server error", { err }));
         this.server = server;
+        if (this.jobsPath && this.store.file !== ":memory:") this.jobArchiveBackground = new JobArchiveBackground(this.jobsPath, this.log);
         this.store.startBackups();
         this.healthMonitor.start();
         this.applyHandoffs();
@@ -457,6 +461,8 @@ export class Broker {
     if (this.pendingJobMailRetry) clearTimeout(this.pendingJobMailRetry);
     this.pendingJobMailRetry = null;
     await this.historyBackground?.close();
+    await this.jobArchiveBackground?.close();
+    this.jobArchiveBackground = null;
     this.historyBackground = null;
     await this.store.closeBackups();
     if (this.purgeTimer) clearInterval(this.purgeTimer);
@@ -870,13 +876,19 @@ export class Broker {
   }
 
   private async jobForControl(peer: PeerInfo, ref: string): Promise<Record<string, unknown> | undefined> {
-    const known = this.storedJobs().find((j) => j.name === ref || j.id === ref);
+    let known = this.storedJobs().find((j) => j.name === ref || j.id === ref);
     let active = false;
     if (known && this.jobsPath) {
       try {
+        if (indexedJobProjectionCurrent(this.jobsPath)) {
+          const selected = readIndexedJobs(this.jobsPath, { ids: new Set([String(known.id)]), active: true }).jobs[0];
+          active = Boolean(selected);
+          if (selected) known = selected;
+        } else {
         const data = readJsonSnapshot(this.jobsPath).value;
         const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
-        active = rows.some(record => isRecord(record) && record.id === known.id);
+        active = rows.some(record => isRecord(record) && record.id === known!.id);
+        }
       } catch { /* Unknown registry reads cannot authorize a stale archive fast path. */ }
     }
     if (active && (known?.remote || (isRecord(known?.host) && Date.now() - Number(known.host.startedAt) < 30_000))) return known;
@@ -897,10 +909,14 @@ export class Broker {
     if (!job || typeof job.id !== "string" || !this.jobsPath) return undefined;
     let active: Record<string, unknown> | undefined;
     try {
+      if (indexedJobProjectionCurrent(this.jobsPath)) {
+        active = readIndexedJobs(this.jobsPath, { ids: new Set([job.id]), active: true }).jobs[0];
+      } else {
       const data = readJsonSnapshot(this.jobsPath).value;
       const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : undefined;
       if (!rows) return undefined;
       active = rows.filter(isRecord).findLast(record => record.id === job.id);
+      }
     }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined; }
     this.jobsForDispatch = null;
@@ -928,7 +944,9 @@ export class Broker {
     // Share that snapshot until the next microtask, without a timer-based stale window.
     if (this.jobsForDispatch) return this.jobsForDispatch;
     try {
-      const active = readJsonSnapshot(this.jobsPath), archive = readArchivedJobSnapshot(this.jobsPath);
+      const archive = readArchivedJobSnapshot(this.jobsPath, { metadata: true });
+      if (indexedJobProjectionCurrent(this.jobsPath)) return [...this.recoveredJobs.values(), ...archive.jobs];
+      const active = readJsonSnapshot(this.jobsPath);
       if (this.jobsSnapshot?.active === active && this.jobsSnapshot.archive === archive.signature) {
         this.jobsForDispatch = this.jobsSnapshot.records;
         queueMicrotask(() => { this.jobsForDispatch = null; });

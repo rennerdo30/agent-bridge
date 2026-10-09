@@ -1,3 +1,4 @@
+import { readJobVersions } from "../src/core/job-archive-index.js";
 import { readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -31,7 +32,7 @@ it("reconciles a stale active ask from its matching completion receipt without l
   expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ privateField: "retained" });
   const backup = readdirSync(env.home).find(name => name.startsWith("jobs.json.backup-"))!;
   expect(readFileSync(join(env.home, backup), "utf8")).toBe(raw);
-  expect(readdirSync(join(env.home, "archive"))).not.toHaveLength(0);
+  expect(readJobVersions(path, job.id)).toHaveLength(2);
   expect(reconcileAskCompletions(path)).toBe(0);
 });
 it("never treats an older completion as proof for a new continuation", () => {
@@ -46,13 +47,11 @@ it("keeps terminal receipt authority in archives while retaining every stale ori
   writeFileSync(path, JSON.stringify({ version: 4, jobs: [job] }));
   recordAskCompletion(env.home, { ...job, finishedAt: 20, status: "done" });
   expect(reconcileAskCompletions(path)).toBe(1);
-  const dir = join(env.home, "archive");
-  const originals = readdirSync(dir).filter(name => name.startsWith("jobs-content-")).map(name => join(dir, name));
-  const stale = originals.find(file => JSON.parse(readFileSync(file, "utf8")).jobs[0].status === "running")!;
-  const bytes = readFileSync(stale);
-  const later = new Date(Date.now() + 60_000); utimesSync(stale, later, later);
+  const originals = readJobVersions(path, job.id);
+  const stale = originals.find(record => record.status === "running")!;
+  const bytes = JSON.stringify(stale);
   expect(readArchivedJobs(path).find(record => record.id === job.id)).toMatchObject({ status: "done", finishedAt: 20, prompt: job.prompt });
-  expect(readFileSync(stale)).toEqual(bytes);
+  expect(JSON.stringify(readJobVersions(path, job.id).find(record => record.status === "running"))).toBe(bytes);
   expect(originals).toHaveLength(2);
 });
 it("retains native JSONL pairing across bounded import chunks and restart", () => {

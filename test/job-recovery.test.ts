@@ -1,4 +1,5 @@
 import { BridgeNode } from "../src/core/node.js";
+import { indexFixtureFile } from "./archive-fixture.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -50,6 +51,9 @@ it("recovers a 0.29.10 backup with current handoff authority and preserves unkno
   // readHistoryJobs orders by timestamp, so use a genuinely newer backup for the handoff.
   writeFileSync(join(env.home, "jobs.json.backup-v3-3"), JSON.stringify({ jobs: [{ id: "11223344", name, owner: next.name, rootName: next.name, masters: [next.name], ownershipHistory: [{ from: old.name, to: next.name }], agent: "codex", sessionId: "native-29-10", startedAt: 1, status: "interrupted", prompt: "original", custom: { future: "keep" } }] }));
   expect(await outsider.jobAuthority(name)).toBeNull();
+  indexFixtureFile(join(env.home, "jobs.json.backup-v2-1"));
+  indexFixtureFile(join(env.home, "archive", "jobs-2-new.json"));
+  indexFixtureFile(join(env.home, "jobs.json.backup-v3-3"));
   const jobs = manager(next); jobs.restore(() => (_body, session) => async () => ({ sessionId: session, text: "done", isError: false, details: {} }));
   expect((await jobs.share(name))?.owner).toBe(next.name);
   expect(jobs.followUp(name, "recover").outcome).toBe("started");
@@ -95,6 +99,7 @@ it("recognizes cancellation of an interrupted job without discarding its resume 
   const owner = env.node("claude-owner"); await owner.start();
   const name = "codex-job-99887766";
   writeFileSync(join(env.home, "jobs.json.backup-1"), JSON.stringify([{ id: "99887766", name, agent: "codex", owner: owner.name, status: "running", sessionId: "original", startedAt: 1, prompt: "task" }]));
+  indexFixtureFile(join(env.home, "jobs.json.backup-1"));
   const jobs = manager(owner); jobs.restore(() => (_body, session) => async () => ({ sessionId: session, text: "done", isError: false, details: {} }));
   await jobs.share(name);
   expect(jobs.cancel(name)).toBe(true);
@@ -123,6 +128,7 @@ it("discovers and controls a connected orphan runner retained only in a backup",
   const record = { id: "retained", name, agent: "codex", owner: owner.name, rootName: owner.name, supervisor: "root",
     status: "running", host: { pid: process.pid, peer: name, startedAt: 1 }, startedAt: 1, prompt: "task" };
   writeFileSync(join(env.home, "jobs.json.backup-1"), JSON.stringify({ jobs: [record] }));
+  indexFixtureFile(join(env.home, "jobs.json.backup-1"));
   mkdirSync(join(env.home, "jobs"));
   writeFileSync(join(env.home, "jobs", "retained.json"), JSON.stringify({ pid: process.pid, peer: name, status: "running", updatedAt: Date.now() - 120_000, live: true }));
   const runner = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), agent: "other", jobAgent: "codex", id: "job:retained", name, cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });

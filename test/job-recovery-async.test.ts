@@ -1,4 +1,5 @@
 import * as feeds from "../src/core/job-recovery-feed.js";
+import { indexFixtureArchives, indexFixtureFile } from "./archive-fixture.js";
 import * as io from "node:fs/promises";
 import * as history from "../src/core/run-history.js";
 import * as cache from "../src/core/file-cache.js";
@@ -37,6 +38,7 @@ it("yields throughout a cold archive/run catalog, matches offline recovery and c
     writeFileSync(`${run}.log`,"01:02:03 header by launch-owner\n         launch context\n         ---\n");
   }
   writeFileSync(join(env.home,"jobs",`${id}.spec.json`),JSON.stringify({cwd:env.home,job:{id,name,agent:"codex",owner:"launch-owner",startedAt:1,prompt:"Old launch context"},base:{access:"ask",futureSpec:"retained"}}));
+  indexFixtureArchives(env.home);
   const synchronousHistory=vi.spyOn(history,"findHistoryJob"),synchronousRuns=vi.spyOn(history,"readRunLogs"),clones=vi.spyOn(cache,"cloneJson");
   let settled=false,beats=0,scheduled=true;
   const tick=()=>{if(!scheduled)return;beats++;setImmediate(tick);};setImmediate(tick);
@@ -136,6 +138,7 @@ it("preserves run context/access omitted by an archive-only legacy record",async
   mkdirSync(join(env.home,"archive"));
   writeFileSync(join(env.home,"jobs.json"),JSON.stringify({version:4,jobs:[]}));
   writeFileSync(join(env.home,"archive","jobs-context.json"),JSON.stringify({version:4,jobs:[{id:"archivecontext",name:f.name,agent:"codex",owner:owner.name,status:"interrupted",sessionId:"retained-native",startedAt:1}]}));
+  indexFixtureFile(join(env.home,"archive","jobs-context.json"));
   writeFileSync(f.file.replace(/\.log$/,".json"),JSON.stringify({job:f.name,session:"retained-native",workdir:env.home,rootSession:"retained-root",parentJob:"claude-job-parent",access:"read"}));
   expect(await owner.jobAuthority(f.name)).toMatchObject({prompt:"full archived task",parentJob:"claude-job-parent",rootSession:"retained-root",args:{access:"read"}});
 });
@@ -145,6 +148,8 @@ it("uses newer retained backup authority/context over an older archive when the 
   mkdirSync(join(env.home,"archive"));writeFileSync(join(env.home,"jobs.json"),JSON.stringify({version:4,jobs:[]}));
   writeFileSync(join(env.home,"archive","jobs-1-original.json"),JSON.stringify({version:4,jobs:[{...base,owner:old.name,rootName:old.name,sessionId:"old-session",prompt:"old exact context",status:"running",host:{pid:process.pid,peer:name,startedAt:Date.now()}}]}));
   writeFileSync(join(env.home,"jobs.json.backup-2"),JSON.stringify({version:4,jobs:[{id:base.id,name,agent:"codex",owner:next.name,rootName:next.name,masters:[next.name],startedAt:2,sessionId:"new-session",prompt:"new exact context",status:"interrupted"}]}));
+  indexFixtureFile(join(env.home,"archive","jobs-1-original.json"));
+  indexFixtureFile(join(env.home,"jobs.json.backup-2"));
   expect(await old.jobAuthority(name)).toBeNull();
   expect(await next.jobAuthority(name)).toMatchObject({owner:next.name,sessionId:"new-session",prompt:"new exact context",rootSession:"preserved-root",parentJob:"claude-job-parent",args:{access:"read"}});
   expect((await old.projectJobs()).some(job=>job.name===name)).toBe(false);

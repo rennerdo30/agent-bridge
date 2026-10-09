@@ -133,7 +133,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
     this.log = opts.log.child("node");
-    if (opts.dbPath !== ":memory:") recordStorePeer(dirname(opts.dbPath), { pid: process.pid, name: opts.name, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION } });
+    if (opts.dbPath !== ":memory:") recordStorePeer(dirname(opts.dbPath), { pid: process.pid, name: opts.name, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 } });
     this.readJournal = new ReadJournal(dirname(opts.dbPath));
     this.restoreReadState(`name:${this.currentName}`);
   }
@@ -349,7 +349,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         activity: this.activity,
         unavailable: this.unavailable,
         version: APP_VERSION,
-        storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION },
+        storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 },
         ...(this.opts.jobAgent ? { jobAgent: this.opts.jobAgent } : {}),
         ...(this.opts.jobOwner ? { jobOwner: this.opts.jobOwner, jobParent: this.opts.jobParent, parentJob: this.opts.parentJob, rootSession: this.opts.rootSession, rootName: this.opts.rootName, jobTitle: this.opts.jobTitle, jobSendTo: this.opts.jobSendTo } : {}),
       },
@@ -896,6 +896,6 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   private recordOwnStorePeer(): void {
-    if (this.opts.dbPath !== ":memory:") recordStorePeer(dirname(this.opts.dbPath), { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION } }, { authoritative: true });
+    if (this.opts.dbPath !== ":memory:") recordStorePeer(dirname(this.opts.dbPath), { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 } }, { authoritative: true });
   }
 }

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { lstatSync, readdirSync, realpathSync, statSync, type Stats } from "node:fs";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { JOBS_FILE } from "./constants.js";
+import { indexedJobProjectionCurrent, readIndexedJobs, type ArchiveSelection } from "./job-archive-index.js";
 import { isRecord } from "./json-store.js";
 import { RUNS_DIR_NAME, type RunMeta } from "./runfeed.js";
 import { safeFile } from "./transcripts/common.js";
@@ -299,14 +300,14 @@ export function readHistoryJobsResponsive(home: string): Promise<Map<string, Rec
 
 /** Bounded dashboard pages must not clone every retained prompt to display a few settings. */
 export function selectHistoryJobs(home: string, names: ReadonlySet<string>): Map<string, Record<string, unknown>> {
-  const snapshot = historyJobsSnapshot(home), selected = new Map<string, Record<string, unknown>>();
+  const snapshot = drainScan(historyJobsSteps(home, false, { names })), selected = new Map<string, Record<string, unknown>>();
   for (const name of names) { const job = snapshot.get(name); if (job) selected.set(name, cloneJson(job)); }
   return selected;
 }
 
 export async function selectHistoryJobsResponsive(home: string, names: ReadonlySet<string>): Promise<Map<string, Record<string, unknown>>> {
   return drainScanResponsive((function* () {
-    const snapshot = yield* historyJobsSteps(home, true), selected = new Map<string, Record<string, unknown>>();
+    const snapshot = yield* historyJobsSteps(home, true, { names }), selected = new Map<string, Record<string, unknown>>();
     for (const name of names) { yield; const job = snapshot.get(name); if (job) selected.set(name, cloneJson(job)); }
     return selected;
   })());
@@ -314,7 +315,7 @@ export async function selectHistoryJobsResponsive(home: string, names: ReadonlyS
 
 /** Authority recovery needs one record, even when thousands of finished jobs are retained. */
 export function findHistoryJob(home: string, ref: string, id: string): Record<string, unknown> | undefined {
-  for (const job of historyJobsSnapshot(home).values()) {
+  for (const job of drainScan(historyJobsSteps(home, false, { ids: new Set([id]), names: new Set([ref]) })).values()) {
     if (job.name === ref || job.id === id) return cloneJson(job);
   }
   return undefined;
@@ -325,74 +326,35 @@ function historyJobsSnapshot(home: string): Map<string, Record<string, unknown>>
 }
 
 /** Internal immutable records; callers must detach every exposed nested value. */
-export function* historyJobsSteps(home: string, responsive = false): Generator<void, Map<string, Record<string, unknown>>> {
-  const out = new Map<string, Record<string, unknown>>();
+export function* historyJobsSteps(home: string, responsive = false, selection: ArchiveSelection = {}): Generator<void, Map<string, Record<string, unknown>>> {
+  const out = new Map<string, Record<string, unknown>>(), path = join(home, JOBS_FILE);
+  if (responsive) yield;
+  for (const job of readIndexedJobs(path, { ...selection, history: true }).jobs) {
+    if (typeof job.name === "string" && RUN_LOG_NAME.test(job.name + ".log")) out.set(job.name, job);
+  }
+  if (indexedJobProjectionCurrent(path)) return out;
+  // Active compatibility data overrides the index. Validate containment on every
+  // read, including a suspended read after an ancestor replacement.
   let canonicalHome: string;
   try { canonicalHome = realpathSync.native(home); } catch { return out; }
-  const snapshots: { file: string; st: Stats; time: number }[] = [];
-  const scan = function* (directory: string, accept: (name: string) => boolean): Generator<void> {
-    let canonicalDir: string;
-    try { canonicalDir = realpathSync.native(directory); } catch { return; }
-    const rel = relative(canonicalHome, canonicalDir);
-    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return;
-    let entries: import("node:fs").Dirent[];
-    try { entries = readdirSync(canonicalDir, { withFileTypes: true }); } catch { return; }
-    entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-    for (const entry of entries) {
-      yield;
-      const name = entry.name;
-      if (!accept(name)) continue;
-      const candidate = join(canonicalDir, name);
-      try {
-        // Direct physical entries have no unresolved ancestor within this validated directory.
-        // Links still resolve through the existing containment check on every scan.
-        const direct = lstatSync(candidate);
-        const file = direct.isFile() ? candidate : direct.isSymbolicLink() ? safeFile(home, candidate, canonicalHome) : null;
-        if (!file) continue;
-        const st = direct.isFile() ? direct : statSync(file);
-        if (!st.isFile()) continue;
-        const stamp = /(?:jobs-|\.backup-|\.overflow\.json-|jobs\.json-)(\d+)/.exec(file)?.[1];
-        snapshots.push({ file, st, time: stamp ? Number(stamp) : st.mtimeMs });
-      } catch { /* Concurrent archival is observed on the next poll. */ }
+  const active = safeFile(home, path, canonicalHome);
+  if (!active) return out;
+  const st = statSync(active);
+  if (responsive) yield;
+  if (!unchangedContainedFile(home, active, st, canonicalHome)) return out;
+  let value: unknown;
+  try { value = readJsonSnapshot(active, { file: active, stat: st }).value; }
+  catch { return out; }
+  const jobs = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.jobs) ? value.jobs : [];
+  for (const job of jobs) {
+    if (responsive) yield;
+    if (!isRecord(job) || typeof job.name !== "string" || !RUN_LOG_NAME.test(job.name + ".log")) continue;
+    if (selection.names || selection.ids) {
+      if (!selection.names?.has(job.name) && !selection.ids?.has(String(job.id))) continue;
     }
-  };
-  yield* scan(join(canonicalHome, "archive"), name => name.startsWith(`${JOBS_FILE}.`) || name.startsWith(`${JOBS_FILE}-`) || /^jobs-.*\.json$/.test(name));
-  yield* scan(canonicalHome, name => name.startsWith(`${JOBS_FILE}.backup-`) || name === `${JOBS_FILE}.overflow.json`);
-  snapshots.sort((a, b) => a.time - b.time || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
-  // Active data always overrides retained snapshots, independent of its modification time.
-  const active = join(canonicalHome, JOBS_FILE);
-  try {
-    const direct = lstatSync(active);
-    const file = direct.isFile() ? active : direct.isSymbolicLink() ? safeFile(home, active, canonicalHome) : null;
-    if (file) { const st = direct.isFile() ? direct : statSync(file); if (st.isFile()) snapshots.push({ file, st, time: 0 }); }
-  } catch { /* Store not created yet. */ }
-  const signatures: string[] = [];
-  let complete = true;
-  let bytes = 0;
-  for (const { file, st } of snapshots) {
-    signatures.push(`${file}:${fileSignature(st)}`); bytes += st.size;
+    out.set(job.name, job);
   }
-  const signature = signatures.join("\n"), saved = historyJobSnapshots.get(canonicalHome);
-  if (saved?.signature === signature && (!responsive || (yield* stableHistoryFiles(canonicalHome, snapshots)))) return saved.jobs;
-  for (const { file, st } of snapshots) {
-    yield;
-    let value: unknown;
-    try {
-      if (responsive && !unchangedContainedFile(canonicalHome, file, st, canonicalHome)) { complete = false; continue; }
-      value = readJsonSnapshot(file, { file, stat: st }).value;
-    }
-    catch { complete = false; continue; }
-    const jobs = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.jobs) ? value.jobs : [];
-    for (const job of jobs) {
-      yield;
-      if (!isRecord(job) || typeof job.name !== "string" || !RUN_LOG_NAME.test(`${job.name}.log`)) continue;
-      out.set(job.name, { ...out.get(job.name), ...job });
-    }
-  }
-  historyJobSnapshots.delete(canonicalHome);
-  if (responsive) complete &&= yield* stableHistoryFiles(canonicalHome, snapshots);
-  if (complete && bytes <= 256 * 1024 * 1024) historyJobSnapshots.set(canonicalHome, { signature, jobs: out });
-  if (historyJobSnapshots.size > 4) historyJobSnapshots.delete(historyJobSnapshots.keys().next().value!);
+  if (responsive && !unchangedContainedFile(home, active, st, canonicalHome)) return new Map();
   return out;
 }
 

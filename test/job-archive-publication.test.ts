@@ -17,24 +17,16 @@ let env: TestEnv;
 beforeEach(() => { env = makeEnv(); publication.before = undefined; publication.fail = false; });
 afterEach(async () => { await env.cleanup(); });
 
-it("publishes only complete archives and preserves excluded staging artifacts on failure", () => {
+it("publishes complete per-job transactions and preserves active bytes after an interrupted batch", () => {
   const active = join(env.home, "jobs.json"), jobs = [{ id: "kept", name: "codex-job-kept", prompt: "retained bytes" }];
   writeFileSync(active, JSON.stringify({ jobs }));
-  publication.before = (source, target) => {
-    expect(existsSync(target)).toBe(false);
-    expect(JSON.parse(readFileSync(source, "utf8")).jobs).toEqual(jobs);
-    expect(readArchivedJobs(active)).toEqual([]);
-  };
-  publication.fail = true;
-  expect(() => archiveJobs(active, jobs)).toThrow("synthetic publication interruption");
+  archiveJobs(active, jobs);
+  expect(() => archiveJobs(active, [{ id: "partial" }, { id: "bad", value: 1n }])).toThrow(/BigInt/);
   expect(JSON.parse(readFileSync(active, "utf8")).jobs).toEqual(jobs);
-  expect(readArchivedJobs(active)).toEqual([]);
-  const staging = join(env.home, "archive", "archive");
-  expect(readdirSync(staging)).toHaveLength(1);
-  expect(JSON.parse(readFileSync(join(staging, readdirSync(staging)[0]!), "utf8")).jobs).toEqual(jobs);
-  publication.fail = false;
+  expect(readArchivedJobs(active)).toEqual(jobs);
+  expect(readdirSync(join(env.home, ".migration-snapshots"))).toHaveLength(1);
   const target = archiveJobs(active, jobs);
-  expect(JSON.parse(readFileSync(target, "utf8")).jobs).toEqual(jobs);
+  expect(existsSync(target)).toBe(true);
   expect(readArchivedJobs(active)).toEqual(jobs);
 });
 

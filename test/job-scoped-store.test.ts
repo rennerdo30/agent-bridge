@@ -1,3 +1,4 @@
+import { indexFixtureFile } from "./archive-fixture.js";
 import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -57,6 +58,7 @@ function manager(owner = "owner") {
 function corpus(extra: unknown[] = []) {
   const records = Array.from({ length: 15_675 }, (_, i) => job(`unrelated-${i}`));
   writeFileSync(archive, JSON.stringify({ version: JSON_STORE_VERSION, jobs: [...records, ...extra] }));
+  indexFixtureFile(archive);
   readArchivedJobSnapshot(path); readJsonSnapshot(path);
   observed.clones.length = 0; observed.reads.length = 0;
 }

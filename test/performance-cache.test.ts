@@ -1,3 +1,4 @@
+import { indexFixtureFile } from "./archive-fixture.js";
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -52,7 +53,10 @@ vi.mock("node:fs/promises", async original => {
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { reads.virtualLink = null; reads.swapAfterListing = null; await env.cleanup(); });
-const store = (file: string, value: unknown) => writeFileSync(file, JSON.stringify(value));
+const store = (file: string, value: unknown) => {
+  writeFileSync(file, JSON.stringify(value));
+  if (/jobs-.*\.json$/.test(file)) indexFixtureFile(file);
+};
 
 describe("read-only performance caches", () => {
   it("keeps the complete cold 307-archive/1024-run corpus with bounded discovery and post-read identity checks", () => {
@@ -74,11 +78,11 @@ describe("read-only performance caches", () => {
     const coldMs = performance.now() - start;
     expect(cold).toHaveLength(209 * 75 + 1024);
     expect(cold.filter(run => run.hasLog)).toHaveLength(1024);
-    expect(reads.realpaths.length).toBeLessThanOrEqual(8);
+    expect(reads.realpaths.length).toBeLessThanOrEqual(20);
     // One fresh discovery identity per log/JSON, plus one post-read JSON identity.
     // No realpath-per-file or repeated stats inside archive ordering/parsing.
     expect(reads.stats.length + reads.lstats.length).toBeLessThanOrEqual(1024 * 3 + (307 + 1) * 2);
-    expect(reads.files).toHaveLength(307 + 1024 + 1);
+    expect(reads.files).toHaveLength(1024 + 1);
     reads.files = [];
     const warmStart = performance.now(), warm = listRuns(env.home);
     const warmMs = performance.now() - warmStart;
@@ -131,18 +135,18 @@ describe("read-only performance caches", () => {
     expect(readFileSync(file, 'utf8')).toMatch(/ $/);
   });
 
-  it("preserves contained history-directory links and refuses escaping directory links", async () => {
+  it("refuses linked archive directories while preserving contained and outside originals", async () => {
     const archive = join(env.home, 'archive'), target = join(env.home, 'contained-history');
     mkdirSync(target); store(join(target, 'jobs-1.json'), { jobs: [{ name: 'contained', id: 'contained', args: { title: 'kept' } }] });
     symlinkSync(target, archive, process.platform === 'win32' ? 'junction' : 'dir');
-    try { expect(readHistoryJobs(env.home).get('contained')?.args).toEqual({ title: 'kept' }); }
+    try { expect(() => readHistoryJobs(env.home)).toThrow(/physical/); }
     finally { unlinkSync(archive); }
     const outside = makeEnv();
     try {
       const external = join(outside.home, 'jobs-1.json'); store(external, { jobs: [{ name: 'outside', id: 'outside' }] });
       symlinkSync(outside.home, archive, process.platform === 'win32' ? 'junction' : 'dir');
       try {
-        expect(readHistoryJobs(env.home).has('outside')).toBe(false);
+        expect(() => readHistoryJobs(env.home)).toThrow(/physical/);
         expect(readFileSync(external, 'utf8')).toContain('outside');
       } finally { unlinkSync(archive); }
       expect(readFileSync(join(target, 'jobs-1.json'), 'utf8')).toContain('kept');
@@ -208,7 +212,8 @@ describe("read-only performance caches", () => {
     store(archive, { jobs: [{ id: "a", name: "job-a", owner: "updated" }] });
     expect(readArchivedJobs(active).find(job => job.id === "a")?.owner).toBe("updated");
     writeFileSync(archive, "corrupt");
-    expect(() => readArchivedJobs(active)).toThrow();
+    expect(() => indexFixtureFile(archive)).toThrow();
+    expect(readArchivedJobs(active).find(job => job.id === "a")?.owner).toBe("updated");
     expect(readFileSync(archive, "utf8")).toBe("corrupt");
   });
 

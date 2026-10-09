@@ -1,3 +1,4 @@
+import { indexFixtureFile } from "./archive-fixture.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -14,7 +15,10 @@ import { makeEnv, type TestEnv } from "./helpers.js";
 let env: TestEnv, outside: TestEnv;
 beforeEach(() => { env = makeEnv(); outside = makeEnv(); });
 afterEach(async () => { vi.restoreAllMocks(); await env.cleanup(); await outside.cleanup(); });
-const save = (file: string, value: unknown) => writeFileSync(file, JSON.stringify(value));
+const save = (file: string, value: unknown) => {
+  writeFileSync(file, JSON.stringify(value));
+  if (file.includes("archive") && /jobs-.*\.json$/.test(file)) indexFixtureFile(file);
+};
 function job(id: string, changes: Record<string, unknown> = {}) {
   return { id, name: `codex-job-${id}`, agent: "codex", owner: "old-owner", prompt: "Retained complete prompt", status: "done", startedAt: 100,
     sessionId: "session-one", args: { title: "Retained task", model: "model-one" }, worktree: { path: "retained-worktree", unknown: { keep: [1] } }, ...changes };
@@ -141,7 +145,7 @@ it("refuses a replaced archive ancestor before any outside read or cache publica
   // published outside jobs under the original cache key.
   renameSync(home, join(fixture, "retained-outside-link")); renameSync(retained, home);
   expect(drainScan(readArchivedJobSteps(join(home, "jobs.json"), true)).jobs.map(value => value.id)).toEqual(["physical-original"]);
-  expect(reads).toHaveBeenCalledTimes(1);
+  expect(reads).not.toHaveBeenCalled();
   console.info(JSON.stringify({ retainedArchiveAncestorFixture: fixture }));
 });
 
@@ -209,6 +213,8 @@ it("preserves a large single-file context without promising that one native pars
   const prompt = "Synthetic retained context ".repeat(160_000);
   save(join(env.home, "archive", "jobs-1900000000000-large.json"), { version: 4, jobs: [job("large", { prompt })] });
   const result = await listRunsResponsive(env.home);
-  expect(result.find(run => run.name === "codex-job-large")?.prompt).toBe(prompt);
+  expect(result.find(run => run.name === "codex-job-large")?.prompt).toBe(prompt.slice(0, 300));
+  expect((await listRunsResponsive(env.home, Date.now(), new Set(["codex-job-large"])))[0]!.prompt).toBe(prompt);
+  expect(readHistoryJobs(env.home).get("codex-job-large")!.prompt).toBe(prompt);
   expect(result).toEqual(listRuns(env.home));
 });

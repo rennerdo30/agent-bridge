@@ -13,7 +13,9 @@ import { isPureAcknowledgement } from "../core/job-messaging.js";
 import type { Worktree } from "../core/worktree.js";
 import { assertWritableStore, backupPath, isRecord, JSON_STORE_VERSION, mergeStoreFields, readJsonStore, retainBackups, retentionLimit, writeJsonStore } from "../core/json-store.js";
 import { changedJobArgs, type JobSettings } from "./job-settings.js";
+import { assertStoreUpgrade } from "../core/store-compatibility.js";
 import { archiveJobs, readArchivedJobs, readArchivedJobSnapshot } from "../core/job-archive.js";
+import { indexedJobProjectionCurrent, readIndexedJobs } from "../core/job-archive-index.js";
 import { cloneJson, readJsonSnapshot } from "../core/file-cache.js";
 import { ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS } from "../core/run-archive.js";
 import { newApprovalId, publishApproval, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
@@ -474,7 +476,8 @@ export class JobManager {
       // Comparisons need read-only archive references; only a selected record can
       // enter mutable job state, so clone that record at the boundary below.
       const archived = new Map<unknown, Record<string, unknown>>();
-      for (const record of readArchivedJobSnapshot(this.storePath).jobs) archived.set(record.id, record);
+      const compared = new Set<string>([...this.history.keys(), ...entries.filter(isRecord).map(entry => String(entry.id))]);
+      for (const record of readArchivedJobSnapshot(this.storePath, { ids: compared }).jobs) archived.set(record.id, record);
       const byId = new Map<unknown, Record<string, unknown>>();
       const duplicates = new Set<unknown>();
       for (const entry of entries) {
@@ -565,7 +568,10 @@ export class JobManager {
           this.log.info("archived finished jobs", { count: unpublished.length });
         }
       }
-      writeJsonStore(this.storePath, { ...(isRecord(previous) ? previous : {}), jobs: all.filter((j) => !overflow.has(j as StoredJob)) }, previous);
+      let retainCompatibility = false;
+      try { assertStoreUpgrade(dirname(this.storePath), "jobArchive", 0, 1); }
+      catch (error) { if ((error as { code?: string }).code !== "STORE_UPGRADE_DEFERRED") throw error; retainCompatibility = true; }
+      writeJsonStore(this.storePath, { ...(isRecord(previous) ? previous : {}), jobs: all.filter((j) => retainCompatibility || !overflow.has(j as StoredJob)) }, previous);
       this.persistRetryMs = 25;
       for (const entry of all) if (isRecord(entry) && typeof entry.id === "string" && this.own.has(entry.id)) this.durableBases.set(entry.id, cloneJson(entry));
       this.verifyRetainedState();
@@ -1808,12 +1814,21 @@ export function readStore(path: string, log?: Logger, includeArchived = false): 
 /** Archive refreshes touch only already tracked jobs; new durable handoffs are active overrides. */
 function readScopedStore(path: string, tracked: ReadonlySet<string>, owners: ReadonlySet<string>, parentName: string | undefined, log?: Logger): StoredJob[] {
   try {
+    if (indexedJobProjectionCurrent(path)) {
+      const ids = new Set(tracked);
+      for (const record of readIndexedJobs(path, { active: true, metadata: true }).jobs) {
+        const owned = parentName !== undefined ? record.parentJob === parentName : !record.parentJob && (!record.owner || owners.has(String(record.owner)));
+        if (typeof record.id === "string" && (owned || record.name === parentName)) ids.add(record.id);
+      }
+      return readIndexedJobs(path, { ids, names: parentName ? new Set([parentName]) : new Set() }).jobs.filter(isStoredJob).map(cloneJson);
+    }
     const current = activeJobSnapshot(path);
     const activeIds = new Set(current.keys());
     const archived: StoredJob[] = [];
-    for (const record of readArchivedJobSnapshot(path).jobs) {
+    for (const record of readArchivedJobSnapshot(path, { ids: tracked, names: parentName ? new Set([parentName]) : new Set() }).jobs) {
       if (!isStoredJob(record) || activeIds.has(record.id)) continue;
-      if (tracked.has(record.id) || parentName !== undefined && record.name === parentName) archived.push(cloneJson(record));
+      if (tracked.has(record.id) || parentName !== undefined && record.name === parentName) archived.push(cloneJson(
+        record.status === "running" && !record.host ? { ...record, status: "interrupted" } : record));
     }
     // Inspect every active record for newly assigned jobs, but clone only matching records.
     for (const record of current.values()) {
@@ -1840,10 +1855,16 @@ function readStoredJob(path: string, id: string, name: string, log?: Logger): St
  * runtime/public jobs; never mutate these stat-validated cache records. */
 function readStoredJobSnapshot(path: string, id: string, name: string, log?: Logger): StoredJob | undefined {
   try {
+    if (indexedJobProjectionCurrent(path)) {
+      const selection = { ids: new Set([id]), names: new Set([name]) };
+      const active = readIndexedJobs(path, { ...selection, active: true }).jobs.find(isStoredJob);
+      if (active) return active;
+      return readIndexedJobs(path, selection).jobs.find(record => isStoredJob(record) && record.status !== "running") as StoredJob | undefined;
+    }
     const current = activeJobSnapshot(path);
     for (const record of current.values()) if (record.id === id || record.name === name) return record;
-    for (const record of readArchivedJobSnapshot(path).jobs) {
-      if (isStoredJob(record) && !current.has(record.id) && (record.id === id || record.name === name)) return record;
+    for (const record of readArchivedJobSnapshot(path, { ids: new Set([id]), names: new Set([name]) }).jobs) {
+      if (isStoredJob(record) && record.status !== "running" && !current.has(record.id) && (record.id === id || record.name === name)) return record;
     }
   } catch (err) { log?.warn("could not look up stored job", { path, err: String(err) }); }
   return undefined;

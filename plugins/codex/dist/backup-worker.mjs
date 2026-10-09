@@ -5,16 +5,16 @@ import { constants, getPriority, setPriority } from "node:os";
 import { setTimeout as pause } from "node:timers/promises";
 
 // src/core/message-backups.ts
-import { createHash as createHash4, randomUUID as randomUUID7 } from "node:crypto";
-import { closeSync as closeSync6, existsSync as existsSync8, fsyncSync as fsyncSync4, lstatSync as lstatSync3, mkdirSync as mkdirSync7, openSync as openSync6, readFileSync as readFileSync7, readdirSync as readdirSync6, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
+import { createHash as createHash5, randomUUID as randomUUID7 } from "node:crypto";
+import { closeSync as closeSync6, existsSync as existsSync9, fsyncSync as fsyncSync4, lstatSync as lstatSync4, mkdirSync as mkdirSync8, openSync as openSync6, readFileSync as readFileSync8, readdirSync as readdirSync6, renameSync as renameSync5, writeFileSync as writeFileSync6 } from "node:fs";
 import { open as open2 } from "node:fs/promises";
-import { dirname as dirname7, join as join10, resolve as resolve3 } from "node:path";
-import { DatabaseSync as DatabaseSync4 } from "node:sqlite";
+import { dirname as dirname8, join as join11, resolve as resolve3 } from "node:path";
+import { DatabaseSync as DatabaseSync5 } from "node:sqlite";
 
 // src/core/backups.ts
-import { createHash as createHash3, randomUUID as randomUUID6 } from "node:crypto";
-import { closeSync as closeSync5, copyFileSync as copyFileSync4, existsSync as existsSync7, fsyncSync as fsyncSync3, lstatSync as lstatSync2, mkdirSync as mkdirSync6, openSync as openSync5, readFileSync as readFileSync6, readSync, readdirSync as readdirSync5, renameSync as renameSync4, statSync as statSync3, writeFileSync as writeFileSync5 } from "node:fs";
-import { dirname as dirname6, join as join9, relative, resolve as resolve2, sep } from "node:path";
+import { createHash as createHash4, randomUUID as randomUUID6 } from "node:crypto";
+import { closeSync as closeSync5, copyFileSync as copyFileSync4, existsSync as existsSync8, fsyncSync as fsyncSync3, lstatSync as lstatSync3, mkdirSync as mkdirSync7, openSync as openSync5, readFileSync as readFileSync7, readSync, readdirSync as readdirSync5, renameSync as renameSync4, statSync as statSync5, writeFileSync as writeFileSync5 } from "node:fs";
+import { dirname as dirname7, join as join10, relative, resolve as resolve2, sep } from "node:path";
 
 // src/core/constants.ts
 import { homedir } from "node:os";
@@ -29,9 +29,9 @@ var QUEUED_MAIL_MAX_AGE_MS = 24 * 60 * 60 * 1e3;
 var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
 
 // src/core/json-store.ts
-import { randomUUID as randomUUID3 } from "node:crypto";
-import { closeSync as closeSync2, copyFileSync as copyFileSync2, existsSync as existsSync4, fsyncSync, mkdirSync as mkdirSync3, openSync as openSync2, readFileSync as readFileSync4, readdirSync as readdirSync4, renameSync as renameSync2, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { basename, dirname as dirname3, join as join5 } from "node:path";
+import { randomUUID as randomUUID5 } from "node:crypto";
+import { closeSync as closeSync4, copyFileSync as copyFileSync3, existsSync as existsSync7, fsyncSync as fsyncSync2, mkdirSync as mkdirSync6, openSync as openSync4, readFileSync as readFileSync6, readdirSync as readdirSync4, renameSync as renameSync3, rmSync as rmSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { basename as basename2, dirname as dirname6, join as join9 } from "node:path";
 
 // src/core/storage-lock.ts
 import { randomUUID } from "node:crypto";
@@ -69,6 +69,42 @@ import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 var exec = promisify(execFile);
 
+// src/core/job-archive-index.ts
+import { createHash as createHash3 } from "node:crypto";
+import { existsSync as existsSync6, lstatSync as lstatSync2, mkdirSync as mkdirSync5, realpathSync, statSync as statSync4 } from "node:fs";
+import { dirname as dirname5, join as join8 } from "node:path";
+import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
+
+// src/core/file-cache.ts
+import { readFileSync as readFileSync4, statSync as statSync2 } from "node:fs";
+var MAX_BYTES = 16 * 1024 * 1024;
+
+// src/core/sqlite-migrations.ts
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+import { createHash as createHash2, randomUUID as randomUUID4 } from "node:crypto";
+import { closeSync as closeSync3, copyFileSync as copyFileSync2, fsyncSync, mkdirSync as mkdirSync4, openSync as openSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { basename, dirname as dirname4, join as join7 } from "node:path";
+
+// src/core/sqlite-maintenance.ts
+import { existsSync as existsSync4 } from "node:fs";
+import { dirname as dirname3, join as join6 } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+
+// src/core/logger.ts
+import { appendFileSync, mkdirSync as mkdirSync3, renameSync as renameSync2, statSync as statSync3 } from "node:fs";
+import { join as join5 } from "node:path";
+var MAX_LOG_BYTES = 5 * 1024 * 1024;
+
+// src/core/sqlite-policy.ts
+import { setTimeout as delay } from "node:timers/promises";
+
+// src/core/migration-lock.ts
+import { randomUUID as randomUUID3 } from "node:crypto";
+import { closeSync as closeSync2, existsSync as existsSync5, openSync as openSync2, readFileSync as readFileSync5, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
+
+// src/core/job-archive-index.ts
+var CACHE_BUDGET = 8 * 1024 * 1024;
+
 // src/core/json-store.ts
 function retentionLimit(key, fallback) {
   const raw = process.env[key];
@@ -76,29 +112,6 @@ function retentionLimit(key, fallback) {
   const value = Number(raw);
   return Number.isSafeInteger(value) ? value : fallback;
 }
-
-// src/core/sqlite-maintenance.ts
-import { existsSync as existsSync6 } from "node:fs";
-import { dirname as dirname5, join as join8 } from "node:path";
-import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
-
-// src/core/sqlite-migrations.ts
-import { DatabaseSync } from "node:sqlite";
-import { createHash as createHash2, randomUUID as randomUUID5 } from "node:crypto";
-import { closeSync as closeSync4, copyFileSync as copyFileSync3, fsyncSync as fsyncSync2, mkdirSync as mkdirSync4, openSync as openSync4, writeFileSync as writeFileSync4 } from "node:fs";
-import { basename as basename2, dirname as dirname4, join as join6 } from "node:path";
-
-// src/core/migration-lock.ts
-import { randomUUID as randomUUID4 } from "node:crypto";
-import { closeSync as closeSync3, existsSync as existsSync5, openSync as openSync3, readFileSync as readFileSync5, rmSync as rmSync3, writeFileSync as writeFileSync3 } from "node:fs";
-
-// src/core/logger.ts
-import { appendFileSync, mkdirSync as mkdirSync5, renameSync as renameSync3, statSync as statSync2 } from "node:fs";
-import { join as join7 } from "node:path";
-var MAX_LOG_BYTES = 5 * 1024 * 1024;
-
-// src/core/sqlite-policy.ts
-import { setTimeout as delay } from "node:timers/promises";
 
 // src/core/backups.ts
 import * as sqlite from "node:sqlite";
@@ -127,13 +140,13 @@ function syncFile(path) {
   }
 }
 function assertPhysical(path) {
-  for (let at = resolve3(path); ; at = dirname7(at)) {
+  for (let at = resolve3(path); ; at = dirname8(at)) {
     try {
-      if (lstatSync3(at).isSymbolicLink()) throw new Error("Message backup refuses linked paths");
+      if (lstatSync4(at).isSymbolicLink()) throw new Error("Message backup refuses linked paths");
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }
-    if (dirname7(at) === at) break;
+    if (dirname8(at) === at) break;
   }
 }
 function rowDigest(row) {
@@ -143,16 +156,16 @@ function rowDigest(row) {
   ])) + "\n");
 }
 function listMessageBackups(home) {
-  const root = join10(home, MESSAGE_BACKUPS_DIR);
+  const root = join11(home, MESSAGE_BACKUPS_DIR);
   assertPhysical(root);
-  if (!existsSync8(root)) return [];
+  if (!existsSync9(root)) return [];
   return readdirSync6(root).filter((name) => name.startsWith("messages-")).flatMap((name) => {
-    const path = join10(root, name);
+    const path = join11(root, name);
     try {
-      if (lstatSync3(path).isSymbolicLink()) return [];
-      const manifestPath = join10(path, "manifest.json");
-      if (lstatSync3(manifestPath).isSymbolicLink()) return [];
-      const manifest = JSON.parse(readFileSync7(manifestPath, "utf8"));
+      if (lstatSync4(path).isSymbolicLink()) return [];
+      const manifestPath = join11(path, "manifest.json");
+      if (lstatSync4(manifestPath).isSymbolicLink()) return [];
+      const manifest = JSON.parse(readFileSync8(manifestPath, "utf8"));
       return manifest.version === 1 && manifest.kind === "message-tables" && Number.isFinite(manifest.createdAt) ? [{ path, createdAt: manifest.createdAt }] : [];
     } catch {
       return [];
@@ -163,12 +176,12 @@ async function messageBackupIfDue(home, control, now = Date.now()) {
   const interval = retentionLimit(BACKUP_INTERVAL_ENV, DEFAULT_BACKUP_INTERVAL_MS);
   if (!interval) return { path: null, skipped: "not-due" };
   await control.checkpoint();
-  for (const path of [home, join10(home, MESSAGE_BACKUPS_DIR), join10(home, ".storage-users"), join10(home, "message-backup-lock.db")]) assertPhysical(path);
+  for (const path of [home, join11(home, MESSAGE_BACKUPS_DIR), join11(home, ".storage-users"), join11(home, "message-backup-lock.db")]) assertPhysical(path);
   const release = storageLease(home);
   let lock;
   let staging;
   try {
-    lock = new DatabaseSync4(join10(home, "message-backup-lock.db"), { timeout: 0 });
+    lock = new DatabaseSync5(join11(home, "message-backup-lock.db"), { timeout: 0 });
     if (Number(lock.prepare("PRAGMA user_version").get().user_version) > 1) throw new Error("Unsupported message backup coordination schema");
     try {
       lock.exec("BEGIN IMMEDIATE; CREATE TABLE IF NOT EXISTS generation(id INTEGER PRIMARY KEY, pid INTEGER NOT NULL, nonce TEXT NOT NULL, started_at INTEGER NOT NULL); PRAGMA user_version=1;");
@@ -178,9 +191,9 @@ async function messageBackupIfDue(home, control, now = Date.now()) {
       throw error;
     }
     if (now - (listMessageBackups(home)[0]?.createdAt ?? 0) < interval) return { path: null, skipped: "not-due" };
-    const root = join10(home, MESSAGE_BACKUPS_DIR), name = `messages-${String(now).padStart(13, "0")}-${randomUUID7()}`;
-    staging = join10(root, `.pending-${name}`);
-    mkdirSync7(staging, { recursive: true, mode: 448 });
+    const root = join11(home, MESSAGE_BACKUPS_DIR), name = `messages-${String(now).padStart(13, "0")}-${randomUUID7()}`;
+    staging = join11(root, `.pending-${name}`);
+    mkdirSync8(staging, { recursive: true, mode: 448 });
     const manifest = {
       version: 1,
       kind: "message-tables",
@@ -190,7 +203,7 @@ async function messageBackupIfDue(home, control, now = Date.now()) {
       files: []
     };
     const checksum = async (path) => {
-      const file = await open2(path, "r"), hash = createHash4("sha256"), buffer = Buffer.allocUnsafe(MAX_BYTES_PER_WINDOW);
+      const file = await open2(path, "r"), hash = createHash5("sha256"), buffer = Buffer.allocUnsafe(MAX_BYTES_PER_WINDOW);
       let bytes = 0;
       try {
         for (; ; ) {
@@ -206,12 +219,12 @@ async function messageBackupIfDue(home, control, now = Date.now()) {
       return { bytes, sha256: hash.digest("hex") };
     };
     for (const [sourceName, names] of Object.entries(TABLES)) {
-      const sourcePath = join10(home, sourceName);
-      if (!existsSync8(sourcePath)) continue;
+      const sourcePath = join11(home, sourceName);
+      if (!existsSync9(sourcePath)) continue;
       assertPhysical(sourcePath);
       await control.checkpoint();
-      const source = new DatabaseSync4(sourcePath, { readOnly: true, timeout: 100 });
-      const path = sourceName.replace(/\.db$/, ".messages.db"), targetPath = join10(staging, path);
+      const source = new DatabaseSync5(sourcePath, { readOnly: true, timeout: 100 });
+      const path = sourceName.replace(/\.db$/, ".messages.db"), targetPath = join11(staging, path);
       let target;
       try {
         source.exec("BEGIN");
@@ -221,7 +234,7 @@ async function messageBackupIfDue(home, control, now = Date.now()) {
           return typeof row?.sql === "string" ? [{ name: name2, schema: row.sql }] : [];
         });
         if (!schemas.length) continue;
-        target = new DatabaseSync4(targetPath, { timeout: 100 });
+        target = new DatabaseSync5(targetPath, { timeout: 100 });
         target.exec("PRAGMA synchronous=FULL;");
         const tables = [];
         for (const { name: name2, schema } of schemas) {
@@ -232,7 +245,7 @@ async function messageBackupIfDue(home, control, now = Date.now()) {
           const read = source.prepare(selection);
           read.setReadBigInts(true);
           const insert = target.prepare(`INSERT INTO ${quote(name2)}(rowid,${columns.map(quote).join(",")}) VALUES(${columns.map(() => "?").concat("?").join(",")})`);
-          const hash = createHash4("sha256");
+          const hash = createHash5("sha256");
           let rows = 0, windowRows = 0, windowBytes = 0;
           target.exec("BEGIN");
           for (const raw of read.iterate()) {
@@ -251,7 +264,7 @@ async function messageBackupIfDue(home, control, now = Date.now()) {
             }
           }
           target.exec("COMMIT");
-          const expected = hash.digest("hex"), verification = createHash4("sha256");
+          const expected = hash.digest("hex"), verification = createHash5("sha256");
           let verifiedRows = 0;
           const reread = target.prepare(selection);
           reread.setReadBigInts(true);
@@ -290,22 +303,22 @@ async function messageBackupIfDue(home, control, now = Date.now()) {
       }
     }
     await control.checkpoint();
-    writeFileSync6(join10(staging, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", { flag: "wx", mode: 384 });
-    syncFile(join10(staging, "manifest.json"));
-    const published = join10(root, name);
+    writeFileSync6(join11(staging, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n", { flag: "wx", mode: 384 });
+    syncFile(join11(staging, "manifest.json"));
+    const published = join11(root, name);
     renameSync5(staging, published);
     const retention = retentionLimit(BACKUP_RETENTION_ENV, DEFAULT_BACKUP_RETENTION);
     if (retention) for (const previous of listMessageBackups(home).slice(retention)) {
       await control.checkpoint();
-      const archive = join10(root, "archive");
+      const archive = join11(root, "archive");
       assertPhysical(archive);
-      mkdirSync7(archive, { recursive: true, mode: 448 });
-      renameSync5(previous.path, join10(archive, previous.path.split(/[\\/]/).at(-1)));
+      mkdirSync8(archive, { recursive: true, mode: 448 });
+      renameSync5(previous.path, join11(archive, previous.path.split(/[\\/]/).at(-1)));
     }
     lock.exec("COMMIT");
     return { path: published };
   } catch (error) {
-    if (staging && existsSync8(staging)) writeFileSync6(join10(staging, "failure.json"), JSON.stringify({ version: 1, at: Date.now(), error: String(error) }) + "\n", { flag: "wx", mode: 384 });
+    if (staging && existsSync9(staging)) writeFileSync6(join11(staging, "failure.json"), JSON.stringify({ version: 1, at: Date.now(), error: String(error) }) + "\n", { flag: "wx", mode: 384 });
     throw error;
   } finally {
     try {

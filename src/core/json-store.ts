@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import type { Logger } from "./logger.js";
 import { storageLease, storeHome } from "./storage-lock.js";
 import { assertStoreUpgrade } from "./store-compatibility.js";
+import { markJobProjection, storeJobRecords } from "./job-archive-index.js";
 
 export const JSON_STORE_VERSION = 4;
 export const KEEP_STORE_BACKUPS = 3;
@@ -96,6 +97,10 @@ function writeJsonStoreUnlocked(path: string, value: Record<string, unknown>, pr
   assertWritableStore(previous);
   assertStoreUpgrade(storeHome(path), "json", isRecord(previous) && typeof previous.version === "number" ? previous.version : 0, JSON_STORE_VERSION);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  if (basename(path) === "jobs.json" && Array.isArray(value.jobs)) {
+    // Preserve changed full records before publishing the compatibility projection.
+    storeJobRecords(path, [...(Array.isArray(previous) ? previous : isRecord(previous) && Array.isArray(previous.jobs) ? previous.jobs : []), ...value.jobs]);
+  }
   if (previous !== null && (!isRecord(previous) || previous.version !== JSON_STORE_VERSION) && existsSync(path)) {
     copyFileSync(path, backupPath(path));
     retainBackups(path);
@@ -109,6 +114,7 @@ function writeJsonStoreUnlocked(path: string, value: Record<string, unknown>, pr
     for (let attempt = 1; ; attempt++) {
       try {
         renameSync(tmp, path);
+        if (basename(path) === "jobs.json" && Array.isArray(value.jobs)) markJobProjection(path, value.jobs);
         return;
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;

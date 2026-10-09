@@ -18,6 +18,7 @@ import { JOB_SETTING_KEYS } from "../mcp/job-settings.js";
 import { cloneJson, fileSignature, readJsonSnapshot } from "./file-cache.js";
 import type { readStore } from "../mcp/jobs.js";
 import { readArchivedJobSteps } from "./job-archive.js";
+import { indexedJobProjectionCurrent } from "./job-archive-index.js";
 import { dashboardRequestSchema, type DashboardReadRequest, type DashboardReadResult } from "../network/dashboard-protocol.js";
 const TASK_PREVIEW_CHARS = 300;
 const STALE_RUN_MS = 150_000;
@@ -92,12 +93,14 @@ async function readOutcomeJobs(home: string, log: Logger, names?: ReadonlySet<st
       const canonicalHome = realpathSync.native(home), activePath = join(canonicalHome, JOBS_FILE);
       let data: unknown = null, activeStat: Stats | undefined;
       try {
-        activeStat = lstatSync(activePath);
+        if (!indexedJobProjectionCurrent(activePath)) activeStat = lstatSync(activePath);
+        if (activeStat) {
         if (!unchangedContainedFile(canonicalHome, activePath, activeStat, canonicalHome)) throw new Error("outcome job store must be a contained physical file");
         data = readJsonSnapshot(activePath, { file: activePath, stat: activeStat }).value;
+        }
       } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; }
       const active = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
-      for (const job of [...(yield* readArchivedJobSteps(activePath, true)).jobs, ...active]) {
+      for (const job of [...(yield* readArchivedJobSteps(activePath, true, { metadata: true, names })).jobs, ...active]) {
         yield;
         if (isRecord(job) && typeof job.id === "string" && typeof job.name === "string") all.set(job.id, job);
       }
@@ -188,7 +191,7 @@ function* listRunsSteps(home: string, now: number, names?: Set<string>, responsi
   for (const run of runs) for (let at = run.name.indexOf("-"); at >= 0; at = run.name.indexOf("-", at + 1)) representedSuffixes.add(run.name.slice(at));
   // Summary construction only reads these immutable records. Detach exposed
   // nested fields individually instead of cloning every retained full prompt.
-  const current = yield* historyJobsSteps(home, responsive);
+  const current = yield* historyJobsSteps(home, responsive, { names, metadata: !names });
   // Filtered outcome pages may recover several jobs. Inspect the log registry once,
   // rather than repeating all metadata stats and clones for each recovered job.
   const retainedLogs = names ? yield* readRunLogsSteps(home, undefined, responsive) : undefined;
@@ -256,7 +259,7 @@ export interface StoredJobView {
 
 /** Jobs from the sessions' store (`{ jobs: [...] }`; before 0.26 a bare array). Read-only and best effort. */
 export function readStoredJobs(home: string, names?: ReadonlySet<string>): Map<string, StoredJobView> {
-  return storedJobViews(names ? selectHistoryJobs(home, names) : readHistoryJobs(home));
+  return storedJobViews(drainScan(historyJobsSteps(home, false, { names, metadata: true })));
 }
 
 function storedJobViews(jobs: Map<string, Record<string, unknown>>): Map<string, StoredJobView> {
@@ -266,7 +269,7 @@ function storedJobViews(jobs: Map<string, Record<string, unknown>>): Map<string,
 /** All saved settings, without cloning retained prompt/context fields. */
 export function readStoredJobsResponsive(home: string, names?: ReadonlySet<string>): Promise<Map<string, StoredJobView>> {
   return drainScanResponsive((function* () {
-    return yield* storedJobViewSteps(yield* historyJobsSteps(home, true), names);
+    return yield* storedJobViewSteps(yield* historyJobsSteps(home, true, { names, metadata: true }), names);
   })());
 }
 

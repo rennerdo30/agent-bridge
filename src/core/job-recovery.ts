@@ -57,7 +57,7 @@ async function prepareRecoveryAsync(home: string, ref: string) {
   const id = recoveryId(ref);
   if (!id) return undefined;
   const history = await drainScanResponsive((function* () {
-    const snapshot = yield* historyJobsSteps(home, true);
+    const snapshot = yield* historyJobsSteps(home, true, { ids: new Set([id]), names: new Set([ref]) });
     for (const job of snapshot.values()) {
       yield;
       if (job.name === ref || job.id === id) return cloneJson(job);

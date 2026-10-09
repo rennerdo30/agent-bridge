@@ -5,11 +5,28 @@ import { readFileSync, statSync } from "node:fs";
  * The budget bounds resident data without removing anything from disk.
  */
 export interface JsonSnapshot { signature: string; value: unknown; bytes: number }
-const MAX_BYTES = 256 * 1024 * 1024;
+const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_ENTRIES = 2048;
 const cache = new Map<string, JsonSnapshot & { bytes: number }>();
 const damaged = new Map<string, { signature: string; error: SyntaxError }>();
 let bytes = 0;
+
+/** Conservative parsed-container budget, including UTF-16 strings and keys.
+ * Stop once over budget; oversized snapshots remain readable without retention. */
+export function estimatedJsonBytes(value: unknown, limit = MAX_BYTES): number {
+  const pending: unknown[] = [value]; let total = 0;
+  while (pending.length && total <= limit) {
+    const item = pending.pop();
+    if (typeof item === "string") total += 32 + item.length * 2;
+    else if (Array.isArray(item)) { total += 64 + item.length * 16; for (const child of item) pending.push(child); }
+    else if (item !== null && typeof item === "object") {
+      total += 64;
+      for (const key of Object.keys(item)) { total += 64 + key.length * 2; pending.push((item as Record<string, unknown>)[key]); }
+    } else total += 16;
+  }
+  return total;
+}
+export function jsonCacheBudget(): { bytes: number; limit: number; entries: number } { return { bytes, limit: MAX_BYTES, entries: cache.size }; }
 
 /** Clone JSON containers without serializing/copying large immutable prompt strings.
  * Only use for parsed JSON and JSON-shaped projections, not arbitrary class instances.
@@ -69,9 +86,9 @@ export function readJsonSnapshot(file: string, scan?: { file: string; stat: Para
     }
     throw error;
   }
-  const next = { signature, value, bytes: st.size };
-  if (st.size <= MAX_BYTES) {
-    cache.set(file, next); bytes += st.size;
+  const next = { signature, value, bytes: estimatedJsonBytes(value) };
+  if (next.bytes <= MAX_BYTES) {
+    cache.set(file, next); bytes += next.bytes;
     while (bytes > MAX_BYTES || cache.size > MAX_ENTRIES) {
       const first = cache.keys().next().value!;
       bytes -= cache.get(first)!.bytes; cache.delete(first);
