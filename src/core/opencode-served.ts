@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { extname } from "node:path";
 import { checkDepthPublic, childEnvPublic, DelegateError, killTree, trackChild, resolveBinary, unwrapNpmShim, opencodeV2, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { progressEventHandler } from "./progress.js";
-import type { PermissionDecision, PermissionRequest } from "./relay.js";
+import { boundedDetail, type PermissionDecision, type PermissionRequest } from "./relay.js";
 
 /**
  * opencode with permission forwarding. `opencode run` answers every permission request itself (rejects
@@ -16,7 +16,6 @@ const SERVE_START_TIMEOUT_MS = 30_000;
 const LISTEN_RE = /listening on (https?:\/\/[^\s]+)/i;
 const SERVER_USER = "opencode";
 const PASSWORD_BYTES = 24;
-const MAX_DETAIL_CHARS = 4_000;
 /** Edits and commands ask (the defaults allow everything); asks come to us as events. */
 export const OPENCODE_ASK_PERMISSIONS = { edit: "ask", bash: "ask" } as const;
 /** If the session shows no sign of life this long after the prompt, something is wrong (bad model, auth). */
@@ -127,15 +126,15 @@ export function opencodePermissionRequest(p: Json, mcpServers: string[], cwd: st
   const permission = String(p.permission ?? "unknown");
   const detail = permissionDetail(p);
   const server = [...mcpServers].sort((a, b) => b.length - a.length).find((s) => permission.startsWith(mcpToolPrefix(s)));
-  if (server) return { agent: "opencode", tool: `mcp:${server}`, detail: `${permission}: ${detail}`.slice(0, MAX_DETAIL_CHARS), cwd };
-  return { agent: "opencode", tool: permission, detail, cwd };
+  if (server) return { agent: "opencode", tool: `mcp:${server}`, ...boundedDetail(`${permission}: ${detail}`), cwd };
+  return { agent: "opencode", tool: permission, ...boundedDetail(detail), cwd };
 }
 
 function permissionDetail(p: Json): string {
   const patterns = Array.isArray(p.patterns) ? p.patterns.join(", ") : "";
   const meta = p.metadata && typeof p.metadata === "object" ? p.metadata : {};
   const cmd = typeof meta.command === "string" ? meta.command : typeof meta.filepath === "string" ? meta.filepath : "";
-  return (cmd || patterns || JSON.stringify(meta)).slice(0, MAX_DETAIL_CHARS);
+  return cmd || patterns || JSON.stringify(meta);
 }
 
 export async function delegateToOpencodeServed(

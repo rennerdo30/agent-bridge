@@ -15,7 +15,7 @@ import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolvePipePath } from "../core/paths.js";
 import { loadOrCreateToken } from "../core/token.js";
 import type { AgentKind, CodingAgent } from "../core/protocol.js";
-import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
+import { PermissionRelay, unreviewable, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObservation } from "../core/codex-trust.js";
 import { startRunFeed, startRunFeedReady } from "../core/runfeed.js";
 import { ResourceSlots, resourceSlotHint, SLOT_OWNER_ENV, SLOT_PID_ENV, SLOT_RENEW_MS } from "../core/resource-slots.js";
@@ -248,6 +248,12 @@ async function runDelegateInner(
       return { allow: false, message: HANDOFF_DECLINED };
     }
     if (!r.automaticReview && r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
+    // Never decide (or pattern-match) a cut text: the owner must see everything they allow (AB-241).
+    const refused = isOwnServerCall(r) ? null : unreviewable(r);
+    if (refused) {
+      asked.push(`denied (too long to review): ${r.tool} ${r.detail.slice(0, 80)}`);
+      return refused;
+    }
     // Its own agent-bridge tools (answering the parent, report_progress) never need a question.
     if (!r.automaticReview && (isOwnServerCall(r) || isAutoApproved(r, autoApprove))) return { allow: true };
     let d: PermissionDecision;

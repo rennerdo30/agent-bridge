@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { ANTIGRAVITY_ACCESS_ENV } from "../core/antigravity.js";
 import { antigravityAncestor } from "../core/procinfo.js";
 import { resolveHome } from "../core/paths.js";
-import { askRelay } from "../core/relay.js";
+import { askRelay, boundedDetail } from "../core/relay.js";
 import { object } from "../core/transcripts/common.js";
 import { isHandoffToolCall } from "../core/tool-allow.js";
 import { createLogger } from "../core/logger.js";
@@ -41,7 +41,7 @@ export async function antigravityPermission(input: Record<string, any>, access =
   const call = object(input.toolCall), args = object(call.args);
   const server = args.ServerName ?? args.server_name ?? args.serverName;
   const tool = args.ToolName ?? args.tool_name ?? args.toolName;
-  const request = { agent: "antigravity", tool: call.name === "call_mcp_tool" ? `mcp:${server ?? "unknown"}` : String(call.name ?? "unknown"), detail: (call.name === "call_mcp_tool" ? `${tool ?? "unknown"}: ` : "") + JSON.stringify(args).slice(0, 4000), cwd: Array.isArray(input.workspacePaths) ? input.workspacePaths[0] : undefined };
+  const request = { agent: "antigravity", tool: call.name === "call_mcp_tool" ? `mcp:${server ?? "unknown"}` : String(call.name ?? "unknown"), ...boundedDetail((call.name === "call_mcp_tool" ? `${tool ?? "unknown"}: ` : "") + JSON.stringify(args)), cwd: Array.isArray(input.workspacePaths) ? input.workspacePaths[0] : undefined };
   if (access && isHandoffToolCall(request)) return { decision: "deny", reason: "Delegated jobs report to their supervisor; handoff writes are declined" };
   if ((!access || access === "edit") && call.name === "call_mcp_tool" && OWN_SERVERS.includes(server)) return allowed(input);
   if (!access || access === "edit") return {};
