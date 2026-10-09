@@ -11,7 +11,7 @@ import { fastSnapshot } from "./sqlite-fast-snapshot.js";
 type Row = Record<string, SQLInputValue>;
 type State = { snapshot: string; status: string; manifest: string | null; source: string | null };
 type CopyState = { table_name: string; source_rows: number; after_rowid: number | null; copied_rows: number; copy_sha256: string; verify_after: number | null; verified_rows: number; verify_sha256: string; done: number; verified: number };
-export interface HistoryMigrationOptions { ioBytesPerSecond?: number; onProgress?: (progress: HistoryMigrationProgress) => void; snapshot?: typeof fastSnapshot }
+export interface HistoryMigrationOptions { ioBytesPerSecond?: number; onProgress?: (progress: HistoryMigrationProgress) => void; snapshot?: typeof fastSnapshot; transient?: (err: unknown) => boolean }
 /** v1 tables kept inside history.db by the v1→v2 upgrade carry this prefix. */
 export const HISTORY_V1_PREFIX = "v1_";
 const q = (s: string) => `"${s.replaceAll('"', '""')}"`;
@@ -108,6 +108,7 @@ function assertDiskSpace(source: string, folder: string): void {
  * 4. only then the store is marked verified and readers switch. The legacy store and the snapshot are retained. */
 export async function resumableHistoryMigration(bridge: string, target: DatabaseSync, paused: () => boolean, stopped: () => boolean, options: HistoryMigrationOptions = {}): Promise<void> {
   const limit = options.ioBytesPerSecond ?? HISTORY_IO_BYTES_PER_SECOND;
+  const transient = options.transient ?? ((err: unknown) => (err as { code?: string }).code === "HISTORY_DISK_SPACE");
   if (!Number.isFinite(limit) || limit < 64 * 1024 || limit > 1024 * 1024 * 1024) throw new Error("History migration I/O limit must be between 64 KiB/s and 1 GiB/s");
   registerHistoryFunctions(target);
   const fts = !!target.prepare("SELECT name FROM sqlite_master WHERE name='history_fts'").get();
@@ -232,16 +233,27 @@ export async function resumableHistoryMigration(bridge: string, target: Database
     await gap();
     target.exec("BEGIN IMMEDIATE");
     try {
-      const max = source.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(`${prefix}conversation_records`)
-        ? Number(source.prepare(`SELECT coalesce(max(id),0) n FROM ${q(`${prefix}conversation_records`)}`).get()!.n) : 0;
-      target.prepare("INSERT INTO history_cursors VALUES('legacy-record-tail',?) ON CONFLICT(source) DO UPDATE SET cursor=excluded.cursor").run(String(max));
+      if (state.source === "history-v1") {
+        // The legacy tail reads bridge.db ids. v1's own cursor (copied with history_cursors) is already in that id
+        // space; v1 record ids are not, so they must never become the cursor. Without a v1 cursor the tail starts
+        // at 0 and replays bridge.db idempotently by natural key. v1's remapped rows keep their mappings (AB-216).
+        if (source.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(`${prefix}history_legacy_tail`)) {
+          const map = target.prepare("INSERT OR IGNORE INTO history_legacy_tail(source_id,target_id) VALUES(?,?)");
+          for (const row of source.prepare(`SELECT source_id,target_id FROM ${q(`${prefix}history_legacy_tail`)}`).iterate()) map.run(row.source_id!, row.target_id!);
+        }
+      } else {
+        const max = source.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(`${prefix}conversation_records`)
+          ? Number(source.prepare(`SELECT coalesce(max(id),0) n FROM ${q(`${prefix}conversation_records`)}`).get()!.n) : 0;
+        target.prepare("INSERT INTO history_cursors VALUES('legacy-record-tail',?) ON CONFLICT(source) DO UPDATE SET cursor=excluded.cursor").run(String(max));
+      }
       target.prepare("UPDATE history_migration SET status='verified',manifest=? WHERE version=?").run(JSON.stringify(manifest), HISTORY_STORE_VERSION);
       target.exec("COMMIT");
     } catch (err) { target.exec("ROLLBACK"); throw err; }
     emit({ phase: "verified", percent: 100, etaSeconds: 0, paused: false });
   } catch (err) {
     const code = (err as { code?: string }).code;
-    emit(code === "HISTORY_MIGRATION_STOPPED" || code === "HISTORY_DISK_SPACE" ? { paused: true, error: code === "HISTORY_DISK_SPACE" ? String((err as Error).message) : null } : { phase: "failed", error: String(err), etaSeconds: null });
+    // Environment errors pause and retry; they are reported, never latched as a failed migration (AB-238).
+    emit(code === "HISTORY_MIGRATION_STOPPED" ? { paused: true, error: null } : transient(err) ? { paused: true, error: String((err as Error).message ?? err) } : { phase: "failed", error: String(err), etaSeconds: null });
     throw err;
   } finally { source?.close(); }
 }

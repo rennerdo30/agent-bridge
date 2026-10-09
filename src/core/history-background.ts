@@ -44,6 +44,8 @@ export class HistoryBackground {
         "ask-completion.ts",
         "history-budget.ts",
         "savepoint.ts",
+        "store-compatibility.ts",
+        "metadata-db.ts",
       ];
       if (
         !existsSync(path) ||

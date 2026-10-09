@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DB_FILE_NAME } from "./constants.js";
 import { extractBundle } from "./archive-bundle.js";
-import { historyDbPath, historyReady, openHistoryReader, openHistoryStore, HISTORY_STORE_VERSION } from "./history-store.js";
+import { historyDbPath, historyReady, legacyTailConflicts, openHistoryReader, openHistoryStore, HISTORY_STORE_VERSION } from "./history-store.js";
 import { decodeHistoryRow, HISTORY_V1_PREFIX } from "./history-migration.js";
 import { jobArchivePath, openJobArchive } from "./job-archive-index.js";
 import { maintenanceLock } from "./storage-lock.js";
@@ -138,6 +138,8 @@ export function verifyBeforeFinalize(home: string, report: (line: string) => voi
         }
         if (++checked % 50_000 === 0) report(`  ${checked.toLocaleString("en")} records checked`);
       }
+      const conflicts = legacyTailConflicts(history);
+      if (conflicts) blockers.push(`${conflicts} legacy tail conflict(s): bridge.db rows whose bytes differ from history.db or lack a conversation; both copies are retained in history_legacy_conflicts. Resolve them before finalize.`);
       if (missing) blockers.push(`${missing} legacy transcript records are not in history.db yet (the legacy tail has not caught up).`);
       if (different) blockers.push(`${different} legacy transcript records differ from their copy in history.db.`);
       report(`  ${checked.toLocaleString("en")} records checked, ${missing} missing, ${different} different`);
