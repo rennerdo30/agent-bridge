@@ -28,6 +28,7 @@ import { recordAskCompletion } from "../core/ask-completion.js";
 import { metadataFileLease } from "../core/metadata-file-lease.js";
 import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { archivePendingJob, mergePendingJob, readPendingJobs, retainPendingJob, type PendingJobReceipt } from "../core/job-pending-journal.js";
+import { verifiedGoneJobOwners } from "../core/job-restoration.js";
 
 const JOB_ID_LENGTH = 8;
 const PROMPT_PREVIEW_CHARS = 120;
@@ -306,6 +307,8 @@ export interface JobCoordinator {
   controlInlineJob?(job: string, control: RunnerControl): Promise<unknown>;
   reportInlineJob?(message: BridgeMessage): Promise<unknown>;
   jobRecipient?(job: string): Promise<string>;
+  /** The broker's live peer list; it decides, with process presence, whether an inline executor still exists. */
+  peers?(signal?: AbortSignal): Promise<{ name: string }[]>;
   name: string;
   id: string;
   currentSessionId: string | null;
@@ -362,6 +365,15 @@ export class JobManager {
   private sharedControl = false;
   private readonly sharedGrants = new Set<string>();
   private readonly sharedAuthority = new Map<string, string>();
+  /** Inline turns whose executing session is proven gone (job id -> turn key): never "running" again here. */
+  private readonly deadExecutorTurns = new Map<string, string>();
+  /** Follow-ups for another session's inline turn that its broker could not deliver (job id -> turn and bodies). */
+  private readonly retainedInline = new Map<string, { turn: string; bodies: string[] }>();
+  /** Cancellations of another session's inline turn, honoured here if its executor turns out to be gone. */
+  private readonly pendingInlineCancels = new Map<string, string>();
+  /** Executors the broker's last answered peer list did not contain. */
+  private offlineExecutors = new Set<string>();
+  private executorCheck: Promise<void> | null = null;
 
   constructor(
     private readonly node: JobCoordinator,
@@ -507,8 +519,15 @@ export class JobManager {
             parentJob: old.parentJob, ownershipHistory: old.ownershipHistory, masters: old.masters });
           if (j.startedAt === old.startedAt) j.executionOwner = old.executionOwner as string | undefined;
           j.args = { ...j.args, ...(isRecord(old.args) ? { send_to: old.args.send_to } : {}) };
-          if ((old.owner !== this.node.name && old.executionOwner !== this.node.name && !(j.executionOwner === this.node.name && canControlJob(old, this.node.name)) && !this.lineage) ||
-              (old.executionOwner && old.executionOwner !== this.node.name && old.status === "running" && j.startedAt === old.startedAt)) return old as unknown as StoredJob;
+          if (old.owner !== this.node.name && old.executionOwner !== this.node.name && !(j.executionOwner === this.node.name && canControlJob(old, this.node.name)) && !this.lineage) return old as unknown as StoredJob;
+          if (old.executionOwner && old.executionOwner !== this.node.name && old.status === "running" && j.startedAt === old.startedAt &&
+              this.deadExecutorTurns.get(j.id) !== `${old.startedAt}:${old.executionOwner}`) {
+            // The executor's turn stays its own; follow-ups it could not take are kept for the turn after it.
+            const retained = this.retainedInline.get(j.id)?.bodies ?? [];
+            const queued = Array.isArray(old.queuedMessages) ? old.queuedMessages as string[] : [];
+            const missing = retained.filter(body => !queued.includes(body));
+            return (missing.length ? { ...old, queuedMessages: [...queued, ...missing] } : old) as unknown as StoredJob;
+          }
         }
         if (isRecord(old) && old.startedAt === j.startedAt && (old.status === "done" || old.status === "failed") && j.status === "running") {
           // An observer's stale same-turn snapshot cannot revive an executor's
@@ -602,7 +621,9 @@ export class JobManager {
       const parent = stored.find((j) => j.name === this.lineage!.parentJob);
       if (parent?.rootSession && parent.rootName) { this.lineage.rootSession = parent.rootSession; this.lineage.rootName = parent.rootName; }
     }
-    for (const s of stored) {
+    for (const saved of stored) {
+      // A turn whose executor is proven gone never reverts to "running" from its stale durable record.
+      const s = saved.status === "running" && !saved.host && this.deadExecutorTurns.get(saved.id) === inlineTurn(saved) ? { ...saved, status: "interrupted" as const } : saved;
       if (!this.own.has(s.id) && !this.canRestoreSaved(s)) continue;
       const directlyOwned = this.lineage ? s.parentJob === this.lineage.parentJob : this.isMine(s.owner) && !s.parentJob;
       if (!s.ownershipHistory?.length && (!directlyOwned || this.running.has(s.id) || this.foreground.has(s.id) || s.status === "running" && !s.host)) continue;
@@ -617,6 +638,12 @@ export class JobManager {
           Object.assign(job, s);
           if (s.status !== "running" && !job.queue.length) job.queue = [...(s.queuedMessages ?? [])];
         }
+        const retained = this.retainedInline.get(s.id);
+        if (retained && (s.status !== "running" || inlineTurn(s) !== retained.turn)) {
+          this.retainedInline.delete(s.id);
+          job.queue.push(...retained.bodies.filter(body => !job!.queue.includes(body)));
+        }
+        if (this.pendingInlineCancels.has(s.id) && (s.status !== "running" || inlineTurn(s) !== this.pendingInlineCancels.get(s.id))) this.pendingInlineCancels.delete(s.id);
       } else if (job && !mine) {
         this.running.delete(s.id); this.waitingJobs.delete(s.id); this.foreground.delete(s.id); this.own.delete(s.id); this.history.delete(s.id);
         continue;
@@ -797,6 +824,13 @@ export class JobManager {
         // classification installs the continuation factory. Preserve their
         // controller and runtime facts while making that eligible turn resumable.
         existing.resume ??= makeResume(existing.agent, existing.args ?? {});
+        // The same decision as for a newly loaded entry: a turn neither running here nor hosted by another
+        // session's live runner is interrupted (refreshOwnership restores one another session still executes).
+        const hostedElsewhere = existing.status === "running" && Boolean(existing.host) && !this.isMine(existing.owner);
+        if (existing.status === "running" && !hostedElsewhere && !this.running.has(s.id) && !this.foreground.has(s.id) && !this.pendingHosts.has(s.id)) {
+          existing.status = "interrupted";
+          if (existing.host && this.isMine(existing.owner) && this.takeOver(existing)) adopted.push(existing);
+        }
         continue;
       }
       const hosted = s.status === "running" && Boolean(s.host);
@@ -1281,8 +1315,19 @@ export class JobManager {
     // A job loaded before the continuation factory was installed (startup order) and outside the restored window
     // still has its session: make it resumable here instead of reporting that it has none.
     if (!job.resume && job.sessionId && this.restoreResume) job.resume = this.restoreResume(job.agent, job.args ?? {});
-    if (job.status === "running" && job.executionOwner && job.executionOwner !== this.node.name && job.owner === this.node.name) {
-      this.controlInline(job.name, { type: "message", body: message, cid: randomUUID() });
+    if (this.foreignInline(job) && job.owner === this.node.name) {
+      // The broker could not reach its executor last time: keep the message for the turn after this one
+      // (or for the resume, should the executor turn out to be gone) instead of reporting it delivered.
+      if (this.offlineExecutors.has(job.executionOwner!)) {
+        this.retainInlineMessage(job, message);
+        void this.checkInlineExecutors();
+        return { outcome: "queued", job };
+      }
+      const turn = inlineTurn(job);
+      void this.node.controlInlineJob?.(job.name, { type: "message", body: message, cid: randomUUID() })?.catch((err) => {
+        this.log.warn("inline job control failed", { job: job.name, control: "message", err: String(err) });
+        if (executorOffline(err) && inlineTurn(job) === turn) { this.retainInlineMessage(job, message); void this.checkInlineExecutors(); }
+      });
       return { outcome: "delivered", job };
     }
     // Its runner may have finished just now: then this continues it instead.
@@ -1545,6 +1590,7 @@ export class JobManager {
         this.hostTimer = null;
       }
       for (const job of hosted) this.checkHostedSafely(job, true);
+      if ([...this.running.values()].some(j => this.foreignInline(j))) void this.checkInlineExecutors();
     }, HOST_POLL_MS);
     this.hostTimer.unref();
   }
@@ -1615,10 +1661,88 @@ export class JobManager {
     }
   }
 
+  /** A running turn another session executes inline (a handed-off ask_* run, or one started without a runner). */
+  private foreignInline(job: Job): boolean {
+    return job.status === "running" && !job.host && Boolean(job.executionOwner) && job.executionOwner !== this.node.name;
+  }
+
+  private retainInlineMessage(job: Job, body: string): void {
+    const turn = inlineTurn(job), retained = this.retainedInline.get(job.id);
+    if (retained?.turn === turn) retained.bodies.push(body);
+    else this.retainedInline.set(job.id, { turn, bodies: [body] });
+    this.own.add(job.id);
+    this.persist();
+  }
+
+  /**
+   * An inline turn runs inside its executor's session process: when that process is gone (crash, reboot) the
+   * turn can never report, and its durable record would say "running" forever. It is declared gone only when
+   * the broker answered a peer list without it AND its recorded process is proven exited; a slow, stalled or
+   * reconnecting executor, or one without any presence record, keeps its turn.
+   */
+  checkInlineExecutors(): Promise<void> {
+    if (this.executorCheck) return this.executorCheck;
+    const check = (async () => {
+      if (!this.storePath || this.dormant || !this.node.peers) return;
+      const candidates = () => [...this.running.values()].filter(j => this.foreignInline(j) && this.isMine(j.owner));
+      const turns = new Map(candidates().map(j => [j.id, inlineTurn(j)]));
+      if (!turns.size) return;
+      const online = new Set((await this.node.peers()).map(peer => peer.name));
+      const executors = new Set(candidates().map(j => j.executionOwner!));
+      this.offlineExecutors = new Set([...executors].filter(name => !online.has(name)));
+      if (!this.offlineExecutors.size) return;
+      const gone = await verifiedGoneJobOwners(dirname(this.storePath), [...this.offlineExecutors]);
+      if (!gone.size || this.dormant || this.reportsStopped) return;
+      this.refreshOwnership();
+      for (const job of candidates()) if (gone.has(job.executionOwner!) && turns.get(job.id) === inlineTurn(job)) this.interruptOrphaned(job);
+    })().catch(err => this.log.warn("could not check inline subagent executors", { err: String(err) }))
+      .finally(() => { if (this.executorCheck === check) this.executorCheck = null; });
+    this.executorCheck = check;
+    return check;
+  }
+
+  /** Its executor is gone: the turn is interrupted (resumable with its session), or cancelled if that was asked. */
+  private interruptOrphaned(job: Job): void {
+    const turn = inlineTurn(job), executor = job.executionOwner;
+    this.deadExecutorTurns.set(job.id, turn);
+    this.running.delete(job.id);
+    this.own.add(job.id);
+    // Messages its executor accepted but never ran come first, then those it could not be reached for.
+    const retained = this.retainedInline.get(job.id);
+    this.retainedInline.delete(job.id);
+    const queue = [...(job.queuedMessages ?? [])];
+    for (const body of [...job.queue, ...(retained?.turn === turn ? retained.bodies : [])]) if (!queue.includes(body)) queue.push(body);
+    job.queue = queue;
+    job.etaAt = undefined; job.etaReportedAt = undefined;
+    if (this.pendingInlineCancels.get(job.id) === turn) {
+      this.pendingInlineCancels.delete(job.id);
+      job.queue = [];
+      job.controller.abort();
+      this.finish(job, "cancelled", "", job.sessionId, `cancelled; its executing session ${executor} had already exited`);
+      return;
+    }
+    job.status = "interrupted";
+    job.progress = `interrupted: its executing session ${executor} exited`;
+    this.log.warn("inline subagent's executing session exited; turn marked interrupted", { job: job.name, executor, queued: job.queue.length });
+    if (job.queue.length && job.resume && job.sessionId) this.waitForSlot(job);
+    this.persist();
+    if (this.waitingJobs.has(job.id)) this.startWaiting();
+  }
+
   /** Cancel a background job, a blocking ask_* run or a continuation waiting for a slot, by name or id. */
   cancel(ref: string): boolean {
     const owned = this.find(ref);
     if (!owned) return false;
+    if (this.foreignInline(owned) && (this.sharedControl || this.isMine(owned.owner) || this.lineage)) {
+      // Its executor stops it; if that session turns out to be gone, the turn is settled as cancelled here.
+      this.pendingInlineCancels.set(owned.id, inlineTurn(owned));
+      void this.node.controlInlineJob?.(owned.name, { type: "cancel" })?.catch((err) => {
+        this.log.warn("inline cancel failed", { err: String(err) });
+        if (executorOffline(err)) void this.checkInlineExecutors();
+      });
+      if (this.offlineExecutors.has(owned.executionOwner!)) void this.checkInlineExecutors();
+      return true;
+    }
     if ((!this.sharedControl && !this.isMine(owned.owner) && !this.lineage) || (owned.status === "running" && owned.executionOwner && owned.executionOwner !== this.node.name)) {
       void this.node.controlInlineJob?.(owned.name, { type: "cancel" }).catch((err) => this.log.warn("inline cancel failed", { err: String(err) }));
       return true;
@@ -1778,6 +1902,16 @@ export class JobManager {
 /** Failed runs often still have a session (timeouts, aborts, errors after progress): keep it for recovery. */
 export function sessionOfError(err: unknown): string | null {
   return err instanceof DelegateError ? (err.sessionId ?? null) : null;
+}
+
+/** One turn of an inline job and its executor: a later turn or another executor is a different turn. */
+function inlineTurn(job: Pick<Job, "startedAt" | "executionOwner">): string {
+  return `${job.startedAt}:${job.executionOwner ?? ""}`;
+}
+
+/** The broker refused an inline control because no session of the executor is connected. */
+function executorOffline(err: unknown): boolean {
+  return (err as { code?: string } | null)?.code === "unknown_target";
 }
 
 type StoredJob = Pick<Job, "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
