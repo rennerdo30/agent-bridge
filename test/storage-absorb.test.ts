@@ -55,7 +55,7 @@ it("a backup holding purged messages is kept before absorb, and removable after 
     db.exec("CREATE TABLE old_feature(a INTEGER, b REAL, c BLOB, d TEXT)");
     db.prepare("INSERT INTO old_feature VALUES(?,?,?,NULL)").run(big, 1.5, Buffer.from([0, 255, 1]));
   });
-  expect(planFinalize(env.home).kept.find(i => i.path === backup)?.reason).toMatch(/messages: 2 of 3 rows.*storage absorb/);
+  expect(planFinalize(env.home, { prove: true }).kept.find(i => i.path === backup)?.reason).toMatch(/messages: 2 of 3 rows.*storage absorb/);
 
   const dry = runAbsorb(env.home);
   expect(dry).toMatchObject({ applied: false, rows: 3, conflicts: 0 });
@@ -78,7 +78,7 @@ it("a backup holding purged messages is kept before absorb, and removable after 
   expect(exact[0]!.d).toBeNull();
   expect(readAbsorbedRows(env.home, "messages").map(r => r.id).sort()).toEqual(["m0", "m2"]);
 
-  const proven = planFinalize(env.home);
+  const proven = planFinalize(env.home, { prove: true });
   expect(proven.kept.find(i => i.path === backup)?.reason).toBeUndefined();
   expect(proven.items.map(i => i.path)).toContain(backup);
   closes.splice(0).forEach(close => close());
@@ -99,7 +99,7 @@ it("a conflicting row is never imported or overwritten; its backup stays and is 
   expect(result).toMatchObject({ rows: 1, conflicts: 1 });
   // Every run reports the conflict again; nothing more is imported.
   expect(runAbsorb(env.home, { apply: true })).toMatchObject({ rows: 0, conflicts: 1 });
-  const plan = planFinalize(env.home);
+  const plan = planFinalize(env.home, { prove: true });
   expect(plan.items.map(i => i.path)).not.toContain(backup);
   expect(plan.kept.find(i => i.path === backup)?.reason).toMatch(/messages: 1 rows conflict/);
   runFinalize(env.home, () => {});
@@ -118,12 +118,12 @@ it("absorbs files that exist only in a pending backup byte-exact, so the folder 
   copyOfBridge(join(pending, "bridge.db"));
   const bytes = Buffer.from([0x7b, 0x00, 0xff, 0x7d]);
   writeFileSync(join(pending, "runs.json"), bytes);
-  expect(planFinalize(env.home).kept.find(i => i.path === pending)?.reason).toMatch(/runs\.json/);
+  expect(planFinalize(env.home, { prove: true }).kept.find(i => i.path === pending)?.reason).toMatch(/runs\.json/);
   expect(runAbsorb(env.home, { apply: true })).toMatchObject({ files: 1, rows: 0 });
   const archive = new DatabaseSync(join(env.home, "archive.db"), { readOnly: true });
   try { expect(Buffer.from(archive.prepare("SELECT bytes FROM absorbed_files").get()!.bytes as Uint8Array).equals(bytes)).toBe(true); }
   finally { archive.close(); }
-  expect(planFinalize(env.home).items.map(i => i.path)).toContain(pending);
+  expect(planFinalize(env.home, { prove: true }).items.map(i => i.path)).toContain(pending);
   runFinalize(env.home, () => {});
   expect(existsSync(pending)).toBe(false);
 });
@@ -148,7 +148,7 @@ it("resumes from the last committed batch after an interruption", async () => {
   expect(archive()).toBe(15);
   expect(runAbsorb(env.home, { apply: true, batchRows: 5 }).rows).toBe(10);
   expect(archive()).toBe(25);
-  expect(planFinalize(env.home).items.map(i => i.path)).toContain(backup);
+  expect(planFinalize(env.home, { prove: true }).items.map(i => i.path)).toContain(backup);
 });
 
 it("round-trips every SQLite value type exactly", () => {

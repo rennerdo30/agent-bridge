@@ -36,7 +36,7 @@ async function legacyHome(migrate: boolean) {
 
 it("refuses and removes nothing before the new storage is verified", async () => {
   await legacyHome(false);
-  const plan = planFinalize(env.home);
+  const plan = planFinalize(env.home, { prove: true });
   expect(plan.ready).toBe(false);
   expect(plan.blockers.join("\n")).toMatch(/not verified/);
   runFinalize(env.home, () => {});
@@ -71,7 +71,7 @@ it("after verification removes exactly the listed old-format data and keeps ever
   const history = await legacyHome(true);
   // The real job archive import, on a home without legacy copies, completes immediately.
   await migrateJobArchives(join(env.home, "jobs.json"));
-  const plan = planFinalize(env.home);
+  const plan = planFinalize(env.home, { prove: true });
   expect(plan.blockers).toEqual([]);
   const paths = plan.items.map(i => i.path);
   expect(paths).toContain("bridge.db:conversation_records");
@@ -124,7 +124,7 @@ it("AB-228: keeps an old backup that holds a message the live databases no longe
   copyOfBridge(purged, db => db.prepare("INSERT INTO messages VALUES('m0','purged by an old version','codex','codex-a','a','claude-b','claude-b',0)").run());
   const redundant = join(env.home, ".migration-snapshots", "bridge.db.backup-3-v1-to-v2");
   copyOfBridge(redundant);
-  const plan = planFinalize(env.home);
+  const plan = planFinalize(env.home, { prove: true });
   expect(plan.items.map(i => i.path)).toContain(redundant);
   expect(plan.items.map(i => i.path)).not.toContain(purged);
   expect(plan.kept.find(i => i.path === purged)?.reason).toMatch(/messages: 1 of 2 rows/);
@@ -144,9 +144,9 @@ it("AB-228: keeps a pending backup directory unless every file in it is proven r
   copyOfBridge(join(pending, "bridge.db"));
   writeFileSync(join(pending, "jobs.json"), "{\"version\":1,\"jobs\":[]}");
   writeFileSync(join(env.home, "jobs.json"), "{\"version\":1,\"jobs\":[]}");
-  expect(planFinalize(env.home).items.map(i => i.path)).toContain(pending);
+  expect(planFinalize(env.home, { prove: true }).items.map(i => i.path)).toContain(pending);
   writeFileSync(join(pending, "runs.json"), "only here");
-  expect(planFinalize(env.home).kept.find(i => i.path === pending)?.reason).toMatch(/runs\.json/);
+  expect(planFinalize(env.home, { prove: true }).kept.find(i => i.path === pending)?.reason).toMatch(/runs\.json/);
   runFinalize(env.home, () => {});
   expect(existsSync(join(pending, "runs.json"))).toBe(true);
 });
@@ -160,7 +160,7 @@ it("AB-215: keeps a retained failed-attempt table that holds a natively ingested
   await migrateHistoryStore(env.db, history, undefined, undefined, undefined, true);
   const retained = String(history.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'retained%conversation_records'").get()!.name);
   expect(history.prepare("SELECT count(*) n FROM conversation_records WHERE source='native'").get()!.n).toBe(0);
-  const plan = planFinalize(env.home);
+  const plan = planFinalize(env.home, { prove: true });
   expect(plan.items.map(i => i.path)).not.toContain(`history.db:${retained}`);
   expect(plan.kept.find(i => i.path === `history.db:${retained}`)?.reason).toMatch(/1 of 2 rows/);
   // Retained tables whose rows all exist in v2 are proven and may go.
@@ -189,10 +189,10 @@ it("AB-211: drops v1_* tables only with a row-level proof against v2", async () 
   const history = openHistoryStore(historyDbPath(env.db)); closes.push(() => history.close());
   await migrateHistoryStore(env.db, history);
   await migrateJobArchives(join(env.home, "jobs.json"));
-  expect(planFinalize(env.home).items.map(i => i.path)).toContain("history.db:v1_conversation_records");
+  expect(planFinalize(env.home, { prove: true }).items.map(i => i.path)).toContain("history.db:v1_conversation_records");
   // A v1 row that never reached v2 must keep its table.
   history.prepare("INSERT INTO v1_conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('v1-late',0,0,'codex:v1',2,?,'')").run(Buffer.from("late v1 record"));
-  const plan = planFinalize(env.home);
+  const plan = planFinalize(env.home, { prove: true });
   expect(plan.items.map(i => i.path)).not.toContain("history.db:v1_conversation_records");
   expect(plan.items.map(i => i.path)).toContain("history.db:v1_conversations");
   for (const close of closes.splice(0).reverse()) close();

@@ -1,12 +1,12 @@
 import { lstatSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { DB_FILE_NAME } from "./constants.js";
-import { ABSORBED_FILES, ABSORBED_ROWS, candidateFiles, fileSha256, hasTable, isSqlite, logicalTable, proveFile, provableTables, tableClassifier, type LiveDb } from "./finalize-proof.js";
+import { ABSORBED_FILES, ABSORBED_ROWS, alignedTarget, candidateFiles, fileSha256, hasTable, isSqlite, logicalTable, proveFile, provableTables, tableProof, type LiveDb, type ProofContext } from "./finalize-proof.js";
 import { historyDbPath } from "./history-store.js";
 import { ARCHIVE_DB_NAME, openArchive } from "./sqlite-maintenance.js";
 import { maintenanceLock } from "./storage-lock.js";
-import { fileCandidates, historyIsVerified, LEGACY_BRIDGE_TABLES } from "./storage-finalize.js";
+import { fileCandidates, historyIsVerified, LEGACY_BRIDGE_TABLES, referenceSnapshot } from "./storage-finalize.js";
 
 /** Lossless absorb (owner decision 2026-10-09): before finalize proves old backups and snapshots redundant, every
  * row in them that exists nowhere live is imported into archive.db, so the proof can succeed without losing anything.
@@ -78,52 +78,43 @@ function archiveMessage(archive: DatabaseSync, row: Row, origin: string, now: nu
   archive.prepare(`INSERT OR IGNORE INTO messages(${cols.map(c => q(String(c.name))).join(",")}) VALUES(${cols.map(() => "?").join(",")})`).run(...values);
 }
 
-function absorbDatabase(path: string, live: readonly LiveDb[], archive: DatabaseSync | undefined, source: AbsorbSource, options: Required<Pick<AbsorbOptions, "batchRows" | "now">> & AbsorbOptions): void {
+function absorbDatabase(path: string, ctx: ProofContext, archive: DatabaseSync | undefined, source: AbsorbSource, options: Required<Pick<AbsorbOptions, "batchRows" | "now">> & AbsorbOptions): void {
   let db: DatabaseSync;
   try { db = new DatabaseSync(path, { readOnly: true, timeout: 1000 }); }
   catch (err) { source.problems.push(`${basename(path)} cannot be opened (${(err as Error).message})`); return; }
   try {
     const sig = signature(path), origin = basename(path);
+    // The verified migration's source snapshot: its history tables are what the migration copied and verified.
+    // Absorb deletes nothing, so a matching row count suffices here; finalize re-hashes them against the manifest.
+    const reference = ctx.reference && samePath(ctx.reference.path, path) ? ctx.reference : undefined;
     for (const table of provableTables(db)) {
-      const c = tableClassifier(db, table, live);
-      if (!c.total) continue;
-      const all = db.prepare(`PRAGMA table_info(${q(table)})`).all().map(r => String(r.name));
+      if (reference) {
+        const name = table.startsWith(reference.prefix) ? table.slice(reference.prefix.length) : undefined;
+        const expected = name !== undefined ? reference.manifest[name] : undefined;
+        if (expected && Number(db.prepare(`SELECT count(*) n FROM ${q(table)}`).get()!.n) === expected.rows) continue;
+      }
+      const p = tableProof(db, table, ctx, alignedTarget(table, ctx), options.batchRows);
+      if (!p.total) continue;
       const progress = archive?.prepare("SELECT after_rowid, done FROM absorb_progress WHERE source=? AND table_name=?").get(sig, table);
       if (progress?.done) continue;
-      let after = Number(progress?.after_rowid ?? -1), rowid = true;
       const conflictsBefore = source.conflicts;
-      const page = (from: number, offset: number): Row[] => {
-        if (rowid) {
-          try {
-            const s = db.prepare(`SELECT rowid AS "__absorb_rowid", * FROM ${q(table)} WHERE rowid>? ORDER BY rowid LIMIT ?`);
-            s.setReadBigInts(true);
-            return s.all(from, options.batchRows) as Row[];
-          } catch { rowid = false; }
-        }
-        const s = db.prepare(`SELECT * FROM ${q(table)} LIMIT ? OFFSET ?`);
-        s.setReadBigInts(true);
-        return s.all(options.batchRows, offset) as Row[];
-      };
-      for (let offset = 0; ;) {
-        const rows = page(after, offset);
-        if (!rows.length) break;
-        offset += rows.length;
-        if (rowid) after = Number(rows.at(-1)!.__absorb_rowid);
+      let after = BigInt(Number(progress?.after_rowid ?? -1));
+      options.report?.(`  ${table}: ${p.total.toLocaleString("en")} rows`);
+      for (const chunk of p.chunks(after)) {
         if (archive) archive.exec("BEGIN IMMEDIATE");
         try {
-          for (const row of rows) {
-            const status = c.classify(row);
+          for (const { row, status } of chunk.rows) {
             if (status === "conflict") { source.conflicts++; continue; }
-            if (status !== "missing") continue;
             source.rows++;
             if (!archive) continue;
             archive.prepare(`INSERT OR IGNORE INTO ${ABSORBED_ROWS}(source_table,digest,row,origin,absorbed_at) VALUES(?,?,?,?,?)`)
-              .run(c.logical, c.digest(row), encodeAbsorbedRow(row, all), origin, options.now);
-            if (c.logical === "messages" || c.logical === "archived_messages") archiveMessage(archive, row, origin, options.now);
+              .run(p.logical, p.digest(row), encodeAbsorbedRow(row, p.allColumns), origin, options.now);
+            if (p.logical === "messages" || p.logical === "archived_messages") archiveMessage(archive, row, origin, options.now);
           }
+          if (chunk.last !== null) after = chunk.last;
           if (archive) {
             archive.prepare("INSERT INTO absorb_progress(source,table_name,after_rowid) VALUES(?,?,?) ON CONFLICT(source,table_name) DO UPDATE SET after_rowid=excluded.after_rowid")
-              .run(sig, table, rowid ? after : -1);
+              .run(sig, table, chunk.last ?? -1n);
             archive.exec("COMMIT");
           }
         } catch (err) {
@@ -143,8 +134,8 @@ function absorbDatabase(path: string, live: readonly LiveDb[], archive: Database
   } finally { db.close(); }
 }
 
-function absorbFile(path: string, root: string, copies: readonly string[], live: readonly LiveDb[], archive: DatabaseSync | undefined, source: AbsorbSource, now: number): void {
-  if (!proveFile(path, live, copies, root).length) return;
+function absorbFile(path: string, root: string, copies: readonly string[], ctx: ProofContext, archive: DatabaseSync | undefined, source: AbsorbSource, now: number): void {
+  if (!proveFile(path, ctx, copies, root).length) return;
   const st = lstatSync(path);
   if (!st.isFile()) { source.problems.push(`${basename(path)} is not a regular file`); return; }
   if (st.size > MAX_ABSORB_FILE_BYTES) { source.problems.push(`${basename(path)} is larger than ${MAX_ABSORB_FILE_BYTES / 1024 ** 2} MiB and is not absorbed`); return; }
@@ -154,6 +145,8 @@ function absorbFile(path: string, root: string, copies: readonly string[], live:
   archive.prepare(`INSERT OR IGNORE INTO ${ABSORBED_FILES}(sha256,bytes,size,origin,absorbed_at) VALUES(?,?,?,?,?)`).run(sha, bytes, bytes.length, path, now);
 }
 
+const samePath = (a: string, b: string) => process.platform === "win32" ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b);
+
 /** Dry run without `apply`: counts what would be imported and the conflicts. With `apply`, imports under the
  * maintenance lock (no bridge process may be writing). */
 export function runAbsorb(home: string, options: AbsorbOptions = {}): AbsorbResult {
@@ -162,24 +155,26 @@ export function runAbsorb(home: string, options: AbsorbOptions = {}): AbsorbResu
   const release = options.apply ? maintenanceLock(home) : () => {};
   const opened: DatabaseSync[] = [];
   try {
-    const bridge = join(home, DB_FILE_NAME), history = historyDbPath(bridge), archivePath = join(home, ARCHIVE_DB_NAME);
+    const bridge = join(home, DB_FILE_NAME), historyPath = historyDbPath(bridge), archivePath = join(home, ARCHIVE_DB_NAME);
     const open = (path: string) => { const db = new DatabaseSync(path, { readOnly: true, timeout: 5000 }); opened.push(db); return db; };
     let archive: DatabaseSync | undefined;
     if (options.apply) {
       archive = openArchive(archivePath); opened.push(archive);
       archive.exec(ABSORB_SCHEMA);
     }
-    const live: LiveDb[] = [{ label: "bridge.db", db: open(bridge), exclude: new Set(LEGACY_BRIDGE_TABLES) }, { label: "history.db", db: open(history) }];
+    const history = open(historyPath);
+    const live: LiveDb[] = [{ label: "bridge.db", db: open(bridge), exclude: new Set(LEGACY_BRIDGE_TABLES) }, { label: "history.db", db: history }];
     const archiveLive = archive ?? (lstatOrNull(archivePath) ? open(archivePath) : undefined);
     if (archiveLive) live.splice(1, 0, { label: "archive.db", db: archiveLive });
+    const ctx: ProofContext = { live, history, reference: referenceSnapshot(history) };
     const settings = { ...options, batchRows: options.batchRows ?? BATCH_ROWS, now: options.now ?? Date.now() };
     for (const { item, copies } of fileCandidates(home)) {
       const source: AbsorbSource = { path: item.path, rows: 0, files: 0, conflicts: 0, problems: [] };
       options.report?.(`${options.apply ? "absorbing" : "checking"} ${item.path}…`);
       for (const file of candidateFiles(item.path)) {
         if (lstatSync(file).isSymbolicLink()) { source.problems.push(`${basename(file)} is a symbolic link`); continue; }
-        if (isSqlite(file)) absorbDatabase(file, live, archive, source, settings);
-        else absorbFile(file, item.path, copies, live, archive, source, settings.now);
+        if (isSqlite(file)) absorbDatabase(file, ctx, archive, source, settings);
+        else absorbFile(file, item.path, copies, ctx, archive, source, settings.now);
       }
       options.report?.(`  ${source.rows} rows and ${source.files} files ${options.apply ? "absorbed" : "to absorb"}, ${source.conflicts} conflicts${source.problems.length ? `; ${source.problems.join("; ")}` : ""}`);
       result.sources.push(source);

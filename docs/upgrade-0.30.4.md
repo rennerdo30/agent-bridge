@@ -29,9 +29,12 @@ Updates publish each plugin version into its own folder and keep older ones. Loc
 Old-format data stays until you remove it explicitly:
 
 ```
-agent-bridge storage finalize          # lists what would be removed, with sizes and reasons
-agent-bridge storage finalize --yes    # verifies again, then removes exactly that list
+agent-bridge storage finalize          # lists the candidates with sizes and reasons (seconds; reads no rows)
+agent-bridge storage finalize --check  # proves every candidate, with progress and ETA, and removes nothing
+agent-bridge storage finalize --yes    # proves again, then removes exactly what is proven
 ```
+
+The proof reads sequentially: the snapshot the verified history migration copied from is re-hashed against that migration's manifest, other copies of the history are compared with history.db in rowid order, and only the remaining rows use batched indexed lookups.
 
 `finalize` refuses while any migration is unverified. Before removing anything it proves again, independently of the migration, that every legacy row exists in the new stores. Anything it cannot prove redundant row by row is kept and reported.
 
