@@ -12,6 +12,7 @@ import { migrateSqlite } from "../src/core/sqlite-migrations.js";
 import { nullLogger } from "../src/core/logger.js";
 import { archiveDbPath } from "../src/core/sqlite-maintenance.js";
 import { JobManager, readStore } from "../src/mcp/jobs.js";
+import { readJobVersions } from "../src/core/job-archive-index.js";
 import { processIdentity } from "../src/core/process-identity.js";
 
 vi.mock("../src/core/json-store.js", async (original) => {
@@ -101,7 +102,10 @@ it("publishes a unique archive without overwriting an interrupted legacy overflo
   expect(JSON.parse(readFileSync(path, "utf8")).futureEnvelope).toEqual(seeded.futureEnvelope);
   const backups = readdirSync(env.home).filter(name => name.startsWith("jobs.json.backup-"));
   expect(backups).toHaveLength(1); expect(readFileSync(join(env.home, backups[0]!), "utf8")).toBe(original);
-  expect(readdirSync(join(env.home, "archive")).some((name) => /^jobs-.*\.json$/.test(name))).toBe(true);
+  // AB-206: overflow is published as job index rows, never as archive files beside a leftover.
+  const active = new Set(readStore(path).map((j) => j.id));
+  for (const record of seeded.jobs.filter((j: { id: string }) => !active.has(j.id))) expect(readJobVersions(path, record.id)).toContainEqual(expect.objectContaining(record));
+  expect(existsSync(join(env.home, "archive"))).toBe(false);
 });
 
 it.each(['{"version":2,"jobs":"bad"}', '{broken'])("does not rename or modify invalid old data on failed migration", (bytes) => {
