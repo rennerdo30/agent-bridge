@@ -468,6 +468,7 @@ export class Broker {
           const history = new HistoryBackground(this.store.file, this.log);
           this.historyBackground = history;
           this.store.historyPeerSink = (peer) => this.historyBackground?.rememberPeer(peer);
+          this.store.historyMessageSink = () => this.historyBackground?.messageArrived();
           void history.reconcileAsks().catch(error => this.log.debug("startup ask reconciliation deferred", { error: String(error) }));
         });
         this.purge();

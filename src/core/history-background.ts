@@ -11,12 +11,16 @@ import { historyDbPath, releaseExitedHistoryLease, HISTORY_IO_BYTES_PER_SECOND, 
 
 type Batch = { work: number; discovering: boolean };
 /** One elected worker; no source I/O or indexing writes on message dispatch. */
+/** At most one message wake per this interval while messages stream in. */
+const WAKE_COALESCE_MS = 250;
 export class HistoryBackground {
   private progress: HistoryMigrationProgress = { phase: "starting", percent: 0, etaSeconds: null, paused: false, completedRows: 0, totalRows: 0, snapshot: null, ioBytesPerSecond: HISTORY_IO_BYTES_PER_SECOND, error: null };
   private worker!: Worker;
   private stopped = false;
   private exited = false;
   private restart: NodeJS.Timeout | null = null;
+  private wakeTimer: NodeJS.Timeout | null = null;
+  private wakeAgain = false;
   private id = 0;
   private migrationLease: string | null = null;
   private reconcilingAsks: Promise<Batch> | null = null;
@@ -120,6 +124,25 @@ export class HistoryBackground {
       this.worker.postMessage({ pressure: true, pending, lockError });
     }
   }
+  /**
+   * New bridge messages wake a backed-off worker (AB-147 backs idle sweeps off to 30 s), so a
+   * just-sent message is searchable promptly. Event driven, so an idle bridge still does nothing.
+   * The post waits for the current turn (the sending transaction commits first), and a stream of
+   * messages yields at most one wake per WAKE_COALESCE_MS.
+   */
+  messageArrived(): void {
+    if (this.stopped || this.exited) return;
+    if (this.wakeTimer) { this.wakeAgain = true; return; }
+    this.wakeTimer = setTimeout(() => {
+      if (!this.stopped && !this.exited) this.worker.postMessage({ wake: true });
+      this.wakeTimer = setTimeout(() => {
+        this.wakeTimer = null;
+        if (this.wakeAgain) { this.wakeAgain = false; this.messageArrived(); }
+      }, WAKE_COALESCE_MS);
+      this.wakeTimer.unref();
+    }, 0);
+    this.wakeTimer.unref();
+  }
   rememberPeer(peer: PeerInfo): void {
     if (!this.stopped && !this.exited) this.worker.postMessage({ peer });
   }
@@ -147,6 +170,8 @@ export class HistoryBackground {
   async close(): Promise<void> {
     this.stopped = true;
     if (this.restart) clearTimeout(this.restart);
+    if (this.wakeTimer) clearTimeout(this.wakeTimer);
+    this.wakeTimer = null;
     for (const p of this.pending.values())
       p.reject(new Error("History worker closed"));
     this.pending.clear();

@@ -173,6 +173,8 @@ export class MessageStore {
   readonly history: HistoryIndex;
   readonly historyFile: string;
   historyPeerSink: ((peer: PeerInfo) => void) | undefined;
+  /** Told about every stored or claimed message, so a backed-off history worker indexes it promptly. */
+  historyMessageSink: (() => void) | undefined;
   readonly file: string;
   private readonly stmt: {
     insert: StatementSync;
@@ -363,6 +365,7 @@ export class MessageStore {
       m.body,
       m.createdAt,
     );
+    this.historyMessageSink?.();
   }
 
   unread(recipient: string, limit: number): BridgeMessage[] {
@@ -470,6 +473,7 @@ export class MessageStore {
         WHERE recipient = ? AND read_at IS NULL AND id IN (SELECT id FROM messages WHERE recipient = ?)`)
         .run(Date.now(), fromKey, toName).changes);
       this.db.exec("COMMIT");
+      if (moved) this.historyMessageSink?.();
       return moved + duplicates;
     } catch (err) {
       this.db.exec("ROLLBACK");

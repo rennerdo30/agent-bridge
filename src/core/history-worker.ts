@@ -159,7 +159,7 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
     throw error;
   } finally { running = false; }
 }
-let dueAt = 0, transcriptsChanged = false;
+let dueAt = 0, transcriptsChanged = false, wakeAfterTick = false;
 /** A watched transcript change brings a backed-off worker forward to the normal cadence; it never postpones a tick. */
 function wakeSoon(): void {
   if (stopped || !timer || dueAt - Date.now() <= HISTORY_TICK_MS) return;
@@ -187,7 +187,8 @@ function schedule(delay = HISTORY_TICK_MS): void {
       if ((err as { code?: string }).code !== "HISTORY_SNAPSHOT_PAUSED" && !stopped) parentPort?.postMessage({ error: String(err) });
       pauseUntil = Date.now() + 5000;
     }
-    // Backfill gets seconds-scale cadence, never a hot loop.
+    // Backfill gets seconds-scale cadence, never a hot loop. A message wake during the tick runs one more now.
+    if (wakeAfterTick) { wakeAfterTick = false; next = 0; }
     schedule(next);
   }, delay);
 }
@@ -201,6 +202,8 @@ parentPort?.on("message", async (message) => {
     return;
   }
   if (message.peer) { peers.set(message.peer.id, message.peer); idle.reset(); if (!running) schedule(0); return; }
+  // A new bridge message: index it now rather than after an idle backoff; during a tick, right after it.
+  if (message.wake) { idle.reset(); if (running) wakeAfterTick = true; else schedule(0); return; }
   if (message.stop) {
     stopped = true;
     releasePressure();
