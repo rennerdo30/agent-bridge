@@ -23,6 +23,7 @@ import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 import { registerTools, type ServerContext } from "../src/mcp/server.js";
 import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 import { until } from "./helpers.js";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
 
 const ROOT = "root-session";
 const ROOT_NAME = "claude-owner";
@@ -46,6 +47,9 @@ afterEach(async (context) => {
     if (errors.length) throw new AggregateError([...(context.task.result?.errors ?? []), ...errors], "Nested teardown failed; original failure and fixture retained");
     return;
   }
+  // Worktree leases and read marks are bridge.db metadata rows (AB-208): release this
+  // process's shared connection, or Windows refuses to remove the home.
+  closeMetadataDb(home);
   await until(() => {
     try { rmSync(home, { recursive: true, force: true }); return true; }
     catch (err) { if (["EPERM", "EBUSY", "ENOTEMPTY"].includes((err as NodeJS.ErrnoException).code ?? "")) return false; throw err; }
