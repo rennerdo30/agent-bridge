@@ -56,22 +56,22 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-2YOSUVFR.mjs";
+} from "./chunks/chunk-RYI3ELYV.mjs";
 import {
   codexAppServerCall,
   describeModels,
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-C4QOXXP6.mjs";
+} from "./chunks/chunk-QBS37U5L.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
   JobRunners,
   closeJobWorktree,
   readWorktreeState
-} from "./chunks/chunk-B2UEDMHR.mjs";
-import "./chunks/chunk-LZRVUOSK.mjs";
+} from "./chunks/chunk-3GDW25PD.mjs";
+import "./chunks/chunk-SGPKDWJD.mjs";
 import {
   openBrowser
 } from "./chunks/chunk-LWVK3CB7.mjs";
@@ -81,7 +81,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-2K7NH5JP.mjs";
+} from "./chunks/chunk-A4EBK6DZ.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -116,14 +116,14 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-JWVT32AI.mjs";
-import "./chunks/chunk-C4526LA5.mjs";
+} from "./chunks/chunk-4QON6RIV.mjs";
+import "./chunks/chunk-7Y7KJIBZ.mjs";
 import "./chunks/chunk-X4B2TYR3.mjs";
 import {
   antigravityAncestor,
   antigravityHookOutput,
   inspectClaudeLaunch
-} from "./chunks/chunk-JD7IJHFT.mjs";
+} from "./chunks/chunk-DUQ5WC2O.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   ACCESS_LEVELS,
@@ -148,8 +148,12 @@ import {
   parseJobSettings,
   resolveBinary,
   runProcess
-} from "./chunks/chunk-YIC6PP7C.mjs";
-import "./chunks/chunk-A2SWCN6M.mjs";
+} from "./chunks/chunk-6RGRWK7M.mjs";
+import {
+  ResourceSlots,
+  describeResourceSlots,
+  formatResourceSlots
+} from "./chunks/chunk-4RDTZ3IQ.mjs";
 import {
   bundleDirectory
 } from "./chunks/chunk-D5ZW6VFT.mjs";
@@ -2771,7 +2775,7 @@ async function startServer(argv = process.argv.slice(2)) {
   const ensureDashboard = async (force) => {
     try {
       if (!force && !cfg.dashboard) return null;
-      dashboard ??= import("./chunks/dashboard-B6HV67EX.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
+      dashboard ??= import("./chunks/dashboard-5VMRMUTI.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
       return await (await dashboard).ensure();
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
@@ -2925,8 +2929,8 @@ function registerTools(mcp, ctx, targets) {
     },
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-ULIJWWGH.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-5WIGNNCD.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-BJJFU45N.mjs")).readHistory(resolveDbPath(ctx.home), args);
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-43AEXCGB.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
@@ -2934,7 +2938,7 @@ function registerTools(mcp, ctx, targets) {
     description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
     inputSchema: conversationPageSchema.shape,
     annotations: { readOnlyHint: true }
-  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-DJG4GMOB.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
+  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-7RGXLQ2C.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
   register(
     "decide",
     {
@@ -3074,6 +3078,17 @@ function registerTools(mcp, ctx, targets) {
         lines.push("Latest unread file-transfer progress (retained notes, not live status):");
         for (const message of transferNotes.values()) lines.push(`- ${message.body}`);
       }
+      try {
+        const slots = new ResourceSlots(ctx.home);
+        let slotLines;
+        try {
+          slotLines = formatResourceSlots(slots.list(), cfg.resourceSlots);
+        } finally {
+          slots.close();
+        }
+        if (slotLines.length) lines.push("Resource slots (holders, then the queue in order):", ...slotLines);
+      } catch {
+      }
       const jobs = ctx.jobs?.list() ?? [];
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
@@ -3210,6 +3225,23 @@ ${jobLines.join("\n")}`);
       annotations: { readOnlyHint: true }
     },
     guarded("network_status", async () => text(JSON.stringify(await requireNode().networkStatus(), null, 2)))
+  );
+  register(
+    "resource_slots",
+    {
+      title: "Resource slots",
+      description: "Show configured resource slots (resourceSlots, e.g. one Unity editor at a time): who holds each slot and who waits, in queue order. Read-only; jobs take slots with the agent-bridge slot CLI.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true }
+    },
+    guarded("resource_slots", async () => {
+      const slots = new ResourceSlots(ctx.home);
+      try {
+        return text(JSON.stringify(describeResourceSlots(slots.list(), cfg.resourceSlots), null, 2));
+      } finally {
+        slots.close();
+      }
+    })
   );
   register(
     "send_files",
