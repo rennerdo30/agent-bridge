@@ -135,17 +135,24 @@ export function exportDecompressed(home: string, db: string, table: string, out:
     // conversation_records.body is stored only when it differs from the raw text; viewers get the resolved text.
     const resolveBody = shown.includes("body") && bytes.has("raw") && shown.includes("source") && shown.includes("offset");
     target.exec(`CREATE TABLE ${q(table)} (${shown.map(c => bytes.has(c) ? `${q(c)} BLOB` : q(c)).join(",")})`);
-    const insert = target.prepare(`INSERT INTO ${q(table)} VALUES(${shown.map(() => "?").join(",")})`);
+    // Lossless across Node releases: Node 22's node:sqlite cuts a TEXT value at its first NUL when reading it
+    // (Node 24 does not). TEXT therefore travels as its exact bytes and is written back with CAST(? AS TEXT).
+    const insert = target.prepare(`INSERT INTO ${q(table)} VALUES(${shown.map((_, i) => `CASE WHEN ?${2 * i + 2} THEN CAST(?${2 * i + 1} AS TEXT) ELSE ?${2 * i + 1} END`).join(",")})`);
+    const select = columns.map((c, i) => `CASE WHEN typeof(${q(c)})='text' THEN CAST(${q(c)} AS BLOB) ELSE ${q(c)} END AS ${q(c)}, typeof(${q(c)})='text' AS "ab_text_${i}"`).join(",");
     let count = 0;
     target.exec("BEGIN");
-    for (const row of conn.prepare(`SELECT * FROM ${q(table)}`).iterate()) {
-      const decode = (c: string): SQLInputValue => {
+    for (const row of conn.prepare(`SELECT ${select} FROM ${q(table)}`).iterate()) {
+      const isText = (c: string) => Number(row[`ab_text_${columns.indexOf(c)}`]) === 1;
+      const text = (value: string): [SQLInputValue, number] => [Buffer.from(value, "utf8"), 1];
+      const decode = (c: string): [SQLInputValue, number] => {
         const value = row[c] as SQLInputValue, codec = codecs.has(c) ? row[codecs.get(c)!] : undefined;
-        if (value === null) return value;
-        if (bytes.has(c)) return decodeBytes(value, codec);
-        return codec !== undefined && Number(codec) !== 0 ? decodeText(value, codec) : value;
+        if (value === null) return [value, 0];
+        if (bytes.has(c)) return [decodeBytes(value, codec), 0];
+        if (codec !== undefined && Number(codec) !== 0) return text(decodeText(value, codec));
+        return [value, isText(c) ? 1 : 0];
       };
-      insert.run(...shown.map(c => c === "body" && resolveBody ? conversationBodyText(row.body, decodeBytes(row.raw, row.raw_codec)) : decode(c)));
+      const body = (): [SQLInputValue, number] => text(conversationBodyText(isText("body") ? decodeText(row.body) : row.body,decodeBytes(row.raw, row.raw_codec)));
+      insert.run(...shown.flatMap(c => c === "body" && resolveBody ? body() : decode(c)));
       if (++count % 5000 === 0) { target.exec("COMMIT"); target.exec("BEGIN"); }
     }
     target.exec("COMMIT");
