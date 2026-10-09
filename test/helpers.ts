@@ -38,8 +38,9 @@ export function makeEnv(): TestEnv {
     async cleanup() {
       await Promise.all(nodes.map((n) => n.stop().catch(() => {})));
       closeMetadataDb(home);
-      // Yield between Windows handle-release retries so pending shutdown callbacks can finish.
-      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      // Yield between Windows handle-release retries so pending shutdown callbacks and exiting child processes can
+      // finish; linear backoff gives a loaded runner about 5.5 s.
+      await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     },
   };
 }
