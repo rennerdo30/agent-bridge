@@ -12,12 +12,13 @@ interface Entry { path: string; sha256: string; bytes: number; data: string }
 export interface RetainedBundle { version: 1; entries: Entry[] }
 
 /** Every source byte, including malformed JSON and unknown fields, survives independently of projection. */
-export function retainMetadataFiles(home: string, files: string[], project: (db: DatabaseSync, path: string, raw: Buffer) => void): string[] {
+/** project runs inside the bundle's commit, before any source moves, and receives the retained original's cold path. */
+export function retainMetadataFiles(home: string, files: string[], project: (db: DatabaseSync, path: string, raw: Buffer, cold: string) => void): string[] {
  const release = storageLease(home);
  try { return retainFiles(home,files,project); } finally { release(); }
 }
 
-function retainFiles(home: string, files: string[], project: (db: DatabaseSync, path: string, raw: Buffer) => void): string[] {
+function retainFiles(home: string, files: string[], project: (db: DatabaseSync, path: string, raw: Buffer, cold: string) => void): string[] {
  assertMetadataAdmission(home);
  const db = metadataDb(home), bundles: string[] = [];
  const pending: { file: string; raw: Buffer; entry: Entry; signature: string }[] = [];
@@ -48,7 +49,7 @@ function retainFiles(home: string, files: string[], project: (db: DatabaseSync, 
    if (entry.path !== source.entry.path || raw.length !== entry.bytes || hash(raw) !== entry.sha256 || !raw.equals(source.raw)) throw new Error("Bundle byte verification failed; originals retained.");
   });
    for (const source of pending) {
-    project(db,source.entry.path,source.raw);
+    project(db,source.entry.path,source.raw,join(originals,source.entry.path));
     db.prepare(`INSERT INTO bridge_imports VALUES (?,?,?,?,?,?) ON CONFLICT(path) DO NOTHING`)
      .run(source.entry.path,source.entry.sha256,source.raw.length,bundle,join(originals,source.entry.path),Date.now());
     db.prepare("INSERT INTO bridge_metadata VALUES ('bundle-entry',?,?,?) ON CONFLICT(domain,key) DO NOTHING")

@@ -558,6 +558,7 @@ export class Broker {
   }
 
   private purge(): void {
+    this.jobArchiveBackground?.repack();
     try {
       const ttl = retentionLimit("AGENT_BRIDGE_MESSAGE_TTL_MS", MESSAGE_TTL_MS);
       if (ttl) this.store.schedulePurgeOlderThan(this.now() - ttl);

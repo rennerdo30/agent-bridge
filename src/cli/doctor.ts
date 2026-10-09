@@ -6,6 +6,23 @@ import { brokerFailureState, formatHealth, probeBrokerHealth } from "../core/hea
 import { resolvePipePath } from "../core/paths.js";
 import { nullLogger } from "../core/logger.js";
 import { windowsUserPathFindings } from "./windows-env-doctor.js";
+import { packArchivedRuns } from "../core/finished-run-bundles.js";
+import { closeMetadataDb } from "../core/metadata-db.js";
+
+/** doctor --archive also packs archived finished runs (AB-208); ordinary run archiving never does. */
+function packAllArchivedRuns(home: string, out: (text: string) => void): number {
+  let packed = 0;
+  try {
+    for (let pass = 0; pass < 10_000; pass++) {
+      let failed = 0;
+      const batch = packArchivedRuns(home, undefined, 100, failure => { failed++; out(`Run kept in place, not packed: ${failure.source}: ${failure.error}`); });
+      packed += batch;
+      if (!batch && !failed) break;
+    }
+  } catch (error) { out(`Run packing deferred; runs stay readable in place: ${String((error as Error).message ?? error)}`); }
+  finally { closeMetadataDb(home); }
+  return packed;
+}
 
 export type ConfirmDoctor = (question: string) => Promise<boolean>;
 
@@ -43,7 +60,10 @@ export async function runDoctor(args: string[], home: string, out: (text: string
   else if (args.includes("--fix") || args.includes("--archive")) {
     const archive = args.includes("--archive");
     if (!(yes || await ask(archive ? "Archive old data? Every record remains readable." : "Quarantine orphan temporary files? All data will be preserved."))) { out("Maintenance cancelled; data unchanged."); return 1; }
-    out(archive ? `Archived: ${JSON.stringify(archiveHome(home, true))}` : `Preserved files: ${JSON.stringify(fixDoctor(home, true))}`);
+    if (archive) {
+      const archived = archiveHome(home, true);
+      out(`Archived: ${JSON.stringify({ ...archived, packedRuns: packAllArchivedRuns(home, out) })}`);
+    } else out(`Preserved files: ${JSON.stringify(fixDoctor(home, true))}`);
   }
   const report = doctor(home);
   report.brokerHealth = await probeBrokerHealth(resolvePipePath(home), nullLogger).catch(error => {

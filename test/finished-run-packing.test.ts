@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { packedRunRecords } from "../src/core/finished-run-bundles.js";
+import { packArchivedRuns, packedRunRecords } from "../src/core/finished-run-bundles.js";
 import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import { archiveOldRuns } from "../src/core/run-archive.js";
 import { readRunLogs, readRunStarts } from "../src/core/run-history.js";
@@ -22,6 +22,9 @@ it("packs archived finished runs out of the scanned folders and keeps them liste
   // An active, unfinished run stays where it is.
   writeFileSync(join(env.home, "runs", "2026-10-09-09-00-00-codex-job-active01.log"), "09:00:00 started\nstill going");
   archiveOldRuns(env.home);
+  // Ordinary archiving keeps archived runs in place; packing is maintenance (broker worker, doctor --archive).
+  expect(existsSync(join(archive, `${name}.log`))).toBe(true);
+  packArchivedRuns(env.home);
   expect(existsSync(join(archive, `${name}.log`))).toBe(false);
   const [packed] = packedRunRecords(env.home);
   expect(packed).toMatchObject({ name, archived: true, meta: { job: "codex-job-packed01" } });
