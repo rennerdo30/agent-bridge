@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -32,14 +33,14 @@ const OLD_TIME = new Date(0);
 let home: string;
 
 beforeEach(() => {
-  home = mkdtempSync(join(import.meta.dirname, ".storage-"));
+  home = mkdtempSync(join(tmpdir(), "storage-"));
 });
 
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
   closeMetadataDbs();
-  rmSync(home, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 function stubNode(): BridgeNode {
