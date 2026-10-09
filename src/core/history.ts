@@ -1,6 +1,6 @@
 import { conversationProject } from "./project-store.js";
 import { cleanupSavepoint } from "./savepoint.js";
-import { clearHistoryDocuments, historyReadPath, historyReady, openHistoryReader, HISTORY_BATCH_MS } from "./history-store.js";
+import { clearHistoryDocuments, historyReadPath, historyReadStatus, historyReady, historyV1Readable, legacyReadNotice, openHistoryReader, HISTORY_BATCH_MS } from "./history-store.js";
 import { decodeText, encodeText, registerHistoryFunctions } from "./history-codec.js";
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, fstatSync, openSync, opendirSync, readSync, statSync, type Dir } from "node:fs";
@@ -74,7 +74,7 @@ export class HistoryIndex {
     this.checked = Number(db.prepare("SELECT coalesce(max(checked),0) AS n FROM history_files").get()!.n);
   }
 
-  get database(): DatabaseSync { return this.source !== this.db && !historyReady(this.db) ? this.source : this.db; }
+  get database(): DatabaseSync { return this.source !== this.db && !historyReady(this.db) && !historyV1Readable(this.db) ? this.source : this.db; }
   /** Writable isolated storage for explicit offline maintenance, regardless of read fallback. */
   get storageDatabase(): DatabaseSync { return this.db; }
 
@@ -405,7 +405,10 @@ export class HistoryIndex {
   }
 
   search(input: HistorySearch): HistoryResult {
-    if (this.database !== this.db) return new HistoryIndex(this.database, null).search(input);
+    if (this.database !== this.db) {
+      const result = new HistoryIndex(this.database, null).search(input), migration = legacyReadNotice(this.db);
+      return migration ? { ...result, migration } : result;
+    }
     const args = historySearchSchema.parse(input), tokens = terms(args.query);
     if (!tokens.length) return { engine: this.engine, hits: [] };
     const durable = this.db.prepare("SELECT name FROM sqlite_master WHERE name='conversation_records'").get();
@@ -450,13 +453,14 @@ export class HistoryIndex {
 
 /** Dashboard reads never initialize, migrate, or change the derived index. */
 export function readHistory(file: string, input: HistorySearch): HistoryResult {
-  file = historyReadPath(file);
+  const status = historyReadStatus(file), migration = status.migration ? { migration: status.migration } : {};
+  file = status.path;
   historySearchSchema.parse(input);
-  if (!existsSync(file)) return { engine: "plain", hits: [] };
+  if (!existsSync(file)) return { engine: "plain", hits: [], ...migration };
   const db = openHistoryReader(file, HISTORY_READ_TIMEOUT_MS);
   try {
-    if (!db.prepare("SELECT name FROM sqlite_master WHERE name='history_documents'").get()) return { engine: "plain", hits: [] };
-    return new HistoryIndex(db, null).search(input);
+    if (!db.prepare("SELECT name FROM sqlite_master WHERE name='history_documents'").get()) return { engine: "plain", hits: [], ...migration };
+    return { ...new HistoryIndex(db, null).search(input), ...migration };
   } finally { db.close(); }
 }
 

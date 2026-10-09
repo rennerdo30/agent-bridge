@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DB_FILE_NAME } from "./constants.js";
 import { extractBundle, readBundleManifest } from "./archive-bundle.js";
-import { historyDbPath, historyReady, openHistoryReader, openHistoryStore, HISTORY_STORE_VERSION } from "./history-store.js";
+import { historyDbPath, historyReady, legacyTailConflicts, openHistoryReader, openHistoryStore, HISTORY_STORE_VERSION } from "./history-store.js";
 import { decodeHistoryRow, HISTORY_V1_PREFIX } from "./history-migration.js";
 import { jobArchivePath, openJobArchive } from "./job-archive-index.js";
 import { maintenanceLock } from "./storage-lock.js";
@@ -267,6 +267,8 @@ export function verifyBeforeFinalize(home: string, report: (line: string) => voi
     report("checking history.db integrity…");
     if (history.prepare("PRAGMA quick_check").all().some(row => row.quick_check !== "ok")) blockers.push("history.db failed quick_check.");
     blockers.push(...verifyLegacyBridge(bridge, history, report));
+    const conflicts = legacyTailConflicts(history);
+    if (conflicts) blockers.push(`${conflicts} legacy tail conflict(s): bridge.db rows whose bytes differ from history.db or lack a conversation; both copies are retained in history_legacy_conflicts. Resolve them before finalize.`);
     const unfinished = history.prepare("SELECT count(*) n FROM history_copy_state WHERE verified=0").get()!.n;
     if (Number(unfinished)) blockers.push("The history copy has unverified tables.");
   } finally { history.close(); bridge.close(); }

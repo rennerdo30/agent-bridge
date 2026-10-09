@@ -3,7 +3,8 @@ import { DatabaseSync } from "node:sqlite";
 import { HistoryIndex, HISTORY_TICK_MS } from "./history.js";
 import { ConversationIngestor } from "./conversations.js";
 import { transcriptPaths } from "./transcripts/common.js";
-import { copyLegacyConversationTail, historyMigrationFailure, HISTORY_IO_BYTES_PER_SECOND, migrateHistoryStore, openHistoryStore } from "./history-store.js";
+import { copyLegacyConversationTail, historyMigrationFailure, HISTORY_IO_BYTES_PER_SECOND, legacyTailConflicts, migrateHistoryStore, openHistoryStore } from "./history-store.js";
+import { closeMetadataDbs } from "./metadata-db.js";
 import { loadConfig } from "./config.js";
 import { nullLogger } from "./logger.js";
 import type { PeerInfo } from "./protocol.js";
@@ -23,8 +24,11 @@ const db = openHistoryStore(workerData.file);
 const source = new DatabaseSync(workerData.bridge, { readOnly: true, timeout: 100 });
 source.exec("PRAGMA busy_timeout=100; PRAGMA query_only=ON");
 const paths = workerData.paths ?? transcriptPaths();
-const index = new HistoryIndex(db, workerData.home, paths, source);
-const ingest = new ConversationIngestor(db, workerData.home, paths, source);
+// Built once the store is at v2 and verified: a deferred v1 store (AB-225) is upgraded in place by the migration,
+// and both read the schema when they are constructed.
+let index: HistoryIndex | null = null;
+let ingest: ConversationIngestor | null = null;
+let legacyConflicts = -1;
 let timer: NodeJS.Timeout | null = null;
 let stopped = false, pending = false, ready = false, running = false;
 let requestedReset = false;
@@ -103,10 +107,23 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
         await migrateHistoryStore(workerData.bridge, db, paused, () => stopped, owner => parentPort?.postMessage({ migrationLease: owner }), reset, { ioBytesPerSecond, onProgress: progress => { migrationProgress = progress; parentPort?.postMessage({ migrationProgress }); } });
         migrationFailure = null;
       } catch (err) { migrationFailure = historyMigrationFailure(db); throw err; }
+      index ??= new HistoryIndex(db, workerData.home, paths, source);
+      ingest ??= new ConversationIngestor(db, workerData.home, paths, source);
       ready = true;
     }
+    if (!index || !ingest) return { work: 0, discovering: true };
     if (stopped || paused()) return { work: 0, discovering: true };
-    const legacyWork = copyLegacyConversationTail(source, db);
+    // The legacy tail never gates raw capture: a failure here is reported and native ingestion still runs (AB-226).
+    let legacyWork = 0;
+    try { legacyWork = copyLegacyConversationTail(source, db); }
+    catch (error) { if (!stopped) parentPort?.postMessage({ error: `legacy history tail deferred; originals retained: ${String(error)}` }); }
+    const conflicts = legacyTailConflicts(db);
+    if (conflicts !== legacyConflicts) {
+      legacyConflicts = conflicts;
+      migrationProgress = { ...migrationProgress, legacyConflicts: conflicts };
+      parentPort?.postMessage({ migrationProgress });
+      if (conflicts) parentPort?.postMessage({ error: `${conflicts} legacy history tail conflict(s) retained in history.db (history_legacy_conflicts); both originals kept, finalize stays blocked` });
+    }
     await yieldTurn(10);
     await waitForPressureGap();
     if (stopped || paused()) return { work: legacyWork, discovering: true };
@@ -151,7 +168,7 @@ function schedule(delay = HISTORY_TICK_MS): void {
     schedule(next);
   }, delay);
 }
-function close(): void { clearInterval(budgetTimer); index.close(); ingest.close(); source.close(); db.close(); parentPort?.close(); }
+function close(): void { clearInterval(budgetTimer); index?.close(); ingest?.close(); source.close(); db.close(); closeMetadataDbs(); parentPort?.close(); }
 parentPort?.on("message", async (message) => {
   if (message.pressure) {
     const wasPending = pending;

@@ -21,4 +21,8 @@ export interface HistoryHit {
   snippet: string; link: string; sourceLink: string; message: string | null; job: string | null; run: string | null;
   session: string | null; cursor: string | null; conversation?: string | null; project?: string | null;
 }
-export interface HistoryResult { engine: "fts5" | "plain"; hits: HistoryHit[] }
+export interface HistoryResult {
+  engine: "fts5" | "plain"; hits: HistoryHit[];
+  /** Set while results come from the legacy store because the history store migration has not finished (AB-224). */
+  migration?: { ready: false; readsFrom: "legacy"; phase: string; percent: number; error: string | null; notice: string };
+}
