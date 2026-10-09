@@ -61,3 +61,16 @@ it("decides unknown owners by the boot rule only, never overriding a known answe
   expect(ownerGone({ alive: true, recordedAt: beforeBoot() })).toBe(false);
   expect(ownerGone({ alive: false, recordedAt: recent() })).toBe(true);
 });
+
+it("treats an unverifiable runner whose last heartbeat predates the boot as gone, so its job is resumable", () => {
+  for (const pid of [ghosts.eperm, ghosts.zombie]) {
+    expect(runnerProcessAlive({ pid, updatedAt: recent() })).toBe(true);
+    expect(runnerProcessAlive({ pid, updatedAt: beforeBoot() })).toBe(false);
+    // Kill decisions stay conservative: never kill an unverifiable process.
+    expect(runnerProcessAlive({ pid, updatedAt: recent() }, true)).toBe(false);
+  }
+  // A runner that never reported in: a launch from before the boot is not running any more.
+  const alive = (startedAt: number) => JobRunners.prototype.alive.call({} as never, { host: { pid: ghosts.eperm, peer: "job:x", startedAt } } as never, null);
+  expect(alive(recent())).toBe(true);
+  expect(alive(beforeBoot())).toBe(false);
+});
