@@ -28,3 +28,19 @@ it("refuses overwriting an existing destination and refuses unauthorized checkpo
  await expect(fastSnapshot(file,join(home,"refused.db"),{method:"copy"})).rejects.toThrow("authorization");
  expect(existsSync(join(home,"refused.db"))).toBe(false);
 });
+
+it("caps checkpoint attempts at three and falls back to a read-only native snapshot", async()=>{
+ const home=mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!,"snapshot-busy-")), file=join(home,"source.db"), destination=join(home,"copy.db");
+ const writer=new DatabaseSync(file);
+ writer.exec("PRAGMA journal_mode=WAL; CREATE TABLE fixture(value TEXT); INSERT INTO fixture VALUES ('before'); PRAGMA wal_checkpoint(TRUNCATE)");
+ const oldReader=new DatabaseSync(file,{readOnly:true});
+ oldReader.exec("BEGIN"); oldReader.prepare("SELECT * FROM fixture").all();
+ writer.exec("INSERT INTO fixture VALUES ('after')");
+ try {
+  const result=await fastSnapshot(file,destination,{method:"copy",allowCheckpoint:true});
+  expect(result.method).toBe("backup"); expect(result.checkpointAttempts).toBe(3);
+  const copied=new DatabaseSync(destination,{readOnly:true});
+  try {expect(copied.prepare("SELECT value FROM fixture ORDER BY rowid").all()).toEqual([{value:"before"},{value:"after"}]);}
+  finally {copied.close();}
+ } finally {oldReader.exec("ROLLBACK");oldReader.close();writer.close();}
+});

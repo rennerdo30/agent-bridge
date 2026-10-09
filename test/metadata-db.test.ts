@@ -21,11 +21,15 @@ it("backs up an existing database before additive DDL and leaves its global vers
  const db = metadataDb(home);
  expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(9);
  expect(db.prepare("SELECT value FROM owner_data").get()!.value).toBe("unique bytes");
- const backups = fs.readdirSync(join(home,".migration-snapshots")); expect(backups).toHaveLength(1);
+ const backups = fs.readdirSync(join(home,".migration-snapshots")).filter(path=>path.endsWith('.db')); expect(backups).toHaveLength(1);
  const backup = new DatabaseSync(join(home,".migration-snapshots",backups[0]!),{readOnly:true});
  try {
-  expect(backup.prepare("SELECT value FROM owner_data").get()!.value).toBe("unique bytes");
+  expect(backup.prepare("SELECT 1 FROM sqlite_master WHERE name='owner_data'").get()).toBeUndefined();
   expect(backup.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get()).toBeUndefined();
+  const manifest=JSON.parse(fs.readFileSync(join(home,".migration-snapshots",`${backups[0]}.manifest.json`),'utf8'));
+  expect(manifest.kind).toBe('metadata-component-snapshot');
+  expect(manifest.schema.some((row:{name:string})=>row.name==='owner_data')).toBe(true);
+  expect(manifest.tables.every((table:{existed:boolean})=>!table.existed)).toBe(true);
  } finally { backup.close(); }
 });
 it("defers while a provably live old reader protects its file-backed domains", () => {

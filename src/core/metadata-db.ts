@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { metadataFileLease } from "./metadata-file-lease.js";
 import { liveStorePeers } from "./store-compatibility.js";
 import { storageLease } from "./storage-lock.js";
+import { snapshotMetadataTables } from "./metadata-snapshot.js";
 
 const VERSION = 1;
 const connections = new Map<string, DatabaseSync>();
@@ -93,10 +94,7 @@ export function metadataDb(home: string): DatabaseSync {
       physicalMetadataPath(dir);
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       const backup = join(dir, `metadata-v${VERSION}-${randomUUID()}.db`);
-      db.exec(`VACUUM INTO '${backup.replace(/'/g, "''")}'`);
-      const check = new DatabaseSync(backup, { readOnly: true });
-      try { if (check.prepare("PRAGMA integrity_check").get()?.integrity_check !== "ok") throw new Error("Metadata backup verification failed; originals retained."); }
-      finally { check.close(); }
+      snapshotMetadataTables(db,backup,["bridge_components","worktree_leases","worktree_lease_archive","bridge_metadata","bridge_read_receipts","bridge_imports"],"metadata",VERSION);
      }
      db.exec("BEGIN IMMEDIATE");
      try { db.exec(SCHEMA); db.exec("COMMIT"); }
