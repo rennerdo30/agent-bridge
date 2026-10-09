@@ -26,6 +26,9 @@ export interface HistoryAnswerDependencies {
 }
 
 /** No model runs, including availability/usage probes, happen in ordinary search mode. */
+/** Source id prefixes of history hits: messages, runs, decisions, transcripts, durable records and questions. */
+const CITATION_KINDS = ["message", "run", "decision", "transcript", "durable", "question", "approval", "progress", "report"];
+
 export async function answerHistory(query: string, result: HistoryResult, cfg: BridgeConfig, home: string, log: Logger, deps: HistoryAnswerDependencies = {}): Promise<HistoryAnswer> {
   const hits = result.hits.slice(0, HISTORY_ANSWER_MAX_HITS), sources = hits.map(({ id, sourceLink }) => ({ id, link: sourceLink }));
   if (!hits.length) return { text: "No matching history was found.", agent: null, model: null, sources };
@@ -61,7 +64,10 @@ export async function answerHistory(query: string, result: HistoryResult, cfg: B
   try {
     const text = await (deps.run?.(selected.agent, selected.model, prompt) ?? runAnswer(selected.agent, selected.model, prompt, cfg, log));
     const capped = text.trim().slice(0, HISTORY_ANSWER_MAX_CHARS);
-    const citations = [...capped.matchAll(/\[((?:message|run|decision|transcript):[^\]]+)\]/g)].map((match) => match[1]);
+    // Every source id kind a search can return (durable:<record>, question:<id>, ... ; AB-234), plus any prefix
+    // of a supplied id, counts as a citation; each one must name a supplied source.
+    const kinds = new Set([...CITATION_KINDS, ...sources.map((source) => source.id.split(":")[0]!)]);
+    const citations = [...capped.matchAll(/\[([a-z]+:[^\]]+)\]/g)].map((match) => match[1]!).filter((id) => kinds.has(id.split(":")[0]!));
     if (!capped || !citations.length || citations.some((id) => !sources.some((s) => s.id === id))) throw new Error("Model answer did not cite a supplied source.");
     return { ...selected, text: capped, sources };
   } catch (err) { return { ...selected, text: "", sources, error: `History answer failed: ${String(err).slice(0, HISTORY_ANSWER_MAX_CHARS)}` }; }
