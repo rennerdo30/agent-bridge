@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.30.6
+
+- A worktree lease whose holder cannot be verified (legacy or unidentified owner) and whose last heartbeat predates the current boot is archived with its reason and no longer blocks resuming its job after a reboot. Live and recent unverifiable holders are still refused; the legacy lease directory stays in place.
+
 ## 0.30.5
 
 - After a reboot, reader presence records written before the boot no longer block the history and metadata upgrades. Windows reuses low PIDs for protected system processes whose start time cannot be read, so such stale records looked like unidentified live readers and kept every 0.30.4 migration waiting.
