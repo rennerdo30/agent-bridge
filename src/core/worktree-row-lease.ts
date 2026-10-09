@@ -63,13 +63,16 @@ export function worktreeRowLease(home: string, key: string, path: string, jobId:
  } catch (error) { db.exec("ROLLBACK"); throw error; }
  let released = false;
  const timer = setInterval(() => {
-  try { db.prepare("UPDATE worktree_leases SET heartbeat_at=? WHERE key=? AND nonce=? AND archived_at IS NULL").run(Date.now(),key,nonce); }
+  try { metadataDb(home).prepare("UPDATE worktree_leases SET heartbeat_at=? WHERE key=? AND nonce=? AND archived_at IS NULL").run(Date.now(),key,nonce); }
   catch { /* Heartbeat failure cannot authorize another owner to reclaim this row. */ }
  },10_000);
  timer.unref();
  return () => {
   if (released) return;
   clearInterval(timer);
+  // The shared per-home connection may have been closed meanwhile (the last bridge node of
+  // this process stopped); a fresh handle still releases exactly this nonce.
+  const db = metadataDb(home);
   db.exec("BEGIN IMMEDIATE");
   try {
    const row = db.prepare("SELECT * FROM worktree_leases WHERE key=? AND nonce=? AND archived_at IS NULL").get(key,nonce) as unknown as LeaseRow | undefined;
