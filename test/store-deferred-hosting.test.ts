@@ -52,6 +52,8 @@ it("keeps read marks while the metadata store is deferred and imports them once 
   expect(journal.read("name:reader")).toEqual(["deferred-mark"]);
   expect(journal.receipt("name:reader", "deferred-mark")).toMatchObject({ read: true });
   identity.mockRestore();
+  // Resolve (and cache) the real identity now, so the background retry does not wait on a slow probe.
+  expect(identities.processIdentity(process.pid)).toBeTruthy();
   // The journal retries in the background; the mark becomes a metadata row without another call.
   await vi.waitFor(() => {
     const db = new DatabaseSync(env.db, { readOnly: true });
