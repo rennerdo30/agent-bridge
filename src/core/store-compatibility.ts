@@ -178,7 +178,8 @@ export function liveStorePeers(home: string): Presence[] {
       // A record observed before its identity was known (an older peer's hello) stays valid
       // unless that PID now belongs to a process started after the observation, as for files.
       const observed = !record.processIdentity && typeof record.observedAt === "number";
-      if (identity && observed && legacyPidReused(identity,record.observedAt!)) return [];
+      // An imported legacy row has neither; its row time is the source file's time (AB-256), so the same rule applies.
+      if (identity && !record.processIdentity && legacyPidReused(identity,observed ? record.observedAt! : at)) return [];
       if (identity && (record.processIdentity === identity || observed) && validStoreCapabilities(record)) return [record];
       return [{pid:record.pid,name:record.name ?? `pid ${record.pid}`,version:"unknown",json:0,sqlite:0,explicit:false}];
     });
@@ -220,14 +221,17 @@ export function metadataRelease(version: string | undefined): boolean {
 export function legacyStorePeers(home: string): { pid: number; name: string; version: string }[] {
   const stored = databasePresence(home);
   if (stored) void refreshStorePeerIdentities(home).catch(() => {});
-  const records = stored ? stored.filter(({ record, signature }) => {
+  const records = stored ? stored.filter(({ record, signature, at }) => {
     if (record.pid === process.pid) return false;
+    // No process survives a reboot: a pre-boot row is never a live legacy reader (AB-256).
+    if (writtenBeforeBoot(at)) return false;
     try { process.kill(record.pid, 0); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; }
     // A verified different process generation reused the PID: that reader is gone.
     const identity = cachedIdentity(home, record.pid, signature);
     if (identity && record.processIdentity && record.processIdentity !== identity) return false;
-    if (identity && !record.processIdentity && typeof record.observedAt === "number" && legacyPidReused(identity, record.observedAt)) return false;
+    // A row without an observation time (an imported legacy file) carries the file's time instead.
+    if (identity && !record.processIdentity && legacyPidReused(identity, typeof record.observedAt === "number" ? record.observedAt : at)) return false;
     return true;
   }).map(entry => entry.record) : liveStorePeers(home).filter(peer => peer.pid !== process.pid);
   return records.filter(peer => !metadataRelease(peer.version)).map(({ pid, name, version }) => ({ pid, name: name ?? `pid ${pid}`, version: version ?? "unknown" }));

@@ -74,3 +74,32 @@ it("treats an unverifiable runner whose last heartbeat predates the boot as gone
   expect(alive(recent())).toBe(true);
   expect(alive(beforeBoot())).toBe(false);
 });
+
+function presenceRow(pid: number, at: number, extra: Record<string, unknown> = {}): void {
+  metadataDb(env.home); importMetadataDomain(env.home, "storage-capabilities");
+  saveMetadataValue(env.home, "storage-capabilities", String(pid), { schemaVersion: 1, json: 4, sqlite: 8, pid, name: "legacy-reader", version: "0.29.17", explicit: true, ...extra });
+  metadataDb(env.home).prepare("UPDATE bridge_metadata SET updated_at=? WHERE domain='storage-capabilities' AND key=?").run(at, String(pid));
+}
+
+it("ignores a pre-boot legacy reader row whose PID answers EPERM, but keeps a recent one", () => {
+  presenceRow(ghosts.eperm, recent());
+  expect(legacyStorePeers(env.home).map(peer => peer.pid)).toContain(ghosts.eperm);
+  presenceRow(ghosts.eperm, beforeBoot());
+  expect(legacyStorePeers(env.home).map(peer => peer.pid)).not.toContain(ghosts.eperm);
+});
+
+it.skipIf(process.platform === "linux")("drops an imported legacy row whose PID now belongs to a process started after the row", async () => {
+  const started = processStartMs(process.ppid);
+  expect(started).toBeDefined();
+  if (started === undefined) return;
+  ghosts.up = (Date.now() - started) / 1000 + 600;
+  // Neither processIdentity nor observedAt: an imported 0.29 file, whose row time is the file time.
+  presenceRow(process.ppid, started - 5_000);
+  await refreshStorePeerIdentities(env.home);
+  expect(legacyStorePeers(env.home).map(peer => peer.pid)).not.toContain(process.ppid);
+  expect(liveStorePeers(env.home).map(peer => peer.pid)).not.toContain(process.ppid);
+  // The same row written after the process started still belongs to it.
+  presenceRow(process.ppid, Date.now());
+  await refreshStorePeerIdentities(env.home);
+  expect(legacyStorePeers(env.home).map(peer => peer.pid)).toContain(process.ppid);
+});
