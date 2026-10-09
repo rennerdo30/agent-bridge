@@ -3,6 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { execFile } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
@@ -62,8 +63,7 @@ async function stopOwnedRunner(id: string): Promise<void> {
   const state = readRunnerState(env.home, id);
   if (!state?.pid) return;
   if (!fixtureProcessExists(state.pid, `Refusing unverified fixture runner ${state.pid}; retained at ${env.home}`)) return;
-  const pid = state.pid, file = join(env.home, "storage-capabilities", `${pid}.json`);
-  const presence = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
+  const pid = state.pid, presence = storePresence(pid);
   if (state.peer !== `claude-job-${id}` || presence?.pid !== pid || presence?.name !== state.peer ||
     typeof presence.processIdentity !== "string" || (process.platform === "win32" && !/^\d+$/.test(presence.processIdentity)))
     throw new Error(`Refusing unidentified fixture runner ${pid}; retained at ${env.home}`);
@@ -81,6 +81,20 @@ async function stopOwnedRunner(id: string): Promise<void> {
     }
   }
   await until(() => !pidAlive(pid), 30_000);
+}
+/** AB-208: a process's presence is a bridge.db metadata row; the file remains while the store is deferred. */
+function storePresence(pid: number): Record<string, any> | null {
+  if (existsSync(env.db)) {
+    const db = new DatabaseSync(env.db, { readOnly: true, timeout: 5_000 });
+    try {
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_metadata'").get()) {
+        const row = db.prepare("SELECT value FROM bridge_metadata WHERE domain='storage-capabilities' AND key=?").get(String(pid));
+        if (row) return JSON.parse(String(row.value));
+      }
+    } finally { db.close(); }
+  }
+  const file = join(env.home, "storage-capabilities", `${pid}.json`);
+  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
 }
 afterEach(async context => {
   let failed = context.task.result?.state === "fail";
