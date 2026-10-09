@@ -16,6 +16,12 @@
 - Add a read-only legacy empty-lock evidence report; no legacy reconciliation or deletion.
 - Refresh eligible GitHub Actions pins; retain dependency upgrades younger than two weeks for a later release.
 - Generate test homes outside source repositories with a Git discovery ceiling.
+- `db export --decompressed` copies TEXT values byte-exact on Node 22, which cut text at its first NUL character.
+- A broker socket path longer than macOS or Linux accept moves to a private per-user folder under `/tmp`; homes with short paths keep their socket.
+- Run log lookup by filter matches the run name only, not the home path.
+- An inline job report that another writer's save left out of the store is saved again with backoff instead of waiting for an unrelated save.
+- A late read-journal retry closes the database handle it opened after its session stopped.
+- The README states prominently what agent-bridge may ever delete and that close cleanup is off by default.
 
 ## 0.30.3
 
