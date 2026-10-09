@@ -33935,12 +33935,12 @@ var JobManager = class {
   }
   lookupAllowed(current) {
     if (!current) return void 0;
-    const durable = this.storePath && readStoredJob(this.storePath, current.id, current.name, this.log);
+    const durable = this.storePath && readStoredJobSnapshot(this.storePath, current.id, current.name, this.log);
     const authority = durable || current;
     const permitted = this.lookupPermitted(authority);
     this.recheckSharedGrant(authority);
     if (durable && durable.startedAt > current.startedAt) return void 0;
-    if (durable) Object.assign(current, {
+    if (durable) Object.assign(current, cloneJson({
       owner: durable.owner,
       masters: durable.masters,
       ownershipHistory: durable.ownershipHistory,
@@ -33948,7 +33948,7 @@ var JobManager = class {
       ...durable.supervisor !== void 0 ? { supervisor: durable.supervisor } : {},
       ...durable.rootName !== void 0 ? { rootName: durable.rootName } : {},
       ...durable.rootSession !== void 0 ? { rootSession: durable.rootSession } : {}
-    });
+    }));
     if (!this.sharedGrants.has(current.id) && !permitted) return void 0;
     return current;
   }
@@ -34783,10 +34783,19 @@ function readScopedStore(path, tracked, owners, parentName, log) {
 }
 function readStoredJob(path, id, name2, log) {
   try {
+    const selected = readStoredJobSnapshot(path, id, name2, log);
+    return selected ? cloneJson(selected) : void 0;
+  } catch (err) {
+    log?.warn("could not look up stored job", { path, err: String(err) });
+  }
+  return void 0;
+}
+function readStoredJobSnapshot(path, id, name2, log) {
+  try {
     const current = activeJobSnapshot(path);
-    for (const record2 of current.values()) if (record2.id === id || record2.name === name2) return cloneJson(record2);
+    for (const record2 of current.values()) if (record2.id === id || record2.name === name2) return record2;
     for (const record2 of readArchivedJobSnapshot(path).jobs) {
-      if (isStoredJob(record2) && !current.has(record2.id) && (record2.id === id || record2.name === name2)) return cloneJson(record2);
+      if (isStoredJob(record2) && !current.has(record2.id) && (record2.id === id || record2.name === name2)) return record2;
     }
   } catch (err) {
     log?.warn("could not look up stored job", { path, err: String(err) });
