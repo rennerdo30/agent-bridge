@@ -61,7 +61,8 @@ export function bundleFiles(dir: string, names: readonly string[], outDir: strin
     chunks.push(data);
     offset += data.length;
   }
-  const packed = brotliCompressSync(Buffer.concat(chunks), { params: { [constants.BROTLI_PARAM_QUALITY]: 9, [constants.BROTLI_PARAM_SIZE_HINT]: offset } });
+  // Quality 6 keeps most of the ratio on JSON at a fraction of quality 9's CPU time.
+  const packed = brotliCompressSync(Buffer.concat(chunks), { params: { [constants.BROTLI_PARAM_QUALITY]: 6, [constants.BROTLI_PARAM_SIZE_HINT]: offset } });
   const id = `bundle-${String(now).padStart(13, "0")}-${randomUUID()}`;
   const bundle = `${id}.br`;
   publish(join(outDir, bundle), packed);
@@ -70,6 +71,24 @@ export function bundleFiles(dir: string, names: readonly string[], outDir: strin
   publish(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
   verifyBundle(manifestPath);
   return manifestPath;
+}
+
+/** Upper bound of original bytes per bundle, so bundling and every later verification holds at most this much. */
+export const MAX_BUNDLE_BYTES = 64 * 1024 * 1024;
+
+/** Pack `names` into as many bundles as needed so none holds more than `maxBytes` of originals (a single larger
+ * file gets a bundle of its own). Returns the manifest paths in order. */
+export function bundleFilesBounded(dir: string, names: readonly string[], outDir: string, now = Date.now(), maxBytes = MAX_BUNDLE_BYTES): string[] {
+  const manifests: string[] = [];
+  let batch: string[] = [], bytes = 0;
+  for (const name of names) {
+    if (basename(name) !== name) throw new Error(`bundle names must be plain file names: ${name}`);
+    const size = lstatSync(join(dir, name)).size;
+    if (batch.length && bytes + size > maxBytes) { manifests.push(bundleFiles(dir, batch, outDir, now)); batch = []; bytes = 0; }
+    batch.push(name); bytes += size;
+  }
+  if (batch.length) manifests.push(bundleFiles(dir, batch, outDir, now));
+  return manifests;
 }
 
 export function readBundleManifest(manifestPath: string): BundleManifest {

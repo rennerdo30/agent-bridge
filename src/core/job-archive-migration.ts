@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { bundleFiles, extractBundle, retireBundled } from "./archive-bundle.js";
+import { bundleFilesBounded, extractBundle, retireBundled } from "./archive-bundle.js";
 import { JSON_STORE_VERSION } from "./json-store.js";
 import { archivedRecordId, jobArchivePath, jobDigest, markJobProjection, openJobArchive, physicalArchivePath, putJobRecords } from "./job-archive-index.js";
 import { migrationLock } from "./migration-lock.js";
@@ -109,15 +109,17 @@ export async function migrateJobArchives(path: string): Promise<ArchiveMigration
     physicalArchivePath(join(cold, "archive"));
     for (const group of groups) {
       if (!group.names.length) continue;
-      const manifest = bundleFiles(group.dir, group.names, cold);
-      result.manifests.push(manifest);
-      // A file may change between import and bundling. Import and verify the
-      // bundled version too; retireBundled rechecks once more before any rename.
-      for (const [name, raw] of extractBundle(manifest)) importSource(join(group.dir, name), raw);
-      const originals = join(cold, group.dir === dirname(path) ? "root-originals" : "archive-originals");
-      physicalArchivePath(originals);
-      const moved = retireBundled(group.dir, manifest, originals);
-      result.moved += moved.moved.length; result.kept += moved.kept.length;
+      // Bounded bundles: memory for bundling and verification stays below MAX_BUNDLE_BYTES per step.
+      for (const manifest of bundleFilesBounded(group.dir, group.names, cold)) {
+        result.manifests.push(manifest);
+        // A file may change between import and bundling. Import and verify the
+        // bundled version too; retireBundled rechecks once more before any rename.
+        for (const [name, raw] of extractBundle(manifest)) importSource(join(group.dir, name), raw);
+        const originals = join(cold, group.dir === dirname(path) ? "root-originals" : "archive-originals");
+        physicalArchivePath(originals);
+        const moved = retireBundled(group.dir, manifest, originals);
+        result.moved += moved.moved.length; result.kept += moved.kept.length;
+      }
     }
     if (!result.kept) db.prepare("UPDATE archive_migrations SET state='complete' WHERE version=1").run();
     return result;

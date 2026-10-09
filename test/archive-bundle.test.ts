@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { bundleFiles, extractBundle, legacyJobCopies, readBundleManifest, retireBundled } from "../src/core/archive-bundle.js";
+import { bundleFiles, bundleFilesBounded, extractBundle, legacyJobCopies, readBundleManifest, retireBundled } from "../src/core/archive-bundle.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -70,4 +70,19 @@ it("moves only verified, unchanged originals and keeps everything else", () => {
   expect(legacyJobCopies(dir)).toEqual([copy(3)]);
   expect(existsSync(join(dir, "jobs-content-abc.json"))).toBe(true);
   expect(readdirSync(cold)).toHaveLength(39);
+});
+
+it("AB-230: splits a large group into bundles of bounded size, each restoring its originals byte-exact", () => {
+  const dir = join(env.home, "archive"), out = join(dir, "cold-bundles");
+  const files = seed(dir);
+  const each = files.get(copy(0))!.length;
+  const manifests = bundleFilesBounded(dir, legacyJobCopies(dir), out, 1, each * 10);
+  expect(manifests).toHaveLength(4);
+  const restored = new Map<string, Buffer>();
+  for (const manifest of manifests) {
+    expect(readBundleManifest(manifest).entries.reduce((n, e) => n + e.bytes, 0)).toBeLessThanOrEqual(each * 10);
+    for (const [name, bytes] of extractBundle(manifest)) restored.set(name, bytes);
+  }
+  expect(restored.size).toBe(40);
+  for (const [name, bytes] of files) expect(restored.get(name)!.equals(bytes)).toBe(true);
 });
