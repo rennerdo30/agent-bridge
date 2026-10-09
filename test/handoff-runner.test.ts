@@ -24,6 +24,8 @@ const releases: string[] = [];
 let responses: { at: number; name: string; args: Record<string, unknown>; text?: string; error?: unknown }[];
 let captureErrors: unknown[];
 const exec = promisify(execFile);
+/** Runner admission budget, the same as stopOwnedRunner allows for a late admission. */
+const RUNNER_START_MS = 30_000;
 beforeEach(() => {
   clients.length = transports.length = fixtureNodes.length = runnerIds.length = releases.length = 0;
   responses = [];
@@ -200,8 +202,11 @@ it.each([
   const release = join(env.home, "release"), linkFile = join(env.home, "link.json"); releases.push(release);
   const started = await call(source, "spawn_claude", { prompt: `release=${release} link=${linkFile} work on task`, title: "Inherited live runner" });
   expect(started.error).toBeFalsy(); const name = /claude-job-[a-f0-9]+/.exec(started.text)![0], id = name.split("-").at(-1)!;
-  if (!inline) runnerIds.push(id);
-  await until(() => existsSync(linkFile));
+  // Even an inline first turn continues in a detached runner of the new (runner-hosting) supervisor.
+  runnerIds.push(id);
+  // A detached Windows runner first establishes its private job object (a PowerShell guardian) before the delegate
+  // starts; on a loaded runner that alone takes 8-11 s. Admission and turn deadlines below allow for it.
+  await until(() => existsSync(linkFile), RUNNER_START_MS);
   const child = parentFromEnv(JSON.parse(readFileSync(linkFile, "utf8")))!;
   expect((await call(source, "handoff_subagents", { to: "claude-target", note: "Finish and review" })).error).toBeFalsy();
   expect((await call(source, "message_subagent", { job: name, message: "Former master instruction" })).error).toBeFalsy();
@@ -210,7 +215,7 @@ it.each([
   await child.escalate?.("Post-handoff approval request");
   await child.progress?.(65, "New supervisor progress");
   writeFileSync(release, "");
-  await until(() => readStore(join(env.home, "jobs.json")).find((j) => j.name === name)?.status === "done", 12000);
+  await until(() => readStore(join(env.home, "jobs.json")).find((j) => j.name === name)?.status === "done", RUNNER_START_MS);
   let inbox = "";
   const deadline = Date.now() + 5000;
   while (!inbox.includes("Inherited runner finished") && Date.now() < deadline) {
@@ -220,7 +225,10 @@ it.each([
   expect(inbox).toContain("Inherited runner finished");
   expect(inbox).toContain("Post-handoff approval request");
   expect((await call(source, "inbox")).text).not.toMatch(/Post-handoff|Inherited runner finished|Subagent .*done after/);
+  // The first turn's "done" stays in the registry until the next turn is admitted: wait for the next turn's own
+  // completion, or the afterEach would find no runner to stop while the new turn's runner still starts.
+  const firstFinishedAt = readStore(join(env.home, "jobs.json")).find((j) => j.name === name)!.finishedAt ?? 0;
   expect((await call(target, "message_subagent", { job: name, message: "Continue with the next task" })).error).toBeFalsy();
-  await until(() => readStore(join(env.home, "jobs.json")).find((j) => j.name === name)?.status === "done", 12000);
+  await until(() => { const job = readStore(join(env.home, "jobs.json")).find((j) => j.name === name); return job?.status === "done" && (job.finishedAt ?? 0) > firstFinishedAt; }, RUNNER_START_MS);
   expect(readStore(join(env.home, "jobs.json")).find((j) => j.name === name)!.owner).toBe("claude-target");
 });
