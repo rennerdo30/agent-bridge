@@ -4,47 +4,55 @@ import {
 } from "./chunks/chunk-2PKS7JZW.mjs";
 import {
   ConversationIngestor
-} from "./chunks/chunk-WZZDSVUH.mjs";
+} from "./chunks/chunk-XQYRTM3Q.mjs";
 import {
   HISTORY_TICK_MS,
   HistoryIndex
-} from "./chunks/chunk-Z4B57VCI.mjs";
+} from "./chunks/chunk-LYWU36ET.mjs";
 import {
   ownsProjectMirrors,
   projectDatabasePath
-} from "./chunks/chunk-BUGIU4VT.mjs";
+} from "./chunks/chunk-CPA7KCZJ.mjs";
 import {
   HISTORY_IO_BYTES_PER_SECOND,
   copyLegacyConversationTail,
   historyMigrationFailure,
+  legacyTailConflicts,
   migrateHistoryStore,
   openHistoryStore,
   readHistoryMigrationProgress
-} from "./chunks/chunk-GXD6MOY6.mjs";
+} from "./chunks/chunk-UHGLMCVN.mjs";
 import "./chunks/chunk-3CXCL26P.mjs";
-import "./chunks/chunk-F7FSK2FI.mjs";
+import "./chunks/chunk-L4PIHH6D.mjs";
 import {
-  readHistoryJson,
   reconcileAskCompletions
-} from "./chunks/chunk-2KLFTBBJ.mjs";
-import "./chunks/chunk-ETHEYCLK.mjs";
-import {
-  transcriptPaths
-} from "./chunks/chunk-CUZHUOFY.mjs";
+} from "./chunks/chunk-SOETFLC6.mjs";
+import "./chunks/chunk-3G4ZOXSN.mjs";
 import {
   loadConfig
-} from "./chunks/chunk-QI6BOSWF.mjs";
-import "./chunks/chunk-L3WJOWYS.mjs";
-import "./chunks/chunk-NSTCMPSE.mjs";
+} from "./chunks/chunk-GT4LWWTU.mjs";
+import "./chunks/chunk-4QXHCXBU.mjs";
+import "./chunks/chunk-FVGCFSLA.mjs";
 import "./chunks/chunk-JNVJDIQM.mjs";
 import "./chunks/chunk-FDMEMG4Z.mjs";
 import {
+  readHistoryJson
+} from "./chunks/chunk-Y5LFAPRR.mjs";
+import "./chunks/chunk-BPZNFS2C.mjs";
+import {
+  transcriptPaths
+} from "./chunks/chunk-TFQZM67X.mjs";
+import {
+  closeMetadataDbs,
+  fileSignature,
   isRecord,
   nullLogger,
   writeJsonStore
-} from "./chunks/chunk-EVPBD2NK.mjs";
-import "./chunks/chunk-SFW3GO73.mjs";
-import "./chunks/chunk-7EOIPV3B.mjs";
+} from "./chunks/chunk-NYEIO7DU.mjs";
+import "./chunks/chunk-4EDVJNL7.mjs";
+import {
+  CONFIG_FILE_NAME
+} from "./chunks/chunk-7EOIPV3B.mjs";
 import "./chunks/chunk-HHAVWD7J.mjs";
 
 // src/core/history-worker.ts
@@ -74,12 +82,14 @@ var IdleBackoff = class {
 };
 
 // src/core/history-worker.ts
+import { statSync } from "node:fs";
 var db = openHistoryStore(workerData.file);
 var source = new DatabaseSync(workerData.bridge, { readOnly: true, timeout: 100 });
 source.exec("PRAGMA busy_timeout=100; PRAGMA query_only=ON");
 var paths = workerData.paths ?? transcriptPaths();
-var index = new HistoryIndex(db, workerData.home, paths, source);
-var ingest = new ConversationIngestor(db, workerData.home, paths, source);
+var index = null;
+var ingest = null;
+var legacyConflicts = -1;
 var timer = null;
 var stopped = false;
 var pending = false;
@@ -102,8 +112,18 @@ var migrationProgress = readHistoryMigrationProgress(db, ioBytesPerSecond);
 if (typeof importState.error === "string") migrationProgress = { ...migrationProgress, error: importState.error, paused: true };
 var pressureWaiters = /* @__PURE__ */ new Set();
 var peers = /* @__PURE__ */ new Map();
+var configCache = null;
+function currentConfig() {
+  let signature = "missing";
+  try {
+    signature = fileSignature(statSync(join(workerData.home, CONFIG_FILE_NAME)));
+  } catch {
+  }
+  if (configCache?.signature !== signature) configCache = { signature, value: loadConfig(workerData.home, "other", nullLogger) };
+  return configCache.value;
+}
 function enabled() {
-  return loadConfig(workerData.home, "other", nullLogger).history.ingest;
+  return currentConfig().history.ingest;
 }
 function reportPaused(paused2) {
   migrationProgress = { ...migrationProgress, paused: paused2, phase: paused2 && migrationProgress.phase === "starting" ? "paused" : migrationProgress.phase };
@@ -112,7 +132,7 @@ function reportPaused(paused2) {
 reportPaused(!enabled() || Boolean(importState.error));
 var paused = () => pending || Date.now() < pauseUntil || !enabled() || storageBudgetPaused;
 async function checkStorageBudget() {
-  const config = loadConfig(workerData.home, "other", nullLogger);
+  const config = currentConfig();
   const mirrors = ownsProjectMirrors(workerData.home) ? db.prepare("SELECT DISTINCT project FROM conversations WHERE project != ''").all().map((row) => dirname(projectDatabasePath(String(row.project), workerData.home))) : [];
   const budget = await historyBudget(workerData.home, config.history.budgetBytes, mirrors);
   storageBudgetPaused = budget.paused;
@@ -175,10 +195,28 @@ async function tick(reset = false) {
         migrationFailure = historyMigrationFailure(db);
         throw err;
       }
+      index ??= new HistoryIndex(db, workerData.home, paths, source);
+      if (!ingest) {
+        ingest = new ConversationIngestor(db, workerData.home, paths, source);
+        ingest.onChange = onTranscriptChange;
+      }
       ready = true;
     }
+    if (!index || !ingest) return { work: 0, discovering: true };
     if (stopped || paused()) return { work: 0, discovering: true };
-    const legacyWork = copyLegacyConversationTail(source, db);
+    let legacyWork = 0;
+    try {
+      legacyWork = copyLegacyConversationTail(source, db);
+    } catch (error) {
+      if (!stopped) parentPort?.postMessage({ error: `legacy history tail deferred; originals retained: ${String(error)}` });
+    }
+    const conflicts = legacyTailConflicts(db);
+    if (conflicts !== legacyConflicts) {
+      legacyConflicts = conflicts;
+      migrationProgress = { ...migrationProgress, legacyConflicts: conflicts };
+      parentPort?.postMessage({ migrationProgress });
+      if (conflicts) parentPort?.postMessage({ error: `${conflicts} legacy history tail conflict(s) retained in history.db (history_legacy_conflicts); both originals kept, finalize stays blocked` });
+    }
     await yieldTurn(10);
     await waitForPressureGap();
     if (stopped || paused()) return { work: legacyWork, discovering: true };
@@ -188,6 +226,10 @@ async function tick(reset = false) {
     }
     if (reset) index.reset();
     const rawWork = ingest.tick();
+    if (transcriptsChanged) {
+      transcriptsChanged = false;
+      index.wake();
+    }
     await yieldTurn(10);
     await waitForPressureGap();
     if (stopped || paused()) return { work: legacyWork + rawWork, discovering: true };
@@ -205,9 +247,22 @@ async function tick(reset = false) {
     running = false;
   }
 }
+var dueAt = 0;
+var transcriptsChanged = false;
+var wakeAfterTick = false;
+function wakeSoon() {
+  if (stopped || !timer || dueAt - Date.now() <= HISTORY_TICK_MS) return;
+  idle.reset();
+  schedule(HISTORY_TICK_MS);
+}
+var onTranscriptChange = () => {
+  transcriptsChanged = true;
+  wakeSoon();
+};
 function schedule(delay = HISTORY_TICK_MS) {
   if (stopped) return;
   if (timer) clearTimeout(timer);
+  dueAt = Date.now() + delay;
   timer = setTimeout(async () => {
     timer = null;
     let next = idle.next(0, false);
@@ -221,15 +276,20 @@ function schedule(delay = HISTORY_TICK_MS) {
       if (err.code !== "HISTORY_SNAPSHOT_PAUSED" && !stopped) parentPort?.postMessage({ error: String(err) });
       pauseUntil = Date.now() + 5e3;
     }
+    if (wakeAfterTick) {
+      wakeAfterTick = false;
+      next = 0;
+    }
     schedule(next);
   }, delay);
 }
 function close() {
   clearInterval(budgetTimer);
-  index.close();
-  ingest.close();
+  index?.close();
+  ingest?.close();
   source.close();
   db.close();
+  closeMetadataDbs();
   parentPort?.close();
 }
 parentPort?.on("message", async (message) => {
@@ -250,6 +310,12 @@ parentPort?.on("message", async (message) => {
     peers.set(message.peer.id, message.peer);
     idle.reset();
     if (!running) schedule(0);
+    return;
+  }
+  if (message.wake) {
+    idle.reset();
+    if (running) wakeAfterTick = true;
+    else schedule(0);
     return;
   }
   if (message.stop) {

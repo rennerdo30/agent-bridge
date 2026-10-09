@@ -66,6 +66,18 @@ There is no daemon. Each agent session starts its own small agent-bridge server.
           first server to start is the broker · messages in SQLite
 ```
 
+## ⚠️ WHAT AGENT-BRIDGE MAY DELETE ON YOUR DISK
+
+> [!WARNING]
+> **Read this before you turn on any cleanup.** By default agent-bridge removes nothing of yours.
+>
+> - **Job worktrees only, and only ones agent-bridge created itself.** When a subagent gets its own git worktree, agent-bridge writes an ownership record for it at creation time. A worktree without that record, or whose folder was replaced, is **never** touched, whatever its branch or folder name. Your own worktrees and checkouts are never removed.
+> - **Automatic removal when a job closes is OFF by default** (`jobCloseCleanup: false`). If you turn it on, a finished job's worktree is removed only when **all** of these hold: no uncommitted or untracked files, no unknown ignored files, no links into other folders, and every commit has first been pushed and verified on your remote (as `wip/<job>`). If any check fails, the worktree is kept and the reason is recorded. Local branches are always kept.
+> - **`agent-bridge cleanup`** is manual. Without `--yes` it only lists what it would remove. With `--yes` it removes only worktrees that are inside agent-bridge's own worktree folder, belong to a recorded agent-bridge job, are on an `agent-bridge/*` branch fully merged into its base, and have nothing uncommitted. Everything else is kept.
+> - **Your history and messages are never deleted.** Old data is archived. `agent-bridge storage finalize` removes old backup copies only after a migration has been verified with counts and hashes, and only when you confirm with `--yes`.
+>
+> If you are unsure, leave cleanup off. Nothing breaks; worktrees simply stay until you remove them.
+
 ## Security
 
 - Only your own agent-bridge processes can connect: every connection presents a secret from `~/.agent-bridge/token`.

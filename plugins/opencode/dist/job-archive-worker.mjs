@@ -1,13 +1,21 @@
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 import {
-  bundleFiles,
+  bundleFilesBounded,
   extractBundle,
   retireBundled
-} from "./chunks/chunk-XFCSUQ7M.mjs";
+} from "./chunks/chunk-PKI6BVNX.mjs";
+import {
+  importRunnerFiles,
+  packArchivedRuns,
+  runnerFilesImported
+} from "./chunks/chunk-Y5LFAPRR.mjs";
+import "./chunks/chunk-BPZNFS2C.mjs";
+import "./chunks/chunk-TFQZM67X.mjs";
 import {
   JSON_STORE_VERSION,
   archivedRecordId,
   assertStoreUpgrade,
+  closeMetadataDbs,
   estimatedJsonBytes,
   fileSignature,
   jobArchivePath,
@@ -18,13 +26,15 @@ import {
   physicalArchivePath,
   putJobRecords,
   refreshStorePeerIdentities
-} from "./chunks/chunk-EVPBD2NK.mjs";
-import "./chunks/chunk-SFW3GO73.mjs";
+} from "./chunks/chunk-NYEIO7DU.mjs";
+import "./chunks/chunk-4EDVJNL7.mjs";
 import "./chunks/chunk-7EOIPV3B.mjs";
 import "./chunks/chunk-HHAVWD7J.mjs";
 
 // src/core/job-archive-worker.ts
 import { parentPort, workerData } from "node:worker_threads";
+import { dirname as dirname2 } from "node:path";
+import { setImmediate as yieldTurn, setTimeout as sleep } from "node:timers/promises";
 
 // src/core/job-archive-migration.ts
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
@@ -145,14 +155,15 @@ async function migrateJobArchives(path) {
     physicalArchivePath(join(cold, "archive"));
     for (const group of groups) {
       if (!group.names.length) continue;
-      const manifest = bundleFiles(group.dir, group.names, cold);
-      result.manifests.push(manifest);
-      for (const [name, raw] of extractBundle(manifest)) importSource(join(group.dir, name), raw);
-      const originals = join(cold, group.dir === dirname(path) ? "root-originals" : "archive-originals");
-      physicalArchivePath(originals);
-      const moved = retireBundled(group.dir, manifest, originals);
-      result.moved += moved.moved.length;
-      result.kept += moved.kept.length;
+      for (const manifest of bundleFilesBounded(group.dir, group.names, cold)) {
+        result.manifests.push(manifest);
+        for (const [name, raw] of extractBundle(manifest)) importSource(join(group.dir, name), raw);
+        const originals = join(cold, group.dir === dirname(path) ? "root-originals" : "archive-originals");
+        physicalArchivePath(originals);
+        const moved = retireBundled(group.dir, manifest, originals);
+        result.moved += moved.moved.length;
+        result.kept += moved.kept.length;
+      }
     }
     if (!result.kept) db.prepare("UPDATE archive_migrations SET state='complete' WHERE version=1").run();
     return result;
@@ -166,10 +177,72 @@ async function migrateJobArchives(path) {
 }
 
 // src/core/job-archive-worker.ts
+var stop = new AbortController();
+var repackRequested = false;
+parentPort?.on("message", (message) => {
+  if (message?.stop) stop.abort();
+  if (message?.repack) repackRequested = true;
+});
+async function packRuns(home2) {
+  let packed = 0, failed = 0;
+  try {
+    while (!stop.signal.aborted) {
+      let batchFailures = 0;
+      const batch = packArchivedRuns(home2, void 0, 100, (failure) => {
+        batchFailures++;
+        parentPort?.postMessage({ warning: "archived run kept in place, not packed", failure });
+      });
+      packed += batch;
+      failed += batchFailures;
+      if (!batch && !batchFailures) break;
+      await yieldTurn();
+    }
+  } finally {
+    closeMetadataDbs();
+  }
+  return { packed, failed };
+}
+async function importRunners(home2) {
+  const raw = process.env.AGENT_BRIDGE_RUNNER_IMPORT_DELAY_MS;
+  if (raw === "off") return;
+  const first = raw === void 0 || !/^\d+$/.test(raw) ? 3e4 : Number(raw);
+  const interval = 6e4;
+  await sleep(first, void 0, { signal: stop.signal });
+  for (; ; ) {
+    if (!runnerFilesImported(home2)) {
+      try {
+        const result = await importRunnerFiles(home2, { signal: stop.signal });
+        if (result.imported || result.remaining) parentPort?.postMessage({ runnerImport: result });
+      } catch (error) {
+        if (stop.signal.aborted) return;
+        parentPort?.postMessage({ runnerImportError: String(error) });
+      }
+    }
+    if (repackRequested) {
+      repackRequested = false;
+      const runs = await packRuns(home2);
+      if (runs.packed || runs.failed) parentPort?.postMessage({ packed: runs });
+    }
+    await sleep(interval, void 0, { signal: stop.signal });
+  }
+}
+var home = dirname2(workerData.path);
 try {
-  parentPort?.postMessage({ result: await migrateJobArchives(workerData.path) });
+  if (!workerData.packOnly) parentPort?.postMessage({ result: await migrateJobArchives(workerData.path) });
 } catch (error) {
   parentPort?.postMessage({ error: String(error) });
+}
+try {
+  const runs = await packRuns(home);
+  if (runs.packed || runs.failed) parentPort?.postMessage({ packed: runs });
+} catch (error) {
+  parentPort?.postMessage({ packError: String(error) });
+}
+try {
+  if (!workerData.packOnly && !stop.signal.aborted) await importRunners(home);
+} catch (error) {
+  if (!stop.signal.aborted) parentPort?.postMessage({ runnerImportError: String(error) });
 } finally {
+  closeMetadataDbs();
   parentPort?.close();
 }

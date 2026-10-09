@@ -37,7 +37,8 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   "core/storage-absorb.ts": ['"DELETE FROM absorb_progress WHERE source=? AND table_name=?"'],
   // Owner decision 2026-10-09: the explicit, confirmed `storage finalize` removes superseded copies only after the new
   // format is verified and each item is proven redundant row by row / byte by byte immediately before removal.
-  "core/storage-finalize.ts": ["`DROP TABLE IF EXISTS \"${item.path.slice(\"bridge.db:\".length).replaceAll('\"', '\"\"')}\"`",
+  // Both drops (bridge.db legacy tables after verifyLegacyBridge, history.db tables after proveHistoryTables) run inside the proving transaction.
+  "core/storage-finalize.ts": ["`DROP TABLE IF EXISTS \"${name.replaceAll('\"', '\"\"')}\"`",
     "`DROP TABLE IF EXISTS \"${name.replaceAll('\"', '\"\"')}\"`", "rmSync(path, { recursive: true, force: true })", "rmSync(path, { force: true })", "rmdirSync(group.dir)"],
   "core/notifications.ts": ["rmdirSync(lock)", "rmdirSync(lock)"],
   "mcp/rewake.ts": ["rmSync(sessionFile(this.home, this.registered), { force: true })", "rmSync(sessionFile(this.home, this.registered), { force: true })"],
