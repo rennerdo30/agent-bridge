@@ -117,11 +117,11 @@ it("elects a broker after every session reloads while only a legacy non-hosting 
   await build({ entryPoints: [join(import.meta.dirname, "../src/core/node.ts")], outfile: bundle, bundle: true, platform: "node", format: "esm", logLevel: "silent" });
   const token = loadOrCreateToken(env.home);
   const script = `import { BridgeNode } from ${JSON.stringify(pathToFileURL(bundle).href)};
-    import { readFileSync, writeFileSync } from 'node:fs';
+    import { DatabaseSync } from 'node:sqlite';
     const log={child(){return this},info(){},warn(){},error(){},debug(){}};
     const node=new BridgeNode({pipePath:${JSON.stringify(env.pipe)},dbPath:${JSON.stringify(env.db)},token:${JSON.stringify(token)},agent:'other',name:'codex-job-retained',id:'job:retained',jobAgent:'codex',cwd:${JSON.stringify(env.home)},autoWake:false,canHostBroker:false,log});
     const hello=node.helloArgs.bind(node);node.helloArgs=()=>{const args=hello();args.peer.version='0.29.17';args.peer.storeCapabilities={json:4,sqlite:8};return args};
-    const adopted=node.afterHello.bind(node);node.afterHello=(...args)=>{adopted(...args);const path=${JSON.stringify(join(env.home, "storage-capabilities"))}+'/'+process.pid+'.json';const record=JSON.parse(readFileSync(path,'utf8'));writeFileSync(path,JSON.stringify({...record,version:'0.29.17',json:4,sqlite:8}))};
+    const adopted=node.afterHello.bind(node);node.afterHello=(...args)=>{adopted(...args);const db=new DatabaseSync(${JSON.stringify(env.db)},{timeout:5000});try{const key=String(process.pid),row=db.prepare("SELECT value FROM bridge_metadata WHERE domain='storage-capabilities' AND key=?").get(key);db.prepare("UPDATE bridge_metadata SET value=? WHERE domain='storage-capabilities' AND key=?").run(JSON.stringify({...JSON.parse(row.value),version:'0.29.17',json:4,sqlite:8}),key)}finally{db.close()}};
     setInterval(()=>{},1000); console.log('ready'); node.start().then(()=>console.log('connected')).catch(e=>{console.error(e);process.exit(1)});`;
   runner = spawn(process.execPath, ["--input-type=module", "-e", script], { stdio: ["ignore", "pipe", "pipe"] });
   let output = "";
@@ -131,7 +131,12 @@ it("elects a broker after every session reloads while only a legacy non-hosting 
   const pid = runner.pid!;
   const identity = processIdentity(pid);
   expect(identity).toBeDefined();
-  writeFileSync(join(env.home, "storage-capabilities", `${pid}.json`), JSON.stringify({ schemaVersion: 1, pid, name: "codex-job-retained", version: "0.29.17", explicit: true, json: 4, sqlite: 8, processIdentity: identity }));
+  // AB-208: capability records are bridge.db metadata rows keyed by PID.
+  const capabilities = new DatabaseSync(env.db, { timeout: 5_000 });
+  try {
+    capabilities.prepare(`INSERT INTO bridge_metadata VALUES ('storage-capabilities',?,?,?) ON CONFLICT(domain,key) DO UPDATE SET value=excluded.value`)
+      .run(String(pid), JSON.stringify({ schemaVersion: 1, pid, name: "codex-job-retained", version: "0.29.17", explicit: true, json: 4, sqlite: 8, processIdentity: identity }), Date.now());
+  } finally { capabilities.close(); }
   const first = env.node("reloaded-first", "claude");
   const second = env.node("reloaded-second", "codex");
   await Promise.all([first.start(), second.start()]);
