@@ -20,7 +20,9 @@ export class JobArchiveBackground {
         mkdirSync(dirname(output), { recursive: true });
         const built = createRequire(import.meta.url)("esbuild").buildSync({ entryPoints: [join(root, "src/core/job-archive-worker.ts")], outfile: output,
           bundle: true, write: false, platform: "node", format: "esm", target: "node22", external: ["node:*"], logLevel: "silent" });
-        atomicPluginWrite(output, built.outputFiles[0].contents);
+        // Parallel test workers rebuild the same file; Windows refuses to replace one that another worker is running.
+        try { atomicPluginWrite(output, built.outputFiles[0].contents); }
+        catch (err) { if (!["EPERM", "EBUSY", "EACCES"].includes((err as NodeJS.ErrnoException).code ?? "") || !existsSync(output)) throw err; }
       }
       entry = pathToFileURL(output);
     }
