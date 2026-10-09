@@ -61,16 +61,25 @@ export class HistoryIndex {
   private heads = new Map<string,{identity:string;value:Record<string,any>}>();
   private readonly paths: TranscriptPaths;
   /** History store v2 keeps document bodies compressed (body_codec) and folded only where it differs. */
-  private readonly encoded: boolean;
+  private encodedSchema = -1;
+  private encodedValue = false;
+  /** Re-read when the schema changes: a store deferred at v1 (AB-225) can be upgraded in place under this connection. */
+  private get encoded(): boolean {
+    const schema = Number(this.db.prepare("PRAGMA schema_version").get()!.schema_version);
+    if (schema !== this.encodedSchema) {
+      this.encodedSchema = schema;
+      this.encodedValue = !!this.db.prepare("SELECT 1 FROM pragma_table_info('history_documents') WHERE name='body_codec'").get();
+    }
+    return this.encodedValue;
+  }
 
   private deadline = Infinity;
   constructor(private readonly db: DatabaseSync, private readonly home: string | null, paths?: TranscriptPaths,
     private readonly source: DatabaseSync = db, private readonly peerSink?: (peer: Pick<PeerInfo, "id" | "name" | "sessionId"> & Partial<Pick<PeerInfo, "cwd" | "agent">>) => void) {
     this.paths = paths ?? transcriptPaths();
     this.engine = db.prepare("SELECT name FROM sqlite_master WHERE name = 'history_fts'").get() ? "fts5" : "plain";
-    this.encoded = !!db.prepare("SELECT 1 FROM pragma_table_info('history_documents') WHERE name='body_codec'").get();
     // FTS snippets and writes decode v2 text in SQL; any connection handed to the index can use it.
-    if (this.encoded) registerHistoryFunctions(db);
+    registerHistoryFunctions(db);
     this.checked = Number(db.prepare("SELECT coalesce(max(checked),0) AS n FROM history_files").get()!.n);
   }
 
