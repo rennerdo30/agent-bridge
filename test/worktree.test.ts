@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, toNamespacedPath } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
 import { createWorktree, finishWorktree, gitDirsOutside, gitStatusSnapshot, handoffWarning, removeWorktreeDirectory, subagentCommitMessage, worktreeReport } from "../src/core/worktree.js";
 import { cleanupWorktrees, type CleanupEntry } from "../src/core/worktree-cleanup.js";
 import { formatUsage } from "../src/mcp/format.js";
@@ -39,6 +40,7 @@ afterEach(() => {
     // ignore
   }
   rmSync(repo, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  closeMetadataDb(home);
   rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   vi.unstubAllEnvs();
 });
