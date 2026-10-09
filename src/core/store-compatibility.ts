@@ -171,6 +171,12 @@ export function liveStorePeers(home: string): Presence[] {
       const identity = cachedIdentity(home,record.pid,signature);
       if (identity && record.processIdentity && record.processIdentity !== identity) return [];
       if (identity && record.processIdentity === identity && validStoreCapabilities(record)) return [record];
+      // Recorded before its identity was known (as the file records allow): the verified identity
+      // binds it unless that process started after the observation, i.e. the PID was reused.
+      if (identity && !record.processIdentity && typeof record.observedAt === "number") {
+        if (legacyPidReused(identity, record.observedAt)) return [];
+        if (validStoreCapabilities(record)) return [record];
+      }
       return [{pid:record.pid,name:record.name ?? `pid ${record.pid}`,version:"unknown",json:0,sqlite:0,explicit:false}];
     });
   }
