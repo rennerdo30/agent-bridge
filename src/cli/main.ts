@@ -42,6 +42,8 @@ async function main(argv: string[]): Promise<number> {
       return (await import("./permission-repair.js")).runPermissionRepair(rest, home, log, out);
     case "doctor":
       return (await import("./doctor.js")).runDoctor(rest, home, out);
+    case "db":
+      return (await import("./db.js")).runDb(rest, home, out);
     case "reindex":
       if (rest.length) { out("Usage: agent-bridge reindex"); return 2; }
       return (await import("./reindex.js")).runReindex(home, pipe, log, out);
@@ -211,6 +213,7 @@ async function main(argv: string[]): Promise<number> {
       out(t("cli.usage"));
       out("Network: connect [--yes] [--non-interactive --create | --address <host:port> --code <code>] | network | pair | link <host:port> <code> | unlink <instance-id>");
       out("Storage: doctor --migration-plan [--json], or doctor [--json] [--backup | --fix | --archive | --restore <backup>] [--yes]");
+      out("Database viewer: db tables | db query \"<sql>\" [--db history] | db export --decompressed <table> <file.sqlite>");
       return 0;
     default:
       out(t("cli.unknownCommand", { command }));

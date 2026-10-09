@@ -1,21 +1,21 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
-import { historySchema } from "./history-schema.js";
-import { CONVERSATION_SCHEMA } from "./conversation-schema.js";
+import { DatabaseSync } from "node:sqlite";
+import { historyStoreV2Schema, HISTORY_V2_COPY_TABLES } from "./history-schema-v2.js";
+import { registerHistoryFunctions } from "./history-codec.js";
 import { configureSqlite, isSqliteBusy } from "./sqlite-policy.js";
 import { migrationLock } from "./migration-lock.js";
-import { resumableHistoryMigration, type HistoryMigrationOptions } from "./history-migration.js";
+import { encodeHistoryRow, decodeHistoryRow, HISTORY_V1_PREFIX, resumableHistoryMigration, type HistoryMigrationOptions } from "./history-migration.js";
 export type { HistoryMigrationOptions } from "./history-migration.js";
 
 export const HISTORY_DB_NAME = "history.db";
-export const HISTORY_STORE_VERSION = 1;
-export const HISTORY_COPY_ROWS = 32;
+/** v2: large text stored compressed (history-codec.ts); v1 tables are retained as v1_* inside the file. */
+export const HISTORY_STORE_VERSION = 2;
+export const HISTORY_COPY_ROWS = 64;
 export const HISTORY_BATCH_MS = 50;
-export const HISTORY_COPY_BYTES = 512 * 1024;
-// Payload pacing is shared by snapshot, copy, and verification; SQLite's own page
-// and index overhead is additional. Pressure pauses further reduce actual I/O.
-export const HISTORY_IO_BYTES_PER_SECOND = 8 * 1024 * 1024;
+export const HISTORY_COPY_BYTES = 2 * 1024 * 1024;
+// Payload pacing for copy and verification; pressure pauses further reduce actual I/O.
+export const HISTORY_IO_BYTES_PER_SECOND = 64 * 1024 * 1024;
 export interface HistoryMigrationProgress {
   phase: "starting" | "snapshot" | "copy" | "verify" | "paused" | "failed" | "verified";
   percent: number;
@@ -27,7 +27,7 @@ export interface HistoryMigrationProgress {
   ioBytesPerSecond: number;
   error: string | null;
 }
-export const HISTORY_TABLES = ["history_documents", "history_cursors", "history_files", "history_tags", "history_sessions", "history_pending", "conversations", "conversation_sources", "conversation_records", "conversation_parts", "conversation_projects", "conversation_memberships", "conversation_bindings", "conversation_envelopes"] as const;
+export const HISTORY_TABLES = HISTORY_V2_COPY_TABLES;
 const quote = (s: string) => `"${s.replaceAll('"', '""')}"`;
 
 export function historyDbPath(bridge: string): string {
@@ -46,26 +46,50 @@ export function historyReadPath(file: string): string {
   const db = new DatabaseSync(path, { readOnly: true, timeout: 100 });
   try { return historyReady(db) ? path : file; } finally { db.close(); }
 }
+/** Read-only connection for history readers: v2 text is decoded by ab_text() inside SQL (FTS snippets, views). */
+export function openHistoryReader(file: string, timeout = 100): DatabaseSync {
+  const db = new DatabaseSync(file, { readOnly: true, timeout });
+  try { registerHistoryFunctions(db); return db; } catch (err) { db.close(); throw err; }
+}
 
-/** Independent version sequence. No broker tables, triggers, or attached writable databases. */
+/** Independent version sequence. No broker tables, triggers, or attached writable databases.
+ * v1 → v2 keeps every v1 table inside the file, renamed v1_*, and copies from it (or from bridge.db) verified. */
 export function openHistoryStore(file: string): DatabaseSync {
   const db = new DatabaseSync(file, { timeout: 3000 });
   try {
     db.exec("PRAGMA busy_timeout=3000");
+    registerHistoryFunctions(db);
     const version = Number(db.prepare("PRAGMA user_version").get()!.user_version);
     if (version > HISTORY_STORE_VERSION) throw new Error(`unsupported history store version: ${version}`);
     configureSqlite(db);
     if (version === HISTORY_STORE_VERSION) return db;
     const release = migrationLock(file);
     try {
-      if (Number(db.prepare("PRAGMA user_version").get()!.user_version) === HISTORY_STORE_VERSION) return db;
+      const current = Number(db.prepare("PRAGMA user_version").get()!.user_version);
+      if (current === HISTORY_STORE_VERSION) return db;
       db.exec("BEGIN IMMEDIATE");
       try {
-        db.exec(historySchema().replace(/CREATE TRIGGER history_message_(?:insert|claim)[\s\S]*?END;/g, "").replace(/PRAGMA user_version = 4;/, ""));
-        db.exec(CONVERSATION_SCHEMA.slice(0, CONVERSATION_SCHEMA.indexOf("INSERT OR IGNORE INTO conversation_envelopes")));
-        db.exec(`CREATE TABLE history_migration(version INTEGER PRIMARY KEY, snapshot TEXT NOT NULL, status TEXT NOT NULL, manifest TEXT);
-          CREATE TABLE history_legacy_tail(source_id INTEGER PRIMARY KEY, target_id INTEGER NOT NULL);
-          PRAGMA user_version=${HISTORY_STORE_VERSION}; COMMIT`);
+        if (current === 1) {
+          // Keep every v1 object. FTS shadow tables follow their virtual table's rename.
+          for (const row of db.prepare("SELECT name FROM sqlite_master WHERE type='trigger'").all()) db.exec(`DROP TRIGGER ${quote(String(row.name))}`);
+          const tables = db.prepare("SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
+          const virtual = tables.filter(row => /^CREATE VIRTUAL TABLE/i.test(String(row.sql))).map(row => String(row.name));
+          for (const row of tables) {
+            const name = String(row.name);
+            if (virtual.some(v => name !== v && name.startsWith(`${v}_`))) continue;
+            db.exec(`ALTER TABLE ${quote(name)} RENAME TO ${quote(HISTORY_V1_PREFIX + name)}`);
+          }
+          // Index names must not collide with v2's; v1 indexes keep working under v1_ names.
+          for (const row of db.prepare("SELECT name,sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL").all()) {
+            const name = String(row.name);
+            if (name.startsWith(HISTORY_V1_PREFIX)) continue;
+            db.exec(`DROP INDEX ${quote(name)}`);
+            db.exec(String(row.sql).replace(/^CREATE (UNIQUE )?INDEX (IF NOT EXISTS )?"?([^"\s(]+)"?/i, (_m, unique = "", ifne = "") => `CREATE ${unique}INDEX ${ifne}${quote(HISTORY_V1_PREFIX + name)}`));
+          }
+        }
+        db.exec(historyStoreV2Schema());
+        db.exec(`PRAGMA user_version=${HISTORY_STORE_VERSION}`);
+        db.exec("COMMIT");
       } catch (err) { db.exec("ROLLBACK"); throw err; }
     } finally { release(); }
     return db;
@@ -73,7 +97,7 @@ export function openHistoryStore(file: string): DatabaseSync {
 }
 
 /** Durable snapshot/copy/verification chunks run only in the elected worker.
- * Legacy rows and every interrupted snapshot generation are retained. */
+ * The legacy store and every snapshot are retained. */
 export async function migrateHistoryStore(bridge: string, target: DatabaseSync, shouldPause: () => boolean = () => false, stopped: () => boolean = () => false, onLease?: (owner: string | null) => void, retryFailed = false, options: HistoryMigrationOptions = {}): Promise<void> {
   if (historyReady(target)) {
     options.onProgress?.({ phase: "verified", percent: 100, etaSeconds: 0, paused: false, completedRows: 0, totalRows: 0, snapshot: null, ioBytesPerSecond: options.ioBytesPerSecond ?? HISTORY_IO_BYTES_PER_SECOND, error: null });
@@ -86,21 +110,41 @@ export async function migrateHistoryStore(bridge: string, target: DatabaseSync, 
     const state = target.prepare("SELECT * FROM history_migration WHERE version=?").get(HISTORY_STORE_VERSION);
     if (state?.status === "failed") {
       if (!retryFailed) throw Object.assign(new Error("History migration verification failed previously; all originals and snapshots preserved; use agent-bridge reindex for an explicit retry"), { code: "HISTORY_VERIFICATION_FAILED" });
-      const failure = JSON.parse(String(state.manifest));
-      target.prepare("UPDATE history_migration SET status=?,manifest=? WHERE version=?").run(failure.resumeStatus, failure.snapshotManifest, HISTORY_STORE_VERSION);
+      // A retry starts a fresh copy from a fresh snapshot; earlier partial copies are kept under renamed tables.
+      retainFailedAttempt(target);
     }
     await resumableHistoryMigration(bridge, target, shouldPause, stopped, options);
   } catch (err) {
     const state = target.prepare("SELECT * FROM history_migration WHERE version=?").get(HISTORY_STORE_VERSION);
     const code = (err as { code?: string }).code;
-    if (state && state.status !== "failed" && !isSqliteBusy(err) && code !== "HISTORY_MIGRATION_STOPPED" && code !== "HISTORY_SNAPSHOT_PAUSED") {
-      target.prepare("UPDATE history_migration SET status='failed',manifest=? WHERE version=?").run(JSON.stringify({ error: String(err), resumeStatus: state.status, snapshotManifest: state.manifest }), HISTORY_STORE_VERSION);
+    if (state && state.status !== "failed" && !isSqliteBusy(err) && code !== "HISTORY_MIGRATION_STOPPED" && code !== "HISTORY_DISK_SPACE") {
+      target.prepare("UPDATE history_migration SET status='failed',manifest=? WHERE version=?").run(JSON.stringify({ error: String(err), resumeStatus: state.status }), HISTORY_STORE_VERSION);
     }
     throw err;
   } finally { release(); onLease?.(null); }
 }
 
+/** A failed copy is never erased: its rows move to retained_* tables and a fresh attempt starts. */
+function retainFailedAttempt(target: DatabaseSync): void {
+  const stamp = Date.now();
+  target.exec("BEGIN IMMEDIATE");
+  try {
+    for (const name of HISTORY_V2_COPY_TABLES) {
+      if (!Number(target.prepare(`SELECT count(*) n FROM ${quote(name)}`).get()!.n)) continue;
+      target.exec(`CREATE TABLE ${quote(`retained_${stamp}_${name}`)} AS SELECT rowid AS retained_rowid,* FROM ${quote(name)}`);
+      if (name === "conversation_records") target.exec("DROP TRIGGER IF EXISTS conversation_records_no_delete");
+      target.exec(`DELETE FROM ${quote(name)}`);
+    }
+    target.exec(`CREATE TRIGGER IF NOT EXISTS conversation_records_no_delete BEFORE DELETE ON conversation_records BEGIN
+ SELECT RAISE(ABORT,'conversation records are append-only'); END`);
+    target.exec(`CREATE TABLE ${quote(`retained_${stamp}_history_migration`)} AS SELECT * FROM history_migration; DELETE FROM history_migration;`);
+    target.exec(`CREATE TABLE ${quote(`retained_${stamp}_history_copy_state`)} AS SELECT * FROM history_copy_state; DELETE FROM history_copy_state;`);
+    target.exec("COMMIT");
+  } catch (err) { target.exec("ROLLBACK"); throw err; }
+}
+
 export function historyMigrationFailure(db: DatabaseSync): string | null {
+  if (!db.prepare("SELECT name FROM sqlite_master WHERE name='history_migration'").get()) return null;
   const state = db.prepare("SELECT status,manifest FROM history_migration WHERE version=?").get(HISTORY_STORE_VERSION);
   if (state?.status !== "failed") return null;
   try { return String(JSON.parse(String(state.manifest)).error); }
@@ -114,12 +158,13 @@ export function releaseExitedHistoryLease(bridge: string, owner: string): void {
   if (existsSync(path) && readFileSync(path,"utf8") === owner) rmSync(path);
 }
 
-/** Old pinned writers may append after the backup. Retain their bytes by natural key,
+/** Old pinned writers may append to bridge.db after the snapshot. Retain their bytes by natural key,
  * remapping numeric ids so concurrent native ingestion can never overwrite a legacy row.
- * Cursor publication follows a committed record, and replay validates its raw bytes.
- */
+ * Cursor publication follows a committed record, and replay validates its raw bytes. */
 export function copyLegacyConversationTail(source: DatabaseSync, target: DatabaseSync): number {
   if (!source.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='conversation_records'").get()) return 0;
+  const fts = !!target.prepare("SELECT name FROM sqlite_master WHERE name='history_fts'").get();
+  const v2 = !!target.prepare("SELECT 1 FROM pragma_table_info('conversation_records') WHERE name='raw_codec'").get();
   const after = Number(target.prepare("SELECT cursor FROM history_cursors WHERE source='legacy-record-tail'").get()?.cursor ?? 0);
   const deadline = Date.now() + HISTORY_BATCH_MS;
   let work = 0;
@@ -132,11 +177,14 @@ export function copyLegacyConversationTail(source: DatabaseSync, target: Databas
       target.prepare(`INSERT OR IGNORE INTO conversations(${columns.map(quote).join(",")}) VALUES(${columns.map(() => "?").join(",")})`).run(...Object.values(conversation));
       let copied = target.prepare("SELECT * FROM conversation_records WHERE source=? AND generation=? AND offset=?").get(row.source!, row.generation!, row.offset!);
       if (!copied) {
-        target.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body,part) VALUES(?,?,?,?,?,?,?,?)")
-          .run(row.source!, row.generation!, row.offset!, row.conversation!, row.at!, row.raw!, row.body!, row.part!);
+        const { id: _id, ...plain } = row;
+        const encoded = v2 ? encodeHistoryRow("conversation_records", plain, fts) : plain;
+        const names = ["source", "generation", "offset", "conversation", "at", "raw", ...(v2 ? ["raw_codec"] : []), "body", "part"];
+        target.prepare(`INSERT INTO conversation_records(${names.join(",")}) VALUES(${names.map(() => "?").join(",")})`).run(...names.map(name => encoded[name] ?? null));
         copied = target.prepare("SELECT * FROM conversation_records WHERE source=? AND generation=? AND offset=?").get(row.source!, row.generation!, row.offset!)!;
       }
-      if (copied.conversation !== row.conversation || !Buffer.from(copied.raw as Uint8Array).equals(Buffer.from(row.raw as Uint8Array))) throw new Error("Legacy transcript conflict; both originals retained, tail deferred");
+      const decoded = v2 ? decodeHistoryRow("conversation_records", copied) : copied;
+      if (decoded.conversation !== row.conversation || !Buffer.from(decoded.raw as Uint8Array).equals(Buffer.from(row.raw as Uint8Array))) throw new Error("Legacy transcript conflict; both originals retained, tail deferred");
       target.prepare("INSERT OR IGNORE INTO history_legacy_tail VALUES(?,?)").run(row.id!, copied.id!);
       target.prepare("INSERT INTO history_cursors VALUES('legacy-record-tail',?) ON CONFLICT(source) DO UPDATE SET cursor=excluded.cursor").run(String(row.id));
       target.exec("COMMIT");

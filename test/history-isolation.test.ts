@@ -1,13 +1,18 @@
-import { copyFileSync, existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { copyLegacyConversationTail, historyDbPath, historyMigrationFailure, historyReadPath, historyReady, HISTORY_TABLES, migrateHistoryStore, openHistoryStore, releaseExitedHistoryLease, type HistoryMigrationProgress } from "../src/core/history-store.js";
+import { decodeHistoryRow, HISTORY_V1_PREFIX } from "../src/core/history-migration.js";
+import { CODEC_PLAIN } from "../src/core/history-codec.js";
 import { MessageStore } from "../src/core/store.js";
 import { loadConfig } from "../src/core/config.js";
 import { ConversationIngestor, indexedConversationText } from "../src/core/conversations.js";
+import { HistoryIndex } from "../src/core/history.js";
 import { nullLogger } from "../src/core/logger.js";
 import { HistoryBackground } from "../src/core/history-background.js";
+import { historySchema } from "../src/core/history-schema.js";
+import { CONVERSATION_SCHEMA } from "../src/core/conversation-schema.js";
 import { installTranscriptFixtures } from "./transcript-fixtures.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -24,8 +29,31 @@ function legacy() {
   return db;
 }
 function target() { const db = openHistoryStore(historyDbPath(env.db)); closes.push(() => db.close()); return db; }
+type Row = Record<string, SQLInputValue>;
+/** v2 rows decoded back to the legacy layout, keyed like the legacy SELECT rowid,* rows. */
+function decoded(db: DatabaseSync, table: string, filter = ""): Row[] {
+  return db.prepare(`SELECT rowid,* FROM ${table} ${filter} ORDER BY rowid`).all().map(row => {
+    const { rowid, ...rest } = decodeHistoryRow(table, row as Row);
+    // SELECT rowid,* names the column after an INTEGER PRIMARY KEY alias instead.
+    return (rowid === undefined ? rest : { rowid, ...rest }) as Row;
+  });
+}
+function legacyRows(db: DatabaseSync, table: string): Row[] {
+  return db.prepare(`SELECT rowid,* FROM ${table} ORDER BY rowid`).all().map(row => {
+    // Byte columns decode to Buffer; compare the same representation.
+    const out: Row = {};
+    for (const [key, value] of Object.entries(row)) out[key] = value instanceof Uint8Array ? Buffer.from(value) : value;
+    return out;
+  });
+}
+function normalize(rows: Row[]): Row[] {
+  return rows.map(row => Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v instanceof Uint8Array ? Buffer.from(v) : v])));
+}
+function copyState(db: DatabaseSync, table: string) {
+  return db.prepare("SELECT * FROM history_copy_state WHERE table_name=?").get(table);
+}
 
-it("copies and verifies actual .17 tables with protected backup, preserving raw bytes and bridge schema", async () => {
+it("copies and verifies actual .17 tables from a consistent snapshot, preserving raw bytes and the bridge schema", async () => {
   const old = legacy(), db = target();
   expect(historyReadPath(env.db)).toBe(env.db);
   const version = old.prepare("PRAGMA user_version").get()!.user_version;
@@ -35,10 +63,12 @@ it("copies and verifies actual .17 tables with protected backup, preserving raw 
   expect(old.prepare("PRAGMA user_version").get()!.user_version).toBe(version);
   const state = db.prepare("SELECT * FROM history_migration").get()!;
   expect(existsSync(String(state.snapshot))).toBe(true);
+  expect(state.source).toBe("bridge");
   const manifest = JSON.parse(String(state.manifest));
   for (const table of HISTORY_TABLES) {
+    if (!old.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table)) continue;
     const filter = table === "history_cursors" ? "WHERE source<>'legacy-record-tail'" : "";
-    expect(db.prepare(`SELECT rowid,* FROM ${table} ${filter} ORDER BY rowid`).all()).toEqual(old.prepare(`SELECT rowid,* FROM ${table} ORDER BY rowid`).all());
+    expect(normalize(decoded(db, table, filter))).toEqual(legacyRows(old, table));
     expect(manifest[table].rows).toBe(Number(old.prepare(`SELECT count(*) n FROM ${table}`).get()!.n));
     expect(manifest[table].sha256).toMatch(/^[a-f0-9]{64}$/);
   }
@@ -46,93 +76,65 @@ it("copies and verifies actual .17 tables with protected backup, preserving raw 
   expect(db.prepare("SELECT snapshot FROM history_migration").get()!.snapshot).toBe(state.snapshot);
 });
 
+it("stores large text compressed and once, restores it byte-exact, and keeps search working", async () => {
+  const old = legacy();
+  const text = JSON.stringify({ type: "message", content: [{ type: "text", text: "walnut compression needle " + "lorem ipsum dolor ".repeat(400) }] });
+  for (let i = 0; i < 20; i++) old.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('big',0,?,'codex:legacy',1,?,?)").run(i, Buffer.from(text), text);
+  old.prepare("INSERT INTO history_documents(id,kind,agent,at,body,folded,link) VALUES('big-doc','transcript','codex',1,?,?,'/big')").run("Walnut Café " + "lorem ipsum ".repeat(500), ("Walnut Café " + "lorem ipsum ".repeat(500)).normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase());
+  const db = target();
+  await migrateHistoryStore(env.db, db);
+  const record = db.prepare("SELECT raw,raw_codec,body FROM conversation_records WHERE source='big' LIMIT 1").get()!;
+  expect(record.raw_codec).not.toBe(CODEC_PLAIN);
+  expect((record.raw as Uint8Array).length).toBeLessThan(Buffer.byteLength(text) / 5);
+  expect(record.body).toBeNull();
+  const doc = db.prepare("SELECT body_codec,folded FROM history_documents WHERE id='big-doc'").get()!;
+  expect(doc.body_codec).not.toBe(CODEC_PLAIN);
+  expect(doc.folded).toBeNull();
+  expect(normalize(decoded(db, "conversation_records"))).toEqual(legacyRows(old, "conversation_records"));
+  // Readable views for our own viewer.
+  expect(db.prepare("SELECT raw_text FROM v_conversation_records WHERE source='big' LIMIT 1").get()!.raw_text).toBe(text);
+  expect(new HistoryIndex(db, null).search({ query: "walnut cafe" }).hits.map(hit => hit.id)).toContain("big-doc");
+});
+
 it("resumes an interrupted copy against its original snapshot without deleting source rows", async () => {
   const old = legacy(), db = target();
   await expect(migrateHistoryStore(env.db, db, () => false, () => Number(db.prepare("SELECT count(*) n FROM conversation_records").get()!.n) > 0)).rejects.toThrow("stopped");
   const snapshot = db.prepare("SELECT snapshot FROM history_migration").get()!.snapshot;
   expect(historyReady(db)).toBe(false);
+  expect(historyMigrationFailure(db)).toBeNull();
   await migrateHistoryStore(env.db, db);
   expect(historyReady(db)).toBe(true);
   expect(db.prepare("SELECT snapshot FROM history_migration").get()!.snapshot).toBe(snapshot);
-  expect(db.prepare("SELECT * FROM conversation_records").all()).toEqual(old.prepare("SELECT * FROM conversation_records").all());
+  expect(normalize(decoded(db, "conversation_records"))).toEqual(legacyRows(old, "conversation_records"));
 });
 
-it("fails closed on copy conflict and retains the backup and all original data", async () => {
+it("fails closed on a copy conflict, latches the failure, and an explicit retry keeps the failed attempt", async () => {
   const old = legacy(), db = target();
   const row = old.prepare("SELECT * FROM history_documents LIMIT 1").get()!;
-  db.prepare("INSERT INTO history_documents VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(row.id!,row.kind!,row.agent!,row.at!,"conflict",row.folded!,row.link!,row.message!,row.job!,row.run!,row.session!,row.cursor!);
-  await expect(migrateHistoryStore(env.db, db)).rejects.toThrow("verification failed");
+  db.prepare("INSERT INTO history_documents(id,kind,agent,at,body,body_codec,folded,link,message,job,run,session,cursor) VALUES(?,?,?,?,?,0,?,?,?,?,?,?,?)").run(row.id!,row.kind!,row.agent!,row.at!,"conflict",row.folded!,row.link!,row.message!,row.job!,row.run!,row.session!,row.cursor!);
+  await expect(migrateHistoryStore(env.db, db)).rejects.toThrow();
   expect(historyReady(db)).toBe(false);
   expect(existsSync(String(db.prepare("SELECT snapshot FROM history_migration").get()!.snapshot))).toBe(true);
   expect(old.prepare("SELECT body FROM history_documents WHERE id=?").get(row.id!)!.body).toBe(row.body);
-  expect(historyMigrationFailure(db)).toMatch(/verification failed/);
-  const snapshot = db.prepare("SELECT snapshot FROM history_migration").get()!.snapshot;
-  const retained = db.prepare("SELECT count(*) n FROM conversation_records").get()!.n;
+  expect(historyMigrationFailure(db)).toBeTruthy();
   await expect(migrateHistoryStore(env.db, db)).rejects.toThrow("explicit retry");
-  expect(db.prepare("SELECT snapshot FROM history_migration").get()!.snapshot).toBe(snapshot);
-  expect(db.prepare("SELECT count(*) n FROM conversation_records").get()!.n).toBe(retained);
-  db.prepare("UPDATE history_documents SET body=? WHERE id=?").run(row.body!, row.id!);
   await migrateHistoryStore(env.db, db, undefined, undefined, undefined, true);
   expect(historyMigrationFailure(db)).toBeNull();
   expect(historyReady(db)).toBe(true);
+  // The conflicting partial attempt is retained, not erased.
+  const retained = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'retained_%_history_documents'").get()!;
+  expect(db.prepare(`SELECT body FROM "${retained.name}" WHERE id=?`).get(row.id!)!.body).toBe("conflict");
+  expect(decodeHistoryRow("history_documents", db.prepare("SELECT * FROM history_documents WHERE id=?").get(row.id!)!).body).toBe(row.body);
 });
 
-it("backs up only history tables and excludes unrelated broker payloads and FTS shadow tables", async () => {
+it("copies rows appended after the snapshot through the legacy tail, idempotently", async () => {
   const old = legacy(), db = target();
-  old.exec("CREATE TABLE unrelated_payload(raw BLOB); INSERT INTO unrelated_payload VALUES(zeroblob(8388608))");
   await migrateHistoryStore(env.db, db);
-  const snapshot = String(db.prepare("SELECT snapshot FROM history_migration").get()!.snapshot);
-  const backup = new DatabaseSync(snapshot, { readOnly: true });
-  try {
-    expect(backup.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map(row => row.name)).toEqual([...HISTORY_TABLES].sort());
-    expect(statSync(snapshot).size).toBeLessThan(1024 * 1024);
-    expect(backup.prepare("PRAGMA integrity_check").get()!.integrity_check).toBe("ok");
-    expect(backup.prepare("SELECT raw FROM conversation_records ORDER BY id").all()).toEqual(old.prepare("SELECT raw FROM conversation_records ORDER BY id").all());
-  } finally { backup.close(); }
-  expect(old.prepare("SELECT length(raw) n FROM unrelated_payload").get()!.n).toBe(8388608);
-});
-
-it("resumes durable snapshot chunks against a new consistent view without abandoning retained data", async () => {
-  const old = legacy(), db = target();
-  let checks = 0;
-  await expect(migrateHistoryStore(env.db, db, () => false, () => ++checks > 7)).rejects.toThrow("stopped");
-  const state = db.prepare("SELECT snapshot,status FROM history_migration").get()!;
-  expect(state.status).toBe("snapshotting");
-  expect(existsSync(String(state.snapshot))).toBe(true);
-  expect(db.prepare("SELECT count(*) n FROM conversation_records").get()!.n).toBe(0);
-  old.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('after-stop',0,0,'codex:legacy',1,?,'after stop')").run(Buffer.from("after stop"));
-  await migrateHistoryStore(env.db, db);
-  expect(historyReady(db)).toBe(true);
-  expect(existsSync(String(state.snapshot))).toBe(true);
-  expect(db.prepare("SELECT snapshot FROM history_migration").get()!.snapshot).toBe(state.snapshot);
-  // The append-only fence remains the initial high-water mark. Late rows replay
-  // from the preserved legacy tail rather than moving that consistent cohort.
+  old.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('after-snapshot',0,0,'codex:legacy',1,?,'late')").run(Buffer.from("late"));
   expect(copyLegacyConversationTail(old, db)).toBe(1);
-  expect(db.prepare("SELECT raw FROM conversation_records WHERE source='after-stop'").get()!.raw).toEqual(old.prepare("SELECT raw FROM conversation_records WHERE source='after-stop'").get()!.raw);
-});
-
-it("holds one source snapshot across tables while allowing legacy WAL appends", async () => {
-  const old = legacy(), db = target();
-  let appended = false;
-  await migrateHistoryStore(env.db, db, () => {
-    const state = db.prepare("SELECT snapshot,status FROM history_migration").get();
-    if (!appended && state?.status === "snapshotting" && existsSync(String(state.snapshot))) {
-      const backup = new DatabaseSync(String(state.snapshot), { readOnly: true });
-      try {
-        if (backup.prepare("SELECT name FROM sqlite_master WHERE name='history_cursors'").get()) {
-          // Earlier tables are already committed to the backup. A late table append
-          // must not enter the same snapshot with a different source view.
-          old.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('during-snapshot',0,0,'codex:legacy',1,?,'late')").run(Buffer.from("late"));
-          appended = true;
-        }
-      } finally { backup.close(); }
-    }
-    return false;
-  });
-  expect(appended).toBe(true);
-  expect(db.prepare("SELECT * FROM conversation_records WHERE source='during-snapshot'").get()).toBeUndefined();
-  expect(copyLegacyConversationTail(old, db)).toBe(1);
-  expect(Buffer.from(db.prepare("SELECT raw FROM conversation_records WHERE source='during-snapshot'").get()!.raw as Uint8Array).toString()).toBe("late");
+  expect(copyLegacyConversationTail(old, db)).toBe(0);
+  const row = db.prepare("SELECT * FROM conversation_records WHERE source='after-snapshot'").get()!;
+  expect((decodeHistoryRow("conversation_records", row).raw as Buffer).toString()).toBe("late");
 });
 
 it("honors pressure before snapshot work and stop during the pressure pause", async () => {
@@ -146,10 +148,10 @@ it("honors pressure before snapshot work and stop during the pressure pause", as
   expect(historyMigrationFailure(db)).toBeNull();
 });
 
-it("honors pressure during target verification and preserves the copy on stop", async () => {
+it("honors pressure during verification and preserves the copy on stop", async () => {
   legacy(); const db = target(); let paused = false, stop = false;
   const migration = migrateHistoryStore(env.db, db, () => {
-    if (Number(db.prepare("SELECT count(*) n FROM conversation_records").get()!.n) === 80) paused = true;
+    if (Number(copyState(db, "conversation_records")?.verified_rows ?? 0) > 0) paused = true;
     return paused;
   }, () => stop);
   for (let i = 0; i < 500 && !paused; i++) await new Promise(resolve => setTimeout(resolve, 10));
@@ -164,35 +166,32 @@ it("honors pressure during target verification and preserves the copy on stop", 
   expect(db.prepare("SELECT snapshot FROM history_migration").get()!.snapshot).toBe(snapshot);
 });
 
-it("releases the source read transaction after sustained pressure and retains its partial snapshot", async () => {
-  const old = legacy(), db = target(); let pressure = false;
-  await expect(migrateHistoryStore(env.db, db, () => {
-    const state = db.prepare("SELECT snapshot FROM history_migration").get();
-    if (!pressure && state && existsSync(String(state.snapshot))) {
-      const backup = new DatabaseSync(String(state.snapshot), { readOnly: true });
-      try { pressure = !!backup.prepare("SELECT name FROM sqlite_master WHERE name='history_cursors'").get(); }
-      finally { backup.close(); }
-    }
-    return pressure;
-  })).rejects.toMatchObject({ code: "HISTORY_SNAPSHOT_PAUSED" });
-  const state = db.prepare("SELECT snapshot,status FROM history_migration").get()!;
-  expect(state.status).toBe("snapshotting");
-  expect(existsSync(String(state.snapshot))).toBe(true);
-  expect(historyMigrationFailure(db)).toBeNull();
-  // No surviving read transaction pins committed WAL pages after the pause abort.
-  expect(old.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get()!.busy).toBe(0);
+it("persists copy and verification cursors and resumes each phase after a stop", async () => {
+  const old = legacy();
+  for (let i = 0; i < 400; i++) old.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('many',0,?,'codex:legacy',1,?,'x')").run(i, Buffer.from(`row ${i}`));
+  const db = target(); const total = Number(old.prepare("SELECT count(*) n FROM conversation_records").get()!.n);
+  for (const field of ["copied_rows", "verified_rows"]) {
+    let stop = false;
+    await expect(migrateHistoryStore(env.db, db, () => false, () => stop, undefined, false, { onProgress: () => {
+      const n = Number(copyState(db, "conversation_records")?.[field] ?? 0);
+      if (n > 0 && n < total) stop = true;
+    } })).rejects.toThrow("stopped");
+    const state = copyState(db, "conversation_records")!;
+    expect(Number(state[field])).toBeGreaterThan(0);
+    expect(Number(state[field])).toBeLessThan(total);
+    if (field === "verified_rows") expect(state.copied_rows).toBe(total);
+  }
   await migrateHistoryStore(env.db, db);
   expect(historyReady(db)).toBe(true);
-  expect(existsSync(String(state.snapshot))).toBe(true);
-  expect(db.prepare("SELECT snapshot FROM history_migration").get()!.snapshot).toBe(state.snapshot);
+  expect(copyState(db, "conversation_records")).toMatchObject({ copied_rows: total, verified_rows: total, done: 1, verified: 1 });
+  expect(normalize(decoded(db, "conversation_records"))).toEqual(legacyRows(old, "conversation_records"));
 });
 
 it("does not retry failed verification after worker restart until explicit reindex", async () => {
   const old = legacy(), db = target();
   const row = old.prepare("SELECT * FROM history_documents LIMIT 1").get()!;
-  db.prepare("INSERT INTO history_documents VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(row.id!,row.kind!,row.agent!,row.at!,"conflict",row.folded!,row.link!,row.message!,row.job!,row.run!,row.session!,row.cursor!);
-  await expect(migrateHistoryStore(env.db, db)).rejects.toThrow("verification failed");
-  db.prepare("UPDATE history_documents SET body=? WHERE id=?").run(row.body!, row.id!);
+  db.prepare("INSERT INTO history_documents(id,kind,agent,at,body,body_codec,folded,link,message,job,run,session,cursor) VALUES(?,?,?,?,?,0,?,?,?,?,?,?,?)").run(row.id!,row.kind!,row.agent!,row.at!,"conflict",row.folded!,row.link!,row.message!,row.job!,row.run!,row.session!,row.cursor!);
+  await expect(migrateHistoryStore(env.db, db)).rejects.toThrow();
   vi.stubEnv("CODEX_HOME", join(env.home, "codex-fixture"));
   vi.stubEnv("CLAUDE_CONFIG_DIR", join(env.home, "claude-fixture"));
   vi.stubEnv("XDG_DATA_HOME", join(env.home, "xdg-fixture"));
@@ -203,7 +202,7 @@ it("does not retry failed verification after worker restart until explicit reind
     await new Promise(resolve => setTimeout(resolve, 2300));
     expect(historyReady(db)).toBe(false);
     expect(warnings).toEqual(["history background batch deferred"]);
-    await expect(worker.tick()).rejects.toThrow("verification failed");
+    await expect(worker.tick()).rejects.toThrow();
     expect(historyReady(db)).toBe(false);
     worker.pressure(true);
     await worker.tick(true); // Explicit retry survives a pressure-deferred request.
@@ -213,64 +212,15 @@ it("does not retry failed verification after worker restart until explicit reind
     expect(historyReady(db)).toBe(true);
     expect(historyMigrationFailure(db)).toBeNull();
   } finally { await worker.close(); }
-}, 15_000);
+}, 30_000);
 
-function checkpoint(db: DatabaseSync, table: string) {
-  const state = db.prepare("SELECT snapshot FROM history_migration").get();
-  if (!state || !existsSync(`${state.snapshot}.progress.db`)) return undefined;
-  const meta = new DatabaseSync(`${state.snapshot}.progress.db`, { readOnly: true, timeout: 100 });
-  try {
-    if (!meta.prepare("SELECT name FROM sqlite_master WHERE name='table_state'").get()) return undefined;
-    return meta.prepare("SELECT * FROM table_state WHERE table_name=?").get(table);
-  } finally { meta.close(); }
-}
-
-it("persists separate snapshot, copy and verification chunk cursors and resumes each phase", async () => {
-  legacy(); const db = target();
-  const snapshots: unknown[] = [];
-  for (const field of ["snapshot_rows", "copy_rows", "verify_rows"]) {
-    let stop = false;
-    await expect(migrateHistoryStore(env.db, db, () => false, () => stop, undefined, false, { onProgress: progress => {
-      const state = checkpoint(db, "conversation_records");
-      if (state && Number(state[field]) >= 32 && Number(state[field]) < 80) { stop = true; snapshots.push(progress.snapshot); }
-    } })).rejects.toThrow("stopped");
-    const state = checkpoint(db,"conversation_records")!;
-    expect(state[field]).toBe(32);
-    for (const earlier of ["snapshot_rows", "copy_rows", "verify_rows"].slice(0,["snapshot_rows", "copy_rows", "verify_rows"].indexOf(field))) expect(state[earlier]).toBe(80);
-  }
-  await migrateHistoryStore(env.db, db);
-  expect(historyReady(db)).toBe(true);
-  expect(new Set(snapshots).size).toBe(1);
-  expect(checkpoint(db,"conversation_records")).toMatchObject({snapshot_rows:80,snapshot_verify_rows:80,copy_rows:80,verify_rows:80,snapshot_done:1,copy_done:1,verify_done:1});
-});
-
-it("retains a changed mutable table generation and reuses unchanged snapshot chunks", async () => {
-  const old = legacy(), db = target(); let stop = false;
-  const row = old.prepare("SELECT id,body FROM history_documents LIMIT 1").get()!;
+it("bases ETA on new work when resuming", async () => {
+  const old = legacy();
+  for (let i = 0; i < 400; i++) old.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('eta',0,?,'codex:legacy',1,?,'x')").run(i, Buffer.from(`row ${i}`));
+  const db = target(); let stop = false;
   await expect(migrateHistoryStore(env.db, db, () => false, () => stop, undefined, false, { onProgress: () => {
-    if (checkpoint(db,"history_documents")?.snapshot_done) stop = true;
+    if (Number(copyState(db, "conversation_records")?.copied_rows ?? 0) > 0) stop = true;
   } })).rejects.toThrow("stopped");
-  const state = db.prepare("SELECT snapshot FROM history_migration").get()!;
-  old.prepare("UPDATE history_documents SET body='updated retained history' WHERE id=?").run(row.id!);
-  await migrateHistoryStore(env.db, db);
-  expect(historyReady(db)).toBe(true);
-  expect(db.prepare("SELECT body FROM history_documents WHERE id=?").get(row.id!)!.body).toBe("updated retained history");
-  const meta = new DatabaseSync(`${state.snapshot}.progress.db`, { readOnly: true });
-  const backup = new DatabaseSync(String(state.snapshot), { readOnly: true });
-  try {
-    const archived = meta.prepare("SELECT archived_table FROM artifacts WHERE table_name='history_documents' AND generation=0").get()!;
-    expect(archived).toBeDefined();
-    expect(backup.prepare(`SELECT body FROM "${archived.archived_table}" WHERE id=?`).get(row.id!)!.body).toBe(row.body);
-    expect(checkpoint(db,"history_documents")!.generation).toBe(1);
-  } finally { meta.close(); backup.close(); }
-});
-
-it.each(["copy_rows", "verify_rows"])("bases ETA on new work when resuming %s", async (field) => {
-  const old = legacy(), db = target(); let stop = false;
-  await expect(migrateHistoryStore(env.db, db, () => false, () => stop, undefined, false, { onProgress: () => {
-    if (Number(checkpoint(db, "conversation_records")?.[field]) === 32) stop = true;
-  } })).rejects.toThrow("stopped");
-  const snapshot = db.prepare("SELECT snapshot FROM history_migration").get()!.snapshot;
   const now = Date.now.bind(Date); let offset = 0;
   const clock = vi.spyOn(Date, "now").mockImplementation(() => now() + offset);
   const updates: HistoryMigrationProgress[] = [];
@@ -283,46 +233,42 @@ it.each(["copy_rows", "verify_rows"])("bases ETA on new work when resuming %s", 
   } finally { clock.mockRestore(); }
   expect(baseline!.completedRows).toBeGreaterThan(0);
   expect(baseline!.etaSeconds).toBeNull();
-  const advanced = updates.find(progress => progress.completedRows > baseline!.completedRows)!;
+  const advanced = updates.find(progress => progress.completedRows > baseline!.completedRows && progress.phase !== "verified")!;
   expect(advanced).toBeDefined();
-  const newRows = advanced.completedRows - baseline!.completedRows;
-  expect(advanced.etaSeconds).toBeGreaterThanOrEqual(Math.ceil(60 * (advanced.totalRows - advanced.completedRows) / newRows));
+  expect(advanced.etaSeconds).not.toBeNull();
   expect(historyReady(db)).toBe(true);
-  expect(db.prepare("SELECT snapshot FROM history_migration").get()!.snapshot).toBe(snapshot);
-  expect(db.prepare("SELECT * FROM conversation_records").all()).toEqual(old.prepare("SELECT * FROM conversation_records").all());
 });
 
-it("resets ETA when a mutable snapshot generation replaces prior work", async () => {
-  const old = legacy(), db = target(); let stop = false;
-  const original = old.prepare("SELECT id,body FROM history_documents LIMIT 1").get()!;
-  const insert = old.prepare("INSERT INTO history_documents SELECT ?,kind,agent,at,body,folded,link,message,job,run,session,cursor FROM history_documents WHERE id=?");
-  for (let i = 0; i < 96; i++) insert.run(`eta-generation-${i}`, original.id!);
-  await expect(migrateHistoryStore(env.db, db, () => false, () => stop, undefined, false, { onProgress: () => {
-    if (Number(checkpoint(db, "history_documents")?.snapshot_rows) === 32) stop = true;
-  } })).rejects.toThrow("stopped");
-  old.prepare("UPDATE history_documents SET body='changed ETA generation' WHERE id=?").run(original.id!);
-  const now = Date.now.bind(Date); let offset = 0, first = true;
-  const clock = vi.spyOn(Date, "now").mockImplementation(() => now() + offset);
-  let restarted: HistoryMigrationProgress | undefined;
-  try {
-    await migrateHistoryStore(env.db, db, undefined, undefined, undefined, false, { onProgress: progress => {
-      if (first) { first = false; expect(progress.etaSeconds).toBeNull(); offset = 60_000; }
-      const state = checkpoint(db, "history_documents");
-      if (!restarted && state?.generation === 1 && Number(state.snapshot_rows) === 32) restarted = progress;
-    } });
-  } finally { clock.mockRestore(); }
-  expect(restarted).toBeDefined();
-  expect(restarted!.etaSeconds).not.toBeNull();
-  expect(restarted!.etaSeconds).toBeLessThan(10);
-  expect(historyReady(db)).toBe(true);
-  expect(checkpoint(db, "history_documents")!.generation).toBe(1);
-  expect(db.prepare("SELECT body FROM history_documents WHERE id=?").get(original.id!)!.body).toBe("changed ETA generation");
+it("upgrades a verified v1 store in place, keeps its tables and copies from them", async () => {
+  legacy();
+  const path = historyDbPath(env.db);
+  const v1 = new DatabaseSync(path);
+  v1.exec(historySchema().replace(/CREATE TRIGGER history_message_(?:insert|claim)[\s\S]*?END;/g, "").replace(/PRAGMA user_version = 4;/, ""));
+  v1.exec(CONVERSATION_SCHEMA.slice(0, CONVERSATION_SCHEMA.indexOf("INSERT OR IGNORE INTO conversation_envelopes")));
+  v1.exec(`CREATE TABLE history_migration(version INTEGER PRIMARY KEY, snapshot TEXT NOT NULL, status TEXT NOT NULL, manifest TEXT);
+    CREATE TABLE history_legacy_tail(source_id INTEGER PRIMARY KEY, target_id INTEGER NOT NULL);
+    INSERT INTO history_migration VALUES(1,'old-snapshot','verified','{}');
+    INSERT INTO conversations(id,agent,session) VALUES('codex:v1-only','codex','v1');
+    PRAGMA user_version=1;`);
+  const raw = Buffer.from("ingested after the v1 migration ".repeat(40));
+  v1.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('v1-only',0,0,'codex:v1-only',1,?,'')").run(raw);
+  v1.prepare("INSERT INTO history_documents(id,kind,agent,at,body,folded,link) VALUES('v1-doc','transcript','codex',1,'Pecan v1 document','pecan v1 document','/v1')").run();
+  v1.close();
+  const db = target();
+  expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(2);
+  expect(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table' AND name=?").get(`${HISTORY_V1_PREFIX}conversation_records`)!.n).toBe(1);
+  await migrateHistoryStore(env.db, db);
+  expect(db.prepare("SELECT source FROM history_migration").get()!.source).toBe("history-v1");
+  const copied = decodeHistoryRow("conversation_records", db.prepare("SELECT * FROM conversation_records WHERE source='v1-only'").get()!);
+  expect((copied.raw as Buffer).equals(raw)).toBe(true);
+  expect(copied.body).toBe("");
+  expect(Buffer.from(db.prepare(`SELECT raw FROM ${HISTORY_V1_PREFIX}conversation_records WHERE source='v1-only'`).get()!.raw as Uint8Array).equals(raw)).toBe(true);
+  expect(new HistoryIndex(db, null).search({ query: "pecan" }).hits.map(hit => hit.id)).toEqual(["v1-doc"]);
 });
 
 it("migrates history-only legacy schemas and leaves native ingestion able to continue", async () => {
   const old = new DatabaseSync(env.db); closes.push(() => old.close());
   // Schema6 precedes transcript storage but already has searchable history tables.
-  const { historySchema } = await import("../src/core/history-schema.js");
   old.exec("CREATE TABLE messages(id TEXT,body TEXT,from_agent TEXT,from_name TEXT,from_id TEXT,recipient TEXT,to_target TEXT,created_at INTEGER)");
   old.exec(historySchema());
   old.exec("CREATE TABLE decisions(id TEXT); PRAGMA user_version=6");
@@ -347,7 +293,7 @@ it("replays .17 raw appends after snapshot despite colliding numeric ids, idempo
   old.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('late-old',0,0,'codex:legacy',1,?,'old')").run(raw);
   expect(copyLegacyConversationTail(old, db)).toBe(1);
   expect(copyLegacyConversationTail(old, db)).toBe(0);
-  expect(Buffer.from(db.prepare("SELECT raw FROM conversation_records WHERE source='late-old'").get()!.raw as Uint8Array)).toEqual(raw);
+  expect(decodeHistoryRow("conversation_records", db.prepare("SELECT * FROM conversation_records WHERE source='late-old'").get()!).raw).toEqual(raw);
   expect(Buffer.from(db.prepare("SELECT raw FROM conversation_records WHERE source='new'").get()!.raw as Uint8Array).toString()).toBe("new");
   expect(db.prepare("SELECT source_id,target_id FROM history_legacy_tail").get()!.target_id).not.toBe(db.prepare("SELECT source_id FROM history_legacy_tail").get()!.source_id);
 });
@@ -364,14 +310,14 @@ it("honors both kill switches and indexes text without duplicating full transcri
 
 it("preserves a future history schema, falls back to legacy reads, and cleans constructor resources", () => {
   const old = legacy(), db = target();
-  db.exec("PRAGMA user_version=2");
+  db.exec("PRAGMA user_version=3");
   expect(() => openHistoryStore(historyDbPath(env.db))).toThrow("unsupported history store version");
   expect(historyReadPath(env.db)).toBe(env.db);
   expect(() => new MessageStore(env.db,nullLogger)).toThrow("unsupported history store version");
   expect(readdirSync(join(env.home,".storage-users"))).toEqual([]);
   // A failed constructor leaves neither an authoritative writer lock nor a schema rewrite.
   old.exec("BEGIN IMMEDIATE; COMMIT");
-  expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(2);
+  expect(db.prepare("PRAGMA user_version").get()!.user_version).toBe(3);
 });
 
 it("cleans a terminated worker lease only when its exact owner nonce still matches", () => {

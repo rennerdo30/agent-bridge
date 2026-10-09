@@ -22,7 +22,9 @@ import { conversationProject, syncProjectMirror } from "./project-store.js";
 import { readArchivedJobSnapshot } from "./job-archive.js";
 import { readJsonSnapshot } from "./file-cache.js";
 import { antigravityItems } from "./transcripts/antigravity.js";
-import { historyReadPath, HISTORY_BATCH_MS } from "./history-store.js";
+import { historyReadPath, openHistoryReader, HISTORY_BATCH_MS } from "./history-store.js";
+import { decodeBytes, encodeBytes, encodeText, registerHistoryFunctions } from "./history-codec.js";
+import { decodeHistoryRow } from "./history-migration.js";
 
 export const CONVERSATION_BYTES = 64 * 1024;
 import { conversationPageSchema, type ConversationRequest, type ConversationPage } from "./conversation-query.js";
@@ -70,12 +72,18 @@ export class ConversationIngestor {
   private watched = new Set<string>();
   private dirty = new Set<string>();
   private idleSources = 0;
+  private readonly encoded: boolean;
+  private readonly fts: boolean;
   constructor(
     private db: DatabaseSync,
     private home: string,
     private paths: TranscriptPaths,
     private source: DatabaseSync = db,
   ) {
+    // History store v2 compresses raw bytes (raw_codec); bridge.db and v1 stores keep them plain.
+    this.encoded = !!db.prepare("SELECT 1 FROM pragma_table_info('conversation_records') WHERE name='raw_codec'").get();
+    this.fts = !!db.prepare("SELECT name FROM sqlite_master WHERE name='history_fts'").get();
+    if (this.encoded) registerHistoryFunctions(db);
     this.checked = Number(
       db
         .prepare("SELECT coalesce(max(checked),0) n FROM (SELECT checked FROM conversation_sources UNION ALL SELECT checked FROM conversation_projects)")
@@ -394,19 +402,20 @@ export class ConversationIngestor {
       return;
     }
     // Retain bytes exactly once. The derived text omits bulky JSON/tool metadata.
-    const body = indexedConversationText(raw);
-    const result = this.db
-      .prepare(
-        "INSERT OR IGNORE INTO conversation_records(source,generation,offset,conversation,at,raw,body,part) VALUES(?,?,?,?,?,?,?,?)",
-      )
-      .run(source, generation, offset, conversation, at, raw, body === raw.toString("utf8") ? "" : body, part);
+    const body = indexedConversationText(raw), stored = body === raw.toString("utf8") ? "" : body;
+    const encoded = this.encoded ? encodeBytes(raw) : null;
+    const result = encoded
+      ? this.db.prepare("INSERT OR IGNORE INTO conversation_records(source,generation,offset,conversation,at,raw,raw_codec,body,part) VALUES(?,?,?,?,?,?,?,?,?)")
+        .run(source, generation, offset, conversation, at, encoded.value, encoded.codec, stored, part)
+      : this.db.prepare("INSERT OR IGNORE INTO conversation_records(source,generation,offset,conversation,at,raw,body,part) VALUES(?,?,?,?,?,?,?,?)")
+        .run(source, generation, offset, conversation, at, raw, stored, part);
     // A lock can interrupt derived indexing after retaining the bytes. Replay repairs
     // documents/tags before the caller advances its source cursor.
     const record = Number(result.changes) ? Number(result.lastInsertRowid) : Number(this.db
       .prepare("SELECT id FROM conversation_records WHERE source=? AND generation=? AND offset=?")
       .get(source, generation, offset)!.id);
-    const retained = this.db.prepare("SELECT raw FROM conversation_records WHERE id=?").get(record)!;
-    if (!Buffer.from(retained.raw as Uint8Array).equals(raw)) {
+    const retained = this.db.prepare("SELECT * FROM conversation_records WHERE id=?").get(record)!;
+    if (!decodeBytes(retained.raw, retained.raw_codec).equals(raw)) {
       throw Object.assign(new Error(`History import verification failed at ${source}:${generation}:${offset}; cursor not advanced, originals retained`), { code: "HISTORY_IMPORT_VERIFICATION_FAILED" });
     }
     const native = this.db.prepare("SELECT kind,agent FROM conversations WHERE id=?").get(conversation);
@@ -441,8 +450,9 @@ export class ConversationIngestor {
       recordProject = c.project!,
       recordKind = c.kind!;
     if (c.kind === "message" || c.kind === "decision") {
-      const first = Buffer.from(this.db.prepare("SELECT raw FROM conversation_records WHERE source=? AND generation=? ORDER BY offset LIMIT 1")
-        .get(recordInfo.source!, recordInfo.generation!)!.raw as Uint8Array).toString("utf8");
+      const firstRow = this.db.prepare("SELECT * FROM conversation_records WHERE source=? AND generation=? ORDER BY offset LIMIT 1")
+        .get(recordInfo.source!, recordInfo.generation!)!;
+      const first = decodeBytes(firstRow.raw, firstRow.raw_codec).toString("utf8");
       const metadata = parse(first);
       for (const key of [
         "from_agent",
@@ -498,9 +508,14 @@ export class ConversationIngestor {
       }
     }
     const eventKind = String(recordInfo.part ?? "").replace(/^event:/, "");
+    // History store v2: compressed body; FTS needs no folded copy.
+    const storedBody = this.encoded ? encodeText(body) : null;
+    const foldedBody = storedBody && this.fts ? null : fold(body);
     this.db
       .prepare(
-        "INSERT OR IGNORE INTO history_documents(id,kind,agent,at,body,folded,link,message,job,run,session,cursor) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        storedBody
+          ? "INSERT OR IGNORE INTO history_documents(id,kind,agent,at,body,body_codec,folded,link,message,job,run,session,cursor) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
+          : "INSERT OR IGNORE INTO history_documents(id,kind,agent,at,body,folded,link,message,job,run,session,cursor) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
       )
       .run(
         id,
@@ -511,8 +526,8 @@ export class ConversationIngestor {
             : recordKind,
         recordAgent,
         at,
-        body,
-        fold(body),
+        ...(storedBody ? [storedBody.value, storedBody.codec] : [body]),
+        foldedBody,
         `/api/conversations/${encodeURIComponent(conversation)}`,
         null,
         recordJob,
@@ -1141,10 +1156,11 @@ export class ConversationIngestor {
         )
         .all(indexed)) {
         if (Date.now() >= deadline) break;
+        const record = decodeHistoryRow("conversation_records", row);
         this.indexRecord(
           Number(row.id),
           String(row.conversation),
-          String(row.body) || indexedConversationText(Buffer.from(row.raw as Uint8Array)),
+          String(record.body) || indexedConversationText(record.raw as Buffer),
           Number(row.at),
           Number(row.offset),
         );
@@ -1234,7 +1250,7 @@ export function readConversation(
   const records: ConversationPage["records"] = [];
   let bytes = 0;
   for (const row of rows) {
-    const raw = Buffer.from(row.raw as Uint8Array);
+    const raw = decodeBytes(row.raw, row.raw_codec);
     if (records.length >= (args.limit ?? 20) || bytes + raw.length > 512 * 1024)
       break;
     records.push({
@@ -1263,7 +1279,7 @@ export function readConversationFile(
 ): ConversationPage {
   file = historyReadPath(file);
   if (!existsSync(file)) return { conversation: null, records: [], next: null };
-  const db = new DatabaseSync(file, { readOnly: true, timeout: 100 });
+  const db = openHistoryReader(file);
   try {
     return readConversation(db, input);
   } finally {

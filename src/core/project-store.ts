@@ -1,3 +1,4 @@
+import { decodeHistoryRow } from "./history-migration.js";
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
@@ -235,9 +236,10 @@ export function syncProjectMirror(main: DatabaseSync, project: string, home: str
           continue;
         }
         if (copied >= 8) break;
-        const row = main
+        // Project mirrors keep the plain legacy layout; history store v2 rows are decoded first.
+        const row = decodeHistoryRow("conversation_records", main
           .prepare("SELECT * FROM conversation_records WHERE id=?")
-          .get(candidate.id!)!;
+          .get(candidate.id!)!);
         mirror
           .prepare(
             "INSERT OR IGNORE INTO conversation_records VALUES(?,?,?,?,?,?,?,?,?)",
@@ -253,9 +255,10 @@ export function syncProjectMirror(main: DatabaseSync, project: string, home: str
             row.body!,
             row.part!,
           );
-        const doc = main
+        const stored = main
           .prepare("SELECT * FROM history_documents WHERE id=?")
           .get(`durable:${row.id}`);
+        const doc = stored ? decodeHistoryRow("history_documents", stored) : undefined;
         if (doc) {
           mirror
             .prepare(

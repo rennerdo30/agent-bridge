@@ -1,6 +1,7 @@
 import { conversationProject } from "./project-store.js";
 import { cleanupSavepoint } from "./savepoint.js";
-import { historyReadPath, historyReady, HISTORY_BATCH_MS } from "./history-store.js";
+import { historyReadPath, historyReady, openHistoryReader, HISTORY_BATCH_MS } from "./history-store.js";
+import { decodeText, encodeText, registerHistoryFunctions } from "./history-codec.js";
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, fstatSync, openSync, opendirSync, readSync, statSync, type Dir } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -57,12 +58,17 @@ export class HistoryIndex {
   private opencodeComplete = false;
   private heads = new Map<string,{identity:string;value:Record<string,any>}>();
   private readonly paths: TranscriptPaths;
+  /** History store v2 keeps document bodies compressed (body_codec) and folded only where it differs. */
+  private readonly encoded: boolean;
 
   private deadline = Infinity;
   constructor(private readonly db: DatabaseSync, private readonly home: string | null, paths?: TranscriptPaths,
     private readonly source: DatabaseSync = db, private readonly peerSink?: (peer: Pick<PeerInfo, "id" | "name" | "sessionId"> & Partial<Pick<PeerInfo, "cwd" | "agent">>) => void) {
     this.paths = paths ?? transcriptPaths();
     this.engine = db.prepare("SELECT name FROM sqlite_master WHERE name = 'history_fts'").get() ? "fts5" : "plain";
+    this.encoded = !!db.prepare("SELECT 1 FROM pragma_table_info('history_documents') WHERE name='body_codec'").get();
+    // FTS snippets and writes decode v2 text in SQL; any connection handed to the index can use it.
+    if (this.encoded) registerHistoryFunctions(db);
     this.checked = Number(db.prepare("SELECT coalesce(max(checked),0) AS n FROM history_files").get()!.n);
   }
 
@@ -90,11 +96,18 @@ export class HistoryIndex {
   }
   private put(doc: Document, sessions: string[] = [], jobs: string[] = []): void {
     const body = doc.body.slice(0, HISTORY_MAX_BODY_CHARS), searchable = folded(body);
+    const stored = this.encoded ? encodeText(body) : { value: body, codec: 0 };
+    // FTS needs no folded copy; the plain engine searches it.
+    const foldedValue = this.encoded && this.engine === "fts5" ? null : searchable;
     // One document and its tags form a short DB-only step; all source reads
     // and project resolution happen before this writer transaction.
     this.db.exec("SAVEPOINT history_document");
     try {
-      this.db.prepare(`INSERT INTO history_documents (id,kind,agent,at,body,folded,link,message,job,run,session,cursor)
+      if (this.encoded) this.db.prepare(`INSERT INTO history_documents (id,kind,agent,at,body,body_codec,folded,link,message,job,run,session,cursor)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body,body_codec=excluded.body_codec,folded=excluded.folded,
+        agent=excluded.agent,at=excluded.at,job=excluded.job,session=excluded.session,link=excluded.link,cursor=excluded.cursor`)
+        .run(doc.id, doc.kind, doc.agent, doc.at, stored.value, stored.codec, foldedValue, doc.link, doc.message, doc.job, doc.run, doc.session, doc.cursor);
+      else this.db.prepare(`INSERT INTO history_documents (id,kind,agent,at,body,folded,link,message,job,run,session,cursor)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body,folded=excluded.folded,
         agent=excluded.agent,at=excluded.at,job=excluded.job,session=excluded.session,link=excluded.link,cursor=excluded.cursor`)
         .run(doc.id, doc.kind, doc.agent, doc.at, body, searchable, doc.link, doc.message, doc.job, doc.run, doc.session, doc.cursor);
@@ -380,7 +393,7 @@ export class HistoryIndex {
       else { where.push(`d.${key}=?`); values.push(value); }
     }
     const joinFts = this.engine === "fts5" ? "JOIN history_fts ON history_fts.rowid=d.rowid" : "";
-    const snippet = this.engine === "fts5" ? "snippet(history_fts,0,'','',' … ',40)" : "d.body";
+    const snippet = this.engine === "fts5" ? "snippet(history_fts,0,'','',' … ',40)" : this.encoded ? "ab_text(d.body,d.body_codec)" : "d.body";
     const order = this.engine === "fts5" ? "bm25(history_fts),d.at DESC,d.id" : "d.at DESC,d.id";
     const retained = durable ? ", (SELECT r.conversation FROM conversation_records r WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%') AS conversation, (SELECT c.project FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%') AS project" : "";
     const rows = this.db.prepare(`SELECT d.id,d.kind,d.agent,d.at,d.link,d.message,coalesce(d.job,${durable ? "(SELECT c.job FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%')," : ""}(SELECT job FROM history_sessions s WHERE (s.session=d.session OR s.alias=d.session) AND s.job IS NOT NULL LIMIT 1)) AS job,d.run,coalesce((SELECT session FROM history_sessions s WHERE s.alias=d.session),d.session) AS session,d.cursor${retained},${snippet} AS snippet
@@ -413,7 +426,7 @@ export function readHistory(file: string, input: HistorySearch): HistoryResult {
   file = historyReadPath(file);
   historySearchSchema.parse(input);
   if (!existsSync(file)) return { engine: "plain", hits: [] };
-  const db = new DatabaseSync(file, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+  const db = openHistoryReader(file, HISTORY_READ_TIMEOUT_MS);
   try {
     if (!db.prepare("SELECT name FROM sqlite_master WHERE name='history_documents'").get()) return { engine: "plain", hits: [] };
     return new HistoryIndex(db, null).search(input);
@@ -424,9 +437,12 @@ export function readHistory(file: string, input: HistorySearch): HistoryResult {
 export function readHistorySource(file: string, id: string): Omit<HistoryHit, "snippet" | "sourceLink"> & { body: string } | null {
   file = historyReadPath(file);
   if (!existsSync(file)) return null;
-  const db = new DatabaseSync(file, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+  const db = openHistoryReader(file, HISTORY_READ_TIMEOUT_MS);
   try {
     if (!db.prepare("SELECT name FROM sqlite_master WHERE name='history_documents'").get()) return null;
-    return (db.prepare("SELECT id,kind,agent,at,body,link,message,job,run,session,cursor FROM history_documents WHERE id=?").get(id) as unknown as Document | undefined) ?? null;
+    const row = db.prepare("SELECT * FROM history_documents WHERE id=?").get(id);
+    if (!row) return null;
+    const { body, body_codec: codec, folded: _folded, ...rest } = row;
+    return { ...rest, body: decodeText(body, codec) } as unknown as Document;
   } finally { db.close(); }
 }

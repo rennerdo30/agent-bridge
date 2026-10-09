@@ -1,3 +1,4 @@
+import { inspectCatalog, inspectRows, MAX_INSPECT_ROWS } from "../core/db-inspect.js";
 import { DatabaseSync } from "node:sqlite";
 import { historyReadPath } from "../core/history-store.js";
 import { conversationPageSchema, readConversation } from "../core/conversations.js";
@@ -338,6 +339,20 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (!id || id.length > HISTORY_MAX_QUERY_CHARS) return send(res, 400, { error: "Invalid history source id." });
       const source = readHistorySource(dbPath, id);
       return source ? send(res, 200, source) : send(res, 404, { error: "No such indexed history source." });
+    }
+    // Read-only Database inspector: bounded pages, compressed history text decoded unless raw=true.
+    if (req.method === "GET" && url.pathname === "/api/db/tables") {
+      try { return send(res, 200, inspectCatalog(opts.home)); }
+      catch (err) { return send(res, 500, { error: String((err as Error).message) }); }
+    }
+    if (req.method === "GET" && url.pathname === "/api/db/rows") {
+      const allowed = new Set(["db", "table", "offset", "limit", "filter", "raw"]);
+      if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) return send(res, 400, { error: "Unknown or duplicate parameter." });
+      const offset = url.searchParams.get("offset") ?? "0", limit = url.searchParams.get("limit") ?? "100", raw = url.searchParams.get("raw");
+      if (!/^\d+$/.test(offset) || !/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > MAX_INSPECT_ROWS || (raw !== null && !["true", "false"].includes(raw))) return send(res, 400, { error: "Invalid offset, limit or raw flag." });
+      try {
+        return send(res, 200, inspectRows(opts.home, { db: url.searchParams.get("db") ?? "", table: url.searchParams.get("table") ?? "", offset: Number(offset), limit: Number(limit), filter: url.searchParams.get("filter") ?? undefined, raw: raw === "true" }));
+      } catch (err) { return send(res, (err as { status?: number }).status ?? 500, { error: String((err as Error).message) }); }
     }
     if (req.method === "GET" && url.pathname === "/api/search") {
       const allowed = new Set(["q", "project", "session", "job", "agent", "kind", "since", "until", "limit", "answer"]);

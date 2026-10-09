@@ -78,9 +78,10 @@ export async function fastSnapshot(source: string, destination: string, options:
  const start = performance.now();
  try {
   if (method==="copy") {
-   if (db.prepare("PRAGMA journal_mode").get()!.journal_mode!=="wal") throw new Error("OS-copy fast path requires existing WAL mode; source mode unchanged.");
+   // The OS-copy fast path needs WAL; other journal modes use the backup API below, unchanged.
+   const wal = db.prepare("PRAGMA journal_mode").get()!.journal_mode==="wal";
    let ready = false;
-   for (let attempt=0;attempt<3;attempt++) {
+   for (let attempt=0;wal && attempt<3;attempt++) {
     checkpointAttempts++;
     const checkpoint = db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get()!;
     if (checkpoint.busy===0 && checkpoint.log===0 && checkpoint.checkpointed===0) {
