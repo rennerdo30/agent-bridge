@@ -81,13 +81,22 @@ it("AB-213: exports compressed non-UTF-8 transcript bytes byte-exact as a BLOB a
   const encoded = encodeBytes(raw);
   expect(encoded.codec).not.toBe(0);
   db.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,raw_codec,body) VALUES('binary',0,0,'codex:a',2,?,?,NULL)").run(encoded.value, encoded.codec);
+  // A stored TEXT body with embedded NULs, which Node 22's node:sqlite would cut short when read as a string.
+  const nulBody = "\u0000before\u0000after";
+  db.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,raw_codec,body) VALUES('nul',0,0,'codex:a',2,?,0,?)").run(Buffer.from("x"), nulBody);
   const out = join(env.home, "binary.sqlite");
   exportDecompressed(env.home, "history", "conversation_records", out);
   const plain = new DatabaseSync(out, { readOnly: true }); closes.push(() => plain.close());
-  const row = plain.prepare("SELECT raw, typeof(raw) t, body FROM conversation_records WHERE source='binary'").get()!;
+  // Text is compared as its stored bytes: reading TEXT with a NUL as a JS string is itself lossy on Node 22.
+  const exported = (source: string) => plain.prepare("SELECT raw, typeof(raw) t, typeof(body) bt, CAST(body AS BLOB) body FROM conversation_records WHERE source=?").get(source)!;
+  const row = exported("binary");
   expect(row.t).toBe("blob");
   expect(Buffer.from(row.raw as Uint8Array).equals(raw)).toBe(true);
-  expect(row.body).toBe(raw.toString("utf8"));
+  expect(row.bt).toBe("text");
+  expect(Buffer.from(row.body as Uint8Array).equals(Buffer.from(raw.toString("utf8"), "utf8"))).toBe(true);
+  const nul = exported("nul");
+  expect(nul.bt).toBe("text");
+  expect(Buffer.from(nul.body as Uint8Array).equals(Buffer.from(nulBody, "utf8"))).toBe(true);
 });
 
 it("AB-229: v_conversation_records shows the body text for records stored with body '' (derived from raw)", async () => {
