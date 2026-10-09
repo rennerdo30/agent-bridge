@@ -99,7 +99,7 @@ function writeJsonStoreUnlocked(path: string, value: Record<string, unknown>, pr
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   if (basename(path) === "jobs.json" && Array.isArray(value.jobs)) {
     // Preserve changed full records before publishing the compatibility projection.
-    storeJobRecords(path, [...(Array.isArray(previous) ? previous : isRecord(previous) && Array.isArray(previous.jobs) ? previous.jobs : []), ...value.jobs]);
+    storeJobRecords(path, value.jobs, false, Array.isArray(previous) ? previous : isRecord(previous) && Array.isArray(previous.jobs) ? previous.jobs : []);
   }
   if (previous !== null && (!isRecord(previous) || previous.version !== JSON_STORE_VERSION) && existsSync(path)) {
     copyFileSync(path, backupPath(path));

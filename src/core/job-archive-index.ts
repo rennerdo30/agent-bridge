@@ -123,11 +123,26 @@ export function putJobRecords(db: DatabaseSync, jobs: readonly unknown[], observ
   }
 }
 
-export function storeJobRecords(path: string, jobs: readonly unknown[], archived = false): string {
+/**
+ * `previous` is the active projection about to be replaced. When this index
+ * published it, its records are already retained and may since have been
+ * superseded (a continued job archived on completion): keep their versions but
+ * never let them overwrite a newer row. A projection written by another
+ * (older) writer is authoritative and indexed as live data.
+ */
+export function storeJobRecords(path: string, jobs: readonly unknown[], archived = false, previous: readonly unknown[] = []): string {
   const db = openJobArchive(path, true)!;
   try {
     db.exec("BEGIN IMMEDIATE");
-    try { putJobRecords(db, jobs, Date.now(), true, archived); db.exec("COMMIT"); }
+    try {
+      const now = Date.now();
+      if (previous.length) {
+        const published = existsSync(path) && db.prepare("SELECT signature FROM archive_projection WHERE version=1").get()?.signature === fileSignature(statSync(path));
+        putJobRecords(db, previous, now, !published);
+      }
+      putJobRecords(db, jobs, now, true, archived);
+      db.exec("COMMIT");
+    }
     catch (error) { if (db.isTransaction) db.exec("ROLLBACK"); throw archiveWriteError(error); }
   } catch (error) { throw archiveWriteError(error); }
   finally { db.close(); }

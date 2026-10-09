@@ -307,9 +307,15 @@ describe("lossless, readable archives", () => {
     archiveHome(home, true, 100);
     const node = Object.assign(new EventEmitter(), { name: "claude-main", deliverLocal: () => {} }) as unknown as BridgeNode;
     const manager = new JobManager(node, nullLogger, path);
-    manager.restore(() => () => async () => ({ text: "continued", isError: false, sessionId: "session1", details: {} }));
+    // Finish only after the running continuation reached jobs.json: completing it
+    // must archive "done" even though the replaced projection still says "running".
+    let finish!: () => void;
+    const published = new Promise<void>((resolve) => { finish = resolve; });
+    manager.restore(() => () => async () => { await published; return { text: "continued", isError: false, sessionId: "session1", details: {} }; });
     expect(manager.list().some((j) => j.id === "0")).toBe(false);
     expect(manager.followUp("codex-job-0", "continue").outcome).toBe("started");
+    await vi.waitFor(() => expect(readStore(path).find((j) => j.id === "0")?.status).toBe("running"));
+    finish();
     await vi.waitFor(() => expect(readStore(path, undefined, true).find((j) => j.id === "0")?.status).toBe("done"));
     expect(readStore(path, undefined, true).find((j) => j.id === "0")).toMatchObject({ future: "keep", supervisor: "supervisor1" });
     manager.cancelAll();
