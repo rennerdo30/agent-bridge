@@ -1,4 +1,4 @@
-import { askRelay, RELAY_URL_ENV, type PermissionRequest } from "../core/relay.js";
+import { askRelay, boundedDetail, RELAY_URL_ENV, type PermissionRequest } from "../core/relay.js";
 
 /**
  * `PermissionRequest` hook (command type) for Codex and Claude Code subagents. Reads the hook input from stdin.
@@ -11,7 +11,6 @@ import { askRelay, RELAY_URL_ENV, type PermissionRequest } from "../core/relay.j
  * Codex loads it from its plugin manifest; Claude subagents get it through `--settings` (see delegate.ts),
  * with "claude" as argument.
  */
-const MAX_DETAIL_CHARS = 4_000;
 /** Codex and Claude Code name MCP tools mcp__<server>__<tool>. */
 const MCP_TOOL = /^mcp__(.+?)__(.+)$/;
 
@@ -21,7 +20,7 @@ function describe(toolInput: unknown): string {
     if (typeof o.command === "string") return o.command;
     if (typeof o.file_path === "string") return o.file_path;
   }
-  return JSON.stringify(toolInput ?? {}).slice(0, MAX_DETAIL_CHARS);
+  return JSON.stringify(toolInput ?? {});
 }
 
 /** The relay request for one hook input. MCP tools become "mcp:<server>" (one allow covers the server). */
@@ -30,8 +29,9 @@ export function hookRequest(agent: string, input: Record<string, unknown>): Perm
   const cwd = typeof input.cwd === "string" ? input.cwd : undefined;
   const detail = describe(input.tool_input);
   const mcp = MCP_TOOL.exec(tool);
-  if (mcp) return { agent, tool: `mcp:${mcp[1]}`, detail: `${mcp[2]}: ${detail}`.slice(0, MAX_DETAIL_CHARS), cwd };
-  return { agent, tool, detail: detail.slice(0, MAX_DETAIL_CHARS), cwd };
+  // Never cut silently: a cut request carries its original length and is refused (AB-241).
+  if (mcp) return { agent, tool: `mcp:${mcp[1]}`, ...boundedDetail(`${mcp[2]}: ${detail}`), cwd };
+  return { agent, tool, ...boundedDetail(detail), cwd };
 }
 
 async function readStdin(): Promise<string> {

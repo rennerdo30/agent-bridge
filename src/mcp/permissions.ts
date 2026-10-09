@@ -18,10 +18,9 @@ const DECISION_SCHEMA = {
 };
 /** How long the user has to answer before the request counts as denied. */
 const ANSWER_TIMEOUT_MS = 10 * 60 * 1000;
-const MAX_DETAIL_CHARS = 1_500;
-
 export function describeRequest(req: PermissionRequest): string {
-  const detail = req.detail.length > MAX_DETAIL_CHARS ? `${req.detail.slice(0, MAX_DETAIL_CHARS)}…` : req.detail;
+  // The whole text the owner approves: over-long requests are refused before they get here (AB-241).
+  const detail = req.detail;
   return `A ${req.agent} subagent started by agent-bridge asks for permission to use ${req.tool}${req.cwd ? ` in ${req.cwd}` : ""}:\n\n${detail}`;
 }
 
