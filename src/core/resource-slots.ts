@@ -4,7 +4,8 @@ import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import { RESOURCE_NAME_PATTERN } from "./config.js";
 import { configureSqlite, isSqliteBusy } from "./sqlite-policy.js";
-import { processIdentity, recordedOwnerAlive } from "./process-identity.js";
+import { processIdentity, recordedOwnerLiveness } from "./process-identity.js";
+import { ownerGone, writtenBeforeBoot } from "./boot-time.js";
 
 export const SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
 export const SLOT_PID_ENV = "AGENT_BRIDGE_SLOT_PID";
@@ -29,12 +30,14 @@ const identities = new Map<number, { identity: string | undefined; at: number }>
  * matches, or, for rows without one, the process using the PID started before the row was last renewed.
  */
 function alive(pid: number, identity?: string | null, recordedAt?: number): boolean {
+  // EPERM or an unreadable start time is unknown: the owner is gone only when it was last renewed before the
+  // current boot, since no process survives a reboot (AB-256).
   try { process.kill(pid, 0); }
-  catch (err) { return (err as NodeJS.ErrnoException).code !== "ESRCH"; }
+  catch (err) { return !ownerGone({ alive: (err as NodeJS.ErrnoException).code === "ESRCH" ? false : undefined, recordedAt }); }
   if (recordedAt === undefined) return true;
-  const key = `${pid}|${identity ?? ""}|${identity ? "" : recordedAt}`, cached = verdicts.get(key);
+  const key = `${pid}|${identity ?? ""}|${identity ? writtenBeforeBoot(recordedAt) : recordedAt}`, cached = verdicts.get(key);
   if (cached && Date.now() - cached.at < PROBE_CACHE_MS) return cached.alive;
-  const verdict = recordedOwnerAlive(pid, identity ?? undefined, recordedAt);
+  const verdict = !ownerGone({ alive: recordedOwnerLiveness(pid, identity ?? undefined, recordedAt), recordedAt });
   verdicts.set(key, { alive: verdict, at: Date.now() });
   return verdict;
 }

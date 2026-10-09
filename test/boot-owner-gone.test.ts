@@ -152,3 +152,22 @@ it("takes over a metadata lease of an unknown owner from before the boot", () =>
   foreignLease(path, ghosts.eperm, beforeBoot());
   metadataFileLease(path)();
 });
+
+it("frees resource slots of unknown owners last renewed before the boot, keeps recent ones", () => {
+  const slots = new ResourceSlots(env.home);
+  const db = new DatabaseSync(join(env.home, "resource-slots.sqlite"));
+  try {
+    const hold = (pid: number, renewedAt: number) => {
+      db.prepare("DELETE FROM slots").run();
+      db.prepare("INSERT INTO slots(resource, id, pid, held, expiresAt, identity) VALUES ('gpu', ?, ?, 1, ?, NULL)").run(`old-${pid}`, pid, renewedAt + SLOT_LEASE_MS);
+    };
+    for (const pid of [ghosts.eperm, ghosts.zombie]) {
+      hold(pid, recent());
+      expect(slots.tryAcquire("gpu", 1, { id: "new", pid: process.pid })).toBe(false);
+      slots.release({ id: "new", pid: process.pid }, "gpu");
+      hold(pid, beforeBoot());
+      expect(slots.tryAcquire("gpu", 1, { id: "new", pid: process.pid })).toBe(true);
+      slots.release({ id: "new", pid: process.pid }, "gpu");
+    }
+  } finally { db.close(); slots.close(); }
+});
