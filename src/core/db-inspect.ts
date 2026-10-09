@@ -2,7 +2,8 @@ import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { DB_FILE_NAME } from "./constants.js";
-import { decodeText, registerHistoryFunctions } from "./history-codec.js";
+import { decodeBytes, decodeText, registerHistoryFunctions } from "./history-codec.js";
+import { conversationBodyText } from "./conversation-text.js";
 import { HISTORY_DB_NAME } from "./history-store.js";
 import { ARCHIVE_DB_NAME } from "./sqlite-maintenance.js";
 
@@ -121,15 +122,23 @@ export function exportDecompressed(home: string, db: string, table: string, out:
     const columns = conn.prepare(`SELECT * FROM ${q(table)} LIMIT 0`).columns().map(c => c.name);
     const codecs = new Map(columns.filter(c => columns.includes(`${c}_codec`)).map(c => [c, `${c}_codec`]));
     const shown = columns.filter(c => ![...codecs.values()].includes(c));
-    target.exec(`CREATE TABLE ${q(table)} (${shown.map(q).join(",")})`);
+    // Lossless: a BLOB column (transcript raw bytes) is decoded to its exact bytes, never to text.
+    const declared = new Map(conn.prepare(`PRAGMA table_info(${q(table)})`).all().map(r => [String(r.name), String(r.type).toUpperCase()]));
+    const bytes = new Set(shown.filter(c => declared.get(c) === "BLOB"));
+    // conversation_records.body is stored only when it differs from the raw text; viewers get the resolved text.
+    const resolveBody = shown.includes("body") && bytes.has("raw") && shown.includes("source") && shown.includes("offset");
+    target.exec(`CREATE TABLE ${q(table)} (${shown.map(c => bytes.has(c) ? `${q(c)} BLOB` : q(c)).join(",")})`);
     const insert = target.prepare(`INSERT INTO ${q(table)} VALUES(${shown.map(() => "?").join(",")})`);
     let count = 0;
     target.exec("BEGIN");
     for (const row of conn.prepare(`SELECT * FROM ${q(table)}`).iterate()) {
-      insert.run(...shown.map(c => {
-        const value = row[c] as SQLInputValue;
-        return codecs.has(c) && Number(row[codecs.get(c)!]) !== 0 ? decodeText(value, row[codecs.get(c)!]) : value;
-      }));
+      const decode = (c: string): SQLInputValue => {
+        const value = row[c] as SQLInputValue, codec = codecs.has(c) ? row[codecs.get(c)!] : undefined;
+        if (value === null) return value;
+        if (bytes.has(c)) return decodeBytes(value, codec);
+        return codec !== undefined && Number(codec) !== 0 ? decodeText(value, codec) : value;
+      };
+      insert.run(...shown.map(c => c === "body" && resolveBody ? conversationBodyText(row.body, decodeBytes(row.raw, row.raw_codec)) : decode(c)));
       if (++count % 5000 === 0) { target.exec("COMMIT"); target.exec("BEGIN"); }
     }
     target.exec("COMMIT");

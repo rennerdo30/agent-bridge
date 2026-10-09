@@ -1,5 +1,9 @@
 import { supportsHistoryFts } from "./history-schema.js";
 
+/** Viewer convenience view. body NULL (migration) and body '' (live writer) both resolve through ab_body(). */
+export const CONVERSATION_RECORDS_VIEW = `CREATE VIEW v_conversation_records AS SELECT id, source, generation, offset, conversation, at, part,
+ ab_text(raw, raw_codec) AS raw_text, ab_body(body, raw, raw_codec) AS body_text, length(raw) AS stored_bytes, raw_codec FROM conversation_records;`;
+
 /** History store v2: the v1 tables, with large text stored once and compressed.
  * - conversation_records.raw holds encoded bytes (raw_codec); body NULL means "the raw bytes as UTF-8".
  * - history_documents.body holds encoded text (body_codec); folded NULL means "folded(body)".
@@ -69,8 +73,7 @@ CREATE TABLE conversation_bindings (
  pending INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(session,agent)
 );
 CREATE TABLE conversation_envelopes (id INTEGER PRIMARY KEY, message TEXT NOT NULL, recipient TEXT NOT NULL, UNIQUE(message,recipient));
-CREATE VIEW v_conversation_records AS SELECT id, source, generation, offset, conversation, at, part,
- ab_text(raw, raw_codec) AS raw_text, coalesce(body, ab_text(raw, raw_codec)) AS body_text, length(raw) AS stored_bytes, raw_codec FROM conversation_records;
+${CONVERSATION_RECORDS_VIEW}
 CREATE VIEW v_history_documents AS SELECT id, kind, agent, at, ab_text(body, body_codec) AS body_text, link, message, job, run, session, length(body) AS stored_bytes, body_codec FROM history_documents;
 CREATE TABLE history_migration(version INTEGER PRIMARY KEY, snapshot TEXT NOT NULL, status TEXT NOT NULL, manifest TEXT, source TEXT);
 CREATE TABLE history_copy_state(table_name TEXT PRIMARY KEY, source_rows INTEGER NOT NULL, after_rowid INTEGER, copied_rows INTEGER NOT NULL DEFAULT 0,

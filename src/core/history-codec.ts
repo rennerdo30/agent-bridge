@@ -1,6 +1,7 @@
 import { brotliCompressSync, brotliDecompressSync, constants } from "node:zlib";
 import * as zlib from "node:zlib";
 import type { DatabaseSync } from "node:sqlite";
+import { conversationBodyText } from "./conversation-text.js";
 
 /** Lossless per-value compression for history store v2. The codec is stored next to every value,
  * so plain legacy rows (codec 0 or no codec column) stay readable and the codec can change later. */
@@ -58,4 +59,6 @@ export function registerHistoryFunctions(db: DatabaseSync): void {
   db.function("ab_raw", { deterministic: true }, (value, codec) => value === null ? null : decodeBytes(value, codec));
   // Decoded text for SQLite's JSON functions, e.g. json_extract(ab_json(raw, raw_codec), '$.type').
   db.function("ab_json", { deterministic: true }, (value, codec) => value === null ? null : decodeText(value, codec));
+  // The text a transcript record stands for: ab_body(body, raw, raw_codec) resolves body NULL and body ''.
+  db.function("ab_body", { deterministic: true }, (body, raw, codec) => raw === null ? body : conversationBodyText(body, decodeBytes(raw, codec)));
 }

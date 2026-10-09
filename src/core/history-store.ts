@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { historyStoreV2Schema, HISTORY_V2_COPY_TABLES } from "./history-schema-v2.js";
+import { CONVERSATION_RECORDS_VIEW, historyStoreV2Schema, HISTORY_V2_COPY_TABLES } from "./history-schema-v2.js";
 import { registerHistoryFunctions } from "./history-codec.js";
 import { configureSqlite, isSqliteBusy } from "./sqlite-policy.js";
 import { migrationLock } from "./migration-lock.js";
@@ -62,7 +62,7 @@ export function openHistoryStore(file: string): DatabaseSync {
     const version = Number(db.prepare("PRAGMA user_version").get()!.user_version);
     if (version > HISTORY_STORE_VERSION) throw new Error(`unsupported history store version: ${version}`);
     configureSqlite(db);
-    if (version === HISTORY_STORE_VERSION) return db;
+    if (version === HISTORY_STORE_VERSION) { refreshHistoryViews(db); return db; }
     const release = migrationLock(file);
     try {
       const current = Number(db.prepare("PRAGMA user_version").get()!.user_version);
@@ -94,6 +94,18 @@ export function openHistoryStore(file: string): DatabaseSync {
     } finally { release(); }
     return db;
   } catch (err) { db.close(); throw err; }
+}
+
+/** Views are derived; a store created by an earlier build gets the current definition. Best effort: a busy store
+ * is retried on the next open. */
+function refreshHistoryViews(db: DatabaseSync): void {
+  const current = db.prepare("SELECT sql FROM sqlite_master WHERE type='view' AND name='v_conversation_records'").get();
+  if (!current || String(current.sql).includes("ab_body(")) return;
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    try { db.exec("DROP VIEW IF EXISTS v_conversation_records"); db.exec(CONVERSATION_RECORDS_VIEW); db.exec("COMMIT"); }
+    catch (err) { db.exec("ROLLBACK"); throw err; }
+  } catch (err) { if (!isSqliteBusy(err)) throw err; }
 }
 
 /** Durable snapshot/copy/verification chunks run only in the elected worker.
