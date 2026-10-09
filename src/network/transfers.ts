@@ -107,10 +107,13 @@ export function readTransferHistory(home: string): TransferProgress[] {
   return readdirSync(root).filter((file) => /^[0-9a-f-]{36}\.json$/.test(file))
     .map((file) => { const path = join(root, file); assertTransferPath(path); return { path, mtime: statSync(path).mtimeMs }; })
     .sort((a, b) => b.mtime - a.mtime).slice(0, MAX_TRANSFER_HISTORY)
-    .map(({ path }) => {
-      const state = JSON.parse(readFileSync(path, "utf8")) as State;
-      if (state.version !== 1 || !Array.isArray(state.entries) || state.entries.length > MAX_STREAM_ENTRIES) throw new Error("invalid persisted transfer");
-      return transferSummary(home, state);
+    .flatMap(({ path }) => {
+      // An unreadable or newer-format state is left out of the history, never fatal to it (AB-243).
+      try {
+        const state = JSON.parse(readFileSync(path, "utf8")) as State;
+        if (state.version !== 1 || !Array.isArray(state.entries) || state.entries.length > MAX_STREAM_ENTRIES) return [];
+        return [transferSummary(home, state)];
+      } catch { return []; }
     }).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
@@ -153,7 +156,9 @@ export class TransferManager {
     ensureTransferDirectory(this.root);
     assertTransferPath(this.root);
     for (const file of readdirSync(this.root).filter((file) => /^[0-9a-f-]{36}\.json$/.test(file))) {
-      const state = this.read(file.slice(0, -5));
+      let state: State | undefined;
+      try { state = this.read(file.slice(0, -5)); }
+      catch (err) { this.setAside(file, err); continue; }
       if (state && (!TERMINAL.has(state.status) || state.cancelPending || state.abortPending)) {
         if (this.states.size >= MAX_ACTIVE_TRANSFERS) { this.log.warn("transfer recovery limit reached", { id: state.id }); continue; }
         state.status = TERMINAL.has(state.status) ? state.status : "paused";
@@ -162,6 +167,21 @@ export class TransferManager {
     }
     this.timer = setInterval(() => this.resume(), TRANSFER_RETRY_MS);
     this.timer.unref();
+  }
+
+  /**
+   * One bad state file must not stop networking (AB-243). Unparseable JSON (e.g. truncated by a full disk) is
+   * renamed aside for inspection; a well-formed state of another format version stays in place for the release
+   * that wrote it. Nothing is deleted.
+   */
+  private setAside(file: string, err: unknown): void {
+    const path = join(this.root, file);
+    let parsed = true;
+    try { JSON.parse(readFileSync(path, "utf8")); } catch { parsed = false; }
+    if (parsed) { this.log.warn("skipping a transfer state this version cannot read", { file, err: String(err) }); return; }
+    const aside = `${path}.unreadable-${Date.now()}`;
+    try { renameSync(path, aside); this.log.warn("set an unreadable transfer state aside", { file, aside, err: String(err) }); }
+    catch (renameErr) { this.log.warn("skipping an unreadable transfer state", { file, err: String(err), renameErr: String(renameErr) }); }
   }
 
   private read(id: string): State | undefined {
