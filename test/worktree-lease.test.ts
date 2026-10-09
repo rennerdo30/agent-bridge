@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { uptime } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { worktreeLease } from "../src/core/worktree-state.js";
@@ -53,6 +54,17 @@ it("imports legacy empty directories as unknown protected holders and retains th
  expect(() => worktreeLease(home,wt)).toThrow("unknown legacy owner");
  expect(row()).toMatchObject({pid:null,identity:null,legacy_path:path});
  expect(readdirSync(path)).toEqual([]); expect(archives()).toHaveLength(0);
+});
+it("archives and reclaims an unverifiable legacy holder whose last heartbeat predates this boot (AB-256)", () => {
+ const path = join(home,"worktree-leases",key); mkdirSync(path,{recursive:true});
+ const beforeBoot = (Date.now() - uptime() * 1000 - 3_600_000) / 1000;
+ utimesSync(path,beforeBoot,beforeBoot);
+ const release = worktreeLease(home,wt,"resumed-job");
+ expect(row()).toMatchObject({pid:process.pid,job_id:"resumed-job",archived_at:null});
+ expect(archives()).toHaveLength(1);
+ expect(archives()[0]).toMatchObject({pid:null,identity:null,archive_reason:"owner predates the current boot",legacy_path:path});
+ expect(readdirSync(path)).toEqual([]);
+ release();
 });
 it("heartbeats update only matching active ownership", () => {
  vi.useFakeTimers(); const release = worktreeLease(home,wt), before = Number(row().heartbeat_at);

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { metadataDb, physicalMetadataPath } from "./metadata-db.js";
 import { isProcessIdentityAlive, processIdentity } from "./process-identity.js";
 import { readMetadataLeaseOwner } from "./metadata-file-lease.js";
+import { writtenBeforeBoot } from "./store-compatibility.js";
 
 interface LeaseRow {
  key: string; path: string | null; pid: number | null; identity: string | null;
@@ -51,8 +52,10 @@ export function worktreeRowLease(home: string, key: string, path: string, jobId:
   const row = db.prepare("SELECT * FROM worktree_leases WHERE key=?").get(key) as unknown as LeaseRow | undefined;
   if (row && row.archived_at === null) {
    const alive = row.pid && row.identity ? isProcessIdentityAlive(row.pid,row.identity) : undefined;
-   if (alive !== false) throw new Error(`${PREFIX} Holder: ${row.pid ? `pid ${row.pid}` : "unknown legacy owner"}, job ${row.job_id ?? "unknown"}; identity ${alive === true ? "live" : "unverifiable"}.`);
-   archive(db,row,"owner identity proved gone");
+   // No process survives a reboot: an unverifiable owner whose last heartbeat predates this boot is gone (AB-256).
+   const predatesBoot = alive === undefined && writtenBeforeBoot(Number(row.heartbeat_at));
+   if (alive === true || alive === undefined && !predatesBoot) throw new Error(`${PREFIX} Holder: ${row.pid ? `pid ${row.pid}` : "unknown legacy owner"}, job ${row.job_id ?? "unknown"}; identity ${alive === true ? "live" : "unverifiable"}.`);
+   archive(db,row,predatesBoot ? "owner predates the current boot" : "owner identity proved gone");
   }
   db.prepare(`INSERT INTO worktree_leases(key,path,pid,identity,job_id,nonce,acquired_at,heartbeat_at)
    VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET
