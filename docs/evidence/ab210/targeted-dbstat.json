@@ -1,0 +1,55 @@
+{
+  "sizes": [
+    {
+      "name": "messages",
+      "bytes": 27947008,
+      "cells": 29317
+    },
+    {
+      "name": "history_documents",
+      "bytes": 9822113792,
+      "cells": 873759
+    },
+    {
+      "name": "conversation_records",
+      "bytes": 8896090112,
+      "cells": 423889
+    },
+    {
+      "name": "conversation_parts",
+      "bytes": 4096,
+      "cells": 0
+    },
+    {
+      "name": "history_fts_data",
+      "bytes": 2026721280,
+      "cells": 991798
+    },
+    {
+      "name": "history_fts_idx",
+      "bytes": 6975488,
+      "cells": 321754
+    },
+    {
+      "name": "history_fts_docsize",
+      "bytes": 6897664,
+      "cells": 573928
+    }
+  ],
+  "samples": [
+    {
+      "table": "conversation_records",
+      "values": 2000,
+      "bytes": 8541580,
+      "unique": 971,
+      "zbytes": 1457300
+    },
+    {
+      "table": "history_documents",
+      "values": 2000,
+      "bytes": 4955937,
+      "unique": 1793,
+      "zbytes": 1808540
+    }
+  ]
+}

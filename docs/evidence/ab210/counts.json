@@ -1,0 +1,118 @@
+[
+  {
+    "name": "messages",
+    "rows": 23468
+  },
+  {
+    "name": "archived_messages",
+    "rows": 0
+  },
+  {
+    "name": "decisions",
+    "rows": 35
+  },
+  {
+    "name": "sqlite_sequence",
+    "rows": 1
+  },
+  {
+    "name": "decision_deliveries",
+    "rows": 346
+  },
+  {
+    "name": "history_documents",
+    "rows": 572250
+  },
+  {
+    "name": "history_cursors",
+    "rows": 25135
+  },
+  {
+    "name": "history_files",
+    "rows": 12119
+  },
+  {
+    "name": "history_tags",
+    "rows": 1078374
+  },
+  {
+    "name": "history_sessions",
+    "rows": 553
+  },
+  {
+    "name": "history_pending",
+    "rows": 1946
+  },
+  {
+    "name": "history_fts",
+    "rows": 572250
+  },
+  {
+    "name": "history_fts_data",
+    "rows": 498849
+  },
+  {
+    "name": "history_fts_idx",
+    "rows": 321754
+  },
+  {
+    "name": "history_fts_docsize",
+    "rows": 572250
+  },
+  {
+    "name": "history_fts_config",
+    "rows": 1
+  },
+  {
+    "name": "session_bindings",
+    "rows": 77
+  },
+  {
+    "name": "peer_names",
+    "rows": 132
+  },
+  {
+    "name": "peer_name_owners",
+    "rows": 404
+  },
+  {
+    "name": "job_delivery_routes",
+    "rows": 3014
+  },
+  {
+    "name": "conversations",
+    "rows": 22446
+  },
+  {
+    "name": "conversation_sources",
+    "rows": 12119
+  },
+  {
+    "name": "conversation_records",
+    "rows": 265725
+  },
+  {
+    "name": "conversation_parts",
+    "rows": 0
+  },
+  {
+    "name": "conversation_projects",
+    "rows": 906
+  },
+  {
+    "name": "conversation_memberships",
+    "rows": 10903
+  },
+  {
+    "name": "conversation_bindings",
+    "rows": 24
+  },
+  {
+    "name": "conversation_envelopes",
+    "rows": 28761
+  },
+  {
+    "name": "peer_last_seen",
+    "rows": 27
+  }
+]

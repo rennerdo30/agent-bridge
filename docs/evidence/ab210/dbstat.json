@@ -1,0 +1,397 @@
+{
+  "sizes": [
+    {
+      "name": "history_documents",
+      "bytes": 9822113792,
+      "pages": 2397977,
+      "payload": 9496734339
+    },
+    {
+      "name": "conversation_records",
+      "bytes": 8896090112,
+      "pages": 2171897,
+      "payload": 8715836523
+    },
+    {
+      "name": "history_fts_data",
+      "bytes": 2026721280,
+      "pages": 494805,
+      "payload": 1979772026
+    },
+    {
+      "name": "idx_history_tags",
+      "bytes": 97173504,
+      "pages": 23724,
+      "payload": 80470400
+    },
+    {
+      "name": "sqlite_autoindex_history_tags_1",
+      "bytes": 95768576,
+      "pages": 23381,
+      "payload": 80470400
+    },
+    {
+      "name": "history_tags",
+      "bytes": 83890176,
+      "pages": 20481,
+      "payload": 76189799
+    },
+    {
+      "name": "sqlite_autoindex_conversation_records_1",
+      "bytes": 51720192,
+      "pages": 12627,
+      "payload": 43641634
+    },
+    {
+      "name": "sqlite_autoindex_history_documents_1",
+      "bytes": 30912512,
+      "pages": 7547,
+      "payload": 25148253
+    },
+    {
+      "name": "messages",
+      "bytes": 27947008,
+      "pages": 6823,
+      "payload": 21390411
+    },
+    {
+      "name": "idx_history_session",
+      "bytes": 24805376,
+      "pages": 6056,
+      "payload": 19975317
+    },
+    {
+      "name": "idx_conversation_records",
+      "bytes": 18415616,
+      "pages": 4496,
+      "payload": 15146307
+    },
+    {
+      "name": "idx_history_time",
+      "bytes": 10272768,
+      "pages": 2508,
+      "payload": 7298107
+    },
+    {
+      "name": "idx_history_job",
+      "bytes": 7909376,
+      "pages": 1931,
+      "payload": 5396527
+    },
+    {
+      "name": "history_fts_idx",
+      "bytes": 6975488,
+      "pages": 1703,
+      "payload": 5039565
+    },
+    {
+      "name": "history_fts_docsize",
+      "bytes": 6897664,
+      "pages": 1684,
+      "payload": 2581269
+    },
+    {
+      "name": "conversation_sources",
+      "bytes": 4956160,
+      "pages": 1210,
+      "payload": 4197543
+    },
+    {
+      "name": "idx_conversation_parts",
+      "bytes": 3985408,
+      "pages": 973,
+      "payload": 2809250
+    },
+    {
+      "name": "history_cursors",
+      "bytes": 3661824,
+      "pages": 894,
+      "payload": 3224387
+    },
+    {
+      "name": "sqlite_autoindex_history_cursors_1",
+      "bytes": 3534848,
+      "pages": 863,
+      "payload": 2941289
+    },
+    {
+      "name": "conversations",
+      "bytes": 3047424,
+      "pages": 744,
+      "payload": 2605895
+    },
+    {
+      "name": "history_files",
+      "bytes": 2469888,
+      "pages": 603,
+      "payload": 2131466
+    },
+    {
+      "name": "sqlite_autoindex_conversation_envelopes_1",
+      "bytes": 2134016,
+      "pages": 521,
+      "payload": 1804054
+    },
+    {
+      "name": "sqlite_autoindex_messages_1",
+      "bytes": 1986560,
+      "pages": 485,
+      "payload": 1465478
+    },
+    {
+      "name": "conversation_envelopes",
+      "bytes": 1929216,
+      "pages": 471,
+      "payload": 1746660
+    },
+    {
+      "name": "history_pending",
+      "bytes": 1646592,
+      "pages": 402,
+      "payload": 1431607
+    },
+    {
+      "name": "sqlite_autoindex_history_files_1",
+      "bytes": 1548288,
+      "pages": 378,
+      "payload": 1331201
+    },
+    {
+      "name": "sqlite_autoindex_conversation_sources_1",
+      "bytes": 1548288,
+      "pages": 378,
+      "payload": 1331201
+    },
+    {
+      "name": "sqlite_autoindex_conversations_1",
+      "bytes": 1380352,
+      "pages": 337,
+      "payload": 1135522
+    },
+    {
+      "name": "idx_messages_id",
+      "bytes": 1302528,
+      "pages": 318,
+      "payload": 962208
+    },
+    {
+      "name": "idx_messages_unread",
+      "bytes": 1179648,
+      "pages": 288,
+      "payload": 913874
+    },
+    {
+      "name": "sqlite_autoindex_conversation_memberships_1",
+      "bytes": 1122304,
+      "pages": 274,
+      "payload": 922534
+    },
+    {
+      "name": "conversation_memberships",
+      "bytes": 962560,
+      "pages": 235,
+      "payload": 889953
+    },
+    {
+      "name": "idx_conversations_project",
+      "bytes": 692224,
+      "pages": 169,
+      "payload": 533592
+    },
+    {
+      "name": "idx_conversations_parent",
+      "bytes": 360448,
+      "pages": 88,
+      "payload": 244443
+    },
+    {
+      "name": "job_delivery_routes",
+      "bytes": 241664,
+      "pages": 59,
+      "payload": 198687
+    },
+    {
+      "name": "sqlite_autoindex_job_delivery_routes_1",
+      "bytes": 151552,
+      "pages": 37,
+      "payload": 123446
+    },
+    {
+      "name": "sqlite_autoindex_history_pending_1",
+      "bytes": 139264,
+      "pages": 34,
+      "payload": 121086
+    },
+    {
+      "name": "conversation_projects",
+      "bytes": 77824,
+      "pages": 19,
+      "payload": 59306
+    },
+    {
+      "name": "sqlite_autoindex_conversation_projects_1",
+      "bytes": 73728,
+      "pages": 18,
+      "payload": 58272
+    },
+    {
+      "name": "history_sessions",
+      "bytes": 57344,
+      "pages": 14,
+      "payload": 49426
+    },
+    {
+      "name": "decision_deliveries",
+      "bytes": 53248,
+      "pages": 13,
+      "payload": 43455
+    },
+    {
+      "name": "idx_history_sessions",
+      "bytes": 40960,
+      "pages": 10,
+      "payload": 30820
+    },
+    {
+      "name": "sqlite_autoindex_decision_deliveries_1",
+      "bytes": 36864,
+      "pages": 9,
+      "payload": 29141
+    },
+    {
+      "name": "sqlite_autoindex_history_sessions_1",
+      "bytes": 32768,
+      "pages": 8,
+      "payload": 22221
+    },
+    {
+      "name": "peer_names",
+      "bytes": 28672,
+      "pages": 7,
+      "payload": 21110
+    },
+    {
+      "name": "peer_name_owners",
+      "bytes": 28672,
+      "pages": 7,
+      "payload": 20603
+    },
+    {
+      "name": "decisions",
+      "bytes": 28672,
+      "pages": 7,
+      "payload": 20545
+    },
+    {
+      "name": "sqlite_autoindex_peer_names_1",
+      "bytes": 24576,
+      "pages": 6,
+      "payload": 16444
+    },
+    {
+      "name": "sqlite_schema",
+      "bytes": 16384,
+      "pages": 4,
+      "payload": 11099
+    },
+    {
+      "name": "sqlite_autoindex_session_bindings_1",
+      "bytes": 16384,
+      "pages": 4,
+      "payload": 10777
+    },
+    {
+      "name": "sqlite_autoindex_peer_name_owners_1",
+      "bytes": 16384,
+      "pages": 4,
+      "payload": 9243
+    },
+    {
+      "name": "session_bindings",
+      "bytes": 16384,
+      "pages": 4,
+      "payload": 11163
+    },
+    {
+      "name": "sqlite_sequence",
+      "bytes": 4096,
+      "pages": 1,
+      "payload": 13
+    },
+    {
+      "name": "sqlite_autoindex_peer_last_seen_1",
+      "bytes": 4096,
+      "pages": 1,
+      "payload": 652
+    },
+    {
+      "name": "sqlite_autoindex_decisions_1",
+      "bytes": 4096,
+      "pages": 1,
+      "payload": 1399
+    },
+    {
+      "name": "sqlite_autoindex_conversation_parts_1",
+      "bytes": 4096,
+      "pages": 1,
+      "payload": 0
+    },
+    {
+      "name": "sqlite_autoindex_conversation_bindings_1",
+      "bytes": 4096,
+      "pages": 1,
+      "payload": 1109
+    },
+    {
+      "name": "peer_last_seen",
+      "bytes": 4096,
+      "pages": 1,
+      "payload": 788
+    },
+    {
+      "name": "idx_decisions_topic",
+      "bytes": 4096,
+      "pages": 1,
+      "payload": 1188
+    },
+    {
+      "name": "idx_decisions_supersedes",
+      "bytes": 4096,
+      "pages": 1,
+      "payload": 211
+    },
+    {
+      "name": "history_fts_config",
+      "bytes": 4096,
+      "pages": 1,
+      "payload": 11
+    },
+    {
+      "name": "conversation_parts",
+      "bytes": 4096,
+      "pages": 1,
+      "payload": 0
+    },
+    {
+      "name": "conversation_bindings",
+      "bytes": 4096,
+      "pages": 1,
+      "payload": 1968
+    },
+    {
+      "name": "archived_messages",
+      "bytes": 4096,
+      "pages": 1,
+      "payload": 0
+    }
+  ],
+  "tables": [],
+  "payload": {
+    "values": 0,
+    "bytes": 0,
+    "uniqueBytes": 0,
+    "compressedBytes": 0,
+    "uniqueValues": 0
+  },
+  "start": 1791527704045
+}

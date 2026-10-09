@@ -1,0 +1,337 @@
+{
+  "method": "read-pinned-copyFile",
+  "checkpoint": {
+    "busy": 0,
+    "log": 0,
+    "checkpointed": 0
+  },
+  "seconds": 654.239,
+  "bytes": 21248196608,
+  "check": [
+    {
+      "quick_check": "ok"
+    }
+  ],
+  "schema": [
+    {
+      "name": "messages",
+      "type": "table",
+      "sql": "CREATE TABLE messages (\n  id              TEXT    NOT NULL,\n  recipient       TEXT    NOT NULL,\n  from_id         TEXT    NOT NULL,\n  from_name       TEXT    NOT NULL,\n  from_agent      TEXT    NOT NULL,\n  to_target       TEXT    NOT NULL,\n  conversation_id TEXT    NOT NULL,\n  reply_to        TEXT,\n  hop             INTEGER NOT NULL,\n  body            TEXT    NOT NULL,\n  created_at      INTEGER NOT NULL,\n  read_at         INTEGER,\n  PRIMARY KEY (id, recipient)\n)"
+    },
+    {
+      "name": "sqlite_autoindex_messages_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "idx_messages_unread",
+      "type": "index",
+      "sql": "CREATE INDEX idx_messages_unread ON messages (recipient, read_at, created_at)"
+    },
+    {
+      "name": "idx_messages_id",
+      "type": "index",
+      "sql": "CREATE INDEX idx_messages_id ON messages (id)"
+    },
+    {
+      "name": "archived_messages",
+      "type": "table",
+      "sql": "CREATE TABLE archived_messages(\n  id TEXT,\n  recipient TEXT,\n  from_id TEXT,\n  from_name TEXT,\n  from_agent TEXT,\n  to_target TEXT,\n  conversation_id TEXT,\n  reply_to TEXT,\n  hop INT,\n  body TEXT,\n  created_at INT,\n  read_at INT,\n  archive_reason,\n  archived_at\n)"
+    },
+    {
+      "name": "decisions",
+      "type": "table",
+      "sql": "CREATE TABLE decisions (\n  revision INTEGER PRIMARY KEY AUTOINCREMENT,\n  id TEXT NOT NULL UNIQUE,\n  topic TEXT NOT NULL,\n  body TEXT NOT NULL,\n  scope TEXT NOT NULL,\n  author_id TEXT NOT NULL,\n  author_name TEXT NOT NULL,\n  author_agent TEXT NOT NULL,\n  created_at INTEGER NOT NULL,\n  source_message_id TEXT,\n  supersedes TEXT\n)"
+    },
+    {
+      "name": "sqlite_autoindex_decisions_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "sqlite_sequence",
+      "type": "table",
+      "sql": "CREATE TABLE sqlite_sequence(name,seq)"
+    },
+    {
+      "name": "idx_decisions_topic",
+      "type": "index",
+      "sql": "CREATE INDEX idx_decisions_topic ON decisions (topic, revision)"
+    },
+    {
+      "name": "idx_decisions_supersedes",
+      "type": "index",
+      "sql": "CREATE INDEX idx_decisions_supersedes ON decisions (supersedes)"
+    },
+    {
+      "name": "decision_deliveries",
+      "type": "table",
+      "sql": "CREATE TABLE decision_deliveries (\n  decision_id TEXT NOT NULL,\n  session_key TEXT NOT NULL,\n  message_id TEXT NOT NULL,\n  created_at INTEGER NOT NULL,\n  PRIMARY KEY (decision_id, session_key)\n)"
+    },
+    {
+      "name": "sqlite_autoindex_decision_deliveries_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "history_documents",
+      "type": "table",
+      "sql": "CREATE TABLE history_documents (\n  id TEXT PRIMARY KEY, kind TEXT NOT NULL, agent TEXT NOT NULL, at INTEGER NOT NULL,\n  body TEXT NOT NULL, folded TEXT NOT NULL, link TEXT NOT NULL,\n  message TEXT, job TEXT, run TEXT, session TEXT, cursor TEXT\n)"
+    },
+    {
+      "name": "sqlite_autoindex_history_documents_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "idx_history_time",
+      "type": "index",
+      "sql": "CREATE INDEX idx_history_time ON history_documents(at)"
+    },
+    {
+      "name": "idx_history_session",
+      "type": "index",
+      "sql": "CREATE INDEX idx_history_session ON history_documents(session)"
+    },
+    {
+      "name": "idx_history_job",
+      "type": "index",
+      "sql": "CREATE INDEX idx_history_job ON history_documents(job)"
+    },
+    {
+      "name": "history_cursors",
+      "type": "table",
+      "sql": "CREATE TABLE history_cursors (source TEXT PRIMARY KEY, cursor TEXT NOT NULL)"
+    },
+    {
+      "name": "sqlite_autoindex_history_cursors_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "history_files",
+      "type": "table",
+      "sql": "CREATE TABLE history_files (path TEXT PRIMARY KEY, kind TEXT NOT NULL, agent TEXT NOT NULL, session TEXT, cwd TEXT NOT NULL, child TEXT, checked INTEGER NOT NULL DEFAULT 0)"
+    },
+    {
+      "name": "sqlite_autoindex_history_files_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "history_tags",
+      "type": "table",
+      "sql": "CREATE TABLE history_tags (id TEXT NOT NULL, type TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(id,type,value))"
+    },
+    {
+      "name": "sqlite_autoindex_history_tags_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "idx_history_tags",
+      "type": "index",
+      "sql": "CREATE INDEX idx_history_tags ON history_tags(type,value,id)"
+    },
+    {
+      "name": "history_sessions",
+      "type": "table",
+      "sql": "CREATE TABLE history_sessions (alias TEXT PRIMARY KEY, session TEXT NOT NULL, job TEXT)"
+    },
+    {
+      "name": "sqlite_autoindex_history_sessions_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "idx_history_sessions",
+      "type": "index",
+      "sql": "CREATE INDEX idx_history_sessions ON history_sessions(session,job)"
+    },
+    {
+      "name": "history_pending",
+      "type": "table",
+      "sql": "CREATE TABLE history_pending (id TEXT NOT NULL, body TEXT NOT NULL, from_agent TEXT NOT NULL, from_name TEXT NOT NULL, from_id TEXT NOT NULL, recipient TEXT NOT NULL, to_target TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(id,recipient))"
+    },
+    {
+      "name": "sqlite_autoindex_history_pending_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "history_fts",
+      "type": "table",
+      "sql": "CREATE VIRTUAL TABLE history_fts USING fts5(body, content='history_documents', content_rowid='rowid', tokenize='unicode61')"
+    },
+    {
+      "name": "history_fts_data",
+      "type": "table",
+      "sql": "CREATE TABLE 'history_fts_data'(id INTEGER PRIMARY KEY, block BLOB)"
+    },
+    {
+      "name": "history_fts_idx",
+      "type": "table",
+      "sql": "CREATE TABLE 'history_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID"
+    },
+    {
+      "name": "history_fts_docsize",
+      "type": "table",
+      "sql": "CREATE TABLE 'history_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)"
+    },
+    {
+      "name": "history_fts_config",
+      "type": "table",
+      "sql": "CREATE TABLE 'history_fts_config'(k PRIMARY KEY, v) WITHOUT ROWID"
+    },
+    {
+      "name": "session_bindings",
+      "type": "table",
+      "sql": "CREATE TABLE session_bindings (\n      identity TEXT NOT NULL,\n      session_id TEXT NOT NULL,\n      learned_at INTEGER NOT NULL,\n      PRIMARY KEY (identity, session_id)\n    )"
+    },
+    {
+      "name": "sqlite_autoindex_session_bindings_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "peer_names",
+      "type": "table",
+      "sql": "CREATE TABLE peer_names (\n      identity TEXT NOT NULL, name TEXT NOT NULL, session_id TEXT, agent TEXT NOT NULL,\n      learned_at INTEGER NOT NULL, PRIMARY KEY (identity, name)\n    )"
+    },
+    {
+      "name": "sqlite_autoindex_peer_names_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "peer_name_owners",
+      "type": "table",
+      "sql": "CREATE TABLE peer_name_owners (\n      name TEXT PRIMARY KEY, identity TEXT NOT NULL\n    )"
+    },
+    {
+      "name": "sqlite_autoindex_peer_name_owners_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "job_delivery_routes",
+      "type": "table",
+      "sql": "CREATE TABLE job_delivery_routes (\n      id TEXT PRIMARY KEY, recipient TEXT NOT NULL, consumed_at INTEGER\n    )"
+    },
+    {
+      "name": "sqlite_autoindex_job_delivery_routes_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "conversations",
+      "type": "table",
+      "sql": "CREATE TABLE conversations (\n id TEXT PRIMARY KEY, agent TEXT NOT NULL, session TEXT NOT NULL, parent TEXT,\n project TEXT NOT NULL DEFAULT '', job TEXT, kind TEXT NOT NULL DEFAULT 'transcript'\n)"
+    },
+    {
+      "name": "sqlite_autoindex_conversations_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "idx_conversations_project",
+      "type": "index",
+      "sql": "CREATE INDEX idx_conversations_project ON conversations(project)"
+    },
+    {
+      "name": "idx_conversations_parent",
+      "type": "index",
+      "sql": "CREATE INDEX idx_conversations_parent ON conversations(parent)"
+    },
+    {
+      "name": "conversation_sources",
+      "type": "table",
+      "sql": "CREATE TABLE conversation_sources (\n id TEXT PRIMARY KEY, path TEXT NOT NULL, conversation TEXT NOT NULL, format TEXT NOT NULL,\n generation INTEGER NOT NULL DEFAULT 0, offset INTEGER NOT NULL DEFAULT 0,\n identity TEXT NOT NULL DEFAULT '', anchor TEXT NOT NULL DEFAULT '', checked INTEGER NOT NULL DEFAULT 0\n)"
+    },
+    {
+      "name": "sqlite_autoindex_conversation_sources_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "conversation_records",
+      "type": "table",
+      "sql": "CREATE TABLE conversation_records (\n id INTEGER PRIMARY KEY, source TEXT NOT NULL, generation INTEGER NOT NULL,\n offset INTEGER NOT NULL, conversation TEXT NOT NULL, at INTEGER NOT NULL,\n raw BLOB NOT NULL, body TEXT NOT NULL, part TEXT,\n UNIQUE(source,generation,offset)\n)"
+    },
+    {
+      "name": "sqlite_autoindex_conversation_records_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "idx_conversation_records",
+      "type": "index",
+      "sql": "CREATE INDEX idx_conversation_records ON conversation_records(conversation,id)"
+    },
+    {
+      "name": "idx_conversation_parts",
+      "type": "index",
+      "sql": "CREATE INDEX idx_conversation_parts ON conversation_records(part)"
+    },
+    {
+      "name": "conversation_parts",
+      "type": "table",
+      "sql": "CREATE TABLE conversation_parts (\n source TEXT NOT NULL, part TEXT NOT NULL, revision TEXT NOT NULL, offset INTEGER NOT NULL DEFAULT 0,\n PRIMARY KEY(source,part)\n)"
+    },
+    {
+      "name": "sqlite_autoindex_conversation_parts_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "conversation_projects",
+      "type": "table",
+      "sql": "CREATE TABLE conversation_projects (project TEXT PRIMARY KEY, checked INTEGER NOT NULL DEFAULT 0)"
+    },
+    {
+      "name": "sqlite_autoindex_conversation_projects_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "conversation_memberships",
+      "type": "table",
+      "sql": "CREATE TABLE conversation_memberships (\n project TEXT NOT NULL, conversation TEXT NOT NULL, PRIMARY KEY(project,conversation)\n)"
+    },
+    {
+      "name": "sqlite_autoindex_conversation_memberships_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "conversation_bindings",
+      "type": "table",
+      "sql": "CREATE TABLE conversation_bindings (\n session TEXT NOT NULL, agent TEXT NOT NULL, cwd TEXT NOT NULL, job TEXT,\n pending INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(session,agent)\n)"
+    },
+    {
+      "name": "sqlite_autoindex_conversation_bindings_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "conversation_envelopes",
+      "type": "table",
+      "sql": "CREATE TABLE conversation_envelopes (\n id INTEGER PRIMARY KEY, message TEXT NOT NULL, recipient TEXT NOT NULL,\n UNIQUE(message,recipient)\n)"
+    },
+    {
+      "name": "sqlite_autoindex_conversation_envelopes_1",
+      "type": "index",
+      "sql": null
+    },
+    {
+      "name": "peer_last_seen",
+      "type": "table",
+      "sql": "CREATE TABLE peer_last_seen (\n      name TEXT PRIMARY KEY, seen_at INTEGER NOT NULL\n    )"
+    },
+    {
+      "name": "sqlite_autoindex_peer_last_seen_1",
+      "type": "index",
+      "sql": null
+    }
+  ]
+}
