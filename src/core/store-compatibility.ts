@@ -170,7 +170,11 @@ export function liveStorePeers(home: string): Presence[] {
       try { process.kill(record.pid,0); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return []; }
       const identity = cachedIdentity(home,record.pid,signature);
       if (identity && record.processIdentity && record.processIdentity !== identity) return [];
-      if (identity && record.processIdentity === identity && validStoreCapabilities(record)) return [record];
+      // A record observed before its identity was known (an older peer's hello) stays valid
+      // unless that PID now belongs to a process started after the observation, as for files.
+      const observed = !record.processIdentity && typeof record.observedAt === "number";
+      if (identity && observed && legacyPidReused(identity,record.observedAt!)) return [];
+      if (identity && (record.processIdentity === identity || observed) && validStoreCapabilities(record)) return [record];
       return [{pid:record.pid,name:record.name ?? `pid ${record.pid}`,version:"unknown",json:0,sqlite:0,explicit:false}];
     });
   }
