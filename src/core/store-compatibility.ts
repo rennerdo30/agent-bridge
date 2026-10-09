@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { uptime } from "node:os";
 import { join } from "node:path";
 import { atomicPluginWrite } from "./plugin-runtime.js";
 import type { PeerInfo } from "./protocol.js";
@@ -12,12 +13,22 @@ interface Presence extends StoreCapabilities { pid: number; name: string; versio
 const identities = new Map<string, { identity: string | null; at: number; signature: string }>();
 const refreshes = new Map<string, Promise<void>>();
 const IDENTITY_REFRESH_MS = 10_000;
+const BOOT_MARGIN_MS = 60_000;
 
-function databasePresence(home: string): {record: Presence; signature: string}[] | undefined {
+/**
+ * No process survives a reboot, so a presence written before this boot is never a live reader. After a reboot
+ * Windows reuses low PIDs for protected system processes whose start time cannot be read; without this, such a
+ * stale legacy record would look like an unidentified live reader and block store upgrades indefinitely.
+ */
+export function writtenBeforeBoot(at: number, now = Date.now(), upSeconds = uptime()): boolean {
+  return Number.isFinite(at) && at > 0 && at < now - upSeconds * 1000 - BOOT_MARGIN_MS;
+}
+
+function databasePresence(home: string): {record: Presence; signature: string; at: number}[] | undefined {
   const db = existingMetadataDb(home);
   if (!db?.prepare("SELECT 1 FROM bridge_components WHERE name='import:storage-capabilities'").get()) return undefined;
-  return db.prepare("SELECT key,value FROM bridge_metadata WHERE domain='storage-capabilities'").all()
-    .filter(row => /^\d+$/.test(String(row.key))).map(row => ({record:JSON.parse(String(row.value)) as Presence,signature:String(row.value)}));
+  return db.prepare("SELECT key,value,updated_at FROM bridge_metadata WHERE domain='storage-capabilities'").all()
+    .filter(row => /^\d+$/.test(String(row.key))).map(row => ({record:JSON.parse(String(row.value)) as Presence,signature:String(row.value),at:Number(row.updated_at)}));
 }
 
 function presenceSignature(path: string): string | undefined {
@@ -166,7 +177,8 @@ export function liveStorePeers(home: string): Presence[] {
   const stored = databasePresence(home);
   if (stored) {
     void refreshStorePeerIdentities(home).catch(()=>{});
-    return stored.flatMap(({record,signature}) => {
+    return stored.flatMap(({record,signature,at}) => {
+      if (writtenBeforeBoot(at)) return [];
       try { process.kill(record.pid,0); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return []; }
       const identity = cachedIdentity(home,record.pid,signature);
       if (identity && record.processIdentity && record.processIdentity !== identity) return [];
@@ -183,6 +195,7 @@ export function liveStorePeers(home: string): Presence[] {
   void refreshStorePeerIdentities(home).catch(() => {});
   return readdirSync(dir).filter((file) => /^\d+\.json$/.test(file)).flatMap((file) => {
     const pid = Number(file.slice(0, -5));
+    try { if (writtenBeforeBoot(statSync(join(dir, file)).mtimeMs)) return []; } catch { /* Unreadable: judged below. */ }
     try { process.kill(pid, 0); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return []; }
     try {
