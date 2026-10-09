@@ -93,3 +93,42 @@ export function processStartMs(pid: number): number | undefined {
     return Number.isFinite(ms) ? ms : undefined;
   } catch { return undefined; }
 }
+
+/**
+ * Whether the process an identity describes was started after `recordedAt` (epoch ms): then a PID recorded at
+ * that time belonged to another, earlier process. Unknown formats answer false (conservatively still alive).
+ */
+export function identityStartedAfter(identity: string, recordedAt: number): boolean {
+  if (process.platform === "win32" && /^\d+$/.test(identity)) {
+    const startedAt = Number((BigInt(identity) - 621355968000000000n) / 10000n);
+    return startedAt > recordedAt;
+  }
+  if (process.platform === "linux") {
+    const match = /^(.+):(\d+)$/.exec(identity);
+    if (!match) return false;
+    try {
+      if (readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() !== match[1]) return false;
+      const btime = Number(/^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"))?.[1]);
+      // Linux reports start times in clock ticks; USER_HZ is 100 on every supported build.
+      return Number.isFinite(btime) && btime * 1000 + Number(match[2]) * 10 > recordedAt;
+    } catch { return false; }
+  }
+  const startedAt = Date.parse(identity + " UTC");
+  return Number.isFinite(startedAt) && startedAt > recordedAt;
+}
+
+/**
+ * Liveness of a recorded owner (AB-218). With its identity: alive only while the process using that PID still
+ * matches it. Without one (older records): dead when the process now using the PID started after the record was
+ * written, which is PID reuse. Unknown answers stay alive, so recovery never takes over a living owner's data.
+ */
+export function recordedOwnerAlive(pid: number, identity: string | undefined, recordedAt: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
+  try { process.kill(pid, 0); }
+  catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+  const current = processIdentity(pid);
+  if (current === undefined) return true;
+  if (identity) return current === identity;
+  // A second of slack for coarse timestamps; a real owner exists before it writes its record.
+  return !identityStartedAfter(current, recordedAt + 1_000);
+}

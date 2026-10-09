@@ -1,13 +1,38 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { processIdentity, recordedOwnerAlive } from "./process-identity.js";
+
+/**
+ * Whether the lock file's owner is provably gone: no such process, or (AB-218) the PID now belongs to a different
+ * process (identity mismatch, or for identity-less older locks a process started after the lock was written).
+ * Unreadable or unverifiable owners count as alive. `null` when the file vanished.
+ */
+function ownerGone(path: string, verdicts: Map<string, boolean>): boolean | null {
+  let text: string, writtenAt: number;
+  try { text = readFileSync(path, "utf8"); writtenAt = statSync(path).mtimeMs; }
+  catch { return null; }
+  let owner: { pid?: unknown; identity?: unknown };
+  try { owner = JSON.parse(text); } catch { return false; /* An opening writer has not published its PID yet. */ }
+  const pid = Number(owner.pid);
+  if (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid) return false;
+  try { process.kill(pid, 0); }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
+  // The process identity probe is slow (PowerShell on Windows) and a live owner's identity does not change while
+  // we wait: probe each distinct owner record once per acquisition.
+  let gone = verdicts.get(text);
+  if (gone === undefined) verdicts.set(text, gone = !recordedOwnerAlive(pid, typeof owner.identity === "string" ? owner.identity : undefined, writtenAt));
+  return gone;
+}
 
 /** Serialize snapshot creation as well as DDL. Never expire a living writer by age. */
 export function migrationLock(file: string): () => void {
   if (file === ":memory:") return () => {};
   const path = `${file}.migration-lock`, recovery = `${path}.recovery`;
-  const owner = JSON.stringify({ pid: process.pid, nonce: randomUUID() });
+  const identity = processIdentity(process.pid);
+  const owner = JSON.stringify({ pid: process.pid, nonce: randomUUID(), ...(identity ? { identity } : {}) });
   const until = Date.now() + 5_000;
   const pause = new Int32Array(new SharedArrayBuffer(4));
+  const verdicts = new Map<string, boolean>();
   for (;;) {
     try {
       const fd = openSync(path, "wx", 0o600);
@@ -21,19 +46,9 @@ export function migrationLock(file: string): () => void {
     // Only dead writers need recovery. A separate exclusive file serializes recoverers.
     let recoveryFd: number | undefined;
     try {
-      let dead = false;
-      if (existsSync(path)) try {
-        const pid = JSON.parse(readFileSync(path, "utf8")).pid;
-        if (Number.isSafeInteger(pid) && pid > 0) try { process.kill(pid, 0); }
-        catch (error) { dead = (error as NodeJS.ErrnoException).code === "ESRCH"; }
-      } catch { /* An opening writer has not published its PID yet. */ }
-      if (dead) {
+      if (existsSync(path) && ownerGone(path, verdicts)) {
         recoveryFd = openSync(recovery, "wx", 0o600);
-        if (existsSync(path)) {
-          const pid = JSON.parse(readFileSync(path, "utf8")).pid;
-          if (Number.isSafeInteger(pid) && pid > 0) try { process.kill(pid, 0); }
-          catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") rmSync(path); }
-        }
+        if (existsSync(path) && ownerGone(path, verdicts)) rmSync(path);
       }
     } catch (error) {
       if (!["EEXIST", "ENOENT", "EPERM", "EBUSY", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
