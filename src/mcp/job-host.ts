@@ -3,6 +3,7 @@ import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { BridgeConfig } from "../core/config.js";
 import { killPid, pidAlive } from "../core/delegate.js";
+import { identityStartedAfter, processIdentity } from "../core/process-identity.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
 import type { AgentKind, CodingAgent } from "../core/protocol.js";
@@ -77,7 +78,27 @@ export function readRunnerState(home: string, id: string): RunnerState | null {
 export function writeRunnerState(home: string, id: string, state: RunnerState): void {
   const path = runnerStatePath(home, id);
   const previous = readJsonStore(path);
-  writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...state }), previous);
+  // The runner's own creation identity: its PID alone may be reused once it is gone (AB-236).
+  const identity = state.identity ?? (state.pid === process.pid ? processIdentity(process.pid) : undefined);
+  writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...state, ...(identity ? { identity } : {}) }), previous);
+}
+
+/** How long a probed identity of a live runner PID is reused by the frequent liveness checks. */
+const IDENTITY_CACHE_MS = 30_000;
+const probed = new Map<number, { identity: string | undefined; at: number }>();
+
+/**
+ * Whether the process a runner state names is still that runner: no PID reuse (AB-236). With a recorded identity
+ * it must match; older states without one need a process that started before the runner's last heartbeat.
+ * Unknown answers keep the conservative "alive" (takeover); `fresh` probes again (kill decisions).
+ */
+export function runnerProcessAlive(state: Pick<RunnerState, "pid" | "identity" | "updatedAt">, fresh = false): boolean {
+  if (!pidAlive(state.pid)) return false;
+  let entry = probed.get(state.pid);
+  if (fresh || !entry || Date.now() - entry.at >= IDENTITY_CACHE_MS) probed.set(state.pid, entry = { identity: processIdentity(state.pid), at: Date.now() });
+  if (entry.identity === undefined) return !fresh;
+  if (state.identity) return entry.identity === state.identity;
+  return !Number.isFinite(state.updatedAt) || !identityStartedAfter(entry.identity, state.updatedAt + 1_000);
 }
 
 /** The session's side: starts runners and talks to them. */
@@ -204,7 +225,7 @@ export class JobRunners implements JobHost {
       const host = job.host;
       return Boolean(host) && (host!.pid !== null ? pidAlive(host!.pid) : Date.now() - host!.startedAt < START_GRACE_MS);
     }
-    return pidAlive(state.pid);
+    return runnerProcessAlive(state);
   }
 
   send(job: Job, control: RunnerControl): void {
@@ -218,7 +239,13 @@ export class JobRunners implements JobHost {
 
   kill(job: Job): void {
     if (job.remote) return this.remote.send(job, { type: "cancel" });
-    const pid = this.state(job)?.pid ?? job.host?.pid;
-    if (pid) killPid(pid, this.log);
+    const state = this.state(job);
+    if (state) {
+      // Never `taskkill /T /F` a process that merely reuses the runner's PID: verify it freshly first.
+      if (runnerProcessAlive(state, true)) killPid(state.pid, this.log);
+      else this.log.warn("job runner PID no longer belongs to the runner; not killing it", { job: job.name, pid: state.pid });
+      return;
+    }
+    if (job.host?.pid) killPid(job.host.pid, this.log);
   }
 }

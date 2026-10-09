@@ -147,6 +147,8 @@ export interface RunnerState {
   status: "running" | "done" | "failed" | "cancelled";
   /** Heartbeat: a runner that stopped writing is gone, even if its pid was reused. */
   updatedAt: number;
+  /** The runner process's creation identity (pid plus start time), so a reused PID is not mistaken for it. */
+  identity?: string;
   /** Model of its current turn; saved next-turn settings may differ while it runs. */
   model?: string | null;
   sessionId?: string | null;
