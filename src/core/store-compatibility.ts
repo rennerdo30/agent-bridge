@@ -261,17 +261,25 @@ function storedPresence(home: string, pid: number): Presence | undefined {
 
 /**
  * Readers not yet verified in this process (a runner that started a moment ago, or a cold cache) are checked
- * now with one query: a record whose own process identity matches the live process is that reader, with its
- * recorded capabilities. A failed query or any mismatch keeps the reader blocking.
+ * now with one query against their recorded process identity:
+ * - the live process matches: it is that reader, and it no longer blocks if its recorded capabilities suffice;
+ * - a successful query shows another process under that PID: the recorded reader is gone (PID reuse).
+ * A failed query, a PID the query cannot read (absent, or e.g. elevated), or a record without an identity keeps
+ * the reader blocking.
  */
 function verifiedNow(home: string, peers: Presence[], format: keyof StoreCapabilities, target: number): Set<number> {
   const candidates = peers.flatMap(peer => {
     const record = storedPresence(home, peer.pid);
-    return record?.processIdentity && validStoreCapabilities(record) && (record[format] ?? 0) >= target ? [{ pid: peer.pid, identity: record.processIdentity }] : [];
+    return record?.processIdentity ? [{ pid: peer.pid, record, identity: record.processIdentity }] : [];
   });
   if (!candidates.length) return new Set();
   const live = readProcessIdentitiesSync(candidates.map(candidate => candidate.pid));
-  return new Set(live ? candidates.filter(candidate => live.get(candidate.pid) === candidate.identity).map(candidate => candidate.pid) : []);
+  if (!live) return new Set();
+  return new Set(candidates.filter(({ pid, record, identity }) => {
+    const now = live.get(pid);
+    if (now === undefined) return false;
+    return now !== identity || validStoreCapabilities(record) && (record[format] ?? 0) >= target;
+  }).map(candidate => candidate.pid));
 }
 
 export function assertStoreUpgrade(home: string, format: keyof StoreCapabilities, current: number, target: number): void {
