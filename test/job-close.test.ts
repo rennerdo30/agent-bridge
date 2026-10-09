@@ -11,6 +11,8 @@ import { setJobOutcome } from "../src/core/job-outcomes.js";
 import { nullLogger } from "../src/core/logger.js";
 import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
 import { runJobClose } from "../src/cli/job-close.js";
+import { writeRunnerStateRecord } from "../src/core/runner-store.js";
+import { processIdentity } from "../src/core/process-identity.js";
 
 let home: string, repo: string, remote: string, wt: Worktree;
 const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "core.longpaths=true", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -152,6 +154,20 @@ describe("opt-in job close retention", () => {
     expect(existsSync(wt.path)).toBe(true);
     setJobOutcome(home, stored, "parent", "discarded");
     await runJobClose("close-idle-jobs", ["--yes"], home, cfg, nullLogger, () => {});
+    expect(existsSync(wt.path)).toBe(false);
+  });
+  it("keeps a verified live runner but not a process that merely reuses the runner's PID (AB-256)", async () => {
+    writeFileSync(join(home, "jobs.json"), JSON.stringify([{ id: "test", name: "opencode-job-test", agent: "opencode", status: "done", startedAt: 1, finishedAt: 2, worktree: wt }]));
+    const cfg = { ...DEFAULT_CONFIG, jobCloseCleanup: true };
+    const output: string[] = [];
+    writeRunnerStateRecord(home, "test", { pid: process.pid, peer: "job:opencode-job-test", status: "done", updatedAt: Date.now(), identity: processIdentity(process.pid) });
+    expect(await runJobClose("job-close", ["opencode-job-test", "--yes"], home, cfg, nullLogger, line => output.push(line))).toBe(1);
+    expect(output.at(-1)).toContain("Live runner");
+    expect(existsSync(wt.path)).toBe(true);
+    // The live PID now has a different creation identity: that runner is gone.
+    writeRunnerStateRecord(home, "test", { pid: process.pid, peer: "job:opencode-job-test", status: "done", updatedAt: Date.now(), identity: "1" });
+    expect(await runJobClose("job-close", ["opencode-job-test", "--yes"], home, cfg, nullLogger, line => output.push(line))).toBe(0);
+    expect(output.at(-1)).toContain("reaped");
     expect(existsSync(wt.path)).toBe(false);
   });
   it("inspects malformed state without repairing, renaming or deleting any original", async () => {
