@@ -22,7 +22,7 @@ import type { Logger } from "./logger.js";
 import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
 import { ReadJournal } from "./read-journal.js";
-import { retainMetadataReader } from "./metadata-db.js";
+import { existingMetadataDb, retainMetadataReader } from "./metadata-db.js";
 import { recordLocalResult } from "./local-result-receipts.js";
 import type { MessageStore } from "./store.js";
 import { SQLITE_STORE_VERSION } from "./store-version.js";
@@ -128,6 +128,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private activity: PeerActivity | null = null;
   private unavailable = false;
   private readonly log: Logger;
+  private presenceTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly opts: BridgeNodeOptions) {
     super();
@@ -136,10 +137,30 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
     this.log = opts.log.child("node");
-    if (opts.dbPath !== ":memory:") recordStorePeer(dirname(opts.dbPath), { pid: process.pid, name: opts.name, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 } });
+    if (opts.dbPath !== ":memory:") this.recordStorePresence();
     if (opts.dbPath !== ":memory:") this.releaseMetadata = retainMetadataReader(dirname(opts.dbPath));
-    this.readJournal = new ReadJournal(opts.dbPath === ":memory:" ? ":memory:" : dirname(opts.dbPath));
+    this.readJournal = new ReadJournal(opts.dbPath === ":memory:" ? ":memory:" : dirname(opts.dbPath), this.log);
     this.restoreReadState(`name:${this.currentName}`);
+  }
+
+  /**
+   * Publish this process's store capabilities. A deferred metadata store (an older reader, or this
+   * process's identity not yet verifiable for the fail-closed migration lease) must never stop the
+   * node from starting: the record then stays in its pre-AB-208 file, and this retries with backoff
+   * until the store opens and holds the row.
+   */
+  private recordStorePresence(delay = 1_000): void {
+    const home = dirname(this.opts.dbPath);
+    let error: unknown;
+    try { recordStorePeer(home, { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 } }); }
+    catch (err) { error = err; }
+    let open = false;
+    try { open = Boolean(existingMetadataDb(home)); } catch { /* Not open yet. */ }
+    if (open && !error) return;
+    if (error && delay === 1_000) this.log.warn("store presence deferred; retrying in the background", { err: String((error as Error).message ?? error) });
+    if (this.presenceTimer) clearTimeout(this.presenceTimer);
+    this.presenceTimer = setTimeout(() => { this.presenceTimer = null; if (!this.stopping) this.recordStorePresence(Math.min(60_000, delay * 2)); }, delay);
+    this.presenceTimer.unref();
   }
 
   get name(): string {
@@ -197,6 +218,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       if (this.broker) await this.broker.close();
       this.broker = null;
     }
+    if (this.presenceTimer) clearTimeout(this.presenceTimer);
+    this.presenceTimer = null;
     this.log.info("bridge node stopped");
     this.releaseMetadata?.(); this.releaseMetadata = undefined;
   }

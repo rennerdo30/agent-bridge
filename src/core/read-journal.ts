@@ -1,15 +1,24 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { metadataDb, physicalMetadataPath } from "./metadata-db.js";
 import { retainMetadataFiles } from "./metadata-import.js";
 import { storageLease } from "./storage-lock.js";
 import { DatabaseSync } from "node:sqlite";
+import type { Logger } from "./logger.js";
+
+/** The metadata store cannot open yet: its fail-closed migration lease needs this process's
+ * verified identity (ELEASEBUSY) or an older reader still uses the files (STORE_UPGRADE_DEFERRED). */
+const DEFERRED_CODES = new Set(["ELEASEBUSY", "STORE_UPGRADE_DEFERRED"]);
+const FIRST_RETRY_MS = 1_000;
+const MAX_RETRY_MS = 60_000;
+/** Per home: when the next attempt to open the metadata store is due, and its retry timer. */
+const deferrals = new Map<string, { until: number; delay: number; timer: NodeJS.Timeout | null }>();
 
 /** Consumption is durable before returning context, even when a broker ACK is lost. */
 export class ReadJournal {
  private memory: DatabaseSync | undefined;
- constructor(private readonly home: string) {}
+ constructor(private readonly home: string, private readonly log?: Logger) {}
  private key(identity: string) { return createHash("sha256").update(identity).digest("hex"); }
  private insert(db: ReturnType<typeof metadataDb>, identity: string, id: string, at: number | null) {
   db.prepare(`INSERT INTO bridge_read_receipts VALUES (?,?,?) ON CONFLICT(identity,message_id)
@@ -39,19 +48,79 @@ export class ReadJournal {
   db.prepare("INSERT INTO bridge_components VALUES ('import:read-state',1) ON CONFLICT(name) DO NOTHING").run();
   return db;
  }
+ /**
+  * The metadata store, or undefined while it is deferred. Until then read marks use the
+  * pre-AB-208 journal files, which the store imports verbatim as soon as it opens: a deferral
+  * only happens before the read-state import, so nothing written meanwhile is missed.
+  */
+ private available(): DatabaseSync | undefined {
+  if (this.home === ":memory:") return this.database();
+  const deferred = deferrals.get(this.home);
+  if (deferred && Date.now() < deferred.until) return undefined;
+  try {
+   const db = this.database();
+   if (deferred) {
+    if (deferred.timer) clearTimeout(deferred.timer);
+    deferrals.delete(this.home);
+    this.log?.info("metadata store available: read marks from the journal files were imported");
+   }
+   return db;
+  } catch (error) {
+   if (!DEFERRED_CODES.has(String((error as { code?: unknown }).code))) throw error;
+   const delay = deferred ? Math.min(MAX_RETRY_MS, deferred.delay * 2) : FIRST_RETRY_MS;
+   if (!deferred) this.log?.warn("metadata store deferred; read marks are kept in the read-state journal files until it opens", { err: String((error as Error).message ?? error) });
+   if (deferred?.timer) clearTimeout(deferred.timer);
+   // Retry in the background, so the journal files are imported even without further reads.
+   const timer = setTimeout(() => { try { this.available(); } catch { /* Retried on the next read or mark. */ } }, delay);
+   timer.unref();
+   deferrals.set(this.home, { until: Date.now() + delay, delay, timer });
+   return undefined;
+  }
+ }
+ private legacyPath(identity: string) { return join(this.home,"read-state",`${this.key(identity)}.jsonl`); }
+ private legacyEntries(identity: string): { ids: string[]; at: number | null }[] {
+  let raw: string;
+  try { raw = readFileSync(this.legacyPath(identity),"utf8"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+  return raw.split("\n").flatMap(line => {
+   if (!line) return [];
+   try {
+    const value: unknown = JSON.parse(line);
+    const timed = value && typeof value === "object" && !Array.isArray(value) ? value as {ids?:unknown;at?:unknown} : null;
+    const ids = timed?.ids ?? value;
+    return Array.isArray(ids) ? [{ ids: ids.filter((id): id is string => typeof id === "string"), at: typeof timed?.at === "number" ? timed.at : null }] : [];
+   } catch { return []; } // An interrupted final append does not invalidate earlier records.
+  });
+ }
  read(identity: string): string[] {
-  return this.database().prepare("SELECT message_id FROM bridge_read_receipts WHERE identity=? ORDER BY rowid").all(this.key(identity)).map(r=>String(r.message_id));
+  const db = this.available();
+  if (!db) return [...new Set(this.legacyEntries(identity).flatMap(entry => entry.ids))];
+  return db.prepare("SELECT message_id FROM bridge_read_receipts WHERE identity=? ORDER BY rowid").all(this.key(identity)).map(r=>String(r.message_id));
  }
  receipt(identity: string, id: string): {read:boolean;at:number|null} {
-  const row = this.database().prepare("SELECT read_at FROM bridge_read_receipts WHERE identity=? AND message_id=?").get(this.key(identity),id);
+  const db = this.available();
+  if (!db) {
+   const entries = this.legacyEntries(identity).filter(entry => entry.ids.includes(id));
+   const times = entries.flatMap(entry => entry.at === null ? [] : [entry.at]);
+   return {read:entries.length > 0,at:times.length ? Math.min(...times) : null};
+  }
+  const row = db.prepare("SELECT read_at FROM bridge_read_receipts WHERE identity=? AND message_id=?").get(this.key(identity),id);
   return {read:!!row,at:row && row.read_at !== null ? Number(row.read_at) : null};
  }
  append(identity: string, ids: string[]): void {
   const release = this.home === ":memory:" ? () => {} : storageLease(this.home);
-  try { this.appendRows(identity,ids); } finally { release(); }
+  try {
+   const db = this.available();
+   if (db) this.appendRows(db,identity,ids);
+   else {
+    const dir = join(this.home,"read-state"); physicalMetadataPath(dir);
+    mkdirSync(dir,{recursive:true,mode:0o700});
+    appendFileSync(this.legacyPath(identity),`\n${JSON.stringify({ids,at:Date.now()})}\n`,{mode:0o600,flush:true});
+   }
+  } finally { release(); }
  }
- private appendRows(identity: string, ids: string[]): void {
-  const db = this.database(), key = this.key(identity), now = Date.now();
+ private appendRows(db: DatabaseSync, identity: string, ids: string[]): void {
+  const key = this.key(identity), now = Date.now();
   db.exec("BEGIN IMMEDIATE");
   try {
    for (const id of ids) this.insert(db,key,id,now);

@@ -125,7 +125,12 @@ export function recordStorePeer(home: string, peer: Pick<PeerInfo, "pid" | "name
       saveMetadataValue(home,"storage-capabilities",String(peer.pid),{schemaVersion:1,...caps,pid:peer.pid,name:peer.name,version:peer.version ?? "unknown",explicit,observedAt:Date.now(),...(identity ? {processIdentity:identity} : {})});
       if (!identity) void refreshStorePeerIdentities(home).catch(()=>{});
       return;
-    } catch (error) { if (ready || (error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED") throw error; }
+    } catch (error) {
+      // Until the metadata store can open (an older reader, or this process's identity is not yet
+      // verifiable for its fail-closed migration lease) the pre-AB-208 file below stays the record;
+      // the store imports it when it opens.
+      if (ready || !["STORE_UPGRADE_DEFERRED", "ELEASEBUSY"].includes(String((error as NodeJS.ErrnoException).code))) throw error;
+    }
   }
   const explicit = validStoreCapabilities(peer.storeCapabilities);
   const path = join(home, "storage-capabilities", `${peer.pid}.json`);

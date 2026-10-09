@@ -14,6 +14,7 @@ import { processIdentity } from "../src/core/process-identity.js";
 import * as identities from "../src/core/process-identity.js";
 import * as compatibility from "../src/core/store-compatibility.js";
 import { loadOrCreateToken } from "../src/core/token.js";
+import { ReadJournal } from "../src/core/read-journal.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 
@@ -34,11 +35,30 @@ it("hosts the compatible schema while process identity discovery is still pendin
   vi.spyOn(identities, "processIdentity").mockReturnValue(undefined);
   vi.spyOn(compatibility, "refreshStorePeerIdentities").mockImplementation(() => new Promise<void>(() => {}));
   const node = env.node("available-before-scan");
-  await Promise.race([node.start(), new Promise<never>((_, reject) => setTimeout(() => reject(new Error("broker waited for process scan")), 1_000))]);
+  // The mocked scan never settles, so any completed start proves it did not wait for the scan.
+  // The bound only turns a hang into a clear failure; it does not measure start latency.
+  await Promise.race([node.start(), new Promise<never>((_, reject) => setTimeout(() => reject(new Error("broker waited for process scan")), 20_000))]);
   expect(node.isBroker).toBe(true);
   expect((await node.send({ to: "offline", body: "Serve before schema upgrade" })).messages).toHaveLength(1);
   const check = new DatabaseSync(env.db, { readOnly: true });
   try { expect(check.prepare("PRAGMA user_version").get()!.user_version).toBe(8); } finally { check.close(); }
+});
+
+it("keeps read marks while the metadata store is deferred and imports them once it opens", async () => {
+  // Without a verifiable own identity the fail-closed metadata migration lease cannot be taken.
+  const identity = vi.spyOn(identities, "processIdentity").mockReturnValue(undefined);
+  const journal = new ReadJournal(env.home);
+  journal.append("name:reader", ["deferred-mark"]);
+  expect(journal.read("name:reader")).toEqual(["deferred-mark"]);
+  expect(journal.receipt("name:reader", "deferred-mark")).toMatchObject({ read: true });
+  identity.mockRestore();
+  // The journal retries in the background; the mark becomes a metadata row without another call.
+  await vi.waitFor(() => {
+    const db = new DatabaseSync(env.db, { readOnly: true });
+    try { expect(db.prepare("SELECT message_id FROM bridge_read_receipts").all().map(r => r.message_id)).toEqual(["deferred-mark"]); }
+    finally { db.close(); }
+  }, { timeout: 15_000, interval: 100 });
+  expect(new ReadJournal(env.home).read("name:reader")).toEqual(["deferred-mark"]);
 });
 
 function seed(version: number): void {
