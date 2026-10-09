@@ -311,7 +311,10 @@ export class Broker {
         if (!parsed.success) throw new BridgeError("bad_request", "Invalid history query or filters.");
         return this.store.history.search(parsed.data);
       },
-      getConversation: (_, a) => readConversation(this.store.history.database, conversationPageSchema.parse(a)),
+      getConversation: (_, a) => {
+        const page = readConversation(this.store.history.database, conversationPageSchema.parse(a)), migration = this.store.history.legacyReadNotice;
+        return migration ? { ...page, migration } : page;
+      },
       reindexHistory: (_, a) => {
         const args = z.object({ reset: z.boolean().optional() }).strict().parse(a);
         if (this.historyBackground) return this.historyBackground.tick(args.reset);
