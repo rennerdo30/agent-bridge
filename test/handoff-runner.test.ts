@@ -53,6 +53,29 @@ function diagnostics(stage: string): void {
   writeFileSync(join(env.home, `handoff-diagnostics-${stage}.json`), JSON.stringify({ at: Date.now(), home: env.home, responses, runnerIds,
     jobs: existsSync(join(env.home, "jobs.json")) ? json(join(env.home, "jobs.json")) : null, states: files("jobs"), runs: files("runs") }, null, 2));
 }
+/**
+ * CI keeps only the console: print where a job's reports went (durable envelopes, broker rows and routes,
+ * and every warning the sessions logged), read-only, so a missing delivery can be traced without the fixture.
+ */
+function printDeliveryEvidence(jobId: string): void {
+  const evidence: Record<string, unknown> = { home: env.home };
+  try {
+    const record = readStore(join(env.home, "jobs.json"), undefined, true).find((j) => j.id === jobId);
+    evidence.job = record && { status: record.status, owner: record.owner, executionOwner: record.executionOwner, rootName: record.rootName, finishedAt: record.finishedAt,
+      deliveryHistory: record.deliveryHistory?.map((m) => ({ id: m.id, to: m.to, conversation: m.conversationId, body: m.body.slice(0, 80) })) };
+  } catch (error) { evidence.job = String(error); }
+  try {
+    const db = new DatabaseSync(env.db, { readOnly: true, timeout: 5_000 });
+    try {
+      evidence.messages = db.prepare("SELECT id, recipient, conversation_id, read_at, created_at, substr(body, 1, 80) AS body FROM messages WHERE from_id=?").all(`job:${jobId}`);
+      evidence.routes = db.prepare("SELECT r.* FROM job_delivery_routes r JOIN messages m ON m.id=r.id WHERE m.from_id=?").all(`job:${jobId}`);
+    } finally { db.close(); }
+  } catch (error) { evidence.messages = String(error); }
+  try {
+    evidence.log = readFileSync(join(env.home, "logs", "agent-bridge.log"), "utf8").split("\n").filter((line) => /\b(WARN|ERROR)\b|inlineJobReport|report/.test(line)).slice(-80);
+  } catch (error) { evidence.log = String(error); }
+  console.error(`Handoff delivery evidence: ${JSON.stringify(evidence, null, 1)}`);
+}
 async function stopOwnedRunner(id: string): Promise<void> {
   // Admission may still be in flight when the test's link-file deadline expires.
   await until(() => {
@@ -161,7 +184,8 @@ it("hands off a blocking ask without returning results or notes to the old calle
   expect(originalReply.text).toContain("supervised by claude-target");
   expect(originalReply.text).not.toContain("Inherited runner finished");
   let inherited = "";
-  await expect.poll(async () => { inherited += (await call(target, "inbox")).text; return inherited.includes("Inherited runner finished"); }, { timeout: 5000 }).toBe(true);
+  await expect.poll(async () => { inherited += (await call(target, "inbox")).text; return inherited.includes("Inherited runner finished"); }, { timeout: 5000 }).toBe(true)
+    .catch((error: unknown) => { printDeliveryEvidence(job.id); throw error; });
   expect((await call(target, "inbox", { include_quiet: true })).text).toContain("Foreground post-handoff note");
   expect((await call(source, "inbox")).text).not.toMatch(/Foreground post-handoff|Inherited runner finished/);
   expect(readStore(join(env.home, "jobs.json")).find((j) => j.id === job.id)!.deliveryHistory).toBeDefined();
