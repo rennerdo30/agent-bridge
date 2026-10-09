@@ -9,6 +9,7 @@ import { JobManager, readStore, type Run } from "../src/mcp/jobs.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 import { until } from "./helpers.js";
 import { pendingJobRoot, readPendingJobs } from "../src/core/job-pending-journal.js";
+import { indexFixtureFile } from "./archive-fixture.js";
 
 const observed = vi.hoisted(() => ({ clones: [] as string[] }));
 vi.mock("../src/core/file-cache.js", async importOriginal => {
@@ -129,6 +130,8 @@ it("report retries select their one durable job without cloning the unrelated ar
   const unrelated = Array.from({ length: 300 }, (_, index) => ({ id: `foreign-${index}`, name: `foreign-job-${index}`, owner: "other", prompt: "unrelated retained context" }));
   writeFileSync(join(home, "archive", "jobs-corpus.json"), JSON.stringify({ version: 4, jobs: [...unrelated,
     { id: "selected", name: "selected-job", owner: "owner", deliveryHistory: [message] }] }));
+  // AB-206: readers never scan archive files; the corpus reaches them through the job index.
+  indexFixtureFile(join(home, "archive", "jobs-corpus.json"));
   (jobs as any).pendingReports.set(message.id, { jobId: "selected", message }); observed.clones.length = 0;
   (jobs as any).scheduleReportRetry(); await until(() => send.mock.calls.length === 1);
   expect(observed.clones.length).toBeGreaterThan(0); expect(observed.clones.every(id => id === "selected")).toBe(true);
