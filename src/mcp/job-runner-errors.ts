@@ -5,6 +5,7 @@ export function guardRunnerErrors(
   log: Pick<Logger, "error">,
   events: Pick<NodeJS.Process, "on" | "off"> = process,
   stderr: Pick<NodeJS.WriteStream, "on" | "off" | "write"> = process.stderr,
+  label: { message: string; fallback: string } = { message: "unexpected runner callback failure; active turn kept running", fallback: "[job-runner] {event}; active turn kept running (error logging failed)" },
 ): () => void {
   let reporting = false;
   let fallbackAttempted = false;
@@ -13,12 +14,12 @@ export function guardRunnerErrors(
     reporting = true;
     // Reporting an unexpected callback failure must not itself throw from the guard.
     try {
-      log.error("unexpected runner callback failure; active turn kept running", { event, error });
+      log.error(label.message, { event, error });
     } catch {
       if (!fallbackAttempted) {
         // Disable before writing: a broken stream may emit EPIPE after reporting resets.
         fallbackAttempted = true;
-        try { stderr.write(`[job-runner] ${event}; active turn kept running (error logging failed)\n`); }
+        try { stderr.write(`${label.fallback.replace("{event}", event)}\n`); }
         catch { /* The delegate and its ownership scope must remain active even if stderr is unavailable. */ }
       }
     } finally { reporting = false; }
@@ -36,4 +37,12 @@ export function guardRunnerErrors(
     events.off("uncaughtException", exception);
     stderr.off("error", stderrError);
   };
+}
+
+/**
+ * The MCP server (which may host the broker) logs a stray rejection or callback exception instead of exiting:
+ * one failed background request must not take the bridge down for every session (AB-246).
+ */
+export function guardServerErrors(log: Pick<Logger, "error">, events: Pick<NodeJS.Process, "on" | "off"> = process): () => void {
+  return guardRunnerErrors(log, events, process.stderr, { message: "unexpected background failure; MCP server kept running", fallback: "[agent-bridge] {event}; MCP server kept running (error logging failed)" });
 }
