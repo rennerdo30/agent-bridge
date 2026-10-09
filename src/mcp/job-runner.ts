@@ -99,6 +99,10 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
       } finally { process.off("SIGTERM", stop); process.off("SIGINT", stop); }
     }
     return await runOwnedJobRunner(spec, log, scope);
+  } catch (error) {
+    // The detached runner's stderr is not retained: record why it ends without a report.
+    log.error("job runner failed", { err: String((error as Error)?.stack ?? error) });
+    throw error;
   } finally {
     try { scope?.detach(); }
     finally { releaseErrorGuards(); }
