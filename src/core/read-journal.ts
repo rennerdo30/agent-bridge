@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { metadataDb, physicalMetadataPath } from "./metadata-db.js";
+import { closeMetadataDb, metadataDb, metadataDbOpen, metadataReaderRetained, physicalMetadataPath } from "./metadata-db.js";
 import { retainMetadataFiles } from "./metadata-import.js";
 import { storageLease } from "./storage-lock.js";
 import { DatabaseSync } from "node:sqlite";
@@ -71,7 +71,14 @@ export class ReadJournal {
    if (!deferred) this.log?.warn("metadata store deferred; read marks are kept in the read-state journal files until it opens", { err: String((error as Error).message ?? error) });
    if (deferred?.timer) clearTimeout(deferred.timer);
    // Retry in the background, so the journal files are imported even without further reads.
-   const timer = setTimeout(() => { try { this.available(); } catch { /* Retried on the next read or mark. */ } }, delay);
+   // The retry may fire after every node of this home stopped and released the shared handle.
+   // A handle it opens then would stay cached with no owner left to close it, keeping bridge.db
+   // locked on Windows, so it closes what it opened unless a live node still shares the handle.
+   const timer = setTimeout(() => {
+    const opened = !metadataDbOpen(this.home);
+    try { this.available(); } catch { /* Retried on the next read or mark. */ }
+    finally { if (opened && !metadataReaderRetained(this.home)) closeMetadataDb(this.home); }
+   }, delay);
    timer.unref();
    deferrals.set(this.home, { until: Date.now() + delay, delay, timer });
    return undefined;

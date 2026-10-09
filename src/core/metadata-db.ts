@@ -124,6 +124,16 @@ export function retainMetadataReader(home: string): () => void {
  };
 }
 
+/** Whether this process currently caches an open metadata handle for home. */
+export function metadataDbOpen(home: string): boolean {
+ return connections.has(join(resolve(home), "bridge.db"));
+}
+
+/** Whether a live bridge node in this process still shares the metadata handle for home. */
+export function metadataReaderRetained(home: string): boolean {
+ return (readers.get(resolve(home)) ?? 0) > 0;
+}
+
 export function metadataValue(home: string, domain: string, key: string): unknown {
  const row = metadataDb(home).prepare("SELECT value FROM bridge_metadata WHERE domain=? AND key=?").get(domain,key);
  return row ? JSON.parse(String(row.value)) : null;
