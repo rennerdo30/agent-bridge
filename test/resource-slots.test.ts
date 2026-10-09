@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
-import { ResourceSlots, resourceSlotHint, SLOT_LEASE_MS, SLOT_OWNER_ENV, SLOT_PID_ENV } from "../src/core/resource-slots.js";
+import { describeResourceSlots, formatResourceSlots, ResourceSlots, resourceSlotHint, SLOT_LEASE_MS, SLOT_OWNER_ENV, SLOT_PID_ENV } from "../src/core/resource-slots.js";
 import { runSlot } from "../src/cli/slot.js";
 
 const TEST_ROOT = process.env.AGENT_BRIDGE_TEST_ROOT!;
@@ -153,4 +153,15 @@ describe("shared resource slots", () => {
       await Promise.all(contenders.map((c) => c.done));
     }
   }, 20_000);
+});
+
+it("shows holders first and the waiting queue in ticket order (AB-40)", () => {
+  const a = store(), b = store(), c = store();
+  expect(a.tryAcquire("unity", 1, owner("job-a"))).toBe(true);
+  expect(b.tryAcquire("unity", 1, owner("job-b"))).toBe(false);
+  expect(c.tryAcquire("unity", 1, owner("job-c"))).toBe(false);
+  const [unity] = describeResourceSlots(a.list(), { unity: 1, blender: 2 }).filter(r => r.resource === "unity");
+  expect(unity!.held.map(e => e.id)).toEqual(["job-a"]);
+  expect(unity!.waiting.map(e => e.id)).toEqual(["job-b", "job-c"]);
+  expect(formatResourceSlots(a.list(), { unity: 1, blender: 2 })).toEqual([`- unity (1/1): held by job-a [pid ${process.pid}]; waiting: job-b, job-c`]);
 });

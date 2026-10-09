@@ -1,3 +1,4 @@
+import { describeResourceSlots, formatResourceSlots, ResourceSlots } from "../core/resource-slots.js";
 import { bundleDirectory } from "../core/bundle-directory.js";
 import { MAX_HOLD_REASON_CHARS, setJobOutcome, deriveJobOutcome } from "../core/job-outcomes.js";
 import { closeJobWorktree } from "../core/job-close.js";
@@ -765,6 +766,12 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         lines.push("Latest unread file-transfer progress (retained notes, not live status):");
         for (const message of transferNotes.values()) lines.push(`- ${message.body}`);
       }
+      try {
+        const slots = new ResourceSlots(ctx.home);
+        let slotLines: string[];
+        try { slotLines = formatResourceSlots(slots.list(), cfg.resourceSlots); } finally { slots.close(); }
+        if (slotLines.length) lines.push("Resource slots (holders, then the queue in order):", ...slotLines);
+      } catch { /* Slot state is advisory in peers; the slot CLI reports its own errors. */ }
       const jobs = ctx.jobs?.list() ?? [];
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
@@ -895,6 +902,20 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       annotations: { readOnlyHint: true },
     },
     guarded("network_status", async () => text(JSON.stringify(await requireNode().networkStatus(), null, 2))),
+  );
+
+  register(
+    "resource_slots",
+    {
+      title: "Resource slots",
+      description: "Show configured resource slots (resourceSlots, e.g. one Unity editor at a time): who holds each slot and who waits, in queue order. Read-only; jobs take slots with the agent-bridge slot CLI.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    guarded("resource_slots", async () => {
+      const slots = new ResourceSlots(ctx.home);
+      try { return text(JSON.stringify(describeResourceSlots(slots.list(), cfg.resourceSlots), null, 2)); } finally { slots.close(); }
+    }),
   );
 
   register(

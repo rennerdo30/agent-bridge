@@ -713,6 +713,7 @@ form#send select#to {
         <div class="note" id="defInfo" role="status" aria-live="polite"></div>
       </form>
     </details></div>
+    <div class="block hidden" id="ovSlotsBox"><h3>Resource slots <span class="n">holders, then the queue in order</span></h3><div class="panel rows" id="ovSlots"></div></div>
     <div class="block"><h3>Sessions <span class="n" id="ovCount"></span></h3><div id="ovSessions" class="cards"></div></div>
     <div class="block"><h3>Subagents <span class="n">working first, then newest finished</span></h3><div class="panel rows" id="ovRuns"></div></div>
     <div class="block" id="ovMsgBox"><h3>Messages</h3><div class="panel"><div id="ovMsgs" class="msgs"></div></div></div>
@@ -1430,7 +1431,23 @@ function countGroups(groups) {
 function countsLine(c) {
   return [c.working && '<span class="w">' + c.working + " working</span>", c.done && '<span class="d">' + c.done + " done</span>", c.failed && '<span class="f">' + c.failed + " failed</span>", c.cancelled && '<span>' + c.cancelled + " cancelled</span>", c.total + " total"].filter(Boolean).join(" · ");
 }
+/* ---- Resource slots (GET /api/resource-slots, AB-40) ---- */
+let slotsAt = 0;
+async function loadSlots() {
+  if (Date.now() - slotsAt < 10000) return;
+  slotsAt = Date.now();
+  try {
+    const r = await fetch("/api/resource-slots");
+    if (!r.ok) return;
+    const busy = ((await r.json()).resources || []).filter((s) => s.held.length || s.waiting.length);
+    $("ovSlotsBox").classList.toggle("hidden", !busy.length);
+    setHtml("ovSlots", busy.map((s) => '<div class="row"><b>' + esc(s.resource) + "</b>" + (s.capacity !== null ? ' <span class="small muted">' + s.held.length + "/" + s.capacity + "</span>" : "") +
+      ' <span class="small">held by ' + (s.held.map((e) => esc(e.id)).join(", ") || "nobody") + "</span>" +
+      (s.waiting.length ? ' <span class="small muted">· waiting: ' + s.waiting.map((e) => esc(e.id)).join(", ") + "</span>" : "") + "</div>").join(""));
+  } catch { /* Slots are optional; the overview stays usable. */ }
+}
 function renderOverview() {
+  void loadSlots();
   const retained = state.peers.filter((p) => !p.version || cmpVersion(p.version, newestVersion()) < 0);
   if (cmpVersion(state.version, newestVersion()) < 0) retained.push({ name: "dashboard host", version: state.version });
   $("ovVersions").innerHTML = retained.length ? '<div class="attn-banner"><span><b>Version skew: sessions still run retained code.</b> ' + retained.map((p) => esc(p.name) + " (v" + esc(p.version || "unknown") + ")").join(", ") + ". Sessions keep working; shared format upgrades wait for compatible readers.</span></div>" : "";

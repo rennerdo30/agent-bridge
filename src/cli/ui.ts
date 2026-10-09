@@ -1,3 +1,4 @@
+import { describeResourceSlots, ResourceSlots } from "../core/resource-slots.js";
 import { inspectCatalog, inspectRows, MAX_INSPECT_ROWS } from "../core/db-inspect.js";
 import { DatabaseSync } from "node:sqlite";
 import { historyReadPath } from "../core/history-store.js";
@@ -339,6 +340,11 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (!id || id.length > HISTORY_MAX_QUERY_CHARS) return send(res, 400, { error: "Invalid history source id." });
       const source = readHistorySource(dbPath, id);
       return source ? send(res, 200, source) : send(res, 404, { error: "No such indexed history source." });
+    }
+    if (req.method === "GET" && url.pathname === "/api/resource-slots") {
+      const slots = new ResourceSlots(opts.home);
+      try { return send(res, 200, { resources: describeResourceSlots(slots.list(), loadConfig(opts.home, "other", opts.log).resourceSlots) }); }
+      finally { slots.close(); }
     }
     // Read-only Database inspector: bounded pages, compressed history text decoded unless raw=true.
     if (req.method === "GET" && url.pathname === "/api/db/tables") {
