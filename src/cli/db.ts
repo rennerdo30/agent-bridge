@@ -4,7 +4,7 @@ const USAGE = `Usage:
   agent-bridge db tables [--json]
   agent-bridge db query "<sql>" [--db bridge|history|archive] [--json]
   agent-bridge db export --decompressed <table|view> <new-file.sqlite> [--db bridge|history|archive]
-Read-only. SQL can call ab_text(value, codec) and ab_raw(value, codec) to decode compressed history,
+Read-only. SQL can call ab_text(value, codec), ab_json(value, codec) and ab_raw(value, codec) to decode compressed history,
 and the views v_conversation_records and v_history_documents already do.`;
 
 function option(args: string[], name: string): string | undefined {

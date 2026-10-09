@@ -52,8 +52,10 @@ export function decodeText(value: unknown, codec?: unknown): string {
 }
 
 /** SQL access for every connection that reads or writes v2 history text, including the FTS content view
- * and our own viewer: ab_text(value, codec) returns text, ab_raw(value, codec) returns the original bytes. */
+ * and our own viewer: ab_text(value, codec) returns text, ab_raw(value, codec) returns the original bytes, ab_json is ab_text for JSON functions. */
 export function registerHistoryFunctions(db: DatabaseSync): void {
   db.function("ab_text", { deterministic: true }, (value, codec) => value === null ? null : decodeText(value, codec));
   db.function("ab_raw", { deterministic: true }, (value, codec) => value === null ? null : decodeBytes(value, codec));
+  // Decoded text for SQLite's JSON functions, e.g. json_extract(ab_json(raw, raw_codec), '$.type').
+  db.function("ab_json", { deterministic: true }, (value, codec) => value === null ? null : decodeText(value, codec));
 }

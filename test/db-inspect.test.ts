@@ -60,3 +60,25 @@ it("runs read-only SQL with the decode functions and exports a plain copy for th
   expect(runDb(["bogus"], env.home, () => {})).toBe(2);
   expect(existsSync(out)).toBe(true);
 });
+
+it("serves the Database inspector API behind dashboard authentication with validated, bounded parameters", async () => {
+  await migrated();
+  const { startUi } = await import("../src/cli/ui.js");
+  const { nullLogger } = await import("../src/core/logger.js");
+  const ui = await startUi({ home: env.home, pipe: env.pipe, port: 0, log: nullLogger });
+  try {
+    const base = ui.url.replace(/\/\?t=.*$/, "");
+    expect((await fetch(`${base}/api/db/tables`)).status).toBe(403);
+    const cookie = String((await fetch(ui.url, { redirect: "manual" })).headers.get("set-cookie")).split(";")[0]!;
+    const headers = { cookie };
+    const catalog = await (await fetch(`${base}/api/db/tables`, { headers })).json();
+    expect(catalog.dbs.map((d: { db: string }) => d.db)).toContain("history");
+    const page = await (await fetch(`${base}/api/db/rows?db=history&table=conversation_records&limit=2`, { headers })).json();
+    expect(page.rows).toHaveLength(2);
+    expect(page.rows[0][page.columns.indexOf("raw")]).toBe(text);
+    expect((await fetch(`${base}/api/db/rows?db=history&table=conversation_records&limit=9999`, { headers })).status).toBe(400);
+    expect((await fetch(`${base}/api/db/rows?db=history&table=nope`, { headers })).status).toBe(400);
+    expect((await fetch(`${base}/api/db/rows?db=history&table=conversation_records&evil=1`, { headers })).status).toBe(400);
+    expect((await fetch(`${base}/api/db/rows?db=../bridge&table=messages`, { headers })).status).toBe(400);
+  } finally { await ui.close(); }
+});
