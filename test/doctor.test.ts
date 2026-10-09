@@ -24,6 +24,7 @@ import { ReadJournal } from "../src/core/read-journal.js";
 import { closeMetadataDb, closeMetadataDbs } from "../src/core/metadata-db.js";
 import { listPendingApprovals, publishApproval } from "../src/core/relay.js";
 import { readArchivedJobs } from "../src/core/job-archive.js";
+import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 
 let home: string;
@@ -327,7 +328,9 @@ describe("lossless, readable archives", () => {
     const journal = new ReadJournal(home);
     journal.append("session", ["old"]);
     const backup = createBackup(home);
-    expect(readBackup(backup).files.some((f) => f.path.startsWith("read-state/"))).toBe(true);
+    // AB-208: receipts are rows in bridge.db, so its consistent snapshot carries the journal.
+    expect(readBackup(backup).files.map((f) => f.path)).toContain("bridge.db");
+    expect(readBackup(backup).files.some((f) => f.path.startsWith("read-state/"))).toBe(false);
     journal.append("session", ["new"]);
     const recovery = restoreBackup(home, backup, true);
     expect(journal.read("session")).toEqual(["old"]);
@@ -346,15 +349,20 @@ describe("lossless, readable archives", () => {
     const dir = join(home, "approvals", "archive");
     expect(readFileSync(join(dir, readdirSync(dir)[0]!))).toEqual(raw);
   });
-  it("reads earlier JSON archive versions and refuses unknown future versions without changing bytes", () => {
+  it("reads earlier JSON archive versions and refuses unknown future versions without changing bytes", async () => {
+    // AB-206: readers never scan archive files; the elected worker imports them into the job index.
     const dir = join(home, "archive"); mkdirSync(dir);
-    const path = join(dir, "jobs-old.json");
-    writeFileSync(path, JSON.stringify({ version: 0, jobs: [savedJob("old")] }));
-    expect(readArchivedJobs(join(home, "jobs.json"))[0]?.id).toBe("old");
-    writeFileSync(path, JSON.stringify({ version: 99, jobs: [savedJob("future")] }));
-    const raw = readFileSync(path);
-    expect(() => readArchivedJobs(join(home, "jobs.json"))).toThrow("invalid job archive");
-    expect(readFileSync(path)).toEqual(raw);
+    const jobs = join(home, "jobs.json");
+    const future = join(dir, "jobs-2.json");
+    writeFileSync(future, JSON.stringify({ version: 99, jobs: [savedJob("future")] }));
+    const raw = readFileSync(future);
+    await expect(migrateJobArchives(jobs)).rejects.toThrow("unsupported job archive");
+    expect(readFileSync(future)).toEqual(raw);
+    expect(readArchivedJobs(jobs).map((j) => j.id)).not.toContain("future");
+    rmSync(future);
+    writeFileSync(join(dir, "jobs-1.json"), JSON.stringify({ version: 0, jobs: [savedJob("old")] }));
+    await migrateJobArchives(jobs);
+    expect(readArchivedJobs(jobs).find((j) => j.id === "old")).toMatchObject({ future: "keep", supervisor: "supervisor1" });
   });
 });
 
