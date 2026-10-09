@@ -75,3 +75,21 @@ export function isProcessIdentityAlive(pid: number, identity: string): boolean |
   const current = processIdentity(pid);
   return current === undefined ? undefined : current === identity;
 }
+
+/** Wall-clock creation time of a process (epoch ms), or undefined when it cannot be read.
+ * A process that started after a lock was written cannot own that lock, so this detects PID reuse. */
+export function processStartMs(pid: number): number | undefined {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
+  try {
+    if (process.platform === "win32") {
+      const ticks = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`], { windowsHide: true, timeout: 5_000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+      if (!/^\d+$/.test(ticks)) return undefined;
+      // .NET ticks are 100 ns units since 0001-01-01 UTC.
+      return Number(BigInt(ticks) / 10_000n - 62_135_596_800_000n);
+    }
+    // lstart is local time with second resolution; Date.parse reads it in the same local zone.
+    const started = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { timeout: 5_000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, LC_ALL: "C" } }).trim();
+    const ms = Date.parse(started);
+    return Number.isFinite(ms) ? ms : undefined;
+  } catch { return undefined; }
+}
