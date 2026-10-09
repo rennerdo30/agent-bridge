@@ -47,7 +47,7 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   "cli/reliability-live.ts": ["rmSync(h, { recursive: true, force: true, maxRetries: 3 })"],
   "core/worktree-links.ts": ["unlinkSync(path)", "rmdirSync(path)", "rmSync(probe, { recursive: true, force: true })"],
   "core/worktree.ts": ["rmSync(toNamespacedPath(resolve(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES })"],
-  "core/resource-slots.ts": ['"DELETE FROM slots WHERE expiresAt <= ?"', '"DELETE FROM slots WHERE pid = ? AND identity IS ?"', '`DELETE FROM slots WHERE id = ? AND pid = ?${resource ? " AND resource = ?" : ""}`'],
+  "core/resource-slots.ts": ['"DELETE FROM slots WHERE expiresAt <= ?"', '"DELETE FROM slots WHERE pid = ? AND identity IS ? AND expiresAt <= ?"', '`DELETE FROM slots WHERE id = ? AND pid = ?${resource ? " AND resource = ?" : ""}`'],
   "core/sqlite-maintenance.ts": ["`DELETE FROM ${table} WHERE ${where}`"],
   "core/sqlite-migrations.ts": ["`DELETE FROM ${quoted}`"],
   // Temporary working folder (mkdtempSync) of the low-cost model that answers search questions.
