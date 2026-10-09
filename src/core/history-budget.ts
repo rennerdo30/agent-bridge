@@ -17,9 +17,10 @@ export async function historyBudget(home: string, budgetBytes: number, mirrors: 
       for (const entry of await readdir(path)) await visit(join(path, entry));
     } else if (st.isFile()) { bytes += st.size; files++; }
   };
-  // Include WAL, indexes (inside DB pages), migration snapshots, retained backups and mirrors.
+  // Include WAL, indexes (inside DB pages), retained archives and mirrors. Migration snapshots are temporary
+  // copies of the legacy store; counting them would stop the very migration that makes them removable.
   for (const entry of await readdir(home)) if (/^history\.db(?:$|[-.])/.test(entry) || entry.startsWith("history-import-") ||
-      [".migration-snapshots", "history-archive", "project-mirrors"].includes(entry)) await visit(join(home, entry));
+      ["history-archive", "project-mirrors"].includes(entry)) await visit(join(home, entry));
   for (const mirror of mirrors) await visit(mirror);
   // Reserve a bounded batch plus SQLite/index overhead before admission.
   return { bytes, budgetBytes, files, paused: budgetBytes > 0 && bytes + 8 * 1024 ** 2 >= budgetBytes, policy: "retain-and-pause" };

@@ -29,7 +29,8 @@ it("accounts for DB/WAL, snapshots, backups and mirrors and pauses without remov
   for (const file of ["history.db", "history.db-wal", "history.db.backup-1", ".migration-snapshots/snapshot.db", "project-mirrors/mirror.db"]) {
     const path = join(env.home, file); mkdirSync(join(path, ".."), { recursive: true }); writeFileSync(path, Buffer.alloc(1024, 17));
   }
-  expect(await historyBudget(env.home, 1)).toMatchObject({ bytes: 5120, files: 5, paused: true, policy: "retain-and-pause" });
+  // Temporary migration snapshots never count against the budget; they would block the migration itself.
+  expect(await historyBudget(env.home, 1)).toMatchObject({ bytes: 4096, files: 4, paused: true, policy: "retain-and-pause" });
   expect(await historyBudget(env.home, 20 * 1024 ** 2)).toMatchObject({ paused: false });
   expect(readFileSync(join(env.home, "history.db"))).toEqual(Buffer.alloc(1024, 17));
 });

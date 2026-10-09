@@ -103,7 +103,7 @@ export interface BridgeConfig {
 }
 
 export const DEFAULT_CONFIG: BridgeConfig = {
-  history: { ingest: true, budgetBytes: 8 * 1024 ** 3 },
+  history: { ingest: true, budgetBytes: 32 * 1024 ** 3 },
   questionAlerts: DEFAULT_QUESTION_ALERTS,
   projectGroups: true,
   historyAnswer: DEFAULT_HISTORY_ANSWER,
