@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 /** Product identity. */
 export const APP_NAME = "agent-bridge";
-export const APP_VERSION = "0.30.6";
+export const APP_VERSION = "0.30.7";
 
 /** Wire protocol version; bump on incompatible changes to the broker protocol. */
 export const PROTOCOL_VERSION = 2;

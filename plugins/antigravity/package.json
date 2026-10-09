@@ -1,6 +1,6 @@
 {
   "name": "agent-bridge-antigravity",
-  "version": "0.30.6",
+  "version": "0.30.7",
   "private": true,
   "type": "module"
 }

@@ -3,7 +3,7 @@ import {
   RewakeEndpoint,
   WAKE_HEADER,
   shouldWakeClaudeMessage
-} from "./chunks/chunk-V7HRAJES.mjs";
+} from "./chunks/chunk-EP3L3GNY.mjs";
 import {
   guardServerErrors
 } from "./chunks/chunk-Q4TGWKCP.mjs";
@@ -53,30 +53,30 @@ import {
 } from "./chunks/chunk-DDASK4CX.mjs";
 import {
   MAX_STREAM_ENTRIES
-} from "./chunks/chunk-W2THBZCO.mjs";
+} from "./chunks/chunk-2IB3CUXL.mjs";
 import {
-  JobRunners,
   isBridgeWorktree,
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-RZ53OUR7.mjs";
+} from "./chunks/chunk-RO3MV5XS.mjs";
 import {
   codexAppServerCall,
   describeModels,
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-QHEF3NNZ.mjs";
+} from "./chunks/chunk-FVORNVX6.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
+  JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-GS4DWRJ5.mjs";
+} from "./chunks/chunk-W3Y32IWO.mjs";
 import {
   readWorktreeState
-} from "./chunks/chunk-ITOQSHK6.mjs";
-import "./chunks/chunk-MQGFL2OS.mjs";
+} from "./chunks/chunk-INN65Y6Y.mjs";
+import "./chunks/chunk-WQR3AD6A.mjs";
 import {
   openBrowser
 } from "./chunks/chunk-LWVK3CB7.mjs";
@@ -85,10 +85,8 @@ import {
 } from "./chunks/chunk-BG6KJS4H.mjs";
 import {
   BridgeNode,
-  DASHBOARD_JOB_CONVERSATION,
-  REMOTE_JOB_POLL_MS,
-  remoteSpawnArgsSchema
-} from "./chunks/chunk-G4SS4C4K.mjs";
+  DASHBOARD_JOB_CONVERSATION
+} from "./chunks/chunk-C4SMUQFU.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -99,13 +97,17 @@ import {
   formatProjectRoute,
   formatReplyRestrictions,
   formatVersionSkew
-} from "./chunks/chunk-RAQCWDAY.mjs";
+} from "./chunks/chunk-GUX2UNLN.mjs";
 import {
   formatHealth,
   probeBrokerHealth
-} from "./chunks/chunk-FOPRIEOG.mjs";
-import "./chunks/chunk-DJET5VBS.mjs";
+} from "./chunks/chunk-ZOGIPCUB.mjs";
+import "./chunks/chunk-6R2GENL4.mjs";
 import "./chunks/chunk-RQUYBZWF.mjs";
+import {
+  REMOTE_JOB_POLL_MS,
+  remoteSpawnArgsSchema
+} from "./chunks/chunk-D7ERDGBB.mjs";
 import {
   conversationPageSchema
 } from "./chunks/chunk-3CXCL26P.mjs";
@@ -113,20 +115,20 @@ import {
   HISTORY_MAX_LIMIT,
   HISTORY_MAX_QUERY_CHARS,
   historyFiltersSchema
-} from "./chunks/chunk-RTYYK3GA.mjs";
+} from "./chunks/chunk-QLU2ZDT2.mjs";
 import {
   MAX_HOLD_REASON_CHARS,
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-ZUNWNXUT.mjs";
-import "./chunks/chunk-5TDOZG2J.mjs";
-import "./chunks/chunk-TFVNH3A3.mjs";
+} from "./chunks/chunk-ALGJWDLW.mjs";
+import "./chunks/chunk-WK4T53Z5.mjs";
+import "./chunks/chunk-IENBXKRU.mjs";
 import {
   antigravityAncestor,
   antigravityHookOutput,
   inspectClaudeLaunch
-} from "./chunks/chunk-XAWFNMP4.mjs";
+} from "./chunks/chunk-SSDLU7WJ.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   ACCESS_LEVELS,
@@ -151,14 +153,15 @@ import {
   parentFromEnv,
   parseJobSettings,
   resolveBinary,
-  runProcess
-} from "./chunks/chunk-KWUM4FZP.mjs";
+  runProcess,
+  verifiedGoneJobOwners
+} from "./chunks/chunk-7KRAJNI6.mjs";
 import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
   formatResourceSlots
-} from "./chunks/chunk-KYK3XDP2.mjs";
+} from "./chunks/chunk-HGNNXUUG.mjs";
 import {
   bundleDirectory
 } from "./chunks/chunk-D5ZW6VFT.mjs";
@@ -166,7 +169,7 @@ import {
   resolveDbPath,
   resolveHome,
   resolvePipePath
-} from "./chunks/chunk-BVTRXPA5.mjs";
+} from "./chunks/chunk-35H7HOLN.mjs";
 import "./chunks/chunk-JTZGNEMM.mjs";
 import {
   MAX_JOB_SEND_TARGETS,
@@ -176,10 +179,10 @@ import {
   loadOrCreateToken,
   tokensEqual
 } from "./chunks/chunk-V4WDBMEN.mjs";
-import "./chunks/chunk-ZBKQCI2L.mjs";
+import "./chunks/chunk-O3D4XOXC.mjs";
 import {
   canonicalProjectRoot
-} from "./chunks/chunk-Y5OCTQFF.mjs";
+} from "./chunks/chunk-6HI567DZ.mjs";
 import {
   CLAUDE_PERMISSION_MODES,
   CODEX_APPROVALS_REVIEWERS,
@@ -191,7 +194,7 @@ import {
   parseAgentKind,
   saveConfigValue,
   watchConfig
-} from "./chunks/chunk-EVQHXDRX.mjs";
+} from "./chunks/chunk-22I6GVQM.mjs";
 import {
   AGENT_KINDS,
   BROADCAST,
@@ -208,17 +211,17 @@ import {
   askOwnerSchema,
   decisionScopeSchema,
   formatDecisionSummary
-} from "./chunks/chunk-MQP6K4NJ.mjs";
+} from "./chunks/chunk-C3IT2QV3.mjs";
 import {
   isInternalBridgeProcess,
   isPluginCacheCwd
-} from "./chunks/chunk-QI5MA53T.mjs";
+} from "./chunks/chunk-KIW2YSIK.mjs";
 import {
   ZodOptional,
   external_exports
 } from "./chunks/chunk-FDMEMG4Z.mjs";
-import "./chunks/chunk-OG3EDS6T.mjs";
-import "./chunks/chunk-2BSEKRNX.mjs";
+import "./chunks/chunk-D26YRNXK.mjs";
+import "./chunks/chunk-JJWO6ADJ.mjs";
 import {
   object
 } from "./chunks/chunk-TFQZM67X.mjs";
@@ -226,13 +229,10 @@ import {
   archiveFile,
   createLogger,
   isRecord,
-  readJsonSnapshot,
   readJsonStore,
   writeJsonStore
-} from "./chunks/chunk-OMBGRGBY.mjs";
-import {
-  readProcessIdentity
-} from "./chunks/chunk-ENZISWMO.mjs";
+} from "./chunks/chunk-OHCADHNH.mjs";
+import "./chunks/chunk-GY7VUHKV.mjs";
 import {
   APP_NAME,
   APP_VERSION,
@@ -246,11 +246,11 @@ import {
   MAX_JOBS_LIMIT,
   MAX_JOB_TIMEOUT_SEC,
   MAX_WAIT_SEC
-} from "./chunks/chunk-Q372BWBW.mjs";
+} from "./chunks/chunk-GWP4RZPO.mjs";
 import "./chunks/chunk-HHAVWD7J.mjs";
 
 // src/mcp/server.ts
-import { isAbsolute, join as join5, resolve } from "node:path";
+import { isAbsolute, join as join4, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
@@ -2211,41 +2211,6 @@ async function runRemoteAsk(node, target, args, job, signal, onProgress) {
   }
 }
 
-// src/core/job-restoration.ts
-import { readdirSync as readdirSync2 } from "node:fs";
-import { join as join3 } from "node:path";
-async function verifiedGoneJobOwners(home, owners) {
-  if (!owners.length) return /* @__PURE__ */ new Set();
-  const records = /* @__PURE__ */ new Map();
-  try {
-    const dir = join3(home, "storage-capabilities");
-    for (const name of readdirSync2(dir).filter((name2) => /^\d+\.json$/.test(name2))) {
-      const record = readJsonSnapshot(join3(dir, name)).value;
-      if (!isRecord(record) || typeof record.name !== "string" || !owners.includes(record.name) || record.pid !== Number(name.slice(0, -5))) continue;
-      const entries = records.get(record.name) ?? [];
-      entries.push({ pid: record.pid, identity: typeof record.processIdentity === "string" ? record.processIdentity : void 0 });
-      records.set(record.name, entries);
-    }
-  } catch {
-    return /* @__PURE__ */ new Set();
-  }
-  const gone = /* @__PURE__ */ new Set();
-  await Promise.all([...records].map(async ([owner, entries]) => {
-    const exited = await Promise.all(entries.map(async (entry) => {
-      try {
-        process.kill(entry.pid, 0);
-      } catch (error) {
-        return error.code === "ESRCH";
-      }
-      if (!entry.identity) return false;
-      const current = await readProcessIdentity(entry.pid);
-      return current !== null && current !== entry.identity;
-    }));
-    if (exited.length && exited.every(Boolean)) gone.add(owner);
-  }));
-  return gone;
-}
-
 // src/mcp/codex-wake.ts
 var WAKE_DEBOUNCE_MS = 1500;
 var QUEUE_TIMEOUT_MS = 3e4;
@@ -2441,11 +2406,11 @@ var LocalCoordinator = class extends EventEmitter {
 };
 
 // src/core/auto-wake-pref.ts
-import { join as join4 } from "node:path";
+import { join as join3 } from "node:path";
 var FILE = "auto-wake.json";
 function read(home) {
   try {
-    return readJsonStore(join4(home, FILE)) ?? {};
+    return readJsonStore(join3(home, FILE)) ?? {};
   } catch {
     return {};
   }
@@ -2457,7 +2422,7 @@ function savedAutoWake(home, name) {
 }
 function saveAutoWake(home, name, enabled) {
   try {
-    const file = join4(home, FILE);
+    const file = join3(home, FILE);
     const previous = readJsonStore(file);
     const data = isRecord(previous) ? previous : {};
     const peers = isRecord(data.peers) ? data.peers : data;
@@ -2652,7 +2617,7 @@ async function startServer(argv = process.argv.slice(2)) {
     const parentJob = process.env[PARENT_JOB_ENV];
     const rootSession = process.env[ROOT_SESSION_ENV];
     const coordinator = ctx.childInbox = new LocalCoordinator(parentJob, rootSession);
-    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join5(home, JOBS_FILE), cfg.maxJobs, {
+    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join4(home, JOBS_FILE), cfg.maxJobs, {
       parentJob,
       rootSession,
       rootName: process.env[ROOT_NAME_ENV] || ctx.parent.name,
@@ -2661,7 +2626,7 @@ async function startServer(argv = process.argv.slice(2)) {
     });
   }
   if (node) {
-    ctx.jobs = new JobManager(node, log.child("jobs"), join5(home, JOBS_FILE), cfg.maxJobs, void 0, {
+    ctx.jobs = new JobManager(node, log.child("jobs"), join4(home, JOBS_FILE), cfg.maxJobs, void 0, {
       canRestore: () => node.isConnected && (agent !== "claude" || ctx.restoreEligible === true),
       canReceiveHandoff: () => node.isConnected
     });
@@ -2785,7 +2750,7 @@ async function startServer(argv = process.argv.slice(2)) {
   const ensureDashboard = async (force) => {
     try {
       if (!force && !cfg.dashboard) return null;
-      dashboard ??= import("./chunks/dashboard-W3LN2VAJ.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
+      dashboard ??= import("./chunks/dashboard-R7YSTAKH.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
       return await (await dashboard).ensure();
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
@@ -2871,11 +2836,11 @@ async function startServer(argv = process.argv.slice(2)) {
       adopt();
       setTimeout(adopt, STAND_IN_RECHECK_MS).unref();
     });
-    const join6 = () => node.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join5 = () => node.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (ctx.headless) {
       log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
     } else if (cwdKnown) {
-      void join6();
+      void join5();
     } else {
       log.info("project directory unknown yet; waiting for host metadata before bridge join");
     }
@@ -2939,8 +2904,8 @@ function registerTools(mcp, ctx, targets) {
     },
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-KYT32WRQ.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-XFS45CH6.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-FOJQ7Q5K.mjs")).readHistory(resolveDbPath(ctx.home), args);
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-NQENW6GF.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
@@ -2948,7 +2913,7 @@ function registerTools(mcp, ctx, targets) {
     description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
     inputSchema: conversationPageSchema.shape,
     annotations: { readOnlyHint: true }
-  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-S76E3GVV.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
+  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-FWENSRPK.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
   register(
     "decide",
     {
