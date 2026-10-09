@@ -1,4 +1,5 @@
 import { appendContextEvent } from "./context-journal.js";
+import { readBodyText } from "./http-body.js";
 import { JOBS_FILE } from "./constants.js";
 import { readStore } from "../mcp/jobs.js";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -115,11 +116,7 @@ export class PermissionRelay {
     if (req.method !== "POST" || req.url !== RELAY_PATH) throw new Error("not found");
     const auth = String(req.headers.authorization ?? "").replace(/^Bearer /, "");
     if (!tokensEqual(auth, this.secret)) throw new Error("unauthorized");
-    let raw = "";
-    for await (const chunk of req) {
-      raw += chunk;
-      if (raw.length > MAX_REQUEST_BYTES) throw new Error("request too large");
-    }
+    const raw = await readBodyText(req, MAX_REQUEST_BYTES);
     const body = JSON.parse(raw) as Partial<PermissionRequest>;
     const detail = boundedDetail(String(body.detail ?? ""));
     const request: PermissionRequest = {
@@ -208,11 +205,9 @@ export async function publishApproval(home: string, approval: PendingApproval, a
     };
     void (async () => {
       if (req.method !== "POST" || req.url !== ANSWER_PATH || !tokensEqual(String(req.headers.authorization ?? ""), `Bearer ${token}`)) return reply(403, { error: "forbidden" });
-      let raw = "";
-      for await (const chunk of req) {
-        raw += chunk;
-        if (raw.length > MAX_REQUEST_BYTES) return reply(400, { error: "request too large" });
-      }
+      let raw: string;
+      try { raw = await readBodyText(req, MAX_REQUEST_BYTES); }
+      catch { return reply(400, { error: "request too large" }); }
       const body = JSON.parse(raw) as ApprovalAnswer;
       if (!body || (body.decision !== "allow" && body.decision !== "deny") || (body.reason !== undefined && (typeof body.reason !== "string" || body.reason.length > MAX_APPROVAL_REASON_CHARS))) return reply(400, { error: "invalid answer" });
       if (body.source !== undefined && body.source !== "dashboard" && body.source !== "MCP decide") return reply(400, { error: "invalid source" });

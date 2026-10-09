@@ -51,6 +51,7 @@ export { classifyPeers, listRuns, readStoredJobs, summarizeRun, finishedRunOutco
 export type { RunSummary, DashboardPeer, StoredJobView } from "../core/dashboard-read.js";
 import { dashboardError } from "../network/remote-dashboard.js";
 import { markRemoteDashboard } from "../network/dashboard-projection.js";
+import { readBodyText } from "../core/http-body.js";
 import { dashboardRequestSchema, isDashboardReadPath, DASHBOARD_TIMEOUT_MS, type DashboardReadRequest, type DashboardReadResult } from "../network/dashboard-protocol.js";
 
 /**
@@ -119,11 +120,7 @@ function send(res: ServerResponse, status: number, body: unknown, type = "applic
 }
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  let raw = "";
-  for await (const chunk of req) {
-    raw += chunk;
-    if (raw.length > MAX_POST_BYTES) throw new Error("request too large");
-  }
+  const raw = await readBodyText(req, MAX_POST_BYTES);
   return JSON.parse(raw || "{}");
 }
 
