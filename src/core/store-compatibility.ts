@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { uptime } from "node:os";
 import { join } from "node:path";
+import { writtenBeforeBoot } from "./boot-time.js";
 import { atomicPluginWrite } from "./plugin-runtime.js";
 import type { PeerInfo } from "./protocol.js";
 import { processIdentity, readProcessIdentities } from "./process-identity.js";
@@ -13,16 +13,9 @@ interface Presence extends StoreCapabilities { pid: number; name: string; versio
 const identities = new Map<string, { identity: string | null; at: number; signature: string }>();
 const refreshes = new Map<string, Promise<void>>();
 const IDENTITY_REFRESH_MS = 10_000;
-const BOOT_MARGIN_MS = 60_000;
 
-/**
- * No process survives a reboot, so a presence written before this boot is never a live reader. After a reboot
- * Windows reuses low PIDs for protected system processes whose start time cannot be read; without this, such a
- * stale legacy record would look like an unidentified live reader and block store upgrades indefinitely.
- */
-export function writtenBeforeBoot(at: number, now = Date.now(), upSeconds = uptime()): boolean {
-  return Number.isFinite(at) && at > 0 && at < now - upSeconds * 1000 - BOOT_MARGIN_MS;
-}
+/** Re-exported: the boot rule lives in boot-time.ts so lock modules can share it without import cycles. */
+export { writtenBeforeBoot };
 
 function databasePresence(home: string): {record: Presence; signature: string; at: number}[] | undefined {
   const db = existingMetadataDb(home);

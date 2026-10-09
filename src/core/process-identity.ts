@@ -123,11 +123,19 @@ export function identityStartedAfter(identity: string, recordedAt: number): bool
  * written, which is PID reuse. Unknown answers stay alive, so recovery never takes over a living owner's data.
  */
 export function recordedOwnerAlive(pid: number, identity: string | undefined, recordedAt: number): boolean {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return true;
+  return recordedOwnerLiveness(pid, identity, recordedAt) !== false;
+}
+
+/**
+ * `recordedOwnerAlive` with the unknown answers kept apart: true (verified live), false (provably gone), or
+ * undefined (EPERM, an unreadable start time, an invalid PID). Callers decide unknown with `ownerGone`.
+ */
+export function recordedOwnerLiveness(pid: number, identity: string | undefined, recordedAt: number): boolean | undefined {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
   try { process.kill(pid, 0); }
-  catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH" ? false : undefined; }
   const current = processIdentity(pid);
-  if (current === undefined) return true;
+  if (current === undefined) return undefined;
   if (identity) return current === identity;
   // A second of slack for coarse timestamps; a real owner exists before it writes its record.
   return !identityStartedAfter(current, recordedAt + 1_000);
