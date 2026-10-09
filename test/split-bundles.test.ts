@@ -23,6 +23,6 @@ it("indexes new messages through the compiled split-bundle background worker", a
     await client.connect(transport);await call("peers",{});
     await call("send",{to:"offline-fixture",message:"compiled_background_needle"});
     await vi.waitFor(async()=>{const result=await call("search_history",{query:"compiled_background_needle"});const content=result.content as {type:string;text?:string}[];const text=content.find(c=>c.type==="text")?.text ?? "{}";expect(JSON.parse(text).hits).toHaveLength(1);},{timeout:10000,interval:100});
-    expect(errors).not.toMatch(/Cannot find module|ERR_MODULE_NOT_FOUND|history worker failed/);
+    expect(errors).not.toMatch(/Cannot find module|ERR_MODULE_NOT_FOUND|history worker failed|job archive worker failed/);
   } finally {await client.close();}
 });

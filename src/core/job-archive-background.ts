@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Logger } from "./logger.js";
+import { bundleDirectory } from "./bundle-directory.js";
 import { atomicPluginWrite } from "./plugin-runtime.js";
 
 /** One resumable migration per broker election, independent of history.ingest.
@@ -15,7 +16,8 @@ export class JobArchiveBackground {
   private closed = false;
   private readonly entry: URL;
   constructor(private readonly path: string, private readonly log: Logger) {
-    let entry = new URL("./job-archive-worker.mjs", import.meta.url);
+    // Shared chunks live in dist/chunks; the worker entry sits beside the bundle entrypoints.
+    let entry = pathToFileURL(join(bundleDirectory(import.meta.url), "job-archive-worker.mjs"));
     if (import.meta.url.endsWith(".ts")) {
       const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
       const output = join(root, ".agent-bridge-test", "job-archive-worker.mjs");
