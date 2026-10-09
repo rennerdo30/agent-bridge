@@ -34,6 +34,12 @@ export const ACK_CONVERSATION_SUFFIX = ":ack";
 /** Transfer updates stay available on demand, without becoming new session work. */
 export const TRANSFER_PROGRESS_PREFIX = "files-progress-";
 
+/** A delegated job's question to its parent (send with message_kind="question"). */
+export const QUESTION_CONVERSATION_SUFFIX = ":question";
+export function isJobQuestion(m: Pick<BridgeMessage, "conversationId">): boolean {
+  return /^job-[^:]+:question(?::fallback)?$/.test(m.conversationId);
+}
+
 export function isSiblingNote(m: Pick<BridgeMessage, "conversationId">): boolean {
   return m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX);
 }
