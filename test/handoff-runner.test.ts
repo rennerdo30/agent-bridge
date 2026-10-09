@@ -10,7 +10,7 @@ import { readRunnerState } from "../src/mcp/job-host.js";
 import { readStore } from "../src/mcp/jobs.js";
 import { parentFromEnv } from "../src/core/parent-link.js";
 import { pidAlive } from "../src/core/delegate.js";
-import { readProcessIdentities } from "../src/core/process-identity.js";
+import { fixtureProcessExists, fixtureProcessGeneration } from "./fixture-process-generation.js";
 import type { CodingAgent } from "../src/core/protocol.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
@@ -60,22 +60,23 @@ async function stopOwnedRunner(id: string): Promise<void> {
     return Boolean(saved && saved.status !== "running" && !saved.host);
   }, 30_000);
   const state = readRunnerState(env.home, id);
-  if (!state?.pid || !pidAlive(state.pid)) return;
+  if (!state?.pid) return;
+  if (!fixtureProcessExists(state.pid, `Refusing unverified fixture runner ${state.pid}; retained at ${env.home}`)) return;
   const pid = state.pid, file = join(env.home, "storage-capabilities", `${pid}.json`);
   const presence = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
   if (state.peer !== `claude-job-${id}` || presence?.pid !== pid || presence?.name !== state.peer ||
-    typeof presence.processIdentity !== "string" || (process.platform === "win32" && !/^\d+$/.test(presence.processIdentity)) ||
-    (await readProcessIdentities([pid])).get(pid) !== presence.processIdentity)
+    typeof presence.processIdentity !== "string" || (process.platform === "win32" && !/^\d+$/.test(presence.processIdentity)))
     throw new Error(`Refusing unidentified fixture runner ${pid}; retained at ${env.home}`);
+  if (!(await fixtureProcessGeneration(pid, presence.processIdentity, `Refusing unidentified fixture runner ${pid}; retained at ${env.home}`))) return;
   if (process.platform === "win32") {
     // Holding the handle fences PID reuse for both the final comparison and termination.
     await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `$p=Get-Process -Id ${pid} -ErrorAction SilentlyContinue; if($null -eq $p){exit 0}; try {$h=$p.SafeHandle; if($h.IsInvalid -or $h.IsClosed -or [string]$p.StartTime.ToUniversalTime().Ticks -ne '${presence.processIdentity}'){throw 'Fixture generation changed; no signal sent'}; $p.Kill(); if(-not $p.WaitForExit(5000)){throw 'Owned runner did not exit; no fallback'}} finally {$p.Dispose()}`], { windowsHide: true });
   } else {
-    if ((await readProcessIdentities([pid])).get(pid) !== presence.processIdentity) throw new Error("Fixture generation changed; no signal sent");
+    if (!(await fixtureProcessGeneration(pid, presence.processIdentity, "Fixture generation changed; no signal sent"))) return;
     try { process.kill(pid, "SIGTERM"); } catch (error) { if (pidAlive(pid)) throw error; }
     await new Promise(resolve => setTimeout(resolve, 3_000));
     if (pidAlive(pid)) {
-      if ((await readProcessIdentities([pid])).get(pid) !== presence.processIdentity) throw new Error("Fixture generation changed; no delayed signal sent");
+      if (!(await fixtureProcessGeneration(pid, presence.processIdentity, "Fixture generation changed; no delayed signal sent"))) return;
       try { process.kill(pid, "SIGKILL"); } catch (error) { if (pidAlive(pid)) throw error; }
     }
   }
