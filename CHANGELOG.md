@@ -22,6 +22,8 @@
 - An inline job report that another writer's save left out of the store is saved again with backoff instead of waiting for an unrelated save.
 - A late read-journal retry closes the database handle it opened after its session stopped, and a retry timer that fires slightly early still retries instead of stopping.
 - After a handoff, the broker routes a job's reports by the stored job, not by an older recovered copy that still named the previous owner.
+- A session that stops while it is taking over as broker closes that broker instead of leaving its databases open.
+- A handoff retries for up to 2 s while the jobs store lease is briefly held, instead of failing at once.
 - The README states prominently what agent-bridge may ever delete and that close cleanup is off by default.
 
 ## 0.30.3
