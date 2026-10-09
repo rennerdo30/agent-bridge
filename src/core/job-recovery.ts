@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isRecord } from "./json-store.js";
 import { AGENT_KINDS } from "./protocol.js";
-import { findHistoryJob, readHistoryJson, readRunLogs } from "./run-history.js";
+import { findHistoryJob, historyJobsSteps, readHistoryJson, readRunLogs, readRunLogsResponsive } from "./run-history.js";
+import { cloneJson } from "./file-cache.js";
+import { drainScanResponsive } from "./responsive-scan.js";
 import { safeFile } from "./transcripts/common.js";
 import { pidAlive } from "./delegate.js";
 import type { Job } from "../mcp/jobs.js";
@@ -31,13 +33,13 @@ export function recoverJobRecord(home: string, ref: string): StoredJob | undefin
 
 /** Broker recovery never synchronously rereads an entire retained run feed. */
 export async function recoverJobRecordAsync(home: string, ref: string): Promise<StoredJob | undefined> {
-  const recovery = prepareRecovery(home, ref);
+  const recovery = await prepareRecoveryAsync(home, ref);
   if (!recovery) return undefined;
   const payload = needsHeader(recovery) && recovery.run ? await readRecoveryHeader(recovery.run.file) : { prompt: "", header: "" };
   if (!payload) return undefined;
   // A handoff or new native turn can update authority while asynchronous IO yields.
   // Re-read durable facts before publishing/authorizing the recovered context.
-  const latest = prepareRecovery(home, ref);
+  const latest = await prepareRecoveryAsync(home, ref);
   if (!latest) return undefined;
   if (!needsHeader(latest)) return finishRecovery(home, latest, { prompt: "", header: "" });
   if (latest.run?.file !== recovery.run?.file || latest.run?.signature !== recovery.run?.signature || contextIdentity(latest) !== contextIdentity(recovery)) return undefined;
@@ -45,13 +47,38 @@ export async function recoverJobRecordAsync(home: string, ref: string): Promise<
 }
 
 function prepareRecovery(home: string, ref: string) {
-  const id = ref.replace(/^.*-(?:job|ask)-/, "");
-  if (!/^[\w-]+$/.test(id)) return undefined;
+  const id = recoveryId(ref);
+  if (!id) return undefined;
   const history = findHistoryJob(home, ref, id);
+  const { spec, launch } = recoverySpec(home, id);
+  return selectRecovery(ref, id, history, spec, launch, readRunLogs(home));
+}
+async function prepareRecoveryAsync(home: string, ref: string) {
+  const id = recoveryId(ref);
+  if (!id) return undefined;
+  const history = await drainScanResponsive((function* () {
+    const snapshot = yield* historyJobsSteps(home, true);
+    for (const job of snapshot.values()) {
+      yield;
+      if (job.name === ref || job.id === id) return cloneJson(job);
+    }
+    return undefined;
+  })());
+  const { spec, launch } = recoverySpec(home, id);
+  return selectRecovery(ref, id, history, spec, launch, await readRunLogsResponsive(home));
+}
+function recoveryId(ref: string): string | undefined {
+  const id = ref.replace(/^.*-(?:job|ask)-/, "");
+  return /^[\w-]+$/.test(id) ? id : undefined;
+}
+function recoverySpec(home: string, id: string) {
   const file = safeFile(home, join(home, "jobs", `${id}.spec.json`));
   const spec = file ? readHistoryJson(file) : null;
   const launch = isRecord(spec) && isRecord(spec.job) ? spec.job : undefined;
-  const runs = readRunLogs(home).filter((r) => r.meta.job === ref || r.meta.job === history?.name ||
+  return { spec, launch };
+}
+function selectRecovery(ref: string, id: string, history: Record<string, unknown> | undefined, spec: unknown, launch: Record<string, unknown> | undefined, runLogs: ReturnType<typeof readRunLogs>) {
+  const runs = runLogs.filter((r) => r.meta.job === ref || r.meta.job === history?.name ||
     r.name.endsWith(`-${launch?.agent ?? history?.agent ?? ref.split("-")[0]}-${id}`))
     .sort((a, b) => runStart(b) - runStart(a));
   const run = runs[0], meta = run?.meta;

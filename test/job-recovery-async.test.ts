@@ -1,5 +1,7 @@
 import * as feeds from "../src/core/job-recovery-feed.js";
 import * as io from "node:fs/promises";
+import * as history from "../src/core/run-history.js";
+import * as cache from "../src/core/file-cache.js";
 import { mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -9,7 +11,7 @@ import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
-import { recoverJobRecordAsync } from "../src/core/job-recovery.js";
+import { recoverJobRecord, recoverJobRecordAsync } from "../src/core/job-recovery.js";
 const ioMocks=vi.hoisted(()=>({open:vi.fn(),original:undefined as typeof import("node:fs/promises").open|undefined}));
 vi.mock("node:fs/promises",async(importOriginal)=>{const actual=await importOriginal<typeof import("node:fs/promises")>();ioMocks.original=actual.open;return {...actual,open:ioMocks.open};});
 let env: TestEnv;
@@ -22,6 +24,36 @@ function fixture(prompt:string, owner:string, id="asynclegacy") {
   writeFileSync(`${run}.log`,text); writeFileSync(`${run}.json`,JSON.stringify({job:name,session:"retained-native",workdir:env.home,byCwd:env.home}));
   return {name,file:`${run}.log`,text};
 }
+it("yields throughout a cold archive/run catalog, matches offline recovery and clones only selected jobs",async()=>{
+  mkdirSync(join(env.home,"archive"));mkdirSync(join(env.home,"runs"));mkdirSync(join(env.home,"jobs"));
+  const id="responsivecold",name=`codex-job-${id}`, selected={id,name,agent:"codex",owner:"current-owner",rootName:"current-owner",status:"interrupted",startedAt:5,sessionId:"retained-native",prompt:"Exact cold retained context",args:{title:"Retained title",future:{keep:true}},future:{context:["keep"]}};
+  for(let i=0;i<307;i++){
+    const jobs=Array.from({length:5},(_,j)=>({id:`foreign-${i}-${j}`,name:`codex-job-foreign-${i}-${j}`,agent:"codex",owner:"foreign-owner",prompt:"retained".repeat(64),future:{keep:true}}));
+    writeFileSync(join(env.home,"archive",`jobs-${String(i).padStart(4,"0")}.json`),JSON.stringify({version:4,jobs:i===306?[...jobs,selected]:jobs}));
+  }
+  for(let i=0;i<1024;i++){
+    const own=i===1023, run=join(env.home,"runs",`2026-10-08-01-02-03-codex-${own?id:`foreign-${i}`}`);
+    writeFileSync(`${run}.json`,JSON.stringify({job:own?name:`codex-job-foreign-${i}`,jobStartedAt:5,session:own?"retained-native":"foreign-native",by:"launch-owner",access:"read",effort:"high",byCwd:env.home}));
+    writeFileSync(`${run}.log`,"01:02:03 header by launch-owner\n         launch context\n         ---\n");
+  }
+  writeFileSync(join(env.home,"jobs",`${id}.spec.json`),JSON.stringify({cwd:env.home,job:{id,name,agent:"codex",owner:"launch-owner",startedAt:1,prompt:"Old launch context"},base:{access:"ask",futureSpec:"retained"}}));
+  const synchronousHistory=vi.spyOn(history,"findHistoryJob"),synchronousRuns=vi.spyOn(history,"readRunLogs"),clones=vi.spyOn(cache,"cloneJson");
+  let settled=false,beats=0,scheduled=true;
+  const tick=()=>{if(!scheduled)return;beats++;setImmediate(tick);};setImmediate(tick);
+  let recovered:Awaited<ReturnType<typeof recoverJobRecordAsync>>;
+  try{
+    const recovering=recoverJobRecordAsync(env.home,name).then(value=>{settled=true;return value;});
+    await new Promise<void>(resolve=>setImmediate(resolve));
+    expect(beats).toBeGreaterThan(0);expect(settled).toBe(false);
+    recovered=await recovering;
+  }finally{scheduled=false;}
+  expect(beats).toBeGreaterThan(2);expect(synchronousHistory).not.toHaveBeenCalled();expect(synchronousRuns).not.toHaveBeenCalled();
+  expect(clones.mock.calls.map(([value])=>(value as {id?:string})?.id).filter(Boolean)).toEqual([id,id]);
+  expect(recovered).toEqual(recoverJobRecord(env.home,name));
+  expect(recovered).toMatchObject({owner:"current-owner",prompt:selected.prompt,sessionId:"retained-native",future:{context:["keep"]},args:{access:"ask",effort:"high",futureSpec:"retained",future:{keep:true}}});
+  (recovered as any).future.context.push("caller mutation");(recovered as any).args.future.keep=false;
+  expect(await recoverJobRecordAsync(env.home,name)).toMatchObject({future:{context:["keep"]},args:{future:{keep:true}}});
+},15000);
 it("preserves multi-MB UTF8 prompts exactly, reads only the header and invalidates same-size/mtime replacements",async()=>{
   const prompt=`${"x".repeat(2*1024*1024)}🌍\r\n  exact spacing\nlast line`, f=fixture(prompt,"owner");
   const original=ioMocks.original!, reads:number[]=[];
