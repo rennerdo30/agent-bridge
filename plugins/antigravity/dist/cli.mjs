@@ -9,7 +9,7 @@ import {
 } from "./chunks/chunk-BG6KJS4H.mjs";
 import {
   BridgeNode
-} from "./chunks/chunk-EV7PMPZ4.mjs";
+} from "./chunks/chunk-VMRQPC64.mjs";
 import {
   formatMessage,
   formatReplyRestrictions
@@ -176,8 +176,8 @@ async function main(argv) {
       return (await import("./chunks/installer-3E2HEDHG.mjs")).runInstaller({ action: command, tools: (await import("./chunks/installer-3E2HEDHG.mjs")).parseInstallerArgs(command, rest), yes: rest.includes("--yes") || rest.includes("-y"), out });
     case "ui": {
       const noOpen = rest.includes("--no-open");
-      if (rest.includes("--reset-key")) (await import("./chunks/dashboard-TYDH3LCX.mjs")).dashboardKey(home, true);
-      const running = await (await import("./chunks/dashboard-TYDH3LCX.mjs")).findRunningDashboard(home);
+      if (rest.includes("--reset-key")) (await import("./chunks/dashboard-S3PCKT66.mjs")).dashboardKey(home, true);
+      const running = await (await import("./chunks/dashboard-S3PCKT66.mjs")).findRunningDashboard(home);
       if (running) {
         out(t("cli.ui.existing", { url: running.url }));
         if (!noOpen) openBrowser(running.url);
@@ -185,7 +185,7 @@ async function main(argv) {
       }
       const portArg = rest.find((a) => a.startsWith("--port="))?.slice("--port=".length);
       const port = portArg ? Number(portArg) : loadConfig(home, "other", log).dashboardPort;
-      const controller = new (await import("./chunks/dashboard-TYDH3LCX.mjs")).DashboardController({ home, pipe, port, log });
+      const controller = new (await import("./chunks/dashboard-S3PCKT66.mjs")).DashboardController({ home, pipe, port, log });
       const info = await controller.ensure();
       out(t("cli.ui.running", { url: info.url }));
       if (!noOpen) openBrowser(info.url);
@@ -211,7 +211,7 @@ async function main(argv) {
     case "permission-hook":
       return (await import("./chunks/permission-hook-UPZK2SKI.mjs")).runPermissionHook(rest[0]);
     case "job-runner":
-      return (await import("./chunks/job-runner-E74DQDH6.mjs")).runJobRunner(rest[0]);
+      return (await import("./chunks/job-runner-EBG32QWG.mjs")).runJobRunner(rest[0]);
     case "reliability": {
       const picked = rest.filter((a) => CODING_AGENTS.includes(a));
       const only = rest.find((a) => a.startsWith("--only="))?.slice("--only=".length);
