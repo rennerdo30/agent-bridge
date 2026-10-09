@@ -28,7 +28,7 @@ import { registerTools, type ServerContext } from "../src/mcp/server.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { createWorktree } from "../src/core/worktree.js";
 import { historyDbPath, type HistoryMigrationProgress } from "../src/core/history-store.js";
-import { listRuns, readDashboard } from "../src/core/dashboard-read.js";
+import { listRunsResponsive, readDashboard } from "../src/core/dashboard-read.js";
 import { worktreeLease } from "../src/core/worktree-state.js";
 import type { Broker } from "../src/core/broker.js";
 import type { HistoryBackground } from "../src/core/history-background.js";
@@ -427,11 +427,11 @@ async function childMain(home: string, role: Role, index: number): Promise<void>
           return { phase: raw.data?.phase, path, pid: process.pid, cpuMicros: process.cpuUsage(cpu), cpuScope: "process including history worker", sampleScope: "broker main thread", samples: value.profile.samples?.length ?? 0, hottestFrames: [...frames.values()].sort((a, b) => b.micros - a.micros).slice(0, 12) };
         } finally { inspector.disconnect(); profiling = false; }
       }
-      if (raw.op === "runs") { const at = performance.now(); const runs = listRuns(home); return { milliseconds: performance.now() - at, count: runs.length }; }
+      if (raw.op === "runs") { const at = performance.now(); const runs = await listRunsResponsive(home); return { milliseconds: performance.now() - at, count: runs.length }; }
       if (raw.op === "dashboard") {
         if (!internals.broker || legacy) throw new Error("Dashboard poll must execute on the current broker main thread");
         const dashboardStartedAt = Date.now();
-        const at = performance.now(), runs = listRuns(home), listRunsMs = performance.now() - at, pollAt = performance.now();
+        const at = performance.now(), runs = await listRunsResponsive(home), listRunsMs = performance.now() - at, pollAt = performance.now();
         const listRunsFinishedAt = Date.now();
         // These are distinct production requests; let pending mail run between them.
         await delay(0);

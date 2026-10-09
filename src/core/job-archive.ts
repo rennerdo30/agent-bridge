@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, writeFileSync, type Stats } from "node:fs";
+import { closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, realpathSync, writeFileSync, type Stats } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { archiveFile, isRecord, JSON_STORE_VERSION } from "./json-store.js";
 import { cloneJson, fileSignature, readJsonSnapshot } from "./file-cache.js";
 import { assertStoreUpgrade } from "./store-compatibility.js";
+import { drainScan } from "./responsive-scan.js";
 
 interface ArchivedJobSnapshot { signature: string; jobs: Record<string, unknown>[] }
 const snapshots = new Map<string, ArchivedJobSnapshot>();
@@ -18,34 +19,79 @@ function physicalFile(file: string): Stats {
   return st;
 }
 
+/** Bind yielding reads to the original physical ancestors, not just final entries.
+ * Directory content timestamps can change normally; creation identity cannot. */
+function archiveDirectoryWitness(dir: string): () => void {
+  const home = dirname(dir), canonicalHome = realpathSync.native(home), canonicalArchive = realpathSync.native(dir);
+  if (canonicalArchive !== join(canonicalHome, "archive")) throw new Error("job archive escaped its home; data kept unchanged");
+  const identity = (st: Stats) => `${st.dev}:${st.ino}:${st.birthtimeMs}`;
+  const ancestors: { path: string; identity: string }[] = [];
+  // Initial OS aliases are valid; bind physical identities along the resolved
+  // chain and separately require the caller's aliases to keep resolving there.
+  for (let at = canonicalArchive; ; at = dirname(at)) {
+    const st = lstatSync(at);
+    if (!st.isDirectory() || st.isSymbolicLink()) throw new Error("job archive ancestors must be physical; data kept unchanged");
+    ancestors.push({ path: at, identity: identity(st) });
+    if (dirname(at) === at) break;
+  }
+  return () => {
+    for (const ancestor of ancestors) {
+      const st = lstatSync(ancestor.path);
+      if (!st.isDirectory() || st.isSymbolicLink() || identity(st) !== ancestor.identity)
+        throw new Error("job archive ancestor changed during traversal; data kept unchanged");
+    }
+    if (realpathSync.native(home) !== canonicalHome || realpathSync.native(dir) !== canonicalArchive)
+      throw new Error("job archive path changed during traversal; data kept unchanged");
+  };
+}
+
 export function readArchivedJobs(path: string): Record<string, unknown>[] {
   return cloneJson(readArchivedJobSnapshot(path).jobs);
 }
 
 /** Validate file identities before reusing the projection; parse only a changed corpus. */
 export function readArchivedJobSnapshot(path: string): ArchivedJobSnapshot {
+  return drainScan(readArchivedJobSteps(path));
+}
+
+/** Shared immutable traversal; responsive readers yield between file/job steps. */
+export function* readArchivedJobSteps(path: string, responsive = false): Generator<void, ArchivedJobSnapshot> {
   const dir = join(dirname(path), "archive");
   if (!existsSync(dir)) return EMPTY_SNAPSHOT;
   physicalDirectory(dir);
+  const validateDirectory = responsive ? archiveDirectoryWitness(dir) : undefined;
   const files: { path: string; time: number; st: Stats }[] = [];
   const signatures: string[] = [];
   let bytes = 0;
   for (const file of readdirSync(dir).sort()) {
+    yield;
     if (!file.startsWith(`${basename(path)}.overflow.json-`) && !/^jobs-.*\.json$/.test(file)) continue;
+    validateDirectory?.();
     const full = join(dir, file), st = physicalFile(full);
     const stamp = /(?:^jobs-|\.overflow\.json-)(\d+)-/.exec(file)?.[1];
     signatures.push(`${file}:${fileSignature(st)}`); files.push({ path: full, time: stamp ? Number(stamp) : st.mtimeMs, st }); bytes += st.size;
   }
   const signature = signatures.join("\n"), saved = snapshots.get(path);
-  if (saved?.signature === signature) return saved;
+  if (saved?.signature === signature) {
+    if (responsive) for (const file of files) { yield; validateDirectory!(); if (fileSignature(physicalFile(file.path)) !== fileSignature(file.st)) throw new Error("job archive changed during traversal"); }
+    validateDirectory?.();
+    return saved;
+  }
   const jobs = new Map<string, Record<string, unknown>>();
   files.sort((a, b) => a.time - b.time || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   for (const { path: file, st } of files) {
+    yield;
+    if (responsive) {
+      validateDirectory!();
+      if (fileSignature(physicalFile(file)) !== fileSignature(st)) throw new Error("job archive changed during traversal");
+    }
     // A damaged archive must be reported, never silently forgotten or renamed by a read.
     const value = readJsonSnapshot(file, { file, stat: st }).value;
     if (!isRecord(value) || (value.version !== undefined && (!Number.isInteger(value.version) || (value.version as number) < 0 || (value.version as number) > JSON_STORE_VERSION)) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${basename(file)}`);
-    for (const job of value.jobs) if (isRecord(job) && typeof job.id === "string") jobs.set(job.id, job);
+    for (const job of value.jobs) { yield; if (isRecord(job) && typeof job.id === "string") jobs.set(job.id, job); }
   }
+  if (responsive) for (const file of files) { yield; validateDirectory!(); if (fileSignature(physicalFile(file.path)) !== fileSignature(file.st)) throw new Error("job archive changed during traversal"); }
+  validateDirectory?.();
   const next = { signature, jobs: [...jobs.values()] };
   snapshots.delete(path);
   if (bytes <= 256 * 1024 * 1024) snapshots.set(path, next);

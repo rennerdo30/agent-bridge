@@ -1,13 +1,17 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { fileSignature } from "./file-cache.js";
 
 const WINDOW_BYTES = 32 * 1024;
 
 /** Dashboard summaries and retention decisions need the header and last complete lines,
  * never a synchronous read of a growing multi-megabyte transcript. */
-export function readRunLogPreview(file: string): string {
+export function readRunLogPreview(file: string, expectedSignature?: string): string {
   const fd = openSync(file, "r");
   try {
-    const size = fstatSync(fd).size;
+    const witnessed = fstatSync(fd);
+    if (!witnessed.isFile() || expectedSignature !== undefined && fileSignature(witnessed) !== expectedSignature)
+      throw new Error("run log changed before its preview read");
+    const size = witnessed.size;
     const read = (position: number, length: number) => {
       const buffer = Buffer.alloc(length);
       const count = readSync(fd, buffer, 0, length, position);

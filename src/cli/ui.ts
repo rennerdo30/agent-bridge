@@ -44,7 +44,7 @@ import { answerHistory, type HistoryAnswerDependencies } from "../core/history-a
 import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, type DecisionsArgs } from "../core/decisions.js";
 import { answerPendingApproval, listPendingApprovals, MAX_APPROVAL_REASON_CHARS } from "../core/relay.js";
 import { questionAnswerSchema, questionAlertSettingsSchema, readOwnerQuestions } from "../core/owner-questions.js";
-import { classifyPeers, listRuns, readStoredJobs, readDashboard, readMeta } from "../core/dashboard-read.js";
+import { classifyPeers, listRunsResponsive, readStoredJobsResponsive, readDashboard, readMeta } from "../core/dashboard-read.js";
 export { classifyPeers, listRuns, readStoredJobs, summarizeRun, finishedRunOutcomes } from "../core/dashboard-read.js";
 export type { RunSummary, DashboardPeer, StoredJobView } from "../core/dashboard-read.js";
 import { dashboardError } from "../network/remote-dashboard.js";
@@ -417,7 +417,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     }
     if (req.method === "GET" && url.pathname === "/api/state") {
       const { brokerPid, peers, brokerState, health } = await brokerPeers(opts.pipe, token, opts.log);
-      const runs = listRuns(opts.home);
+      const runs = await listRunsResponsive(opts.home);
       const page = pageRuns(runs, null, DEFAULT_RUN_PAGE_SIZE);
       const remote = await remoteStateNow();
       const remoteStates = Object.values(remote).filter((r) => r.status === 200).map((r) => r.body as { runs: unknown[]; jobs: Record<string, unknown> });
@@ -435,7 +435,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         remoteErrors,
         messages: recentMessages(dbPath),
         // Saved next-turn settings per job (message_subagent or the dashboard may have changed them).
-        jobs: { ...Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next, projectRoot: j.projectRoot, ...(j.remote ? { remote: j.remote } : {}) }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) },
+        jobs: { ...Object.fromEntries([...(await readStoredJobsResponsive(opts.home))].map(([name, j]) => [name, { next: j.next, projectRoot: j.projectRoot, ...(j.remote ? { remote: j.remote } : {}) }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) },
       });
     }
     if (req.method === "GET" && url.pathname === "/api/network") {
@@ -560,7 +560,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (job) {
         // A native child of a delegated job belongs to that job, not the dashboard session.
         if (!child || body.target !== "parent") return send(res, 409, { state: "not-supported", transport: "parent", text: "Direct input to this job's native subagent is not supported. Send to its parent with a note." });
-        const run = listRuns(opts.home).find((r) => r.job === name && !r.remote);
+        const run = (await listRunsResponsive(opts.home)).find((r) => r.job === name && !r.remote);
         if (!run?.by) return send(res, 409, { error: "parent job has no local owning session" });
         try {
           const sender = await getSender();
@@ -619,7 +619,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const run = typeof body.run === "string" ? body.run : "";
       const command = jobCommand(body);
       if (!RUN_NAME.test(`${run}.log`) || !command) return send(res, 400, { error: "a valid run and request are required" });
-      const meta = listRuns(opts.home).find((r) => r.name === run);
+      const meta = (await listRunsResponsive(opts.home)).find((r) => r.name === run);
       if (!meta) return send(res, 404, { error: "no such run" });
       if (!meta.by || !meta.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
