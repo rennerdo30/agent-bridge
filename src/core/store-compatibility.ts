@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { writtenBeforeBoot } from "./boot-time.js";
 import { atomicPluginWrite } from "./plugin-runtime.js";
 import type { PeerInfo } from "./protocol.js";
-import { processIdentity, readProcessIdentities } from "./process-identity.js";
+import { processIdentity, readProcessIdentities, readProcessIdentitiesSync } from "./process-identity.js";
 import { existingMetadataDb, metadataDb, saveMetadataValue } from "./metadata-db.js";
 import { importMetadataDomain } from "./metadata-import.js";
 
@@ -88,7 +88,10 @@ function cachedIdentity(home: string, pid: number, observedSignature?: string): 
   const path = join(home, "storage-capabilities", `${pid}.json`), cached = identities.get(path);
   const stored = observedSignature === undefined ? databasePresence(home) : undefined;
   const signature = observedSignature ?? (stored ? stored.find(entry=>entry.record.pid===pid)?.signature : presenceSignature(path));
-  return cached && cached.signature === signature && Date.now() - cached.at < IDENTITY_REFRESH_MS ? cached.identity ?? undefined : undefined;
+  // A verified identity stays usable past its refresh age while the background refresh renews it: a slow step
+  // (e.g. creating a worktree under load) must not turn every live reader "unknown" and fail a store write.
+  // Staleness can only keep a gone reader counted (refreshes and ESRCH remove it), never make an old one compatible.
+  return cached && cached.signature === signature ? cached.identity ?? undefined : undefined;
 }
 
 /** Legacy records have no identity. A process born after its record cannot own it. */
@@ -249,9 +252,36 @@ export function legacyStorePeers(home: string): { pid: number; name: string; ver
   return records.filter(peer => !metadataRelease(peer.version)).map(({ pid, name, version }) => ({ pid, name: name ?? `pid ${pid}`, version: version ?? "unknown" }));
 }
 
+/** The stored presence record of pid, from the metadata rows or the legacy file. */
+function storedPresence(home: string, pid: number): Presence | undefined {
+  const stored = databasePresence(home);
+  if (stored) return stored.find(entry => entry.record.pid === pid)?.record;
+  try { return JSON.parse(readFileSync(join(home, "storage-capabilities", `${pid}.json`), "utf8")) as Presence; } catch { return undefined; }
+}
+
+/**
+ * Readers not yet verified in this process (a runner that started a moment ago, or a cold cache) are checked
+ * now with one query: a record whose own process identity matches the live process is that reader, with its
+ * recorded capabilities. A failed query or any mismatch keeps the reader blocking.
+ */
+function verifiedNow(home: string, peers: Presence[], format: keyof StoreCapabilities, target: number): Set<number> {
+  const candidates = peers.flatMap(peer => {
+    const record = storedPresence(home, peer.pid);
+    return record?.processIdentity && validStoreCapabilities(record) && (record[format] ?? 0) >= target ? [{ pid: peer.pid, identity: record.processIdentity }] : [];
+  });
+  if (!candidates.length) return new Set();
+  const live = readProcessIdentitiesSync(candidates.map(candidate => candidate.pid));
+  return new Set(live ? candidates.filter(candidate => live.get(candidate.pid) === candidate.identity).map(candidate => candidate.pid) : []);
+}
+
 export function assertStoreUpgrade(home: string, format: keyof StoreCapabilities, current: number, target: number): void {
   if (target <= current) return;
-  const blockers = liveStorePeers(home).filter((peer) => (peer[format] ?? 0) < target);
+  let blockers = liveStorePeers(home).filter((peer) => (peer[format] ?? 0) < target);
+  const unverified = blockers.filter(peer => peer.version === "unknown");
+  if (unverified.length && unverified.length <= 64) {
+    const verified = verifiedNow(home, unverified, format, target);
+    blockers = blockers.filter(peer => !verified.has(peer.pid));
+  }
   if (!blockers.length) return;
   throw Object.assign(new Error(`Waiting to upgrade ${format} store ${current}→${target}: ${blockers.map((p) => `${p.name} (v${p.version}, pid ${p.pid}, reads ${p[format]})`).join(", ")}. Existing sessions keep their code and data; retry when these readers finish naturally.`), { code: "STORE_UPGRADE_DEFERRED" });
 }

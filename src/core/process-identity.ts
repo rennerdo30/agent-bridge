@@ -57,6 +57,29 @@ export async function readProcessIdentities(pids: number[]): Promise<Map<number,
   return result;
 }
 
+/**
+ * Synchronous form of readProcessIdentities for a store upgrade check that must decide now (one query for all
+ * unverified readers). Returns undefined when the query fails, so callers keep those readers blocking.
+ */
+export function readProcessIdentitiesSync(pids: number[]): Map<number, string> | undefined {
+  const valid = [...new Set(pids.filter(pid => Number.isSafeInteger(pid) && pid > 0))];
+  const result = new Map<number, string>();
+  if (!valid.length) return result;
+  if (process.platform !== "win32") {
+    for (const pid of valid) { const identity = processIdentity(pid); if (identity) result.set(pid, identity); }
+    return result;
+  }
+  let stdout: string;
+  try {
+    stdout = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Get-Process -Id @(${valid.join(",")}) -ErrorAction SilentlyContinue | ForEach-Object { try { [string]$_.Id + '|' + [string]$_.StartTime.ToUniversalTime().Ticks } catch {} }; exit 0`], { windowsHide: true, timeout: BATCH_QUERY_TIMEOUT_MS, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch { return undefined; }
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = /^(\d+)\|(\d+)$/.exec(line.trim());
+    if (match && valid.includes(Number(match[1]))) result.set(Number(match[1]), match[2]!);
+  }
+  return result;
+}
+
 let ownIdentity: string | undefined;
 
 /** Creation identity for lock acquisition/recovery, never for polling hot paths. */
