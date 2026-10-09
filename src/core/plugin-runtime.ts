@@ -2,6 +2,7 @@ import { randomUUID, createHash } from "node:crypto";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { APP_VERSION, PROTOCOL_VERSION } from "./constants.js";
+import { recordedOwnerAlive } from "./process-identity.js";
 
 export type PluginClient = "claude" | "codex" | "opencode" | "antigravity";
 export const RUNTIME_SCHEMA = 1;
@@ -124,19 +125,47 @@ export function selectedWorker(home: string, client: PluginClient, fallback: str
 }
 
 export interface RuntimeSession { pid: number; client: PluginClient; version: string; startedAt: string; worker: string }
+const SESSION_RECORD = /^\d+\.json$/;
+
+/** Move a session record into plugin-sessions/archive: records are retired, never deleted (AB-248). */
+function archiveSessionRecord(dir: string, file: string): void {
+  const archive = join(dir, "archive");
+  mkdirSync(archive, { recursive: true });
+  assertUnlinked(archive);
+  renameSync(join(dir, file), join(archive, `${file.slice(0, -5)}-${Date.now()}-${randomUUID()}.json`));
+}
+
+const pidGone = (pid: number): boolean => {
+  try { process.kill(pid, 0); return false; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
+};
+
 export function recordRuntimeSession(home: string, session: RuntimeSession): void {
-  atomicPluginWrite(join(home, "plugin-sessions", `${session.pid}.json`), JSON.stringify({ schemaVersion: RUNTIME_SCHEMA, ...session }) + "\n");
+  const dir = join(home, "plugin-sessions");
+  if (existsSync(dir)) {
+    assertUnlinked(dir);
+    for (const file of readdirSync(dir).filter((name) => SESSION_RECORD.test(name))) {
+      const pid = Number(file.slice(0, -5));
+      // This PID's earlier launch, or a launch whose process has exited: retire it instead of keeping a
+      // ".backup-*" copy per reuse or scanning it forever.
+      if (pid === session.pid || pidGone(pid)) try { archiveSessionRecord(dir, file); } catch { /* Kept; read paths filter it. */ }
+    }
+  }
+  atomicPluginWrite(join(dir, `${session.pid}.json`), JSON.stringify({ schemaVersion: RUNTIME_SCHEMA, ...session }) + "\n");
 }
 export function liveRuntimeSessions(home: string, client: PluginClient): RuntimeSession[] {
   const dir = join(home, "plugin-sessions");
   if (!existsSync(dir)) return [];
   assertUnlinked(dir);
-  return readdirSync(dir).filter((file) => /^\d+\.json$/.test(file)).flatMap((file) => {
+  return readdirSync(dir).filter((file) => SESSION_RECORD.test(file)).flatMap((file) => {
     try {
       const path = join(dir, file); assertUnlinked(path);
       const session = JSON.parse(readFileSync(path, "utf8"));
       if (session.schemaVersion !== RUNTIME_SCHEMA || session.client !== client || !Number.isSafeInteger(session.pid) || session.pid <= 0) return [];
       process.kill(session.pid, 0);
+      // A PID now used by a process started after this launch was recorded belongs to someone else (AB-248).
+      const startedAt = Date.parse(session.startedAt);
+      if (Number.isFinite(startedAt) && !recordedOwnerAlive(session.pid, undefined, startedAt)) return [];
       return [session as RuntimeSession];
     } catch { return []; }
   });
