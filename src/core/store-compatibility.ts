@@ -263,9 +263,10 @@ function storedPresence(home: string, pid: number): Presence | undefined {
  * Readers not yet verified in this process (a runner that started a moment ago, or a cold cache) are checked
  * now with one query against their recorded process identity:
  * - the live process matches: it is that reader, and it no longer blocks if its recorded capabilities suffice;
- * - a successful query shows another process under that PID: the recorded reader is gone (PID reuse).
- * A failed query, a PID the query cannot read (absent, or e.g. elevated), or a record without an identity keeps
- * the reader blocking.
+ * - a successful query shows another process under that PID, or no running process at all (an exited process
+ *   whose PID a lingering handle keeps answering): the recorded reader is gone.
+ * A failed query, a listed process whose start time cannot be read (elevated or protected), or a record without
+ * an identity keeps the reader blocking.
  */
 function verifiedNow(home: string, peers: Presence[], format: keyof StoreCapabilities, target: number): Set<number> {
   const candidates = peers.flatMap(peer => {
@@ -277,7 +278,8 @@ function verifiedNow(home: string, peers: Presence[], format: keyof StoreCapabil
   if (!live) return new Set();
   return new Set(candidates.filter(({ pid, record, identity }) => {
     const now = live.get(pid);
-    if (now === undefined) return false;
+    if (now === undefined) return true;
+    if (now === "") return false;
     return now !== identity || validStoreCapabilities(record) && (record[format] ?? 0) >= target;
   }).map(candidate => candidate.pid));
 }

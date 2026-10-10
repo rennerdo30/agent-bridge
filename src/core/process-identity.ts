@@ -71,10 +71,12 @@ export function readProcessIdentitiesSync(pids: number[]): Map<number, string> |
   }
   let stdout: string;
   try {
-    stdout = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Get-Process -Id @(${valid.join(",")}) -ErrorAction SilentlyContinue | ForEach-Object { try { [string]$_.Id + '|' + [string]$_.StartTime.ToUniversalTime().Ticks } catch {} }; exit 0`], { windowsHide: true, timeout: BATCH_QUERY_TIMEOUT_MS, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    stdout = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Get-Process -Id @(${valid.join(",")}) -ErrorAction SilentlyContinue | ForEach-Object { $p = $_; try { [string]$p.Id + '|' + [string]$p.StartTime.ToUniversalTime().Ticks } catch { [string]$p.Id + '|' } }; exit 0`], { windowsHide: true, timeout: BATCH_QUERY_TIMEOUT_MS, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
   } catch { return undefined; }
+  // A listed process whose start time cannot be read (elevated or protected) maps to "": present, identity unknown.
+  // A PID not listed at all does not exist as a running process (an exited one, even if a handle keeps its PID).
   for (const line of stdout.split(/\r?\n/)) {
-    const match = /^(\d+)\|(\d+)$/.exec(line.trim());
+    const match = /^(\d+)\|(\d*)$/.exec(line.trim());
     if (match && valid.includes(Number(match[1]))) result.set(Number(match[1]), match[2]!);
   }
   return result;
