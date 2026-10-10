@@ -3,8 +3,6 @@ import { join } from "node:path";
 import { realpathSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { testFixtureRoot } from "../scripts/test-fixture-root.mjs";
-// First: census of in-process SQLite handles for cleanup diagnostics (AB-255).
-import "./open-db-tracker.js";
 const fixtureRoot = testFixtureRoot();
 process.env.AGENT_BRIDGE_HOME = join(fixtureRoot, "default-home");
 delete process.env.AGENT_BRIDGE_PIPE;
