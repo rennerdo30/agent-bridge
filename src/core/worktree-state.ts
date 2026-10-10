@@ -101,13 +101,6 @@ export function recordWorktreeProcessProof(home: string, wt: Worktree, stopped: 
 }
 
 /** A job using a managed cwd without saved worktree metadata cannot inherit an older shutdown proof. */
-export function invalidateWorktreePathProof(home: string, path: string): void {
-  const value = readHistoryJson(statePath(home, { path }));
-  if (!isRecord(value) || typeof value.repoRoot !== "string" || typeof value.base !== "string") return;
-  const wt = { path, cwd: path, repoRoot: value.repoRoot, base: value.base, branch: "" };
-  const state = readWorktreeState(home, wt);
-  if (state) saveWorktreeState(home, wt, { ...state, processesStopped: false, lastContinuation: Date.now() });
-}
 
 const LEASE_BUSY = "Worktree is running, closing, or has an unreconciled lease; kept unchanged.";
 
