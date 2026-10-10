@@ -101,7 +101,7 @@ export function normalizeScope(scope: DecisionScope): DecisionScope {
   return { sessions: [...new Set(scope.sessions)].sort() };
 }
 
-export function decisionApplies(decision: OwnerDecision, peer: Pick<PeerInfo, "name" | "id" | "sessionId" | "cwd">): boolean {
+export function decisionApplies(decision: Pick<OwnerDecision, "scope">, peer: Pick<PeerInfo, "name" | "id" | "sessionId" | "cwd">): boolean {
   if (decision.scope === "all") return true;
   if ("project" in decision.scope) return decision.scope.project === normalizeProject(peer.cwd);
   return decision.scope.sessions.some((s) => s === peer.name || s === peer.id || s === peer.sessionId);
@@ -137,6 +137,43 @@ export class DecisionStore {
     return this.list({ topic, history: true }).find((d) => d.id === id)!;
   }
 
+  /**
+   * Insert a decision synced from a paired broker, keeping its id, topic, createdAt, author,
+   * supersedes and history intact (a decision is identified by its id; an existing id is kept
+   * as-is and never duplicated). Only scope "all" is synced: project and session paths differ
+   * per PC, so narrower scopes are refused here. Returns true when the row is new.
+   *
+   * When both PCs recorded the same topic while disconnected there are two chain tips; the
+   * newer revision (createdAt, id as tiebreak) becomes current by chaining the tips, so the
+   * older revision stays in history. Nothing is deleted: history is append-only.
+   *
+   * `current` is derived locally from the supersedes chain, so it is not an input here.
+   */
+  importSync(decision: Omit<OwnerDecision, "current">): boolean {
+    if (decision.scope !== "all") return false;
+    const topic = decision.topic.trim().toLowerCase();
+    if (!topic || !decision.text.trim()) return false;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const inserted = this.db.prepare("INSERT OR IGNORE INTO decisions (id, topic, body, scope, author_id, author_name, author_agent, created_at, source_message_id, supersedes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(decision.id, topic, decision.text.trim(), JSON.stringify("all" as const),
+          decision.author.id, decision.author.name, decision.author.agent,
+          decision.createdAt, decision.sourceMessageId, decision.supersedes).changes === 1;
+      const tips = (this.db.prepare(`SELECT id, created_at FROM decisions WHERE topic = ?
+        AND id NOT IN (SELECT supersedes FROM decisions WHERE topic = ? AND supersedes IS NOT NULL)
+        ORDER BY created_at ASC, id ASC`).all(topic, topic) as { id: string; created_at: number }[]);
+      for (let i = 1; i < tips.length; i++) {
+        this.db.prepare("UPDATE decisions SET supersedes = ? WHERE id = ? AND (supersedes IS NULL OR supersedes != ?)")
+          .run(tips[i - 1]!.id, tips[i]!.id, tips[i - 1]!.id);
+      }
+      this.db.exec("COMMIT");
+      return inserted;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
   list(args: DecisionsArgs = {}, peer?: PeerInfo): OwnerDecision[] {
     const rows = this.db.prepare(`SELECT d.*, NOT EXISTS (SELECT 1 FROM decisions newer WHERE newer.supersedes = d.id) AS current
       FROM decisions d ORDER BY revision DESC`).all() as unknown as DecisionRow[];
@@ -152,7 +189,7 @@ export class DecisionStore {
   }
 
   /** The receipt and durable message commit together, before emitting any event. */
-  enqueue(decision: OwnerDecision, sessionKey: string, message: BridgeMessage, insert: () => void): boolean {
+  enqueue(decision: Pick<OwnerDecision, "id">, sessionKey: string, message: BridgeMessage, insert: () => void): boolean {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const changed = this.db.prepare("INSERT OR IGNORE INTO decision_deliveries VALUES (?, ?, ?, ?)").run(decision.id, sessionKey, message.id, message.createdAt).changes;
