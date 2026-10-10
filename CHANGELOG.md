@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.30.9
+
+- The dashboard opens a conversation at its latest messages. It used to read every transcript from its first byte, which took seconds for long sessions (a 140 MB transcript) and showed the oldest part first. A paired PC on an older version is still read from the start.
+- Loading the dashboard no longer blocks the bridge. The resource-slot view ran a slow liveness check (PowerShell on Windows) for every slot holder, stalling the serving process, broker included, for seconds. The dashboard, `peers` and `resource_slots` now show the slots without new checks; acquiring and releasing still prune dead holders.
+- Owner decisions with scope "all" now sync between paired PCs. They are announced when recorded, caught up after a reconnect, and imported with their ids, so nothing is duplicated or rebroadcast. When both PCs decided the same topic while apart, the newer revision is current on both and the other stays in history. Project and session scopes stay on their own PC. Both PCs need 0.30.9.
+- A job turn no longer fails at once when its worktree state write waits on a store upgrade behind a briefly unverifiable reader. It retries with a fresh identity check for up to 2 minutes, then fails with the same message as before.
+- Opening the job archive no longer fails when a SQLite `-shm` or `-wal` file disappears while the archive path is checked.
+
 ## 0.30.8
 
 - New jobs no longer fail at their first store write because another reader looked unknown. A reader verified once stays known while its identity refreshes in the background, and readers not yet verified (a runner that started a moment ago, or a cold cache) are checked directly against their recorded process identity.

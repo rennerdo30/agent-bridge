@@ -4,15 +4,15 @@ import {
 } from "./chunks/chunk-2PKS7JZW.mjs";
 import {
   ConversationIngestor
-} from "./chunks/chunk-UVGMNSE5.mjs";
+} from "./chunks/chunk-FUMBH4J7.mjs";
 import {
   HISTORY_TICK_MS,
   HistoryIndex
-} from "./chunks/chunk-C6OKFSQM.mjs";
+} from "./chunks/chunk-MLDAU7BS.mjs";
 import {
   ownsProjectMirrors,
   projectDatabasePath
-} from "./chunks/chunk-VYYLWKCH.mjs";
+} from "./chunks/chunk-7PYLSGO7.mjs";
 import {
   HISTORY_IO_BYTES_PER_SECOND,
   copyLegacyConversationTail,
@@ -21,38 +21,38 @@ import {
   migrateHistoryStore,
   openHistoryStore,
   readHistoryMigrationProgress
-} from "./chunks/chunk-R7HXRKWE.mjs";
+} from "./chunks/chunk-2P6P5FZO.mjs";
 import "./chunks/chunk-3CXCL26P.mjs";
-import "./chunks/chunk-PTKEHKCJ.mjs";
+import "./chunks/chunk-6RP3VKJ3.mjs";
 import {
   reconcileAskCompletions
-} from "./chunks/chunk-NAIKP65T.mjs";
-import "./chunks/chunk-CZNWCZNZ.mjs";
+} from "./chunks/chunk-AGEMLUYH.mjs";
+import "./chunks/chunk-KLFFS5AY.mjs";
 import {
   loadConfig
-} from "./chunks/chunk-5I7IJLKF.mjs";
+} from "./chunks/chunk-2GQW7PXU.mjs";
 import "./chunks/chunk-4QXHCXBU.mjs";
-import "./chunks/chunk-DAI2VPPJ.mjs";
-import "./chunks/chunk-CCQJERHQ.mjs";
+import "./chunks/chunk-ZNBE7QJQ.mjs";
+import "./chunks/chunk-EUVUYVJQ.mjs";
 import "./chunks/chunk-FDMEMG4Z.mjs";
 import {
   readHistoryJson
-} from "./chunks/chunk-OK4AKY67.mjs";
-import "./chunks/chunk-JCI74XRN.mjs";
+} from "./chunks/chunk-3HR6VMN7.mjs";
+import "./chunks/chunk-I6MYXRDE.mjs";
 import {
   transcriptPaths
-} from "./chunks/chunk-TFQZM67X.mjs";
+} from "./chunks/chunk-WM3QOXKL.mjs";
 import {
   closeMetadataDbs,
   fileSignature,
   isRecord,
   nullLogger,
   writeJsonStore
-} from "./chunks/chunk-S4W4VZWF.mjs";
-import "./chunks/chunk-5KYAJ3AQ.mjs";
+} from "./chunks/chunk-UNRS7LDN.mjs";
+import "./chunks/chunk-VBHAVRFY.mjs";
 import {
   CONFIG_FILE_NAME
-} from "./chunks/chunk-XTHHW5FU.mjs";
+} from "./chunks/chunk-DLCSA3SJ.mjs";
 import "./chunks/chunk-HHAVWD7J.mjs";
 
 // src/core/history-worker.ts
