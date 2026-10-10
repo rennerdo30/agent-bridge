@@ -28,11 +28,22 @@ export function physicalArchivePath(path: string): void {
   // supported. The storage entry and its direct parent must remain physical.
   for (const at of [path, dirname(path)]) {
     if (existsSync(at)) {
-      const st = lstatSync(at);
+      let st: ReturnType<typeof lstatSync>;
+      try { st = lstatSync(at); } catch (error) {
+        // A SQLite -shm/-wal sidecar can vanish between the existence check
+        // and the lstat when another connection checkpoints or closes.
+        if ((error as NodeJS.ErrnoException)?.code === "ENOENT") continue;
+        throw error;
+      }
       if (st.isSymbolicLink()) throw new Error("job archive path must be physical; data kept unchanged");
     }
   }
-  if (existsSync(path)) realpathSync.native(path);
+  try {
+    if (existsSync(path)) realpathSync.native(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return;
+    throw error;
+  }
 }
 
 const schema = `
