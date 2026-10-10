@@ -21,6 +21,7 @@ import type { readStore } from "../mcp/jobs.js";
 import { readArchivedJobSteps } from "./job-archive.js";
 import { indexedJobProjectionCurrent } from "./job-archive-index.js";
 import { dashboardRequestSchema, type DashboardReadRequest, type DashboardReadResult } from "../network/dashboard-protocol.js";
+import { readRunnerStateRecord } from "./runner-store.js";
 const TASK_PREVIEW_CHARS = 300;
 const STALE_RUN_MS = 150_000;
 const LEGACY_JOB_START_TOLERANCE_MS = 1_000;
@@ -166,6 +167,16 @@ export function listRunsResponsive(home: string, now = Date.now(), names?: Set<s
   return drainScanResponsive(listRunsSteps(home, now, names, true));
 }
 
+/** Whether the job runner of a hosted job reported in recently (its state heartbeat). Inline jobs have none. */
+function runnerHeartbeatFresh(home: string, job: unknown, now: number): boolean {
+  const id = typeof job === "string" ? /-(?:job|ask)-([0-9a-f]{8})$/.exec(job)?.[1] : undefined;
+  if (!id) return false;
+  try {
+    const state = readRunnerStateRecord(home, id);
+    return typeof state?.updatedAt === "number" && state.status === "running" && now - state.updatedAt < STALE_RUN_MS;
+  } catch { return false; }
+}
+
 function* listRunsSteps(home: string, now: number, names?: Set<string>, responsive = false): Generator<void, RunSummary[]> {
   const runs: RunSummary[] = [];
   for (const log of yield* readRunLogsSteps(home, names, responsive)) {
@@ -179,7 +190,9 @@ function* listRunsSteps(home: string, now: number, names?: Set<string>, responsi
         runSummaries.delete(log.file); runSummaries.set(log.file, cached);
         if (runSummaries.size > 2048) runSummaries.delete(runSummaries.keys().next().value!);
       }
-      const stale = cached.summary.status === "running" && now - log.updatedAt > STALE_RUN_MS;
+      // A silent log alone is not an interruption: a fresh job can wait for admission, a queue or a long model step.
+      // Its runner heartbeat (every 15 s) proves it is still at work.
+      const stale = cached.summary.status === "running" && now - log.updatedAt > STALE_RUN_MS && !runnerHeartbeatFresh(home, log.meta.job, now);
       runs.push({ ...cloneJson(cached.summary), ...(stale ? { status: "interrupted", etaAt: undefined, etaReportedAt: undefined } : {}), archived: log.archived, recovered: false, hasLog: true });
     }
     catch { /* A concurrent archive operation is retried on the next refresh. */ }
