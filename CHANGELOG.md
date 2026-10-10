@@ -7,6 +7,8 @@
 - Owner decisions with scope "all" now sync between paired PCs. They are announced when recorded, caught up after a reconnect, and imported with their ids, so nothing is duplicated or rebroadcast. When both PCs decided the same topic while apart, the newer revision is current on both and the other stays in history. Project and session scopes stay on their own PC. Both PCs need 0.30.9.
 - A job turn no longer fails at once when its worktree state write waits on a store upgrade behind a briefly unverifiable reader. It retries with a fresh identity check for up to 2 minutes, then fails with the same message as before.
 - Opening the job archive no longer fails when a SQLite `-shm` or `-wal` file disappears while the archive path is checked.
+- A config or store file that is being rewritten in place (for example saved by an editor) is no longer moved aside as corrupt when it is read half written. It is read again after a moment; a file that stays unreadable is still preserved as before.
+- The job archive waits out a brief writer lock like the other stores instead of reporting "busy" after 100 ms.
 
 ## 0.30.8
 
