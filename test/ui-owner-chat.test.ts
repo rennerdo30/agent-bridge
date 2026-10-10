@@ -41,9 +41,11 @@ describe("authenticated local owner chat", () => {
     writeFileSync(join(env.home, JOBS_FILE), JSON.stringify([{ name: job.name, owner: owner.name, agent: "codex", sessionId: CODEX_SESSION }]));
     const route = `${base()}/api/jobs/${job.name}/message`;
     const send = (data: unknown) => fetch(route, { method: "POST", headers: headers(), body: JSON.stringify(data) });
-    expect((await send({ body: "child task", child: CODEX_CHILD })).status).toBe(409);
+    const direct = await send({ body: "child task", child: CODEX_CHILD });
+    expect(direct.status, await direct.text()).toBe(409);
     expect(received).toEqual([]);
-    expect((await send({ body: "child task", child: CODEX_CHILD, target: "parent" })).status).toBe(200);
+    const parent = await send({ body: "child task", child: CODEX_CHILD, target: "parent" });
+    expect(parent.status, await parent.text()).toBe(200);
     expect(received).toEqual([expect.stringContaining(`native subagent ${CODEX_CHILD}`)]);
     expect(queue).not.toHaveBeenCalled();
     expect((await send({ body: "forged", child: "foreign", target: "parent" })).status).toBe(404);

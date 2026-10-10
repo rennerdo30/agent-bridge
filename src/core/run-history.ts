@@ -352,7 +352,9 @@ export function* historyJobsSteps(home: string, responsive = false, selection: A
   // read, including a suspended read after an ancestor replacement.
   const active = safeFile(home, path, canonicalHome);
   if (!active) return out;
-  const st = statSync(active);
+  // The job manager replaces jobs.json atomically; on Windows a stat during the replace can fail for a moment.
+  let st: Stats;
+  try { st = statSync(active); } catch { return out; }
   if (responsive) yield;
   if (!unchangedContainedFile(home, active, st, canonicalHome)) return out;
   let value: unknown;
