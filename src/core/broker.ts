@@ -69,6 +69,7 @@ import { cancelStoredTransfer, MAX_STREAM_ENTRIES, readTransferHistory, type Tra
 import { MAX_NETWORK_HOST_CHARS, MAX_PAIRING_CODE_CHARS, MAX_PORT } from "../network/constants.js";
 import { RemoteDashboard, dashboardError } from "../network/remote-dashboard.js";
 import { RemoteJobs } from "../network/remote-jobs.js";
+import { DecisionSync } from "../network/decision-sync.js";
 import { CONTROL_CONVERSATION_PREFIX } from "../mcp/job-host.js";
 import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, decisionApplies, decisionScopeSchema, type OwnerDecision } from "./decisions.js";
 import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
@@ -147,6 +148,7 @@ export class Broker {
   private network: NetworkService | null = null;
   private remoteJobs: RemoteJobs | null = null;
   private remoteDashboard: RemoteDashboard | null = null;
+  private decisionSync: DecisionSync | null = null;
   private readonly remoteProgress = new Map<string, string>();
   private networkChange: Promise<unknown> = Promise.resolve();
   private readonly handlers: { [O in Op]: Handler<O> };
@@ -471,6 +473,7 @@ export class Broker {
     await this.store.closeBackups().catch(() => {});
     this.remoteDashboard?.close(); this.remoteDashboard = null;
     this.remoteJobs?.close(); this.remoteJobs = null;
+    this.decisionSync?.close(); this.decisionSync = null;
     await this.network?.close().catch(() => {});
     this.network = null;
     for (const c of this.conns) c.socket.destroy();
@@ -516,6 +519,8 @@ export class Broker {
             this.remoteDashboard = null;
             this.remoteJobs?.close();
             this.remoteJobs = null;
+            this.decisionSync?.close();
+            this.decisionSync = null;
             await this.network?.close();
             this.network = null;
             this.log.warn("networking could not start; local broker remains available", { message: (err as Error).message });
@@ -542,6 +547,8 @@ export class Broker {
     this.remoteDashboard = null;
     this.remoteJobs?.close();
     this.remoteJobs = null;
+    this.decisionSync?.close();
+    this.decisionSync = null;
     await this.network?.close();
     this.network = null;
     for (const c of this.conns) c.socket.destroy();
@@ -562,6 +569,8 @@ export class Broker {
     this.remoteDashboard = null;
     this.remoteJobs?.close();
     this.remoteJobs = null;
+    this.decisionSync?.close();
+    this.decisionSync = null;
     await this.network?.close();
     this.network = null;
     this.networking.config = config;
@@ -581,6 +590,12 @@ export class Broker {
 
   private installRemoteJobs(service: NetworkService): void {
     this.remoteDashboard = new RemoteDashboard(service, { home: this.networking!.home, log: this.log, peers: () => this.dashboardPeers() });
+    this.decisionSync = new DecisionSync(service, {
+      globalDecisions: () => this.store.decisions.list({ scope: "all", history: true })
+        .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1)),
+      importDecision: (decision) => this.store.decisions.importSync(decision),
+      notifyDecision: (decision) => { this.notifyDecision(decision); },
+    }, this.log);
     this.remoteJobs = new RemoteJobs(service, this.networking!.home, this.log, async (record, control) => {
       this.receiveRemote({ id: randomUUID(), from: { id: record.owner, name: record.owner, agent: "other" },
         to: record.name, recipient: record.name, conversationId: `${CONTROL_CONVERSATION_PREFIX}${record.id}`,
@@ -1194,12 +1209,8 @@ export class Broker {
     if (!parsed.success) throw new BridgeError("bad_request", "Invalid decision topic, text or scope.");
     if (parsed.data.sourceMessageId && !this.store.byId(parsed.data.sourceMessageId)) throw new BridgeError("bad_request", "Source message does not exist.");
     const decision = this.store.decisions.record({ ...parsed.data, scope: parsed.data.scope ?? { project: peer.cwd } }, { id: peer.id, name: peer.name, agent: peer.agent }, this.now());
-    const deliveredTo: string[] = [];
-    for (const c of this.conns) {
-      if (!c.peer || c.peer.jobAgent || !decisionApplies(decision, c.peer)) continue;
-      const message = this.queueDecision(decision, c.peer);
-      if (message) { this.emit(c, "message", message); deliveredTo.push(c.peer.name); }
-    }
+    const deliveredTo = this.notifyDecision(decision);
+    this.decisionSync?.announce(decision);
     return { decision, deliveredTo };
   }
 
@@ -1217,7 +1228,18 @@ export class Broker {
     return `${peer.agent}:${peer.sessionId ?? peer.id}`;
   }
 
-  private queueDecision(decision: OwnerDecision, peer: PeerInfo): BridgeMessage | null {
+  /** Deliver one decision notification per local session; receipts make redelivery a no-op. */
+  private notifyDecision(decision: Omit<OwnerDecision, "current">): string[] {
+    const deliveredTo: string[] = [];
+    for (const c of this.conns) {
+      if (!c.peer || c.peer.jobAgent || !decisionApplies(decision, c.peer)) continue;
+      const message = this.queueDecision(decision, c.peer);
+      if (message) { this.emit(c, "message", message); deliveredTo.push(c.peer.name); }
+    }
+    return deliveredTo;
+  }
+
+  private queueDecision(decision: Omit<OwnerDecision, "current">, peer: PeerInfo): BridgeMessage | null {
     const message: BridgeMessage = {
       id: randomUUID(), from: decision.author, to: peer.name, recipient: peer.name,
       conversationId: `decision-${decision.id}`, replyTo: decision.sourceMessageId, hop: DECISION_MESSAGE_HOP,

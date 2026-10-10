@@ -16,7 +16,7 @@ const MAX_METADATA_CHARS = 4_096;
 const MAX_ID_CHARS = 128;
 const MAX_HOP_COUNT = 100;
 const MAX_EXTENSION_HANDLERS = 8;
-export type NetworkExtensionType = "file-stream" | "remote-job" | "dashboard-read";
+export type NetworkExtensionType = "file-stream" | "remote-job" | "dashboard-read" | "decision-sync";
 export type NetworkExtensionHandler = (payload: Record<string, unknown>, remote: NetworkPair) => void | Promise<void>;
 /** Runtime-only timing overrides for tests; production keeps the shared network constants. */
 export interface NetworkTimings {
@@ -51,6 +51,7 @@ const frameSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("file-stream"), payload: z.record(z.string(), z.unknown()) }),
   z.object({ type: z.literal("remote-job"), payload: z.record(z.string(), z.unknown()) }),
   z.object({ type: z.literal("dashboard-read"), payload: z.record(z.string(), z.unknown()) }),
+  z.object({ type: z.literal("decision-sync"), payload: z.record(z.string(), z.unknown()) }),
   z.object({ type: z.literal("peers"), peers: peersSchema }),
   z.object({ type: z.literal("send"), rid: z.uuid(), message: messageSchema }),
   z.object({ type: z.literal("echo"), rid: z.uuid() }),
@@ -259,7 +260,7 @@ class Link {
   }
 
   private onFrame(frame: Exclude<NetworkFrame, { type: "hello" }>): void {
-    if (frame.type === "file-stream" || frame.type === "remote-job" || frame.type === "dashboard-read") {
+    if (frame.type === "file-stream" || frame.type === "remote-job" || frame.type === "dashboard-read" || frame.type === "decision-sync") {
       const bytes = Buffer.byteLength(JSON.stringify(frame));
       if (this.incomingExtensions.length >= MAX_NETWORK_REQUESTS || this.incomingExtensionBytes + bytes > 8 * MAX_NETWORK_FRAME_BYTES) throw new Error("too many queued extension frames");
       this.incomingExtensions.push(frame); this.incomingExtensionBytes += bytes; this.pumpExtensions();
@@ -333,6 +334,7 @@ export class NetworkService {
   private timer: NodeJS.Timeout | null = null;
   private closed = false;
   private readonly extensions = new Map<NetworkExtensionType, { capability: string; aliases: string[]; handler: NetworkExtensionHandler }>();
+  private readonly linkListeners = new Set<(pair: NetworkPair) => void>();
 
   constructor(private readonly home: string, private readonly cfg: NetworkConfig, private readonly broker: NetworkBroker, private readonly log: Logger, timings: NetworkTimings = {}) {
     this.timings = { refreshMs: timings.refreshMs ?? NETWORK_REFRESH_MS, heartbeatTimeoutMs: timings.heartbeatTimeoutMs ?? NETWORK_HEARTBEAT_TIMEOUT_MS };
@@ -374,6 +376,15 @@ export class NetworkService {
     const extension = this.extensions.get(type);
     if (!extension) throw new Error("unsupported network extension");
     return extension.handler(payload, remote);
+  }
+
+  /**
+   * Run after an authenticated paired link attaches (initial pair and every reconnect), so
+   * extensions can pull what they missed. Returns an unsubscribe function.
+   */
+  onLink(listener: (pair: NetworkPair) => void): () => void {
+    this.linkListeners.add(listener);
+    return () => { this.linkListeners.delete(listener); };
   }
 
   private instanceLink(instance: string): Link {
@@ -474,6 +485,12 @@ export class NetworkService {
     if (existing && existing !== link) throw new Error("instance already connected");
     this.links.set(remote.id, link);
     setImmediate(() => this.transfers.resume());
+    // Catch-up extensions (decision sync) re-pull here; the link is authenticated by now.
+    setImmediate(() => {
+      for (const listener of this.linkListeners) {
+        try { listener(remote); } catch (error) { this.log.warn("network link listener failed", { message: (error as Error).message }); }
+      }
+    });
   }
 
   detach(link: Link): void {
