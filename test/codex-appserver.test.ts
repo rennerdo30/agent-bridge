@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { codexTurnSandbox, delegateToCodexAppServer, innerCommand, type Steering } from "../src/core/codex-appserver.js";
+import { codexTurnSandbox, CODEX_FULL_ACCESS_APPROVAL_POLICY, delegateToCodexAppServer, innerCommand, type Steering } from "../src/core/codex-appserver.js";
 import { nullLogger } from "../src/core/logger.js";
 import { delegateToCodex } from "../src/core/delegate.js";
 
@@ -100,6 +100,47 @@ describe("next-turn Codex settings", () => {
         expect(turn.sandboxPolicy.type).toBe(sandbox === "danger-full-access" ? "dangerFullAccess" : sandbox === "read-only" ? "readOnly" : "workspaceWrite");
         expect(turn.input[0].text.includes("can't see devices from the sandbox")).toBe(process.platform === "win32");
       }
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  });
+
+  it.each(["read-only", "workspace-write", "danger-full-access"] as const)("sends identical approval policy, reviewer and sandbox on app-server start and resume for %s (AB-262)", async (sandbox) => {
+    const dir = mkdtempSync(join(tmpdir(), "ab-start-resume-policy-"));
+    const requests = join(dir, "requests.jsonl");
+    writeFileSync(join(dir, "app-server"), FAKE_CODEX_APPSERVER);
+    const run = async (sessionId: string | undefined) => {
+      writeFileSync(requests, "");
+      await delegateToCodexAppServer({ bin: process.execPath, cwd: dir, prompt: "inspect phone", sandbox, sessionId, approvalsReviewer: "auto_review", timeoutSec: 10, log: nullLogger, extraEnv: { AB_TEST_REQUESTS: requests } });
+      return readFileSync(requests, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    };
+    try {
+      const startCalls = await run(undefined);
+      const resumeCalls = await run("saved-thread");
+      const startThread = startCalls.find((call) => call.method === "thread/start").params;
+      const resumeCall = resumeCalls.find((call) => call.method === "thread/resume");
+      expect(resumeCall.params.threadId).toBe("saved-thread");
+      const { threadId: _resumeId, excludeTurns: _exclude, ...resumeThread } = resumeCall.params;
+      // thread/resume carries exactly the thread/start settings (plus its thread id): same access
+      // level resumes with the same approvalPolicy, approvalsReviewer, sandbox and config.
+      expect(resumeThread).toEqual(startThread);
+      const expectedPolicy = sandbox === "danger-full-access" ? CODEX_FULL_ACCESS_APPROVAL_POLICY : "on-request";
+      expect(startThread.approvalPolicy).toEqual(expectedPolicy);
+      // Full access never routes sandbox approvals to a reviewer model; other levels keep the setting.
+      expect(startThread.approvalsReviewer).toBe(sandbox === "danger-full-access" ? "user" : "auto_review");
+      const stripTurn = (params: any) => {
+        const { threadId: _turnThread, input: _input, ...rest } = params;
+        return rest;
+      };
+      const startTurn = stripTurn(startCalls.find((call) => call.method === "turn/start").params);
+      const resumeTurn = stripTurn(resumeCalls.find((call) => call.method === "turn/start").params);
+      expect(resumeTurn).toEqual(startTurn);
+      expect(startTurn.approvalPolicy).toEqual(expectedPolicy);
+      expect(startTurn.approvalsReviewer).toBe(startThread.approvalsReviewer);
+      const startInit = startCalls.find((call) => call.method === "initialize").params;
+      const resumeInit = resumeCalls.find((call) => call.method === "initialize").params;
+      expect(resumeInit).toEqual(startInit);
+      expect(startInit.capabilities.experimentalApi).toBe(sandbox === "danger-full-access");
     } finally {
       rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
