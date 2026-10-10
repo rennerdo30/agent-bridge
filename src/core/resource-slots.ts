@@ -160,6 +160,21 @@ export class ResourceSlots {
     });
   }
 
+  /**
+   * For display (dashboard, peers): unexpired rows without new liveness probes, which take ~0.5 s each on Windows
+   * and block the serving process. Holders a cached verdict already proved gone are left out; pruning stays with
+   * acquire and release.
+   */
+  snapshot(): SlotEntry[] {
+    const now = this.now();
+    return this.db.prepare("SELECT * FROM slots WHERE expiresAt > ? ORDER BY ticket").all(now).flatMap((row) => {
+      const pid = Number(row.pid), recordedAt = Number(row.expiresAt) - SLOT_LEASE_MS, identity = row.identity as string | null;
+      const key = `${pid}|${identity ?? ""}|${identity ? writtenBeforeBoot(recordedAt) : recordedAt}`, cached = verdicts.get(key);
+      if (cached && now - cached.at < PROBE_CACHE_MS && !cached.alive) return [];
+      return [{ resource: String(row.resource), id: String(row.id), pid, ticket: Number(row.ticket), held: Boolean(row.held), expiresAt: Number(row.expiresAt) }];
+    });
+  }
+
   close(): void { this.db.close(); }
 
   /** Move live root leases without enforcing capacity: inherited work must keep running. */

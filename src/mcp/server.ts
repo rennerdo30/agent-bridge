@@ -775,7 +775,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       try {
         const slots = new ResourceSlots(ctx.home);
         let slotLines: string[];
-        try { slotLines = formatResourceSlots(slots.list(), cfg.resourceSlots); } finally { slots.close(); }
+        try { slotLines = formatResourceSlots(slots.snapshot(), cfg.resourceSlots); } finally { slots.close(); }
         if (slotLines.length) lines.push("Resource slots (holders, then the queue in order):", ...slotLines);
       } catch { /* Slot state is advisory in peers; the slot CLI reports its own errors. */ }
       const jobs = ctx.jobs?.list() ?? [];
@@ -921,7 +921,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     },
     guarded("resource_slots", async () => {
       const slots = new ResourceSlots(ctx.home);
-      try { return text(JSON.stringify(describeResourceSlots(slots.list(), cfg.resourceSlots), null, 2)); } finally { slots.close(); }
+      try { return text(JSON.stringify(describeResourceSlots(slots.snapshot(), cfg.resourceSlots), null, 2)); } finally { slots.close(); }
     }),
   );
 

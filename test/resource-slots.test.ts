@@ -55,6 +55,20 @@ describe("shared resource slots", () => {
     expect(a.list()).toMatchObject([{ id: "c", held: true }]);
   });
 
+  it("shows a display snapshot without probing owners or pruning", () => {
+    let probes = 0, alive = true, clock = Date.now();
+    const s = store((() => { probes++; return alive; }) as (pid: number) => boolean, () => clock);
+    expect(s.tryAcquire("unity", 1, owner("a"))).toBe(true);
+    probes = 0; alive = false;
+    // The dashboard read must not run (slow, blocking) liveness probes or write.
+    expect(s.snapshot()).toMatchObject([{ id: "a", held: true }]);
+    expect(probes).toBe(0);
+    // An expired lease is hidden from the snapshot without being deleted; list() still prunes.
+    clock += SLOT_LEASE_MS + 1;
+    expect(s.snapshot()).toEqual([]);
+    expect(s.list()).toEqual([]);
+  });
+
   it("shares each resource separately and retains holders when capacity is reduced", () => {
     const s = store();
     expect(s.tryAcquire("unity", 2, owner("a"))).toBe(true);

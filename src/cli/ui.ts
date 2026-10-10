@@ -341,7 +341,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     }
     if (req.method === "GET" && url.pathname === "/api/resource-slots") {
       const slots = new ResourceSlots(opts.home);
-      try { return send(res, 200, { resources: describeResourceSlots(slots.list(), loadConfig(opts.home, "other", opts.log).resourceSlots) }); }
+      try { return send(res, 200, { resources: describeResourceSlots(slots.snapshot(), loadConfig(opts.home, "other", opts.log).resourceSlots) }); }
       finally { slots.close(); }
     }
     // Read-only Database inspector: bounded pages, compressed history text decoded unless raw=true.
