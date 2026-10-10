@@ -23,7 +23,7 @@ import { changedJobArgs } from "./job-settings.js";
 import { processCleanupReport, establishWindowsJobScope, type WindowsJobScope } from "../core/windows-job-scope.js";
 import type { Logger } from "../core/logger.js";
 import { closeJobWorktree } from "../core/job-close.js";
-import { recordWorktreeProcessProof } from "../core/worktree-state.js";
+import { recordWorktreeProcessProofWithRetry } from "../core/worktree-state.js";
 import { acquireStartup } from "../core/startup-admission.js";
 import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { guardRunnerErrors } from "./job-runner-errors.js";
@@ -374,7 +374,13 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       text += "\n\n" + worktreeProcessReport(await worktreeProcesses(job.worktree.path));
     }
     job.etaAt = undefined;
-    if (job.worktree) recordWorktreeProcessProof(home, job.worktree, processesStopped);
+    if (job.worktree) {
+      try {
+        await recordWorktreeProcessProofWithRetry(home, job.worktree, processesStopped, { log });
+      } catch (err) {
+        log.warn("could not write the worktree process proof; worktree retained", { err: (err as Error).message });
+      }
+    }
     if (job.controller.signal.aborted && processesStopped) {
       const cleanup = await closeJobWorktree({ home, job: { ...job, status }, enabled: spec.cfg.jobCloseCleanup, log });
       text += `\n\nWorktree close: ${cleanup.action}: ${cleanup.reason}`;
