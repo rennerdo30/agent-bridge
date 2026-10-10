@@ -11,6 +11,7 @@ import type { BridgeMessage } from "../src/core/protocol.js";
 import type { MessageStore } from "../src/core/store.js";
 import { closeMetadataDb } from "../src/core/metadata-db.js";
 import { describeFileLockers } from "./file-lockers.js";
+import { describeOpenDatabases } from "./open-db-tracker.js";
 
 export interface TestEnv {
   home: string;
@@ -38,22 +39,42 @@ export function makeEnv(): TestEnv {
     },
     async cleanup() {
       await Promise.all(nodes.map((n) => n.stop().catch(() => {})));
-      closeMetadataDb(home);
-      // Yield between Windows handle-release retries so pending shutdown callbacks and exiting child processes can
-      // finish; linear backoff gives a loaded runner about 5.5 s.
-      try { await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
-      catch (error) {
-        // CI keeps only the console: name the process (this test process or a child) that still holds the file.
+      await removeHome(home);
+    },
+  };
+}
+
+/** Delete a test home, re-closing the shared metadata handle before every attempt.
+ * Background store-identity refreshes (a PowerShell query on Windows that takes seconds
+ * under load) can reopen the handle after it is closed; without a re-close every
+ * deletion retry fails with EBUSY held by this test process (AB-255).
+ * Linear backoff gives a loaded runner about 5.5 s before the holders are named. */
+export async function removeHome(home: string): Promise<void> {
+  let attempt = 0;
+  for (;;) {
+    closeMetadataDb(home);
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 100 * attempt));
+    try {
+      await rm(home, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? "";
+      if (attempt >= 10 || !["EBUSY", "EPERM", "ENOTEMPTY", "EMFILE", "ENFILE"].includes(code)) {
+        // CI keeps only the console: name the process (this test process or a child) that still holds the file,
+        // and which in-process SQLite handles are still open on this home (AB-255).
         const path = (error as NodeJS.ErrnoException).path;
-        if (process.platform === "win32" && path && ["EBUSY", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) {
+        if (process.platform === "win32" && path && ["EBUSY", "EPERM"].includes(code)) {
           (error as Error).message += `
 Held by:
-${await describeFileLockers(path)}`;
+${await describeFileLockers(path)}
+Open in this process under ${home}:
+${describeOpenDatabases(home) || "(none tracked)"}`;
         }
         throw error;
       }
-    },
-  };
+      attempt++;
+    }
+  }
 }
 
 export async function until(pred: () => boolean, timeoutMs = 5_000, stepMs = 20): Promise<void> {

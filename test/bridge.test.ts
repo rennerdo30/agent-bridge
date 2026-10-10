@@ -154,10 +154,16 @@ describe("authentication", () => {
     const good = env.node("good");
     await good.start();
     const bad = new BridgeNode({ pipePath: env.pipe, token: "wrong", dbPath: env.db, agent: "other", name: "bad", cwd: env.home, autoWake: false, log: nullLogger });
-    const started = Date.now();
-    await expect(bad.start()).rejects.toMatchObject({ code: "unauthorized" });
-    expect(Date.now() - started).toBeLessThan(3_000);
-    expect((await good.peers()).map((p) => p.name)).toEqual(["good"]);
+    try {
+      const started = Date.now();
+      await expect(bad.start()).rejects.toMatchObject({ code: "unauthorized" });
+      expect(Date.now() - started).toBeLessThan(3_000);
+      expect((await good.peers()).map((p) => p.name)).toEqual(["good"]);
+    } finally {
+      // A failed start still arms background re-election: without a stop it retries
+      // forever and can open this home's store after teardown (AB-255).
+      await bad.stop();
+    }
   });
 
   it("refuses requests on connections that never authenticated", async () => {

@@ -61,12 +61,14 @@ describe("local project permission groups", () => {
       await source.setUnavailable(true);
       expect(await shared.share(job.name)).toBeTruthy();
       expect(shared.followUp(job.name, "Redirect inline work").outcome).toBe("delivered");
-      await expect.poll(() => job.queue).toContain("Redirect inline work");
+      // Cross-node job control travels through the broker named pipe, which is
+      // slow on loaded Windows runners: poll past the 1 s default (AB-255).
+      await expect.poll(() => job.queue, { timeout: 10_000 }).toContain("Redirect inline work");
       shared.setTitle(job.name, "Shared inline title");
       shared.setSettings(job.name, { effort: "high" });
-      await expect.poll(() => job.args).toMatchObject({ title: "Shared inline title", effort: "high" });
+      await expect.poll(() => job.args, { timeout: 10_000 }).toMatchObject({ title: "Shared inline title", effort: "high" });
       expect(shared.cancel(job.name)).toBe(true);
-      await expect.poll(() => job.controller.signal.aborted).toBe(true);
+      await expect.poll(() => job.controller.signal.aborted, { timeout: 10_000 }).toBe(true);
     } finally { original.cancelAll(); }
   });
   it("switches the main with an all-jobs handoff and rejects a cross-group switch atomically", async () => {

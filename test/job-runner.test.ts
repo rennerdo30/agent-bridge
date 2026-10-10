@@ -2,7 +2,6 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { execFileSync } from "node:child_process";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -17,6 +16,7 @@ import { parentFromEnv } from "../src/core/parent-link.js";
 import { readRunnerState } from "../src/mcp/job-host.js";
 import { runnerStateIds } from "../src/core/runner-store.js";
 import { closeMetadataDbs } from "../src/core/metadata-db.js";
+import { removeHome } from "./helpers.js";
 import { readStore } from "../src/mcp/jobs.js";
 import { RootConcurrency } from "../src/core/root-concurrency.js";
 import { startUi } from "../src/cli/ui.js";
@@ -139,7 +139,9 @@ afterEach(async context => {
   for (const s of sessions.splice(0)) await stopSession(s).catch(() => {});
   for (const n of nodes.splice(0)) await n.stop().catch(() => {});
   closeMetadataDbs();
-  if (!failed) await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  // Re-close the shared metadata handle before every deletion attempt: late
+  // background store-identity refreshes reopen it otherwise (AB-255).
+  if (!failed) await removeHome(home);
 });
 
 describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () => {
