@@ -126,7 +126,9 @@ export class DecisionStore {
     const id = randomUUID();
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const previous = this.db.prepare("SELECT id FROM decisions WHERE topic = ? ORDER BY revision DESC LIMIT 1").get(topic);
+      // The current revision, not the last inserted: a decision synced from a paired PC can be older (AB-261).
+      const previous = this.db.prepare(`SELECT id FROM decisions d WHERE topic = ? AND NOT EXISTS (SELECT 1 FROM decisions newer WHERE newer.supersedes = d.id)
+        ORDER BY created_at DESC, id DESC LIMIT 1`).get(topic);
       this.db.prepare(`INSERT INTO decisions (id, topic, body, scope, author_id, author_name, author_agent, created_at, source_message_id, supersedes)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, topic, args.text.trim(), JSON.stringify(normalizeScope(args.scope)), author.id, author.name, author.agent, at, args.sourceMessageId ?? null, previous?.id ?? null);
       this.db.exec("COMMIT");
@@ -143,9 +145,9 @@ export class DecisionStore {
    * as-is and never duplicated). Only scope "all" is synced: project and session paths differ
    * per PC, so narrower scopes are refused here. Returns true when the row is new.
    *
-   * When both PCs recorded the same topic while disconnected there are two chain tips; the
-   * newer revision (createdAt, id as tiebreak) becomes current by chaining the tips, so the
-   * older revision stays in history. Nothing is deleted: history is append-only.
+   * When both PCs recorded the same topic while disconnected there are two chain tips; list()
+   * treats the newer one (createdAt, id as tiebreak) as current and the other as history. Rows
+   * are never rewritten, so both PCs keep identical records and derive the same current one.
    *
    * `current` is derived locally from the supersedes chain, so it is not an input here.
    */
@@ -159,13 +161,6 @@ export class DecisionStore {
         .run(decision.id, topic, decision.text.trim(), JSON.stringify("all" as const),
           decision.author.id, decision.author.name, decision.author.agent,
           decision.createdAt, decision.sourceMessageId, decision.supersedes).changes === 1;
-      const tips = (this.db.prepare(`SELECT id, created_at FROM decisions WHERE topic = ?
-        AND id NOT IN (SELECT supersedes FROM decisions WHERE topic = ? AND supersedes IS NOT NULL)
-        ORDER BY created_at ASC, id ASC`).all(topic, topic) as { id: string; created_at: number }[]);
-      for (let i = 1; i < tips.length; i++) {
-        this.db.prepare("UPDATE decisions SET supersedes = ? WHERE id = ? AND (supersedes IS NULL OR supersedes != ?)")
-          .run(tips[i - 1]!.id, tips[i]!.id, tips[i - 1]!.id);
-      }
       this.db.exec("COMMIT");
       return inserted;
     } catch (err) {
@@ -175,7 +170,10 @@ export class DecisionStore {
   }
 
   list(args: DecisionsArgs = {}, peer?: PeerInfo): OwnerDecision[] {
-    const rows = this.db.prepare(`SELECT d.*, NOT EXISTS (SELECT 1 FROM decisions newer WHERE newer.supersedes = d.id) AS current
+    // Current: not superseded, and no newer unsuperseded revision of the topic (a fork from a paired PC, AB-261).
+    const rows = this.db.prepare(`SELECT d.*, NOT EXISTS (SELECT 1 FROM decisions newer WHERE newer.supersedes = d.id)
+        AND NOT EXISTS (SELECT 1 FROM decisions o WHERE o.topic = d.topic AND (o.created_at > d.created_at OR (o.created_at = d.created_at AND o.id > d.id))
+          AND NOT EXISTS (SELECT 1 FROM decisions n WHERE n.supersedes = o.id)) AS current
       FROM decisions d ORDER BY revision DESC`).all() as unknown as DecisionRow[];
     const query = args.query?.trim().toLowerCase();
     const scope = args.scope ? normalizeScope(args.scope) : undefined;

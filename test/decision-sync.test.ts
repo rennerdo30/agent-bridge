@@ -6,6 +6,7 @@ import { BridgeClient } from "../src/core/client.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
 import { BridgeNode } from "../src/core/node.js";
+import { MessageStore } from "../src/core/store.js";
 import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
@@ -57,6 +58,32 @@ async function paired() {
   await waitFor(async () => (await adminA.request("networkStatus", {})).paired.some((p) => p.connected));
   return { a, b, adminA, adminB };
 }
+
+describe("forked decision history", () => {
+  it("keeps exactly one current revision when both PCs decided the same topic apart, without rewriting rows", () => {
+    const store = new MessageStore(":memory:", nullLogger);
+    cleanup.push(() => store.close());
+    const author = { id: "a", name: "alpha", agent: "codex" as const };
+    const base = store.decisions.record({ topic: "lunch", text: "Ramen", scope: "all" }, author, 1_000);
+    const local = store.decisions.record({ topic: "lunch", text: "Udon", scope: "all" }, author, 3_000);
+    // Recorded on the other PC while apart: older than the local revision, both superseding base.
+    const remote = { id: "00000000-0000-4000-8000-000000000002", topic: "lunch", text: "Soba", scope: "all" as const, author, createdAt: 2_000, sourceMessageId: null, supersedes: base.id };
+    expect(store.decisions.importSync(remote)).toBe(true);
+    expect(store.decisions.importSync(remote)).toBe(false);
+    const current = () => store.decisions.list({ topic: "lunch" }).map((d) => d.text);
+    expect(current()).toEqual(["Udon"]);
+    const history = store.decisions.list({ topic: "lunch", history: true });
+    expect(history.find((d) => d.id === local.id)!.supersedes).toBe(base.id);
+    expect(history.find((d) => d.id === remote.id)!.supersedes).toBe(base.id);
+    // The next local decision supersedes the current revision, not the last imported row.
+    const next = store.decisions.record({ topic: "lunch", text: "Curry", scope: "all" }, author, 4_000);
+    expect(next.supersedes).toBe(local.id);
+    expect(current()).toEqual(["Curry"]);
+    // A newer revision from the other PC wins on arrival.
+    store.decisions.importSync({ ...remote, id: "00000000-0000-4000-8000-000000000003", text: "Pho", createdAt: 5_000, supersedes: local.id });
+    expect(current()).toEqual(["Pho"]);
+  });
+});
 
 describe("owner decision sync between paired PCs", () => {
   it("syncs scope-all decisions in both directions with ids intact and notifies once", async () => {
