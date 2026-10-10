@@ -2,7 +2,7 @@ import { existsSync, lstatSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { git, removeWorktreeDirectory, trustArgs, type Worktree } from "./worktree.js";
 import { assertPhysicalPath, permissionRepairPlan } from "./permission-repair.js";
-import { readWorktreeState, rootId, saveWorktreeState, worktreeLease, type WorktreeState } from "./worktree-state.js";
+import { readWorktreeState, rootId, saveWorktreeState, saveWorktreeStateWithRetry, worktreeLease, type WorktreeState, type WorktreeStateRetryOptions } from "./worktree-state.js";
 import type { Logger } from "./logger.js";
 
 export interface CloseJob {
@@ -15,13 +15,13 @@ export interface CloseJob {
 export interface CloseResult { action: "disabled" | "kept" | "reaped"; reason: string; pushed?: { ref: string; sha: string }[] }
 
 /** New sidecar, no changes to existing job/config formats. Legacy jobs receive no cache authority. */
-export async function recordWorktreeOrigin(home: string, wt: Worktree, log: Logger): Promise<void> {
+export async function recordWorktreeOrigin(home: string, wt: Worktree, log: Logger, retry?: WorktreeStateRetryOptions): Promise<void> {
   assertPhysicalPath(wt.path);
   const files = (await git([...trustArgs(wt.path), "ls-files", "-z"], wt.path, log)).split("\0").filter(Boolean);
   const libraries = files.filter((file) => /(^|\/)ProjectSettings\/ProjectVersion\.txt$/.test(file))
     .map((file) => join(dirname(dirname(file)), "Library"))
     .filter((path) => { try { lstatSync(join(wt.path, path)); return false; } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; return true; } });
-  saveWorktreeState(home, wt, { contractVersion: 1, path: wt.path, repoRoot: wt.repoRoot, base: wt.base, rootId: rootId(wt.path), libraries, lastContinuation: Date.now(), processesStopped: false });
+  await saveWorktreeStateWithRetry(home, wt, { contractVersion: 1, path: wt.path, repoRoot: wt.repoRoot, base: wt.base, rootId: rootId(wt.path), libraries, lastContinuation: Date.now(), processesStopped: false }, retry ?? { log });
 }
 
 const inside = (path: string, parent: string) => { const rel = relative(parent, path); return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel); };
@@ -92,17 +92,17 @@ export async function closeJobWorktree(opts: { home: string; job: CloseJob; enab
 }
 
 /** Called inside the run lease. Recreate only a checkout with a durable successful reap record. */
-export async function prepareWorktreeContinuation(home: string, wt: Worktree, log: Logger): Promise<void> {
+export async function prepareWorktreeContinuation(home: string, wt: Worktree, log: Logger, retry?: WorktreeStateRetryOptions): Promise<void> {
   let state = readWorktreeState(home, wt);
   if (!existsSync(wt.path)) {
     if (!state?.reapedAt || !state.pushed?.length) throw new Error("Worktree is missing without a verified reap record; recreate it explicitly.");
     const branch = state.resumeBranch ?? wt.branch;
     await git([...trustArgs(wt.repoRoot), "worktree", "add", wt.path, branch], wt.repoRoot, log);
     wt.branch = branch;
-    await recordWorktreeOrigin(home, wt, log);
+    await recordWorktreeOrigin(home, wt, log, retry);
     state = readWorktreeState(home, wt);
   }
   assertPhysicalPath(wt.path);
   if (state && rootId(wt.path) !== state.rootId) throw new Error("Worktree root was replaced; restore isolation before continuing.");
-  if (state) saveWorktreeState(home, wt, { ...state, lastContinuation: Date.now(), closedAt: undefined, reapedAt: undefined, processesStopped: false });
+  if (state) await saveWorktreeStateWithRetry(home, wt, { ...state, lastContinuation: Date.now(), closedAt: undefined, reapedAt: undefined, processesStopped: false }, retry ?? { log });
 }

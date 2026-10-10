@@ -29,7 +29,7 @@ import { denyPendingApprovals, waitForApproval, type Job, type RunResult } from 
 import { DELEGATION_TARGETS, supportsAsk, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
 import { JOB_SETTING_KEYS } from "./job-settings.js";
 import { prepareWorktreeContinuation, recordWorktreeOrigin } from "../core/job-close.js";
-import { invalidateWorktreePathProof, worktreeLease } from "../core/worktree-state.js";
+import { invalidateWorktreePathProofWithRetry, worktreeLease } from "../core/worktree-state.js";
 import { assertPhysicalPath } from "../core/permission-repair.js";
 
 /** Added to a subagent's task when it can report progress. */
@@ -156,12 +156,15 @@ async function runWithWorktreeLease(rc: RunContext, target: CodingAgent, a: Dele
   if (!root) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
   const release = worktreeLease(rc.home, { path: root }, job?.id);
   try {
+    // A reader that is just exiting must not fail the turn at once (AB-260): these state writes wait
+    // for a fresh identity scan with backoff, then fail with the same blocker message as before.
+    const retry = { signal, log: rc.log, onWait: (message: string) => onProgress?.(`queued: ${message}`) };
     if (wt) {
-      if (!a._worktree) await recordWorktreeOrigin(rc.home, wt, rc.log);
-      else await prepareWorktreeContinuation(rc.home, wt, rc.log);
+      if (!a._worktree) await recordWorktreeOrigin(rc.home, wt, rc.log, retry);
+      else await prepareWorktreeContinuation(rc.home, wt, rc.log, retry);
     } else {
       assertPhysicalPath(root);
-      invalidateWorktreePathProof(rc.home, root);
+      await invalidateWorktreePathProofWithRetry(rc.home, root, retry);
     }
     return await runDelegateInner(rc, target, wt ? { ...a, _worktree: wt } : a, signal, onProgress, background, job);
   } finally { release(); }

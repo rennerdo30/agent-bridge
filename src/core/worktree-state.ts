@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { isRecord, JSON_STORE_VERSION, readJsonStore, writeJsonStore } from "./json-store.js";
 import type { Worktree } from "./worktree.js";
 import { readHistoryJson } from "./run-history.js";
 import { worktreeRowLease } from "./worktree-row-lease.js";
+import { refreshStorePeerIdentities } from "./store-compatibility.js";
+import type { Logger } from "./logger.js";
 
 export const WORKTREE_STATE_CONTRACT = 1;
 export interface WorktreeState {
@@ -34,6 +37,63 @@ export function readWorktreeState(home: string, wt: Worktree): WorktreeState | n
 export function saveWorktreeState(home: string, wt: Worktree, value: WorktreeState): void {
   const path = statePath(home, wt);
   writeJsonStore(path, { ...value }, readJsonStore(path));
+}
+
+/** How long a turn-time worktree state write waits for briefly unverifiable readers (AB-260). */
+export const WORKTREE_STATE_UPGRADE_WAIT_MS = 120_000;
+
+export interface WorktreeStateRetryOptions {
+  deadlineMs?: number;
+  signal?: AbortSignal;
+  log?: Logger | null;
+  onWait?: (message: string) => void;
+}
+
+/**
+ * A turn-time worktree state write: a reader that is just exiting (ESRCH a moment later) must not fail
+ * the whole turn at once. Retries STORE_UPGRADE_DEFERRED with a fresh identity scan and backoff until
+ * the deadline, then throws the last blocker message unchanged. A genuinely old reader still blocks.
+ */
+export async function saveWorktreeStateWithRetry(home: string, wt: Pick<Worktree, "path">, value: WorktreeState, opts: WorktreeStateRetryOptions = {}): Promise<void> {
+  const deadlineMs = opts.deadlineMs ?? WORKTREE_STATE_UPGRADE_WAIT_MS;
+  const start = Date.now();
+  for (let attempt = 0; ; attempt++) {
+    opts.signal?.throwIfAborted();
+    try {
+      saveWorktreeState(home, wt as Worktree, value);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED") throw error;
+      if (Date.now() - start >= deadlineMs) throw error;
+      if (attempt === 0) opts.onWait?.(String(error));
+      if (attempt === 0) opts.log?.info("worktree state waits for retained store readers", { reason: String(error) });
+      await refreshStorePeerIdentities(home, opts.signal).catch(() => {});
+      opts.signal?.throwIfAborted();
+      try {
+        await delay(Math.min(1_000, (attempt + 1) * 100), undefined, { signal: opts.signal });
+      } catch {
+        opts.signal?.throwIfAborted();
+        throw error;
+      }
+    }
+  }
+}
+
+/** Proof write after a turn, retried the same way; resolved state is read once up front. */
+export async function recordWorktreeProcessProofWithRetry(home: string, wt: Worktree, stopped: boolean, opts: WorktreeStateRetryOptions = {}): Promise<void> {
+  const state = readWorktreeState(home, wt);
+  if (!state) return;
+  await saveWorktreeStateWithRetry(home, wt, { ...state, processesStopped: stopped }, opts);
+}
+
+/** Path-proof invalidation inside the run lease, retried the same way. */
+export async function invalidateWorktreePathProofWithRetry(home: string, path: string, opts: WorktreeStateRetryOptions = {}): Promise<void> {
+  const value = readHistoryJson(statePath(home, { path }));
+  if (!isRecord(value) || typeof value.repoRoot !== "string" || typeof value.base !== "string") return;
+  const wt = { path, cwd: path, repoRoot: value.repoRoot, base: value.base, branch: "" };
+  const state = readWorktreeState(home, wt);
+  if (!state) return;
+  await saveWorktreeStateWithRetry(home, wt, { ...state, processesStopped: false, lastContinuation: Date.now() }, opts);
 }
 export function recordWorktreeProcessProof(home: string, wt: Worktree, stopped: boolean): void {
   const state = readWorktreeState(home, wt);
