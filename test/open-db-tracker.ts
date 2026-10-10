@@ -33,24 +33,32 @@ function register(db: DatabaseSync): void {
   open.add(entry);
 }
 
-proto.prepare = function (this: DatabaseSync, ...args: never[]): unknown {
-  register(this);
-  return origPrepare.apply(this, args);
-};
-
-proto.exec = function (this: DatabaseSync, ...args: never[]): unknown {
-  register(this);
-  return origExec.apply(this, args);
-};
-
-proto.close = function (this: DatabaseSync, ...args: never[]): unknown {
-  const entry = entries.get(this);
-  if (entry) { open.delete(entry); entries.delete(this); }
-  return origClose.apply(this, args);
-};
+let tracking = false;
+/**
+ * Opt-in (AB_TRACK_DB=1): the hooks add a query and a stack capture to every handle's first use, which changed
+ * timing enough to fail macOS lock-timing tests in CI.
+ */
+export function trackOpenDatabases(): void {
+  if (tracking) return;
+  tracking = true;
+  proto.prepare = function (this: DatabaseSync, ...args: never[]): unknown {
+    register(this);
+    return origPrepare.apply(this, args);
+  };
+  proto.exec = function (this: DatabaseSync, ...args: never[]): unknown {
+    register(this);
+    return origExec.apply(this, args);
+  };
+  proto.close = function (this: DatabaseSync, ...args: never[]): unknown {
+    const entry = entries.get(this);
+    if (entry) { open.delete(entry); entries.delete(this); }
+    return origClose.apply(this, args);
+  };
+}
 
 /** One entry per open handle: file plus the first-use call site. */
 export function describeOpenDatabases(onlyUnder?: string): string {
+  if (!tracking) return "(not tracked; rerun with AB_TRACK_DB=1)";
   const lines: string[] = [];
   for (const entry of open) {
     if (!entry.ref.deref()) { open.delete(entry); continue; }
