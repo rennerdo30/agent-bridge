@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { MAX_TEXT_CHARS, MAX_TOOL_PREVIEW_CHARS, MAX_TRANSCRIPT_CHUNK_BYTES, readJsonl, safeFile } from "../src/core/transcripts/common.js";
+import { MAX_TEXT_CHARS, MAX_TOOL_PREVIEW_CHARS, MAX_TRANSCRIPT_CHUNK_BYTES, readJsonl, safeFile, TRANSCRIPT_TAIL_BYTES } from "../src/core/transcripts/common.js";
 import { claudeItems, listClaudeSubagents, readClaudeChat } from "../src/core/transcripts/claude.js";
 import { codexItems, listCodexSubagents, readCodexChat } from "../src/core/transcripts/codex.js";
 import { listOpencodeSubagents, opencodeItems, readOpencodeChat } from "../src/core/transcripts/opencode.js";
@@ -42,6 +42,21 @@ describe("bounded JSONL reading", () => {
       next = page.next;
     }
     expect(values).toEqual(["visible"]);
+  });
+  it("opens a long transcript at its last records with the tail cursor", () => {
+    const file = join(home, "long.jsonl"), line = (n: number) => JSON.stringify({ n, pad: "x".repeat(200) }) + "\n";
+    let text = "", last = -1;
+    while (text.length < TRANSCRIPT_TAIL_BYTES * 3) text += line(++last);
+    writeFileSync(file, text);
+    const page = readJsonl(file, "tail");
+    // Whole records only, ending with the newest, and nowhere near the start.
+    expect(page.entries.at(-1)?.value.n).toBe(last);
+    expect(page.entries[0]!.value.n).toBeGreaterThan(last / 2);
+    expect(page.entries.every((e, i) => i === 0 || e.value.n === page.entries[i - 1]!.value.n + 1)).toBe(true);
+    expect(page.next).toBe(`j:${Buffer.byteLength(text)}:0`);
+    appendFileSync(file, line(last + 1));
+    expect(readJsonl(file, page.next).entries.map((e) => e.value.n)).toEqual([last + 1]);
+    expect(validTranscriptCursor("tail")).toBe(true);
   });
   it("skips malformed JSON and a cursor inside a line, and resets after truncation", () => {
     const file = join(home, "unknown.jsonl");

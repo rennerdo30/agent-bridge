@@ -1181,7 +1181,10 @@ async function pullChatFrom(id, url) {
   c.loading = true;
   try {
     for (let i = 0; i < LOG_PAGES; i++) {
-      const r = await fetch(url + (c.next ? "?from=" + encodeURIComponent(c.next) : ""));
+      // A first load opens at the latest records: reading a 100 MB transcript from its start took seconds.
+      let r = await fetch(url + "?from=" + encodeURIComponent(c.next || "tail"));
+      // A paired PC on an older version rejects the tail cursor: read from the start there.
+      if (!c.next && r.status === 400) r = await fetch(url);
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(remoteErrorText(d) || (r.status === 409 ? "This session has not reported its CLI session yet: it appears after its next prompt." : d.error || "HTTP " + r.status));
       for (const item of d.items || []) {

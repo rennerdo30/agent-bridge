@@ -9,6 +9,7 @@ export type { TranscriptItem, TranscriptPage, NativeSubagent, TranscriptPaths } 
 
 export function validTranscriptCursor(from: string): boolean {
   const match = /^(?:(?:j:)?(\d+)(?::[01])?|o:(\d+):[A-Za-z0-9_-]*)$/.exec(from);
+  if (from === "tail") return true;
   return from.length <= MAX_CURSOR_CHARS && !!match && Number.isSafeInteger(Number(match[1] ?? match[2]));
 }
 

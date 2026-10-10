@@ -4,6 +4,8 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { PeerInfo } from "../protocol.js";
 
 export const MAX_TRANSCRIPT_CHUNK_BYTES = 512 * 1024;
+/** The `tail` cursor opens a conversation at its last records: transcripts grow past 100 MB. */
+export const TRANSCRIPT_TAIL_BYTES = 1024 * 1024;
 export const MAX_TOOL_PREVIEW_CHARS = 1_200;
 export const MAX_TEXT_CHARS = 16_000;
 export const MAX_TITLE_CHARS = 160;
@@ -97,6 +99,7 @@ export function readJsonl(file: string, from = "0", maxBytes = MAX_TRANSCRIPT_CH
   try {
     fd = openSync(file, "r");
     const size = fstatSync(fd).size;
+    if (from === "tail") { offset = Math.max(0, size - TRANSCRIPT_TAIL_BYTES); maxBytes = Math.max(maxBytes, TRANSCRIPT_TAIL_BYTES); }
     if (offset > size) { offset = 0; discard = false; }
     // Check a manually supplied offset too: never parse the middle of a record.
     if (offset > 0 && !discard) {
