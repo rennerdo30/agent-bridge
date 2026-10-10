@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.30.8
+
+- New jobs no longer fail at their first store write because another reader looked unknown. A reader verified once stays known while its identity refreshes in the background, and readers not yet verified (a runner that started a moment ago, or a cold cache) are checked directly against their recorded process identity.
+- A recorded reader whose PID now belongs to another process, or to no running process at all (an exited process whose PID a lingering handle keeps answering), counts as gone. A listed process whose start time cannot be read (elevated or protected) still blocks.
+- The dashboard shows a silent run as interrupted only when its job runner's heartbeat is old too. Freshly started jobs waiting for admission, a queue or a long model step no longer flip between interrupted and running.
+- The owner's dashboard shows only questions addressed to the owner (`ask_owner`). Subagent questions to their parent session no longer appear in the overview, question list, session page, counters, toasts or notifications.
+
 ## 0.30.7
 
 - A session adopts the jobs it started under a "-N" stand-in name during a reload again. Since 0.30.4 the stand-in's presence lives in the metadata database, which the check that the stand-in had exited did not read, so those jobs stayed with the dead stand-in: missing from the session's job list, refused by `message_subagent` as unknown, and their results stuck in its mailbox. Presence written before the current boot also counts as proof that the stand-in exited; a stand-in that may still be alive is never adopted.

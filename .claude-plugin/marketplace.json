@@ -10,7 +10,7 @@
       "name": "agent-bridge",
       "source": "./plugins/claude",
       "description": "Live messaging with Codex sessions plus headless delegation (ask_codex).",
-      "version": "0.30.7"
+      "version": "0.30.8"
     }
   ]
 }

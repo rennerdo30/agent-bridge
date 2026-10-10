@@ -252,6 +252,12 @@ export function legacyStorePeers(home: string): { pid: number; name: string; ver
   return records.filter(peer => !metadataRelease(peer.version)).map(({ pid, name, version }) => ({ pid, name: name ?? `pid ${pid}`, version: version ?? "unknown" }));
 }
 
+/** A PID that answers EPERM (or no longer exists) while no running process holds it. */
+function exitedBehindHandle(pid: number): boolean {
+  try { process.kill(pid, 0); return false; }
+  catch (error) { return ["EPERM", "ESRCH"].includes(String((error as NodeJS.ErrnoException).code)); }
+}
+
 /** The stored presence record of pid, from the metadata rows or the legacy file. */
 function storedPresence(home: string, pid: number): Presence | undefined {
   const stored = databasePresence(home);
@@ -278,7 +284,9 @@ function verifiedNow(home: string, peers: Presence[], format: keyof StoreCapabil
   if (!live) return new Set();
   return new Set(candidates.filter(({ pid, record, identity }) => {
     const now = live.get(pid);
-    if (now === undefined) return true;
+    // Not listed: gone only with the exited-process signature (the PID answers EPERM, e.g. a lingering handle keeps
+    // it). A PID that still answers a signal normally but is missing from the list is a race; it keeps blocking.
+    if (now === undefined) return exitedBehindHandle(pid);
     if (now === "") return false;
     return now !== identity || validStoreCapabilities(record) && (record[format] ?? 0) >= target;
   }).map(candidate => candidate.pid));

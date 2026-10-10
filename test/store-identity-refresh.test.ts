@@ -34,12 +34,24 @@ it("keeps verified readers known when a later identity query fails, but not read
   expect(versionOf()).toBe("0.30.6");
   expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).not.toThrow();
 
-  // A successful query without the PID: that reader is unknown again and blocks the upgrade.
+  // A successful query without the PID: the cached reader is unknown again.
   query.mockResolvedValue(new Map());
   expire();
   await refreshStorePeerIdentities(env.home);
   expect(versionOf()).toBe("unknown");
+  // The upgrade check verifies it directly: a listed process whose start time cannot be read (elevated or
+  // protected) keeps blocking...
+  const direct = vi.spyOn(identity, "readProcessIdentitiesSync").mockReturnValue(new Map([[pid, ""]]));
   expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);
+  // ...a failed direct query keeps blocking...
+  direct.mockReturnValue(undefined);
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);
+  // ...an unlisted PID that still answers a signal normally is a race and keeps blocking...
+  direct.mockReturnValue(new Map());
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);
+  // ...while an exited reader whose PID a lingering handle keeps answering (EPERM, not listed) is gone.
+  vi.mocked(process.kill).mockImplementation(((target: number) => { throw Object.assign(new Error(target === pid ? "EPERM" : "ESRCH"), { code: target === pid ? "EPERM" : "ESRCH" }); }) as typeof process.kill);
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).not.toThrow();
 });
 
 it.runIf(process.platform === "win32")("reports a failed batch query instead of an empty result", async () => {
