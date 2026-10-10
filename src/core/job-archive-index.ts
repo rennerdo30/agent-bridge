@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { cloneJson, estimatedJsonBytes, fileSignature } from "./file-cache.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
+import { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
 import type { Logger } from "./logger.js";
 
 export const JOB_ARCHIVE_VERSION = 1;
@@ -76,9 +77,11 @@ export function openJobArchive(path: string, writable = false): DatabaseSync | u
   physicalArchivePath(join(dirname(path), "archive"));
   if (!writable && !existsSync(file)) return undefined;
   if (writable) mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-  const db = new DatabaseSync(file, { readOnly: !writable, timeout: 100 });
+  // Wait out transient writer locks like every other store (AB-255): 100 ms is
+  // routinely exceeded by a concurrent archive migration on a loaded runner.
+  const db = new DatabaseSync(file, { readOnly: !writable, timeout: SQLITE_BUSY_TIMEOUT_MS });
   try {
-    db.exec("PRAGMA busy_timeout=100; PRAGMA foreign_keys=ON");
+    db.exec(`PRAGMA busy_timeout=${SQLITE_BUSY_TIMEOUT_MS}; PRAGMA foreign_keys=ON`);
     const version = Number(db.prepare("PRAGMA user_version").get()!.user_version);
     if (!writable && version === 0) { db.close(); return undefined; }
     if (writable && version < JOB_ARCHIVE_VERSION) {

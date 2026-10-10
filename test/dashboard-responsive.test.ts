@@ -62,7 +62,8 @@ it("serves the complete cold 307-archive/1024-log corpus while timers keep runni
   const state = await readDashboard({ home: env.home, log: nullLogger, peers: () => [] }, { path: "/api/state" });
   expect(state.status).toBe(200);
   expect((state.body as { runsTotal: number }).runsTotal).toBe(asyncRuns.length);
-}, 30_000);
+  // Writing ~5,000 fixture files dominates on a loaded Windows runner (AB-255).
+}, 60_000);
 
 it("preserves unknown metadata and isolates nested returned mutations, including recovered ownership and worktrees", async () => {
   corpus(2, 3);

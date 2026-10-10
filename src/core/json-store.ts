@@ -49,6 +49,16 @@ export function retainBackups(path: string): void {
   }
 }
 
+/** How long a store that does not parse gets to finish a write by another process before it counts as corrupt. */
+const PARTIAL_WRITE_WAIT_MS = 100;
+
+function parseJsonStore(raw: string, valid: (value: unknown) => boolean): unknown {
+  const value: unknown = JSON.parse(raw);
+  if (isRecord(value) && typeof value.version === "number" && value.version > JSON_STORE_VERSION) return value;
+  if (!valid(value)) throw new Error("invalid store structure");
+  return value;
+}
+
 export function readJsonStore(path: string, log?: Logger, valid: (value: unknown) => boolean = isRecord): unknown {
   let raw: string;
   try {
@@ -58,11 +68,17 @@ export function readJsonStore(path: string, log?: Logger, valid: (value: unknown
     throw err;
   }
   try {
-    const value: unknown = JSON.parse(raw);
-    if (isRecord(value) && typeof value.version === "number" && value.version > JSON_STORE_VERSION) return value;
-    if (!valid(value)) throw new Error("invalid store structure");
-    return value;
+    return parseJsonStore(raw, valid);
   } catch (err) {
+    // A file another process is writing in place (an editor, or a plain writeFileSync) can be read empty or half
+    // written: read it again before moving it aside as corrupt.
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, PARTIAL_WRITE_WAIT_MS);
+    try {
+      const again = readFileSync(path, "utf8");
+      if (again !== raw) return parseJsonStore(again, valid);
+    } catch (retry) {
+      if ((retry as NodeJS.ErrnoException).code === "ENOENT") return null;
+    }
     const preserved = `${path}.corrupt-${Date.now()}-${randomUUID()}`;
     const release = storageLease(storeHome(path));
     try { renameSync(path, preserved); } finally { release(); }

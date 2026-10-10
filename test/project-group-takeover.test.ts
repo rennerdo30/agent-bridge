@@ -191,7 +191,9 @@ it("routes a blocking ask to an available group master without returning its res
   expect(reply.text).toContain("supervised by codex-master");
   expect(reply.text).not.toContain("Takeover result");
   let inbox = "";
-  await expect.poll(async () => { inbox += (await call(target, "inbox")).text; return /Subagent codex-ask-[a-f0-9]+ \(codex\) done after/.test(inbox); }).toBe(true);
+  // Completion envelopes arrive through spawned fixture runners and child MCP
+  // servers: allow slow runners past the 1 s default (AB-255).
+  await expect.poll(async () => { inbox += (await call(target, "inbox")).text; return /Subagent codex-ask-[a-f0-9]+ \(codex\) done after/.test(inbox); }, { timeout: 10_000 }).toBe(true);
   expect((await call(target, "inbox", { include_quiet: true })).text).toContain("Blocking fallback note");
   expect((inbox.match(/Subagent codex-ask-[a-f0-9]+ \(codex\) done after/g) ?? [])).toHaveLength(1);
   expect((await call(source, "inbox")).text).not.toMatch(/Blocking fallback note|Takeover result/);
@@ -253,7 +255,8 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   await expect.poll(async () => {
     try { return (await call(target, "peers")).text.includes(jobs[9]!.name); }
     catch { return false; } // A pipe request can straddle broker election.
-  }, { timeout: 5000 }).toBe(true);
+    // Re-election after the primary closes takes seconds on loaded runners (AB-255).
+  }, { timeout: 10_000 }).toBe(true);
   expect(jobs.every((j) => pidAlive(readRunnerState(env.home, j.id)!.pid))).toBe(true);
   expect((await call(target, "peers")).text).toContain(jobs[9]!.name);
   expect((await call(target, "message_subagent", { job: jobs[1]!.name, message: "Continue under the project master", title: "Inherited project work" })).error).toBeFalsy();

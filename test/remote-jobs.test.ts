@@ -2,7 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -170,12 +170,17 @@ async function waitFor(test: () => boolean | Promise<boolean>, ms = 30_000): Pro
   const deadline = Date.now() + ms;
   while (!await test()) { if (Date.now() > deadline) throw new Error("Remote test timed out"); await new Promise((r) => setTimeout(r, 50)); }
 }
+/** The remote broker reads config.json concurrently: replace it whole, never truncate it in place. */
+function writeAtomic(path: string, text: string): void {
+  writeFileSync(`${path}.tmp`, text);
+  renameSync(`${path}.tmp`, path);
+}
 function config(home: string, name: string, allowed = false): void {
   const bin = join(remoteHome, "fake-claude.mjs");
   writeFileSync(bin, FAKE); chmodSync(bin, 0o755);
   let claudeBin = bin;
   if (process.platform === "win32") { claudeBin = join(remoteHome, "claude.cmd"); writeFileSync(claudeBin, '@ECHO off\r\n"%dp0%\\fake-claude.mjs" %*\r\n'); }
-  writeFileSync(join(home, "config.json"), JSON.stringify({ dashboard: false, claudeBin, network: { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: LOOPBACK, port: 0, remoteJobs: { enabled: allowed, allowRoots: [repo], agents: ["claude"], allowPeers: allowed ? ["windows"] : [] } } }));
+  writeAtomic(join(home, "config.json"), JSON.stringify({ dashboard: false, claudeBin, network: { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: LOOPBACK, port: 0, remoteJobs: { enabled: allowed, allowRoots: [repo], agents: ["claude"], allowPeers: allowed ? ["windows"] : [] } } }));
 }
 async function session(home: string, name: string, agent = "codex"): Promise<Client> {
   const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`],
@@ -337,7 +342,7 @@ describe.skipIf(!existsSync(SERVER))("remote jobs with two paired TLS brokers", 
     cfg.codexBin = process.execPath;
     cfg.codexSubagents = 2;
     cfg.network.remoteJobs.agents.push("codex");
-    writeFileSync(path, JSON.stringify(cfg));
+    writeAtomic(path, JSON.stringify(cfg));
     const callsPath = join(repo, "native-calls.jsonl");
     // This extensionless fake CLI uses CommonJS even when the temp fixture lives inside an ESM checkout.
     writeFileSync(join(repo, "package.json"), JSON.stringify({ type: "commonjs" }));
@@ -404,7 +409,7 @@ rl.on("line", (line) => {
     const policyFile = join(remoteHome, "config.json");
     const deniedPair = JSON.parse(readFileSync(policyFile, "utf8"));
     deniedPair.network.remoteJobs.allowPeers = ["another-pc"];
-    writeFileSync(policyFile, JSON.stringify(deniedPair));
+    writeAtomic(policyFile, JSON.stringify(deniedPair));
     await expect(inspector.remoteJob("mac", { ...spawn, args: { ...spawn.args, cwd: repo } })).rejects.toThrow(/disabled for this pair/);
     config(remoteHome, "mac", true);
     const escape = join(repo, "remote-escape");
