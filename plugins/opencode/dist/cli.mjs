@@ -9,7 +9,7 @@ import {
 } from "./chunks/chunk-BG6KJS4H.mjs";
 import {
   BridgeNode
-} from "./chunks/chunk-DV7E5DWG.mjs";
+} from "./chunks/chunk-UY7IQUV4.mjs";
 import {
   formatMessage,
   formatReplyRestrictions
@@ -22,8 +22,8 @@ import {
   BridgeClient
 } from "./chunks/chunk-TEWRMKDT.mjs";
 import "./chunks/chunk-RQUYBZWF.mjs";
-import "./chunks/chunk-CHD4H3OC.mjs";
-import "./chunks/chunk-36EJN5ZR.mjs";
+import "./chunks/chunk-YKOJR76Q.mjs";
+import "./chunks/chunk-RZ3TLB7M.mjs";
 import {
   resolveDbPath,
   resolveHome,
@@ -37,17 +37,17 @@ import {
 import {
   DEFAULT_CONFIG,
   loadConfig
-} from "./chunks/chunk-AZVCKMPI.mjs";
+} from "./chunks/chunk-N4VZQR6L.mjs";
 import {
   CODING_AGENTS
 } from "./chunks/chunk-4QXHCXBU.mjs";
-import "./chunks/chunk-WHAYOFEB.mjs";
+import "./chunks/chunk-PC2MBYVM.mjs";
 import "./chunks/chunk-EUVUYVJQ.mjs";
 import "./chunks/chunk-FDMEMG4Z.mjs";
 import {
   createLogger,
   nullLogger
-} from "./chunks/chunk-6D4OVNOD.mjs";
+} from "./chunks/chunk-52VIYWBV.mjs";
 import "./chunks/chunk-VBHAVRFY.mjs";
 import {
   APP_VERSION,
@@ -67,31 +67,31 @@ function printResult(res) {
 async function main(argv) {
   const [command = "help", ...rest] = argv;
   const home = resolveHome();
-  if (command === "job-state") return (await import("./chunks/job-close-FKO6XGKI.mjs")).runJobClose(command, rest, home, DEFAULT_CONFIG, nullLogger, out);
+  if (command === "job-state") return (await import("./chunks/job-close-2CSDRQFP.mjs")).runJobClose(command, rest, home, DEFAULT_CONFIG, nullLogger, out);
   const pipe = resolvePipePath(home);
   const log = createLogger({ home, component: "cli" });
   const makeNode = () => new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: "other", name: CLI_PEER_NAME, cwd: process.cwd(), autoWake: false, log });
   switch (command) {
     case "antigravity-hook":
-      return (await import("./chunks/antigravity-hook-4MDYP5OM.mjs")).runAntigravityHook(rest[0] ?? "PreInvocation");
+      return (await import("./chunks/antigravity-hook-7Q5VHORI.mjs")).runAntigravityHook(rest[0] ?? "PreInvocation");
     case "job-state":
     case "job-close":
     case "close-idle-jobs":
-      return (await import("./chunks/job-close-FKO6XGKI.mjs")).runJobClose(command, rest, home, loadConfig(home, "other", log), log, out);
+      return (await import("./chunks/job-close-2CSDRQFP.mjs")).runJobClose(command, rest, home, loadConfig(home, "other", log), log, out);
     case "repair-permissions":
-      return (await import("./chunks/permission-repair-YC74KG6E.mjs")).runPermissionRepair(rest, home, log, out);
+      return (await import("./chunks/permission-repair-TJMCW2DT.mjs")).runPermissionRepair(rest, home, log, out);
     case "doctor":
-      return (await import("./chunks/doctor-RWQRUWP5.mjs")).runDoctor(rest, home, out);
+      return (await import("./chunks/doctor-P5HCPJPX.mjs")).runDoctor(rest, home, out);
     case "db":
-      return (await import("./chunks/db-VU5TFJN3.mjs")).runDb(rest, home, out);
+      return (await import("./chunks/db-A2XYK5I7.mjs")).runDb(rest, home, out);
     case "storage":
-      return (await import("./chunks/storage-RDOXOXRF.mjs")).runStorage(rest, home, out);
+      return (await import("./chunks/storage-MAK5R4GX.mjs")).runStorage(rest, home, out);
     case "reindex":
       if (rest.length) {
         out("Usage: agent-bridge reindex");
         return 2;
       }
-      return (await import("./chunks/reindex-V7Y3XXTM.mjs")).runReindex(home, pipe, log, out);
+      return (await import("./chunks/reindex-FXISUVTK.mjs")).runReindex(home, pipe, log, out);
     case "history-archive":
       if (rest.length > 1) {
         out("Usage: agent-bridge history-archive [absolute-archive-root]");
@@ -100,13 +100,13 @@ async function main(argv) {
       out(await (await import("./chunks/history-archive-FFC5FWA4.mjs")).archiveHistory(home, rest[0]));
       return 0;
     case "slot":
-      return (await import("./chunks/slot-SUNPRMDA.mjs")).runSlot(rest, home, loadConfig(home, "other", log), out);
+      return (await import("./chunks/slot-PCKT3BI4.mjs")).runSlot(rest, home, loadConfig(home, "other", log), out);
     case "connect":
     case "network":
     case "pair":
     case "link":
     case "unlink":
-      return (await import("./chunks/cli-XQNPJNYC.mjs")).runNetworkCommand(command, rest, home, pipe, log, out);
+      return (await import("./chunks/cli-XZKBBCWO.mjs")).runNetworkCommand(command, rest, home, pipe, log, out);
     case "status": {
       let client;
       try {
@@ -174,11 +174,11 @@ async function main(argv) {
     case "install":
     case "update":
     case "uninstall":
-      return (await import("./chunks/installer-JAA3LUNX.mjs")).runInstaller({ action: command, tools: (await import("./chunks/installer-JAA3LUNX.mjs")).parseInstallerArgs(command, rest), yes: rest.includes("--yes") || rest.includes("-y"), out });
+      return (await import("./chunks/installer-XKMXY2VI.mjs")).runInstaller({ action: command, tools: (await import("./chunks/installer-XKMXY2VI.mjs")).parseInstallerArgs(command, rest), yes: rest.includes("--yes") || rest.includes("-y"), out });
     case "ui": {
       const noOpen = rest.includes("--no-open");
-      if (rest.includes("--reset-key")) (await import("./chunks/dashboard-RZLBQJRZ.mjs")).dashboardKey(home, true);
-      const running = await (await import("./chunks/dashboard-RZLBQJRZ.mjs")).findRunningDashboard(home);
+      if (rest.includes("--reset-key")) (await import("./chunks/dashboard-SYBZCBGV.mjs")).dashboardKey(home, true);
+      const running = await (await import("./chunks/dashboard-SYBZCBGV.mjs")).findRunningDashboard(home);
       if (running) {
         out(t("cli.ui.existing", { url: running.url }));
         if (!noOpen) openBrowser(running.url);
@@ -186,7 +186,7 @@ async function main(argv) {
       }
       const portArg = rest.find((a) => a.startsWith("--port="))?.slice("--port=".length);
       const port = portArg ? Number(portArg) : loadConfig(home, "other", log).dashboardPort;
-      const controller = new (await import("./chunks/dashboard-RZLBQJRZ.mjs")).DashboardController({ home, pipe, port, log });
+      const controller = new (await import("./chunks/dashboard-SYBZCBGV.mjs")).DashboardController({ home, pipe, port, log });
       const info = await controller.ensure();
       out(t("cli.ui.running", { url: info.url }));
       if (!noOpen) openBrowser(info.url);
@@ -196,27 +196,27 @@ async function main(argv) {
       return 0;
     }
     case "watch": {
-      const logPath = (await import("./chunks/watch-7JFWHYS3.mjs")).findRunLog(home, rest[0]);
+      const logPath = (await import("./chunks/watch-Q6OT4QNX.mjs")).findRunLog(home, rest[0]);
       if (!logPath) {
         out(t("cli.watch.none"));
         return 1;
       }
       out(t("cli.watch.following", { path: logPath }));
-      await (await import("./chunks/watch-7JFWHYS3.mjs")).watchRunLog(logPath, out);
+      await (await import("./chunks/watch-Q6OT4QNX.mjs")).watchRunLog(logPath, out);
       return 0;
     }
     case "rewake-hook":
       return (await import("./chunks/rewake-hook-R4MAMQVI.mjs")).runRewakeHook(rest.includes("--standby"));
     case "session-start-hook":
-      return (await import("./chunks/session-start-hook-7LTHIOWZ.mjs")).runSessionStartHook(log);
+      return (await import("./chunks/session-start-hook-JJS7ZGBF.mjs")).runSessionStartHook(log);
     case "permission-hook":
-      return (await import("./chunks/permission-hook-XXLVEYWW.mjs")).runPermissionHook(rest[0]);
+      return (await import("./chunks/permission-hook-Q7APGQDN.mjs")).runPermissionHook(rest[0]);
     case "job-runner":
-      return (await import("./chunks/job-runner-7YGYY5E2.mjs")).runJobRunner(rest[0]);
+      return (await import("./chunks/job-runner-PWZ6ZUJS.mjs")).runJobRunner(rest[0]);
     case "reliability": {
       const picked = rest.filter((a) => CODING_AGENTS.includes(a));
       const only = rest.find((a) => a.startsWith("--only="))?.slice("--only=".length);
-      const sections = (await import("./chunks/reliability-E4RP25V7.mjs")).RELIABILITY_SECTIONS.filter((s) => !only || s === only);
+      const sections = (await import("./chunks/reliability-P4SE2PSQ.mjs")).RELIABILITY_SECTIONS.filter((s) => !only || s === only);
       const models = {};
       for (const arg of rest.filter((a) => a.startsWith("--model="))) {
         const [agent, ...model] = arg.slice("--model=".length).split(":");
@@ -226,32 +226,32 @@ async function main(argv) {
         out(t("cli.usage"));
         return 2;
       }
-      return (await import("./chunks/reliability-E4RP25V7.mjs")).runReliability({ agents: picked.length ? picked : [...CODING_AGENTS], out, log, sections, models });
+      return (await import("./chunks/reliability-P4SE2PSQ.mjs")).runReliability({ agents: picked.length ? picked : [...CODING_AGENTS], out, log, sections, models });
     }
     case "smoke": {
       const picked = rest.filter((a) => CODING_AGENTS.includes(a));
-      return (await import("./chunks/smoke-C4YOR6XU.mjs")).runSmoke({ agents: picked.length ? picked : [...CODING_AGENTS], out, log });
+      return (await import("./chunks/smoke-CE6BDYOM.mjs")).runSmoke({ agents: picked.length ? picked : [...CODING_AGENTS], out, log });
     }
     case "install-opencode": {
-      const source = (await import("./chunks/opencode-install-WD2K4V6A.mjs")).opencodeSourceDir();
+      const source = (await import("./chunks/opencode-install-IOVQPRPO.mjs")).opencodeSourceDir();
       if (!source) {
         out(t("cli.opencode.noSource"));
         return 1;
       }
-      const res = (await import("./chunks/opencode-install-WD2K4V6A.mjs")).installOpencode(source);
+      const res = (await import("./chunks/opencode-install-IOVQPRPO.mjs")).installOpencode(source);
       out(t("cli.opencode.installed", { dir: res.configDir }));
       printResult(res);
       out(t("cli.opencode.restart"));
       return 0;
     }
     case "uninstall-opencode": {
-      const res = (await import("./chunks/opencode-install-WD2K4V6A.mjs")).uninstallOpencode();
+      const res = (await import("./chunks/opencode-install-IOVQPRPO.mjs")).uninstallOpencode();
       out(res.files.length ? t("cli.opencode.removed", { dir: res.configDir }) : t("cli.opencode.nothing", { dir: res.configDir }));
       printResult(res);
       return 0;
     }
     case "cleanup":
-      return (await import("./chunks/cleanup-3J64UKLA.mjs")).runCleanup(rest, { home, cwd: process.cwd(), log, out });
+      return (await import("./chunks/cleanup-K4GBHHMN.mjs")).runCleanup(rest, { home, cwd: process.cwd(), log, out });
     case "paths":
       out(t("cli.paths", { home, logs: join(home, LOG_DIR_NAME), db: resolveDbPath(home), pipe }));
       return 0;
