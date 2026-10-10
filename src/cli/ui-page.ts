@@ -2615,7 +2615,10 @@ async function loadApprovals() {
   try {
     const r = await fetch("/api/approvals", { signal: AbortSignal.timeout(ANSWER_TIMEOUT_MS) });
     if (r.ok) {
-      const data = await r.json(); approvals = data.approvals || []; questionHistory = data.questions || [];
+      const data = await r.json();
+      // Owner rule: only questions addressed to the owner (ask_owner) appear here. Subagent questions to their parent
+      // session (job-question) stay agent-to-agent: no card, counter, toast, sound or notification for the owner.
+      approvals = (data.approvals || []).filter((a) => a.kind !== "job-question"); questionHistory = data.questions || [];
       const focusId=new URLSearchParams(location.hash.split("?")[1] || "").get("question");
       if (focusId && questionHistory.some(q => q.id === focusId && q.status !== "open")) apFilter="history";
       notifyNewApprovals();
