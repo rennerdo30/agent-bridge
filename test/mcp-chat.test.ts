@@ -10,7 +10,6 @@ import { resolvePipePath } from "../src/core/paths.js";
 import { pidAlive } from "../src/core/delegate.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
-const OWNER = "claude-dashboard-test";
 const TEST_TIMEOUT_MS = 60_000;
 const POLL_MS = 20;
 const CLEANUP_TIMEOUT_MS = 10_000;
@@ -49,7 +48,8 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
-describe.skipIf(!existsSync(SERVER))("dashboard and Codex jobs through the bundled MCP server", () => {
+describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboard and Codex jobs through the bundled MCP server (%s parent)", (parent) => {
+  const OWNER = `${parent}-dashboard-test`;
   let home: string;
   let client: Client;
   let transport: StdioClientTransport;
@@ -63,7 +63,7 @@ describe.skipIf(!existsSync(SERVER))("dashboard and Codex jobs through the bundl
     writeFileSync(join(home, "models-codex.json"), JSON.stringify({ at: Date.now(), bin: process.execPath, effort: null, report: { agent: "codex", defaultModel: "default-codex", models: ["first-codex", "second-codex"], lines: ["Codex models (2):", "- first-codex", "- second-codex"] } }));
     client = new Client({ name: "test-chat", version: "0.0.0" });
     transport = new StdioClientTransport({
-      command: process.execPath, args: [SERVER, "--agent=claude"], cwd: home,
+      command: process.execPath, args: [SERVER, `--agent=${parent}`], cwd: home,
       env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_PIPE: resolvePipePath(home, {}), AGENT_BRIDGE_NAME: OWNER, AGENT_BRIDGE_CODEX_BIN: process.execPath, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_JOB_RUNNER: "0", AGENT_BRIDGE_DELEGATE_DEPTH: "0", CLAUDE_PROJECT_DIR: home, AGENT_BRIDGE_PARENT_URL: "", AGENT_BRIDGE_PARENT_TOKEN: "" } as Record<string, string>, stderr: "ignore",
     });
     await client.connect(transport);
@@ -138,9 +138,29 @@ describe.skipIf(!existsSync(SERVER))("dashboard and Codex jobs through the bundl
       const description = (tool.inputSchema.properties!.model as { description: string }).description;
       expect(description).toContain("Default: configured-codex.");
       expect(description).toContain("Available: first-codex, second-codex.");
+      expect(tool.inputSchema.properties).toHaveProperty("effort");
+      expect(tool.inputSchema.properties).toHaveProperty("sandbox");
+      expect(tool.inputSchema.properties).toHaveProperty("worktree");
     }
+    expect(await call("list_models", { agent: "codex" })).toContain("first-codex");
     expect(requests()).toEqual([]);
   });
+
+  it("delivers a spawned Codex result to its parent and keeps the requested settings", async () => {
+    const spawned = await call("spawn_codex", { prompt: "wait for parent", title: "Owned Codex package", cwd: home, model: "first-codex", effort: "medium", sandbox: "danger-full-access" });
+    const job = /Subagent (codex-job-[\da-f]+) started/.exec(spawned)![1]!;
+    await waitFor(() => requests().some((r) => r.method === "turn/start"));
+    const stored = JSON.parse(readFileSync(join(home, "jobs.json"), "utf8")).jobs.find((j: any) => j.name === job);
+    expect(stored).toMatchObject({ owner: OWNER, agent: "codex", args: { model: "first-codex", effort: "medium", sandbox: "danger-full-access" } });
+    expect(requests().find((r) => r.method === "thread/start").params.model).toBe("first-codex");
+    expect(requests().find((r) => r.method === "turn/start").params).toMatchObject({ effort: "medium", sandboxPolicy: { type: "dangerFullAccess" } });
+    writeFileSync(join(home, "finish-turn"), "finish");
+    await waitFor(async () => (await call("peers")).includes(`${job} "Owned Codex package": done`));
+    let mail = "";
+    await waitFor(async () => { mail += await call("inbox"); return mail.includes("fake answer"); });
+    expect(mail).toContain(job);
+    expect(await call("inbox")).not.toContain("fake answer");
+  }, TEST_TIMEOUT_MS);
 
   it("derives an omitted spawn title, persists it and notes the fallback (AB-111)", async () => {
     const tool = (await client.listTools()).tools.find((t) => t.name === "spawn_codex")!;

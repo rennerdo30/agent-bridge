@@ -204,9 +204,9 @@ function progressReporter(extra: ToolExtra, log: Logger): ((message: string) => 
   };
 }
 
-/** Headless targets for ask_* / spawn_*: every coding agent except ourselves. */
+/** Codex mains may delegate to Codex; other callers keep their cross-agent targets. */
 export function delegationTargets(agent: AgentKind): CodingAgent[] {
-  return CODING_AGENTS.filter((a) => a !== agent);
+  return CODING_AGENTS.filter((a) => a !== agent || agent === "codex");
 }
 
 function instructionsFor(agent: AgentKind, targets: CodingAgent[]): string {

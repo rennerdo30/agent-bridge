@@ -20,7 +20,7 @@ import { runDelegate } from "../src/mcp/delegate-run.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import { JobManager, readStore } from "../src/mcp/jobs.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
-import { registerTools, type ServerContext } from "../src/mcp/server.js";
+import { delegationTargets, registerTools, type ServerContext } from "../src/mcp/server.js";
 import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 import { until } from "./helpers.js";
 import { closeMetadataDb } from "../src/core/metadata-db.js";
@@ -67,7 +67,7 @@ function nestedContext(escalate = vi.fn(async (_body: string) => {})): ServerCon
 
 async function connect(ctx: ServerContext): Promise<Client> {
   const server = new McpServer({ name: "nested-test", version: "0" });
-  registerTools(server, ctx, ["claude", "opencode"]);
+  registerTools(server, ctx, delegationTargets(ctx.agent));
   const client = new Client({ name: "test", version: "0" });
   clients.push(client);
   const [a, b] = InMemoryTransport.createLinkedPair();
@@ -126,11 +126,12 @@ describe("nested delegation", () => {
     vi.stubEnv("AGENT_BRIDGE_DELEGATE_DEPTH", "1");
     const client = await connect(nestedContext());
     const names = (await client.listTools()).tools.map((tool) => tool.name);
-    for (const name of ["spawn_claude", "ask_claude", "message_subagent", "cancel_subagent", "inbox", "wait_for_message"]) expect(names).toContain(name);
+    for (const name of ["spawn_codex", "ask_codex", "spawn_claude", "ask_claude", "message_subagent", "cancel_subagent", "inbox", "wait_for_message"]) expect(names).toContain(name);
     for (const name of ["auto_wake", "max_subagents", "send_files"]) expect(names).not.toContain(name);
     vi.stubEnv("AGENT_BRIDGE_DELEGATE_DEPTH", "2");
     const leaf = await connect(nestedContext());
-    expect((await leaf.listTools()).tools.map((tool) => tool.name)).not.toContain("spawn_claude");
+    const leafNames = (await leaf.listTools()).tools.map((tool) => tool.name);
+    for (const name of ["spawn_codex", "ask_codex", "spawn_claude", "ask_claude"]) expect(leafNames).not.toContain(name);
   });
 
   it("runs a nested ask and persists ancestry in jobs, run metadata and dashboard state", async () => {
