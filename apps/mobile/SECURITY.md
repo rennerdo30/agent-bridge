@@ -134,8 +134,11 @@ npm run test:all
   Three isolated takeover reruns each pass 4/4 (80.74s, 95.00s, 81.06s), so the
   supervisor's approved disposition is a load flake. No SDK regression was detected.
   Results are recorded in the linked verification JSON.
-- Opencode comparison: origin/main `40fbf0a4` passes 12/12; this branch passes 11/12.
-  This is a branch merge blocker, left unchanged in dependency scope.
+- Baseline opencode comparison: origin/main `40fbf0a4` passes 12/12; this branch
+  initially passed 11/12. Both already intentionally expose self-delegation under
+  AB-270; main has the missing assertion correction from `962236f8`. After the
+  supervisor approved that exact test correction, this branch passes 12/12.
+  See [commit trace and final suite results](../../docs/mobile/OPENCODE-EXPOSURE-REVIEW.md).
 - Baseline retention failure: isolated guard 6/7. The separate, authorized follow-up
   now retains push tombstones and ciphertext, including replacements. Final retention
   guard 7/7 and focused mobile/retention tests 148/148 (11 files), including all five
@@ -145,8 +148,11 @@ npm run test:all
   A syntax comparison found all 22 formatting/import-only files unchanged; only
   strings.ts, view-model.ts and useDashboard.ts intentionally change expressions.
   Final retention changes also pass app 14/14, both typechecks and the local root build.
-  The entire root suite was not repeated after these follow-ups; the opencode assertion
-  remains the known branch merge blocker.
+- Final full root suite rerun after the approved assertion correction: 2,138 pass /
+  1 fail / 3 skipped (288 files, 2,142 tests). The sole failure is the compiled
+  background indexing test in split-bundles.test.ts; its isolated rerun passes 2/2.
+  Treat this as an intermittent timing failure candidate requiring review, not a
+  clean full-suite result. Opencode, retention and takeover pass in this full rerun.
 - Local root build: successful. Generated dist was restored after checking; release
   must rebuild desktop distributions from the updated lockfile.
 - Root audit: 2 high -> 0. Mobile audit: 22 unchanged, 15 high / 7 moderate.
