@@ -22,3 +22,33 @@ Scan the desktop QR, confirm the address list on the phone, then compare the six
 V1 screens: Overview, Running/jobs/live steps, session/run chats, local owner-question inbox and answer confirmation, phone pairing/appearance. Optional session sending, paired-PC content in this local adapter, approvals, decisions, settings and cross-PC writes show unsupported. Read histories use bounded forward native cursors; no backward/full-history export is claimed. Push contains only a generic opaque hint and always reauthenticates/refetches on tap.
 
 Known dependency risk: npm audit still lists 22 inherited/transitive advisories (15 high, 7 moderate) after compatible non-forced remediation. Forced fixes propose incompatible SDK/RN downgrades and were not applied. Distribution remains pending reviewer/owner acceptance of dependency risk and actual phone/TLS/storage/push/background evidence.
+
+## Design fidelity and review
+
+The app uses the design tokens for typography, themes, status colors, radii and touch targets, with four roots: Overview, Running, Questions and Settings. Root views remain mounted to preserve scroll positions. Detail screens, chat bubbles/tool folds, full context/options and a keyboard-safe answer bar use the existing private DTOs and unchanged client operations. Confirmation captures PC identity, epoch, question id/version and the exact literal answer; callbacks recheck current authority and CAS terms. Drafts stay in memory, unchanged terms survive unrelated activity, and removed/revoked/changed terms invalidate them. A single-flight latch survives back navigation. Ambiguous writes remain unconfirmed until a deliberate read-only check and new review; nothing auto-resubmits. UI expiry redraws consult actual QR/client authority, never the design's conflicting timing tokens.
+
+Design reconciliation stays within the approved contract:
+
+| Design feature | This app |
+| --- | --- |
+| QR 5 minutes / fingerprint | Actual 120-second QR; desktop code confirmation; normal trusted TLS; no fingerprint or pinning claim |
+| Project/role/owner/model metadata | Opaque local grouping; unavailable metadata is omitted; loaded counts are labeled |
+| Native children / linked subagents | Unsupported; no inferred entity links or ownership |
+| Older transcript navigation | Existing forward bounded pages only; no backward/history-completeness claim |
+| Dismiss / pin / session composer / remote settings | Unsupported; closed history is read-only |
+| Notification test / delivery claim | Existing explicit registration/tap helper; actual OS permission is separate from delivery and acceptance |
+| Clipboard, haptics, native stack gestures | Selectable native text and lightweight navigation; no added modules or native configuration |
+| Preferences / drafts / content | Memory only; credentials and approved origins remain the only SecureStore data |
+
+English copy lives in `src/strings.ts`; the logo PNG is a local raster adaptation of the existing SVG geometry. All dependencies, native configuration, client/auth code and provider helpers remain unchanged.
+
+Run the app-owned model/navigation/answer-state tests from the repository root using the existing read-only Vitest installation:
+
+```powershell
+node node_modules/vitest/vitest.mjs run --config apps/mobile/vitest.config.ts
+node node_modules/vitest/vitest.mjs run test/mobile-client.test.ts --maxWorkers=1
+```
+
+The first command also generates the stable offline reference at [`.visual-review/contact-sheet.html`](.visual-review/contact-sheet.html) and [`.visual-review/manifest.json`](.visual-review/manifest.json): 24 states × light/dark × 375×812/412×915 × font 1.0/1.5 = **192 frames**. All content/addresses are synthetic. Markup is independent HTML driven by shared tokens/model fixtures, **not a React Native renderer or device capture**. Files are ignored and retained locally; tests regenerate them without any services, stores, credentials or network. Browser automation rejects `file:` URLs here, so no browser screenshot or rendered-browser inspection is claimed. The preserved PNG is the logo asset, not a contact-sheet screenshot.
+
+Presentation/model tests and Android/iOS Hermes exports do not prove native visual fidelity, camera/torch/keyboard/scroll behavior, screen readers, OS storage/TLS, push delivery or signed distribution. Actual Android/iOS captures and full app review remain required before merge/release. No live activation took place for this package.
