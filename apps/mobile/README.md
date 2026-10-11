@@ -21,7 +21,7 @@ Scan the desktop QR, confirm the address list on the phone, then compare the six
 
 V1 screens: Overview, Running/jobs/live steps, session/run chats, local owner-question inbox and answer confirmation, phone pairing/appearance. Optional session sending, paired-PC content in this local adapter, approvals, decisions, settings and cross-PC writes show unsupported. Read histories use bounded forward native cursors; no backward/full-history export is claimed. Push contains only a generic opaque hint and always reauthenticates/refetches on tap.
 
-Known dependency risk: npm audit still lists 22 inherited/transitive advisories (15 high, 7 moderate) after compatible non-forced remediation. Forced fixes propose incompatible SDK/RN downgrades and were not applied. Distribution remains pending reviewer/owner acceptance of dependency risk and actual phone/TLS/storage/push/background evidence.
+Known dependency risk: npm audit lists 22 vulnerable package entries (15 high, 7 moderate), traced to three build-only advisories: braces, node-forge and uuid through xcode. The supervisor accepted these residuals on SDK 57 / RN 0.86; the vulnerable leaves are absent from both production Hermes exports. See [dependency security review](SECURITY.md) for each path, exploitability, evidence and upstream-patch/next-SDK revisit triggers. Actual phone/TLS/storage/push/background evidence remains pending.
 
 ## Design fidelity and review
 

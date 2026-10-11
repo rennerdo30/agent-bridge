@@ -1,0 +1,14 @@
+{
+  "android": {
+    "file": "index-96bbb69082c8bbaa6f983d884e712ca8.hbc",
+    "bytes": 1401776,
+    "sha256": "05ac1780632beffcaaf51223dd554a8cd28b8f0690579c84b3b60887ea52b6a5",
+    "hermesMagic": "c61fbc03c103191f"
+  },
+  "ios": {
+    "file": "index-a18af23aa72904171797c6211f2b6a3d.hbc",
+    "bytes": 1394180,
+    "sha256": "4cf176b8afcfe2a61728b16f389b4ee0bb2668edd06a4ea3d1c1fc1bf5c0d508",
+    "hermesMagic": "c61fbc03c103191f"
+  }
+}
