@@ -12,7 +12,7 @@ Push WIP with explicit refs: `git push origin HEAD:refs/heads/<branch>`. Do not 
 
 ## Roles and evidence
 
-The Codex session is the project main; the Claude session reviews and decides within the owner's authorization. Record a one-line Pair Desk note at each milestone. Reviews belong on the desk and the diff, rather than in chat. Distinguish source/test evidence from live session acceptance.
+The Claude session is the project main, decides, reviews milestones on Pair Desk and the diff, and talks to the owner with minimal usage. Codex sessions do implementation, Bridge packages and release work. Record a one-line Pair Desk note at each milestone. Reviews belong on the desk and the diff, rather than in chat. Distinguish source/test evidence from live session acceptance.
 
 ## Shared tools
 
