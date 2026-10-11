@@ -1,6 +1,6 @@
 import type { DashboardReadContext } from "../core/dashboard-read.js";
-import type { OwnerQuestionStore, OwnerQuestion } from "../core/owner-questions.js";
-import { LocalMobileSource } from "./adapter.js";
+import type { OwnerQuestion } from "../core/owner-questions.js";
+import { LocalMobileSource, type MobileQuestionStore } from "./adapter.js";
 import { MobileDesktopAdmin } from "./desktop.js";
 import { MobileGateway } from "./gateway.js";
 import { MobilePush, type PushProvider } from "./push.js";
@@ -8,7 +8,7 @@ import { MobileStore } from "./store.js";
 
 /** Borrowed from the broker; mobile never owns its store, timer or close lifecycle. */
 export interface MobileQuestionService {
-  store: OwnerQuestionStore;
+  store: MobileQuestionStore;
   list(): OwnerQuestion[];
   complete(question: OwnerQuestion): OwnerQuestion;
 }
@@ -26,7 +26,7 @@ export function provisionMobile(options: {
   const source = new LocalMobileSource(options.local, options.ownerQuestions.store, options.pcId, ready,
     q => options.ownerQuestions.complete(q), () => options.ownerQuestions.list());
   const push = options.push ? new MobilePush(store, options.push.provider, options.push.encryptionKey, options.push.projectId, options.push.environment) : new MobilePush(store);
-  const gateway = new MobileGateway(store, source, push), desktopAdmin = new MobileDesktopAdmin(store, source, options.desktopOrigin, ready);
+  const gateway = new MobileGateway(store, source, push, undefined, ready), desktopAdmin = new MobileDesktopAdmin(store, source, options.desktopOrigin, ready);
   let hintPoll: Promise<void> | undefined;
   return { gateway, desktopAdmin, close: () => {
     if (closing) return closing;

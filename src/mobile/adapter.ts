@@ -8,6 +8,7 @@ import { MobileFault } from "./store.js";
 
 export interface SourceView { sessions: Session[]; jobs: Job[]; questions: Question[]; sampledAt: number; sourceState: "ready" | "offline" | "slow" | "unavailable" }
 export interface ContentPage<T> { items: T[]; next: string | null; generation: string; reset: boolean }
+export type MobileQuestionStore = Pick<OwnerQuestionStore, "get" | "list" | "answerMobile">;
 export interface MobileSource {
   snapshot(): Promise<SourceView>;
   chat(id: string, cursor: string | undefined, limit: number): Promise<ContentPage<ChatItem>>;
@@ -30,7 +31,7 @@ interface Binding { kind: "session" | "job"; nativeName: string; generation: str
 /** Fixed local adapter. No caller-controlled upstream path/host/broker opcode. */
 export class LocalMobileSource implements MobileSource {
   private bindings = new Map<string, Binding>();
-  constructor(private readonly ctx: DashboardReadContext, private readonly questions: OwnerQuestionStore,
+  constructor(private readonly ctx: DashboardReadContext, private readonly questions: MobileQuestionStore,
     readonly pcId: string, private readonly ready: () => boolean, private readonly completeAnswer?: (q: OwnerQuestion) => void,
     private readonly listQuestions: () => OwnerQuestion[] = () => questions.list()) {}
   async snapshot(): Promise<SourceView> {

@@ -31,7 +31,7 @@ export class MobileGateway {
   private readonly inFlight = new Set<Promise<MobileResponse>>();
   private closing?: Promise<void>;
   constructor(readonly store: MobileStore, private readonly source: MobileSource, readonly push = new MobilePush(store),
-    private readonly diagnostics: GatewayDiagnosticSink = diagnostic => console.error(diagnostic)) {}
+    private readonly diagnostics: GatewayDiagnosticSink = diagnostic => console.error(diagnostic), private readonly ready: () => boolean = () => true) {}
   hello(): Hello { return { apiVersion: 1, capabilities: CAPS, transport: "private-https", pinning: false, send: "unsupported", pairedPcWrites: "unsupported", push: this.push.configured ? "configured" : "unsupported" }; }
   /** Owned host retirement; no registry reads or writes after it is closed. */
   deactivate(): void { this.available = false; this.views.clear(); this.cursors.clear(); }
@@ -153,10 +153,10 @@ export class MobileGateway {
       generation, reset: false, sampledAt: this.store.now(), viewCursor: view.snapshot.cursor };
   }
   handle(req: MobileRequest): Promise<MobileResponse> {
-    if (!this.available) return this.dispatch(req);
+    if (!this.available || !this.ready()) return this.dispatch(req);
     // Every admitted request is tracked. A response completing after retirement is
     // discarded in favor of the normal content-free 503, including committed answers.
-    const work = this.dispatch(req).then(response => this.available ? response : this.dispatch(req));
+    const work = this.dispatch(req).then(response => this.available && this.ready() ? response : this.dispatch(req));
     this.inFlight.add(work);
     void work.then(() => this.inFlight.delete(work), () => this.inFlight.delete(work));
     return work;
@@ -164,7 +164,7 @@ export class MobileGateway {
   private async dispatch(req: MobileRequest): Promise<MobileResponse> {
     const requestId = randomUUID(), headers = { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" };
     try {
-      if (!this.available) throw new MobileFault(503, "source_unavailable");
+      if (!this.available || !this.ready()) throw new MobileFault(503, "source_unavailable");
       const configuredOrigin = this.store.origins.find(o => new URL(o).host === req.authority);
       if (!req.tls || !configuredOrigin) throw new MobileFault(403, "authority");
       if (req.headers.cookie || req.headers.origin && req.headers.origin !== configuredOrigin || req.headers["sec-fetch-site"] === "cross-site") throw new MobileFault(403, "origin");

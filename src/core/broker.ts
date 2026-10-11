@@ -123,16 +123,23 @@ const HANDOFF_LOCK_WAIT_MS = 2_000;
 const HANDOFF_LOCK_RETRY_MS = 25;
 export class Broker {
   private mobileResources?: Set<() => Promise<void>>;
+  private mobileRetiring?: boolean;
   /** Explicit host-only opt-in; borrow an already-existing service, never initialize one here. */
   mobileHostContext(): import("../mobile/host.js").MobileHostContext | undefined {
     const service = this.questions;
-    if (!service || this.closing || !this.server?.listening) return undefined;
+    if (!service || this.closing || this.mobileRetiring || !this.server?.listening) return undefined;
     let live = true;
     const home = dirname(this.store.file);
+    const ready = () => live && !this.mobileRetiring && !this.closing && !!this.server?.listening && this.questions === service;
+    const requireReady = () => { if (!ready()) throw new Error("source_unavailable"); };
     return { home, pipe: this.pipePath, log: this.log,
-      local: { home, log: this.log, peers: () => this.dashboardPeers() },
-      ownerQuestions: { store: service.store, list: () => service.list(), complete: q => service.complete(q) },
-      ready: () => live && !this.closing && !!this.server?.listening && this.questions === service,
+      local: { home, log: this.log, peers: () => { requireReady(); return this.dashboardPeers(); } },
+      ownerQuestions: { store: {
+        get: id => { requireReady(); return service.store.get(id); },
+        list: () => { requireReady(); return service.store.list(); },
+        answerMobile: (...args) => { requireReady(); return service.store.answerMobile(...args); },
+      }, list: () => { requireReady(); return service.list(); }, complete: q => { requireReady(); return service.complete(q); } },
+      ready,
       onDispose: dispose => {
         const wrapped = () => { live = false; return dispose(); };
         (this.mobileResources ??= new Set()).add(wrapped);
@@ -140,8 +147,18 @@ export class Broker {
       } };
   }
   private async disposeMobileResources(): Promise<void> {
+    this.mobileRetiring = true;
     const resources = this.mobileResources; this.mobileResources = undefined;
-    await Promise.all([...resources ?? []].map(dispose => dispose()));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const work = Promise.allSettled([...resources ?? []].map(dispose => Promise.resolve().then(dispose)));
+      const settled = await Promise.race([work, new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), 5000); })]);
+      if (!settled) this.mobileDisposalDiagnostic("mobile_disposal_timeout");
+      else if (settled.some(result => result.status === "rejected")) this.mobileDisposalDiagnostic("mobile_disposal_failed");
+    } finally { if (timer) clearTimeout(timer); }
+  }
+  private mobileDisposalDiagnostic(errorCategory: "mobile_disposal_timeout" | "mobile_disposal_failed"): void {
+    try { this.log.warn("mobile shutdown requires restart", { requestId: randomUUID(), errorCategory }); } catch { /* Optional diagnostics must never block core teardown. */ }
   }
   private questions: OwnerQuestionService | null = null;
   private ownerQuestions(): OwnerQuestionService {
@@ -486,7 +503,7 @@ export class Broker {
     this.healthMonitor.close();
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     this.purgeTimer = null;
-    if (this.mobileResources) await this.disposeMobileResources();
+    if (this.mobileResources) await this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed"));
     this.questions?.close(); this.questions = null;
     await this.historyBackground?.close().catch(() => {});
     this.historyBackground = null;
@@ -553,7 +570,7 @@ export class Broker {
   async close(): Promise<void> {
     this.healthMonitor.close();
     this.closing = true;
-    if (this.mobileResources) await this.disposeMobileResources();
+    if (this.mobileResources) await this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed"));
     this.questions?.close(); this.questions = null;
     this.store.stopWrites();
     if (this.pendingJobMailRetry) clearTimeout(this.pendingJobMailRetry);

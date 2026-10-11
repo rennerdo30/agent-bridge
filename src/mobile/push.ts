@@ -5,6 +5,9 @@ import { MobileFault, MobileStore, type Device } from "./store.js";
 export interface PushRegistration { expoPushToken: string; platform: Platform; projectId: string; environment: "development" | "production" }
 export interface PushHint { title: "agent-bridge"; body: "Open the app to review an update"; data: { v: 1; notificationId: string }; ttl: 300 }
 export interface PushProvider {
+  /** Implementations MUST enforce their own finite transport/body-read deadline on every call.
+   * Core broker teardown has an independent five-second mobile-disposal bound and never waits indefinitely.
+   * Timeout/ambiguous provider outcomes must not trigger blind submission retries or acceptance claims. */
   submit(registration: PushRegistration, hint: PushHint): Promise<{ state: "submitted" | "retry-later" | "device-not-registered"; ticketId?: string }>;
   receipt?(ticketId: string): Promise<{ state: "provider-accepted" | "pending" | "device-not-registered" | "failed" }>;
 }

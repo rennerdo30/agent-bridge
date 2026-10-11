@@ -9,6 +9,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BridgeNode } from "../src/core/node.js";
 import { Broker } from "../src/core/broker.js";
 import { nullLogger } from "../src/core/logger.js";
+import { resolvePipePath } from "../src/core/paths.js";
+import * as processIdentity from "../src/core/process-identity.js";
 import { OwnerQuestionService } from "../src/core/owner-question-service.js";
 import { ownerQuestionVersion } from "../src/core/owner-questions.js";
 import { MessageStore } from "../src/core/store.js";
@@ -33,7 +35,7 @@ vi.mock("../src/mobile/https.js", () => ({ createMobileHttpsListeners: vi.fn((_g
 })) }));
 const pcId = "fixture-pc", origin = "https://pc.fixture.test:4433", origins = [origin, "https://pc.tailnet.ts.net"];
 const closers: (() => void | Promise<void>)[] = [];
-afterEach(async () => { for (const close of closers.splice(0).reverse()) await close(); vi.restoreAllMocks(); vi.useRealTimers(); vi.mocked(createMobileHttpsListeners).mockClear(); });
+afterEach(async () => { for (const close of closers.splice(0).reverse()) await close(); vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllEnvs(); vi.mocked(createMobileHttpsListeners).mockClear(); });
 function fixtureHome() { const root = resolve(".agent-bridge-test/mobile-wiring"); mkdirSync(root, { recursive: true }); return mkdtempSync(join(root, "run-")); }
 function fixture(home = fixtureHome()) {
   const messages = new MessageStore(join(home, "bridge.db"), nullLogger);
@@ -149,6 +151,62 @@ describe("real owner-question completion and recovery", () => {
 });
 
 describe("opt-in host ownership and authenticated desktop administration", () => {
+  it.each(["close", "abortStartup"] as const)("%s continues core teardown after a rejecting optional disposer and sanitizes diagnostics", async mode => {
+    const f = fixture(), { broker } = borrowed(f), context = broker.mobileHostContext()!, serviceClose = vi.spyOn(f.service, "close"), coreClose = vi.spyOn(f.messages, "close");
+    const warn = vi.fn(() => { throw new Error("fixture diagnostic sink failure"); }); Object.assign(broker, { log: { ...nullLogger, warn } });
+    context.onDispose(() => { throw new Error("fixture sensitive path/body/token must not appear"); });
+    const close = mode === "close" ? () => broker.close() : () => (broker as unknown as { abortStartup(): Promise<void> }).abortStartup();
+    await expect(close()).resolves.toBeUndefined(); expect(context.ready()).toBe(false); expect(serviceClose).toHaveBeenCalledTimes(1);
+    expect(coreClose).toHaveBeenCalledTimes(mode === "close" ? 1 : 0); // Existing abort contract leaves the store with its caller.
+    expect(warn).toHaveBeenCalledExactlyOnceWith("mobile shutdown requires restart", { requestId: expect.any(String), errorCategory: "mobile_disposal_failed" });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("sensitive");
+    expect(() => context.ownerQuestions.store.get(f.q.id)).toThrow("source_unavailable");
+    expect(() => context.ownerQuestions.list()).toThrow("source_unavailable");
+    expect(() => context.ownerQuestions.complete(f.q)).toThrow("source_unavailable");
+  });
+  it.each(["close", "abortStartup"] as const)("%s bounds a hanging disposer and guards its eventual access to retired resources", async mode => {
+    vi.useFakeTimers(); const f = fixture(), { broker } = borrowed(f), context = broker.mobileHostContext()!, host = await prepareMobileDesktopHost({ mobileHostContext: () => context }, config(f.home));
+    const serviceClose = vi.spyOn(f.service, "close"), coreClose = vi.spyOn(f.messages, "close"), rawGet = vi.spyOn(f.service.store, "get"), rawList = vi.spyOn(f.service, "list"), rawComplete = vi.spyOn(f.service, "complete"), warn = vi.fn();
+    Object.assign(broker, { log: { ...nullLogger, warn } });
+    let release!: () => void, late!: Promise<void>;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    context.onDispose(() => late = gate.then(() => {
+      expect(() => context.ownerQuestions.store.get(f.q.id)).toThrow("source_unavailable");
+      expect(() => context.ownerQuestions.store.list()).toThrow("source_unavailable");
+      expect(() => context.ownerQuestions.store.answerMobile(f.q.id, { expectedVersion: ownerQuestionVersion(f.q), text: "late fixture" }, "fixture", randomUUID(), { id: "fixture", name: "fixture", agent: "other" })).toThrow("source_unavailable");
+      expect(() => context.ownerQuestions.list()).toThrow("source_unavailable");
+      expect(() => context.ownerQuestions.complete(f.q)).toThrow("source_unavailable");
+      expect(() => context.local.peers()).toThrow("source_unavailable");
+    }));
+    let finished = false; const close = (mode === "close" ? broker.close() : (broker as unknown as { abortStartup(): Promise<void> }).abortStartup()).then(() => { finished = true; });
+    expect(context.ready()).toBe(false); expect((await host.gateway.handle(req("GET", "/hello"))).status).toBe(503);
+    await vi.advanceTimersByTimeAsync(4999); expect(finished).toBe(false); expect(serviceClose).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1); await close; expect(serviceClose).toHaveBeenCalledTimes(1); expect(coreClose).toHaveBeenCalledTimes(mode === "close" ? 1 : 0);
+    expect(warn).toHaveBeenCalledExactlyOnceWith("mobile shutdown requires restart", { requestId: expect.any(String), errorCategory: "mobile_disposal_timeout" });
+    rawGet.mockClear(); rawList.mockClear(); rawComplete.mockClear(); release(); await late;
+    expect(rawGet).not.toHaveBeenCalled(); expect(rawList).not.toHaveBeenCalled(); expect(rawComplete).not.toHaveBeenCalled();
+    expect((await host.gateway.handle(req("GET", "/hello"))).status).toBe(503);
+  });
+  it.each(["reject", "hang"] as const)("releases the actual isolated fixture endpoint/store after %s so a new node can reacquire it", async failure => {
+    vi.stubEnv("AGENT_BRIDGE_HISTORY_INGEST", "0"); vi.stubEnv("AGENT_BRIDGE_AUTO_BACKUP", "0");
+    vi.spyOn(MessageStore.prototype, "startBackups").mockImplementation(() => {});
+    vi.spyOn(processIdentity, "parentProcessIdentity").mockResolvedValue("synthetic-parent");
+    vi.spyOn(processIdentity, "readProcessIdentities").mockImplementation(async pids => new Map(pids.map(pid => [pid, "synthetic-parent"])));
+    const f = fixture(), pipe = resolvePipePath(f.home, {}), broker = new Broker(pipe, f.messages, nullLogger, "fixture-token");
+    Object.assign(broker, { questions: f.service }); await broker.listen();
+    const node = new BridgeNode({ pipePath: pipe, dbPath: join(f.home, "bridge.db"), token: "fixture-token", name: "retiring-fixture", cwd: f.home, agent: "codex", autoWake: false, log: nullLogger });
+    Object.assign(node, { broker }); f.disown(); closers.push(() => node.stop());
+    const context = broker.mobileHostContext()!, serviceClose = vi.spyOn(f.service, "close"), coreClose = vi.spyOn(f.messages, "close");
+    let release!: () => void;
+    if (failure === "reject") context.onDispose(async () => { throw new Error("synthetic disposal rejection"); });
+    else { const gate = new Promise<void>(resolve => { release = resolve; }); context.onDispose(() => gate); vi.useFakeTimers(); }
+    const stopped = node.stop(); if (failure === "hang") await vi.advanceTimersByTimeAsync(5000); await stopped; vi.useRealTimers();
+    expect(serviceClose).toHaveBeenCalledTimes(1); expect(coreClose).toHaveBeenCalledTimes(1); expect(node.isBroker).toBe(false);
+    const replacement = new BridgeNode({ pipePath: pipe, dbPath: join(f.home, "bridge.db"), token: "fixture-token", name: "replacement-fixture", cwd: f.home, agent: "codex", autoWake: false, log: nullLogger });
+    closers.push(() => replacement.stop()); await replacement.start();
+    expect(replacement.isBroker).toBe(true); expect(replacement.isConnected).toBe(true); expect(await replacement.peers()).toHaveLength(1);
+    if (failure === "hang") release();
+  });
   it("borrows only the existing broker service and retires owned listeners before that service closes", async () => {
     const f = fixture(), { node, broker } = borrowed(f), timer = (f.service as unknown as { timer: unknown }).timer;
     const serviceClose = vi.spyOn(f.service, "close"), configs = [{ bindAddress: "127.0.0.1", port: 4433, origin, tls: { key: "synthetic-not-used", cert: "synthetic-not-used" } }];
