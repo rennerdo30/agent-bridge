@@ -55,10 +55,14 @@ CREATE TABLE questions (id TEXT PRIMARY KEY, project TEXT NOT NULL, dedupe_key T
 CREATE UNIQUE INDEX question_open_key ON questions(dedupe_key) WHERE status='open';
 CREATE TABLE question_events (revision INTEGER PRIMARY KEY AUTOINCREMENT, question_id TEXT NOT NULL, record TEXT NOT NULL);
 CREATE TABLE question_alerts (question_id TEXT PRIMARY KEY, notified_at INTEGER NOT NULL, channel TEXT NOT NULL);
-PRAGMA user_version=1;` }, { version: 2, sql: `
-CREATE TABLE mobile_question_answers (principal TEXT NOT NULL, replay_key TEXT NOT NULL, request_hash TEXT NOT NULL,
+PRAGMA user_version=1;` }];
+
+// Retained v1 writers reject a higher user_version. This independent ledger adds
+// no columns or constraints to their tables; it remains unbounded and durable.
+const mobileAnswerLedger = `
+CREATE TABLE IF NOT EXISTS mobile_question_answers (principal TEXT NOT NULL, replay_key TEXT NOT NULL, request_hash TEXT NOT NULL,
   question_id TEXT NOT NULL, result TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(principal,replay_key));
-PRAGMA user_version=2;` }];
+`;
 
 /** Equality token covers displayed terms and outcome, excluding asynchronous delivery metadata. */
 export function ownerQuestionVersion(q: OwnerQuestion): string {
@@ -77,7 +81,11 @@ export class OwnerQuestionStore {
     mkdirSync(home, { recursive: true, mode: 0o700 });
     const file = join(home, QUESTIONS_FILE), existed = existsSync(file);
     this.db = new DatabaseSync(file);
-    try { migrateSqlite(this.db, file, existed, 2, migrations, log); this.db.exec("PRAGMA busy_timeout=1000"); }
+    try {
+      migrateSqlite(this.db, file, existed, 1, migrations, log);
+      this.db.exec("PRAGMA busy_timeout=1000");
+      this.db.exec(mobileAnswerLedger);
+    }
     catch (error) { this.db.close(); throw error; }
   }
   close(): void { this.db.close(); }
