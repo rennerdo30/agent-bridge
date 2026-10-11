@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "./logger.js";
 import { isQuietMessage, SIBLING_CONVERSATION_PREFIX, type AgentKind, type BridgeMessage, type PeerInfo } from "./protocol.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
-import { archiveDbPath, archiveMessages, openArchive } from "./sqlite-maintenance.js";
+import { archiveDbPath, archiveMessages, ensureMessageQuarantine, openArchive, unquarantined } from "./sqlite-maintenance.js";
 import { storageLease } from "./storage-lock.js";
 import { BackupBackground } from "./backup-background.js";
 import { historySchema } from "./history-schema.js";
@@ -207,6 +207,7 @@ export class MessageStore {
       }
       if (file !== ":memory:") attachStoreCompatibility(this.db, file, log, deferred);
       configureSqlite(this.db);
+      ensureMessageQuarantine(this.db);
     } catch (err) {
       this.db.close();
       this.release();
@@ -233,14 +234,14 @@ export class MessageStore {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
       ),
       unread: this.db.prepare(
-        `SELECT * FROM messages WHERE recipient = ? AND read_at IS NULL
+        `SELECT * FROM deliverable_messages WHERE recipient = ? AND read_at IS NULL
          ORDER BY CASE WHEN (conversation_id LIKE '%:note' OR conversation_id LIKE '%:ack' OR conversation_id LIKE 'files-progress-%') THEN 1 ELSE 0 END,
                   created_at ASC, id ASC LIMIT ?`,
       ),
-      markRead: this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL`),
-      claim: this.db.prepare(`UPDATE OR IGNORE messages SET recipient = ? WHERE recipient = ? AND read_at IS NULL`),
+      markRead: this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL AND ${unquarantined("messages")}`),
+      claim: this.db.prepare(`UPDATE OR IGNORE messages SET recipient = ? WHERE recipient = ? AND read_at IS NULL AND ${unquarantined("messages")}`),
       byId: this.db.prepare(`SELECT * FROM messages WHERE id = ? ORDER BY created_at ASC LIMIT 1`),
-      replyConflicts: this.db.prepare(`SELECT id, from_name, conversation_id FROM messages WHERE recipient = ? AND read_at IS NULL
+      replyConflicts: this.db.prepare(`SELECT id, from_name, conversation_id FROM deliverable_messages WHERE recipient = ? AND read_at IS NULL
         AND (conversation_id = ? OR from_name IN (SELECT value FROM json_each(?)))
         AND (? IS NULL OR created_at >= ?) AND id != ?
         AND conversation_id NOT LIKE '%:note' AND conversation_id NOT LIKE '%:ack'
@@ -326,7 +327,7 @@ export class MessageStore {
 
   /** Eligibility never removes history or old queued messages. Unknown old names are skipped. */
   recentProjectSenders(address: string, previous: string, since: number): string[] {
-    return this.db.prepare(`SELECT from_name FROM messages WHERE to_target=? AND recipient=? AND created_at>=?
+    return this.db.prepare(`SELECT from_name FROM deliverable_messages WHERE to_target=? AND recipient=? AND created_at>=?
       AND from_id NOT LIKE 'job:%' GROUP BY from_name ORDER BY MAX(created_at) DESC LIMIT 64`)
       .all(address, previous, since).map((row) => String(row.from_name));
   }
@@ -394,12 +395,13 @@ export class MessageStore {
     if (from === to) return [];
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const rows = this.db.prepare("SELECT * FROM messages WHERE recipient=? AND from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(from, `job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`) as unknown as Row[];
+      const rows = this.db.prepare("SELECT * FROM deliverable_messages WHERE recipient=? AND from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(from, `job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`) as unknown as Row[];
       const copied: BridgeMessage[] = [];
       for (const row of rows) {
         const route = this.db.prepare("SELECT recipient, consumed_at FROM job_delivery_routes WHERE id=?").get(row.id);
         if (route && (route.consumed_at !== null || route.recipient !== from)) continue;
         const m = { ...toMessage(row), recipient: to, to, readAt: null };
+        if (this.db.prepare("SELECT 1 FROM message_archive_conflicts WHERE source_table='messages' AND id=? AND recipient=?").get(m.id, to)) continue;
         if (fallback && !isQuietMessage(m)) m.conversationId = m.conversationId.replace(/:note$/, "") + (m.conversationId.endsWith(":fallback") ? "" : ":fallback");
         const existing = this.db.prepare("SELECT read_at FROM messages WHERE id=? AND recipient=?").get(m.id, to);
         if (!existing) this.insert(m);
@@ -414,11 +416,11 @@ export class MessageStore {
   }
 
   pendingJobRecipients(job: string): string[] {
-    return this.db.prepare("SELECT DISTINCT recipient FROM messages WHERE from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(`job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`).map((row) => String(row.recipient));
+    return this.db.prepare("SELECT DISTINCT recipient FROM deliverable_messages WHERE from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(`job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`).map((row) => String(row.recipient));
   }
 
   pendingJobSenders(): Set<string> {
-    return new Set(this.db.prepare("SELECT DISTINCT from_id FROM messages WHERE read_at IS NULL AND from_id LIKE 'job:%' AND conversation_id NOT LIKE ?")
+    return new Set(this.db.prepare("SELECT DISTINCT from_id FROM deliverable_messages WHERE read_at IS NULL AND from_id LIKE 'job:%' AND conversation_id NOT LIKE ?")
       .all(`${SIBLING_CONVERSATION_PREFIX}%`).map((row) => String(row.from_id)));
   }
 
@@ -430,6 +432,7 @@ export class MessageStore {
 
   /** A recovered inline envelope must never replay after a recipient consumed it or it was forwarded. */
   insertJobDelivery(m: BridgeMessage): boolean {
+    if (this.db.prepare("SELECT 1 FROM message_archive_conflicts WHERE source_table='messages' AND id=? AND recipient=?").get(m.id, m.recipient)) return false;
     if (this.db.prepare("SELECT 1 FROM job_delivery_routes WHERE id=?").get(m.id)) return false;
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -470,7 +473,7 @@ export class MessageStore {
       // A broadcast can have reached both servers before their shared session id was learned.
       // Keep the destination copy and retire the duplicate alias without replaying it later.
       const duplicates = Number(this.db.prepare(`UPDATE messages SET read_at = ?
-        WHERE recipient = ? AND read_at IS NULL AND id IN (SELECT id FROM messages WHERE recipient = ?)`)
+        WHERE recipient = ? AND read_at IS NULL AND ${unquarantined("messages")} AND id IN (SELECT id FROM deliverable_messages WHERE recipient = ?)`)
         .run(Date.now(), fromKey, toName).changes);
       this.db.exec("COMMIT");
       if (moved) this.historyMessageSink?.();
@@ -483,8 +486,8 @@ export class MessageStore {
 
   /** Archive unread mail waiting for a queue key or name that is older than the cutoff. */
   expireQueued(recipient: string, cutoff: number): number {
-    if (!this.db.prepare("SELECT 1 FROM messages WHERE recipient = ? AND read_at IS NULL AND created_at < ? LIMIT 1").get(recipient, cutoff)) return 0;
-    const n = archiveMessages(this.db, this.archiveDb, "recipient = ? AND read_at IS NULL AND created_at < ?", [recipient, cutoff], "stale queue");
+    if (!this.db.prepare("SELECT 1 FROM deliverable_messages WHERE recipient = ? AND read_at IS NULL AND created_at < ? LIMIT 1").get(recipient, cutoff)) return 0;
+    const n = archiveMessages(this.db, this.archiveDb, "recipient = ? AND read_at IS NULL AND created_at < ?", [recipient, cutoff], "stale queue", "messages", this.log);
     if (n > 0) this.log.info("archived stale queued messages", { recipient, count: n });
     return n;
   }
@@ -497,7 +500,7 @@ export class MessageStore {
         this.archiveDb.exec(`PRAGMA busy_timeout = ${SQLITE_REQUEST_BUSY_MS}`);
         try {
           const moved = this.archiveChunk("messages", "recipient = ? AND read_at IS NULL AND created_at < ?", [recipient, cutoff], "stale queue");
-          const remaining = Boolean(this.db.prepare("SELECT 1 FROM messages WHERE recipient = ? AND read_at IS NULL AND created_at < ? LIMIT 1").get(recipient, cutoff));
+          const remaining = Boolean(this.db.prepare("SELECT 1 FROM deliverable_messages WHERE recipient = ? AND read_at IS NULL AND created_at < ? LIMIT 1").get(recipient, cutoff));
           return { moved, remaining };
         }
         finally { this.archiveDb.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`); }
@@ -537,8 +540,8 @@ export class MessageStore {
   }
 
   purgeOlderThan(cutoff: number): number {
-    if (!this.db.prepare("SELECT 1 FROM messages WHERE created_at < ? LIMIT 1").get(cutoff)) return 0;
-    const n = archiveMessages(this.db, this.archiveDb, "created_at < ?", [cutoff], "expired");
+    if (!this.db.prepare("SELECT 1 FROM deliverable_messages WHERE created_at < ? LIMIT 1").get(cutoff)) return 0;
+    const n = archiveMessages(this.db, this.archiveDb, "created_at < ?", [cutoff], "expired", "messages", this.log);
     if (n > 0) this.log.info("archived expired messages", { count: n });
     return n;
   }
@@ -590,7 +593,7 @@ export class MessageStore {
   private archiveChunk(table: "messages" | "archived_messages", where: string, args: (string | number)[], reason: string): number {
     // octet_length reads SQLite's stored length without materializing TEXT.
     // One unusually large row still makes progress; later rows wait for a yield.
-    const rows = this.db.prepare(`SELECT rowid AS id, octet_length(body) AS bytes FROM ${table} WHERE ${where} ORDER BY ${table === "messages" ? "created_at" : "rowid"} LIMIT 16`).all(...args);
+    const rows = this.db.prepare(`SELECT rowid AS id, octet_length(body) AS bytes FROM ${table} WHERE (${where}) AND ${unquarantined(table)} ORDER BY ${table === "messages" ? "created_at" : "rowid"} LIMIT 16`).all(...args);
     const ids: string[] = [];
     let bytes = 0;
     for (const row of rows) {
@@ -600,7 +603,7 @@ export class MessageStore {
     if (!ids.length) return 0;
     // Selection happens before BEGIN IMMEDIATE. Recheck eligibility while
     // locked so a concurrent claim/receipt update cannot archive fresh mail.
-    return archiveMessages(this.db, this.archiveDb, `rowid IN (${ids.map(() => "?").join(",")}) AND (${where})`, [...ids, ...args], reason, table);
+    return archiveMessages(this.db, this.archiveDb, `rowid IN (${ids.map(() => "?").join(",")}) AND (${where})`, [...ids, ...args], reason, table, this.log);
   }
 
   private archivePurgeChunk(cutoff: number): boolean {
@@ -626,7 +629,7 @@ export class MessageStore {
       }
       next = String(row.id);
     }
-    if (ids.length) archiveMessages(this.db, this.archiveDb, `rowid IN (${ids.map(() => "?").join(",")}) AND created_at < ?`, [...ids, cutoff], "expired");
+    if (ids.length) archiveMessages(this.db, this.archiveDb, `rowid IN (${ids.map(() => "?").join(",")}) AND created_at < ?`, [...ids, cutoff], "expired", "messages", this.log);
     // Publish the cursor only after a successful copy+source transaction.
     this.purgeCursor = next;
     return rows.length > 0;

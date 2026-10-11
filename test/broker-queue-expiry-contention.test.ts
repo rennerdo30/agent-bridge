@@ -16,11 +16,16 @@ const queued = (id: string, recipient: string, createdAt: number): BridgeMessage
   id, recipient, from: { id: "sender", name: "sender", agent: "other" }, to: recipient,
   conversationId: id, replyTo: null, hop: 0, body: id, createdAt, readAt: null,
 });
-function seed() {
+function seed(conflicts = false) {
   const store = new MessageStore(env.db, nullLogger), now = Date.now();
   try {
     for (const recipient of ["codex-app", "agent:codex"]) {
-      store.insert(queued(`old-${recipient}`, recipient, now - QUEUED_MAIL_MAX_AGE_MS - 60_000));
+      const old = queued(`old-${recipient}`, recipient, now - QUEUED_MAIL_MAX_AGE_MS - 60_000);
+      store.insert(old);
+      if (conflicts) {
+        store.expireQueued(recipient, now);
+        store.insert({ ...old, body: `conflict-${recipient}` });
+      }
       store.insert(queued(`fresh-${recipient}`, recipient, now - 60_000));
     }
   } finally { store.close(); }
@@ -67,8 +72,8 @@ it.each(["hello", "rename"])("keeps requests responsive and expires before %s re
   } finally { if (writer.isTransaction) writer.exec("ROLLBACK"); writer.close(); }
 });
 
-it("does not claim or replay queued mail for a registration whose authenticated session changed during expiry", async () => {
-  seed(); const host = env.node("host", "other"); await host.start();
+it.each([false, true])("does not claim or replay queued mail for a registration whose authenticated session changed during expiry (conflicts=%s)", async conflicts => {
+  seed(conflicts); const host = env.node("host", "other"); await host.start();
   const waiting = witnessExpiry(), writer = new DatabaseSync(archiveDbPath(env.db));
   const raw = await BridgeClient.connect(env.pipe, nullLogger);
   writer.exec("BEGIN IMMEDIATE");
@@ -89,7 +94,7 @@ it("does not claim or replay queued mail for a registration whose authenticated 
   } finally { if (writer.isTransaction) writer.exec("ROLLBACK"); writer.close(); raw.close(); }
 });
 
-it("does not reopen pending mail when an older same-name/session expiry completes", async () => {
+it.each([false, true])("does not reopen pending mail when an older same-name/session expiry completes (conflicts=%s)", async conflicts => {
   const host = env.node("host", "other"); await host.start();
   const raw = await BridgeClient.connect(env.pipe, nullLogger), received: BridgeMessage[] = [];
   raw.on("event", (event, message) => { if (event === "message") received.push(message as BridgeMessage); });
@@ -98,7 +103,7 @@ it("does not reopen pending mail when an older same-name/session expiry complete
       pid: process.pid, agentPid: null, sessionId: "unchanged-sid", startedAt: Date.now(), autoWake: false } });
   // Drain the initial hello replay before adding the retained inbox.
   await new Promise<void>(resolve => setImmediate(resolve));
-  seed();
+  seed(conflicts);
   let releaseFirst!: () => void, releaseSecond!: () => void, calls = 0;
   const firstGate = new Promise<void>(resolve => { releaseFirst = resolve; });
   const secondGate = new Promise<void>(resolve => { releaseSecond = resolve; });
@@ -120,7 +125,7 @@ it("does not reopen pending mail when an older same-name/session expiry complete
     expect(await underOneSecond(host.peers())).toBeTruthy();
     releaseSecond(); await second;
     await until(() => received.some(message => message.body === "fresh-codex-app"));
-    expect(received.some(message => message.body.startsWith("old-"))).toBe(false);
+    expect(received.every(message => message.body === "fresh-codex-app")).toBe(true);
   } finally { releaseFirst(); releaseSecond(); raw.close(); }
 });
 
@@ -141,7 +146,7 @@ it("archives expired explicit stand-in mail before returning fresh claimed mail"
   finally { archive.close(); }
 });
 
-it.each([false, true])("keeps explicit alias expiry responsive and fences a superseding registration=%s", async superseded => {
+it.each([[false, false], [true, false], [false, true], [true, true]])("keeps explicit alias expiry responsive and fences a superseding registration=%s (conflicts=%s)", async (superseded, conflicts) => {
   const host = env.node("host", "other"); await host.start();
   const raw = await BridgeClient.connect(env.pipe, nullLogger), received: BridgeMessage[] = [];
   raw.on("event", (event, message) => { if (event === "message") received.push(message as BridgeMessage); });
@@ -150,7 +155,9 @@ it.each([false, true])("keeps explicit alias expiry responsive and fences a supe
       pid: process.pid, agentPid: null, sessionId: "explicit-old", startedAt: Date.now(), autoWake: false } });
   const store = new MessageStore(env.db, nullLogger), alias = "codex-app-2", now = Date.now();
   try {
-    store.insert(queued("old-locked-alias", alias, now - QUEUED_MAIL_MAX_AGE_MS - 60_000));
+    const old = queued("old-locked-alias", alias, now - QUEUED_MAIL_MAX_AGE_MS - 60_000);
+    store.insert(old);
+    if (conflicts) { store.expireQueued(alias, now); store.insert({ ...old, body: "conflict-old-locked-alias" }); }
     store.insert(queued("fresh-locked-alias", alias, now - 60_000));
   } finally { store.close(); }
   const waiting = witnessExpiry(alias), writer = new DatabaseSync(archiveDbPath(env.db)); writer.exec("BEGIN IMMEDIATE");
@@ -171,16 +178,16 @@ it.each([false, true])("keeps explicit alias expiry responsive and fences a supe
       expect(received).toEqual([]);
     } else {
       await until(() => received.some(message => message.body === "fresh-locked-alias"));
-      expect(received.some(message => message.body.startsWith("old-"))).toBe(false);
+      expect(received.every(message => message.body === "fresh-locked-alias")).toBe(true);
     }
     expect(writer.prepare("SELECT body FROM messages WHERE id='old-locked-alias'").get()!.body).toBe("old-locked-alias");
   } finally { if (writer.isTransaction) writer.exec("ROLLBACK"); writer.close(); raw.close(); }
 });
 
-it("defers same-session reload replay until expired own-name mail is archived", async () => {
+it.each([false, true])("defers same-session reload replay until expired own-name mail is archived (conflicts=%s)", async conflicts => {
   const host = env.node("host", "other"); await host.start();
   const old = env.node("codex-app", "codex"); await old.setSessionId("same-session"); await old.start();
-  seed();
+  seed(conflicts);
   const replacement = env.node("codex-app", "codex"); await replacement.setSessionId("same-session");
   const waiting = witnessExpiry(), writer = new DatabaseSync(archiveDbPath(env.db)); writer.exec("BEGIN IMMEDIATE");
   try {
@@ -190,7 +197,7 @@ it("defers same-session reload replay until expired own-name mail is archived", 
     expect(replacement.unread()).toEqual([]);
     writer.exec("ROLLBACK"); await connected;
     await until(() => replacement.unread().some(message => message.body === "fresh-codex-app"));
-    expect(replacement.unread().some(message => message.body.startsWith("old-"))).toBe(false);
+    expect(replacement.unread().every(message => message.body.startsWith("fresh-"))).toBe(true);
     expect(writer.prepare("SELECT body FROM messages WHERE id='old-codex-app'").get()!.body).toBe("old-codex-app");
   } finally { if (writer.isTransaction) writer.exec("ROLLBACK"); writer.close(); }
 });

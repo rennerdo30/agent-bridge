@@ -248,8 +248,10 @@ describe("lossless, readable archives", () => {
   it("does not overwrite different archived content sharing the same identity", () => {
     const s = store(); s.insert(message("old")); s.purgeOlderThan(2);
     s.insert({ ...message("old"), body: "different" });
-    expect(() => s.purgeOlderThan(2)).toThrow("identity conflict");
-    expect(s.unread("claude-main", 10)[0]?.body).toBe("different");
+    expect(s.purgeOlderThan(2)).toBe(1);
+    expect(s.unread("claude-main", 10)).toEqual([]);
+    expect(s.byId("old")?.body).toBe("different");
+    expect(doctor(home).findings.some(f => f.code === "archive-conflicts")).toBe(true);
   });
   it("archives aged finished jobs with raw fields and keeps them continuable", async () => {
     vi.stubEnv("AGENT_BRIDGE_ARCHIVE_AGE_MS", "10");

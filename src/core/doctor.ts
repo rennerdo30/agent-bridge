@@ -60,6 +60,10 @@ export function doctor(home: string, now = Date.now()): DoctorReport {
         db = new DatabaseSync(path, { readOnly: true, timeout: 50 });
         actual = Number(db.prepare("PRAGMA user_version").get()!.user_version);
         for (const detail of checkDatabase(db)) finding("error", "sqlite-integrity", path, detail);
+        if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='message_archive_conflicts'").get()) {
+          const count = Number(db.prepare("SELECT COUNT(*) AS n FROM message_archive_conflicts").get()!.n);
+          if (count) finding("warning", "archive-conflicts", path, `${count} quarantined archive conflicts; originals and evidence retained in message_archive_conflicts; manual review required`);
+        }
         if (actual !== expected) finding(actual > expected ? "error" : "warning", "schema-version", path, `Schema ${actual}; code expects ${expected}`);
       } catch (err) { finding("error", "sqlite-unreadable", path, String(err)); }
       finally { db?.close(); }
