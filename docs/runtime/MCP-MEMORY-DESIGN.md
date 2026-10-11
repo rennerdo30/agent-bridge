@@ -195,9 +195,11 @@ AB-268 must remain distinct even under one parent PID.
 
 Related proposal: [AB-276 waiter notice contract](../../../agentbridge-ab276-design-332867e2/docs/runtime/WAITER-NOTICE-CONTRACT.md)
 in `D:/AgentData/worktrees/agentbridge-ab276-design-332867e2`, commit
-`1c2a0f70ab9c5fffa9ef61ad3b8924820ecd5669`. This sibling artifact is a
-proposal, not implemented authority. The relative link is convenient between
-these local worktrees; use the exact commit/path when reviewing elsewhere.
+`1c2a0f70ab9c5fffa9ef61ad3b8924820ecd5669`. Its storage proposal is
+**superseded by Claude decision `03856544`** pending the sibling revision;
+it is not implemented authority. The relative link is convenient between
+these local worktrees; use the exact commit/path and this decision when
+reviewing elsewhere.
 
 | Identity/fence | What it means here |
 | --- | --- |
@@ -209,9 +211,14 @@ these local worktrees; use the exact commit/path when reviewing elsewhere.
 | Env/cwd/name | Association hints; never credentials or ownership authority. |
 | Durable authenticated owner generation | AB-276's proposed broker-owned authority epoch; not present merely because a shared runtime exists. |
 
-Do not implement or assume AB-276's proposed global store reader floor as a
-memory optimization. Its schema/pin/fencing decisions require separate review.
-AB-277 does not need a store migration to explore lazy imports or shared code.
+Claude decision `03856544` explicitly **rejected the global store reader
+floor**. AB-276 requires an isolated capability + notice database, no pinned
+legacy mail, unsupported notice operation on old hosts, and coexistence with
+v0.30.11. The earlier shared-store/pinned-mail proposal is not an accepted
+dependency. The revised isolated-store authority/fencing contract still needs
+review and implementation; AB-277 must not add a legacy-store reader floor or
+mail pins to enable runtime sharing. AB-277 does not need a store migration to
+explore lazy imports or shared code.
 If future runtime ownership relies on durable owner generations, that part
 must remain blocked until the authority contract is approved and implemented.
 No cross-thread inbox drain/read/ack, old mail to a successor, wake bypass or
