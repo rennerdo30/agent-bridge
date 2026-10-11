@@ -6,6 +6,12 @@ This change is documentation only. The CLI, wire operations and files marked
 "new" below do not exist in the baseline. Acceptance of the architecture in
 principle is not toolkit integration, security review or runtime acceptance.
 
+Revision: Claude decision `03856544` rejects an ordinary SQLite reader-floor
+bump. Capabilities, notices, delivery claims and acknowledgements belong only
+to an isolated feature-home DB. No pinned notice body enters legacy ordinary
+mail rows. GN-206 reviews `5abf0dce` / `f91fa818` inform the proposed handshake;
+they do not authorize a toolkit patch or approve TTL/secret retention policy.
+
 ## Purpose and boundary
 
 GN-206 needs to notify the recorded current owner of a toolkit waiter without
@@ -51,7 +57,7 @@ All following paths refer to the source baseline, not running services.
 | `src/core/broker.ts:239-274`; `src/core/job-handoff.ts:31-87` commit job ownership in a journaled registry and replay other effects. | Handoff and capability authority need a recoverable fence; registry and notice DB are not already one transaction. |
 | `src/core/protocol.ts:153-187`; `src/core/broker.ts:1600-1640` implement stable message IDs, storage recovery and sender/content checks. | Reuse durable ID semantics, not the ordinary name-based sender authorization or generic routing. |
 | `src/cli/main.ts:27-33,96-110` creates a general Bridge node/token for ordinary CLI sends. | The restricted CLI must dispatch before home/logger/token/node initialization and must never auto-start a broker. |
-| `src/core/store.ts:355-389,447-468,516-539` stores batches, acknowledgements and retained active/archive ID lookups. | A new ledger must commit with its message, preserve archive recovery and distinguish storage from consumption. |
+| `src/core/store.ts:355-389,447-468,516-539` stores batches, acknowledgements and retained active/archive ID lookups. | Atomic-write/retained-ID patterns only; waiter body/ledger/receipts live together in the new feature store, not ordinary rows. |
 | `src/core/metadata-db.ts:67-111`; `src/core/store.ts:203-206` retain old readers and defer upgrades. | Do not evict readers, mutate protected formats or force migration to enable notices. |
 | `src/mcp/codex-wake.ts:53-65,87-130` guards idle wake and says queue acceptance leaves consumption unconfirmed. | Keep normal activity, hop and wake preferences; never synthesize idle or acknowledge on queue acceptance. |
 
@@ -63,6 +69,31 @@ and retained mail; `test/handoff-subagents.test.ts` tests ownership replay and
 reader refusal; `test/store-compatibility.test.ts` and
 `test/metadata-db.test.ts` test retention and upgrade refusal. No tests are run
 as part of this design package.
+
+## GN-206 canonical inventory and lifecycle boundary
+
+Read-only supplemental inventory:
+`D:/AgentData/worktrees/renner-unity-tools-gn204-20261011/evidence/gn204/gn206-launch-inventory.md`,
+source `f894de47fcfcd2bc943a800d9e8d3463747ce614`. The inventory was read;
+underlying toolkit source/lifecycle was not executed or independently probed.
+Canonical source references below are from that supplied inventory.
+
+| Toolkit source | Existing responsibility; proposed notice boundary |
+| --- | --- |
+| `scripts/tool_locks.py:1143-1190,1217-1226` | Local token, PID/start, children, paths and attribution; preserve schemaVersion 1 / minReaderVersion 0.10.7. No automatic edit to shared lease schema; keep new public binding/outbox in a separately versioned private sidecar pending toolkit review. |
+| `scripts/tool_scheduler.py:249-266` | Existing lease reader refusal remains unchanged; notice support cannot bypass it or raise its floor. |
+| `scripts/tool_locks.py:1456-1476,1550-1570,1714-1743` | Wait ticket creation, admission and prelaunch requeue retain the token/sequence/deadline. Requeue must retain broker waiter/run binding and notice UUIDs without reminting authority. Rotating withdrawal proof does not rotate a Bridge generation. |
+| `scripts/tool_locks.py:434-527,1159-1190` | Withdrawal proof, same-joblabel/worktree and ancestry are local lifecycle authority only. Withdrawal must retire the notice route before any later wake/delivery. Restart creates new token/PID-start and requires new attested registration; same job label cannot inherit the old grant. |
+| `scripts/tool_process.py:415-456`; `scripts/tool_locks.py:1688-1706` | Suspended exact child PID/start is recorded, then assigned to the owned job before resume: possible future staged integration point, not shipped Bridge attestation. Never keep this admission gate across broker RPC, ACL or store work. |
+| `scripts/tool_process.py:270-283,531-562` | Direct Editor binding needs the verified executable and exactly one -projectPath; an opaque wrapper has no Editor-child/project binding. Whole-tree completion is process-local; neither wrapper ownership nor completion proves a Bridge generation. |
+| `scripts/tool_environment.py:14-16`; `scripts/tool_process.py:231-255` | Existing inherited/scoped toolkit lease credentials are not notice authority. Do not add a notice bearer to inherited/shared env or silently change wrapper argv/config. |
+| `scripts/tool_runner.py:119-120`; `scripts/tool_fs.py:128-129`; `scripts/tool_locks.py:1143-1157` | Artifact run_id is unrelated to admission; no canonical native run ID exists. Broker must mint its own run binding. Normalize E:/D: aliases to the same physical Library, never two authority scopes. |
+
+Existing unregistered waiters remain unsupported with truthful local blocked
+status. Missing authenticated Bridge fields in the synthetic inventory are
+absence examples, not shipped constructor fields. Canonical integration
+boundaries are now known; final toolkit sidecar/launch API acceptance remains
+pending.
 
 ## Authority and minimum launch/registration handshake
 
@@ -77,6 +108,8 @@ toolkit children, capability files or notice CLI.
    principal, verifies current authority from its own registration/job ledger,
    and derives the exact local recipient. A caller cannot request another
    session by name. A job's parent/root strings alone do not authorize issuance.
+   Require capable-broker and `waiterNoticeV1` owner delivery negotiation before
+   preparation; older hosts continue ordinary messaging but cannot own a route.
 2. A proposed Bridge-owned launch adapter creates a durable launch receipt for
    the specific toolkit process: requesting registration, owner principal and
    generation, broker-issued run nonce, waiter ID, verified project/physical
@@ -107,14 +140,34 @@ toolkit children, capability files or notice CLI.
    A prepared credential authenticates only the original attested process for
    registration confirmation; emit/status rights start after activation.
 
-The principal receiving notices must be agreed with GN-206: a waiting session
-or a waiting job. The default proposal is **the authenticated requesting
-principal itself**, never automatically its project main or supervisor. For a
+GN-206 accepts **the authenticated requesting session/job itself** as the
+issuer/recipient direction, never automatically its project main or supervisor. For a
 job, its exact job ID, recorded session/route and current ownership revision
 are all checked. A project main does not implicitly get every job's notices.
-If GN-206 actually waits on a different principal, a separately reviewed
-broker-authorized registration contract is required; toolkit text cannot make
-that choice. This integration decision remains open.
+Exact toolkit launch plumbing into that principal still needs review. A
+different target is not part of v1; toolkit text cannot make that choice.
+
+### Staged suspended-child handshake (proposal, not a launch)
+
+Preparation/RPC/ACL/store work happens outside toolkit admission gates. Before
+entry, the authenticated owner prepares a non-active launch/binding request.
+Inside the existing short local gate, record only the exact suspended child
+PID/start, owned-job assignment and a local reservation revision; then release
+the gate while retaining the reservation. Outside the gate, the broker-owned
+adapter attests that exact child, completes its private bootstrap, and confirms
+the bound route with a bounded deadline. Re-enter the local gate briefly to
+verify the same reservation/token/run/child is still current and not withdrawn
+before resume; no broker call runs while this gate is held. Bootstrap precedes
+resume, but no gate spans network/pipe RPC, DACL probes or SQLite locking.
+
+This requires a reviewed toolkit launch change; existing tool_process.py does
+not supply the split automatically. Each notice CLI child must use its own
+recorded/attested launch and bounded private handoff; possessing the parent's
+capability is insufficient. Timeout or concurrent withdrawal leaves a truthful
+blocked route, invalidates prepared authority, and uses only the toolkit's
+reviewed owned-child failure path. The bounded cancellation/reservation policy
+must be agreed before code: no orphaned indefinite suspended child, foreign
+process stop, automatic native launch or argv/config change is authorized.
 
 ## Persisted records and secret handling
 
@@ -122,7 +175,7 @@ that choice. This integration decision remains open.
 | --- | --- |
 | Broker owner authority | Local installation ID; principal type/ID; exact session/job identity; durable owner generation; current authority revision; verified launch identity; state and invalidation reason. Broker-owned, never inferred from names. |
 | Broker grant | Public capability ID; secret digest only; registration request ID; waiter/run; project and physical-library scope; exact owner principal/generation; permitted operation `waiter.notice`; issued/expiry times; activation/revocation state; launch identity and public binding digest. |
-| Toolkit waiter binding | Schema version; opaque toolkit waiter ID; broker run nonce; capability ID; expiry; owner generation; non-secret installation/principal descriptor; verified project/library scope; registration request ID and confirmation state. Persist atomically with the waiter record. Persist a private capability-file locator separately; no bearer in lease JSON. |
+| Toolkit waiter binding | Independently versioned private sidecar; opaque toolkit waiter ID; stable broker binding ID/run nonce; capability ID; expiry and absolute expiry; owner generation; non-secret installation/principal descriptor; verified project/library scope; registration request ID and confirmation state. Persist atomically and cross-check against the unchanged lease token/PID-start; no automatic shared lease schema change. Persist a private capability-file locator separately; no bearer in lease JSON. |
 | Toolkit notice outbox | Durable notice UUID; immutable canonical payload and digest; capability ID/generation/run; prepared/submitted/unknown/stored/read state; last non-secret error and receipt. Save before first send. No bearer or arbitrary recipient/sender. |
 | Broker notice ledger/pin | Notice UUID; capability/run/generation; payload digest; derived message ID; exact pinned owner principal; storage and acknowledgement state; timestamps and non-secret rejection/retirement audit. Retain across restart, archival and grant expiry. |
 | Private capability file | Format/version, public grant descriptor and at least 256 random bits of bearer secret. This is the only persistent raw-secret copy, not an ordinary Bridge message or retained audit object. |
@@ -167,6 +220,7 @@ connection:
 prepare_waiter_notice(registration_id, waiter_id, launch_spec, project_scope,
                       physical_library_scope, requested_ttl)
 revalidate_waiter_notice(capability_id, registration_id)
+renew_waiter_notice(capability_id, renewal_request_id, requested_expiry)
 revoke_waiter_notice(capability_id, reason)
 waiter_notice_status(notice_id)  # caller's own authorized records only
 ```
@@ -174,10 +228,20 @@ waiter_notice_status(notice_id)  # caller's own authorized records only
 `registration_id` is a durable request UUID, not an owner claim. `launch_spec`
 goes through the reviewed exact-owned-process adapter, not a spawn-anything
 notice token. Generation, principal, recipient and expiry are broker outputs.
-There is no general grant minting for arbitrary targets. The default TTL
-proposal is one hour with an issuer-approved maximum of 24 hours; these
-numbers need owner/toolkit review before implementation. Expiry is independent
-of toolkit admission leases. No automatic extension by heartbeat or retry.
+There is no general grant minting for arbitrary targets. One hour is not an
+accepted policy: GN-206 observed a 37-minute wait followed by potentially long
+build work. Propose explicit issuer-authorized renewal before expiry, only
+after revalidating the SAME owner generation, waiter/run, attested process and
+project/library/operation scope. Keep a stable binding ID and immutable notice
+UUID/fingerprint across renewal; a rotated capability ID/secret is only a new
+credential version for that binding, never a new recipient or dedupe domain.
+Persist renewal by its own request UUID and return a recoverable public result.
+No heartbeat, CLI retry or same-joblabel restart may extend expiry. Proposed
+absolute ceiling is 24 hours from first issuance, also bounded by the reviewed
+wait hard deadline; renewal/reissuance for the same run cannot reset it. Initial
+TTL, ceiling/alignment, rates and secret retirement remain main-reviewed choices,
+not approved policy. Expired/revoked or changed-run grants require new explicit
+registration, not a silent renewal/rebind of old pending events.
 
 Restricted toolkit CLI, using a private file locator rather than a bearer:
 
@@ -213,6 +277,10 @@ toolkit admission/lease locks** and cannot alter admission, release a lock,
 repair a library or block other waiters. Notification failure changes only
 notice state, not the truth of the toolkit operation/recovery result.
 
+Stable binding ID is part of the immutable event fingerprint. Transport
+capability ID/version may change only through approved same-binding renewal;
+it is not an edited event body or a new notice UUID/dedupe namespace.
+
 JSON result fields are `noticeId`, `capabilityId`, `ownerGeneration`,
 `storageState` (`stored`, `not_stored`, `unknown`), `deliveryState`,
 `checkedAt`, `receipt` (`readAt` or null), `recovered` and `reason`. No message
@@ -236,30 +304,55 @@ never a read or admission-success claim; consumers must inspect JSON states.
 2. The broker validates the active grant, exact attested caller, expiry, current
    owner generation and project/library/run scope. It does not trust a claimed
    sender. It renders a broker-authored sender such as `waiter:<capability-id>`
-   with agent `other`, visibly identified as a toolkit notice, not the owner.
+   visibly identified as a toolkit notice, not the owner. This is a dedicated
+   `WaiterNotice` envelope, not a synthetic ordinary-mail peer/message row.
    Replies do not confer general sender/routing rights on the toolkit.
-3. Under one synchronous store transaction, revalidate the current authority
-   fence and insert the unique notice ledger, exact owner delivery pin and one
-   ordinary Bridge message. Use the notice UUID as its stable message ID.
-   Commit before wake scheduling or replying. A separate metadata connection
-   and message insert are **not** an atomic transaction; expose a store-owned
-   operation using the same SQLite handle. No half-committed ledger/message.
+3. In one transaction on the **isolated notice DB**, revalidate the current
+   authority fence and persist the unique notice ID/fingerprint, body, exact
+   owner pin and pending delivery state. The notice UUID is its message ID.
+   Commit before wake scheduling or replying. Never insert the body or a
+   pinned delivery into ordinary bridge.db/messages or legacy archives.
+   There is no required transaction across the ordinary store and feature DB:
+   all durable notice facts live together on one feature-store SQLite handle.
 4. Uniqueness is local installation + notice UUID, not process name, ephemeral
    peer ID or an in-memory dedupe map. Same UUID with the same immutable
-   grant/run/generation/payload returns the retained result without another
-   message, observer copy or wake. Any different binding/content is a conflict.
-   Concurrent duplicates converge on the committed record.
+   binding/run/generation/payload returns the retained result without another
+   notice, observer copy or wake. Different binding/content conflicts; explicit
+   same-binding renewal does not change the fingerprint. Concurrent duplicates
+   converge on the committed record.
 5. A crash before commit leaves no stored notice. A crash after commit but
    before response is resolved by status/retry with the same UUID. A crash
    before wake leaves durable pending delivery, reconciled once by normal
-   receiver replay; no repeated wakes are scheduled merely by CLI retries.
+   dedicated notice receiver replay; no wakes are scheduled merely by retries.
    Runtime wake admission remains per receiver/activity epoch, not a claim of
    exactly-once OS queue execution across an unknowable host crash.
-6. Archives retain the original message and receipt history, while the small
-   notice ledger/pin remains authoritative. Archived, quarantined or withheld
+6. Feature-store retention retains the notice body and receipt history in
+   place for v1; no export into ordinary archives. Retired or withheld
    rows cannot be mistaken for `not_stored` and regenerated. Capability expiry
    does not expire the dedupe evidence. A lost local outbox/ledger is an
    unsupported recovery state requiring reviewed evidence, not a new send.
+
+Dedicated receiver operations are `waiterNoticesSubscribe`,
+`waiterNoticesClaim` and `waiterNoticesAck`, available only to a feature-aware
+Bridge owner connection bound to its current registration/generation. They
+are not on the toolkit allowlist. Claim records a stable delivery-attempt ID,
+notice ID, generation and exact receiving registration in the feature DB
+transaction before returning a body. An acknowledgement atomically verifies
+that claim/current authority, inserts the unique scoped receipt and marks the
+notice consumed **in that same feature DB**. Ordinary `ack`/`inbox` cannot
+read or consume it. Revoked/withdrawn/stale claims cannot mutate successor
+state; retain late outcomes as non-secret historical evidence, not new-owner
+read receipts.
+
+Rendering to the host/OS queue happens outside this transaction. A crash before
+hand-off leaves the claim retryable only to the same revalidated owner; a
+crash after rendering but before ack can replay the same stable ID. The
+feature-aware receiver must preserve its own scoped dedupe/ack journal within
+the isolated feature home, never an ordinary inbox row. Exactly-once durable
+notice insertion/ack is achievable; exactly-once model context across a crash
+with an unconfirmed hand-off is not promised. Lost acceptance is `unknown`,
+not consumed. Handed-but-unacknowledged old-generation notices remain retained
+and withheld after ownership change, not automatically rebound.
 
 `emit`/`status` return public IDs, owner generation, storage state, observation
 time and scoped receipt state. A deadline or disconnected reply gives
@@ -276,6 +369,13 @@ the notice can be durably stored for that principal without interrupting its
 active turn. An idle receiver may admit a wake using existing preferences,
 host availability and hop/depth/ownership guards. Busy or unknown remains
 queued; missing transport remains stored/unread with an explicit reason.
+Only feature-aware receivers may subscribe/claim. Maintain a separate pending
+notice collection in memory and use existing host activity/wake policies as
+guards, with a dedicated notice provider/ack path. Do not call ordinary
+BridgeNode.send or store.insert to make notices visible. Wake payloads are
+rendered just in time after claim/authority checks, without persistent legacy
+mail copies. An old host's ordinary inbox, history reader or alias claim sees
+no notice body, even if it shares a display name with the recorded owner.
 No elapsed-time idle heuristic, activity overwrite, direct native injection,
 session start, permission change or wake-policy bypass is part of this feature.
 
@@ -287,7 +387,7 @@ Report distinct facts:
 | `unknown` | Submission/response incomplete; storage must be recovered using the same notice UUID. |
 | `stored` / `queued` | Exactly one durable message for the pinned principal exists; the owner has not acknowledged it. |
 | `wake_requested` / `wake_accepted` | A receiver transport was requested/accepted; neither means read, model action or successful toolkit admission. |
-| `read` | Existing receiver acknowledgement is durably recorded for the pinned message/principal. It proves Bridge consumption only. |
+| `read` | Dedicated receiver acknowledgement is durably recorded in the isolated DB for the claimed notice/principal/generation. It proves Bridge consumption only. |
 | `withheld` / `retired` | The stored event is retained but no longer deliverable under the old owner authority; no silent forwarding. |
 
 The capability cannot acknowledge, drain, read other inboxes, inspect broad
@@ -317,8 +417,28 @@ attested launch revalidate the same stable principal, generation, revision and
 scope. A replaced MCP transport may reconnect to the same verified owner;
 neither a reused name nor a new session ID may silently restore the grant.
 Revalidation cannot extend expiry, change target or resurrect a revoked grant.
-Expired renewal requires a new explicit issuance/registration; it must not
-automatically resubmit old-generation events to a new principal.
+Revalidation is distinct from the separately authorized same-binding renewal
+above. Expired renewal requires new explicit issuance/registration and must
+not automatically resubmit old-generation events to a new principal.
+
+Toolkit prelaunch requeue retains the existing attested waiter/run binding;
+it is not a reason to mint another grant. Withdrawal must fence/retire the
+route before subsequent delivery/wake. New token/PID-start after toolkit
+restart requires new exact launch attestation and registration, regardless of
+unchanged joblabel/ancestry. Preserve old in-flight/late notices as withheld.
+
+Proposed feature-aware withdrawal is staged too: record local withdrawal intent
+under the short toolkit gate, release it, obtain durable route retirement from
+the authenticated issuer/broker, then briefly re-enter the gate to complete
+the same token/revision's existing local withdrawal. No shared joblabel/proof
+becomes a Bridge revoke credential. Until retirement is acknowledged, report
+`withdraw_pending`/blocked notice authority, not completed route retirement.
+If the issuer or broker cannot establish the fence, do not claim the new
+contract's withdrawal guarantee or silently fall back to legacy delivery.
+Exact treatment of the underlying admission reservation during this bounded
+failure needs toolkit/main review; this proposal does not change its existing
+withdrawal semantics by itself. On restart an unresolved intent suspends the
+route before replay. Already handed context cannot be retracted.
 
 Handoff must invalidate before a new owner can receive under that run. Because
 job registry writes and notice storage are separate, propose a durable
@@ -351,55 +471,116 @@ files cannot enter a general archive. No cleanup occurs in this design task.
 
 ## Store and retained-reader compatibility
 
-Propose a separately versioned `waiter_notice` component in the existing
-`bridge.db`, using additive owner/grant/launch/fence/notice/pin tables. Preserve
-the existing message envelope, archive bytes and old metadata domains. The
-table names and component version must be finalized with storage review;
-no live DDL or migration is authorized here.
+### Required isolated feature home
 
-An additive table alone is insufficient: older brokers/readers do not honor
-owner delivery pins. Advertise a specific waiter-notice/pin reader capability
-and refuse activation until all live readers able to host, claim, replay or
-acknowledge this store understand it. Keep ordinary messaging available on its
-existing compatible schema. Old/incompatible readers finish naturally; never
-stop them, expire them by age, rewrite their presence or bypass deferred
-admission. Unknown identity/version remains a blocker. A downgrade encountering
-an active component must refuse hosting it rather than expose pinned notices
-as ordinary name mail. Propose a minimum global reader floor alongside the
-additive component (candidate SQLite version 10 against this version-9
-baseline; allocate the actual number during implementation review). Baseline
-`src/core/sqlite-migrations.ts:69-72` rejects a version above its supported
-target; `src/core/store.ts:201-208` only catches deferred upgrade errors.
-Exercise retained older-host fixtures to prove refusal, including restart,
-rather than assuming a component marker protects pins. Merely leaving
-`user_version` unchanged does not supply a downgrade fence. Reader admission
-must succeed before raising the floor; while deferred, no waiter pins/messages
-are activated and ordinary compatible messaging continues.
+The proposed global reader-floor bump is **rejected**, not an implementation
+option. Ordinary `bridge.db` stays schema/version 9 at this baseline; existing
+message envelopes, retained archives, metadata domains and reader admission
+rules remain unchanged. Toolkit shared lease schema1/minReader0.10.7 likewise
+stays unchanged. No capability or notice table is added to either shared store.
 
-Before additive DDL, use existing admission, physical-path, lease and verified
-snapshot practices. Extend snapshots/restore coverage to the complete new
-component and its message references, without raw capabilities. Snapshot
-failures preserve originals. The ledger transaction must use the message
-store connection, not `saveMetadataValue` on a separate handle. A component
-newer than its reader is retained unchanged. Retain archive conflicts and
-dedupe evidence; never repair or delete conflicts to make notice retries pass.
+Propose a dedicated private feature home, for example
+`%LOCALAPPDATA%/AgentBridge/WaiterNotice/v1/<broker-installation-id>/`, resolved
+only by the feature-aware broker (exact location needs main review). Its own
+`notice.db`, WAL/SHM, recovery journal and private capability directory are
+never supplied to an old broker as `--home` or an ordinary `resolveDbPath`.
+Use an explicit feature-store file identity/version magic and separate pipe
+namespace; no generic shared-home directory scan, attach or fallback. Old
+hosts have no open path or delivery handler for this store. Normal backups
+must exclude its bearer files; separately reviewed feature snapshots may
+retain the complete non-secret DB/authority state.
+
+Illustrative isolated schema (names/DDL still subject to implementation review):
+
+| Table | Key facts kept together in notice.db |
+| --- | --- |
+| `feature_meta` | Store kind/version, local installation ID, supported notice protocol. Newer/unknown feature format refuses unchanged. |
+| `owner_authority` | Principal key, generation, authoritative revision, registration/launch identity, active/suspended/retired state. |
+| `launches` | Launch/request/run IDs, exact PID/start/SID, scope digest, bootstrap state; no bearer. |
+| `grants` / `grant_renewals` | Public binding/capability IDs, secret digest, immutable owner/run/scope, expiry/absolute expiry, activation/revoke state, renewal request ID. |
+| `authority_fences` | Durable pending/committed/reconciled handoff or withdrawal intent, affected generation and registry/local lifecycle revision. |
+| `notices` | Unique notice UUID, binding/run/generation, body/fingerprint, exact owner pin, created/storage/retirement state. This is the only durable notice body store. |
+| `delivery_claims` / `notice_receipts` | Notice/attempt IDs, exact receiver registration/generation, hand-off/ack state and durable read timestamp; one consumed receipt per scoped notice. |
+| `retirement_audit` | Permanent non-secret grant/run/notice retirement reasons, epochs and late-outcome evidence. |
+
+A single feature-DB transaction checks grant/fence/generation and inserts the
+notice/pin/pending delivery; a second feature-DB transaction validates a claim
+and commits receipt/consumption. WAL plus full durable sync is proposed for
+this new store, not a change to the ordinary DB. Do not claim atomic commit
+across attached WAL databases: this design intentionally requires no notice
+body write in the ordinary DB. Recovery of feature DB, WAL and non-secret
+authority journal is one retained feature boundary; losing any part suspends
+delivery rather than sourcing bodies/receipts from legacy rows.
+
+The ordinary registration/job registry is still an external authority source.
+Its mutation is not made atomic with this DB by isolation. Keep the durable
+pre-change fence/reconcile protocol described above and revalidate authority
+before emit, claim, wake and ack. Only notice-aware authority paths may change
+an active binding; an uninstrumented/unknown legacy job mutation path means
+the binding is unsupported/suspended, not silently adopted. A fresh generation
+cannot be installed while a fence is unresolved. An old broker taking over the
+ordinary pipe cannot serve notices; suspend the feature route until the
+authenticated owner reconnects to a capable broker and exact authority is
+revalidated. No second general peer or token export bridges this boundary.
+
+### v0.30.11 coexistence fixture (required, not run)
+
+Use two isolated synthetic homes: an ordinary fixture at SQLite9 and a new
+feature home with synthetic notices/capabilities; never use a real profile.
+First, a capable broker owns registration/control with a feature-aware owner
+and pinned v0.30.11 ordinary peers/readers coexisting; exercise normal sends,
+alias claims, inbox/ack and history/retention. Second, hand ordinary hosting to
+an exact pinned v0.30.11 broker in the fixture: ordinary messaging continues
+but notice operations/replay are unsupported/suspended. Never run two owners
+of the same ordinary pipe. Record ordinary user_version/schema plus relevant
+legacy rows before/after **feature-only** operations: no notice body/ID/pin or
+secret is introduced. Verify old binary opens only ordinary fixture paths
+with file-access instrumentation; new feature data stays unchanged by old
+read/claim/ack/retention. A reused owner name must not make a notice visible.
+
+An owner/host lacking `waiterNoticeV1` delivery negotiation is explicitly
+unsupported for issue/subscribe/claim/ack, while unrelated v0.30.11 peers keep
+ordinary messaging. A pre-AB-276 broker rejects/does not know the new feature
+operations; the CLI reports unsupported/broker-unavailable and keeps its
+outbox, never starts a broker, inserts ordinary mail or borrows shared auth.
+After a capable broker restarts/ordinary ownership changes, old claims cannot
+be acknowledged or replayed under a new principal. Fixtures must also crash
+between feature commit/claim/host hand-off/ack and between fence/registry
+commit/reconciliation, proving durable recovery and truthful unknown states.
+
+### Tradeoffs and rejected alternatives
+
+| Approach | Authority/durability tradeoff |
+| --- | --- |
+| Isolated capabilities **and notices**, dedicated claim/ack (required) | No legacy ordinary-reader bypass and single-DB notice/receipt atomicity without ordinary floor bump. Costs a new receiver provider, separate history/status/snapshot tooling, capability negotiation and recoverable cross-registry authority fences. Legacy owner hosts cannot receive these notices. |
+| Isolated capabilities but ordinary pinned body/mail rows (rejected) | Old readers ignore pins, alias/name claims bypass authority; cross-store insertion is not one durable notice transaction. Isolation of grants alone does not solve delivery. |
+| ATTACH feature + ordinary WAL DB (rejected) | Does not provide a joint atomic transaction across WAL DBs and still exposes ordinary rows to legacy readers; see the [SQLite WAL transaction boundary](https://sqlite.org/wal.html). |
+| Shared-table pins plus global reader-floor bump (rejected by main) | Could fence upgraded readers but blocks old hosting; violates approved coexistence boundary. Do not retain as a fallback. |
+| In-memory-only notice queue or full-peer CLI shortcut (rejected) | Loses crash/idempotency evidence or grants arbitrary routing/shared-token authority. |
+
+Retain feature data and verify physical paths/private ACLs before first use.
+Feature schema upgrades have their own compatible-reader/snapshot gate; never
+rewrite protected old formats or stop/age-evict readers. V1 keeps notice bodies,
+dedupe and receipts in place: a later feature archive/export/disposal contract
+requires review. Ordinary archive conflicts remain untouched, and feature
+retention cannot turn a withheld notice into a new send.
 
 ## Proposed implementation ownership (after approval only)
 
 | File | Narrow responsibility |
 | --- | --- |
 | `src/core/waiter-notice.ts` (new) | Grant/owner/scope state machine, validation, public result/error types, expiry and revalidation policy. No generic routing or activity guessing. |
-| `src/core/waiter-notice-store.ts` (new), `src/core/store.ts` | Additive component/ledger/pin persistence; a same-handle atomic notice/message operation and pin checks on delivery/ack/retained ID recovery. |
+| `src/core/waiter-notice-store.ts` (new) | Isolated feature-home schema, same-handle atomic grant/notice/pin/claim/receipt persistence and retained recovery. No ordinary MessageStore notice-body writes. |
+| `src/core/waiter-notice-delivery.ts` (new), `src/core/node.ts`, host hook/wake adapters | Separate pending notice provider, feature-aware subscription/claim/render/ack, host activity/current-registration guards. No legacy inbox/history copies or generic send fallback. |
 | `src/core/waiter-notice-windows.ts` (new) | Restricted pipe ACL/client PID/SID attestation, exact launch identity, private nonlinked capability file and bounded bootstrap/child handle transfer. Review feasibility and dependencies first. |
 | `src/core/waiter-notice-launch.ts` (new) | Exact broker-owned toolkit launch receipt/registration linkage and explicit child allowlist. No native subagent or unrestricted peer-token inheritance. |
 | `src/core/protocol.ts`, `src/core/broker.ts` | Disjoint auth classes/allowlist; owner issuance and restricted notice RPCs; durable authority fencing; commit/replay integration. |
 | `src/core/job-handoff.ts`, `src/core/node.ts` | Handoff/restart/session replacement authority invalidation and current registration/pin checks. Preserve existing job ownership and mail cancellation behavior. |
-| `src/core/store-compatibility.ts`, `src/core/metadata-db.ts`, `src/core/metadata-snapshot.ts` | Explicit reader/component admission, snapshot coverage and downgrade refusal. No forced reader eviction. |
-| `src/core/store-version.ts`, `src/core/sqlite-migrations.ts` | Reviewed minimum reader floor and additive migration/snapshot coverage, retaining the old compatible store when admission is deferred. |
+| `src/core/waiter-notice-snapshot.ts` (new), feature store | Complete isolated authority/notice/receipt recovery boundary and feature-specific reader gate; no bearer snapshots. Ordinary store-version/migrations/metadata schemas are outside this package. |
 | `src/cli/waiter-notice.ts` (new), `src/cli/main.ts` | Strict connect-only bounded CLI; durable request consumption/status; early dispatch with no shared-token/config initialization. |
 | `src/mcp/server.ts` | Owner-facing prepare/revalidate/revoke/status tools only on the authenticated caller's authority, returning no bearer. |
 | `test/waiter-notice*.test.ts` (new), related existing tests | In-memory authority/transport tests and isolated private filesystem/store fixtures; Windows-native ACL/attestation acceptance separately. |
-| GN-206 canonical toolkit files (owner-supplied exact inventory pending) | Persist binding and outbox; registration handshake; bounded notice invocation outside admission gates; truthful status and non-secret receipts. No consumer copies or broad lease-schema edits. |
+| GN-206 `scripts/tool_locks.py`, `scripts/tool_process.py`, proposed notice sidecar/CLI adapter (owner to approve exact new file) | Preserve recorded admission/requeue/withdrawal and suspended-child boundaries above; staged registration/outbox/renewal and bounded out-of-gate notice operations. No automatic lease-schema edit, consumer-copy patch or silent argv/config/env credential change. |
 
 These are proposed ownership boundaries, not permission to edit these files.
 Toolkit integration must be coordinated with its canonical owner and exact
@@ -418,9 +599,12 @@ source inventory. No implementation proceeds before root/Claude review.
 | Wake lost after storage | Replay retained mail through the real receiver/waker with stubbed queue; idle admits one current wake, busy blocks it, queue acceptance leaves unread mail, ack alone establishes read. No elapsed idle inference or process interruption. |
 | Handoff/failover/session replacement during stalled send/replay | Fence before authority change, no old-generation commit/wake/ack mutation; old mail withheld, not consumed by successor/name reuse; recovery at each journal/fence crash point stays blocked until authority proven. |
 | Broker restart and capability expiry | Revalidation required; exact same owner may resume without rebinding; new owner/unknown launch/expired grant refuses new emit. Status never fabricates `not_stored` after lost submission. |
-| Archive/quarantine/retention and downgrade | Stored notice remains deduplicated and receipts retained after archive; quarantine never triggers resend; incompatible readers defer activation unchanged; old host cannot bypass pins; snapshot/restore retains complete ledger. |
+| Isolated-store coexistence/retention/downgrade | Pin exact v0.30.11 fixture and verify no feature DB opens, no notice bodies/IDs/pins/secrets in ordinary rows/archives and unchanged SQLite9 schema; old host refuses feature operations without fallback; feature snapshots retain complete notice/receipt/fence ledger. |
 | Secret leakage | Synthetic marked bearer never appears in stdout/stderr, exception text, log/dashboard/message/receipt/snapshot/export artifacts, argv or shared env; only verified private file contains it. |
 | Toolkit admission independence | Bounded sends happen after gates are released; unavailable broker leaves toolkit result and leases truthful, with durable blocked/unknown notice and actionable non-secret reason. |
+| Requeue/withdrawal/restart | Requeue preserves run/binding/UUID; withdrawal's durable fence precedes later claim/wake; new token/PID-start cannot inherit authority through joblabel or proof; late old notices retained/withheld, never rebound. |
+| Suspended bootstrap and deadlock | Stub broker/ACL/store stalls at each staged handshake point; assert no admission gate is held during RPC and unrelated waiters can progress; bounded failure has an explicit reservation/owned-child outcome and no unreviewed resume/kill. |
+| Renewal | Authenticated issuer renewal preserves SAME generation/scope/run/notice fingerprint, rotates only credential version and is idempotent by renewal UUID; heartbeat cannot extend; absolute first-issue ceiling cannot reset; changed process/run requires new attestation. |
 
 Use synthetic capabilities and isolated stores/temp directories only. No live
 home DB/config/log/history, real secrets, foreign process inspection or toolkit
@@ -431,19 +615,20 @@ these new guarantees.
 
 ## Approval questions and integration dependencies
 
-1. Which exact registered session/job is GN-206's waiting owner, and how does
-   its launch flow request authority on that principal's existing connection?
-   No toolkit field currently proves this. Confirm canonical files/schema and
-   the smallest launch adapter; existing opaque waiters remain unsupported.
+1. GN-206 accepts the requesting authenticated session/job itself, without main
+   forwarding. Approve its exact launch connection and new private sidecar API
+   using the canonical inventory above; no current toolkit field proves Bridge
+   ownership and existing opaque waiters remain unsupported.
 2. Review the proposed Windows attestation/private-file adapter and exact
    child transfer. Decide whether its dependencies and launch changes are
    acceptable; no weak env-only alternative is proposed.
 3. Approve issuance TTL/rate/payload/deadline policy and expiry/renewal behavior
    for long waits, plus explicit secret-file retention/disposal and backup
    exclusion policy. No automatic cleanup authorization follows from expiry.
-4. Review durable owner-generation/fencing coverage across every ownership
-   path and the pinned-delivery/downgrade storage boundary. These are necessary
-   security changes, not a general lineage/routing redesign.
+4. Review isolated feature schema/receiver claim+ack transactions, v0.30.11
+   coexistence fixture and durable owner/withdrawal fencing across all supported
+   lifecycle paths. Ordinary reader-floor bump and pinned legacy body rows are
+   rejected; no general lineage/routing redesign is proposed.
 5. GN-206 owner must accept the persisted public binding, durable event UUID,
    crash recovery, out-of-gate bounded sends and truthful blocked/queued/read
    status before a toolkit patch. Remote/cross-PC scope remains refused in v1;
