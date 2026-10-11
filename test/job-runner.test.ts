@@ -1,4 +1,5 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { codexHost } from "./helpers.js";
 import { execFileSync } from "node:child_process";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -71,14 +72,15 @@ function installFakeClaude(dir: string): string {
 
 /** One server of the session (a Codex session: it spawns Claude subagents). */
 async function startSession(inProcess = false): Promise<{ client: Client; transport: StdioClientTransport }> {
+  const client = new Client({ name: "test-codex", version: "0.0.0" });
+  const codexHome = codexHost(client, home, "codex", SESSION);
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [SERVER, "--agent=codex"],
     cwd: home,
-    env: { ...process.env, AGENT_BRIDGE_HOME: home, CLAUDE_PROJECT_DIR: home, AGENT_BRIDGE_NAME: SESSION, AGENT_BRIDGE_CLAUDE_BIN: claudeBin, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", AGENT_BRIDGE_JOB_RUNNER: inProcess ? "0" : "1" } as Record<string, string>,
+    env: { ...process.env, CODEX_HOME: codexHome, AGENT_BRIDGE_HOME: home, CLAUDE_PROJECT_DIR: home, AGENT_BRIDGE_NAME: SESSION, AGENT_BRIDGE_CLAUDE_BIN: claudeBin, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", AGENT_BRIDGE_JOB_RUNNER: inProcess ? "0" : "1" } as Record<string, string>,
     stderr: "ignore",
   });
-  const client = new Client({ name: "test-codex", version: "0.0.0" });
   await client.connect(transport);
   const s = { client, transport };
   sessions.push(s);

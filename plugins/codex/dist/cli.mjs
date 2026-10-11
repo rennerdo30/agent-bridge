@@ -9,7 +9,7 @@ import {
 } from "./chunks/chunk-BG6KJS4H.mjs";
 import {
   BridgeNode
-} from "./chunks/chunk-HMDY3WEO.mjs";
+} from "./chunks/chunk-VPBMU4SK.mjs";
 import {
   formatMessage,
   formatReplyRestrictions
@@ -177,8 +177,8 @@ async function main(argv) {
       return (await import("./chunks/installer-WIWHZLRS.mjs")).runInstaller({ action: command, tools: (await import("./chunks/installer-WIWHZLRS.mjs")).parseInstallerArgs(command, rest), yes: rest.includes("--yes") || rest.includes("-y"), out });
     case "ui": {
       const noOpen = rest.includes("--no-open");
-      if (rest.includes("--reset-key")) (await import("./chunks/dashboard-NZIEBRSN.mjs")).dashboardKey(home, true);
-      const running = await (await import("./chunks/dashboard-NZIEBRSN.mjs")).findRunningDashboard(home);
+      if (rest.includes("--reset-key")) (await import("./chunks/dashboard-KKVXAH2P.mjs")).dashboardKey(home, true);
+      const running = await (await import("./chunks/dashboard-KKVXAH2P.mjs")).findRunningDashboard(home);
       if (running) {
         out(t("cli.ui.existing", { url: running.url }));
         if (!noOpen) openBrowser(running.url);
@@ -186,7 +186,7 @@ async function main(argv) {
       }
       const portArg = rest.find((a) => a.startsWith("--port="))?.slice("--port=".length);
       const port = portArg ? Number(portArg) : loadConfig(home, "other", log).dashboardPort;
-      const controller = new (await import("./chunks/dashboard-NZIEBRSN.mjs")).DashboardController({ home, pipe, port, log });
+      const controller = new (await import("./chunks/dashboard-KKVXAH2P.mjs")).DashboardController({ home, pipe, port, log });
       const info = await controller.ensure();
       out(t("cli.ui.running", { url: info.url }));
       if (!noOpen) openBrowser(info.url);
@@ -206,13 +206,13 @@ async function main(argv) {
       return 0;
     }
     case "rewake-hook":
-      return (await import("./chunks/rewake-hook-SL724AKX.mjs")).runRewakeHook(rest.includes("--standby"));
+      return (await import("./chunks/rewake-hook-K4HLFW7P.mjs")).runRewakeHook(rest.includes("--standby"));
     case "session-start-hook":
       return (await import("./chunks/session-start-hook-5S4B2SBQ.mjs")).runSessionStartHook(log);
     case "permission-hook":
       return (await import("./chunks/permission-hook-JHSQHNE4.mjs")).runPermissionHook(rest[0]);
     case "job-runner":
-      return (await import("./chunks/job-runner-3HW6ZHR3.mjs")).runJobRunner(rest[0]);
+      return (await import("./chunks/job-runner-TGYRZ2FV.mjs")).runJobRunner(rest[0]);
     case "reliability": {
       const picked = rest.filter((a) => CODING_AGENTS.includes(a));
       const only = rest.find((a) => a.startsWith("--only="))?.slice("--only=".length);

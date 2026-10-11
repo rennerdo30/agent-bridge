@@ -3,7 +3,7 @@ import {
   RewakeEndpoint,
   WAKE_HEADER,
   shouldWakeClaudeMessage
-} from "./chunks/chunk-BAIECVFF.mjs";
+} from "./chunks/chunk-K7SEYMJF.mjs";
 import {
   guardServerErrors
 } from "./chunks/chunk-Q4TGWKCP.mjs";
@@ -59,7 +59,7 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-OL3JRWLC.mjs";
+} from "./chunks/chunk-W7MCH4UZ.mjs";
 import {
   codexAppServerCall,
   describeModels,
@@ -86,7 +86,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-HMDY3WEO.mjs";
+} from "./chunks/chunk-VPBMU4SK.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -223,7 +223,12 @@ import {
 import "./chunks/chunk-7COR3ABA.mjs";
 import "./chunks/chunk-ZLR2KASI.mjs";
 import {
-  object
+  TRANSCRIPT_ID,
+  directory,
+  object,
+  readJsonl,
+  safeFile,
+  transcriptPaths
 } from "./chunks/chunk-WM3QOXKL.mjs";
 import {
   archiveFile,
@@ -250,7 +255,7 @@ import {
 import "./chunks/chunk-HHAVWD7J.mjs";
 
 // src/mcp/server.ts
-import { isAbsolute, join as join4, resolve } from "node:path";
+import { isAbsolute, join as join5, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
@@ -1854,7 +1859,7 @@ var owners = /* @__PURE__ */ new WeakMap();
 function owner(ctx) {
   let state = owners.get(ctx);
   if (!state) {
-    state = { epoch: 0, prompt: null, closed: /* @__PURE__ */ new Set(), modSequence: -1 };
+    state = { epoch: 0, prompt: null, closed: /* @__PURE__ */ new Set(), modSequence: -1, modInstance: "", retiredMods: /* @__PURE__ */ new Set(), modCompleted: false };
     owners.set(ctx, state);
   }
   return state;
@@ -1862,12 +1867,14 @@ function owner(ctx) {
 var promptKey = (input) => input.promptId ? JSON.stringify([input.sessionId, input.promptId]) : null;
 function reserveHook(ctx, input) {
   const state = owner(ctx), key = promptKey(input), node = ctx.node;
+  if (state.modCompleted && input.event === "PostToolUse") return null;
   if (key && (state.closed.has(key) || input.event !== "UserPromptSubmit" && state.prompt && state.prompt !== key)) return null;
   if (input.event === "UserPromptSubmit" && key) {
     if (state.modTurn && state.modPrompt && state.modPrompt !== key) state.modTurn = void 0;
     state.prompt = key;
     if (state.modTurn && !state.modPrompt) state.modPrompt = key;
   }
+  if (input.event === "UserPromptSubmit" || input.event === "SessionStart") state.modCompleted = false;
   const epoch = ++state.epoch;
   return () => ctx.node === node && !ctx.headless && state.epoch === epoch;
 }
@@ -1883,17 +1890,28 @@ function finishHookTurn(ctx, input) {
 function reportModActivity(ctx, event) {
   if (!ctx.node || ctx.headless || ctx.node.currentSessionId !== event.sessionId) return false;
   const state = owner(ctx);
-  if (!Number.isSafeInteger(event.sequence) || event.sequence <= state.modSequence || !event.turnId) return false;
+  if (!Number.isSafeInteger(event.sequence) || event.sequence < 0 || !event.turnId) return false;
+  const instance = event.instance ?? "";
+  if (instance.length > 128 || state.retiredMods.has(instance)) return false;
+  if (instance !== state.modInstance) {
+    if (!event.busy) return false;
+    state.retiredMods.add(state.modInstance);
+    state.modInstance = instance;
+    state.modSequence = -1;
+  }
+  if (event.sequence <= state.modSequence) return false;
   if (!event.busy && (state.modTurn !== event.turnId || state.modPrompt && state.modPrompt !== state.prompt)) return false;
   state.modSequence = event.sequence;
   if (event.busy) {
+    state.modCompleted = false;
     state.modTurn = event.turnId;
-    state.modPrompt = state.prompt;
+    state.modPrompt = state.prompt && !state.closed.has(state.prompt) ? state.prompt : null;
     ++state.epoch;
     ctx.wakeDelivery?.confirm();
     ctx.wakeDelivery?.active();
     ctx.activity?.("busy");
   } else {
+    state.modCompleted = true;
     state.modTurn = void 0;
     ++state.epoch;
     finishHookTurn(ctx);
@@ -2001,7 +2019,7 @@ async function buildHookResponse(ctx, input) {
   }
 }
 async function runHook(ctx, input, current, busyAtIngress) {
-  if (input.prepare) await withinHook(input.prepare(), input.signal);
+  if (input.prepare) await withinHook(input.prepare(() => current() && !input.signal?.aborted), input.signal);
   if (!current()) return {};
   const node = ctx.node;
   if (!node) return subagentHook(ctx, input);
@@ -2393,6 +2411,60 @@ var CodexWaker = class {
   }
 };
 
+// src/mcp/codex-lineage.ts
+import { join as join3 } from "node:path";
+var CodexLineageLookup = class {
+  constructor(root = join3(transcriptPaths().codex, "sessions")) {
+    this.root = root;
+  }
+  root;
+  known = /* @__PURE__ */ new Map();
+  classify(id, transcript) {
+    if (!TRANSCRIPT_ID.test(id)) return "unknown";
+    const cached = this.known.get(id);
+    if (cached) return cached;
+    const inspect = (path) => {
+      const file = safeFile(this.root, path);
+      if (!file) return "unknown";
+      const row = readJsonl(file, "0", 512 * 1024).entries.find(({ value }) => value.type === "session_meta" && object(value.payload).id === id);
+      if (!row) return "unknown";
+      const meta = object(row.value.payload), source = object(meta.source);
+      if (meta.thread_source === "subagent" || source.subagent !== void 0 || typeof meta.parent_thread_id === "string" && meta.parent_thread_id.length > 0) return "child";
+      return ["cli", "vscode", "exec", "mcp"].includes(meta.source) || ["cli", "vscode", "exec", "mcp"].includes(meta.thread_source) ? "main" : "unknown";
+    };
+    let result = transcript ? inspect(transcript) : "unknown";
+    let examined = 0;
+    if (result === "unknown") outer: for (const year of directory(this.root).filter((s) => /^\d{4}$/.test(s)).sort().reverse()) {
+      const yearDir = safeFile(this.root, join3(this.root, year));
+      if (!yearDir) continue;
+      for (const month of directory(yearDir).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+        const monthDir = safeFile(this.root, join3(yearDir, month));
+        if (!monthDir) continue;
+        for (const day of directory(monthDir).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+          const dir = safeFile(this.root, join3(monthDir, day));
+          if (!dir) continue;
+          if (++examined > 2e3) break outer;
+          for (const name of directory(dir)) {
+            if (++examined > 2e4) break outer;
+            if (!name.startsWith("rollout-") || !name.endsWith(`-${id}.jsonl`)) continue;
+            result = inspect(join3(dir, name));
+            if (result !== "unknown") break outer;
+          }
+        }
+      }
+    }
+    if (result !== "unknown") {
+      this.known.set(id, result);
+      if (this.known.size > 512) this.known.delete(this.known.keys().next().value);
+    }
+    return result;
+  }
+};
+function codexCallIdentity(meta, hook) {
+  const given = (value) => typeof value === "string" && value && !value.startsWith("${") ? value : null;
+  return { threadId: given(meta?.threadId) ?? hook?.threadId, agentId: hook?.agentId ?? given(meta?.agent_id), transcript: hook?.transcript ?? given(meta?.transcript_path) };
+}
+
 // src/mcp/permissions.ts
 var DECISION_SCHEMA = {
   type: "object",
@@ -2481,11 +2553,11 @@ var LocalCoordinator = class extends EventEmitter {
 };
 
 // src/core/auto-wake-pref.ts
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 var FILE = "auto-wake.json";
 function read(home) {
   try {
-    return readJsonStore(join3(home, FILE)) ?? {};
+    return readJsonStore(join4(home, FILE)) ?? {};
   } catch {
     return {};
   }
@@ -2497,7 +2569,7 @@ function savedAutoWake(home, name) {
 }
 function saveAutoWake(home, name, enabled) {
   try {
-    const file = join3(home, FILE);
+    const file = join4(home, FILE);
     const previous = readJsonStore(file);
     const data = isRecord(previous) ? previous : {};
     const peers = isRecord(data.peers) ? data.peers : data;
@@ -2692,7 +2764,7 @@ async function startServer(argv = process.argv.slice(2)) {
     const parentJob = process.env[PARENT_JOB_ENV];
     const rootSession = process.env[ROOT_SESSION_ENV];
     const coordinator = ctx.childInbox = new LocalCoordinator(parentJob, rootSession);
-    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join4(home, JOBS_FILE), cfg.maxJobs, {
+    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join5(home, JOBS_FILE), cfg.maxJobs, {
       parentJob,
       rootSession,
       rootName: process.env[ROOT_NAME_ENV] || ctx.parent.name,
@@ -2701,7 +2773,7 @@ async function startServer(argv = process.argv.slice(2)) {
     });
   }
   if (node) {
-    ctx.jobs = new JobManager(node, log.child("jobs"), join4(home, JOBS_FILE), cfg.maxJobs, void 0, {
+    ctx.jobs = new JobManager(node, log.child("jobs"), join5(home, JOBS_FILE), cfg.maxJobs, void 0, {
       canRestore: () => node.isConnected && (agent !== "claude" || ctx.restoreEligible === true),
       canReceiveHandoff: () => node.isConnected
     });
@@ -2730,13 +2802,18 @@ async function startServer(argv = process.argv.slice(2)) {
     };
   }
   if (agent === "codex" && node) {
+    const lineage = new CodexLineageLookup();
+    ctx.admitCodex = (meta, hook) => {
+      const call = codexCallIdentity(meta, hook);
+      return !call.agentId && Boolean(call.threadId && lineage.classify(call.threadId, call.transcript) === "main");
+    };
     const waker = new CodexWaker(node, cfg, log.child("wake"));
     ctx.activity = (s) => {
       node.setActivity(s);
       waker.setActivity(s);
     };
     ctx.observeMeta = async (meta) => {
-      const id = meta?.threadId ?? meta?.sessionId;
+      const id = meta?.threadId;
       if (typeof id === "string" && id) {
         waker.setThreadId(id);
         await node.setSessionId(id).catch(() => {
@@ -2825,7 +2902,7 @@ async function startServer(argv = process.argv.slice(2)) {
   const ensureDashboard = async (force) => {
     try {
       if (!force && !cfg.dashboard) return null;
-      dashboard ??= import("./chunks/dashboard-NZIEBRSN.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
+      dashboard ??= import("./chunks/dashboard-KKVXAH2P.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
       return await (await dashboard).ensure();
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
@@ -2911,11 +2988,11 @@ async function startServer(argv = process.argv.slice(2)) {
       adopt();
       setTimeout(adopt, STAND_IN_RECHECK_MS).unref();
     });
-    const join5 = () => node.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join6 = () => node.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (ctx.headless) {
       log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
-    } else if (cwdKnown) {
-      void join5();
+    } else if (cwdKnown && agent !== "codex") {
+      void join6();
     } else {
       log.info("project directory unknown yet; waiting for host metadata before bridge join");
     }
@@ -2939,6 +3016,7 @@ function registerTools(mcp, ctx, targets) {
   };
   const guarded = (name, fn) => async (args, extra) => {
     log.debug("tool call", { tool: name, args });
+    if (ctx.admitCodex && !ctx.admitCodex(extra._meta)) return text("Native Codex child or unverified thread: use the parent session's bridge. Missing main-thread lineage may be retried once its rollout header is available.", true);
     if (name !== "health" && ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: err.message }));
     await ctx.observeMeta?.(extra._meta);
     try {
@@ -3801,24 +3879,27 @@ Saved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value
         cwd: external_exports.string().optional(),
         agent_id: external_exports.string().optional(),
         prompt: external_exports.string().optional(),
-        prompt_id: external_exports.string().optional()
+        prompt_id: external_exports.string().optional(),
+        transcript_path: external_exports.string().optional()
       }
     },
     async (a, extra) => {
       const given = (v) => v && !v.startsWith("${") ? v : null;
       try {
+        const identity = codexCallIdentity(extra._meta, { threadId: given(a.session_id), agentId: given(a.agent_id), transcript: given(a.transcript_path) });
+        if (given(a.agent_id) || ctx.admitCodex && !ctx.admitCodex(extra._meta, identity)) return text("{}");
         const out = await buildHookResponse(ctx, {
           event: a.event,
-          sessionId: given(a.session_id),
+          sessionId: ctx.agent === "codex" ? identity.threadId ?? null : given(a.session_id),
           stopHookActive: a.stop_hook_active === true || a.stop_hook_active === "true",
           cwd: given(a.cwd),
           subagent: Boolean(given(a.agent_id)),
           prompt: given(a.prompt),
           promptId: given(a.prompt_id),
           signal: extra.signal,
-          prepare: async () => {
+          prepare: async (current) => {
             if (ctx.node?.wasReplaced) await ctx.node.reclaim();
-            await ctx.observeMeta?.(extra._meta);
+            if (current()) await ctx.observeMeta?.(ctx.agent === "codex" ? { ...extra._meta, threadId: identity.threadId } : extra._meta);
           }
         });
         return text(JSON.stringify(out));

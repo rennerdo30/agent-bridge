@@ -88,7 +88,7 @@ export class RewakeEndpoint {
     this.server = createServer((req, res) => {
       const url = new URL(req.url ?? "/", `http://${HOST}`);
       if (url.pathname === "/activity" && tokensEqual(String(req.headers.authorization ?? "").replace(/^Bearer /, ""), this.secret)) {
-        const accepted = !this.retired && this.activity?.({ sessionId: url.searchParams.get("session_id") ?? "", turnId: url.searchParams.get("turn_id") ?? "", sequence: Number(url.searchParams.get("sequence")), busy: url.searchParams.get("busy") === "1" });
+        const accepted = !this.retired && this.activity?.({ sessionId: url.searchParams.get("session_id") ?? "", turnId: url.searchParams.get("turn_id") ?? "", sequence: Number(url.searchParams.get("sequence")), busy: url.searchParams.get("busy") === "1", instance: url.searchParams.get("instance") ?? undefined });
         if (accepted) this.modSeen = true;
         res.writeHead(accepted ? 204 : 409).end();
         return;

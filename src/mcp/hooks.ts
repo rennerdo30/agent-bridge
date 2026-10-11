@@ -25,7 +25,7 @@ export interface HookInput {
   /** Aborted when the host cancels the hook call (e.g. the user interrupts). */
   signal?: AbortSignal;
   /** Metadata work shares the hook deadline. */
-  prepare?: () => Promise<void>;
+  prepare?: (current: () => boolean) => Promise<void>;
 }
 
 /** Same JSON shape as command-hook stdout; both hosts parse MCP-tool hook text identically. */
@@ -141,7 +141,7 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
   finally { clearTimeout(timer); input.signal?.removeEventListener("abort", abort); }
 }
 async function runHook(ctx: ServerContext, input: HookInput, current: () => boolean, busyAtIngress: boolean): Promise<HookOutput> {
-  if (input.prepare) await withinHook(input.prepare(), input.signal!);
+  if (input.prepare) await withinHook(input.prepare(() => current() && !input.signal?.aborted), input.signal!);
   if (!current()) return {};
   const node = ctx.node;
   if (!node) return subagentHook(ctx, input);

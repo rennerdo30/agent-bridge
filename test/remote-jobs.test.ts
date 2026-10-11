@@ -1,4 +1,5 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { codexHost } from "./helpers.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -183,15 +184,16 @@ function config(home: string, name: string, allowed = false): void {
   writeAtomic(join(home, "config.json"), JSON.stringify({ dashboard: false, claudeBin, network: { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: LOOPBACK, port: 0, remoteJobs: { enabled: allowed, allowRoots: [repo], agents: ["claude"], allowPeers: allowed ? ["windows"] : [] } } }));
 }
 async function session(home: string, name: string, agent = "codex"): Promise<Client> {
+  const client = new Client({ name: "remote-test", version: "1" });
+  const codexHome = codexHost(client, home, agent, name);
   const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`],
-    env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug" } as Record<string, string>, stderr: "pipe" });
+    env: { ...process.env, CODEX_HOME: codexHome, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug" } as Record<string, string>, stderr: "pipe" });
   const stderrPath = join(root, `session-${name}-${agent}.stderr.log`);
   let stderrError: unknown;
   transport.stderr?.on("data", data => {
     try { appendFileSync(stderrPath, data); }
     catch (error) { stderrError ??= error; }
   });
-  const client = new Client({ name: "remote-test", version: "1" });
   cleanup.push(async () => {
     const pid = transport.pid;
     try { await client.close(); }

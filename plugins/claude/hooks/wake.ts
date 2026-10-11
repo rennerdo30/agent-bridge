@@ -11,6 +11,7 @@ import type { Register } from 'claude-code'
  * versions keep using them.
  */
 const RETRY_MS = 5_000
+const ACTIVITY_TIMEOUT_MS = 1_500
 /** A wake-up that started no turn within this long is asked for again (the server hands out the same messages). */
 const RETAKE_MS = 25_000
 
@@ -24,6 +25,8 @@ const state = {
   openTurns: new Set<string>(),
   turnsStarted: 0,
   activitySequence: 0,
+  /** Module reloads start a new sequence; the endpoint retires the previous instance. */
+  activityInstance: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
   lastMainTurn: '',
   /** Ids of the messages already submitted: never submitted twice (a server that missed the delivery). */
   submitted: [] as string[],
@@ -51,7 +54,12 @@ async function call($: Engine, path: string, method = 'GET') {
 
 async function activity($: Engine, busy: boolean, turnId: string, sequence: number) {
   const session = await $.session.id()
-  return call($, `/activity?busy=${busy ? 1 : 0}&session_id=${encodeURIComponent(session)}&turn_id=${encodeURIComponent(turnId)}&sequence=${sequence}`, 'POST')
+  // A stalled local endpoint must not hold the host's lifecycle open. A transport
+  // timeout makes no activity claim; hooks remain the fallback authority.
+  return Promise.race([
+    call($, `/activity?busy=${busy ? 1 : 0}&session_id=${encodeURIComponent(session)}&turn_id=${encodeURIComponent(turnId)}&sequence=${sequence}&instance=${encodeURIComponent(state.activityInstance)}`, 'POST'),
+    $.clock.sleep(ACTIVITY_TIMEOUT_MS).then(() => null),
+  ])
 }
 
 async function poll($: Engine, mine: number): Promise<void> {

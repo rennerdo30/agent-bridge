@@ -69,6 +69,30 @@ it("a prompt supersedes an old mod completion while the next main turn can finis
   expect(mod(true, "next", 3)).toBe(true); expect(mod(false, "next", 4)).toBe(true);
 });
 
+it("rejects tokenless late PostToolUse after authoritative completion and binds a start preceding the next prompt", async () => {
+  const { ctx, hook, mod } = fixture();
+  await hook("UserPromptSubmit"); mod(true, "first", 1); mod(false, "first", 2);
+  vi.mocked(ctx.activity!).mockClear();
+  await buildHookResponse(ctx, { event: "PostToolUse", sessionId: "session", stopHookActive: false });
+  expect(ctx.activity).not.toHaveBeenCalled();
+  expect(mod(true, "next", 3)).toBe(true);
+  await hook("UserPromptSubmit", "next");
+  expect(mod(false, "next", 4)).toBe(true);
+  expect(ctx.activity).toHaveBeenLastCalledWith("idle");
+});
+
+it("accepts a reloaded mod's sequence and retires prior instance events", () => {
+  const { ctx } = fixture();
+  const mod = (instance: string, busy: boolean, sequence: number) => reportModActivity(ctx, { sessionId: "session", turnId: instance, instance, busy, sequence });
+  expect(mod("old", true, 100)).toBe(true);
+  expect(mod("invalid", true, NaN)).toBe(false);
+  expect(mod("old", false, 101)).toBe(true);
+  expect(mod("new", true, 1)).toBe(true);
+  expect(mod("old", true, 102)).toBe(false);
+  expect(mod("old", false, 103)).toBe(false);
+  expect(mod("new", false, 2)).toBe(true);
+});
+
 it("authenticated mod completion reaches idle with retained mail; confirmation toggles are not activity", async () => {
   const { ctx, node } = fixture();
   mkdirSync(ctx.home, { recursive: true });
@@ -95,6 +119,7 @@ it("the Claude mod ignores child starts and completes main turns without a Stop 
   register(((name: string, fn: any) => handlers.set(name, fn)) as any);
   const requests: string[] = [];
   const engine = { session: { id: async () => "session" }, env: { get: async () => "fixture" },
+    clock: { sleep: async () => new Promise(() => {}) },
     fs: { read: async () => JSON.stringify({ port: 1, secret: "fixture" }) },
     http: { fetch: async (url: string) => { requests.push(url); return { ok: true, text: JSON.stringify({ superseded: true }) }; } },
   };
@@ -107,4 +132,21 @@ it("the Claude mod ignores child starts and completes main turns without a Stop 
     expect.stringContaining("busy=1&session_id=session&turn_id=main&sequence=1"),
     expect.stringContaining("busy=0&session_id=session&turn_id=main&sequence=2"),
   ]);
+});
+
+it("a stalled mod activity endpoint does not hold turn start open or infer idle", async () => {
+  vi.resetModules();
+  const modulePath = "../plugins/claude/hooks/wake.ts";
+  const { register } = await import(modulePath);
+  const handlers = new Map<string, (...a: any[]) => Promise<unknown>>();
+  register(((name: string, fn: any) => handlers.set(name, fn)) as any);
+  const fetch = vi.fn(async (_url: string) => new Promise(() => {})), next = vi.fn(async (e: any) => e);
+  const engine = { session: { id: async () => "session" }, env: { get: async () => "fixture" },
+    fs: { read: async () => JSON.stringify({ port: 1, secret: "fixture" }) },
+    http: { fetch }, clock: { sleep: vi.fn(async () => {}) },
+  };
+  await handlers.get("turn.start")!(engine, { turnId: "main" }, next);
+  expect(next).toHaveBeenCalledOnce();
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(fetch.mock.calls[0]![0]).toContain("busy=1");
 });
