@@ -23,6 +23,39 @@ V1 screens: Overview, Running/jobs/live steps, session/run chats, local owner-qu
 
 Known dependency risk: npm audit lists 22 vulnerable package entries (15 high, 7 moderate), traced to three build-only advisories: braces, node-forge and uuid through xcode. The supervisor accepted these residuals on SDK 57 / RN 0.86; the vulnerable leaves are absent from both production Hermes exports. See [dependency security review](SECURITY.md) for each path, exploitability, evidence and upstream-patch/next-SDK revisit triggers. Actual phone/TLS/storage/push/background evidence remains pending.
 
+## iOS 27 scene lifecycle
+
+`app.json` enables the official `expo-build-properties` option
+`ios.enableSceneSupport`. Apps built with the iOS 27 SDK must adopt UIKit scenes
+or UIKit terminates them at launch. Expo SDK 57 keeps the old lifecycle by default.
+The locked Expo 57.0.27 and build-properties 57.0.22 include the supported backport.
+
+On a fresh `npx expo prebuild --platform ios`, the plugin adds the
+`UIApplicationSceneManifest` pointing to Expo's built-in `EXExpoAppSceneDelegate`,
+makes `AppDelegate` conform to `ExpoReactNativeFactoryProvider`, and moves React
+Native window startup into the scene delegate. SDK 57 does not generate a separate
+`SceneDelegate.swift`. No custom plugin or committed native folder is needed.
+Regenerate an existing disposable native build copy with
+`npx expo prebuild --clean --platform ios` after updating the config.
+
+The option requires Expo >=57.0.23 and build-properties >=57.0.19; remove it when
+upgrading to SDK 58, where scene adoption is automatic. See the official
+[SDK 57 option](https://docs.expo.dev/versions/v57.0.0/sdk/build-properties/#pluginconfigtypeios),
+[scene migration guide](https://github.com/expo/fyi/blob/main/ios-scene-lifecycle.md),
+[runtime backport](https://github.com/expo/expo/pull/50191), and
+[config option](https://github.com/expo/expo/pull/50205). The earlier
+[blank-screen report](https://github.com/expo/expo/issues/47570) explains why adding
+only a manifest or making AppDelegate a scene delegate is insufficient.
+
+For unsigned simulator verification over SSH, use a private build copy under a
+path without spaces (for example `~/dkbuild/ab271-<timestamp>`), install with
+`npm ci` at the root and in this package, then prebuild and run `pod install`.
+Set `PATH=/opt/homebrew/bin:/usr/local/bin:$PATH` and `LANG=en_US.UTF-8` in the SSH
+shell. Build Release for `iphonesimulator` with `CODE_SIGNING_ALLOWED=NO` so the
+app includes its JavaScript bundle and launches without Metro or keychain access.
+Keep test bundle identifiers in the build copy only. See
+[iOS launch verification](../../docs/mobile/IOS-SCENE-VERIFICATION.md) for evidence.
+
 ## Design fidelity and review
 
 The app uses the design tokens for typography, themes, status colors, radii and touch targets, with four roots: Overview, Running, Questions and Settings. Root views remain mounted to preserve scroll positions. Detail screens, chat bubbles/tool folds, full context/options and a keyboard-safe answer bar use the existing private DTOs and unchanged client operations. Confirmation captures PC identity, epoch, question id/version and the exact literal answer; callbacks recheck current authority and CAS terms. Drafts stay in memory, unchanged terms survive unrelated activity, and removed/revoked/changed terms invalidate them. A single-flight latch survives back navigation. Ambiguous writes remain unconfirmed until a deliberate read-only check and new review; nothing auto-resubmits. UI expiry redraws consult actual QR/client authority, never the design's conflicting timing tokens.
@@ -40,7 +73,7 @@ Design reconciliation stays within the approved contract:
 | Clipboard, haptics, native stack gestures | Selectable native text and lightweight navigation; no added modules or native configuration |
 | Preferences / drafts / content | Memory only; credentials and approved origins remain the only SecureStore data |
 
-English copy lives in `src/strings.ts`; the logo PNG is a local raster adaptation of the existing SVG geometry. All dependencies, native configuration, client/auth code and provider helpers remain unchanged.
+English copy lives in `src/strings.ts`; the logo PNG is a local raster adaptation of the existing SVG geometry. The design implementation did not change dependencies, client/auth code or provider helpers.
 
 Run the app-owned model/navigation/answer-state tests from the repository root using the existing read-only Vitest installation:
 

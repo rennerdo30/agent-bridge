@@ -28,7 +28,13 @@
         }
       ],
       "expo-notifications",
-      ["expo-build-properties", { "android": { "usesCleartextTraffic": false } }]
+      [
+        "expo-build-properties",
+        {
+          "android": { "usesCleartextTraffic": false },
+          "ios": { "enableSceneSupport": true }
+        }
+      ]
     ]
   }
 }
