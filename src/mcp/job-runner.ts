@@ -272,8 +272,8 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     } catch {
       return;
     }
-    if (c.type === "cancel" && !isCurrentRunnerCancel(m.createdAt, spec.job.startedAt)) {
-      log.info("ignoring cancellation from an earlier job turn", { createdAt: m.createdAt, startedAt: spec.job.startedAt });
+    if (c.type === "cancel" && !isCurrentRunnerCancel(m.createdAt, job.startedAt)) {
+      log.info("ignoring cancellation from an earlier job turn", { createdAt: m.createdAt, startedAt: job.startedAt });
       return;
     }
     refreshOwner();
@@ -310,6 +310,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       log.info("cancelled by the session");
       job.queue = [];
       job.controller.abort();
+      save({ stopping: true });
     }
     node.markRead([m.id]);
   };
