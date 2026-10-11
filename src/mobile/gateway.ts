@@ -43,7 +43,12 @@ export class MobileGateway {
   }
   private async sample(): Promise<SourceView> {
     if (!this.sampling) this.sampling = this.source.snapshot().finally(() => { this.sampling = undefined; });
-    return this.sampling;
+    return this.deadline(this.sampling);
+  }
+  private async deadline<T>(work: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try { return await Promise.race([work, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new MobileFault(503, "source_unavailable")), 5000); })]); }
+    finally { if (timer) clearTimeout(timer); }
   }
   private authorized<T extends Session | Job | Question>(device: Device, kind: "session" | "job" | "question", capability: Capability, entities: T[]): T[] {
     return entities.filter(e => (kind !== "question" || e.pcId === this.store.pcId) && this.store.can(device, capability, e.pcId, { kind, id: e.id, projectId: e.projectId }));
@@ -90,7 +95,7 @@ export class MobileGateway {
       remaining = payload.remaining as T[]; nativeNext = payload.nativeNext; generation = payload.generation; existing = true;
     }
     if (!existing || remaining.length === 0 && nativeNext) {
-      const page = kind === "chat" ? await this.source.chat(entityId, nativeNext ?? undefined, limit) : await this.source.steps(entityId, nativeNext ?? undefined, limit);
+      const page = kind === "chat" ? await this.deadline(this.source.chat(entityId, nativeNext ?? undefined, limit)) : await this.deadline(this.source.steps(entityId, nativeNext ?? undefined, limit));
       if (existing && generation !== page.generation || page.reset) throw new MobileFault(410, "snapshot_required");
       remaining = page.items as T[]; generation = page.generation; nativeNext = page.next;
     }
@@ -115,6 +120,7 @@ export class MobileGateway {
       const route = url.pathname.slice("/mobile/v1".length);
       for (const [key] of url.searchParams) if (url.searchParams.getAll(key).length !== 1) throw new MobileFault(400, "invalid_query");
       if (req.body && Buffer.byteLength(req.body) > 32 * 1024) throw new MobileFault(413, "body_too_large");
+      if (req.method === "GET" && req.body) throw new MobileFault(400, "unexpected_body");
       const write = req.method !== "GET";
       const key = write || route.startsWith("/pairing/claims/") ? uuid.parse(req.headers["idempotency-key"]) : "";
       let body: unknown;
@@ -192,7 +198,7 @@ export class MobileGateway {
           const proof = req.headers["x-mobile-view"], displayed = proof && this.fromCursor(device, proof, "events");
           if (!displayed || view.snapshot.stale || q.status === "open" && proof !== view.snapshot.cursor) throw new MobileFault(409, "fresh_snapshot_required");
           // This adapter delegates CAS + durable idempotency atomically to the owner-question store.
-          const result = await this.source.answer(q.id, args, device.id, key);
+          const result = await this.deadline(this.source.answer(q.id, args, device.id, key));
           return reply(200, { question: result, replayExpiresAt: this.store.now() + 24 * 60 * 60_000 });
         }
       }

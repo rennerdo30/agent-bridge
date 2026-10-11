@@ -94,7 +94,8 @@ export class LocalMobileSource implements MobileSource {
     if (!this.ready()) throw new MobileFault(503, "source_unavailable");
     const q = this.questions.answerMobile(id, body, deviceId, key, { id: `owner:mobile:${deviceId}`, name: "Owner (mobile)", agent: "other" });
     // Delivery resumes through the existing service work loop even if this callback fails.
-    try { this.completeAnswer?.(q); } catch { /* Persisted owner intent must not be submitted again. */ }
+    const latest = this.questions.get(q.id) ?? q;
+    try { if (!latest.deliveryComplete) this.completeAnswer?.(latest); } catch { /* Persisted owner intent must not be submitted again. */ }
     return projectQuestion(this.questions.get(q.id) ?? q, this.pcId);
   }
 }

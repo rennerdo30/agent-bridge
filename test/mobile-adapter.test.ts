@@ -57,4 +57,12 @@ describe("fixed mobile local adapter", () => {
     const payload = JSON.parse(body.qrPayload); expect(Object.keys(payload).sort()).toEqual(["expiresAt", "invitationId", "nonce", "origin", "origins", "pcId", "v"]);
     expect(payload.expiresAt - Date.now()).toBeLessThanOrEqual(120_000);
   });
+  it("does not redeliver or replace delivery metadata on a durable answer replay", async () => {
+    const q = questions.ask({ topic: "replay", title: "Replay fixture", context: "Terms", options: [{ id: "yes", label: "Yes", consequence: "Keep", recommended: true }, { id: "wait", label: "Wait", consequence: "Delay", recommended: false }], blocking: false, blocks: "", meanwhile: "Read" }, peer.cwd, { session: peer.name, sessionId: peer.sessionId, main: "main", agent: "codex" }).question;
+    const complete = vi.fn((current: typeof q) => { current.deliveryComplete = true; current.deliveries = [{ recipient: "main", state: "busy", detail: "Queued", readAt: 123 }]; questions.save(current); });
+    const withDelivery = new LocalMobileSource({ home, log: nullLogger, peers: () => [peer] }, questions, "fixture-pc", () => true, complete);
+    const intent = { expectedVersion: ownerQuestionVersion(q), option: "yes" }, key = "11111111-1111-4111-8111-111111111111";
+    await withDelivery.answer(q.id, intent, "device", key); const replay = await withDelivery.answer(q.id, intent, "device", key);
+    expect(complete).toHaveBeenCalledTimes(1); expect(replay.deliveries).toEqual([{ recipientLabel: "main", state: "busy", consumedAt: 123 }]);
+  });
 });

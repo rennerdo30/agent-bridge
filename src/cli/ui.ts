@@ -14,6 +14,7 @@ import { UI_RECOVERY_PAGE } from "./ui-recovery.js";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { MobileDesktopAdmin } from "../mobile/desktop.js";
+import { readMobileDesktopBody } from "../mobile/desktop.js";
 import { MobileFault } from "../mobile/store.js";
 import { MOBILE_DESKTOP_PAGE } from "../mobile/desktop-page.js";
 import type { AddressInfo } from "node:net";
@@ -313,7 +314,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
           if (Array.isArray(value)) return send(res, 400, { code: "invalid_headers" });
           headers[key] = value;
         }
-        const body = req.method === "GET" ? undefined : JSON.stringify(await readJson(req));
+        const body = req.method === "GET" ? undefined : await readMobileDesktopBody(req);
         const result = await opts.mobileAdmin.handle(req.method ?? "", url.pathname, headers, body);
         res.setHeader("cache-control", "no-store");
         return send(res, result.status, result.body ?? "");

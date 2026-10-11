@@ -140,6 +140,8 @@ describe("atomic answer CAS/replay", () => {
     const body = { expectedVersion: question.version, option: "keep" };
     const results = await Promise.all([gateway.handle(req("POST", `/questions/${question.id}/answer`, c, body, { "x-mobile-view": snap.cursor, "idempotency-key": key })), gateway.handle(req("POST", `/questions/${question.id}/answer`, c, { ...body, option: "wait" }, { "x-mobile-view": snap.cursor }))]);
     expect(results.map(r => r.status).sort()).toEqual([200, 409]);
+    const replay = await gateway.handle(req("POST", `/questions/${question.id}/answer`, c, body, { "x-mobile-view": snap.cursor, "idempotency-key": key }));
+    expect(replay.status).toBe(200); expect(replay.body).toMatchObject({ question: { status: "answered", answer: { option: "keep" } } });
     questions.close(); close.pop(); questions = new OwnerQuestionStore(home, nullLogger); close.push(() => questions.close());
     expect(questions.answerMobile(question.id, body, c.deviceId, key, author).answer?.option).toBe("keep");
     expect(() => questions.answerMobile(question.id, { ...body, option: "wait" }, c.deviceId, key, author)).toThrow(QuestionVersionConflict);
@@ -169,6 +171,16 @@ describe("atomic answer CAS/replay", () => {
     expect((await gateway.handle(req("POST", path, c, body, { "x-mobile-view": snap.cursor, "idempotency-key": "invalid" }))).status).toBe(400);
     view.sourceState = "offline"; expect((await gateway.handle(req("POST", path, c, body, { "x-mobile-view": snap.cursor }))).status).toBe(409);
     expect(source.answer).not.toHaveBeenCalled();
+  });
+  it("bounds JSON bodies and keeps native read cursors hidden behind the entity-bound cursor", async () => {
+    const c = pair(), snapshot = await gateway.handle(req("GET", "/snapshot", c));
+    const path = `/questions/${question.id}/answer`;
+    expect((await gateway.handle(req("POST", path, c, { expectedVersion: question.version, text: "x".repeat(40_000) }, { "x-mobile-view": (snapshot.body as { cursor: string }).cursor }))).status).toBe(413);
+    source.chat = vi.fn(async () => ({ items: Array.from({ length: 35 }, (_, n) => ({ id: String(n), kind: "assistant" as const, at, text: "item" + n, version: "v", truncated: false })), next: "private-native-cursor", generation: "g", reset: false }));
+    const first = await gateway.handle(req("GET", "/chats/chat1?limit=20", c));
+    const page = first.body as { items: unknown[]; next: string }; expect(page.items).toHaveLength(20); expect(JSON.stringify(page)).not.toContain("private-native-cursor");
+    const second = await gateway.handle(req("GET", "/chats/chat1?cursor=" + page.next, c)); expect((second.body as { items: unknown[] }).items).toHaveLength(15); expect(source.chat).toHaveBeenCalledTimes(1);
+    expect((await gateway.handle(req("GET", "/chats/chat-job1?cursor=" + page.next, c))).status).toBe(410);
   });
 });
 describe("local phone administration and opaque push seams", () => {

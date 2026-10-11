@@ -44,8 +44,16 @@ function Dashboard() {
   }, []);
   useEffect(() => {
     setOlder({ sessions: [], jobs: [], questions: [] }); setPages(state.snapshot?.pages ?? { sessions: null, jobs: null, questions: null });
-    if (detail?.kind === "question") { const current = state.snapshot?.questions.find(q => q.id === detail.item.id); if (current) setDetail({ kind: "question", item: current }); }
+    if (detail) {
+      const current = detail.kind === "question" ? state.snapshot?.questions.find(q => q.id === detail.item.id) : detail.kind === "session" ? state.snapshot?.sessions.find(q => q.id === detail.item.id) : state.snapshot?.jobs.find(q => q.id === detail.item.id);
+      if (!current) { setDetail(null); setContent([]); setSteps([]); setConfirm(false); setAnswerText(""); setSelected(null); }
+      else { if (detail.kind === "question" && current.version !== detail.item.version) { setConfirm(false); setAnswerText(""); setSelected(null); } setDetail({ kind: detail.kind, item: current } as Detail); }
+    }
   }, [state.snapshot?.cursor]);
+  useEffect(() => {
+    if (!["revoked", "unpaired"].includes(state.connection)) return;
+    setDetail(null); setContent([]); setSteps([]); setOlder({ sessions: [], jobs: [], questions: [] }); setConfirm(false); setAnswerText(""); setSelected(null);
+  }, [state.connection]);
   useEffect(() => {
     if (!pushQuestionId || !state.snapshot) return;
     const q = state.snapshot.questions.find(q => q.id === pushQuestionId);
@@ -113,10 +121,10 @@ function Dashboard() {
       {card("meanwhile", "Meanwhile", detail.item.meanwhile)}
       {detail.item.declaredDefault && card("default", "Declared default", `${detail.item.declaredDefault.option} at ${new Date(detail.item.declaredDefault.deadline).toLocaleString()}`)}
       {detail.item.links.map((link, index) => card("link" + index, link.kind, link.display))}
-      {detail.item.options.map(option => <Pressable key={option.id} accessibilityRole="radio" accessibilityState={{ checked: selected === option.id, disabled: !client.writesEnabled || detail.item.status !== "open" }} disabled={!client.writesEnabled || detail.item.status !== "open"} onPress={() => { setSelected(option.id); setAnswerText(""); }} style={[styles.card, { backgroundColor: selected === option.id ? color.accentSoft : color.panel, borderColor: selected === option.id ? color.accent : color.line }]}>
+      {detail.item.options.map(option => <Pressable key={option.id} accessibilityRole="radio" accessibilityState={{ checked: selected === option.id, disabled: !client.canAnswer(detail.item) }} disabled={!client.canAnswer(detail.item)} onPress={() => { setSelected(option.id); setAnswerText(""); }} style={[styles.card, { backgroundColor: selected === option.id ? color.accentSoft : color.panel, borderColor: selected === option.id ? color.accent : color.line }]}>
         {text(option.label + (option.recommended ? " · Recommended" : ""))}{text(option.consequence, true)}</Pressable>)}
-      {detail.item.status === "open" && <><TextInput accessibilityLabel="Free text answer" multiline value={answerText} maxLength={8000} onChangeText={value => { setAnswerText(value); setSelected(null); }} placeholder="Or write an exact answer" placeholderTextColor={color.textMuted} editable={client.writesEnabled} style={[styles.input, { color: color.text, backgroundColor: color.panel, borderColor: color.line }]} />
-        {button(s.confirm, () => setConfirm(true), !client.writesEnabled || (!selected && !answerText.trim()), true)}</>}
+      {detail.item.status === "open" && <><TextInput accessibilityLabel="Free text answer" multiline value={answerText} maxLength={8000} onChangeText={value => { setAnswerText(value); setSelected(null); }} placeholder="Or write an exact answer" placeholderTextColor={color.textMuted} editable={client.canAnswer(detail.item)} style={[styles.input, { color: color.text, backgroundColor: color.panel, borderColor: color.line }]} />
+        {button(s.confirm, () => setConfirm(true), !client.canAnswer(detail.item) || (!selected && !answerText.trim()), true)}</>}
       {detail.item.answer && card("answer", "Recorded answer", detail.item.answer.text)}
       {detail.item.deliveries.map((delivery, index) => card("delivery" + index, delivery.recipientLabel, `${delivery.state}${delivery.consumedAt ? " · consumed" : " · consumption unknown"}`))}
       {detail.item.dismissal && card("dismissal", detail.item.status, detail.item.dismissal.reason)}

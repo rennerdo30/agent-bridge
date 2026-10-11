@@ -36,7 +36,10 @@ export class MobileClient {
   constructor(private readonly wire: WireFetch, private readonly secure: SecureCredentials, private readonly uuid: () => string, private readonly now: () => number = Date.now) {}
   subscribe(fn: () => void): () => void { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
   private update(patch: Partial<ClientState>): void { this.state = { ...this.state, ...patch }; for (const fn of this.listeners) fn(); }
-  get writesEnabled(): boolean { return this.foreground && this.state.connection === "ready" && !this.state.writePending && !!this.state.snapshot && !this.state.snapshot.stale && this.now() - this.state.snapshot.sampledAt < 15_000; }
+  get writesEnabled(): boolean { return this.foreground && this.state.connection === "ready" && !this.state.writePending && !!this.device && this.device.credentials.accessExpiresAt > this.now() && !!this.state.snapshot && !this.state.snapshot.stale && this.now() - this.state.snapshot.sampledAt < 15_000; }
+  canAnswer(question: Question): boolean {
+    return this.writesEnabled && question.pcId === this.device?.credentials.pcId && question.status === "open" && !!this.device?.credentials.scopes.some(g => g.pcId === question.pcId && g.projectIds.includes(question.projectId) && g.capabilities.includes("questions.answer"));
+  }
   get approvedOrigins(): readonly string[] { return this.device?.origins ?? []; }
   get preferredOrigin(): string | null { return this.device?.preferredOrigin ?? null; }
   async initialize(): Promise<void> {
@@ -65,7 +68,7 @@ export class MobileClient {
       if (response.redirected || response.url && response.url !== requestUrl || response.status >= 300 && response.status < 400) throw new ClientFault("redirect_rejected", response.status, method !== "GET");
       const text = await response.text(); if (text.length > 512 * 1024) throw new ClientFault("response_too_large");
       const value = text ? JSON.parse(text) : null;
-      if (!response.ok) throw new ClientFault((value as GatewayError)?.code ?? "request_failed", response.status);
+      if (!response.ok) throw new ClientFault((value as GatewayError)?.code ?? "request_failed", response.status, method !== "GET" && response.status >= 500);
       return value as T;
     } catch (error) { if (error instanceof ClientFault) throw error; throw new ClientFault(method === "GET" ? "unreachable" : "outcome_unconfirmed", 0, method !== "GET"); }
     finally { clearTimeout(timeout); this.controllers.delete(controller); }
@@ -167,7 +170,7 @@ export class MobileClient {
     return page;
   }
   async answer(question: Question, choice: { option: string } | { text: string }): Promise<Question> {
-    if (!this.writesEnabled || !this.device || !this.state.snapshot) throw new ClientFault("fresh_snapshot_required");
+    if (!this.canAnswer(question) || !this.device || !this.state.snapshot) throw new ClientFault("fresh_snapshot_required");
     const device = this.device, snapshot = this.state.snapshot;
     this.update({ writePending: true, notice: null });
     try {

@@ -5,6 +5,11 @@ import { digest, equal, MobileFault, MobileStore, secret } from "./store.js";
 import qrcode from "./vendor/qrcode.js";
 
 const grantsSchema = z.array(z.object({ pcId: z.string().min(1).max(128), projectIds: z.array(z.string().max(128)).max(100), sessionIds: z.array(z.string().max(128)).max(100), jobIds: z.array(z.string().max(128)).max(100), capabilities: z.array(z.enum(["overview.read", "chat.read", "questions.read", "questions.answer"])).max(4) }).strict()).max(10);
+export async function readMobileDesktopBody(stream: AsyncIterable<Uint8Array | string>): Promise<string> {
+  let size = 0; const chunks: Buffer[] = [];
+  for await (const chunk of stream) { const buffer = Buffer.from(chunk); size += buffer.length; if (size > 32 * 1024) throw new MobileFault(413, "body_too_large"); chunks.push(buffer); }
+  return Buffer.concat(chunks).toString("utf8");
+}
 /** Mounted only AFTER the existing desktop cookie/Host owner gate; never the mobile listener. */
 export class MobileDesktopAdmin {
   private readonly csrf = secret();

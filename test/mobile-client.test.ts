@@ -10,7 +10,7 @@ let q: Question;
 function response(url: string, value: unknown, status = 200): WireResponse { return { url, status, ok: status < 300, redirected: false, text: async () => JSON.stringify(value) }; }
 beforeEach(() => {
   at = Date.now(); offlineLan = false; calls = []; blocked = undefined;
-  credentials = { deviceId: "device", sessionId: "session", pcId, accessToken: "a".repeat(43), refreshToken: "r".repeat(43), csrfToken: "c".repeat(43), accessExpiresAt: at + 300_000, refreshExpiresAt: at + 86_400_000, capabilities: ["questions.read", "questions.answer"], scopes: [] };
+  credentials = { deviceId: "device", sessionId: "session", pcId, accessToken: "a".repeat(43), refreshToken: "r".repeat(43), csrfToken: "c".repeat(43), accessExpiresAt: at + 300_000, refreshExpiresAt: at + 86_400_000, capabilities: ["questions.read", "questions.answer"], scopes: [{ pcId, projectIds: ["project"], sessionIds: [], jobIds: [], capabilities: ["questions.read", "questions.answer"] }] };
   saved = { origins: [lan, vpn], preferredOrigin: lan, credentials };
   q = { id: randomUUID(), kind: "question", pcId, projectId: "project", title: "Fixture terms", context: "Fixture content", topic: "fixture", options: [{ id: "keep", label: "Keep", consequence: "Retain", recommended: true }, { id: "wait", label: "Wait", consequence: "Delay", recommended: false }], links: [], blocking: true, blocks: "Action", meanwhile: "Read", destructive: false, authorization: false, urgency: "normal", declaredDefault: null, status: "open", askedAt: at, version: "v".repeat(43), answer: null, deliveries: [], dismissal: null };
   snapshot = { apiVersion: 1, pcId, epoch: "epoch", cursor: "cursor", sampledAt: at, stale: false, sourceState: "ready", capabilities: ["questions.read", "questions.answer"], sessions: [], jobs: [], questions: [q], pages: { sessions: null, jobs: null, questions: null } };
@@ -38,6 +38,12 @@ describe("mobile memory, freshness and write intent", () => {
     expect(JSON.stringify(saved)).not.toContain(q.context); expect(JSON.stringify(saved)).not.toContain(q.title);
     expect(saved.origins).toEqual([lan, vpn]); expect(saved.preferredOrigin).toBe(lan);
     expect((secure.save as ReturnType<typeof vi.fn>).mock.calls[0]![0]).not.toHaveProperty("snapshot");
+  });
+  it("disables read-only project answers and expired access before creating a write", async () => {
+    await initialized();
+    expect(client.canAnswer({ ...q, projectId: "not-granted" })).toBe(false);
+    await expect(client.answer({ ...q, projectId: "not-granted" }, { option: "keep" })).rejects.toThrow("fresh snapshot required");
+    saved.credentials.accessExpiresAt = at; expect(client.writesEnabled).toBe(false); expect(calls).toHaveLength(0);
   });
   it("disables stale/offline writes without sending or replaying them", async () => {
     await initialized(); at += 15_001;
