@@ -5,6 +5,9 @@
 - Every CLI can now use `ask_*` and `spawn_*` with Claude, Codex, opencode and Antigravity, including its own kind. Existing delegation limits still apply.
 - Codex sessions recover idle when an end-of-turn hook reaches its deadline, allowing queued peer mail to wake the session. Delayed older hooks cannot interrupt a newer turn or consume its mail.
 - Hooks flagged as native subagents leave the main session's mail untouched. This also preserves supervisor messages for a delegated job's main agent, instead of letting its native children drain them.
+- Archive identity conflicts no longer prevent sessions from joining the bridge. Conflicting original messages stay intact in quarantine, with both variants, hashes and provenance retained; unaffected mail remains available.
+- `doctor` reports an `archive-conflicts` warning requiring manual review. Quarantine is permanent pending explicitly reviewed recovery, without automatic retries or expiry. The originating handoff identity issue remains tracked as AB-275.
+- Archive maintenance reports progress for newly moved and newly quarantined rows: `archiveMessages` returns their combined count.
 
 ## 0.30.10
 
