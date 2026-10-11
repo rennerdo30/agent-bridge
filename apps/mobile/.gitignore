@@ -6,3 +6,5 @@ android/
 ios/
 *.tsbuildinfo
 .npm-cache/
+.test-cache/
+.visual-review/
