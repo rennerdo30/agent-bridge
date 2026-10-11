@@ -8,12 +8,15 @@ import { digest, MobileFault, MobileStore, secret, type Device, type Principal }
 
 export interface MobileRequest { method: string; path: string; headers: Record<string, string | undefined>; body?: string; authority: string; tls: boolean; remoteAddress: string }
 export interface MobileResponse { status: number; headers: Record<string, string>; body?: unknown }
+export interface GatewayDiagnostic { requestId: string; errorCategory: "unexpected_gateway_exception" }
+export type GatewayDiagnosticSink = (diagnostic: GatewayDiagnostic) => void;
 const uuid = z.string().uuid(), id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), token = z.string().min(40).max(256);
 const answerSchema = z.object({ expectedVersion: token, option: z.string().min(1).max(40).optional(), text: z.string().min(1).max(8000).optional() }).strict().refine(a => !!a.option !== !!a.text);
 const pushSchema = z.object({ expoPushToken: z.string().regex(/^(Expo|Exponent)PushToken\[[\w-]+\]$/).max(256), platform: z.enum(["android", "ios"]), projectId: uuid, environment: z.enum(["development", "production"]) }).strict();
 const CAPS: Capability[] = ["overview.read", "chat.read", "questions.read", "questions.answer"];
 interface View { snapshot: Snapshot; all: SourceView; signature: string; deviceRevision: string }
-interface CursorRecord { deviceId: string; revision: string; kind: string; expiresAt: number; viewCursor: string; payload?: unknown }
+interface WriteProof { epoch: string; sessionId: string; accessHash: string; grantHash: string; sampledAt: number }
+interface CursorRecord { deviceId: string; revision: string; kind: string; expiresAt: number; viewCursor: string; payload?: unknown; writeProof?: WriteProof }
 interface CollectionCursor { items: unknown[]; offset: number; generation: string }
 interface ContentCursor { remaining: unknown[]; nativeNext: string | null; generation: string; entityId: string }
 
@@ -24,7 +27,8 @@ export class MobileGateway {
   private readonly cursors = new Map<string, CursorRecord>();
   private readonly rates = new Map<string, { at: number; count: number }>();
   private sampling?: Promise<SourceView>;
-  constructor(readonly store: MobileStore, private readonly source: MobileSource, readonly push = new MobilePush(store)) {}
+  constructor(readonly store: MobileStore, private readonly source: MobileSource, readonly push = new MobilePush(store),
+    private readonly diagnostics: GatewayDiagnosticSink = diagnostic => console.error(diagnostic)) {}
   hello(): Hello { return { apiVersion: 1, capabilities: CAPS, transport: "private-https", pinning: false, send: "unsupported", pairedPcWrites: "unsupported", push: this.push.configured ? "configured" : "unsupported" }; }
   private rate(principal: string, max: number): void {
     const now = this.store.now(), prior = this.rates.get(principal);
@@ -40,6 +44,19 @@ export class MobileGateway {
     const c = this.cursors.get(key);
     if (!c || c.deviceId !== device.id || c.revision !== device.revision || c.kind !== kind || c.expiresAt <= this.store.now()) throw new MobileFault(410, "snapshot_required");
     return c;
+  }
+  private recordWriteProof(principal: Principal, snapshot: Snapshot): void {
+    if (snapshot.stale) return;
+    const record = this.fromCursor(principal.device, snapshot.cursor, "events");
+    record.writeProof = { epoch: this.epoch, sessionId: principal.session.id, accessHash: principal.session.accessHash,
+      grantHash: digest("grants", JSON.stringify(principal.device.grants)), sampledAt: snapshot.sampledAt };
+  }
+  private requireWriteProof(principal: Principal, cursor: string | undefined, snapshot: Snapshot): void {
+    const proof = cursor ? this.fromCursor(principal.device, cursor, "events").writeProof : undefined;
+    const age = proof ? this.store.now() - proof.sampledAt : Infinity;
+    if (!proof || snapshot.stale || proof.epoch !== this.epoch || proof.sessionId !== principal.session.id || proof.accessHash !== principal.session.accessHash ||
+      proof.grantHash !== digest("grants", JSON.stringify(principal.device.grants)) || !Number.isFinite(age) || age < 0 || age >= 15_000)
+      throw new MobileFault(409, "fresh_snapshot_required");
   }
   private async sample(): Promise<SourceView> {
     if (!this.sampling) this.sampling = this.source.snapshot().finally(() => { this.sampling = undefined; });
@@ -68,6 +85,7 @@ export class MobileGateway {
     const all: SourceView = { sessions: this.authorized(device, "session", "overview.read", raw.sessions), jobs: this.authorized(device, "job", "overview.read", raw.jobs),
       questions: this.authorized(device, "question", "questions.read", raw.questions), sampledAt: raw.sampledAt, sourceState: raw.sourceState };
     const stale = raw.sourceState !== "ready" || this.store.now() - raw.sampledAt > 15_000;
+    if (stale) for (const cursor of this.cursors.values()) if (cursor.deviceId === device.id) cursor.writeProof = undefined;
     const signature = digest("view", JSON.stringify([all.sessions.map(s => [s.id, s.version]), all.jobs.map(j => [j.id, j.version]), all.questions.map(q => [q.id, q.version, q.deliveries]), stale, all.sourceState, device.revision]));
     const old = this.views.get(device.id);
     const oldCursor = old && this.cursors.get(old.snapshot.cursor);
@@ -164,7 +182,7 @@ export class MobileGateway {
         return reply(req.method === "PUT" ? 200 : 204, req.method === "PUT" ? result : undefined);
       }
       const view = await this.view(principal);
-      if (req.method === "GET" && route === "/snapshot") { allowedQuery([]); return reply(200, view.snapshot); }
+      if (req.method === "GET" && route === "/snapshot") { allowedQuery([]); this.recordWriteProof(principal, view.snapshot); return reply(200, view.snapshot); }
       if (req.method === "GET" && route === "/events") {
         allowedQuery(["after"]); const after = url.searchParams.get("after");
         if (!after) throw new MobileFault(400, "cursor_required");
@@ -193,10 +211,14 @@ export class MobileGateway {
         if (req.method === "GET" && !question[2]) return reply(200, q);
         if (req.method === "POST" && question[2]) {
           const args = answerSchema.parse(body);
-          if (args.option && !q.options.some(o => o.id === args.option)) throw new MobileFault(400, "unknown_option");
-          if (!this.store.can(device, "questions.answer", q.pcId, { kind: "question", id: q.id, projectId: q.projectId }) || q.pcId !== this.store.pcId) throw new MobileFault(404, "not_found");
-          const proof = req.headers["x-mobile-view"], displayed = proof && this.fromCursor(device, proof, "events");
-          if (!displayed || view.snapshot.stale || q.status === "open" && proof !== view.snapshot.cursor) throw new MobileFault(409, "fresh_snapshot_required");
+          if (q.status === "open" && q.version === args.expectedVersion && args.option && !q.options.some(o => o.id === args.option)) throw new MobileFault(400, "unknown_option");
+          // Recheck credentials after sampling; refresh/revocation may have happened while awaiting it.
+          const active = this.store.authenticate(this.bearer(req)); this.store.checkCsrf(active, req.headers["x-mobile-csrf"] ?? "");
+          if (active.device.revision !== device.revision) throw new MobileFault(410, "authorization_changed");
+          if (!this.store.can(active.device, "questions.answer", q.pcId, { kind: "question", id: q.id, projectId: q.projectId }) || q.pcId !== this.store.pcId) throw new MobileFault(404, "not_found");
+          // Only a delivered authoritative snapshot mints/renews this <=15-second proof.
+          // Events/read/answer sampling cannot renew it; question terms/outcome remain protected by CAS.
+          this.requireWriteProof(active, req.headers["x-mobile-view"], view.snapshot);
           // This adapter delegates CAS + durable idempotency atomically to the owner-question store.
           const result = await this.deadline(this.source.answer(q.id, args, device.id, key));
           return reply(200, { question: result, replayExpiresAt: this.store.now() + 24 * 60 * 60_000 });
@@ -211,6 +233,9 @@ export class MobileGateway {
       if (req.method === "GET" && hint) { allowedQuery([]); return reply(200, this.push.resolve(device, uuid.parse(hint[1]), view.all.questions)); }
       throw new MobileFault(404, "unsupported");
     } catch (error) {
+      if (!(error instanceof MobileFault) && !(error instanceof QuestionVersionConflict) && !(error instanceof z.ZodError)) {
+        try { this.diagnostics({ requestId, errorCategory: "unexpected_gateway_exception" }); } catch { /* Diagnostics cannot change the response or leak the exception. */ }
+      }
       const fault = error instanceof MobileFault ? error : error instanceof QuestionVersionConflict ? new MobileFault(409, "version_conflict", error.currentVersion) : error instanceof z.ZodError ? new MobileFault(400, "invalid_request") : new MobileFault(503, "source_unavailable");
       if (fault.status === 202) return { status: 202, headers, body: { state: "pending" } };
       return { status: fault.status, headers: { ...headers, ...(fault.status === 429 ? { "retry-after": "60" } : {}) }, body: { code: fault.code, message: fault.code.replaceAll("_", " "), requestId, retryable: fault.status === 503 || fault.status === 429, ...(fault.currentVersion ? { currentVersion: fault.currentVersion } : {}) } };

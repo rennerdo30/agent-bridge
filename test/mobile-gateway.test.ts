@@ -80,6 +80,17 @@ describe("mobile pairing/credentials", () => {
     expect(() => store.refresh(c.refreshToken, c.csrfToken, randomUUID())).toThrow("refresh_reuse");
     expect(() => store.authenticate(next.accessToken)).toThrow("device_revoked");
   });
+  it("keeps the original absolute 30-day refresh expiry across rotations", () => {
+    const c = pair(), deadline = c.refreshExpiresAt;
+    expect(deadline - at).toBe(30 * 24 * 60 * 60_000);
+    at += 15 * 24 * 60 * 60_000;
+    const halfway = store.refresh(c.refreshToken, c.csrfToken, randomUUID()) as Credentials;
+    expect(halfway.refreshExpiresAt).toBe(deadline);
+    at = deadline - 1;
+    const last = store.refresh(halfway.refreshToken, halfway.csrfToken, randomUUID()) as Credentials;
+    expect(last.refreshExpiresAt).toBe(deadline);
+    at = deadline; expect(() => store.refresh(last.refreshToken, last.csrfToken, randomUUID())).toThrow("credential_expired");
+  });
   it("makes revoked/expired credentials fail and denies remote write grants", async () => {
     const c = pair(); store.revoke(c.deviceId); expect((await gateway.handle(req("GET", "/snapshot", c))).status).toBe(401);
     const newer = pair(); at += 300_000; expect((await gateway.handle(req("GET", "/me", newer))).status).toBe(401);
@@ -135,6 +146,87 @@ describe("mobile allowlist, grants and cursor boundary", () => {
   });
 });
 describe("atomic answer CAS/replay", () => {
+  it("accepts unchanged question CAS despite session/job churn without accepting an events-only proof", async () => {
+    const c = pair(), displayed = await snapshot(c), body = { expectedVersion: question.version, option: "keep" }, path = `/questions/${question.id}/answer`;
+    view.sessions[0]!.version = "session-advanced"; view.jobs[0]!.version = "job-advanced";
+    const events = await gateway.handle(req("GET", "/events?after=" + displayed.cursor, c)), eventCursor = (events.body as { next: string }).next;
+    expect(eventCursor).not.toBe(displayed.cursor);
+    expect((await gateway.handle(req("POST", path, c, body, { "x-mobile-view": eventCursor }))).body).toMatchObject({ code: "fresh_snapshot_required" });
+    expect(source.answer).not.toHaveBeenCalled();
+    expect((await gateway.handle(req("POST", path, c, body, { "x-mobile-view": displayed.cursor }))).status).toBe(200);
+  });
+  it("rejects revised question terms with store CAS while an authoritative proof is still fresh", async () => {
+    const c = pair(), displayed = await snapshot(c), changed = questions.get(question.id)!;
+    changed.context = "Revised displayed terms"; questions.save(changed);
+    const result = await gateway.handle(req("POST", `/questions/${question.id}/answer`, c, { expectedVersion: question.version, option: "keep" }, { "x-mobile-view": displayed.cursor }));
+    expect(result.status).toBe(409); expect(result.body).toMatchObject({ code: "version_conflict", currentVersion: ownerQuestionVersion(changed) });
+    expect(questions.get(question.id)?.status).toBe("open");
+  });
+  it("expires the delivered proof at 15 seconds even when event/read/answer sampling stays fresh", async () => {
+    const c = pair(), displayed = await snapshot(c), body = { expectedVersion: question.version, option: "keep" }, path = `/questions/${question.id}/answer`;
+    at += 15_000; view.sampledAt = at;
+    expect((await gateway.handle(req("GET", "/events?after=" + displayed.cursor, c))).status).toBe(200);
+    expect((await gateway.handle(req("GET", `/questions/${question.id}`, c))).status).toBe(200);
+    for (let i = 0; i < 2; i++) {
+      const result = await gateway.handle(req("POST", path, c, body, { "x-mobile-view": displayed.cursor }));
+      expect(result.status).toBe(409); expect(result.body).toMatchObject({ code: "fresh_snapshot_required" });
+    }
+    expect(source.answer).not.toHaveBeenCalled();
+    const fresh = await snapshot(c);
+    expect((await gateway.handle(req("POST", path, c, body, { "x-mobile-view": fresh.cursor }))).status).toBe(200);
+  });
+  it("invalidates earlier proof on observed offline/stale state until a new authoritative fetch", async () => {
+    const c = pair(), displayed = await snapshot(c), body = { expectedVersion: question.version, option: "keep" }, path = `/questions/${question.id}/answer`;
+    view.sourceState = "offline";
+    expect((await gateway.handle(req("GET", "/events?after=" + displayed.cursor, c))).status).toBe(200);
+    view.sourceState = "ready"; view.sampledAt = at;
+    const result = await gateway.handle(req("POST", path, c, body, { "x-mobile-view": displayed.cursor }));
+    expect(result.status).toBe(409); expect(result.body).toMatchObject({ code: "fresh_snapshot_required" });
+    expect(source.answer).not.toHaveBeenCalled();
+    const fresh = await snapshot(c);
+    expect((await gateway.handle(req("POST", path, c, body, { "x-mobile-view": fresh.cursor }))).status).toBe(200);
+  });
+  it("keeps write proof device, epoch, grant revision and revocation boundaries", async () => {
+    const c = pair(), displayed = await snapshot(c), other = pair(), body = { expectedVersion: question.version, option: "keep" }, path = `/questions/${question.id}/answer`;
+    expect((await gateway.handle(req("POST", path, other, body, { "x-mobile-view": displayed.cursor }))).status).toBe(410);
+    const restarted = new MobileGateway(store, source);
+    expect((await restarted.handle(req("POST", path, c, body, { "x-mobile-view": displayed.cursor }))).status).toBe(410);
+    const device = store.get<Device>("device", c.deviceId)!; device.revision = randomUUID(); store.put("device", device.id, device);
+    expect((await gateway.handle(req("POST", path, c, body, { "x-mobile-view": displayed.cursor }))).status).toBe(410);
+    const fresh = await snapshot(c); store.revoke(c.deviceId);
+    expect((await gateway.handle(req("POST", path, c, body, { "x-mobile-view": fresh.cursor }))).status).toBe(401);
+    expect(source.answer).not.toHaveBeenCalled();
+  });
+  it("binds proof to exact grants even if a caller fails to advance the device revision", async () => {
+    const c = pair(), displayed = await snapshot(c), device = store.get<Device>("device", c.deviceId)!;
+    device.grants = [{ ...grant(), sessionIds: [] }]; store.put("device", device.id, device);
+    const body = { expectedVersion: question.version, option: "keep" }, path = `/questions/${question.id}/answer`;
+    const result = await gateway.handle(req("POST", path, c, body, { "x-mobile-view": displayed.cursor }));
+    expect(result.status).toBe(409); expect(result.body).toMatchObject({ code: "fresh_snapshot_required" });
+    expect(source.answer).not.toHaveBeenCalled();
+    const fresh = await snapshot(c);
+    expect((await gateway.handle(req("POST", path, c, body, { "x-mobile-view": fresh.cursor }))).status).toBe(200);
+  });
+  it("requires a new authoritative snapshot after refresh rotation during reconnect", async () => {
+    const c = pair(), displayed = await snapshot(c), refresh = await gateway.handle(req("POST", "/auth/refresh", c, {}, { authorization: "Bearer " + c.refreshToken }));
+    expect(refresh.status).toBe(200); const rotated = refresh.body as Credentials;
+    const body = { expectedVersion: question.version, option: "keep" }, path = `/questions/${question.id}/answer`;
+    expect((await gateway.handle(req("POST", path, rotated, body, { "x-mobile-view": displayed.cursor }))).body).toMatchObject({ code: "fresh_snapshot_required" });
+    expect(source.answer).not.toHaveBeenCalled();
+    const fresh = await snapshot(rotated);
+    expect((await gateway.handle(req("POST", path, rotated, body, { "x-mobile-view": fresh.cursor }))).status).toBe(200);
+  });
+  it("preserves exact answered replay after a new fresh fetch but rejects stale replay proof", async () => {
+    const c = pair(), displayed = await snapshot(c), key = randomUUID(), body = { expectedVersion: question.version, option: "keep" }, path = `/questions/${question.id}/answer`;
+    const original = await gateway.handle(req("POST", path, c, body, { "x-mobile-view": displayed.cursor, "idempotency-key": key }));
+    expect(original.status).toBe(200);
+    at += 15_000; view.sampledAt = at; view.jobs[0]!.version = "job-advanced";
+    expect((await gateway.handle(req("POST", path, c, body, { "x-mobile-view": displayed.cursor, "idempotency-key": key }))).status).toBe(409);
+    const fresh = await snapshot(c);
+    const replay = await gateway.handle(req("POST", path, c, body, { "x-mobile-view": fresh.cursor, "idempotency-key": key }));
+    expect(replay.status).toBe(200); expect((replay.body as { question: Question }).question).toEqual((original.body as { question: Question }).question);
+    expect((await gateway.handle(req("POST", path, c, { ...body, option: "wait" }, { "x-mobile-view": fresh.cursor, "idempotency-key": key }))).body).toMatchObject({ code: "version_conflict" });
+  });
   it("commits answer and durable replay together and rejects a concurrent stale writer", async () => {
     const c = pair(), snap = await snapshot(c), key = randomUUID();
     const body = { expectedVersion: question.version, option: "keep" };
@@ -181,6 +273,19 @@ describe("atomic answer CAS/replay", () => {
     const page = first.body as { items: unknown[]; next: string }; expect(page.items).toHaveLength(20); expect(JSON.stringify(page)).not.toContain("private-native-cursor");
     const second = await gateway.handle(req("GET", "/chats/chat1?cursor=" + page.next, c)); expect((second.body as { items: unknown[] }).items).toHaveLength(15); expect(source.chat).toHaveBeenCalledTimes(1);
     expect((await gateway.handle(req("GET", "/chats/chat-job1?cursor=" + page.next, c))).status).toBe(410);
+  });
+});
+describe("content-free exception diagnostics", () => {
+  it("reports only a requestId and fixed safe category and contains diagnostic sink failures", async () => {
+    const c = pair(), diagnostic = vi.fn(), safe = new MobileGateway(store, source, undefined, diagnostic);
+    expect((await safe.handle(req("GET", "/snapshot"))).status).toBe(401); expect(diagnostic).not.toHaveBeenCalled();
+    source.snapshot = vi.fn(async () => { throw Object.assign(new Error("fixture-private-message"), { token: "fixture-private-token", path: "fixture-private-path", body: "fixture-private-body" }); });
+    const result = await safe.handle(req("GET", "/snapshot", c)), requestId = (result.body as { requestId: string }).requestId;
+    expect(result.status).toBe(503); expect(requestId).toMatch(/^[\da-f-]{36}$/i);
+    expect(diagnostic.mock.calls).toEqual([[{ requestId, errorCategory: "unexpected_gateway_exception" }]]);
+    expect(JSON.stringify([result, diagnostic.mock.calls])).not.toContain("fixture-private");
+    const failingSink = new MobileGateway(store, source, undefined, () => { throw new Error("fixture-private-sink"); });
+    expect((await failingSink.handle(req("GET", "/snapshot", c))).status).toBe(503);
   });
 });
 describe("local phone administration and opaque push seams", () => {
