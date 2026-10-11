@@ -13,6 +13,8 @@ import { currentDashboardKey, loadDashboardKey } from "./dashboard-key.js";
 import { UI_RECOVERY_PAGE } from "./ui-recovery.js";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { MobileDesktopAdmin } from "../mobile/desktop.js";
+import { MobileFault } from "../mobile/store.js";
 import type { AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
@@ -179,6 +181,8 @@ export interface UiOptions {
   historyAnswer?: HistoryAnswerDependencies;
   /** Replace only the native queue transport in tests; never supplied by an HTTP request. */
   chatQueue?: QueuePrompt;
+  /** Inert opt-in: owner-provisioned mobile registry and exact loopback origin only. */
+  mobileAdmin?: MobileDesktopAdmin;
 }
 
 /** The paired PCs' runs in /api/state are re-fetched in the background at most this often. */
@@ -291,6 +295,22 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       return res.end();
     }
     if (!tokensEqual(cookieSecret(req), activeSecret)) return send(res, 403, UI_RECOVERY_PAGE, "text/html; charset=utf-8");
+
+    if (url.pathname.startsWith("/api/mobile/")) {
+      if (!opts.mobileAdmin) return send(res, 404, { code: "mobile_not_provisioned" });
+      if (`http://${req.headers.host}` !== opts.mobileAdmin.localOrigin || url.search) return send(res, 403, { code: "desktop_origin" });
+      try {
+        const headers: Record<string, string | undefined> = {};
+        for (const [key, value] of Object.entries(req.headers)) {
+          if (Array.isArray(value)) return send(res, 400, { code: "invalid_headers" });
+          headers[key] = value;
+        }
+        const body = req.method === "GET" ? undefined : JSON.stringify(await readJson(req));
+        const result = await opts.mobileAdmin.handle(req.method ?? "", url.pathname, headers, body);
+        res.setHeader("cache-control", "no-store");
+        return send(res, result.status, result.body ?? "");
+      } catch (error) { return send(res, error instanceof MobileFault ? error.status : 400, { code: error instanceof MobileFault ? error.code : "invalid_request" }); }
+    }
 
     if (req.method === "GET" && url.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
     if (req.method === "POST" && url.pathname === "/api/coordinator/availability") {

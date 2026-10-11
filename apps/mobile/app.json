@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "agent-bridge",
+    "slug": "agent-bridge-mobile",
+    "version": "0.1.0",
+    "scheme": "agentbridge",
+    "orientation": "default",
+    "userInterfaceStyle": "automatic",
+    "platforms": ["android", "ios"],
+    "ios": { "supportsTablet": true, "infoPlist": { "NSAppTransportSecurity": { "NSAllowsArbitraryLoads": false } } },
+    "android": { "usesCleartextTraffic": false },
+    "plugins": ["expo-secure-store", ["expo-camera", { "cameraPermission": "Scan the pairing QR shown by your agent-bridge PC.", "recordAudioAndroid": false }], "expo-notifications"]
+  }
+}
