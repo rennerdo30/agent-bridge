@@ -3,7 +3,7 @@ import { codexSubagentConfig } from "./codex-subagents.js";
 import { codexExecutionPrompt } from "./codex-env.js";
 import { jobEnvironment } from "./job-environment.js";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { delimiter, dirname, extname, isAbsolute, join, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -730,7 +730,7 @@ export function parseOpencodeJsonl(stdout: string): {
     } catch {
       continue;
     }
-    if (typeof ev.sessionID === "string") sessionId ??= ev.sessionID;
+    if (typeof ev.sessionID === "string" && ev.sessionID.trim()) sessionId ??= ev.sessionID;
     if (ev.type === "step_finish" && ev.part?.tokens) {
       sawUsage = true;
       input += Number(ev.part.tokens.input) || 0;
@@ -750,19 +750,33 @@ export function parseOpencodeJsonl(stdout: string): {
   return sawUsage ? { sessionId, text, error, usage: { input, output }, cost } : { sessionId, text, error };
 }
 
-const opencodeVersions = new Map<string, Promise<boolean>>();
+const opencodeVersions = new Map<string, { fingerprint: string; version: Promise<boolean> }>();
+
+function opencodeFingerprint(resolved: string): string {
+  const shim = process.platform === "win32" && WINDOWS_SHIM_EXTS.has(extname(resolved).toLowerCase()) ? unwrapNpmShim(resolved) : null;
+  return JSON.stringify([resolved, ...(shim ? [shim.command, ...shim.prefix] : [])].map(file => {
+    try { const s = statSync(file); return [file, s.size, s.mtimeMs, s.ctimeMs]; }
+    catch { return [file, null]; }
+  }));
+}
 
 /** Probe once per executable; v2 needs a private server to inherit child config and permissions. */
 export function opencodeV2(bin: string, cwd: string, log: Logger): Promise<boolean> {
   const key = resolveBinary(bin) ?? bin;
-  let cached = opencodeVersions.get(key);
-  if (!cached) {
-    cached = runProcess({ bin, args: ["--version"], stdin: "", cwd, timeoutMs: 10_000, env: childEnv(), log })
-      .then((res) => /(?:^|\s)(?:opencode\s+)?v?2\.\d+\.\d+/.test(res.stdout.trim()))
-      .catch(() => false);
-    opencodeVersions.set(key, cached);
-  }
-  return cached;
+  const fingerprint = opencodeFingerprint(key);
+  const cached = opencodeVersions.get(key);
+  if (cached?.fingerprint === fingerprint) return cached.version;
+  const version = runProcess({ bin, args: ["--version"], stdin: "", cwd, timeoutMs: 10_000, env: childEnv(), log })
+    .then(res => {
+      if (res.code !== 0) throw new DelegateError("Could not detect opencode version", "failed", res.stderr);
+      return /(?:^|\s)(?:opencode\s+)?v?2\.\d+\.\d+/.test(res.stdout.trim());
+    }).catch(err => {
+      // A failed probe must not permanently select V1 flags for a V2 installation.
+      if (opencodeVersions.get(key)?.version === version) opencodeVersions.delete(key);
+      throw err;
+    });
+  opencodeVersions.set(key, { fingerprint, version });
+  return version;
 }
 
 export async function delegateToOpencode(req: DelegateRequest & { bin: string; autoApprove: boolean }): Promise<DelegateResult> {

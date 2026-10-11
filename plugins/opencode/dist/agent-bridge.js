@@ -31047,7 +31047,7 @@ async function loadZod() {
 var REGISTRY_KEY = /* @__PURE__ */ Symbol.for("agent-bridge.opencode.registry");
 var registry2 = globalThis[REGISTRY_KEY] ??= /* @__PURE__ */ new Map();
 var AgentBridgePlugin = async (input2) => {
-  const key = input2.directory.toLowerCase();
+  const key = `${input2.apiVersion ?? 1}:${input2.directory.toLowerCase()}`;
   let entry = registry2.get(key);
   if (!entry) {
     entry = { refs: 0, hooks: createBridge(input2) };
@@ -31156,6 +31156,7 @@ async function createBridge({ client, directory }) {
     const name = t.name;
     tool[`${TOOL_PREFIX}${name}`] = {
       description: `[agent-bridge] ${t.description ?? name}`,
+      inputSchema: t.inputSchema,
       args: jsonSchemaToZodShape(z2, t.inputSchema),
       execute: async (args, ctx) => {
         log("debug", "tool", { name, sessionID: ctx?.sessionID });
@@ -31243,6 +31244,89 @@ ${context}`;
     }
   };
 }
+var plugin_default = {
+  id: "agent-bridge",
+  server: AgentBridgePlugin,
+  setup: async (ctx) => {
+    const hooks = await AgentBridgePlugin({
+      directory: ctx.location.directory,
+      apiVersion: 2,
+      client: { session: { promptAsync: async (opts) => {
+        const sessionID = opts.sessionID;
+        const text = opts.parts[0].text;
+        if (opts.noReply) await ctx.session.synthetic({ sessionID, text, resume: false });
+        else await ctx.session.prompt({ sessionID, text });
+      } } }
+    });
+    const registrations = [];
+    const abort = new AbortController();
+    const log = makeLog();
+    try {
+      registrations.push(await ctx.tool.transform((editor) => {
+        for (const [name, definition] of Object.entries(hooks.tool)) {
+          const t = definition;
+          editor.add({
+            name,
+            description: t.description,
+            input: t.inputSchema,
+            execute: async (args, context) => ({
+              content: await t.execute(args, { sessionID: context.sessionID, abort: context.signal })
+            })
+          });
+        }
+      }));
+      registrations.push(await ctx.session.hook("prompt", async (input2) => {
+        await hooks["chat.message"](input2);
+      }));
+      registrations.push(await ctx.session.hook("context", async (input2) => {
+        const output2 = { system: [] };
+        await hooks["experimental.chat.system.transform"](input2, output2);
+        for (const text of output2.system) input2.system.push({ type: "text", text });
+      }));
+      registrations.push(await ctx.tool.hook("execute.after", async (input2) => {
+        if (input2.status !== "completed") return;
+        const content = input2.result.content;
+        const original = typeof content === "string" ? content : (content ?? []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
+        const output2 = { output: original };
+        await hooks["tool.execute.after"](input2, output2);
+        if (output2.output !== original) {
+          input2.result = { ...input2.result, content: [
+            ...Array.isArray(content) ? content : [{ type: "text", text: content ?? "" }],
+            { type: "text", text: output2.output.slice(original.length) }
+          ] };
+        }
+      }));
+      const events = (async () => {
+        for await (const event of ctx.event.subscribe({ signal: abort.signal })) {
+          if (abort.signal.aborted) break;
+          if (event.location?.directory && event.location.directory !== ctx.location.directory) continue;
+          const p = event.data ?? {};
+          if (event.type === "session.created") {
+            await hooks.event({ event: { type: "session.created", properties: { info: { id: p.sessionID, parentID: p.parentID } } } });
+          } else if (event.type === "session.execution.started") {
+            await hooks.event({ event: { type: "session.status", properties: { sessionID: p.sessionID, status: { type: "busy" } } } });
+          } else if (["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"].includes(event.type)) {
+            await hooks.event({ event: { type: "session.idle", properties: p } });
+          }
+        }
+      })().catch((err) => {
+        if (!abort.signal.aborted) log("warn", "event subscription failed", { err: String(err) });
+      });
+      return async () => {
+        abort.abort();
+        await Promise.all(registrations.map((r) => r.dispose()));
+        await hooks.dispose();
+        await events;
+      };
+    } catch (err) {
+      abort.abort();
+      await Promise.all(registrations.map((r) => r.dispose()));
+      await hooks.dispose();
+      throw err;
+    }
+  }
+};
 export {
-  AgentBridgePlugin
+  AgentBridgePlugin,
+  plugin_default as default
 };

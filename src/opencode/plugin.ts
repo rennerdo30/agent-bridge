@@ -39,6 +39,7 @@ interface PluginInput {
   client: any;
   directory: string;
   worktree?: string;
+  apiVersion?: 2;
 }
 
 interface OpencodeEvent {
@@ -102,7 +103,7 @@ const REGISTRY_KEY = Symbol.for("agent-bridge.opencode.registry");
 const registry: Map<string, SharedEntry> = ((globalThis as any)[REGISTRY_KEY] ??= new Map());
 
 export const AgentBridgePlugin = async (input: PluginInput) => {
-  const key = input.directory.toLowerCase();
+  const key = `${input.apiVersion ?? 1}:${input.directory.toLowerCase()}`;
   let entry = registry.get(key);
   if (!entry) {
     entry = { refs: 0, hooks: createBridge(input) };
@@ -221,6 +222,7 @@ async function createBridge({ client, directory }: PluginInput) {
     const name = t.name;
     tool[`${TOOL_PREFIX}${name}`] = {
       description: `[agent-bridge] ${t.description ?? name}`,
+      inputSchema: t.inputSchema,
       args: jsonSchemaToZodShape(z as any, t.inputSchema as JsonSchema),
       execute: async (args: Json, ctx: ToolContext) => {
         log("debug", "tool", { name, sessionID: ctx?.sessionID });
@@ -312,4 +314,83 @@ async function createBridge({ client, directory }: PluginInput) {
       await mcp.close().catch(() => {});
     },
   };
+};
+
+/** V1 selects server(); V2 selects setup(). Neither adapter needs a version subprocess. */
+export default {
+  id: "agent-bridge",
+  server: AgentBridgePlugin,
+  setup: async (ctx: any) => {
+    const hooks = await AgentBridgePlugin({
+      directory: ctx.location.directory,
+      apiVersion: 2,
+      client: { session: { promptAsync: async (opts: any) => {
+        const sessionID = opts.sessionID;
+        const text = opts.parts[0].text;
+        if (opts.noReply) await ctx.session.synthetic({ sessionID, text, resume: false });
+        else await ctx.session.prompt({ sessionID, text });
+      } } },
+    });
+    const registrations: { dispose(): Promise<void> }[] = [];
+    const abort = new AbortController();
+    const log = makeLog();
+    try {
+      registrations.push(await ctx.tool.transform((editor: any) => {
+        for (const [name, definition] of Object.entries(hooks.tool)) {
+          const t = definition as any;
+          editor.add({ name, description: t.description, input: t.inputSchema,
+            execute: async (args: Json, context: any) => ({
+              content: await t.execute(args, { sessionID: context.sessionID, abort: context.signal }),
+            }),
+          });
+        }
+      }));
+      registrations.push(await ctx.session.hook("prompt", async (input: any) => {
+        await hooks["chat.message"](input);
+      }));
+      registrations.push(await ctx.session.hook("context", async (input: any) => {
+        const output = { system: [] as string[] };
+        await hooks["experimental.chat.system.transform"](input, output);
+        for (const text of output.system) input.system.push({ type: "text", text });
+      }));
+      registrations.push(await ctx.tool.hook("execute.after", async (input: any) => {
+        if (input.status !== "completed") return;
+        const content = input.result.content;
+        const original = typeof content === "string" ? content :
+          (content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n");
+        const output = { output: original };
+        await hooks["tool.execute.after"](input, output);
+        if (output.output !== original) {
+          input.result = { ...input.result, content: [...(Array.isArray(content) ? content : [{ type: "text", text: content ?? "" }]),
+            { type: "text", text: output.output.slice(original.length) }] };
+        }
+      }));
+      // Subscription is cancelled before the bridge closes; no late events may revive it.
+      const events = (async () => {
+        for await (const event of ctx.event.subscribe({ signal: abort.signal })) {
+          if (abort.signal.aborted) break;
+          if (event.location?.directory && event.location.directory !== ctx.location.directory) continue;
+          const p = event.data ?? {};
+          if (event.type === "session.created") {
+            await hooks.event({ event: { type: "session.created", properties: { info: { id: p.sessionID, parentID: p.parentID } } } });
+          } else if (event.type === "session.execution.started") {
+            await hooks.event({ event: { type: "session.status", properties: { sessionID: p.sessionID, status: { type: "busy" } } } });
+          } else if (["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"].includes(event.type)) {
+            await hooks.event({ event: { type: "session.idle", properties: p } });
+          }
+        }
+      })().catch((err) => { if (!abort.signal.aborted) log("warn", "event subscription failed", { err: String(err) }); });
+      return async () => {
+        abort.abort();
+        await Promise.all(registrations.map((r) => r.dispose()));
+        await hooks.dispose();
+        await events;
+      };
+    } catch (err) {
+      abort.abort();
+      await Promise.all(registrations.map((r) => r.dispose()));
+      await hooks.dispose();
+      throw err;
+    }
+  },
 };
