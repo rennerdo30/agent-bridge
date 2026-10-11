@@ -122,6 +122,27 @@ type Handler<O extends Op> = (conn: Conn, args: RequestMap[O][0]) => RequestMap[
 const HANDOFF_LOCK_WAIT_MS = 2_000;
 const HANDOFF_LOCK_RETRY_MS = 25;
 export class Broker {
+  private mobileResources?: Set<() => Promise<void>>;
+  /** Explicit host-only opt-in; borrow an already-existing service, never initialize one here. */
+  mobileHostContext(): import("../mobile/host.js").MobileHostContext | undefined {
+    const service = this.questions;
+    if (!service || this.closing || !this.server?.listening) return undefined;
+    let live = true;
+    const home = dirname(this.store.file);
+    return { home, pipe: this.pipePath, log: this.log,
+      local: { home, log: this.log, peers: () => this.dashboardPeers() },
+      ownerQuestions: { store: service.store, list: () => service.list(), complete: q => service.complete(q) },
+      ready: () => live && !this.closing && !!this.server?.listening && this.questions === service,
+      onDispose: dispose => {
+        const wrapped = () => { live = false; return dispose(); };
+        (this.mobileResources ??= new Set()).add(wrapped);
+        return () => { this.mobileResources?.delete(wrapped); };
+      } };
+  }
+  private async disposeMobileResources(): Promise<void> {
+    const resources = this.mobileResources; this.mobileResources = undefined;
+    await Promise.all([...resources ?? []].map(dispose => dispose()));
+  }
   private questions: OwnerQuestionService | null = null;
   private ownerQuestions(): OwnerQuestionService {
     return this.questions ??= new OwnerQuestionService(dirname(this.store.file), this.store, this.log, () => this.localPeers().map(p => this.projectPeer(p)), (peer, message) => { const c = this.connByName(peer.name); if (c) this.emit(c, "message", message); }, decision => {
@@ -465,6 +486,7 @@ export class Broker {
     this.healthMonitor.close();
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     this.purgeTimer = null;
+    if (this.mobileResources) await this.disposeMobileResources();
     this.questions?.close(); this.questions = null;
     await this.historyBackground?.close().catch(() => {});
     this.historyBackground = null;
@@ -531,6 +553,7 @@ export class Broker {
   async close(): Promise<void> {
     this.healthMonitor.close();
     this.closing = true;
+    if (this.mobileResources) await this.disposeMobileResources();
     this.questions?.close(); this.questions = null;
     this.store.stopWrites();
     if (this.pendingJobMailRetry) clearTimeout(this.pendingJobMailRetry);

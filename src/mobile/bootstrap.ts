@@ -6,26 +6,40 @@ import { MobileGateway } from "./gateway.js";
 import { MobilePush, type PushProvider } from "./push.js";
 import { MobileStore } from "./store.js";
 
+/** Borrowed from the broker; mobile never owns its store, timer or close lifecycle. */
+export interface MobileQuestionService {
+  store: OwnerQuestionStore;
+  list(): OwnerQuestion[];
+  complete(question: OwnerQuestion): OwnerQuestion;
+}
+
 /** Explicit owner-provisioning seam. No certificates, secrets, listeners, environment or live stores are read here. */
 export function provisionMobile(options: {
   registryFile: string; pcId: string; origins: string[]; desktopOrigin: string; local: DashboardReadContext;
-  questions: OwnerQuestionStore; ready: () => boolean; completeAnswer?: (question: OwnerQuestion) => void;
+  ownerQuestions: MobileQuestionService; ready: () => boolean;
   push?: { provider: PushProvider; encryptionKey: Uint8Array; projectId: string; environment: "development" | "production" };
-}): { gateway: MobileGateway; desktopAdmin: MobileDesktopAdmin; pollQuestionHints: () => Promise<void>; close: () => void } {
+}): { gateway: MobileGateway; desktopAdmin: MobileDesktopAdmin; pollQuestionHints: () => Promise<void>; close: () => Promise<void> } {
   if (!options.origins.length) throw new Error("Owner must provision LAN/Tailscale trusted HTTPS origins");
   const store = new MobileStore(options.registryFile, options.pcId, options.origins[0]!, Date.now, options.origins.slice(1));
-  const source = new LocalMobileSource(options.local, options.questions, options.pcId, options.ready, options.completeAnswer);
+  let closed = false, closing: Promise<void> | undefined;
+  const ready = () => !closed && options.ready();
+  const source = new LocalMobileSource(options.local, options.ownerQuestions.store, options.pcId, ready,
+    q => options.ownerQuestions.complete(q), () => options.ownerQuestions.list());
   const push = options.push ? new MobilePush(store, options.push.provider, options.push.encryptionKey, options.push.projectId, options.push.environment) : new MobilePush(store);
-  const gateway = new MobileGateway(store, source), desktopAdmin = new MobileDesktopAdmin(store, source, options.desktopOrigin);
+  const gateway = new MobileGateway(store, source, push), desktopAdmin = new MobileDesktopAdmin(store, source, options.desktopOrigin, ready);
   let hintPoll: Promise<void> | undefined;
-  return { gateway, desktopAdmin, close: () => store.close(), pollQuestionHints: () => {
+  return { gateway, desktopAdmin, close: () => {
+    if (closing) return closing;
+    closed = true; gateway.deactivate();
+    closing = (async () => { await hintPoll?.catch(() => {}); store.close(); })(); return closing;
+  }, pollQuestionHints: () => {
     if (hintPoll) return hintPoll;
     hintPoll = (async () => {
-      if (!push.configured || !options.ready()) return;
+      if (!push.configured || !ready()) return;
       const view = await source.snapshot();
       for (const question of view.questions.filter(q => q.status === "open")) {
         await push.notify(question, async () => {
-          if (!options.ready()) return undefined;
+          if (!ready()) return undefined;
           return (await source.snapshot()).questions.find(q => q.id === question.id);
         });
       }

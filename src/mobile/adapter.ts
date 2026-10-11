@@ -31,11 +31,14 @@ interface Binding { kind: "session" | "job"; nativeName: string; generation: str
 export class LocalMobileSource implements MobileSource {
   private bindings = new Map<string, Binding>();
   constructor(private readonly ctx: DashboardReadContext, private readonly questions: OwnerQuestionStore,
-    readonly pcId: string, private readonly ready: () => boolean, private readonly completeAnswer?: (q: OwnerQuestion) => void) {}
+    readonly pcId: string, private readonly ready: () => boolean, private readonly completeAnswer?: (q: OwnerQuestion) => void,
+    private readonly listQuestions: () => OwnerQuestion[] = () => questions.list()) {}
   async snapshot(): Promise<SourceView> {
+    if (!this.ready()) throw new MobileFault(503, "source_unavailable");
     const sampledAt = Date.now();
     const peers = (await this.ctx.peers()).filter(p => !p.name.includes("/"));
     const runs = await listRunsResponsive(this.ctx.home);
+    if (!this.ready()) throw new MobileFault(503, "source_unavailable");
     const bindings = new Map<string, Binding>();
     const sessions = peers.slice(0, 10_000).map((p: PeerInfo): Session => {
       const generation = opaqueId("generation", [p.id, p.sessionId ?? null]), id = opaqueId("session", [this.pcId, p.id, generation]), chatId = opaqueId("chat", [id]);
@@ -54,9 +57,10 @@ export class LocalMobileSource implements MobileSource {
       return { ...state, sampledAt, version: version(state) };
     });
     this.bindings = bindings;
-    return { sessions, jobs, questions: this.questions.list().slice(0, 10_000).map(q => projectQuestion(q, this.pcId)), sampledAt, sourceState: this.ready() ? "ready" : "offline" };
+    return { sessions, jobs, questions: this.listQuestions().slice(0, 10_000).map(q => projectQuestion(q, this.pcId)), sampledAt, sourceState: "ready" };
   }
   private async read(binding: Binding, suffix: string, cursor?: string): Promise<unknown> {
+    if (!this.ready()) throw new MobileFault(503, "source_unavailable");
     let context = this.ctx;
     const validateRun = async (): Promise<void> => {
       const run = (await listRunsResponsive(this.ctx.home)).find(r => r.name === binding.nativeName);
@@ -70,6 +74,7 @@ export class LocalMobileSource implements MobileSource {
     } else await validateRun();
     const path = binding.kind === "session" ? `/api/sessions/${encodeURIComponent(binding.nativeName)}/chat` : `/api/runs/${encodeURIComponent(binding.nativeName)}${suffix}`;
     const result = await readDashboard(context, { path, ...(cursor ? { query: { from: cursor } } : {}) });
+    if (!this.ready()) throw new MobileFault(503, "source_unavailable");
     if (binding.kind === "job") await validateRun();
     if (result.status !== 200) throw new MobileFault(result.status === 409 ? 409 : result.status === 404 ? 404 : 503, "source_unavailable");
     return result.body;
@@ -96,6 +101,6 @@ export class LocalMobileSource implements MobileSource {
     // Delivery resumes through the existing service work loop even if this callback fails.
     const latest = this.questions.get(q.id) ?? q;
     try { if (!latest.deliveryComplete) this.completeAnswer?.(latest); } catch { /* Persisted owner intent must not be submitted again. */ }
-    return projectQuestion(this.questions.get(q.id) ?? q, this.pcId);
+    return projectQuestion(this.listQuestions().find(latest => latest.id === q.id) ?? q, this.pcId);
   }
 }

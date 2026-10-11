@@ -5,6 +5,9 @@ import type { Logger } from "../core/logger.js";
 import { startUi } from "./ui.js";
 import { loadDashboardKey } from "./dashboard-key.js";
 import { protect } from "../network/pairing.js";
+import type { MobileDesktopAdmin } from "../mobile/desktop.js";
+
+export interface DashboardHostOptions { home: string; pipe: string; port: number; log: Logger; mobileAdmin?: MobileDesktopAdmin }
 
 /**
  * The dashboard runs inside whichever process hosts the bridge (or a manual `agent-bridge ui`).
@@ -81,7 +84,7 @@ export interface HostedDashboard {
 export class DashboardController {
   private hosted: HostedDashboard | null = null;
   private starting: Promise<DashboardInfo> | null = null;
-  constructor(private readonly opts: { home: string; pipe: string; port: number; log: Logger }) {}
+  constructor(private readonly opts: DashboardHostOptions) {}
 
   ensure(): Promise<DashboardInfo> {
     return this.starting ??= this.open().finally(() => { this.starting = null; });
@@ -92,12 +95,14 @@ export class DashboardController {
   private async open(): Promise<DashboardInfo> {
     if (this.hosted) return { ...this.hosted.info, url: dashboardUrl(this.hosted.info.port, dashboardKey(this.opts.home)) };
     const running = await findRunningDashboard(this.opts.home);
+    if (this.opts.mobileAdmin && running) throw new Error("mobile_dashboard_requires_this_host");
     if (running) return running;
     const preferred = readDashboardInfo(this.opts.home)?.port || this.opts.port;
     try {
       this.hosted = await hostDashboard(this.opts);
       return this.hosted.info;
     } catch (err) {
+      if (this.opts.mobileAdmin) throw err;
       if (!["EADDRINUSE", "EACCES"].includes((err as NodeJS.ErrnoException).code ?? "")) throw err;
       // The successful host may still be publishing dashboard.json after binding its listener.
       for (let attempt = 0; (err as NodeJS.ErrnoException).code === "EADDRINUSE" && attempt < 10; attempt++) {
@@ -137,11 +142,12 @@ export class DashboardController {
 }
 
 /** Start the dashboard in this process and publish its link. Fails with EADDRINUSE if the port is taken. */
-export async function hostDashboard(opts: { home: string; pipe: string; port: number; log: Logger; preferSavedPort?: boolean }): Promise<HostedDashboard> {
+export async function hostDashboard(opts: DashboardHostOptions & { preferSavedPort?: boolean }): Promise<HostedDashboard> {
   // A session taking over keeps the previous secret: open dashboard tabs (and saved links) keep working.
   dashboardKey(opts.home);
   const saved = readDashboardInfo(opts.home)?.port;
   const port = opts.preferSavedPort !== false && saved && Number.isInteger(saved) && saved > 0 && saved <= 65535 ? saved : opts.port;
+  if (opts.mobileAdmin && (port !== opts.port || opts.mobileAdmin.localOrigin !== `http://127.0.0.1:${port}`)) throw new Error("mobile_dashboard_exact_origin_required");
   const ui = await startUi({ ...opts, port });
   const info: DashboardInfo = { url: ui.url, port: ui.port, pid: process.pid };
   const file = dashboardFile(opts.home);

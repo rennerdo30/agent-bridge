@@ -13,14 +13,16 @@ export async function readMobileDesktopBody(stream: AsyncIterable<Uint8Array | s
 /** Mounted only AFTER the existing desktop cookie/Host owner gate; never the mobile listener. */
 export class MobileDesktopAdmin {
   private readonly csrf = secret();
-  constructor(private readonly store: MobileStore, private readonly source: MobileSource, readonly localOrigin: string) {
+  constructor(private readonly store: MobileStore, private readonly source: MobileSource, readonly localOrigin: string, private readonly ready: () => boolean = () => true) {
     const origin = new URL(localOrigin);
     if (origin.origin !== localOrigin || !["localhost", "127.0.0.1"].includes(origin.hostname) || origin.protocol !== "http:") throw new Error("Exact loopback desktop origin required");
   }
   async handle(method: string, path: string, headers: Record<string, string | undefined>, body?: string): Promise<{ status: number; body?: unknown }> {
+    if (!this.ready()) throw new MobileFault(503, "source_unavailable");
     if (headers["sec-fetch-site"] === "cross-site" || headers.origin && headers.origin !== this.localOrigin) throw new MobileFault(403, "desktop_origin");
     if (method === "GET" && path === "/api/mobile/phones") {
       const view = await this.source.snapshot();
+      if (!this.ready()) throw new MobileFault(503, "source_unavailable");
       return { status: 200, body: { csrfToken: this.csrf, devices: this.store.devices(), pending: this.store.pending(),
         catalog: { pcId: this.store.pcId, sessions: view.sessions.map(s => ({ id: s.id, name: s.name })), jobs: view.jobs.map(j => ({ id: j.id, title: j.title })), projects: [...new Set([...view.questions.map(q => q.projectId), ...view.sessions.flatMap(s => s.projectId ? [s.projectId] : []), ...view.jobs.flatMap(j => j.projectId ? [j.projectId] : [])])] }, gatewayOrigins: this.store.origins } };
     }
@@ -41,6 +43,7 @@ export class MobileDesktopAdmin {
     if (method === "POST" && confirm) {
       const parsed = z.object({ comparisonCode: z.string().regex(/^\d{6}$/), allow: z.boolean(), grants: grantsSchema }).strict().parse(args);
       const view = await this.source.snapshot();
+      if (!this.ready()) throw new MobileFault(503, "source_unavailable");
       // Remote reads remain unsupported: this local adapter cannot prove existing paired-PC trust.
       for (const grant of parsed.grants) {
         if (grant.pcId !== this.store.pcId || grant.sessionIds.some(id => !view.sessions.some(s => s.id === id)) || grant.jobIds.some(id => !view.jobs.some(j => j.id === id)) || grant.projectIds.some(id => ![...view.questions, ...view.sessions, ...view.jobs].some(q => q.projectId === id))) throw new MobileFault(403, "unsupported_grant");

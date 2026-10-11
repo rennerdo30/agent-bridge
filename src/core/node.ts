@@ -169,6 +169,20 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   get isBroker(): boolean {
     return this.broker !== null;
   }
+  /** No election or service creation. Only an explicitly prepared local broker owner can borrow this. */
+  mobileHostContext(): import("../mobile/host.js").MobileHostContext | undefined {
+    const broker = this.broker;
+    if (!broker || this.stopping || this.replaced) return undefined;
+    const context = broker.mobileHostContext(); if (!context) return undefined;
+    let live = true;
+    return { ...context, ready: () => live && this.broker === broker && !this.stopping && !this.replaced && context.ready(),
+      onDispose: dispose => {
+        const lost = () => { live = false; void dispose().catch(() => {}); };
+        const unregister = context.onDispose(dispose);
+        this.on("stopped", lost); this.on("disconnected", lost);
+        return () => { unregister(); this.off("stopped", lost); this.off("disconnected", lost); };
+      } };
+  }
   get isConnected(): boolean {
     return this.client !== null && !this.client.isClosed;
   }

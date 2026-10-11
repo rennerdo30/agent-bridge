@@ -27,9 +27,12 @@ export class MobileGateway {
   private readonly cursors = new Map<string, CursorRecord>();
   private readonly rates = new Map<string, { at: number; count: number }>();
   private sampling?: Promise<SourceView>;
+  private available = true;
   constructor(readonly store: MobileStore, private readonly source: MobileSource, readonly push = new MobilePush(store),
     private readonly diagnostics: GatewayDiagnosticSink = diagnostic => console.error(diagnostic)) {}
   hello(): Hello { return { apiVersion: 1, capabilities: CAPS, transport: "private-https", pinning: false, send: "unsupported", pairedPcWrites: "unsupported", push: this.push.configured ? "configured" : "unsupported" }; }
+  /** Owned host retirement; no registry reads or writes after it is closed. */
+  deactivate(): void { this.available = false; this.views.clear(); this.cursors.clear(); }
   private rate(principal: string, max: number): void {
     const now = this.store.now(), prior = this.rates.get(principal);
     if (!prior || now - prior.at >= 60_000) { if (this.rates.size >= 10_000) this.rates.clear(); this.rates.set(principal, { at: now, count: 1 }); return; }
@@ -78,6 +81,7 @@ export class MobileGateway {
   }
   private async view(principal: Principal): Promise<View> {
     const raw = await this.sample();
+    if (!this.available) throw new MobileFault(503, "source_unavailable");
     // Refresh live device grant/revocation state after every awaited upstream call.
     const device = this.store.get<Device>("device", principal.device.id);
     if (!device || device.revoked) throw new MobileFault(401, "device_revoked");
@@ -118,6 +122,7 @@ export class MobileGateway {
       remaining = page.items as T[]; generation = page.generation; nativeNext = page.next;
     }
     // Check grants again before content serialization; cannot leak a response after revocation.
+    if (!this.available) throw new MobileFault(503, "source_unavailable");
     const active = this.store.get<Device>("device", device.id);
     if (!active || active.revoked) throw new MobileFault(401, "device_revoked");
     if (active.revision !== device.revision) throw new MobileFault(410, "authorization_changed");
@@ -130,6 +135,7 @@ export class MobileGateway {
   async handle(req: MobileRequest): Promise<MobileResponse> {
     const requestId = randomUUID(), headers = { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" };
     try {
+      if (!this.available) throw new MobileFault(503, "source_unavailable");
       const configuredOrigin = this.store.origins.find(o => new URL(o).host === req.authority);
       if (!req.tls || !configuredOrigin) throw new MobileFault(403, "authority");
       if (req.headers.cookie || req.headers.origin && req.headers.origin !== configuredOrigin || req.headers["sec-fetch-site"] === "cross-site") throw new MobileFault(403, "origin");
