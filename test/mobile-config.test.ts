@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync, symlinkSync, promises as fs } from "node:fs";
 import { resolve, join } from "node:path";
-import { parseMobileConfig, privateAddress, readPrivateMaterial } from "../src/mobile/config.js";
+import { parseMobileConfig, privateAddress, readPrivateMaterial, windowsPrivateAcl } from "../src/mobile/config.js";
 import { loadConfig, DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
 
@@ -35,6 +35,21 @@ describe("home-only explicit mobile config", () => {
   });
 });
 describe("activation-only private material", () => {
+  it.skipIf(process.platform !== "win32")("real ACL adapter denies synthetic lookup failure, including nonterminating PowerShell errors", async () => {
+    expect(await windowsPrivateAcl(join(home(), "missing-synthetic"))).toBe(false);
+  });
+  it("bounds reads to max+1 when a synthetic file grows after metadata validation", async () => {
+    const root = home(), file = join(root, "growing"); writeFileSync(file, "fixture");
+    const original = fs.open.bind(fs); let observed = 0;
+    const open = vi.spyOn(fs, "open").mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
+      const handle = await original(...args), read = handle.read.bind(handle);
+      vi.spyOn(handle, "read").mockImplementation(async options => {
+        observed = Math.max(observed, options?.length ?? 0); writeFileSync(file, Buffer.alloc(256 * 1024)); return read(options);
+      }); return handle;
+    });
+    await expect(readPrivateMaterial(file, { platform: "win32", acl: async () => true })).rejects.toMatchObject({ message: "material_unavailable" });
+    expect(observed).toBe(64 * 1024 + 1); open.mockRestore();
+  });
   it("fails closed on missing/unreadable files with no path or OS error", async () => {
     const root = home(), file = join(root, "private");
     await expect(readPrivateMaterial(file)).rejects.toMatchObject({ message: "material_unavailable" });

@@ -33,7 +33,7 @@ export class MobileActivationFault extends Error {
 /** No shell interpolation, env credentials, or diagnostic output. Allow owner, SYSTEM and administrators only. */
 export function windowsPrivateAcl(file: string): Promise<boolean> {
   return new Promise(resolve => {
-    const script = "$a=Get-Acl -LiteralPath ([Console]::In.ReadLine()); $owner=([System.Security.Principal.NTAccount]$a.Owner).Translate([System.Security.Principal.SecurityIdentifier]).Value; $bad=$false; foreach($r in $a.Access){ $sid=$r.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value; if($r.AccessControlType -eq 'Allow' -and ([int]$r.FileSystemRights -band 1) -ne 0 -and $sid -notin @($owner,'S-1-5-18','S-1-5-32-544')){$bad=$true} }; if($bad){'deny'}else{'allow'}";
+    const script = "$ErrorActionPreference='Stop'; try { $a=Get-Acl -LiteralPath ([Console]::In.ReadLine()); $owner=([System.Security.Principal.NTAccount]$a.Owner).Translate([System.Security.Principal.SecurityIdentifier]).Value; $caller=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; if($owner -ne $caller){throw 'deny'}; foreach($r in $a.Access){ $sid=$r.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value; if($r.AccessControlType -eq 'Allow' -and ([int]$r.FileSystemRights -band 1) -ne 0 -and $sid -notin @($caller,'S-1-5-18','S-1-5-32-544')){throw 'deny'} }; 'allow' } catch { 'deny'; exit 1 }";
     if (/[\r\n]/.test(file)) { resolve(false); return; }
     const child = execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, timeout: 3000, maxBuffer: 8192 }, (error, stdout) => resolve(!error && stdout.trim() === "allow"));
     child.stdin?.end(file + "\n");
@@ -54,8 +54,11 @@ export async function readPrivateMaterial(file: string, policy: MaterialPolicy =
     handle = await fs.open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const opened = await handle.stat();
     if (!opened.isFile() || opened.ino !== before.ino || opened.dev !== before.dev) throw new Error();
-    const content = await handle.readFile(); if (content.length > 64 * 1024) throw new Error();
-    return content;
+    const content = Buffer.alloc(64 * 1024 + 1); let length = 0;
+    while (length < content.length) { const read = await handle.read({ buffer: content, offset: length, length: content.length - length, position: length }); if (!read.bytesRead) break; length += read.bytesRead; }
+    const after = await handle.stat();
+    if (length > 64 * 1024 || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || length !== after.size) throw new Error();
+    return content.subarray(0, length);
   } catch { throw new MobileActivationFault("material_unavailable"); }
   finally { await handle?.close().catch(() => {}); }
 }
