@@ -143,7 +143,7 @@ function Dashboard() {
       {button("Forget credentials on this phone", () => safe(() => client.forget()))}{text("Revoke the phone from your desktop to invalidate server credentials.", true)}</>}
     {text("Appearance", true)}<View style={styles.actions}>{(["system", "light", "dark"] as const).map(value => <View key={value}>{button(value, () => setTheme(value), theme === value)}</View>)}</View>
     {text(s.localQuestions, true)}
-  </ScrollView> : <FlatList data={tab === "overview" ? sessions : tab === "running" ? jobs : questions} keyExtractor={item => item.id} contentContainerStyle={styles.body}
+  </ScrollView> : <FlatList<Session | Job | Question> data={tab === "overview" ? sessions : tab === "running" ? jobs : questions} keyExtractor={item => item.id} contentContainerStyle={styles.body}
     ListHeaderComponent={<><Text accessibilityRole="header" style={[styles.title, { color: color.text }]}>{s[tab]}</Text>{state.snapshot && text(`Sampled ${new Date(state.snapshot.sampledAt).toLocaleTimeString()}`, true)}{tab === "inbox" && text(s.localQuestions, true)}</>}
     ListEmptyComponent={text(tab === "overview" ? s.noSessions : tab === "running" ? s.noJobs : s.noQuestions, true)}
     renderItem={({ item }) => "kind" in item ? card(item.id, item.title, `${item.urgency} · ${item.status}${item.blocking ? " · blocking" : ""}`, () => setDetail({ kind: "question", item })) : "generation" in item ? card(item.id, item.name, `${item.agent} · ${item.activity} · ${item.connection}`, () => setDetail({ kind: "session", item })) : card(item.id, item.title, `${item.status} · ${item.progress.percent === null ? "Progress unknown" : item.progress.percent + "%"}${item.progress.note ? " · " + item.progress.note : ""}`, () => setDetail({ kind: "job", item }))}

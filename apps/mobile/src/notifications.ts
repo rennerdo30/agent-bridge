@@ -20,7 +20,7 @@ export function watchNotificationTaps(client: MobileClient, openQuestion: (id: s
     if (lastIdentifier === response.notification.request.identifier) return;
     lastIdentifier = response.notification.request.identifier;
     const data = response.notification.request.content.data;
-    if (data.v !== 1 || typeof data.notificationId !== "string") return;
+    if (!data || data.v !== 1 || typeof data.notificationId !== "string") return;
     try { const id = await client.resolveNotification(data.notificationId); if (id) openQuestion(id); }
     catch { report("Reconnect to fetch the current question. The notification carries no answer action."); }
   };

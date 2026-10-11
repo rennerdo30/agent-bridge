@@ -65,7 +65,8 @@ export class MobileGateway {
     const stale = raw.sourceState !== "ready" || this.store.now() - raw.sampledAt > 15_000;
     const signature = digest("view", JSON.stringify([all.sessions.map(s => [s.id, s.version]), all.jobs.map(j => [j.id, j.version]), all.questions.map(q => [q.id, q.version]), stale, all.sourceState, device.revision]));
     const old = this.views.get(device.id);
-    const cursor = old?.signature === signature ? old.snapshot.cursor : this.cursor(device, "events", "");
+    const oldCursor = old && this.cursors.get(old.snapshot.cursor);
+    const cursor = old?.signature === signature && oldCursor && oldCursor.expiresAt > this.store.now() ? old.snapshot.cursor : this.cursor(device, "events", "");
     const capabilities = [...new Set(device.grants.flatMap(g => g.capabilities))];
     const sessions = this.collection(device, "sessions", all.sessions, 20, cursor), jobs = this.collection(device, "jobs", all.jobs, 20, cursor), questions = this.collection(device, "questions", all.questions, 20, cursor);
     const snapshot: Snapshot = { apiVersion: 1, pcId: this.store.pcId, epoch: this.epoch, cursor, sampledAt: raw.sampledAt, stale, capabilities,
@@ -186,6 +187,7 @@ export class MobileGateway {
         if (req.method === "GET" && !question[2]) return reply(200, q);
         if (req.method === "POST" && question[2]) {
           const args = answerSchema.parse(body);
+          if (args.option && !q.options.some(o => o.id === args.option)) throw new MobileFault(400, "unknown_option");
           if (!this.store.can(device, "questions.answer", q.pcId, { kind: "question", id: q.id, projectId: q.projectId }) || q.pcId !== this.store.pcId) throw new MobileFault(404, "not_found");
           const proof = req.headers["x-mobile-view"], displayed = proof && this.fromCursor(device, proof, "events");
           if (!displayed || view.snapshot.stale || q.status === "open" && proof !== view.snapshot.cursor) throw new MobileFault(409, "fresh_snapshot_required");

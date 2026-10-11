@@ -42,6 +42,18 @@ function req(method: string, path: string, credentials?: Credentials, body?: unk
 async function snapshot(credentials: Credentials): Promise<{ cursor: string }> { const result = await gateway.handle(req("GET", "/snapshot", credentials)); expect(result.status).toBe(200); return result.body as { cursor: string }; }
 
 describe("mobile pairing/credentials", () => {
+  it("shares credentials/revocation across LAN and VPN exact authorities including port", async () => {
+    const multiStore = new MobileStore(join(home, "multi-mobile.db"), pcId, origin, () => at, ["https://pc.tailnet.ts.net"]); close.push(() => multiStore.close());
+    const qr = multiStore.invite(); expect(qr.origins).toEqual([origin, "https://pc.tailnet.ts.net"]);
+    const claim = multiStore.claim(qr.invitationId, qr.nonce, "Fixture", "android", randomUUID()) as PairingClaim;
+    multiStore.confirm(claim.claimId, claim.comparisonCode, true, [grant()]);
+    const c = (multiStore.pollClaim(claim.claimId, claim.claimToken, randomUUID()) as { credentials: Credentials }).credentials;
+    const multi = new MobileGateway(multiStore, source), lanRead = req("GET", "/me", c), vpnRead = { ...lanRead, authority: "pc.tailnet.ts.net" };
+    expect((await multi.handle(lanRead)).status).toBe(200); expect((await multi.handle(vpnRead)).status).toBe(200);
+    expect((await multi.handle({ ...lanRead, authority: "pc.example.test:4434" })).status).toBe(403);
+    expect((await multi.handle({ ...vpnRead, headers: { ...vpnRead.headers, origin } })).status).toBe(403);
+    multiStore.revoke(c.deviceId); expect((await multi.handle(lanRead)).status).toBe(401); expect((await multi.handle(vpnRead)).status).toBe(401);
+  });
   it("uses 120-second single-use QR and matching desktop confirmation", () => {
     const qr = store.invite(); expect(qr.expiresAt - at).toBe(120_000); expect(qr.nonce.length).toBeGreaterThanOrEqual(43);
     const claim = store.claim(qr.invitationId, qr.nonce, "Fixture", "android", randomUUID()) as PairingClaim;

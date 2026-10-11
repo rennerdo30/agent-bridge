@@ -4,5 +4,6 @@ const config = getDefaultConfig(__dirname);
 // The only imported file outside the package is the pure shared DTO contract (type-only).
 config.watchFolders = [path.resolve(__dirname, '../../src/mobile')];
 config.resolver.nodeModulesPaths = [path.resolve(__dirname, 'node_modules')];
-config.resolver.disableHierarchicalLookup = true;
+// Expo intentionally nests some SDK dependencies; their own package resolution must work.
+config.resolver.disableHierarchicalLookup = false;
 module.exports = config;

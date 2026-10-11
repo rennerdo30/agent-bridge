@@ -19,10 +19,12 @@ Baseline `a679e53746640c04094070730fb8a29558e1e985`; design and inventory import
 
 `src/mobile/{contract,store,gateway,adapter,desktop,push,https}.ts`: pure DTOs, isolated mobile SQLite registry/ledger, strict dispatch/authentication, fixed local service projection, authenticated loopback phone administration, provider seam, inert HTTPS server factory (never starts automatically).
 
-`src/core/owner-questions.ts`: additive question version and atomic mobile answer replay/CAS API. Existing desktop/default callers retain their behavior; no archive, lease or worktree edits.
+`src/core/owner-questions.ts`: additive question version and atomic mobile answer replay/CAS API. Existing desktop/default callers retain their behavior. `src/cli/ui.ts` has only an optional authenticated `/api/mobile/*` dispatch after its existing cookie/Host gate; no archive, lease or worktree edits.
 
 `apps/mobile/**`: independently writable Expo package, Android+iOS UI, secure credential adapter, typed client/state machine, QR scanner and notification seams, copied design tokens, app-only lockfile and checks. Official Expo SDK matrix checked 2026-10-11: SDK 57 / React Native 0.86 / React 19.2.3; installation uses Expo compatibility checks in this package only (https://docs.expo.dev/versions/latest/).
 
 `test/mobile-*.test.ts`: isolated fixture databases and mocked source/provider tests; no live DB/history/secrets/devices/listeners.
 
 Designer documents remain unchanged. This contract is updated with implemented routes, bounds and validation evidence before delivery. No release, merge, updater, network/listener activation or distribution work.
+
+SecureStore retains the approved HTTPS origin list and selected preferred origin alongside device credentials; content remains memory-only. Every API request uses Expo native `fetch` with `redirect:error`, `credentials:omit` and cache-control no-store. Installed Expo source enforces redirects before follow: Android `NativeRequest.kt` sets `followRedirects(false)` and rejects redirect responses; iOS `NativeResponse.swift` redirection delegate refuses the redirect and raises in error mode. Client checks response URL too. Mock transport tests verify policy/identity/failover; physical native enforcement testing is still pending, and no pinning is claimed.
