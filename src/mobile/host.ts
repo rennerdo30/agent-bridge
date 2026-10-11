@@ -33,18 +33,21 @@ export async function prepareMobileDesktopHost(node: MobileHostNode, config: Mob
     if (closing) return closing;
     closed = true; mobile.gateway.deactivate();
     closing = (async () => {
+      const failures: unknown[] = [];
       try {
-        await Promise.all(listeners.map(({ server }) => new Promise<void>((resolve, reject) => {
+        const settled = await Promise.allSettled(listeners.map(({ server }) => new Promise<void>((resolve, reject) => {
           // Only these owned listeners: end keep-alive/in-flight connections before service retirement.
           server.closeAllConnections();
           if (!server.listening) { resolve(); return; }
           server.close(error => error ? reject(error) : resolve());
         })));
+        for (const result of settled) if (result.status === "rejected") failures.push(result.reason);
       } finally {
         // Keep the broker disposer registered while node shutdown drains pending work.
         // Broker.close must await this same promise before retiring its borrowed service.
-        try { await mobile.close(); } finally { unregister(); }
+        try { await mobile.close(); } catch (error) { failures.push(error); } finally { unregister(); }
       }
+      if (failures.length) throw new AggregateError(failures, "mobile_host_disposal_failed");
     })(); return closing;
   };
   try {

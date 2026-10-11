@@ -8,7 +8,7 @@ import { digest, MobileFault, MobileStore, secret, type Device, type Principal }
 
 export interface MobileRequest { method: string; path: string; headers: Record<string, string | undefined>; body?: string; authority: string; tls: boolean; remoteAddress: string }
 export interface MobileResponse { status: number; headers: Record<string, string>; body?: unknown }
-export interface GatewayDiagnostic { requestId: string; errorCategory: "unexpected_gateway_exception" }
+export interface GatewayDiagnostic { requestId: string; errorCategory: "unexpected_gateway_exception" | "gateway_shutdown_timeout" }
 export type GatewayDiagnosticSink = (diagnostic: GatewayDiagnostic) => void;
 const uuid = z.string().uuid(), id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), token = z.string().min(40).max(256);
 const answerSchema = z.object({ expectedVersion: token, option: z.string().min(1).max(40).optional(), text: z.string().min(1).max(8000).optional() }).strict().refine(a => !!a.option !== !!a.text);
@@ -28,11 +28,31 @@ export class MobileGateway {
   private readonly rates = new Map<string, { at: number; count: number }>();
   private sampling?: Promise<SourceView>;
   private available = true;
+  private readonly inFlight = new Set<Promise<MobileResponse>>();
+  private closing?: Promise<void>;
   constructor(readonly store: MobileStore, private readonly source: MobileSource, readonly push = new MobilePush(store),
     private readonly diagnostics: GatewayDiagnosticSink = diagnostic => console.error(diagnostic)) {}
   hello(): Hello { return { apiVersion: 1, capabilities: CAPS, transport: "private-https", pinning: false, send: "unsupported", pairedPcWrites: "unsupported", push: this.push.configured ? "configured" : "unsupported" }; }
   /** Owned host retirement; no registry reads or writes after it is closed. */
   deactivate(): void { this.available = false; this.views.clear(); this.cursors.clear(); }
+  /** Stop admission immediately; settle owned handlers before the host retires its stores. */
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.deactivate();
+    this.closing = (async () => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const drained = await Promise.race([
+          Promise.allSettled([...this.inFlight]).then(() => true),
+          new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), 5000); }),
+        ]);
+        if (!drained) {
+          try { this.diagnostics({ requestId: randomUUID(), errorCategory: "gateway_shutdown_timeout" }); } catch { /* Content-free diagnostics cannot break disposal. */ }
+          throw new MobileFault(503, "gateway_shutdown_timeout");
+        }
+      } finally { if (timer) clearTimeout(timer); }
+    })(); return this.closing;
+  }
   private rate(principal: string, max: number): void {
     const now = this.store.now(), prior = this.rates.get(principal);
     if (!prior || now - prior.at >= 60_000) { if (this.rates.size >= 10_000) this.rates.clear(); this.rates.set(principal, { at: now, count: 1 }); return; }
@@ -132,7 +152,16 @@ export class MobileGateway {
     return { items, next: rest.length || nativeNext ? this.cursor(device, `${kind}:${entityId}`, view.snapshot.cursor, { remaining: rest, nativeNext, generation, entityId } satisfies ContentCursor) : null,
       generation, reset: false, sampledAt: this.store.now(), viewCursor: view.snapshot.cursor };
   }
-  async handle(req: MobileRequest): Promise<MobileResponse> {
+  handle(req: MobileRequest): Promise<MobileResponse> {
+    if (!this.available) return this.dispatch(req);
+    // Every admitted request is tracked. A response completing after retirement is
+    // discarded in favor of the normal content-free 503, including committed answers.
+    const work = this.dispatch(req).then(response => this.available ? response : this.dispatch(req));
+    this.inFlight.add(work);
+    void work.then(() => this.inFlight.delete(work), () => this.inFlight.delete(work));
+    return work;
+  }
+  private async dispatch(req: MobileRequest): Promise<MobileResponse> {
     const requestId = randomUUID(), headers = { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" };
     try {
       if (!this.available) throw new MobileFault(503, "source_unavailable");

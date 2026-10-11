@@ -31,7 +31,13 @@ export function provisionMobile(options: {
   return { gateway, desktopAdmin, close: () => {
     if (closing) return closing;
     closed = true; gateway.deactivate();
-    closing = (async () => { await hintPoll?.catch(() => {}); store.close(); })(); return closing;
+    closing = (async () => {
+      try {
+        const settled = await Promise.allSettled([gateway.close(), hintPoll ?? Promise.resolve()]);
+        const failed = settled[0]!;
+        if (failed.status === "rejected") throw failed.reason;
+      } finally { store.close(); }
+    })(); return closing;
   }, pollQuestionHints: () => {
     if (hintPoll) return hintPoll;
     hintPoll = (async () => {

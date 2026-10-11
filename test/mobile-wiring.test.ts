@@ -17,7 +17,7 @@ import { startUi } from "../src/cli/ui.js";
 import { DashboardController, hostDashboard } from "../src/cli/dashboard.js";
 import { MobileClient, type StoredDevice, type WireFetch } from "../apps/mobile/src/client.js";
 import { provisionMobile } from "../src/mobile/bootstrap.js";
-import { projectQuestion } from "../src/mobile/adapter.js";
+import { projectQuestion, type MobileSource } from "../src/mobile/adapter.js";
 import { prepareMobileDesktopHost } from "../src/mobile/host.js";
 import { createMobileHttpsListeners, type MobileListenerConfig } from "../src/mobile/https.js";
 import type { MobileGateway, MobileRequest } from "../src/mobile/gateway.js";
@@ -191,6 +191,75 @@ describe("opt-in host ownership and authenticated desktop administration", () =>
     expect(host.ready()).toBe(false); expect(serviceClose).not.toHaveBeenCalled(); expect(f.service.store.get(f.q.id)?.status).toBe("open");
     finish({ state: "submitted" }); await poll; await stopped;
     expect(serviceClose).toHaveBeenCalledTimes(1);
+    expect((await host.gateway.handle(req("GET", "/hello"))).status).toBe(503);
+  });
+  it("drains a suspended gateway handler before node/broker disposal closes the borrowed service and registry", async () => {
+    const f = fixture(), { node, broker } = borrowed(f), serviceClose = vi.spyOn(f.service, "close");
+    const host = await prepareMobileDesktopHost(node, config(f.home)), registryClose = vi.spyOn(host.gateway.store, "close");
+    const c = await pair(host, projectQuestion(f.q, pcId).projectId);
+    let entered!: () => void, release!: (peers: PeerInfo[]) => void;
+    const suspended = new Promise<PeerInfo[]>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+    vi.mocked((broker as unknown as { dashboardPeers(): PeerInfo[] }).dashboardPeers).mockImplementationOnce(() => { entered(); return suspended as unknown as PeerInfo[]; });
+    const request = host.gateway.handle(req("GET", "/snapshot", c)); await started;
+    const stopped = node.stop(), closing = host.close();
+    expect(host.close()).toBe(closing); // Node lost and broker close already joined this exact disposal promise.
+    expect(serviceClose).not.toHaveBeenCalled(); expect(registryClose).not.toHaveBeenCalled(); expect(f.service.store.get(f.q.id)?.status).toBe("open");
+    expect((await host.gateway.handle(req("GET", "/hello"))).status).toBe(503);
+    release(f.peers); expect((await request).body).toMatchObject({ code: "source_unavailable" });
+    await stopped; await closing;
+    expect(registryClose).toHaveBeenCalledTimes(1); expect(serviceClose).toHaveBeenCalledTimes(1);
+  });
+  it("settles every listener close before mobile close/unregister and aggregates a listener rejection", async () => {
+    const f = fixture(), { node } = borrowed(f), serviceClose = vi.spyOn(f.service, "close");
+    const host = await prepareMobileDesktopHost(node, { ...config(f.home), listeners: origins.map((address, index) => ({ origin: address,
+      bindAddress: index ? "100.64.0.1" : "127.0.0.1", port: index ? 443 : 4433, tls: { key: "synthetic-not-used", cert: "synthetic-not-used" } })) });
+    const registryClose = vi.spyOn(host.gateway.store, "close"), first = host.listeners[0]!.server, second = host.listeners[1]!.server;
+    Object.assign(first, { listening: true }); Object.assign(second, { listening: true });
+    const rejected = new Error("fixture listener close rejection");
+    vi.mocked(first.close).mockImplementation(() => { throw rejected; });
+    let release!: () => void;
+    vi.mocked(second.close).mockImplementation(((callback: () => void) => { release = () => { Object.assign(second, { listening: false }); callback(); }; return second; }) as typeof second.close);
+    const closing = host.close(), outcome = closing.catch(error => error as AggregateError);
+    expect(host.close()).toBe(closing); expect(second.close).toHaveBeenCalledTimes(1); expect(registryClose).not.toHaveBeenCalled();
+    expect(node.listenerCount("disconnected")).toBe(1); // Disposal remains registered while the second listener is pending.
+    release(); const error = await outcome;
+    expect(error).toBeInstanceOf(AggregateError); if (!(error instanceof AggregateError)) throw new Error("Expected aggregated disposal failure");
+    expect(error.errors).toEqual([rejected]);
+    expect(second.listening).toBe(false); expect(registryClose).toHaveBeenCalledTimes(1); expect(node.listenerCount("disconnected")).toBe(0);
+    expect(serviceClose).not.toHaveBeenCalled(); expect((await host.gateway.handle(req("GET", "/hello"))).status).toBe(503);
+    expect(first.close).toHaveBeenCalledTimes(1); // No blind automatic close retry; caller receives the aggregated failure.
+  });
+  it("retains a committed answer but suppresses its delayed success response during ownership retirement", async () => {
+    const f = fixture(), { node } = borrowed(f), host = await prepareMobileDesktopHost(node, config(f.home));
+    const c = await pair(host, projectQuestion(f.q, pcId).projectId), displayed = await snap(host.gateway, c);
+    const source = (host.gateway as unknown as { source: MobileSource }).source, answer = source.answer.bind(source), serviceClose = vi.spyOn(f.service, "close");
+    let entered!: () => void, release!: () => void;
+    const committed = new Promise<void>(resolve => { entered = resolve; }), responseGate = new Promise<void>(resolve => { release = resolve; });
+    vi.spyOn(source, "answer").mockImplementation(async (...args) => { const result = await answer(...args); entered(); await responseGate; return result; });
+    const request = host.gateway.handle(req("POST", `/questions/${f.q.id}/answer`, c, { expectedVersion: ownerQuestionVersion(f.q), text: "Retained synthetic owner intent" }, { "x-mobile-view": displayed.cursor }));
+    await committed; const stopped = node.stop();
+    expect(serviceClose).not.toHaveBeenCalled(); expect(f.service.store.get(f.q.id)?.answer?.text).toBe("Retained synthetic owner intent");
+    release(); const response = await request; expect(response.status).toBe(503); expect(response.body).toMatchObject({ code: "source_unavailable" });
+    expect(JSON.stringify(response.body)).not.toContain("Retained synthetic owner intent"); await stopped;
+    const reopened = fixture(f.home); expect(reopened.service.store.get(f.q.id)?.answer?.text).toBe("Retained synthetic owner intent");
+  });
+  it("bounds a nonsettling handler drain and emits only a safe timeout category before retiring the registry", async () => {
+    vi.useFakeTimers(); const f = fixture(), { node, broker } = borrowed(f);
+    const host = await prepareMobileDesktopHost(node, config(f.home)), registryClose = vi.spyOn(host.gateway.store, "close"), diagnostics = vi.fn();
+    Object.assign(host.gateway, { diagnostics });
+    const c = await pair(host, projectQuestion(f.q, pcId).projectId);
+    let release!: (peers: PeerInfo[]) => void;
+    const suspended = new Promise<PeerInfo[]>(resolve => { release = resolve; });
+    vi.mocked((broker as unknown as { dashboardPeers(): PeerInfo[] }).dashboardPeers).mockReturnValueOnce(suspended as unknown as PeerInfo[]);
+    // Simulate a future adapter ignoring its normal request deadline to exercise the independent shutdown bound.
+    vi.spyOn(host.gateway as unknown as { deadline(work: Promise<unknown>): Promise<unknown> }, "deadline").mockImplementation(work => work);
+    const request = host.gateway.handle(req("GET", "/snapshot", c)), outcome = host.close().catch(error => error as AggregateError);
+    await vi.advanceTimersByTimeAsync(4999); expect(registryClose).not.toHaveBeenCalled(); expect(diagnostics).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1); const error = await outcome;
+    expect(error).toBeInstanceOf(AggregateError); expect(registryClose).toHaveBeenCalledTimes(1);
+    expect(diagnostics).toHaveBeenCalledExactlyOnceWith({ requestId: expect.any(String), errorCategory: "gateway_shutdown_timeout" });
+    expect(Object.keys(diagnostics.mock.calls[0]![0]).sort()).toEqual(["errorCategory", "requestId"]);
+    release(f.peers); expect((await request).body).toMatchObject({ code: "source_unavailable" });
     expect((await host.gateway.handle(req("GET", "/hello"))).status).toBe(503);
   });
   it("pairs/confirms/issues/revokes through real owner-authenticated startUi routes", async () => {
