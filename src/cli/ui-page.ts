@@ -7,6 +7,11 @@ import { FAVICON_HREF, LOGO_SVG } from "./logo.js";
 import { renderMarkdown } from "./markdown.js";
 import { DEFAULT_NETWORK_PORT, NETWORK_NAME_PATTERN } from "../network/constants.js";
 
+/** Default HTML is byte-identical; the fixed local entry is inserted only for a ready prepared host. */
+export function mobileDashboardPage(ready: boolean): string {
+  return ready ? UI_PAGE.replace('<nav class="side-nav">', '<nav class="side-nav"><a href="/mobile/phones" id="tabPhones"><span class="ico" aria-hidden="true">▣</span>Phones</a>') : UI_PAGE;
+}
+
 /**
  * The renderer as page script. Bundlers may wrap functions in a __name(...) helper (keepNames); the page
  * has no such helper, so the source brings a no-op one along.

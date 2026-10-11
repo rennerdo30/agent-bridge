@@ -128,6 +128,20 @@ async function main(argv: string[]): Promise<number> {
       return (await import("./installer.js")).runInstaller({ action: command, tools: (await import("./installer.js")).parseInstallerArgs(command, rest), yes: rest.includes("--yes") || rest.includes("-y"), out });
     case "ui": {
       const noOpen = rest.includes("--no-open");
+      const mobileConfig = loadConfig(home, "other", log).mobile;
+      if (mobileConfig) {
+        if (rest.includes("--reset-key")) (await import("./dashboard.js")).dashboardKey(home, true);
+        const portArg = rest.find((a) => a.startsWith("--port="))?.slice("--port=".length), cfg = loadConfig(home, "other", log);
+        const node = makeNode(); let activation: import("../mobile/activation.js").MobileActivation | undefined;
+        try {
+          await node.start();
+          activation = await (await import("../mobile/activation.js")).configuredMobileDashboard(node, mobileConfig, { home, pipe, port: portArg ? Number(portArg) : cfg.dashboardPort, log });
+          const info = await activation?.start();
+          if (!info) { out("Mobile unavailable; check owner setup and restart the broker host."); return 1; }
+          out(t("cli.ui.running", { url: info.url })); if (!noOpen) openBrowser(info.url);
+          await new Promise<void>(resolve => process.once("SIGINT", resolve)); return 0;
+        } finally { await activation?.close().catch(() => {}); await node.stop(); }
+      }
       if (rest.includes("--reset-key")) (await import("./dashboard.js")).dashboardKey(home, true);
       // Usually an agent session already hosts it: just open that one.
       const running = await (await import("./dashboard.js")).findRunningDashboard(home);

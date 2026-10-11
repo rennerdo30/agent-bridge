@@ -12,6 +12,7 @@ export async function readMobileDesktopBody(stream: AsyncIterable<Uint8Array | s
 }
 /** Mounted only AFTER the existing desktop cookie/Host owner gate; never the mobile listener. */
 export class MobileDesktopAdmin {
+  isReady(): boolean { return this.ready(); }
   private readonly csrf = secret();
   constructor(private readonly store: MobileStore, private readonly source: MobileSource, readonly localOrigin: string, private readonly ready: () => boolean = () => true) {
     const origin = new URL(localOrigin);

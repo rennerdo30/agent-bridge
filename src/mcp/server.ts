@@ -254,6 +254,8 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     return configRoot;
   };
   const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? projectConfigRoot(cwd) : undefined);
+  const mobileAtStartup = cfg.mobile;
+  const mobilePortAtStartup = cfg.dashboardPort;
   const delegated = currentDelegateDepth() > 0;
   const internal = isInternalBridgeProcess();
   log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, internal, version: APP_VERSION, node: process.version });
@@ -433,9 +435,15 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
 
   /** Web dashboard hosted by this process, if any. */
   let dashboard: Promise<import("../cli/dashboard.js").DashboardController> | null = null;
+  let mobileDashboard: Promise<import("../mobile/activation.js").MobileActivation | undefined> | null = null;
   const ensureDashboard = async (force: boolean): Promise<DashboardInfo | null> => {
     try {
       if (!force && !cfg.dashboard) return null;
+      if (mobileAtStartup && node) {
+        mobileDashboard ??= import("../mobile/activation.js").then(({ configuredMobileDashboard }) => configuredMobileDashboard(node, mobileAtStartup,
+          { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }));
+        return await (await mobileDashboard)?.start() ?? null;
+      }
       dashboard ??= import("../cli/dashboard.js").then(({ DashboardController }) =>
         new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
       return await (await dashboard).ensure();
@@ -481,6 +489,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     await killAllDelegates();
     await mcp.close().catch(() => {});
     await dashboard?.then(controller => controller.close()).catch(() => {});
+    await mobileDashboard?.then(controller => controller?.close()).catch(() => {});
     await rewake?.stop().catch(() => {});
     await antigravityHooks?.stop().catch(() => {});
     await node?.stop().catch(() => {});

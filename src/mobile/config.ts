@@ -53,11 +53,13 @@ export async function readPrivateMaterial(file: string, policy: MaterialPolicy =
     if (platform === "win32" ? !await (policy.acl ?? windowsPrivateAcl)(file) : (before.mode & 0o077) !== 0 || typeof process.getuid === "function" && before.uid !== process.getuid()) throw new Error();
     handle = await fs.open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const opened = await handle.stat();
-    if (!opened.isFile() || opened.ino !== before.ino || opened.dev !== before.dev) throw new Error();
+    if (!opened.isFile() || opened.ino !== before.ino || opened.dev !== before.dev || opened.mode !== before.mode || opened.uid !== before.uid) throw new Error();
+    component = file;
+    while (component !== parse(component).root) { if ((await fs.lstat(component)).isSymbolicLink()) throw new Error(); component = dirname(component); }
     const content = Buffer.alloc(64 * 1024 + 1); let length = 0;
     while (length < content.length) { const read = await handle.read({ buffer: content, offset: length, length: content.length - length, position: length }); if (!read.bytesRead) break; length += read.bytesRead; }
     const after = await handle.stat();
-    if (length > 64 * 1024 || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || length !== after.size) throw new Error();
+    if (length > 64 * 1024 || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.mode !== opened.mode || after.uid !== opened.uid || length !== after.size) throw new Error();
     return content.subarray(0, length);
   } catch { throw new MobileActivationFault("material_unavailable"); }
   finally { await handle?.close().catch(() => {}); }

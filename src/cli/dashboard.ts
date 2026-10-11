@@ -7,7 +7,9 @@ import { loadDashboardKey } from "./dashboard-key.js";
 import { protect } from "../network/pairing.js";
 import type { MobileDesktopAdmin } from "../mobile/desktop.js";
 
-export interface DashboardHostOptions { home: string; pipe: string; port: number; log: Logger; mobileAdmin?: MobileDesktopAdmin }
+export interface DashboardHostOptions { home: string; pipe: string; port: number; log: Logger; mobileAdmin?: MobileDesktopAdmin; mobileStatus?: () => string }
+/** Used only by the explicit activation coordinator. */
+export function createConfiguredMobileDashboard(options: DashboardHostOptions): DashboardController { return new DashboardController(options); }
 
 /**
  * The dashboard runs inside whichever process hosts the bridge (or a manual `agent-bridge ui`).

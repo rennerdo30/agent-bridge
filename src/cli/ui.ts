@@ -33,7 +33,7 @@ import { loadOrCreateToken, tokensEqual } from "../core/token.js";
 import { loadConfig, saveConfigValue } from "../core/config.js";
 import { readUsage, type UsageReport } from "../core/usage.js";
 import { controlDashboardJob, JobControlError, type DashboardJobCommand } from "../core/job-control.js";
-import { UI_PAGE } from "./ui-page.js";
+import { UI_PAGE, mobileDashboardPage } from "./ui-page.js";
 import { codexQueue, deliverDashboardChat, childNote, type QueuePrompt } from "../core/dashboard-chat.js";
 import { networkConfigSchema } from "../network/config.js";
 import { planFirewall, detectFirewall, applyWindowsFirewall } from "../network/firewall.js";
@@ -185,6 +185,7 @@ export interface UiOptions {
   chatQueue?: QueuePrompt;
   /** Inert opt-in: owner-provisioned mobile registry and exact loopback origin only. */
   mobileAdmin?: MobileDesktopAdmin;
+  mobileStatus?: () => string;
 }
 
 /** The paired PCs' runs in /api/state are re-fetched in the background at most this often. */
@@ -301,6 +302,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (req.method === "GET" && url.pathname === "/mobile/phones") {
       if (!opts.mobileAdmin) return send(res, 404, { code: "mobile_not_provisioned" });
       if (`http://${req.headers.host}` !== opts.mobileAdmin.localOrigin) return send(res, 403, { code: "desktop_origin" });
+      if (!opts.mobileAdmin.isReady() || opts.mobileStatus && opts.mobileStatus() !== "ready") return send(res, 503, { code: "source_unavailable" });
       res.setHeader("cache-control", "no-store"); res.setHeader("referrer-policy", "no-referrer");
       return send(res, 200, MOBILE_DESKTOP_PAGE, "text/html; charset=utf-8");
     }
@@ -308,6 +310,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (url.pathname.startsWith("/api/mobile/")) {
       if (!opts.mobileAdmin) return send(res, 404, { code: "mobile_not_provisioned" });
       if (`http://${req.headers.host}` !== opts.mobileAdmin.localOrigin || url.search) return send(res, 403, { code: "desktop_origin" });
+      if (req.method === "GET" && url.pathname === "/api/mobile/status") return send(res, 200, { state: opts.mobileStatus?.() ?? (opts.mobileAdmin.isReady() ? "ready" : "source_unavailable") });
       try {
         const headers: Record<string, string | undefined> = {};
         for (const [key, value] of Object.entries(req.headers)) {
@@ -321,7 +324,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       } catch (error) { return send(res, error instanceof MobileFault ? error.status : 400, { code: error instanceof MobileFault ? error.code : "invalid_request" }); }
     }
 
-    if (req.method === "GET" && url.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
+    if (req.method === "GET" && url.pathname === "/") return send(res, 200, opts.mobileAdmin ? mobileDashboardPage(opts.mobileAdmin.isReady() && (!opts.mobileStatus || opts.mobileStatus() === "ready")) : UI_PAGE, "text/html; charset=utf-8");
     if (req.method === "POST" && url.pathname === "/api/coordinator/availability") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
       const body = await readJson(req);

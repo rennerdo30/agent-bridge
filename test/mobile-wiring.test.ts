@@ -107,7 +107,14 @@ describe("unprepared host compatibility", () => {
       const split = key.lastIndexOf(":"), file = key.slice(0, split), name = key.slice(split + 1);
       expect(sha(methodBody(readFileSync(file, "utf8"), name)), key).toBe(expected);
     }
-    expect(sha(readFileSync("src/cli/ui.ts", "utf8").replaceAll("\r\n", "\n"))).toBe(baseline.uiSha256);
+    const ui = readFileSync("src/cli/ui.ts", "utf8").replaceAll("\r\n", "\n")
+      .replace('import { UI_PAGE, mobileDashboardPage }', 'import { UI_PAGE }')
+      .replace('  mobileStatus?: () => string;\n', '')
+      .replace('      if (!opts.mobileAdmin.isReady() || opts.mobileStatus && opts.mobileStatus() !== "ready") return send(res, 503, { code: "source_unavailable" });\n', '')
+      .replace('      if (req.method === "GET" && url.pathname === "/api/mobile/status") return send(res, 200, { state: opts.mobileStatus?.() ?? (opts.mobileAdmin.isReady() ? "ready" : "source_unavailable") });\n', '')
+      .replace('opts.mobileAdmin ? mobileDashboardPage(opts.mobileAdmin.isReady() && (!opts.mobileStatus || opts.mobileStatus() === "ready")) : UI_PAGE', 'UI_PAGE');
+    // Remove only the explicitly reviewed opt-in additions; original default route source stays pinned.
+    expect(sha(ui)).toBe(baseline.uiSha256);
   });
   it("does not open mobile stores, install timers/listeners or initialize a question service without preparation", async () => {
     const home = fixtureHome(), messages = new MessageStore(join(home, "bridge.db"), nullLogger), broker = new Broker("fixture-unused-pipe", messages, nullLogger, "fixture-token");
