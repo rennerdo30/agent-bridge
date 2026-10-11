@@ -206,7 +206,7 @@ async function main(argv) {
       return 0;
     }
     case "rewake-hook":
-      return (await import("./chunks/rewake-hook-T6THQZHI.mjs")).runRewakeHook(rest.includes("--standby"));
+      return (await import("./chunks/rewake-hook-SL724AKX.mjs")).runRewakeHook(rest.includes("--standby"));
     case "session-start-hook":
       return (await import("./chunks/session-start-hook-5S4B2SBQ.mjs")).runSessionStartHook(log);
     case "permission-hook":

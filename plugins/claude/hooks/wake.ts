@@ -6,7 +6,7 @@ import type { Register } from 'claude-code'
  *
  * The MCP server publishes its wake endpoint per session in ~/.agent-bridge/sessions/<session id>.json. While
  * the session is idle the mod long-polls it (`/wait?role=mod`) and submits what comes back as a prompt. It
- * tells the server when turns start and end (`/mod?busy=`), so messages arriving mid-turn go out with the tool
+ * tells the server when main turns start and end (`/activity`), so messages arriving mid-turn go out with the tool
  * hooks instead. Once the server has seen the mod, the asyncRewake Stop hooks step aside; older Claude Code
  * versions keep using them.
  */
@@ -23,6 +23,8 @@ const state = {
   /** Main-loop turns that started and have not completed. */
   openTurns: new Set<string>(),
   turnsStarted: 0,
+  activitySequence: 0,
+  lastMainTurn: '',
   /** Ids of the messages already submitted: never submitted twice (a server that missed the delivery). */
   submitted: [] as string[],
 }
@@ -45,6 +47,11 @@ async function call($: Engine, path: string, method = 'GET') {
   const ep = await endpoint($)
   if (!ep) return null
   return $.http.fetch(`http://127.0.0.1:${ep.port}${path}`, { method, headers: { authorization: `Bearer ${ep.secret}` } })
+}
+
+async function activity($: Engine, busy: boolean, turnId: string, sequence: number) {
+  const session = await $.session.id()
+  return call($, `/activity?busy=${busy ? 1 : 0}&session_id=${encodeURIComponent(session)}&turn_id=${encodeURIComponent(turnId)}&sequence=${sequence}`, 'POST')
 }
 
 async function poll($: Engine, mine: number): Promise<void> {
@@ -91,20 +98,24 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
+    if (e.agentId) return next(e)
     state.turnsStarted++
     state.openTurns.add(e.turnId)
+    state.lastMainTurn = e.turnId
     state.generation++
-    void call($, '/mod?busy=1', 'POST').catch(() => undefined)
+    // Publish the start before allowing the turn to finish; a reordered idle request
+    // cannot release an owner that the endpoint has not seen yet.
+    await activity($, true, e.turnId, ++state.activitySequence).catch(() => undefined)
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
     // A subagent's runs complete too; only the main loop's turns count.
-    if (!e.agentId) {
+    if (!e.agentId && state.openTurns.has(e.turnId)) {
       state.openTurns.delete(e.turnId)
       if (state.openTurns.size === 0) {
-        await call($, '/mod?busy=0', 'POST').catch(() => undefined)
+        await activity($, false, state.lastMainTurn, ++state.activitySequence).catch(() => undefined)
         void poll($, ++state.generation)
       }
     }

@@ -47,6 +47,7 @@ import { loadOrCreateToken } from "../core/token.js";
 import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, isUnsupportedOperation, SIBLING_CONVERSATION_PREFIX, TRANSFER_PROGRESS_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
 import { formatInboxMessages, formatProjectRoute, formatReplyRestrictions, formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer, formatVersionSkew } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
+import { reportModActivity } from "./hook-ownership.js";
 import { buildHookResponse, discardFinishedNotes, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, type Access } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
@@ -415,7 +416,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       // Running-job notes remain in explicit inbox reads and history (see JobManager.fromSubagent).
       !ctx.jobs?.isNote(m) &&
       shouldWakeClaudeMessage(node, cfg, m);
-    rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"));
+    rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"), (event) => reportModActivity(ctx, event));
     try {
       await rewake.start();
       ctx.rewakeAvailable = true;
@@ -1536,9 +1537,10 @@ ${res.text || t("delegate.empty")}`, res.isError);
         cwd: z.string().optional(),
         agent_id: z.string().optional(),
         prompt: z.string().optional(),
+        prompt_id: z.string().optional(),
       },
     },
-    async (a: { event: string; session_id?: string; stop_hook_active?: boolean | string; cwd?: string; agent_id?: string; prompt?: string }, extra: ToolExtra) => {
+    async (a: { event: string; session_id?: string; stop_hook_active?: boolean | string; cwd?: string; agent_id?: string; prompt?: string; prompt_id?: string }, extra: ToolExtra) => {
       // An unsubstituted "${...}" template means the host had no value for that field.
       const given = (v: string | undefined) => (v && !v.startsWith("${") ? v : null);
       try {
@@ -1549,6 +1551,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
           cwd: given(a.cwd),
           subagent: Boolean(given(a.agent_id)),
           prompt: given(a.prompt),
+          promptId: given(a.prompt_id),
           signal: extra.signal,
           prepare: async () => {
             if (ctx.node?.wasReplaced) await ctx.node.reclaim();

@@ -81,11 +81,18 @@ export class RewakeEndpoint {
     /** Messages that should wake the session. */
     private readonly shouldWake: (m: BridgeMessage) => boolean,
     private readonly log: Logger,
+    private readonly activity?: (event: import("./hook-ownership.js").ModActivity) => boolean,
   ) {}
 
   async start(): Promise<void> {
     this.server = createServer((req, res) => {
       const url = new URL(req.url ?? "/", `http://${HOST}`);
+      if (url.pathname === "/activity" && tokensEqual(String(req.headers.authorization ?? "").replace(/^Bearer /, ""), this.secret)) {
+        const accepted = !this.retired && this.activity?.({ sessionId: url.searchParams.get("session_id") ?? "", turnId: url.searchParams.get("turn_id") ?? "", sequence: Number(url.searchParams.get("sequence")), busy: url.searchParams.get("busy") === "1" });
+        if (accepted) this.modSeen = true;
+        res.writeHead(accepted ? 204 : 409).end();
+        return;
+      }
       if (url.pathname === "/mod" && tokensEqual(String(req.headers.authorization ?? "").replace(/^Bearer /, ""), this.secret)) {
         // The mod reports turns starting and ending.
         this.modSeen = true;
