@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.30.10
+
+- Codex sessions now expose `spawn_codex` and `ask_codex`, so a Codex main can delegate isolated packages to Codex jobs. Model, effort, sandbox and worktree settings use the existing job path; depth, capacity and ownership limits still apply. Jobs report to their Codex parent and support continuation and cancellation.
+
 ## 0.30.9
 
 - The dashboard opens a conversation at its latest messages. It used to read every transcript from its first byte, which took seconds for long sessions (a 140 MB transcript) and showed the oldest part first. A paired PC on an older version is still read from the start.
