@@ -195,9 +195,10 @@ AB-268 must remain distinct even under one parent PID.
 
 Related proposal: [AB-276 waiter notice contract](../../../agentbridge-ab276-design-332867e2/docs/runtime/WAITER-NOTICE-CONTRACT.md)
 in `D:/AgentData/worktrees/agentbridge-ab276-design-332867e2`, commit
-`1c2a0f70ab9c5fffa9ef61ad3b8924820ecd5669`. Its storage proposal is
-**superseded by Claude decision `03856544`** pending the sibling revision;
-it is not implemented authority. The relative link is convenient between
+`12fa4e682fef026171b89d70e45033fd8b420fa2`. This revised proposal replaces
+the storage design in `1c2a0f70ab9c5fffa9ef61ad3b8924820ecd5669`,
+**superseded by Claude decision `03856544`**; neither is implemented authority.
+The relative link is convenient between
 these local worktrees; use the exact commit/path and this decision when
 reviewing elsewhere.
 
@@ -214,8 +215,9 @@ reviewing elsewhere.
 Claude decision `03856544` explicitly **rejected the global store reader
 floor**. AB-276 requires an isolated capability + notice database, no pinned
 legacy mail, unsupported notice operation on old hosts, and coexistence with
-v0.30.11. The earlier shared-store/pinned-mail proposal is not an accepted
-dependency. The revised isolated-store authority/fencing contract still needs
+v0.30.11. The revised proposal negotiates dedicated notice claim/ack without
+placing pinned notice bodies in legacy mail. The earlier shared-store/pinned-mail
+proposal is not an accepted dependency. The revised isolated-store authority/fencing contract still needs
 review and implementation; AB-277 must not add a legacy-store reader floor or
 mail pins to enable runtime sharing. AB-277 does not need a store migration to
 explore lazy imports or shared code.
