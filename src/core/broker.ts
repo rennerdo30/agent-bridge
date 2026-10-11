@@ -124,6 +124,11 @@ const HANDOFF_LOCK_RETRY_MS = 25;
 export class Broker {
   private mobileResources?: Set<() => Promise<void>>;
   private mobileRetiring?: boolean;
+  /** Deliberate owner-only activation, after caller validation; no change to ordinary startup. */
+  initializeMobileOwnerQuestions(): boolean {
+    if (this.closing || this.mobileRetiring || !this.server?.listening) return false;
+    this.ownerQuestions(); return true;
+  }
   /** Explicit host-only opt-in; borrow an already-existing service, never initialize one here. */
   mobileHostContext(): import("../mobile/host.js").MobileHostContext | undefined {
     const service = this.questions;

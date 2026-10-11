@@ -169,6 +169,9 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   get isBroker(): boolean {
     return this.broker !== null;
   }
+  initializeMobileOwnerQuestions(): boolean {
+    return !this.stopping && !this.replaced && !!this.broker?.initializeMobileOwnerQuestions();
+  }
   /** No election or service creation. Only an explicitly prepared local broker owner can borrow this. */
   mobileHostContext(): import("../mobile/host.js").MobileHostContext | undefined {
     const broker = this.broker;

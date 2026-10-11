@@ -6,6 +6,7 @@ import { AGENT_KINDS, type AgentKind } from "./protocol.js";
 import { isRecord, readJsonStore, writeJsonStore } from "./json-store.js";
 import { DEFAULT_NETWORK_CONFIG, parseNetworkConfig, type NetworkConfig } from "../network/config.js";
 import { DEFAULT_QUESTION_ALERTS, questionAlertSettingsSchema, type QuestionAlertSettings } from "./owner-questions.js";
+import { parseMobileConfig, type MobileConfig } from "../mobile/config.js";
 
 /**
  * How incoming messages reach a Claude Code session.
@@ -36,6 +37,8 @@ export interface HistoryAnswerConfig {
 const DEFAULT_HISTORY_ANSWER: HistoryAnswerConfig = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
 
 export interface BridgeConfig {
+  /** Restart-applied, home top-level only; never projected in effective-config diagnostics. */
+  mobile?: MobileConfig;
   history: { ingest: boolean; budgetBytes: number };
   questionAlerts: QuestionAlertSettings;
   projectGroups: boolean;
@@ -374,6 +377,8 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     network: pick("network", null, parseNetworkConfig) ?? d.network,
   };
   log.debug("effective config", { ...cfg });
+  const mobile = parseMobileConfig(file.mobile);
+  if (mobile) cfg.mobile = mobile;
   return cfg;
 }
 
