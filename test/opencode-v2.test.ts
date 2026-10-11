@@ -6,6 +6,10 @@ import { delegateToOpencodeServed } from "../src/core/opencode-served.js";
 import { nullLogger } from "../src/core/logger.js";
 import { parseOpencodeModelCosts, readOpencodeModelCosts, readUsage } from "../src/core/usage.js";
 import { listOpencodeModels } from "../src/core/opencode-models.js";
+import { DEFAULT_CONFIG } from "../src/core/config.js";
+import { readModels } from "../src/core/models.js";
+import { answerHistory } from "../src/core/history-answer.js";
+import type { HistoryResult } from "../src/core/history.js";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
@@ -131,6 +135,54 @@ it("does not retain a failed version probe or start a run with guessed V1 flags"
   expect(fixture.calls().some(c => c.args?.[0] === "run")).toBe(false);
   expect(await opencodeV2(fixture.bin, fixture.cwd, nullLogger)).toBe(true);
   expect(fixture.calls().filter(c => c.probe)).toHaveLength(2);
+});
+
+it("fails a served delegation clearly before starting its private server", async () => {
+  const fixture = cli(2);
+  writeFileSync(join(fixture.cwd, "version-failure-once"), "");
+  await expect(delegateToOpencodeServed({ ...fixture, prompt: "test", timeoutSec: 5, log: nullLogger,
+    onPermission: async () => ({ allow: false, message: "fixture declines" }) })).rejects.toMatchObject({ name: "DelegateError", kind: "failed", message: "Could not detect opencode version", stderrTail: expect.stringContaining("probe unavailable") });
+  expect(fixture.calls().every(c => c.probe)).toBe(true);
+});
+
+it("degrades usage and model listing after a failed probe and retries rather than caching the error", async () => {
+  const fixture = cli(2);
+  const fail = () => writeFileSync(join(fixture.cwd, "version-failure-once"), "");
+  const cfg = { ...DEFAULT_CONFIG, opencodeBin: fixture.bin };
+  fail();
+  expect(await readUsage("opencode", fixture.bin, fixture.cwd, nullLogger)).toMatchObject({
+    lines: ["Could not read usage: Could not detect opencode version"], limits: [], maxUsedPercent: null,
+  });
+  fail();
+  expect(await readModels("opencode", cfg, fixture.cwd, nullLogger, fixture.cwd)).toMatchObject({
+    models: [], lines: ["Could not list opencode models: Could not detect opencode version"],
+  });
+  fail();
+  await expect(readOpencodeModelCosts(fixture.bin, fixture.cwd, nullLogger)).rejects.toThrow("Could not detect opencode version");
+  expect(fixture.calls().every(c => c.probe)).toBe(true);
+  expect((await readModels("opencode", cfg, fixture.cwd, nullLogger, fixture.cwd)).models).toEqual(["provider/model"]);
+  expect((await readUsage("opencode", fixture.bin, fixture.cwd, nullLogger)).lines[1]).toContain("Today: cost $0.125");
+});
+
+it("contains history-answer cost and runner probe failures without running a model", async () => {
+  const fixture = cli(2);
+  const cfg = { ...DEFAULT_CONFIG, opencodeBin: fixture.bin,
+    historyAnswer: { ...DEFAULT_CONFIG.historyAnswer, preference: ["opencode" as const], opencodeModel: "provider/model" } };
+  const result: HistoryResult = { engine: "fts5", hits: [{ id: "message:fixture", kind: "message", agent: "opencode", at: 1,
+    snippet: "synthetic fixture", link: "", sourceLink: "/synthetic/fixture", message: null, job: null, run: null, session: null, cursor: null }] };
+  const deps = { available: () => true,
+    usage: async () => ({ agent: "opencode" as const, lines: [], limits: [], maxUsedPercent: null }),
+    models: async () => ({ agent: "opencode" as const, models: ["provider/model"], defaultModel: null, lines: [] }) };
+  writeFileSync(join(fixture.cwd, "version-failure-once"), "");
+  expect(await answerHistory("fixture", result, cfg, fixture.cwd, nullLogger, deps)).toMatchObject({
+    agent: null, error: "No configured cheap model is available with usable limits.",
+  });
+  writeFileSync(join(fixture.cwd, "version-failure-once"), "");
+  const answer = await answerHistory("fixture", result, cfg, fixture.cwd, nullLogger, {
+    ...deps, costs: async () => [{ id: "provider/model", input: 0, output: 0 }],
+  });
+  expect(answer).toMatchObject({ agent: "opencode", text: "", error: expect.stringContaining("History answer failed: DelegateError: Could not detect opencode version") });
+  expect(fixture.calls().every(c => c.probe)).toBe(true);
 });
 
 it("lists v2 models with child configuration and caches per executable and directory", async () => {
