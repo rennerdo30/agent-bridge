@@ -6,9 +6,29 @@
     "scheme": "agentbridge",
     "orientation": "default",
     "userInterfaceStyle": "automatic",
-    "platforms": ["android", "ios"],
-    "ios": { "supportsTablet": true, "infoPlist": { "NSAppTransportSecurity": { "NSAllowsArbitraryLoads": false } } },
-    "android": { "usesCleartextTraffic": false },
-    "plugins": ["expo-secure-store", ["expo-camera", { "cameraPermission": "Scan the pairing QR shown by your agent-bridge PC.", "recordAudioAndroid": false }], "expo-notifications"]
+    "platforms": [
+      "android",
+      "ios"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false
+        }
+      }
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan the pairing QR shown by your agent-bridge PC.",
+          "recordAudioAndroid": false
+        }
+      ],
+      "expo-notifications",
+      ["expo-build-properties", { "android": { "usesCleartextTraffic": false } }]
+    ]
   }
 }
