@@ -13,6 +13,7 @@ interface SessionRecord { id: string; deviceId: string; accessHash: string; refr
 interface Invitation { id: string; pcId: string; origins: string[]; nonceHash: string; expiresAt: number; claimed: boolean }
 interface ClaimRecord { id: string; tokenHash: string; code: string; name: string; platform: Platform; expiresAt: number; state: "pending" | "approved" | "denied" | "issued"; deviceId?: string }
 export interface Principal { device: Device; session: SessionRecord }
+export type PushRevocationReason = "unsubscribe" | "device-revoke" | "logout" | "refresh-reuse" | "provider-invalid";
 const ACCESS_MS = 5 * 60_000, REFRESH_MS = 30 * 24 * 60 * 60_000;
 
 /** Dedicated registry. Caller supplies a private writable path; never opens the desktop store. */
@@ -32,6 +33,16 @@ export class MobileStore {
       CREATE TABLE IF NOT EXISTS mobile_records(kind TEXT NOT NULL,id TEXT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(kind,id));
       CREATE TABLE IF NOT EXISTS mobile_replays(principal TEXT NOT NULL,route TEXT NOT NULL,key TEXT NOT NULL,hash TEXT NOT NULL,
         state TEXT NOT NULL,result TEXT,expires_at INTEGER NOT NULL,PRIMARY KEY(principal,route,key));`);
+    // Additive migration: existing registry rows and encrypted registrations stay in place.
+    this.transaction(() => {
+      const columns = new Set(this.db.prepare("PRAGMA table_info(mobile_records)").all().map(row => String(row.name)));
+      if (!columns.has("status")) this.db.exec("ALTER TABLE mobile_records ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
+      if (!columns.has("revokedAt")) this.db.exec("ALTER TABLE mobile_records ADD COLUMN revokedAt INTEGER");
+      if (!columns.has("reason")) this.db.exec("ALTER TABLE mobile_records ADD COLUMN reason TEXT");
+      this.db.exec(`CREATE TABLE IF NOT EXISTS mobile_push_history(
+        revision INTEGER PRIMARY KEY,deviceId TEXT NOT NULL,record TEXT NOT NULL,status TEXT NOT NULL,
+        revokedAt INTEGER,reason TEXT,retainedAt INTEGER NOT NULL);`);
+    });
     const identity = this.get<{ pcId: string }>("meta", "pc");
     if (identity && identity.pcId !== pcId) { this.db.close(); throw new Error("Mobile registry belongs to a different PC"); }
     this.put("meta", "pc", { pcId, origins: this.origins });
@@ -42,10 +53,24 @@ export class MobileStore {
     this.db.exec("BEGIN IMMEDIATE"); this.transactionDepth++;
     try { const result = fn(); this.db.exec("COMMIT"); return result; } catch (err) { this.db.exec("ROLLBACK"); throw err; } finally { this.transactionDepth--; }
   }
-  get<T>(kind: string, id: string): T | undefined { const row = this.db.prepare("SELECT record FROM mobile_records WHERE kind=? AND id=?").get(kind, id); return row ? JSON.parse(String(row.record)) as T : undefined; }
-  put(kind: string, id: string, record: unknown): void { this.db.prepare("INSERT INTO mobile_records VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET record=excluded.record").run(kind, id, JSON.stringify(record)); }
-  list<T>(kind: string): T[] { return this.db.prepare("SELECT record FROM mobile_records WHERE kind=?").all(kind).map(row => JSON.parse(String(row.record)) as T); }
-  remove(kind: string, id: string): void { this.db.prepare("DELETE FROM mobile_records WHERE kind=? AND id=?").run(kind, id); }
+  get<T>(kind: string, id: string): T | undefined { const row = this.db.prepare("SELECT record FROM mobile_records WHERE kind=? AND id=? AND status='active'").get(kind, id); return row ? JSON.parse(String(row.record)) as T : undefined; }
+  put(kind: string, id: string, record: unknown): void {
+    this.transaction(() => {
+      // A new registration may replace an active or revoked one. Retain its exact
+      // ciphertext and lifecycle metadata before reactivating the current slot.
+      if (kind === "push") this.db.prepare(`INSERT INTO mobile_push_history(deviceId,record,status,revokedAt,reason,retainedAt)
+        SELECT id,record,status,revokedAt,reason,? FROM mobile_records WHERE kind='push' AND id=?`).run(this.now(), id);
+      this.db.prepare(`INSERT INTO mobile_records(kind,id,record,status) VALUES(?,?,?,'active')
+        ON CONFLICT(kind,id) DO UPDATE SET record=excluded.record,status='active',revokedAt=NULL,reason=NULL`).run(kind, id, JSON.stringify(record));
+    });
+  }
+  list<T>(kind: string): T[] { return this.db.prepare("SELECT record FROM mobile_records WHERE kind=? AND status='active'").all(kind).map(row => JSON.parse(String(row.record)) as T); }
+  archivePush(id: string, reason: PushRevocationReason, expectedCiphertext?: string): void {
+    // A late provider failure must not revoke a newer registration.
+    this.db.prepare(`UPDATE mobile_records SET status='revoked',revokedAt=?,reason=?
+      WHERE kind='push' AND id=? AND status='active' AND (? IS NULL OR json_extract(record,'$.ciphertext')=?)`)
+      .run(this.now(), reason, id, expectedCiphertext ?? null, expectedCiphertext ?? null);
+  }
   replay(principal: string, route: string, key: string, hash: string): { state: string; result: unknown; expiresAt: number } | undefined {
     const prior = this.db.prepare("SELECT * FROM mobile_replays WHERE principal=? AND route=? AND key=?").get(principal, route, key);
     if (!prior) return undefined;
@@ -128,7 +153,7 @@ export class MobileStore {
     if (session.revoked || device.revoked) throw new MobileFault(401, "device_revoked");
     const requestHash = digest("refresh-body", JSON.stringify([token, csrf]));
     const prior = this.replay(session.id, "refresh", key, requestHash); if (prior) return prior.result;
-    if (session.refreshHash !== hash) { this.revoke(device.id); throw new MobileFault(401, "refresh_reuse"); }
+    if (session.refreshHash !== hash) { this.revoke(device.id, "refresh-reuse"); throw new MobileFault(401, "refresh_reuse"); }
     if (session.refreshExpiresAt <= this.now()) throw new MobileFault(401, "credential_expired");
     if (!equal(session.csrfHash, digest("csrf", csrf))) throw new MobileFault(403, "csrf");
     return this.mutate(session.id, "refresh", key, requestHash, () => {
@@ -147,7 +172,12 @@ export class MobileStore {
   }
   checkCsrf(principal: Principal, csrf: string): void { if (!equal(principal.session.csrfHash, digest("csrf", csrf))) throw new MobileFault(403, "csrf"); }
   devices(): Omit<Device, "grants" | "revision">[] { return this.list<Device>("device").map(({ grants, revision, ...device }) => device); }
-  revoke(id: string): void { const device = this.get<Device>("device", id); if (!device) throw new MobileFault(404, "not_found"); device.revoked = true; device.revision = randomUUID(); this.put("device", id, device); this.remove("push", id); }
+  revoke(id: string, reason: PushRevocationReason = "device-revoke"): void {
+    this.transaction(() => {
+      const device = this.get<Device>("device", id); if (!device) throw new MobileFault(404, "not_found");
+      device.revoked = true; device.revision = randomUUID(); this.put("device", id, device); this.archivePush(id, reason);
+    });
+  }
   can(device: Device, capability: Capability, pcId: string, entity?: { kind: "session" | "job" | "question"; id: string; projectId: string | null }): boolean {
     return device.grants.some(g => g.pcId === pcId && g.capabilities.includes(capability) && (!entity || (entity.kind === "session" ? g.sessionIds.includes(entity.id) : entity.kind === "job" ? g.jobIds.includes(entity.id) : !!entity.projectId && g.projectIds.includes(entity.projectId))));
   }

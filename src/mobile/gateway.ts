@@ -209,7 +209,7 @@ export class MobileGateway {
         allowedQuery([]);
         const args = req.method === "PUT" ? pushSchema.parse(body) : body === undefined ? null : z.object({}).strict().parse(body);
         const result = this.store.mutate(device.id, req.method + route, key, digest("body", JSON.stringify(args)), () => {
-          if (route === "/me/session") this.store.revoke(device.id);
+          if (route === "/me/session") this.store.revoke(device.id, "logout");
           else if (req.method === "DELETE") this.push.remove(device.id);
           const response = req.method === "PUT" ? this.push.register(device, args as z.infer<typeof pushSchema>) : { state: "removed" };
           return { response, replay: response };

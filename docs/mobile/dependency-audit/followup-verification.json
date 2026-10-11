@@ -1,0 +1,29 @@
+{
+  "reviewedAt": "2026-10-11",
+  "dependencyCommit": "a418392a",
+  "designCommit": "b825cc92",
+  "designCleanup": {
+    "appTests": { "files": 4, "passed": 14 },
+    "clientTests": { "files": 1, "passed": 18 },
+    "rootTypecheck": "pass",
+    "appTypecheck": "pass",
+    "formattingOnlySyntaxComparisons": { "files": 22, "unchanged": 22 },
+    "hermesExport": { "android": "pass", "ios": "pass", "signedNativeBuild": false }
+  },
+  "retentionRepair": {
+    "focusedMobileAndRetentionTests": { "files": 11, "passed": 148 },
+    "includedClientTests": 18,
+    "newPushRetentionTests": 10,
+    "dataRetentionGuardTests": 7,
+    "appTests": { "files": 4, "passed": 14 },
+    "rootTypecheck": "pass",
+    "appTypecheck": "pass",
+    "rootBuild": "pass",
+    "generatedDistCommitted": false,
+    "guardWhitelistChanged": false,
+    "migration": "additive columns and retained push history table",
+    "triggers": ["unsubscribe", "device-revoke", "logout", "refresh-reuse", "provider-invalid"]
+  },
+  "fullRootSuiteRepeatedAfterFollowups": false,
+  "remainingMergeBlocker": "test/opencode.test.ts:184 fails on branch, passes at origin/main 40fbf0a4"
+}

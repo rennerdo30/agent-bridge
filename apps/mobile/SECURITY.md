@@ -136,9 +136,17 @@ npm run test:all
   Results are recorded in the linked verification JSON.
 - Opencode comparison: origin/main `40fbf0a4` passes 12/12; this branch passes 11/12.
   This is a branch merge blocker, left unchanged in dependency scope.
-- Existing retention failure: isolated guard 6/7; see
-  [exact callers and archive proposal](../../docs/mobile/RETENTION-REVIEW.md).
-  The supervisor authorized a separate retention commit after design cleanup.
+- Baseline retention failure: isolated guard 6/7. The separate, authorized follow-up
+  now retains push tombstones and ciphertext, including replacements. Final retention
+  guard 7/7 and focused mobile/retention tests 148/148 (11 files), including all five
+  revocation triggers and 18 client tests. The guard whitelist is unchanged. See
+  [historical callers and implemented archive repair](../../docs/mobile/RETENTION-REVIEW.md).
+- Design cleanup: app 14/14, client 18/18, both typechecks and both Hermes exports pass.
+  A syntax comparison found all 22 formatting/import-only files unchanged; only
+  strings.ts, view-model.ts and useDashboard.ts intentionally change expressions.
+  Final retention changes also pass app 14/14, both typechecks and the local root build.
+  The entire root suite was not repeated after these follow-ups; the opencode assertion
+  remains the known branch merge blocker.
 - Local root build: successful. Generated dist was restored after checking; release
   must rebuild desktop distributions from the updated lockfile.
 - Root audit: 2 high -> 0. Mobile audit: 22 unchanged, 15 high / 7 moderate.

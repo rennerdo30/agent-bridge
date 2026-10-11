@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto";
 import type { Platform, Question } from "./contract.js";
-import { MobileFault, MobileStore, type Device } from "./store.js";
+import { MobileFault, MobileStore, type Device, type PushRevocationReason } from "./store.js";
 
 export interface PushRegistration { expoPushToken: string; platform: Platform; projectId: string; environment: "development" | "production" }
 export interface PushHint { title: "agent-bridge"; body: "Open the app to review an update"; data: { v: 1; notificationId: string }; ttl: 300 }
@@ -22,6 +22,7 @@ export class MobilePush {
   get configured(): boolean { return !!(this.provider && this.encryptionKey && this.projectId && this.environment); }
   register(device: Device, registration: PushRegistration): { state: string } {
     if (!this.configured) throw new MobileFault(409, "push_unsupported");
+    if (this.store.get<Device>("device", device.id)?.revoked !== false) throw new MobileFault(401, "device_revoked");
     if (registration.projectId !== this.projectId || registration.environment !== this.environment || registration.platform !== device.platform) throw new MobileFault(403, "push_project_mismatch");
     const iv = randomBytes(12), cipher = createCipheriv("aes-256-gcm", this.encryptionKey!, iv);
     cipher.setAAD(Buffer.from(device.id));
@@ -29,7 +30,7 @@ export class MobilePush {
     this.store.put("push", device.id, { iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64"), ciphertext: ciphertext.toString("base64") } satisfies Subscription);
     return { state: "registered" };
   }
-  remove(deviceId: string): void { this.store.remove("push", deviceId); }
+  remove(deviceId: string, reason: PushRevocationReason = "unsubscribe"): void { this.store.archivePush(deviceId, reason); }
   async notify(question: Question, current: () => Promise<Question | undefined>): Promise<{ state: string }[]> {
     if (!this.configured || question.pcId !== this.store.pcId) return [];
     const results: { state: string }[] = [];
@@ -49,7 +50,7 @@ export class MobilePush {
       this.store.put("push-dedupe", dedupe, { state: "unconfirmed" });
       try {
         const result = await this.provider!.submit(registration, { title: "agent-bridge", body: "Open the app to review an update", data: { v: 1, notificationId: id }, ttl: 300 });
-        if (result.state === "device-not-registered") this.remove(active.id);
+        if (result.state === "device-not-registered") this.store.archivePush(active.id, "provider-invalid", subscription.ciphertext);
         this.store.put("push-dedupe", dedupe, { state: result.state }); results.push({ state: result.state });
       } catch { results.push({ state: "unconfirmed" }); }
     }
