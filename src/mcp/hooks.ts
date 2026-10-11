@@ -108,34 +108,59 @@ function withinHook<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
     if (signal.aborted) abort();
   });
 }
+/** Codex main hooks own activity in ingress order, even while metadata is still pending. */
+const mainHookEpochs = new WeakMap<ServerContext, number>();
+
 export async function buildHookResponse(ctx: ServerContext, input: HookInput): Promise<HookOutput> {
+  // An authoritative native-child flag must be checked before prepare can observe its metadata.
+  // Hosts without that flag still need a separate lineage solution; thread ids alone are not proof.
+  if (input.subagent) return {};
+  const node = ctx.node;
+  const main = ctx.agent === "codex" && node !== null && !ctx.headless;
+  const epoch = main ? (mainHookEpochs.get(ctx) ?? 0) + 1 : 0;
+  if (main) mainHookEpochs.set(ctx, epoch);
+  const current = () => !main || (ctx.node === node && mainHookEpochs.get(ctx) === epoch);
+  const owningSession = input.sessionId ?? node?.currentSessionId;
+  // A running main turn must block wake admission even if its metadata never completes.
+  const busyAtIngress = main && !input.signal?.aborted && (input.event === "UserPromptSubmit" || input.event === "PostToolUse");
+  if (busyAtIngress) ctx.activity?.("busy");
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HOOK_BUDGET_MS);
+  let deadlineExpired = false;
+  const timer = setTimeout(() => { deadlineExpired = true; controller.abort(); }, HOOK_BUDGET_MS);
   const abort = () => controller.abort();
   input.signal?.addEventListener("abort", abort, { once: true });
   if (input.signal?.aborted) abort();
-  try { return await runHook(ctx, { ...input, signal: controller.signal }); }
-  catch (err) { if (!controller.signal.aborted) throw err; ctx.log.debug("hook deferred slow work", { event: input.event }); return {}; }
+  try { return await runHook(ctx, { ...input, signal: controller.signal }, current, busyAtIngress); }
+  catch (err) {
+    if (!controller.signal.aborted) throw err;
+    // The host accepts {} as turn end. Only the owning main Stop's own deadline can
+    // recover idle; cancellation, a newer hook, or a replaced session must retain activity.
+    if (deadlineExpired && main && input.event === "Stop" && current() && node?.currentSessionId === owningSession) ctx.activity?.("idle");
+    ctx.log.debug("hook deferred slow work", { event: input.event });
+    return {};
+  }
   finally { clearTimeout(timer); input.signal?.removeEventListener("abort", abort); }
 }
-async function runHook(ctx: ServerContext, input: HookInput): Promise<HookOutput> {
+async function runHook(ctx: ServerContext, input: HookInput, current: () => boolean, busyAtIngress: boolean): Promise<HookOutput> {
   if (input.prepare) await withinHook(input.prepare(), input.signal!);
+  if (!current()) return {};
   const node = ctx.node;
   if (!node) return subagentHook(ctx, input);
   // A headless `claude -p` run is not a session: its hooks must not join the bridge or take mail.
   await withinHook(ctx.launchKnown ?? Promise.resolve(), input.signal!);
-  if (ctx.headless) return {};
+  if (ctx.headless || !current()) return {};
   ctx.log.debug("hook event", { event: input.event, sessionId: input.sessionId, stopHookActive: input.stopHookActive });
   if (input.sessionId) {
     await withinHook(node.setSessionId(input.sessionId).catch(() => {}), input.signal!);
+    if (!current()) return {};
     ctx.onSessionId?.(input.sessionId);
   }
   // The MCP server may have been started outside the project (e.g. in the plugin folder).
   if (input.cwd && ctx.learnCwd) await withinHook(ctx.learnCwd(input.cwd), input.signal!);
+  if (!current()) return {};
   // Joining may have been deferred until the project dir was known.
   await withinHook(node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: (err as Error).message })), input.signal!);
-  // A native subagent's tool calls fire the same hooks: messages are for the main agent, so leave them.
-  if (input.subagent) return {};
+  if (!current()) return {};
   const stopJobsRunning = input.event === "Stop" ? ctx.jobs?.runningCount() ?? 0 : 0;
   const replay = node.refreshPending().catch((err) => ctx.log.warn("pending mail refresh failed; retained for retry", { err: String(err) }));
   // Stop can deliver buffered mail or arm a child-result notification immediately. A slow
@@ -143,6 +168,8 @@ async function runHook(ctx: ServerContext, input: HookInput): Promise<HookOutput
   // use the existing delivery path, and ordinary hooks continue to await their refill.
   const stopReady = input.event === "Stop" && (stopJobsRunning > 0 || node.unread().some((m) => !isQuietMessage(m)));
   if (!stopReady) await withinHook(replay, input.signal!);
+  // No stale main hook may confirm wake delivery, consume newer-turn mail or report activity.
+  if (!current()) return {};
   // A wake-up's messages reached the session if a turn is running (tool calls, turn end); if a prompt or a new
   // session comes first, the wake-up was lost and they are shown again below.
   // The wake-up's own turn starts with a prompt carrying its text: that is delivery, not a new user prompt.
@@ -157,6 +184,7 @@ async function runHook(ctx: ServerContext, input: HookInput): Promise<HookOutput
     case "SessionStart": {
       ctx.activity?.("idle");
       const peers = node.isConnected ? (await withinHook(node.peers().catch(() => []), input.signal!)).filter((p) => p.id !== node.id) : [];
+      if (!current()) return {};
       const lines = [
         `[agent-bridge] You are connected to agent-bridge as "${node.name}".`,
         peers.length ? `Peers online:\n${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now.",
@@ -164,6 +192,7 @@ async function runHook(ctx: ServerContext, input: HookInput): Promise<HookOutput
       lines.push(...new MessageWaitStore(ctx.home).pending(node).map(resumeWaitHint));
       const unread = node.unread().filter((m) => !isQuietMessage(m)).length;
       const decisions = await withinHook(node.decisions({ scope: { project: ctx.cwd() } }).catch(() => []), input.signal!);
+      if (!current()) return {};
       const summary = formatDecisionSummary(decisions);
       if (summary) lines.push(summary);
       if (unread > 0 && !channel) lines.push(`You have ${unread} unread peer message(s); call the "inbox" tool to read them.`);
@@ -171,7 +200,7 @@ async function runHook(ctx: ServerContext, input: HookInput): Promise<HookOutput
     }
     case "UserPromptSubmit":
     case "PostToolUse": {
-      ctx.activity?.("busy");
+      if (!busyAtIngress) ctx.activity?.("busy");
       // Muted session messages use active hooks; observer copies stay on demand.
       const msgs = take(ctx, false, channel);
       return msgs.length ? context(input.event, formatMessages(msgs)) : {};

@@ -204,9 +204,9 @@ function progressReporter(extra: ToolExtra, log: Logger): ((message: string) => 
   };
 }
 
-/** Codex mains may delegate to Codex; other callers keep their cross-agent targets. */
-export function delegationTargets(agent: AgentKind): CodingAgent[] {
-  return CODING_AGENTS.filter((a) => a !== agent || agent === "codex");
+/** Every CLI may delegate to every coding CLI, including its own kind. */
+export function delegationTargets(_agent: AgentKind): CodingAgent[] {
+  return [...CODING_AGENTS];
 }
 
 function instructionsFor(agent: AgentKind, targets: CodingAgent[]): string {
@@ -217,7 +217,7 @@ function instructionsFor(agent: AgentKind, targets: CodingAgent[]): string {
       : "";
   const names = targets.join(", ");
   return (
-    `agent-bridge connects you with other AI coding agents (such as ${names}) running on this machine. ` +
+    `agent-bridge connects AI coding sessions (${names}) running on this machine. Any CLI can delegate to any CLI, including its own kind. ` +
     "Peer messages arrive as <agent-bridge-message id=... from=...> blocks injected into your context." +
     channelNote +
     " Use health/peers to inspect broker latency, history-import progress and recent error codes instead of reading live bridge log files. Retry a timeout once; report its exact error if it persists. " +
