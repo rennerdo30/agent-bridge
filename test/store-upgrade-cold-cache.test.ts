@@ -32,9 +32,18 @@ it("verifies a just-started reader directly instead of blocking a store write on
   expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).not.toThrow();
 });
 
-it("keeps blocking an unverified reader whose recorded identity does not match the live process", async () => {
+it("treats an unverified reader whose PID now belongs to another process as gone (PID reuse)", async () => {
   await until(() => Boolean(processIdentity(reader.pid!)), 15_000);
-  presence("not-this-process", 4);
+  // An old json-0 reader recorded under this PID; the live process has a different identity.
+  presence("an-earlier-process", 0);
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).not.toThrow();
+});
+
+it("keeps blocking an unverified reader whose record carries no identity", async () => {
+  await until(() => Boolean(processIdentity(reader.pid!)), 15_000);
+  const dir = join(env.home, "storage-capabilities");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${reader.pid}.json`), JSON.stringify({ schemaVersion: 1, json: 0, sqlite: 8, pid: reader.pid, name: "legacy-reader", version: "0.29.17", explicit: true }));
   expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow("Waiting to upgrade json store 0→4");
 });
 
