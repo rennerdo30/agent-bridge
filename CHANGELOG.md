@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.30.12
+
+- New background jobs no longer fail at startup when the PC is busy. Before its first state write, a job runner checks the identities of running store readers; on Windows that check is a PowerShell query that takes many seconds with dozens of agent processes running. A slow or failed check used to end the job after 15 s ("job runner ended without reporting a result"). The runner now retries the check and waits up to 5 minutes for store admission, still writing nothing before identities are ready (AB-278).
+
 ## 0.30.11
 
 - Every CLI can now use `ask_*` and `spawn_*` with Claude, Codex, opencode and Antigravity, including its own kind. Existing delegation limits still apply.
