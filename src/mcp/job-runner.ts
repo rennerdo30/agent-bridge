@@ -37,17 +37,29 @@ const PROGRESS_SAVE_MS = 1_000;
 const SEEN_LIMIT = 100;
 /** After SIGTERM, a runner that has not wound down by then exits anyway. */
 const STOP_DEADLINE_MS = 15_000;
-/** Initial storage admission is bounded before any native turn starts. */
-const INITIAL_STATE_DEADLINE_MS = 15_000;
+/**
+ * Initial storage admission is bounded before any native turn starts. The host keeps a runner whose PID is
+ * known and alive, so a slow admission waits instead of failing the turn (AB-278).
+ */
+export const INITIAL_STATE_DEADLINE_MS = 5 * 60_000;
+const INITIAL_STATE_RETRY_MAX_MS = 2_000;
 
-async function publishInitialRunnerState(spec: RunnerSpec, log: Logger): Promise<void> {
+export async function publishInitialRunnerState(spec: Pick<RunnerSpec, "home" | "job">, log: Logger, deadlineMs = INITIAL_STATE_DEADLINE_MS): Promise<void> {
   const controller = new AbortController();
   const stop = () => controller.abort(new Error("Job runner stopped before initial state publication"));
-  const deadline = setTimeout(() => controller.abort(new Error("Job runner initial state publication timed out")), INITIAL_STATE_DEADLINE_MS);
+  const deadline = setTimeout(() => controller.abort(new Error("Job runner initial state publication timed out after waiting for store admission")), deadlineMs);
   process.on("SIGTERM", stop); process.on("SIGINT", stop);
   try {
     for (let attempt = 0; ; attempt++) {
-      await refreshStorePeerIdentities(spec.home, controller.signal);
+      // Cold identity readiness stays a precondition of the first write. A slow or failed identity query (a
+      // PowerShell batch on Windows under load) is retried within the deadline instead of failing the turn (AB-278).
+      try { await refreshStorePeerIdentities(spec.home, controller.signal); }
+      catch (error) {
+        controller.signal.throwIfAborted();
+        if (attempt === 0 || attempt % 30 === 0) log.info("initial runner state waits for reader identities", { job: spec.job.name, attempt, reason: String(error) });
+        await delay(Math.min(INITIAL_STATE_RETRY_MAX_MS, (attempt + 1) * 100), undefined, { signal: controller.signal });
+        continue;
+      }
       controller.signal.throwIfAborted();
       try {
         // Another runner can publish presence after the asynchronous scan. Keep
@@ -56,8 +68,8 @@ async function publishInitialRunnerState(spec: RunnerSpec, log: Logger): Promise
         return;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED") throw error;
-        if (attempt === 0) log.info("initial runner state waits for retained store readers", { job: spec.job.name, reason: String(error) });
-        await delay(Math.min(1_000, (attempt + 1) * 100), undefined, { signal: controller.signal });
+        if (attempt === 0 || attempt % 30 === 0) log.info("initial runner state waits for retained store readers", { job: spec.job.name, attempt, reason: String(error) });
+        await delay(Math.min(INITIAL_STATE_RETRY_MAX_MS, (attempt + 1) * 100), undefined, { signal: controller.signal });
       }
     }
   } finally {
