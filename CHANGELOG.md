@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.30.11
+
+- Every CLI can now use `ask_*` and `spawn_*` with Claude, Codex, opencode and Antigravity, including its own kind. Existing delegation limits still apply.
+- Codex sessions recover idle when an end-of-turn hook reaches its deadline, allowing queued peer mail to wake the session. Delayed older hooks cannot interrupt a newer turn or consume its mail.
+- Hooks flagged as native subagents leave the main session's mail untouched. This also preserves supervisor messages for a delegated job's main agent, instead of letting its native children drain them.
+
 ## 0.30.10
 
 - Codex sessions can now start Codex subagents with `spawn_codex` and `ask_codex`, choose their model, reasoning effort and sandbox, and manage them with the existing subagent tools.
