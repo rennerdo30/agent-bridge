@@ -71,6 +71,7 @@ import { RemoteDashboard, dashboardError } from "../network/remote-dashboard.js"
 import { RemoteJobs } from "../network/remote-jobs.js";
 import { DecisionSync } from "../network/decision-sync.js";
 import { CONTROL_CONVERSATION_PREFIX } from "../mcp/job-host.js";
+import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, decisionApplies, decisionScopeSchema, type OwnerDecision } from "./decisions.js";
 import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
 import { OwnerQuestionService, OWNER_ADDRESS } from "./owner-question-service.js";
@@ -192,6 +193,15 @@ export class Broker {
         if (c.peer && (c.peer.jobAgent || c.peer.subagent || !q?.askers.some(asker => asker.sessionId && c.peer!.sessionId ? asker.agent === c.peer!.agent && asker.sessionId === c.peer!.sessionId : asker.peerId ? asker.peerId === c.peer!.id : asker.session === c.peer!.name))) throw new BridgeError("unauthorized", "Only an asker or the owner may dismiss this question.");
         return this.ownerQuestions().store.dismiss(args.id,args.status,args.reason,args.supersededBy);
       },
+      dashboardJobSend: (c, a) => {
+        if (c.peer) {
+          this.log.warn("rejected agent dashboard job send", { from: c.peer.name });
+          throw new BridgeError("unauthorized", "Only the local owner dashboard can use dashboardJobSend.");
+        }
+        const sender = this.localPeers().find(p => p.id === a.senderId && p.agent === "other" && !p.jobAgent && !p.subagent);
+        if (!sender || a.conversationId !== DASHBOARD_JOB_CONVERSATION) throw new BridgeError("bad_request", "A local dashboard reply listener is required.");
+        return this.routeSend(c, sender, a);
+      },
       dashboardHeartbeat: (c,a) => {
         if (c.peer) throw new BridgeError("unauthorized", "Only the local dashboard reports presence.");
         const args = z.object({ tab:z.string().regex(/^[\w-]{1,80}$/), visible:z.boolean() }).strict().parse(a);
@@ -311,7 +321,7 @@ export class Broker {
           if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
           const recipient = this.jobRecipient(job);
           fallback = recipient !== primaryFor(job);
-          const message = { ...m, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) };
+          const message = { ...m, jobControlAuthorized: undefined, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) };
           if (this.store.insertJobDelivery(message)) {
             const target = this.connByName(recipient);
             if (target && !target.peer?.unavailable) this.emit(target, "message", message);
@@ -1722,6 +1732,38 @@ export class Broker {
       throw new BridgeError("bad_request", "if_no_newer_than must identify a message exchanged by this session.");
     }
     conversationId ||= anchor?.conversationId || args.messageId || randomUUID();
+    let jobControlAuthorized = false;
+    if (conversationId === DASHBOARD_JOB_CONVERSATION) {
+      let command: unknown;
+      try { command = JSON.parse(body); } catch { /* Fail closed for malformed control messages. */ }
+      const reject = () => {
+        this.log.warn("rejected unauthorized dashboard job command", { from: sender.name, to });
+        throw new BridgeError("unauthorized", "Only the owner dashboard or a controlling job master can send this command.");
+      };
+      if (!isRecord(command)) reject();
+      const control = command as Record<string, unknown>;
+      if (control.type === "result") {
+        const parent = replyTo ? this.store.byId(replyTo) : null;
+        let request: unknown;
+        try { request = parent && JSON.parse(parent.body); } catch { /* Invalid reply anchor. */ }
+        if (!parent || parent.conversationId !== DASHBOARD_JOB_CONVERSATION || parent.recipient !== sender.name ||
+            parent.from.name !== to || !isRecord(request) || request.type === "result" || request.requestId !== control.requestId) reject();
+      } else {
+        if (!["message", "settings", "handoff"].includes(String(control.type)) || typeof control.requestId !== "string" || typeof control.job !== "string") reject();
+        const target = this.connByName(to)?.peer;
+        if (!target || target.jobAgent || target.subagent) reject();
+        if (conn.peer) {
+          const records = this.storedJobs();
+          // Handoff can move a tree or all jobs, so authorize every selected root, not the display job.
+          const selected = control.type === "handoff" ? records.filter(j => !j.parentJob &&
+            this.groups.canControl(target!, j, this.localPeers()) && (control.jobs === undefined || control.jobs === "all" ||
+              Array.isArray(control.jobs) && (control.jobs.includes(j.name) || control.jobs.includes(j.id)))) :
+            records.filter(j => j.name === control.job || j.id === control.job);
+          if (!selected.length || selected.some(j => !this.groups.canControl(sender, j, this.localPeers()))) reject();
+        }
+        jobControlAuthorized = true;
+      }
+    }
     if (own && (to === own.rootName || to === own.owner || this.groups.members(own, this.localPeers()).some((p) => p.name === to) || mastersFor(own).includes(to))) conversationId = this.jobConversation(own, to, conversationId);
 
     const id = args.messageId ?? (sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX)
@@ -1738,6 +1780,7 @@ export class Broker {
       body,
       createdAt,
       readAt: null,
+      ...(jobControlAuthorized ? { jobControlAuthorized: true } : {}),
     };
     let remoteAddress = to.includes("/") ? to : undefined;
     if (to.startsWith("project:")) {
@@ -1927,6 +1970,7 @@ export class Broker {
   }
 
   private receiveRemote(message: BridgeMessage): { delivered: boolean; recipient: string; stored: boolean; recovered?: boolean; readAt: number | null } {
+    message = { ...message, jobControlAuthorized: undefined };
     const target = this.recipientConn(message.recipient);
     if (target?.peer) message = { ...message, recipient: target.peer.name };
     const existing = this.store.byId(message.id);

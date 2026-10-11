@@ -344,8 +344,7 @@ describe("web dashboard", () => {
     attachDashboardJobControl(peer, jobs, nullLogger);
     const job = jobs.start("codex", null, "foreign task", async () => new Promise(() => {}));
     job.owner = "another-session";
-    const sent = await sender.send({ to: peer.name, body: "null", conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true });
-    await until(() => peer.hasSeen(sent.messages[0]!.id));
+    await expect(sender.send({ to: peer.name, body: "null", conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true })).rejects.toMatchObject({ code: "unauthorized" });
     expect(peer.unread()).toEqual([]);
     recordJob(peer.name, job);
     const r = await fetch(`${base()}/api/subagents/message`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ run: RUN, body: "wrong owner" }) });

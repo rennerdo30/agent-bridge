@@ -117,6 +117,8 @@ export interface MessageAddress {
 }
 
 export interface BridgeMessage {
+  /** Local broker's live authorization; omitted from retained mail so replay fails closed. */
+  jobControlAuthorized?: boolean;
   id: string;
   from: MessageAddress;
   /** Target as given by the sender: a peer name, peer id, agent kind or "*". */
@@ -224,6 +226,8 @@ export interface AuthArgs {
 }
 
 export interface RequestMap {
+  /** Authenticated owner connection only; senderId selects the dashboard's reply listener. */
+  dashboardJobSend: [SendArgs & { senderId: string }, SendResult];
   health: [Record<string, never>, import("./health.js").BrokerHealth];
   /** Older brokers must refuse this opcode rather than discard the durable identity. */
   trackedSend: [SendArgs & { messageId: string }, SendResult];

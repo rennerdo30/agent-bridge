@@ -231,6 +231,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       return await client.request(op, args, op === "dashboardRead" ? DASHBOARD_TIMEOUT_MS + 2_000 : undefined);
     } finally { client.close(); }
   };
+  const dashboardControl = async (node: BridgeNode, owner: string, job: string, command: DashboardJobCommand) =>
+    controlDashboardJob(node, owner, job, command, args => networkRequest("dashboardJobSend", { ...args, senderId: node.id }));
 
   const remoteRead = async (host: string, request: DashboardReadRequest): Promise<DashboardReadResult> => {
     try {
@@ -590,7 +592,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         if (!run?.by) return send(res, 409, { error: "parent job has no local owning session" });
         try {
           const sender = await getSender();
-          const result = await controlDashboardJob(sender, await jobOwner(opts.home, name, run.by, sender), name, { type: "message", body: childNote(child.id, child.title, body.body.trim()) });
+          const result = await dashboardControl(sender, await jobOwner(opts.home, name, run.by, sender), name, { type: "message", body: childNote(child.id, child.title, body.body.trim()) });
           return send(res, result.isError ? 409 : 200, { state: result.isError ? "not-supported" : "queued", transport: "parent", text: result.text });
         } catch (err) {
           if (err instanceof JobControlError) return send(res, 409, { error: err.message });
@@ -636,7 +638,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const parsed = handoffSchema.safeParse({ to: body.to, jobs: body.jobs, note: body.note, switch_project_main: body.switch_project_main });
       if (!parsed.success || typeof body.from !== "string" || body.from.includes("/")) return send(res, 400, { error: "An exact local source and valid handoff arguments are required." });
       try {
-        const result = await controlDashboardJob(await getSender(), body.from, "", { type: "handoff", ...parsed.data });
+        const result = await dashboardControl(await getSender(), body.from, "", { type: "handoff", ...parsed.data });
         return send(res, result.isError ? 409 : 200, result);
       } catch (err) {
         if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });
@@ -654,7 +656,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (!meta) return send(res, 404, { error: "no such run" });
       if (!meta.by || !meta.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
-        const result = await controlDashboardJob(await getSender(), await jobOwner(opts.home, meta.job, meta.by, await getSender()), meta.job, command);
+        const result = await dashboardControl(await getSender(), await jobOwner(opts.home, meta.job, meta.by, await getSender()), meta.job, command);
         return send(res, result.isError ? 409 : 200, result);
       } catch (err) {
         if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });

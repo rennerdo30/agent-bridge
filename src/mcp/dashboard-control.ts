@@ -6,7 +6,6 @@ import type { BridgeNode } from "../core/node.js";
 import type { BridgeMessage } from "../core/protocol.js";
 import { parseJobSettings } from "./job-settings.js";
 import type { JobManager } from "./jobs.js";
-import { canControlJob } from "../core/job-ownership.js";
 
 interface DashboardResult {
   outcome: string;
@@ -27,6 +26,11 @@ export function attachDashboardJobControl(node: BridgeNode, jobs: JobManager, lo
       return;
     }
     if (!command || typeof command.requestId !== "string" || typeof command.job !== "string") return;
+    if (command.type === "result") return;
+    if (m.jobControlAuthorized !== true) {
+      log.warn("rejected unauthorized dashboard job command", { from: m.from.name, job: command.job, type: command.type });
+      return;
+    }
     let result: DashboardResult;
     if (command.type === "handoff") {
       try {
