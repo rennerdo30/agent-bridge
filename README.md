@@ -13,7 +13,7 @@ agent-bridge connects the coding agents on your machine, and on PCs you pair, in
 ## What it does
 
 - **Messaging between agents.** Sessions send each other questions, reviews and results. Messages to an offline or idle agent wait and wake it when possible.
-- **Subagents across CLIs.** Any agent can run another one headlessly (`ask_codex`, `ask_claude`, …) or start it in the background (`spawn_*`). You can talk to a running subagent, continue a finished one with its full context, cancel it, or hand all of them to another session. Edits can run in their own git worktree.
+- **Any CLI can delegate to any CLI, including itself.** Claude, Codex, opencode and Antigravity each expose every coding agent's `ask_*` and `spawn_*` tools. Depth, slot, ownership and hop guards still apply. You can talk to a running subagent, continue a finished one with its full context, cancel it, or hand all of them to another session. Edits can run in their own git worktree.
 - **Projects with a main and a secondary.** A Claude and a Codex session in the same folder share their project's jobs. The main session is the first contact. If it closes or runs out of usage, the secondary takes over and nothing is lost.
 - **Questions to you.** Agents ask you decisions in one place. You hear a chime in the dashboard, or get a Windows notification that opens the question. Your answer goes straight back to the agent that asked.
 - **A dashboard for everything.** Sessions, subagent trees, chats, progress with ETA, approvals, pinned decisions, full history search and paired PCs, at `http://127.0.0.1:4777`.
