@@ -15,6 +15,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { MobileDesktopAdmin } from "../mobile/desktop.js";
 import { MobileFault } from "../mobile/store.js";
+import { MOBILE_DESKTOP_PAGE } from "../mobile/desktop-page.js";
 import type { AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
@@ -295,6 +296,13 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       return res.end();
     }
     if (!tokensEqual(cookieSecret(req), activeSecret)) return send(res, 403, UI_RECOVERY_PAGE, "text/html; charset=utf-8");
+
+    if (req.method === "GET" && url.pathname === "/mobile/phones") {
+      if (!opts.mobileAdmin) return send(res, 404, { code: "mobile_not_provisioned" });
+      if (`http://${req.headers.host}` !== opts.mobileAdmin.localOrigin) return send(res, 403, { code: "desktop_origin" });
+      res.setHeader("cache-control", "no-store"); res.setHeader("referrer-policy", "no-referrer");
+      return send(res, 200, MOBILE_DESKTOP_PAGE, "text/html; charset=utf-8");
+    }
 
     if (url.pathname.startsWith("/api/mobile/")) {
       if (!opts.mobileAdmin) return send(res, 404, { code: "mobile_not_provisioned" });

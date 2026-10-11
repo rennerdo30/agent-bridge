@@ -10,7 +10,7 @@ export class MobileFault extends Error {
 }
 export interface Device { id: string; name: string; platform: Platform; pairedAt: number; revoked: boolean; revision: string; grants: Grant[] }
 interface SessionRecord { id: string; deviceId: string; accessHash: string; refreshHash: string; csrfHash: string; retired: string[]; accessExpiresAt: number; refreshExpiresAt: number; revoked: boolean }
-interface Invitation { id: string; nonceHash: string; expiresAt: number; claimed: boolean }
+interface Invitation { id: string; pcId: string; origins: string[]; nonceHash: string; expiresAt: number; claimed: boolean }
 interface ClaimRecord { id: string; tokenHash: string; code: string; name: string; platform: Platform; expiresAt: number; state: "pending" | "approved" | "denied" | "issued"; deviceId?: string }
 export interface Principal { device: Device; session: SessionRecord }
 const ACCESS_MS = 5 * 60_000, REFRESH_MS = 30 * 24 * 60 * 60_000;
@@ -32,6 +32,9 @@ export class MobileStore {
       CREATE TABLE IF NOT EXISTS mobile_records(kind TEXT NOT NULL,id TEXT NOT NULL,record TEXT NOT NULL,PRIMARY KEY(kind,id));
       CREATE TABLE IF NOT EXISTS mobile_replays(principal TEXT NOT NULL,route TEXT NOT NULL,key TEXT NOT NULL,hash TEXT NOT NULL,
         state TEXT NOT NULL,result TEXT,expires_at INTEGER NOT NULL,PRIMARY KEY(principal,route,key));`);
+    const identity = this.get<{ pcId: string }>("meta", "pc");
+    if (identity && identity.pcId !== pcId) { this.db.close(); throw new Error("Mobile registry belongs to a different PC"); }
+    this.put("meta", "pc", { pcId, origins: this.origins });
   }
   close(): void { this.db.close(); }
   private transaction<T>(fn: () => T): T {
@@ -66,7 +69,7 @@ export class MobileStore {
     const pending = this.list<Invitation>("invite").filter(i => i.expiresAt > this.now());
     if (pending.length >= 10) throw new MobileFault(429, "pairing_limit");
     const id = randomUUID(), nonce = secret(), expiresAt = this.now() + 120_000;
-    this.put("invite", id, { id, nonceHash: digest("qr", nonce), expiresAt, claimed: false } satisfies Invitation);
+    this.put("invite", id, { id, pcId: this.pcId, origins: [...this.origins], nonceHash: digest("qr", nonce), expiresAt, claimed: false } satisfies Invitation);
     return { v: 1, origin: this.origin, origins: [...this.origins], pcId: this.pcId, invitationId: id, nonce, expiresAt };
   }
   claim(invitationId: string, nonce: string, name: string, platform: Platform, key: string): PairingClaim | unknown {

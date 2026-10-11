@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { listRunsResponsive, readDashboard, type DashboardReadContext } from "../core/dashboard-read.js";
+import { normalizeProject } from "../core/decisions.js";
 import { ownerQuestionVersion, type OwnerQuestion, type OwnerQuestionStore } from "../core/owner-questions.js";
 import type { PeerInfo } from "../core/protocol.js";
 import type { ChatItem, Job, Question, Session } from "./contract.js";
@@ -16,7 +17,7 @@ export interface MobileSource {
 export const opaqueId = (kind: string, parts: unknown[]): string => createHash("sha256").update(JSON.stringify([kind, ...parts])).digest("base64url");
 const version = (value: unknown): string => opaqueId("version", [value]);
 export function projectQuestion(q: OwnerQuestion, pcId: string): Question {
-  return { id: q.id, kind: "question", pcId, projectId: opaqueId("project", [pcId, q.project]), title: q.title, context: q.context, topic: q.topic,
+  return { id: q.id, kind: "question", pcId, projectId: opaqueId("project", [pcId, normalizeProject(q.project)]), title: q.title, context: q.context, topic: q.topic,
     options: q.options.map(o => ({ id: o.id, label: o.label, consequence: o.consequence, recommended: o.recommended })),
     links: q.links.map(l => ({ kind: l.kind, display: l.kind === "issue" && /^[\w-]{1,100}$/.test(l.value) ? l.value : `${l.kind} reference` })),
     blocking: q.blocking, blocks: q.blocks, meanwhile: q.meanwhile, destructive: q.destructive, authorization: q.authorization, urgency: q.urgency,
@@ -39,7 +40,7 @@ export class LocalMobileSource implements MobileSource {
     const sessions = peers.slice(0, 10_000).map((p: PeerInfo): Session => {
       const generation = opaqueId("generation", [p.id, p.sessionId ?? null]), id = opaqueId("session", [this.pcId, p.id, generation]), chatId = opaqueId("chat", [id]);
       if (p.sessionId) bindings.set(chatId, { kind: "session", nativeName: p.name, generation });
-      const state = { id, pcId: this.pcId, generation, name: p.name.slice(0, 160), agent: p.agent, projectId: opaqueId("project", [this.pcId, p.projectRoot ?? p.cwd]), activity: "unknown" as const,
+      const state = { id, pcId: this.pcId, generation, name: p.name.slice(0, 160), agent: p.agent, projectId: opaqueId("project", [this.pcId, normalizeProject(p.projectRoot ?? p.cwd)]), activity: p.activity === "busy" || p.activity === "idle" ? p.activity : "unknown" as const,
         connection: p.unavailable ? "unavailable" as const : "connected" as const, parentId: null, chatId: p.sessionId ? chatId : null, sendSupported: false as const };
       return { ...state, sampledAt, version: version(state) };
     });
@@ -47,7 +48,7 @@ export class LocalMobileSource implements MobileSource {
       const id = opaqueId("job", [this.pcId, r.name, r.startedAt]), generation = opaqueId("run", [r.name, r.startedAt]), chatId = opaqueId("chat", [id]);
       bindings.set(id, { kind: "job", nativeName: r.name, generation });
       bindings.set(chatId, { kind: "job", nativeName: r.name, generation });
-      const state = { id, pcId: this.pcId, projectId: r.workdir ? opaqueId("project", [this.pcId, r.workdir]) : null, parentId: null, title: (r.title ?? r.job ?? r.name).slice(0, 160), status: r.status,
+      const state = { id, pcId: this.pcId, projectId: r.workdir ? opaqueId("project", [this.pcId, normalizeProject(r.workdir)]) : null, parentId: null, title: (r.title ?? r.job ?? r.name).slice(0, 160), status: r.status,
         progress: { percent: typeof r.percent === "number" ? r.percent : null, note: r.progressNote?.slice(0, 500) ?? null, at: r.updatedAt ?? null, etaAt: r.etaAt ?? null, etaReportedAt: r.etaReportedAt ?? null },
         chatId, hasSteps: r.hasLog !== false, archived: r.archived ?? false, recovered: r.recovered ?? false };
       return { ...state, sampledAt, version: version(state) };
@@ -56,8 +57,20 @@ export class LocalMobileSource implements MobileSource {
     return { sessions, jobs, questions: this.questions.list().slice(0, 10_000).map(q => projectQuestion(q, this.pcId)), sampledAt, sourceState: this.ready() ? "ready" : "offline" };
   }
   private async read(binding: Binding, suffix: string, cursor?: string): Promise<unknown> {
+    let context = this.ctx;
+    const validateRun = async (): Promise<void> => {
+      const run = (await listRunsResponsive(this.ctx.home)).find(r => r.name === binding.nativeName);
+      if (!run || opaqueId("run", [run.name, run.startedAt]) !== binding.generation) throw new MobileFault(410, "snapshot_required");
+    };
+    if (binding.kind === "session") {
+      const peers = await this.ctx.peers(), peer = peers.find(p => p.name === binding.nativeName && !p.name.includes("/"));
+      if (!peer || opaqueId("generation", [peer.id, peer.sessionId ?? null]) !== binding.generation) throw new MobileFault(410, "snapshot_required");
+      // Pin the resolved native identity, so a recycled name cannot redirect a granted chat.
+      context = { ...this.ctx, peers: () => [peer] };
+    } else await validateRun();
     const path = binding.kind === "session" ? `/api/sessions/${encodeURIComponent(binding.nativeName)}/chat` : `/api/runs/${encodeURIComponent(binding.nativeName)}${suffix}`;
-    const result = await readDashboard(this.ctx, { path, ...(cursor ? { query: { from: cursor } } : {}) });
+    const result = await readDashboard(context, { path, ...(cursor ? { query: { from: cursor } } : {}) });
+    if (binding.kind === "job") await validateRun();
     if (result.status !== 200) throw new MobileFault(result.status === 409 ? 409 : result.status === 404 ? 404 : 503, "source_unavailable");
     return result.body;
   }

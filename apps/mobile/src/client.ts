@@ -31,6 +31,7 @@ export class MobileClient {
   private reconnecting?: Promise<void>;
   private refreshing?: Promise<void>;
   private syncing?: Promise<void>;
+  private initializing?: Promise<void>;
   private claim?: { qr: PairingQr; origin: string; claim: PairingClaim; issueKey: string };
   constructor(private readonly wire: WireFetch, private readonly secure: SecureCredentials, private readonly uuid: () => string, private readonly now: () => number = Date.now) {}
   subscribe(fn: () => void): () => void { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; }
@@ -39,10 +40,14 @@ export class MobileClient {
   get approvedOrigins(): readonly string[] { return this.device?.origins ?? []; }
   get preferredOrigin(): string | null { return this.device?.preferredOrigin ?? null; }
   async initialize(): Promise<void> {
-    const saved = await this.secure.load(); if (!saved) return;
-    saved.origins = exactOrigins(saved.origins);
-    if (!saved.origins.includes(saved.preferredOrigin)) throw new ClientFault("invalid_credentials");
-    this.device = saved; await this.reconnect();
+    if (this.initializing) return this.initializing;
+    this.initializing = (async () => {
+      const saved = await this.secure.load(); if (!saved) return;
+      saved.origins = exactOrigins(saved.origins);
+      if (!saved.origins.includes(saved.preferredOrigin)) throw new ClientFault("invalid_credentials");
+      this.device = saved; await this.reconnect();
+    })().finally(() => { this.initializing = undefined; });
+    return this.initializing;
   }
   setForeground(active: boolean): void {
     this.foreground = active; this.generation++;
@@ -175,6 +180,7 @@ export class MobileClient {
   }
   async resolveNotification(opaqueId: string): Promise<string | null> {
     if (!/^[\w-]{1,128}$/.test(opaqueId)) throw new ClientFault("notification_gone");
+    if (this.initializing) await this.initializing;
     await this.reconnect(); if (!this.device || this.state.connection !== "ready") return null;
     const result = await this.request<{ questionId: string }>(this.device.preferredOrigin, this.device.origins, `/mobile/v1/notifications/${opaqueId}`, "GET", this.auth()); return result.questionId;
   }

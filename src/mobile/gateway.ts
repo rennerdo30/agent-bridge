@@ -63,7 +63,7 @@ export class MobileGateway {
     const all: SourceView = { sessions: this.authorized(device, "session", "overview.read", raw.sessions), jobs: this.authorized(device, "job", "overview.read", raw.jobs),
       questions: this.authorized(device, "question", "questions.read", raw.questions), sampledAt: raw.sampledAt, sourceState: raw.sourceState };
     const stale = raw.sourceState !== "ready" || this.store.now() - raw.sampledAt > 15_000;
-    const signature = digest("view", JSON.stringify([all.sessions.map(s => [s.id, s.version]), all.jobs.map(j => [j.id, j.version]), all.questions.map(q => [q.id, q.version]), stale, all.sourceState, device.revision]));
+    const signature = digest("view", JSON.stringify([all.sessions.map(s => [s.id, s.version]), all.jobs.map(j => [j.id, j.version]), all.questions.map(q => [q.id, q.version, q.deliveries]), stale, all.sourceState, device.revision]));
     const old = this.views.get(device.id);
     const oldCursor = old && this.cursors.get(old.snapshot.cursor);
     const cursor = old?.signature === signature && oldCursor && oldCursor.expiresAt > this.store.now() ? old.snapshot.cursor : this.cursor(device, "events", "");
