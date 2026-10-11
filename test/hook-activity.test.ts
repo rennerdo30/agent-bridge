@@ -4,6 +4,7 @@ import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { HOOK_BUDGET_MS } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
 import type { BridgeNode } from "../src/core/node.js";
+import type { LinkMessage } from "../src/core/parent-link.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 import { CodexWaker } from "../src/mcp/codex-wake.js";
 import { buildHookResponse, type HookInput } from "../src/mcp/hooks.js";
@@ -26,6 +27,55 @@ function deferred() {
 
 const hook = (event: HookInput["event"], extra: Partial<HookInput> = {}): HookInput => ({
   event, sessionId: "main-thread", stopHookActive: false, ...extra,
+});
+
+describe("flagged native children of delegated jobs", () => {
+  it.each(["Stop", "PostToolUse", "UserPromptSubmit"] as const)(
+    "%s leaves parent mail for the delegated job main to receive once", async (event) => {
+      const retained: LinkMessage[] = [{ id: "parent-mail", body: "JOB_MAIN_ONLY" }];
+      const inbox = vi.fn(async () => retained.splice(0));
+      const { ctx } = fixture(); ctx.node = null;
+      ctx.parent = { name: "supervisor", inbox } as unknown as NonNullable<ServerContext["parent"]>;
+      const prepare = vi.fn(async () => {});
+      expect(await buildHookResponse(ctx, hook(event, { subagent: true, prepare }))).toEqual({});
+      expect(prepare).not.toHaveBeenCalled(); expect(inbox).not.toHaveBeenCalled();
+      expect(retained).toHaveLength(1);
+      const delivered = await buildHookResponse(ctx, hook(event));
+      if (event === "UserPromptSubmit") {
+        expect(delivered).toMatchObject({ hookSpecificOutput: { hookEventName: event, additionalContext: expect.stringContaining("JOB_MAIN_ONLY") } });
+      } else {
+        expect(delivered).toMatchObject({ decision: "block", reason: expect.stringContaining("JOB_MAIN_ONLY") });
+        if (event === "PostToolUse") expect(delivered).toMatchObject({ hookSpecificOutput: { hookEventName: event, additionalContext: expect.stringContaining("JOB_MAIN_ONLY") } });
+      }
+      expect(inbox).toHaveBeenCalledOnce(); expect(retained).toHaveLength(0);
+      expect(await buildHookResponse(ctx, hook(event))).toEqual({});
+      expect(inbox).toHaveBeenCalledTimes(2);
+      expect(queue).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["Stop", "PostToolUse", "UserPromptSubmit"] as const)(
+    "%s cancellation retains a late parent response; a child cannot drain it", async (event) => {
+      const retained: LinkMessage[] = [{ id: "late-parent-mail", body: "LATE_JOB_MAIN_ONLY" }];
+      const held = deferred(), cancel = new AbortController();
+      const inbox = vi.fn(() => held.promise.then(() => retained.splice(0)));
+      const { ctx } = fixture(); ctx.node = null;
+      ctx.parent = { name: "supervisor", inbox } as unknown as NonNullable<ServerContext["parent"]>;
+      const main = buildHookResponse(ctx, hook(event, { signal: cancel.signal }));
+      expect(inbox).toHaveBeenCalledOnce(); cancel.abort();
+      expect(await main).toEqual({}); expect(retained).toHaveLength(1);
+      held.resolve(); await vi.advanceTimersByTimeAsync(0);
+      expect(await buildHookResponse(ctx, hook(event, { subagent: true }))).toEqual({});
+      expect(inbox).toHaveBeenCalledOnce();
+      const delivered = await buildHookResponse(ctx, hook(event));
+      expect(JSON.stringify(delivered)).toContain("LATE_JOB_MAIN_ONLY");
+      if (event === "UserPromptSubmit") expect(delivered).toMatchObject({ hookSpecificOutput: { hookEventName: event } });
+      else expect(delivered).toMatchObject({ decision: "block" });
+      expect(inbox).toHaveBeenCalledOnce();
+      expect(await buildHookResponse(ctx, hook(event))).toEqual({});
+      expect(inbox).toHaveBeenCalledTimes(2); expect(queue).not.toHaveBeenCalled();
+    },
+  );
 });
 
 // Real hook and waker; only broker/storage and the CLI queue transport are doubles.
