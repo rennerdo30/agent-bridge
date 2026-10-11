@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.30.10
+
+- Codex sessions can now start Codex subagents with `spawn_codex` and `ask_codex`, choose their model, reasoning effort and sandbox, and manage them with the existing subagent tools.
+
 ## 0.30.9
 
 - The dashboard opens a conversation at its latest messages. It used to read every transcript from its first byte, which took seconds for long sessions (a 140 MB transcript) and showed the oldest part first. A paired PC on an older version is still read from the start.
