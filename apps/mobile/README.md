@@ -23,6 +23,19 @@ V1 screens: Overview, Running/jobs/live steps, session/run chats, local owner-qu
 
 Known dependency risk: npm audit lists 22 vulnerable package entries (15 high, 7 moderate), traced to three build-only advisories: braces, node-forge and uuid through xcode. The supervisor accepted these residuals on SDK 57 / RN 0.86; the vulnerable leaves are absent from both production Hermes exports. See [dependency security review](SECURITY.md) for each path, exploitability, evidence and upstream-patch/next-SDK revisit triggers. Actual phone/TLS/storage/push/background evidence remains pending.
 
+## App icons
+
+`expo.icon` uses `assets/icon.png`: a 1024×1024 RGB PNG with no alpha, with the
+existing logo centered on the theme's indigo brand color (`color.light.accent`,
+`#4f46e5`, imported by `ThemeProvider`). Android uses `assets/adaptive-icon.png`
+as its transparent foreground, with the same background color. The padded
+foreground keeps the whole logo inside Android's central safe zone.
+
+From this package, regenerate both assets with `node scripts/generate-icons.cjs`
+after `npm ci`. This uses Expo's installed image tooling and preserves the source
+`assets/logo.png`. Then regenerate the native build copy with Expo prebuild.
+See [native icon verification](../../docs/mobile/APP-ICON-VERIFICATION.md).
+
 ## iOS 27 scene lifecycle
 
 `app.json` enables the official `expo-build-properties` option
