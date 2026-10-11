@@ -129,22 +129,32 @@ async function main(argv: string[]): Promise<number> {
     case "ui": {
       const noOpen = rest.includes("--no-open");
       const mobileConfig = loadConfig(home, "other", log).mobile;
+      let mobileUnavailable: string | undefined;
       if (mobileConfig) {
         if (rest.includes("--reset-key")) (await import("./dashboard.js")).dashboardKey(home, true);
+        const existing = await (await import("./dashboard.js")).findRunningDashboard(home);
+        if (existing) {
+          const info = (await import("./dashboard.js")).withMobileUnavailable(existing, "invalid" in mobileConfig ? "config_invalid" : "source_unavailable");
+          out(t("cli.ui.existing", { url: info.url })); if (!noOpen) openBrowser(info.url); return 0;
+        }
         const portArg = rest.find((a) => a.startsWith("--port="))?.slice("--port=".length), cfg = loadConfig(home, "other", log);
         const node = makeNode(); let activation: import("../mobile/activation.js").MobileActivation | undefined;
         try {
           await node.start();
           activation = await (await import("../mobile/activation.js")).configuredMobileDashboard(node, mobileConfig, { home, pipe, port: portArg ? Number(portArg) : cfg.dashboardPort, log });
           const info = await activation?.start();
-          if (!info) { out("Mobile unavailable; check owner setup and restart the broker host."); return 1; }
-          out(t("cli.ui.running", { url: info.url })); if (!noOpen) openBrowser(info.url);
-          await new Promise<void>(resolve => process.once("SIGINT", resolve)); return 0;
-        } finally { await activation?.close().catch(() => {}); await node.stop(); }
+          if (info && activation?.status() === "ready") {
+            out(t("cli.ui.running", { url: info.url })); if (!noOpen) openBrowser(info.url);
+            await new Promise<void>(resolve => process.once("SIGINT", resolve)); return 0;
+          }
+          mobileUnavailable = activation?.status() ?? "source_unavailable";
+        } catch { mobileUnavailable = "restart_required"; }
+        finally { await activation?.close().catch(() => {}); await node.stop().catch(() => {}); }
       }
       if (rest.includes("--reset-key")) (await import("./dashboard.js")).dashboardKey(home, true);
       // Usually an agent session already hosts it: just open that one.
-      const running = await (await import("./dashboard.js")).findRunningDashboard(home);
+      const found = await (await import("./dashboard.js")).findRunningDashboard(home);
+      const running = found && mobileUnavailable ? (await import("./dashboard.js")).withMobileUnavailable(found, mobileUnavailable) : found;
       if (running) {
         out(t("cli.ui.existing", { url: running.url }));
         if (!noOpen) openBrowser(running.url);
@@ -152,8 +162,9 @@ async function main(argv: string[]): Promise<number> {
       }
       const portArg = rest.find((a) => a.startsWith("--port="))?.slice("--port=".length);
       const port = portArg ? Number(portArg) : loadConfig(home, "other", log).dashboardPort;
-      const controller = new (await import("./dashboard.js")).DashboardController({ home, pipe, port, log });
-      const info = await controller.ensure();
+      const controller = new (await import("./dashboard.js")).DashboardController({ home, pipe, port, log, ...(mobileUnavailable ? { mobileStatus: () => mobileUnavailable! } : {}) });
+      const hosted = await controller.ensure();
+      const info = mobileUnavailable ? (await import("./dashboard.js")).withMobileUnavailable(hosted, mobileUnavailable) : hosted;
       out(t("cli.ui.running", { url: info.url }));
       if (!noOpen) openBrowser(info.url);
       if (!controller.isHosting) return 0;

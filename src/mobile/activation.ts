@@ -32,7 +32,8 @@ export function validateMobileTls(cert: Buffer, key: Buffer, hostname: string): 
 export class MobileActivation {
   private starting?: Promise<DashboardInfo | undefined>;
   private closing?: Promise<void>;
-  private disposal?: { prepared?: PreparedMobileDesktopHost; desktop?: Desktop; work: Promise<void> };
+  private retiring?: Promise<void>;
+  private disposal?: { prepared?: PreparedMobileDesktopHost; desktop?: Desktop; closeDesktop: boolean; work: Promise<void> };
   private prepared?: PreparedMobileDesktopHost;
   private desktop?: Desktop;
   private unregister?: () => void;
@@ -80,7 +81,7 @@ export class MobileActivation {
         origins: this.config.origins, desktopOrigin: `http://127.0.0.1:${this.options.port}`, listeners, ...(push ? { push } : {}) });
       if (this.retired || !this.prepared.ready()) throw new MobileActivationFault("source_unavailable");
       const context = this.node.mobileHostContext(); if (!context?.ready()) throw new MobileActivationFault("source_unavailable");
-      this.unregister = context.onDispose(() => this.close());
+      this.unregister = context.onDispose(() => this.retireMobile());
       const factory = this.deps.desktop ?? (options => { throw new Error("desktop_factory_required"); });
       this.desktop = factory({ ...this.options, mobileAdmin: this.prepared.desktopAdmin, mobileStatus: this.status });
       const info = await this.desktop.ensure();
@@ -93,7 +94,7 @@ export class MobileActivation {
           server.once("error", failed); server.once("listening", done);
           try { server.listen(config.port, config.bindAddress); } catch { failed(); }
         });
-        server.on("error", () => { this.state = "restart_required"; this.diagnostic(this.state); void this.close(); });
+        server.on("error", () => { this.state = "restart_required"; this.diagnostic(this.state); void this.retireMobile(); });
       }
       if (this.retired || !this.prepared.ready()) throw new MobileActivationFault("source_unavailable");
       this.state = "ready";
@@ -106,15 +107,20 @@ export class MobileActivation {
   }
   close(): Promise<void> {
     if (this.closing) return this.closing;
+    void this.retireMobile();
+    this.closing = this.disposeOwned(); return this.closing;
+  }
+  private retireMobile(): Promise<void> {
+    if (this.retiring) return this.retiring;
     this.retired = true; if (this.state === "ready" || this.state === "preparing") this.state = "source_unavailable";
     if (this.poll) clearInterval(this.poll); this.poll = undefined;
     this.prepared?.gateway.deactivate();
-    this.closing = this.disposeOwned(); return this.closing;
+    this.retiring = this.disposeOwned(false); return this.retiring;
   }
-  private disposeOwned(): Promise<void> {
+  private disposeOwned(closeDesktop = true): Promise<void> {
     const prepared = this.prepared, desktop = this.desktop;
-    if (this.disposal && this.disposal.prepared === prepared && this.disposal.desktop === desktop) return this.disposal.work;
-    const work = this.settleOwned(prepared, desktop, this.unregister); this.disposal = { prepared, desktop, work }; return work;
+    if (this.disposal && this.disposal.prepared === prepared && this.disposal.desktop === desktop && this.disposal.closeDesktop === closeDesktop) return this.disposal.work;
+    const work = this.settleOwned(prepared, closeDesktop ? desktop : undefined, this.unregister); this.disposal = { prepared, desktop, closeDesktop, work }; return work;
   }
   private async settleOwned(prepared: PreparedMobileDesktopHost | undefined, desktop: Desktop | undefined, unregister: (() => void) | undefined): Promise<void> {
       prepared?.gateway.deactivate();

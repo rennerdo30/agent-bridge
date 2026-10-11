@@ -8,8 +8,12 @@ import { renderMarkdown } from "./markdown.js";
 import { DEFAULT_NETWORK_PORT, NETWORK_NAME_PATTERN } from "../network/constants.js";
 
 /** Default HTML is byte-identical; the fixed local entry is inserted only for a ready prepared host. */
-export function mobileDashboardPage(ready: boolean): string {
-  return ready ? UI_PAGE.replace('<nav class="side-nav">', '<nav class="side-nav"><a href="/mobile/phones" id="tabPhones"><span class="ico" aria-hidden="true">▣</span>Phones</a>') : UI_PAGE;
+export function safeMobileStatus(value: unknown): string {
+  return typeof value === "string" && ["preparing", "config_invalid", "material_unavailable", "tls_invalid", "bind_invalid", "source_unavailable", "restart_required"].includes(value) ? value : "source_unavailable";
+}
+export function mobileDashboardPage(ready: boolean, unavailable?: string): string {
+  if (ready) return UI_PAGE.replace('<nav class="side-nav">', '<nav class="side-nav"><a href="/mobile/phones" id="tabPhones"><span class="ico" aria-hidden="true">▣</span>Phones</a>');
+  return unavailable === undefined ? UI_PAGE : UI_PAGE.replace('<nav class="side-nav">', '<nav class="side-nav"><p id="phonesStatus" role="status">Phones unavailable: ' + safeMobileStatus(unavailable) + '</p>');
 }
 
 /**

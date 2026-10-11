@@ -19,6 +19,8 @@ import { MobileClient, type StoredDevice, type WireFetch } from "../apps/mobile/
 import { projectQuestion } from "../src/mobile/adapter.js";
 import type { PairingQr } from "../src/mobile/contract.js";
 import { ownerQuestionVersion } from "../src/core/owner-questions.js";
+import { DashboardController, hostDashboard } from "../src/cli/dashboard.js";
+import { createServer } from "node:http";
 
 vi.mock("../src/mobile/https.js", () => ({ createMobileHttpsListeners: vi.fn() }));
 const closers: (() => Promise<unknown> | void)[] = [];
@@ -116,9 +118,19 @@ describe("explicit owner activation", () => {
     expect(a.status()).toBe("restart_required"); expect(f.servers.every(s => !s.listening)).toBe(true); expect(f.desktopClose).toHaveBeenCalled();
     expect(service(f.broker)!.store.list()).toEqual([]);
   });
+  it("failed mobile preparation never closes a recognized foreign desktop; normal fallback may open it", async () => {
+    const f = fixture(), reservation = createServer(); await new Promise<void>(r => reservation.listen(0, "127.0.0.1", r));
+    const port = (reservation.address() as { port: number }).port; await new Promise<void>(r => reservation.close(() => r())); f.options.port = port;
+    const foreign = await hostDashboard({ ...f.options, log: nullLogger }); closers.push(foreign.close);
+    const a = f.activation({ desktop: (opts: Parameters<typeof hostDashboard>[0]) => new DashboardController(opts) });
+    expect(await a.start()).toBeUndefined(); expect(a.status()).toBe("restart_required"); expect(f.servers.every(s => !s.listening)).toBe(true);
+    const fallback = new DashboardController({ ...f.options, mobileStatus: a.status }); closers.push(() => fallback.close());
+    expect(await fallback.ensure()).toEqual(foreign.info); expect(fallback.isHosting).toBe(false);
+    await a.close(); expect((await fetch(foreign.info.url, { redirect: "manual" })).status).toBe(302);
+  });
   it("disposes on broker ownership loss and is idempotent across node and broker close", async () => {
     const f = fixture(), a = f.activation(); await a.start(); const close = vi.spyOn(service(f.broker)!, "close");
-    f.node.emit("disconnected"); expect(a.status()).toBe("source_unavailable"); await a.close(); await f.node.stop();
+    f.node.emit("disconnected"); expect(a.status()).toBe("source_unavailable"); expect(f.desktopClose).not.toHaveBeenCalled(); await a.close(); await f.node.stop();
     expect(f.servers.every(s => !s.listening)).toBe(true); expect(close).toHaveBeenCalledTimes(1); expect(f.desktopClose).toHaveBeenCalledTimes(1);
   });
   it("close while desktop startup is pending disables dispatch and never binds after the late result", async () => {
@@ -130,12 +142,15 @@ describe("explicit owner activation", () => {
   });
   it("failed listener close surfaces restart-required but cannot abort core teardown", async () => {
     const f = fixture(), a = f.activation(); await a.start(); f.servers[0]!.closeFail = true; const close = vi.spyOn(service(f.broker)!, "close");
-    await f.node.stop(); expect(close).toHaveBeenCalledTimes(1); expect(a.status()).toBe("restart_required"); expect(f.desktopClose).toHaveBeenCalled();
+    await f.node.stop(); expect(close).toHaveBeenCalledTimes(1); expect(a.status()).toBe("restart_required"); expect(f.desktopClose).not.toHaveBeenCalled();
+    await a.close(); expect(f.desktopClose).toHaveBeenCalledTimes(1);
   });
   it("hang past deadline still closes core service and exposes restart-required", async () => {
     const f = fixture(), a = f.activation(); await a.start(); vi.useFakeTimers();
-    f.desktopClose.mockImplementation(() => new Promise(() => {})); const close = vi.spyOn(service(f.broker)!, "close"), stop = f.node.stop();
+    let resume!: () => void; vi.spyOn(f.servers[0]!, "close").mockImplementation(callback => { resume = () => callback?.(); });
+    const close = vi.spyOn(service(f.broker)!, "close"), stop = f.node.stop();
     await vi.advanceTimersByTimeAsync(5001); await stop; expect(close).toHaveBeenCalledTimes(1); expect(a.status()).toBe("restart_required");
+    expect(f.desktopClose).not.toHaveBeenCalled(); resume(); await a.close();
   });
   it("loads synthetic Expo material once in memory and injects configured push", async () => {
     const f = fixture(), materialRef = join(f.home, "push-material"); writeFileSync(materialRef, JSON.stringify({ accessToken: "synthetic-only-token", encryptionKey: Buffer.alloc(32, 7).toString("base64") }));

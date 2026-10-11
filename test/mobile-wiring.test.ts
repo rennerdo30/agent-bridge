@@ -108,11 +108,15 @@ describe("unprepared host compatibility", () => {
       expect(sha(methodBody(readFileSync(file, "utf8"), name)), key).toBe(expected);
     }
     const ui = readFileSync("src/cli/ui.ts", "utf8").replaceAll("\r\n", "\n")
-      .replace('import { UI_PAGE, mobileDashboardPage }', 'import { UI_PAGE }')
+      .replace('import { UI_PAGE, mobileDashboardPage, safeMobileStatus }', 'import { UI_PAGE }')
       .replace('  mobileStatus?: () => string;\n', '')
       .replace('      if (!opts.mobileAdmin.isReady() || opts.mobileStatus && opts.mobileStatus() !== "ready") return send(res, 503, { code: "source_unavailable" });\n', '')
       .replace('      if (req.method === "GET" && url.pathname === "/api/mobile/status") return send(res, 200, { state: opts.mobileStatus?.() ?? (opts.mobileAdmin.isReady() ? "ready" : "source_unavailable") });\n', '')
-      .replace('opts.mobileAdmin ? mobileDashboardPage(opts.mobileAdmin.isReady() && (!opts.mobileStatus || opts.mobileStatus() === "ready")) : UI_PAGE', 'UI_PAGE');
+      .replace('location: url.searchParams.has("phonesStatus") ? "/?phonesStatus=" + safeMobileStatus(url.searchParams.get("phonesStatus")) : "/"', 'location: "/"')
+      .replace('\n    if (req.method === "GET" && url.pathname === "/api/mobile/status" && opts.mobileStatus) {\n      if (req.headers.host !== `127.0.0.1:${req.socket.localPort}` || url.search) return send(res, 403, { code: "desktop_origin" });\n      const status = opts.mobileStatus(); return send(res, 200, { state: status === "ready" ? "ready" : safeMobileStatus(status) });\n    }\n', '')
+      .replace('    const mobileReady = !!opts.mobileAdmin?.isReady() && (!opts.mobileStatus || opts.mobileStatus() === "ready");\n', '')
+      .replace('    const mobileUnavailable = opts.mobileStatus && !mobileReady ? safeMobileStatus(opts.mobileStatus()) : url.searchParams.has("phonesStatus") ? safeMobileStatus(url.searchParams.get("phonesStatus")) : undefined;\n', '')
+      .replace('mobileDashboardPage(mobileReady, mobileUnavailable)', 'UI_PAGE');
     // Remove only the explicitly reviewed opt-in additions; original default route source stays pinned.
     expect(sha(ui)).toBe(baseline.uiSha256);
   });

@@ -33,7 +33,7 @@ import { loadOrCreateToken, tokensEqual } from "../core/token.js";
 import { loadConfig, saveConfigValue } from "../core/config.js";
 import { readUsage, type UsageReport } from "../core/usage.js";
 import { controlDashboardJob, JobControlError, type DashboardJobCommand } from "../core/job-control.js";
-import { UI_PAGE, mobileDashboardPage } from "./ui-page.js";
+import { UI_PAGE, mobileDashboardPage, safeMobileStatus } from "./ui-page.js";
 import { codexQueue, deliverDashboardChat, childNote, type QueuePrompt } from "../core/dashboard-chat.js";
 import { networkConfigSchema } from "../network/config.js";
 import { planFirewall, detectFirewall, applyWindowsFirewall } from "../network/firewall.js";
@@ -294,10 +294,15 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     const fromUrl = url.searchParams.get("t");
     if (url.pathname === "/" && fromUrl) {
       if (!tokensEqual(fromUrl, activeSecret)) return send(res, 403, UI_RECOVERY_PAGE, "text/html; charset=utf-8");
-      res.writeHead(302, { location: "/", "cache-control": "no-store", "referrer-policy": "no-referrer", "set-cookie": `${COOKIE}=${activeSecret}; Max-Age=31536000; HttpOnly; SameSite=Strict; Path=/` });
+      res.writeHead(302, { location: url.searchParams.has("phonesStatus") ? "/?phonesStatus=" + safeMobileStatus(url.searchParams.get("phonesStatus")) : "/", "cache-control": "no-store", "referrer-policy": "no-referrer", "set-cookie": `${COOKIE}=${activeSecret}; Max-Age=31536000; HttpOnly; SameSite=Strict; Path=/` });
       return res.end();
     }
     if (!tokensEqual(cookieSecret(req), activeSecret)) return send(res, 403, UI_RECOVERY_PAGE, "text/html; charset=utf-8");
+
+    if (req.method === "GET" && url.pathname === "/api/mobile/status" && opts.mobileStatus) {
+      if (req.headers.host !== `127.0.0.1:${req.socket.localPort}` || url.search) return send(res, 403, { code: "desktop_origin" });
+      const status = opts.mobileStatus(); return send(res, 200, { state: status === "ready" ? "ready" : safeMobileStatus(status) });
+    }
 
     if (req.method === "GET" && url.pathname === "/mobile/phones") {
       if (!opts.mobileAdmin) return send(res, 404, { code: "mobile_not_provisioned" });
@@ -324,7 +329,9 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       } catch (error) { return send(res, error instanceof MobileFault ? error.status : 400, { code: error instanceof MobileFault ? error.code : "invalid_request" }); }
     }
 
-    if (req.method === "GET" && url.pathname === "/") return send(res, 200, opts.mobileAdmin ? mobileDashboardPage(opts.mobileAdmin.isReady() && (!opts.mobileStatus || opts.mobileStatus() === "ready")) : UI_PAGE, "text/html; charset=utf-8");
+    const mobileReady = !!opts.mobileAdmin?.isReady() && (!opts.mobileStatus || opts.mobileStatus() === "ready");
+    const mobileUnavailable = opts.mobileStatus && !mobileReady ? safeMobileStatus(opts.mobileStatus()) : url.searchParams.has("phonesStatus") ? safeMobileStatus(url.searchParams.get("phonesStatus")) : undefined;
+    if (req.method === "GET" && url.pathname === "/") return send(res, 200, mobileDashboardPage(mobileReady, mobileUnavailable), "text/html; charset=utf-8");
     if (req.method === "POST" && url.pathname === "/api/coordinator/availability") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
       const body = await readJson(req);
