@@ -16,7 +16,8 @@ they do not authorize a toolkit patch or approve TTL/secret retention policy.
 
 GN-206 needs to notify the recorded current owner of a toolkit waiter without
 becoming a general Bridge peer. The broker must issue authority for one waiter,
-run, owner generation, project, physical library and notice operation. Neither
+run, owner generation, durable capable-broker election epoch, project, physical
+library and notice operation. Neither
 the toolkit nor the notice CLI chooses a recipient or a sender identity.
 
 V1 is **one local Windows PC only**, per the owner decision reported as
@@ -174,10 +175,10 @@ process stop, automatic native launch or argv/config change is authorized.
 | Record | Required fields and owner |
 | --- | --- |
 | Broker owner authority | Local installation ID; principal type/ID; exact session/job identity; durable owner generation; current authority revision; verified launch identity; state and invalidation reason. Broker-owned, never inferred from names. |
-| Broker grant | Public capability ID; secret digest only; registration request ID; waiter/run; project and physical-library scope; exact owner principal/generation; permitted operation `waiter.notice`; issued/expiry times; activation/revocation state; launch identity and public binding digest. |
-| Toolkit waiter binding | Independently versioned private sidecar; opaque toolkit waiter ID; stable broker binding ID/run nonce; capability ID; expiry and absolute expiry; owner generation; non-secret installation/principal descriptor; verified project/library scope; registration request ID and confirmation state. Persist atomically and cross-check against the unchanged lease token/PID-start; no automatic shared lease schema change. Persist a private capability-file locator separately; no bearer in lease JSON. |
+| Broker grant | Public capability ID; secret digest only; registration request ID; waiter/run; project and physical-library scope; exact owner principal/generation and durable capable-broker election epoch; permitted operation `waiter.notice`; issued/expiry times; activation/revocation state; launch identity and public binding digest. |
+| Toolkit waiter binding | Independently versioned private sidecar; opaque toolkit waiter ID; stable broker binding ID/run nonce; capability ID; expiry and absolute expiry; owner generation and capable-broker election epoch; non-secret installation/principal descriptor; verified project/library scope; registration request ID and confirmation state. Persist atomically and cross-check against the unchanged lease token/PID-start; no automatic shared lease schema change. Persist a private capability-file locator separately; no bearer in lease JSON. |
 | Toolkit notice outbox | Durable notice UUID; immutable canonical payload and digest; capability ID/generation/run; prepared/submitted/unknown/stored/read state; last non-secret error and receipt. Save before first send. No bearer or arbitrary recipient/sender. |
-| Broker notice ledger/pin | Notice UUID; capability/run/generation; payload digest; derived message ID; exact pinned owner principal; storage and acknowledgement state; timestamps and non-secret rejection/retirement audit. Retain across restart, archival and grant expiry. |
+| Broker notice ledger/pin | Notice UUID; capability/run/generation/election epoch; payload digest; derived message ID; exact pinned owner principal; storage and acknowledgement state; timestamps and non-secret rejection/retirement audit. Retain across restart, archival and grant expiry. |
 | Private capability file | Format/version, public grant descriptor and at least 256 random bits of bearer secret. This is the only persistent raw-secret copy, not an ordinary Bridge message or retained audit object. |
 
 The broker creates the capability in a same-user private directory with an
@@ -405,6 +406,28 @@ replacement or explicit revoke invalidates the binding. Preserve a reasoned
 non-secret retirement record. Main/job completion invalidates new emissions.
 Unknown authority fails closed instead of treating the last name as current.
 
+There is also a separate **durable capable-broker election epoch**. Every grant
+binds both it and owner generation. Issuance, validation, storage, claim, wake
+and acknowledgement are allowed only while the issuing capable broker is the
+current elected broker for the ordinary control plane. Any election/handover,
+including restart requiring a new election, invalidates prior-epoch grants;
+an elected legacy broker means unsupported feature authority. A private pipe
+or still-running former broker cannot bypass this election fence. Establishing
+how election ownership is durably proven and loss is fenced remains a required
+implementation review, not a property already supplied by the private DB.
+
+A newly elected capable broker must authenticate exact live session/job
+principals and revalidate fresh exact launch authority. Persisted feature or
+legacy registry claims alone cannot restore authority. Cross-epoch same-binding
+renewal is permitted only after the SAME stable principal, waiter/run, scope
+and current owner generation are proved unchanged and fresh launch authority
+is established. This retires the old credential and issues a new-epoch one;
+it cannot reset the absolute expiry ceiling, transfer ownership or silently
+resubmit withheld notices. Otherwise require NEW registration/binding.
+Previously accepted notices keep their original owner/epoch pins and remain
+retained/withheld; a changed owner cannot consume them. Any reviewed recovery
+of old-epoch notices needs a separate explicit policy, not credential renewal.
+
 Expiry stops new authenticated emissions; it does not retract an already
 committed notice while its pinned owner/generation remains current. Explicit
 revocation or authority change withholds unread delivery as well as stopping
@@ -412,9 +435,10 @@ new emits. Retain both the accepted event and the invalidation evidence.
 Clock rollback or an untrustworthy restored clock suspends grants instead of
 extending their lifetime; revalidation needs a trustworthy expiry observation.
 
-On broker restart, grants are suspended until an authenticated owner and
-attested launch revalidate the same stable principal, generation, revision and
-scope. A replaced MCP transport may reconnect to the same verified owner;
+On broker restart, old-epoch grants are invalidated. New-epoch issuance or
+same-binding renewal requires an authenticated owner and attested launch to
+revalidate the same stable principal, generation, revision and scope as above.
+A replaced MCP transport may reconnect to the same verified owner;
 neither a reused name nor a new session ID may silently restore the grant.
 Revalidation cannot extend expiry, change target or resurrect a revoked grant.
 Revalidation is distinct from the separately authorized same-binding renewal
@@ -449,6 +473,16 @@ issuance/emission/replay until authoritative journal reconciliation. If transfer
 fails, only verified unchanged authority can reopen the old fence. Every owner
 mutation path, including failover/restoration and session replacement, must
 participate; otherwise that path is unsupported for active waiter grants.
+
+The baseline does not route every registry write through the elected broker:
+`src/core/job-handoff.ts:32-87` is a directly callable file transaction;
+`src/mcp/jobs.ts:597` persists merged job records and `:1537` retains hosted
+starts by direct `writeJsonStore`. The broker's handoff call at
+`src/core/broker.ts:260` proves only that path uses it. Audit all direct registry
+mutation, restoration and identity paths before claiming the election fence
+covers authority changes. Until an active binding's mutation paths are fenced
+or independently detected and suspended, that binding is unsupported. Never
+infer elected-broker authority merely from successful registry persistence.
 
 Do not use generic job reroute, project master fallback, alias claim or inbox
 name reuse to redirect notices. Recheck the durable pin at storage, replay,
@@ -494,16 +528,17 @@ Illustrative isolated schema (names/DDL still subject to implementation review):
 
 | Table | Key facts kept together in notice.db |
 | --- | --- |
-| `feature_meta` | Store kind/version, local installation ID, supported notice protocol. Newer/unknown feature format refuses unchanged. |
+| `feature_meta` / `broker_elections` | Store kind/version, local installation ID, supported notice protocol, durable election epoch and capable elected-owner proof/fence. Newer/unknown feature format refuses unchanged; private persistence alone is not election authority. |
 | `owner_authority` | Principal key, generation, authoritative revision, registration/launch identity, active/suspended/retired state. |
 | `launches` | Launch/request/run IDs, exact PID/start/SID, scope digest, bootstrap state; no bearer. |
-| `grants` / `grant_renewals` | Public binding/capability IDs, secret digest, immutable owner/run/scope, expiry/absolute expiry, activation/revoke state, renewal request ID. |
+| `grants` / `grant_renewals` | Public binding/capability IDs, secret digest, immutable owner/run/scope, elected capable-broker epoch, expiry/absolute expiry, activation/revoke state, renewal request ID and revalidated launch authority. |
 | `authority_fences` | Durable pending/committed/reconciled handoff or withdrawal intent, affected generation and registry/local lifecycle revision. |
 | `notices` | Unique notice UUID, binding/run/generation, body/fingerprint, exact owner pin, created/storage/retirement state. This is the only durable notice body store. |
 | `delivery_claims` / `notice_receipts` | Notice/attempt IDs, exact receiver registration/generation, hand-off/ack state and durable read timestamp; one consumed receipt per scoped notice. |
 | `retirement_audit` | Permanent non-secret grant/run/notice retirement reasons, epochs and late-outcome evidence. |
 
-A single feature-DB transaction checks grant/fence/generation and inserts the
+A single feature-DB transaction checks elected capable-broker epoch and
+grant/fence/generation and inserts the
 notice/pin/pending delivery; a second feature-DB transaction validates a claim
 and commits receipt/consumption. WAL plus full durable sync is proposed for
 this new store, not a change to the ordinary DB. Do not claim atomic commit
@@ -547,6 +582,16 @@ After a capable broker restarts/ordinary ownership changes, old claims cannot
 be acknowledged or replayed under a new principal. Fixtures must also crash
 between feature commit/claim/host hand-off/ack and between fence/registry
 commit/reconciliation, proving durable recovery and truthful unknown states.
+
+Required election fixture: capable epoch A issues a grant and stores an unread
+notice; hand control to pinned legacy v0.30.11, change owner/session there,
+then elect capable epoch B. Reject the old grant at every operation, including
+when private feature rows and an old process survive. Fresh exact principal
+and launch authentication is mandatory; old notices stay pinned/withheld and
+the successor receives none. A second unchanged-principal fixture may propose
+explicit same-binding renewal after fresh authority proof, but still cannot
+replay old-epoch pins or transfer them. Fault each election/fence persistence
+boundary and direct registry mutation; ambiguous election suspends authority.
 
 ### Tradeoffs and rejected alternatives
 
@@ -605,6 +650,7 @@ source inventory. No implementation proceeds before root/Claude review.
 | Requeue/withdrawal/restart | Requeue preserves run/binding/UUID; withdrawal's durable fence precedes later claim/wake; new token/PID-start cannot inherit authority through joblabel or proof; late old notices retained/withheld, never rebound. |
 | Suspended bootstrap and deadlock | Stub broker/ACL/store stalls at each staged handshake point; assert no admission gate is held during RPC and unrelated waiters can progress; bounded failure has an explicit reservation/owned-child outcome and no unreviewed resume/kill. |
 | Renewal | Authenticated issuer renewal preserves SAME generation/scope/run/notice fingerprint, rotates only credential version and is idempotent by renewal UUID; heartbeat cannot extend; absolute first-issue ceiling cannot reset; changed process/run requires new attestation. |
+| Capable/legacy/capable election | Durable epoch A caps fail under legacy and epoch B even after legacy owner change; fresh exact principal/launch authority is required. Changed owner never sees retained old pins; unchanged same-binding renewal is explicit, not transfer or old-notice replay. Exercise direct registry writer and election crash fences. |
 
 Use synthetic capabilities and isolated stores/temp directories only. No live
 home DB/config/log/history, real secrets, foreign process inspection or toolkit
