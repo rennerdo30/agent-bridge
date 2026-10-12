@@ -41,7 +41,7 @@ import { NETWORK_NAME_PATTERN } from "../network/constants.js";
 import { remoteSpawnArgsSchema } from "../network/remote-job-protocol.js";
 import { MAX_STREAM_ENTRIES } from "../network/transfers.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
-import { inspectClaudeLaunch, inspectInteractiveLaunch } from "../core/procinfo.js";
+import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { verifiedGoneJobOwners } from "../core/job-restoration.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, isUnsupportedOperation, SIBLING_CONVERSATION_PREFIX, TRANSFER_PROGRESS_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
@@ -279,7 +279,6 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
         cwd,
         // What the user last chose for this session survives /reload-plugins and restarts.
         autoWake: savedAutoWake(home, cfg.name ?? defaultPeerName(agent, cwdKnown ? cwd : "")) ?? cfg.autoWake,
-        brokerEligible: false,
         log,
       });
 
@@ -345,7 +344,6 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       // Codex attaches the thread id to every tools/call as _meta.threadId ...
       const id = meta?.threadId;
       if (typeof id === "string" && id) {
-        await node.setBrokerEligibility(lineage.isInteractive(id, codexCallIdentity(meta).transcript));
         waker.setThreadId(id);
         await node.setSessionId(id).catch(() => {});
         await node.setWakePolicy(cfg.wakeOnDirect, true, cfg.maxHops).catch(() => {});
@@ -524,7 +522,6 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     const launch = await inspectClaudeLaunch(APP_NAME, log);
     ctx.headless = launch.print;
     ctx.restoreEligible = launch.interactive;
-    await node.setBrokerEligibility(launch.interactive);
     if (cfg.delivery === "auto") {
       channel = launch.channel;
       log.info("delivery mode resolved", { delivery: channel ? "channel" : "hooks" });
@@ -532,7 +529,6 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   }
   if (agent === "claude" && node) await node.setWakePolicy(cfg.wakeOnDirect, Boolean(ctx.rewakeAvailable || channel), cfg.maxHops);
   launchInspected();
-  if (node && (agent === "opencode" || agent === "antigravity")) await node.setBrokerEligibility(await inspectInteractiveLaunch(agent));
   await antigravityHooks?.start().catch((err) => log.warn("Antigravity hooks unavailable", { err: String(err) }));
   if (node) {
     node.on("connected", ({ isBroker }) => {
