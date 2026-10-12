@@ -17,6 +17,8 @@
     "test": "node scripts/test.mjs fast",
     "test:integration": "node scripts/test.mjs integration",
     "test:all": "node scripts/test.mjs all",
+    "test:ci-windows": "node scripts/test-ci-windows.mjs",
+    "test:shards": "node scripts/check-test-shards.mjs",
     "check": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {

@@ -22,6 +22,11 @@ if (process.platform === "win32") {
   mkdirSync(fixtureTemp, { recursive: true });
   Object.assign(env, { TEMP: fixtureTemp, TMP: fixtureTemp });
 }
+if (env.AGENT_BRIDGE_CI_RESULTS_DIR) {
+  mkdirSync(env.AGENT_BRIDGE_CI_RESULTS_DIR, { recursive: true });
+  args.push("--reporter=default", "--reporter=json", "--reporter=./scripts/ci-reporter.mjs",
+    `--outputFile.json=${join(env.AGENT_BRIDGE_CI_RESULTS_DIR, `${lane}-results.json`)}`);
+}
 const child = spawn(process.execPath, [fileURLToPath(new URL("../node_modules/vitest/vitest.mjs", import.meta.url)), "run", ...args], {
   stdio: "inherit", windowsHide: true, env,
 });
