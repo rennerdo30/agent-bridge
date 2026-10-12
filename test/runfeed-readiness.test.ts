@@ -24,16 +24,16 @@ function reader(version: string, json=4) {
   recordStorePeer(env.home,{pid:child.pid!,name:"synthetic-supervisor",version,storeCapabilities:{json,sqlite:json===3?7:9}});
   return child;
 }
-it("formats feed paths while keeping execution metadata and log location unchanged", () => {
-  preferredDriveFixture();
+it("formats feed paths while keeping execution metadata and log location unchanged", async () => {
+  await preferredDriveFixture();
   const forwarded: string[] = [];
   const feed = startRunFeed({ home: env.home, name: "path-display", header: "Run in Q:/work", meta: { workdir: "Q:/work" }, forward: (message) => forwarded.push(message) });
   try {
     feed.report("Reading Q:/input", "Command: `Q:/input` -> Q:/output");
   } finally { feed.end("done", "Report Q:/output"); }
-  expect(readFileSync(feed.logPath, "utf8")).toContain("Run in E:/work");
-  expect(readFileSync(feed.logPath, "utf8")).toContain("Command: `E:/input` -> E:/output");
-  expect(forwarded).toContain("Reading E:/input");
+  expect(readFileSync(feed.logPath, "utf8")).toContain("Run in X:/work");
+  expect(readFileSync(feed.logPath, "utf8")).toContain("Command: `X:/input` -> X:/output");
+  expect(forwarded).toContain("Reading X:/input");
   expect(JSON.parse(readFileSync(runMetaPath(feed.logPath), "utf8"))).toMatchObject({ workdir: "Q:/work" });
   expect(feed.logPath.startsWith(env.home)).toBe(true);
 });

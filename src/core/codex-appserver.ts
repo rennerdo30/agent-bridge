@@ -7,7 +7,7 @@ import { progressEventHandler } from "./progress.js";
 import { CODEX_ASK_HINT } from "./delegate.js";
 import type { PermissionDecision } from "./relay.js";
 import { FinalAnswers } from "./final-answers.js";
-import { codexDriveMappings, codexPathPrompt } from "./codex-paths.js";
+import { resolveCodexDriveMappings, codexPathPrompt } from "./codex-paths.js";
 import { codexExecutionPrompt } from "./codex-env.js";
 
 /**
@@ -87,7 +87,7 @@ export async function delegateToCodexAppServer(
   req: DelegateRequest & { bin: string; sandbox: CodexSandbox; windowsSandbox?: "unelevated" | "elevated"; approvalsReviewer?: CodexApprovalsReviewer; askMode?: boolean; writableRoots?: string[]; networkAccess?: boolean; startupTimeoutMs?: number },
 ): Promise<DelegateResult> {
   checkDepth(req.maxDelegateDepth);
-  const mappings = codexDriveMappings(`${req.cwd}\n${req.prompt}`);
+  const mappings = await resolveCodexDriveMappings(`${req.cwd}\n${req.prompt}`);
   req = { ...req, prompt: codexExecutionPrompt(codexPathPrompt(req.prompt, mappings, req.sandbox === "danger-full-access"), req.sandbox) };
   // See delegateToCodex: the Windows sandbox user does not see drive mappings.
   const cwd = realFolder(req.cwd);

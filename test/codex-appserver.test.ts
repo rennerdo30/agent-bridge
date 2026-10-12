@@ -69,12 +69,12 @@ it.each(["danger-full-access", "read-only"] as const)("keeps preferred prompts a
   const requests = join(dir, "requests.jsonl");
   writeFileSync(join(dir, "app-server"), FAKE_CODEX_APPSERVER);
   writeFileSync(join(dir, "exec"), 'const fs=require("node:fs");let text="";process.stdin.on("data",d=>text+=d);process.stdin.on("end",()=>{fs.writeFileSync("prompt.txt",text);fs.writeFileSync("cwd.txt",process.cwd());console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"done"}}));});');
-  const restore = preferredDriveFixture();
-  const mappings = vi.spyOn(codexPaths, "codexDriveMappings").mockReturnValue([{ alias: "E:\\", real: "Q:\\" }]);
+  const restore = await preferredDriveFixture();
+  const mappings = vi.spyOn(codexPaths, "resolveCodexDriveMappings").mockResolvedValue([{ alias: "X:\\", real: "Q:\\" }]);
   try {
-    const prompt = "Write E:/future.md and read Q:/existing.md";
+    const prompt = "Write X:/future.md and read Q:/existing.md";
     await delegateToCodex({ bin: process.execPath, cwd: dir, prompt, sandbox, timeoutSec: 10, log: nullLogger });
-    const expected = sandbox === "danger-full-access" ? "Write E:/future.md and read E:/existing.md" : "Write Q:\\future.md and read Q:/existing.md";
+    const expected = sandbox === "danger-full-access" ? "Write X:/future.md and read X:/existing.md" : "Write Q:\\future.md and read Q:/existing.md";
     expect(readFileSync(join(dir, "prompt.txt"), "utf8")).toContain(expected);
     expect(realpathSync.native(readFileSync(join(dir, "cwd.txt"), "utf8"))).toBe(realpathSync.native(dir));
     await delegateToCodexAppServer({ bin: process.execPath, cwd: dir, prompt, sandbox, timeoutSec: 10, log: nullLogger, extraEnv: { AB_TEST_REQUESTS: requests } });

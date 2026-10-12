@@ -4,7 +4,7 @@ import { contentText, directory, fileStat, MAX_NATIVE_SUBAGENTS, MAX_TEXT_CHARS,
 export function claudeSessionFile(session: TranscriptSession, paths: TranscriptPaths): string | null {
   if (!session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return null;
   const projects = join(paths.claude, "projects");
-  // Observed Windows encoding: E:\\Development\\repo -> E--Development-repo.
+  // Windows encoding replaces the drive colon and each separator with a dash.
   const encoded = session.cwd.replace(/[^A-Za-z0-9]/g, "-");
   const direct = safeFile(projects, join(projects, encoded, `${session.sessionId}.jsonl`));
   if (direct) return direct;
