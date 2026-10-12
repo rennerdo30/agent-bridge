@@ -105,8 +105,39 @@ npm run test:all
 Typechecks, plugin builds, Expo compatibility and Android/iOS Hermes exports pass.
 Focused identity/config/activation/pinning: **49 tests**. Client/pinning/unchanged
 retention guard: **32 tests**. Existing app tests: **14**. Native wrapper: **31**.
-The full root suite was invoked once; its final receipt is pending at this record's
-initial publication and will be updated when it finishes. No all-green claim yet.
+The full root suite was invoked **once** from the required `E:` worktree and exited
+**1** after **2522.64 seconds**: **296 files passed, 3 failed**; **2252 tests passed,
+17 failed, 3 skipped**. This is not an all-green result. All mobile tests and the
+unchanged data-retention guard passed in that run.
+
+- **15 failures:** `test/release-rehearsal-backup.test.ts`. The supervisor confirmed
+  the known pre-existing E-drive alias containment defect, reproduced on base
+  `40fbf0a4`; approved fix `8514df88` on `fix/e-path-display-ab272` is being
+  integrated by the separate release owner. This TLS branch does not import or
+  weaken those tests.
+- **1 failure:** `test/split-bundles.test.ts`, "indexes new messages through the
+  compiled split-bundle background worker" (11448 ms).
+- **1 failure:** `test/send-state-lock.test.ts`, "tracks pending storage under a
+  real writer lock and concurrent retries queue once" (7747 ms).
+
+The latter two files passed a single unchanged focused rerun: **3/3 tests across
+2 files**, exit **0**, **12.67 seconds**. No source/assertion changes or full-suite
+rerun were made. Their full-run cause is unestablished; a passing rerun does not
+retroactively erase the failures. PowerShell interpreted CLIXML markers in the
+original stderr and replaced assertion details with XML-parser errors. The
+original failed test names/counts/durations and final summary are retained, but
+the original failing assertion payload is unavailable. The focused rerun used
+Node stdout/stderr pipes to a file to preserve native output.
+
+The unchanged send-state-lock assertions check `state.state === "pending"` and
+`state.message === null` before releasing the writer; both concurrent results
+must have the same message ID with storage `"stored"`; recipient unread count
+and sender receipt count must each be **1**. The rerun retained every assertion.
+
+[Final test receipt](verification/ab271-pinned-tests.json). Full captured log and
+plain focused-rerun log remain under `.agent-bridge-test/ab271-pinned/` in the
+isolated Windows worktree. The final receipt/docs commit changes no source or
+assertions. The release owner owns the separate alias fix and release validation.
 Existing app dependency audit remains 22 inherited advisories (7 moderate,
 15 high); this slice did not change the Expo app dependency set. Root install
 reports zero advisories.
