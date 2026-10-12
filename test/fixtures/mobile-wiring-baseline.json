@@ -9,7 +9,7 @@
     "src/core/node.ts:constructor": "b071317e90dd8025e2ecc58f381c7a0a06ae4e11d2aa6019cb9fcf0f4b16ff01",
     "src/core/node.ts:start": "922dd81e0ddbe0d79b70656ef14bd97cd1e6e331aeb410b8e9a9d92afce9f402",
     "src/core/node.ts:stop": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
-    "src/core/node.ts:tryBecomeBroker": "fab51b8ae8c1c37d9dabc2de36335137eafe69d62ffbbc1065a7f71b40d4c270",
+    "src/core/node.ts:tryBecomeBroker": "fcb86e9e30984b1db662d8c8d0722d4de0098b929480a02133e297b9a6de940e",
     "src/cli/dashboard.ts:constructor": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
     "src/cli/dashboard.ts:open": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
@@ -39,6 +39,14 @@
         "src/core/node.ts:tryBecomeBroker"
       ],
       "reason": "Election/retirement changes from the approved commit; constructor/startServices also retain approved AB-280 additions. All other method and UI pins remain unchanged."
+    },
+    "AB-281-retirement-grace": {
+      "base": "b50d1669d3c8dc98605441a6782e1721eda66183",
+      "commit": "d97122c1104242bf4b63f9645d169747b807bd8c",
+      "methods": [
+        "src/core/node.ts:tryBecomeBroker"
+      ],
+      "reason": "Reviewed one-line retirement callback redirection to reconnectAfterUpgrade; local successor grace no longer depends on receiving the retiring host own socket event. Other twelve methods, historical base and UI pin are unchanged."
     }
   }
 }
