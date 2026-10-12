@@ -31132,13 +31132,21 @@ async function createBridge({ client, directory }) {
   const noteSession = (sessionID) => {
     if (!sessionID || childSessions.has(sessionID)) return;
     activeSession = sessionID;
-    if (!sessionStartSent) {
-      sessionStartSent = true;
-      sessionStart = hook("SessionStart", sessionID).then(async (out) => {
+    if (sessionStartSent) return;
+    if (sessionStart) return sessionStart;
+    sessionStart = (async () => {
+      for (let attempt = 0; attempt < 2 && !disposed; attempt++) {
+        const out = await hook("SessionStart", sessionID);
         const context = out?.reason ?? out?.hookSpecificOutput?.additionalContext;
-        if (!disposed && typeof context === "string" && context) await promptAsync(client, sessionID, context, true);
-      }).catch((err) => log("warn", "could not store initial peer context", { err: String(err) }));
-    }
+        if (typeof context !== "string" || !context) continue;
+        if (disposed) return;
+        await promptAsync(client, sessionID, context, true);
+        sessionStartSent = true;
+        return;
+      }
+    })().catch((err) => log("warn", "could not store initial peer context", { err: String(err) })).finally(() => {
+      sessionStart = null;
+    });
     return sessionStart;
   };
   const stopCheck = async (sessionID) => {
