@@ -43,3 +43,5 @@ parallel shards of each lane, retaining one integration worker per shard.
 proves every file is covered exactly once. CI also checks the files actually run
 against that inventory. Per-job artifacts retain JSON results, shard lists,
 failures and retry/flaky diagnostics; retries are not added or hidden.
+Artifact names include the workflow attempt so a manual rerun preserves the
+original failure evidence and can upload fresh results without a name collision.

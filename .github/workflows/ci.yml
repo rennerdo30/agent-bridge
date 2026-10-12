@@ -46,7 +46,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: tests-${{ matrix.os }}-node-${{ matrix.node }}
+          name: tests-${{ matrix.os }}-node-${{ matrix.node }}-attempt-${{ github.run_attempt }}
           path: .agent-bridge-test/ci/
           if-no-files-found: warn
 
@@ -84,6 +84,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: tests-windows-node-${{ matrix.node }}-shard-${{ matrix.shard }}
+          name: tests-windows-node-${{ matrix.node }}-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: .agent-bridge-test/ci/
           if-no-files-found: warn
