@@ -1,0 +1,17 @@
+{
+  "result": {
+    "credentialStore": "build-copy-only memory seam; production SecureStore unchanged",
+    "qrVersion": 2,
+    "phase": "save-memory-credentials",
+    "read": true,
+    "savedPins": true,
+    "appClientRead": true,
+    "wrongPinRejected": true,
+    "httpRejected": true,
+    "redirectRejected": true,
+    "emptyPinsRejected": true
+  },
+  "wrongHttpRequests": 0,
+  "redirectTargetRequests": 0,
+  "authenticatedReads": 2
+}
