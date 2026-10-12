@@ -1585,7 +1585,16 @@ export class JobManager {
       record.queuedMessages = pending;
       const jobs = replaceStoredJob(entries, job.id, record);
       try { writeJsonStore(this.storePath, { ...(isRecord(previous) ? previous : {}), jobs }, previous); }
-      catch (error) { Object.assign(job, before); throw error; }
+      catch (error) {
+        // A brand-new id has no shared turn to replace. Its immutable journal
+        // can prove admission while old readers keep the registry read-only.
+        // Recovered jobs and continuations still require the registry claim.
+        if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED" || !initial || saved || before.executionOwner || job.recoveredRecord) {
+          Object.assign(job, before); throw error;
+        }
+        try { this.retainInitialTransition(record, toStored(before) as unknown as Record<string, unknown>); }
+        catch (retentionError) { Object.assign(job, before); throw retentionError; }
+      }
       job.queue = pending;
       return true;
     } finally { release(); }
@@ -1990,9 +1999,21 @@ export class JobManager {
       if (saved && saved.startedAt !== job.startedAt) throw Object.assign(new Error("job turn changed during cancellation"), { code: "EJOBLOCKED" });
       const record = { ...(saved ?? toStored(job)), cancellingTurn: job.startedAt };
       const jobs = replaceStoredJob(entries, job.id, record);
-      writeJsonStore(this.storePath, { ...(isRecord(previous) ? previous : {}), jobs }, previous);
+      try { writeJsonStore(this.storePath, { ...(isRecord(previous) ? previous : {}), jobs }, previous); }
+      catch (error) {
+        // The local executor may have admitted this fresh id in the journal.
+        // Retain cancellation before aborting, without touching old readers.
+        if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED" || saved || job.recoveredRecord || job.executionOwner !== this.node.name) throw error;
+        this.retainInitialTransition(record, toStored(job) as unknown as Record<string, unknown>);
+      }
       job.cancellingTurn = job.startedAt;
     } finally { release(); }
+  }
+
+  private retainInitialTransition(record: Record<string, unknown>, base: Record<string, unknown>): void {
+    const receipt = retainPendingJob(this.storePath!, { name: this.node.name, session: this.node.currentSessionId ?? null, nonce: this.receiptWriter }, record, base);
+    this.receipts.push(receipt);
+    this.retainedSnapshots.set(String(record.id), JSON.stringify(record));
   }
 
   /**
