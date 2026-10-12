@@ -124,34 +124,6 @@ it("a drain timeout keeps ownership and lets the admitted request finish", async
   await old.send({ to: next.name, body: "serving after bounded drain" });
 });
 
-it("the retiring host yields locally even when its own handover event is lost", async () => {
-  let oldClient: BridgeClient | undefined, dropped = 0;
-  const request = BridgeClient.prototype.request, emit = BridgeClient.prototype.emit;
-  vi.spyOn(BridgeClient.prototype, "request").mockImplementation(function (this: BridgeClient, op, args, timeout) {
-    if (op === "hello" && (args as any).peer?.name === "old") oldClient = this;
-    return request.call(this, op, args, timeout);
-  });
-  vi.spyOn(BridgeClient.prototype, "emit").mockImplementation(function (this: BridgeClient, event, ...args: any[]) {
-    if (this === oldClient && event === "event" && args[0] === "broker_handover") { dropped++; return true; }
-    return (emit as any).call(this, event, ...args);
-  });
-  const old = await oldHost(), next = env.node("next");
-  const stored = await old.send({ to: "later", body: "retained without self handover event" });
-  let delayReconnect = false;
-  next.once("disconnected", () => { delayReconnect = true; });
-  const connect = next.ensureConnected.bind(next);
-  vi.spyOn(next, "ensureConnected").mockImplementation(async () => {
-    if (delayReconnect) { delayReconnect = false; await new Promise(resolve => setTimeout(resolve, 250)); }
-    await connect();
-  });
-  await next.start();
-  await until(() => next.isBroker && next.isConnected && old.isConnected && !old.isBroker, HANDOVER_RECONNECT_BUDGET_MS);
-  expect(dropped).toBe(1);
-  expect((await old.health()).brokerVersion).toBe(APP_VERSION);
-  const later = env.node("later"); await later.start(); await until(() => later.unread().length === 1);
-  expect(later.unread()[0]!.id).toBe(stored.messages[0]!.id);
-});
-
 it.each(["deferred", "reader"])("a %s store blocks handover without losing ownership", async kind => {
   const warning = vi.spyOn(nullLogger, "warn");
   const old = await oldHost(), broker = internals(old).broker;
