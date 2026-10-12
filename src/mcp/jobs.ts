@@ -816,7 +816,16 @@ export class JobManager {
       const priorReceipt = appliedReceipts.get(saved.id);
       const base = !durableIds.has(saved.id) && priorReceipt?.value.writer.nonce === receipt.value.writer.nonce &&
         priorReceipt.value.sequence < receipt.value.sequence && index >= 0 ? stored[index] as unknown as Record<string, unknown> : receipt.value.baseJob;
-      const merged = mergePendingJob(index < 0 ? undefined : stored[index] as unknown as Record<string, unknown>, saved, base);
+      let current = index < 0 ? undefined : stored[index] as unknown as Record<string, unknown>;
+      // The same original writer may establish its initial executor between
+      // pre-admission and admitted receipts. No durable authority is replaced;
+      // all other ownership fields still pass mergePendingJob's exact checks.
+      if (!durableIds.has(saved.id) && priorReceipt?.value.writer.nonce === receipt.value.writer.nonce &&
+          priorReceipt.value.sequence < receipt.value.sequence && current?.status === "running" && saved.status === "running" &&
+          current.executionOwner === undefined && current.executionPid === undefined && !current.host && !saved.host &&
+          saved.executionOwner === receipt.value.writer.name && typeof saved.executionPid === "number" &&
+          saved.startedAt > Number(current.startedAt)) current = { ...current, executionOwner: saved.executionOwner };
+      const merged = mergePendingJob(current, saved, base);
       if (!merged || !isStoredJob(merged)) continue;
       if (index < 0) stored.push(merged); else stored[index] = merged;
       appliedReceipts.set(saved.id, receipt);
