@@ -7,6 +7,7 @@ import java.util.Base64
 import javax.net.ssl.SSLHandshakeException
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.tls.HandshakeCertificates
@@ -71,6 +72,19 @@ class PinPolicyTest {
     try {
       gateway.enqueue(MockResponse().setBody("enrolled key"))
       client.newCall(Request.Builder().url(gateway.url("/hello")).build()).execute().use { assertEquals("enrolled key", it.body!!.string()) }
+    } finally { close(client); gateway.shutdown() }
+  }
+
+  @Test fun pinnedPutPreservesUtf8Json() {
+    val cert = certificate(); val gateway = server(cert); val client = pinnedClient(listOf(pin(cert)))
+    val json = "{\"label\":\"電話\",\"token\":\"fixture\"}"
+    try {
+      gateway.enqueue(MockResponse().setBody("registered"))
+      client.newCall(Request.Builder().url(gateway.url("/mobile/v1/me/push")).put(json.toRequestBody(null)).build()).execute().use {
+        assertEquals("registered", it.body!!.string())
+      }
+      val captured = gateway.takeRequest()
+      assertEquals("PUT", captured.method); assertEquals(json, captured.body.readUtf8())
     } finally { close(client); gateway.shutdown() }
   }
 
