@@ -13,7 +13,7 @@ import type { HistoryResult } from "../src/core/history.js";
 
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
-function cli(major: number) {
+function cli(major: number, exitOnStdinEnd = false) {
   const root = process.env.AGENT_BRIDGE_TEST_ROOT!;
   mkdirSync(root, { recursive: true });
   const cwd = mkdtempSync(join(root, "opencode-v2-"));
@@ -42,6 +42,11 @@ if (args[0] === "run") {
     console.log(JSON.stringify({type:"text",sessionID:"same-session",part:{messageID:"m",text:"done"}}));
   });
 } else if (args[0] === "serve") {
+  // V2 ties the private server's lifetime to its parent's stdin pipe.
+  if (${exitOnStdinEnd}) {
+    process.stdin.resume();
+    process.stdin.on("end", () => setTimeout(() => process.exit(0), 50));
+  }
   let events;
   const emit = (type, data) => events.write("data: " + JSON.stringify({id:type, type, data:{sessionID:"ses_test",...data}}) + "\\n\\n");
   const server = createServer(async (req,res) => {
@@ -55,7 +60,7 @@ if (args[0] === "run") {
     if (path.endsWith("/reply")) setTimeout(() => {
       emit("session.text.ended",{assistantMessageID:"msg_test",ordinal:0,text:"done"});
       emit("session.execution.succeeded",{});
-    },10);
+    },${exitOnStdinEnd ? 200 : 10});
     res.end(JSON.stringify({data:{}}));
   });
   server.listen(0,"127.0.0.1",()=>console.log("server listening on http://127.0.0.1:"+server.address().port));
@@ -101,6 +106,15 @@ it("forwards permissions over the v2 API and switches models on resume", async (
   const mcp = new URL(calls.find(c => c.path?.startsWith("/api/mcp?")).path, "http://fixture");
   expect(mcp.searchParams.get("location[directory]")).toBe(fixture.cwd);
   expect(mcp.searchParams.has("directory")).toBe(false);
+});
+
+it("keeps the private V2 server alive when it shuts down on stdin EOF", async () => {
+  const fixture = cli(2, true);
+  const result = await delegateToOpencodeServed({ ...fixture, prompt: "reply OK", model: "provider/model",
+    timeoutSec: 10, log: nullLogger, permissions: null,
+    onPermission: async () => ({ allow: false, message: "fixture declines" }) });
+  expect(result).toMatchObject({ text: "done", sessionId: "ses_test", isError: false });
+  expect(fixture.calls().some(c => c.path?.endsWith("/reply"))).toBe(true);
 });
 
 it.each([1, 2])("reads stats locally with V%i's output format", async major => {
