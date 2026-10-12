@@ -4,15 +4,15 @@ import {
 } from "./chunks/chunk-2PKS7JZW.mjs";
 import {
   ConversationIngestor
-} from "./chunks/chunk-D64BPCKP.mjs";
+} from "./chunks/chunk-R53PVG73.mjs";
 import {
   HISTORY_TICK_MS,
   HistoryIndex
-} from "./chunks/chunk-MIW3ARQS.mjs";
+} from "./chunks/chunk-3RSMPSKB.mjs";
 import {
   ownsProjectMirrors,
   projectDatabasePath
-} from "./chunks/chunk-MQMR3OKE.mjs";
+} from "./chunks/chunk-2YO4F5BE.mjs";
 import {
   HISTORY_IO_BYTES_PER_SECOND,
   copyLegacyConversationTail,
@@ -21,40 +21,39 @@ import {
   migrateHistoryStore,
   openHistoryStore,
   readHistoryMigrationProgress
-} from "./chunks/chunk-O6RMT7GX.mjs";
+} from "./chunks/chunk-SKT3HYSV.mjs";
 import "./chunks/chunk-AJ3G2ZXC.mjs";
 import "./chunks/chunk-KQJ5KQYW.mjs";
-import "./chunks/chunk-7DAXIAGU.mjs";
-import "./chunks/chunk-ZW7YKSPB.mjs";
+import "./chunks/chunk-UUSRNKCB.mjs";
+import "./chunks/chunk-CNEMWRSZ.mjs";
 import {
   reconcileAskCompletions
-} from "./chunks/chunk-VIBWHOHO.mjs";
-import "./chunks/chunk-6WTV3HWM.mjs";
+} from "./chunks/chunk-ZBX5QQ3S.mjs";
 import {
   loadConfig
-} from "./chunks/chunk-HIALPP7M.mjs";
+} from "./chunks/chunk-OSA6ND2Q.mjs";
 import "./chunks/chunk-4QXHCXBU.mjs";
-import "./chunks/chunk-36QHDPET.mjs";
-import "./chunks/chunk-TJVQ42HE.mjs";
-import "./chunks/chunk-NK3KPZ36.mjs";
+import "./chunks/chunk-7I6HYUGL.mjs";
+import "./chunks/chunk-MIHYBRIY.mjs";
 import {
   readHistoryJson
-} from "./chunks/chunk-FXWD7ZJJ.mjs";
-import "./chunks/chunk-IJXRM5WK.mjs";
+} from "./chunks/chunk-HM5PDKXV.mjs";
+import "./chunks/chunk-JROBSEUR.mjs";
 import {
   transcriptPaths
 } from "./chunks/chunk-WM3QOXKL.mjs";
+import "./chunks/chunk-NTTETPFJ.mjs";
 import {
   closeMetadataDbs,
   fileSignature,
   isRecord,
   nullLogger,
   writeJsonStore
-} from "./chunks/chunk-C5TTRWRF.mjs";
-import "./chunks/chunk-B5YQVBXX.mjs";
+} from "./chunks/chunk-7PX5Q4QT.mjs";
+import "./chunks/chunk-6JJ25VPZ.mjs";
 import {
   CONFIG_FILE_NAME
-} from "./chunks/chunk-BF2F5BYX.mjs";
+} from "./chunks/chunk-AH7X4KST.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/core/history-worker.ts
