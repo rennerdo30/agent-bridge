@@ -144,6 +144,15 @@ describe("paths", () => {
 });
 
 describe("formatPeer", () => {
+  it("prefers the verified E: spelling without changing peer identity", async () => {
+    const { preferredDriveFixture } = await import("./preferred-drive-fixture.js");
+    const restore = preferredDriveFixture();
+    try {
+      const peer = { id: "x", name: "peer", agent: "codex", cwd: "Q:/work", startedAt: 0 } as import("../src/core/protocol.js").PeerInfo;
+      expect(formatPeer(peer)).toContain("cwd=E:/work");
+      expect(peer.cwd).toBe("Q:/work");
+    } finally { restore(); }
+  });
   it("shows activity, uptime and session", () => {
     const line = formatPeer(
       { id: "x", name: "codex-app", agent: "codex", cwd: "/w/app", pid: 1, agentPid: null, sessionId: "t-9", startedAt: 0, autoWake: true, activity: "idle" },

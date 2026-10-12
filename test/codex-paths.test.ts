@@ -7,8 +7,31 @@ import { codexDriveMappings, codexPathPrompt, codexPathReport } from "../src/cor
 import { delegateToCodex } from "../src/core/delegate.js";
 import { delegateToCodexAppServer } from "../src/core/codex-appserver.js";
 import { nullLogger } from "../src/core/logger.js";
+import { preferredDriveFixture } from "./preferred-drive-fixture.js";
 
 describe("Codex drive aliases", () => {
+  it("prefers verified E: display and preserves full-access prompt spellings", () => {
+    const restore = preferredDriveFixture();
+    try {
+      const mappings = [{ alias: "E:\\", real: "Q:\\" }];
+      const prompt = "Read E:/repo and write Q:/future.md";
+      const text = codexPathPrompt(prompt, mappings, true);
+      expect(text).toContain("Read E:/repo and write E:/future.md");
+      expect(codexPathPrompt(text, mappings, true)).toBe(text);
+      expect(codexPathReport(mappings)).toContain("preferred E:\\ (verified drive alias)");
+      expect(codexPathReport(mappings)).not.toContain("Q:\\");
+    } finally { restore(); }
+  });
+  it("replaces previous mapping notes without self-equations or duplicates", () => {
+    const mappings = [{ alias: "E:\\", real: "Q:\\" }];
+    const report = codexPathReport(mappings)!;
+    const once = codexPathPrompt(`Write E:/new.md\n${report}`, mappings);
+    expect(codexPathPrompt(once, mappings)).toBe(once);
+    expect(once).not.toContain("Q:\\ = Q:\\");
+    expect(once.match(/Windows drive aliases resolved/g)).toHaveLength(1);
+    expect(codexPathPrompt("task\nWindows path mappings (same folders): Q:\\ = Q:\\.", [])).toBe("task");
+    expect(codexPathReport([{ alias: "Q:\\", real: "q:\\" }])).toBeNull();
+  });
   it("resolves referenced drive roots and rewrites even nonexistent report destinations", () => {
     const prompt = "Read E:/Development/repo and write e:\\Development\\new-report.md; keep D:/other";
     const mappings = codexDriveMappings(prompt, "win32", (p) => p === "E:\\" ? "D:\\" : p);
@@ -16,9 +39,9 @@ describe("Codex drive aliases", () => {
     const mapped = codexPathPrompt(prompt, mappings);
     expect(mapped).toContain("Read D:\\Development/repo");
     expect(mapped).toContain("write D:\\Development\\new-report.md");
-    expect(mapped).toContain("E:\\ = D:\\");
+    expect(mapped).toContain("E:\\ (physical drive D:\\)");
     expect(mapped).toContain("without requesting path confirmation");
-    expect(codexPathReport(mappings)).toContain("E:\\ = D:\\");
+    expect(codexPathReport(mappings)).toContain("E:\\");
   });
 
   it("supports subst roots pointing below a drive and namespaced native paths", () => {
@@ -31,6 +54,7 @@ describe("Codex drive aliases", () => {
     expect(codexDriveMappings(prompt, "win32", () => { throw new Error("missing"); })).toEqual([]);
     expect(codexDriveMappings(prompt, "linux")).toEqual([]);
     expect(codexPathPrompt(prompt, [])).toBe(prompt);
+    expect(codexPathPrompt(`${prompt}\n `, [])).toBe(`${prompt}\n `);
     expect(codexPathReport([])).toBeNull();
   });
 

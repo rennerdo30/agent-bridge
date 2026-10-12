@@ -5,6 +5,7 @@ import { archiveOldRuns, archiveRun, finishedRunLine } from "./run-archive.js";
 import { storageLease } from "./storage-lock.js";
 import { refreshStorePeerIdentities } from "./store-compatibility.js";
 import { setTimeout as delay } from "node:timers/promises";
+import { displayPathText } from "./display-paths.js";
 
 /**
  * Live feed of one delegated run: every progress line goes to ~/.agent-bridge/runs/<name>.log (so the
@@ -135,7 +136,7 @@ export function startRunFeed(opts: RunFeedOptions): RunFeed {
   const logPath = join(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
   /** One entry; extra lines of a multi-line text are indented under it. */
   const write = (line: string) => {
-    const [first, ...rest] = line.replace(/\r/g, "").split("\n");
+    const [first, ...rest] = displayPathText(line).replace(/\r/g, "").split("\n");
     const body = [first, ...rest.map((l) => `${CONTINUATION}${l}`)].join("\n");
     try {
       appendFileSync(logPath, `${stamp(now())} ${body}\n`);
@@ -165,7 +166,7 @@ export function startRunFeed(opts: RunFeedOptions): RunFeed {
   let lastAt = started;
   const emit = (m: string) => {
     write(m);
-    opts.forward?.(m);
+    opts.forward?.(displayPathText(m));
   };
   emit(`started · follow live: agent-bridge watch ${opts.name}`);
   const timer = setInterval(() => {
@@ -181,7 +182,7 @@ export function startRunFeed(opts: RunFeedOptions): RunFeed {
       lastAt = now();
       // The log keeps the full text (whole message or command); the host gets the short line.
       write(full ?? m);
-      opts.forward?.(m);
+      opts.forward?.(displayPathText(m));
     },
     end: (summary, answer) => {
       clearInterval(timer);

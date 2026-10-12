@@ -8,6 +8,7 @@ import { closeSync, constants as fsConstants, copyFileSync, fsyncSync, openSync 
 import { dirname, join } from "node:path";
 import { DEFAULT_MAX_JOBS, DELEGATION_METADATA_VERSION } from "../core/constants.js";
 import { DelegateError, failureCause, pidAlive, type DelegateResult } from "../core/delegate.js";
+import { displayPathText } from "../core/display-paths.js";
 import type { Logger } from "../core/logger.js";
 import { ACK_CONVERSATION_SUFFIX, isQuietMessage, type AgentKind, type BridgeMessage } from "../core/protocol.js";
 import { isPureAcknowledgement } from "../core/job-messaging.js";
@@ -209,7 +210,7 @@ export function jobReport(job: Pick<Job, "name" | "agent" | "model" | "sessionId
     : "";
   const header = `Subagent ${job.name} (${job.agent}${job.model ? `, model ${job.model}` : ""}) ${status} after ${seconds}s.${how}`;
   // A failure always says why, before whatever the agent said last (which may be only a progress note).
-  return [header, cause ? `Cause: ${cause}` : "", text && cause ? `Its last message:\n${text}` : text].filter(Boolean).join("\n\n");
+  return displayPathText([header, cause ? `Cause: ${cause}` : "", text && cause ? `Its last message:\n${text}` : text].filter(Boolean).join("\n\n"));
 }
 
 /**

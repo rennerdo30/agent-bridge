@@ -88,7 +88,7 @@ export async function delegateToCodexAppServer(
 ): Promise<DelegateResult> {
   checkDepth(req.maxDelegateDepth);
   const mappings = codexDriveMappings(`${req.cwd}\n${req.prompt}`);
-  req = { ...req, prompt: codexExecutionPrompt(codexPathPrompt(req.prompt, mappings), req.sandbox) };
+  req = { ...req, prompt: codexExecutionPrompt(codexPathPrompt(req.prompt, mappings, req.sandbox === "danger-full-access"), req.sandbox) };
   // See delegateToCodex: the Windows sandbox user does not see drive mappings.
   const cwd = realFolder(req.cwd);
   const env = childEnv(req.extraEnv);
