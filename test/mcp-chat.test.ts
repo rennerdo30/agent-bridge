@@ -8,6 +8,7 @@ import { startUi } from "../src/cli/ui.js";
 import { nullLogger } from "../src/core/logger.js";
 import { resolvePipePath } from "../src/core/paths.js";
 import { pidAlive } from "../src/core/delegate.js";
+import { codexHost } from "./helpers.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 const TEST_TIMEOUT_MS = 60_000;
@@ -62,9 +63,10 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
     writeFileSync(join(home, "config.json"), JSON.stringify({ codexModel: "configured-codex" }));
     writeFileSync(join(home, "models-codex.json"), JSON.stringify({ at: Date.now(), bin: process.execPath, effort: null, report: { agent: "codex", defaultModel: "default-codex", models: ["first-codex", "second-codex"], lines: ["Codex models (2):", "- first-codex", "- second-codex"] } }));
     client = new Client({ name: "test-chat", version: "0.0.0" });
+    const codexHome = codexHost(client, home, parent, OWNER);
     transport = new StdioClientTransport({
       command: process.execPath, args: [SERVER, `--agent=${parent}`], cwd: home,
-      env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_PIPE: resolvePipePath(home, {}), AGENT_BRIDGE_NAME: OWNER, AGENT_BRIDGE_CODEX_BIN: process.execPath, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_JOB_RUNNER: "0", AGENT_BRIDGE_DELEGATE_DEPTH: "0", CLAUDE_PROJECT_DIR: home, AGENT_BRIDGE_PARENT_URL: "", AGENT_BRIDGE_PARENT_TOKEN: "" } as Record<string, string>, stderr: "ignore",
+      env: { ...process.env, CODEX_HOME: codexHome, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_PIPE: resolvePipePath(home, {}), AGENT_BRIDGE_NAME: OWNER, AGENT_BRIDGE_CODEX_BIN: process.execPath, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_JOB_RUNNER: "0", AGENT_BRIDGE_DELEGATE_DEPTH: "0", CLAUDE_PROJECT_DIR: home, AGENT_BRIDGE_PARENT_URL: "", AGENT_BRIDGE_PARENT_TOKEN: "" } as Record<string, string>, stderr: "ignore",
     });
     await client.connect(transport);
     await call("peers");

@@ -96,6 +96,8 @@ const HANDOFF_STORE_READY_MS = 5_500;
 
 type StoredSibling = SiblingPeer & { id: string; report: string | null };
 type QueueRegistration = Pick<PeerInfo, "id" | "name" | "sessionId"> & { generation: number };
+type ProjectMainIdentity = Pick<PeerInfo, "id" | "agent" | "sessionId" | "name">;
+const ownsProjectMain = (owner: ProjectMainIdentity, peer: PeerInfo) => owner.agent === peer.agent && (owner.sessionId ? owner.sessionId === peer.sessionId : owner.id === peer.id);
 
 interface Conn {
   socket: Socket;
@@ -131,7 +133,7 @@ export class Broker {
   }
   private readonly groups: ProjectGroups;
   /** Live role selection, recomputed after broker restart; no durable ownership is rewritten. */
-  private readonly projectMains = new Map<string, string>();
+  private readonly projectMains = new Map<string, ProjectMainIdentity>();
   private readonly projectRoutes = new Map<string, import("./protocol.js").ProjectRoute>();
   private server: Server | null = null;
   private readonly conns = new Set<Conn>();
@@ -795,25 +797,36 @@ export class Broker {
     if (!key || peer.jobAgent || peer.subagent) return decorated;
     const members = this.localPeers().filter((p) => !p.jobAgent && !p.subagent && this.groups.decorate(p).projectGroup === key)
       .sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name));
-    let main = this.projectMains.get(key);
-    if (!members.some((p) => p.name === main)) { main = members[0]?.name; if (main) this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, main); }
-    return { ...decorated, projectMain: main === peer.name, projectAddress: `project:${basename(decorated.projectRoot!)}`, projectRoute: this.projectRoutes.get(key) };
+    let main = members.find(p => this.projectMains.has(key) && ownsProjectMain(this.projectMains.get(key)!, p));
+    if (!main) { main = members[0]; if (main) this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, main); }
+    return { ...decorated, projectMain: main?.id === peer.id, projectAddress: `project:${basename(decorated.projectRoot!)}`, projectRoute: this.projectRoutes.get(key) };
   }
 
   private switchProjectMain(source: PeerInfo | null | undefined, target: PeerInfo | undefined): PeerInfo {
     if (!target || target.jobAgent || target.subagent || target.host) throw new BridgeError("bad_request", "Choose a live local project master.");
     const peer = this.projectPeer(target);
     if (!peer.projectGroup || source && (source.jobAgent || this.projectPeer(source).projectGroup !== peer.projectGroup)) throw new BridgeError("unauthorized", "Only a master of this project may switch its main session.");
-    this.recordProjectMain(peer.projectGroup, peer.projectAddress!, peer.name);
+    this.recordProjectMain(peer.projectGroup, peer.projectAddress!, target);
     return this.projectPeer(target);
   }
 
-  private recordProjectMain(key: string, address: string, main: string): void {
-    const previous = this.projectMains.get(key);
-    if (previous === main) return;
+  private recordProjectMain(key: string, address: string, peer: PeerInfo): void {
+    const old = this.projectMains.get(key);
+    if (old && ownsProjectMain(old, peer)) { this.transferProjectMain(old, peer); return; }
+    const previous = old?.name, main = peer.name;
     const route = { address, main, since: this.now(), previous };
-    this.projectMains.set(key, main); this.projectRoutes.set(key, route);
+    this.projectMains.set(key, { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name }); this.projectRoutes.set(key, route);
     if (previous) void this.notifyProjectMainChange(route).catch((err) => this.log.warn("project main notice deferred", { err: String(err) }));
+  }
+
+  /** Only an owning live connection (or an exact reconnect) may carry its role across resume/rename. */
+  private transferProjectMain(old: ProjectMainIdentity, peer: PeerInfo): void {
+    for (const [key, main] of this.projectMains) {
+      if (main.agent !== old.agent || (main.sessionId ? main.sessionId !== old.sessionId : main.id !== old.id)) continue;
+      this.projectMains.set(key, { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name });
+      const route = this.projectRoutes.get(key);
+      if (route) this.projectRoutes.set(key, { ...route, main: peer.name });
+    }
   }
 
   private async notifyProjectMainChange(route: import("./protocol.js").ProjectRoute): Promise<void> {
@@ -1290,10 +1303,10 @@ export class Broker {
     }
     if (conn.peer) throw new BridgeError("bad_request", "already registered");
     if (isPluginCacheCwd(String(p.cwd ?? ""))) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
-    const name = this.uniqueName(p.name);
+    if (p.subagent && !p.jobAgent) throw new BridgeError("bad_request", "Native subagents cannot register as top-level bridge sessions.");
     const peer: PeerInfo = {
       id: String(p.id),
-      name,
+      name: p.name,
       agent: p.agent,
       cwd: String(p.cwd ?? ""),
       pid: Number(p.pid),
@@ -1321,6 +1334,13 @@ export class Broker {
       } : {}),
     };
     if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
+    // Recover the identity before allocating a name. Arrival order cannot swap an
+    // established suffixed session with another session's base name on reconnect.
+    const identity = registrationIdentity(peer);
+    const liveOwner = this.localPeers().find(old => old.agent === peer.agent && (peer.sessionId ? old.sessionId === peer.sessionId :
+      (old.pid !== peer.pid || old.id === peer.id) && identity && identity === registrationIdentity(old)));
+    const remembered = this.store.namesFor(peer).find(name => name.replace(/-\d+$/, "") === p.name.replace(/-\d+$/, "") && !this.connByName(name));
+    peer.name = liveOwner?.name ?? this.uniqueName(remembered ?? p.name);
     this.store.rememberSession(peer, this.now());
     conn.peer = peer;
     const aliases = this.replaceStale(conn, peer);
@@ -1342,7 +1362,7 @@ export class Broker {
     }
     this.assertQueueRegistration(conn, peer, registration);
     conn.mailReady = registration;
-    this.log.info("peer joined", { name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
+    this.log.info("peer joined", { name: peer.name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
     this.replayMail(conn, peer, () => { this.queueCurrentDecisions(peer); });
@@ -1379,6 +1399,7 @@ export class Broker {
   private async onUpdatePeer(conn: Conn, args: RequestMap["updatePeer"][0]): Promise<PeerInfo> {
     if (typeof args.cwd === "string" && isPluginCacheCwd(args.cwd)) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const peer = this.requirePeer(conn);
+    const previousIdentity = { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name };
     const previousName = peer.name;
     const aliases: string[] = [];
     let replay = args.unavailable === false;
@@ -1394,6 +1415,7 @@ export class Broker {
     if (args.sessionId !== undefined) {
       const previousKey = this.decisionSessionKey(peer);
       peer.sessionId = args.sessionId;
+      this.transferProjectMain(previousIdentity, peer);
       this.store.decisions.linkSession(previousKey, this.decisionSessionKey(peer));
       if (peer.sessionId) aliases.push(...this.replaceStale(conn, peer));
     }
@@ -1415,6 +1437,7 @@ export class Broker {
     this.store.rememberSession(peer, this.now());
     this.store.rememberName(peer, this.now());
     aliases.push(...this.restoreNames(peer, args.sessionId !== undefined));
+    this.transferProjectMain({ ...previousIdentity, sessionId: peer.sessionId }, peer);
     replay ||= previousName !== peer.name || aliases.length > 0;
     if (replay || args.sessionId !== undefined) {
       const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: ++conn.mailGeneration };
@@ -1447,6 +1470,7 @@ export class Broker {
       const sameProcess = (old.pid !== peer.pid || old.id === peer.id) && identity && identity === registrationIdentity(old) &&
         (!old.sessionId || !peer.sessionId || old.sessionId === peer.sessionId);
       if (!sameSession && !sameProcess) continue;
+      const previousIdentity = { id: old.id, agent: old.agent, sessionId: old.sessionId, name: old.name };
       this.store.rememberName(old, this.now());
       this.log.info("session connected again from a new server; replacing the old connection", { name: old.name, by: peer.name, sessionId: peer.sessionId });
       this.emit(c, "replaced", { by: peer.name });
@@ -1462,6 +1486,7 @@ export class Broker {
         // Either way, mail that waited under the old name is the session's.
         aliases.push(oldName);
       }
+      this.transferProjectMain(previousIdentity, peer);
     }
     return aliases;
   }
@@ -1574,7 +1599,7 @@ export class Broker {
     if (to === BROADCAST) {
       if (sender.jobAgent) throw new BridgeError("unauthorized", "job runners cannot broadcast to independent sessions");
       const ownNames = new Set([sender.name, ...this.store.namesFor(sender)]);
-      const masters = new Set([...this.projectMains.values(), ...this.storedJobs().filter((job) => !job.parentJob && job.status === "running").map(primaryFor)].filter((name) => PEER_NAME_PATTERN.test(name)));
+      const masters = new Set([...this.projectMains.values()].map(peer => peer.name).concat(this.storedJobs().filter((job) => !job.parentJob && job.status === "running").map(primaryFor)).filter((name) => PEER_NAME_PATTERN.test(name)));
       const eligible = this.store.broadcastRecipients(this.now(), masters);
       const offline = (name: string) => !ownNames.has(name) && !this.recipientConn(name);
       const queued = eligible.queued.filter(offline), skipped = eligible.skipped.filter(offline);

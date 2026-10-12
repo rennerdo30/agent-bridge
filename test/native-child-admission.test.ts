@@ -1,0 +1,38 @@
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { join } from "node:path";
+import { afterEach, beforeEach, expect, it } from "vitest";
+import { codexRollout, makeEnv, type TestEnv } from "./helpers.js";
+let env: TestEnv, client: Client | undefined;
+beforeEach(() => { env = makeEnv(); });
+afterEach(async () => { await client?.close(); client = undefined; await env.cleanup(); });
+it("child-first hooks and ordinary tools never join or change their shared parent's identity, activity or inbox", async () => {
+  const observer = env.node("observer", "other"); await observer.start();
+  const codexHome = codexRollout(env.home, "root"); codexRollout(env.home, "child", "root"); codexRollout(env.home, "resumed");
+  client = new Client({ name: "native-child-fixture", version: "1" });
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: [join(import.meta.dirname, "../plugins/codex/dist/server.mjs"), "--agent=codex"], cwd: env.home,
+    env: { ...process.env, CODEX_HOME: codexHome, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_NAME: "parent", CLAUDE_PROJECT_DIR: env.home, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_AUTO_WAKE: "off", AGENT_BRIDGE_WAKE_ON_DIRECT: "off" } as Record<string, string>, stderr: "ignore" }));
+  const call = (threadId: string, name: string, args: Record<string, unknown> = {}) => client!.callTool({ name, arguments: args, _meta: { threadId, sessionId: "root" } });
+  const hook = (threadId: string, event: string, extra: Record<string, unknown> = {}) => call(threadId, "hook_event", { event, session_id: "root", ...extra });
+  expect((await hook("child", "UserPromptSubmit")).content).toEqual([{ type: "text", text: "{}" }]);
+  expect(await call("child", "peers")).toHaveProperty("isError", true);
+  expect((await observer.peers()).map(p => p.name)).toEqual(["observer"]);
+  expect(await call("unknown", "peers")).toHaveProperty("isError", true);
+  expect(await client.callTool({ name: "peers", arguments: {}, _meta: { sessionId: "root" } })).toHaveProperty("isError", true);
+  expect(await call("root", "peers")).not.toHaveProperty("isError", true);
+  await hook("root", "Stop");
+  const replacement = env.node("parent", "codex");
+  await replacement.setSessionId("root"); await replacement.start(); replacement.setActivity("idle");
+  await observer.send({ to: "parent", body: "parent retained mail" });
+  expect(await call("child", "inbox")).toHaveProperty("isError", true);
+  await hook("child", "PostToolUse"); await hook("root", "PostToolUse", { agent_id: "native-child" });
+  let parent = (await observer.peers()).find(p => p.name === "parent");
+  expect(parent).toMatchObject({ id: replacement.id, sessionId: "root", activity: "idle" });
+  const retained: any = await call("root", "inbox", { mark_read: false });
+  expect(retained.content[0].text).toContain("parent retained mail");
+  await hook("resumed", "SessionStart");
+  parent = (await observer.peers()).find(p => p.name === "parent");
+  expect(parent?.sessionId).toBe("resumed");
+  const delivered: any = await call("resumed", "inbox"); expect(delivered.isError).not.toBe(true);
+  expect((await observer.peers()).filter(p => p.agent === "codex")).toHaveLength(1);
+});

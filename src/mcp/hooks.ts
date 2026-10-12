@@ -5,9 +5,10 @@ import { MessageWaitStore, resumeWaitHint } from "./message-wait.js";
 import { shouldWakeClaudeMessage, WAKE_HEADER } from "./rewake.js";
 import type { ServerContext } from "./server.js";
 import { formatDecisionSummary } from "../core/decisions.js";
+import { finishHookTurn, reserveHook } from "./hook-ownership.js";
 
 /** Hook events agent-bridge subscribes to in both Claude Code and Codex. */
-export type HookEvent = "SessionStart" | "UserPromptSubmit" | "PostToolUse" | "Stop";
+export type HookEvent = "SessionStart" | "UserPromptSubmit" | "PostToolUse" | "Stop" | "StopFailure";
 
 export interface HookInput {
   event: HookEvent;
@@ -15,6 +16,8 @@ export interface HookInput {
   stopHookActive: boolean;
   /** UserPromptSubmit: the prompt text (to recognize agent-bridge's own wake-up turns). */
   prompt?: string | null;
+  /** Host token for rejecting hooks from a completed or superseded prompt. */
+  promptId?: string | null;
   /** The hook fired inside a native subagent (Claude Code's agent_id), not for the main agent. */
   subagent?: boolean;
   /** Session working directory from the hook input, when the host provides it. */
@@ -22,7 +25,7 @@ export interface HookInput {
   /** Aborted when the host cancels the hook call (e.g. the user interrupts). */
   signal?: AbortSignal;
   /** Metadata work shares the hook deadline. */
-  prepare?: () => Promise<void>;
+  prepare?: (current: () => boolean) => Promise<void>;
 }
 
 /** Same JSON shape as command-hook stdout; both hosts parse MCP-tool hook text identically. */
@@ -76,7 +79,7 @@ const parentReads = new WeakMap<ServerContext, Promise<Awaited<ReturnType<NonNul
 
 async function subagentHook(ctx: ServerContext, input: HookInput): Promise<HookOutput> {
   const parent = ctx.parent;
-  if (!parent || input.event === "SessionStart") return {};
+  if (!parent || input.event === "SessionStart" || input.event === "StopFailure") return {};
   let pending = parentReads.get(ctx);
   if (!pending) { pending = parent.inbox().catch((err) => {
     ctx.log.debug("parent inbox unavailable", { err: (err as Error).message });
@@ -108,18 +111,14 @@ function withinHook<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
     if (signal.aborted) abort();
   });
 }
-/** Codex main hooks own activity in ingress order, even while metadata is still pending. */
-const mainHookEpochs = new WeakMap<ServerContext, number>();
-
 export async function buildHookResponse(ctx: ServerContext, input: HookInput): Promise<HookOutput> {
   // An authoritative native-child flag must be checked before prepare can observe its metadata.
   // Hosts without that flag still need a separate lineage solution; thread ids alone are not proof.
-  if (input.subagent) return {};
+  if (input.subagent || input.signal?.aborted) return {};
   const node = ctx.node;
-  const main = ctx.agent === "codex" && node !== null && !ctx.headless;
-  const epoch = main ? (mainHookEpochs.get(ctx) ?? 0) + 1 : 0;
-  if (main) mainHookEpochs.set(ctx, epoch);
-  const current = () => !main || (ctx.node === node && mainHookEpochs.get(ctx) === epoch);
+  const main = (ctx.agent === "codex" || ctx.agent === "claude") && node !== null && !ctx.headless;
+  const current = main ? reserveHook(ctx, input) : () => true;
+  if (!current) return {};
   const owningSession = input.sessionId ?? node?.currentSessionId;
   // A running main turn must block wake admission even if its metadata never completes.
   const busyAtIngress = main && !input.signal?.aborted && (input.event === "UserPromptSubmit" || input.event === "PostToolUse");
@@ -135,14 +134,14 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
     if (!controller.signal.aborted) throw err;
     // The host accepts {} as turn end. Only the owning main Stop's own deadline can
     // recover idle; cancellation, a newer hook, or a replaced session must retain activity.
-    if (deadlineExpired && main && input.event === "Stop" && current() && node?.currentSessionId === owningSession) ctx.activity?.("idle");
+    if (deadlineExpired && main && (input.event === "Stop" || input.event === "StopFailure") && current() && node?.currentSessionId === owningSession) finishHookTurn(ctx, input);
     ctx.log.debug("hook deferred slow work", { event: input.event });
     return {};
   }
   finally { clearTimeout(timer); input.signal?.removeEventListener("abort", abort); }
 }
 async function runHook(ctx: ServerContext, input: HookInput, current: () => boolean, busyAtIngress: boolean): Promise<HookOutput> {
-  if (input.prepare) await withinHook(input.prepare(), input.signal!);
+  if (input.prepare) await withinHook(input.prepare(() => current() && !input.signal?.aborted), input.signal!);
   if (!current()) return {};
   const node = ctx.node;
   if (!node) return subagentHook(ctx, input);
@@ -161,6 +160,8 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
   // Joining may have been deferred until the project dir was known.
   await withinHook(node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: (err as Error).message })), input.signal!);
   if (!current()) return {};
+  // The host discards StopFailure output. Never read/confirm mail that it cannot deliver.
+  if (input.event === "StopFailure") { finishHookTurn(ctx, input); return {}; }
   const stopJobsRunning = input.event === "Stop" ? ctx.jobs?.runningCount() ?? 0 : 0;
   const replay = node.refreshPending().catch((err) => ctx.log.warn("pending mail refresh failed; retained for retry", { err: String(err) }));
   // Stop can deliver buffered mail or arm a child-result notification immediately. A slow
@@ -207,13 +208,13 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
     }
     case "Stop": {
       if (channel) {
-        ctx.activity?.("idle");
+        finishHookTurn(ctx, input);
         return {};
       }
       ctx.wakeDelivery?.idle?.();
       // The agent-bridge mod wakes the session with a real turn: the turn ends, waiting messages go to the mod.
       if (ctx.wakeDelivery?.modActive?.()) {
-        ctx.activity?.("idle");
+        finishHookTurn(ctx, input);
         return {};
       }
       // Listen window: this session is in a conversation if it sent something recently or has subagents running.
@@ -234,7 +235,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
           ctx.activity?.("busy");
           return { decision: "block", reason: formatMessages(awaited, { replyHint: false }) };
         }
-        ctx.activity?.("idle");
+        finishHookTurn(ctx, input);
         return {};
       }
       const msgs = take(ctx, true);
@@ -245,7 +246,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
         waits.attach(node);
       }
       if (msgs.length === 0) {
-        ctx.activity?.("idle");
+        finishHookTurn(ctx, input);
         return {};
       }
       ctx.activity?.("busy");
