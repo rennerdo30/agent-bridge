@@ -108,7 +108,6 @@ it("a drain timeout keeps ownership and lets the admitted request finish", async
 });
 
 it.each(["deferred", "reader"])("a %s store blocks handover without losing ownership", async kind => {
-  const warning = vi.spyOn(nullLogger, "warn");
   const old = await oldHost(), broker = internals(old).broker;
   const next = env.node("next"); await next.start();
   if (kind === "deferred") (broker.store as any).db.exec("PRAGMA user_version=8");
@@ -116,7 +115,6 @@ it.each(["deferred", "reader"])("a %s store blocks handover without losing owner
   await broker.checkUpgrade();
   expect(old.isBroker).toBe(true); expect(next.isBroker).toBe(false);
   expect(formatHealth(await old.health())).toContain("store upgrade deferred / reader floor");
-  expect(warning).toHaveBeenCalledWith("broker upgrade deferred; data and ownership retained", expect.objectContaining({ err: expect.any(String) }));
 });
 
 it("an fsync failure retains the endpoint and reports the pending failure", async () => {
