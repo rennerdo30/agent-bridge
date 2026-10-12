@@ -83,16 +83,33 @@ it("drains an admitted send, rejects new writes, retains mail and reconnects the
   const send = old.send({ to: "later", body: "admitted before drain" });
   await until(() => started);
   const next = env.node("next"); await next.start();
+  const timeline: unknown[] = [];
+  for (const [name, node] of [["old", old], ["next", next]] as const) {
+    node.on("connected", value => timeline.push({ name, event: "connected", at: Date.now(), value }));
+    node.on("disconnected", () => timeline.push({ name, event: "disconnected", at: Date.now() }));
+  }
+  const waitPhase = async (phase: string, predicate: () => boolean, budget?: number) => {
+    try { await until(predicate, budget); }
+    catch (error) {
+      const states = [old, next].map(node => ({ name: node.name, broker: node.isBroker, connected: node.isConnected }));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const health = await Promise.race([
+        Promise.allSettled([old.health(), next.health()]),
+        new Promise(resolve => { timer = setTimeout(() => resolve("diagnostic health probe timed out"), 1_000); }),
+      ]).finally(() => clearTimeout(timer));
+      throw new Error(JSON.stringify({ phase, states, health, timeline }), { cause: error });
+    }
+  };
   const change = broker.checkUpgrade();
-  await until(() => (broker as any).draining);
+  await waitPhase("drain", () => (broker as any).draining);
   expect(formatHealth(await old.health())).toContain("Handover pending: draining requests");
   await expect((internals(old) as any).client.request("send", { to: "later", body: "must retry" })).rejects.toMatchObject({ code: "timeout" });
   await expect((internals(old) as any).client.request("peers", {})).rejects.toMatchObject({ code: "timeout", message: expect.stringContaining("Broker v0.30.12. Handover pending: draining requests") });
   release(); const sent = await send; await change;
-  await until(() => next.isBroker && next.isConnected && old.isConnected && !old.isBroker, HANDOVER_RECONNECT_BUDGET_MS);
-  const later = env.node("later"); await later.start(); await until(() => later.unread().length === 1);
+  await waitPhase("reconnect", () => next.isBroker && next.isConnected && old.isConnected && !old.isBroker, HANDOVER_RECONNECT_BUDGET_MS);
+  const later = env.node("later"); await later.start(); await waitPhase("retained-mail", () => later.unread().length === 1);
   expect(later.unread()[0]?.id).toBe(sent.messages[0]?.id);
-  await old.send({ to: next.name, body: "old session still works" }); await until(() => next.unread().some(m => m.body === "old session still works"));
+  await old.send({ to: next.name, body: "old session still works" }); await waitPhase("old-session-send", () => next.unread().some(m => m.body === "old session still works"));
 });
 
 it("a drain timeout keeps ownership and lets the admitted request finish", async () => {
