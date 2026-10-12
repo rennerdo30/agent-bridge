@@ -133,7 +133,6 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private readonly log: Logger;
   private presenceTimer: NodeJS.Timeout | null = null;
   private brokerYieldUntil = 0;
-  private brokerYieldOnClose = false;
   private brokerEligible: boolean;
   private readonly version = APP_VERSION;
 
@@ -469,12 +468,6 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (this.client !== client) return;
     this.client = null;
     if (this.stopping) return;
-    // Announcement flushing can consume part of the grace while the old
-    // listener still owns the endpoint. Give the successor its full window.
-    if (this.brokerYieldOnClose) {
-      this.brokerYieldUntil = Date.now() + BROKER_SUCCESSOR_GRACE_MS;
-      this.brokerYieldOnClose = false;
-    }
     this.log.warn("lost connection to broker; re-electing");
     this.emit("disconnected");
     // Established hosts must replace a lost listener immediately. Legacy job
@@ -489,9 +482,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       const hint = data as { successor?: string; version?: string; graceMs?: number };
       if (typeof hint.successor !== "string" || compareBrokerVersions(hint.version, this.version) === null) return;
       // Only the announced eligible successor elects immediately; everyone else remains a client.
-      const successor = hint.successor === this.id && this.brokerEligible && compareBrokerVersions(this.version, hint.version) === 0;
-      this.brokerYieldOnClose = !successor;
-      this.brokerYieldUntil = successor ? 0 : Date.now() + BROKER_SUCCESSOR_GRACE_MS;
+      this.brokerYieldUntil = hint.successor === this.id && this.brokerEligible && compareBrokerVersions(this.version, hint.version) === 0
+        ? 0 : Date.now() + BROKER_SUCCESSOR_GRACE_MS;
     } else if (ev === "mail_retracted") {
       for (const id of (data as { ids: string[] }).ids) this.inbox.delete(id);
     } else if (ev === "shared_job_control") {

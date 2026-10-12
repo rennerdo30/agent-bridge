@@ -78,7 +78,7 @@ import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS
 import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
 import { OwnerQuestionService, OWNER_ADDRESS } from "./owner-question-service.js";
 import { ensurePrivateSocketDirectory } from "./paths.js";
-import { BROKER_UPGRADE_CHECK_MS, BROKER_UPGRADE_DRAIN_MS, BROKER_UPGRADE_RETRY_MS, BROKER_UPGRADE_COOLDOWN_MS, BROKER_SUCCESSOR_GRACE_MS, compareBrokerVersions, newestBrokerSuccessor, syncBrokerStores } from "./broker-upgrade.js";
+import { BROKER_UPGRADE_CHECK_MS, BROKER_UPGRADE_DRAIN_MS, BROKER_UPGRADE_COOLDOWN_MS, BROKER_SUCCESSOR_GRACE_MS, newestBrokerSuccessor, syncBrokerStores } from "./broker-upgrade.js";
 import { metadataValue, saveMetadataValue } from "./metadata-db.js";
 
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
@@ -198,7 +198,6 @@ export class Broker {
   private readonly version = APP_VERSION;
   private upgradeTimer: NodeJS.Timeout | null = null;
   private upgrading = false;
-  private upgradeAttempt: Promise<void> | null = null;
   private draining = false;
   private handoverPending: string | null = null;
   private nextUpgradeAttempt = 0;
@@ -675,17 +674,7 @@ export class Broker {
     if (legacy) throw Object.assign(new Error(`${legacy.name} v${legacy.version ?? "unknown"} lacks broker election handover support`), { code: "BROKER_HANDOVER_UNSUPPORTED" });
   }
 
-  private checkUpgrade(): Promise<void> {
-    if (this.upgradeAttempt) return this.upgradeAttempt;
-    if (this.closing) return Promise.resolve();
-    const attempt = this.performUpgrade();
-    this.upgradeAttempt = attempt;
-    const clear = () => { if (this.upgradeAttempt === attempt) this.upgradeAttempt = null; };
-    void attempt.then(clear, clear);
-    return attempt;
-  }
-
-  private async performUpgrade(): Promise<void> {
+  private async checkUpgrade(): Promise<void> {
     if (this.closing || this.upgrading) return;
     const successor = newestBrokerSuccessor(this.localPeers(), this.version);
     if (!successor) { this.handoverPending = null; return; }
@@ -695,11 +684,8 @@ export class Broker {
       const home = this.store.file === ":memory:" ? null : dirname(this.store.file);
       const prior = home ? metadataValue(home, "broker-election", "upgrade") : null;
       const last = isRecord(prior) && typeof prior.at === "number" ? prior.at : 0;
-      if (this.now() < last + BROKER_UPGRADE_COOLDOWN_MS) {
+      if (this.now() < Math.max(this.nextUpgradeAttempt, last + BROKER_UPGRADE_COOLDOWN_MS)) {
         this.handoverPending = "upgrade cooldown"; return;
-      }
-      if (this.now() < this.nextUpgradeAttempt) {
-        this.handoverPending = "in-flight request drain timed out; retry pending"; return;
       }
       this.store.assertBrokerUpgradeReady(successor.storeCapabilities!);
       this.handoverPending = `draining requests for ${successor.name} v${successor.version}`;
@@ -708,7 +694,7 @@ export class Broker {
       while (this.requests.size && Date.now() < deadline) await delay(10);
       if (this.requests.size) {
         this.handoverPending = "in-flight request drain timed out; broker retained";
-        this.nextUpgradeAttempt = this.now() + BROKER_UPGRADE_RETRY_MS;
+        this.nextUpgradeAttempt = this.now() + BROKER_UPGRADE_COOLDOWN_MS;
         return;
       }
       // A reader or successor may have changed during the drain. Recheck before touching ownership.
@@ -720,6 +706,7 @@ export class Broker {
         this.assertElectionHandoverReady();
         this.store.assertBrokerUpgradeReady(successor.storeCapabilities!);
         if (home) {
+          saveMetadataValue(home, "broker-election", "upgrade", { at: this.now(), from: this.version, to: successor.version, successor: successor.id });
           await syncBrokerStores(home);
         }
         this.broadcastEvent("broker_handover", { successor: successor.id, version: successor.version!, graceMs: BROKER_SUCCESSOR_GRACE_MS }, undefined);
@@ -728,9 +715,6 @@ export class Broker {
           const timer = setTimeout(resolve, 1_000);
           c.socket.write("", () => { clearTimeout(timer); resolve(); });
         })));
-        // Record the successful retirement barrier, never a failed drain or
-        // flush. Metadata commits use synchronous FULL before endpoint release.
-        if (home) saveMetadataValue(home, "broker-election", "upgrade", { at: this.now(), from: this.version, to: successor.version, successor: successor.id });
       });
       this.releasedForUpgrade?.();
     } catch (error) {
@@ -740,12 +724,6 @@ export class Broker {
       if (this.handoverPending !== reason) this.log.warn("broker upgrade deferred; data and ownership retained", { err: String(error) });
       this.handoverPending = reason;
     } finally { this.draining = this.closing; this.upgrading = false; }
-  }
-
-  /** React to ready eligible arrivals/updates; polling remains the retry fallback. */
-  private checkNewerSuccessor(peer: PeerInfo): void {
-    if (peer.brokerEligible !== true || compareBrokerVersions(peer.version, this.version) !== 1) return;
-    setImmediate(() => { void this.checkUpgrade(); });
   }
 
   /** Serialize listener changes and let the elected broker remain the sole network writer. */
@@ -1556,7 +1534,6 @@ export class Broker {
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
     this.replayMail(conn, peer, () => { this.queueCurrentDecisions(peer); });
-    this.checkNewerSuccessor(peer);
     return { brokerPid: process.pid, brokerVersion: this.version, name: peer.name, sessionId: peer.sessionId, peers: this.livePeers().filter((x) => x.id !== peer.id) };
   }
 
@@ -1643,7 +1620,6 @@ export class Broker {
     }
     if (replay) this.replayMail(conn, peer);
     for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
-    if (args.brokerEligible === true) this.checkNewerSuccessor(peer);
     return peer;
   }
 
