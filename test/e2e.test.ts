@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { codexHost } from "./helpers.js";
 
 /** Runs the bundled plugin server (npm run build first) for all four CLI kinds. */
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
@@ -15,6 +16,8 @@ const home = mkdtempSync(join(tmpdir(), "agent-bridge-e2e-"));
 writeFileSync(join(home,"config.json"),JSON.stringify({questionAlerts:{sound:false,toast:false,reminderMinutes:0}}));
 
 async function spawnAgent(agent: "claude" | "codex" | "opencode" | "antigravity", name: string): Promise<Client> {
+  const client = new Client({ name: `test-${agent}`, version: "0.0.0" });
+  codexHost(client, home, agent, name);
   const transport = new StdioClientTransport({
     command: process.execPath,
     cwd: home,
@@ -22,8 +25,8 @@ async function spawnAgent(agent: "claude" | "codex" | "opencode" | "antigravity"
     env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home } as Record<string, string>,
     stderr: "ignore",
   });
-  const client = new Client({ name: `test-${agent}`, version: "0.0.0" });
   await client.connect(transport);
+  if (agent === "codex") await client.callTool({ name: "peers", arguments: {} });
   return client;
 }
 

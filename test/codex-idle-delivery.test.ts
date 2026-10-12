@@ -1,4 +1,5 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { codexHost } from "./helpers.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { fork, execFileSync, type ChildProcess } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -19,7 +20,8 @@ it.each(["main", "secondary"])("idle Codex %s consumes broadcast and subsequent 
   const sender = env.node("sender", "other"); await sender.start();
   if (role === "secondary") { const primary = env.node("primary", "claude"); await primary.relocate(project); await primary.start(); }
   client = new Client({name:"native-idle-codex-fixture",version:"1"});
-  await client.connect(new StdioClientTransport({command:process.execPath,args:[join(import.meta.dirname,"..","plugins","codex","dist","server.mjs"),"--agent=codex"],env:{...process.env,AGENT_BRIDGE_HOME:env.home,AGENT_BRIDGE_NAME:"idle-codex",CLAUDE_PROJECT_DIR:project,AGENT_BRIDGE_CODEX_BIN:process.execPath,AGENT_BRIDGE_AUTO_WAKE:"off",AGENT_BRIDGE_WAKE_ON_DIRECT:"on",AGENT_BRIDGE_DASHBOARD:"off",AGENT_BRIDGE_LINGER_SEC:"0"} as Record<string,string>,stderr:"ignore"}));
+  const codexHome = codexHost(client, env.home, "codex", "idle-codex");
+  await client.connect(new StdioClientTransport({command:process.execPath,args:[join(import.meta.dirname,"..","plugins","codex","dist","server.mjs"),"--agent=codex"],env:{...process.env,CODEX_HOME:codexHome,AGENT_BRIDGE_HOME:env.home,AGENT_BRIDGE_NAME:"idle-codex",CLAUDE_PROJECT_DIR:project,AGENT_BRIDGE_CODEX_BIN:process.execPath,AGENT_BRIDGE_AUTO_WAKE:"off",AGENT_BRIDGE_WAKE_ON_DIRECT:"on",AGENT_BRIDGE_DASHBOARD:"off",AGENT_BRIDGE_LINGER_SEC:"0"} as Record<string,string>,stderr:"ignore"}));
   const call = (name:string,args={}) => client!.callTool({name,arguments:args,_meta:{threadId:"native-thread","codex/sandbox-state-meta":{sandboxCwd:project}}});
   await call("peers");
   await sender.send({to:"idle-codex",body:"RETAINED_QUIET_COPY",conversationId:"siblings-finished:note"});

@@ -151,7 +151,9 @@ export class RemoteJobs {
       let worktree: Worktree | null = null;
       if (record) {
         const state = this.snapshot(record).state;
-        if (!state?.sessionId) throw new Error("Remote job has no session to continue.");
+        if (!state?.sessionId) throw new Error(state?.status === "cancelled"
+          ? "Remote job was cancelled before its session started; start a new job."
+          : "Remote job did not start a native session; start a new job.");
         cwd = allowedRemoteDirectory(state.workdir ?? cwd, policy.allowRoots);
         worktree = state.worktree ?? null;
         args = resumeArgs(args, record.job.name, args.prompt, state.sessionId, cwd, worktree, { ...args });

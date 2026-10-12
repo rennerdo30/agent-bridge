@@ -1,13 +1,5 @@
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 import {
-  RewakeEndpoint,
-  WAKE_HEADER,
-  shouldWakeClaudeMessage
-} from "./chunks/chunk-O7JEP55W.mjs";
-import {
-  guardServerErrors
-} from "./chunks/chunk-Q4TGWKCP.mjs";
-import {
   AjvJsonSchemaValidator,
   CallToolRequestSchema,
   CallToolResultSchema,
@@ -50,43 +42,51 @@ import {
   safeParseAsync,
   serializeMessage,
   toJsonSchemaCompat
-} from "./chunks/chunk-DDASK4CX.mjs";
+} from "./chunks/chunk-MIFXQMNI.mjs";
+import {
+  RewakeEndpoint,
+  WAKE_HEADER,
+  shouldWakeClaudeMessage
+} from "./chunks/chunk-X5MVRJHE.mjs";
+import {
+  guardServerErrors
+} from "./chunks/chunk-Q4TGWKCP.mjs";
 import {
   MAX_STREAM_ENTRIES
-} from "./chunks/chunk-JLHWMVZY.mjs";
+} from "./chunks/chunk-NPE2MH6H.mjs";
 import {
   isBridgeWorktree,
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-OL3JRWLC.mjs";
+} from "./chunks/chunk-TQ7JD75E.mjs";
 import {
   codexAppServerCall,
   describeModels,
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-EGYLE56F.mjs";
+} from "./chunks/chunk-GATU2GUD.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-4DXK4BMQ.mjs";
+} from "./chunks/chunk-P3PHZ6SV.mjs";
 import {
   readWorktreeState
-} from "./chunks/chunk-25TGEXCR.mjs";
-import "./chunks/chunk-6RRXMKNR.mjs";
+} from "./chunks/chunk-KOJ7OFFF.mjs";
+import "./chunks/chunk-24UJAMBT.mjs";
 import {
   openBrowser
 } from "./chunks/chunk-LWVK3CB7.mjs";
 import {
   t
-} from "./chunks/chunk-BG6KJS4H.mjs";
+} from "./chunks/chunk-CE5EGKJK.mjs";
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-HMDY3WEO.mjs";
+} from "./chunks/chunk-ZSBWBFE4.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -97,17 +97,17 @@ import {
   formatProjectRoute,
   formatReplyRestrictions,
   formatVersionSkew
-} from "./chunks/chunk-6FWS4A64.mjs";
+} from "./chunks/chunk-ORX4YFOE.mjs";
 import {
   formatHealth,
   probeBrokerHealth
-} from "./chunks/chunk-CCYP6QGH.mjs";
-import "./chunks/chunk-QQ4EGNBD.mjs";
+} from "./chunks/chunk-GWNZ2M2Q.mjs";
+import "./chunks/chunk-GQOJBOMY.mjs";
 import "./chunks/chunk-RQUYBZWF.mjs";
 import {
   REMOTE_JOB_POLL_MS,
   remoteSpawnArgsSchema
-} from "./chunks/chunk-UXR35LO7.mjs";
+} from "./chunks/chunk-WMW4AOK5.mjs";
 import {
   conversationPageSchema
 } from "./chunks/chunk-3CXCL26P.mjs";
@@ -115,20 +115,20 @@ import {
   HISTORY_MAX_LIMIT,
   HISTORY_MAX_QUERY_CHARS,
   historyFiltersSchema
-} from "./chunks/chunk-UNYETCR7.mjs";
+} from "./chunks/chunk-JRTFN2TQ.mjs";
 import {
   MAX_HOLD_REASON_CHARS,
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-KTXB5KAE.mjs";
-import "./chunks/chunk-UXKDF7IF.mjs";
-import "./chunks/chunk-XV4UJPWK.mjs";
+} from "./chunks/chunk-RKHYK4Q2.mjs";
+import "./chunks/chunk-TUS65V4Q.mjs";
+import "./chunks/chunk-ANCJAUAI.mjs";
 import {
   antigravityAncestor,
   antigravityHookOutput,
   inspectClaudeLaunch
-} from "./chunks/chunk-GDWH4N3S.mjs";
+} from "./chunks/chunk-SELOL2LF.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   ACCESS_LEVELS,
@@ -155,13 +155,13 @@ import {
   resolveBinary,
   runProcess,
   verifiedGoneJobOwners
-} from "./chunks/chunk-RF7RMXGJ.mjs";
+} from "./chunks/chunk-GMHMYT3Q.mjs";
 import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
   formatResourceSlots
-} from "./chunks/chunk-ICOR677W.mjs";
+} from "./chunks/chunk-2F52LJGN.mjs";
 import {
   bundleDirectory
 } from "./chunks/chunk-D5ZW6VFT.mjs";
@@ -169,7 +169,7 @@ import {
   resolveDbPath,
   resolveHome,
   resolvePipePath
-} from "./chunks/chunk-TZ7ALTLI.mjs";
+} from "./chunks/chunk-ZBF6WTFC.mjs";
 import "./chunks/chunk-JTZGNEMM.mjs";
 import {
   MAX_JOB_SEND_TARGETS,
@@ -179,10 +179,10 @@ import {
   loadOrCreateToken,
   tokensEqual
 } from "./chunks/chunk-V4WDBMEN.mjs";
-import "./chunks/chunk-PKCLSJPP.mjs";
+import "./chunks/chunk-VIBWHOHO.mjs";
 import {
   canonicalProjectRoot
-} from "./chunks/chunk-527TPQZO.mjs";
+} from "./chunks/chunk-6WTV3HWM.mjs";
 import {
   CLAUDE_PERMISSION_MODES,
   CODEX_APPROVALS_REVIEWERS,
@@ -194,7 +194,7 @@ import {
   parseAgentKind,
   saveConfigValue,
   watchConfig
-} from "./chunks/chunk-7EOQ5DLV.mjs";
+} from "./chunks/chunk-65FHYHTF.mjs";
 import {
   AGENT_KINDS,
   BROADCAST,
@@ -211,19 +211,24 @@ import {
   askOwnerSchema,
   decisionScopeSchema,
   formatDecisionSummary
-} from "./chunks/chunk-GEIUPZ2V.mjs";
+} from "./chunks/chunk-K476F6IU.mjs";
 import {
   isInternalBridgeProcess,
   isPluginCacheCwd
-} from "./chunks/chunk-F5TIWO5T.mjs";
+} from "./chunks/chunk-TJVQ42HE.mjs";
 import {
   ZodOptional,
   external_exports
 } from "./chunks/chunk-FDMEMG4Z.mjs";
-import "./chunks/chunk-7COR3ABA.mjs";
-import "./chunks/chunk-ZLR2KASI.mjs";
+import "./chunks/chunk-FXWD7ZJJ.mjs";
+import "./chunks/chunk-IJXRM5WK.mjs";
 import {
-  object
+  TRANSCRIPT_ID,
+  directory,
+  object,
+  readJsonl,
+  safeFile,
+  transcriptPaths
 } from "./chunks/chunk-WM3QOXKL.mjs";
 import {
   archiveFile,
@@ -231,8 +236,8 @@ import {
   isRecord,
   readJsonStore,
   writeJsonStore
-} from "./chunks/chunk-MVI32GWA.mjs";
-import "./chunks/chunk-EWK3N7HP.mjs";
+} from "./chunks/chunk-C5TTRWRF.mjs";
+import "./chunks/chunk-B5YQVBXX.mjs";
 import {
   APP_NAME,
   APP_VERSION,
@@ -246,11 +251,11 @@ import {
   MAX_JOBS_LIMIT,
   MAX_JOB_TIMEOUT_SEC,
   MAX_WAIT_SEC
-} from "./chunks/chunk-VRRYA6BY.mjs";
+} from "./chunks/chunk-BF2F5BYX.mjs";
 import "./chunks/chunk-HHAVWD7J.mjs";
 
 // src/mcp/server.ts
-import { isAbsolute, join as join4, resolve } from "node:path";
+import { isAbsolute, join as join5, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
@@ -925,6 +930,42 @@ var ExperimentalMcpServerTasks = class {
 };
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
+function toolInputElementCount(value, max) {
+  let count = 0;
+  const stack = [value];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node === null || typeof node !== "object")
+      continue;
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        if (++count > max)
+          return count;
+        if (child !== null && typeof child === "object")
+          stack.push(child);
+      }
+    } else {
+      for (const key in node) {
+        if (!Object.prototype.hasOwnProperty.call(node, key))
+          continue;
+        if (++count > max)
+          return count;
+        const child = node[key];
+        if (child !== null && typeof child === "object")
+          stack.push(child);
+      }
+    }
+  }
+  return count;
+}
+function resolveMaxToolInputElements(value) {
+  if (value === void 0 || value === Infinity)
+    return void 0;
+  if (typeof value !== "number" || Number.isNaN(value) || value < 1) {
+    throw new RangeError(`maxToolInputElements must be a number of at least 1, or Infinity, got ${String(value)}`);
+  }
+  return value;
+}
 var McpServer = class {
   constructor(serverInfo, options) {
     this._registeredResources = {};
@@ -936,6 +977,7 @@ var McpServer = class {
     this._resourceHandlersInitialized = false;
     this._promptHandlersInitialized = false;
     this.server = new Server(serverInfo, options);
+    this._maxToolInputElements = resolveMaxToolInputElements(options?.maxToolInputElements);
   }
   /**
    * Access experimental features.
@@ -1066,12 +1108,15 @@ var McpServer = class {
    * Validates tool input arguments against the tool's input schema.
    */
   async validateToolInput(tool, args, toolName) {
+    if (this._maxToolInputElements !== void 0 && toolInputElementCount(args, this._maxToolInputElements) > this._maxToolInputElements) {
+      throw new McpError(ErrorCode.InvalidParams, `Invalid arguments for tool ${toolName}: arguments contain more than the maximum of ${this._maxToolInputElements} elements`);
+    }
     if (!tool.inputSchema) {
       return void 0;
     }
     const inputObj = normalizeObjectSchema(tool.inputSchema);
     const schemaToParse = inputObj ?? tool.inputSchema;
-    const parseResult = await safeParseAsync(schemaToParse, args);
+    const parseResult = await safeParseAsync(schemaToParse, args ?? {});
     if (!parseResult.success) {
       const error = "error" in parseResult ? parseResult.error : "Unknown error";
       const errorMessage = getParseErrorMessage(error);
@@ -1309,7 +1354,7 @@ var McpServer = class {
       }
       if (prompt.argsSchema) {
         const argsObj = normalizeObjectSchema(prompt.argsSchema);
-        const parseResult = await safeParseAsync(argsObj, request.params.arguments);
+        const parseResult = await safeParseAsync(argsObj, request.params.arguments ?? {});
         if (!parseResult.success) {
           const error = "error" in parseResult ? parseResult.error : "Unknown error";
           const errorMessage = getParseErrorMessage(error);
@@ -1849,6 +1894,71 @@ async function waitForReadReceipt(node, id, timeoutMs, signal) {
   return null;
 }
 
+// src/mcp/hook-ownership.ts
+var owners = /* @__PURE__ */ new WeakMap();
+function owner(ctx) {
+  let state = owners.get(ctx);
+  if (!state) {
+    state = { epoch: 0, prompt: null, closed: /* @__PURE__ */ new Set(), modSequence: -1, modInstance: "", retiredMods: /* @__PURE__ */ new Set(), modCompleted: false };
+    owners.set(ctx, state);
+  }
+  return state;
+}
+var promptKey = (input) => input.promptId ? JSON.stringify([input.sessionId, input.promptId]) : null;
+function reserveHook(ctx, input) {
+  const state = owner(ctx), key = promptKey(input), node = ctx.node;
+  if (state.modCompleted && input.event === "PostToolUse") return null;
+  if (key && (state.closed.has(key) || input.event !== "UserPromptSubmit" && state.prompt && state.prompt !== key)) return null;
+  if (input.event === "UserPromptSubmit" && key) {
+    if (state.modTurn && state.modPrompt && state.modPrompt !== key) state.modTurn = void 0;
+    state.prompt = key;
+    if (state.modTurn && !state.modPrompt) state.modPrompt = key;
+  }
+  if (input.event === "UserPromptSubmit" || input.event === "SessionStart") state.modCompleted = false;
+  const epoch = ++state.epoch;
+  return () => ctx.node === node && !ctx.headless && state.epoch === epoch;
+}
+function finishHookTurn(ctx, input) {
+  const state = owner(ctx), key = input ? promptKey(input) ?? state.prompt : state.prompt;
+  if (key) {
+    state.closed.add(key);
+    if (state.closed.size > 128) state.closed.delete(state.closed.values().next().value);
+  }
+  ctx.wakeDelivery?.idle?.();
+  ctx.activity?.("idle");
+}
+function reportModActivity(ctx, event) {
+  if (!ctx.node || ctx.headless || ctx.node.currentSessionId !== event.sessionId) return false;
+  const state = owner(ctx);
+  if (!Number.isSafeInteger(event.sequence) || event.sequence < 0 || !event.turnId) return false;
+  const instance = event.instance ?? "";
+  if (instance.length > 128 || state.retiredMods.has(instance)) return false;
+  if (instance !== state.modInstance) {
+    if (!event.busy) return false;
+    state.retiredMods.add(state.modInstance);
+    state.modInstance = instance;
+    state.modSequence = -1;
+  }
+  if (event.sequence <= state.modSequence) return false;
+  if (!event.busy && (state.modTurn !== event.turnId || state.modPrompt && state.modPrompt !== state.prompt)) return false;
+  state.modSequence = event.sequence;
+  if (event.busy) {
+    state.modCompleted = false;
+    state.modTurn = event.turnId;
+    state.modPrompt = state.prompt && !state.closed.has(state.prompt) ? state.prompt : null;
+    ++state.epoch;
+    ctx.wakeDelivery?.confirm();
+    ctx.wakeDelivery?.active();
+    ctx.activity?.("busy");
+  } else {
+    state.modCompleted = true;
+    state.modTurn = void 0;
+    ++state.epoch;
+    finishHookTurn(ctx);
+  }
+  return true;
+}
+
 // src/mcp/hooks.ts
 var STOP_REASON_FOOTER = 'Handle these peer messages now: do what is reasonable, answer with the agent-bridge "send" tool (reply_to=<id>), then end your turn.';
 function context(event, additionalContext) {
@@ -1878,7 +1988,7 @@ function take(ctx, wakeOnly, notesOnly = false) {
 var parentReads = /* @__PURE__ */ new WeakMap();
 async function subagentHook(ctx, input) {
   const parent = ctx.parent;
-  if (!parent || input.event === "SessionStart") return {};
+  if (!parent || input.event === "SessionStart" || input.event === "StopFailure") return {};
   let pending = parentReads.get(ctx);
   if (!pending) {
     pending = parent.inbox().catch((err) => {
@@ -1918,14 +2028,12 @@ function withinHook(work, signal) {
     if (signal.aborted) abort();
   });
 }
-var mainHookEpochs = /* @__PURE__ */ new WeakMap();
 async function buildHookResponse(ctx, input) {
-  if (input.subagent) return {};
+  if (input.subagent || input.signal?.aborted) return {};
   const node = ctx.node;
-  const main = ctx.agent === "codex" && node !== null && !ctx.headless;
-  const epoch = main ? (mainHookEpochs.get(ctx) ?? 0) + 1 : 0;
-  if (main) mainHookEpochs.set(ctx, epoch);
-  const current = () => !main || ctx.node === node && mainHookEpochs.get(ctx) === epoch;
+  const main = (ctx.agent === "codex" || ctx.agent === "claude") && node !== null && !ctx.headless;
+  const current = main ? reserveHook(ctx, input) : () => true;
+  if (!current) return {};
   const owningSession = input.sessionId ?? node?.currentSessionId;
   const busyAtIngress = main && !input.signal?.aborted && (input.event === "UserPromptSubmit" || input.event === "PostToolUse");
   if (busyAtIngress) ctx.activity?.("busy");
@@ -1942,7 +2050,7 @@ async function buildHookResponse(ctx, input) {
     return await runHook(ctx, { ...input, signal: controller.signal }, current, busyAtIngress);
   } catch (err) {
     if (!controller.signal.aborted) throw err;
-    if (deadlineExpired && main && input.event === "Stop" && current() && node?.currentSessionId === owningSession) ctx.activity?.("idle");
+    if (deadlineExpired && main && (input.event === "Stop" || input.event === "StopFailure") && current() && node?.currentSessionId === owningSession) finishHookTurn(ctx, input);
     ctx.log.debug("hook deferred slow work", { event: input.event });
     return {};
   } finally {
@@ -1951,7 +2059,7 @@ async function buildHookResponse(ctx, input) {
   }
 }
 async function runHook(ctx, input, current, busyAtIngress) {
-  if (input.prepare) await withinHook(input.prepare(), input.signal);
+  if (input.prepare) await withinHook(input.prepare(() => current() && !input.signal?.aborted), input.signal);
   if (!current()) return {};
   const node = ctx.node;
   if (!node) return subagentHook(ctx, input);
@@ -1968,6 +2076,10 @@ async function runHook(ctx, input, current, busyAtIngress) {
   if (!current()) return {};
   await withinHook(node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: err.message })), input.signal);
   if (!current()) return {};
+  if (input.event === "StopFailure") {
+    finishHookTurn(ctx, input);
+    return {};
+  }
   const stopJobsRunning = input.event === "Stop" ? ctx.jobs?.runningCount() ?? 0 : 0;
   const replay = node.refreshPending().catch((err) => ctx.log.warn("pending mail refresh failed; retained for retry", { err: String(err) }));
   const stopReady = input.event === "Stop" && (stopJobsRunning > 0 || node.unread().some((m) => !isQuietMessage(m)));
@@ -2005,12 +2117,12 @@ ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online rig
     }
     case "Stop": {
       if (channel) {
-        ctx.activity?.("idle");
+        finishHookTurn(ctx, input);
         return {};
       }
       ctx.wakeDelivery?.idle?.();
       if (ctx.wakeDelivery?.modActive?.()) {
-        ctx.activity?.("idle");
+        finishHookTurn(ctx, input);
         return {};
       }
       const now = Date.now();
@@ -2024,7 +2136,7 @@ ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online rig
           ctx.activity?.("busy");
           return { decision: "block", reason: formatMessages(awaited, { replyHint: false }) };
         }
-        ctx.activity?.("idle");
+        finishHookTurn(ctx, input);
         return {};
       }
       const msgs = take(ctx, true);
@@ -2034,7 +2146,7 @@ ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online rig
         waits.attach(node);
       }
       if (msgs.length === 0) {
-        ctx.activity?.("idle");
+        finishHookTurn(ctx, input);
         return {};
       }
       ctx.activity?.("busy");
@@ -2339,6 +2451,85 @@ var CodexWaker = class {
   }
 };
 
+// src/mcp/codex-lineage.ts
+import { join as join3 } from "node:path";
+var CodexLineageLookup = class {
+  constructor(root = join3(transcriptPaths().codex, "sessions")) {
+    this.root = root;
+  }
+  root;
+  known = /* @__PURE__ */ new Map();
+  retryAfter = /* @__PURE__ */ new Map();
+  classify(id, transcript) {
+    if (!TRANSCRIPT_ID.test(id)) return "unknown";
+    const cached = this.known.get(id);
+    if (cached) return cached;
+    if (Date.now() < (this.retryAfter.get(id) ?? 0)) return "unknown";
+    const inspect = (path) => {
+      const file = safeFile(this.root, path);
+      if (!file) return "unknown";
+      const row = readJsonl(file, "0", 512 * 1024).entries.find(({ value }) => value.type === "session_meta" && object(value.payload).id === id);
+      if (!row) return "unknown";
+      const meta = object(row.value.payload), source = object(meta.source);
+      if (meta.thread_source === "subagent" || source.subagent !== void 0 || typeof meta.parent_thread_id === "string" && meta.parent_thread_id.length > 0) return "child";
+      return ["cli", "vscode", "exec", "mcp"].includes(meta.source) || ["cli", "vscode", "exec", "mcp"].includes(meta.thread_source) ? "main" : "unknown";
+    };
+    let result = transcript ? inspect(transcript) : "unknown";
+    let directories = 0, entries = 0;
+    const visited = /* @__PURE__ */ new Set();
+    const scan = (path) => {
+      if (visited.has(path) || directories >= 2e3 || entries >= 2e4) return "unknown";
+      visited.add(path);
+      const dir = safeFile(this.root, path);
+      if (!dir) return "unknown";
+      directories++;
+      for (const name of directory(dir)) {
+        if (++entries > 2e4) break;
+        if (!name.startsWith("rollout-") || !name.endsWith(`-${id}.jsonl`)) continue;
+        const found = inspect(join3(dir, name));
+        if (found !== "unknown") return found;
+      }
+      return "unknown";
+    };
+    if (result === "unknown" && /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+      const created = parseInt(id.slice(0, 8) + id.slice(9, 13), 16);
+      for (const offset of [0, -1, 1]) {
+        const day = new Date(created + offset * 864e5).toISOString();
+        if (!/^\d{4}-/.test(day)) continue;
+        result = scan(join3(this.root, ...day.slice(0, 10).split("-")));
+        if (result !== "unknown") break;
+      }
+    }
+    if (result === "unknown") outer: for (const year of directory(this.root).filter((s) => /^\d{4}$/.test(s)).sort().reverse()) {
+      const yearDir = safeFile(this.root, join3(this.root, year));
+      if (!yearDir) continue;
+      for (const month of directory(yearDir).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+        const monthDir = safeFile(this.root, join3(yearDir, month));
+        if (!monthDir) continue;
+        for (const day of directory(monthDir).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+          if (directories >= 2e3 || entries >= 2e4) break outer;
+          result = scan(join3(monthDir, day));
+          if (result !== "unknown") break outer;
+        }
+      }
+    }
+    if (result !== "unknown") {
+      this.retryAfter.delete(id);
+      this.known.set(id, result);
+      if (this.known.size > 512) this.known.delete(this.known.keys().next().value);
+    } else {
+      this.retryAfter.delete(id);
+      this.retryAfter.set(id, Date.now() + 1e4);
+      if (this.retryAfter.size > 2048) this.retryAfter.delete(this.retryAfter.keys().next().value);
+    }
+    return result;
+  }
+};
+function codexCallIdentity(meta, hook) {
+  const given = (value) => typeof value === "string" && value && !value.startsWith("${") ? value : null;
+  return { threadId: given(meta?.threadId) ?? hook?.threadId, agentId: hook?.agentId ?? given(meta?.agent_id), transcript: hook?.transcript ?? given(meta?.transcript_path) };
+}
+
 // src/mcp/permissions.ts
 var DECISION_SCHEMA = {
   type: "object",
@@ -2427,11 +2618,11 @@ var LocalCoordinator = class extends EventEmitter {
 };
 
 // src/core/auto-wake-pref.ts
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 var FILE = "auto-wake.json";
 function read(home) {
   try {
-    return readJsonStore(join3(home, FILE)) ?? {};
+    return readJsonStore(join4(home, FILE)) ?? {};
   } catch {
     return {};
   }
@@ -2443,7 +2634,7 @@ function savedAutoWake(home, name) {
 }
 function saveAutoWake(home, name, enabled) {
   try {
-    const file = join3(home, FILE);
+    const file = join4(home, FILE);
     const previous = readJsonStore(file);
     const data = isRecord(previous) ? previous : {};
     const peers = isRecord(data.peers) ? data.peers : data;
@@ -2467,6 +2658,11 @@ function attachDashboardJobControl(node, jobs, log) {
       return;
     }
     if (!command || typeof command.requestId !== "string" || typeof command.job !== "string") return;
+    if (command.type === "result") return;
+    if (m.jobControlAuthorized !== true) {
+      log.warn("rejected unauthorized dashboard job command", { from: m.from.name, job: command.job, type: command.type });
+      return;
+    }
     let result;
     if (command.type === "handoff") {
       try {
@@ -2497,7 +2693,7 @@ function followUp(node, jobs, ref, body) {
   return {
     outcome,
     text: t(`followUp.${outcome}`, { name: job?.name ?? ref, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }),
-    isError: outcome === "unknown" || outcome === "no-session"
+    isError: outcome === "unknown" || outcome === "no-session" || outcome === "stopping" || outcome === "cancelled-before-start"
   };
 }
 function changeSettings(node, jobs, ref, input, log) {
@@ -2612,6 +2808,8 @@ async function startServer(argv = process.argv.slice(2)) {
     return configRoot;
   };
   const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? projectConfigRoot(cwd) : void 0);
+  const mobileAtStartup = cfg.mobile;
+  const mobilePortAtStartup = cfg.dashboardPort;
   const delegated = currentDelegateDepth() > 0;
   const internal = isInternalBridgeProcess();
   log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, internal, version: APP_VERSION, node: process.version });
@@ -2638,7 +2836,7 @@ async function startServer(argv = process.argv.slice(2)) {
     const parentJob = process.env[PARENT_JOB_ENV];
     const rootSession = process.env[ROOT_SESSION_ENV];
     const coordinator = ctx.childInbox = new LocalCoordinator(parentJob, rootSession);
-    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join4(home, JOBS_FILE), cfg.maxJobs, {
+    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join5(home, JOBS_FILE), cfg.maxJobs, {
       parentJob,
       rootSession,
       rootName: process.env[ROOT_NAME_ENV] || ctx.parent.name,
@@ -2647,7 +2845,7 @@ async function startServer(argv = process.argv.slice(2)) {
     });
   }
   if (node) {
-    ctx.jobs = new JobManager(node, log.child("jobs"), join4(home, JOBS_FILE), cfg.maxJobs, void 0, {
+    ctx.jobs = new JobManager(node, log.child("jobs"), join5(home, JOBS_FILE), cfg.maxJobs, void 0, {
       canRestore: () => node.isConnected && (agent !== "claude" || ctx.restoreEligible === true),
       canReceiveHandoff: () => node.isConnected
     });
@@ -2676,13 +2874,18 @@ async function startServer(argv = process.argv.slice(2)) {
     };
   }
   if (agent === "codex" && node) {
+    const lineage = new CodexLineageLookup();
+    ctx.admitCodex = (meta, hook) => {
+      const call = codexCallIdentity(meta, hook);
+      return !call.agentId && Boolean(call.threadId && lineage.classify(call.threadId, call.transcript) === "main");
+    };
     const waker = new CodexWaker(node, cfg, log.child("wake"));
     ctx.activity = (s) => {
       node.setActivity(s);
       waker.setActivity(s);
     };
     ctx.observeMeta = async (meta) => {
-      const id = meta?.threadId ?? meta?.sessionId;
+      const id = meta?.threadId;
       if (typeof id === "string" && id) {
         waker.setThreadId(id);
         await node.setSessionId(id).catch(() => {
@@ -2753,7 +2956,7 @@ async function startServer(argv = process.argv.slice(2)) {
   if (agent === "claude" && node) {
     const shouldWake = (m) => !ctx.channelActive() && m.hop < cfg.maxHops && // Running-job notes remain in explicit inbox reads and history (see JobManager.fromSubagent).
     !ctx.jobs?.isNote(m) && shouldWakeClaudeMessage(node, cfg, m);
-    rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"));
+    rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"), (event) => reportModActivity(ctx, event));
     try {
       await rewake.start();
       ctx.rewakeAvailable = true;
@@ -2768,11 +2971,28 @@ async function startServer(argv = process.argv.slice(2)) {
     }
   }
   let dashboard = null;
+  let mobileDashboard = null;
+  let mobileUnavailable;
   const ensureDashboard = async (force) => {
     try {
       if (!force && !cfg.dashboard) return null;
-      dashboard ??= import("./chunks/dashboard-NZIEBRSN.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
-      return await (await dashboard).ensure();
+      if (mobileAtStartup && node) {
+        try {
+          mobileDashboard ??= import("./chunks/activation-OKC7W6MW.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+            node,
+            mobileAtStartup,
+            { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
+          ));
+          const mobile = await mobileDashboard, info2 = await mobile?.start();
+          if (info2 && mobile?.status() === "ready") return info2;
+          mobileUnavailable = mobile?.status ?? (() => "source_unavailable");
+        } catch {
+          mobileUnavailable = () => "restart_required";
+        }
+      }
+      dashboard ??= import("./chunks/dashboard-CVEW7YN6.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      const info = await (await dashboard).ensure();
+      return mobileUnavailable ? (await import("./chunks/dashboard-CVEW7YN6.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -2815,6 +3035,8 @@ async function startServer(argv = process.argv.slice(2)) {
     });
     await dashboard?.then((controller) => controller.close()).catch(() => {
     });
+    await mobileDashboard?.then((controller) => controller?.close()).catch(() => {
+    });
     await rewake?.stop().catch(() => {
     });
     await antigravityHooks?.stop().catch(() => {
@@ -2850,18 +3072,18 @@ async function startServer(argv = process.argv.slice(2)) {
         const online = new Set(peers.map((p) => p.name));
         const candidates = ctx.jobs?.standInOwners(online) ?? [];
         const gone = await verifiedGoneJobOwners(home, candidates);
-        const owners = ctx.jobs?.adoptStandIns(online, gone) ?? [];
-        if (owners.length) await node.claimMail(owners);
+        const owners2 = ctx.jobs?.adoptStandIns(online, gone) ?? [];
+        if (owners2.length) await node.claimMail(owners2);
       }).catch(() => {
       });
       adopt();
       setTimeout(adopt, STAND_IN_RECHECK_MS).unref();
     });
-    const join5 = () => node.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join6 = () => node.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (ctx.headless) {
       log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
-    } else if (cwdKnown) {
-      void join5();
+    } else if (cwdKnown && agent !== "codex") {
+      void join6();
     } else {
       log.info("project directory unknown yet; waiting for host metadata before bridge join");
     }
@@ -2885,6 +3107,7 @@ function registerTools(mcp, ctx, targets) {
   };
   const guarded = (name, fn) => async (args, extra) => {
     log.debug("tool call", { tool: name, args });
+    if (ctx.admitCodex && !ctx.admitCodex(extra._meta)) return text("Native Codex child or unverified thread: use the parent session's bridge. Missing main-thread lineage may be retried once its rollout header is available.", true);
     if (name !== "health" && ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: err.message }));
     await ctx.observeMeta?.(extra._meta);
     try {
@@ -2925,8 +3148,8 @@ function registerTools(mcp, ctx, targets) {
     },
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-E3JLD5VA.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-HIDE5ZS3.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-52MXPNMK.mjs")).readHistory(resolveDbPath(ctx.home), args);
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-QVNRIMS2.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
@@ -2934,7 +3157,7 @@ function registerTools(mcp, ctx, targets) {
     description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
     inputSchema: conversationPageSchema.shape,
     annotations: { readOnlyHint: true }
-  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-ZYZEZA33.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
+  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-ZO5X5LWR.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
   register(
     "decide",
     {
@@ -3698,7 +3921,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
 Saved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value}`).join(", ")}.${wasRunning ? " Applies from its next turn; the turn running now keeps its settings." : " Applies to this continuation and later turns."}` : "";
       return text(
         t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote + approvalNote,
-        outcome === "unknown" || outcome === "no-session"
+        outcome === "unknown" || outcome === "no-session" || outcome === "stopping" || outcome === "cancelled-before-start"
       );
     })
   );
@@ -3746,23 +3969,28 @@ Saved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value
         stop_hook_active: external_exports.union([external_exports.boolean(), external_exports.string()]).optional(),
         cwd: external_exports.string().optional(),
         agent_id: external_exports.string().optional(),
-        prompt: external_exports.string().optional()
+        prompt: external_exports.string().optional(),
+        prompt_id: external_exports.string().optional(),
+        transcript_path: external_exports.string().optional()
       }
     },
     async (a, extra) => {
       const given = (v) => v && !v.startsWith("${") ? v : null;
       try {
+        const identity = codexCallIdentity(extra._meta, { threadId: given(a.session_id), agentId: given(a.agent_id), transcript: given(a.transcript_path) });
+        if (given(a.agent_id) || ctx.admitCodex && !ctx.admitCodex(extra._meta, identity)) return text("{}");
         const out = await buildHookResponse(ctx, {
           event: a.event,
-          sessionId: given(a.session_id),
+          sessionId: ctx.agent === "codex" ? identity.threadId ?? null : given(a.session_id),
           stopHookActive: a.stop_hook_active === true || a.stop_hook_active === "true",
           cwd: given(a.cwd),
           subagent: Boolean(given(a.agent_id)),
           prompt: given(a.prompt),
+          promptId: given(a.prompt_id),
           signal: extra.signal,
-          prepare: async () => {
+          prepare: async (current) => {
             if (ctx.node?.wasReplaced) await ctx.node.reclaim();
-            await ctx.observeMeta?.(extra._meta);
+            if (current()) await ctx.observeMeta?.(ctx.agent === "codex" ? { ...extra._meta, threadId: identity.threadId } : extra._meta);
           }
         });
         return text(JSON.stringify(out));

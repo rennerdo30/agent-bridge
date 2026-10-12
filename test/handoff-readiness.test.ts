@@ -9,6 +9,7 @@ import * as identities from "../src/core/process-identity.js";
 import * as compatibility from "../src/core/store-compatibility.js";
 import { readStore } from "../src/mcp/jobs.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { codexHost } from "./helpers.js";
 import type { BridgeNode } from "../src/core/node.js";
 
 let env: TestEnv, source: BridgeNode, target: BridgeNode;
@@ -44,6 +45,7 @@ async function server(name: string, released = false) {
   Object.assign(childEnv, { AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off",
     CLAUDE_PROJECT_DIR: env.home, CLAUDE_CONFIG_DIR: join(env.home, "claude"), CODEX_HOME: join(env.home, "codex"), XDG_DATA_HOME: env.home });
   const client = new Client({ name: `fixture-${name}`, version: "1" }); clients.push(client);
+  childEnv.CODEX_HOME = codexHost(client, env.home, "codex", name);
   const transport = new StdioClientTransport({ command: process.execPath, args: [file, "--agent=codex"], env: childEnv, stderr: "pipe" });
   let stderr = ""; transport.stderr?.on("data", chunk => { stderr += String(chunk); });
   try { await client.connect(transport); await client.callTool({ name: "peers", arguments: {} }); }

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { readFileSync, writeFileSync } from "node:fs";
 import { DelegateError } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 import type { BridgeNode } from "../src/core/node.js";
@@ -125,12 +126,18 @@ describe("messaging subagents", () => {
     const first = new JobManager(me, nullLogger, store);
     const agent = fakeAgent();
     const done = first.start("codex", "gpt-x", "task one", async () => ok("one", "ses-A", "/wt/a"), agent.resume, { access: "edit" });
-    await until(() => first.recent().some((j) => j.id === done.id));
+    await until(() => done.status === "done" && done.sessionId === "ses-A");
     const running = first.start("claude", null, "task two", (_s, _p, job) => {
       first.note(job, { sessionId: "ses-B", workdir: "/wt/b" });
       return new Promise(() => {});
     }, agent.resume);
     await until(() => running.sessionId === "ses-B");
+
+    // Model an exited MCP executor, rather than two live managers resuming its turn.
+    first.setDormant(true); first.cancelAll();
+    const saved = JSON.parse(readFileSync(store, "utf8"));
+    saved.jobs.find((j: { id: string }) => j.id === running.id).executionPid = 2_147_483_647;
+    writeFileSync(store, JSON.stringify(saved));
 
     // The session restarts: a new manager reads what the old one saved.
     const args: Record<string, unknown>[] = [];

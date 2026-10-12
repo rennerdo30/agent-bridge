@@ -14,6 +14,7 @@ import { loadOrCreateToken } from "../src/core/token.js";
 import { SiblingLink } from "../src/mcp/siblings.js";
 import type { Job } from "../src/mcp/jobs.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { codexHost } from "./helpers.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 let env: TestEnv;
@@ -27,9 +28,10 @@ const textOf = (r: any) => r.content.map((c: any) => c.text).join("\n");
 const call = async (c: Client, name: string, args = {}) => textOf(await c.callTool({ name, arguments: args }));
 async function connect(agent: string, name: string, extra = {}) {
   const c = new Client({ name: "context-scenario", version: "1" });
+  const codexHome = codexHost(c, env.home, agent, name);
   cleanups.push(() => c.close());
   await c.connect(new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`],
-    env: { ...process.env, AGENT_BRIDGE_HOME: env.home, CLAUDE_PROJECT_DIR: env.home, CODEX_HOME: join(env.home, "codex-fixture"), CLAUDE_CONFIG_DIR: join(env.home, "claude-fixture"), XDG_DATA_HOME: join(env.home, "xdg-fixture"), AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks",
+    env: { ...process.env, AGENT_BRIDGE_HOME: env.home, CLAUDE_PROJECT_DIR: env.home, CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: join(env.home, "claude-fixture"), XDG_DATA_HOME: join(env.home, "xdg-fixture"), AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks",
       AGENT_BRIDGE_WAKE_ON_DIRECT: "off", AGENT_BRIDGE_AUTO_WAKE: "off", AGENT_BRIDGE_DASHBOARD: "off",
       AGENT_BRIDGE_LINGER_SEC: "0", AGENT_BRIDGE_DELEGATE_DEPTH: "0", ...extra } as Record<string, string>, stderr: "ignore" }));
   await call(c, "peers");

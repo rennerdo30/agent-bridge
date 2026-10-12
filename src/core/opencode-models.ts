@@ -53,6 +53,9 @@ export function resolveOpencodeModel(input: string, models: string[]): ModelReso
 
   const suggest = (list: string[]) => list.slice(0, MAX_SUGGESTIONS).join(", ");
   if (best.length > 1) return { error: `The opencode model "${want}" is ambiguous. Pass one of: ${suggest(best)}${best.length > MAX_SUGGESTIONS ? ", …" : ""}` };
+  // V2's catalog can omit dynamically resolved provider routes. Explicit IDs
+  // remain the CLI's decision; the catalog only resolves aliases for us.
+  if (MODEL_LINE.test(want)) return { model: want, note: `model "${want}" is not in the catalog; passed explicitly to opencode for resolution` };
   const near = models.filter((m) => name.split(/[-._]/).some((part) => part.length > 2 && m.toLowerCase().includes(part)));
   return {
     error: `Unknown opencode model "${want}". Use "provider/model" from \`opencode models\`${near.length ? `, e.g. ${suggest(near)}` : ""}.`,

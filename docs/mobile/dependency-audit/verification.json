@@ -1,0 +1,111 @@
+{
+  "reviewedAt": "2026-10-11",
+  "baseline": "c79345779c4d90fa181856344cc9ac0756f97d4e",
+  "expoCompatibility": "dependencies already up to date",
+  "appTests": {
+    "files": 4,
+    "passed": 14
+  },
+  "clientTests": {
+    "files": 1,
+    "passed": 18
+  },
+  "focusedMobileRootTests": {
+    "files": 9,
+    "passed": 131
+  },
+  "rootTypecheck": "pass",
+  "appTypecheck": "pass",
+  "hermesExport": {
+    "android": "pass",
+    "ios": "pass",
+    "signedNativeBuild": false
+  },
+  "fullRootSuite": {
+    "files": 287,
+    "passedFiles": 284,
+    "failedFiles": 3,
+    "passed": 2126,
+    "failed": 3,
+    "skipped": 3,
+    "total": 2132,
+    "durationSeconds": 2110.54,
+    "failures": [
+      "project-group-takeover: closed primary readiness",
+      "data-retention: mobile_records DELETE",
+      "opencode: tool-name assertion"
+    ]
+  },
+  "rootAudit": {
+    "before": 2,
+    "after": 0
+  },
+  "mobileAudit": {
+    "before": 22,
+    "after": 22,
+    "high": 15,
+    "moderate": 7
+  },
+  "sharedDependencyJunction": {
+    "targetFileCountBefore": 4944,
+    "targetFileCountAfter": 4944,
+    "linkOnlyRemoved": true,
+    "supervisorApproved": true
+  },
+  "baselineOpencode": {
+    "commit": "40fbf0a4287b0d494fc2c1ce2fafde28b95bb786",
+    "test": "test/opencode.test.ts",
+    "passed": 12,
+    "failed": 0
+  },
+  "branchOpencode": {
+    "test": "test/opencode.test.ts",
+    "passed": 11,
+    "failed": 1,
+    "failure": "line 184 prohibits opencode tool names",
+    "preExistingAtTaskBaseline": true,
+    "mergeBlocker": true
+  },
+  "baselineRetentionGuard": {
+    "test": "test/data-retention.test.ts",
+    "passed": 6,
+    "failed": 1,
+    "failure": "mobile/store.ts: DELETE FROM mobile_records WHERE kind=? AND id=?",
+    "preExistingAtTaskBaseline": true
+  },
+  "rootBuild": {
+    "result": "pass",
+    "generatedDistCommitted": false,
+    "rebuiltAtRelease": true
+  },
+  "takeoverReruns": [
+    {
+      "run": 1,
+      "code": 0,
+      "summary": [
+        " Test Files  1 passed (1)",
+        "      Tests  4 passed (4)",
+        "   Duration  80.74s (tests 99%, transform 1%)"
+      ]
+    },
+    {
+      "run": 2,
+      "code": 0,
+      "summary": [
+        " Test Files  1 passed (1)",
+        "      Tests  4 passed (4)",
+        "   Duration  95.00s (tests 99%, transform 1%)"
+      ]
+    },
+    {
+      "run": 3,
+      "code": 0,
+      "summary": [
+        " Test Files  1 passed (1)",
+        "      Tests  4 passed (4)",
+        "   Duration  81.06s (tests 99%, transform 1%)"
+      ]
+    }
+  ],
+  "takeoverDisposition": "load flake: 3 isolated runs passed 4/4 under SDK1.32.1"
+}

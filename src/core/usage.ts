@@ -163,6 +163,14 @@ export function parseClaudeUsage(text: string): UsageReport {
 
 /** Today's spend and tokens from `opencode stats`. */
 export function parseOpencodeStats(text: string): UsageReport {
+  try {
+    const stats = JSON.parse(text);
+    if (typeof stats.cost === "number" && Number.isFinite(stats.cost) &&
+        typeof stats.tokens?.input === "number" && typeof stats.tokens?.output === "number") {
+      return { agent: "opencode", lines: ["No account limits: opencode uses the providers' keys and plans.",
+        `Today: cost $${stats.cost}, ${stats.tokens.input} input tokens, ${stats.tokens.output} output tokens`], limits: [], maxUsedPercent: null };
+    }
+  } catch { /* V1 prints a table. */ }
   const pick = (label: string) => new RegExp(`${label}\\s+([^\\s│|]+)`, "i").exec(text)?.[1];
   const cost = pick("Total Cost");
   const input = pick("Input");
@@ -204,7 +212,7 @@ export function parseOpencodeModelCosts(text: string): ModelCost[] {
 
 export async function readOpencodeModelCosts(bin: string, cwd: string, log: Logger): Promise<ModelCost[]> {
   const v2 = await opencodeV2(bin, cwd, log);
-  return parseOpencodeModelCosts(await capture(bin, v2 ? ["api", "--standalone", "GET", "/api/model"] : ["models", "--verbose"], cwd, log));
+  return parseOpencodeModelCosts(await capture(bin, v2 ? ["api", "--standalone", "GET", `/api/model?${new URLSearchParams({ "location[directory]": cwd })}`] : ["models", "--verbose"], cwd, log));
 }
 
 const MAX_FREE_LISTED = 12;
@@ -254,8 +262,9 @@ export async function readUsage(agent: CodingAgent, bin: string, cwd: string, lo
     if (agent === "antigravity") return { agent, lines: ["Account limit availability is unknown: agy exposes quotas in interactive /usage (or /quota), without a documented machine-readable quota command. Delegated results include token usage."], limits: [], maxUsedPercent: null };
     if (agent === "codex") return await codexUsage(bin, cwd, log);
     if (agent === "claude") return parseClaudeUsage(await capture(bin, ["-p", "/usage"], cwd, log));
+    const v2 = await opencodeV2(bin, cwd, log);
     const [stats, models] = await Promise.all([
-      capture(bin, ["stats", "--days", "1"], cwd, log).catch(() => ""),
+      capture(bin, v2 ? ["stats", "--standalone", "--days", "1", "--json"] : ["stats", "--days", "1"], cwd, log).catch(() => ""),
       readOpencodeModelCosts(bin, cwd, log).catch(() => []),
     ]);
     const report = parseOpencodeStats(stats);

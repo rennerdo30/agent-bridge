@@ -71,6 +71,7 @@ import { RemoteDashboard, dashboardError } from "../network/remote-dashboard.js"
 import { RemoteJobs } from "../network/remote-jobs.js";
 import { DecisionSync } from "../network/decision-sync.js";
 import { CONTROL_CONVERSATION_PREFIX } from "../mcp/job-host.js";
+import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, decisionApplies, decisionScopeSchema, type OwnerDecision } from "./decisions.js";
 import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
 import { OwnerQuestionService, OWNER_ADDRESS } from "./owner-question-service.js";
@@ -95,6 +96,8 @@ const HANDOFF_STORE_READY_MS = 5_500;
 
 type StoredSibling = SiblingPeer & { id: string; report: string | null };
 type QueueRegistration = Pick<PeerInfo, "id" | "name" | "sessionId"> & { generation: number };
+type ProjectMainIdentity = Pick<PeerInfo, "id" | "agent" | "sessionId" | "name">;
+const ownsProjectMain = (owner: ProjectMainIdentity, peer: PeerInfo) => owner.agent === peer.agent && (owner.sessionId ? owner.sessionId === peer.sessionId : owner.id === peer.id);
 
 interface Conn {
   socket: Socket;
@@ -122,6 +125,49 @@ type Handler<O extends Op> = (conn: Conn, args: RequestMap[O][0]) => RequestMap[
 const HANDOFF_LOCK_WAIT_MS = 2_000;
 const HANDOFF_LOCK_RETRY_MS = 25;
 export class Broker {
+  private mobileResources?: Set<() => Promise<void>>;
+  private mobileRetiring?: boolean;
+  /** Deliberate owner-only activation, after caller validation; no change to ordinary startup. */
+  initializeMobileOwnerQuestions(): boolean {
+    if (this.closing || this.mobileRetiring || !this.server?.listening) return false;
+    this.ownerQuestions(); return true;
+  }
+  /** Explicit host-only opt-in; borrow an already-existing service, never initialize one here. */
+  mobileHostContext(): import("../mobile/host.js").MobileHostContext | undefined {
+    const service = this.questions;
+    if (!service || this.closing || this.mobileRetiring || !this.server?.listening) return undefined;
+    let live = true;
+    const home = dirname(this.store.file);
+    const ready = () => live && !this.mobileRetiring && !this.closing && !!this.server?.listening && this.questions === service;
+    const requireReady = () => { if (!ready()) throw new Error("source_unavailable"); };
+    return { home, pipe: this.pipePath, log: this.log,
+      local: { home, log: this.log, peers: () => { requireReady(); return this.dashboardPeers(); } },
+      ownerQuestions: { store: {
+        get: id => { requireReady(); return service.store.get(id); },
+        list: () => { requireReady(); return service.store.list(); },
+        answerMobile: (...args) => { requireReady(); return service.store.answerMobile(...args); },
+      }, list: () => { requireReady(); return service.list(); }, complete: q => { requireReady(); return service.complete(q); } },
+      ready,
+      onDispose: dispose => {
+        const wrapped = () => { live = false; return dispose(); };
+        (this.mobileResources ??= new Set()).add(wrapped);
+        return () => { this.mobileResources?.delete(wrapped); };
+      } };
+  }
+  private async disposeMobileResources(): Promise<void> {
+    this.mobileRetiring = true;
+    const resources = this.mobileResources; this.mobileResources = undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const work = Promise.allSettled([...resources ?? []].map(dispose => Promise.resolve().then(dispose)));
+      const settled = await Promise.race([work, new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), 5000); })]);
+      if (!settled) this.mobileDisposalDiagnostic("mobile_disposal_timeout");
+      else if (settled.some(result => result.status === "rejected")) this.mobileDisposalDiagnostic("mobile_disposal_failed");
+    } finally { if (timer) clearTimeout(timer); }
+  }
+  private mobileDisposalDiagnostic(errorCategory: "mobile_disposal_timeout" | "mobile_disposal_failed"): void {
+    try { this.log.warn("mobile shutdown requires restart", { requestId: randomUUID(), errorCategory }); } catch { /* Optional diagnostics must never block core teardown. */ }
+  }
   private questions: OwnerQuestionService | null = null;
   private ownerQuestions(): OwnerQuestionService {
     return this.questions ??= new OwnerQuestionService(dirname(this.store.file), this.store, this.log, () => this.localPeers().map(p => this.projectPeer(p)), (peer, message) => { const c = this.connByName(peer.name); if (c) this.emit(c, "message", message); }, decision => {
@@ -130,7 +176,7 @@ export class Broker {
   }
   private readonly groups: ProjectGroups;
   /** Live role selection, recomputed after broker restart; no durable ownership is rewritten. */
-  private readonly projectMains = new Map<string, string>();
+  private readonly projectMains = new Map<string, ProjectMainIdentity>();
   private readonly projectRoutes = new Map<string, import("./protocol.js").ProjectRoute>();
   private server: Server | null = null;
   private readonly conns = new Set<Conn>();
@@ -191,6 +237,15 @@ export class Broker {
         const q = this.ownerQuestions().store.get(args.id);
         if (c.peer && (c.peer.jobAgent || c.peer.subagent || !q?.askers.some(asker => asker.sessionId && c.peer!.sessionId ? asker.agent === c.peer!.agent && asker.sessionId === c.peer!.sessionId : asker.peerId ? asker.peerId === c.peer!.id : asker.session === c.peer!.name))) throw new BridgeError("unauthorized", "Only an asker or the owner may dismiss this question.");
         return this.ownerQuestions().store.dismiss(args.id,args.status,args.reason,args.supersededBy);
+      },
+      dashboardJobSend: (c, a) => {
+        if (c.peer) {
+          this.log.warn("rejected agent dashboard job send", { from: c.peer.name });
+          throw new BridgeError("unauthorized", "Only the local owner dashboard can use dashboardJobSend.");
+        }
+        const sender = this.localPeers().find(p => p.id === a.senderId && p.agent === "other" && !p.jobAgent && !p.subagent);
+        if (!sender || a.conversationId !== DASHBOARD_JOB_CONVERSATION) throw new BridgeError("bad_request", "A local dashboard reply listener is required.");
+        return this.routeSend(c, sender, a);
       },
       dashboardHeartbeat: (c,a) => {
         if (c.peer) throw new BridgeError("unauthorized", "Only the local dashboard reports presence.");
@@ -311,7 +366,7 @@ export class Broker {
           if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
           const recipient = this.jobRecipient(job);
           fallback = recipient !== primaryFor(job);
-          const message = { ...m, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) };
+          const message = { ...m, jobControlAuthorized: undefined, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) };
           if (this.store.insertJobDelivery(message)) {
             const target = this.connByName(recipient);
             if (target && !target.peer?.unavailable) this.emit(target, "message", message);
@@ -465,6 +520,7 @@ export class Broker {
     this.healthMonitor.close();
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     this.purgeTimer = null;
+    if (this.mobileResources) await this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed"));
     this.questions?.close(); this.questions = null;
     await this.historyBackground?.close().catch(() => {});
     this.historyBackground = null;
@@ -531,6 +587,7 @@ export class Broker {
   async close(): Promise<void> {
     this.healthMonitor.close();
     this.closing = true;
+    if (this.mobileResources) await this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed"));
     this.questions?.close(); this.questions = null;
     this.store.stopWrites();
     if (this.pendingJobMailRetry) clearTimeout(this.pendingJobMailRetry);
@@ -785,25 +842,36 @@ export class Broker {
     if (!key || peer.jobAgent || peer.subagent) return decorated;
     const members = this.localPeers().filter((p) => !p.jobAgent && !p.subagent && this.groups.decorate(p).projectGroup === key)
       .sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name));
-    let main = this.projectMains.get(key);
-    if (!members.some((p) => p.name === main)) { main = members[0]?.name; if (main) this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, main); }
-    return { ...decorated, projectMain: main === peer.name, projectAddress: `project:${basename(decorated.projectRoot!)}`, projectRoute: this.projectRoutes.get(key) };
+    let main = members.find(p => this.projectMains.has(key) && ownsProjectMain(this.projectMains.get(key)!, p));
+    if (!main) { main = members[0]; if (main) this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, main); }
+    return { ...decorated, projectMain: main?.id === peer.id, projectAddress: `project:${basename(decorated.projectRoot!)}`, projectRoute: this.projectRoutes.get(key) };
   }
 
   private switchProjectMain(source: PeerInfo | null | undefined, target: PeerInfo | undefined): PeerInfo {
     if (!target || target.jobAgent || target.subagent || target.host) throw new BridgeError("bad_request", "Choose a live local project master.");
     const peer = this.projectPeer(target);
     if (!peer.projectGroup || source && (source.jobAgent || this.projectPeer(source).projectGroup !== peer.projectGroup)) throw new BridgeError("unauthorized", "Only a master of this project may switch its main session.");
-    this.recordProjectMain(peer.projectGroup, peer.projectAddress!, peer.name);
+    this.recordProjectMain(peer.projectGroup, peer.projectAddress!, target);
     return this.projectPeer(target);
   }
 
-  private recordProjectMain(key: string, address: string, main: string): void {
-    const previous = this.projectMains.get(key);
-    if (previous === main) return;
+  private recordProjectMain(key: string, address: string, peer: PeerInfo): void {
+    const old = this.projectMains.get(key);
+    if (old && ownsProjectMain(old, peer)) { this.transferProjectMain(old, peer); return; }
+    const previous = old?.name, main = peer.name;
     const route = { address, main, since: this.now(), previous };
-    this.projectMains.set(key, main); this.projectRoutes.set(key, route);
+    this.projectMains.set(key, { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name }); this.projectRoutes.set(key, route);
     if (previous) void this.notifyProjectMainChange(route).catch((err) => this.log.warn("project main notice deferred", { err: String(err) }));
+  }
+
+  /** Only an owning live connection (or an exact reconnect) may carry its role across resume/rename. */
+  private transferProjectMain(old: ProjectMainIdentity, peer: PeerInfo): void {
+    for (const [key, main] of this.projectMains) {
+      if (main.agent !== old.agent || (main.sessionId ? main.sessionId !== old.sessionId : main.id !== old.id)) continue;
+      this.projectMains.set(key, { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name });
+      const route = this.projectRoutes.get(key);
+      if (route) this.projectRoutes.set(key, { ...route, main: peer.name });
+    }
   }
 
   private async notifyProjectMainChange(route: import("./protocol.js").ProjectRoute): Promise<void> {
@@ -1280,10 +1348,10 @@ export class Broker {
     }
     if (conn.peer) throw new BridgeError("bad_request", "already registered");
     if (isPluginCacheCwd(String(p.cwd ?? ""))) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
-    const name = this.uniqueName(p.name);
+    if (p.subagent && !p.jobAgent) throw new BridgeError("bad_request", "Native subagents cannot register as top-level bridge sessions.");
     const peer: PeerInfo = {
       id: String(p.id),
-      name,
+      name: p.name,
       agent: p.agent,
       cwd: String(p.cwd ?? ""),
       pid: Number(p.pid),
@@ -1311,6 +1379,13 @@ export class Broker {
       } : {}),
     };
     if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
+    // Recover the identity before allocating a name. Arrival order cannot swap an
+    // established suffixed session with another session's base name on reconnect.
+    const identity = registrationIdentity(peer);
+    const liveOwner = this.localPeers().find(old => old.agent === peer.agent && (peer.sessionId ? old.sessionId === peer.sessionId :
+      (old.pid !== peer.pid || old.id === peer.id) && identity && identity === registrationIdentity(old)));
+    const remembered = this.store.namesFor(peer).find(name => name.replace(/-\d+$/, "") === p.name.replace(/-\d+$/, "") && !this.connByName(name));
+    peer.name = liveOwner?.name ?? this.uniqueName(remembered ?? p.name);
     this.store.rememberSession(peer, this.now());
     conn.peer = peer;
     const aliases = this.replaceStale(conn, peer);
@@ -1332,7 +1407,7 @@ export class Broker {
     }
     this.assertQueueRegistration(conn, peer, registration);
     conn.mailReady = registration;
-    this.log.info("peer joined", { name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
+    this.log.info("peer joined", { name: peer.name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
     this.replayMail(conn, peer, () => { this.queueCurrentDecisions(peer); });
@@ -1369,6 +1444,7 @@ export class Broker {
   private async onUpdatePeer(conn: Conn, args: RequestMap["updatePeer"][0]): Promise<PeerInfo> {
     if (typeof args.cwd === "string" && isPluginCacheCwd(args.cwd)) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const peer = this.requirePeer(conn);
+    const previousIdentity = { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name };
     const previousName = peer.name;
     const aliases: string[] = [];
     let replay = args.unavailable === false;
@@ -1384,6 +1460,7 @@ export class Broker {
     if (args.sessionId !== undefined) {
       const previousKey = this.decisionSessionKey(peer);
       peer.sessionId = args.sessionId;
+      this.transferProjectMain(previousIdentity, peer);
       this.store.decisions.linkSession(previousKey, this.decisionSessionKey(peer));
       if (peer.sessionId) aliases.push(...this.replaceStale(conn, peer));
     }
@@ -1405,6 +1482,7 @@ export class Broker {
     this.store.rememberSession(peer, this.now());
     this.store.rememberName(peer, this.now());
     aliases.push(...this.restoreNames(peer, args.sessionId !== undefined));
+    this.transferProjectMain({ ...previousIdentity, sessionId: peer.sessionId }, peer);
     replay ||= previousName !== peer.name || aliases.length > 0;
     if (replay || args.sessionId !== undefined) {
       const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: ++conn.mailGeneration };
@@ -1437,6 +1515,7 @@ export class Broker {
       const sameProcess = (old.pid !== peer.pid || old.id === peer.id) && identity && identity === registrationIdentity(old) &&
         (!old.sessionId || !peer.sessionId || old.sessionId === peer.sessionId);
       if (!sameSession && !sameProcess) continue;
+      const previousIdentity = { id: old.id, agent: old.agent, sessionId: old.sessionId, name: old.name };
       this.store.rememberName(old, this.now());
       this.log.info("session connected again from a new server; replacing the old connection", { name: old.name, by: peer.name, sessionId: peer.sessionId });
       this.emit(c, "replaced", { by: peer.name });
@@ -1452,6 +1531,7 @@ export class Broker {
         // Either way, mail that waited under the old name is the session's.
         aliases.push(oldName);
       }
+      this.transferProjectMain(previousIdentity, peer);
     }
     return aliases;
   }
@@ -1564,7 +1644,7 @@ export class Broker {
     if (to === BROADCAST) {
       if (sender.jobAgent) throw new BridgeError("unauthorized", "job runners cannot broadcast to independent sessions");
       const ownNames = new Set([sender.name, ...this.store.namesFor(sender)]);
-      const masters = new Set([...this.projectMains.values(), ...this.storedJobs().filter((job) => !job.parentJob && job.status === "running").map(primaryFor)].filter((name) => PEER_NAME_PATTERN.test(name)));
+      const masters = new Set([...this.projectMains.values()].map(peer => peer.name).concat(this.storedJobs().filter((job) => !job.parentJob && job.status === "running").map(primaryFor)).filter((name) => PEER_NAME_PATTERN.test(name)));
       const eligible = this.store.broadcastRecipients(this.now(), masters);
       const offline = (name: string) => !ownNames.has(name) && !this.recipientConn(name);
       const queued = eligible.queued.filter(offline), skipped = eligible.skipped.filter(offline);
@@ -1722,6 +1802,38 @@ export class Broker {
       throw new BridgeError("bad_request", "if_no_newer_than must identify a message exchanged by this session.");
     }
     conversationId ||= anchor?.conversationId || args.messageId || randomUUID();
+    let jobControlAuthorized = false;
+    if (conversationId === DASHBOARD_JOB_CONVERSATION) {
+      let command: unknown;
+      try { command = JSON.parse(body); } catch { /* Fail closed for malformed control messages. */ }
+      const reject = () => {
+        this.log.warn("rejected unauthorized dashboard job command", { from: sender.name, to });
+        throw new BridgeError("unauthorized", "Only the owner dashboard or a controlling job master can send this command.");
+      };
+      if (!isRecord(command)) reject();
+      const control = command as Record<string, unknown>;
+      if (control.type === "result") {
+        const parent = replyTo ? this.store.byId(replyTo) : null;
+        let request: unknown;
+        try { request = parent && JSON.parse(parent.body); } catch { /* Invalid reply anchor. */ }
+        if (!parent || parent.conversationId !== DASHBOARD_JOB_CONVERSATION || parent.recipient !== sender.name ||
+            parent.from.name !== to || !isRecord(request) || request.type === "result" || request.requestId !== control.requestId) reject();
+      } else {
+        if (!["message", "settings", "handoff"].includes(String(control.type)) || typeof control.requestId !== "string" || typeof control.job !== "string") reject();
+        const target = this.connByName(to)?.peer;
+        if (!target || target.jobAgent || target.subagent) reject();
+        if (conn.peer) {
+          const records = this.storedJobs();
+          // Handoff can move a tree or all jobs, so authorize every selected root, not the display job.
+          const selected = control.type === "handoff" ? records.filter(j => !j.parentJob &&
+            this.groups.canControl(target!, j, this.localPeers()) && (control.jobs === undefined || control.jobs === "all" ||
+              Array.isArray(control.jobs) && (control.jobs.includes(j.name) || control.jobs.includes(j.id)))) :
+            records.filter(j => j.name === control.job || j.id === control.job);
+          if (!selected.length || selected.some(j => !this.groups.canControl(sender, j, this.localPeers()))) reject();
+        }
+        jobControlAuthorized = true;
+      }
+    }
     if (own && (to === own.rootName || to === own.owner || this.groups.members(own, this.localPeers()).some((p) => p.name === to) || mastersFor(own).includes(to))) conversationId = this.jobConversation(own, to, conversationId);
 
     const id = args.messageId ?? (sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX)
@@ -1738,6 +1850,7 @@ export class Broker {
       body,
       createdAt,
       readAt: null,
+      ...(jobControlAuthorized ? { jobControlAuthorized: true } : {}),
     };
     let remoteAddress = to.includes("/") ? to : undefined;
     if (to.startsWith("project:")) {
@@ -1927,6 +2040,7 @@ export class Broker {
   }
 
   private receiveRemote(message: BridgeMessage): { delivered: boolean; recipient: string; stored: boolean; recovered?: boolean; readAt: number | null } {
+    message = { ...message, jobControlAuthorized: undefined };
     const target = this.recipientConn(message.recipient);
     if (target?.peer) message = { ...message, recipient: target.peer.name };
     const existing = this.store.byId(message.id);

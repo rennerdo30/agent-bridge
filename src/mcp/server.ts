@@ -47,6 +47,8 @@ import { loadOrCreateToken } from "../core/token.js";
 import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, isUnsupportedOperation, SIBLING_CONVERSATION_PREFIX, TRANSFER_PROGRESS_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
 import { formatInboxMessages, formatProjectRoute, formatReplyRestrictions, formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer, formatVersionSkew } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
+import { reportModActivity } from "./hook-ownership.js";
+import { CodexLineageLookup, codexCallIdentity, type CodexCallIdentity } from "./codex-lineage.js";
 import { buildHookResponse, discardFinishedNotes, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, type Access } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
@@ -157,6 +159,8 @@ export interface ServerContext {
   activity?: (state: Activity) => void;
   /** Called with host-provided session metadata seen on any tool call. */
   observeMeta?: (meta: Record<string, unknown> | undefined) => Promise<void>;
+  /** Native children share the pane server; classify before any session side effect. */
+  admitCodex?: (meta?: Record<string, unknown>, hook?: CodexCallIdentity) => boolean;
   /** Record the real project directory (from hook input or tool-call metadata). */
   learnCwd?: (projectDir: string) => Promise<void>;
   /** Background subagents started by this session. */
@@ -254,6 +258,8 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     return configRoot;
   };
   const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? projectConfigRoot(cwd) : undefined);
+  const mobileAtStartup = cfg.mobile;
+  const mobilePortAtStartup = cfg.dashboardPort;
   const delegated = currentDelegateDepth() > 0;
   const internal = isInternalBridgeProcess();
   log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, internal, version: APP_VERSION, node: process.version });
@@ -324,6 +330,11 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     };
   }
   if (agent === "codex" && node) {
+    const lineage = new CodexLineageLookup();
+    ctx.admitCodex = (meta, hook) => {
+      const call = codexCallIdentity(meta, hook);
+      return !call.agentId && Boolean(call.threadId && lineage.classify(call.threadId, call.transcript) === "main");
+    };
     const waker = new CodexWaker(node, cfg, log.child("wake"));
     ctx.activity = (s) => {
       node.setActivity(s);
@@ -331,7 +342,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     };
     ctx.observeMeta = async (meta) => {
       // Codex attaches the thread id to every tools/call as _meta.threadId ...
-      const id = meta?.threadId ?? meta?.sessionId;
+      const id = meta?.threadId;
       if (typeof id === "string" && id) {
         waker.setThreadId(id);
         await node.setSessionId(id).catch(() => {});
@@ -415,7 +426,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       // Running-job notes remain in explicit inbox reads and history (see JobManager.fromSubagent).
       !ctx.jobs?.isNote(m) &&
       shouldWakeClaudeMessage(node, cfg, m);
-    rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"));
+    rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"), (event) => reportModActivity(ctx, event));
     try {
       await rewake.start();
       ctx.rewakeAvailable = true;
@@ -433,12 +444,24 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
 
   /** Web dashboard hosted by this process, if any. */
   let dashboard: Promise<import("../cli/dashboard.js").DashboardController> | null = null;
+  let mobileDashboard: Promise<import("../mobile/activation.js").MobileActivation | undefined> | null = null;
+  let mobileUnavailable: (() => string) | undefined;
   const ensureDashboard = async (force: boolean): Promise<DashboardInfo | null> => {
     try {
       if (!force && !cfg.dashboard) return null;
+      if (mobileAtStartup && node) {
+        try {
+          mobileDashboard ??= import("../mobile/activation.js").then(({ configuredMobileDashboard }) => configuredMobileDashboard(node, mobileAtStartup,
+            { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }));
+          const mobile = await mobileDashboard, info = await mobile?.start();
+          if (info && mobile?.status() === "ready") return info;
+          mobileUnavailable = mobile?.status ?? (() => "source_unavailable");
+        } catch { mobileUnavailable = () => "restart_required"; }
+      }
       dashboard ??= import("../cli/dashboard.js").then(({ DashboardController }) =>
-        new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
-      return await (await dashboard).ensure();
+        new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...(mobileUnavailable ? { mobileStatus: () => mobileUnavailable!() } : {}) }));
+      const info = await (await dashboard).ensure();
+      return mobileUnavailable ? (await import("../cli/dashboard.js")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: (err as Error).message, port: cfg.dashboardPort });
       return null;
@@ -481,6 +504,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     await killAllDelegates();
     await mcp.close().catch(() => {});
     await dashboard?.then(controller => controller.close()).catch(() => {});
+    await mobileDashboard?.then(controller => controller?.close()).catch(() => {});
     await rewake?.stop().catch(() => {});
     await antigravityHooks?.stop().catch(() => {});
     await node?.stop().catch(() => {});
@@ -534,7 +558,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       // `claude -p` (scripts, other plugins' background calls) loads every plugin: joining would show a
       // phantom session and could take mail meant for real sessions. A bridge tool call still connects.
       log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
-    } else if (cwdKnown) {
+    } else if (cwdKnown && agent !== "codex") {
       void join();
     } else {
       // Hooks and tool metadata supply the real project. Validation-only hosts never join.
@@ -570,6 +594,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     <A>(name: string, fn: (args: A, extra: ToolExtra) => Promise<CallToolResult>) =>
     async (args: A, extra: ToolExtra): Promise<CallToolResult> => {
       log.debug("tool call", { tool: name, args: args as Record<string, unknown> });
+      if (ctx.admitCodex && !ctx.admitCodex(extra._meta)) return text("Native Codex child or unverified thread: use the parent session's bridge. Missing main-thread lineage may be retried once its rollout header is available.", true);
       // Replaced by another server of this session, yet called: this is the one the session uses (see reclaim).
       if (name !== "health" && ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: (err as Error).message }));
       await ctx.observeMeta?.(extra._meta);
@@ -1481,7 +1506,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         : "";
       return text(
         t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote + approvalNote,
-        outcome === "unknown" || outcome === "no-session",
+        outcome === "unknown" || outcome === "no-session" || outcome === "stopping" || outcome === "cancelled-before-start",
       );
     }),
   );
@@ -1536,23 +1561,28 @@ ${res.text || t("delegate.empty")}`, res.isError);
         cwd: z.string().optional(),
         agent_id: z.string().optional(),
         prompt: z.string().optional(),
+        prompt_id: z.string().optional(),
+        transcript_path: z.string().optional(),
       },
     },
-    async (a: { event: string; session_id?: string; stop_hook_active?: boolean | string; cwd?: string; agent_id?: string; prompt?: string }, extra: ToolExtra) => {
+    async (a: { event: string; session_id?: string; stop_hook_active?: boolean | string; cwd?: string; agent_id?: string; prompt?: string; prompt_id?: string; transcript_path?: string }, extra: ToolExtra) => {
       // An unsubstituted "${...}" template means the host had no value for that field.
       const given = (v: string | undefined) => (v && !v.startsWith("${") ? v : null);
       try {
+        const identity = codexCallIdentity(extra._meta, { threadId: given(a.session_id), agentId: given(a.agent_id), transcript: given(a.transcript_path) });
+        if (given(a.agent_id) || ctx.admitCodex && !ctx.admitCodex(extra._meta, identity)) return text("{}");
         const out = await buildHookResponse(ctx, {
           event: a.event as HookEvent,
-          sessionId: given(a.session_id),
+          sessionId: ctx.agent === "codex" ? identity.threadId ?? null : given(a.session_id),
           stopHookActive: a.stop_hook_active === true || a.stop_hook_active === "true",
           cwd: given(a.cwd),
           subagent: Boolean(given(a.agent_id)),
           prompt: given(a.prompt),
+          promptId: given(a.prompt_id),
           signal: extra.signal,
-          prepare: async () => {
+          prepare: async (current) => {
             if (ctx.node?.wasReplaced) await ctx.node.reclaim();
-            await ctx.observeMeta?.(extra._meta);
+            if (current()) await ctx.observeMeta?.(ctx.agent === "codex" ? { ...extra._meta, threadId: identity.threadId } : extra._meta);
           },
         });
         return text(JSON.stringify(out));
