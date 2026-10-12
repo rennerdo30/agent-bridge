@@ -258,6 +258,8 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     return configRoot;
   };
   const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? projectConfigRoot(cwd) : undefined);
+  const mobileAtStartup = cfg.mobile;
+  const mobilePortAtStartup = cfg.dashboardPort;
   const delegated = currentDelegateDepth() > 0;
   const internal = isInternalBridgeProcess();
   log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, internal, version: APP_VERSION, node: process.version });
@@ -442,12 +444,24 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
 
   /** Web dashboard hosted by this process, if any. */
   let dashboard: Promise<import("../cli/dashboard.js").DashboardController> | null = null;
+  let mobileDashboard: Promise<import("../mobile/activation.js").MobileActivation | undefined> | null = null;
+  let mobileUnavailable: (() => string) | undefined;
   const ensureDashboard = async (force: boolean): Promise<DashboardInfo | null> => {
     try {
       if (!force && !cfg.dashboard) return null;
+      if (mobileAtStartup && node) {
+        try {
+          mobileDashboard ??= import("../mobile/activation.js").then(({ configuredMobileDashboard }) => configuredMobileDashboard(node, mobileAtStartup,
+            { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }));
+          const mobile = await mobileDashboard, info = await mobile?.start();
+          if (info && mobile?.status() === "ready") return info;
+          mobileUnavailable = mobile?.status ?? (() => "source_unavailable");
+        } catch { mobileUnavailable = () => "restart_required"; }
+      }
       dashboard ??= import("../cli/dashboard.js").then(({ DashboardController }) =>
-        new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
-      return await (await dashboard).ensure();
+        new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...(mobileUnavailable ? { mobileStatus: () => mobileUnavailable!() } : {}) }));
+      const info = await (await dashboard).ensure();
+      return mobileUnavailable ? (await import("../cli/dashboard.js")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: (err as Error).message, port: cfg.dashboardPort });
       return null;
@@ -490,6 +504,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     await killAllDelegates();
     await mcp.close().catch(() => {});
     await dashboard?.then(controller => controller.close()).catch(() => {});
+    await mobileDashboard?.then(controller => controller?.close()).catch(() => {});
     await rewake?.stop().catch(() => {});
     await antigravityHooks?.stop().catch(() => {});
     await node?.stop().catch(() => {});
