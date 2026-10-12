@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { BridgeNode } from "./node.js";
-import type { BridgeMessage } from "./protocol.js";
+import type { BridgeMessage, SendArgs, SendResult } from "./protocol.js";
 
 /** Dashboard commands and replies stay out of the agent's chat and wake-up paths. */
 export const DASHBOARD_JOB_CONVERSATION = "jobctl-dashboard";
@@ -25,7 +25,8 @@ export function messageDashboardJob(node: BridgeNode, owner: string, job: string
   return controlDashboardJob(node, owner, job, { type: "message", body });
 }
 
-export async function controlDashboardJob(node: BridgeNode, owner: string, job: string, command: DashboardJobCommand): Promise<JobMessageResult> {
+export async function controlDashboardJob(node: BridgeNode, owner: string, job: string, command: DashboardJobCommand,
+  send: (args: SendArgs) => Promise<SendResult> = args => node.send(args, { quiet: true })): Promise<JobMessageResult> {
   if (!(await node.peers()).some((p) => p.name === owner)) throw new JobControlError("The owning session is not connected. Reopen it to continue this subagent.", "offline");
   const requestId = randomUUID();
   let receive!: (m: BridgeMessage) => void;
@@ -46,7 +47,7 @@ export async function controlDashboardJob(node: BridgeNode, owner: string, job: 
   // A send may fail before the reply is awaited.
   reply.catch(() => {});
   try {
-    await node.send({ to: owner, body: JSON.stringify({ ...command, requestId, job }), conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true });
+    await send({ to: owner, body: JSON.stringify({ ...command, requestId, job }), conversationId: DASHBOARD_JOB_CONVERSATION });
     return await reply;
   } finally {
     clearTimeout(timer);
