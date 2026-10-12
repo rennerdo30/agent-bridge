@@ -27,6 +27,7 @@ import { recordWorktreeProcessProofWithRetry } from "../core/worktree-state.js";
 import { acquireStartup } from "../core/startup-admission.js";
 import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { guardRunnerErrors } from "./job-runner-errors.js";
+import { configurePathDisplay } from "../core/display-paths.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
 const SEND_ATTEMPTS = 30;
@@ -345,6 +346,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       save();
     }, PROGRESS_SAVE_MS);
   };
+  configurePathDisplay(spec.cfg.pathDisplay ?? { preferAlias: true });
   const rc: RunContext = { agent: spec.byAgent, cfg: spec.cfg, home, log, me: () => owner, cwd: () => spec.cwd, jobs: sink, jobNode: node };
 
   let args = spec.args;

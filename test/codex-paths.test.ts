@@ -8,24 +8,43 @@ import { delegateToCodex } from "../src/core/delegate.js";
 import { delegateToCodexAppServer } from "../src/core/codex-appserver.js";
 import { nullLogger } from "../src/core/logger.js";
 import { preferredDriveFixture } from "./preferred-drive-fixture.js";
+import { configurePathDisplay } from "../src/core/display-paths.js";
 
 describe("Codex drive aliases", () => {
-  it("prefers verified E: display and preserves full-access prompt spellings", () => {
+  it("shares discovered whole-drive mappings across notes and full-access prompts, with opt-out", () => {
+    const roots: Record<string, string> = { "X:\\": "C:\\", "Q:\\": "D:\\", "R:\\": "C:\\subfolder" };
+    const restore = preferredDriveFixture(roots), canonical = (path: string) => roots[path] ?? path;
+    try {
+      const mappings = codexDriveMappings("Read C:/repo and D:/report", "win32", canonical);
+      expect(mappings).toEqual([{ alias: "Q:\\", real: "D:\\" }, { alias: "X:\\", real: "C:\\" }]);
+      const prompt = "Read C:/repo and write D:/new.md";
+      const formatted = codexPathPrompt(prompt, mappings, true);
+      expect(formatted).toContain("Read X:/repo and write Q:/new.md");
+      expect(codexPathPrompt(formatted, mappings, true)).toBe(formatted);
+      expect(codexPathReport(mappings)).toContain("preferred Q:\\");
+      expect(codexPathReport(mappings)).toContain("preferred X:\\");
+      configurePathDisplay({ preferAlias: false });
+      expect(codexPathPrompt(prompt, mappings, true)).toContain(prompt);
+      expect(codexPathReport(mappings)).toContain("Alias display preference is disabled");
+      expect(codexPathReport(mappings)).not.toContain("preferred");
+    } finally { configurePathDisplay({ preferAlias: true }); restore(); }
+  });
+  it("prefers verified X: display and preserves full-access prompt spellings", () => {
     const restore = preferredDriveFixture();
     try {
-      const mappings = [{ alias: "E:\\", real: "Q:\\" }];
-      const prompt = "Read E:/repo and write Q:/future.md";
+      const mappings = [{ alias: "X:\\", real: "Q:\\" }];
+      const prompt = "Read X:/repo and write Q:/future.md";
       const text = codexPathPrompt(prompt, mappings, true);
-      expect(text).toContain("Read E:/repo and write E:/future.md");
+      expect(text).toContain("Read X:/repo and write X:/future.md");
       expect(codexPathPrompt(text, mappings, true)).toBe(text);
-      expect(codexPathReport(mappings)).toContain("preferred E:\\ (verified drive alias)");
+      expect(codexPathReport(mappings)).toContain("preferred X:\\ (verified drive alias)");
       expect(codexPathReport(mappings)).not.toContain("Q:\\");
     } finally { restore(); }
   });
   it("replaces previous mapping notes without self-equations or duplicates", () => {
-    const mappings = [{ alias: "E:\\", real: "Q:\\" }];
+    const mappings = [{ alias: "X:\\", real: "Q:\\" }];
     const report = codexPathReport(mappings)!;
-    const once = codexPathPrompt(`Write E:/new.md\n${report}`, mappings);
+    const once = codexPathPrompt(`Write X:/new.md\n${report}`, mappings);
     expect(codexPathPrompt(once, mappings)).toBe(once);
     expect(once).not.toContain("Q:\\ = Q:\\");
     expect(once.match(/Windows drive aliases resolved/g)).toHaveLength(1);

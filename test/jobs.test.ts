@@ -30,8 +30,8 @@ it("formats report bodies and failure diagnostics using the preferred drive", ()
   const restore = preferredDriveFixture();
   try {
     const report = jobReport({ name: "saved", agent: "codex", model: null, sessionId: null }, "failed", 1, "Log: `Q:/run.log`", "could not start Q:/work");
-    expect(report).toContain("Cause: could not start E:/work");
-    expect(report).toContain("Log: `E:/run.log`");
+    expect(report).toContain("Cause: could not start X:/work");
+    expect(report).toContain("Log: `X:/run.log`");
   } finally { restore(); }
 });
 

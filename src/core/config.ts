@@ -6,6 +6,7 @@ import { AGENT_KINDS, type AgentKind } from "./protocol.js";
 import { isRecord, readJsonStore, writeJsonStore } from "./json-store.js";
 import { DEFAULT_NETWORK_CONFIG, parseNetworkConfig, type NetworkConfig } from "../network/config.js";
 import { DEFAULT_QUESTION_ALERTS, questionAlertSettingsSchema, type QuestionAlertSettings } from "./owner-questions.js";
+import { configurePathDisplay, type PathDisplaySettings } from "./display-paths.js";
 
 /**
  * How incoming messages reach a Claude Code session.
@@ -36,6 +37,8 @@ export interface HistoryAnswerConfig {
 const DEFAULT_HISTORY_ANSWER: HistoryAnswerConfig = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
 
 export interface BridgeConfig {
+  /** Home-wide spelling preference, shared by sessions, CLI helpers and runners. */
+  pathDisplay: PathDisplaySettings;
   history: { ingest: boolean; budgetBytes: number };
   questionAlerts: QuestionAlertSettings;
   projectGroups: boolean;
@@ -103,6 +106,7 @@ export interface BridgeConfig {
 }
 
 export const DEFAULT_CONFIG: BridgeConfig = {
+  pathDisplay: { preferAlias: true },
   history: { ingest: true, budgetBytes: 32 * 1024 ** 3 },
   questionAlerts: DEFAULT_QUESTION_ALERTS,
   projectGroups: true,
@@ -326,6 +330,8 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
 
   const d = DEFAULT_CONFIG;
   const cfg: BridgeConfig = {
+    // Helper reads using another agent kind must not reset this process-wide preference.
+    pathDisplay: isRecord(file.pathDisplay) && typeof file.pathDisplay.preferAlias === "boolean" ? { preferAlias: file.pathDisplay.preferAlias } : d.pathDisplay,
     history: {
       ingest: env.AGENT_BRIDGE_HISTORY_INGEST === "false" || env.AGENT_BRIDGE_HISTORY_INGEST === "0" ? false : !(isRecord(file.history) && file.history.ingest === false),
       budgetBytes: isRecord(file.history) && Number.isSafeInteger(file.history.budgetBytes) && Number(file.history.budgetBytes) >= 0 ? Number(file.history.budgetBytes) : d.history.budgetBytes,
@@ -374,6 +380,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     network: pick("network", null, parseNetworkConfig) ?? d.network,
   };
   log.debug("effective config", { ...cfg });
+  configurePathDisplay(cfg.pathDisplay);
   return cfg;
 }
 

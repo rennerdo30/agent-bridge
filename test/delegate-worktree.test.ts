@@ -36,7 +36,7 @@ describe("delegated worktree contracts", () => {
     vi.spyOn(DELEGATION_TARGETS.codex, "run").mockResolvedValue({ sessionId: "saved", text: "Output Q:/future/result.md", isError: false, details: {} });
     const wt = { repoRoot: home, path: root, cwd: root, branch: "saved", base: "base" };
     const result = await runDelegate(context(), "codex", { title: "paths", prompt: "task", access: "read", _worktree: wt }, new AbortController().signal, undefined, true);
-    expect(result.text).toContain("Output E:/future/result.md");
+    expect(result.text).toContain("Output X:/future/result.md");
     expect(result.worktree?.path).toBe(root);
   });
   it.each(["codex", "claude", "opencode"] as const)("fences implicit managed cwd jobs and invalidates prior shutdown proof for %s", async (target) => {

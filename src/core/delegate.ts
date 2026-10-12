@@ -511,7 +511,7 @@ export async function delegateToCodex(
 ): Promise<DelegateResult> {
   checkDepth(req.maxDelegateDepth);
   // Codex's Windows sandbox runs as a separate user that does not see per-user drive mappings (a mapped
-  // or subst'ed E: drive): commands fail with "no E: drive". Hand it the real path instead.
+  // or substituted drives): commands can fail because the alias is absent. Hand it the real path instead.
   req = { ...req, cwd: realFolder(req.cwd), prompt: codexExecutionPrompt(codexPathPrompt(req.prompt, codexDriveMappings(`${req.cwd}\n${req.prompt}`), req.sandbox === "danger-full-access"), req.sandbox) };
   // In ask mode the sandbox is read-only and every change goes through an approval the user answers;
   // without this hint Codex gives up at the sandbox instead of requesting the approval.
