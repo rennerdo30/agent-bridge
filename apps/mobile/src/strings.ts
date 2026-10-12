@@ -123,8 +123,8 @@ export const strings = {
     qrExpires: "QR expires ",
     sLeft: " s left",
     connectToThesePcAddresses: "Connect to these PC addresses",
-    normalPhoneTrustedHttpsRequiredNoFingerprintPinningOrTlsBypass:
-      "Normal phone-trusted HTTPS required. No fingerprint pinning or TLS bypass.",
+    normalPhoneTrustedHttpsRequired: "Normal phone-trusted HTTPS certificate required.",
+    pinnedPcKeyReview: "Compare the PC key with the desktop. Only the scanned keys are accepted; a mismatch stops pairing.",
     compareEveryDigitWithThePcSRequestOnlyTheDesktopOwner:
       "Compare every digit with the PC's request. Only the desktop owner can confirm this phone and its exact grants.",
     waitingForYourPc: "Waiting for your PC…",
@@ -191,7 +191,7 @@ export const strings = {
     app: "App ",
     gatewayApi: " · Gateway API ",
     privateLanTailscaleHttpsNoRelayPinningClaimOrContentDiskCache:
-      "Private LAN + Tailscale HTTPS. No relay, pinning claim or content disk cache.",
+      "Private LAN + Tailscale HTTPS. Scanned PC keys are pinned when provided. Content stays in memory.",
     ownerSetupDocsMobileSetupMdInTheDesktopCheckout: "Owner setup: docs/mobile/SETUP.md in the desktop checkout.",
     reactNativeExpoAndDependenciesRetainTheirPackageLicensesDeviceDistributionAnd:
       "React Native / Expo and dependencies retain their package licenses. Device distribution and provider acceptance remain pending.",

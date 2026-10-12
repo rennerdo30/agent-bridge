@@ -43,6 +43,6 @@ export interface Hello { apiVersion: 1; capabilities: Capability[]; transport: "
 export interface GatewayError { code: string; message: string; requestId: string; retryable: boolean; currentVersion?: string }
 export type PairingQr = { origin: string; origins: string[]; pcId: string; invitationId: string; nonce: string; expiresAt: number } & ({ v: 1; pins?: never } | { v: 2; pins: string[] });
 /** A display abbreviation only; transport always checks every byte of the full pin. */
-export function shortPin(pin: string): string { return pin.slice(0, 4) + "·" + pin.slice(4, 8) + "·" + pin.slice(8, 12) + "·" + pin.slice(12, 16); }
+export function shortPin(pin: string): string { return pin.slice(0, 4) + "Â·" + pin.slice(4, 8) + "Â·" + pin.slice(8, 12) + "Â·" + pin.slice(12, 16); }
 export interface PairingClaim { claimId: string; claimToken: string; comparisonCode: string; expiresAt: number }
 export type ClaimResult = { state: "pending" | "denied" | "expired" | "issued" } | { state: "approved"; credentials: Credentials };

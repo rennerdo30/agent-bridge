@@ -119,7 +119,7 @@ export function PairingScreen({ d }: { d: Dashboard }) {
                 />
               )}
               <AppText variant="caption" tone="textFaint">
-                {d.qr.pins ? "Compare the PC key with the desktop. Only the scanned keys are accepted; a mismatch stops pairing." : "Normal phone-trusted HTTPS certificate required."}
+                {d.qr.pins ? copyStrings.copy.pinnedPcKeyReview : copyStrings.copy.normalPhoneTrustedHttpsRequired}
               </AppText>
             </>
           )}

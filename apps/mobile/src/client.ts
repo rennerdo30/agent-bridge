@@ -21,7 +21,7 @@ export function exactPins(value: unknown): string[] {
 export function parseQr(payload: string, now = Date.now()): PairingQr {
   if (payload.length > 4096) throw new ClientFault("invalid_pairing");
   const q = JSON.parse(payload) as PairingQr;
-  if (!q || (q.v !== 1 && q.v !== 2) || typeof q.pcId !== "string" || q.pcId.length > 128 || !/^[\w-]{1,128}$/.test(q.invitationId) || !/^[\w-]{43}$/.test(q.nonce) || q.expiresAt <= now || q.expiresAt > now + 120_000 || Object.keys(q).some(k => !["v", "origin", "origins", "pcId", "invitationId", "nonce", "expiresAt", ...(q.v === 2 ? ["pins"] : [])].includes(k))) throw new ClientFault("invalid_pairing");
+  if (!q || (q.v !== 1 && q.v !== 2) || typeof q.pcId !== "string" || !q.pcId.length || q.pcId.length > 128 || typeof q.invitationId !== "string" || typeof q.nonce !== "string" || typeof q.origin !== "string" || !Number.isSafeInteger(q.expiresAt) || !/^[\w-]{1,128}$/.test(q.invitationId) || !/^[\w-]{43}$/.test(q.nonce) || q.expiresAt <= now || q.expiresAt > now + 120_000 || Object.keys(q).some(k => !["v", "origin", "origins", "pcId", "invitationId", "nonce", "expiresAt", ...(q.v === 2 ? ["pins"] : [])].includes(k))) throw new ClientFault("invalid_pairing");
   if (q.v === 2) q.pins = exactPins(q.pins);
   q.origins = exactOrigins(q.origins); if (!q.origins.includes(q.origin)) throw new ClientFault("invalid_pairing"); return q;
 }
