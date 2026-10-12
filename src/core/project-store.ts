@@ -121,7 +121,7 @@ const MIRROR_RECYCLE_MS = 5 * 60_000;
 interface IdleMirror { path: string; project: string; signature: string; newest: number; since: number }
 const idleMirrors = new Map<string, IdleMirror>();
 const mirrorFiles = (path: string): string => [path, `${path}-wal`]
-  .map((file) => { try { return fileSignature(statSync(file)); } catch { return "missing"; } }).join("|");
+  .map((file) => { try { return fileSignature(statSync(file, { bigint: true })); } catch { return "missing"; } }).join("|");
 const NEWER_PRIMARY = "SELECT 1 FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE c.project=? AND r.id>? LIMIT 1";
 const NEWER_ASSOCIATED = "SELECT 1 FROM conversation_memberships m JOIN conversation_records r ON r.conversation=m.conversation WHERE m.project=? AND r.id>? LIMIT 1";
 function mirrorIdle(main: DatabaseSync, key: string): boolean {

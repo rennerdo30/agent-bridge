@@ -1,13 +1,13 @@
 import { packedRunRecords } from "./finished-run-bundles.js";
 import { readFile } from "node:fs/promises";
-import { lstatSync, readdirSync, realpathSync, statSync, type Stats } from "node:fs";
+import { lstatSync, readdirSync, realpathSync, statSync, type BigIntStats } from "node:fs";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { JOBS_FILE } from "./constants.js";
 import { indexedJobProjectionCurrent, readIndexedJobs, type ArchiveSelection } from "./job-archive-index.js";
 import { isRecord } from "./json-store.js";
 import { RUNS_DIR_NAME, type RunMeta } from "./runfeed.js";
 import { safeFile } from "./transcripts/common.js";
-import { cloneJson, fileSignature, readJsonSnapshot } from "./file-cache.js";
+import { cloneJson, fileSignature, fileTimeMs, readJsonSnapshot } from "./file-cache.js";
 import { drainScan, drainScanResponsive } from "./responsive-scan.js";
 
 export const DEFAULT_RUN_PAGE_SIZE = 50;
@@ -46,7 +46,7 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
   const records = new Map<string, RunLogRecord>();
   const signatures: string[] = [];
   let complete = !responsive || Boolean(warmWitness), metadataBytes = 0;
-  const directories: { archived: boolean; files: { name: string; original: string; file: string; st: Stats }[] }[] = [];
+  const directories: { archived: boolean; files: { name: string; original: string; file: string; st: BigIntStats }[] }[] = [];
   for (const archived of [true, false]) {
     const dir = archived ? join(root, "archive") : root;
     let canonicalDir: string;
@@ -61,10 +61,10 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
     const localFile = (entry: import("node:fs").Dirent) => {
       const file = join(canonicalDir, entry.name);
       try {
-        const direct = lstatSync(file);
+        const direct = lstatSync(file, { bigint: true });
         return direct.isFile() ? { file, st: direct } : direct.isSymbolicLink() ? (() => {
           const actual = safeFile(root, file, canonicalRoot);
-          return actual ? { file: actual, st: statSync(actual) } : null;
+          return actual ? { file: actual, st: statSync(actual, { bigint: true }) } : null;
         })() : null;
       } catch { return null; }
     };
@@ -79,7 +79,7 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
       if (!record) continue;
       if (warmWitness && !captureWarmRunParents(warmWitness, dirname(record.file))) complete = false;
       signatures.push(`${archived}:${name}:${record.file}:${fileSignature(record.st)}`);
-      if (extension === ".json") metadataBytes += record.st.size;
+      if (extension === ".json") metadataBytes += Number(record.st.size);
       selected.push({ name, original, ...record });
     }
     directories.push({ archived, files: selected });
@@ -112,7 +112,7 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
       try {
         if (!st.isFile()) continue;
         const key = original.slice(0, -".log".length);
-        const record = { name: key, file, updatedAt: st.mtimeMs, size: st.size, signature: fileSignature(st), archived, meta: metadata.get(`${key}.json`) ?? {} };
+        const record = { name: key, file, updatedAt: fileTimeMs(st.mtimeMs, st.mtimeNs), size: Number(st.size), signature: fileSignature(st), archived, meta: metadata.get(`${key}.json`) ?? {} };
         const previous = records.get(key);
         if (!previous || !archived || record.updatedAt >= previous.updatedAt) records.set(key, record);
       } catch { /* A concurrent archiver may have moved the file; retry on the next read. */ }
@@ -127,17 +127,17 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
   return yield* cloneRunRecords(result);
 }
 
-type DirectoryIdentity = { dev: number; ino: number };
+type DirectoryIdentity = { dev: bigint; ino: bigint };
 interface WarmRunWitness {
   root: string; canonicalRoot: string; alias: DirectoryIdentity;
   parents: Map<string, DirectoryIdentity>; valid: boolean;
 }
-function sameDirectory(st: Stats, identity: DirectoryIdentity): boolean {
+function sameDirectory(st: BigIntStats, identity: DirectoryIdentity): boolean {
   return st.dev === identity.dev && st.ino === identity.ino;
 }
 function captureWarmRunRoot(root: string, canonicalRoot: string): WarmRunWitness | undefined {
   try {
-    const alias = lstatSync(root), physical = lstatSync(canonicalRoot);
+    const alias = lstatSync(root, { bigint: true }), physical = lstatSync(canonicalRoot, { bigint: true });
     if ((!alias.isDirectory() && !alias.isSymbolicLink()) || !physical.isDirectory() || physical.isSymbolicLink() || realpathSync.native(root) !== canonicalRoot) return undefined;
     return { root, canonicalRoot, alias: { dev: alias.dev, ino: alias.ino }, parents: new Map([[canonicalRoot, { dev: physical.dev, ino: physical.ino }]]), valid: true };
   } catch { return undefined; }
@@ -149,7 +149,7 @@ function captureWarmRunParents(witness: WarmRunWitness, parent: string): boolean
   if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return witness.valid = false;
   try {
     for (let at = parent; !witness.parents.has(at); at = dirname(at)) {
-      const st = lstatSync(at);
+      const st = lstatSync(at, { bigint: true });
       if (!st.isDirectory() || st.isSymbolicLink()) return witness.valid = false;
       witness.parents.set(at, { dev: st.dev, ino: st.ino });
     }
@@ -169,19 +169,19 @@ function warmRunBatchParents(witness: WarmRunWitness, files: { file: string }[])
 function unchangedWarmRunParents(witness: WarmRunWitness, parents: Iterable<string> = [witness.canonicalRoot]): boolean {
   if (!witness.valid) return false;
   try {
-    const alias = lstatSync(witness.root);
+    const alias = lstatSync(witness.root, { bigint: true });
     if (!sameDirectory(alias, witness.alias) || realpathSync.native(witness.root) !== witness.canonicalRoot) return false;
     for (const path of parents) {
       const identity = witness.parents.get(path);
       if (!identity) return false;
-      const st = path === witness.root ? alias : lstatSync(path);
+      const st = path === witness.root ? alias : lstatSync(path, { bigint: true });
       if (!st.isDirectory() || st.isSymbolicLink() || !sameDirectory(st, identity)) return false;
     }
     return true;
   } catch { return false; }
 }
 /** Warm hits read no bytes. Guard ancestors around each bounded, nonsuspending stat batch. */
-function* stableWarmRunFiles(witness: WarmRunWitness, directories: { files: { file: string; st: Stats }[] }[]): Generator<void, boolean> {
+function* stableWarmRunFiles(witness: WarmRunWitness, directories: { files: { file: string; st: BigIntStats }[] }[]): Generator<void, boolean> {
   for (const directory of directories) {
     let index = 0;
     while (index < directory.files.length) {
@@ -192,7 +192,7 @@ function* stableWarmRunFiles(witness: WarmRunWitness, directories: { files: { fi
       do {
         const file = directory.files[index++]!;
         try {
-          const direct = lstatSync(file.file);
+          const direct = lstatSync(file.file, { bigint: true });
           if (!direct.isFile() || fileSignature(direct) !== fileSignature(file.st)) return false;
         } catch { return false; }
         checked++;
@@ -203,7 +203,7 @@ function* stableWarmRunFiles(witness: WarmRunWitness, directories: { files: { fi
   return unchangedWarmRunParents(witness);
 }
 
-function* stableRunFiles(root: string, directories: { files: { file: string; st: Stats }[] }[], canonicalRoot: string): Generator<void, boolean> {
+function* stableRunFiles(root: string, directories: { files: { file: string; st: BigIntStats }[] }[], canonicalRoot: string): Generator<void, boolean> {
   for (const directory of directories) for (const file of directory.files) {
     yield;
     if (!unchangedContainedFile(root, file.file, file.st, canonicalRoot)) return false;
@@ -218,9 +218,9 @@ function* cloneRunRecords(records: RunLogRecord[]): Generator<void, RunLogRecord
 }
 
 /** A yielding scan must not trust an entry witnessed before a suspension. */
-export function unchangedContainedFile(root: string, file: string, before: Stats, canonicalRoot?: string): boolean {
+export function unchangedContainedFile(root: string, file: string, before: BigIntStats, canonicalRoot?: string): boolean {
   try {
-    const direct = lstatSync(file);
+    const direct = lstatSync(file, { bigint: true });
     return direct.isFile() && fileSignature(direct) === fileSignature(before) &&
       safeFile(root, file, canonicalRoot) === file;
   } catch { return false; }
@@ -249,7 +249,7 @@ export async function readRunStarts(home: string): Promise<{ job: string; jobSta
       if (contained) {
         const previous = paths.get(original);
         if (previous && original.endsWith(".log")) {
-          try { if (statSync(previous).mtimeMs > statSync(contained).mtimeMs) continue; } catch { continue; }
+          try { if (statSync(previous, { bigint: true }).mtimeMs > statSync(contained, { bigint: true }).mtimeMs) continue; } catch { continue; }
         }
         paths.set(original, contained);
       }
@@ -268,18 +268,19 @@ export async function readRunStarts(home: string): Promise<{ job: string; jobSta
         try {
           // Recheck after enumeration and immediately before an asynchronous read.
           // A newly inserted link must still pass the same storage-root containment guard.
-          const direct = lstatSync(file);
+          const direct = lstatSync(file, { bigint: true });
           const readable = direct.isFile() ? file : direct.isSymbolicLink() ? safeFile(root, file, canonicalRoot) : null;
           if (!readable) return;
-          const before = direct.isFile() ? direct : statSync(readable);
+          const before = direct.isFile() ? direct : statSync(readable, { bigint: true });
           if (!before.isFile()) return;
           const raw = await readFile(readable, "utf8");
-          const after = lstatSync(readable);
+          const after = lstatSync(readable, { bigint: true });
           if (!after.isFile() || fileSignature(after) !== fileSignature(before)) return;
           const meta: unknown = JSON.parse(raw);
           if (!isRecord(meta) || typeof meta.job !== "string") return;
           const m = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(name);
-          const startedAt = m ? Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!) : statSync(log).mtimeMs;
+          const logStat = m ? undefined : statSync(log, { bigint: true });
+          const startedAt = m ? Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!) : fileTimeMs(logStat!.mtimeMs, logStat!.mtimeNs);
           starts.set(runName, { job: meta.job, startedAt, ...(typeof meta.jobStartedAt === "number" ? { jobStartedAt: meta.jobStartedAt } : {}) });
         } catch { /* Concurrent archival or malformed metadata contributes no evidence. */ }
       }));
@@ -353,8 +354,8 @@ export function* historyJobsSteps(home: string, responsive = false, selection: A
   const active = safeFile(home, path, canonicalHome);
   if (!active) return out;
   // The job manager replaces jobs.json atomically; on Windows a stat during the replace can fail for a moment.
-  let st: Stats;
-  try { st = statSync(active); } catch { return out; }
+  let st: BigIntStats;
+  try { st = statSync(active, { bigint: true }); } catch { return out; }
   if (responsive) yield;
   if (!unchangedContainedFile(home, active, st, canonicalHome)) return out;
   let value: unknown;
@@ -373,7 +374,7 @@ export function* historyJobsSteps(home: string, responsive = false, selection: A
   return out;
 }
 
-function* stableHistoryFiles(home: string, files: { file: string; st: Stats }[]): Generator<void, boolean> {
+function* stableHistoryFiles(home: string, files: { file: string; st: BigIntStats }[]): Generator<void, boolean> {
   for (const file of files) { yield; if (!unchangedContainedFile(home, file.file, file.st, home)) return false; }
   return true;
 }

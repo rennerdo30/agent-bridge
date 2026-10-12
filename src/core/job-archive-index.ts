@@ -151,7 +151,7 @@ export function storeJobRecords(path: string, jobs: readonly unknown[], archived
     try {
       const now = Date.now();
       if (previous.length) {
-        const published = existsSync(path) && db.prepare("SELECT signature FROM archive_projection WHERE version=1").get()?.signature === fileSignature(statSync(path));
+        const published = existsSync(path) && db.prepare("SELECT signature FROM archive_projection WHERE version=1").get()?.signature === fileSignature(statSync(path, { bigint: true }));
         putJobRecords(db, previous, now, !published);
       }
       putJobRecords(db, jobs, now, true, archived);
@@ -172,7 +172,7 @@ export const archiveIndexCounters = { reads: 0, decoded: 0 };
 export function readIndexedJobs(path: string, selection: ArchiveSelection = {}): IndexedJobSnapshot {
   const file = jobArchivePath(path);
   physicalArchivePath(file); physicalArchivePath(join(dirname(path), "archive"));
-  const signature = [file, `${file}-wal`].map(p => existsSync(p) ? fileSignature(statSync(p)) : "missing").join("|");
+  const signature = [file, `${file}-wal`].map(p => existsSync(p) ? fileSignature(statSync(p, { bigint: true })) : "missing").join("|");
   const key = `${file}:${Number(Boolean(selection.metadata))}:${Number(Boolean(selection.active))}:${Number(Boolean(selection.history))}:${JSON.stringify([selection.ids ? [...selection.ids].sort() : null, selection.names ? [...selection.names].sort() : null])}`;
   const saved = cache.get(key);
   if (saved?.signature === signature) { cache.delete(key); cache.set(key, saved); return saved; }
@@ -213,7 +213,7 @@ export function readIndexedJobs(path: string, selection: ArchiveSelection = {}):
  * An older writer's replacement invalidates this witness immediately. */
 export function markJobProjection(path: string, jobs: readonly unknown[], expectedSignature?: string): void {
   physicalArchivePath(path);
-  const signature = fileSignature(statSync(path)), db = openJobArchive(path, true)!;
+  const signature = fileSignature(statSync(path, { bigint: true })), db = openJobArchive(path, true)!;
   try {
     if (expectedSignature && signature !== expectedSignature) throw new Error("active jobs changed during archive import; retry later");
     db.exec("BEGIN IMMEDIATE");
@@ -234,12 +234,12 @@ export function indexedJobProjectionCurrent(path: string, expectedIndexSignature
   if (!existsSync(path)) return false;
   physicalArchivePath(path);
   const file = jobArchivePath(path);
-  const stat = (p: string) => existsSync(p) ? fileSignature(statSync(p)) : "missing";
+  const stat = (p: string) => existsSync(p) ? fileSignature(statSync(p, { bigint: true })) : "missing";
   const indexSignature = () => [stat(file), stat(`${file}-wal`)].join("|");
   const observedIndex = indexSignature();
   // A newer projection witness cannot authorize rows read from an older index.
   if (expectedIndexSignature !== undefined && expectedIndexSignature !== observedIndex) return false;
-  const active = fileSignature(statSync(path)), signature = [active, observedIndex].join("|");
+  const active = fileSignature(statSync(path, { bigint: true })), signature = [active, observedIndex].join("|");
   const saved = projectionChecks.get(path);
   if (saved?.signature === signature) return saved.current &&
     (expectedIndexSignature === undefined || indexSignature() === expectedIndexSignature);
