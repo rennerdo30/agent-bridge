@@ -27,7 +27,7 @@ const candidate = (id: string, version = APP_VERSION, overrides: Partial<PeerInf
 
 it("selects the newest compatible interactive local host and never equal, older or unknown releases", () => {
   expect(newestBrokerSuccessor([candidate("equal", "0.30.12"), candidate("older", "0.30.11")], "0.30.12")).toBeUndefined();
-  expect(newestBrokerSuccessor([candidate("new"), candidate("newest", "0.30.14")], "0.30.12")?.id).toBe("newest");
+  expect(newestBrokerSuccessor([candidate("new", "0.30.13"), candidate("newest", "0.30.14")], "0.30.12")?.id).toBe("newest");
   for (const version of [undefined, "unknown", "0.30.14-rc.1", "0.30.14+dev", "00.30.14"]) expect(compareBrokerVersions(version, APP_VERSION)).toBeNull();
   for (const overrides of [{ brokerEligible: false }, { brokerEligible: undefined }, { jobAgent: "codex" as const }, { subagent: true }, { agent: "other" as const }, { host: "remote" }, { storeCapabilities: undefined }]) {
     expect(newestBrokerSuccessor([candidate("excluded", "0.30.14", overrides)], "0.30.12")).toBeUndefined();
