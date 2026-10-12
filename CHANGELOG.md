@@ -8,7 +8,7 @@
 - opencode jobs in served/edit mode keep their private server's input open, preventing early shutdown and "fetch failed" errors in worktrees (AB-264).
 - Cancelling and resuming jobs wait briefly for another session's state write, avoiding unnecessary retry errors and delayed starts. A lock that stays busy still blocks the operation safely (AB-278).
 - Ordinary mail to jobs stays blocked while background indexing catches up; use the supervisor or an authorized sibling channel.
-- An eligible newer session can take over the broker automatically after a bounded request drain and durable store flush, with a 60-second cooldown (AB-281). A broker already running a version before 0.30.14 cannot hand over retroactively: after updating, restart the session hosting the broker once normally to enable automatic handovers for future updates.
+- Windows scans keep complete file IDs, so replacing a JSON file cannot be mistaken for unchanged cached data.
 - opencode retries deferred initial peer context and records it only after session storage succeeds.
 
 ## 0.30.13
