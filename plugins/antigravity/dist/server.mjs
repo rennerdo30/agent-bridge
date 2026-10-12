@@ -7,7 +7,7 @@ import {
   DEFAULT_HOME,
   ENV
 } from "./chunks/chunk-BF2F5BYX.mjs";
-import "./chunks/chunk-HHAVWD7J.mjs";
+import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/mcp/launcher.ts
 import { dirname, join } from "node:path";

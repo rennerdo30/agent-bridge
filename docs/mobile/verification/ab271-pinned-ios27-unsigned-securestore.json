@@ -1,0 +1,11 @@
+{
+  "result": {
+    "qrVersion": 2,
+    "phase": "save-credentials",
+    "secureStoreError": "Error: FunctionCallException: Calling the 'setValueWithKeyAsync' function has failed (at ExpoModulesCore/AsyncFunctionDefinition.swift:123)\n→ Caused by: KeyChainException: A required entitlement is not present. (at ExpoSecureStore/SecureStoreModule.swift:123)",
+    "error": "Error: pairing unconfirmed"
+  },
+  "wrongHttpRequests": 0,
+  "redirectTargetRequests": 0,
+  "authenticatedReads": 0
+}

@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { shortPin } from "../../../../src/mobile/contract";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Linking, Modal, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -99,6 +100,7 @@ export function PairingScreen({ d }: { d: Dashboard }) {
                   {copyStrings.copy.pcIdentity}
                   {d.qr.pcId}
                 </AppText>
+                {d.qr.pins?.map(pin => <AppText key={pin} variant="monoSmall" selectable>PC key: {shortPin(pin)}</AppText>)}
               </Panel>
               <AppText variant="caption" tone="textMuted">
                 {copyStrings.copy.qrExpires}
@@ -117,7 +119,7 @@ export function PairingScreen({ d }: { d: Dashboard }) {
                 />
               )}
               <AppText variant="caption" tone="textFaint">
-                {copyStrings.copy.normalPhoneTrustedHttpsRequiredNoFingerprintPinningOrTlsBypass}
+                {d.qr.pins ? copyStrings.copy.pinnedPcKeyReview : copyStrings.copy.normalPhoneTrustedHttpsRequired}
               </AppText>
             </>
           )}
