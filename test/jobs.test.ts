@@ -26,8 +26,8 @@ afterEach(async () => {
 
 const result = (text: string): DelegateResult => ({ sessionId: "s-9", text, isError: false, details: {} });
 
-it("formats report bodies and failure diagnostics using the preferred drive", () => {
-  const restore = preferredDriveFixture();
+it("formats report bodies and failure diagnostics using the preferred drive", async () => {
+  const restore = await preferredDriveFixture();
   try {
     const report = jobReport({ name: "saved", agent: "codex", model: null, sessionId: null }, "failed", 1, "Log: `Q:/run.log`", "could not start Q:/work");
     expect(report).toContain("Cause: could not start X:/work");

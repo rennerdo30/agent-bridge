@@ -9,7 +9,7 @@ import { maxSocketPathBytes, resolvePipePath } from "../src/core/paths.js";
 import { cmdlineEnablesChannel, cmdlineIsPrintMode } from "../src/core/procinfo.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 import { formatMessage, formatPeer } from "../src/mcp/format.js";
-import { configurePathDisplay, displayPath, pathDisplayPrefersAlias } from "../src/core/display-paths.js";
+import { configurePathDisplay, displayPath, pathDisplayPrefersAlias, refreshDriveAliases } from "../src/core/display-paths.js";
 
 const msg = (over: Partial<BridgeMessage> = {}): BridgeMessage => ({
   id: "m1",
@@ -88,11 +88,12 @@ describe("cmdlineEnablesChannel", () => {
 });
 
 describe("config", () => {
-  it("defaults to aliases and applies the optional presentation preference", () => {
+  it("defaults to aliases and applies the optional presentation preference", async () => {
     const home = mkdtempSync(join(tmpdir(), "ab-cfg-display-"));
     const canonical = (path: string) => path === "X:\\" ? "C:\\" : path;
     try {
       expect(loadConfig(home, "codex", nullLogger, {}).pathDisplay).toEqual({ preferAlias: true });
+      await refreshDriveAliases("win32", canonical);
       expect(displayPath("C:/file", "win32", canonical)).toBe("X:/file");
       writeFileSync(join(home, "config.json"), JSON.stringify({ pathDisplay: { preferAlias: false }, codex: { pathDisplay: { preferAlias: true } } }));
       expect(loadConfig(home, "codex", nullLogger, {}).pathDisplay).toEqual({ preferAlias: false });
@@ -163,7 +164,7 @@ describe("paths", () => {
 describe("formatPeer", () => {
   it("prefers the verified X: spelling without changing peer identity", async () => {
     const { preferredDriveFixture } = await import("./preferred-drive-fixture.js");
-    const restore = preferredDriveFixture();
+    const restore = await preferredDriveFixture();
     try {
       const peer = { id: "x", name: "peer", agent: "codex", cwd: "Q:/work", startedAt: 0 } as import("../src/core/protocol.js").PeerInfo;
       expect(formatPeer(peer)).toContain("cwd=X:/work");

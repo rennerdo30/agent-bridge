@@ -14,7 +14,7 @@ import { PARENT_URL_ENV } from "./parent-link.js";
 import { FinalAnswers } from "./final-answers.js";
 import { progressLineHandler } from "./progress.js";
 import { PermissionRelay, type PermissionDecision } from "./relay.js";
-import { codexDriveMappings, codexPathPrompt } from "./codex-paths.js";
+import { resolveCodexDriveMappings, codexPathPrompt } from "./codex-paths.js";
 import { DEFAULT_MAX_DELEGATE_DEPTH, ENV, MAX_DELEGATE_DEPTH_LIMIT } from "./constants.js";
 
 /** Env var tracking nested delegation, so a delegated agent cannot delegate back forever. */
@@ -512,7 +512,8 @@ export async function delegateToCodex(
   checkDepth(req.maxDelegateDepth);
   // Codex's Windows sandbox runs as a separate user that does not see per-user drive mappings (a mapped
   // or substituted drives): commands can fail because the alias is absent. Hand it the real path instead.
-  req = { ...req, cwd: realFolder(req.cwd), prompt: codexExecutionPrompt(codexPathPrompt(req.prompt, codexDriveMappings(`${req.cwd}\n${req.prompt}`), req.sandbox === "danger-full-access"), req.sandbox) };
+  const mappings = await resolveCodexDriveMappings(`${req.cwd}\n${req.prompt}`);
+  req = { ...req, cwd: realFolder(req.cwd), prompt: codexExecutionPrompt(codexPathPrompt(req.prompt, mappings, req.sandbox === "danger-full-access"), req.sandbox) };
   // In ask mode the sandbox is read-only and every change goes through an approval the user answers;
   // without this hint Codex gives up at the sandbox instead of requesting the approval.
   if (req.relayApprovals && req.sandbox !== "danger-full-access") req = { ...req, prompt: `${req.prompt}\n\n${CODEX_ASK_HINT}` };

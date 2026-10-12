@@ -1,5 +1,5 @@
-import { realpathSync } from "node:fs";
-import { discoverDriveAliases, displayPath, displayPathText, pathDisplayPrefersAlias, type DriveMapping } from "./display-paths.js";
+import { realpath } from "node:fs/promises";
+import { cachedExecutionDriveMappings, discoverDriveAliases, displayPath, displayPathText, pathDisplayPrefersAlias, refreshDriveAliases, resolveExecutionDriveRoots, type CanonicalPath, type DriveMapping } from "./display-paths.js";
 export type { DriveMapping } from "./display-paths.js";
 
 function uniqueMappings(mappings: readonly DriveMapping[]): DriveMapping[] {
@@ -11,19 +11,28 @@ function displayMapping(mapping: DriveMapping): string {
   return real === alias ? `preferred ${alias} (verified drive alias)` : `${alias} (same location as ${real})`;
 }
 
-/** Resolve drive roots in the supervisor's logon session, before Codex switches sandbox users. */
-export function codexDriveMappings(text: string, platform: string = process.platform, canonical: (path: string) => string = realpathSync.native): DriveMapping[] {
+/** Report paths only read the cached snapshot and may trigger a background refresh. */
+export function codexDriveMappings(text: string, platform: string = process.platform, canonical: CanonicalPath = realpath): DriveMapping[] {
   if (platform !== "win32") return [];
   const drives = new Set([...text.matchAll(/\b([a-z]):[\\/]/gi)].map((m) => `${m[1]!.toUpperCase()}:\\`));
+  if (!drives.size) return [];
   const mappings = discoverDriveAliases(platform, canonical).filter((m) => drives.has(m.alias) || drives.has(m.real));
-  for (const alias of drives) {
-    if (mappings.some((m) => m.alias === alias || m.real === alias)) continue;
-    try {
-      const real = canonical(alias).replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "").replace(/[\\/]*$/, "\\");
-      if (real.toLowerCase() !== alias.toLowerCase()) mappings.push({ alias, real });
-    } catch { /* A missing drive is not evidence of an alias. */ }
+  for (const mapping of cachedExecutionDriveMappings(platform, canonical)) {
+    if (drives.has(mapping.alias) && !mappings.some((m) => m.alias === mapping.alias)) mappings.push(mapping);
   }
   return mappings;
+}
+
+/** Native startup awaits bounded asynchronous probes; it never runs on a display path. */
+export async function resolveCodexDriveMappings(text: string, platform: string = process.platform, canonical: CanonicalPath = realpath): Promise<DriveMapping[]> {
+  if (platform !== "win32") return [];
+  const roots = [...new Set([...text.matchAll(/\b([a-z]):[\\/]/gi)].map((match) => `${match[1]!.toUpperCase()}:\\`))];
+  if (!roots.length) return [];
+  await refreshDriveAliases(platform, canonical);
+  // An in-flight scan may have started before a new subst was created. Recheck
+  // requested roots after it settles instead of sharing that earlier result.
+  const requested = await resolveExecutionDriveRoots(roots, platform, canonical);
+  return [...codexDriveMappings(text, platform, canonical).filter((mapping) => !roots.includes(mapping.alias)), ...requested];
 }
 
 /** Translate paths even when their final file does not exist yet. */

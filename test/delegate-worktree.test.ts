@@ -31,7 +31,7 @@ const job = (): Job => ({ id: "test", name: "codex-job-test", agent: "codex", mo
 
 describe("delegated worktree contracts", () => {
   it("formats job answer paths while retaining managed worktree records", async () => {
-    preferredDriveFixture();
+    await preferredDriveFixture();
     const root = join(home, "worktrees", "existing"); mkdirSync(root, { recursive: true });
     vi.spyOn(DELEGATION_TARGETS.codex, "run").mockResolvedValue({ sessionId: "saved", text: "Output Q:/future/result.md", isError: false, details: {} });
     const wt = { repoRoot: home, path: root, cwd: root, branch: "saved", base: "base" };

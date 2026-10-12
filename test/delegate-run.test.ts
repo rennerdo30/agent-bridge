@@ -31,7 +31,7 @@ const job = (): Job => ({ id: "test", name: "codex-job-test", agent: "codex", mo
 
 describe("delegation approval routing", () => {
   it("formats result and log paths without changing execution or saved workdir", async () => {
-    preferredDriveFixture();
+    await preferredDriveFixture();
     const actual = home;
     const startFeed = feeds.startRunFeedReady;
     vi.spyOn(feeds, "startRunFeedReady").mockImplementation(async (...args) => ({ ...await startFeed(...args), logPath: "Q:/logs/run.log" }));
@@ -45,7 +45,7 @@ describe("delegation approval routing", () => {
     expect(result.workdir).toBe(actual);
   });
   it("formats failure paths while retaining the original error type", async () => {
-    preferredDriveFixture();
+    await preferredDriveFixture();
     vi.spyOn(DELEGATION_TARGETS.codex, "run").mockRejectedValue(new DelegateError('failed in "Q:/work"', "failed"));
     const run = runDelegate(context(), "codex", { title: "failure", prompt: "task", access: "read" }, new AbortController().signal, undefined, true);
     await expect(run).rejects.toMatchObject({ message: 'failed in "X:/work"', kind: "failed" });
