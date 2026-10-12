@@ -1,1 +1,11 @@
 .native-tests/
+# The app ignores generated native projects; this module's native sources are owned.
+!android/
+android/*
+!android/build.gradle
+!android/src/
+!android/src/**
+!ios/
+ios/*
+!ios/*.swift
+!ios/*.podspec

@@ -63,6 +63,17 @@ class PinPolicyTest {
     } finally { close(client); gateway.shutdown() }
   }
 
+  @Test fun datesDoNotReplaceTheEnrolledKeyDecision() {
+    val now = System.currentTimeMillis()
+    val cert = HeldCertificate.Builder().ecdsa256().commonName("expired-fixture")
+      .validityInterval(now - 172800000, now - 86400000).build()
+    val gateway = server(cert); val client = pinnedClient(listOf(pin(cert)))
+    try {
+      gateway.enqueue(MockResponse().setBody("enrolled key"))
+      client.newCall(Request.Builder().url(gateway.url("/hello")).build()).execute().use { assertEquals("enrolled key", it.body!!.string()) }
+    } finally { close(client); gateway.shutdown() }
+  }
+
   @Test fun redirectRefusedAndTargetNeverReceivesCredentials() {
     val cert = certificate(); val gateway = server(cert); val target = server(cert); val client = pinnedClient(listOf(pin(cert)))
     try {
