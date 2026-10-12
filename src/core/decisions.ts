@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { MAX_BODY_CHARS } from "./constants.js";
 import type { BridgeMessage, MessageAddress, PeerInfo } from "./protocol.js";
+import { canonicalProjectRoot, projectKey } from "./project-identity.js";
 
 export const MAX_DECISION_TOPIC_CHARS = 160;
 export const MAX_DECISION_TEXT_CHARS = MAX_BODY_CHARS - 1_024;
@@ -91,8 +92,10 @@ interface DecisionRow {
 }
 
 export function normalizeProject(folder: string): string {
-  const path = resolve(folder).replace(/\\/g, "/").replace(/\/+$/, "");
-  return process.platform === "win32" ? path.toLowerCase() : path;
+  const root = canonicalProjectRoot(folder);
+  // Share the exact project-group key when discovery succeeds. Missing/damaged
+  // folders keep only their own absolute spelling; never guess an ancestor.
+  return root ? projectKey(root) : projectKey(resolve(folder).replace(/\\/g, "/").replace(/\/+$/, ""));
 }
 
 export function normalizeScope(scope: DecisionScope): DecisionScope {
@@ -103,7 +106,7 @@ export function normalizeScope(scope: DecisionScope): DecisionScope {
 
 export function decisionApplies(decision: Pick<OwnerDecision, "scope">, peer: Pick<PeerInfo, "name" | "id" | "sessionId" | "cwd">): boolean {
   if (decision.scope === "all") return true;
-  if ("project" in decision.scope) return decision.scope.project === normalizeProject(peer.cwd);
+  if ("project" in decision.scope) return normalizeProject(decision.scope.project) === normalizeProject(peer.cwd);
   return decision.scope.sessions.some((s) => s === peer.name || s === peer.id || s === peer.sessionId);
 }
 
@@ -112,7 +115,7 @@ function scopeMatches(decision: OwnerDecision, filter?: DecisionScope, sessions:
   if (!filter || stored === "all") return true;
   if (filter === "all") return false;
   if ("project" in filter) {
-    return "project" in stored ? stored.project === filter.project : sessions.some((s) => stored.sessions.includes(s));
+    return "project" in stored ? normalizeProject(stored.project) === normalizeProject(filter.project) : sessions.some((s) => stored.sessions.includes(s));
   }
   return "sessions" in stored && filter.sessions.some((s) => stored.sessions.includes(s));
 }

@@ -21,6 +21,7 @@ import { startRunFeed, startRunFeedReady } from "../core/runfeed.js";
 import { ResourceSlots, resourceSlotHint, SLOT_OWNER_ENV, SLOT_PID_ENV, SLOT_RENEW_MS } from "../core/resource-slots.js";
 import { approvalHint, DESK_READ_PATTERNS, isAutoApproved, isHandoffToolCall, isOwnServerCall } from "../core/tool-allow.js";
 import { codexDriveMappings, codexPathReport } from "../core/codex-paths.js";
+import { displayPath, displayPathText } from "../core/display-paths.js";
 import { scanWorktreeLinks, WORKTREE_LINK_HINT, worktreeLinkWarning } from "../core/worktree-links.js";
 import { changedFiles, createWorktree, finishWorktree, git, trustArgs, gitChangeSnapshot, gitDirsOutside, handoffWarning, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
 import { formatSiblingMessages, formatUsage } from "./format.js";
@@ -283,7 +284,7 @@ async function runDelegateInner(
     feed = await startRunFeedReady({
       home: rc.home,
       name: `${target}-${randomUUID().slice(0, 8)}`,
-      header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}\n${a.prompt}\n---`,
+      header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${displayPath(workdir)}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}\n${displayPathText(a.prompt)}\n---`,
       forward: onProgress,
       meta: {
         metadataVersion: DELEGATION_METADATA_VERSION,
@@ -454,7 +455,7 @@ async function runDelegateInner(
       },
     );
     feed.meta({ session: res.sessionId });
-    feed.end(signal.aborted ? "cancelled" : res.isError ? "failed" : "done", res.text);
+    feed.end(signal.aborted ? "cancelled" : res.isError ? "failed" : "done", displayPathText(res.text));
     if (!res.isError && res.text.trim()) link?.reportCompleted();
   } catch (err) {
     if (err instanceof DelegateError && err.sessionId) feed.meta({ session: err.sessionId });
@@ -463,13 +464,14 @@ async function runDelegateInner(
       const branchHead = await git([...trustArgs(wt.path), "rev-parse", "HEAD"], wt.path, dlog).catch(() => undefined);
       feed.meta({ branch: branch || wt.branch, branchHead });
     }
-    feed.end(signal.aborted ? "cancelled" : `failed: ${(err as Error)?.message ?? err}`);
+    feed.end(signal.aborted ? "cancelled" : displayPathText(`failed: ${(err as Error)?.message ?? err}`));
     // The worktree keeps whatever the subagent did before failing: say where it is.
     if (wt && err instanceof Error) err.message += `\n\nIts worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
     if (linkRoot && err instanceof Error) {
       try { const warning = worktreeLinkWarning(scanWorktreeLinks(linkRoot)); if (warning) err.message += `\n\n${warning}`; }
       catch (scanError) { err.message += `\nWARNING: worktree link inspection failed: ${(scanError as Error).message}`; }
     }
+    if (err instanceof Error) err.message = displayPathText(err.message);
     throw err;
   } finally {
     if (job) denyPendingApprovals(job);
@@ -548,5 +550,5 @@ async function runDelegateInner(
     const warning = handoffWarning(changed);
     if (warning) notes.push(warning);
   }
-  return { ...res, workdir, worktree: wt ?? undefined, text: notes.length ? `${res.text}\n\n---\n${notes.join("\n\n")}` : res.text };
+  return { ...res, workdir, worktree: wt ?? undefined, text: displayPathText(notes.length ? `${res.text}\n\n---\n${notes.join("\n\n")}` : res.text) };
 }
