@@ -72,7 +72,7 @@ private final class PinnedRequest: NSObject, URLSessionDataDelegate, @unchecked 
     self.pins = try Pinning.validate(pins)
     guard let address = URL(string: url), address.scheme == "https", address.host != nil,
       address.user == nil, address.password == nil, address.fragment == nil,
-      ["GET", "POST", "DELETE"].contains(options.method),
+      ["GET", "POST", "PUT", "DELETE"].contains(options.method),
       options.method != "GET" || options.body == nil,
       (options.body?.utf8.count ?? 0) <= 32768 else { throw PinningError.invalidRequest }
     var nativeRequest = URLRequest(url: address, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
