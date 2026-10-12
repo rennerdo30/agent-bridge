@@ -1236,7 +1236,7 @@ export class Broker {
     if (this.jobsForDispatch) return this.jobsForDispatch;
     try {
       const archive = readArchivedJobSnapshot(this.jobsPath, { metadata: true });
-      if (indexedJobProjectionCurrent(this.jobsPath)) {
+      if (indexedJobProjectionCurrent(this.jobsPath, archive.signature)) {
         // A recovered record only stands in for a job the store does not list. Once the store lists it, the
         // stored record wins: a recovery cached before a handoff must not keep routing to the previous owner.
         const stored = new Set(archive.jobs.map((job) => job.id).filter((id): id is string => typeof id === "string"));

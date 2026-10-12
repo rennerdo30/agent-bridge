@@ -230,19 +230,27 @@ export function markJobProjection(path: string, jobs: readonly unknown[], expect
 /** Supervisors ask this on every job poll (AB-147): answer from memory while the active file, the
  * archive and its WAL are unchanged, instead of opening the archive database each time. */
 const projectionChecks = new Map<string, { signature: string; current: boolean }>();
-export function indexedJobProjectionCurrent(path: string): boolean {
+export function indexedJobProjectionCurrent(path: string, expectedIndexSignature?: string): boolean {
   if (!existsSync(path)) return false;
   physicalArchivePath(path);
   const file = jobArchivePath(path);
   const stat = (p: string) => existsSync(p) ? fileSignature(statSync(p)) : "missing";
-  const active = fileSignature(statSync(path)), signature = [active, stat(file), stat(`${file}-wal`)].join("|");
+  const indexSignature = () => [stat(file), stat(`${file}-wal`)].join("|");
+  const observedIndex = indexSignature();
+  // A newer projection witness cannot authorize rows read from an older index.
+  if (expectedIndexSignature !== undefined && expectedIndexSignature !== observedIndex) return false;
+  const active = fileSignature(statSync(path)), signature = [active, observedIndex].join("|");
   const saved = projectionChecks.get(path);
-  if (saved?.signature === signature) return saved.current;
+  if (saved?.signature === signature) return saved.current &&
+    (expectedIndexSignature === undefined || indexSignature() === expectedIndexSignature);
   const db = openJobArchive(path);
   if (!db) return false;
   let current: boolean;
   try { current = db.prepare("SELECT signature FROM archive_projection WHERE version=1").get()?.signature === active; }
   finally { db.close(); }
+  // A worker may publish while the witness query runs. Fall back to the active
+  // JSON rather than using metadata from a different committed generation.
+  if (expectedIndexSignature !== undefined && indexSignature() !== expectedIndexSignature) return false;
   if (projectionChecks.size >= 64) projectionChecks.delete(projectionChecks.keys().next().value!);
   projectionChecks.set(path, { signature, current });
   return current;
