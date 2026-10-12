@@ -1,9 +1,9 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "3ebb2bf9e76c2b1ac9fc9c1f90b2c3ce8600d9cf79742e412b97a2b41bc5030a",
+    "src/core/broker.ts:constructor": "b46136a2548fb9582ce2274793775f68c635fe461ae6e3d3f11d1ac1ff3836f0",
     "src/core/broker.ts:listen": "eb98a2820f42563b76778c1f642d8a4a704c1af4fd4af43aedee9c1263cf2b4d",
-    "src/core/broker.ts:startServices": "1c099e60467be3fad00b752401435ccc362254f9ff9f6ad20b56434cb15e0978",
+    "src/core/broker.ts:startServices": "4d48b8bdb253d56458edfb283ed7d85b8530185391be52725961d015f5b26b85",
     "src/core/broker.ts:abortStartup": "2c7b606eb6c601f877f5d0283f0f1efcb7e4bc11c1af14857c9ca582e8ad6cb5",
     "src/core/broker.ts:close": "61af8b1a2dd8e1c2f44fa39055e1963ae82e9887f99eed1d0499ae7e66ea91c2",
     "src/core/node.ts:constructor": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
@@ -15,5 +15,15 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "de79dfca55109c3f807e5608ff8bb83a5ade39e37a562263b2dd0c05e0a17845"
+  "uiSha256": "de79dfca55109c3f807e5608ff8bb83a5ade39e37a562263b2dd0c05e0a17845",
+  "updates": {
+    "AB-280": {
+      "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
+      "methods": [
+        "src/core/broker.ts:constructor",
+        "src/core/broker.ts:startServices"
+      ],
+      "reason": "Scoped native child handlers and retained orphan recovery extend the broker. Other default control-flow and UI pins are unchanged."
+    }
+  }
 }

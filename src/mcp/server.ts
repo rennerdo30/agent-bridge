@@ -49,7 +49,7 @@ import { formatInboxMessages, formatProjectRoute, formatReplyRestrictions, forma
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { reportModActivity } from "./hook-ownership.js";
 import { CodexLineageLookup, codexCallIdentity, type CodexCallIdentity } from "./codex-lineage.js";
-import { buildHookResponse, discardFinishedNotes, type HookEvent } from "./hooks.js";
+import { buildHookResponse, confirmNativeChildDelivery, discardFinishedNotes, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, type Access } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
 import { answerPendingApproval, listPendingApprovals, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
@@ -590,11 +590,45 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     discardFinishedNotes(ctx);
     return node;
   };
+  const nativeChildSummary = async (n: BridgeNode): Promise<string[]> => {
+    if (ctx.agent !== "claude") return [];
+    const children = await n.nativeChildren().catch(err => {
+      if (isUnsupportedOperation(err, "nativeChildren")) return [];
+      throw err;
+    });
+    return children.length ? ["Live native child addresses:", ...children.map(c => `- ${c.address} (Claude native child; send_to: ${c.sendTo.join(", ") || "none"})`)] : [];
+  };
   const guarded =
     <A>(name: string, fn: (args: A, extra: ToolExtra) => Promise<CallToolResult>) =>
     async (args: A, extra: ToolExtra): Promise<CallToolResult> => {
       log.debug("tool call", { tool: name, args: args as Record<string, unknown> });
       if (ctx.admitCodex && !ctx.admitCodex(extra._meta)) return text("Native Codex child or unverified thread: use the parent session's bridge. Missing main-thread lineage may be retried once its rollout header is available.", true);
+      // Claude's ordinary tools/call has no documented native agent identity. Use the id
+      // issued by SubagentStart explicitly; never infer a caller from the last child hook.
+      const a = args as Record<string, unknown>;
+      const metaChildId = extra._meta?.agent_id ?? extra._meta?.agentId;
+      const childId = metaChildId ?? a.native_child;
+      if (childId !== undefined) {
+        try {
+          if (metaChildId !== undefined && a.native_child !== undefined && metaChildId !== a.native_child) throw new BridgeError("unauthorized", "native_child conflicts with host-provided agent identity.");
+          if (ctx.agent !== "claude" || !node || node.wasReplaced || typeof childId !== "string" || !["peers", "inbox", "send"].includes(name)) throw new BridgeError("unauthorized", "Scoped native children may use peers, inbox and send only on their current Claude parent connection.");
+          const children = await node.nativeChildren(), child = children.find(c => c.agentId === childId);
+          if (!child) throw new BridgeError("unauthorized", "No live scoped native child; wait for its SubagentStart hook.");
+          await confirmNativeChildDelivery(ctx, childId);
+          const identity = `Your native child bridge address is ${child.address}. Parent: ${child.parent}.`;
+          if (name === "peers") {
+            const jobs = (await node.projectJobs()).filter(j => j.owner === child.parent && j.supervisor === node.currentSessionId);
+            return text([identity, ...jobs.map(j => `${j.name} (${j.agent}, ${j.status})`), `Explicit send_to grants: ${child.sendTo.join(", ") || "none"}`].join("\n"));
+          }
+          if (name === "inbox") {
+            const messages = (await node.nativeChildPending(childId)).filter(m => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, typeof a.limit === "number" ? a.limit : HOOK_MAX_MESSAGES);
+            if (a.mark_read !== false && messages.length) await node.nativeChildAck(childId, messages.map(m => m.id));
+            return text(`${identity}\n\n${messages.length ? formatMessages(messages) : "No unread native child mail."}`);
+          }
+          const result = await node.nativeChildSend(childId, { to: String(a.to), body: String(a.message), replyTo: a.reply_to as string | undefined, conversationId: a.conversation_id as string | undefined, ifNoNewerThan: a.if_no_newer_than as string | undefined, messageId: a.message_id as string | undefined });
+          return text(`${identity}\nMessage ${result.messages[0]?.id} stored. The parent received a quiet copy.\n${JSON.stringify(result)}`);
+        } catch (err) { return text(describeError(err), true); }
+      }
       // Replaced by another server of this session, yet called: this is the one the session uses (see reclaim).
       if (name !== "health" && ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: (err as Error).message }));
       await ctx.observeMeta?.(extra._meta);
@@ -739,7 +773,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       description:
         "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity): name, agent type, busy/idle, uptime, working directory and session id. " +
         "Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
-      inputSchema: {},
+      inputSchema: { native_child: z.string().optional().describe("Native Claude agent_id issued by its start hook; scopes this call to the child") },
       annotations: { readOnlyHint: true },
     },
     guarded("peers", async () => {
@@ -780,6 +814,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         others.length ? t("peers.header", { count: others.length }) : t("peers.none"),
         ...others.map((p) => formatPeer(p)),
       ];
+      lines.push(...await nativeChildSummary(n));
       const quietCount = n.unread().filter(isQuietMessage).length;
       if (health) lines.push(formatHealth(health));
       if (quietCount) lines.push(`${quietCount} retained quiet message(s), available with inbox(include_quiet=true) or history; excluded from actionable unread mail.`);
@@ -838,6 +873,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         "Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. A job that is blocked, unsure or about to take a consequential step asks its parent with message_kind=\"question\" (question, options, recommendation, what it does meanwhile). Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.",
       inputSchema: {
         to: z.string().min(1).describe('Peer name, project address, agent kind, "*" (sessions and your running jobs), or "jobs:*" (only your running jobs)'),
+        native_child: z.string().optional().describe("Your scoped native Claude agent_id from SubagentStart; send as that child"),
         message: z.string().min(1).max(MAX_BODY_CHARS).describe("Message text (Markdown is fine)"),
         reply_to: z.string().optional().describe("Id of the message you are answering"),
         conversation_id: z.string().optional().describe("Continue an existing conversation"),
@@ -925,6 +961,12 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     guarded("send_status", async (a: { message_id: string }) => text(JSON.stringify(await requireNode().sendState(a.message_id), null, 2))),
   );
 
+  if (node && ctx.agent === "claude") register("native_child_grant", {
+    title: "Grant native child message access",
+    description: "Parent only: replace exact send_to grants for a live native Claude child. Your bridge jobs already have access. Empty send_to revokes external grants. This never registers a peer or assigns a main role.",
+    inputSchema: { agent_id: z.string(), send_to: z.array(z.string()).max(20) },
+  }, guarded("native_child_grant", async (a: { agent_id: string; send_to: string[] }) => text(JSON.stringify(await requireNode().nativeChild({ action: "grant", agentId: a.agent_id, sendTo: a.send_to })))));
+
   register(
     "network_status",
     {
@@ -993,6 +1035,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       description: "Read unread messages from other agents, with quiet transfer progress, sibling copies and acknowledgements excluded by default. Use include_quiet=true (or a read-only mark_read=false peek) to inspect retained copies. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt.",
       inputSchema: {
         include_quiet: z.boolean().optional().describe("Include historical quiet coordination copies (default false)"),
+        native_child: z.string().optional().describe("Your scoped native Claude agent_id; read only that child's inbox"),
         mark_read: z.boolean().optional().describe("Mark returned messages as read (default true); false also permits inspecting retained quiet copies"),
         limit: z.number().int().min(1).max(100).optional(),
       },
@@ -1005,9 +1048,10 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       }
       const n = requireNode();
       const msgs = n.unread().filter((m) => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
-      if (msgs.length === 0) return text(t("inbox.empty"));
+      const children = await nativeChildSummary(n);
+      if (msgs.length === 0) return text([t("inbox.empty"), ...children].join("\n"));
       if (a.mark_read !== false) n.markRead(msgs.map((m) => m.id));
-      return text(formatInboxMessages(msgs));
+      return text([formatInboxMessages(msgs), ...children].join("\n"));
     }),
   );
 
@@ -1567,16 +1611,19 @@ ${res.text || t("delegate.empty")}`, res.isError);
     },
     async (a: { event: string; session_id?: string; stop_hook_active?: boolean | string; cwd?: string; agent_id?: string; prompt?: string; prompt_id?: string; transcript_path?: string }, extra: ToolExtra) => {
       // An unsubstituted "${...}" template means the host had no value for that field.
-      const given = (v: string | undefined) => (v && !v.startsWith("${") ? v : null);
+      const given = (v: unknown) => (typeof v === "string" && v && !v.startsWith("${") ? v : null);
       try {
-        const identity = codexCallIdentity(extra._meta, { threadId: given(a.session_id), agentId: given(a.agent_id), transcript: given(a.transcript_path) });
-        if (given(a.agent_id) || ctx.admitCodex && !ctx.admitCodex(extra._meta, identity)) return text("{}");
+        const nativeId = given(a.agent_id) ?? given(extra._meta?.agent_id) ?? given(extra._meta?.agentId);
+        if ((a.event === "SubagentStart" || a.event === "SubagentStop") && !nativeId) return text("{}");
+        const identity = codexCallIdentity(extra._meta, { threadId: given(a.session_id), agentId: nativeId, transcript: given(a.transcript_path) });
+        if ((ctx.agent !== "claude" && nativeId) || (ctx.admitCodex && !ctx.admitCodex(extra._meta, identity))) return text("{}");
         const out = await buildHookResponse(ctx, {
           event: a.event as HookEvent,
           sessionId: ctx.agent === "codex" ? identity.threadId ?? null : given(a.session_id),
           stopHookActive: a.stop_hook_active === true || a.stop_hook_active === "true",
           cwd: given(a.cwd),
-          subagent: Boolean(given(a.agent_id)),
+          subagent: Boolean(nativeId),
+          agentId: nativeId,
           prompt: given(a.prompt),
           promptId: given(a.prompt_id),
           signal: extra.signal,
