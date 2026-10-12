@@ -76,6 +76,8 @@ import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS
 import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
 import { OwnerQuestionService, OWNER_ADDRESS } from "./owner-question-service.js";
 import { ensurePrivateSocketDirectory } from "./paths.js";
+import { BROKER_UPGRADE_CHECK_MS, BROKER_UPGRADE_DRAIN_MS, BROKER_UPGRADE_COOLDOWN_MS, BROKER_SUCCESSOR_GRACE_MS, newestBrokerSuccessor, syncBrokerStores } from "./broker-upgrade.js";
+import { metadataValue, saveMetadataValue } from "./metadata-db.js";
 
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
 export const PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -190,6 +192,13 @@ export class Broker {
   private pendingJobMailRetry: NodeJS.Timeout | null = null;
   private jobMailRerouteTimer: NodeJS.Timeout | null = null;
   private closing = false;
+  private readonly version = APP_VERSION;
+  private upgradeTimer: NodeJS.Timeout | null = null;
+  private upgrading = false;
+  private draining = false;
+  private handoverPending: string | null = null;
+  private nextUpgradeAttempt = 0;
+  private readonly requests = new Set<Promise<void>>();
   private requestTurn: Promise<void> = Promise.resolve();
   private network: NetworkService | null = null;
   private remoteJobs: RemoteJobs | null = null;
@@ -211,6 +220,7 @@ export class Broker {
     /** The supervisor's job registry, for siblings whose peers are not connected between turns. */
     private readonly jobsPath?: string,
     private readonly networking?: { home: string; config: NetworkConfig },
+    private readonly releasedForUpgrade?: () => void,
   ) {
     this.groups = new ProjectGroups(jobsPath ? dirname(jobsPath) : undefined);
     this.handlers = {
@@ -422,9 +432,9 @@ export class Broker {
       },
       updatePeer: async (c, a) => { const peer = await this.onUpdatePeer(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === peer.id); if (job?.ownershipHistory) this.refreshJobPeer(job); this.store.history.rememberPeer(peer); return peer; },
       claimMail: (c, a) => this.onClaimMail(c, a),
-      health: () => this.healthMonitor.snapshot(APP_VERSION, this.historyBackground?.status() ?? null, this.store.backupStatus()),
-      ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION, brokerVersion: APP_VERSION,
-        health: this.healthMonitor.snapshot(APP_VERSION, this.historyBackground?.status() ?? null, this.store.backupStatus()) }),
+      health: () => this.healthSnapshot(),
+      ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION, brokerVersion: this.version, handoverSupported: Boolean(this.releasedForUpgrade),
+        health: this.healthSnapshot() }),
       networkStatus: () => this.network?.status() ?? { enabled: false, config: this.networking?.config, discovered: [], paired: [] },
       remoteJob: async (c, a) => {
         const peer = this.requirePeer(c);
@@ -517,6 +527,8 @@ export class Broker {
 
   /** Undo a failed listen(): background services, timers and the bound server; the store stays open for its owner. */
   private async abortStartup(): Promise<void> {
+    if (this.upgradeTimer) clearInterval(this.upgradeTimer);
+    this.upgradeTimer = null;
     this.healthMonitor.close();
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     this.purgeTimer = null;
@@ -540,6 +552,10 @@ export class Broker {
   }
 
   private async startServices(optional: (what: string, step: () => void) => void): Promise<void> {
+        if (this.releasedForUpgrade) {
+          this.upgradeTimer = setInterval(() => { void this.checkUpgrade(); }, BROKER_UPGRADE_CHECK_MS);
+          this.upgradeTimer.unref();
+        }
         if (this.jobsPath && this.store.file !== ":memory:") optional("job archive worker", () => { this.jobArchiveBackground = new JobArchiveBackground(this.jobsPath!, this.log); });
         optional("backups", () => this.store.startBackups());
         this.healthMonitor.start();
@@ -584,7 +600,9 @@ export class Broker {
         }
   }
 
-  async close(): Promise<void> {
+  async close(beforeRelease?: () => Promise<void>): Promise<void> {
+    if (this.upgradeTimer) clearInterval(this.upgradeTimer);
+    this.upgradeTimer = null;
     this.healthMonitor.close();
     this.closing = true;
     if (this.mobileResources) await this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed"));
@@ -608,14 +626,79 @@ export class Broker {
     this.decisionSync = null;
     await this.network?.close();
     this.network = null;
+    await this.pendingJobMailRoute?.catch((err) => this.log.warn("pending mail route stopped", { err: String(err) }));
+    // Optional upgrade barrier runs while the old listener and storage lease are still owned.
+    await beforeRelease?.();
     for (const c of this.conns) c.socket.destroy();
     this.conns.clear();
     const server = this.server;
     this.server = null;
-    if (server) await new Promise<void>((r) => server.close(() => r()));
-    await this.pendingJobMailRoute?.catch((err) => this.log.warn("pending mail route stopped", { err: String(err) }));
     this.store.close();
+    if (server) await new Promise<void>((r) => server.close(() => r()));
     this.log.info("broker closed");
+  }
+
+  private healthSnapshot() {
+    return { ...this.healthMonitor.snapshot(this.version, this.historyBackground?.status() ?? null, this.store.backupStatus()), handoverPending: this.handoverPending };
+  }
+
+  private assertElectionHandoverReady(): void {
+    // Retained pre-feature hosts cannot obey the successor hint and could win the ordinary
+    // election with older code. Keep serving until they finish/reload naturally.
+    const legacy = this.localPeers().find(p => p.agent !== "other" && !p.jobAgent && !p.subagent && p.brokerEligible === undefined);
+    if (legacy) throw Object.assign(new Error(`${legacy.name} v${legacy.version ?? "unknown"} lacks broker election handover support`), { code: "BROKER_HANDOVER_UNSUPPORTED" });
+  }
+
+  private async checkUpgrade(): Promise<void> {
+    if (this.closing || this.upgrading) return;
+    const successor = newestBrokerSuccessor(this.localPeers(), this.version);
+    if (!successor) { this.handoverPending = null; return; }
+    this.upgrading = true;
+    try {
+      this.assertElectionHandoverReady();
+      const home = this.store.file === ":memory:" ? null : dirname(this.store.file);
+      const prior = home ? metadataValue(home, "broker-election", "upgrade") : null;
+      const last = isRecord(prior) && typeof prior.at === "number" ? prior.at : 0;
+      if (this.now() < Math.max(this.nextUpgradeAttempt, last + BROKER_UPGRADE_COOLDOWN_MS)) {
+        this.handoverPending = "upgrade cooldown"; return;
+      }
+      this.store.assertBrokerUpgradeReady(successor.storeCapabilities!);
+      this.handoverPending = `draining requests for ${successor.name} v${successor.version}`;
+      this.draining = true;
+      const deadline = Date.now() + BROKER_UPGRADE_DRAIN_MS;
+      while (this.requests.size && Date.now() < deadline) await delay(10);
+      if (this.requests.size) {
+        this.handoverPending = "in-flight request drain timed out; broker retained";
+        this.nextUpgradeAttempt = this.now() + BROKER_UPGRADE_COOLDOWN_MS;
+        return;
+      }
+      // A reader or successor may have changed during the drain. Recheck before touching ownership.
+      if (this.closing || newestBrokerSuccessor(this.localPeers(), this.version)?.id !== successor.id) return;
+      this.assertElectionHandoverReady();
+      this.store.assertBrokerUpgradeReady(successor.storeCapabilities!);
+      await this.close(async () => {
+        if (!this.localPeers().some(p => p.id === successor.id)) throw new Error("Successor disconnected during retirement");
+        this.assertElectionHandoverReady();
+        this.store.assertBrokerUpgradeReady(successor.storeCapabilities!);
+        if (home) {
+          saveMetadataValue(home, "broker-election", "upgrade", { at: this.now(), from: this.version, to: successor.version, successor: successor.id });
+          await syncBrokerStores(home);
+        }
+        this.broadcastEvent("broker_handover", { successor: successor.id, version: successor.version!, graceMs: BROKER_SUCCESSOR_GRACE_MS }, undefined);
+        // Flush the announcement before closing sockets; no storage ownership is released yet.
+        await Promise.all([...this.conns].filter(c => !c.socket.destroyed).map(c => new Promise<void>(resolve => {
+          const timer = setTimeout(resolve, 1_000);
+          c.socket.write("", () => { clearTimeout(timer); resolve(); });
+        })));
+      });
+      this.releasedForUpgrade?.();
+    } catch (error) {
+      const deferred = (error as NodeJS.ErrnoException).code === "STORE_UPGRADE_DEFERRED";
+      const unsupported = (error as NodeJS.ErrnoException).code === "BROKER_HANDOVER_UNSUPPORTED";
+      const reason = unsupported ? String((error as Error).message) : deferred ? `store upgrade deferred / reader floor: ${String((error as Error).message)}` : "store flush or handover failed; broker retained; restart required";
+      if (this.handoverPending !== reason) this.log.warn("broker upgrade deferred; data and ownership retained", { err: String(error) });
+      this.handoverPending = reason;
+    } finally { this.draining = this.closing; this.upgrading = false; }
   }
 
   /** Serialize listener changes and let the elected broker remain the sole network writer. */
@@ -688,19 +771,25 @@ export class Broker {
       }
       for (const f of frames) {
         if (f.t === "req") {
+          if (this.draining && !["health", "ping"].includes(f.op)) {
+            this.write(conn, { t: "res", id: f.id, ok: false, error: { code: "timeout", message: `Broker v${this.version}. Handover pending: ${this.handoverPending ?? "retiring"}; retry after reconnect.` } });
+            continue;
+          }
           if (++conn.inFlight > MAX_INFLIGHT_PER_CONNECTION) {
             this.log.warn("closing overloaded client connection", { peer: conn.peer?.name });
             socket.destroy();
             break;
           }
           if (conn.inFlight >= PAUSE_INFLIGHT_PER_CONNECTION) socket.pause();
-          void this.dispatch(conn, f).catch((err) => {
+          const request = this.dispatch(conn, f).catch((err) => {
             this.log.warn("client request transport failed", { err: String(err) });
             socket.destroy();
           }).finally(() => {
+            this.requests.delete(request);
             conn.inFlight--;
             if (conn.inFlight < PAUSE_INFLIGHT_PER_CONNECTION && !socket.destroyed) socket.resume();
           });
+          this.requests.add(request);
         }
         else this.log.debug("ignoring non-request frame from client", { t: f.t });
       }
@@ -737,7 +826,7 @@ export class Broker {
       const turn = this.requestTurn.then(() => new Promise<void>((resolve) => setImmediate(resolve)));
       this.requestTurn = turn;
       await turn;
-      if (this.closing) return;
+      if (this.closing && !["health", "ping"].includes(frame.op)) return;
       if (!conn.authed && !UNAUTHENTICATED_OPS.has(frame.op)) throw new BridgeError("unauthorized", "authenticate first");
       this.log.debug("request", { op: frame.op, peer: conn.peer?.name });
       const result = await handler(conn, (frame.args ?? {}) as never);
@@ -813,7 +902,7 @@ export class Broker {
     this.write(conn, frame as EventFrame);
   }
 
-  private broadcastEvent<E extends EventName>(ev: E, data: EventMap[E], except: Conn): void {
+  private broadcastEvent<E extends EventName>(ev: E, data: EventMap[E], except?: Conn): void {
     for (const c of this.conns) if (c !== except && c.peer) this.emit(c, ev, data);
   }
 
@@ -1366,6 +1455,7 @@ export class Broker {
       activity: p.activity === "busy" || p.activity === "idle" ? p.activity : null,
       unavailable: p.unavailable === true,
       version: typeof p.version === "string" ? p.version.slice(0, 32) : undefined,
+      ...(typeof p.brokerEligible === "boolean" ? { brokerEligible: p.brokerEligible && !p.jobAgent && !p.subagent && p.agent !== "other" } : {}),
       ...(validStoreCapabilities(p.storeCapabilities) ? { storeCapabilities: p.storeCapabilities } : {}),
       ...(p.subagent === true ? { subagent: true } : {}),
       ...(p.jobAgent && AGENT_KINDS.includes(p.jobAgent) ? { jobAgent: p.jobAgent } : {}),
@@ -1411,7 +1501,7 @@ export class Broker {
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
     this.replayMail(conn, peer, () => { this.queueCurrentDecisions(peer); });
-    return { brokerPid: process.pid, brokerVersion: APP_VERSION, name: peer.name, sessionId: peer.sessionId, peers: this.livePeers().filter((x) => x.id !== peer.id) };
+    return { brokerPid: process.pid, brokerVersion: this.version, name: peer.name, sessionId: peer.sessionId, peers: this.livePeers().filter((x) => x.id !== peer.id) };
   }
 
   /**
@@ -1444,6 +1534,7 @@ export class Broker {
   private async onUpdatePeer(conn: Conn, args: RequestMap["updatePeer"][0]): Promise<PeerInfo> {
     if (typeof args.cwd === "string" && isPluginCacheCwd(args.cwd)) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const peer = this.requirePeer(conn);
+    if (typeof args.brokerEligible === "boolean") peer.brokerEligible = args.brokerEligible && !peer.jobAgent && !peer.subagent && peer.agent !== "other";
     const previousIdentity = { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name };
     const previousName = peer.name;
     const aliases: string[] = [];

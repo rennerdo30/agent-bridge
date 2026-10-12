@@ -8,11 +8,41 @@ publishes a new release without stopping sessions. Where the native client is
 installed, `update antigravity --yes` applies the same retention policy.
 
 New MCP server starts select the published compatible runtime. Existing servers
-continue with their original code, stdio connection, session identity, broker,
+continue with their original code, stdio connection, session identity,
 jobs, approvals and notification waits. The updater reports recorded live server
 PIDs and versions, including servers still on retained code. Launches made before
 the startup launcher was introduced are unrecorded, rather than guessed current.
 PID liveness is best-effort reporting; PID reuse can leave a stale launch record.
+
+## Automatic broker upgrade handover
+
+A broker that supports upgrade handover checks connected local servers once per
+second. It yields to the newest compatible release with a positively identified
+interactive host. Equal or older versions, unknown/prerelease versions, remote
+servers, job runners, headless launches and native children are ineligible.
+
+The broker stops admitting requests and allows admitted requests up to five
+seconds to finish. A drain timeout retains the broker and resumes admission;
+it never closes storage under an unfinished request. After a successful drain,
+it stops its background services, flushes and fsyncs retained stores and approval
+files, announces the successor, and releases its existing endpoint and storage
+lease. The old server reconnects as a client with its session and retained code.
+Other hosts give the successor five seconds to acquire the ordinary election.
+A persisted sixty-second cooldown limits subsequent upgrade handovers.
+
+Existing deferred-upgrade and reader-floor checks run again before release.
+Unknown readers remain blockers. A failed store flush retains ownership and
+reports that a restart is required; no mail, registry, approval or question is
+deleted. `health` includes `brokerVersion` and `handoverPending`; `peers` displays
+the same broker version and pending reason.
+
+This cannot add a handover handler to a broker already running a release from
+before this feature. That broker needs one normal reload or exit before automatic
+handover becomes available. Connected legacy hosts without election-hint support
+also defer handover until they finish or reload naturally, preventing an older
+host from racing the designated successor. The process integration test uses two version-stamped
+builds of the handover-capable source; it does not claim that an unmodified
+0.30.12 broker can retire itself automatically.
 
 ## Why the old updater required shutdown
 
