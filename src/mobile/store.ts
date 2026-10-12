@@ -21,7 +21,8 @@ export class MobileStore {
   private readonly db: DatabaseSync;
   private transactionDepth = 0;
   readonly origins: string[];
-  constructor(file: string, readonly pcId: string, readonly origin: string, readonly now: () => number = Date.now, alternateOrigins: string[] = []) {
+  constructor(file: string, readonly pcId: string, readonly origin: string, readonly now: () => number = Date.now, alternateOrigins: string[] = [], readonly pins?: readonly string[]) {
+    if (pins !== undefined && (pins.length < 1 || pins.length > 2 || pins.some(pin => !/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(pin)) || new Set(pins).size !== pins.length)) throw new Error("Invalid SPKI pins");
     this.origins = [...new Set([origin, ...alternateOrigins])];
     if (this.origins.length > 8) throw new Error("At most eight private HTTPS addresses");
     for (const configured of this.origins) {
@@ -95,7 +96,8 @@ export class MobileStore {
     if (pending.length >= 10) throw new MobileFault(429, "pairing_limit");
     const id = randomUUID(), nonce = secret(), expiresAt = this.now() + 120_000;
     this.put("invite", id, { id, pcId: this.pcId, origins: [...this.origins], nonceHash: digest("qr", nonce), expiresAt, claimed: false } satisfies Invitation);
-    return { v: 1, origin: this.origin, origins: [...this.origins], pcId: this.pcId, invitationId: id, nonce, expiresAt };
+    const fields = { origin: this.origin, origins: [...this.origins], pcId: this.pcId, invitationId: id, nonce, expiresAt };
+    return this.pins ? { v: 2, ...fields, pins: [...this.pins] } : { v: 1, ...fields };
   }
   claim(invitationId: string, nonce: string, name: string, platform: Platform, key: string): PairingClaim | unknown {
     return this.mutate("invite:" + invitationId, "claim", key, digest("claim-body", JSON.stringify([nonce, name, platform])), () => {

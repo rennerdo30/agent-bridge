@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Grant } from "./contract.js";
+import { shortPin, type Grant } from "./contract.js";
 import type { MobileSource } from "./adapter.js";
 import { digest, equal, MobileFault, MobileStore, secret } from "./store.js";
 import qrcode from "./vendor/qrcode.js";
@@ -25,7 +25,7 @@ export class MobileDesktopAdmin {
       const view = await this.source.snapshot();
       if (!this.ready()) throw new MobileFault(503, "source_unavailable");
       return { status: 200, body: { csrfToken: this.csrf, devices: this.store.devices(), pending: this.store.pending(),
-        catalog: { pcId: this.store.pcId, sessions: view.sessions.map(s => ({ id: s.id, name: s.name })), jobs: view.jobs.map(j => ({ id: j.id, title: j.title })), projects: [...new Set([...view.questions.map(q => q.projectId), ...view.sessions.flatMap(s => s.projectId ? [s.projectId] : []), ...view.jobs.flatMap(j => j.projectId ? [j.projectId] : [])])] }, gatewayOrigins: this.store.origins } };
+        catalog: { pcId: this.store.pcId, sessions: view.sessions.map(s => ({ id: s.id, name: s.name })), jobs: view.jobs.map(j => ({ id: j.id, title: j.title })), projects: [...new Set([...view.questions.map(q => q.projectId), ...view.sessions.flatMap(s => s.projectId ? [s.projectId] : []), ...view.jobs.flatMap(j => j.projectId ? [j.projectId] : [])])] }, gatewayOrigins: this.store.origins, fingerprints: this.store.pins?.map(shortPin) ?? [] } };
     }
     if (headers.origin !== this.localOrigin || !equal(headers["x-mobile-admin-csrf"] ?? "", this.csrf)) throw new MobileFault(403, "desktop_csrf");
     const key = z.string().uuid().parse(headers["idempotency-key"]);

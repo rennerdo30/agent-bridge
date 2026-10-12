@@ -1,10 +1,10 @@
 import type { ChatItem, ClaimResult, Credentials, GatewayError, Hello, Job, Page, PairingClaim, PairingQr, Platform, Question, Session, Snapshot } from "../../../src/mobile/contract";
 
-export interface StoredDevice { origins: string[]; preferredOrigin: string; credentials: Credentials }
+export interface StoredDevice { origins: string[]; preferredOrigin: string; credentials: Credentials; pins?: string[]; pinning?: true }
 export interface SecureCredentials { load(): Promise<StoredDevice | null>; save(device: StoredDevice): Promise<void>; clear(): Promise<void> }
 export interface WireResponse { status: number; ok: boolean; redirected: boolean; url: string; text(): Promise<string> }
 /** Native transport must enforce redirect:error before a follow; Expo's native fetch is used. */
-export type WireFetch = (url: string, init: { method: string; headers: Record<string, string>; body?: string; redirect: "error"; credentials: "omit"; cache: "no-store"; signal: AbortSignal }) => Promise<WireResponse>;
+export type WireFetch = (url: string, init: { method: string; headers: Record<string, string>; body?: string; redirect: "error"; credentials: "omit"; cache: "no-store"; signal: AbortSignal }, pins?: readonly string[]) => Promise<WireResponse>;
 export type Connection = "unpaired" | "reconnecting" | "ready" | "stale" | "offline" | "background" | "revoked";
 export class ClientFault extends Error { constructor(readonly code: string, readonly status = 0, readonly unconfirmed = false) { super(code.replaceAll("_", " ")); } }
 export interface ClientState { connection: Connection; snapshot: Snapshot | null; writePending: boolean; notice: string | null }
@@ -13,10 +13,16 @@ export function exactOrigins(origins: unknown): string[] {
   for (const origin of origins as string[]) { const url = new URL(origin); if (url.protocol !== "https:" || url.origin !== origin || url.username || url.password) throw new ClientFault("trusted_https_required"); }
   return [...new Set(origins as string[])];
 }
+/** Nonempty canonical SHA-256 SPKI digest set. Missing/empty pins never mean unpinned. */
+export function exactPins(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 2 || value.some(pin => typeof pin !== "string" || !/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(pin)) || new Set(value).size !== value.length) throw new ClientFault("invalid_pins");
+  return [...value];
+}
 export function parseQr(payload: string, now = Date.now()): PairingQr {
   if (payload.length > 4096) throw new ClientFault("invalid_pairing");
   const q = JSON.parse(payload) as PairingQr;
-  if (q.v !== 1 || typeof q.pcId !== "string" || q.pcId.length > 128 || !/^[\w-]{1,128}$/.test(q.invitationId) || !/^[\w-]{43}$/.test(q.nonce) || q.expiresAt <= now || q.expiresAt > now + 120_000 || Object.keys(q).some(k => !["v", "origin", "origins", "pcId", "invitationId", "nonce", "expiresAt"].includes(k))) throw new ClientFault("invalid_pairing");
+  if (!q || (q.v !== 1 && q.v !== 2) || typeof q.pcId !== "string" || q.pcId.length > 128 || !/^[\w-]{1,128}$/.test(q.invitationId) || !/^[\w-]{43}$/.test(q.nonce) || q.expiresAt <= now || q.expiresAt > now + 120_000 || Object.keys(q).some(k => !["v", "origin", "origins", "pcId", "invitationId", "nonce", "expiresAt", ...(q.v === 2 ? ["pins"] : [])].includes(k))) throw new ClientFault("invalid_pairing");
+  if (q.v === 2) q.pins = exactPins(q.pins);
   q.origins = exactOrigins(q.origins); if (!q.origins.includes(q.origin)) throw new ClientFault("invalid_pairing"); return q;
 }
 
@@ -47,6 +53,8 @@ export class MobileClient {
     this.initializing = (async () => {
       const saved = await this.secure.load(); if (!saved) return;
       saved.origins = exactOrigins(saved.origins);
+      if (saved.pinning && saved.pins === undefined) throw new ClientFault("invalid_pins");
+      if (saved.pins !== undefined) { saved.pins = exactPins(saved.pins); saved.pinning = true; }
       if (!saved.origins.includes(saved.preferredOrigin)) throw new ClientFault("invalid_credentials");
       this.device = saved; await this.reconnect();
     })().finally(() => { this.initializing = undefined; });
@@ -57,14 +65,15 @@ export class MobileClient {
     if (!active) { for (const controller of this.controllers) controller.abort(); this.update({ connection: "background" }); }
     else if (this.device) { this.update({ connection: "reconnecting" }); void this.reconnect().catch(() => {}); }
   }
-  private async request<T>(origin: string, origins: readonly string[], path: string, method = "GET", headers: Record<string, string> = {}, body?: unknown): Promise<T> {
+  private async request<T>(origin: string, origins: readonly string[], path: string, method = "GET", headers: Record<string, string> = {}, body?: unknown, pins: readonly string[] | undefined = this.device?.pins ?? this.claim?.qr.pins): Promise<T> {
     if (!origins.includes(origin) || !path.startsWith("/mobile/v1/") || path.includes("\\")) throw new ClientFault("unapproved_origin");
+    if (pins !== undefined) exactPins(pins);
     const requestUrl = origin + path, url = new URL(requestUrl); if (url.origin !== origin) throw new ClientFault("unapproved_origin");
     const controller = new AbortController(); this.controllers.add(controller);
     const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
       const response = await this.wire(requestUrl, { method, headers: { accept: "application/json", ...(body !== undefined ? { "content-type": "application/json" } : {}), ...headers },
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}), redirect: "error", credentials: "omit", cache: "no-store", signal: controller.signal });
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}), redirect: "error", credentials: "omit", cache: "no-store", signal: controller.signal }, pins);
       if (response.redirected || response.url && response.url !== requestUrl || response.status >= 300 && response.status < 400) throw new ClientFault("redirect_rejected", response.status, method !== "GET");
       const text = await response.text(); if (text.length > 512 * 1024) throw new ClientFault("response_too_large");
       const value = text ? JSON.parse(text) : null;
@@ -74,17 +83,17 @@ export class MobileClient {
     finally { clearTimeout(timeout); this.controllers.delete(controller); }
   }
   private auth(): Record<string, string> { if (!this.device) throw new ClientFault("unpaired"); return { authorization: "Bearer " + this.device.credentials.accessToken }; }
-  private async chooseOrigin(origins: string[], preferred: string): Promise<string> {
+  private async chooseOrigin(origins: string[], preferred: string, pins?: readonly string[]): Promise<string> {
     for (const origin of [preferred, ...origins.filter(o => o !== preferred)]) {
-      try { const hello = await this.request<Hello>(origin, origins, "/mobile/v1/hello"); if (hello.apiVersion === 1 && hello.transport === "private-https" && hello.pinning === false) return origin; } catch (error) { if (error instanceof ClientFault && error.code === "unapproved_origin") throw error; }
+      try { const hello = await this.request<Hello>(origin, origins, "/mobile/v1/hello", "GET", {}, undefined, pins); if (hello.apiVersion === 1 && hello.transport === "private-https" && hello.pinning === (pins !== undefined)) return origin; } catch (error) { if (error instanceof ClientFault && error.code === "unapproved_origin") throw error; }
     }
     throw new ClientFault("unreachable");
   }
   async beginPairing(qr: PairingQr, deviceName: string, platform: Platform): Promise<PairingClaim> {
     if (this.device) throw new ClientFault("already_paired");
-    parseQr(JSON.stringify(qr), this.now());
-    const origin = await this.chooseOrigin(qr.origins, qr.origin);
-    const claim = await this.request<PairingClaim>(origin, qr.origins, "/mobile/v1/pairing/claims", "POST", { "idempotency-key": this.uuid() }, { invitationId: qr.invitationId, nonce: qr.nonce, deviceName, platform });
+    qr = parseQr(JSON.stringify(qr), this.now());
+    const origin = await this.chooseOrigin(qr.origins, qr.origin, qr.pins);
+    const claim = await this.request<PairingClaim>(origin, qr.origins, "/mobile/v1/pairing/claims", "POST", { "idempotency-key": this.uuid() }, { invitationId: qr.invitationId, nonce: qr.nonce, deviceName, platform }, qr.pins);
     if (!claim.claimToken || !claim.claimId || !/^\d{6}$/.test(claim.comparisonCode) || claim.expiresAt > qr.expiresAt) throw new ClientFault("pairing_unconfirmed");
     this.claim = { qr, origin, claim, issueKey: this.uuid() }; return claim;
   }
@@ -96,7 +105,7 @@ export class MobileClient {
     catch (error) { this.claim = undefined; throw new ClientFault("pairing_unconfirmed", error instanceof ClientFault ? error.status : 0, true); }
     if (result.state === "approved") {
       if (result.credentials.pcId !== pending.qr.pcId) throw new ClientFault("pc_identity_mismatch");
-      this.device = { origins: pending.qr.origins, preferredOrigin: pending.origin, credentials: result.credentials };
+      this.device = { origins: pending.qr.origins, preferredOrigin: pending.origin, credentials: result.credentials, ...(pending.qr.pins ? { pins: [...pending.qr.pins], pinning: true as const } : {}) };
       try { await this.secure.save(this.device); } catch { this.device = null; this.claim = undefined; throw new ClientFault("pairing_unconfirmed", 0, true); }
       this.claim = undefined; await this.reconnect(false);
     } else if (result.state !== "pending") this.claim = undefined;
@@ -123,7 +132,7 @@ export class MobileClient {
     const generation = this.generation; this.update({ connection: "reconnecting", notice: null });
     this.reconnecting = (async () => {
       const device = this.device!;
-      const selected = await this.chooseOrigin(device.origins, device.preferredOrigin);
+      const selected = await this.chooseOrigin(device.origins, device.preferredOrigin, device.pins);
       this.device = { ...device, preferredOrigin: selected };
       if (rotate) await this.refresh();
       const me = await this.request<{ pcId: string; deviceId: string; sessionId: string }>(selected, device.origins, "/mobile/v1/me", "GET", this.auth());

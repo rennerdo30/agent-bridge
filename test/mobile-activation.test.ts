@@ -39,7 +39,7 @@ function fixture() {
   Object.assign(node, { broker }); closers.push(() => node.stop());
   const origins = ["https://lan.fixture:8443", "https://fixture.ts.net:8444"], listeners = origins.map((origin, index) => ({ origin, port: 8443 + index, bindAddress: index ? "100.64.1.2" : "192.168.1.2", certFile: join(home, `cert${index}`), keyFile: join(home, `key${index}`) }));
   for (const listener of listeners) { writeFileSync(listener.certFile, "synthetic cert"); writeFileSync(listener.keyFile, "synthetic key"); }
-  const config: EnabledMobileConfig = { enabled: true, pcId: "fixture-pc", origins, listeners };
+  const config: EnabledMobileConfig & { listeners: typeof listeners } = { enabled: true, pcId: "fixture-pc", origins, listeners };
   const servers = listeners.map(() => new Listener());
   vi.mocked(createMobileHttpsListeners).mockImplementation((_, configs) => configs.map((config, i) => ({ config, server: servers[i]! as unknown as Server })));
   const ensure = vi.fn(async () => ({ url: "http://127.0.0.1:4321/?t=fixture", port: 4321, pid: 0 })), desktopClose = vi.fn(async () => {}), desktop = vi.fn(() => ({ ensure, close: desktopClose }));

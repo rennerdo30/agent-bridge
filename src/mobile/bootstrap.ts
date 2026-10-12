@@ -17,10 +17,11 @@ export interface MobileQuestionService {
 export function provisionMobile(options: {
   registryFile: string; pcId: string; origins: string[]; desktopOrigin: string; local: DashboardReadContext;
   ownerQuestions: MobileQuestionService; ready: () => boolean;
+  pins?: readonly string[];
   push?: { provider: PushProvider; encryptionKey: Uint8Array; projectId: string; environment: "development" | "production" };
 }): { gateway: MobileGateway; desktopAdmin: MobileDesktopAdmin; pollQuestionHints: () => Promise<void>; close: () => Promise<void> } {
   if (!options.origins.length) throw new Error("Owner must provision LAN/Tailscale trusted HTTPS origins");
-  const store = new MobileStore(options.registryFile, options.pcId, options.origins[0]!, Date.now, options.origins.slice(1));
+  const store = new MobileStore(options.registryFile, options.pcId, options.origins[0]!, Date.now, options.origins.slice(1), options.pins);
   let closed = false, closing: Promise<void> | undefined;
   const ready = () => !closed && options.ready();
   const source = new LocalMobileSource(options.local, options.ownerQuestions.store, options.pcId, ready,

@@ -8,6 +8,7 @@ import { ExpoPushProvider } from "./expo-push.js";
 import { MobileActivationFault, privateAddress, readPrivateMaterial, type MobileConfig } from "./config.js";
 import { prepareMobileDesktopHost, type MobileHostNode, type PreparedMobileDesktopHost, type MobileHostConfig } from "./host.js";
 import type { PushProvider } from "./push.js";
+import { loadMobileIdentity } from "./identity.js";
 
 export type ActivationStatus = "preparing" | "ready" | "source_unavailable" | MobileActivationFault["category"];
 export interface ActivationNode extends MobileHostNode { readonly isBroker: boolean; initializeMobileOwnerQuestions(): boolean }
@@ -19,6 +20,7 @@ export interface ActivationDependencies {
   prepare?: typeof prepareMobileDesktopHost;
   desktop?(options: DashboardHostOptions): Desktop;
   provider?(token: string): PushProvider;
+  identity?: typeof loadMobileIdentity;
 }
 export function validateMobileTls(cert: Buffer, key: Buffer, hostname: string): void {
   try {
@@ -54,13 +56,16 @@ export class MobileActivation {
       if (!this.node.isBroker || this.retired) throw new MobileActivationFault("source_unavailable");
       const material = this.deps.material ?? readPrivateMaterial;
       const listeners: NonNullable<MobileHostConfig["listeners"]> = [];
+      let identity: Awaited<ReturnType<typeof loadMobileIdentity>> | undefined;
       for (const listener of this.config.listeners) {
         const addresses = isIP(listener.bindAddress) ? [listener.bindAddress] : await (this.deps.addresses ?? (async name => (await lookup(name, { all: true })).map(r => r.address)))(listener.bindAddress);
         if (!addresses.length || addresses.some(address => !privateAddress(address))) throw new MobileActivationFault("bind_invalid");
         // Bind a validated literal address: do not resolve again between validation and listen.
-        const cert = await material(listener.certFile), key = await material(listener.keyFile);
+        const pinned = "tls" in listener;
+        if (pinned) identity ??= await (this.deps.identity ?? loadMobileIdentity)(this.options.home, this.config.origins);
+        const cert = pinned ? identity!.cert : await material(listener.certFile), key = pinned ? identity!.key : await material(listener.keyFile);
         (this.deps.validateTls ?? validateMobileTls)(cert, key, new URL(listener.origin).hostname);
-        listeners.push({ origin: listener.origin, bindAddress: addresses[0]!, port: listener.port, tls: { cert, key } });
+        listeners.push({ origin: listener.origin, bindAddress: addresses[0]!, port: listener.port, tls: { cert, key }, ...(pinned ? { pinning: true } : {}) });
       }
       let push: MobileHostConfig["push"];
       if (this.config.push) {
@@ -78,7 +83,7 @@ export class MobileActivation {
       }
       if (this.retired || !this.node.initializeMobileOwnerQuestions()) throw new MobileActivationFault("source_unavailable");
       this.prepared = await (this.deps.prepare ?? prepareMobileDesktopHost)(this.node, { registryFile: join(this.options.home, "mobile.db"), pcId: this.config.pcId,
-        origins: this.config.origins, desktopOrigin: `http://127.0.0.1:${this.options.port}`, listeners, ...(push ? { push } : {}) });
+        origins: this.config.origins, desktopOrigin: `http://127.0.0.1:${this.options.port}`, listeners, ...(identity ? { pins: identity.pins } : {}), ...(push ? { push } : {}) });
       if (this.retired || !this.prepared.ready()) throw new MobileActivationFault("source_unavailable");
       const context = this.node.mobileHostContext(); if (!context?.ready()) throw new MobileActivationFault("source_unavailable");
       this.unregister = context.onDispose(() => this.retireMobile());

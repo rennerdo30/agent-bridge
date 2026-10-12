@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ClientFault, exactOrigins, MobileClient, parseQr, type SecureCredentials, type StoredDevice, type WireFetch, type WireResponse } from "../apps/mobile/src/client.js";
+import { ClientFault, exactOrigins, MobileClient, parseQr, exactPins, type SecureCredentials, type StoredDevice, type WireFetch, type WireResponse } from "../apps/mobile/src/client.js";
 import type { Credentials, PairingQr, Question, Snapshot } from "../src/mobile/contract.js";
 
 const lan = "https://lan.example.test:4443", vpn = "https://pc.tailnet.ts.net", pcId = "fixture-pc";
 let at: number, credentials: Credentials, saved: StoredDevice, snapshot: Snapshot, secure: SecureCredentials, client: MobileClient;
-let calls: { url: string; init: Parameters<WireFetch>[1] }[], offlineLan: boolean, blocked: ((url: string, init: Parameters<WireFetch>[1]) => Promise<WireResponse | undefined>) | undefined;
+let calls: { url: string; init: Parameters<WireFetch>[1]; pins?: readonly string[] }[], offlineLan: boolean, blocked: ((url: string, init: Parameters<WireFetch>[1]) => Promise<WireResponse | undefined>) | undefined;
 let q: Question;
 function response(url: string, value: unknown, status = 200): WireResponse { return { url, status, ok: status < 300, redirected: false, text: async () => JSON.stringify(value) }; }
 beforeEach(() => {
@@ -15,12 +15,12 @@ beforeEach(() => {
   q = { id: randomUUID(), kind: "question", pcId, projectId: "project", title: "Fixture terms", context: "Fixture content", topic: "fixture", options: [{ id: "keep", label: "Keep", consequence: "Retain", recommended: true }, { id: "wait", label: "Wait", consequence: "Delay", recommended: false }], links: [], blocking: true, blocks: "Action", meanwhile: "Read", destructive: false, authorization: false, urgency: "normal", declaredDefault: null, status: "open", askedAt: at, version: "v".repeat(43), answer: null, deliveries: [], dismissal: null };
   snapshot = { apiVersion: 1, pcId, epoch: "epoch", cursor: "cursor", sampledAt: at, stale: false, sourceState: "ready", capabilities: ["questions.read", "questions.answer"], sessions: [], jobs: [], questions: [q], pages: { sessions: null, jobs: null, questions: null } };
   secure = { load: vi.fn(async () => saved), save: vi.fn(async value => { saved = value; }), clear: vi.fn(async () => {}) };
-  const wire: WireFetch = async (url, init) => {
-    calls.push({ url, init });
+  const wire: WireFetch = async (url, init, pins) => {
+    calls.push({ url, init, pins });
     if (blocked) { const result = await blocked(url, init); if (result) return result; }
     if (offlineLan && url.startsWith(lan)) throw new Error("fixture unreachable");
     const path = new URL(url).pathname;
-    if (path.endsWith("/hello")) return response(url, { apiVersion: 1, transport: "private-https", pinning: false });
+    if (path.endsWith("/hello")) return response(url, { apiVersion: 1, transport: "private-https", pinning: pins !== undefined });
     if (path.endsWith("/auth/refresh")) return response(url, { ...credentials, accessToken: "n".repeat(43), refreshToken: "s".repeat(43), csrfToken: "d".repeat(43) });
     if (path.endsWith("/me")) return response(url, { pcId, deviceId: credentials.deviceId, sessionId: credentials.sessionId });
     if (path.endsWith("/snapshot")) return response(url, snapshot);

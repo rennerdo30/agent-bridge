@@ -9,7 +9,10 @@ const origin = z.string().max(512).refine(value => {
 });
 const path = z.string().max(4096).refine(isAbsolute);
 const schema = z.object({ enabled: z.literal(true), pcId: z.string().min(1).max(128), origins: z.array(origin).min(1).max(8),
-  listeners: z.array(z.object({ origin, bindAddress: z.string().min(1).max(253), port: z.number().int().min(1).max(65535), certFile: path, keyFile: path }).strict()).min(1).max(8),
+  listeners: z.array(z.union([
+    z.object({ origin, bindAddress: z.string().min(1).max(253), port: z.number().int().min(1).max(65535), tls: z.literal("pinned") }).strict(),
+    z.object({ origin, bindAddress: z.string().min(1).max(253), port: z.number().int().min(1).max(65535), certFile: path, keyFile: path }).strict(),
+  ])).min(1).max(8),
   push: z.object({ provider: z.literal("expo"), materialRef: path, projectId: z.string().uuid(), environment: z.enum(["development", "production"]) }).strict().optional(),
 }).strict().superRefine((config, ctx) => {
   if (new Set(config.origins).size !== config.origins.length || config.listeners.length !== config.origins.length || new Set(config.listeners.map(l => l.origin)).size !== config.origins.length) ctx.addIssue({ code: "custom", message: "origins" });
@@ -35,7 +38,10 @@ export function windowsPrivateAcl(file: string): Promise<boolean> {
   return new Promise(resolve => {
     const script = "$ErrorActionPreference='Stop'; try { $a=Get-Acl -LiteralPath ([Console]::In.ReadLine()); $owner=([System.Security.Principal.NTAccount]$a.Owner).Translate([System.Security.Principal.SecurityIdentifier]).Value; $caller=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; if($owner -ne $caller){throw 'deny'}; foreach($r in $a.Access){ $sid=$r.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value; if($r.AccessControlType -eq 'Allow' -and ([int]$r.FileSystemRights -band 1) -ne 0 -and $sid -notin @($caller,'S-1-5-18','S-1-5-32-544')){throw 'deny'} }; 'allow' } catch { 'deny'; exit 1 }";
     if (/[\r\n]/.test(file)) { resolve(false); return; }
-    const child = execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, timeout: 3000, maxBuffer: 8192 }, (error, stdout) => resolve(!error && stdout.trim() === "allow"));
+    // A pwsh parent exports its incompatible module path. Let Windows PowerShell
+    // select its own Security module; lookup/translation failures still deny.
+    const env = { ...process.env }; for (const name of Object.keys(env)) if (name.toLowerCase() === "psmodulepath") delete env[name];
+    const child = execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { env, windowsHide: true, timeout: 3000, maxBuffer: 8192 }, (error, stdout) => resolve(!error && stdout.trim() === "allow"));
     child.stdin?.end(file + "\n");
   });
 }
