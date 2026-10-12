@@ -5,6 +5,7 @@ export type CodexLineage = "main" | "child" | "unknown";
 /** Filesystem-only admission. No CLI database is opened; missing headers are retried after a short cooldown. */
 export class CodexLineageLookup {
   private readonly known = new Map<string, CodexLineage>();
+  private readonly interactive = new Map<string, boolean>();
   private readonly retryAfter = new Map<string, number>();
   constructor(private readonly root = join(transcriptPaths().codex, "sessions")) {}
 
@@ -21,7 +22,9 @@ export class CodexLineageLookup {
       if (!row) return "unknown";
       const meta = object(row.value.payload), source = object(meta.source);
       if (meta.thread_source === "subagent" || source.subagent !== undefined || typeof meta.parent_thread_id === "string" && meta.parent_thread_id.length > 0) return "child";
-      return ["cli", "vscode", "exec", "mcp"].includes(meta.source) || ["cli", "vscode", "exec", "mcp"].includes(meta.thread_source) ? "main" : "unknown";
+      const main = ["cli", "vscode", "exec", "mcp"].includes(meta.source) || ["cli", "vscode", "exec", "mcp"].includes(meta.thread_source);
+      if (main) this.interactive.set(id, ["cli", "vscode"].includes(meta.source) || ["cli", "vscode"].includes(meta.thread_source));
+      return main ? "main" : "unknown";
     };
     let result: CodexLineage = transcript ? inspect(transcript) : "unknown";
     let directories = 0, entries = 0;
@@ -67,13 +70,18 @@ export class CodexLineageLookup {
     if (result !== "unknown") {
       this.retryAfter.delete(id);
       this.known.set(id, result);
-      if (this.known.size > 512) this.known.delete(this.known.keys().next().value!);
+      if (this.known.size > 512) { const oldest = this.known.keys().next().value!; this.known.delete(oldest); this.interactive.delete(oldest); }
     } else {
       this.retryAfter.delete(id);
       this.retryAfter.set(id, Date.now() + 10_000);
       if (this.retryAfter.size > 2_048) this.retryAfter.delete(this.retryAfter.keys().next().value!);
     }
     return result;
+  }
+
+  /** Exec/MCP sources can use tools as mains, but are headless and never upgrade successors. */
+  isInteractive(id: string, transcript?: string | null): boolean {
+    return this.classify(id, transcript) === "main" && this.interactive.get(id) === true;
   }
 }
 

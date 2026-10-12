@@ -89,6 +89,36 @@ export function cmdlineIsClaude(cmdline: string): boolean {
   return /(?:^|\/)node_modules\/@anthropic-ai\/claude-code\/cli\.js$/i.test((tokens[1] ?? "").replace(/\\/g, "/"));
 }
 
+/** Positive TUI launch evidence for the other interactive CLIs. Unknown server/print launches
+ * stay ineligible, even if their tools subsequently register a session on the bridge. */
+export function cmdlineIsInteractiveAgent(cmdline: string, agent: "opencode" | "antigravity"): boolean {
+  return interactiveAgentLaunch(cmdline, agent) === true;
+}
+
+function interactiveAgentLaunch(cmdline: string, agent: "opencode" | "antigravity"): boolean | null {
+  const tokens = cmdline.match(/"[^"]*"|'[^']*'|\S+/g)?.map(token => token.replace(/^["']|["']$/g, "")) ?? [];
+  const executable = tokens[0]?.replace(/\\/g, "/").split("/").at(-1) ?? "";
+  const name = agent === "antigravity" ? "agy" : "opencode";
+  let start = 1;
+  if (!new RegExp(`^${name}(?:\\.exe|\\.cmd)?$`, "i").test(executable)) {
+    if (agent !== "opencode" || !/^node(?:\.exe)?$/i.test(executable) || !/(?:^|\/)node_modules\/opencode-ai\/bin\/opencode$/i.test((tokens[1] ?? "").replace(/\\/g, "/"))) return null;
+    start = 2;
+  }
+  return !tokens.slice(start).some(token => /^(?:run|serve|web|acp|mcp)$/.test(token) || /^(?:-p|--print|--headless|--output-format|--input-format|--print-timeout)(?:=|$)/.test(token));
+}
+
+export async function inspectInteractiveLaunch(agent: "opencode" | "antigravity"): Promise<boolean> {
+  let pid = process.ppid;
+  for (let i = 0; i < MAX_ANCESTORS && pid > 1; i++) {
+    const info = await lookup(pid);
+    if (!info) return false;
+    const interactive = interactiveAgentLaunch(info.cmdline, agent);
+    if (interactive !== null) return interactive;
+    pid = info.ppid;
+  }
+  return false;
+}
+
 export interface ClaudeLaunch {
   /** Its command line enables our channel. */
   channel: boolean;

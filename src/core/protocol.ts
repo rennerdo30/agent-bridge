@@ -90,6 +90,8 @@ export interface PeerInfo {
   activity?: PeerActivity | null;
   /** agent-bridge version of this peer. */
   version?: string;
+  /** Explicit true: interactive upgrade successor. Either boolean advertises election-hint support. */
+  brokerEligible?: boolean;
   /** Maximum readable shared formats. Optional for retained legacy peers. */
   storeCapabilities?: { json: number; sqlite: number; jobArchive?: number };
   /** Set for a job runner (it hosts a background subagent of a session): that subagent's agent. Hidden from peer lists. */
@@ -206,6 +208,7 @@ export interface PendingArgs {
 }
 
 export interface UpdatePeerArgs {
+  brokerEligible?: boolean;
   unavailable?: boolean;
   jobParent?: string;
   jobTitle?: string;
@@ -272,7 +275,7 @@ export interface RequestMap {
   updatePeer: [UpdatePeerArgs, PeerInfo];
   /** Take over the unread mail of "-N" stand-in names of this peer that no one holds (after a reload). */
   claimMail: [{ names: string[] }, { moved: number }];
-  ping: [Record<string, never>, { brokerPid: number; protocol: number; brokerVersion?: string; health?: import("./health.js").BrokerHealth }];
+  ping: [Record<string, never>, { brokerPid: number; protocol: number; brokerVersion?: string; handoverSupported?: boolean; health?: import("./health.js").BrokerHealth }];
   dashboardRead: [{ host: string; request: DashboardReadRequest }, DashboardReadResult];
   dashboardPeers: [Record<string, never>, PeerInfo[]];
   networkStatus: [Record<string, never>, NetworkStatus];
@@ -325,6 +328,7 @@ export type ResponseFrame =
   | { t: "res"; id: number; ok: false; error: ErrorPayload };
 
 export interface EventMap {
+  broker_handover: { successor: string; version: string; graceMs: number };
   shared_job_control: { job: string; control: import("../mcp/jobs.js").RunnerControl };
   mail_retracted: { ids: string[] };
   jobs_changed: { withdrawn: string[] };
