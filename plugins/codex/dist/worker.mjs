@@ -1,13 +1,5 @@
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 import {
-  RewakeEndpoint,
-  WAKE_HEADER,
-  shouldWakeClaudeMessage
-} from "./chunks/chunk-K7SEYMJF.mjs";
-import {
-  guardServerErrors
-} from "./chunks/chunk-Q4TGWKCP.mjs";
-import {
   AjvJsonSchemaValidator,
   CallToolRequestSchema,
   CallToolResultSchema,
@@ -50,43 +42,51 @@ import {
   safeParseAsync,
   serializeMessage,
   toJsonSchemaCompat
-} from "./chunks/chunk-DDASK4CX.mjs";
+} from "./chunks/chunk-MIFXQMNI.mjs";
+import {
+  RewakeEndpoint,
+  WAKE_HEADER,
+  shouldWakeClaudeMessage
+} from "./chunks/chunk-X5MVRJHE.mjs";
+import {
+  guardServerErrors
+} from "./chunks/chunk-Q4TGWKCP.mjs";
 import {
   MAX_STREAM_ENTRIES
-} from "./chunks/chunk-JLHWMVZY.mjs";
+} from "./chunks/chunk-NPE2MH6H.mjs";
 import {
   isBridgeWorktree,
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-W7MCH4UZ.mjs";
+} from "./chunks/chunk-TQ7JD75E.mjs";
 import {
   codexAppServerCall,
   describeModels,
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-EGYLE56F.mjs";
+} from "./chunks/chunk-GATU2GUD.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-4DXK4BMQ.mjs";
+} from "./chunks/chunk-P3PHZ6SV.mjs";
 import {
   readWorktreeState
-} from "./chunks/chunk-25TGEXCR.mjs";
-import "./chunks/chunk-6RRXMKNR.mjs";
+} from "./chunks/chunk-KOJ7OFFF.mjs";
+import "./chunks/chunk-24UJAMBT.mjs";
 import {
   openBrowser
 } from "./chunks/chunk-LWVK3CB7.mjs";
 import {
   t
-} from "./chunks/chunk-BG6KJS4H.mjs";
+} from "./chunks/chunk-CE5EGKJK.mjs";
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-VPBMU4SK.mjs";
+} from "./chunks/chunk-ZSBWBFE4.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -97,17 +97,17 @@ import {
   formatProjectRoute,
   formatReplyRestrictions,
   formatVersionSkew
-} from "./chunks/chunk-6FWS4A64.mjs";
+} from "./chunks/chunk-ORX4YFOE.mjs";
 import {
   formatHealth,
   probeBrokerHealth
-} from "./chunks/chunk-CCYP6QGH.mjs";
-import "./chunks/chunk-QQ4EGNBD.mjs";
+} from "./chunks/chunk-GWNZ2M2Q.mjs";
+import "./chunks/chunk-GQOJBOMY.mjs";
 import "./chunks/chunk-RQUYBZWF.mjs";
 import {
   REMOTE_JOB_POLL_MS,
   remoteSpawnArgsSchema
-} from "./chunks/chunk-UXR35LO7.mjs";
+} from "./chunks/chunk-WMW4AOK5.mjs";
 import {
   conversationPageSchema
 } from "./chunks/chunk-3CXCL26P.mjs";
@@ -115,20 +115,20 @@ import {
   HISTORY_MAX_LIMIT,
   HISTORY_MAX_QUERY_CHARS,
   historyFiltersSchema
-} from "./chunks/chunk-UNYETCR7.mjs";
+} from "./chunks/chunk-JRTFN2TQ.mjs";
 import {
   MAX_HOLD_REASON_CHARS,
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-KTXB5KAE.mjs";
-import "./chunks/chunk-UXKDF7IF.mjs";
-import "./chunks/chunk-XV4UJPWK.mjs";
+} from "./chunks/chunk-RKHYK4Q2.mjs";
+import "./chunks/chunk-TUS65V4Q.mjs";
+import "./chunks/chunk-ANCJAUAI.mjs";
 import {
   antigravityAncestor,
   antigravityHookOutput,
   inspectClaudeLaunch
-} from "./chunks/chunk-GDWH4N3S.mjs";
+} from "./chunks/chunk-SELOL2LF.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   ACCESS_LEVELS,
@@ -155,13 +155,13 @@ import {
   resolveBinary,
   runProcess,
   verifiedGoneJobOwners
-} from "./chunks/chunk-RF7RMXGJ.mjs";
+} from "./chunks/chunk-GMHMYT3Q.mjs";
 import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
   formatResourceSlots
-} from "./chunks/chunk-ICOR677W.mjs";
+} from "./chunks/chunk-2F52LJGN.mjs";
 import {
   bundleDirectory
 } from "./chunks/chunk-D5ZW6VFT.mjs";
@@ -169,7 +169,7 @@ import {
   resolveDbPath,
   resolveHome,
   resolvePipePath
-} from "./chunks/chunk-TZ7ALTLI.mjs";
+} from "./chunks/chunk-ZBF6WTFC.mjs";
 import "./chunks/chunk-JTZGNEMM.mjs";
 import {
   MAX_JOB_SEND_TARGETS,
@@ -179,10 +179,10 @@ import {
   loadOrCreateToken,
   tokensEqual
 } from "./chunks/chunk-V4WDBMEN.mjs";
-import "./chunks/chunk-PKCLSJPP.mjs";
+import "./chunks/chunk-VIBWHOHO.mjs";
 import {
   canonicalProjectRoot
-} from "./chunks/chunk-527TPQZO.mjs";
+} from "./chunks/chunk-6WTV3HWM.mjs";
 import {
   CLAUDE_PERMISSION_MODES,
   CODEX_APPROVALS_REVIEWERS,
@@ -194,7 +194,7 @@ import {
   parseAgentKind,
   saveConfigValue,
   watchConfig
-} from "./chunks/chunk-7EOQ5DLV.mjs";
+} from "./chunks/chunk-65FHYHTF.mjs";
 import {
   AGENT_KINDS,
   BROADCAST,
@@ -211,17 +211,17 @@ import {
   askOwnerSchema,
   decisionScopeSchema,
   formatDecisionSummary
-} from "./chunks/chunk-GEIUPZ2V.mjs";
+} from "./chunks/chunk-K476F6IU.mjs";
 import {
   isInternalBridgeProcess,
   isPluginCacheCwd
-} from "./chunks/chunk-F5TIWO5T.mjs";
+} from "./chunks/chunk-TJVQ42HE.mjs";
 import {
   ZodOptional,
   external_exports
 } from "./chunks/chunk-FDMEMG4Z.mjs";
-import "./chunks/chunk-7COR3ABA.mjs";
-import "./chunks/chunk-ZLR2KASI.mjs";
+import "./chunks/chunk-FXWD7ZJJ.mjs";
+import "./chunks/chunk-IJXRM5WK.mjs";
 import {
   TRANSCRIPT_ID,
   directory,
@@ -236,8 +236,8 @@ import {
   isRecord,
   readJsonStore,
   writeJsonStore
-} from "./chunks/chunk-MVI32GWA.mjs";
-import "./chunks/chunk-EWK3N7HP.mjs";
+} from "./chunks/chunk-C5TTRWRF.mjs";
+import "./chunks/chunk-B5YQVBXX.mjs";
 import {
   APP_NAME,
   APP_VERSION,
@@ -251,7 +251,7 @@ import {
   MAX_JOBS_LIMIT,
   MAX_JOB_TIMEOUT_SEC,
   MAX_WAIT_SEC
-} from "./chunks/chunk-VRRYA6BY.mjs";
+} from "./chunks/chunk-BF2F5BYX.mjs";
 import "./chunks/chunk-HHAVWD7J.mjs";
 
 // src/mcp/server.ts
@@ -930,6 +930,42 @@ var ExperimentalMcpServerTasks = class {
 };
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
+function toolInputElementCount(value, max) {
+  let count = 0;
+  const stack = [value];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node === null || typeof node !== "object")
+      continue;
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        if (++count > max)
+          return count;
+        if (child !== null && typeof child === "object")
+          stack.push(child);
+      }
+    } else {
+      for (const key in node) {
+        if (!Object.prototype.hasOwnProperty.call(node, key))
+          continue;
+        if (++count > max)
+          return count;
+        const child = node[key];
+        if (child !== null && typeof child === "object")
+          stack.push(child);
+      }
+    }
+  }
+  return count;
+}
+function resolveMaxToolInputElements(value) {
+  if (value === void 0 || value === Infinity)
+    return void 0;
+  if (typeof value !== "number" || Number.isNaN(value) || value < 1) {
+    throw new RangeError(`maxToolInputElements must be a number of at least 1, or Infinity, got ${String(value)}`);
+  }
+  return value;
+}
 var McpServer = class {
   constructor(serverInfo, options) {
     this._registeredResources = {};
@@ -941,6 +977,7 @@ var McpServer = class {
     this._resourceHandlersInitialized = false;
     this._promptHandlersInitialized = false;
     this.server = new Server(serverInfo, options);
+    this._maxToolInputElements = resolveMaxToolInputElements(options?.maxToolInputElements);
   }
   /**
    * Access experimental features.
@@ -1071,12 +1108,15 @@ var McpServer = class {
    * Validates tool input arguments against the tool's input schema.
    */
   async validateToolInput(tool, args, toolName) {
+    if (this._maxToolInputElements !== void 0 && toolInputElementCount(args, this._maxToolInputElements) > this._maxToolInputElements) {
+      throw new McpError(ErrorCode.InvalidParams, `Invalid arguments for tool ${toolName}: arguments contain more than the maximum of ${this._maxToolInputElements} elements`);
+    }
     if (!tool.inputSchema) {
       return void 0;
     }
     const inputObj = normalizeObjectSchema(tool.inputSchema);
     const schemaToParse = inputObj ?? tool.inputSchema;
-    const parseResult = await safeParseAsync(schemaToParse, args);
+    const parseResult = await safeParseAsync(schemaToParse, args ?? {});
     if (!parseResult.success) {
       const error = "error" in parseResult ? parseResult.error : "Unknown error";
       const errorMessage = getParseErrorMessage(error);
@@ -1314,7 +1354,7 @@ var McpServer = class {
       }
       if (prompt.argsSchema) {
         const argsObj = normalizeObjectSchema(prompt.argsSchema);
-        const parseResult = await safeParseAsync(argsObj, request.params.arguments);
+        const parseResult = await safeParseAsync(argsObj, request.params.arguments ?? {});
         if (!parseResult.success) {
           const error = "error" in parseResult ? parseResult.error : "Unknown error";
           const errorMessage = getParseErrorMessage(error);
@@ -2419,10 +2459,12 @@ var CodexLineageLookup = class {
   }
   root;
   known = /* @__PURE__ */ new Map();
+  retryAfter = /* @__PURE__ */ new Map();
   classify(id, transcript) {
     if (!TRANSCRIPT_ID.test(id)) return "unknown";
     const cached = this.known.get(id);
     if (cached) return cached;
+    if (Date.now() < (this.retryAfter.get(id) ?? 0)) return "unknown";
     const inspect = (path) => {
       const file = safeFile(this.root, path);
       if (!file) return "unknown";
@@ -2433,7 +2475,31 @@ var CodexLineageLookup = class {
       return ["cli", "vscode", "exec", "mcp"].includes(meta.source) || ["cli", "vscode", "exec", "mcp"].includes(meta.thread_source) ? "main" : "unknown";
     };
     let result = transcript ? inspect(transcript) : "unknown";
-    let examined = 0;
+    let directories = 0, entries = 0;
+    const visited = /* @__PURE__ */ new Set();
+    const scan = (path) => {
+      if (visited.has(path) || directories >= 2e3 || entries >= 2e4) return "unknown";
+      visited.add(path);
+      const dir = safeFile(this.root, path);
+      if (!dir) return "unknown";
+      directories++;
+      for (const name of directory(dir)) {
+        if (++entries > 2e4) break;
+        if (!name.startsWith("rollout-") || !name.endsWith(`-${id}.jsonl`)) continue;
+        const found = inspect(join3(dir, name));
+        if (found !== "unknown") return found;
+      }
+      return "unknown";
+    };
+    if (result === "unknown" && /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+      const created = parseInt(id.slice(0, 8) + id.slice(9, 13), 16);
+      for (const offset of [0, -1, 1]) {
+        const day = new Date(created + offset * 864e5).toISOString();
+        if (!/^\d{4}-/.test(day)) continue;
+        result = scan(join3(this.root, ...day.slice(0, 10).split("-")));
+        if (result !== "unknown") break;
+      }
+    }
     if (result === "unknown") outer: for (const year of directory(this.root).filter((s) => /^\d{4}$/.test(s)).sort().reverse()) {
       const yearDir = safeFile(this.root, join3(this.root, year));
       if (!yearDir) continue;
@@ -2441,21 +2507,20 @@ var CodexLineageLookup = class {
         const monthDir = safeFile(this.root, join3(yearDir, month));
         if (!monthDir) continue;
         for (const day of directory(monthDir).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-          const dir = safeFile(this.root, join3(monthDir, day));
-          if (!dir) continue;
-          if (++examined > 2e3) break outer;
-          for (const name of directory(dir)) {
-            if (++examined > 2e4) break outer;
-            if (!name.startsWith("rollout-") || !name.endsWith(`-${id}.jsonl`)) continue;
-            result = inspect(join3(dir, name));
-            if (result !== "unknown") break outer;
-          }
+          if (directories >= 2e3 || entries >= 2e4) break outer;
+          result = scan(join3(monthDir, day));
+          if (result !== "unknown") break outer;
         }
       }
     }
     if (result !== "unknown") {
+      this.retryAfter.delete(id);
       this.known.set(id, result);
       if (this.known.size > 512) this.known.delete(this.known.keys().next().value);
+    } else {
+      this.retryAfter.delete(id);
+      this.retryAfter.set(id, Date.now() + 1e4);
+      if (this.retryAfter.size > 2048) this.retryAfter.delete(this.retryAfter.keys().next().value);
     }
     return result;
   }
@@ -2593,6 +2658,11 @@ function attachDashboardJobControl(node, jobs, log) {
       return;
     }
     if (!command || typeof command.requestId !== "string" || typeof command.job !== "string") return;
+    if (command.type === "result") return;
+    if (m.jobControlAuthorized !== true) {
+      log.warn("rejected unauthorized dashboard job command", { from: m.from.name, job: command.job, type: command.type });
+      return;
+    }
     let result;
     if (command.type === "handoff") {
       try {
@@ -2623,7 +2693,7 @@ function followUp(node, jobs, ref, body) {
   return {
     outcome,
     text: t(`followUp.${outcome}`, { name: job?.name ?? ref, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }),
-    isError: outcome === "unknown" || outcome === "no-session"
+    isError: outcome === "unknown" || outcome === "no-session" || outcome === "stopping" || outcome === "cancelled-before-start"
   };
 }
 function changeSettings(node, jobs, ref, input, log) {
@@ -2738,6 +2808,8 @@ async function startServer(argv = process.argv.slice(2)) {
     return configRoot;
   };
   const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? projectConfigRoot(cwd) : void 0);
+  const mobileAtStartup = cfg.mobile;
+  const mobilePortAtStartup = cfg.dashboardPort;
   const delegated = currentDelegateDepth() > 0;
   const internal = isInternalBridgeProcess();
   log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, internal, version: APP_VERSION, node: process.version });
@@ -2899,11 +2971,28 @@ async function startServer(argv = process.argv.slice(2)) {
     }
   }
   let dashboard = null;
+  let mobileDashboard = null;
+  let mobileUnavailable;
   const ensureDashboard = async (force) => {
     try {
       if (!force && !cfg.dashboard) return null;
-      dashboard ??= import("./chunks/dashboard-KKVXAH2P.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
-      return await (await dashboard).ensure();
+      if (mobileAtStartup && node) {
+        try {
+          mobileDashboard ??= import("./chunks/activation-OKC7W6MW.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+            node,
+            mobileAtStartup,
+            { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
+          ));
+          const mobile = await mobileDashboard, info2 = await mobile?.start();
+          if (info2 && mobile?.status() === "ready") return info2;
+          mobileUnavailable = mobile?.status ?? (() => "source_unavailable");
+        } catch {
+          mobileUnavailable = () => "restart_required";
+        }
+      }
+      dashboard ??= import("./chunks/dashboard-CVEW7YN6.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      const info = await (await dashboard).ensure();
+      return mobileUnavailable ? (await import("./chunks/dashboard-CVEW7YN6.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -2945,6 +3034,8 @@ async function startServer(argv = process.argv.slice(2)) {
     await mcp.close().catch(() => {
     });
     await dashboard?.then((controller) => controller.close()).catch(() => {
+    });
+    await mobileDashboard?.then((controller) => controller?.close()).catch(() => {
     });
     await rewake?.stop().catch(() => {
     });
@@ -3057,8 +3148,8 @@ function registerTools(mcp, ctx, targets) {
     },
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-E3JLD5VA.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-HIDE5ZS3.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-52MXPNMK.mjs")).readHistory(resolveDbPath(ctx.home), args);
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-QVNRIMS2.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
@@ -3066,7 +3157,7 @@ function registerTools(mcp, ctx, targets) {
     description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
     inputSchema: conversationPageSchema.shape,
     annotations: { readOnlyHint: true }
-  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-ZYZEZA33.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
+  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-ZO5X5LWR.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
   register(
     "decide",
     {
@@ -3830,7 +3921,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
 Saved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value}`).join(", ")}.${wasRunning ? " Applies from its next turn; the turn running now keeps its settings." : " Applies to this continuation and later turns."}` : "";
       return text(
         t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote + approvalNote,
-        outcome === "unknown" || outcome === "no-session"
+        outcome === "unknown" || outcome === "no-session" || outcome === "stopping" || outcome === "cancelled-before-start"
       );
     })
   );

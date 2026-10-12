@@ -4,15 +4,15 @@ import {
 } from "./chunks/chunk-2PKS7JZW.mjs";
 import {
   ConversationIngestor
-} from "./chunks/chunk-5TSPKEF3.mjs";
+} from "./chunks/chunk-RNHV4ZXM.mjs";
 import {
   HISTORY_TICK_MS,
   HistoryIndex
-} from "./chunks/chunk-QWQWRS3T.mjs";
+} from "./chunks/chunk-PMVJB6SY.mjs";
 import {
   ownsProjectMirrors,
   projectDatabasePath
-} from "./chunks/chunk-SKM3IASZ.mjs";
+} from "./chunks/chunk-MQMR3OKE.mjs";
 import {
   HISTORY_IO_BYTES_PER_SECOND,
   copyLegacyConversationTail,
@@ -21,24 +21,26 @@ import {
   migrateHistoryStore,
   openHistoryStore,
   readHistoryMigrationProgress
-} from "./chunks/chunk-WNTMEZHS.mjs";
+} from "./chunks/chunk-O6RMT7GX.mjs";
+import "./chunks/chunk-AJ3G2ZXC.mjs";
+import "./chunks/chunk-KQJ5KQYW.mjs";
 import "./chunks/chunk-3CXCL26P.mjs";
-import "./chunks/chunk-UNYETCR7.mjs";
+import "./chunks/chunk-JRTFN2TQ.mjs";
 import {
   reconcileAskCompletions
-} from "./chunks/chunk-PKCLSJPP.mjs";
-import "./chunks/chunk-527TPQZO.mjs";
+} from "./chunks/chunk-VIBWHOHO.mjs";
+import "./chunks/chunk-6WTV3HWM.mjs";
 import {
   loadConfig
-} from "./chunks/chunk-7EOQ5DLV.mjs";
+} from "./chunks/chunk-65FHYHTF.mjs";
 import "./chunks/chunk-4QXHCXBU.mjs";
-import "./chunks/chunk-GEIUPZ2V.mjs";
-import "./chunks/chunk-F5TIWO5T.mjs";
+import "./chunks/chunk-K476F6IU.mjs";
+import "./chunks/chunk-TJVQ42HE.mjs";
 import "./chunks/chunk-FDMEMG4Z.mjs";
 import {
   readHistoryJson
-} from "./chunks/chunk-7COR3ABA.mjs";
-import "./chunks/chunk-ZLR2KASI.mjs";
+} from "./chunks/chunk-FXWD7ZJJ.mjs";
+import "./chunks/chunk-IJXRM5WK.mjs";
 import {
   transcriptPaths
 } from "./chunks/chunk-WM3QOXKL.mjs";
@@ -48,11 +50,11 @@ import {
   isRecord,
   nullLogger,
   writeJsonStore
-} from "./chunks/chunk-MVI32GWA.mjs";
-import "./chunks/chunk-EWK3N7HP.mjs";
+} from "./chunks/chunk-C5TTRWRF.mjs";
+import "./chunks/chunk-B5YQVBXX.mjs";
 import {
   CONFIG_FILE_NAME
-} from "./chunks/chunk-VRRYA6BY.mjs";
+} from "./chunks/chunk-BF2F5BYX.mjs";
 import "./chunks/chunk-HHAVWD7J.mjs";
 
 // src/core/history-worker.ts

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.30.13
+
+- Dashboard job controls now check who sent the request before allowing it, preventing unauthorized sessions from controlling jobs.
+- Claude activity hooks track each turn so delayed hooks cannot change a newer turn. Native Codex children join under their parent without taking its mail, and project main sessions keep the correct identity (AB-268/269).
+- Cancelling and resuming the same job now happen one at a time, preventing overlapping runners and lost continuation messages. The original executor can still stop handed-off inline work, and job results stay recoverable while store upgrades wait (AB-278).
+- Support opencode 2.x session discovery, project matching and launches while keeping compatibility with earlier versions (AB-264).
+- Add the mobile gateway and the first Expo companion app for pairing, conversations, jobs, owner questions and push notifications. The gateway is opt-in through config. Push registrations are archived when replaced or revoked; the app includes iOS 27 scene support and its launcher icon. Update the MCP SDK to 1.32.1 and source-map-js to 1.2.2 (AB-271).
+
 ## 0.30.12
 
 - New background jobs no longer fail at startup when the PC is busy. Before its first state write, a job runner checks the identities of running store readers; on Windows that check is a PowerShell query that takes many seconds with dozens of agent processes running. A slow or failed check used to end the job after 15 s ("job runner ended without reporting a result"). The runner now retries the check and waits up to 5 minutes for store admission, still writing nothing before identities are ready (AB-278).
