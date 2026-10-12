@@ -1900,7 +1900,9 @@ export class JobManager {
       if (this.offlineExecutors.has(owned.executionOwner!)) void this.checkInlineExecutors();
       return true;
     }
-    if ((!this.sharedControl && !this.isMine(owned.owner) && !this.lineage) || (owned.status === "running" && owned.executionOwner && owned.executionOwner !== this.node.name)) {
+    // A handoff moves control ownership, but its inline executor must still stop
+    // the local turn when the broker forwards the new owner's cancellation.
+    if ((!this.sharedControl && !this.isMine(owned.owner) && !this.lineage && owned.executionOwner !== this.node.name) || (owned.status === "running" && owned.executionOwner && owned.executionOwner !== this.node.name)) {
       void this.node.controlInlineJob?.(owned.name, { type: "cancel" }).catch((err) => this.log.warn("inline cancel failed", { err: String(err) }));
       return true;
     }
