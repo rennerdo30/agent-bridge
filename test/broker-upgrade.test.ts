@@ -2,8 +2,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { BridgeNode } from "../src/core/node.js";
 import { BridgeClient } from "../src/core/client.js";
 import { MessageStore } from "../src/core/store.js";
-import { APP_VERSION, PROTOCOL_VERSION } from "../src/core/constants.js";
-import { newestBrokerSuccessor, compareBrokerVersions } from "../src/core/broker-upgrade.js";
+import { APP_VERSION, PROTOCOL_VERSION, CONNECT_TIMEOUT_MS, ELECTION_RETRY_MAX_MS, RECONNECT_BACKOFF_MIN_MS } from "../src/core/constants.js";
+import { newestBrokerSuccessor, compareBrokerVersions, BROKER_SUCCESSOR_GRACE_MS } from "../src/core/broker-upgrade.js";
 import * as upgrade from "../src/core/broker-upgrade.js";
 import { formatHealth } from "../src/core/health.js";
 import { recordStorePeer } from "../src/core/store-compatibility.js";
@@ -15,6 +15,7 @@ import { cmdlineIsInteractiveAgent } from "../src/core/procinfo.js";
 
 let env: TestEnv;
 const extra: BridgeNode[] = [];
+const HANDOVER_RECONNECT_BUDGET_MS = BROKER_SUCCESSOR_GRACE_MS + RECONNECT_BACKOFF_MIN_MS + ELECTION_RETRY_MAX_MS + 2 * CONNECT_TIMEOUT_MS;
 beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { vi.restoreAllMocks(); for (const node of extra.splice(0)) await node.stop(); await env.cleanup(); });
 const internals = (node: BridgeNode) => node as unknown as { broker: { version: string; checkUpgrade(): Promise<void>; store: MessageStore; requests: Set<Promise<void>>; handlers: Record<string, (...args: any[]) => any> }; version: string };
@@ -69,7 +70,7 @@ it("waits for legacy election hosts rather than let them race the successor with
     expect((await old.health()).handoverPending).toContain("legacy v0.30.12 lacks broker election handover support");
     await old.send({ to: next.name, body: "serving while legacy host stays" });
     legacy.close();
-    await until(() => next.isBroker && old.isConnected && !old.isBroker);
+    await until(() => next.isBroker && old.isConnected && !old.isBroker, HANDOVER_RECONNECT_BUDGET_MS);
   } finally { legacy.close(); }
 });
 
@@ -88,7 +89,7 @@ it("drains an admitted send, rejects new writes, retains mail and reconnects the
   await expect((internals(old) as any).client.request("send", { to: "later", body: "must retry" })).rejects.toMatchObject({ code: "timeout" });
   await expect((internals(old) as any).client.request("peers", {})).rejects.toMatchObject({ code: "timeout", message: expect.stringContaining("Broker v0.30.12. Handover pending: draining requests") });
   release(); const sent = await send; await change;
-  await until(() => next.isBroker && next.isConnected && old.isConnected && !old.isBroker);
+  await until(() => next.isBroker && next.isConnected && old.isConnected && !old.isBroker, HANDOVER_RECONNECT_BUDGET_MS);
   const later = env.node("later"); await later.start(); await until(() => later.unread().length === 1);
   expect(later.unread()[0]?.id).toBe(sent.messages[0]?.id);
   await old.send({ to: next.name, body: "old session still works" }); await until(() => next.unread().some(m => m.body === "old session still works"));

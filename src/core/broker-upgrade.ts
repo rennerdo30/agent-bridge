@@ -5,6 +5,7 @@ import { physicalMetadataPath } from "./metadata-db.js";
 
 export const BROKER_UPGRADE_CHECK_MS = 1_000;
 export const BROKER_UPGRADE_DRAIN_MS = 5_000;
+export const BROKER_UPGRADE_RETRY_MS = 5_000;
 export const BROKER_UPGRADE_COOLDOWN_MS = 60_000;
 export const BROKER_SUCCESSOR_GRACE_MS = 5_000;
 
