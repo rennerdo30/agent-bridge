@@ -97,7 +97,7 @@ export function installOpencode(sourceDir: string, configDir: string = opencodeC
     configDir,
   );
   const url = pathToFileURL(join(root, "dist", PLUGIN_FILE)).href;
-  atomicPluginWrite(native, `// agent-bridge: immutable plugin entry; previous versions are retained.\nexport * from ${JSON.stringify(url)};\n`);
+  atomicPluginWrite(native, `// agent-bridge: immutable plugin entry; previous versions are retained.\nexport { default } from ${JSON.stringify(url)};\nexport * from ${JSON.stringify(url)};\n`);
   result.files.push(native, root);
   return result;
 }

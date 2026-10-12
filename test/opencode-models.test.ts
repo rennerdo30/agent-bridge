@@ -32,9 +32,12 @@ describe("resolveOpencodeModel", () => {
   });
 
   it("explains unknown names with suggestions", () => {
-    const r = resolveOpencodeModel("openai/gpt-flash", MODELS) as { error: string };
-    expect(r.error).toContain('Unknown opencode model "openai/gpt-flash"');
+    const r = resolveOpencodeModel("gpt-flash", MODELS) as { error: string };
+    expect(r.error).toContain('Unknown opencode model "gpt-flash"');
     expect(r.error).toContain("opencode/mimo-v2.6-flash-free");
+  });
+  it("passes explicit IDs omitted from a non-exhaustive catalog to the CLI", () => {
+    expect(resolveOpencodeModel("anthropic/claude-haiku-5-5", MODELS)).toMatchObject({ model: "anthropic/claude-haiku-5-5", note: expect.stringContaining("not in the catalog") });
   });
 
   it("passes the input through when the model list is unavailable", () => {

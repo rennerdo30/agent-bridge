@@ -49,7 +49,8 @@ export function modelParameterDescription(agent: CodingAgent, cfg: BridgeConfig,
     `Any model id or alias ${agent} accepts, passed through verbatim (e.g. ${example}). ` +
     `Default: ${modelDefault(agent, cfg) ?? cached?.defaultModel ?? `${agent}'s own default`}. ` +
     (models.length ? `Available${models.length > SHORT_MODEL_LIST ? " (short list)" : ""}: ${models.slice(0, SHORT_MODEL_LIST).join(", ")}. ` : "") +
-    `Use list_models(agent="${agent}") for the full list and effort levels.`
+    (agent === "opencode" ? `Use list_models(agent="opencode") for catalog hints; explicit provider/model IDs are resolved by opencode, even when the catalog is empty.` :
+      `Use list_models(agent="${agent}") for the full list and effort levels.`)
   );
 }
 
@@ -70,7 +71,7 @@ export async function readModels(agent: CodingAgent, cfg: BridgeConfig, cwd: str
           });
       const defaultModel = lines.flatMap((l) => /^- (\S+) \(default\)/.exec(l)?.[1] ?? [])[0] ?? null;
       const report: ModelReport = { agent, defaultModel, models, lines };
-      if (!lines[0]?.startsWith("Could not list")) {
+      if (!lines[0]?.startsWith("Could not list") && (agent !== "opencode" || models.length > 0)) {
         try {
           mkdirSync(home, { recursive: true });
           writeFileSync(modelCachePath(home, agent), JSON.stringify({ at: Date.now(), bin: modelBin(agent, cfg), effort: cfg.effort[agent] ?? null, report }), { mode: 0o600 });
@@ -114,9 +115,13 @@ export async function describeModels(agent: CodingAgent, cfg: BridgeConfig, cwd:
       const rows = (await captureOutput(cfg.antigravityBin, ["models"], cwd, log)).split(/\r?\n/).map((line) => /^([A-Za-z0-9][\w.-]*)\t+(.+)$/.exec(line.trim())).filter((row) => row && match(row[1], row[2]));
       return [`Antigravity CLI models (${rows.length}):`, ...rows.slice(0, MAX_LISTED).map((row) => `- ${row![1]}: ${row![2]}`), "Efforts: low, medium, high, xhigh, max (model-dependent).", ...tail];
     }
-    const models = (await listOpencodeModels(cfg.opencodeBin, cwd, log)).filter((m) => match(m));
+    const catalog = await listOpencodeModels(cfg.opencodeBin, cwd, log);
+    const models = catalog.filter((m) => match(m));
     return [
-      `opencode models (${models.length}${q ? ` matching "${query}"` : ""}), as provider/model:`,
+      catalog.length ? `opencode catalog (${models.length}${q ? ` matching "${query}"` : ""}), as provider/model (not exhaustive):` :
+        "opencode returned an empty catalog; available models are unknown, not necessarily unavailable.",
+      "An explicit provider/model ID may still run; opencode resolves it at startup. Catalog absence does not reject an explicit ID.",
+      ...(cfg.opencodeModel ? [`Configured model: ${cfg.opencodeModel} (configuration, not availability verification).`] : []),
       ...models.slice(0, MAX_LISTED).map((m) => `- ${m}`),
       ...(models.length > MAX_LISTED ? [`… ${models.length - MAX_LISTED} more; narrow it down with query.`] : []),
       `Effort is the model's "variant" (provider-specific, e.g. low, high, max).`,
