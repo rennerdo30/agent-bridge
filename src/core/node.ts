@@ -702,7 +702,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   health(): Promise<import("./health.js").BrokerHealth> {
     const started = performance.now();
-    return this.withClient(c => c.request("health", {})).then(health => ({ ...health, roundTripMs: performance.now() - started }));
+    return this.withReadClient((c, timeoutMs) => c.request("health", {}, timeoutMs)).then(health => ({ ...health, roundTripMs: performance.now() - started }));
   }
 
   brokerLoad() {

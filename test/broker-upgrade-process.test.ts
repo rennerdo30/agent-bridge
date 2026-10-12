@@ -34,7 +34,7 @@ it("real old/new servers automatically transfer ownership once, retaining mail, 
     child.on("exit", () => { failed(new Error(`fixture exited: ${stderr}`)); for (const entry of waiting.values()) { clearTimeout(entry.timer); entry.reject(new Error(stderr)); } waiting.clear(); });
     const server = { child, call(op: string, args: unknown = {}) { return new Promise<any>((resolve, reject) => {
       const id = ++sequence; const timer = setTimeout(() => { waiting.delete(id); reject(new Error(`${name} ${op} timed out: ${stderr}`)); }, 15_000);
-      waiting.set(id, { resolve, reject, timer }); child.send({ id, op, args });
+      waiting.set(id, { resolve, reject: error => reject(new Error(`${name} ${op}: ${error.message}`)), timer }); child.send({ id, op, args });
     }); } };
     children.push(server); await readiness; return server;
   };
