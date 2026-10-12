@@ -62,6 +62,8 @@ describe("background subagents", () => {
       jobs.persist();
       return new Promise((resolve) => { release = resolve; });
     });
+    // Admission and durable writes may defer while store readers are verified.
+    await until(() => readStore(store).find((j) => j.id === job.id)?.percent === 40);
     expect(readStore(store).find((j) => j.id === job.id)).toMatchObject({ percent: 40, etaAt: job.etaAt, etaReportedAt: job.etaReportedAt });
     release(result("done"));
     await until(() => job.status === "done");
