@@ -68,3 +68,5 @@ Failure diagnostics show only a request ID and fixed category (`config_invalid`,
 ## Explicit PC key rotation
 
 Rotation is a local owner maintenance operation through `loadMobileIdentity` (see `src/mobile/CONTRACT.md`). Stage a next key, restart, and pair/re-pair phones with a current+next QR before promotion. Restart applies promotion. Retired key bytes are archived; original keys/state revisions are retained. There is no automatic rotation or automatic pin update on existing phones; a phone without the next pin must be revoked and paired again.
+
+A mixed pinned/supplied-certificate configuration emits pinned QR v2. Its phones require an enrolled key on every address they use; a supplied-certificate listener with a different key cannot serve those pinned phones. Certificate-only setups continue to emit QR v1 and use normal platform trust.

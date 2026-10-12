@@ -30,6 +30,14 @@ async function privateDirectory(dir: string, policy: MaterialPolicy): Promise<vo
     : (info.mode & 0o077) !== 0 || typeof process.getuid === "function" && info.uid !== process.getuid())) throw new Error();
 }
 async function ensureDirectory(dir: string, policy: MaterialPolicy): Promise<void> {
+  // Validate existing ancestors before the first mutation, including a linked home.
+  let parent = dirname(dir);
+  for (;;) {
+    const info = await fs.lstat(parent);
+    if (info.isSymbolicLink() || !info.isDirectory()) throw new Error();
+    if (parent === parse(parent).root) break;
+    parent = dirname(parent);
+  }
   try { await fs.mkdir(dir, { mode: 0o700 }); protect(dir, 0o700); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
   // Existing permissions are checked, never silently repaired.

@@ -1,5 +1,5 @@
 import { createHash, createPrivateKey, X509Certificate } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { loadMobileIdentity, spkiPin } from "../src/mobile/identity.js";
@@ -46,6 +46,10 @@ describe("owner-private mobile PC identity", () => {
     const dir = home(); await loadMobileIdentity(dir, origins);
     const states = join(dir, "mobile-identity", "states"), file = join(states, readdirSync(states)[0]!); writeFileSync(file, "{}");
     await expect(loadMobileIdentity(dir, origins)).rejects.toThrow("material_unavailable"); expect(readdirSync(join(dir, "mobile-identity", "keys"))).toHaveLength(1);
+    const targetHome = home(), parentHome = home(), linkedRoot = join(parentHome, "linked-home");
+    symlinkSync(targetHome, linkedRoot, process.platform === "win32" ? "junction" : "dir");
+    await expect(loadMobileIdentity(linkedRoot, origins)).rejects.toThrow("material_unavailable");
+    expect(existsSync(join(targetHome, "mobile-identity"))).toBe(false);
     const linkedHome = home(); symlinkSync(join(dir, "mobile-identity"), join(linkedHome, "mobile-identity"), process.platform === "win32" ? "junction" : "dir");
     await expect(loadMobileIdentity(linkedHome, origins)).rejects.toThrow("material_unavailable");
   }, 30_000);

@@ -71,6 +71,21 @@ describe("explicit owner activation", () => {
     expect(await configuredMobileDashboard(f.node, undefined, f.options, { material: f.material, desktop: f.desktop })).toBeUndefined();
     expect(f.material).not.toHaveBeenCalled(); expect(f.desktop).not.toHaveBeenCalled(); expect(service(f.broker)).toBeNull();
   });
+  it("loads one PC identity for pinned listeners, preserves supplied material and exposes v2 pins/fingerprints", async () => {
+    const f = fixture(), pin = "A".repeat(43), supplied = f.config.listeners[1]!;
+    (f.config as EnabledMobileConfig).listeners = [{ origin: f.config.origins[0]!, bindAddress: "192.168.1.2", port: 8443, tls: "pinned" }, supplied];
+    const identity = vi.fn(async () => ({ key: Buffer.from("synthetic identity key"), cert: Buffer.from("synthetic identity cert"), pins: [pin] }));
+    const a = f.activation({ identity }); expect(await a.start()).toBeDefined();
+    expect(identity).toHaveBeenCalledOnce(); expect(identity).toHaveBeenCalledWith(f.home, f.config.origins);
+    expect(f.material.mock.calls.map(([file]) => file)).toEqual([supplied.certFile, supplied.keyFile]);
+    const configs = vi.mocked(createMobileHttpsListeners).mock.calls.at(-1)![1];
+    expect(configs[0]).toMatchObject({ pinning: true, tls: { key: Buffer.from("synthetic identity key") } }); expect(configs[1]).not.toHaveProperty("pinning");
+    const prepared = (a as unknown as { prepared: PreparedMobileDesktopHost }).prepared;
+    expect(prepared.gateway.hello(true).pinning).toBe(true); expect(prepared.gateway.hello().pinning).toBe(false);
+    const meta = await prepared.desktopAdmin.handle("GET", "/api/mobile/phones", {});
+    expect(meta.body).toMatchObject({ fingerprints: ["AAAA·AAAA·AAAA·AAAA"] });
+    expect(prepared.gateway.store.invite()).toMatchObject({ v: 2, pins: [pin] });
+  });
   it("initializes the fresh existing owner service once after material checks and shares it on repeats", async () => {
     const f = fixture(), a = f.activation(); expect(service(f.broker)).toBeNull();
     const results = await Promise.all([a.start(), a.start()]); expect(results[0]).toEqual(results[1]); expect(a.status()).toBe("ready");
