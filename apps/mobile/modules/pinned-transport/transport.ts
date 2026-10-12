@@ -33,7 +33,7 @@ export function createPinnedRequest(
     if (init.body != null && typeof init.body !== "string") throw new Error("Pinned transport requires a string body");
     if (init.body && new TextEncoder().encode(init.body).length > 32 * 1024) throw new Error("Request body too large");
     const method = (init.method ?? "GET").toUpperCase();
-    if (!["GET", "POST", "DELETE"].includes(method) || (method === "GET" && init.body != null)) throw new Error("Unsupported request method");
+    if (!["GET", "POST", "PUT", "DELETE"].includes(method) || (method === "GET" && init.body != null)) throw new Error("Unsupported request method");
     if (init.redirect && init.redirect !== "error") throw new Error("Pinned transport refuses redirects");
     if (init.credentials && init.credentials !== "omit") throw new Error("Pinned transport requires omitted cookies");
     const headers = new Headers(init.headers);

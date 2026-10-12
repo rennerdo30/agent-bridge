@@ -49,8 +49,14 @@ describe("pinned transport boundary", () => {
     await expect(f.request(url, {}, [pin])).rejects.toThrow("redirect");
   });
 
-  it.each([{ redirect: "follow" }, { credentials: "include" }, { body: "{}" }, { method: "PUT" }, { headers: { cookie: "fixture" } }, { method: "POST", body: "a".repeat(32769) }])("refuses unsupported request %j", async init => {
+  it.each([{ redirect: "follow" }, { credentials: "include" }, { body: "{}" }, { method: "PATCH" }, { headers: { cookie: "fixture" } }, { method: "POST", body: "a".repeat(32769) }])("refuses unsupported request %j", async init => {
     const f = fixture(); await expect(f.request(url, init as RequestInit, [pin])).rejects.toThrow(); expect(f.load).not.toHaveBeenCalled();
+  });
+
+  it("routes push-registration PUT and its UTF-8 JSON body through pinned native transport", async () => {
+    const f = fixture(); const body = JSON.stringify({ token: "fixture", label: "電話" });
+    await f.request(url, { method: "PUT", body }, [pin]);
+    expect(f.native.request).toHaveBeenCalledWith(url, expect.objectContaining({ method: "PUT", body }), [pin], expect.any(String));
   });
 
   it("does not dispatch an already aborted request", async () => {

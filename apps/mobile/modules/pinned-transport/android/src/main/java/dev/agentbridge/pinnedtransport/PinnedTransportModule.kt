@@ -40,7 +40,7 @@ class PinnedTransportModule : Module() {
       try {
         val address = url.toHttpUrl()
         require(address.isHttps && address.username.isEmpty() && address.password.isEmpty() && address.fragment == null)
-        require(options.method in setOf("GET", "POST", "DELETE") && (options.method != "GET" || options.body == null))
+        require(options.method in setOf("GET", "POST", "PUT", "DELETE") && (options.method != "GET" || options.body == null))
         require((options.body?.toByteArray(Charsets.UTF_8)?.size ?: 0) <= 32768)
         // Each request has a fresh connection pool and pin policy. A previously
         // authenticated pooled socket must never escape a changed device pin set.
@@ -52,7 +52,7 @@ class PinnedTransportModule : Module() {
         }
         builder.header("Cache-Control", "no-store")
         val body = options.body?.toRequestBody(null)
-        builder.method(options.method, if (options.method == "POST") body ?: "".toRequestBody(null) else body)
+        builder.method(options.method, if (options.method in setOf("POST", "PUT")) body ?: "".toRequestBody(null) else body)
         val call = client.newCall(builder.build())
         val stopped = synchronized(lock) {
           val stopped = !reserved.remove(id) || calls.containsKey(id)

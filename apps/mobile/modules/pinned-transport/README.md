@@ -36,7 +36,7 @@ The native bridge has synchronous request reservation/cancellation plus an
 [Expo AsyncFunction](https://docs.expo.dev/modules/module-api/#asyncfunction)
 request. Reservation closes the abort-before-dispatch race and caps concurrent
 requests at 128. JS and native deadlines are ten seconds; abort rejects the JS
-promise and cancels native work. Only GET, POST and DELETE with string bodies
+promise and cancels native work. Only GET, POST, PUT and DELETE with string bodies
 are supported for the fixed gateway API. Request bodies are bounded to 32 KiB;
 responses to 512 KiB including decompressed data. Native errors expose fixed
 categories without certificate material, addresses, response content or headers.
@@ -54,7 +54,7 @@ from Maven Central and verifies their published checksums. It compiles the actua
 production policy/factory. Its seven tests use real local TLS sockets to prove
 self-signed/wrong-hostname acceptance only with the enrolled key, wrong-key
 rejection before HTTP, next-key acceptance, redirect refusal without forwarding
-credentials, HTTP refusal and date-independent key authentication. The 30 wrapper tests exercise validation,
+credentials, HTTP refusal and date-independent key authentication. The 31 wrapper tests exercise validation,
 Response conversion, native absence/failure, bounded bodies, abort and deadlines.
 
 On a Mac, compile the production SPKI reader and standalone synthetic fixture
