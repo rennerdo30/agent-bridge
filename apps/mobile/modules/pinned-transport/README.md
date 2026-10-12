@@ -51,10 +51,10 @@ npm --prefix apps/mobile run typecheck
 
 The standalone JVM runner uses isolated `.native-tests` artifacts downloaded
 from Maven Central and verifies their published checksums. It compiles the actual
-production policy/factory. Its six tests use real local TLS sockets to prove
+production policy/factory. Its seven tests use real local TLS sockets to prove
 self-signed/wrong-hostname acceptance only with the enrolled key, wrong-key
 rejection before HTTP, next-key acceptance, redirect refusal without forwarding
-credentials, and HTTP refusal. The 28 wrapper tests exercise validation,
+credentials, HTTP refusal and date-independent key authentication. The 30 wrapper tests exercise validation,
 Response conversion, native absence/failure, bounded bodies, abort and deadlines.
 
 On a Mac, compile the production SPKI reader and standalone synthetic fixture

@@ -58,6 +58,18 @@ describe("pinned transport boundary", () => {
     await expect(f.request(url, { signal: controller.signal }, [pin])).rejects.toMatchObject({ name: "AbortError" }); expect(f.load).not.toHaveBeenCalled();
   });
 
+  it("fails closed when native reservation refuses capacity", async () => {
+    const f = fixture(); vi.mocked(f.native.reserve).mockImplementation(() => { throw new Error("Request capacity exhausted"); });
+    await expect(f.request(url, {}, [pin])).rejects.toThrow("capacity"); expect(f.native.request).not.toHaveBeenCalled();
+  });
+
+  it("does not dispatch when aborted immediately after reservation", async () => {
+    const f = fixture(); const controller = new AbortController();
+    const pending = f.request(url, { signal: controller.signal }, [pin]); controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(f.native.reserve).toHaveBeenCalledTimes(1); expect(f.native.cancel).toHaveBeenCalledTimes(1); expect(f.native.request).not.toHaveBeenCalled();
+  });
+
   it("cancels an in-flight native call on abort and ignores late completion", async () => {
     const f = fixture(); let resolve!: (value: NativeResponse) => void;
     vi.mocked(f.native.request).mockImplementation(() => new Promise(done => { resolve = done; }));
