@@ -60,7 +60,7 @@ function followUp(node: BridgeNode, jobs: JobManager, ref: string, body: string)
   return {
     outcome,
     text: t(`followUp.${outcome}`, { name: job?.name ?? ref, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }),
-    isError: outcome === "unknown" || outcome === "no-session",
+    isError: outcome === "unknown" || outcome === "no-session" || outcome === "stopping" || outcome === "cancelled-before-start",
   };
 }
 

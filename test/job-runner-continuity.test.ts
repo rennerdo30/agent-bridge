@@ -30,6 +30,40 @@ vi.mock("../src/core/node.js", async () => {
 let home: string | undefined;
 afterEach(() => { closeMetadataDbs(); if (home) rmSync(home, { recursive: true, force: true }); home = undefined; vi.clearAllMocks(); });
 
+it("fences an old-turn cancel after the runner starts a queued continuation and publishes current stopping", async () => {
+  home = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "runner-cancel-generation-"));
+  const startedAt = Date.now() - 1_000;
+  const args = { prompt: "First turn", title: "Cancel generations", session_id: "native-context" };
+  const spec: RunnerSpec = { home, target: "codex", args, base: args, owner: "owner", byAgent: "claude", cwd: home, cfg: DEFAULT_CONFIG,
+    job: { id: "cancelgeneration", name: "codex-job-cancelgeneration", owner: "owner", agent: "codex", model: null, prompt: args.prompt, startedAt, sessionId: "native-context", workdir: home, worktree: null, allowedServers: [] } };
+  writeFileSync(join(home, "jobs.json"), JSON.stringify({ version: 4, jobs: [{ ...spec.job, status: "running" }] }));
+  const file = join(home, "runner.spec.json"); writeFileSync(file, JSON.stringify(spec));
+  let finish!: (result: unknown) => void, continued!: () => void, signal!: AbortSignal;
+  const continuation = new Promise<void>(resolve => { continued = resolve; });
+  mocks.delegate.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  mocks.delegate.mockImplementationOnce((_rc, _target, _args, active: AbortSignal) => {
+    signal = active; continued();
+    return new Promise((_, reject) => active.addEventListener("abort", () => reject(new Error("cancelled")), { once: true }));
+  });
+  const running = runJobRunner(file);
+  while (!finish) await new Promise(resolve => setTimeout(resolve, 10));
+  // This fixture exercises native lifecycle ordering, not broker ACK retries.
+  mocks.node.markRead.mockReset(); mocks.node.updateJob.mockResolvedValue({});
+  const control = (id: string, body: unknown, createdAt: number) => ({ id, from: { id: "owner-session", name: "owner", agent: "claude" }, body: JSON.stringify(body), conversationId: "jobctl-cancelgeneration", createdAt });
+  mocks.node.emit("message", control("queued", { type: "message", body: "Continue", cid: "queued" }, Date.now()));
+  while (!readRunnerState(home, spec.job.id)?.seen?.includes("queued")) await new Promise(resolve => setTimeout(resolve, 10));
+  finish({ text: "first finished", sessionId: "native-context", isError: false });
+  await continuation;
+  mocks.node.emit("message", control("old-cancel", { type: "cancel" }, startedAt + 1));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  expect(signal.aborted).toBe(false);
+  mocks.node.emit("message", control("current-cancel", { type: "cancel" }, Date.now() + 1));
+  while (!signal.aborted) await new Promise(resolve => setTimeout(resolve, 10));
+  expect(readRunnerState(home, spec.job.id)?.stopping).toBe(true);
+  expect(await running).toBe(0);
+  expect(readRunnerState(home, spec.job.id)).toMatchObject({ status: "cancelled", sessionId: "native-context", stopping: true });
+});
+
 it("reports surviving worktree tools to the supervisor when a cancelled runner has degraded containment", async () => {
   home = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "runner-survivors-"));
   const path = join(home, "worktree"); mkdirSync(path);

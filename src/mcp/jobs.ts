@@ -1,13 +1,13 @@
 import { canonicalProjectRoot, migrateProjectJobs } from "../core/project-identity.js";
 import { canControlJob } from "../core/job-ownership.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { worktreeProcesses, worktreeProcessReport } from "../core/worktree-processes.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { closeSync, constants as fsConstants, copyFileSync, fsyncSync, openSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { DEFAULT_MAX_JOBS, DELEGATION_METADATA_VERSION } from "../core/constants.js";
-import { DelegateError, failureCause, type DelegateResult } from "../core/delegate.js";
+import { DelegateError, failureCause, pidAlive, type DelegateResult } from "../core/delegate.js";
 import type { Logger } from "../core/logger.js";
 import { ACK_CONVERSATION_SUFFIX, isQuietMessage, type AgentKind, type BridgeMessage } from "../core/protocol.js";
 import { isPureAcknowledgement } from "../core/job-messaging.js";
@@ -60,6 +60,8 @@ export type Run = ((signal: AbortSignal, onProgress: (message: string, full?: st
 export type Resume = (message: string, sessionId: string, workdir: string | null, worktree: Worktree | null) => Run;
 
 export interface Job {
+  /** Cancellation intent belongs to this exact turn and survives supervisor changes. */
+  cancellingTurn?: number;
   /** Initial spawn accepted but not yet admitted; preserved across server reloads. */
   waitingForStart?: boolean;
   /** Original recovery snapshot, retained only until ordinary durable storage takes precedence. */
@@ -71,6 +73,8 @@ export interface Job {
   /** Immutable original project identity, unaffected by primary handoff. */
   projectRoot?: string;
   executionOwner?: string;
+  /** Startup/inline executor liveness; a surviving executor excludes recovery of its turn. */
+  executionPid?: number;
   queuedMessages?: string[];
   /** Append-only inline envelopes: the broker can recover delivery after executor/connection loss. */
   deliveryHistory?: BridgeMessage[];
@@ -143,6 +147,7 @@ export interface JobHostInfo {
 
 /** What a job runner reports about its job (its state file, written only by the runner). */
 export interface RunnerState {
+  stopping?: boolean;
   pid: number;
   peer: string;
   status: "running" | "done" | "failed" | "cancelled";
@@ -293,7 +298,7 @@ export function waitForApproval(job: Job, question: string, timeoutMs: number, p
 }
 
 /** "waiting": a finished job, but all slots are taken; it continues as soon as one frees up. */
-export type FollowUpOutcome = "started" | "delivered" | "queued" | "waiting" | "answered" | "unknown" | "no-session";
+export type FollowUpOutcome = "started" | "delivered" | "queued" | "waiting" | "answered" | "unknown" | "no-session" | "stopping" | "cancelled-before-start";
 
 /**
  * Subagents: the other CLI running headlessly. Background jobs report their result as a message from the
@@ -331,6 +336,8 @@ export interface JobRestorePolicy {
 }
 
 export class JobManager {
+  private readonly transitions = new Set<string>();
+  private readonly inlineCancelRetries = new Map<string, NodeJS.Timeout>();
   private readonly running = new Map<string, Job>();
   private readonly foreground = new Map<string, Job>();
   private readonly history = new Map<string, Job>();
@@ -403,7 +410,9 @@ export class JobManager {
       this.refreshOwnership();
       const job = [...this.running.values(), ...this.foreground.values()].find((j) => j.name === name && (j.executionOwner ?? j.owner) === this.node.name);
       if (!job) return;
-      if (control.type === "cancel") { job.queue = []; job.controller.abort(); }
+      if (control.type === "cancel") {
+        this.cancelInlineTurn(job, job.startedAt);
+      }
       else if (control.type === "message") {
         if (job.controller.signal.aborted && job.resume && job.sessionId) {
           job.queue.push(control.body);
@@ -529,7 +538,13 @@ export class JobManager {
             return (missing.length ? { ...old, queuedMessages: [...queued, ...missing] } : old) as unknown as StoredJob;
           }
         }
-        if (isRecord(old) && old.startedAt === j.startedAt && (old.status === "done" || old.status === "failed") && j.status === "running") {
+        if (isRecord(old) && old.startedAt === j.startedAt) {
+          j.sessionId ??= old.sessionId as string | null;
+          j.workdir ??= old.workdir as string | null;
+          j.worktree ??= old.worktree as Worktree | null;
+          if (old.cancellingTurn === j.startedAt) j.cancellingTurn = j.startedAt;
+        }
+        if (isRecord(old) && old.startedAt === j.startedAt && (old.status === "done" || old.status === "failed" || old.status === "cancelled") && j.status === "running") {
           // An observer's stale same-turn snapshot cannot revive an executor's
           // completed turn. Keep every conflicting accepted byte in the existing
           // immutable journal before reconciling the observer's runtime state.
@@ -1187,7 +1202,7 @@ export class JobManager {
     resume?: Resume,
     args?: Record<string, unknown>,
   ): { job: Job; onProgress: (message: string) => void; end: (outcome?: { result?: RunResult; error?: unknown }) => void } {
-    const job = { ...this.newJob(agent, model, prompt, "ask", resume, args), foreground: true };
+    const job = { ...this.newJob(agent, model, prompt, "ask", resume, args), executionPid: process.pid, foreground: true };
     this.foreground.set(job.id, job);
     this.remember(job);
     return {
@@ -1218,11 +1233,11 @@ export class JobManager {
             let run: Run;
             try { run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree); }
             catch (error) { this.failContinuation(job, error); return; }
-            job.queue.splice(0);
             this.launch(job, run);
           }
           else this.waitForSlot(job);
         }
+        this.startWaiting();
       },
     };
   }
@@ -1310,8 +1325,45 @@ export class JobManager {
    * as soon as a slot is free.
    */
   followUp(ref: string, message: string): { outcome: FollowUpOutcome; job?: Job; approvalPending?: boolean } {
-    const job = this.find(ref);
+    const job = this.controlJob(ref);
     if (!job) return { outcome: "unknown" };
+    try { return this.transition(job, () => this.followUpCurrent(job, message)); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EJOBLOCKED") return { outcome: "stopping", job };
+      throw error;
+    }
+  }
+
+  /** The lease covers the synchronous decision, not a broker call or runner lifetime. */
+  private transition<T>(job: Job, action: () => T): T {
+    if (!this.storePath || this.transitions.has(job.id)) return action();
+    const key = createHash("sha256").update(job.id).digest("hex");
+    const release = acquireLock(join(dirname(this.storePath), "job-controls", `${key}.lock`), 0);
+    this.transitions.add(job.id);
+    try { return action(); }
+    finally { this.transitions.delete(job.id); release(); }
+  }
+
+  /** A newer durable turn is busy, not an unknown job. Recheck permission before hydrating it. */
+  private controlJob(ref: string): Job | undefined {
+    const job = this.lookupCurrent(ref);
+    if (!job) return this.find(ref);
+    const saved = this.storePath && readStoredJob(this.storePath, job.id, job.name, this.log);
+    if (!saved) return this.lookupAllowed(job);
+    this.recheckSharedGrant(saved);
+    return this.lookupPermitted(saved) || this.sharedGrants.has(job.id) ? job : undefined;
+  }
+
+  private followUpCurrent(job: Job, message: string): { outcome: FollowUpOutcome; job?: Job; approvalPending?: boolean } {
+    // A second master may have cancelled or claimed a continuation since share() yielded.
+    this.refreshControlTurn(job);
+    if (this.hostedRunning(job)) this.checkHosted(job);
+    if (job.status === "interrupted" && job.executionPid && pidAlive(job.executionPid)) return { outcome: "stopping", job };
+    const runnerState = job.host ? this.runners?.state(job) : null;
+    if (runnerState?.sessionId) this.note(job, runnerState);
+    const cancelling = job.controller.signal.aborted || job.cancellingTurn === job.startedAt || runnerState?.stopping || runnerState?.status === "cancelled";
+    if (!job.sessionId && (job.status === "cancelled" || job.status !== "running" && job.cancellingTurn === job.startedAt)) return { outcome: "cancelled-before-start", job };
+    if (job.status === "running" && cancelling && (!job.sessionId || this.foreignInline(job) || !this.isMine(job.owner))) return { outcome: "stopping", job };
     // A job loaded before the continuation factory was installed (startup order) and outside the restored window
     // still has its session: make it resumable here instead of reporting that it has none.
     if (!job.resume && job.sessionId && this.restoreResume) job.resume = this.restoreResume(job.agent, job.args ?? {});
@@ -1336,13 +1388,16 @@ export class JobManager {
       return { outcome: "delivered", job };
     }
     if (this.hostedRunning(job)) this.checkHosted(job);
+    const state = job.host ? this.runners?.state(job) : null;
+    const stopping = job.controller.signal.aborted || job.cancellingTurn === job.startedAt || state?.stopping || state?.status === "cancelled";
+    if (job.status === "running" && stopping && (!job.resume || !job.sessionId)) return { outcome: "stopping", job };
+    if (job.status === "running" && state && state.status !== "running") return { outcome: "stopping", job };
     if (this.waitingJobs.has(job.id)) {
       job.queue.push(message);
       this.persist();
       return { outcome: "waiting", job };
     }
-    if (job.status === "running" && job.controller.signal.aborted) {
-      if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
+    if (job.status === "running" && stopping) {
       // A continuation sent during cancellation belongs to a fresh turn, after this one stops.
       job.queue.push(message);
       this.waitForSlot(job);
@@ -1367,6 +1422,7 @@ export class JobManager {
       job.queue.push(message);
       return { outcome: "queued", job, approvalPending: Boolean(job.pendingApproval) };
     }
+    if (!job.sessionId && (job.status === "cancelled" || job.cancellingTurn === job.startedAt)) return { outcome: "cancelled-before-start", job };
     if (!job.resume || !job.sessionId) return { outcome: "no-session", job };
     // Capacity refresh can register durable queued continuations. Do it before
     // appending this new message, so a direct admission does not become a waiter.
@@ -1382,10 +1438,23 @@ export class JobManager {
     let run: Run;
     try { run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree); }
     catch (error) { this.failContinuation(job, error); throw error; }
-    job.queue.splice(0);
     this.log.info("subagent resumed", { job: job.name, sessionId: job.sessionId });
-    this.launch(job, run);
-    return { outcome: "started", job };
+    return { outcome: this.launch(job, run) ? "started" : "waiting", job };
+  }
+
+  private refreshControlTurn(job: Job): void {
+    if (!this.storePath) return;
+    const saved = readStoredJob(this.storePath, job.id, job.name, this.log);
+    if (!saved) return;
+    if (saved.startedAt > job.startedAt || !this.running.has(job.id) && !this.foreground.has(job.id)) {
+      if (saved.startedAt > job.startedAt) job.controller = new AbortController();
+      Object.assign(job, saved, { sessionId: saved.sessionId ?? job.sessionId, workdir: saved.workdir ?? job.workdir, worktree: saved.worktree ?? job.worktree });
+      this.adoptRecoveredRunner(job);
+    } else {
+      Object.assign(job, { owner: saved.owner, supervisor: saved.supervisor, masters: saved.masters, ownershipHistory: saved.ownershipHistory,
+        rootSession: saved.rootSession, rootName: saved.rootName, parentJob: saved.parentJob });
+      if (saved.cancellingTurn === job.startedAt) job.cancellingTurn = job.startedAt;
+    }
   }
 
   /** Continue this finished job (its queued messages) once a slot frees up. */
@@ -1405,14 +1474,16 @@ export class JobManager {
 
   /** Start waiting continuations while there are free slots, oldest first. */
   private startWaiting(): void {
-    for (const job of this.waitingJobs.values()) {
+    // Failed admission may reinsert the same waiter. Visit each candidate once per pass.
+    for (const job of [...this.waitingJobs.values()]) {
+      this.refreshControlTurn(job);
       if (job.continuationFailure?.turn === job.startedAt) { this.waitingJobs.delete(job.id); continue; }
       if (job.status === "running") continue;
       if (!this.canStart()) return;
       if (job.waitingForStart) {
         this.waitingJobs.delete(job.id);
         try {
-          const run = job.resume?.(job.prompt, "", job.workdir, job.worktree) ?? this.pendingRuns.get(job.id);
+          const run = this.pendingRuns.get(job.id) ?? job.resume?.(job.prompt, "", job.workdir, job.worktree);
           this.pendingRuns.delete(job.id);
           if (run) this.launch(job, run);
           else { this.waitingJobs.set(job.id, job); return; }
@@ -1427,7 +1498,6 @@ export class JobManager {
       try { run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree); }
       catch (error) { this.failContinuation(job, error); continue; }
       this.waitingJobs.delete(job.id);
-      job.queue.splice(0);
       this.log.info("subagent resumed (was waiting for a slot)", { job: job.name, sessionId: job.sessionId });
       this.launch(job, run);
     }
@@ -1442,14 +1512,90 @@ export class JobManager {
     this.persist();
   }
 
-  private launch(job: Job, run: Run): void {
+  private launch(job: Job, run: Run): boolean {
+    const initial = job.waitingForStart || job.status === "running" && !this.running.has(job.id);
+    try {
+      return this.transition(job, () => {
+        if (!this.claimTurn(job)) { this.waitForSlot(job); return false; }
+        this.launchClaimed(job, run);
+        return true;
+      });
+    } catch (error) {
+      if (!["EJOBLOCKED", "STORE_UPGRADE_DEFERRED", "EBUSY"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+      if (initial) {
+        job.status = "interrupted";
+        job.waitingForStart = true;
+        this.pendingRuns.set(job.id, run);
+      }
+      this.waitForSlot(job);
+      this.log.info("job continuation waits for serialized admission", { job: job.name, reason: String(error) });
+      return false;
+    }
+  }
+
+  /** Claim the new generation durably BEFORE asynchronous detached startup can yield. */
+  private claimTurn(job: Job): boolean {
+    const initial = job.waitingForStart || job.status === "running" && !this.running.has(job.id);
+    const reset = () => {
+      job.status = "running";
+      job.executionOwner = this.node.name;
+      job.executionPid = process.pid;
+      job.startedAt = Math.max(Date.now(), job.startedAt + 1);
+      job.cancellingTurn = undefined;
+      job.host = null;
+      job.waitingForStart = undefined;
+      job.continuationFailure = null;
+    };
+    if (!this.storePath) { reset(); if (!initial) job.queue = []; return true; }
+    const release = acquireLock(`${this.storePath}.lock`, 0);
+    try {
+      const previous = readJobsDocument(this.storePath, this.log);
+      assertWritableStore(previous);
+      const entries: unknown[] = Array.isArray(previous) ? previous : isRecord(previous) && Array.isArray(previous.jobs) ? previous.jobs : [];
+      const saved = entries.filter(isStoredJob).findLast(j => j.id === job.id) ?? readStoredJob(this.storePath, job.id, job.name, this.log);
+      const interrupted = saved && job.status === "interrupted" && !saved.host && !saved.remote &&
+        (!saved.executionPid || !pidAlive(saved.executionPid));
+      if (saved && (saved.startedAt > job.startedAt || saved.status === "running" && !interrupted && (!initial || saved.host || saved.executionOwner))) return false;
+      if (saved?.host && this.runners?.alive({ ...job, host: saved.host }, this.runners.state(job))) return false;
+      if (saved && !this.lookupAllowed(job)) return false;
+      job.sessionId ??= saved?.sessionId ?? null;
+      job.workdir ??= saved?.workdir ?? null;
+      job.worktree ??= saved?.worktree ?? null;
+      const before = { ...job };
+      reset();
+      const record = mergeStoreFields(saved ?? {}, toStored(job));
+      // Only consume the messages passed to this run. A concurrent registry writer may
+      // have accepted more context before this lock; retain every unconsumed occurrence.
+      const queued = [...(saved?.queuedMessages ?? [])];
+      if (initial) {
+        const retained = [...queued];
+        for (const body of job.queue) {
+          const index = retained.indexOf(body);
+          if (index < 0) queued.push(body);
+          else retained.splice(index, 1);
+        }
+      }
+      const consumed = initial ? [] : [...job.queue];
+      const pending = queued.filter(body => {
+        const index = consumed.indexOf(body);
+        if (index < 0) return true;
+        consumed.splice(index, 1);
+        return false;
+      });
+      record.queuedMessages = pending;
+      const jobs = replaceStoredJob(entries, job.id, record);
+      try { writeJsonStore(this.storePath, { ...(isRecord(previous) ? previous : {}), jobs }, previous); }
+      catch (error) { Object.assign(job, before); throw error; }
+      job.queue = pending;
+      return true;
+    } finally { release(); }
+  }
+
+  private launchClaimed(job: Job, run: Run): void {
     this.waitingJobs.delete(job.id);
     job.continuationFailure = null;
     job.waitingForStart = undefined;
     if (typeof job.args?.model === "string") job.model = job.args.model;
-    job.status = "running";
-    job.executionOwner = !this.isMine(job.owner) ? this.node.name : undefined;
-    job.startedAt = Math.max(Date.now(), job.startedAt + 1);
     job.controller = new AbortController();
     job.progress = null;
     job.etaAt = undefined;
@@ -1549,6 +1695,7 @@ export class JobManager {
 
   private launchPrepared(job: Job, run: Run, host: JobHostInfo | null): void {
     job.host = host;
+    if (host && this.isMine(job.owner)) job.executionOwner = undefined;
     job.forwarded = [];
     this.persist();
     if (job.host) {
@@ -1633,9 +1780,9 @@ export class JobManager {
       }
     }
     const alive = runners.alive(job, state);
-    // A finished runner may still be delivering its report: wait for that (or for it to give up).
+    // Delivery precedes the runner's last writes and exit. Never overlap runner generations.
     if (state && state.status !== "running") {
-      if ((!job.remote && state.delivered) || !alive) this.settleHosted(job, state);
+      if (!alive) this.settleHosted(job, state);
     } else if (!alive) this.settleHosted(job, null);
   }
 
@@ -1731,8 +1878,18 @@ export class JobManager {
 
   /** Cancel a background job, a blocking ask_* run or a continuation waiting for a slot, by name or id. */
   cancel(ref: string): boolean {
-    const owned = this.find(ref);
+    const owned = this.controlJob(ref);
     if (!owned) return false;
+    try { return this.transition(owned, () => this.cancelCurrent(owned, ref)); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EJOBLOCKED") throw new Error(`${owned.name} is changing state; retry cancellation in 1 s.`, { cause: error });
+      throw error;
+    }
+  }
+
+  private cancelCurrent(owned: Job, ref: string): boolean {
+    this.refreshControlTurn(owned);
+    if (!owned.waitingForStart && (owned.status === "running" || this.waitingJobs.has(owned.id) || owned.status === "interrupted")) this.recordCancellation(owned);
     if (this.foreignInline(owned) && (this.sharedControl || this.isMine(owned.owner) || this.lineage)) {
       // Its executor stops it; if that session turns out to be gone, the turn is settled as cancelled here.
       this.pendingInlineCancels.set(owned.id, inlineTurn(owned));
@@ -1759,7 +1916,8 @@ export class JobManager {
         this.finish(waiting, "cancelled", "", null, "cancelled before starting");
       }
       this.log.info("waiting subagent continuation cancelled", { job: waiting.name });
-      return true;
+      this.persist();
+      if (!this.running.has(waiting.id) && !this.foreground.has(waiting.id)) return true;
     }
     const job = [...this.running.values(), ...this.foreground.values()].find((j) => j.id === id || j.name === ref);
     if (!job) {
@@ -1772,6 +1930,7 @@ export class JobManager {
     job.queue = [];
     this.explicitCancellations.add(job.controller);
     job.controller.abort();
+    this.persist();
     if (this.hostedRunning(job)) {
       // Its runner stops the subagent and reports; one that does not react in time is killed with everything it started.
       job.forwarded = [];
@@ -1790,11 +1949,57 @@ export class JobManager {
     return true;
   }
 
+  /** Broker controls have no tool caller to retry a busy lease. Retry only their original turn. */
+  private cancelInlineTurn(job: Job, turn: number): void {
+    if (this.dormant || this.reportsStopped || job.startedAt !== turn || job.status !== "running") return;
+    try {
+      const current = this.controlJob(job.name);
+      if (!current) return;
+      this.transition(current, () => {
+        this.refreshControlTurn(current);
+        if (current.startedAt === turn) this.cancelCurrent(current, job.name);
+      });
+    }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? (error as { cause?: NodeJS.ErrnoException }).cause?.code;
+      if (!["EJOBLOCKED", "STORE_UPGRADE_DEFERRED", "EBUSY"].includes(code ?? "")) {
+        this.log.warn("inline cancellation failed", { job: job.name, err: String(error) });
+        return;
+      }
+      if (this.inlineCancelRetries.has(job.id)) return;
+      const timer = setTimeout(() => {
+        this.inlineCancelRetries.delete(job.id);
+        this.cancelInlineTurn(job, turn);
+      }, 100);
+      timer.unref();
+      this.inlineCancelRetries.set(job.id, timer);
+    }
+  }
+
+  /** Commit cross-session cancel intent before sending control or aborting startup. */
+  private recordCancellation(job: Job): void {
+    if (!this.storePath) { job.cancellingTurn = job.startedAt; return; }
+    const release = acquireLock(`${this.storePath}.lock`, 0);
+    try {
+      const previous = readJobsDocument(this.storePath, this.log);
+      assertWritableStore(previous);
+      const entries: unknown[] = Array.isArray(previous) ? previous : isRecord(previous) && Array.isArray(previous.jobs) ? previous.jobs : [];
+      const saved = entries.filter(isStoredJob).findLast(entry => entry.id === job.id) ?? readStoredJob(this.storePath, job.id, job.name, this.log);
+      if (saved && saved.startedAt !== job.startedAt) throw Object.assign(new Error("job turn changed during cancellation"), { code: "EJOBLOCKED" });
+      const record = { ...(saved ?? toStored(job)), cancellingTurn: job.startedAt };
+      const jobs = replaceStoredJob(entries, job.id, record);
+      writeJsonStore(this.storePath, { ...(isRecord(previous) ? previous : {}), jobs }, previous);
+      job.cancellingTurn = job.startedAt;
+    } finally { release(); }
+  }
+
   /**
    * Stop every subagent of this process (the server shuts down). Runner-hosted ones keep running: the next
    * server of this session takes them over, and their results wait for it on the bridge.
    */
   cancelAll(): void {
+    for (const timer of this.inlineCancelRetries.values()) clearTimeout(timer);
+    this.inlineCancelRetries.clear();
     if (this.rootWaitTimer) { clearInterval(this.rootWaitTimer); this.rootWaitTimer = null; }
     for (const j of this.waitingJobs.values()) if (!j.waitingForStart) j.queue = [];
     this.waitingJobs.clear();
@@ -1832,7 +2037,6 @@ export class JobManager {
         return;
       }
       if (message !== null) this.post(job, `${message}\n\n${QUEUED_FOLLOW_UP_NOTE}`, null, "", messageId);
-      job.queue.splice(0);
       this.launch(job, run);
       return;
     }
@@ -1914,7 +2118,7 @@ function executorOffline(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === "unknown_target";
 }
 
-type StoredJob = Pick<Job, "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+type StoredJob = Pick<Job, "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
 
 function toStored(j: Job): StoredJob {
   return {
@@ -1925,6 +2129,7 @@ function toStored(j: Job): StoredJob {
     prompt: j.prompt,
     startedAt: j.startedAt,
     status: j.status,
+    cancellingTurn: j.cancellingTurn,
     waitingForStart: j.waitingForStart,
     sessionId: j.sessionId,
     workdir: j.workdir,
@@ -1935,6 +2140,7 @@ function toStored(j: Job): StoredJob {
     masters: j.masters,
     projectRoot: j.projectRoot,
     executionOwner: j.executionOwner,
+    executionPid: j.executionPid,
     queuedMessages: [...j.queue],
     continuationFailure: j.continuationFailure,
     deliveryHistory: j.deliveryHistory,
@@ -1956,6 +2162,12 @@ function toStored(j: Job): StoredJob {
 
 function isStoredJob(j: unknown): j is StoredJob {
   return isRecord(j) && typeof j.id === "string" && typeof j.name === "string";
+}
+
+/** Preserve earlier duplicate snapshots; ordinary persistence archives them before compaction. */
+function replaceStoredJob(entries: unknown[], id: string, record: Record<string, unknown>): unknown[] {
+  const index = entries.findLastIndex(entry => isRecord(entry) && entry.id === id);
+  return index < 0 ? [...entries, record] : entries.map((entry, at) => at === index ? record : entry);
 }
 
 export function readJobsDocument(path: string, log?: Logger): unknown {

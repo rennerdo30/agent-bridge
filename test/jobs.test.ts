@@ -144,7 +144,7 @@ describe("background subagents", () => {
   it("never applies an old cancellation grace timer to the resumed runner", async () => {
     let state: RunnerState | null = null;
     const kill = vi.fn();
-    jobs.runners = { state: () => state, alive: () => true, send: vi.fn(), kill };
+    jobs.runners = { state: () => state, alive: () => state === null || state.status === "running", send: vi.fn(), kill };
     const run: Run = Object.assign(async () => result("unused"), { hosted: () => ({ pid: 123, peer: "runner", startedAt: Date.now() }) });
     const job = jobs.start("opencode", null, "task", run, () => run);
     job.sessionId = "saved";
