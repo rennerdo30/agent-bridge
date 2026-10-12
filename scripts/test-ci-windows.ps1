@@ -33,7 +33,8 @@ $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
 $token = [guid]::NewGuid().ToString('N')
 $tempParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
-$root = Join-Path $tempParent ('ab-ci-windows-' + $token)
+# Keep the added path budget small: SQLite on Node 22 still hits MAX_PATH.
+$root = Join-Path $tempParent ('abci-' + $token)
 $markerName = '.ab-ci-windows-owner'
 $vhd = Join-Path $root 'fixtures.vhdx'
 $mountAttempted = $false
@@ -54,7 +55,7 @@ function Assert-PhysicalPath([string]$Path) {
 }
 function Assert-OwnedRoot {
     Assert-PhysicalPath $root
-    $expected = Join-Path $tempParent ('ab-ci-windows-' + $token)
+    $expected = Join-Path $tempParent ('abci-' + $token)
     if ([IO.Path]::GetFullPath($root) -ne [IO.Path]::GetFullPath($expected)) { throw 'Cleanup root changed' }
     $marker = Join-Path $root $markerName
     $item = Get-Item -LiteralPath $marker -Force
@@ -95,7 +96,7 @@ try {
     $null = New-Item -ItemType Directory -Path $root
     [IO.File]::WriteAllText((Join-Path $root $markerName), $token)
     Set-RunnerAcl $root
-    $fixtures = Join-Path $root 'fixtures'
+    $fixtures = Join-Path $root 'f'
     if ($FreshVolume) {
         $admin = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
         if (-not $admin.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -122,7 +123,7 @@ try {
             $mount = Join-Path $root 'volume'
             $null = New-Item -ItemType Directory -Path $mount
             Add-PartitionAccessPath -DiskNumber $disk.Number -PartitionNumber $partition.PartitionNumber -AccessPath ($mount + '\')
-            $fixtures = Join-Path $mount 'fixtures'
+            $fixtures = Join-Path $mount 'f'
             Write-Host 'FreshVolume: new disposable NTFS VHDX mounted for fixtures.'
         }
     }

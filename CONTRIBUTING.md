@@ -30,6 +30,8 @@ This approximates runner ACLs and CPU contention. It cannot reproduce the hosted
 Windows Server image, token/default owner, NTFS file-ID magnitude, antivirus,
 installed tools, disk/network latency or other tenants. A fresh VHDX does not
 guarantee large file IDs. See the PowerShell script header for the limits.
+The runner uses short folder names to leave room for SQLite snapshots. If your
+TEMP/TMP path is unusually long, set them to a shorter writable folder first.
 
 ## Branch CI
 
