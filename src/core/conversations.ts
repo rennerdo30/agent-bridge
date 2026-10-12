@@ -286,7 +286,7 @@ export class ConversationIngestor {
     const path = join(this.home, "jobs.json");
     const archive = jobArchivePath(path);
     const stores = [path, archive, `${archive}-wal`, join(this.home, "archive")]
-      .map((file) => { try { return fileSignature(statSync(file)); } catch { return "missing"; } }).join("|");
+      .map((file) => { try { return fileSignature(statSync(file, { bigint: true })); } catch { return "missing"; } }).join("|");
     if (stores === this.jobsSignature) return;
     let complete = true;
     let active: Record<string, any> = {};
@@ -1097,7 +1097,7 @@ export class ConversationIngestor {
       work += this.events(this.source, "decisions", "durable-decisions");
       const archive = join(this.home, "archive.db");
       // The archive database is opened again only after it changes, once a read found nothing new (AB-147).
-      const archiveSignature = [archive, `${archive}-wal`].map((file) => { try { return fileSignature(statSync(file)); } catch { return "missing"; } }).join("|");
+      const archiveSignature = [archive, `${archive}-wal`].map((file) => { try { return fileSignature(statSync(file, { bigint: true })); } catch { return "missing"; } }).join("|");
       if (existsSync(archive) && archiveSignature !== this.quietArchive) {
         const input = new DatabaseSync(archive, {
           readOnly: true,

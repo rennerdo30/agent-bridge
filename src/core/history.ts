@@ -265,7 +265,7 @@ export class HistoryIndex {
   }
   /** Side databases are opened again only after they change, once a read found nothing new (AB-147). */
   private unlessQuiet(file: string, read: () => number): number {
-    const signature = [file, `${file}-wal`].map((p) => { try { return fileSignature(statSync(p)); } catch { return "missing"; } }).join("|");
+    const signature = [file, `${file}-wal`].map((p) => { try { return fileSignature(statSync(p, { bigint: true })); } catch { return "missing"; } }).join("|");
     if (this.quietSources.get(file) === signature) return 0;
     const work = read();
     if (work) this.quietSources.delete(file); else this.quietSources.set(file, signature);

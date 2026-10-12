@@ -57,7 +57,7 @@ const peers = new Map<string, PeerInfo>();
 let configCache: { signature: string; value: BridgeConfig } | null = null;
 function currentConfig(): BridgeConfig {
   let signature = "missing";
-  try { signature = fileSignature(statSync(join(workerData.home, CONFIG_FILE_NAME))); } catch { /* defaults */ }
+  try { signature = fileSignature(statSync(join(workerData.home, CONFIG_FILE_NAME), { bigint: true })); } catch { /* defaults */ }
   if (configCache?.signature !== signature) configCache = { signature, value: loadConfig(workerData.home, "other", nullLogger) };
   return configCache.value;
 }

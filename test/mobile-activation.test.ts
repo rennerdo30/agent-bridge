@@ -39,7 +39,7 @@ function fixture() {
   Object.assign(node, { broker }); closers.push(() => node.stop());
   const origins = ["https://lan.fixture:8443", "https://fixture.ts.net:8444"], listeners = origins.map((origin, index) => ({ origin, port: 8443 + index, bindAddress: index ? "100.64.1.2" : "192.168.1.2", certFile: join(home, `cert${index}`), keyFile: join(home, `key${index}`) }));
   for (const listener of listeners) { writeFileSync(listener.certFile, "synthetic cert"); writeFileSync(listener.keyFile, "synthetic key"); }
-  const config: EnabledMobileConfig = { enabled: true, pcId: "fixture-pc", origins, listeners };
+  const config: EnabledMobileConfig & { listeners: typeof listeners } = { enabled: true, pcId: "fixture-pc", origins, listeners };
   const servers = listeners.map(() => new Listener());
   vi.mocked(createMobileHttpsListeners).mockImplementation((_, configs) => configs.map((config, i) => ({ config, server: servers[i]! as unknown as Server })));
   const ensure = vi.fn(async () => ({ url: "http://127.0.0.1:4321/?t=fixture", port: 4321, pid: 0 })), desktopClose = vi.fn(async () => {}), desktop = vi.fn(() => ({ ensure, close: desktopClose }));
@@ -70,6 +70,21 @@ describe("explicit owner activation", () => {
     const f = fixture(); expect(service(f.broker)).toBeNull();
     expect(await configuredMobileDashboard(f.node, undefined, f.options, { material: f.material, desktop: f.desktop })).toBeUndefined();
     expect(f.material).not.toHaveBeenCalled(); expect(f.desktop).not.toHaveBeenCalled(); expect(service(f.broker)).toBeNull();
+  });
+  it("loads one PC identity for pinned listeners, preserves supplied material and exposes v2 pins/fingerprints", async () => {
+    const f = fixture(), pin = "A".repeat(43), supplied = f.config.listeners[1]!;
+    (f.config as EnabledMobileConfig).listeners = [{ origin: f.config.origins[0]!, bindAddress: "192.168.1.2", port: 8443, tls: "pinned" }, supplied];
+    const identity = vi.fn(async () => ({ key: Buffer.from("synthetic identity key"), cert: Buffer.from("synthetic identity cert"), pins: [pin] }));
+    const a = f.activation({ identity }); expect(await a.start()).toBeDefined();
+    expect(identity).toHaveBeenCalledOnce(); expect(identity).toHaveBeenCalledWith(f.home, f.config.origins);
+    expect(f.material.mock.calls.map(([file]) => file)).toEqual([supplied.certFile, supplied.keyFile]);
+    const configs = vi.mocked(createMobileHttpsListeners).mock.calls.at(-1)![1];
+    expect(configs[0]).toMatchObject({ pinning: true, tls: { key: Buffer.from("synthetic identity key") } }); expect(configs[1]).not.toHaveProperty("pinning");
+    const prepared = (a as unknown as { prepared: PreparedMobileDesktopHost }).prepared;
+    expect(prepared.gateway.hello(true).pinning).toBe(true); expect(prepared.gateway.hello().pinning).toBe(false);
+    const meta = await prepared.desktopAdmin.handle("GET", "/api/mobile/phones", {});
+    expect(meta.body).toMatchObject({ fingerprints: ["AAAA·AAAA·AAAA·AAAA"] });
+    expect(prepared.gateway.store.invite()).toMatchObject({ v: 2, pins: [pin] });
   });
   it("initializes the fresh existing owner service once after material checks and shares it on repeats", async () => {
     const f = fixture(), a = f.activation(); expect(service(f.broker)).toBeNull();

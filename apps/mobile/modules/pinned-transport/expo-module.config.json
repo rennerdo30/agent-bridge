@@ -1,0 +1,5 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": { "modules": ["PinnedTransportModule"] },
+  "android": { "modules": ["dev.agentbridge.pinnedtransport.PinnedTransportModule"] }
+}

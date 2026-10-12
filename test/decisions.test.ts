@@ -1,4 +1,5 @@
-import { readdirSync } from "node:fs";
+import { mkdirSync, readdirSync, realpathSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,11 +7,12 @@ import { runSessionStartHook } from "../src/cli/session-start-hook.js";
 import { startUi } from "../src/cli/ui.js";
 import { BridgeClient } from "../src/core/client.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
-import { DECISION_MESSAGE_HOP, formatDecisionSummary, normalizeProject } from "../src/core/decisions.js";
+import { DECISION_MESSAGE_HOP, decisionApplies, formatDecisionSummary, normalizeProject } from "../src/core/decisions.js";
 import { nullLogger } from "../src/core/logger.js";
 import { MessageStore, SQLITE_STORE_VERSION } from "../src/core/store.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { withDirectoryAlias } from "./directory-alias-fixture.js";
 
 const EARLIER_SCHEMA = `CREATE TABLE messages (
   id TEXT NOT NULL, recipient TEXT NOT NULL, from_id TEXT NOT NULL, from_name TEXT NOT NULL,
@@ -98,6 +100,46 @@ describe("decision schema migrations", () => {
 });
 
 describe("shared decision broker", () => {
+  it("delivers and lists project decisions across a real directory/drive alias", async () => {
+    await withDirectoryAlias(env.home, async (alias) => {
+      const owner = env.node("claude-owner"), peer = env.node("codex-peer", "codex");
+      await owner.start(); await peer.start();
+      const recorded = await owner.decide({ topic: "alias", text: "Same project", scope: { project: alias } });
+      await until(() => peer.unread().some((m) => m.body.includes("Same project")));
+      expect((await peer.decisions({ scope: { project: alias } })).map((d) => d.id)).toContain(recorded.decision.id);
+      expect((await peer.decisions({ scope: { project: realpathSync.native(env.home) } })).map((d) => d.id)).toContain(recorded.decision.id);
+    });
+  });
+  it("matches historical scope spellings without rewriting any decision rows", async () => {
+    await withDirectoryAlias(env.home, (alias) => {
+      const store = new MessageStore(env.db, nullLogger);
+      const db = new DatabaseSync(env.db);
+      try {
+        const decision = store.decisions.record({ topic: "legacy alias", text: "Keep history", scope: { project: env.home } }, AUTHOR, 1);
+        // Fixture of the old lexical spelling, before canonical comparison existed.
+        const legacy = alias.replace(/\\/g, "/").replace(/\/+$/, "");
+        db.prepare("UPDATE decisions SET scope=? WHERE id=?").run(JSON.stringify({ project: legacy }), decision.id);
+        const before = db.prepare("SELECT * FROM decisions ORDER BY revision").all();
+        const saved = store.decisions.list({ history: true })[0]!;
+        expect(decisionApplies(saved, { name: "peer", id: "peer", sessionId: null, cwd: env.home })).toBe(true);
+        expect(store.decisions.list({ scope: { project: env.home } }).map((d) => d.id)).toEqual([decision.id]);
+        expect(store.decisions.list({ scope: { project: alias } }).map((d) => d.id)).toEqual([decision.id]);
+        expect(decisionApplies(saved, { name: "other", id: "other", sessionId: null, cwd: join(env.home, "missing") })).toBe(false);
+        expect(db.prepare("SELECT * FROM decisions ORDER BY revision").all()).toEqual(before);
+      } finally { db.close(); store.close(); }
+    });
+  });
+  it("uses common Git identity for linked worktrees and conservative missing-path fallback", () => {
+    const root = join(env.home, "repo"), linked = join(env.home, "linked"); mkdirSync(root);
+    const git = (...args: string[]) => execFileSync("git", ["-C", root, ...args], { windowsHide: true, stdio: "pipe" });
+    git("init", "-q"); git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "Initial");
+    git("worktree", "add", "--detach", linked);
+    const decision = { scope: { project: root } };
+    expect(decisionApplies(decision, { id: "peer", name: "peer", sessionId: null, cwd: linked })).toBe(true);
+    const missing = join(env.home, "absent");
+    expect(decisionApplies({ scope: { project: missing } }, { id: "peer", name: "peer", sessionId: null, cwd: missing })).toBe(true);
+    expect(decisionApplies({ scope: { project: missing } }, { id: "peer", name: "peer", sessionId: null, cwd: join(env.home, "another") })).toBe(false);
+  });
   it("supersedes a case-insensitive topic across scopes while preserving provenance and history", async () => {
     const owner = env.node("claude-owner");
     const peer = env.node("codex-peer", "codex");

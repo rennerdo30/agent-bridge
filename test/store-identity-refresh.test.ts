@@ -4,6 +4,9 @@ import { importMetadataDomain } from "../src/core/metadata-import.js";
 import * as identity from "../src/core/process-identity.js";
 import { assertStoreUpgrade, liveStorePeers, refreshStorePeerIdentities } from "../src/core/store-compatibility.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+import { registrationIdentity } from "../src/core/store.js";
+import { withDirectoryAlias } from "./directory-alias-fixture.js";
+import type { PeerInfo } from "../src/core/protocol.js";
 
 // 2026-10-10: ~20 jobs starting at once made the batch PowerShell identity query time out. Its empty result
 // marked every live 0.30.6 reader "unknown, reads 0" and blocked spawn_codex behind a json 0→4 upgrade.
@@ -17,6 +20,13 @@ afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); await env.clea
 
 const versionOf = () => liveStorePeers(env.home).find(peer => peer.pid === pid)?.version;
 const expire = () => vi.setSystemTime(Date.now() + 11_000);
+
+it("keeps registration identity physical through drive/directory aliases", async () => {
+  await withDirectoryAlias(env.home, (alias) => {
+    const peer = { id: "peer", name: "codex-peer", agent: "codex", cwd: env.home, agentPid: 123, agentStartedAt: "generation-1" } as unknown as PeerInfo;
+    expect(registrationIdentity({ ...peer, cwd: alias })).toBe(registrationIdentity(peer));
+  });
+});
 
 it("keeps verified readers known when a later identity query fails, but not readers a successful query misses", async () => {
   metadataDb(env.home); importMetadataDomain(env.home, "storage-capabilities");

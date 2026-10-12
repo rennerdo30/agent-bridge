@@ -42,41 +42,41 @@ import {
   safeParseAsync,
   serializeMessage,
   toJsonSchemaCompat
-} from "./chunks/chunk-MIFXQMNI.mjs";
+} from "./chunks/chunk-JYPXH2P6.mjs";
 import {
   RewakeEndpoint,
   WAKE_HEADER,
   shouldWakeClaudeMessage
-} from "./chunks/chunk-X5MVRJHE.mjs";
+} from "./chunks/chunk-MRP53FWV.mjs";
 import {
   guardServerErrors
 } from "./chunks/chunk-Q4TGWKCP.mjs";
 import {
   MAX_STREAM_ENTRIES
-} from "./chunks/chunk-NPE2MH6H.mjs";
+} from "./chunks/chunk-LSW2UXWP.mjs";
 import {
   isBridgeWorktree,
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-TQ7JD75E.mjs";
+} from "./chunks/chunk-DQA54TRP.mjs";
 import {
   codexAppServerCall,
   describeModels,
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-GATU2GUD.mjs";
+} from "./chunks/chunk-VH5HY26P.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-P3PHZ6SV.mjs";
+} from "./chunks/chunk-5YVYVOAN.mjs";
 import {
   readWorktreeState
-} from "./chunks/chunk-KOJ7OFFF.mjs";
-import "./chunks/chunk-24UJAMBT.mjs";
+} from "./chunks/chunk-UISHVEDU.mjs";
+import "./chunks/chunk-FGRV3672.mjs";
 import {
   openBrowser
 } from "./chunks/chunk-LWVK3CB7.mjs";
@@ -86,7 +86,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-ZSBWBFE4.mjs";
+} from "./chunks/chunk-4C4J22S3.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -97,38 +97,38 @@ import {
   formatProjectRoute,
   formatReplyRestrictions,
   formatVersionSkew
-} from "./chunks/chunk-ORX4YFOE.mjs";
+} from "./chunks/chunk-I4JRD75E.mjs";
 import {
   formatHealth,
   probeBrokerHealth
-} from "./chunks/chunk-GWNZ2M2Q.mjs";
-import "./chunks/chunk-GQOJBOMY.mjs";
+} from "./chunks/chunk-QV4QHNJ7.mjs";
+import "./chunks/chunk-YAW243II.mjs";
 import "./chunks/chunk-RQUYBZWF.mjs";
 import {
   REMOTE_JOB_POLL_MS,
   remoteSpawnArgsSchema
-} from "./chunks/chunk-WMW4AOK5.mjs";
+} from "./chunks/chunk-KYWLNV7B.mjs";
 import {
   conversationPageSchema
-} from "./chunks/chunk-3CXCL26P.mjs";
+} from "./chunks/chunk-UUSRNKCB.mjs";
 import {
   HISTORY_MAX_LIMIT,
   HISTORY_MAX_QUERY_CHARS,
   historyFiltersSchema
-} from "./chunks/chunk-JRTFN2TQ.mjs";
+} from "./chunks/chunk-CNEMWRSZ.mjs";
 import {
   MAX_HOLD_REASON_CHARS,
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-RKHYK4Q2.mjs";
-import "./chunks/chunk-TUS65V4Q.mjs";
-import "./chunks/chunk-ANCJAUAI.mjs";
+} from "./chunks/chunk-LAIGCVOA.mjs";
+import "./chunks/chunk-MS6SRU7M.mjs";
+import "./chunks/chunk-DUUQFMF5.mjs";
 import {
   antigravityAncestor,
   antigravityHookOutput,
   inspectClaudeLaunch
-} from "./chunks/chunk-SELOL2LF.mjs";
+} from "./chunks/chunk-7VKZC576.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   ACCESS_LEVELS,
@@ -155,13 +155,13 @@ import {
   resolveBinary,
   runProcess,
   verifiedGoneJobOwners
-} from "./chunks/chunk-GMHMYT3Q.mjs";
+} from "./chunks/chunk-2FSYZDEK.mjs";
 import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
   formatResourceSlots
-} from "./chunks/chunk-2F52LJGN.mjs";
+} from "./chunks/chunk-KSRGXCIR.mjs";
 import {
   bundleDirectory
 } from "./chunks/chunk-D5ZW6VFT.mjs";
@@ -169,20 +169,18 @@ import {
   resolveDbPath,
   resolveHome,
   resolvePipePath
-} from "./chunks/chunk-ZBF6WTFC.mjs";
+} from "./chunks/chunk-DFGCM6KO.mjs";
 import "./chunks/chunk-JTZGNEMM.mjs";
 import {
   MAX_JOB_SEND_TARGETS,
-  isJobSendTarget
+  isJobSendTarget,
+  siblingMaxHops
 } from "./chunks/chunk-M26SH6VN.mjs";
 import {
   loadOrCreateToken,
   tokensEqual
 } from "./chunks/chunk-V4WDBMEN.mjs";
-import "./chunks/chunk-VIBWHOHO.mjs";
-import {
-  canonicalProjectRoot
-} from "./chunks/chunk-6WTV3HWM.mjs";
+import "./chunks/chunk-PV5RDKMR.mjs";
 import {
   CLAUDE_PERMISSION_MODES,
   CODEX_APPROVALS_REVIEWERS,
@@ -194,7 +192,7 @@ import {
   parseAgentKind,
   saveConfigValue,
   watchConfig
-} from "./chunks/chunk-65FHYHTF.mjs";
+} from "./chunks/chunk-EI6SUMB4.mjs";
 import {
   AGENT_KINDS,
   BROADCAST,
@@ -211,17 +209,16 @@ import {
   askOwnerSchema,
   decisionScopeSchema,
   formatDecisionSummary
-} from "./chunks/chunk-K476F6IU.mjs";
-import {
-  isInternalBridgeProcess,
-  isPluginCacheCwd
-} from "./chunks/chunk-TJVQ42HE.mjs";
+} from "./chunks/chunk-A5FJFIHB.mjs";
 import {
   ZodOptional,
-  external_exports
-} from "./chunks/chunk-FDMEMG4Z.mjs";
-import "./chunks/chunk-FXWD7ZJJ.mjs";
-import "./chunks/chunk-IJXRM5WK.mjs";
+  canonicalProjectRoot,
+  external_exports,
+  isInternalBridgeProcess,
+  isPluginCacheCwd
+} from "./chunks/chunk-MIHYBRIY.mjs";
+import "./chunks/chunk-WYCVEB3J.mjs";
+import "./chunks/chunk-BK2JHAE4.mjs";
 import {
   TRANSCRIPT_ID,
   directory,
@@ -230,14 +227,15 @@ import {
   safeFile,
   transcriptPaths
 } from "./chunks/chunk-WM3QOXKL.mjs";
+import "./chunks/chunk-HYOPFLLN.mjs";
 import {
   archiveFile,
   createLogger,
   isRecord,
   readJsonStore,
   writeJsonStore
-} from "./chunks/chunk-C5TTRWRF.mjs";
-import "./chunks/chunk-B5YQVBXX.mjs";
+} from "./chunks/chunk-IA7UPCXY.mjs";
+import "./chunks/chunk-6JJ25VPZ.mjs";
 import {
   APP_NAME,
   APP_VERSION,
@@ -251,8 +249,8 @@ import {
   MAX_JOBS_LIMIT,
   MAX_JOB_TIMEOUT_SEC,
   MAX_WAIT_SEC
-} from "./chunks/chunk-BF2F5BYX.mjs";
-import "./chunks/chunk-HHAVWD7J.mjs";
+} from "./chunks/chunk-AH7X4KST.mjs";
+import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/mcp/server.ts
 import { isAbsolute, join as join5, resolve } from "node:path";
@@ -1986,7 +1984,40 @@ function take(ctx, wakeOnly, notesOnly = false) {
   return msgs;
 }
 var parentReads = /* @__PURE__ */ new WeakMap();
+var nativeDeliveries = /* @__PURE__ */ new WeakMap();
+async function confirmNativeChildDelivery(ctx, agentId) {
+  const deliveries = nativeDeliveries.get(ctx), ids = deliveries?.get(agentId);
+  if (!ids?.length || !ctx.node) return;
+  await ctx.node.nativeChildAck(agentId, ids);
+  if (deliveries?.get(agentId) === ids) deliveries.delete(agentId);
+}
 async function subagentHook(ctx, input) {
+  if (input.subagent && ctx.agent === "claude" && ctx.node && input.agentId) {
+    const node = ctx.node;
+    if (node.wasReplaced || !input.sessionId || input.sessionId !== node.currentSessionId || input.event === "StopFailure") return {};
+    if (input.event === "SubagentStop") {
+      await withinHook(node.nativeChild({ agentId: input.agentId, action: "end" }), input.signal);
+      nativeDeliveries.get(ctx)?.delete(input.agentId);
+      return {};
+    }
+    const child = await withinHook(node.nativeChild({ agentId: input.agentId, action: "start", maxHops: Math.min(32, siblingMaxHops(ctx.cfg.maxHops)) }), input.signal);
+    if (!child || input.signal?.aborted) return {};
+    await withinHook(confirmNativeChildDelivery(ctx, input.agentId), input.signal);
+    const identity = `[agent-bridge] Your scoped native child address is "${child.address}". Use native_child="${child.agentId}" on peers, inbox and send. Your parent is ${child.parent}; bridge jobs owned by it and exact send_to grants may reach you. Never act as the parent session.`;
+    const messages = (await withinHook(node.nativeChildPending(input.agentId), input.signal)).filter((m) => !isQuietMessage(m) && (input.event !== "Stop" || m.hop < child.maxHops));
+    if (messages.length) {
+      let deliveries = nativeDeliveries.get(ctx);
+      if (!deliveries) {
+        deliveries = /* @__PURE__ */ new Map();
+        nativeDeliveries.set(ctx, deliveries);
+      }
+      deliveries.set(input.agentId, messages.map((m) => m.id));
+    }
+    const delivery = [identity, messages.length ? formatMessages(messages) : ""].filter(Boolean).join("\n\n");
+    if (input.event === "Stop") return messages.length ? { decision: "block", reason: delivery } : {};
+    if (input.event === "PostToolUse" && messages.length) return { decision: "block", reason: delivery, hookSpecificOutput: { hookEventName: input.event, additionalContext: delivery } };
+    return context(input.event, delivery);
+  }
   const parent = ctx.parent;
   if (!parent || input.event === "SessionStart" || input.event === "StopFailure") return {};
   let pending = parentReads.get(ctx);
@@ -2029,9 +2060,9 @@ function withinHook(work, signal) {
   });
 }
 async function buildHookResponse(ctx, input) {
-  if (input.subagent || input.signal?.aborted) return {};
+  if (input.signal?.aborted || input.subagent && (ctx.agent !== "claude" || !ctx.node || !input.agentId)) return {};
   const node = ctx.node;
-  const main = (ctx.agent === "codex" || ctx.agent === "claude") && node !== null && !ctx.headless;
+  const main = !input.subagent && input.event !== "SessionEnd" && (ctx.agent === "codex" || ctx.agent === "claude") && node !== null && !ctx.headless;
   const current = main ? reserveHook(ctx, input) : () => true;
   if (!current) return {};
   const owningSession = input.sessionId ?? node?.currentSessionId;
@@ -2047,6 +2078,11 @@ async function buildHookResponse(ctx, input) {
   input.signal?.addEventListener("abort", abort, { once: true });
   if (input.signal?.aborted) abort();
   try {
+    if (input.subagent) return await subagentHook(ctx, { ...input, signal: controller.signal });
+    if (input.event === "SessionEnd") {
+      if (ctx.agent === "claude" && node && !node.wasReplaced && node.currentSessionId === input.sessionId) await withinHook(node.nativeChildrenEnd(), controller.signal);
+      return {};
+    }
     return await runHook(ctx, { ...input, signal: controller.signal }, current, busyAtIngress);
   } catch (err) {
     if (!controller.signal.aborted) throw err;
@@ -2978,7 +3014,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-OKC7W6MW.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-GANLJ5VH.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -2990,9 +3026,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-CVEW7YN6.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-OOYHUKFD.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-CVEW7YN6.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-OOYHUKFD.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3105,9 +3141,47 @@ function registerTools(mcp, ctx, targets) {
     discardFinishedNotes(ctx);
     return node;
   };
+  const nativeChildSummary = async (n) => {
+    if (ctx.agent !== "claude") return [];
+    const children = await n.nativeChildren().catch((err) => {
+      if (isUnsupportedOperation(err, "nativeChildren")) return [];
+      throw err;
+    });
+    return children.length ? ["Live native child addresses:", ...children.map((c) => `- ${c.address} (Claude native child; send_to: ${c.sendTo.join(", ") || "none"})`)] : [];
+  };
   const guarded = (name, fn) => async (args, extra) => {
     log.debug("tool call", { tool: name, args });
     if (ctx.admitCodex && !ctx.admitCodex(extra._meta)) return text("Native Codex child or unverified thread: use the parent session's bridge. Missing main-thread lineage may be retried once its rollout header is available.", true);
+    const a = args;
+    const metaChildId = extra._meta?.agent_id ?? extra._meta?.agentId;
+    const childId = metaChildId ?? a.native_child;
+    if (childId !== void 0) {
+      try {
+        if (metaChildId !== void 0 && a.native_child !== void 0 && metaChildId !== a.native_child) throw new BridgeError("unauthorized", "native_child conflicts with host-provided agent identity.");
+        if (ctx.agent !== "claude" || !node || node.wasReplaced || typeof childId !== "string" || !["peers", "inbox", "send"].includes(name)) throw new BridgeError("unauthorized", "Scoped native children may use peers, inbox and send only on their current Claude parent connection.");
+        const children = await node.nativeChildren(), child = children.find((c) => c.agentId === childId);
+        if (!child) throw new BridgeError("unauthorized", "No live scoped native child; wait for its SubagentStart hook.");
+        await confirmNativeChildDelivery(ctx, childId);
+        const identity = `Your native child bridge address is ${child.address}. Parent: ${child.parent}.`;
+        if (name === "peers") {
+          const jobs = (await node.projectJobs()).filter((j) => j.owner === child.parent && j.supervisor === node.currentSessionId);
+          return text([identity, ...jobs.map((j) => `${j.name} (${j.agent}, ${j.status})`), `Explicit send_to grants: ${child.sendTo.join(", ") || "none"}`].join("\n"));
+        }
+        if (name === "inbox") {
+          const messages = (await node.nativeChildPending(childId)).filter((m) => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, typeof a.limit === "number" ? a.limit : HOOK_MAX_MESSAGES);
+          if (a.mark_read !== false && messages.length) await node.nativeChildAck(childId, messages.map((m) => m.id));
+          return text(`${identity}
+
+${messages.length ? formatMessages(messages) : "No unread native child mail."}`);
+        }
+        const result = await node.nativeChildSend(childId, { to: String(a.to), body: String(a.message), replyTo: a.reply_to, conversationId: a.conversation_id, ifNoNewerThan: a.if_no_newer_than, messageId: a.message_id });
+        return text(`${identity}
+Message ${result.messages[0]?.id} stored. The parent received a quiet copy.
+${JSON.stringify(result)}`);
+      } catch (err) {
+        return text(describeError(err), true);
+      }
+    }
     if (name !== "health" && ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: err.message }));
     await ctx.observeMeta?.(extra._meta);
     try {
@@ -3148,8 +3222,8 @@ function registerTools(mcp, ctx, targets) {
     },
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-52MXPNMK.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-QVNRIMS2.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-XOY3WDS2.mjs")).readHistory(resolveDbPath(ctx.home), args);
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-MZ53AIC6.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
@@ -3157,7 +3231,7 @@ function registerTools(mcp, ctx, targets) {
     description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
     inputSchema: conversationPageSchema.shape,
     annotations: { readOnlyHint: true }
-  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-ZO5X5LWR.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
+  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-UVLEASIS.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
   register(
     "decide",
     {
@@ -3239,7 +3313,7 @@ function registerTools(mcp, ctx, targets) {
     {
       title: "List peers",
       description: "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity): name, agent type, busy/idle, uptime, working directory and session id. Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
-      inputSchema: {},
+      inputSchema: { native_child: external_exports.string().optional().describe("Native Claude agent_id issued by its start hook; scopes this call to the child") },
       annotations: { readOnlyHint: true }
     },
     guarded("peers", async () => {
@@ -3280,6 +3354,7 @@ function registerTools(mcp, ctx, targets) {
         others.length ? t("peers.header", { count: others.length }) : t("peers.none"),
         ...others.map((p) => formatPeer(p))
       ];
+      lines.push(...await nativeChildSummary(n));
       const quietCount = n.unread().filter(isQuietMessage).length;
       if (health) lines.push(formatHealth(health));
       if (quietCount) lines.push(`${quietCount} retained quiet message(s), available with inbox(include_quiet=true) or history; excluded from actionable unread mail.`);
@@ -3337,6 +3412,7 @@ function registerTools(mcp, ctx, targets) {
       description: `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. Delivery means queued in the recipient inbox, not read. Project addresses include available live secondaries. Broadcasts wake every live session according to its settings and include recently seen offline local sessions or known project masters, connected paired-PC sessions and your running jobs; jobs:* targets only your running jobs through existing links, even when authority RPCs are unavailable. Per-recipient results report queueing, not consumption. Direct messages wake idle Claude, Codex and opencode sessions according to wakeOnDirect and available CLI transport; other recipients may read them on their next turn. Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. A job that is blocked, unsure or about to take a consequential step asks its parent with message_kind="question" (question, options, recommendation, what it does meanwhile). Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.`,
       inputSchema: {
         to: external_exports.string().min(1).describe('Peer name, project address, agent kind, "*" (sessions and your running jobs), or "jobs:*" (only your running jobs)'),
+        native_child: external_exports.string().optional().describe("Your scoped native Claude agent_id from SubagentStart; send as that child"),
         message: external_exports.string().min(1).max(MAX_BODY_CHARS).describe("Message text (Markdown is fine)"),
         reply_to: external_exports.string().optional().describe("Id of the message you are answering"),
         conversation_id: external_exports.string().optional().describe("Continue an existing conversation"),
@@ -3435,6 +3511,11 @@ ${jobLines.join("\n")}`);
     },
     guarded("send_status", async (a) => text(JSON.stringify(await requireNode().sendState(a.message_id), null, 2)))
   );
+  if (node && ctx.agent === "claude") register("native_child_grant", {
+    title: "Grant native child message access",
+    description: "Parent only: replace exact send_to grants for a live native Claude child. Your bridge jobs already have access. Empty send_to revokes external grants. This never registers a peer or assigns a main role.",
+    inputSchema: { agent_id: external_exports.string(), send_to: external_exports.array(external_exports.string()).max(20) }
+  }, guarded("native_child_grant", async (a) => text(JSON.stringify(await requireNode().nativeChild({ action: "grant", agentId: a.agent_id, sendTo: a.send_to })))));
   register(
     "network_status",
     {
@@ -3502,6 +3583,7 @@ ${jobLines.join("\n")}`);
       description: "Read unread messages from other agents, with quiet transfer progress, sibling copies and acknowledgements excluded by default. Use include_quiet=true (or a read-only mark_read=false peek) to inspect retained copies. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt.",
       inputSchema: {
         include_quiet: external_exports.boolean().optional().describe("Include historical quiet coordination copies (default false)"),
+        native_child: external_exports.string().optional().describe("Your scoped native Claude agent_id; read only that child's inbox"),
         mark_read: external_exports.boolean().optional().describe("Mark returned messages as read (default true); false also permits inspecting retained quiet copies"),
         limit: external_exports.number().int().min(1).max(100).optional()
       }
@@ -3514,9 +3596,10 @@ ${jobLines.join("\n")}`);
       }
       const n = requireNode();
       const msgs = n.unread().filter((m) => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
-      if (msgs.length === 0) return text(t("inbox.empty"));
+      const children = await nativeChildSummary(n);
+      if (msgs.length === 0) return text([t("inbox.empty"), ...children].join("\n"));
       if (a.mark_read !== false) n.markRead(msgs.map((m) => m.id));
-      return text(formatInboxMessages(msgs));
+      return text([formatInboxMessages(msgs), ...children].join("\n"));
     })
   );
   register(
@@ -3975,16 +4058,19 @@ Saved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value
       }
     },
     async (a, extra) => {
-      const given = (v) => v && !v.startsWith("${") ? v : null;
+      const given = (v) => typeof v === "string" && v && !v.startsWith("${") ? v : null;
       try {
-        const identity = codexCallIdentity(extra._meta, { threadId: given(a.session_id), agentId: given(a.agent_id), transcript: given(a.transcript_path) });
-        if (given(a.agent_id) || ctx.admitCodex && !ctx.admitCodex(extra._meta, identity)) return text("{}");
+        const nativeId = given(a.agent_id) ?? given(extra._meta?.agent_id) ?? given(extra._meta?.agentId);
+        if ((a.event === "SubagentStart" || a.event === "SubagentStop") && !nativeId) return text("{}");
+        const identity = codexCallIdentity(extra._meta, { threadId: given(a.session_id), agentId: nativeId, transcript: given(a.transcript_path) });
+        if (ctx.agent !== "claude" && nativeId || ctx.admitCodex && !ctx.admitCodex(extra._meta, identity)) return text("{}");
         const out = await buildHookResponse(ctx, {
           event: a.event,
           sessionId: ctx.agent === "codex" ? identity.threadId ?? null : given(a.session_id),
           stopHookActive: a.stop_hook_active === true || a.stop_hook_active === "true",
           cwd: given(a.cwd),
-          subagent: Boolean(given(a.agent_id)),
+          subagent: Boolean(nativeId),
+          agentId: nativeId,
           prompt: given(a.prompt),
           promptId: given(a.prompt_id),
           signal: extra.signal,

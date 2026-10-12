@@ -3,14 +3,15 @@ import {
   bundleFilesBounded,
   extractBundle,
   retireBundled
-} from "./chunks/chunk-O5HRDKLU.mjs";
+} from "./chunks/chunk-G3OOPLYU.mjs";
 import {
   importRunnerFiles,
   packArchivedRuns,
   runnerFilesImported
-} from "./chunks/chunk-FXWD7ZJJ.mjs";
-import "./chunks/chunk-IJXRM5WK.mjs";
+} from "./chunks/chunk-WYCVEB3J.mjs";
+import "./chunks/chunk-BK2JHAE4.mjs";
 import "./chunks/chunk-WM3QOXKL.mjs";
+import "./chunks/chunk-HYOPFLLN.mjs";
 import {
   JSON_STORE_VERSION,
   archivedRecordId,
@@ -18,6 +19,7 @@ import {
   closeMetadataDbs,
   estimatedJsonBytes,
   fileSignature,
+  fileTimeMs,
   jobArchivePath,
   jobDigest,
   markJobProjection,
@@ -26,10 +28,10 @@ import {
   physicalArchivePath,
   putJobRecords,
   refreshStorePeerIdentities
-} from "./chunks/chunk-C5TTRWRF.mjs";
-import "./chunks/chunk-B5YQVBXX.mjs";
-import "./chunks/chunk-BF2F5BYX.mjs";
-import "./chunks/chunk-HHAVWD7J.mjs";
+} from "./chunks/chunk-IA7UPCXY.mjs";
+import "./chunks/chunk-6JJ25VPZ.mjs";
+import "./chunks/chunk-AH7X4KST.mjs";
+import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/core/job-archive-worker.ts
 import { parentPort, workerData } from "node:worker_threads";
@@ -128,11 +130,11 @@ async function migrateJobArchives(path) {
     }
     if (existsSync(path)) {
       physicalArchivePath(path);
-      const before = lstatSync(path), jobs = records(readFileSync(path), path);
-      if (fileSignature(lstatSync(path)) !== fileSignature(before)) throw new Error("active jobs changed during archive import; retry later");
+      const before = lstatSync(path, { bigint: true }), jobs = records(readFileSync(path), path);
+      if (fileSignature(lstatSync(path, { bigint: true })) !== fileSignature(before)) throw new Error("active jobs changed during archive import; retry later");
       db.exec("BEGIN IMMEDIATE");
       try {
-        putJobRecords(db, jobs, before.mtimeMs);
+        putJobRecords(db, jobs, fileTimeMs(before.mtimeMs, before.mtimeNs));
         db.exec("COMMIT");
       } catch (error) {
         if (db.isTransaction) db.exec("ROLLBACK");

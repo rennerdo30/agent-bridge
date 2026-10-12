@@ -39,8 +39,10 @@ export interface Event {
   apiVersion: 1; epoch: string; cursor: string; type: "snapshot.required";
   resource: { kind: "snapshot"; id: string }; version: string; at: number;
 }
-export interface Hello { apiVersion: 1; capabilities: Capability[]; transport: "private-https"; pinning: false; send: "unsupported"; pairedPcWrites: "unsupported"; push: "configured" | "unsupported" }
+export interface Hello { apiVersion: 1; capabilities: Capability[]; transport: "private-https"; pinning: boolean; send: "unsupported"; pairedPcWrites: "unsupported"; push: "configured" | "unsupported" }
 export interface GatewayError { code: string; message: string; requestId: string; retryable: boolean; currentVersion?: string }
-export interface PairingQr { v: 1; origin: string; origins: string[]; pcId: string; invitationId: string; nonce: string; expiresAt: number }
+export type PairingQr = { origin: string; origins: string[]; pcId: string; invitationId: string; nonce: string; expiresAt: number } & ({ v: 1; pins?: never } | { v: 2; pins: string[] });
+/** A display abbreviation only; transport always checks every byte of the full pin. */
+export function shortPin(pin: string): string { return pin.slice(0, 4) + "·" + pin.slice(4, 8) + "·" + pin.slice(8, 12) + "·" + pin.slice(12, 16); }
 export interface PairingClaim { claimId: string; claimToken: string; comparisonCode: string; expiresAt: number }
 export type ClaimResult = { state: "pending" | "denied" | "expired" | "issued" } | { state: "approved"; credentials: Credentials };

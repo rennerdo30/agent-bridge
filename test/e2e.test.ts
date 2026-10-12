@@ -68,7 +68,7 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     const x = (await codex.listTools()).tools.map((t) => t.name).sort();
     const g = (await antigravity.listTools()).tools.map((t) => t.name).sort();
     const o = (await opencode.listTools()).tools.map((t) => t.name).sort();
-    expect(c).toEqual(x);
+    expect(c).toEqual([...x, "native_child_grant"].sort());
     expect(g).toEqual(x);
     expect(o).toEqual(x);
     for (const client of [claude, codex, opencode, antigravity]) {

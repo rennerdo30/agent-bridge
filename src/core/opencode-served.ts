@@ -63,7 +63,9 @@ function startServe(bin: string, cwd: string, env: NodeJS.ProcessEnv, log: Deleg
       cwd,
       env: { ...env, PWD: cwd },
       windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      // OpenCode 2 shuts its private server down on stdin EOF. Keep the parent
+      // pipe open throughout the API/SSE run; killTree closes it during cleanup.
+      stdio: ["pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
     });
     trackChild(child, log);

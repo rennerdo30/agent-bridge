@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
+import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { messageBackupIfDue, type MessageBackupManifest } from "../src/core/message-backups.js";
 import { verifyRehearsalMessageBackup } from "../scripts/release-rehearsal.js";
+import { withDirectoryAlias } from "./directory-alias-fixture.js";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -31,6 +33,27 @@ async function backup(body = "Synthetic retained message") {
 }
 
 describe("rehearsal automatic backup proof", () => {
+  it.skipIf(process.platform !== "win32")("accepts a verified backup through a real subst alias of the fixture root", async () => {
+    const fixture = await backup();
+    const root = join(realpathSync.native(process.cwd()), ".agent-bridge-test");
+    await withDirectoryAlias(root, async (alias) => {
+      const path = join(alias, relative(root, realpathSync.native(fixture.path)));
+      expect((await verifyRehearsalMessageBackup(path)).path).toBe(realpathSync.native(fixture.path));
+      await expect(verifyRehearsalMessageBackup(alias)).rejects.toThrow("strictly below");
+    });
+  });
+  it("rejects outside fixtures and links even when their targets contain genuine backups", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "rehearsal-outside-"));
+    await expect(verifyRehearsalMessageBackup(outside)).rejects.toThrow("strictly below");
+    const fixture = await backup(), root = join(process.cwd(), ".agent-bridge-test", "tmp");
+    const linkParent = mkdtempSync(join(root, "rehearsal-link-")), link = join(linkParent, "backup");
+    symlinkSync(fixture.path, link, process.platform === "win32" ? "junction" : "dir");
+    try { await expect(verifyRehearsalMessageBackup(link)).rejects.toThrow("must not traverse links"); }
+    finally { unlinkSync(link); }
+    if (process.platform === "win32") await withDirectoryAlias(outside, async (alias) => {
+      await expect(verifyRehearsalMessageBackup(alias)).rejects.toThrow("strictly below");
+    });
+  });
   it("accepts a genuine message-only backup above 8MiB with verified tables, rows and hashes", async () => {
     const fixture = await backup("m".repeat(9 * 1024 * 1024));
     const proof = await verifyRehearsalMessageBackup(fixture.path);

@@ -4,9 +4,10 @@ import type { DelegateResult } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 import type { BridgeNode } from "../src/core/node.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
-import { JobManager, type Run, type RunnerState } from "../src/mcp/jobs.js";
+import { jobReport, JobManager, type Run, type RunnerState } from "../src/mcp/jobs.js";
 import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { preferredDriveFixture } from "./preferred-drive-fixture.js";
 
 let env: TestEnv;
 let me: BridgeNode;
@@ -24,6 +25,15 @@ afterEach(async () => {
 });
 
 const result = (text: string): DelegateResult => ({ sessionId: "s-9", text, isError: false, details: {} });
+
+it("formats report bodies and failure diagnostics using the preferred drive", async () => {
+  const restore = await preferredDriveFixture();
+  try {
+    const report = jobReport({ name: "saved", agent: "codex", model: null, sessionId: null }, "failed", 1, "Log: `Q:/run.log`", "could not start Q:/work");
+    expect(report).toContain("Cause: could not start X:/work");
+    expect(report).toContain("Log: `X:/run.log`");
+  } finally { restore(); }
+});
 
 describe("background subagents", () => {
   it("keeps remote cancellation distinct for foreground and background results", async () => {
@@ -52,6 +62,8 @@ describe("background subagents", () => {
       jobs.persist();
       return new Promise((resolve) => { release = resolve; });
     });
+    // Admission and durable writes may defer while store readers are verified.
+    await until(() => readStore(store).find((j) => j.id === job.id)?.percent === 40);
     expect(readStore(store).find((j) => j.id === job.id)).toMatchObject({ percent: 40, etaAt: job.etaAt, etaReportedAt: job.etaReportedAt });
     release(result("done"));
     await until(() => job.status === "done");

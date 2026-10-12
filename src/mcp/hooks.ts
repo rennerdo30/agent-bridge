@@ -1,4 +1,5 @@
 import { HOOK_MAX_MESSAGES, HOOK_BUDGET_MS } from "../core/constants.js";
+import { siblingMaxHops } from "../core/job-messaging.js";
 import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage } from "../core/protocol.js";
 import { formatMessages, formatParentMessages, formatPeer } from "./format.js";
 import { MessageWaitStore, resumeWaitHint } from "./message-wait.js";
@@ -8,7 +9,7 @@ import { formatDecisionSummary } from "../core/decisions.js";
 import { finishHookTurn, reserveHook } from "./hook-ownership.js";
 
 /** Hook events agent-bridge subscribes to in both Claude Code and Codex. */
-export type HookEvent = "SessionStart" | "UserPromptSubmit" | "PostToolUse" | "Stop" | "StopFailure";
+export type HookEvent = "SessionStart" | "UserPromptSubmit" | "PostToolUse" | "Stop" | "StopFailure" | "SubagentStart" | "SubagentStop" | "SessionEnd";
 
 export interface HookInput {
   event: HookEvent;
@@ -20,6 +21,7 @@ export interface HookInput {
   promptId?: string | null;
   /** The hook fired inside a native subagent (Claude Code's agent_id), not for the main agent. */
   subagent?: boolean;
+  agentId?: string | null;
   /** Session working directory from the hook input, when the host provides it. */
   cwd?: string | null;
   /** Aborted when the host cancels the hook call (e.g. the user interrupts). */
@@ -76,8 +78,43 @@ function take(ctx: ServerContext, wakeOnly: boolean, notesOnly = false): BridgeM
 
 /** A delegated subagent: its parent's messages arrive over the parent link, not the bridge. */
 const parentReads = new WeakMap<ServerContext, Promise<Awaited<ReturnType<NonNullable<ServerContext["parent"]>["inbox"]>>>>();
+const nativeDeliveries = new WeakMap<ServerContext, Map<string, string[]>>();
+
+/** A later child boundary confirms the preceding hook context survived cancellation. */
+export async function confirmNativeChildDelivery(ctx: ServerContext, agentId: string): Promise<void> {
+  const deliveries = nativeDeliveries.get(ctx), ids = deliveries?.get(agentId);
+  if (!ids?.length || !ctx.node) return;
+  await ctx.node.nativeChildAck(agentId, ids);
+  if (deliveries?.get(agentId) === ids) deliveries.delete(agentId);
+}
 
 async function subagentHook(ctx: ServerContext, input: HookInput): Promise<HookOutput> {
+  if (input.subagent && ctx.agent === "claude" && ctx.node && input.agentId) {
+    const node = ctx.node;
+    // Native children never prepare/observe metadata or acquire main hook ownership.
+    if (node.wasReplaced || !input.sessionId || input.sessionId !== node.currentSessionId || input.event === "StopFailure") return {};
+    if (input.event === "SubagentStop") {
+      await withinHook(node.nativeChild({ agentId: input.agentId, action: "end" }), input.signal!);
+      nativeDeliveries.get(ctx)?.delete(input.agentId);
+      return {};
+    }
+    const child = await withinHook(node.nativeChild({ agentId: input.agentId, action: "start", maxHops: Math.min(32, siblingMaxHops(ctx.cfg.maxHops)) }), input.signal!);
+    if (!child || input.signal?.aborted) return {};
+    await withinHook(confirmNativeChildDelivery(ctx, input.agentId), input.signal!);
+    const identity = `[agent-bridge] Your scoped native child address is "${child.address}". Use native_child="${child.agentId}" on peers, inbox and send. Your parent is ${child.parent}; bridge jobs owned by it and exact send_to grants may reach you. Never act as the parent session.`;
+    const messages = (await withinHook(node.nativeChildPending(input.agentId), input.signal!)).filter(m => !isQuietMessage(m) && (input.event !== "Stop" || m.hop < child.maxHops));
+    // Hand-out is not a receipt. A cancelled/deadline hook must leave mail returnable
+    // at SubagentStop or parent end; the next child hook/tool confirms this hand-out.
+    if (messages.length) {
+      let deliveries = nativeDeliveries.get(ctx);
+      if (!deliveries) { deliveries = new Map(); nativeDeliveries.set(ctx, deliveries); }
+      deliveries.set(input.agentId, messages.map(m => m.id));
+    }
+    const delivery = [identity, messages.length ? formatMessages(messages) : ""].filter(Boolean).join("\n\n");
+    if (input.event === "Stop") return messages.length ? { decision: "block", reason: delivery } : {};
+    if (input.event === "PostToolUse" && messages.length) return { decision: "block", reason: delivery, hookSpecificOutput: { hookEventName: input.event, additionalContext: delivery } };
+    return context(input.event, delivery);
+  }
   const parent = ctx.parent;
   if (!parent || input.event === "SessionStart" || input.event === "StopFailure") return {};
   let pending = parentReads.get(ctx);
@@ -114,9 +151,9 @@ function withinHook<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
 export async function buildHookResponse(ctx: ServerContext, input: HookInput): Promise<HookOutput> {
   // An authoritative native-child flag must be checked before prepare can observe its metadata.
   // Hosts without that flag still need a separate lineage solution; thread ids alone are not proof.
-  if (input.subagent || input.signal?.aborted) return {};
+  if (input.signal?.aborted || input.subagent && (ctx.agent !== "claude" || !ctx.node || !input.agentId)) return {};
   const node = ctx.node;
-  const main = (ctx.agent === "codex" || ctx.agent === "claude") && node !== null && !ctx.headless;
+  const main = !input.subagent && input.event !== "SessionEnd" && (ctx.agent === "codex" || ctx.agent === "claude") && node !== null && !ctx.headless;
   const current = main ? reserveHook(ctx, input) : () => true;
   if (!current) return {};
   const owningSession = input.sessionId ?? node?.currentSessionId;
@@ -129,7 +166,14 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
   const abort = () => controller.abort();
   input.signal?.addEventListener("abort", abort, { once: true });
   if (input.signal?.aborted) abort();
-  try { return await runHook(ctx, { ...input, signal: controller.signal }, current, busyAtIngress); }
+  try {
+    if (input.subagent) return await subagentHook(ctx, { ...input, signal: controller.signal });
+    if (input.event === "SessionEnd") {
+      if (ctx.agent === "claude" && node && !node.wasReplaced && node.currentSessionId === input.sessionId) await withinHook(node.nativeChildrenEnd(), controller.signal);
+      return {};
+    }
+    return await runHook(ctx, { ...input, signal: controller.signal }, current, busyAtIngress);
+  }
   catch (err) {
     if (!controller.signal.aborted) throw err;
     // The host accepts {} as turn end. Only the owning main Stop's own deadline can

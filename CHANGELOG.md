@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.30.14
+
+- Phone pairing over a plain home-network IP now works with `"tls": "pinned"`, with no CA or certificate setup. Scan the QR code to pin the PC key; the native phone transport checks that key before sending requests (AB-271).
+- Project paths and full-access prompts prefer verified drive aliases, and project decisions match across drive aliases. You can turn the display preference off with `pathDisplay.preferAlias`. Release rehearsals also recognize aliases when checking fixture containment (AB-272).
+- Native Claude children have their own scoped bridge addresses and mail queues, with explicit recipient grants and recovery of unread mail when a child ends (AB-280).
+- opencode jobs in served/edit mode keep their private server's input open, preventing early shutdown and "fetch failed" errors in worktrees (AB-264).
+- Cancelling and resuming jobs wait briefly for another session's state write, avoiding unnecessary retry errors and delayed starts. A lock that stays busy still blocks the operation safely (AB-278).
+- Ordinary mail to jobs stays blocked while background indexing catches up; use the supervisor or an authorized sibling channel.
+- Windows scans keep complete file IDs, so replacing a JSON file cannot be mistaken for unchanged cached data.
+- opencode retries deferred initial peer context and records it only after session storage succeeds.
+
 ## 0.30.13
 
 - Dashboard job controls now check who sent the request before allowing it, preventing unauthorized sessions from controlling jobs.

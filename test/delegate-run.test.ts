@@ -13,6 +13,8 @@ import { answerPendingApproval, listPendingApprovals, type PermissionDecision, t
 import { until } from "./helpers.js";
 import { readWorktreeState, rootId, saveWorktreeState } from "../src/core/worktree-state.js";
 import { closeJobWorktree } from "../src/core/job-close.js";
+import { preferredDriveFixture } from "./preferred-drive-fixture.js";
+import * as feeds from "../src/core/runfeed.js";
 
 let home: string;
 beforeEach(() => {
@@ -28,6 +30,26 @@ const context = (): RunContext => ({ agent: "claude", cfg: { ...DEFAULT_CONFIG }
 const job = (): Job => ({ id: "test", name: "codex-job-test", agent: "codex", model: null, prompt: "task", startedAt: Date.now(), controller: new AbortController(), progress: null, status: "running", sessionId: null, workdir: null, worktree: null, queue: [] });
 
 describe("delegation approval routing", () => {
+  it("formats result and log paths without changing execution or saved workdir", async () => {
+    await preferredDriveFixture();
+    const actual = home;
+    const startFeed = feeds.startRunFeedReady;
+    vi.spyOn(feeds, "startRunFeedReady").mockImplementation(async (...args) => ({ ...await startFeed(...args), logPath: "Q:/logs/run.log" }));
+    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      expect(req.cwd).toBe(actual);
+      return { sessionId: "saved", text: 'Report: "Q:/future/report.md"', isError: false, details: {} };
+    });
+    const result = await runDelegate(context(), "codex", { title: "paths", prompt: "task", access: "read" }, new AbortController().signal, undefined, true);
+    expect(result.text).toContain('Report: "X:/future/report.md"');
+    expect(result.text).toContain("Step-by-step log: X:/logs/run.log");
+    expect(result.workdir).toBe(actual);
+  });
+  it("formats failure paths while retaining the original error type", async () => {
+    await preferredDriveFixture();
+    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockRejectedValue(new DelegateError('failed in "Q:/work"', "failed"));
+    const run = runDelegate(context(), "codex", { title: "failure", prompt: "task", access: "read" }, new AbortController().signal, undefined, true);
+    await expect(run).rejects.toMatchObject({ message: 'failed in "X:/work"', kind: "failed" });
+  });
   it("requires a supervisor decision for reviewer refusals despite tool allowlists or cached allows", async () => {
     const rc = context();
     rc.cfg.autoApproveTools = ["pair-desk.get_*"];

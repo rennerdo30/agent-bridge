@@ -6,7 +6,7 @@ import type { Capability, ChatItem, Event, Hello, Job, Page, Question, Session, 
 import { MobilePush } from "./push.js";
 import { digest, MobileFault, MobileStore, secret, type Device, type Principal } from "./store.js";
 
-export interface MobileRequest { method: string; path: string; headers: Record<string, string | undefined>; body?: string; authority: string; tls: boolean; remoteAddress: string }
+export interface MobileRequest { method: string; path: string; headers: Record<string, string | undefined>; body?: string; authority: string; tls: boolean; pinning?: boolean; remoteAddress: string }
 export interface MobileResponse { status: number; headers: Record<string, string>; body?: unknown }
 export interface GatewayDiagnostic { requestId: string; errorCategory: "unexpected_gateway_exception" | "gateway_shutdown_timeout" }
 export type GatewayDiagnosticSink = (diagnostic: GatewayDiagnostic) => void;
@@ -32,7 +32,7 @@ export class MobileGateway {
   private closing?: Promise<void>;
   constructor(readonly store: MobileStore, private readonly source: MobileSource, readonly push = new MobilePush(store),
     private readonly diagnostics: GatewayDiagnosticSink = diagnostic => console.error(diagnostic), private readonly ready: () => boolean = () => true) {}
-  hello(): Hello { return { apiVersion: 1, capabilities: CAPS, transport: "private-https", pinning: false, send: "unsupported", pairedPcWrites: "unsupported", push: this.push.configured ? "configured" : "unsupported" }; }
+  hello(pinning = false): Hello { return { apiVersion: 1, capabilities: CAPS, transport: "private-https", pinning, send: "unsupported", pairedPcWrites: "unsupported", push: this.push.configured ? "configured" : "unsupported" }; }
   /** Owned host retirement; no registry reads or writes after it is closed. */
   deactivate(): void { this.available = false; this.views.clear(); this.cursors.clear(); }
   /** Stop admission immediately; settle owned handlers before the host retires its stores. */
@@ -183,7 +183,7 @@ export class MobileGateway {
       }
       const reply = (status: number, result?: unknown): MobileResponse => ({ status, headers, ...(result === undefined ? {} : { body: result }) });
       const allowedQuery = (keys: string[]): void => { for (const [key] of url.searchParams) if (!keys.includes(key)) throw new MobileFault(400, "invalid_query"); };
-      if (req.method === "GET" && route === "/hello") { allowedQuery([]); this.rate("hello:" + req.remoteAddress, 30); return reply(200, this.hello()); }
+      if (req.method === "GET" && route === "/hello") { allowedQuery([]); this.rate("hello:" + req.remoteAddress, 30); return reply(200, this.hello(req.pinning === true)); }
       if (req.method === "POST" && route === "/pairing/claims") {
         allowedQuery([]); this.rate("pair:" + req.remoteAddress, 10);
         const args = z.object({ invitationId: uuid, nonce: token, platform: z.enum(["android", "ios"]), deviceName: z.string().trim().min(1).max(80).regex(/^[^\x00-\x1f\x7f]+$/) }).strict().parse(body);

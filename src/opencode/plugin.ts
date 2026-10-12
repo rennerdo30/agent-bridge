@@ -171,13 +171,22 @@ async function createBridge({ client, directory }: PluginInput) {
   const noteSession = (sessionID: string | undefined) => {
     if (!sessionID || childSessions.has(sessionID)) return;
     activeSession = sessionID;
-    if (!sessionStartSent) {
-      sessionStartSent = true;
-      sessionStart = hook("SessionStart", sessionID).then(async (out) => {
+    if (sessionStartSent) return;
+    if (sessionStart) return sessionStart;
+    sessionStart = (async () => {
+      // A hook deadline can return an empty deferral. Retry it once here, then
+      // leave the context pending for the next boundary instead of losing it.
+      for (let attempt = 0; attempt < 2 && !disposed; attempt++) {
+        const out = await hook("SessionStart", sessionID);
         const context = out?.reason ?? out?.hookSpecificOutput?.additionalContext;
-        if (!disposed && typeof context === "string" && context) await promptAsync(client, sessionID, context, true);
-      }).catch((err) => log("warn", "could not store initial peer context", { err: String(err) }));
-    }
+        if (typeof context !== "string" || !context) continue;
+        if (disposed) return;
+        await promptAsync(client, sessionID, context, true);
+        sessionStartSent = true;
+        return;
+      }
+    })().catch((err) => log("warn", "could not store initial peer context", { err: String(err) }))
+      .finally(() => { sessionStart = null; });
     return sessionStart;
   };
 
