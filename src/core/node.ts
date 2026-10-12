@@ -305,6 +305,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.reconnectTimer.unref();
   }
 
+  private reconnectAfterUpgrade(): void {
+    // This host knows it retired locally, even if its socket missed the hint.
+    this.brokerYieldUntil = Math.max(this.brokerYieldUntil, Date.now() + BROKER_SUCCESSOR_GRACE_MS);
+    this.brokerYieldOnClose = this.isConnected;
+    this.scheduleReconnect(0);
+  }
+
   private async elect(): Promise<void> {
     for (let attempt = 1; attempt <= ELECTION_MAX_ATTEMPTS && !this.stopping; attempt++) {
       try {
@@ -355,7 +362,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join(dirname(this.opts.dbPath), JOBS_FILE), this.opts.network, () => {
       if (this.broker === broker) this.broker = null;
       // The old server keeps its session/client state and follows the ordinary reconnect path.
-      if (!this.stopping) this.scheduleReconnect(0);
+      if (!this.stopping) this.reconnectAfterUpgrade();
     });
     try {
       await broker.listen();
