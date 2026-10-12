@@ -36,7 +36,7 @@ export class MobileActivationFault extends Error {
 /** No shell interpolation, env credentials, or diagnostic output. Allow owner, SYSTEM and administrators only. */
 export function windowsPrivateAcl(file: string): Promise<boolean> {
   return new Promise(resolve => {
-    const script = "$ErrorActionPreference='Stop'; try { $a=Get-Acl -LiteralPath ([Console]::In.ReadLine()); $owner=([System.Security.Principal.NTAccount]$a.Owner).Translate([System.Security.Principal.SecurityIdentifier]).Value; $caller=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; if($owner -ne $caller){throw 'deny'}; foreach($r in $a.Access){ $sid=$r.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value; if($r.AccessControlType -eq 'Allow' -and ([int]$r.FileSystemRights -band 1) -ne 0 -and $sid -notin @($caller,'S-1-5-18','S-1-5-32-544')){throw 'deny'} }; 'allow' } catch { 'deny'; exit 1 }";
+    const script = "$ErrorActionPreference='Stop'; try { $a=Get-Acl -LiteralPath ([Console]::In.ReadLine()); $owner=$a.GetOwner([System.Security.Principal.SecurityIdentifier]).Value; $caller=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; if($owner -ne $caller){throw 'deny'}; foreach($r in $a.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])){ $sid=$r.IdentityReference.Value; if($r.AccessControlType -eq 'Allow' -and ([int]$r.FileSystemRights -band 1) -ne 0 -and $sid -notin @($caller,'S-1-5-18','S-1-5-32-544')){throw 'deny'} }; 'allow' } catch { 'deny'; exit 1 }";
     if (/[\r\n]/.test(file)) { resolve(false); return; }
     // A pwsh parent exports its incompatible module path. Let Windows PowerShell
     // select its own Security module; lookup/translation failures still deny.

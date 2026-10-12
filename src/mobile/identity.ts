@@ -38,7 +38,7 @@ async function ensureDirectory(dir: string, policy: MaterialPolicy): Promise<voi
     if (parent === parse(parent).root) break;
     parent = dirname(parent);
   }
-  try { await fs.mkdir(dir, { mode: 0o700 }); protect(dir, 0o700); }
+  try { await fs.mkdir(dir, { mode: 0o700 }); protect(dir, 0o700, true); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
   // Existing permissions are checked, never silently repaired.
   await privateDirectory(dir, policy);
@@ -46,7 +46,7 @@ async function ensureDirectory(dir: string, policy: MaterialPolicy): Promise<voi
 async function writeNew(file: string, bytes: Buffer | string, policy: MaterialPolicy): Promise<void> {
   const handle = await fs.open(file, "wx", 0o600);
   try {
-    protect(file, 0o600); // Directory was protected before creating any key bytes.
+    protect(file, 0o600, true); // Exclusive creation; owner and ACL are set before key bytes.
     await handle.writeFile(bytes); await handle.sync();
   } finally { await handle.close(); }
   await readPrivateMaterial(file, policy);
