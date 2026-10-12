@@ -1344,11 +1344,11 @@ export class JobManager {
     }
   }
 
-  /** The lease covers the synchronous decision, not a broker call or runner lifetime. */
+  /** Wait briefly for another writer; the lease covers only the synchronous decision. */
   private transition<T>(job: Job, action: () => T): T {
     if (!this.storePath || this.transitions.has(job.id)) return action();
     const key = createHash("sha256").update(job.id).digest("hex");
-    const release = acquireLock(join(dirname(this.storePath), "job-controls", `${key}.lock`), 0);
+    const release = acquireLock(join(dirname(this.storePath), "job-controls", `${key}.lock`), LOCK_WAIT_MS, true);
     this.transitions.add(job.id);
     try { return action(); }
     finally { this.transitions.delete(job.id); release(); }
@@ -1557,7 +1557,7 @@ export class JobManager {
       job.continuationFailure = null;
     };
     if (!this.storePath) { reset(); if (!initial) job.queue = []; return true; }
-    const release = acquireLock(`${this.storePath}.lock`, 0);
+    const release = acquireLock(`${this.storePath}.lock`, LOCK_WAIT_MS, true);
     try {
       const previous = readJobsDocument(this.storePath, this.log);
       assertWritableStore(previous);
@@ -2000,7 +2000,7 @@ export class JobManager {
   /** Commit cross-session cancel intent before sending control or aborting startup. */
   private recordCancellation(job: Job): void {
     if (!this.storePath) { job.cancellingTurn = job.startedAt; return; }
-    const release = acquireLock(`${this.storePath}.lock`, 0);
+    const release = acquireLock(`${this.storePath}.lock`, LOCK_WAIT_MS, true);
     try {
       const previous = readJobsDocument(this.storePath, this.log);
       assertWritableStore(previous);
@@ -2308,8 +2308,10 @@ export function hostedStartRetryMs(attempt: number): number {
 }
 const HOSTED_START_NOTICE_ATTEMPT = 10;
 
-export function acquireLock(path: string, waitMs = LOCK_WAIT_MS): () => void {
-  try { return metadataFileLease(path, waitMs, waitMs === 0); }
+// Control decisions can wait for a short writer turn, but must not extend that
+// bound with a synchronous foreign-process identity query (PowerShell on Windows).
+export function acquireLock(path: string, waitMs = LOCK_WAIT_MS, nonBlockingRecovery = waitMs === 0): () => void {
+  try { return metadataFileLease(path, waitMs, nonBlockingRecovery); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ELEASEBUSY") throw error;
     throw Object.assign(new Error("timed out locking jobs store"), { code: "EJOBLOCKED" });
