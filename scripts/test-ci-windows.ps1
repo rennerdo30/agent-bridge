@@ -159,8 +159,6 @@ try {
     Write-Error -ErrorAction Continue $_
     $exitCode = 1
 } finally {
-    $process.PriorityClass = $oldPriority
-    $process.ProcessorAffinity = $oldAffinity
     try {
         if ($mountAttempted) {
             # Always detach our exact image, including after a partial mount/format failure.
@@ -180,6 +178,15 @@ try {
         }
     } catch {
         Write-Error -ErrorAction Continue "Cleanup refused/failed; retaining $root for inspection: $_"
+        $exitCode = 1
+    }
+    # Restoring an unusual inherited priority can fail without privileges.
+    # It must never prevent detaching our VHD or checking the cleanup marker.
+    try {
+        $process.PriorityClass = $oldPriority
+        $process.ProcessorAffinity = $oldAffinity
+    } catch {
+        Write-Error -ErrorAction Continue "Restoring this runner process priority/affinity failed: $_"
         $exitCode = 1
     }
 }
