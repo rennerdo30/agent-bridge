@@ -3,8 +3,10 @@
 ## 0.30.14
 
 - Phone pairing over a plain home-network IP now works with `"tls": "pinned"`, with no CA or certificate setup. Scan the QR code to pin the PC key; the native phone transport checks that key before sending requests (AB-271).
-- Project paths use the E: display alias when it points to the same files, and project decisions match across drive aliases. Release rehearsals also recognize aliases when checking fixture containment (AB-272).
+- Project paths and full-access prompts prefer verified drive aliases, and project decisions match across drive aliases. You can turn the display preference off with `pathDisplay.preferAlias`. Release rehearsals also recognize aliases when checking fixture containment (AB-272).
 - Native Claude children have their own scoped bridge addresses and mail queues, with explicit recipient grants and recovery of unread mail when a child ends (AB-280).
+- opencode jobs in served/edit mode keep their private server's input open, preventing early shutdown and "fetch failed" errors in worktrees (AB-264).
+- An eligible newer session can take over the broker automatically after a bounded request drain and durable store flush, with a 60-second cooldown (AB-281). A broker already running a version before 0.30.14 cannot hand over retroactively: after updating, restart the session hosting the broker once normally to enable automatic handovers for future updates.
 
 ## 0.30.13
 
