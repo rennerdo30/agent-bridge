@@ -3,13 +3,13 @@ import {
   bundleFilesBounded,
   extractBundle,
   retireBundled
-} from "./chunks/chunk-HILZZFP7.mjs";
+} from "./chunks/chunk-JNLL5ZON.mjs";
 import {
   importRunnerFiles,
   packArchivedRuns,
   runnerFilesImported
-} from "./chunks/chunk-OHYEDZ4E.mjs";
-import "./chunks/chunk-ZAYDCQJV.mjs";
+} from "./chunks/chunk-MYZUHO5I.mjs";
+import "./chunks/chunk-X7GNR5RQ.mjs";
 import "./chunks/chunk-WM3QOXKL.mjs";
 import "./chunks/chunk-HYOPFLLN.mjs";
 import {
@@ -19,6 +19,7 @@ import {
   closeMetadataDbs,
   estimatedJsonBytes,
   fileSignature,
+  fileTimeMs,
   jobArchivePath,
   jobDigest,
   markJobProjection,
@@ -27,7 +28,7 @@ import {
   physicalArchivePath,
   putJobRecords,
   refreshStorePeerIdentities
-} from "./chunks/chunk-CBB2GARB.mjs";
+} from "./chunks/chunk-JWFV2ATR.mjs";
 import "./chunks/chunk-6JJ25VPZ.mjs";
 import "./chunks/chunk-AH7X4KST.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
@@ -129,11 +130,11 @@ async function migrateJobArchives(path) {
     }
     if (existsSync(path)) {
       physicalArchivePath(path);
-      const before = lstatSync(path), jobs = records(readFileSync(path), path);
-      if (fileSignature(lstatSync(path)) !== fileSignature(before)) throw new Error("active jobs changed during archive import; retry later");
+      const before = lstatSync(path, { bigint: true }), jobs = records(readFileSync(path), path);
+      if (fileSignature(lstatSync(path, { bigint: true })) !== fileSignature(before)) throw new Error("active jobs changed during archive import; retry later");
       db.exec("BEGIN IMMEDIATE");
       try {
-        putJobRecords(db, jobs, before.mtimeMs);
+        putJobRecords(db, jobs, fileTimeMs(before.mtimeMs, before.mtimeNs));
         db.exec("COMMIT");
       } catch (error) {
         if (db.isTransaction) db.exec("ROLLBACK");

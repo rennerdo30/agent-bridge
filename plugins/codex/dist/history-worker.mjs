@@ -4,15 +4,15 @@ import {
 } from "./chunks/chunk-2PKS7JZW.mjs";
 import {
   ConversationIngestor
-} from "./chunks/chunk-UBMMQDJB.mjs";
+} from "./chunks/chunk-275YT7AX.mjs";
 import {
   HISTORY_TICK_MS,
   HistoryIndex
-} from "./chunks/chunk-QEHPXH3A.mjs";
+} from "./chunks/chunk-ANH65RNX.mjs";
 import {
   ownsProjectMirrors,
   projectDatabasePath
-} from "./chunks/chunk-3KQPIZMT.mjs";
+} from "./chunks/chunk-SU43SUMV.mjs";
 import {
   HISTORY_IO_BYTES_PER_SECOND,
   copyLegacyConversationTail,
@@ -21,24 +21,24 @@ import {
   migrateHistoryStore,
   openHistoryStore,
   readHistoryMigrationProgress
-} from "./chunks/chunk-Z6QHLHS2.mjs";
+} from "./chunks/chunk-MGGHM5LX.mjs";
 import "./chunks/chunk-AJ3G2ZXC.mjs";
 import "./chunks/chunk-KQJ5KQYW.mjs";
 import "./chunks/chunk-UUSRNKCB.mjs";
 import "./chunks/chunk-CNEMWRSZ.mjs";
 import {
   reconcileAskCompletions
-} from "./chunks/chunk-PW7SCQHQ.mjs";
+} from "./chunks/chunk-VKXCBLVU.mjs";
 import {
   loadConfig
-} from "./chunks/chunk-X5DPCKVP.mjs";
+} from "./chunks/chunk-ZIKRAW2M.mjs";
 import "./chunks/chunk-4QXHCXBU.mjs";
-import "./chunks/chunk-ZF6BZIFJ.mjs";
+import "./chunks/chunk-VI5AN7YI.mjs";
 import "./chunks/chunk-MIHYBRIY.mjs";
 import {
   readHistoryJson
-} from "./chunks/chunk-OHYEDZ4E.mjs";
-import "./chunks/chunk-ZAYDCQJV.mjs";
+} from "./chunks/chunk-MYZUHO5I.mjs";
+import "./chunks/chunk-X7GNR5RQ.mjs";
 import {
   transcriptPaths
 } from "./chunks/chunk-WM3QOXKL.mjs";
@@ -49,7 +49,7 @@ import {
   isRecord,
   nullLogger,
   writeJsonStore
-} from "./chunks/chunk-CBB2GARB.mjs";
+} from "./chunks/chunk-JWFV2ATR.mjs";
 import "./chunks/chunk-6JJ25VPZ.mjs";
 import {
   CONFIG_FILE_NAME
@@ -117,7 +117,7 @@ var configCache = null;
 function currentConfig() {
   let signature = "missing";
   try {
-    signature = fileSignature(statSync(join(workerData.home, CONFIG_FILE_NAME)));
+    signature = fileSignature(statSync(join(workerData.home, CONFIG_FILE_NAME), { bigint: true }));
   } catch {
   }
   if (configCache?.signature !== signature) configCache = { signature, value: loadConfig(workerData.home, "other", nullLogger) };
