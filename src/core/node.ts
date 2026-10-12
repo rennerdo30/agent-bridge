@@ -652,6 +652,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return this.withClient((c) => c.request("messageReceipt", { id }));
   }
 
+  nativeChild(args: RequestMap["nativeChild"][0]) { return this.withClient(c => c.request("nativeChild", args)); }
+  nativeChildren() { return this.withClient(c => c.request("nativeChildren", {})); }
+  nativeChildrenEnd() { return this.withClient(c => c.request("nativeChildrenEnd", {})); }
+  nativeChildPending(agentId: string) { return this.withClient(c => c.request("nativeChildPending", { agentId })); }
+  nativeChildAck(agentId: string, ids: string[]) { return this.withClient(c => c.request("nativeChildAck", { agentId, ids })); }
+  nativeChildSend(agentId: string, args: SendArgs) { return this.withClient(c => c.request("nativeChildSend", { ...args, agentId })); }
+
   peers(signal?: AbortSignal): Promise<PeerInfo[]> {
     return this.withReadClient((c, timeoutMs) => c.request("peers", {}, timeoutMs), signal).then((peers) => peers.filter((p) => !isPluginCacheCwd(p.cwd)));
   }

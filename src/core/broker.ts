@@ -1,4 +1,5 @@
 import { HistoryBackground } from "./history-background.js";
+import { NativeChildren, isNativeChildAddress } from "./native-children.js";
 import { HealthMonitor } from "./health.js";
 import { loadConfig } from "./config.js";
 import { conversationPageSchema, readConversation } from "./conversations.js";
@@ -12,6 +13,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import {
   APP_VERSION,
   DEFAULT_MAX_HOPS,
+  HOOK_MAX_MESSAGES,
   MAX_BODY_CHARS,
   BROKER_TESTED_JOB_LOAD,
   MAX_FRAME_BYTES,
@@ -180,6 +182,7 @@ export class Broker {
   private readonly projectRoutes = new Map<string, import("./protocol.js").ProjectRoute>();
   private server: Server | null = null;
   private readonly conns = new Set<Conn>();
+  private readonly nativeChildren: NativeChildren;
   private historyBackground: HistoryBackground | null = null;
   private jobArchiveBackground: JobArchiveBackground | null = null;
   private readonly healthMonitor = new HealthMonitor();
@@ -213,6 +216,7 @@ export class Broker {
     private readonly networking?: { home: string; config: NetworkConfig },
   ) {
     this.groups = new ProjectGroups(jobsPath ? dirname(jobsPath) : undefined);
+    this.nativeChildren = new NativeChildren(this.store);
     this.handlers = {
       askOwner: (c,a) => {
         const peer = this.requirePeer(c);
@@ -410,6 +414,26 @@ export class Broker {
       dashboardRead: (_, a) => this.remoteDashboard?.request(a.host, a.request) ?? dashboardError("remote_offline", "Networking is unavailable."),
       siblings: (c) => this.siblingPeers(c),
       sendSibling: (c, a) => this.onSendSibling(c, a),
+      nativeChildren: (c) => this.nativeChildren.list(this.requirePeer(c)),
+      nativeChildrenEnd: async (c) => { await this.nativeChildren.endParent(this.requirePeer(c)); return { ended: true }; },
+      nativeChild: async (c, a) => {
+        const peer = this.requirePeer(c);
+        if (a.action === "start") return this.nativeChildren.start(peer, a.agentId, a.maxHops);
+        if (a.action === "grant") return this.nativeChildren.grant(peer, a.agentId, a.sendTo ?? []);
+        if (a.action !== "end") throw new BridgeError("bad_request", "Unknown native child action.");
+        await this.nativeChildren.end(peer, a.agentId);
+        this.replayMail(c, peer);
+        return null;
+      },
+      nativeChildPending: (c, a) => this.pendingMail(this.nativeChildren.own(this.requirePeer(c), a.agentId).address, HOOK_MAX_MESSAGES),
+      nativeChildAck: async (c, a) => {
+        const peer = this.requirePeer(c);
+        return { acked: await this.store.retryWrite(() => this.store.markRead(this.nativeChildren.own(peer, a.agentId).address, a.ids, this.now())) };
+      },
+      nativeChildSend: (c, a) => {
+        const child = this.nativeChildren.own(this.requirePeer(c), a.agentId);
+        return this.routeNativeSend(c, a, child.address);
+      },
       guardedSend: (c, a) => {
         if (!a.ifNoNewerThan) throw new BridgeError("bad_request", "guardedSend requires if_no_newer_than");
         return this.onSend(c, a);
@@ -540,6 +564,7 @@ export class Broker {
   }
 
   private async startServices(optional: (what: string, step: () => void) => void): Promise<void> {
+        await this.nativeChildren.recover();
         if (this.jobsPath && this.store.file !== ":memory:") optional("job archive worker", () => { this.jobArchiveBackground = new JobArchiveBackground(this.jobsPath!, this.log); });
         optional("backups", () => this.store.startBackups());
         this.healthMonitor.start();
@@ -709,6 +734,7 @@ export class Broker {
     socket.on("close", () => {
       this.conns.delete(conn);
       if (conn.peer) {
+        void this.nativeChildren.endParent(conn.peer).catch(err => this.log.warn("native child fallback deferred", { err: String(err) }));
         if (!this.closing && !conn.peer.jobAgent && !conn.peer.subagent) {
           const name = conn.peer.name, at = this.now();
           void this.store.retryWrite(() => {
@@ -1183,10 +1209,17 @@ export class Broker {
       peers.set(p.name, { name: p.name, title: p.jobTitle ?? "", agent: p.jobAgent!, status: previous?.status ?? "running",
         ...(previous?.finishedAt !== undefined ? { finishedAt: previous.finishedAt } : {}) });
     }
+    const caller = this.requirePeer(conn);
+    for (const parent of this.conns) if (parent.peer) {
+      for (const child of this.nativeChildren.list(parent.peer)) {
+        if (this.nativeAllowed(this.nativeChildren.target(child.address), caller.name)) peers.set(child.address, { name: child.address, title: "Native Claude child", agent: "claude", status: "running" });
+      }
+    }
     return [...peers.values()];
   }
 
   private async onSendSibling(conn: Conn, args: RequestMap["sendSibling"][0]): Promise<RequestMap["sendSibling"][1]> {
+    if (isNativeChildAddress(args.to)) return this.routeNativeSend(conn, args);
     const sender = this.requirePeer(conn);
     const dedupeKey = args.dedupeKey ? `${SIBLING_CONVERSATION_PREFIX}${args.dedupeKey}` : undefined;
     const key = dedupeKey ? `${sender.id}:${dedupeKey}` : null;
@@ -1446,6 +1479,7 @@ export class Broker {
     const peer = this.requirePeer(conn);
     const previousIdentity = { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name };
     const previousName = peer.name;
+    if (args.sessionId !== undefined && args.sessionId !== peer.sessionId || args.name !== undefined && args.name !== peer.name) await this.nativeChildren.endParent(peer);
     const aliases: string[] = [];
     let replay = args.unavailable === false;
     if (args.unavailable !== undefined) {
@@ -1519,6 +1553,7 @@ export class Broker {
       this.store.rememberName(old, this.now());
       this.log.info("session connected again from a new server; replacing the old connection", { name: old.name, by: peer.name, sessionId: peer.sessionId });
       this.emit(c, "replaced", { by: peer.name });
+      void this.nativeChildren.endParent(old).catch(err => this.log.warn("replaced native child fallback deferred", { err: String(err) }));
       this.conns.delete(c);
       c.peer = null;
       this.broadcastEvent("peer_left", old, c);
@@ -1698,7 +1733,7 @@ export class Broker {
           !(sender.jobAgent && message.conversationId === args.conversationId.trim() + ":fallback")) {
         throw new BridgeError("bad_request", "Message id already stored with different content; use a new id for a new message.");
       }
-      const receipts = message.recipient.includes("/") ? await this.messageReceipt(conn, id).catch(() => state.receipts) : state.receipts;
+      const receipts = message.recipient.includes("/") && !isNativeChildAddress(message.recipient) ? await this.messageReceipt(conn, id).catch(() => state.receipts) : state.receipts;
       return { messages: this.store.messagesById(id), deliveredTo: [], queuedFor: [], storage: { id, state: "stored", recovered: true, receipts } };
     }
     const fingerprint = JSON.stringify([args.to, args.body, args.replyTo, args.conversationId, args.ifNoNewerThan]);
@@ -1743,6 +1778,69 @@ export class Broker {
     return result;
   }
 
+  /** Native queues admit only their parent, directly owned jobs and exact grants. */
+  private nativeAllowed(child: ReturnType<NativeChildren["target"]>, name: string): boolean {
+    if (name === child.parent || child.sendTo.includes(name)) return true;
+    const job = this.storedJobs().find(j => j.name === name);
+    if (job) return job.owner === child.parent && job.supervisor === child.session;
+    const peer = this.connByName(name)?.peer;
+    return Boolean(peer?.jobAgent && peer.jobParent === child.parent && peer.jobOwner === child.session);
+  }
+
+  /** Virtual sender selection is internal to this opcode, never a hello or connection mutation. */
+  private async routeNativeSend(conn: Conn, args: RequestMap["send"][0], fromChild?: string): Promise<RequestMap["send"][1]> {
+    const peer = this.requirePeer(conn), to = String(args.to ?? "").trim();
+    const child = this.nativeChildren.target(fromChild ?? to);
+    const senderName = fromChild ?? peer.name;
+    const check = () => {
+      if (fromChild) this.nativeChildren.own(peer, child.agentId);
+      else this.nativeChildren.target(to);
+      const owner = this.connByName(child.parent)?.peer;
+      if (!owner || owner.id !== child.owner || owner.sessionId !== child.session ||
+          !this.nativeAllowed(child, fromChild ? to : senderName)) throw new BridgeError("unauthorized", "Native child mail requires its parent, the parent's bridge job, or an exact send_to grant.");
+    };
+    check();
+    if (!args.body?.trim() || args.body.length > MAX_BODY_CHARS) throw new BridgeError("bad_request", "Invalid native child message body.");
+    if (fromChild && (to === senderName || isNativeChildAddress(to))) throw new BridgeError("unauthorized", "Use an exact granted session or bridge job target.");
+    const sender = { id: fromChild ? `native:${child.owner}:${child.agentId}` : peer.id, name: senderName, agent: fromChild ? "claude" as const : peer.jobAgent ?? peer.agent };
+    const anchor = args.replyTo ? this.store.byId(args.replyTo) : null;
+    if (args.replyTo && (!anchor || !((anchor.from.name === to && this.store.receipts(anchor.id).some(r => r.recipient === senderName)) ||
+        (anchor.from.name === senderName && anchor.recipient === to)))) throw new BridgeError("bad_request", "reply_to must identify mail exchanged with this recipient.");
+    const hop = anchor ? anchor.hop + 1 : 0;
+    if (hop >= child.maxHops) throw new BridgeError("bad_request", `Native child conversation reached its ${child.maxHops}-message hop limit; message was not delivered.`);
+    if (args.conversationId && !args.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX)) throw new BridgeError("bad_request", "Native child conversation_id must be a sibling thread returned by a previous send.");
+    const conversationId = anchor?.conversationId ?? args.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID()}`;
+    const guard = args.ifNoNewerThan ? this.store.byId(args.ifNoNewerThan) : null;
+    if (args.ifNoNewerThan && (!guard || guard.from.name !== senderName && !this.store.receipts(guard.id).some(r => r.recipient === senderName))) throw new BridgeError("bad_request", "Invalid native child reply guard.");
+    const id = args.messageId ? z.uuid().parse(args.messageId).toLowerCase() : args.dedupeKey ? completionMessageId(`native:${sender.id}:${to}`, args.dedupeKey) : randomUUID();
+    const recovered = (): RequestMap["send"][1] | null => {
+      const existing = this.store.byId(id);
+      if (!existing) return null;
+      if (existing.from.name !== senderName || existing.to !== to || existing.body !== args.body || existing.replyTo !== (args.replyTo ?? null)) throw new BridgeError("bad_request", "Message id already belongs to different content or sender.");
+      return { messages: this.store.messagesById(id), deliveredTo: [], queuedFor: [], storage: { id, state: "stored", recovered: true, receipts: this.store.receipts(id) } };
+    };
+    const existing = recovered();
+    if (existing) return existing;
+    const message: BridgeMessage = { id, from: sender, to, recipient: to, conversationId, replyTo: args.replyTo ?? null, hop, replyLimit: child.maxHops, body: args.body, createdAt: this.now(), readAt: null };
+    const copies = to === child.parent ? [] : [{ ...message, id: randomUUID(), recipient: child.parent, conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`, body: `Native child message to ${to}:\n\n${args.body}` }];
+    const previous = await this.store.retryWrite(() => {
+      check();
+      const previous = recovered();
+      if (previous) return previous;
+      this.store.insertBatch([message, ...copies], () => {
+        if (guard && this.store.replyConflicts(senderName, [to], conversationId, guard).length) throw new BridgeError("bad_request", "Stale reply refused: newer unread mail exists.");
+      });
+      return null;
+    });
+    if (previous) return previous;
+    // Child queues are pulled at that child's hook/tool boundary. Never emit them as parent work.
+    const recipient = fromChild ? this.connByName(to) : null;
+    if (recipient) this.emit(recipient, "message", message);
+    const supervisor = this.connByName(child.parent);
+    for (const copy of copies) if (supervisor) this.emit(supervisor, "message", copy);
+    return { messages: [message], deliveredTo: recipient ? [to] : [], queuedFor: recipient ? [] : [to], storage: { id, state: "stored", receipts: this.store.receipts(id) } };
+  }
+
   /** Reverse permissions use the current durable record, not stale runner registration. */
   private replyRestriction(sender: PeerInfo, name: string): { name: string; supervisor: string } | null {
     const jobs = this.storedJobs(), peer = this.connByName(name)?.peer;
@@ -1759,6 +1857,7 @@ export class Broker {
   }
 
   private async routeSend(conn: Conn, sender: PeerInfo, args: RequestMap["send"][0]): Promise<RequestMap["send"][1]> {
+    if (isNativeChildAddress(args.to)) return this.routeNativeSend(conn, args);
     const body = typeof args.body === "string" ? args.body : "";
     if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
     if (body.length > MAX_BODY_CHARS) throw new BridgeError("too_large", `message body exceeds ${MAX_BODY_CHARS} characters`);
@@ -2013,7 +2112,7 @@ export class Broker {
     const message = this.store.byId(z.uuid().parse(id));
     if (!message || message.from.name !== sender.name) throw new BridgeError("unauthorized", "receipt is only available to the sender");
     const receipts = this.store.receipts(id);
-    return Promise.all(receipts.map(async (r) => r.recipient.includes("/")
+    return Promise.all(receipts.map(async (r) => r.recipient.includes("/") && !isNativeChildAddress(r.recipient)
       ? { ...r, readAt: await this.requireNetwork().receipt(r.recipient, id, message.from.id,
         receipts.filter((other) => other.recipient.startsWith(`${r.recipient.split("/")[0]}/`)).length > 1) }
       : r));
@@ -2040,6 +2139,7 @@ export class Broker {
   }
 
   private receiveRemote(message: BridgeMessage): { delivered: boolean; recipient: string; stored: boolean; recovered?: boolean; readAt: number | null } {
+    if (isNativeChildAddress(message.recipient) || isNativeChildAddress(message.to) || isNativeChildAddress(message.from.name)) throw new BridgeError("unauthorized", "Native child addresses are local scoped queues; paired-PC delivery is not authorized.");
     message = { ...message, jobControlAuthorized: undefined };
     const target = this.recipientConn(message.recipient);
     if (target?.peer) message = { ...message, recipient: target.peer.name };

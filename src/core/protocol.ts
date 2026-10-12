@@ -226,6 +226,13 @@ export interface AuthArgs {
 }
 
 export interface RequestMap {
+  /** Virtual addresses are controlled only by the registered parent connection. */
+  nativeChild: [{ agentId: string; action: "start" | "end" | "grant"; sendTo?: string[]; maxHops?: number }, NativeChildAddress | null];
+  nativeChildren: [Record<string, never>, NativeChildAddress[]];
+  nativeChildrenEnd: [Record<string, never>, { ended: boolean }];
+  nativeChildPending: [{ agentId: string }, BridgeMessage[]];
+  nativeChildAck: [{ agentId: string; ids: string[] }, { acked: number }];
+  nativeChildSend: [SendArgs & { agentId: string }, SendResult];
   /** Authenticated owner connection only; senderId selects the dashboard's reply listener. */
   dashboardJobSend: [SendArgs & { senderId: string }, SendResult];
   health: [Record<string, never>, import("./health.js").BrokerHealth];
@@ -279,6 +286,13 @@ export interface RequestMap {
   fetchFiles: [{ from: string; paths: string[] }, TransferStarted];
   transfers: [Record<string, never>, { transfers: TransferProgress[] }];
   cancelTransfer: [{ id: string }, { id: string; cancelled: boolean }];
+}
+export interface NativeChildAddress {
+  address: string;
+  agentId: string;
+  parent: string;
+  sendTo: string[];
+  maxHops: number;
 }
 export type Op = keyof RequestMap;
 

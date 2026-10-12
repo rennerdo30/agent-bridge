@@ -465,6 +465,28 @@ export class MessageStore {
   }
 
   /** Move messages waiting for "any <agent>" to a concrete peer name. */
+  nativeChildRoutes(): { address: string; parent: string }[] {
+    if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_child_routes'").get()) return [];
+    return this.db.prepare("SELECT address,parent FROM native_child_routes WHERE active=1").all() as { address: string; parent: string }[];
+  }
+
+  retainNativeChild(address: string, parent: string): void {
+    this.db.exec("CREATE TABLE IF NOT EXISTS native_child_routes (address TEXT PRIMARY KEY, parent TEXT NOT NULL, active INTEGER NOT NULL)");
+    this.db.prepare("INSERT INTO native_child_routes(address,parent,active) VALUES (?,?,1) ON CONFLICT(address) DO UPDATE SET parent=excluded.parent,active=1").run(address, parent);
+  }
+
+  /** Return unread child mail and retire its route atomically; retained rows are never removed. */
+  returnNativeChild(address: string, parent: string): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.stmt.claim.run(parent, address);
+      this.db.prepare(`UPDATE messages SET read_at=? WHERE recipient=? AND read_at IS NULL AND ${unquarantined("messages")} AND id IN (SELECT id FROM deliverable_messages WHERE recipient=?)`).run(Date.now(), address, parent);
+      this.db.prepare("UPDATE native_child_routes SET active=0 WHERE address=?").run(address);
+      this.db.exec("COMMIT");
+      this.historyMessageSink?.();
+    } catch (err) { this.db.exec("ROLLBACK"); throw err; }
+  }
+
   claim(fromKey: string, toName: string): number {
     if (fromKey === toName) return 0;
     this.db.exec("BEGIN IMMEDIATE");
