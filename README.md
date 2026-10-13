@@ -118,6 +118,18 @@ There is no daemon. Each agent session starts its own small agent-bridge server.
           first server to start is the broker · messages in SQLite
 ```
 
+### Work items
+
+A spawned job can be linked to a tracker item with `work_item: "<tracker>:<id>"` on `spawn_*`, e.g. `pair-desk:AB-12`. The bridge then posts a short start/finish/fail note to that item. Trackers are opt-in in `~/.agent-bridge/config.json`:
+
+```json
+{
+  "trackers": { "pair-desk": { "type": "pair-desk", "command": "pair-desk" } }
+}
+```
+
+On Windows the command must be an executable, e.g. the Python path with `"argsPrefix": ["<path>/desk.py"]`, not a `.cmd` wrapper. The bridge only comments; it never changes an issue's status.
+
 ## ⚠️ WHAT AGENT-BRIDGE MAY DELETE ON YOUR DISK
 
 > [!WARNING]

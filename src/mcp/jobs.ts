@@ -22,6 +22,7 @@ import { cloneJson, readJsonSnapshot } from "../core/file-cache.js";
 import { ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS } from "../core/run-archive.js";
 import { newApprovalId, publishApproval, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { notifyJobEvent } from "../core/notifications.js";
+import { MAX_EVENT_TEXT_CHARS, notifyWorkItem, type TrackerAdapter, type WorkItemEvent, type WorkItemRef } from "../core/work-items.js";
 import { RootConcurrency } from "../core/root-concurrency.js";
 import { completionMessageId } from "../core/completion.js";
 import { recoverJobRecord, recoverJobRecordAsync } from "../core/job-recovery.js";
@@ -46,6 +47,8 @@ const ROOT_WAIT_POLL_MS = 1_000;
 export const NOTE_CONVERSATION_SUFFIX = ":note";
 /** Follow-up sent when a subagent is resumed without a message (e.g. after a failure). */
 export const DEFAULT_FOLLOW_UP = "Continue where you stopped and finish the task. Then give your final answer.";
+/** No work-item tracker provider: lookups warn once per event inside notifyWorkItem (acceptable). */
+const NO_TRACKER_ADAPTERS: ReadonlyMap<string, TrackerAdapter> = new Map();
 
 /** A delegated run's result, plus the folder it worked in (a worktree, for example). */
 export type RunResult = DelegateResult & { workdir?: string; worktree?: Worktree; status?: "done" | "failed" | "cancelled" };
@@ -135,6 +138,10 @@ export interface Job {
   finishedAt?: number;
   /** Runs in a detached job runner, so it outlives a restart of this session's server (see job-host.ts). */
   host?: JobHostInfo | null;
+  /** Linked tracker item; the supervisor posts start/finish/fail notes there (see work-items.ts). */
+  workItem?: WorkItemRef;
+  /** Which work-item events already posted; persisted so a restart or adoption never posts twice. */
+  workItemPosted?: { started?: boolean; finished?: boolean };
   /** Messages forwarded to its runner that it has not confirmed yet; they become a follow-up if it never saw them. */
   forwarded?: { cid: string; body: string }[];
 }
@@ -392,6 +399,8 @@ export class JobManager {
     private maxJobs: number = DEFAULT_MAX_JOBS,
     private readonly lineage?: JobLineage,
     private readonly restorePolicy?: JobRestorePolicy,
+    /** Fresh work-item tracker adapters per call (rebuilt from config, so config changes apply to the next event). */
+    private readonly trackerAdapters?: () => ReadonlyMap<string, TrackerAdapter>,
   ) {
     node.on("shared_job_control", async ({ job: name, control }: { job: string; control: RunnerControl }) => {
       try {
@@ -1267,8 +1276,9 @@ export class JobManager {
     try { return fn(budget); } finally { budget.close(); }
   }
 
-  start(agent: AgentKind, model: string | null, prompt: string, run: Run, resume?: Resume, args?: Record<string, unknown>): Job {
+  start(agent: AgentKind, model: string | null, prompt: string, run: Run, resume?: Resume, args?: Record<string, unknown>, workItem?: WorkItemRef): Job {
     const job = this.newJob(agent, model, prompt, "job", resume, args);
+    if (workItem) job.workItem = workItem;
     if (!this.canStart() || this.waitingJobs.size) {
       job.status = "interrupted";
       job.waitingForStart = true;
@@ -1625,6 +1635,8 @@ export class JobManager {
     job.host = null;
     this.running.set(job.id, job);
     this.own.add(job.id);
+    // The turn is admitted (durably claimed in claimTurn): follow-up turns pass here too, but post only once.
+    this.notifyWorkItemStarted(job);
     const controller = job.controller;
     const authority = () => JSON.stringify([job.startedAt, job.owner, job.supervisor, job.executionOwner, job.rootSession, job.rootName, job.ownershipHistory,
       this.node.name, this.node.currentSessionId]);
@@ -2043,6 +2055,51 @@ export class JobManager {
     this.hostTimer = null;
   }
 
+  /**
+   * Work-item tracker notes, posted from the supervisor (never from the job runner: anything spawned in the
+   * runner lives inside the job's owned process scope). Each event posts at most once per job: the flag is set
+   * and persisted BEFORE the (never-throwing, never-awaited) post, so a restart or adoption cannot repost.
+   */
+  private workItemAdapters(): ReadonlyMap<string, TrackerAdapter> {
+    try {
+      return this.trackerAdapters?.() ?? NO_TRACKER_ADAPTERS;
+    } catch (err) {
+      this.log.warn("tracker adapters unavailable", { err: String(err) });
+      return NO_TRACKER_ADAPTERS;
+    }
+  }
+
+  private notifyWorkItemStarted(job: Job): void {
+    if (!job.workItem || job.workItemPosted?.started) return;
+    job.workItemPosted = { ...job.workItemPosted, started: true };
+    this.persist();
+    const title = typeof job.args?.title === "string" ? job.args.title : undefined;
+    const event: WorkItemEvent = { kind: "started", job: job.name, agent: job.agent, ...(title !== undefined ? { title } : {}) };
+    // Never delays the start: notifyWorkItem itself never throws either.
+    void notifyWorkItem(this.workItemAdapters(), job.workItem, event, this.log);
+  }
+
+  private notifyWorkItemFinished(job: Job, status: "done" | "failed" | "cancelled", text: string, cause: string | null): void {
+    if (!job.workItem || job.workItemPosted?.finished) return;
+    job.workItemPosted = { ...job.workItemPosted, finished: true };
+    this.persist();
+    const ref = job.workItem;
+    let event: WorkItemEvent;
+    if (status === "done") {
+      event = {
+        kind: "finished", job: job.name, agent: job.agent,
+        ...(job.worktree?.branch !== undefined ? { branch: job.worktree.branch } : {}),
+        ...(job.worktree?.branchHead !== undefined ? { head: job.worktree.branchHead } : {}),
+        summary: text.slice(0, MAX_EVENT_TEXT_CHARS),
+      };
+    } else if (status === "failed") {
+      event = { kind: "failed", job: job.name, agent: job.agent, ...(cause != null ? { reason: cause } : {}) };
+    } else {
+      event = { kind: "failed", job: job.name, agent: job.agent, reason: "cancelled" };
+    }
+    void notifyWorkItem(this.workItemAdapters(), ref, event, this.log);
+  }
+
   /** `report`: null when the runner already delivered it, a text to post as it is, or undefined to compose it here. */
   private finish(job: Job, status: "done" | "failed" | "cancelled", text: string, sessionId: string | null, cause: string | null = null, report?: string | null, messageId?: string): void {
     if (job.controller.signal.aborted) status = "cancelled";
@@ -2065,6 +2122,8 @@ export class JobManager {
       try { run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree); }
       catch (error) {
         this.failContinuation(job, error);
+        // No relaunch: the turn ends here (an explicit retry starts a new one, which must not post again).
+        this.notifyWorkItemFinished(job, status, text, cause);
         if (message !== null) this.post(job, message, null, "", messageId);
         this.startWaiting();
         return;
@@ -2073,6 +2132,8 @@ export class JobManager {
       this.launch(job, run);
       return;
     }
+    // Truly ends here (the branch above relaunches): follow-up turns therefore never post again.
+    this.notifyWorkItemFinished(job, status, text, cause);
     if (message !== null) this.post(job, message, null, "", messageId);
     // Its slot is free: the continuation waiting longest starts now.
     this.startWaiting();
@@ -2151,7 +2212,7 @@ function executorOffline(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === "unknown_target";
 }
 
-type StoredJob = Pick<Job, "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+type StoredJob = Pick<Job, "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt" | "workItem" | "workItemPosted">;
 
 function toStored(j: Job): StoredJob {
   return {
@@ -2187,6 +2248,8 @@ function toStored(j: Job): StoredJob {
     progressNote: j.progressNote,
     etaAt: j.etaAt,
     etaReportedAt: j.etaReportedAt,
+    workItem: j.workItem,
+    workItemPosted: j.workItemPosted,
     finishedAt: j.finishedAt,
     host: j.host ?? null,
     remote: j.remote,

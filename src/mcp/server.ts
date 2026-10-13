@@ -12,7 +12,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { CallToolResult, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { isRecord } from "../core/json-store.js";
-import { CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES, defaultPeerName, loadConfig, parseAgentKind, saveConfigValue, watchConfig, type BridgeConfig, MODEL_NAME_PATTERN } from "../core/config.js";
+import { parseWorkItem, type WorkItemRef } from "../core/work-items.js";
+import { CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES, buildTrackerAdapters, defaultPeerName, loadConfig, parseAgentKind, saveConfigValue, watchConfig, type BridgeConfig, MODEL_NAME_PATTERN } from "../core/config.js";
 import { canonicalProjectRoot } from "../core/project-identity.js";
 import {
   APP_NAME,
@@ -293,13 +294,13 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     ctx.jobs = new JobManager(coordinator, log.child("jobs"), join(home, JOBS_FILE), cfg.maxJobs, {
       parentJob, rootSession, rootName: process.env[ROOT_NAME_ENV] || ctx.parent.name,
       escalate: (body) => ctx.parent!.escalate ? ctx.parent!.escalate(body) : ctx.parent!.send(body).then(() => {}),
-    });
+    }, undefined, () => buildTrackerAdapters(cfg));
   }
   if (node) {
     ctx.jobs = new JobManager(node, log.child("jobs"), join(home, JOBS_FILE), cfg.maxJobs, undefined, {
       canRestore: () => node.isConnected && (agent !== "claude" || ctx.restoreEligible === true),
       canReceiveHandoff: () => node.isConnected,
-    });
+    }, () => buildTrackerAdapters(cfg));
     // Only the server the session uses tends the jobs: a replaced one pauses until it takes its place back.
     node.on("replaced", () => ctx.jobs?.setDormant(true));
     node.on("reclaimed", () => ctx.jobs?.setDormant(false));
@@ -1362,18 +1363,38 @@ ${res.text || t("delegate.empty")}`, res.isError);
           `the result arrives as a message from "${target}-job-<id>" (injected automatically, or use wait_for_message with from=<job name>). ` +
           `Several subagents can run in parallel (max ${cfg.maxJobs}). ` +
           profile.permissionNote(cfg),
-        inputSchema: { ...schema, title: schema.title.optional().describe("A short title, 3-7 words. Optional: if omitted, derived from the prompt's first nonempty line and noted in the result.") },
+        inputSchema: {
+          ...schema,
+          title: schema.title.optional().describe("A short title, 3-7 words. Optional: if omitted, derived from the prompt's first nonempty line and noted in the result."),
+          work_item: z
+            .string()
+            .optional()
+            .describe(
+              'Link this job to a tracker item as "<tracker>:<id>", e.g. "pair-desk:AB-12". The bridge posts start/finish/fail notes there (needs a configured tracker).',
+            ),
+        },
       },
-      guarded(spawnName, async (input: Omit<DelegateArgs, "title"> & { title?: string }) => {
+      guarded(spawnName, async (input: Omit<DelegateArgs, "title"> & { title?: string; work_item?: string }) => {
         const derivedTitle = input.title === undefined;
-        let a: DelegateArgs = { ...input, title: input.title ?? deriveJobTitle(input.prompt, MAX_TITLE_CHARS) };
+        // The spawn is rejected when the reference does not parse; the error message says why.
+        let workItemRef: WorkItemRef | undefined;
+        if (input.work_item !== undefined) {
+          try {
+            workItemRef = parseWorkItem(input.work_item);
+          } catch (err) {
+            throw new BridgeError("bad_request", (err as Error).message);
+          }
+        }
+        const { work_item: _workItemArg, ...rest } = input;
+        // workItem stays off the run args: they cross the strict remote wire schema (see remote-job-host.ts).
+        let a: DelegateArgs = { ...rest, title: input.title ?? deriveJobTitle(input.prompt, MAX_TITLE_CHARS) };
         if (target === "codex" && !a.host) a = { ...a, native_subagents: a.native_subagents ?? cfg.codexSubagents };
         if (a.host && (!a.cwd || a.send_to?.length)) throw new BridgeError("bad_request", "Remote jobs require an absolute remote cwd; send_to is local-only.");
         if (a.host) { const { host, send_to, ...args } = a; remoteSpawnArgsSchema.parse(args); }
         if (a.host && !ctx.runners) throw new BridgeError("bad_request", "Remote jobs require the bundled runner. Update and reload this session.");
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
-        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job) => ({ ...a, _job: job.name }), a), resumeFor(a), keep(a));
+        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job) => ({ ...a, _job: job.name }), a), resumeFor(a), keep(a), workItemRef);
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
         // Exact target options (sandbox, permission_mode, auto_approve) say it themselves.
