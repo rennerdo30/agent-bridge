@@ -124,7 +124,7 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     expect(j.selected()).toEqual(retained);
     expect(j.selected()?.state).toBe("prepared");
   });
-  it.skipIf(!portable).each(["id", "revision", "digest", "home", "sql_digest"] as const)("retained %s envelope mismatch refuses lookup/selection/prepared read/advance without repair or BEGIN", async mismatch => {
+  it.skipIf(!portable).each(["id", "revision", "digest", "home", "sql_digest", "matching_digest"] as const)("retained %s envelope mismatch refuses lookup/selection/prepared read/advance without repair or BEGIN", async mismatch => {
     const j = await bootstrap(), input = request(), accepted = j.admit(input, deadline());
     expect(j.lookup(input.restartId)).toEqual(accepted); expect(j.selected()).toEqual(accepted);
     const reader = j.preparedReader(input.restartId), fixture = new DatabaseSync(file());
@@ -136,10 +136,10 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
         const otherRequest = { ...input, restartId: randomUUID() };
         corrupted.restartId = otherRequest.restartId; corrupted.requestDigest = acceptedRequestDigest(otherRequest);
       } else if (mismatch === "revision") corrupted.revision++;
-      else if (mismatch === "digest") corrupted.requestDigest = "b".repeat(64);
+      else if (mismatch === "digest" || mismatch === "matching_digest") corrupted.requestDigest = "b".repeat(64);
       else if (mismatch === "home") corrupted.homeIdentity = "c".repeat(64);
       fixture.prepare("UPDATE receipt_revisions SET json=?,request_digest=? WHERE restart_id=? AND revision=1")
-        .run(JSON.stringify(corrupted), mismatch === "sql_digest" ? "d".repeat(64) : accepted.requestDigest, input.restartId);
+        .run(JSON.stringify(corrupted), mismatch === "sql_digest" ? "d".repeat(64) : mismatch === "matching_digest" ? corrupted.requestDigest : accepted.requestDigest, input.restartId);
       const rows = () => fixture.prepare("SELECT restart_id,revision,request_digest,json FROM receipt_revisions ORDER BY revision").all();
       const selection = () => fixture.prepare("SELECT * FROM selected_receipt").all();
       const retainedRows = rows(), retainedSelection = selection(), retainedBytes = [readFileSync(file()), readFileSync(file() + "-journal")];
@@ -147,6 +147,27 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
       expect(() => j.lookup(input.restartId)).toThrow("lineage_unknown"); expect(() => j.selected()).toThrow("lineage_unknown");
       expect(() => reader.read()).toThrow("lineage_unknown");
       expect(() => j.advance(input.restartId, 1, "preparing", {}, deadline())).toThrow("lineage_unknown");
+      expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE")).toBe(false);
+      expect(rows()).toEqual(retainedRows); expect(selection()).toEqual(retainedSelection);
+      expect([readFileSync(file()), readFileSync(file() + "-journal")]).toEqual(retainedBytes);
+    } finally { reader.close(); fixture.close(); }
+  });
+  it.skipIf(!portable)("a retained dangling selection refuses new-ID admission without overwriting its intent or accepted rows", async () => {
+    const j = await bootstrap(), input = request(), missing = request();
+    expect(j.selected()).toBeNull(); expect(j.lookup(missing.restartId)).toBeNull();
+    const accepted = j.admit(input, deadline()), reader = j.preparedReader(input.restartId), fixture = new DatabaseSync(file());
+    try {
+      expect(reader.read()).toEqual(accepted);
+      // Explicit OWNED retained-state fault only; the normal source writer has
+      // foreign_keys=ON and cannot publish this dangling selection.
+      fixture.exec("PRAGMA journal_mode=PERSIST; PRAGMA synchronous=FULL; PRAGMA foreign_keys=OFF;");
+      fixture.prepare("UPDATE selected_receipt SET revision=2 WHERE singleton=1").run();
+      const rows = () => fixture.prepare("SELECT * FROM receipt_revisions").all(), selection = () => fixture.prepare("SELECT * FROM selected_receipt").all();
+      const retainedRows = rows(), retainedSelection = selection(), retainedBytes = [readFileSync(file()), readFileSync(file() + "-journal")];
+      const exec = vi.spyOn(DatabaseSync.prototype, "exec");
+      expect(j.lookup(input.restartId)).toEqual(accepted); expect(j.lookup(missing.restartId)).toBeNull();
+      expect(() => j.selected()).toThrow("lineage_unknown"); expect(() => reader.read()).toThrow("lineage_unknown");
+      expect(() => j.admit(missing, deadline())).toThrow("lineage_unknown");
       expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE")).toBe(false);
       expect(rows()).toEqual(retainedRows); expect(selection()).toEqual(retainedSelection);
       expect([readFileSync(file()), readFileSync(file() + "-journal")]).toEqual(retainedBytes);
