@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/core/daemon-launcher.ts'
       - 'src/core/daemon-lifecycle.ts'
+      - 'src/core/daemon-lifecycle-role.ts'
       - 'src/core/lifecycle-windows.ts'
       - 'src/core/endpoint-reservation.ts'
       - 'src/core/native-lifecycle-reader.ts'
@@ -70,7 +71,7 @@ jobs:
       - name: Launcher classification
         run: npm test -- test/daemon-launcher.test.ts test/network-local-peers.test.ts
       - name: Startup, concurrency, auth, lifecycle and existing mobile compatibility
-        run: npm run test:integration -- test/daemon-lifecycle.test.ts test/daemon-readonly.test.ts test/daemon-receipt.test.ts test/daemon-send-boundaries.test.ts test/daemon-endpoint.test.ts test/daemon-native-refusal.test.ts test/daemon-network.test.ts test/daemon-store-drain.test.ts test/daemon-backup-drain.test.ts test/daemon-windows-paths.test.ts test/daemon-windows-bootstrap.test.ts test/daemon-metadata-checkpoint.test.ts test/daemon-archive-drain.test.ts test/daemon-serving-capability.test.ts test/daemon-history-drain.test.ts test/ui.test.ts test/mobile-activation.test.ts test/mobile-wiring.test.ts test/mobile-owner-startup.test.ts test/job-process-scope.test.ts test/data-retention.test.ts test/mixed-release-processes.test.ts
+        run: npm run test:integration -- test/daemon-lifecycle.test.ts test/daemon-readonly.test.ts test/daemon-receipt.test.ts test/daemon-journal-role.test.ts test/daemon-send-boundaries.test.ts test/daemon-endpoint.test.ts test/daemon-native-refusal.test.ts test/daemon-network.test.ts test/daemon-store-drain.test.ts test/daemon-backup-drain.test.ts test/daemon-windows-paths.test.ts test/daemon-windows-bootstrap.test.ts test/daemon-metadata-checkpoint.test.ts test/daemon-archive-drain.test.ts test/daemon-serving-capability.test.ts test/daemon-history-drain.test.ts test/ui.test.ts test/mobile-activation.test.ts test/mobile-wiring.test.ts test/mobile-owner-startup.test.ts test/job-process-scope.test.ts test/data-retention.test.ts test/mixed-release-processes.test.ts
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:

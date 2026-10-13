@@ -105,7 +105,16 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     j.advance(input.restartId, 1, "preparing", { replacementInstance: replacement }, deadline());
     expect(() => j.advance(input.restartId, 1, "preparing", { replacementInstance: replacement }, deadline())).toThrow(LifecycleUnavailable);
     j.advance(input.restartId, 2, "draining", {}, deadline()); j.advance(input.restartId, 3, "prepared", {}, deadline());
-    expect(() => j.advance(input.restartId, 4, "release_committed", {}, deadline())).toThrow(LifecycleUnavailable);
+    expect(() => j.advance(input.restartId, 4, "release_intent", {}, deadline())).toThrow(LifecycleUnavailable);
+    const retained = j.selected();
+    expect(retained).toMatchObject({ currentActor: { kind: "old", instance: owner }, actorGeneration: 1 });
+    const exec = vi.spyOn(DatabaseSync.prototype, "exec");
+    expect(() => j.advance(input.restartId, 4, "release_intent", { checkpointManifest: {
+      closureDigest: "a".repeat(64), owners: [] } }, deadline())).toThrow("owner_unsupported");
+    expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE")).toBe(false);
+    expect(() => j.advance(input.restartId, 4, "unknown", { currentActor: { kind: "successor", instance: replacement } }
+      as unknown as Parameters<typeof j.advance>[3], deadline())).toThrow("revision_conflict");
+    expect(j.selected()).toEqual(retained);
     expect(j.selected()?.state).toBe("prepared");
   });
   it.skipIf(!portable)("real COMMIT_BUSY is locally settled and quarantined, never replayed or visible as acceptance", async () => {

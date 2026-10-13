@@ -6,6 +6,8 @@ import { z } from "zod";
 import { readProcessIdentity } from "./process-identity.js";
 import { assertLifecycleServingCapability, type LifecycleServingCapability } from "./broker.js";
 import { createWindowsLifecycleObjects, assertWindowsLifecycleCreation, readOwnWindowsLifecycleIdentity } from "./lifecycle-windows.js";
+import { lifecycleInstanceSchema as instanceSchema, lifecycleActorSchema, LIFECYCLE_STATES, LIFECYCLE_NEXT,
+  LIFECYCLE_PROOF_REQUIRED, sameLifecycleInstance } from "./daemon-lifecycle-role.js";
 
 // These caps belong to lifecycle coordination, not ordinary request deadlines.
 export const LIFECYCLE_PRE_RELEASE_MS = 10_000;
@@ -17,19 +19,34 @@ export const LIFECYCLE_BIND_OBSERVE_MS = 2_000;
 export const LIFECYCLE_METADATA_BYTES = 64 * 1024;
 const BUSY_MS = 25;
 const DIRECTORY = ".core-lifecycle", FILE = "receipts.sqlite";
-const instanceSchema = z.object({ nonce: z.string().uuid(), pid: z.number().int().positive(), creationIdentity: z.string().min(1).max(256) }).strict();
 const targetSchema = z.object({ immutableRuntimePath: z.string().min(1).max(4096), version: z.string().min(1).max(128),
   protocol: z.number().int().positive(), fileManifestDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
-const states = ["accepted", "preparing", "draining", "prepared", "release_committed", "binding", "done", "failed_serving", "unavailable", "unknown", "stop_committed", "stopped"] as const;
-const receiptSchema = z.object({ schema: z.literal(1), restartId: z.string().uuid(), operation: z.enum(["restart", "stop"]),
+const receiptDataSchema = z.object({ schema: z.literal(1), restartId: z.string().uuid(), operation: z.enum(["restart", "stop"]),
   homeIdentity: z.string().regex(/^[a-f0-9]{64}$/), oldInstance: instanceSchema, target: targetSchema,
-  state: z.enum(states), revision: z.number().int().positive(), requestDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  state: z.enum(LIFECYCLE_STATES), revision: z.number().int().positive(), requestDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  currentActor: lifecycleActorSchema, actorGeneration: z.number().int().positive(),
+  historicalOldOutcome: z.enum(["unknown", "released", "released_late"]).optional(),
   acceptedAt: z.number().int().nonnegative(), replacementInstance: instanceSchema.optional(),
   checkpointManifest: z.object({ closureDigest: z.string().regex(/^[a-f0-9]{64}$/),
     owners: z.array(z.object({ ownerId: z.string().min(1).max(128), checkpointRevision: z.string().min(1).max(128),
       durabilityEvidence: z.string().min(1).max(1024), ownershipReleaseEvidence: z.string().min(1).max(1024) }).strict()).max(128) }).strict().optional(),
   failureCode: z.string().regex(/^[a-z_]+(?::[a-z_]+)?$/).max(128).optional(),
 }).strict();
+const receiptSchema = receiptDataSchema.superRefine((receipt, ctx) => {
+  const actor = receipt.currentActor;
+  const expected = actor.kind === "old" ? receipt.oldInstance : receipt.replacementInstance;
+  if (!expected || !sameLifecycleInstance(actor.instance, expected) ||
+      (actor.kind === "old" ? receipt.actorGeneration !== 1 : receipt.actorGeneration <= 1)) {
+    ctx.addIssue({ code: "custom", message: "Unproved lifecycle actor binding" });
+  }
+  if ((["binding", "done"].includes(receipt.state) && actor.kind !== "successor") ||
+      (["accepted", "preparing", "draining", "prepared", "release_intent", "released", "failed_serving", "stop_intent", "stop_committed"].includes(receipt.state) && actor.kind !== "old") ||
+      (receipt.operation === "stop" && (["preparing", "release_intent", "released", "binding", "done"].includes(receipt.state) || !!receipt.replacementInstance)) ||
+      (receipt.operation === "restart" && ["stop_intent", "stop_committed"].includes(receipt.state))) {
+    ctx.addIssue({ code: "custom", message: "Unproved lifecycle actor transition" });
+  }
+});
+const advanceFieldsSchema = receiptDataSchema.pick({ replacementInstance: true, checkpointManifest: true, failureCode: true }).strict();
 export type LifecycleInstance = z.infer<typeof instanceSchema>;
 export type LifecycleReceipt = z.infer<typeof receiptSchema>;
 export type LifecycleRequest = Pick<LifecycleReceipt, "restartId" | "operation" | "oldInstance" | "target">;
@@ -42,7 +59,7 @@ export class LifecycleUnavailable extends Error {
   readonly bootstrapFlushOk?: boolean;
   readonly bootstrapFlushErrno?: BootstrapFlushErrno;
   readonly bootstrapCloseErrno?: BootstrapFlushErrno;
-  constructor(readonly reason: "private_path" | "publication_unproved" | "lineage_unknown" | "writer_unknown" | "revision_conflict" | "receipt_conflict" | "budget" | "metadata_bound", bootstrapStage?: BootstrapStage,
+  constructor(readonly reason: "private_path" | "publication_unproved" | "lineage_unknown" | "writer_unknown" | "owner_unsupported" | "revision_conflict" | "receipt_conflict" | "budget" | "metadata_bound", bootstrapStage?: BootstrapStage,
     flush?: { ok: boolean; errno?: BootstrapFlushErrno; closeErrno?: BootstrapFlushErrno }) {
     super(`Core lifecycle unavailable: ${reason}.`);
     if (bootstrapStage !== undefined && BOOTSTRAP_STAGES.includes(bootstrapStage)) this.bootstrapStage = bootstrapStage;
@@ -121,12 +138,6 @@ CREATE TABLE selected_receipt (singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  FOREIGN KEY(restart_id,revision) REFERENCES receipt_revisions(restart_id,revision));
 CREATE TABLE receipt_conflicts (sequence INTEGER PRIMARY KEY, restart_id TEXT NOT NULL, observed_digest TEXT NOT NULL, json TEXT NOT NULL);
 `;
-const NEXT: Record<LifecycleReceipt["state"], readonly LifecycleReceipt["state"][]> = {
-  accepted: ["preparing", "draining", "failed_serving", "unknown"], preparing: ["draining", "failed_serving", "unknown"],
-  draining: ["prepared", "failed_serving", "unknown"], prepared: ["release_committed", "stop_committed", "failed_serving", "unknown"],
-  release_committed: ["binding", "unavailable", "unknown"], binding: ["done", "unavailable", "unknown"],
-  stop_committed: ["stopped", "unknown"], done: [], failed_serving: [], unavailable: [], unknown: [], stopped: [],
-};
 
 /** Strict reader of committed snapshots. It cannot repair/recover a hot journal. */
 export class PreparedLifecycleReader {
@@ -330,7 +341,8 @@ export class LifecycleJournal {
     }
     const selected = this.selected();
     if (selected && !["done", "failed_serving"].includes(selected.state)) fail("writer_unknown");
-    const receipt: LifecycleReceipt = { ...parsed, schema: 1, homeIdentity: this.lineage.homeIdentity, state: "accepted", revision: 1, requestDigest, acceptedAt: Date.now() };
+    const receipt: LifecycleReceipt = { ...parsed, schema: 1, homeIdentity: this.lineage.homeIdentity, state: "accepted", revision: 1,
+      currentActor: { kind: "old", instance: { ...this.owner } }, actorGeneration: 1, requestDigest, acceptedAt: Date.now() };
     const json = bytes(receipt);
     return this.transaction(deadline, () => {
       this.writer.prepare("INSERT INTO receipt_revisions VALUES (?,?,?,?)").run(receipt.restartId, 1, requestDigest, json);
@@ -339,10 +351,18 @@ export class LifecycleJournal {
     }, value => this.lookup(value.restartId)?.requestDigest === requestDigest && this.selected()?.revision === 1);
   }
   advance(id: string, expectedRevision: number, state: LifecycleReceipt["state"], fields: Pick<LifecycleReceipt, "replacementInstance" | "checkpointManifest" | "failureCode">, deadline: number): LifecycleReceipt {
+    const parsedState = z.enum(LIFECYCLE_STATES).safeParse(state), parsedFields = advanceFieldsSchema.safeParse(fields);
+    if (!parsedState.success || !parsedFields.success) fail("revision_conflict");
     const previous = this.lookup(id);
-    if (!previous || previous.revision !== expectedRevision || digest(previous.oldInstance) !== digest(this.owner) || !NEXT[previous.state].includes(state)) fail("revision_conflict");
-    if (["release_committed", "stop_committed", "binding", "done", "stopped"].includes(state) && !previous.checkpointManifest && !fields.checkpointManifest) fail("writer_unknown");
-    const next = receiptSchema.parse({ ...previous, ...fields, state, revision: expectedRevision + 1 }), json = bytes(next);
+    if (!previous || previous.revision !== expectedRevision || !sameLifecycleInstance(previous.oldInstance, this.owner) ||
+        previous.currentActor.kind !== "old" || !sameLifecycleInstance(previous.currentActor.instance, this.owner) || previous.actorGeneration !== 1 ||
+        !LIFECYCLE_NEXT[previous.state].includes(parsedState.data)) fail("revision_conflict");
+    // Canonical-schema substage: census/closure/retirement and successor CAS proofs
+    // are not wired. No public fields, checkpoint strings or row can substitute.
+    if (LIFECYCLE_PROOF_REQUIRED.includes(parsedState.data)) fail("owner_unsupported");
+    const parsedNext = receiptSchema.safeParse({ ...previous, ...parsedFields.data, state: parsedState.data, revision: expectedRevision + 1 });
+    if (!parsedNext.success) fail("revision_conflict");
+    const next = parsedNext.data, json = bytes(next);
     return this.transaction(deadline, () => {
       this.writer.prepare("INSERT INTO receipt_revisions VALUES (?,?,?,?)").run(id, next.revision, next.requestDigest, json);
       const changed = this.writer.prepare("UPDATE selected_receipt SET revision=? WHERE singleton=1 AND restart_id=? AND revision=?").run(next.revision, id, expectedRevision);
