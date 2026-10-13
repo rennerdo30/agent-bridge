@@ -1,6 +1,6 @@
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { cpSync, existsSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -160,7 +160,13 @@ describe("standalone demand-start broker", () => {
           await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
-      expect(pid).toBeDefined();
+      const observations = () => {
+        try { return readFileSync(join(env.home, "logs", "agent-bridge.log"), "utf8").split("\n")
+          .filter(line => line.includes("daemon creation observation"))
+          .map(line => line.slice(line.indexOf("daemon creation observation"))).join("\n"); }
+        catch { return "no fixture creation observation"; }
+      };
+      expect(pid, observations()).toBeDefined();
       const a = node("observer", async () => { throw new Error("observer must not launch the tested daemon"); });
       await a.start();
       expect((await a.health()).history).toBeNull();

@@ -10,6 +10,7 @@ describe("daemon creation evidence", () => {
     expect(classifyWindowsCreate(1, '{"code":2,"pid":0}').kind).toBe("unknown");
     expect(classifyWindowsCreate(null, '{"code":0,"pid":123}').kind).toBe("unknown");
     expect(classifyWindowsCreate(0, '{"code":0,"pid":123}').kind).toBe("created");
+    expect(classifyWindowsCreate(1, '{"stage":"create","hresult":-2147467259}')).toEqual({ kind: "unknown", stage: "create", errorCode: -2147467259 });
   });
   it("quotes spaces, literal quotes and trailing backslashes as Windows argv", () => {
     expect(windowsArgument("a b")).toBe('"a b"');

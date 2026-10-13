@@ -329,8 +329,12 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       if (this.opts.canHostBroker !== false) {
         if (this.opts.daemon) {
           if (!(await this.clearStaleSocket())) { await sleep(jitter()); continue; }
-          this.daemonLaunch ??= await (this.opts.daemon.launch ?? launchDaemon)({ cli: this.opts.daemon.cli, home: dirname(this.opts.dbPath), pipe: this.opts.pipePath,
-            cwd: this.currentCwd, dashboard: this.opts.daemon.dashboard?.(), config: this.opts.daemon.config?.() });
+          if (!this.daemonLaunch) {
+            this.daemonLaunch = await (this.opts.daemon.launch ?? launchDaemon)({ cli: this.opts.daemon.cli, home: dirname(this.opts.dbPath), pipe: this.opts.pipePath,
+              cwd: this.currentCwd, dashboard: this.opts.daemon.dashboard?.(), config: this.opts.daemon.config?.() });
+            this.log.info("daemon creation observation; authenticated readiness still required", { kind: this.daemonLaunch.kind,
+              ...(this.daemonLaunch.kind === "unknown" ? { stage: this.daemonLaunch.stage, errorCode: this.daemonLaunch.errorCode } : {}) });
+          }
           if (this.daemonLaunch.kind === "unavailable") {
             // Only definite creation failure AND fresh concrete endpoint absence permit embedding.
             try { const client = await BridgeClient.connect(this.opts.pipePath, this.log); await this.adopt(client); return; }

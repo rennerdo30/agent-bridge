@@ -4,13 +4,14 @@ import { join } from "node:path";
 import { ENV } from "./constants.js";
 import type { BridgeConfig } from "./config.js";
 
-export type DaemonLaunch = { kind: "created" } | { kind: "unavailable"; reason: "windows_wmi_unavailable" | "windows_wmi_create_rejected" } | { kind: "unknown" };
+export type DaemonLaunch = { kind: "created" } | { kind: "unavailable"; reason: "windows_wmi_unavailable" | "windows_wmi_create_rejected" } | { kind: "unknown"; stage?: "read" | "startup" | "create"; errorCode?: number };
 export interface DaemonOptions { cli: string; home: string; pipe: string; cwd: string; dashboard?: boolean; config?: Pick<BridgeConfig, "network" | "mobile" | "dashboardPort"> }
 const CREATE_TIMEOUT_MS = 5_000;
 const CREATE_FAILURES = new Set([2, 3, 8, 9, 21, 22, 0xffffffff]);
 export function classifyWindowsCreate(exitCode: number | null, output: string): DaemonLaunch {
   try {
     const result = JSON.parse(output);
+    if (result && ["read", "startup", "create"].includes(result.stage) && Number.isSafeInteger(result.hresult)) return { kind: "unknown", stage: result.stage, errorCode: result.hresult };
     if (exitCode !== 0 || !result || Object.keys(result).sort().join(",") !== "code,pid" || !Number.isSafeInteger(result.code) || !Number.isSafeInteger(result.pid)) return { kind: "unknown" };
     if (result.code === 0 && result.pid > 0) return { kind: "created" };
     if (CREATE_FAILURES.has(result.code) && result.pid === 0) return { kind: "unavailable", reason: "windows_wmi_create_rejected" };
@@ -28,17 +29,20 @@ export function windowsArgument(value: string): string {
 // WMI creates outside the caller's Job Object; breakaway excludes the provider's job too.
 const WINDOWS_CREATE = String.raw`
 $ErrorActionPreference='Stop'
+$phase='read'
 try {
   $reader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false))
   try { $inputData = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+  $phase='startup'
   $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{
     ShowWindow=[uint16]0; CreateFlags=[uint32]0x09000400; EnvironmentVariables=[string[]]$inputData.environment
   }
+  $phase='create'
   $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
     CommandLine=[string]$inputData.command; CurrentDirectory=[string]$inputData.cwd; ProcessStartupInformation=$startup
   }
   [Console]::Out.WriteLine((@{code=[uint32]$result.ReturnValue; pid=[uint32]$result.ProcessId} | ConvertTo-Json -Compress))
-} catch { [Console]::Out.WriteLine('{}'); exit 1 }
+} catch { [Console]::Out.WriteLine((@{stage=$phase; hresult=[int]$_.Exception.HResult} | ConvertTo-Json -Compress)); exit 1 }
 `;
 
 /** Keep configuration/native transcript discovery, without inheriting session control credentials. */
