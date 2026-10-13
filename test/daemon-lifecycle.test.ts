@@ -132,7 +132,7 @@ describe("standalone demand-start broker", () => {
     expect(launch).not.toHaveBeenCalled(); expect(a.isBroker).toBe(false); expect(host.isBroker).toBe(true);
   });
   it("parent exit and Windows prohibiting Job Object close leave the same authenticated daemon alive", async () => {
-    const runtime = join(env.home, "runtime with spaces"); cpSync(join(import.meta.dirname, "../plugins/codex/dist"), runtime, { recursive: true });
+    const runtime = join(env.home, "runtime with spaces-日本"); cpSync(join(import.meta.dirname, "../plugins/codex/dist"), runtime, { recursive: true });
     const parentCli = join(runtime, "cli.mjs");
     const gate = "process.send('ready');process.on('message',()=>{const child=require('node:child_process').spawn(process.execPath,[process.argv[1],'tail'],{windowsHide:true,stdio:'ignore'});child.on('error',()=>process.exit(1));});setInterval(()=>{},1000);";
     const parent = spawn(process.execPath, ["-e", gate, parentCli], { cwd: env.home, windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "ignore", "ignore", "ipc"],

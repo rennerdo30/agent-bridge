@@ -29,7 +29,8 @@ export function windowsArgument(value: string): string {
 const WINDOWS_CREATE = String.raw`
 $ErrorActionPreference='Stop'
 try {
-  $inputData = [Console]::In.ReadToEnd() | ConvertFrom-Json
+  $reader = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false))
+  try { $inputData = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
   $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{
     ShowWindow=[uint16]0; CreateFlags=[uint32]0x09000400; EnvironmentVariables=[string[]]$inputData.environment
   }
