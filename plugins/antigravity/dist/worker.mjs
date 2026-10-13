@@ -1,5 +1,8 @@
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 import {
+  guardServerErrors
+} from "./chunks/chunk-Q4TGWKCP.mjs";
+import {
   AjvJsonSchemaValidator,
   CallToolRequestSchema,
   CallToolResultSchema,
@@ -49,9 +52,6 @@ import {
   shouldWakeClaudeMessage
 } from "./chunks/chunk-MRP53FWV.mjs";
 import {
-  guardServerErrors
-} from "./chunks/chunk-Q4TGWKCP.mjs";
-import {
   MAX_STREAM_ENTRIES
 } from "./chunks/chunk-LSW2UXWP.mjs";
 import {
@@ -59,24 +59,24 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-DQA54TRP.mjs";
+} from "./chunks/chunk-OO3TBVCL.mjs";
 import {
   codexAppServerCall,
   describeModels,
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-VH5HY26P.mjs";
+} from "./chunks/chunk-JNQSWUQB.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-5YVYVOAN.mjs";
+} from "./chunks/chunk-KRSWW62A.mjs";
 import {
   readWorktreeState
 } from "./chunks/chunk-UISHVEDU.mjs";
-import "./chunks/chunk-FGRV3672.mjs";
+import "./chunks/chunk-HHAMN7RL.mjs";
 import {
   openBrowser
 } from "./chunks/chunk-LWVK3CB7.mjs";
@@ -86,7 +86,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-4C4J22S3.mjs";
+} from "./chunks/chunk-GJJJB6ZT.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -121,14 +121,14 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-LAIGCVOA.mjs";
-import "./chunks/chunk-MS6SRU7M.mjs";
+} from "./chunks/chunk-7PS7WUKD.mjs";
+import "./chunks/chunk-IFC7QQH6.mjs";
 import "./chunks/chunk-DUUQFMF5.mjs";
 import {
   antigravityAncestor,
   antigravityHookOutput,
   inspectClaudeLaunch
-} from "./chunks/chunk-7VKZC576.mjs";
+} from "./chunks/chunk-QV46GEA4.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   ACCESS_LEVELS,
@@ -155,16 +155,13 @@ import {
   resolveBinary,
   runProcess,
   verifiedGoneJobOwners
-} from "./chunks/chunk-2FSYZDEK.mjs";
-import "./chunks/chunk-6KTEQAZ2.mjs";
+} from "./chunks/chunk-VFOARSMG.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
   formatResourceSlots
 } from "./chunks/chunk-KSRGXCIR.mjs";
-import {
-  bundleDirectory
-} from "./chunks/chunk-D5ZW6VFT.mjs";
+import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   resolveDbPath,
   resolveHome,
@@ -180,6 +177,9 @@ import {
   loadOrCreateToken,
   tokensEqual
 } from "./chunks/chunk-V4WDBMEN.mjs";
+import {
+  bundleDirectory
+} from "./chunks/chunk-D5ZW6VFT.mjs";
 import "./chunks/chunk-PV5RDKMR.mjs";
 import {
   CLAUDE_PERMISSION_MODES,
@@ -2854,6 +2854,11 @@ async function startServer(argv = process.argv.slice(2)) {
     pipePath: resolvePipePath(home),
     token: loadOrCreateToken(home),
     dbPath: resolveDbPath(home),
+    daemon: {
+      cli: join5(bundleDirectory(import.meta.url), "cli.mjs"),
+      dashboard: () => cfg.dashboard && !ctx.headless,
+      config: () => ({ network: cfg.network, mobile: mobileAtStartup, dashboardPort: mobilePortAtStartup })
+    },
     network: { home, config: cfg.network },
     agent,
     // Until the project dir is known, the folder name would be the plugin version.
@@ -3012,9 +3017,16 @@ async function startServer(argv = process.argv.slice(2)) {
   const ensureDashboard = async (force) => {
     try {
       if (!force && !cfg.dashboard) return null;
+      if (node?.usesDaemon && !node.isBroker) {
+        try {
+          return await node.ensureDashboard(force, mobilePortAtStartup);
+        } catch (error) {
+          if (!isUnsupportedOperation(error, "ensureDashboard")) throw error;
+        }
+      }
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-GANLJ5VH.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-P55BZ3C4.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3026,9 +3038,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-OOYHUKFD.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-NNLHXLGQ.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-OOYHUKFD.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-NNLHXLGQ.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3103,7 +3115,7 @@ async function startServer(argv = process.argv.slice(2)) {
     node.on("connected", ({ isBroker }) => {
       if (node.currentSessionId) ctx.onSessionId?.(node.currentSessionId);
       if (channel) for (const m of node.unread()) void pushChannel(m);
-      if (isBroker && cfg.dashboard && !ctx.headless) void ensureDashboard(false);
+      if ((isBroker || node.usesDaemon) && cfg.dashboard && !ctx.headless) void ensureDashboard(false);
       const adopt = () => void node.peers().then(async (peers) => {
         const online = new Set(peers.map((p) => p.name));
         const candidates = ctx.jobs?.standInOwners(online) ?? [];
@@ -3196,7 +3208,7 @@ ${JSON.stringify(result)}`);
     description: "Cheap broker health: round-trip latency, event-loop delay, cached history-import phase, estimated percent and ETA, backup phase and last verification time, and recent error codes. Uses no log or archive reads. If tools are slow, use health or peers instead of reading live bridge log files. Retry a timeout once; report the exact tool error if it persists.",
     inputSchema: {},
     annotations: { readOnlyHint: true }
-  }, guarded("health", async () => text(JSON.stringify(await probeBrokerHealth(resolvePipePath(home), log)))));
+  }, guarded("health", async () => text(JSON.stringify({ ...await probeBrokerHealth(resolvePipePath(home), log), nodeHosting: ctx.node?.hostingEvidence() ?? null }))));
   register("ask_owner", {
     title: "Ask the owner a decision question",
     description: "File an owner-only decision for your own project in Waiting for you. Check decisions first. Returns immediately; the exact answer arrives later as a waking direct message with reply_to=question id, also sent to the project main. Jobs must ask their main. Use 2\u20134 options, one recommendation, and concise context; link a concrete artifact for authorization. Never secrets, status, peer questions, playable checks or routine tool approvals. Answers never bypass native approvals or accept implementation. Same project + issue + topic merges; at most five open per session. Unanswered stays visible; destructive blocking or authorization questions cannot default.",
@@ -3223,7 +3235,7 @@ ${JSON.stringify(result)}`);
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
       const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-XOY3WDS2.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-MZ53AIC6.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-6GSQQWKZ.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
