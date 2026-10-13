@@ -1539,7 +1539,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         }
       }
       if (Object.keys(settings).length) jobs.setSettings(a.job, settings);
-      const { outcome, job, approvalPending } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
+      const { outcome, job, approvalPending, gate } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
       const pending = listPendingApprovals(ctx.home).filter(entry => entry.job === (job?.name ?? a.job));
       const approvalNote = pending.length
@@ -1548,8 +1548,14 @@ ${res.text || t("delegate.empty")}`, res.isError);
       const settingsNote = job && Object.keys(settings).length
         ? `\nSaved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value}`).join(", ")}.${wasRunning ? " Applies from its next turn; the turn running now keeps its settings." : " Applies to this continuation and later turns."}`
         : "";
+      // Explicit projection: never serialize the Job, or future additions to the gate contract.
+      const gateNote = gate ? "\nLocal follow-up gate observation (executor identity unknown): " + JSON.stringify({
+        reason: gate.reason, jobId: gate.jobId, startedAt: gate.startedAt, observedAt: gate.observedAt,
+        executorIdentity: "unknown", controllerAborted: gate.controllerAborted,
+        hasResume: gate.hasResume, hasSession: gate.hasSession,
+      }) : "";
       return text(
-        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote + approvalNote,
+        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote + approvalNote + gateNote,
         outcome === "unknown" || outcome === "no-session" || outcome === "stopping" || outcome === "cancelled-before-start",
       );
     }),
