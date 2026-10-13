@@ -23,6 +23,7 @@ export interface BackupLifecycleObservation {
   pendingWorkers: number;
   unknown: boolean;
   settled: boolean;
+  stopped: boolean;
 }
 
 /** Opt-in message-table backups start after bind in a separate low-priority process. */
@@ -43,6 +44,8 @@ export class BackupBackground {
   private timerDueAt: number | null = null;
   private resumeDueAt: number | null = null;
   private lifecycleWaiter: { finish: (settled: boolean) => void } | null = null;
+  private lifecycleCapture: ChildProcess | null = null;
+  private readonly lifecycleWitnesses = new WeakMap<BackupLifecycleObservation, ChildProcess | null>();
   constructor(private readonly home: string, private readonly log: Logger) {
     if (this.enabled) this.schedule(30_000);
   }
@@ -79,11 +82,14 @@ export class BackupBackground {
       entry = pathToFileURL(path);
     }
     const worker = this.worker = fork(fileURLToPath(entry), [], { stdio: ["ignore", "ignore", "ignore", "ipc"], execArgv: [], windowsHide: true });
+    this.lifecycleCapture = worker;
     this.advanceLifecycleGeneration();
     let completed = false;
     worker.on("message", (message: any) => {
+      if (this.lifecycleCapture !== worker) return;
       if (message.error) {
         this.lifecycleUnknown = true;
+        this.advanceLifecycleGeneration(); this.lifecycleWaiter?.finish(false);
         this.lastError = String(message.error).includes("sustained broker pressure") ? "broker_pressure" : "backup_failed";
         const pressureOnly = this.lastError === "broker_pressure";
         this.failed = !pressureOnly; // Only pressure interruptions may retry at the next quiet interval.
@@ -97,10 +103,13 @@ export class BackupBackground {
       } else {
         // An external lock holder or an unrecognized outcome is not owned settlement proof.
         this.lifecycleUnknown = true;
+        this.advanceLifecycleGeneration(); this.lifecycleWaiter?.finish(false);
       }
     });
-    worker.on("error", error => { this.lifecycleUnknown = true; this.failed = true; this.lastError = "worker_failed"; this.log.warn("automatic backup process failed", { err: String(error) }); });
+    worker.on("error", error => { if (this.lifecycleCapture !== worker) return; this.lifecycleUnknown = true; this.advanceLifecycleGeneration(); this.lifecycleWaiter?.finish(false); this.failed = true; this.lastError = "worker_failed"; this.log.warn("automatic backup process failed", { err: String(error) }); });
     worker.on("exit", (code, signal) => {
+      if (this.lifecycleCapture !== worker) return;
+      if (this.worker !== worker) { this.lifecycleUnknown = true; this.advanceLifecycleGeneration(); this.lifecycleWaiter?.finish(false); return; }
       if (code !== 0 || signal || !completed) this.lifecycleUnknown = true;
       this.advanceLifecycleGeneration();
       if (!this.stopped && (code !== 0 || signal)) { this.failed = true; this.lastError = "worker_failed"; }
@@ -133,8 +142,20 @@ export class BackupBackground {
     else this.lifecycleGeneration++;
   }
   lifecycleOwnerManifest(): BackupLifecycleObservation {
-    return { ownerInstance: this.lifecycleOwnerInstance, quiesced: this.lifecycleQuiesced, generation: this.lifecycleGeneration, pendingWorkers: this.worker ? 1 : 0,
-      unknown: this.lifecycleUnknown, settled: this.lifecycleQuiesced && !this.worker && !this.lifecycleUnknown && !this.stopped };
+    const state = Object.freeze({ ownerInstance: this.lifecycleOwnerInstance, quiesced: this.lifecycleQuiesced, generation: this.lifecycleGeneration, pendingWorkers: this.worker ? 1 : 0,
+      unknown: this.lifecycleUnknown, stopped: this.stopped, settled: this.lifecycleQuiesced && !this.worker && !this.lifecycleUnknown && !this.stopped });
+    this.lifecycleWitnesses.set(state, this.lifecycleCapture); return state;
+  }
+  /** Source-owned complete witness, rechecked immediately under the coordinator's producer seal.
+   * A serialized/caller-forged snapshot, changed capture, close, error or resumed owner cannot qualify. */
+  isCurrentLifecycleWitness(witness: BackupLifecycleObservation, isAdmissionSealed: () => boolean): boolean {
+    if (!this.lifecycleWitnesses.has(witness) || !witness.settled) return false;
+    try {
+      if (isAdmissionSealed() !== true || this.lifecycleWitnesses.get(witness) !== this.lifecycleCapture) return false;
+      const current = this.lifecycleOwnerManifest();
+      return current.settled && witness.ownerInstance === current.ownerInstance && witness.generation === current.generation &&
+        witness.quiesced === current.quiesced && witness.pendingWorkers === current.pendingWorkers && witness.unknown === current.unknown && witness.stopped === current.stopped;
+    } catch { return false; }
   }
   /** One bounded observer. Timeout leaves the actual worker/capture and retained bytes untouched.
    * Actual successful backup outcome plus process exit proves this owner's settlement only;
@@ -146,12 +167,13 @@ export class BackupBackground {
       return Promise.resolve({ ...state, settled: false });
     }
     if (!this.worker) return Promise.resolve(state);
+    const capture = this.worker;
     return new Promise(resolve => {
       const finish = (settled: boolean) => {
         if (this.lifecycleWaiter !== waiter) return;
         clearTimeout(timer); this.lifecycleWaiter = null;
         const current = this.lifecycleOwnerManifest();
-        resolve({ ...current, settled: settled && performance.now() <= deadline && current.settled });
+        resolve(settled && performance.now() <= deadline && current.settled && this.lifecycleCapture === capture ? current : { ...current, settled: false });
       };
       const waiter = { finish };
       const timer = setTimeout(() => finish(false), remaining);
@@ -160,6 +182,7 @@ export class BackupBackground {
   }
   async close(): Promise<void> {
     this.stopped = true;
+    this.advanceLifecycleGeneration();
     this.lifecycleWaiter?.finish(false);
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;

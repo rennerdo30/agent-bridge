@@ -78,4 +78,31 @@ describe("owned automatic-backup settlement (not whole-core durability)", () => 
     finally { original.close(); }
     backup.resumeLifecycleMaintenance(); expect(backup.lifecycleOwnerManifest().unknown).toBe(true);
   });
+  it("a complete source-owned witness rejects serialization, unsealed admission and close", async () => {
+    backup = new BackupBackground(env.home, nullLogger); backup.quiesceLifecycleMaintenance();
+    const witness = await backup.settleLifecycleMaintenance(deadline());
+    expect(backup.isCurrentLifecycleWitness(witness, () => true)).toBe(true);
+    expect(backup.isCurrentLifecycleWitness({ ...witness }, () => true)).toBe(false);
+    expect(backup.isCurrentLifecycleWitness(witness, () => false)).toBe(false);
+    await backup.close(); expect(backup.isCurrentLifecycleWitness(witness, () => true)).toBe(false);
+  });
+  it("resume retains an actual active capture; a SIMULATED late error invalidates its subsequently settled witness", async () => {
+    sourceMail(); backup = new BackupBackground(env.home, nullLogger); const worker = startOwnedCapture(); backup.pressure(true);
+    const send = vi.spyOn(worker, "send"), kill = vi.spyOn(worker, "kill");
+    backup.quiesceLifecycleMaintenance();
+    expect(await backup.settleLifecycleMaintenance(performance.now() + 20)).toMatchObject({ settled: false, pendingWorkers: 1 });
+    backup.resumeLifecycleMaintenance(); const resumed = backup.lifecycleOwnerManifest();
+    Reflect.get(backup, "start").call(backup);
+    expect(Reflect.get(backup, "worker")).toBe(worker); expect(backup.lifecycleOwnerManifest().generation).toBe(resumed.generation);
+    expect(kill).not.toHaveBeenCalled(); expect(send.mock.calls.some(call => (call[0] as { type?: string }).type === "stop")).toBe(false);
+    backup.pressure(false);
+    // Independent fixture observation of actual completion; it is NOT a passing 2s drain
+    // claim for the earlier failed cold-worker test or a production retry/longer phase.
+    await until(() => worker.exitCode !== null); expect(worker.exitCode).toBe(0);
+    backup.quiesceLifecycleMaintenance(); const witness = await backup.settleLifecycleMaintenance(deadline());
+    expect(backup.isCurrentLifecycleWitness(witness, () => true)).toBe(true);
+    worker.emit("error", new Error("SIMULATED late owned IPC error"));
+    expect(backup.lifecycleOwnerManifest().unknown).toBe(true);
+    expect(backup.isCurrentLifecycleWitness(witness, () => true)).toBe(false);
+  });
 });
