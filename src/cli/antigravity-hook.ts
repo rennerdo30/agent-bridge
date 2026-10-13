@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ANTIGRAVITY_ACCESS_ENV } from "../core/antigravity.js";
 import { antigravityAncestor } from "../core/procinfo.js";
@@ -7,6 +6,8 @@ import { askRelay, boundedDetail } from "../core/relay.js";
 import { object } from "../core/transcripts/common.js";
 import { isHandoffToolCall } from "../core/tool-allow.js";
 import { createLogger } from "../core/logger.js";
+import { readAntigravityPrivateJson } from "../core/antigravity-plugin.js";
+import { processIdentity } from "../core/process-identity.js";
 
 const OWN_SERVERS = ["agent-bridge", "agent-bridge_agent-bridge"];
 function allowed(input: Record<string, any>): Record<string, unknown> {
@@ -70,8 +71,8 @@ export async function runAntigravityHook(event: string): Promise<number> {
     }
     const pid = await antigravityAncestor();
     if (!pid) { process.stdout.write("{}"); return 0; }
-    const reg = JSON.parse(readFileSync(join(resolveHome(), "antigravity-hooks", `${pid}.json`), "utf8"));
-    if (!Number.isInteger(reg.port) || typeof reg.secret !== "string") throw new Error("invalid hook registration");
+    const reg = readAntigravityPrivateJson(join(resolveHome(), "antigravity-hooks", `${pid}.json`));
+    if (!reg.hostIdentity || reg.hostIdentity !== processIdentity(pid) || !reg.identity || reg.identity !== processIdentity(reg.pid) || !Number.isInteger(reg.port) || reg.port < 1 || reg.port > 65535 || typeof reg.secret !== "string" || !reg.secret) throw new Error("invalid hook registration");
     const res = await fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${reg.secret}`, "content-type": "application/json" }, body: JSON.stringify({ event, input }), signal: AbortSignal.timeout(20_000) });
     if (!res.ok) throw new Error("hook endpoint unavailable");
     process.stdout.write(JSON.stringify(await res.json()));

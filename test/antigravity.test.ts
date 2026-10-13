@@ -34,6 +34,14 @@ describe("Antigravity delegation", () => {
     expect(parseAntigravityJsonl(stream("ERROR")).isError).toBe(true);
     expect(parseAntigravityJsonl(JSON.stringify({ event: "result", result: { conversation_id: "saved", status: "SUCCESS", response: "", denied_actions: [{ action: "mcp" }] } }))).toMatchObject({ isError: true, text: "Antigravity denied permissions: mcp" });
     expect(parseAntigravityJsonl('noise\n{"event":"init","conversation_id":"saved"}\n{')).toMatchObject({ sessionId: "saved", isError: true });
+    const children = [
+      { event: "step_update", step_update: { conversation_id: "child" } },
+      { event: "init", conversation_id: "root" },
+      { event: "step_update", step_update: { conversation_id: "child" } },
+      { event: "result", result: { conversation_id: "root", status: "SUCCESS", response: "root answer" } },
+      { event: "result", result: { conversation_id: "child", status: "SUCCESS", response: "child answer" } },
+    ].map(row => JSON.stringify(row)).join("\n");
+    expect(parseAntigravityJsonl(children)).toMatchObject({ sessionId: "root", text: "root answer", isError: false });
   });
   it("passes model, effort, sandbox and resume without shell interpolation", async () => {
     mocks.run.mockImplementation(async (opts) => { for (const line of stream().split("\n")) opts.onLine(line); return { code: 0, stdout: stream(), stderr: "" }; });
@@ -49,6 +57,16 @@ describe("Antigravity delegation", () => {
   it("keeps early conversation ids after cancellation or timeout", async () => {
     mocks.run.mockImplementation(async (opts) => { opts.onLine('{"event":"init","conversation_id":"early"}'); throw new DelegateError("aborted", "aborted"); });
     await expect(delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "read", timeoutSec: 20, log: nullLogger })).rejects.toMatchObject({ kind: "aborted", sessionId: "early" });
+  });
+  it("never announces a native child's step as the delegated root session", async () => {
+    const onSession = vi.fn();
+    mocks.run.mockImplementation(async opts => {
+      opts.onLine('{"event":"step_update","step_update":{"conversation_id":"child"}}');
+      opts.onLine('{"event":"init","conversation_id":"root"}');
+      throw new DelegateError("aborted", "aborted");
+    });
+    await expect(delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "read", timeoutSec: 20, log: nullLogger, onSession })).rejects.toMatchObject({ kind: "aborted", sessionId: "root" });
+    expect(onSession).toHaveBeenCalledExactlyOnceWith("root");
   });
   it("rejects unsupported effort before starting a process", async () => {
     await expect(delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "read", effort: "ultra", timeoutSec: 20, log: nullLogger })).rejects.toThrow("low, medium, high, xhigh or max");
@@ -72,7 +90,7 @@ describe("Antigravity delegation", () => {
       expect(await response.json()).toEqual({ allow: true });
       return { code: 0, stdout: stream(), stderr: "" };
     });
-    await delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "ask", timeoutSec: 20, log: nullLogger, approve, extraEnv: { AGENT_BRIDGE_RELAY_URL: "http://127.0.0.1:1/inherited" } });
+    await delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "ask", timeoutSec: 20, log: nullLogger, canApprove: true, approve, extraEnv: { AGENT_BRIDGE_RELAY_URL: "http://127.0.0.1:1/inherited" } });
     expect(approve).toHaveBeenCalledWith(expect.objectContaining({ tool: "run_command", detail: "npm test" }));
   });
   it("drains an unanswered approval relay when the CLI times out", async () => {
@@ -84,7 +102,7 @@ describe("Antigravity delegation", () => {
       await waiting;
       throw new DelegateError("timed out", "timeout");
     });
-    await expect(delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "ask", timeoutSec: 1, log: nullLogger, approve })).rejects.toMatchObject({ kind: "timeout" });
+    await expect(delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "ask", timeoutSec: 1, log: nullLogger, canApprove: true, approve })).rejects.toMatchObject({ kind: "timeout" });
     expect(await response).toEqual({ allow: false, message: "Antigravity run ended" });
   });
   it("registers shared targets and keeps Antigravity access settings agent-specific", () => {

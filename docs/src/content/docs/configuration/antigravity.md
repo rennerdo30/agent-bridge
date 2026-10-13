@@ -28,6 +28,14 @@ settings. Terminal sandboxing is
 separate and depends on the installed platform. Active mail arrives at the next
 model invocation or stopping boundary. **Idle TUI sessions receive mail on their
 next turn or through `inbox`; no public programmatic idle wake API is documented.**
+Automatic hook mail requires a proven root conversation: a delegated run's top-level
+`init`, an inspected `--conversation` launch, or a restored binding for the exact
+native process. An unbound fresh interactive session keeps mail in `inbox`;
+the first arbitrary hook cannot claim the root because native children share the
+same process. Missing or different conversation IDs leave the root's mail unread.
+Hook registrations use private authenticated endpoints and are removed when their
+own server generation stops. Native children have no verified MCP caller identity
+contract here; use Bridge delegation for scoped child coordination.
 Native Remote Control provides separate desktop/web UI access through a tunnel.
 Account quotas are shown by native `/usage` or `/quota`; the bridge reports them
 as unknown because no machine-readable quota command is documented.
@@ -37,6 +45,13 @@ logs without modifying them. Updates publish complete immutable runtimes and bac
 uninstall archives the owned plugin, including user additions, and retains
 the native MCP allow rule. No bridge data
 format changes are required for this additive agent kind.
+
+Paired jobs accept the same `terminal_sandbox` and exact `bypass_permissions`
+booleans, including `false`; these options apply only to Antigravity. Changes
+queued with `message_subagent` remain attached to the next resumed turn. `ask`
+denies mutations when no supervisor or user can answer its approval requests.
+Cancellation and timeout stop the CLI process tree and settle pending bridge
+approvals without allowing the requested action.
 
 **Gemini CLI (`gemini`) is separate and is not implemented in this release:** it
 was not installed on the verified PC. See [official evidence and CLI differences](../../google-cli-research/).
