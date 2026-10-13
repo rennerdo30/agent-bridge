@@ -61,6 +61,8 @@ function resetNativeAdapters() {
   vi.mocked(files.openSync).mockReset().mockImplementation(originals.openSync!);
   vi.mocked(files.fsyncSync).mockReset().mockImplementation(originals.fsyncSync!);
   vi.mocked(files.closeSync).mockReset().mockImplementation(originals.closeSync!);
+}
+function verifyNativeAdapters() {
   for (const [adapter, native] of [[processes.spawn, originals.spawn], [files.openSync, originals.openSync],
     [files.fsyncSync, originals.fsyncSync], [files.closeSync, originals.closeSync]] as const) {
     expect(vi.mocked(adapter).getMockImplementation()).toBe(native);
@@ -69,6 +71,7 @@ function resetNativeAdapters() {
 }
 beforeEach(async () => {
   resetNativeAdapters();
+  verifyNativeAdapters();
   env = makeEnv(); home = join(env.home, "home"); captured = undefined;
   if (process.platform !== "win32") return;
   const bin = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
@@ -87,17 +90,23 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   resetNativeAdapters();
-  vi.restoreAllMocks();
-  // A setup observer timeout is not process exit or permission to remove its home.
-  await Promise.all([...setupCloses]);
-  // Dispose ONLY exact native descriptors this isolated fixture captured; this is
-  // neither production retry/cleanup nor proof the failed close had succeeded.
-  for (const fd of fixtureFlushDescriptors) { originals.closeSync!(fd); fixtureFlushDescriptors.delete(fd); }
-  // Exact isolated test handle disposal ONLY. No production rollback/force-close API.
-  if (captured) { if (captured.isTransaction) sqliteExec.call(captured, "ROLLBACK"); captured.close(); captured = undefined; }
-  if (journal) { expect(journal.close()).toBe(true); journal = undefined; }
-  await broker?.close(); await reservation?.close(); broker = undefined; reservation = undefined;
-  await until(() => pendingWindowsLifecycleVerifications() === 0); await env.cleanup();
+  const failures: unknown[] = [];
+  try { verifyNativeAdapters(); } catch (error) { failures.push(error); }
+  try {
+    vi.restoreAllMocks();
+    // A setup observer timeout is not process exit or permission to remove its home.
+    await Promise.all([...setupCloses]);
+    // Dispose ONLY exact native descriptors this isolated fixture captured; this is
+    // neither production retry/cleanup nor proof the failed close had succeeded.
+    for (const fd of fixtureFlushDescriptors) { originals.closeSync!(fd); fixtureFlushDescriptors.delete(fd); }
+    // Exact isolated test handle disposal ONLY. No production rollback/force-close API.
+    if (captured) { if (captured.isTransaction) sqliteExec.call(captured, "ROLLBACK"); captured.close(); captured = undefined; }
+    if (journal) { expect(journal.close()).toBe(true); journal = undefined; }
+    await broker?.close(); await reservation?.close(); broker = undefined; reservation = undefined;
+    await until(() => pendingWindowsLifecycleVerifications() === 0); await env.cleanup();
+  } catch (error) { failures.push(error); }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, "Owned fixture verification and cleanup both failed");
 });
 async function serving() {
   const pipe = resolvePipePath(home, {});
