@@ -165,6 +165,119 @@ failure, a reused PID or time expiry is unknown, never an exit witness. A releas
 receipt without drain/checkpoint proof cannot be completed merely because old died.
 Both mechanisms may fail and yield unavailable/unknown; no zero-gap guarantee.
 
+### Proposed final-close ledger and last control-journal ordering (review required)
+
+This successor note proposes the final release boundary; it does not authorize
+ledger, store-close, worker-release or role-promotion code. Source pin for this
+proposal is `9b2e38f2ddae4533daf04e233ffdd9466c6d9dc8`. The current additive
+metadata stage is checkpoint-only/all-handles-retained; archive settlement observes
+producers, not store release. Neither default `close()` nor a worker exit supplies
+the following proofs. History/project closure is still unsupported.
+
+`release_committed` (or `stop_committed`) is durable INTENT, NEVER promotion
+permission. Before it, every required managed producer, opener, migration,
+accepted dispatch/disconnect/native-route/mail operation, renewal and teardown
+producer must be sealed and settled under its exact owner instance/nonce,
+process-creation identity and generation. Include owned dashboard sender/HTTP
+operations and metadata-reader registrations; an HTTP close that creates a late
+broker disconnect/write is itself an owned producer, not cleanup proof. Unsupported
+closure, an unaccounted handle, a changed owner/generation or a pending unknown
+result blocks BEFORE endpoint release. Freeze actual FULL/autocommit/identity and
+checkpoint evidence for every owned handle and schema; do not infer external-process
+writer closure or treat installed inactive versions as live participants.
+
+All substantive handles and leases remain owned during reversible preparation.
+Pre-release failure/overrun leaves the endpoint serving and restores only proven
+reversible producer/admission gates. No partial close/reopen or cached-statement
+reconstruction is authorized as that abort mechanism. Once selected replacement
+preparation, checkpoints and intent are committed, irreversibly inhibit all old
+managed writes/openers/teardown/renewal callbacks and release only the actual owned
+endpoint/accepted transports. Native routes must already have the frozen committed
+zero proof; do not call endParent/recoverOrphans to manufacture it. Any unexpected
+disconnect/registration/generation invalidates release eligibility. Stop applies the
+same ownership ordering, with persisted stop intent and no prepared successor.
+
+After actual endpoint release, close the substantive resources with a retained
+per-handle ledger `{ownerInstance, ownerNonce, generation, handleId, fileIdentity,
+schemaIdentities, checkpointRevision, status}`. Status is exactly `unattempted`,
+`attempted`, `closed`, `failed` or `unknown`. Register every handle before any attempt;
+record a close only after the real owned call returns successfully and source-owned
+consumer/statement invalidation is accounted for. A close error retains the entry
+and any remaining handle; never clear the registry or release its lease in a finally
+block to fake completion. Count aliases per connection, not just physical files.
+Worker release ACKs must bind the exact request/worker/generation and attest all
+owned handles plus accepted queues; actual exit alone is insufficient. No abort,
+termination, rollback, replay, migration, repair or close-based durability claim.
+
+The post-release two-second monotonic deadline is ONE shared observation envelope
+for ledger returns, final witness publication/observation, replacement bind/readiness
+and outcome observation, not a fresh two seconds per resource. Sync SQLite close,
+COMMIT and filesystem operations cannot be cancelled by that observer. Do not start
+a new attempt after expiry. A return/error/ACK after the deadline yields UNKNOWN to
+the expired observer; it never proves timely settlement, authorizes another launch,
+or reopens old admission. Retain exact attempted/unattempted/unknown entries and
+durable intent. Availability can remain interrupted: no old rollback or zero-gap
+claim after endpoint release.
+
+The restricted lifecycle journal is the explicit LAST control-resource exception
+to substantive-store closure. It cannot publish a witness after literally every
+SQL handle has closed. The proposal therefore requires a source-private, irrevocable
+old control-role revocation BEFORE one final witness CAS: every ordinary admit,
+advance, renewal, writer lookup, preparation and queued journal mutation becomes
+ineligible. Drain prior journal transactions first; revoke all grants/captured
+callbacks, not just a public boolean. The sole remaining permission is one bounded
+final CAS for the original receipt/revision and exact selected successor (or stop),
+carrying the frozen closure-ledger digest and old writer-role retirement evidence.
+It cannot create another receipt, change executable/arguments/target, reopen a store,
+renew a lease or retry ambiguous effects. This retiring permission is not a reusable
+general writer role. No substantive store lease remains; any control-role lease
+must be retired by this same reviewed capability transition, with no renewal task.
+
+The final durable witness must bind restartId, journal lineage/file identities,
+old instance nonce/PID/creation identity, owner generation, original authenticated
+prepared ACK/revision, selected replacement nonce/PID/creation identity and verified
+target version/manifest, closure digest and `oldControlWriterEligible=false`.
+The old process becomes permanently non-writing even if the last physical journal
+connection has not yet closed. A prepared reader accepts ONLY the SAME authenticated
+exact-instance witness from a separate verified committed readonly snapshot, with
+strict non-hot lineage/file/owner checks and no writable recovery. Then, and only
+then, the selected successor may win exclusive tentative bind; it still cannot
+initialize writable stores or workers before its all-store guard and role CAS.
+No ordinary client, bind loser or unselected process gets that permission.
+
+After the final COMMIT, the old process attempts the last journal connection close
+and records its actual in-memory ledger outcome without another journal write. This
+connection is now a retired resource, not an eligible writer or a proof that all
+native resources have vanished. Unknown COMMIT/transaction state stays quarantined;
+no writer SELECT, fresh BEGIN, second witness CAS or auto-close as rollback proof.
+Within the original remaining budget only known-local transaction settlement may
+be observed under the reviewed failure rules. If no committed valid witness is
+provable, the successor remains readonly/UNKNOWN. A final COMMIT that actually
+completes after observer expiry cannot turn the expired command into SUCCESS;
+same-receipt discovery may later observe a valid witness and the SAME selected
+successor's bind/readiness. Permission comes from that committed retirement/closure
+proof, never elapsed time. This distinction requires hosted fault/source proof; it
+does not assume thrown COMMIT rolled back or cancellation stopped an effect.
+
+Crash recovery is the separate exact old nonce/PID/process-creation EXIT plus
+ownership/checkpoint reconciliation alternative, before bind and ANY writable
+acquisition. A lost/invalid final witness, hot/partial journal, unknown PID identity,
+unsettled ledger or unknown writer is not repaired or promoted merely because an
+endpoint is absent. No second replacement launch, rollback, forced eviction or
+automatic missing-journal bootstrap. Stop's valid terminal receipt must retain its
+no-demand-start intent; an unknown stop is unavailable, not a force-stop success.
+
+Required hosted Windows/Linux/macOS cases: partial close at each ledger position;
+close error before/after actual native return; delayed worker release ACK/exit;
+last-journal COMMIT_BUSY/IO/FULL/rollback failure and committed-only observation;
+retired-role late callback/admit/renewal rejection; journal-close error after valid
+retirement witness; final COMMIT late return retaining UNKNOWN without second CAS;
+new-client/selected-successor bind race; receipt loss/auth rejection; exact old crash
+and replacement failures; accepted bytes/active detached jobs/connected dashboard
+unchanged. Instrument only bounded primitive phase/ledger outcomes. No fixture or
+source subset certifies full lifecycle closure until every required owner supports
+this reviewed contract and the original timing/acceptance assertions pass.
+
 Proposed files: new `core/daemon-lifecycle.ts` for a **restricted lifecycle receipt**
 and its election gate; launcher/daemon/node wiring; narrow broker/protocol/CLI lifecycle
 handlers; minimal store/background-service drain adapters and isolated fixture tests.
