@@ -6,9 +6,10 @@ import { ABSORBED_FILES, ABSORBED_ROWS, alignedTarget, candidateFiles, fileSha25
 import { historyDbPath } from "./history-store.js";
 import { ARCHIVE_DB_NAME, openArchive } from "./sqlite-maintenance.js";
 import { maintenanceLock } from "./storage-lock.js";
-import { fileCandidates, historyIsVerified, LEGACY_BRIDGE_TABLES, referenceSnapshot } from "./storage-finalize.js";
+import { commandReadProblems, fileCandidates, historyIsVerified, LEGACY_BRIDGE_TABLES, referenceSnapshot } from "./storage-finalize.js";
+import { openPreservedReader } from "./storage-preservation.js";
 
-/** Lossless absorb (owner decision 2026-10-09): before finalize proves old backups and snapshots redundant, every
+/** Retaining absorb: originals stay at their original paths regardless of later proof results. Every
  * row in them that exists nowhere live is imported into archive.db, so the proof can succeed without losing anything.
  * - each such row is stored exactly (every column, type-tagged, integers as exact decimals) in absorbed_rows, keyed by
  *   its table and a digest of its decoded values, so identical rows from many backups are stored once;
@@ -80,7 +81,7 @@ function archiveMessage(archive: DatabaseSync, row: Row, origin: string, now: nu
 
 function absorbDatabase(path: string, ctx: ProofContext, archive: DatabaseSync | undefined, source: AbsorbSource, options: Required<Pick<AbsorbOptions, "batchRows" | "now">> & AbsorbOptions): void {
   let db: DatabaseSync;
-  try { db = new DatabaseSync(path, { readOnly: true, timeout: 1000 }); }
+  try { db = openPreservedReader(path, 1000); }
   catch (err) { source.problems.push(`${basename(path)} cannot be opened (${(err as Error).message})`); return; }
   try {
     const sig = signature(path), origin = basename(path);
@@ -126,7 +127,7 @@ function absorbDatabase(path: string, ctx: ProofContext, archive: DatabaseSync |
       // A table with conflicts is scanned again on every run, so each run reports them.
       if (source.conflicts === conflictsBefore) archive?.prepare("INSERT INTO absorb_progress(source,table_name,after_rowid,done) VALUES(?,?,?,1) ON CONFLICT(source,table_name) DO UPDATE SET done=1")
         .run(sig, table, after);
-      else archive?.prepare("DELETE FROM absorb_progress WHERE source=? AND table_name=?").run(sig, table);
+      else archive?.prepare("UPDATE absorb_progress SET after_rowid=-1, done=0 WHERE source=? AND table_name=?").run(sig, table);
     }
   } catch (err) {
     if ((err as { absorbWrite?: boolean }).absorbWrite) throw err;
@@ -151,22 +152,24 @@ const samePath = (a: string, b: string) => process.platform === "win32" ? resolv
  * maintenance lock (no bridge process may be writing). */
 export function runAbsorb(home: string, options: AbsorbOptions = {}): AbsorbResult {
   const result: AbsorbResult = { applied: !!options.apply, blockers: [], sources: [], rows: 0, files: 0, conflicts: 0 };
+  result.blockers = commandReadProblems(home, false);
+  if (result.blockers.length) { result.applied = false; return result; }
   if (!historyIsVerified(home)) { result.blockers.push("History store v2 is not verified yet; old copies are compared against it, so absorb waits."); return result; }
   const release = options.apply ? maintenanceLock(home) : () => {};
   const opened: DatabaseSync[] = [];
   try {
     const bridge = join(home, DB_FILE_NAME), historyPath = historyDbPath(bridge), archivePath = join(home, ARCHIVE_DB_NAME);
-    const open = (path: string) => { const db = new DatabaseSync(path, { readOnly: true, timeout: 5000 }); opened.push(db); return db; };
+    const open = (path: string) => { const db = openPreservedReader(path, 5000); opened.push(db); return db; };
     let archive: DatabaseSync | undefined;
     if (options.apply) {
-      archive = openArchive(archivePath); opened.push(archive);
+      archive = openArchive(archivePath, { migrate: false, home }); opened.push(archive);
       archive.exec(ABSORB_SCHEMA);
     }
     const history = open(historyPath);
     const live: LiveDb[] = [{ label: "bridge.db", db: open(bridge), exclude: new Set(LEGACY_BRIDGE_TABLES) }, { label: "history.db", db: history }];
     const archiveLive = archive ?? (lstatOrNull(archivePath) ? open(archivePath) : undefined);
     if (archiveLive) live.splice(1, 0, { label: "archive.db", db: archiveLive });
-    const ctx: ProofContext = { live, history, reference: referenceSnapshot(history) };
+    const ctx: ProofContext = { live, history, reference: referenceSnapshot(history), preserveCandidates: true };
     const settings = { ...options, batchRows: options.batchRows ?? BATCH_ROWS, now: options.now ?? Date.now() };
     for (const { item, copies } of fileCandidates(home)) {
       const source: AbsorbSource = { path: item.path, rows: 0, files: 0, conflicts: 0, problems: [] };
