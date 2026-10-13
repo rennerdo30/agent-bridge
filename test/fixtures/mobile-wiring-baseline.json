@@ -15,7 +15,7 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "de79dfca55109c3f807e5608ff8bb83a5ade39e37a562263b2dd0c05e0a17845",
+  "uiSha256": "3f013571e860db81fb38d53e848ddf72669a7cb7fbecda4f2a172d0161e6997f",
   "updates": {
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
@@ -56,6 +56,19 @@
         }
       ],
       "reason": "Approved centralization of legacy stale-socket cleanup in the existing exact reviewed unlink site, with socket type/current UID/fresh ECONNREFUSED checks. Bind losers never unlink. The retention allowlist, all other method pins, schema/backup deadlines/assertions and complete UI pin remain unchanged. Failed full job 115219351847/run38374490738 retained."
+    },
+    "AB-325-1a-ui-policy": {
+      "sourceCommit": "d4c834842504a1916fc3011a6a8269e46d6c5e9a",
+      "sourceParent": "de42082d109d053f09a4d3480a24b794a498bc50",
+      "reviewedBaseline": "35227bed0cfabf3e47d9418b8dd5114c9eed08d4",
+      "previousUiSha256": "de79dfca55109c3f807e5608ff8bb83a5ade39e37a562263b2dd0c05e0a17845",
+      "uiSha256": "3f013571e860db81fb38d53e848ddf72669a7cb7fbecda4f2a172d0161e6997f",
+      "normalizedSourceFileSha256": "9cefbc8ffa3b3cd49495615010e31efbe10e68fa28df9f1b716c539a7d5a66e2",
+      "sourceDiffSha256": "b9b479562ec5ab1d0eb95288673cc7263ab441ca5584ec216b453de72fb3ce33",
+      "reason": "Owner-approved P2 backend sender wiring only: default connect-only, trusted CLI daemon option, one retained sender node/unknown latch and cleanup. No frontend/routes/auth/schema/deadline change; existing normalizer, all thirteen method pins and assertions retained.",
+      "preservedFailureRun": "38383760743",
+      "preservedOriginalWindowsJob": "115250343801",
+      "preservedIndependentWindowsJob": "115252022028"
     }
   },
   "revertedUpdates": {
