@@ -7,7 +7,7 @@ import { historySearchSchema } from "./history.js";
 import { ReadJournal } from "./read-journal.js";
 import { recordStorePeer, refreshStorePeerIdentities, validStoreCapabilities } from "./store-compatibility.js";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { createServer, type Server, type Socket } from "node:net";
 import {
@@ -77,8 +77,31 @@ import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, decisionApplies, decisionScopeSchema, type OwnerDecision } from "./decisions.js";
 import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
 import { OwnerQuestionService, OWNER_ADDRESS } from "./owner-question-service.js";
-import { ensurePrivateSocketDirectory } from "./paths.js";
+import { ensurePrivateSocketDirectory, resolvePipePath } from "./paths.js";
 import type { EndpointReservation } from "./endpoint-reservation.js";
+
+export type LifecycleServingPhase = "admission" | "prepare" | "write";
+/** Opaque source capability. Shape/copy/serialized flags never confer authority. */
+export interface LifecycleServingCapability { readonly __servingCapability?: never }
+const SERVING_PHASE_MS = { admission: 1000, prepare: 5000, write: 2000 } as const;
+type ServingBinding = { server: Server; ownerInstance: string; generation: number; home: string; identity: string; endpoint: string; revoked: boolean; current(): boolean };
+const servingBindings = new WeakMap<Broker, ServingBinding>();
+const servingCapabilities = new WeakMap<LifecycleServingCapability, { binding: ServingBinding; generation: number; phase: LifecycleServingPhase; expires: number }>();
+function servingHomeIdentity(home: string): string {
+  const stat = lstatSync(home, { bigint: true });
+  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.ino <= 0n || stat.dev < 0n || process.platform === "win32" && stat.dev === 0n) throw Error("unknown");
+  return `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`;
+}
+function unavailableServing(): never { throw new BridgeError("bad_request", "Core lifecycle serving authority is unavailable."); }
+/** Internal consumer validation only; no factory, protocol handler, role flag or fixture mint. */
+export function assertLifecycleServingCapability(capability: LifecycleServingCapability, phase: LifecycleServingPhase): Readonly<{ ownerInstance: string; generation: number; home: string; endpoint: string }> {
+  const grant = servingCapabilities.get(capability);
+  if (!grant || grant.phase !== phase || performance.now() >= grant.expires || grant.binding.revoked || grant.generation !== grant.binding.generation) unavailableServing();
+  try {
+    if (!grant.binding.current() || !grant.binding.server.listening || grant.binding.server.address() !== grant.binding.endpoint || servingHomeIdentity(grant.binding.home) !== grant.binding.identity) unavailableServing();
+  } catch { unavailableServing(); }
+  return Object.freeze({ ownerInstance: grant.binding.ownerInstance, generation: grant.generation, home: grant.binding.home, endpoint: grant.binding.endpoint });
+}
 
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
 export const PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -131,6 +154,16 @@ export class Broker {
   private hosting: { mode: "daemon" | "embedded" | "embedded_degraded"; reason?: string } = { mode: "embedded" };
   setHostingMode(mode: "daemon" | "embedded_degraded", reason?: "windows_wmi_unavailable" | "windows_wmi_create_rejected"): void {
     this.hosting = { mode, ...(reason ? { reason } : {}) };
+  }
+  /** Trusted bootstrap primitive staging only. Ordinary/default startup never invokes it. */
+  lifecycleServingCapability(phase: LifecycleServingPhase, deadline: number): LifecycleServingCapability {
+    const binding = servingBindings.get(this);
+    if (!binding || binding.revoked || !Object.hasOwn(SERVING_PHASE_MS, phase) || !Number.isFinite(deadline)) unavailableServing();
+    const expires = Math.min(deadline, performance.now() + SERVING_PHASE_MS[phase]);
+    if (expires <= performance.now()) unavailableServing();
+    const capability = Object.freeze({});
+    servingCapabilities.set(capability, { binding, generation: binding.generation, phase, expires });
+    assertLifecycleServingCapability(capability, phase); return capability;
   }
   private mobileResources?: Set<() => Promise<void>>;
   private mobileRetiring?: boolean;
@@ -570,6 +603,20 @@ export class Broker {
       this.network?.activateAuthority();
       this.networkAuthorityDeferred = false;
       this.server.on("error", err => this.log.error("broker server error", { err }));
+      // Only this real controlled reservation's completed activation registers a
+      // source issuer. A constructor, legacy listener, tentative or failed start
+      // cannot register/mint. Failure here leaves ordinary serving unchanged.
+      if (!servingBindings.has(this) && this.hosting.mode === "daemon" && this.store.file !== ":memory:") {
+        try {
+          const server = this.server, home = realpathSync.native(dirname(this.store.file)), identity = servingHomeIdentity(home), hosting = this.hosting;
+          if (resolvePipePath(home, {}) === this.pipePath && server.listening && server.address() === this.pipePath) {
+            const binding: ServingBinding = { server, home, identity, endpoint: this.pipePath, ownerInstance: randomUUID(), generation: 0, revoked: false,
+              current: () => this.server === server && this.hosting === hosting && !this.closing && !this.startupAuthorityRevoked && !this.networkAuthorityDeferred && !this.mobileRetiring && this.store.lifecycleWriteManifest().transactionsSettled };
+            const revoke = () => { binding.revoked = true; binding.generation++; };
+            server.once("close", revoke); server.once("error", revoke); servingBindings.set(this, binding);
+          }
+        } catch { /* Unproved canonical home/endpoint binding is lifecycle unsupported, never repaired. */ }
+      }
     } catch (error) {
       this.startupAuthorityRevoked = true;
       this.network?.deferAuthority();
