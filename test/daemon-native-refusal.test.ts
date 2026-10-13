@@ -85,6 +85,37 @@ describe("native active-route refusal subguard (not whole-core restart acceptanc
     expect(store.nativeChildRoutes()).toHaveLength(1); children.resumeLifecycleAdmission();
     expect(children.lifecycleOwnerManifest().unknown).toBe(true);
   });
+  it("retained unsupported INTEGER2 cannot become a zero witness or retire its accepted mail", async () => {
+    const address = "claude-retained/sub:one";
+    store.retainNativeChild(address, "claude-retained"); retainMail(address);
+    const db = Reflect.get(store, "db"); db.prepare("UPDATE native_child_routes SET active=2 WHERE address=?").run(address);
+    const before = db.prepare("SELECT address,parent,active,typeof(active) kind FROM native_child_routes WHERE address=?").get(address),
+      mail = store.unread(address, 100), fallback = vi.spyOn(store, "returnNativeChild");
+    const fresh = new NativeChildren(store); await fresh.recover(); fresh.freezeLifecycleAdmission();
+    const unknown = await fresh.settleLifecycleWrites(deadline());
+    expect(unknown.blocker).toBe("native_state_unknown"); expect(await fresh.zeroLifecycleWitnessCurrent(unknown, deadline())).toBe(false);
+    expect(fallback).not.toHaveBeenCalled(); expect(db.prepare("SELECT address,parent,active,typeof(active) kind FROM native_child_routes WHERE address=?").get(address)).toEqual(before);
+    expect(store.unread(address, 100)).toEqual(mail);
+  });
+  it("paired retained inactive INTEGER0 permits zero history without deleting or returning any mail", async () => {
+    const address = "claude-retained/sub:one";
+    store.retainNativeChild(address, "claude-retained"); retainMail(address);
+    const db = Reflect.get(store, "db"); db.prepare("UPDATE native_child_routes SET active=0 WHERE address=?").run(address);
+    const fallback = vi.spyOn(store, "returnNativeChild"); children.freezeLifecycleAdmission();
+    const zero = await children.settleLifecycleWrites(deadline()); expect(zero).toMatchObject({ blocker: null, memoryActive: 0, durableActive: 0 });
+    expect(await children.zeroLifecycleWitnessCurrent(zero, deadline())).toBe(true); expect(fallback).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT active FROM native_child_routes WHERE address=?").get(address)?.active).toBe(0);
+    expect(store.unread(address, 100)).toContainEqual(expect.objectContaining({ id: "fixture-mail", body: "Accepted fixture bytes", readAt: null }));
+  });
+  it.each(["view", "unsupported_table"])("same-name %s is unknown, never proven object absence or writable repair", async kind => {
+    const db = Reflect.get(store, "db");
+    if (kind === "view") db.exec("CREATE VIEW native_child_routes AS SELECT 'claude-retained/sub:one' address,'claude-retained' parent,0 active");
+    else db.exec("CREATE TABLE native_child_routes (address TEXT PRIMARY KEY,parent TEXT NOT NULL,active TEXT NOT NULL)");
+    const object = db.prepare("SELECT type,sql FROM sqlite_master WHERE name='native_child_routes'").get(), fallback = vi.spyOn(store, "returnNativeChild");
+    children.freezeLifecycleAdmission(); const unknown = await children.settleLifecycleWrites(deadline());
+    expect(unknown.blocker).toBe("native_state_unknown"); expect(await children.zeroLifecycleWitnessCurrent(unknown, deadline())).toBe(false);
+    expect(db.prepare("SELECT type,sql FROM sqlite_master WHERE name='native_child_routes'").get()).toEqual(object); expect(fallback).not.toHaveBeenCalled();
+  });
   it("an accepted implicit disconnect invalidates the frozen zero witness without suppressing normal parent-end behavior", async () => {
     children.freezeLifecycleAdmission(); const zero = await children.settleLifecycleWrites(deadline()); expect(zero.blocker).toBeNull();
     await expect(children.endParent(parent)).rejects.toThrow(/draining/);

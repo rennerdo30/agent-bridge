@@ -22,7 +22,16 @@ try {
   db.exec('PRAGMA query_only=ON');
   db.exec('BEGIN');
   let routes = [];
-  if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_child_routes'").get()) {
+  const objects = db.prepare("SELECT type FROM sqlite_master WHERE name='native_child_routes' LIMIT 2").all();
+  if (objects.length) {
+    if (objects.length !== 1 || objects[0].type !== 'table') throw Error();
+    const columns = db.prepare("SELECT name,type,[notnull],pk FROM pragma_table_info('native_child_routes') LIMIT 4").all();
+    if (columns.length !== 3 || columns[0].name !== 'address' || columns[0].type !== 'TEXT' || columns[0].pk !== 1 ||
+        columns[1].name !== 'parent' || columns[1].type !== 'TEXT' || columns[1].notnull !== 1 || columns[1].pk !== 0 ||
+        columns[2].name !== 'active' || columns[2].type !== 'INTEGER' || columns[2].notnull !== 1 || columns[2].pk !== 0) throw Error();
+    // Canonical old DDL has no CHECK constraint. Ignoring unsupported retained
+    // values would fabricate zero activity; absence and inactive INTEGER0 differ.
+    if (db.prepare("SELECT 1 FROM native_child_routes WHERE typeof(active)!='integer' OR active NOT IN(0,1) OR typeof(address)!='text' OR typeof(parent)!='text' LIMIT 1").get()) throw Error();
     const count = db.prepare('SELECT COUNT(*) n, MAX(length(address)) a, MAX(length(parent)) p FROM native_child_routes WHERE active=1').get();
     if (!Number.isSafeInteger(count.n) || count.n < 0 || count.n > 128 || count.a > 256 || count.p > 64) throw Error();
     routes = db.prepare('SELECT address,parent FROM native_child_routes WHERE active=1 LIMIT 129').all();
