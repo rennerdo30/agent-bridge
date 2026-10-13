@@ -90,6 +90,22 @@ pending obligation has a verified durable original/checkpoint and an existing sa
 resume contract; absent such a contract, pendingCount must be zero. Counts alone
 are not durability proof. Replacement validates each digest/checkpoint before done.
 
+Before intent, that durable bounded manifest MUST contain complete managed writer
+membership (max128 descriptors within the existing64KiB envelope): processes carry
+`{kind,ownerInstance,instanceNonce,pid,creationIdentity,bootIdentity,registryGeneration,
+checkpointRevision,leaseIdentities,exitEvidence}`. Each thread carries
+`{kind,parentInstanceNonce,parentPid,parentCreationIdentity,parentBootIdentity,
+workerInstance,captureIdentity,registryGeneration,checkpointRevision,leaseIdentities,
+actualExitEvidence}`. Thread identity is the exact source-owned Worker/capture,
+not an invented separate process PID. Unavailable boot/creation evidence or an
+incomplete registry remains unknown; installed cache enumeration is not membership.
+Reconcile the complete membership/generations again BEFORE final released and at
+successor exit/checkpoint reconciliation. Every actual owned child writer must be
+accounted for; absence, changed membership, missing checkpoints or mismatched leases
+blocks release. A reboot cannot revive a dead selected successor nonce, establish
+continuity from absent PIDs or silently mint a new target. Unproved boot/exit/current
+selected identity remains UNKNOWN, with no new bootstrap/election/second launch.
+
 Receipt publication, durable checkpoint and writer-census proof remain implementation
 entry gates. This table freezes the obligations/file boundary; it does not authorize
 rewriting unsupported services to fit the boundary. An adapter needing a new domain,
@@ -118,12 +134,15 @@ the same receipt ID truthfully; a later explicit lookup can observe completion.
 
 Prepare includes WMI/create, exact successor authentication and ready-to-bind within
 five seconds; the creation timeout is not an extra allowance. Any pre-release phase
-overrun BEFORE an uncertain intent COMMIT reopens old admission and retains serving endpoints, publishes
+overrun may reopen old admission and retain serving endpoints ONLY before ANY
+irreversible handle close or permission retirement, with original ownership and
+producers intact AND committed-only nonuncertain intent/abort outcome proved. Then it publishes
 `aborted:<phase>budget` as the failed_serving outcome and prohibits release. Do not
 kill a possibly created replacement: it remains bound to the original receipt and
-cannot bind without release_committed. Unknown WMI creation stays latched, no second
+cannot bind without release_intent. Unknown WMI creation stays latched, no second
 launch. Already accepted store/worker work continues settling while old serves.
-If durable abort publication itself is unprovable, retain unknown receipt/election
+If any of those predicates or durable abort publication is unprovable, retain seals,
+the complete ledger and unknown receipt/election
 gate and report it; do not claim a durably clean abort or a completed command.
 
 Post-release two seconds is observation only, starting at verified endpoint release.
@@ -144,7 +163,7 @@ short final of this exact note. Existing adapters are checkpoint/producer observ
 not proof of final closure. Unsupported history/project/other closure blocks release.
 
 There is ONE successor activation path below. The prior intent-only exit fallback
-is REMOVED: old death plus release_committed, a lost ACK, time, an absent endpoint,
+is REMOVED: old death plus release_intent, a lost ACK, time, an absent endpoint,
 or acquiring a journal lock does not authorize promotion. A still-live old daemon
 cannot be replaced under a normal post-close ACK. The exact old daemon AND EVERY
 manifest-owned child writer must exit before successor journal writer acquisition.
@@ -165,8 +184,9 @@ or newly observed writer refuses before irreversible release; unsupported networ
 mobile/question continuity refuses rather than silently discarding work.
 
 Before any irreversible resource close, a proven reversible phase-budget refusal
-may reopen admission only if every ownership/producer state is intact and no final
-intent outcome is uncertain. Once retirement begins, no partial-close rollback or
+may reopen admission only before any irreversible close/permission retirement,
+with original ownership/producers intact AND committed-only nonuncertain intent/
+abort outcome proved. Once retirement begins, no partial-close rollback or
 old-serving resume is claimed. This is an availability gap, not a force close.
 Keep all attempted/unattempted resources accounted for if failure interrupts it.
 The endpoint reservation does not own accepted Broker connections: inventory exact
@@ -195,7 +215,7 @@ revive this retired generation. A public boolean/role flag is not this proof.
 The final transaction alone may append `released` (or terminal stop intent) and its
 exact checkpoint/selection revision; no subsequent old SQL effect may follow.
 
-`release_committed` is preparation INTENT, never promotion permission. The final
+`release_intent` is preparation INTENT, never promotion permission. The final
 `released` record is likewise necessary but INSUFFICIENT by itself. Its current
 revision binds exact old nonce/PID/creation identity, journal lineage, owner/gate
 generations, manifest/ledger digest, restartId/request digest, selected successor
@@ -205,6 +225,8 @@ release the exact control-role lease; failure remains failed/unknown in the ledg
 Do not write a receipt after closing the last journal, reopen it, or disguise close
 as rollback/durability proof. Normal old exit occurs only after supported retirement;
 verify every owned writer process/thread exited through its actual creation identity.
+Use the durable process/thread membership above: a thread's actual exit is tied to
+its exact parent creation/boot identity and owned Worker capture, not a fictitious PID.
 A parent exit does not prove its workers/children or accepted queues settled.
 
 #### Budget and uncertain final COMMIT
@@ -327,11 +349,34 @@ One retained receipt per command:
 target:{immutableRuntimePath,version,protocol,fileManifestDigest},replacementInstance?,
 state,revision,requestDigest,acceptedAt,checkpointManifest?,outcome?,failureCode?}`.
 
-States are `accepted -> preparing -> draining -> prepared -> release_committed ->
-binding -> done`, with pre-release `failed_serving`, post-release `unavailable`,
-and unprovable `unknown`. Stop uses `accepted -> draining -> prepared ->
-stop_committed -> stopped`. Retain all revisions and conflicting bytes; no deletion,
-time expiry, overwrite by a reused ID or reconstructed guessed completion.
+The proposed schema has ONE canonical actor/transition table below. Current portable
+source still uses the older release_committed enum and does NOT implement this new
+state/actor contract; schema/wiring alignment is a code-entry requirement, not an
+implicit migration or permission to accept prose-only states. Retain all revisions,
+conflicting bytes and historical outcome uncertainty independently of current actor.
+
+| State / transition | Only authorized actor and evidence | Authority meaning |
+| --- | --- | --- |
+| accepted -> preparing -> draining -> prepared | Exact old instance, durable admission/selection, complete bounded writer membership, actual producer/drain/checkpoints | Old owns serving; no successor writer. Stop skips preparing. |
+| prepared -> release_intent | Exact old writer, committed intent and selected target/checkpoints | INTENT only; no promotion or old-retirement proof. |
+| release_intent -> released | Old single-use FINAL transaction, all substantive handles/leases retired, complete closed ledger and permanently retired old write permission | Last CONTROL tail is explicitly logically retired, not falsely physically closed. Readable row alone is insufficient. |
+| released -> binding | Exact designated successor ONLY after strict RO/nonhot + old/all-child exits + checkpoints + tentative bind + SAME-held-transaction current-revision CAS | NEW authorization requires actual successful CAS/COMMIT/autocommit/independent read BEFORE substantive writers. A binding row without those source-owned observations is not permission. |
+| binding -> done | Current proven successor writer, initialization/checkpoints/serving verified | Completed same receipt; preserve historical old UNKNOWN/late outcome separately. |
+| reversible prefinal -> failed_serving | Old only while no irreversible close/retirement, original ownership/producers intact and committed-only nonuncertain intent/abort proved | May resume serving under ALL predicates; no uncertain final-tail abort. |
+| any unproved outcome -> unknown; post-release unavailable | Committed observation reports actual proven actor/revision; unknown cannot mint a writer or persist its own guessed authority | Historical old unknown never becomes old COMMIT success through successor reconciliation. |
+| prepared -> stop_intent -> stop_committed | Exact old, same single-use final retirement rules, complete retained ledger | Intent/inhibition pending; no stopped proof or demand-start. No successor is launched. |
+| stop_committed + observedOutcome=stopped (no new durable transition) | Readonly exact old/all-child exit + checkpoints/leases; terminal durable intent already exists | Proven stopped may be reported without reopening old journal to write after close. Otherwise observedOutcome=pending/unknown. |
+
+Each receipt revision binds currentActor/actorGeneration and selected successor,
+while historicalOldOutcome retains old commit unknown or released(late). The last
+control-handle/lease status is explicit and cannot be counted closed before actual
+return/exit. Existing schema rejects unknown fields; reviewed implementation must
+define/validate these exact bounded fields before enabling transitions. No new
+receipt ID, overwrite, time expiry or reconstructed guessed completion is allowed.
+The canonical persisted state enum is exactly accepted/preparing/draining/prepared/
+release_intent/released/binding/done/failed_serving/unavailable/unknown/stop_intent/
+stop_committed; status observedOutcome is a separately validated bounded enum
+pending/unknown/done/stopped, not a fabricated stopped journal revision by a reader.
 
 Publication must be all-or-none and durable before acknowledgement or endpoint
 release through the lifecycle-only journal contract below. Existing json-store.ts:107-137
@@ -424,7 +469,7 @@ and exact home; bind the exclusive canonical endpoint FIRST, THEN acquire/initia
 any writable broker-owner store, lease, lifecycle journal or side worker. A designated
 successor additionally satisfies the exact-exit/new-durable-CAS guard above BEFORE
 the first substantive writable acquisition; it must also have won bind. Neither
-release_committed, designation nor an exit observation alone bypasses endpoint exclusivity. Unknown remains
+release_intent, designation nor an exit observation alone bypasses endpoint exclusivity. Unknown remains
 readonly/unavailable. Prepared replacement opens no other stores even readonly.
 
 The endpoint is initially **TENTATIVE**, distinct from SERVING. Before initialization
@@ -497,13 +542,16 @@ legacy MCP/job/runner domain writers still exist and no full AB325 authority cla
 follows. If this bounded compatibility choice cannot preserve accepted bytes or
 prevent competing broker-owner writes, report the exact blocker for review.
 
-Current source needs an explicit listener/store split: broker-daemon.ts constructs
+HISTORICAL source447/352 needs an explicit listener/store split: broker-daemon.ts constructs
 MessageStore before Broker.listen; node.ts tryBecomeBroker does likewise. Separately,
 node.ts constructor records store presence and restores ReadJournal metadata BEFORE
 election. Those are existing CLIENT metadata writes, not broker initialization;
 inventory and barrier their actual owners, never silently assert all writes occur
 after bind. This contract requires startup wiring review; it does not authorize a
-domain rewrite or certify client queues. Proposed narrow files: broker listener
+domain rewrite or certify client queues. Current b6 source implements reservation
+before broker-owner MessageStore construction in broker-daemon.ts:25-40 and
+node.ts:356-369; that source change does not certify lifecycle receipts/closure or
+client-metadata write barriers. Proposed narrow files: broker listener
 reservation/adoption, daemon/node controlled startup, receipt path/reader guards,
 and fixture acceptance. Any additional owner adapter returns to the coordinator.
 
@@ -560,7 +608,7 @@ readonly observation, exact old AND manifest child-writer exits/checkpoints, ten
 exclusive bind, bounded control-journal BEGIN/current-revision CAS, independently
 verified successful NEW durable revision, THEN substantive store/worker acquisition.
 No live-old witness or intent-only exit fallback remains. Hot/missing/corrupt/unknown
-reader outcome never permits writable recovery. release_committed, readable released
+reader outcome never permits writable recovery. release_intent, readable released
 or a lock alone does not prove earlier flush success or permit store initialization.
 
 Small transactions use indexed current receipt/ID lookups, BEGIN IMMEDIATE and
@@ -596,12 +644,19 @@ establish a NEW authorization; it never retroactively validates the failing comm
 
 On failed BEGIN/COMMIT or I/O/FULL/unknown transaction error, latch lifecycle writes
 and effect advancement BEFORE another observer/control request can use tentative
-state. Within the remaining phase budget, if isTransaction is true attempt ONE
+state. ONLY during reversible PREFINAL settlement, before irreversible handle
+close/permission retirement or consumed final permit, within the remaining phase
+budget, if isTransaction is true attempt ONE
 explicit ROLLBACK of ONLY this known local UNCOMMITTED receipt transaction, then
 require isTransaction false and independent committed-snapshot verification. This
 is transaction settlement, not rollback of accepted work, stores, jobs, a committed
 lifecycle effect, replacement creation or public endpoint release. Never retry COMMIT,
 replay a CAS/effect, begin a nested transaction or infer absence from an exception.
+Once the final single-use permit is consumed, NO explicit further old SQL is allowed,
+including ROLLBACK, failure-row writes, retry, renewal or a renewed permit. Retain
+quarantine/seals and exit under the complete owner ledger. SQLite internal behavior
+on physical connection/process exit is not a granted old SQL capability or proof
+of accepted-byte settlement; hot/unknown observation remains fail closed.
 
 If settlement/autocommit/committed observation/durability is unprovable or the phase
 budget is exhausted, quarantine that writer/connection and keep the command unknown.
@@ -611,11 +666,14 @@ Release an owned connection only through proven local settlement; failure to rel
 its lock remains an explicit blocker. Committed prior rows and any hot artifacts
 remain preserved. Receipt queries use the strict reader and disclose unknown when
 blocked; no writer-state fallback. A separately persisted failure revision, if one
-can be safely committed without retrying the effect, is distinct from the failed CAS.
+can be safely committed PREFINAL under the intact reversible predicates without
+retrying the effect, is distinct from the failed CAS. No final-retired-tail failure write.
 
 Before public release, the old daemon may continue/reopen serving admission ONLY
-after proving its substantive ownership stayed intact, no release or successor
-writable acquisition occurred, and reversible producer/admission state is safe.
+after proving NO irreversible handle close or permission retirement occurred,
+original ownership/producers stayed intact, committed-only nonuncertain intent/abort
+outcome is proved, no release/successor writable acquisition occurred, and reversible
+producer/admission state is safe.
 Otherwise retain a truthful blocked/unknown state; do not manufacture failed_serving.
 After release, no old-serving/rollback claim follows from a journal exception.
 Required hosted faults: BUSY COMMIT with active transaction, I/O/FULL auto-rollback
@@ -671,7 +729,10 @@ Any missing release/durability/live-writer proof keeps lifecycle acceptance bloc
    compatible runtime, readable verified receipt and ability to attempt the endpoint.
    This is readiness to bind, not a claim that an unattempted OS bind cannot fail.
 5. Failure/timeout/invalid creation receipt remains unconfirmed. No second launch.
-   The old broker keeps serving while preparation is unresolved. A prepared replacement
+   The old broker keeps serving while preparation is unresolved ONLY with original
+   ownership/producers intact, no irreversible close/retirement and committed-only
+   nonuncertain intent/abort outcome proved; otherwise retain seals/ledger/UNKNOWN.
+   A prepared replacement
    watches durable receipt state; it never elects independently or treats time as release.
 
 Capability closure/census and restricted atomic receipt are prerequisites, not facts
@@ -695,11 +756,13 @@ report and approval delivery need explicit capable settlement/backpressure seman
 if current legacy adapters cannot preserve them through the bounded gap, refuse.
 
 Use the exact monotonic budget and durable pending-receipt semantics below; do not
-increase generic RPC deadlines. A pre-release phase overrun aborts the reversible
-transition, retains the old endpoint/services and reopens admission. Never cancel
+increase generic RPC deadlines. A pre-release overrun may abort/reopen ONLY before
+ANY irreversible handle close/permission retirement, with original ownership/producers
+intact AND committed-only nonuncertain intent/abort outcome proved. Otherwise retain
+seals, ledger and UNKNOWN without reopening admission/election/writes. Never cancel
 accepted writes or terminate workers to manufacture successful drain/checkpoint.
 
-After prepared replacement + verified drain/checkpoints, persist `release_committed`
+After prepared replacement + verified drain/checkpoints, persist `release_intent`
 and its exact designated successor before releasing the public endpoint. Only that
 replacement, after the exact-exit/new-durable-CAS guard above is verified, may acquire
 substantive writable stores/leases/workers or run initializers, verify checkpoints, advertise its
@@ -721,7 +784,7 @@ reconnect and scoped to the authenticated local lifecycle principal. Lost reply 
 authorizes a fresh ID, second launch or rollback. Corrupt/missing/unflushed receipt after
 acceptance stays unknown; it cannot be repaired by replaying the effect.
 
-Stop must also gate future automatic launches. Persist `stop_committed/stopped` as
+Stop must also gate future automatic launches. Persist `stop_intent/stop_committed` as
 an intentional availability state that updated clients honor indefinitely, until an
 explicit authenticated user lifecycle resume/restart intent is reviewed. No time-based
 autostart. Stop refuses while active/unknown jobs, live native children, pending accepted
@@ -734,15 +797,15 @@ or call MCP shutdown; ordinary future demand cannot override the stop receipt.
 | --- | --- |
 | Old dies before accepted receipt is durable | No success receipt; ambiguous accepted work remains unknown. Reconcile exact original stores/instances, never blindly repeat. |
 | Old dies after acceptance but before successor preparation/release | Active gate blocks ordinary election. Existing designated replacement waits; recovery verifies old exit and checkpoints. Without proof, unavailable/unknown, no takeover. |
-| Replacement dies before ready | Old stays up; pre-release failure or unknown receipt. No timeout-driven second launch. |
-| Replacement dies after prepared but before release | Old must revalidate live authenticated exact successor before release. If unprovable, failed_serving/unknown and remain up. |
+| Replacement dies before ready | Old may keep serving ONLY under the complete reversible/intact/nonuncertain predicates above; otherwise seals+ledger+UNKNOWN. No timeout-driven second launch. |
+| Replacement dies after prepared but before release | Old must revalidate live authenticated exact successor before release. If unprovable, failed_serving ONLY under all reversible/intact/nonuncertain predicates; otherwise seals+ledger+UNKNOWN. |
 | Old dies during drain | Receipt/checkpoints survive; successor cannot infer drain success. Reconcile all admitted queues or block. |
-| Receipt write/fsync/selected-pointer fails | Before release remain serving and report failure; an acknowledged but unprovable generation blocks release/recovery. |
+| Receipt write/fsync/selection fails | Resume serving ONLY before ANY irreversible close/permission retirement, with original ownership/producers intact and committed-only nonuncertain intent/abort proved; otherwise seals+ledger+UNKNOWN, no reopen/election/write revival. |
 | Old dies after release commit before actual endpoint close | Successor waits for exact old-instance exit and safe endpoint availability. No unlink/kill of a live unknown holder. |
 | Replacement dies after ready/release or before done flush | Preserve release/designated successor/checkpoints; unavailable or unknown until exact outcome is proved. No automatic duplicate/old-runtime rollback. |
 | Both unavailable or discovery auth/token/protocol failure | Keep receipt and bytes; explicit unavailable/unknown. PID absence, connection timeout or name reuse never authorizes new election. |
 | New capable client arrives during bind gap | Reads canonical gate and waits/discovers original receipt; does not launch embedded/daemon. |
-| Legacy election/client appears during prepare | Abort before release and remain serving. Arrival after closure cannot be called safe without writer/deployment proof; do not force eviction. |
+| Legacy election/client appears during prepare | Abort/resume ONLY before any irreversible close/retirement, with original ownership/producers intact and committed-only nonuncertain intent/abort proved; otherwise seals+ledger+UNKNOWN. Arrival after closure requires writer/deployment proof; no eviction. |
 | Lost command reply after release/done | Query same receipt. Existing reconnect/full-refetch may observe new host; never replay accepted lifecycle/mutating work. |
 | Stop with active native/runner/inline work | Refuse, endpoint remains serving, no child/cancel/ownership effect. |
 
