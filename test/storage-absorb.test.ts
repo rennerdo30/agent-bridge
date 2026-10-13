@@ -236,6 +236,19 @@ it("round-trips every SQLite value type exactly", () => {
   expect(back).toEqual({ a: big, b: -0.25, c: "text ü", d: Buffer.from([1, 2, 3]), e: null, f: 7 });
 });
 
+it("AB-215 absorption boundary: unsupported views fail without mutation while BLOB subarray bytes stay exact", () => {
+  const bytes = Buffer.from([0xaa, 0xff, 0xfe, 0xbb]), before = Buffer.from(bytes);
+  const slice = new Uint8Array(bytes.buffer, bytes.byteOffset + 1, 2);
+  expect(decodeAbsorbedRow(encodeAbsorbedRow({ payload: slice }, ["payload"])).payload).toEqual(Buffer.from([0xff, 0xfe]));
+  expect(decodeAbsorbedRow(encodeAbsorbedRow({ payload: bytes.subarray(1, 3) }, ["payload"])).payload).toEqual(Buffer.from([0xff, 0xfe]));
+  for (const view of [new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), new Uint16Array(new Uint8Array([1, 2, 3, 4]).buffer)]) {
+    const original = Buffer.from(view.buffer, view.byteOffset, view.byteLength), copy = Buffer.from(original);
+    expect(() => encodeAbsorbedRow({ payload: view }, ["payload"])).toThrow(/Unsupported stored value/);
+    expect(Buffer.from(view.buffer, view.byteOffset, view.byteLength)).toEqual(copy);
+  }
+  expect(bytes).toEqual(before);
+});
+
 it("AB-215 absorption boundary: integral REAL stays REAL and its exact stored receipt proves survival", async () => {
   await verifiedHome();
   const backup = join(env.home, "bridge.db.backup-215-real"), db = new DatabaseSync(backup); closes.push(() => db.close());
