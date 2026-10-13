@@ -39,7 +39,7 @@ async function main(argv: string[]): Promise<number> {
     case "core": {
       if (rest.length !== 1 || rest[0] !== "status") throw new Error("Usage: agent-bridge core status. Safe restart/stop awaits the lifecycle prerequisite review.");
       let client: BridgeClient;
-      try { client = await BridgeClient.connect(pipe, log); }
+      try { client = await BridgeClient.connect(pipe, log, undefined, { readOnlyDirectory: true }); }
       catch (error) {
         if (["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "")) { out(JSON.stringify({ available: false })); return 0; }
         throw error;

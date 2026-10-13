@@ -70,10 +70,10 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
   }
 
   /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
-  static connect(pipePath: string, log: Logger, timeoutMs: number = CONNECT_TIMEOUT_MS): Promise<BridgeClient> {
+  static connect(pipePath: string, log: Logger, timeoutMs: number = CONNECT_TIMEOUT_MS, options: { readOnlyDirectory?: boolean } = {}): Promise<BridgeClient> {
     return new Promise((resolve, reject) => {
       // Never hand the token to an endpoint in a short-socket directory another user controls.
-      ensurePrivateSocketDirectory(pipePath);
+      ensurePrivateSocketDirectory(pipePath, process.platform, options.readOnlyDirectory ?? false);
       const socket = connect(pipePath);
       const timer = setTimeout(() => {
         socket.destroy();
