@@ -6,8 +6,8 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 
-// Keep every inspected directory/file open with FILE_SHARE_READ only. This pins
-// identities and blocks both rename and in-place writes/reparse-point conversion.
+// Pin identities without FILE_SHARE_DELETE. Tree directories and the marker also
+// deny write sharing; ordinary files/ancestors permit compatible existing writers.
 // Deletion uses the verified handles, including for the marker and root itself.
 public static class CiWindowsCleanup
 {
@@ -52,16 +52,29 @@ public static class CiWindowsCleanup
         uint inputSize, byte[] output, uint outputSize, out uint returned, IntPtr overlapped);
 
     static void Check(bool ok) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
+    static SafeFileHandle Acquire(string path, uint access, uint share) {
+        var handle = CreateFile(path, access, share, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+        if (handle.IsInvalid) {
+            int error = Marshal.GetLastWin32Error(); handle.Dispose();
+            throw new IOException("Cleanup open refused: " + path + "; win32=" + error, new Win32Exception(error));
+        }
+        return handle;
+    }
     static Entry Open(string path, bool deleting, bool marker, bool allowJunction = false) {
         // OPEN_REPARSE_POINT inspects the entry itself; BACKUP_SEMANTICS permits dirs.
         // READ_DATA / LIST_DIRECTORY makes ancestor handles participate in sharing
         // enforcement; attribute-only opens are exempt from those rules.
+        AttributeTag initial;
+        using (var metadata = Acquire(path, 0x80, 7))
+            Check(GetFileInformationByHandleEx(metadata, 9, out initial, 8));
+        bool directory = (initial.Attributes & 0x10) != 0;
         uint access = 0x81u | (deleting ? 0x10100u : 0u) | (marker ? 0x80000000u : 0u);
-        var handle = CreateFile(path, access, 1, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
-        if (handle.IsInvalid) { int error = Marshal.GetLastWin32Error(); handle.Dispose(); throw new Win32Exception(error); }
+        uint share = marker || (deleting && directory) ? 1u : 3u;
+        var handle = Acquire(path, access, share);
         try {
             AttributeTag info;
             Check(GetFileInformationByHandleEx(handle, 9, out info, 8));
+            if (((info.Attributes & 0x10) != 0) != directory) throw new IOException("Cleanup entry type changed: " + path);
             if ((info.Attributes & 0x400) != 0 && (!allowJunction || marker || info.Tag != 0xA0000003u))
                 throw new IOException("Refusing reparse point: " + path);
             return new Entry { Path = path, Handle = handle, Attributes = info.Attributes };

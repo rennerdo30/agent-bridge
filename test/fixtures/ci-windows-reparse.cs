@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -13,6 +14,13 @@ public static class CiReparseFixture
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool DeviceIoControl(SafeFileHandle handle, uint code, byte[] input,
         uint inputSize, IntPtr output, uint outputSize, out uint returned, IntPtr overlapped);
+    public static SafeFileHandle HoldWriteDirectory(string path) {
+        var handle = CreateFile(path, 0x40000000, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+        if (handle.IsInvalid) {
+            int error = Marshal.GetLastWin32Error(); handle.Dispose(); throw new Win32Exception(error);
+        }
+        return handle;
+    }
     public static int ConvertToJunction(string path, string target) {
         return ConvertToJunctionRaw(path, Path.GetFullPath(target));
     }

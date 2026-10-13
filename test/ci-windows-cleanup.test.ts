@@ -297,3 +297,24 @@ try {
 } finally { [IO.Directory]::Delete($link) }
 `)).toEqual({ created: 0, refused: true, noncanonical: true, retained: true, targetRetained: true });
 });
+
+it.runIf(process.platform === "win32")("permits compatible existing writers without releasing directory identity pins", () => {
+  expect(guard(`
+Add-Type -Path $reparseFixture
+$ancestorWriter = [CiReparseFixture]::HoldWriteDirectory($parent)
+$fileWriter = [IO.File]::Open($sentinel, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+try {
+    Initialize-CiCleanupApi
+    $script:ancestorSwapBlocked = $false
+    $settleWriter = [Action]{
+        try { [IO.Directory]::Move($parent, ($parent + '-moved')) } catch { $script:ancestorSwapBlocked = $true }
+        $fileWriter.Dispose()
+    }
+    [CiWindowsCleanup]::Remove($owner.Root, $owner.MarkerName, $owner.MarkerContents, $settleWriter)
+    [pscustomobject]@{ removed = -not (Test-Path -LiteralPath $owner.Root); ancestorSwapBlocked = $script:ancestorSwapBlocked } | ConvertTo-Json -Compress
+} finally {
+    $fileWriter.Dispose()
+    $ancestorWriter.Dispose()
+}
+`)).toEqual({ removed: true, ancestorSwapBlocked: true });
+});
