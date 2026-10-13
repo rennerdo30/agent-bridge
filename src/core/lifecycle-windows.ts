@@ -23,7 +23,8 @@ export class WindowsLifecyclePathUnavailable extends Error {
 }
 export interface WindowsLifecyclePathProof { readonly nonce: string; readonly ownerInstance: string; readonly phase: Phase; readonly scope: Scope }
 type Snapshot = Map<string, string>;
-const proofs = new WeakMap<WindowsLifecyclePathProof, { paths: Snapshot; deadline: number; pid: number }>();
+const proofs = new WeakMap<WindowsLifecyclePathProof, { paths: Snapshot; deadline: number; pid: number;
+  authority?: LifecycleServingCapability; generation?: number }>();
 const pending = new Set<object>();
 const PHASE_MS = { admission: 1000, prepare: 5000, write: 2000 } as const;
 const DIRECTORY = ".core-lifecycle", FILE = "receipts.sqlite";
@@ -194,7 +195,8 @@ export async function readOwnWindowsLifecycleIdentity(capability: LifecycleServi
 
 /** Fresh phase-local ACL/file observation only. It does NOT open SQLite or prove committed
  * lineage, a non-hot journal, directory-entry power-loss durability, or writable-role ownership. */
-export async function verifyWindowsLifecyclePaths(home: string, ownerInstance: string, phase: Phase, scope: Scope, deadline: number): Promise<WindowsLifecyclePathProof> {
+export async function verifyWindowsLifecyclePaths(home: string, ownerInstance: string, phase: Phase, scope: Scope, deadline: number,
+  authority?: LifecycleServingCapability): Promise<WindowsLifecyclePathProof> {
   const reject = (reason: Reason): never => { throw new WindowsLifecyclePathUnavailable(reason); };
   if (process.platform !== "win32" || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(ownerInstance) || !Object.hasOwn(PHASE_MS, phase) || !["home", "established"].includes(scope)) reject("unavailable");
   const started = performance.now(), expires = Math.min(deadline, started + PHASE_MS[phase]);
@@ -203,46 +205,70 @@ export async function verifyWindowsLifecyclePaths(home: string, ownerInstance: s
   let physicalHome: string, before: Snapshot;
   try { before = snapshot(home, scope); physicalHome = realpathSync.native(home); }
   catch { reject("unsafe_path"); }
+  let generation: number | undefined;
+  const current = () => {
+    if (performance.now() >= expires) reject("budget");
+    if (authority !== undefined) {
+      try {
+        const serving = assertLifecycleServingCapability(authority, phase), stat = lstatSync(serving.home, { bigint: true });
+        if (serving.ownerInstance !== ownerInstance || before.get(home) !== `${stat.dev}:${stat.ino}:${stat.birthtimeNs}` ||
+            generation !== undefined && serving.generation !== generation) reject("unavailable");
+        generation = serving.generation;
+      } catch { reject("unavailable"); }
+    }
+  };
+  current();
   const nonce = randomUUID();
   const bin = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   return new Promise((resolve, no) => {
-    const child = spawn(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(INSPECT, "utf16le").toString("base64")], { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
-    const registration = {}; pending.add(registration);
+    const registration = { ownerInstance, phase, nonce, authority, generation, child: undefined as ReturnType<typeof spawn> | undefined,
+      state: "not_attempted" as "not_attempted" | "attempted_unconfirmed" | "child_known" | "closed" };
+    pending.add(registration);
     let output = "", settled = false;
     const refuse = (reason: Reason, diagnostic?: Diagnostic) => { if (!settled) { settled = true; clearTimeout(timer); no(new WindowsLifecyclePathUnavailable(reason, diagnostic)); } };
     const timer = setTimeout(() => refuse("budget"), Math.max(0, expires - performance.now()));
-    child.on("error", () => refuse("unavailable")); child.stdin!.on("error", () => refuse("unavailable"));
-    child.stdout!.setEncoding("utf8");
-    child.stdout!.on("data", (chunk: string) => { if (!settled) { output += chunk; if (Buffer.byteLength(output) > 4096) refuse("unavailable"); } });
-    child.once("close", code => {
-      pending.delete(registration);
-      if (settled) return; // Late observation never grants eligibility or changes the expired caller.
-      try {
-        const response: unknown = JSON.parse(output);
-        if (!response || typeof response !== "object") return refuse("unavailable");
-        const r = response as Record<string, unknown>;
-        if (code !== 0 || r.schema !== 1 || r.nonce !== nonce || performance.now() >= expires) return refuse("unavailable");
-        const keys = Object.keys(r);
-        if (r.status !== "verified") {
-          if (r.status === "unsafe_acl") {
-            if (keys.length !== 7 || keys.some(key => !["schema", "nonce", "status", "rule", "role", "ancestorDepth", "ownerClass"].includes(key)) ||
-              !RULES.includes(r.rule as Diagnostic["rule"]) || !ROLES.includes(r.role as Diagnostic["role"]) ||
-              !OWNER_CLASSES.includes(r.ownerClass as Diagnostic["ownerClass"]) ||
-              typeof r.ancestorDepth !== "number" || !Number.isSafeInteger(r.ancestorDepth) || r.ancestorDepth < 0 || r.ancestorDepth > 128) return refuse("unavailable");
-            return refuse("unsafe_acl", { rule: r.rule as Diagnostic["rule"], role: r.role as Diagnostic["role"], ancestorDepth: r.ancestorDepth, ownerClass: r.ownerClass as Diagnostic["ownerClass"] });
+    try {
+      current();
+      registration.state = "attempted_unconfirmed";
+      const child = registration.child = spawn(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(INSPECT, "utf16le").toString("base64")], { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
+      registration.state = "child_known";
+      child.on("error", () => refuse("unavailable")); child.stdin!.on("error", () => refuse("unavailable"));
+      child.stdout!.setEncoding("utf8");
+      child.stdout!.on("data", (chunk: string) => { if (!settled) { output += chunk; if (Buffer.byteLength(output) > 4096) refuse("unavailable"); } });
+      child.once("close", code => {
+        registration.state = "closed"; pending.delete(registration);
+        if (settled) return; // Late observation never grants eligibility or changes the expired caller.
+        try {
+          current();
+          const response: unknown = JSON.parse(output);
+          if (!response || typeof response !== "object") return refuse("unavailable");
+          const r = response as Record<string, unknown>;
+          if (code !== 0 || r.schema !== 1 || r.nonce !== nonce || performance.now() >= expires) return refuse("unavailable");
+          const keys = Object.keys(r);
+          if (r.status !== "verified") {
+            if (r.status === "unsafe_acl") {
+              if (keys.length !== 7 || keys.some(key => !["schema", "nonce", "status", "rule", "role", "ancestorDepth", "ownerClass"].includes(key)) ||
+                !RULES.includes(r.rule as Diagnostic["rule"]) || !ROLES.includes(r.role as Diagnostic["role"]) ||
+                !OWNER_CLASSES.includes(r.ownerClass as Diagnostic["ownerClass"]) ||
+                typeof r.ancestorDepth !== "number" || !Number.isSafeInteger(r.ancestorDepth) || r.ancestorDepth < 0 || r.ancestorDepth > 128) return refuse("unavailable");
+              return refuse("unsafe_acl", { rule: r.rule as Diagnostic["rule"], role: r.role as Diagnostic["role"], ancestorDepth: r.ancestorDepth, ownerClass: r.ownerClass as Diagnostic["ownerClass"] });
+            }
+            if (keys.length !== 3 || keys.some(key => !["schema", "nonce", "status"].includes(key))) return refuse("unavailable");
+            return refuse(["unsafe_path", "unsupported_fs"].includes(String(r.status)) ? r.status as Reason : "unavailable");
           }
-          if (keys.length !== 3 || keys.some(key => !["schema", "nonce", "status"].includes(key))) return refuse("unavailable");
-          return refuse(["unsafe_path", "unsupported_fs"].includes(String(r.status)) ? r.status as Reason : "unavailable");
-        }
-        if (keys.length !== 4 || keys.some(key => !["schema", "nonce", "status", "filesystem"].includes(key))) return refuse("unavailable");
-        if (!["NTFS", "ReFS"].includes(String(r.filesystem)) || !same(before, snapshot(home, scope))) return refuse("unsafe_path");
-        const proof = Object.freeze({ nonce, ownerInstance, phase, scope });
-        proofs.set(proof, { paths: before, deadline: expires, pid: process.pid });
-        settled = true; clearTimeout(timer); resolve(proof);
-      } catch { refuse("unavailable"); }
-    });
-    child.stdin!.end(JSON.stringify({ schema: 1, nonce, home: physicalHome, scope }));
-    child.unref();
+          if (keys.length !== 4 || keys.some(key => !["schema", "nonce", "status", "filesystem"].includes(key))) return refuse("unavailable");
+          if (!["NTFS", "ReFS"].includes(String(r.filesystem)) || !same(before, snapshot(home, scope))) return refuse("unsafe_path");
+          const proof = Object.freeze({ nonce, ownerInstance, phase, scope });
+          proofs.set(proof, { paths: before, deadline: expires, pid: process.pid, authority, generation });
+          settled = true; clearTimeout(timer); resolve(proof);
+        } catch { refuse("unavailable"); }
+      });
+      child.stdin!.end(JSON.stringify({ schema: 1, nonce, home: physicalHome, scope }));
+      child.unref();
+    } catch (error) {
+      if (registration.state === "not_attempted" && registration.ownerInstance === ownerInstance && registration.nonce === nonce && registration.authority === authority) pending.delete(registration);
+      refuse(error instanceof WindowsLifecyclePathUnavailable && error.reason === "budget" ? "budget" : "unavailable");
+    }
   });
 }
 
@@ -251,6 +277,12 @@ export async function verifyWindowsLifecyclePaths(home: string, ownerInstance: s
 export function assertWindowsLifecyclePathProof(proof: WindowsLifecyclePathProof, home: string, ownerInstance: string, phase: Phase, scope: Scope): void {
   const known = proofs.get(proof);
   if (!known || known.pid !== process.pid || proof.ownerInstance !== ownerInstance || proof.phase !== phase || proof.scope !== scope || performance.now() >= known.deadline || pending.size) throw new WindowsLifecyclePathUnavailable("unavailable");
+  if (known.authority !== undefined) {
+    try {
+      const serving = assertLifecycleServingCapability(known.authority, phase);
+      if (serving.ownerInstance !== ownerInstance || serving.generation !== known.generation) throw new Error("unknown");
+    } catch { throw new WindowsLifecyclePathUnavailable("unavailable"); }
+  }
   try { if (!same(known.paths, snapshot(home, scope))) throw new WindowsLifecyclePathUnavailable("unsafe_path"); }
   catch { throw new WindowsLifecyclePathUnavailable("unsafe_path"); }
 }

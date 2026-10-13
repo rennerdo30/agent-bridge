@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { z } from "zod";
 import { readProcessIdentity } from "./process-identity.js";
-import { assertLifecycleServingCapability, type LifecycleServingCapability } from "./broker.js";
-import { createWindowsLifecycleObjects, assertWindowsLifecycleCreation, readOwnWindowsLifecycleIdentity } from "./lifecycle-windows.js";
+import { assertLifecycleServingCapability, type LifecycleServingCapability, type LifecycleServingPhase } from "./broker.js";
+import { createWindowsLifecycleObjects, assertWindowsLifecycleCreation, readOwnWindowsLifecycleIdentity, WindowsLifecyclePathUnavailable,
+  verifyWindowsLifecyclePaths, assertWindowsLifecyclePathProof } from "./lifecycle-windows.js";
 import { lifecycleInstanceSchema as instanceSchema, lifecycleActorSchema, LIFECYCLE_STATES, LIFECYCLE_NEXT,
   LIFECYCLE_PROOF_REQUIRED, sameLifecycleInstance } from "./daemon-lifecycle-role.js";
 
@@ -137,12 +138,13 @@ function configureWriter(db: DatabaseSync, guard: () => void = () => {}): void {
       observed("PRAGMA foreign_keys", "foreign_keys") !== 1 || observed("PRAGMA trusted_schema", "trusted_schema") !== 0 ||
       (process.platform === "darwin" && observed("PRAGMA fullfsync", "fullfsync") !== 1)) fail("publication_unproved");
 }
-function readConnection(file: string, exclusivelyNewGuard?: () => void): DatabaseSync {
+function readConnection(file: string, exclusivelyNewGuard?: () => void, deadline?: number): DatabaseSync {
   try { if (exclusivelyNewGuard) exclusivelyNewGuard(); else { privatePath(dirname(file), true); privatePath(file, false); privatePath(file + "-journal", false); } }
   catch { fail("lineage_unknown"); }
   const before = identity(file);
   let db: DatabaseSync;
-  try { exclusivelyNewGuard?.(); db = new DatabaseSync(file, { readOnly: true, timeout: BUSY_MS }); }
+  try { exclusivelyNewGuard?.(); db = new DatabaseSync(file, { readOnly: true,
+    timeout: deadline === undefined ? BUSY_MS : Math.max(0, Math.min(BUSY_MS, Math.floor(deadline - performance.now()))) }); }
   catch { fail("lineage_unknown"); } // Hot recovery requiring writes is not a prepared-reader exception.
   try {
     exclusivelyNewGuard?.(); db.exec("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;"); exclusivelyNewGuard?.();
@@ -162,27 +164,49 @@ CREATE TABLE receipt_conflicts (sequence INTEGER PRIMARY KEY, restart_id TEXT NO
 /** Strict reader of committed snapshots. It cannot repair/recover a hot journal. */
 export class PreparedLifecycleReader {
   private readonly db: DatabaseSync;
-  constructor(private readonly file: string, private readonly lineage: Lineage, private readonly restartId: string) {
-    z.string().uuid().parse(restartId); this.db = readConnection(file);
+  private readonly phaseGuard?: () => void;
+  private readonly phaseDeadline?: number;
+  private disposed = false;
+  constructor(private readonly file: string, private readonly lineage: Lineage, private readonly restartId: string, private readonly access?: object) {
+    z.string().uuid().parse(restartId);
+    if (access !== undefined) {
+      const record = preparedPhaseAccess.get(access);
+      if (!record || record.claimed || record.file !== file || record.lineage !== lineage.lineage || record.id !== restartId) fail("writer_unknown");
+      record.claimed = true; this.phaseGuard = record.guard; this.phaseDeadline = record.deadline;
+    }
+    this.db = readConnection(file, this.phaseGuard, this.phaseDeadline);
   }
   read(): LifecycleReceipt {
     try {
+      if (this.disposed) fail("lineage_unknown");
+      this.phaseGuard?.();
       // One SELECT is one settled committed snapshot; no cursor/read transaction is retained.
       const row = this.db.prepare(`SELECT l.json AS lineage, r.json AS receipt,
         r.restart_id AS receipt_id, r.revision AS receipt_revision, r.request_digest AS receipt_digest,
         s.restart_id AS selected_id,s.revision AS selected_revision FROM lifecycle_lineage l
         JOIN selected_receipt s ON s.singleton=l.singleton JOIN receipt_revisions r
         ON r.restart_id=s.restart_id AND r.revision=s.revision WHERE l.singleton=1 AND r.restart_id=?`).get(this.restartId);
+      this.phaseGuard?.();
       if (!row || JSON.stringify(JSON.parse(String(row.lineage))) !== JSON.stringify(this.lineage) ||
           !same(this.lineage.directory, identity(dirname(this.file))) || !same(this.lineage.file, identity(this.file)) ||
           !same(this.lineage.journal, identity(this.file + "-journal"))) fail("lineage_unknown");
       const envelope = { ...row, json: row.receipt };
       if (!hasSelectedReceipt(envelope)) fail("lineage_unknown");
-      return receiptEnvelope(envelope, this.lineage.homeIdentity, this.restartId);
+      const receipt = receiptEnvelope(envelope, this.lineage.homeIdentity, this.restartId); this.phaseGuard?.(); return receipt;
     } catch { fail("lineage_unknown"); }
   }
-  close(): void { this.db.close(); }
+  close(): void {
+    if (this.disposed) return;
+    this.db.close(); // Expiry/revocation never prevents disposing this exact reader.
+    this.disposed = true;
+    if (this.access) { preparedPhaseAccess.get(this.access)?.closed(); preparedPhaseAccess.delete(this.access); }
+  }
 }
+
+// Private, single-reader, bounded READONLY lifetime. Shape/copy/caller callbacks
+// cannot mint access; no writable role, renewal or cross-phase cache is granted.
+const preparedPhaseAccess = new WeakMap<object, { file: string; lineage: string; id: string; claimed: boolean;
+  deadline: number; reader?: PreparedLifecycleReader; guard(): void; closed(): void }>();
 
 // Source-owned quarantine retention, not a public force-dispose/recovery API.
 const failedBootstrapJournals = new Set<LifecycleJournal>();
@@ -191,7 +215,90 @@ const failedBootstrapFlushDescriptors = new Set<number>();
 /** Storage only. Dispatch/producer closure and pre-writable ownership guards belong to the coordinator; not yet wired. */
 export class LifecycleJournal {
   private quarantined = false;
+  private servingPhaseBusy = false;
+  private servingPhase?: { phase: LifecycleServingPhase; deadline: number; guard(): void };
+  private readonly servingReaderAccess = new Set<object>();
   private constructor(private readonly file: string, private readonly lineage: Lineage, private readonly owner: LifecycleInstance, private readonly writer: DatabaseSync) {}
+
+  /** Boundary2: actual CURRENT serving owner, fresh phase-local OS/lineage proof.
+   * No ordinary Windows method/default role or successor promotion is enabled. */
+  private async inServingPhase<T>(capability: LifecycleServingCapability, phase: LifecycleServingPhase, deadline: number,
+    work: (guard: () => void) => T): Promise<T> {
+    this.requireKnownWriter();
+    if (process.platform !== "win32" || this.servingPhaseBusy || this.servingPhase) fail("owner_unsupported");
+    this.servingPhaseBusy = true;
+    try {
+      const initial = assertLifecycleServingCapability(capability, phase), home = dirname(dirname(this.file));
+      const current = () => {
+        if (!Number.isFinite(deadline) || performance.now() >= deadline) fail("budget");
+        const actual = assertLifecycleServingCapability(capability, phase);
+        if (actual.ownerInstance !== this.owner.nonce || actual.ownerInstance !== initial.ownerInstance || actual.generation !== initial.generation ||
+            actual.endpoint !== initial.endpoint || digest(realpathSync.native(actual.home)) !== this.lineage.homeIdentity ||
+            !same(identity(actual.home), identity(home))) fail("writer_unknown");
+      };
+      current();
+      if (phase !== "prepare") {
+        try { if (transactionState(this.writer)) fail("writer_unknown"); }
+        catch { this.quarantined = true; fail("writer_unknown"); }
+      }
+      const proof = await verifyWindowsLifecyclePaths(home, this.owner.nonce, phase, "established", deadline, capability);
+      current();
+      const guard = () => { current(); assertWindowsLifecyclePathProof(proof, home, this.owner.nonce, phase, "established"); };
+      guard(); this.servingPhase = { phase, deadline, guard };
+      this.verifyLineage(); // Actual strict RO/query_only observation BEFORE any writer SQL.
+      if (phase !== "prepare") {
+        try { if (transactionState(this.writer)) fail("writer_unknown"); }
+        catch { this.quarantined = true; fail("writer_unknown"); }
+        for (const [pragma, key, expected] of [["PRAGMA journal_mode", "journal_mode", "persist"], ["PRAGMA synchronous", "synchronous", 2],
+          ["PRAGMA journal_size_limit", "journal_size_limit", -1], ["PRAGMA trusted_schema", "trusted_schema", 0], ["PRAGMA foreign_keys", "foreign_keys", 1]] as const) {
+          guard(); const value = this.writer.prepare(pragma).get()?.[key]; guard(); if (value !== expected) fail("publication_unproved");
+        }
+        guard(); const busy = this.writer.prepare("PRAGMA busy_timeout").get()?.timeout; guard();
+        if (typeof busy !== "number" || !Number.isSafeInteger(busy) || busy < 0 || busy > BUSY_MS) fail("publication_unproved");
+      }
+      const result = work(guard); guard(); return result;
+    } catch (error) {
+      throw error instanceof LifecycleUnavailable ? error : new LifecycleUnavailable(
+        error instanceof WindowsLifecyclePathUnavailable && error.reason === "budget" ? "budget" : "lineage_unknown");
+    } finally { this.servingPhase = undefined; this.servingPhaseBusy = false; }
+  }
+  admitServing(capability: LifecycleServingCapability, request: LifecycleRequest, deadline: number): Promise<LifecycleReceipt> {
+    return this.inServingPhase(capability, "admission", deadline, () => this.admit(request, deadline));
+  }
+  advanceServing(capability: LifecycleServingCapability, id: string, revision: number, state: LifecycleReceipt["state"],
+    fields: Pick<LifecycleReceipt, "replacementInstance" | "checkpointManifest" | "failureCode">, deadline: number): Promise<LifecycleReceipt> {
+    return this.inServingPhase(capability, "write", deadline, () => this.advance(id, revision, state, fields, deadline));
+  }
+  lookupServing(capability: LifecycleServingCapability, id: string, deadline: number): Promise<LifecycleReceipt | null> {
+    return this.inServingPhase(capability, "prepare", deadline, () => this.lookup(id));
+  }
+  selectedServing(capability: LifecycleServingCapability, deadline: number): Promise<LifecycleReceipt | null> {
+    return this.inServingPhase(capability, "prepare", deadline, () => this.selected());
+  }
+  preparedReaderServing(capability: LifecycleServingCapability, id: string, deadline: number): Promise<PreparedLifecycleReader> {
+    return this.inServingPhase(capability, "prepare", deadline, guard => {
+      const selected = this.selected(); if (!selected || selected.restartId !== id) fail("receipt_conflict");
+      const access = Object.freeze({}); this.servingReaderAccess.add(access);
+      const record = { file: this.file, lineage: this.lineage.lineage, id, deadline, claimed: false, reader: undefined as PreparedLifecycleReader | undefined,
+        guard: () => { this.requireKnownWriter(); guard(); }, closed: () => { this.servingReaderAccess.delete(access); } };
+      preparedPhaseAccess.set(access, record);
+      return record.reader = new PreparedLifecycleReader(this.file, this.lineage, id, access);
+    });
+  }
+  private readerGuard(): (() => void) | undefined { return process.platform === "win32" ? this.servingPhase?.guard : undefined; }
+  private readerDeadline(): number | undefined { return process.platform === "win32" ? this.servingPhase?.deadline : undefined; }
+  private writerGuard(): void { if (process.platform === "win32") { if (!this.servingPhase) fail("owner_unsupported"); this.servingPhase.guard(); } }
+  private writerExec(sql: string): void {
+    this.writerGuard();
+    if (process.platform === "win32") {
+      this.writer.exec(`PRAGMA busy_timeout=${Math.max(0, Math.min(BUSY_MS, Math.floor(this.servingPhase!.deadline - performance.now())))}`);
+      this.writerGuard();
+    }
+    this.writer.exec(sql); this.writerGuard();
+  }
+  private writerRun(sql: string, ...args: SQLInputValue[]) {
+    this.writerGuard(); const statement = this.writer.prepare(sql); this.writerGuard(); const result = statement.run(...args); this.writerGuard(); return result;
+  }
 
   /** Boundary1 ONLY: explicit real serving issuer, exclusive new Windows objects,
    * initial committed lineage. No ordinary admission, controller or role promotion.
@@ -292,16 +399,19 @@ export class LifecycleJournal {
     }
   }
   private verifyLineage(): void {
-    const reader = readConnection(this.file);
+    const guard = this.readerGuard(), reader = readConnection(this.file, guard, this.readerDeadline());
     try {
+      guard?.();
       const row = reader.prepare("SELECT json FROM lifecycle_lineage WHERE singleton=1").get();
+      guard?.();
       if (!row || String(row.json) !== JSON.stringify(this.lineage) || !same(this.lineage.directory, identity(dirname(this.file))) ||
           !same(this.lineage.file, identity(this.file)) || !same(this.lineage.journal, identity(this.file + "-journal"))) fail("lineage_unknown");
     } finally { reader.close(); }
   }
   private read(id?: string): LifecycleReceipt | null {
-    const reader = readConnection(this.file);
+    const guard = this.readerGuard(), reader = readConnection(this.file, guard, this.readerDeadline());
     try {
+      guard?.();
       const row = id ? reader.prepare(`SELECT r.json,l.json AS lineage,
         r.restart_id AS receipt_id,r.revision AS receipt_revision,r.request_digest AS receipt_digest FROM lifecycle_lineage l LEFT JOIN receipt_revisions r
         ON r.restart_id=? AND r.revision=(SELECT max(revision) FROM receipt_revisions WHERE restart_id=?) WHERE l.singleton=1`).get(id, id)
@@ -309,6 +419,7 @@ export class LifecycleJournal {
           r.restart_id AS receipt_id,r.revision AS receipt_revision,r.request_digest AS receipt_digest,
           s.restart_id AS selected_id,s.revision AS selected_revision FROM lifecycle_lineage l LEFT JOIN selected_receipt s ON s.singleton=l.singleton
           LEFT JOIN receipt_revisions r ON r.restart_id=s.restart_id AND r.revision=s.revision WHERE l.singleton=1`).get();
+      guard?.();
       if (!row || (String(row.lineage) !== JSON.stringify(this.lineage) || !same(this.lineage.directory, identity(dirname(this.file))) ||
           !same(this.lineage.file, identity(this.file)) || !same(this.lineage.journal, identity(this.file + "-journal")))) fail("lineage_unknown");
       if (id === undefined && !hasSelectedReceipt(row)) return null;
@@ -328,9 +439,9 @@ export class LifecycleJournal {
     if (performance.now() >= deadline) fail("budget");
     this.verifyLineage();
     try {
-      this.writer.exec("BEGIN IMMEDIATE"); const value = work();
+      this.writerExec("BEGIN IMMEDIATE"); const value = work();
       if (performance.now() >= deadline) fail("budget");
-      this.writer.exec("COMMIT");
+      this.writerExec("COMMIT");
       if (transactionState(this.writer) || performance.now() >= deadline || !committed(value)) fail("writer_unknown");
       return value;
     } catch (error) {
@@ -339,7 +450,7 @@ export class LifecycleJournal {
       let settled = false;
       try {
         if (performance.now() < deadline) {
-          if (transactionState(this.writer)) this.writer.exec("ROLLBACK");
+          if (transactionState(this.writer)) this.writerExec("ROLLBACK");
           if (!transactionState(this.writer) && performance.now() < deadline) { this.verifyLineage(); this.read(); settled = true; }
         }
       } catch { /* unresolved locks/visibility stay quarantined, without another BEGIN/COMMIT */ }
@@ -356,11 +467,11 @@ export class LifecycleJournal {
       if (existing.requestDigest !== requestDigest) {
         const json = JSON.stringify(parsed); if (Buffer.byteLength(json) > LIFECYCLE_METADATA_BYTES) fail("metadata_bound");
         this.transaction(deadline, () => {
-          this.writer.prepare("INSERT INTO receipt_conflicts(restart_id,observed_digest,json) VALUES (?,?,?)").run(parsed.restartId, requestDigest, json);
+          this.writerRun("INSERT INTO receipt_conflicts(restart_id,observed_digest,json) VALUES (?,?,?)", parsed.restartId, requestDigest, json);
           return requestDigest;
         }, value => {
-          const reader = readConnection(this.file);
-          try { return !!reader.prepare("SELECT 1 FROM receipt_conflicts WHERE restart_id=? AND observed_digest=? AND json=?").get(parsed.restartId, value, json); }
+          const guard = this.readerGuard(), reader = readConnection(this.file, guard, this.readerDeadline());
+          try { guard?.(); const found = !!reader.prepare("SELECT 1 FROM receipt_conflicts WHERE restart_id=? AND observed_digest=? AND json=?").get(parsed.restartId, value, json); guard?.(); return found; }
           finally { reader.close(); }
         });
         fail("receipt_conflict");
@@ -373,8 +484,8 @@ export class LifecycleJournal {
       currentActor: { kind: "old", instance: { ...this.owner } }, actorGeneration: 1, requestDigest, acceptedAt: Date.now() };
     const json = bytes(receipt);
     return this.transaction(deadline, () => {
-      this.writer.prepare("INSERT INTO receipt_revisions VALUES (?,?,?,?)").run(receipt.restartId, 1, requestDigest, json);
-      this.writer.prepare("INSERT INTO selected_receipt VALUES (1,?,1) ON CONFLICT(singleton) DO UPDATE SET restart_id=excluded.restart_id,revision=excluded.revision").run(receipt.restartId);
+      this.writerRun("INSERT INTO receipt_revisions VALUES (?,?,?,?)", receipt.restartId, 1, requestDigest, json);
+      this.writerRun("INSERT INTO selected_receipt VALUES (1,?,1) ON CONFLICT(singleton) DO UPDATE SET restart_id=excluded.restart_id,revision=excluded.revision", receipt.restartId);
       return receipt;
     }, value => this.lookup(value.restartId)?.requestDigest === requestDigest && this.selected()?.revision === 1);
   }
@@ -392,8 +503,8 @@ export class LifecycleJournal {
     if (!parsedNext.success) fail("revision_conflict");
     const next = parsedNext.data, json = bytes(next);
     return this.transaction(deadline, () => {
-      this.writer.prepare("INSERT INTO receipt_revisions VALUES (?,?,?,?)").run(id, next.revision, next.requestDigest, json);
-      const changed = this.writer.prepare("UPDATE selected_receipt SET revision=? WHERE singleton=1 AND restart_id=? AND revision=?").run(next.revision, id, expectedRevision);
+      this.writerRun("INSERT INTO receipt_revisions VALUES (?,?,?,?)", id, next.revision, next.requestDigest, json);
+      const changed = this.writerRun("UPDATE selected_receipt SET revision=? WHERE singleton=1 AND restart_id=? AND revision=?", next.revision, id, expectedRevision);
       if (changed.changes !== 1) fail("revision_conflict");
       return next;
     }, value => this.lookup(id)?.revision === value.revision && digest(this.selected()) === digest(value));

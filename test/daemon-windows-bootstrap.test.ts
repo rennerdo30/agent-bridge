@@ -5,7 +5,7 @@ import * as files from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Broker } from "../src/core/broker.js";
+import { Broker, assertLifecycleServingCapability } from "../src/core/broker.js";
 import { EndpointReservation } from "../src/core/endpoint-reservation.js";
 import { LifecycleJournal } from "../src/core/daemon-lifecycle.js";
 import { pendingWindowsLifecycleVerifications } from "../src/core/lifecycle-windows.js";
@@ -27,6 +27,7 @@ vi.mock("node:child_process", async importOriginal => {
   const spawn = vi.fn(native.spawn);
   return { ...native, spawn, default: { ...(Reflect.get(native, "default") ?? native), spawn } };
 });
+
 vi.mock("node:fs", async importOriginal => {
   const native = await importOriginal<typeof import("node:fs")>();
   originals.openSync = native.openSync; originals.fsyncSync = native.fsyncSync; originals.closeSync = native.closeSync;
@@ -265,5 +266,47 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
     const againEnd = performance.now() + 5000;
     await expect(LifecycleJournal.bootstrapServing(b.lifecycleServingCapability("prepare", againEnd), againEnd)).rejects.toThrow("unavailable");
     expect([readFileSync(file()), readFileSync(file() + "-journal")]).toEqual(retained); expect(captured!.isTransaction).toBe(true);
+  });
+});
+
+describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Boundary2 (no role promotion or restart acceptance)", () => {
+  it("fresh real phase APIs retain default/copy/wrong-phase refusal without a caller-created permission", async () => {
+    const b = await serving(), end = performance.now() + 5000, initial = b.lifecycleServingCapability("prepare", end);
+    journal = await LifecycleJournal.bootstrapServing(initial, end);
+    const actual = assertLifecycleServingCapability(initial, "prepare"), creationIdentity = await identities.readProcessIdentity(process.pid);
+    expect(creationIdentity).toBeTruthy();
+    const input = { restartId: "00000000-0000-4000-8000-000000000002", operation: "restart" as const,
+      oldInstance: { nonce: actual.ownerInstance, pid: process.pid, creationIdentity: creationIdentity! },
+      target: { immutableRuntimePath: join(home, "owned-fixture-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } };
+    const admittedEnd = performance.now() + 1000, cap = b.lifecycleServingCapability("admission", admittedEnd);
+    const accepted = await journal.admitServing(cap, input, admittedEnd); expect(accepted.revision).toBe(1);
+    const exec = vi.spyOn(DatabaseSync.prototype, "exec");
+    expect(() => journal!.selected()).toThrow("lineage_unknown"); expect(() => journal!.admit(input, performance.now() + 1000)).toThrow("lineage_unknown");
+    const badEnd = performance.now() + 1000;
+    await expect(journal.admitServing({ ...b.lifecycleServingCapability("admission", badEnd) }, input, badEnd)).rejects.toThrow("unavailable");
+    await expect(journal.admitServing(b.lifecycleServingCapability("prepare", badEnd), input, badEnd)).rejects.toThrow("unavailable");
+    expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE")).toBe(false);
+    const readEnd = performance.now() + 5000;
+    expect(await journal.selectedServing(b.lifecycleServingCapability("prepare", readEnd), readEnd)).toEqual(accepted);
+    expect(pendingWindowsLifecycleVerifications()).toBe(0);
+  });
+  it("a returned actual readonly reader works outside factory cleanup then refuses expired/closed reads without renewal or SQL", async () => {
+    const b = await serving(), end = performance.now() + 5000, initial = b.lifecycleServingCapability("prepare", end);
+    journal = await LifecycleJournal.bootstrapServing(initial, end);
+    const actual = assertLifecycleServingCapability(initial, "prepare"), creationIdentity = await identities.readProcessIdentity(process.pid);
+    expect(creationIdentity).toBeTruthy();
+    const input = { restartId: "00000000-0000-4000-8000-000000000003", operation: "restart" as const,
+      oldInstance: { nonce: actual.ownerInstance, pid: process.pid, creationIdentity: creationIdentity! },
+      target: { immutableRuntimePath: join(home, "owned-fixture-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } };
+    const admittedEnd = performance.now() + 1000;
+    const accepted = await journal.admitServing(b.lifecycleServingCapability("admission", admittedEnd), input, admittedEnd);
+    const readEnd = performance.now() + 5000, reader = await journal.preparedReaderServing(b.lifecycleServingCapability("prepare", readEnd), input.restartId, readEnd);
+    try {
+      expect(reader.read()).toEqual(accepted);
+      const reads = vi.spyOn(DatabaseSync.prototype, "prepare"), before = reads.mock.calls.length;
+      vi.spyOn(performance, "now").mockReturnValue(readEnd + 1);
+      expect(() => reader.read()).toThrow("lineage_unknown"); expect(reads.mock.calls.length).toBe(before);
+      reader.close(); expect(() => reader.read()).toThrow("lineage_unknown"); expect(reads.mock.calls.length).toBe(before);
+    } finally { reader.close(); }
   });
 });

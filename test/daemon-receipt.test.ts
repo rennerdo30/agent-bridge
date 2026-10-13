@@ -8,14 +8,18 @@ import { LifecycleJournal, LifecycleUnavailable, LIFECYCLE_ADMISSION_MS, LIFECYC
   LIFECYCLE_PREPARE_MS, LIFECYCLE_DISPATCH_DRAIN_MS, LIFECYCLE_WRITE_CHECKPOINT_MS, LIFECYCLE_BIND_OBSERVE_MS,
   type LifecycleInstance, type LifecycleRequest } from "../src/core/daemon-lifecycle.js";
 import { readProcessIdentity } from "../src/core/process-identity.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { verifyWindowsLifecyclePaths, assertWindowsLifecyclePathProof, pendingWindowsLifecycleVerifications } from "../src/core/lifecycle-windows.js";
+import { createServingJournalFixture } from "./fixtures/daemon-serving-journal.js";
+import { makeEnv, until, type TestEnv } from "./helpers.js";
 
 let env: TestEnv, owner: LifecycleInstance, journal: LifecycleJournal | undefined, captured: DatabaseSync | undefined;
+let journalHome: string, servingFixture: Awaited<ReturnType<typeof createServingJournalFixture>> | undefined;
 const sqliteExec = DatabaseSync.prototype.exec;
 beforeEach(async () => {
-  env = makeEnv(); journal = undefined; captured = undefined;
+  env = makeEnv(); journal = undefined; captured = undefined; servingFixture = undefined; journalHome = env.home;
   const creationIdentity = await readProcessIdentity(process.pid); expect(creationIdentity).toBeTruthy();
   owner = { nonce: randomUUID(), pid: process.pid, creationIdentity: creationIdentity! };
+  if (!portable) { servingFixture = await createServingJournalFixture(env); journalHome = servingFixture.home; owner = servingFixture.owner; }
 });
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -27,14 +31,38 @@ afterEach(async () => {
     const actual = captured ?? Reflect.get(journal, "writer");
     expect(actual).toBeInstanceOf(DatabaseSync); actual.close();
   }
-  await env.cleanup();
+  await servingFixture?.close(); servingFixture = undefined;
+  await until(() => pendingWindowsLifecycleVerifications() === 0); await env.cleanup();
 });
-const file = () => join(env.home, ".core-lifecycle", "receipts.sqlite");
+const file = () => join(journalHome, ".core-lifecycle", "receipts.sqlite");
 const deadline = () => performance.now() + LIFECYCLE_ADMISSION_MS;
 const request = (): LifecycleRequest => ({ restartId: randomUUID(), operation: "restart", oldInstance: owner,
   target: { immutableRuntimePath: join(env.home, "fixture-immutable-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } });
-async function bootstrap() { journal = await LifecycleJournal.bootstrap(env.home, owner); return journal; }
+async function bootstrap() {
+  if (portable) journal = await LifecycleJournal.bootstrap(journalHome, owner);
+  else { const end = performance.now() + LIFECYCLE_PREPARE_MS; journal = await LifecycleJournal.bootstrapServing(servingFixture!.broker.lifecycleServingCapability("prepare", end), end); }
+  return journal;
+}
 const portable = process.platform !== "win32";
+async function admit(j: LifecycleJournal, input: LifecycleRequest, end = deadline()) {
+  return portable ? j.admit(input, end) : j.admitServing(servingFixture!.broker.lifecycleServingCapability("admission", end), input, end);
+}
+async function advance(j: LifecycleJournal, id: string, revision: number, state: Parameters<LifecycleJournal["advance"]>[2],
+  fields: Parameters<LifecycleJournal["advance"]>[3], end = deadline()) {
+  return portable ? j.advance(id, revision, state, fields, end) : j.advanceServing(servingFixture!.broker.lifecycleServingCapability("write", end), id, revision, state, fields, end);
+}
+async function lookup(j: LifecycleJournal, id: string) {
+  const end = performance.now() + LIFECYCLE_PREPARE_MS;
+  return portable ? j.lookup(id) : j.lookupServing(servingFixture!.broker.lifecycleServingCapability("prepare", end), id, end);
+}
+async function selected(j: LifecycleJournal) {
+  const end = performance.now() + LIFECYCLE_PREPARE_MS;
+  return portable ? j.selected() : j.selectedServing(servingFixture!.broker.lifecycleServingCapability("prepare", end), end);
+}
+async function preparedReader(j: LifecycleJournal, id: string) {
+  const end = performance.now() + LIFECYCLE_PREPARE_MS;
+  return portable ? j.preparedReader(id) : j.preparedReaderServing(servingFixture!.broker.lifecycleServingCapability("prepare", end), id, end);
+}
 function acceptedRequestDigest(input: LifecycleRequest): string {
   // The counterexample is valid JSON for a DIFFERENT accepted request, not an
   // invalid actor/schema. Canonicalize only these exact accepted request fields.
@@ -60,24 +88,24 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     expect([LIFECYCLE_PRE_RELEASE_MS, LIFECYCLE_ADMISSION_MS, LIFECYCLE_PREPARE_MS, LIFECYCLE_DISPATCH_DRAIN_MS,
       LIFECYCLE_WRITE_CHECKPOINT_MS, LIFECYCLE_BIND_OBSERVE_MS]).toEqual([10000, 1000, 5000, 2000, 2000, 2000]);
     if (!portable) {
-      await expect(bootstrap()).rejects.toMatchObject({ reason: "publication_unproved" });
-      expect(existsSync(join(env.home, ".core-lifecycle"))).toBe(false);
+      await expect(LifecycleJournal.bootstrap(journalHome, owner)).rejects.toMatchObject({ reason: "publication_unproved" });
+      expect(existsSync(join(journalHome, ".core-lifecycle"))).toBe(false);
     }
   });
-  it.skipIf(!portable)("retains every committed revision and conflicting request while same-ID lost reply is idempotent", async () => {
+  it("retains every committed revision and conflicting request while same-ID lost reply is idempotent", async () => {
     const spy = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function (this: DatabaseSync, sql: string) {
       if (sql.includes("PRAGMA journal_mode=PERSIST")) captured = this;
       return sqliteExec.call(this, sql);
     });
-    const began = performance.now(), j = await bootstrap(), input = request(), accepted = j.admit(input, deadline());
+    const began = performance.now(), j = await bootstrap(), input = request(), accepted = await admit(j, input, deadline());
     spy.mockRestore();
     expect(captured!.prepare("PRAGMA journal_mode").get()?.journal_mode).toBe("persist");
     expect(captured!.prepare("PRAGMA synchronous").get()?.synchronous).toBe(2);
     expect(captured!.prepare("PRAGMA journal_size_limit").get()?.journal_size_limit).toBe(-1);
-    expect(j.admit(input, deadline())).toEqual(accepted);
-    const prepared = j.advance(input.restartId, 1, "preparing", {}, deadline());
-    expect(prepared.revision).toBe(2); expect(j.admit(input, deadline())).toEqual(prepared);
-    expect(() => j.admit({ ...input, operation: "stop" }, deadline())).toThrow(LifecycleUnavailable);
+    expect(await admit(j, input, deadline())).toEqual(accepted);
+    const prepared = await advance(j, input.restartId, 1, "preparing", {}, deadline());
+    expect(prepared.revision).toBe(2); expect(await admit(j, input, deadline())).toEqual(prepared);
+    await expect(admit(j, { ...input, operation: "stop" }, deadline())).rejects.toThrow(LifecycleUnavailable);
     const db = new DatabaseSync(file(), { readOnly: true });
     try {
       expect(db.prepare("SELECT count(*) AS n FROM receipt_revisions").get()?.n).toBe(2);
@@ -85,12 +113,19 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
       expect(db.prepare("SELECT sqlite_version() AS version").get()?.version).toBeTruthy();
       process.stderr.write("AB325 receipt fixture measurements " + JSON.stringify({ platform: process.platform, node: process.version,
         sqlite: db.prepare("SELECT sqlite_version() AS version").get()?.version, bootstrapAndReceiptMs: Math.round(performance.now() - began),
-        publication: "unix_directory_sync_and_committed_reopen", restartAcceptance: false }) + "\n");
+        publication: portable ? "unix_directory_sync_and_committed_reopen" : "windows_owned_creation_assumptions_and_committed_reopen", restartAcceptance: false }) + "\n");
     } finally { db.close(); }
-    expect(lstatSync(file()).mode & 0o077).toBe(0); expect(existsSync(file() + "-journal")).toBe(true);
+    if (portable) expect(lstatSync(file()).mode & 0o077).toBe(0);
+    else {
+      const end = performance.now() + LIFECYCLE_PREPARE_MS, cap = servingFixture!.broker.lifecycleServingCapability("prepare", end);
+      const proof = await verifyWindowsLifecyclePaths(journalHome, owner.nonce, "prepare", "established", end, cap);
+      assertWindowsLifecyclePathProof(proof, journalHome, owner.nonce, "prepare", "established");
+      expect(proof.ownerInstance).toBe(owner.nonce); expect(proof.scope).toBe("established");
+    }
+    expect(existsSync(file() + "-journal")).toBe(true);
   });
-  it.skipIf(!portable)("actual prepared reader rejects UPDATE and INSERT with strict readonly flags/query_only", async () => {
-    const j = await bootstrap(), input = request(); j.admit(input, deadline());
+  it("actual prepared reader rejects UPDATE and INSERT with strict readonly flags/query_only", async () => {
+    const j = await bootstrap(), input = request(); await admit(j, input, deadline());
     const prepare = DatabaseSync.prototype.prepare; let checked = false;
     const spy = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (this: DatabaseSync, sql: string) {
       if (sql.startsWith("SELECT l.json AS lineage")) {
@@ -101,33 +136,33 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
       }
       return prepare.call(this, sql);
     });
-    const reader = j.preparedReader(input.restartId);
+    const reader = await preparedReader(j, input.restartId);
     try { expect(reader.read().restartId).toBe(input.restartId); expect(checked).toBe(true); }
     finally { reader.close(); spy.mockRestore(); }
-    expect(j.lookup(input.restartId)?.revision).toBe(1);
+    expect((await lookup(j, input.restartId))?.revision).toBe(1);
   });
-  it.skipIf(!portable)("old writer CAS rejects stale prepared acknowledgements and cannot cross release without checkpoint", async () => {
-    const j = await bootstrap(), input = request(); j.admit(input, deadline());
+  it("old writer CAS rejects stale prepared acknowledgements and cannot cross release without checkpoint", async () => {
+    const j = await bootstrap(), input = request(); await admit(j, input, deadline());
     const replacement = { ...owner, nonce: randomUUID() };
-    j.advance(input.restartId, 1, "preparing", { replacementInstance: replacement }, deadline());
-    expect(() => j.advance(input.restartId, 1, "preparing", { replacementInstance: replacement }, deadline())).toThrow(LifecycleUnavailable);
-    j.advance(input.restartId, 2, "draining", {}, deadline()); j.advance(input.restartId, 3, "prepared", {}, deadline());
-    expect(() => j.advance(input.restartId, 4, "release_intent", {}, deadline())).toThrow(LifecycleUnavailable);
-    const retained = j.selected();
+    await advance(j, input.restartId, 1, "preparing", { replacementInstance: replacement }, deadline());
+    await expect(advance(j, input.restartId, 1, "preparing", { replacementInstance: replacement }, deadline())).rejects.toThrow(LifecycleUnavailable);
+    await advance(j, input.restartId, 2, "draining", {}, deadline()); await advance(j, input.restartId, 3, "prepared", {}, deadline());
+    await expect(advance(j, input.restartId, 4, "release_intent", {}, deadline())).rejects.toThrow(LifecycleUnavailable);
+    const retained = await selected(j);
     expect(retained).toMatchObject({ currentActor: { kind: "old", instance: owner }, actorGeneration: 1 });
     const exec = vi.spyOn(DatabaseSync.prototype, "exec");
-    expect(() => j.advance(input.restartId, 4, "release_intent", { checkpointManifest: {
-      closureDigest: "a".repeat(64), owners: [] } }, deadline())).toThrow("owner_unsupported");
+    await expect(advance(j, input.restartId, 4, "release_intent", { checkpointManifest: {
+      closureDigest: "a".repeat(64), owners: [] } }, deadline())).rejects.toThrow("owner_unsupported");
     expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE")).toBe(false);
     const forgedFields = { currentActor: { kind: "successor", instance: replacement } } as unknown as Parameters<typeof j.advance>[3];
-    expect(() => j.advance(input.restartId, 4, "unknown", forgedFields, deadline())).toThrow("revision_conflict");
-    expect(j.selected()).toEqual(retained);
-    expect(j.selected()?.state).toBe("prepared");
+    await expect(advance(j, input.restartId, 4, "unknown", forgedFields, deadline())).rejects.toThrow("revision_conflict");
+    expect(await selected(j)).toEqual(retained);
+    expect((await selected(j))?.state).toBe("prepared");
   });
-  it.skipIf(!portable).each(["id", "revision", "digest", "home", "sql_digest", "matching_digest"] as const)("retained %s envelope mismatch refuses lookup/selection/prepared read/advance without repair or BEGIN", async mismatch => {
-    const j = await bootstrap(), input = request(), accepted = j.admit(input, deadline());
-    expect(j.lookup(input.restartId)).toEqual(accepted); expect(j.selected()).toEqual(accepted);
-    const reader = j.preparedReader(input.restartId), fixture = new DatabaseSync(file());
+  it.each(["id", "revision", "digest", "home", "sql_digest", "matching_digest"] as const)("retained %s envelope mismatch refuses lookup/selection/prepared read/advance without repair or BEGIN", async mismatch => {
+    const j = await bootstrap(), input = request(), accepted = await admit(j, input, deadline());
+    expect(await lookup(j, input.restartId)).toEqual(accepted); expect(await selected(j)).toEqual(accepted);
+    const reader = await preparedReader(j, input.restartId), fixture = new DatabaseSync(file());
     try {
       fixture.exec("PRAGMA journal_mode=PERSIST; PRAGMA synchronous=FULL;");
       expect(reader.read()).toEqual(accepted);
@@ -144,18 +179,18 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
       const selection = () => fixture.prepare("SELECT * FROM selected_receipt").all();
       const retainedRows = rows(), retainedSelection = selection(), retainedBytes = [readFileSync(file()), readFileSync(file() + "-journal")];
       const exec = vi.spyOn(DatabaseSync.prototype, "exec");
-      expect(() => j.lookup(input.restartId)).toThrow("lineage_unknown"); expect(() => j.selected()).toThrow("lineage_unknown");
+      await expect(lookup(j, input.restartId)).rejects.toThrow("lineage_unknown"); await expect(selected(j)).rejects.toThrow("lineage_unknown");
       expect(() => reader.read()).toThrow("lineage_unknown");
-      expect(() => j.advance(input.restartId, 1, "preparing", {}, deadline())).toThrow("lineage_unknown");
+      await expect(advance(j, input.restartId, 1, "preparing", {}, deadline())).rejects.toThrow("lineage_unknown");
       expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE")).toBe(false);
       expect(rows()).toEqual(retainedRows); expect(selection()).toEqual(retainedSelection);
       expect([readFileSync(file()), readFileSync(file() + "-journal")]).toEqual(retainedBytes);
     } finally { reader.close(); fixture.close(); }
   });
-  it.skipIf(!portable)("a retained dangling selection refuses new-ID admission without overwriting its intent or accepted rows", async () => {
+  it("a retained dangling selection refuses new-ID admission without overwriting its intent or accepted rows", async () => {
     const j = await bootstrap(), input = request(), missing = request();
-    expect(j.selected()).toBeNull(); expect(j.lookup(missing.restartId)).toBeNull();
-    const accepted = j.admit(input, deadline()), reader = j.preparedReader(input.restartId), fixture = new DatabaseSync(file());
+    expect(await selected(j)).toBeNull(); expect(await lookup(j, missing.restartId)).toBeNull();
+    const accepted = await admit(j, input, deadline()), reader = await preparedReader(j, input.restartId), fixture = new DatabaseSync(file());
     try {
       expect(reader.read()).toEqual(accepted);
       // Explicit OWNED retained-state fault only; the normal source writer has
@@ -165,15 +200,15 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
       const rows = () => fixture.prepare("SELECT * FROM receipt_revisions").all(), selection = () => fixture.prepare("SELECT * FROM selected_receipt").all();
       const retainedRows = rows(), retainedSelection = selection(), retainedBytes = [readFileSync(file()), readFileSync(file() + "-journal")];
       const exec = vi.spyOn(DatabaseSync.prototype, "exec");
-      expect(j.lookup(input.restartId)).toEqual(accepted); expect(j.lookup(missing.restartId)).toBeNull();
-      expect(() => j.selected()).toThrow("lineage_unknown"); expect(() => reader.read()).toThrow("lineage_unknown");
-      expect(() => j.admit(missing, deadline())).toThrow("lineage_unknown");
+      expect(await lookup(j, input.restartId)).toEqual(accepted); expect(await lookup(j, missing.restartId)).toBeNull();
+      await expect(selected(j)).rejects.toThrow("lineage_unknown"); expect(() => reader.read()).toThrow("lineage_unknown");
+      await expect(admit(j, missing, deadline())).rejects.toThrow("lineage_unknown");
       expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE")).toBe(false);
       expect(rows()).toEqual(retainedRows); expect(selection()).toEqual(retainedSelection);
       expect([readFileSync(file()), readFileSync(file() + "-journal")]).toEqual(retainedBytes);
     } finally { reader.close(); fixture.close(); }
   });
-  it.skipIf(!portable)("real COMMIT_BUSY is locally settled and quarantined, never replayed or visible as acceptance", async () => {
+  it("real COMMIT_BUSY is locally settled and quarantined, never replayed or visible as acceptance", async () => {
     const j = await bootstrap(), input = request(), blocker = new DatabaseSync(file(), { readOnly: true });
     blocker.exec("BEGIN"); blocker.prepare("SELECT json FROM lifecycle_lineage").get();
     let commits = 0, begins = 0;
@@ -183,13 +218,13 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
       return sqliteExec.call(this, sql);
     });
     try {
-      expect(() => j.admit(input, deadline())).toThrow(LifecycleUnavailable);
+      await expect(admit(j, input, deadline())).rejects.toThrow(LifecycleUnavailable);
       expect(j.isQuarantined).toBe(true); expect(captured?.isTransaction).toBe(false); expect(commits).toBe(1);
       publicQuarantineRefuses(j, input.restartId); expect(committedFixtureRows()).toHaveLength(0);
-      expect(() => j.admit(input, deadline())).toThrow(LifecycleUnavailable); expect(begins).toBe(1);
+      await expect(admit(j, input, deadline())).rejects.toThrow(LifecycleUnavailable); expect(begins).toBe(1);
     } finally { spy.mockRestore(); blocker.exec("ROLLBACK"); blocker.close(); }
   });
-  it.skipIf(!portable).each([false, true])("injected IOERR/FULL active versus auto-rollback quarantine (autoRollback=%s)", async autoRollback => {
+  it.each([false, true])("injected IOERR/FULL active versus auto-rollback quarantine (autoRollback=%s)", async autoRollback => {
     const j = await bootstrap(), input = request(); let rollbacks = 0;
     vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function (this: DatabaseSync, sql: string) {
       if (sql === "BEGIN IMMEDIATE") captured = this;
@@ -200,29 +235,29 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
       if (sql === "ROLLBACK") rollbacks++;
       return sqliteExec.call(this, sql);
     });
-    expect(() => j.admit(input, deadline())).toThrow(LifecycleUnavailable);
+    await expect(admit(j, input, deadline())).rejects.toThrow(LifecycleUnavailable);
     expect(j.isQuarantined).toBe(true); expect(captured?.isTransaction).toBe(false);
     expect(rollbacks).toBe(autoRollback ? 0 : 1); publicQuarantineRefuses(j, input.restartId); expect(committedFixtureRows()).toHaveLength(0);
   });
-  it.skipIf(!portable)("failed ROLLBACK retains unknown transaction/lock without forced close or tentative receipt reads", async () => {
+  it("failed ROLLBACK retains unknown transaction/lock without forced close or tentative receipt reads", async () => {
     const j = await bootstrap(), input = request();
     vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function (this: DatabaseSync, sql: string) {
       if (sql === "BEGIN IMMEDIATE") captured = this;
       if (sql === "COMMIT" || sql === "ROLLBACK") throw new Error("fixture unsettled transaction");
       return sqliteExec.call(this, sql);
     });
-    expect(() => j.admit(input, deadline())).toThrow(LifecycleUnavailable);
+    await expect(admit(j, input, deadline())).rejects.toThrow(LifecycleUnavailable);
     expect(captured?.isTransaction).toBe(true); expect(j.isQuarantined).toBe(true); expect(j.close()).toBe(false);
     expect(captured!.prepare("SELECT count(*) AS n FROM receipt_revisions").get()?.n).toBe(1);
     publicQuarantineRefuses(j, input.restartId); expect(committedFixtureRows()).toHaveLength(0);
   });
-  it.skipIf(!portable)("unknown transaction-state API quarantines before BEGIN and cannot authorize close", async () => {
+  it("unknown transaction-state API quarantines before BEGIN and cannot authorize close", async () => {
     const spy = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function (this: DatabaseSync, sql: string) {
       if (sql.includes("PRAGMA journal_mode=PERSIST")) captured = this;
       return sqliteExec.call(this, sql);
     });
     const j = await bootstrap(); spy.mockRestore();
-    const input = request(), retained = j.admit(input, deadline());
+    const input = request(), retained = await admit(j, input, deadline());
     // Native isTransaction is nonconfigurable. Inject ONLY the unavailable
     // observation at this private fixture boundary; keep real SQLite methods.
     const actual = captured!;
@@ -230,7 +265,7 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     try {
       const exec = vi.spyOn(DatabaseSync.prototype, "exec");
       const reads = vi.spyOn(DatabaseSync.prototype, "prepare");
-      expect(() => j.advance(input.restartId, 1, "preparing", {}, deadline())).toThrow(LifecycleUnavailable);
+      await expect(advance(j, input.restartId, 1, "preparing", {}, deadline())).rejects.toThrow(LifecycleUnavailable);
       expect(j.isQuarantined).toBe(true); expect(j.close()).toBe(false);
       expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE")).toBe(false);
       publicQuarantineRefuses(j, input.restartId);
@@ -238,7 +273,7 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
       expect(reads.mock.contexts.some(context => context === actual)).toBe(false);
     } finally { Reflect.set(j, "writer", actual); }
   });
-  it.skipIf(!portable)("SIMULATED error after actual COMMIT retains committed bytes but quarantined public APIs cannot claim readiness or close", async () => {
+  it("SIMULATED error after actual COMMIT retains committed bytes but quarantined public APIs cannot claim readiness or close", async () => {
     const j = await bootstrap(), input = request();
     vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function (this: DatabaseSync, sql: string) {
       if (sql === "BEGIN IMMEDIATE") captured = this;
@@ -246,14 +281,14 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
       if (sql === "COMMIT") throw Object.assign(new Error("SIMULATED error after real COMMIT"), { errcode: 10 });
       return result;
     });
-    expect(() => j.admit(input, deadline())).toThrow(LifecycleUnavailable);
+    await expect(admit(j, input, deadline())).rejects.toThrow(LifecycleUnavailable);
     expect(captured!.isTransaction).toBe(false); expect(j.isQuarantined).toBe(true);
     const before = readFileSync(file()), rows = committedFixtureRows(); expect(rows).toHaveLength(1);
     expect(JSON.parse(String(rows[0]!.json))).toMatchObject({ restartId: input.restartId, state: "accepted", revision: 1 });
     publicQuarantineRefuses(j, input.restartId);
     expect(readFileSync(file())).toEqual(before); expect(committedFixtureRows()).toEqual(rows);
   });
-  it.skipIf(!portable)("actual crash hot journal cannot be repaired or reopened through quarantined public APIs", async () => {
+  it("actual crash hot journal cannot be repaired or reopened through quarantined public APIs", async () => {
     const j = await bootstrap(), input = request();
     const fault = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function (this: DatabaseSync, sql: string) {
       if (sql === "BEGIN IMMEDIATE") captured = this;
@@ -261,7 +296,7 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
       if (sql === "COMMIT") throw new Error("SIMULATED error after real COMMIT");
       return result;
     });
-    expect(() => j.admit(input, deadline())).toThrow(LifecycleUnavailable); fault.mockRestore();
+    await expect(admit(j, input, deadline())).rejects.toThrow(LifecycleUnavailable); fault.mockRestore();
     // The exact owned synthetic child deliberately exits mid-transaction. Its
     // small pager cache forces real journal/database spill; no signals or fake
     // journal header, writable recovery, or production teardown are used.
@@ -282,14 +317,27 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     publicQuarantineRefuses(j, input.restartId);
     expect(readFileSync(file())).toEqual(main); expect(readFileSync(file() + "-journal")).toEqual(rollback);
   });
-  it.skipIf(!portable)("missing established journal is unknown, not repaired/recreated or treated as fresh home", async () => {
-    const j = await bootstrap(), input = request(); j.admit(input, deadline());
-    const before = readFileSync(file()); renameSync(file() + "-journal", file() + "-fixture-retained-journal");
-    expect(() => j.lookup(input.restartId)).toThrow(LifecycleUnavailable);
-    expect(() => j.admit(input, deadline())).toThrow(LifecycleUnavailable);
+  it("missing established journal is unknown, not repaired/recreated or treated as fresh home", async () => {
+    const j = await bootstrap(), input = request(); await admit(j, input, deadline());
+    expect((await lookup(j, input.restartId))?.state).toBe("accepted"); expect((await selected(j))?.restartId).toBe(input.restartId);
+    const before = readFileSync(file()), beforeRows = committedFixtureRows(), beforeJournal = readFileSync(file() + "-journal");
+    renameSync(file() + "-journal", file() + "-fixture-retained-journal");
+    const exec = vi.spyOn(DatabaseSync.prototype, "exec");
+    await expect(lookup(j, input.restartId)).rejects.toThrow(LifecycleUnavailable);
+    await expect(selected(j)).rejects.toThrow(LifecycleUnavailable);
+    await expect(admit(j, input, deadline())).rejects.toThrow(LifecycleUnavailable);
+    expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE")).toBe(false);
     expect(existsSync(file() + "-journal")).toBe(false); expect(readFileSync(file()).equals(before)).toBe(true);
-    await expect(LifecycleJournal.bootstrap(env.home, owner)).rejects.toMatchObject({ reason: "lineage_unknown" });
+    if (portable) await expect(LifecycleJournal.bootstrap(journalHome, owner)).rejects.toMatchObject({ reason: "lineage_unknown" });
+    else {
+      await expect(LifecycleJournal.bootstrap(journalHome, owner)).rejects.toMatchObject({ reason: "publication_unproved" });
+      const end = performance.now() + LIFECYCLE_PREPARE_MS;
+      await expect(LifecycleJournal.bootstrapServing(servingFixture!.broker.lifecycleServingCapability("prepare", end), end))
+        .rejects.toMatchObject({ reason: "publication_unproved" });
+    }
+    expect(existsSync(file() + "-journal")).toBe(false); expect(readFileSync(file())).toEqual(before);
+    expect(committedFixtureRows()).toEqual(beforeRows); expect(readFileSync(file() + "-fixture-retained-journal")).toEqual(beforeJournal);
     renameSync(file() + "-fixture-retained-journal", file() + "-journal");
-    expect(j.lookup(input.restartId)?.state).toBe("accepted");
+    expect((await lookup(j, input.restartId))?.state).toBe("accepted");
   });
 });
