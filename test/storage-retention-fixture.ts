@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { registerHistoryFunctions } from "../src/core/history-codec.js";
 
 export const sha256File = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
@@ -23,6 +24,7 @@ export function originalFiles(paths: string[]): Record<string, string> {
  * This reads original tables directly; it does not rely on finalize/absorb's equivalence rules. */
 export function storedInventory(path: string): string {
   const db = new DatabaseSync(path, { readOnly: true });
+  registerHistoryFunctions(db);
   const q = (s: string) => `"${s.replaceAll('"', '""')}"`;
   try {
     const schema = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all();
