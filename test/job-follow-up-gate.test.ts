@@ -121,6 +121,9 @@ async function clientFor(admitCodex?: ServerContext["admitCodex"]): Promise<Clie
 it.each(reasons)("renders only whitelisted facts for authorized MCP %s", async reason => {
   prepare(reason); const bytes = retainFixture();
   const client = await clientFor();
+  // Registration installs a generic resumer on existing jobs; the controlled
+  // fixture for this gate deliberately has none at the measured command boundary.
+  if (reason === "cancellation_guard_no_resume") job.resume = undefined;
   const response = await client.callTool({ name: "message_subagent", arguments: { job: job.name, message: SECRET } });
   expect(response.isError).toBe(true);
   const rendered = JSON.stringify(response.content);
