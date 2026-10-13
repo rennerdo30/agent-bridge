@@ -17,6 +17,12 @@
   },
   "uiSha256": "de79dfca55109c3f807e5608ff8bb83a5ade39e37a562263b2dd0c05e0a17845",
   "brokerUpgradeReview": "AB-281 intentionally changes broker/node election and retirement; dashboard and UI pins stay unchanged.",
+  "reIntegration": {
+    "base": "7adb4817ea2800e56bd26737a81dbe28d7f17219",
+    "commit": "a987d21e",
+    "sourceReverts": ["a49fe35e", "1f9da610", "11d9c08d", "0181ba20", "cdef3aeb", "db05b907", "eff78e4b", "1a744ed9", "6b0d6b24"],
+    "reason": "Inverse source and attribution commits restore the six approved AB-281 broker/node hashes below, including AB-280 composition and d97122c1 local retirement grace. All thirteen hashes match b2304743; dashboard and UI pins remain unchanged. The Windows grace correction only changes test synchronization."
+  },
   "updates": {
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",

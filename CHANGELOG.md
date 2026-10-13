@@ -5,6 +5,7 @@
 - An eligible newer session can take over the broker automatically after a bounded request drain and durable store flush, with a 60-second cooldown (AB-281). A broker already running a version before 0.30.15 needs one normal restart of its hosting session to enable future automatic handovers.
 - Broker handovers react when a newer host becomes eligible, retry a busy drain after five seconds, and give the successor its full reconnect window, even when the retiring host misses its own handover notice. The 60-second cooldown applies after successful handovers.
 - Health checks reconnect across a broker handover.
+- The delayed handover grace regression measures its unchanged polling budget with an independent clock, so its simulated election-clock jump cannot expire that budget early on Windows.
 
 ## 0.30.14
 
