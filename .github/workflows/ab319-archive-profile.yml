@@ -25,6 +25,11 @@ jobs:
         env:
           AB319_PROFILE_DIR: .agent-bridge-test/ab319-profile
         run: node node_modules/vitest/vitest.mjs run test/jobs-archive-persist.test.ts --maxWorkers=1
+      - name: Generate plugin bundle patch after passing regression
+        run: |
+          npm run build
+          git add -- plugins
+          git diff --cached --binary -- plugins > .agent-bridge-test/ab319-profile/plugin-bundles.patch
       - name: Preserve profile and measurements even on pre-fix failure
         if: always()
         uses: actions/upload-artifact@v4

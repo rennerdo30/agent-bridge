@@ -601,7 +601,9 @@ export class JobManager {
       if (overflow.size) {
         // A stale session may still hold finished records already retained elsewhere.
         // Preserve changed records, but do not republish identical archives per node.
-        const unpublished = [...overflow].filter(job => !isDeepStrictEqual(archived.get(job.id), job));
+        // toStored includes undefined optionals; compare the complete JSON value
+        // the archive persists, preserving unknown fields and distinct versions.
+        const unpublished = [...overflow].filter(job => !isDeepStrictEqual(archived.get(job.id), JSON.parse(JSON.stringify(job))));
         if (unpublished.length) {
           archiveJobs(this.storePath, unpublished);
           this.log.info("archived finished jobs", { count: unpublished.length });
