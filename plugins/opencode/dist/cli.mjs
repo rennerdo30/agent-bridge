@@ -85,7 +85,7 @@ async function main(argv) {
     case "db":
       return (await import("./chunks/db-IZPBBIRQ.mjs")).runDb(rest, home, out);
     case "storage":
-      return (await import("./chunks/storage-YE42CPHE.mjs")).runStorage(rest, home, out);
+      return (await import("./chunks/storage-4YKYLER2.mjs")).runStorage(rest, home, out);
     case "reindex":
       if (rest.length) {
         out("Usage: agent-bridge reindex");
