@@ -171,6 +171,12 @@ export class MessageStore {
   private archiveMaintenanceFailed = false;
   private closed = false;
   private readonly nativeLifecycleReader = new NativeLifecycleReader();
+  private lifecycleMaintenanceQuiesced = false;
+  private lifecycleResumeArchive = false;
+  private lifecycleWriteGeneration = 0;
+  private lifecycleWriteUnknown = false;
+  private lifecyclePendingWriteCount = 0;
+  private lifecycleDrainWaiter: (() => void) | null = null;
   readonly decisions: DecisionStore;
   readonly history: HistoryIndex;
   readonly historyFile: string;
@@ -347,11 +353,62 @@ export class MessageStore {
 
   /** Keep lock waits out of the broker event loop. Callbacks must be synchronous atomic steps. */
   retryWrite<T>(operation: () => T): Promise<T> {
-    return retrySqlite(() => {
+    // Register before the first synchronous attempt, including its lock wait.
+    // Observation never aborts/rejects accepted operations to manufacture drain.
+    let resolve!: (value: T) => void, reject!: (error: unknown) => void;
+    const tracked = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+    this.lifecyclePendingWriteCount++; this.lifecycleWriteGeneration++;
+    if (!Number.isSafeInteger(this.lifecyclePendingWriteCount) || !Number.isSafeInteger(this.lifecycleWriteGeneration)) this.lifecycleWriteUnknown = true;
+    const settled = () => {
+      this.lifecyclePendingWriteCount--; this.lifecycleWriteGeneration++;
+      if (!Number.isSafeInteger(this.lifecycleWriteGeneration)) this.lifecycleWriteUnknown = true;
+      if (!this.lifecyclePendingWriteCount) this.lifecycleDrainWaiter?.();
+    };
+    void tracked.then(settled, () => { this.lifecycleWriteUnknown = true; settled(); });
+    void retrySqlite(() => {
       this.db.exec(`PRAGMA busy_timeout = ${SQLITE_REQUEST_BUSY_MS}`);
       try { return operation(); }
       finally { this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`); }
-    }, Infinity, this.writeAbort.signal);
+    }, Infinity, this.writeAbort.signal).then(resolve, reject);
+    return tracked;
+  }
+
+  /** Inhibits this maintenance producer only. Dispatch and all other owners need their own gates. */
+  quiesceLifecycleMaintenance(): void {
+    this.lifecycleMaintenanceQuiesced = true;
+    this.lifecycleResumeArchive ||= !!this.archiveTimer;
+    if (this.archiveTimer) clearTimeout(this.archiveTimer);
+    this.archiveTimer = null;
+  }
+  resumeLifecycleMaintenance(): void {
+    this.lifecycleMaintenanceQuiesced = false;
+    const resume = this.lifecycleResumeArchive; this.lifecycleResumeArchive = false;
+    if (!this.closed && resume) this.scheduleArchiveMaintenance();
+  }
+  lifecycleWriteManifest(): { generation: number; pending: number; unknown: boolean; maintenanceQuiesced: boolean;
+    pendingReaders: number; transactionsSettled: boolean; legacyArchivePending: boolean; purgePending: boolean } {
+    return { generation: this.lifecycleWriteGeneration, pending: this.lifecyclePendingWriteCount, unknown: this.lifecycleWriteUnknown,
+      maintenanceQuiesced: this.lifecycleMaintenanceQuiesced, pendingReaders: this.nativeLifecycleReader.pending(),
+      transactionsSettled: !this.closed && [this.db, this.archiveDb, this.historyDb].every(db => db.isTransaction === false),
+      legacyArchivePending: this.legacyArchivePending, purgePending: this.purgeCutoff !== null || this.nextPurgeCutoff !== null };
+  }
+  /** Queue settlement observation, not a file flush/checkpoint or release witness. */
+  async settleLifecycleWrites(deadline: number): Promise<ReturnType<MessageStore["lifecycleWriteManifest"]> & { settled: boolean }> {
+    // One bounded observer, with no copy of the admitted retry queue/payloads.
+    if (this.lifecycleDrainWaiter) return { ...this.lifecycleWriteManifest(), settled: false };
+    if (Number.isFinite(deadline) && performance.now() < deadline && this.lifecyclePendingWriteCount) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let waiter!: () => void;
+      try {
+        await new Promise<void>(resolve => {
+          waiter = resolve; this.lifecycleDrainWaiter = waiter;
+          timer = setTimeout(resolve, Math.max(0, deadline - performance.now()));
+        });
+      } finally { if (timer) clearTimeout(timer); if (this.lifecycleDrainWaiter === waiter) this.lifecycleDrainWaiter = null; }
+    }
+    const manifest = this.lifecycleWriteManifest();
+    return { ...manifest, settled: Number.isFinite(deadline) && performance.now() < deadline && manifest.maintenanceQuiesced &&
+      !manifest.pending && !manifest.unknown && !manifest.pendingReaders && manifest.transactionsSettled };
   }
 
   insert(m: BridgeMessage): void {
@@ -587,10 +644,11 @@ export class MessageStore {
   }
 
   private scheduleArchiveMaintenance(delayMs = 50): void {
+    if (this.lifecycleMaintenanceQuiesced) { this.lifecycleResumeArchive = true; return; }
     if (this.closed || this.archiveMaintenanceFailed || this.archiveTimer) return;
     this.archiveTimer = setTimeout(() => {
       this.archiveTimer = null;
-      if (this.closed) return;
+      if (this.closed || this.lifecycleMaintenanceQuiesced) return;
       let more = false;
       let retryDelay = 50;
       try {
