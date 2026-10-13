@@ -10,7 +10,7 @@ import { recordStorePeer } from "../src/core/store-compatibility.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { nullLogger } from "../src/core/logger.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
-import type { PeerInfo } from "../src/core/protocol.js";
+import type { Frame, PeerInfo } from "../src/core/protocol.js";
 import { cmdlineIsInteractiveAgent } from "../src/core/procinfo.js";
 
 let env: TestEnv;
@@ -125,17 +125,16 @@ it("a drain timeout keeps ownership and lets the admitted request finish", async
 });
 
 it("the retiring host yields locally even when its own handover event is lost", async () => {
-  let oldClient: BridgeClient | undefined, dropped = 0;
-  const request = BridgeClient.prototype.request, emit = BridgeClient.prototype.emit;
-  vi.spyOn(BridgeClient.prototype, "request").mockImplementation(function (this: BridgeClient, op, args, timeout) {
-    if (op === "hello" && (args as any).peer?.name === "old") oldClient = this;
-    return request.call(this, op, args, timeout);
-  });
-  vi.spyOn(BridgeClient.prototype, "emit").mockImplementation(function (this: BridgeClient, event, ...args: any[]) {
-    if (this === oldClient && event === "event" && args[0] === "broker_handover") { dropped++; return true; }
-    return (emit as any).call(this, event, ...args);
-  });
   const old = await oldHost(), next = env.node("next");
+  const broker = internals(old).broker as unknown as { write(conn: { peer: PeerInfo | null }, frame: Frame): boolean };
+  const write = broker.write.bind(broker);
+  let dropped = 0;
+  // Drop the old host's notice at publication. Its socket can close before
+  // parsing a queued event, so counting client receipt is itself a race.
+  vi.spyOn(broker, "write").mockImplementation((conn, frame) => {
+    if (conn.peer?.id === old.id && frame.t === "evt" && frame.ev === "broker_handover") { dropped++; return true; }
+    return write(conn, frame);
+  });
   const stored = await old.send({ to: "later", body: "retained without self handover event" });
   let delayReconnect = false;
   next.once("disconnected", () => { delayReconnect = true; });
