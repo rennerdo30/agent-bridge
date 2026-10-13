@@ -266,7 +266,11 @@ it("AB-215 absorption boundary: integral REAL stays REAL and its exact stored re
   expect(db.prepare("SELECT typeof(payload) t,payload FROM numeric_row").get()).toEqual(before);
 });
 
-it.each(["integer-receipt", "malformed-json", "missing-column"] as const)("AB-215 absorption boundary: %s cannot authorize removal or OR IGNORE success", async kind => {
+it.each([
+  ["integer-receipt", false], ["integer-receipt", true],
+  ["malformed-json", false], ["malformed-json", true],
+  ["missing-column", false], ["missing-column", true],
+] as const)("AB-215 absorption boundary: %s checkpoint done=%s cannot authorize removal or OR IGNORE success", async (kind, done) => {
   await verifiedHome(); runAbsorb(env.home, { apply: true });
   const backup = join(env.home, "bridge.db.backup-216-invalid"), db = new DatabaseSync(backup); closes.push(() => db.close());
   db.exec("CREATE TABLE numeric_row(id INTEGER PRIMARY KEY,payload); INSERT INTO numeric_row VALUES(1,1.0)");
@@ -275,9 +279,9 @@ it.each(["integer-receipt", "malformed-json", "missing-column"] as const)("AB-21
   const payload = kind === "integer-receipt" ? '{"columns":["id","payload"],"values":[{"i":"1"},{"i":"1"}]}' : kind === "malformed-json" ? '{bad' : '{"columns":["id"],"values":[{"i":"1"}]}';
   const archive = new DatabaseSync(join(env.home, "archive.db")); closes.push(() => archive.close());
   archive.prepare("INSERT INTO absorbed_rows VALUES('numeric_row',?,?,?,1)").run(digest, payload, "legacy");
-  // A historical completion flag must not bypass validation of the lossy receipt.
+  // Neither a completed nor a partial historical cursor can bypass an unvalidated prefix receipt.
   const st = statSync(backup), sig = `${backup}|${st.size}|${Math.trunc(st.mtimeMs)}`;
-  archive.prepare("INSERT INTO absorb_progress VALUES(?,'numeric_row',1,1)").run(sig);
+  archive.prepare("INSERT INTO absorb_progress VALUES(?,'numeric_row',1,?)").run(sig, done ? 1 : 0);
   for (const check of [() => planFinalize(env.home, { prove: true }), () => runFinalize(env.home, () => {}, { dryRun: true }), () => runFinalize(env.home, () => {})]) {
     expect(check().kept.map(i => i.path)).toContain(backup);
     expect(p.storedDigest([...candidateRows(db, "numeric_row")][0]!)).toBe(before);
@@ -294,6 +298,22 @@ it.each(["integer-receipt", "malformed-json", "missing-column"] as const)("AB-21
   expect(archive.prepare("SELECT row FROM absorbed_rows WHERE source_table='numeric_row' AND digest=?").get(digest)!.row).toBe(payload);
   expect(p.storedDigest([...candidateRows(db, "numeric_row")][0]!)).toBe(before);
   expect(planFinalize(env.home, { prove: true }).kept.map(i => i.path)).toContain(backup);
+});
+
+it("AB-215 absorption boundary: negative, zero and minimum bigint rowids are included before any checkpoint", async () => {
+  await verifiedHome(); runAbsorb(env.home, { apply: true });
+  const backup = join(env.home, "bridge.db.backup-218-rowids"), db = new DatabaseSync(backup); closes.push(() => db.close());
+  db.exec("CREATE TABLE rowid_data(id INTEGER PRIMARY KEY,payload); INSERT INTO rowid_data VALUES(-9223372036854775808,'minimum'),(-2,'negative'),(0,'zero'),(9223372036854775807,'maximum')");
+  const before = [...candidateRows(db, "rowid_data")].map(r => rowDigest(r, ["id", "payload"], false));
+  const archive = new DatabaseSync(join(env.home, "archive.db")); closes.push(() => archive.close());
+  const st = statSync(backup), sig = `${backup}|${st.size}|${Math.trunc(st.mtimeMs)}`;
+  archive.prepare("INSERT INTO absorb_progress VALUES(?,'rowid_data',9223372036854775807,0)").run(sig);
+  expect(planFinalize(env.home, { prove: true }).kept.map(i => i.path)).toContain(backup);
+  expect(runAbsorb(env.home, { apply: true, batchRows: 1 }).sources.find(s => s.path === backup)?.rows).toBe(4);
+  expect(readAbsorbedRows(env.home, "rowid_data").map(r => r.id).sort((a, b) => (a as bigint) < (b as bigint) ? -1 : 1)).toEqual([-9223372036854775808n, -2n, 0n, 9223372036854775807n]);
+  expect([...candidateRows(db, "rowid_data")].map(r => rowDigest(r, ["id", "payload"], false))).toEqual(before);
+  expect(runAbsorb(env.home, { apply: true }).sources.find(s => s.path === backup)?.rows).toBe(0);
+  expect(planFinalize(env.home, { prove: true }).items.map(i => i.path)).toContain(backup);
 });
 
 it("AB-215 absorption boundary: unsupported TEXT bytes preserve whole-row witnesses and stop before counts/cursor claims", async () => {

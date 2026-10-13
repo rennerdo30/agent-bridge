@@ -151,7 +151,9 @@ function value(row: Row, column: string): SQLInputValue {
 /** Same content of one column; identically encoded values are compared without decoding. */
 function sameColumn(a: Row, b: Row, column: string): boolean {
   const ca = a[`${column}_codec`], cb = b[`${column}_codec`];
-  if (ca !== undefined && cb !== undefined && String(ca) === String(cb) && sameCell(storedCell(a, column), storedCell(b, column))) return true;
+  const ac = ca === null || ca === undefined ? 0 : Number(ca), bc = cb === null || cb === undefined ? 0 : Number(cb);
+  // Only documented codec ids justify a representation shortcut; invalid TEXT codec bytes must not collapse.
+  if ([0, 1, 2].includes(ac) && ac === bc && sameCell(storedCell(a, column), storedCell(b, column))) return true;
   return sameCell(plainCell(value(a, column)), plainCell(value(b, column)));
 }
 
@@ -357,13 +359,13 @@ export function tableProof(candidate: DatabaseSync, table: string, ctx: ProofCon
     return out;
   };
 
-  function* chunks(after = -1n): Generator<ChunkResult> {
+  function* chunks(after?: bigint): Generator<ChunkResult> {
     let rowid = true;
     let source: Iterator<Row>;
     // Key-only rule with an index on both sides: walk both indexes in key order (small, sequential). Any row this
     // merge does not find still goes through the indexed lookup below, so an ordering surprise only costs time.
     const keyList = key ? key.map(q).join(",") : "";
-    const merging = key && !sameCols.length && after === -1n && encoding(candidate) === "UTF-8" && indexedBy(candidate, table, key)
+    const merging = key && !sameCols.length && after === undefined && encoding(candidate) === "UTF-8" && indexedBy(candidate, table, key)
       ? keyed.filter(t => encoding(t.l.db) === "UTF-8" && indexedBy(t.l.db, t.name, key!)) : [];
     const mergeCursors = merging.map(t => {
       const s = proofRead(t.l.db, t.cols.map(c => c.name), key!, p => `SELECT ${p} FROM ${q(t.name)} ORDER BY ${keyList}`);
@@ -390,8 +392,8 @@ export function tableProof(candidate: DatabaseSync, table: string, ctx: ProofCon
         source = s.iterate();
       }
     } else try {
-      const s = proofRead(candidate, allColumns, [...needed, ...(aligned?.by ? [aligned.by] : [])], p => `SELECT rowid AS ${q(cid)}, ${p} FROM ${q(table)} WHERE rowid>? ORDER BY rowid`);
-      source = s.iterate(after);
+      const s = proofRead(candidate, allColumns, [...needed, ...(aligned?.by ? [aligned.by] : [])], p => `SELECT rowid AS ${q(cid)}, ${p} FROM ${q(table)}${after === undefined ? "" : " WHERE rowid>?"} ORDER BY rowid`);
+      source = after === undefined ? s.iterate() : s.iterate(after);
     } catch {
       rowid = false;
       const s = proofRead(candidate, allColumns, allColumns, p => `SELECT ${p} FROM ${q(table)}`);

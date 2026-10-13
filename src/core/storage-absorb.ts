@@ -66,13 +66,14 @@ function absorbDatabase(path: string, ctx: ProofContext, archive: DatabaseSync |
     for (const table of provableTables(db)) {
       const p = tableProof(db, table, ctx, alignedTarget(table, ctx), options.batchRows);
       if (!p.total) continue;
-      const progress = archive?.prepare("SELECT after_rowid, done FROM absorb_progress WHERE source=? AND table_name=?").get(sig, table);
-      // Historical completion is not a current surviving-payload proof (older receipts could be lossy).
+      const progress = archive?.prepare("SELECT done FROM absorb_progress WHERE source=? AND table_name=?").get(sig, table);
+      // Any checkpoint can precede a lossy historical receipt. Re-prove its prefix, then import only missing rows.
       const conflictsBefore = source.conflicts;
       let unsupported = false;
-      let after = progress?.done ? -1n : BigInt(Number(progress?.after_rowid ?? -1));
+      let after: bigint | undefined;
       options.report?.(`  ${table}: ${p.total.toLocaleString("en")} rows`);
-      for (const chunk of p.chunks(after)) {
+      // An absent lower bound includes SQLite's negative, zero and minimum bigint rowids.
+      for (const chunk of p.chunks()) {
         // Re-proven rows need no write batch. Keep interruption boundaries on actual imports.
         if (!chunk.rows.length) { if (chunk.last !== null) after = chunk.last; continue; }
         if (archive) archive.exec("BEGIN IMMEDIATE");
@@ -97,7 +98,7 @@ function absorbDatabase(path: string, ctx: ProofContext, archive: DatabaseSync |
           } catch (err) { problem = (err as Error).message; }
           if (problem) {
             if (archive?.isTransaction) archive.exec("ROLLBACK");
-            if (progress?.done) archive?.prepare("UPDATE absorb_progress SET done=0,after_rowid=-1 WHERE source=? AND table_name=?").run(sig, table);
+            if (progress) archive?.prepare("UPDATE absorb_progress SET done=0,after_rowid=-1 WHERE source=? AND table_name=?").run(sig, table);
             source.problems.push(`${table}: ${problem}; originals kept and cursor not advanced`);
             unsupported = true; break;
           }
@@ -108,7 +109,7 @@ function absorbDatabase(path: string, ctx: ProofContext, archive: DatabaseSync |
           const stored = receipts();
           if (archive && payloads.some(item => !stored.has(item.digest) || !valid(item, stored.get(item.digest)!))) {
             archive.exec("ROLLBACK");
-            if (progress?.done) archive.prepare("UPDATE absorb_progress SET done=0,after_rowid=-1 WHERE source=? AND table_name=?").run(sig, table);
+            if (progress) archive.prepare("UPDATE absorb_progress SET done=0,after_rowid=-1 WHERE source=? AND table_name=?").run(sig, table);
             source.problems.push(`${table}: stored receipt failed exact roundtrip; originals kept and cursor not advanced`);
             unsupported = true; break;
           }
@@ -129,7 +130,7 @@ function absorbDatabase(path: string, ctx: ProofContext, archive: DatabaseSync |
       }
       // A table with conflicts is scanned again on every run, so each run reports them.
       if (!unsupported && source.conflicts === conflictsBefore) archive?.prepare("INSERT INTO absorb_progress(source,table_name,after_rowid,done) VALUES(?,?,?,1) ON CONFLICT(source,table_name) DO UPDATE SET done=1")
-        .run(sig, table, after);
+        .run(sig, table, after ?? -1n);
       else if (!unsupported) archive?.prepare("DELETE FROM absorb_progress WHERE source=? AND table_name=?").run(sig, table);
     }
   } catch (err) {

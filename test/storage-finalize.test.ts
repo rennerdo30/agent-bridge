@@ -557,6 +557,31 @@ it("AB-215 SQL boundary: collations and mixed TEXT encodings do not authorize by
   expect(proveTable(source, "retained_225_words", { live: [{ label: "same", db: source }] })).not.toBeNull();
 });
 
+it("AB-215 SQL boundary: first proof includes minimum/negative/zero rowids and explicit resume retains its strict bound", () => {
+  const db = new DatabaseSync(":memory:"); closes.push(() => db.close());
+  db.exec("CREATE TABLE rowid_payload(id INTEGER PRIMARY KEY,payload); CREATE TABLE retained_226_rowid_payload(id INTEGER PRIMARY KEY,payload); INSERT INTO retained_226_rowid_payload VALUES(-9223372036854775808,'minimum'),(-1,'negative'),(0,'zero'); INSERT INTO rowid_payload SELECT * FROM retained_226_rowid_payload; UPDATE rowid_payload SET payload='different' WHERE id=-9223372036854775808;");
+  const ctx = { live: [{ label: "fixture", db }] }, p = tableProof(db, "retained_226_rowid_payload", ctx);
+  expect(p.total).toBe(3);
+  expect(proveTable(db, p.table, ctx)).toMatch(/conflict/);
+  expect([...p.chunks()].reduce((n, c) => n + c.present + c.rows.length + c.absorbed, 0)).toBe(3);
+  expect([...p.chunks(-1n)].reduce((n, c) => n + c.present + c.rows.length + c.absorbed, 0)).toBe(1);
+  db.exec("UPDATE rowid_payload SET payload='minimum' WHERE id=-9223372036854775808");
+  expect(proveTable(db, p.table, ctx)).toBeNull();
+});
+
+it("AB-215 SQL boundary: malformed TEXT codec metadata cannot use an identical-payload fast path", async () => {
+  const { history, retained, id } = await retainedPayload("history_documents", false);
+  history.prepare("UPDATE history_documents SET body=?,body_codec=CAST(x'fe' AS TEXT) WHERE rowid=?").run(retainedBody, id);
+  history.prepare(`UPDATE ${retained} SET body=?,body_codec=CAST(x'ff' AS TEXT)`).run(retainedBody);
+  const before = storedContent(history, retained);
+  expect(() => runFinalize(env.home, () => {})).toThrow(/Unknown history codec/);
+  expect(storedContent(history, retained)).toEqual(before);
+  expect(history.prepare(`SELECT typeof(body_codec) t,hex(CAST(body_codec AS BLOB)) h FROM ${retained}`).get()).toEqual({ t: "text", h: "FF" });
+  history.prepare("UPDATE history_documents SET body_codec=0 WHERE rowid=?").run(id);
+  history.exec(`UPDATE ${retained} SET body_codec=0`);
+  expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toContain(`history.db:${retained}`);
+});
+
 it.each([
   ["history_pending", false], ["history_pending", true],
   ["history_documents", false], ["history_documents", true],
