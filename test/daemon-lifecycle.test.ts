@@ -1,6 +1,6 @@
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -52,6 +52,20 @@ function node(name: string, launch?: NonNullable<ConstructorParameters<typeof Br
 async function port() {
   const server = createServer(); await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const value = (server.address() as { port: number }).port; await new Promise<void>(resolve => server.close(() => resolve())); return value;
+}
+function copyFixtureRuntime(source: string, target: string): void {
+  // Node's native cpSync has Windows Unicode regressions (nodejs/node#59636).
+  // Set up the fixture with ordinary file APIs, then prove every copied byte.
+  mkdirSync(target, { recursive: true });
+  for (const entry of readdirSync(source, { withFileTypes: true })) {
+    const from = join(source, entry.name), to = join(target, entry.name);
+    if (entry.isDirectory()) copyFixtureRuntime(from, to);
+    else {
+      expect(entry.isFile(), "fixture runtime must contain regular files only").toBe(true);
+      copyFileSync(from, to);
+      expect(readFileSync(to).equals(readFileSync(from)), "fixture runtime bytes must match hosted bundle").toBe(true);
+    }
+  }
 }
 
 describe("standalone demand-start broker", () => {
@@ -141,8 +155,9 @@ describe("standalone demand-start broker", () => {
     expect(launch).not.toHaveBeenCalled(); expect(a.isBroker).toBe(false); expect(host.isBroker).toBe(true);
   });
   it("parent exit and Windows prohibiting Job Object close leave the same authenticated daemon alive", async () => {
-    const runtime = join(env.home, "runtime with spaces-日本"); cpSync(join(import.meta.dirname, "../plugins/codex/dist"), runtime, { recursive: true });
+    const runtime = join(env.home, "runtime with spaces-日本"); copyFixtureRuntime(join(import.meta.dirname, "../plugins/codex/dist"), runtime);
     const parentCli = join(runtime, "cli.mjs");
+    expect(existsSync(parentCli), "copied Unicode fixture entry must exist before parent launch").toBe(true);
     const gate = String.raw`
       process.send('ready');
       process.on('message', message => {
