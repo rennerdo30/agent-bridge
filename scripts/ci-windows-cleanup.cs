@@ -24,6 +24,8 @@ public static class CiWindowsCleanup
         public string Path;
         public SafeFileHandle Handle;
         public uint Attributes;
+        public Entry Target;
+        public string Substitute;
     }
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern SafeFileHandle CreateFile(string path, uint access, uint share,
@@ -45,9 +47,12 @@ public static class CiWindowsCleanup
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, StringBuilder path,
         uint size, uint flags);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool DeviceIoControl(SafeFileHandle handle, uint code, IntPtr input,
+        uint inputSize, byte[] output, uint outputSize, out uint returned, IntPtr overlapped);
 
     static void Check(bool ok) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
-    static Entry Open(string path, bool deleting, bool marker) {
+    static Entry Open(string path, bool deleting, bool marker, bool allowJunction = false) {
         // OPEN_REPARSE_POINT inspects the entry itself; BACKUP_SEMANTICS permits dirs.
         // READ_DATA / LIST_DIRECTORY makes ancestor handles participate in sharing
         // enforcement; attribute-only opens are exempt from those rules.
@@ -57,7 +62,8 @@ public static class CiWindowsCleanup
         try {
             AttributeTag info;
             Check(GetFileInformationByHandleEx(handle, 9, out info, 8));
-            if ((info.Attributes & 0x400) != 0) throw new IOException("Refusing reparse point: " + path);
+            if ((info.Attributes & 0x400) != 0 && (!allowJunction || marker || info.Tag != 0xA0000003u))
+                throw new IOException("Refusing reparse point: " + path);
             return new Entry { Path = path, Handle = handle, Attributes = info.Attributes };
         } catch { handle.Dispose(); throw; }
     }
@@ -73,13 +79,58 @@ public static class CiWindowsCleanup
             throw new IOException("Cleanup handle escaped its physical parent");
     }
     static void Collect(string path, string canonical, string marker, List<Entry> entries, Action<string> beforeEnumerate) {
-        var entry = Open(path, true, string.Equals(path, marker, StringComparison.OrdinalIgnoreCase));
+        var entry = Open(path, true, string.Equals(path, marker, StringComparison.OrdinalIgnoreCase), entries.Count != 0);
         entries.Add(entry);
         VerifyPath(entry, canonical);
+        if ((entry.Attributes & 0x400) != 0) return; // Never enumerate a junction's target.
         if ((entry.Attributes & 0x10) != 0) {
             if (beforeEnumerate != null) beforeEnumerate(path);
             foreach (string child in Directory.EnumerateFileSystemEntries(path))
                 Collect(child, canonical + "\\" + Path.GetFileName(child), marker, entries, beforeEnumerate);
+        }
+    }
+    static string JunctionSubstitute(Entry entry) {
+        byte[] buffer = new byte[16384];
+        uint returned;
+        Check(DeviceIoControl(entry.Handle, 0x000900a8, IntPtr.Zero, 0, buffer, (uint)buffer.Length, out returned, IntPtr.Zero));
+        if (returned < 16 || BitConverter.ToUInt32(buffer, 0) != 0xA0000003u)
+            throw new IOException("Unknown junction target");
+        int offset = BitConverter.ToUInt16(buffer, 8), length = BitConverter.ToUInt16(buffer, 10);
+        if ((offset & 1) != 0 || (length & 1) != 0 || 16 + offset + length > returned)
+            throw new IOException("Unreadable junction target");
+        string substitute = Encoding.Unicode.GetString(buffer, 16 + offset, length);
+        // Volume mount points, UNC targets and relative targets are never admitted.
+        if (substitute.Length < 7 || !substitute.StartsWith("\\??\\", StringComparison.Ordinal) ||
+            !char.IsLetter(substitute[4]) || substitute[5] != ':' || substitute[6] != '\\')
+            throw new IOException("Refusing mount point or nonabsolute junction target");
+        foreach (string component in substitute.Substring(7).Split('\\'))
+            if (component == "." || component == "..") throw new IOException("Refusing noncanonical junction target");
+        return "\\\\?\\" + Path.GetFullPath(substitute.Substring(4)).TrimEnd('\\');
+    }
+    static void VerifyJunctions(List<Entry> entries, string rootCanonical, bool recheck) {
+        foreach (var link in entries) {
+            if ((link.Attributes & 0x400) == 0) continue;
+            string observed = "unknown/unproven";
+            try {
+                string substitute = JunctionSubstitute(link);
+                observed = substitute;
+                if (!substitute.StartsWith(rootCanonical + "\\", StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("Junction target escaped its marked root");
+                // Only entries from the ordinary physical walk can be a target. A chain,
+                // alias ancestor, missing path or unreadable target cannot enter this set.
+                var target = entries.Find(e => string.Equals(FinalPath(e.Handle), substitute, StringComparison.OrdinalIgnoreCase));
+                if (target == null || (target.Attributes & 0x10) == 0 || (target.Attributes & 0x400) != 0)
+                    throw new IOException("Junction target is not a physical directory in its marked root");
+                AttributeTag current;
+                Check(GetFileInformationByHandleEx(target.Handle, 9, out current, 8));
+                if ((current.Attributes & 0x400) != 0) throw new IOException("Junction target changed into a reparse point");
+                if (recheck && (target != link.Target || !string.Equals(substitute, link.Substitute, StringComparison.OrdinalIgnoreCase)))
+                    throw new IOException("Junction target changed before deletion");
+                link.Target = target; link.Substitute = substitute;
+            } catch (Exception error) {
+                throw new IOException("Cleanup retained root: junction " + link.Path + " -> " +
+                    observed + "; reason=" + error.Message, error);
+            }
         }
     }
     static void VerifyMarker(Entry marker, string contents) {
@@ -103,6 +154,9 @@ public static class CiWindowsCleanup
         Remove(root, markerName, contents, beforeDelete, null);
     }
     public static void Remove(string root, string markerName, string contents, Action beforeDelete, Action<string> beforeEnumerate) {
+        Remove(root, markerName, contents, beforeDelete, beforeEnumerate, null);
+    }
+    public static void Remove(string root, string markerName, string contents, Action beforeDelete, Action<string> beforeEnumerate, Action<string> afterUnlink) {
         root = Path.GetFullPath(root).TrimEnd('\\');
         string markerPath = Path.Combine(root, markerName);
         var ancestors = new List<Entry>();
@@ -120,16 +174,28 @@ public static class CiWindowsCleanup
                 canonical += "\\" + parts[i];
                 VerifyPath(ancestor, canonical);
             }
-            Collect(root, canonical + "\\" + parts[parts.Length - 1], markerPath, entries, beforeEnumerate);
+            string rootCanonical = canonical + "\\" + parts[parts.Length - 1];
+            Collect(root, rootCanonical, markerPath, entries, beforeEnumerate);
             var marker = entries.Find(e => string.Equals(e.Path, markerPath, StringComparison.OrdinalIgnoreCase));
             if (marker == null) throw new IOException("Cleanup marker missing");
             VerifyMarker(marker, contents);
+            VerifyJunctions(entries, rootCanonical, false);
             if (beforeDelete != null) beforeDelete();
+            VerifyJunctions(entries, rootCanonical, true);
+            // All guards finish before any deletion. Unlink admitted junctions first;
+            // targets remain pinned and are removed only by the normal physical walk.
+            foreach (var link in entries) {
+                if ((link.Attributes & 0x400) == 0) continue;
+                Delete(link);
+                Console.WriteLine("Cleanup: unlinked " + link.Path + " -> " + link.Substitute +
+                    "; reason=physical directory inside this invocation's marked root; no target traversal");
+                if (afterUnlink != null) afterUnlink(link.Path);
+            }
             // Bottom-up disposal completes each child deletion before its parent.
             // The marker stays pinned until every other child has been removed.
             for (int i = entries.Count - 1; i >= 0; i--) {
                 var entry = entries[i];
-                if (entry == marker || i == 0) continue;
+                if (entry == marker || i == 0 || (entry.Attributes & 0x400) != 0) continue;
                 Delete(entry);
             }
             Delete(marker);

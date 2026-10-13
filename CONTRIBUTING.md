@@ -11,9 +11,12 @@ unchanged test deadlines, and a fresh temporary fixture root. The root disables
 ACL inheritance and grants the current user, SYSTEM and Administrators explicit
 access. TEMP/TMP and the test home live there; cleanup removes only this
 invocation's marked root. The marker must exactly match its random token and path;
-missing/changed markers or any reparse point retain the whole tree. Every cleanup
+missing/changed markers and outside, chained or unproven links retain the whole tree. Every cleanup
 entry is checked for containment and links before nonrecursive removal. Native
 handles prevent entry replacement or in-place link conversion during deletion.
+Only a directory junction to a physical directory in the same marked root can be
+unlinked, by its own handle, with no traversal. Each unlink logs its path, target
+and reason; symlinks and volume mount points are refused.
 
 ```powershell
 npm run test:ci-windows -- -Throttle

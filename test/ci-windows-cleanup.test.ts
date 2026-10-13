@@ -24,12 +24,13 @@ ${body}
     [IO.Directory]::Delete($parent)
 }
 `;
-  return JSON.parse(execFileSync(join(process.env.SystemRoot ?? "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe"),
+  const output = execFileSync(join(process.env.SystemRoot ?? "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe"),
     ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
       input: fileURLToPath(new URL("../scripts/ci-windows-ownership.ps1", import.meta.url)) + "\n" +
         fileURLToPath(new URL("./fixtures/ci-windows-reparse.cs", import.meta.url)) + "\n",
       encoding: "utf8", windowsHide: true,
-    }));
+    });
+  return JSON.parse(output.trim().split(/\r?\n/).at(-1)!);
 }
 
 it.runIf(process.platform === "win32")("retains all fixtures when the creation marker is missing", () => {
@@ -190,4 +191,109 @@ try {
     [IO.Directory]::Delete($outside)
 }
 `)).toEqual({ baseline: 0, conversionError: 32, removed: true, outsideRetained: true });
+});
+
+it.runIf(process.platform === "win32")("unlinks a physical internal junction before its target's normal walk, and logs why", () => {
+  expect(guard(`
+$target = Join-Path $owner.Root 'target'
+$link = Join-Path $owner.Root 'internal-junction'
+$null = New-Item -ItemType Directory -Path $target
+[IO.File]::WriteAllText((Join-Path $target 'keep.txt'), 'target fixture')
+$null = New-Item -ItemType Junction -Path $link -Target $target
+Initialize-CiCleanupApi
+$script:linkEnumerations = 0
+$script:targetRetainedAtUnlink = $false
+$script:linkRemovedAtUnlink = $false
+$beforeEnumeration = [Action[string]]{ param($directory); if ($directory -ceq $link) { $script:linkEnumerations++ } }
+$afterUnlink = [Action[string]]{
+    param($path)
+    $script:targetRetainedAtUnlink = [IO.Directory]::Exists($target) -and (Test-Path -LiteralPath (Join-Path $target 'keep.txt'))
+    $script:linkRemovedAtUnlink = -not (Test-Path -LiteralPath $path)
+}
+$capture = [IO.StringWriter]::new()
+$oldOut = [Console]::Out
+try {
+    [Console]::SetOut($capture)
+    [CiWindowsCleanup]::Remove($owner.Root, $owner.MarkerName, $owner.MarkerContents, $null, $beforeEnumeration, $afterUnlink)
+} finally { [Console]::SetOut($oldOut) }
+$log = $capture.ToString()
+[pscustomobject]@{ enumerations = $script:linkEnumerations; targetRetained = $script:targetRetainedAtUnlink;
+    linkRemoved = $script:linkRemovedAtUnlink; removed = -not (Test-Path -LiteralPath $owner.Root);
+    logged = $log.Contains($link) -and $log.Contains($target) -and $log.Contains('reason=physical directory') } | ConvertTo-Json -Compress
+`)).toEqual({ enumerations: 0, targetRetained: true, linkRemoved: true, removed: true, logged: true });
+});
+
+it.runIf(process.platform === "win32")("refuses an internal chained junction before deleting anything", () => {
+  expect(guard(`
+$target = Join-Path $owner.Root 'target'
+$first = Join-Path $owner.Root 'first-junction'
+$chain = Join-Path $owner.Root 'chained-junction'
+$null = New-Item -ItemType Directory -Path $target
+[IO.File]::WriteAllText((Join-Path $target 'keep.txt'), 'target fixture')
+$null = New-Item -ItemType Junction -Path $first -Target $target
+$null = New-Item -ItemType Junction -Path $chain -Target $first
+try {
+    $refused = $false
+    try { Remove-CiOwnedRoot $owner } catch { $refused = $true }
+    [pscustomobject]@{ refused = $refused; retained = Test-Path -LiteralPath $sentinel;
+        targetRetained = [IO.File]::ReadAllText((Join-Path $target 'keep.txt')) -ceq 'target fixture';
+        linksRetained = (Test-Path -LiteralPath $first) -and (Test-Path -LiteralPath $chain) } | ConvertTo-Json -Compress
+} finally {
+    [IO.Directory]::Delete($chain)
+    [IO.Directory]::Delete($first)
+}
+`)).toEqual({ refused: true, retained: true, targetRetained: true, linksRetained: true });
+});
+
+it.runIf(process.platform === "win32")("refuses a target swap between junction validation and deletion", () => {
+  expect(guard(`
+$target = Join-Path $owner.Root 'target'
+$link = Join-Path $owner.Root 'internal-junction'
+$outside = Join-Path $parent 'outside'
+$null = New-Item -ItemType Directory -Path $target
+$null = New-Item -ItemType Directory -Path $outside
+[IO.File]::WriteAllText((Join-Path $target 'keep.txt'), 'target fixture')
+[IO.File]::WriteAllText((Join-Path $outside 'keep.txt'), 'outside fixture')
+$null = New-Item -ItemType Junction -Path $link -Target $target
+Initialize-CiCleanupApi
+try {
+    $swap = [Action]{
+        [IO.Directory]::Move($target, ($target + '-moved'))
+        $null = New-Item -ItemType Junction -Path $target -Target $outside
+    }
+    $refused = $false
+    try { [CiWindowsCleanup]::Remove($owner.Root, $owner.MarkerName, $owner.MarkerContents, $swap) } catch { $refused = $true }
+    [pscustomobject]@{ refused = $refused; retained = Test-Path -LiteralPath $sentinel;
+        targetRetained = [IO.File]::ReadAllText((Join-Path $target 'keep.txt')) -ceq 'target fixture';
+        outsideRetained = [IO.File]::ReadAllText((Join-Path $outside 'keep.txt')) -ceq 'outside fixture';
+        linkRetained = Test-Path -LiteralPath $link } | ConvertTo-Json -Compress
+} finally {
+    [IO.Directory]::Delete($link)
+    [IO.File]::Delete((Join-Path $outside 'keep.txt'))
+    [IO.Directory]::Delete($outside)
+}
+`)).toEqual({ refused: true, retained: true, targetRetained: true, outsideRetained: true, linkRetained: true });
+});
+
+it.runIf(process.platform === "win32")("refuses raw dot segments that could hide a reparse hop", () => {
+  expect(guard(`
+Add-Type -Path $reparseFixture
+$target = Join-Path $owner.Root 'target'
+$via = Join-Path $owner.Root 'via'
+$link = Join-Path $owner.Root 'raw-junction'
+$null = New-Item -ItemType Directory -Path $target
+$null = New-Item -ItemType Directory -Path $via
+$null = New-Item -ItemType Directory -Path $link
+$created = [CiReparseFixture]::ConvertToJunctionRaw($link, ($via + '\\..\\target'))
+try {
+    $refused = $false
+    $noncanonical = $false
+    try { Remove-CiOwnedRoot $owner } catch {
+        $refused = $true
+        $noncanonical = $_.Exception.ToString().Contains('noncanonical junction target')
+    }
+    [pscustomobject]@{ created = $created; refused = $refused; noncanonical = $noncanonical;
+        retained = Test-Path -LiteralPath $sentinel; targetRetained = Test-Path -LiteralPath $target } | ConvertTo-Json -Compress
+} finally { [IO.Directory]::Delete($link) }
+`)).toEqual({ created: 0, refused: true, noncanonical: true, retained: true, targetRetained: true });
 });

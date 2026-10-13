@@ -14,9 +14,12 @@ public static class CiReparseFixture
     static extern bool DeviceIoControl(SafeFileHandle handle, uint code, byte[] input,
         uint inputSize, IntPtr output, uint outputSize, out uint returned, IntPtr overlapped);
     public static int ConvertToJunction(string path, string target) {
+        return ConvertToJunctionRaw(path, Path.GetFullPath(target));
+    }
+    public static int ConvertToJunctionRaw(string path, string target) {
         using (var handle = CreateFile(path, 0x40000000, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero)) {
             if (handle.IsInvalid) return Marshal.GetLastWin32Error();
-            string substitute = "\\??\\" + Path.GetFullPath(target);
+            string substitute = "\\??\\" + target;
             byte[] sub = Encoding.Unicode.GetBytes(substitute), print = Encoding.Unicode.GetBytes(target);
             byte[] data;
             using (var buffer = new MemoryStream()) {

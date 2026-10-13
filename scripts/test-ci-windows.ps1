@@ -14,8 +14,9 @@ tools, CPU model or contention from other tenants. A fresh VHD is not a guarante
 of >2^53 file IDs. Throttle approximates CPU contention, not IO latency.
 No elevation is requested. Tests/assertions/deadlines are unchanged. An interrupted
 or forcibly killed shell may leave its marked root/VHD for manual inspection.
-Cleanup verifies its unique token-plus-path marker and refuses reparse points
-without following them. VHD detach verifies the recorded path and actual VHD GUID.
+Cleanup verifies its unique token-plus-path marker and refuses unproven links.
+Proven internal directory junctions are unlinked by handle without target traversal.
+VHD detach verifies the recorded path and actual VHD GUID.
 Never point this script at an existing volume or an existing fixture root.
 .EXAMPLE
 npm run test:ci-windows -- -Throttle
