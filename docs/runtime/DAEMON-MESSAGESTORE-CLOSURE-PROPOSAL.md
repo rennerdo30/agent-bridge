@@ -29,7 +29,7 @@ refresh belongs to this fence.
 | Cached statements and direct writers | `store.ts:187–194,270–306,414–558,578–700` | Guard session/name/seen, insert/batch/once/job delivery, handoff/claim/read acknowledgement, native route mutations, expire/purge and maintenance at source entry and native SQL boundaries. Count synchronous operations and asynchronous continuations, including nested accepted operations. |
 | Retry/maintenance producers | `store.ts:355–411,640–725` | Seal new producers without aborting accepted callbacks; drain actual retry promises and ALL accepted legacy archive/purge obligations naturally to settled zero before intent. Include `legacyArchivePending`, `purgeCutoff`, `nextPurgeCutoff`, `purgeCursor` and `purgeHighWater`. The current settle predicate omits these obligations. Timeout retains exact work/cursors/resources and blocks retirement; no durable cursor/resume mechanism is added. |
 | DecisionStore borrowed main connection | `decisions.ts:125–210`; Broker direct calls `1411,1449,1597,768` | Enroll this actual consumer; guard `record/importSync/enqueue/linkSession` and their transaction boundaries. Account for the accepted `enqueue` insert callback. Seal reads before physical close and invalidate the consumer permanently on retirement. No second close of the shared main handle. |
-| Main-thread HistoryIndex borrowed history and main/source connections | `history.ts:85–106,118–174,275–286,462–507` | Enroll both actual handles and active directory walk. Guard peer/session writes, tick/reset/wake/discovery and their internal SQL. Track nested read-only source handles through actual close; failed disposal remains unknown. Retain queued discovery/cursors before irreversible retirement. |
+| Main-thread HistoryIndex borrowed history and main/source connections | `history.ts:85–106,118–174,275–286,462–507` | Enroll both actual handles and active directory walk. Guard peer/session writes, tick/reset/wake/discovery and their internal SQL. Track nested read-only source handles through actual close; failed disposal remains unknown. ALL accepted durable `history_pending` rows and discovery/Dir/cursor obligations must genuinely settle zero before intent. Retained rows or cursors are not completion. |
 | Raw HistoryIndex getters | `history.ts:94–98`; `store.ts:316–317`, `broker.ts:452` | Replace these known managed consumers with source-owned synchronous scoped reads. A legacy/raw `database` or `storageDatabase` escape in the managed instance permanently marks an unenrolled borrower and blocks prepare; normal legacy getter behavior remains available. A callback result must not export handles/statements/cursors. No proxy is claimed to revoke a previously escaped native handle. |
 | Broker admission, callbacks and services | handlers `broker.ts:419–498`, seen callback `829–832`, mail routing `1005–1141`, service sinks `668–669`, close `701–731` | Seal dispatch/native registration/connection mutation, timers, disconnect and replacement callbacks before census. Settle accepted handlers and teardown callbacks under original identities. Seal DecisionSync/import and history sinks. Active native routes, network or questions with unsupported continuity refuse; no endParent/orphan recovery to manufacture zero. |
 | Store-wide storage lease | `storage-lock.ts:71–84`; `store.ts:204,746` | Capture the exact source-created lease record/nonce/file identity at acquisition. Existing `createdAt` is not a process creation identity or complete census. Bind fresh daemon creation/boot identity before prepare. Retire only this exact lease after every associated handle/consumer is confirmed closed, with matching nonce/identity and actual removal acknowledgement. No stale-lease sweep, foreign lease deletion or default release callback as proof. |
@@ -115,6 +115,22 @@ have genuinely finished before intent; keeping a cursor only in the old process
 cannot qualify retirement. Large or blocked work simply refuses within the shared
 budget with its original state retained for old-serving resumption where allowed.
 
+History has the same all-obligation requirement. Eligible current sealed
+preparation must verify actual accepted `history_pending` work, queued discovery,
+active `Dir` walk and cursor obligations at zero before intent. Include the exact
+independently owned history worker, its own history/source connections and any
+accepted checkpoint/migration/index work where present (the separate 32915 owner
+inventory applies). The main-thread index does not stand in for those owners.
+Source-owned zero verification is performed only as part of the eligible current
+sealed preparation/non-recovering handoff above; it is not page SQL in the
+non-authorizing census. A pending durable row, partial discovery, busy operation,
+unknown membership/disposal or shared-budget expiry blocks intent and retirement.
+Keep every accepted row, queue, cursor and resource unchanged on that refusal;
+neither deletion, clearing pending flags, timer cancellation, an unreviewed
+successor replay nor stored rows-as-implicit-completion can manufacture settlement.
+Normal successful indexing may finish its accepted obligation, but its real
+source-owned completion must be observed before the zero witness is eligible.
+
 The canonical issuer then performs the source-owned `release_intent` transaction
 for the exact selected receipt/lineage/revision/old actor/generation and verifies
 successful COMMIT, autocommit and an independent committed read. Only this source
@@ -183,7 +199,11 @@ rows/schema routing, cold/hot attachment observations, stale sidecar/admission
 generation and a delayed owned writer between observation and preparation (must
 refuse before RW page SQL). Include pending legacy archive and both purge cutoffs/
 cursor/high-water work: only genuinely settled zero can cross intent, while
-deadline refusal retains every obligation. Exercise genuine committed intent and separate
+deadline refusal retains every obligation. Exercise history-pending and partial
+discovery/Dir/cursor fixtures across main-thread and
+independent worker owners. Unknown or blocked history work must retain the same
+rows, work and resources, with no false zero or successor replay grant. Exercise
+genuine committed intent and separate
 explicitly SIMULATED close throws before/after actual native close, a failure after
 one successful close, real deadline overrun, lease mismatch/removal failure and
 cached callback attempts after retirement. Require exact attempted/closed/failed/
