@@ -1,8 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.30.15
 
-- Codex hooks no longer fail with "hook input placeholder `${agent_id}` was not found". Codex leaves out `agent_id` for the main thread, and on SessionStart and Stop, and fails any MCP hook that references a missing field. The Codex hooks now leave it out too. Native Codex children are still recognized by the thread ID Codex attaches to every hook call, together with that thread's rollout lineage. `hook_event` also accepts `null` fields, which Codex sends for a missing transcript path.
+- Storage finalize and absorb keep backups, migration snapshots, `retained_*` tables and old archives without deleting or rewriting retained data. Linked, uncertain or WAL-mode candidates are refused before they are opened (AB-215/AB-228, #18).
+- Unchanged finished jobs are no longer archived again on every save (AB-319, #13).
+- Jobs that refuse a follow-up now return a typed reason explaining why (AB-320, #15).
+- Codex plugin hooks no longer fail with "hook input placeholder `${agent_id}` was not found" on Codex 0.162 and later (AB-299, #12).
 
 ## 0.30.14
 
