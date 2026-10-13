@@ -23,6 +23,14 @@ not certification that current shutdown/capability paths satisfy it. Claude rati
 the initial numeric defaults through the coordinator; hosted phase measurements
 remain absent and must be disclosed per OS in the eventual implementation PR.
 
+Receipt-mechanism successor: the coordinator/Claude approved proposing a lifecycle-only
+SQLite journal using the already-supported `node:sqlite` dependency. This document
+changes publication from a JSON temp/rename/selected-pointer scheme to one fixed
+restricted-home journal. **Journal code remains held for independent recheck and
+Claude assessment of this exact mechanism revision.** Source baseline for this
+mechanism inventory is `35227bed0cfabf3e47d9418b8dd5114c9eed08d4`; owner/drain
+anchors remain pinned to source447 above. No general state-core/job migration.
+
 ## Source obligations and gaps
 
 | Existing owner | Actual behavior and missing lifecycle proof |
@@ -191,16 +199,109 @@ stop_committed -> stopped`. Retain all revisions and conflicting bytes; no delet
 time expiry, overwrite by a reused ID or reconstructed guessed completion.
 
 Publication must be all-or-none and durable before acknowledgement or endpoint
-release: private temp write, complete bytes/digest, file flush, atomic selected-pointer
-publication and platform-appropriate durable directory/rename proof. The existing
-JSON helper's file fsync alone is not a full cross-platform directory durability proof.
-Existing storage leases require audit: no timeout-only steal or process-identity
-unknown recovery is allowed. This is an explicit implementation/CI dependency.
+release through the lifecycle-only journal contract below. Existing json-store.ts:107-137
+fsyncs a temp file and renames it without established durable directory publication;
+it is not the receipt backend. Existing storage leases still require audit: no
+timeout-only steal or process-identity-unknown recovery is allowed.
 
 The serialized lifecycle coordinator verifies the current receipt revision and exact
 bound instance before each transition. After a conflicting/paused holder, only proven
 old-instance exit plus receipt reconciliation permits a successor; no lease-age takeover.
 This is a narrow lifecycle generation/instance guard, not a general domain epoch claim.
+
+### Lifecycle-only SQLite publication proposal
+
+Canonical location is the fixed physical-home path `.core-lifecycle/receipts.sqlite`;
+there is **no external selected-pointer file**, version-dependent endpoint path or
+selector that could discover a different journal. Every updated election path checks
+this location before create/takeover/degraded embedding. Canonical physical home,
+user identity and an immutable journal lineage UUID are committed during bootstrap,
+before accepting a lifecycle command. Receipt revisions and the selected active
+receipt/revision/old-instance/designated-successor projection commit in ONE transaction.
+The projection is disposable only by verified reconciliation, not guessed absence.
+
+Initial bootstrap is performed by the authenticated current daemon owner, never by
+a prepared replacement or ordinary discovering client. Verify all ancestors and
+the database/journal are regular, nonlinked, correctly owned private paths; retain
+the physical-directory/file identities in lineage evidence. Create the new directory
+0700 and files0600 on Unix, flush initial schema/lineage and validate reopen through
+a separate strict reader before acknowledgement. Require durable directory-entry
+proof for initial database/journal creation (Unix directory sync/VFS evidence;
+Windows documented VFS/FlushFileBuffers and local-filesystem creation assumptions).
+If initial lineage/publication proof cannot be established, refuse lifecycle admission
+while the old daemon serves; SQLite does not make that missing proof disappear.
+After bootstrap, absent/replaced/corrupt/mismatched journal is unknown, never permission
+to re-bootstrap or elect. A participant that has observed lineage must retain that
+identity for its lifetime; release must not occur while a new participant can mistake
+a missing journal for a never-initialized home. Prove this discovery boundary in
+fixtures, including interrupted first creation; unknown lineage blocks election.
+
+Windows must verify current SID ownership and a restrictive directory/file ACL
+equivalent to the existing private authentication-material scope, using built-in
+OS/.NET facilities only. New private receipt paths may receive a restrictive ACL;
+do not alter existing home/job/store ACLs or widen grants. Failure/unknown ACL or
+filesystem inspection blocks lifecycle, not a broad permission repair. No tokens,
+auth material, arbitrary command line or content payload is persisted in receipts.
+Target fields are attested existing immutable runtime path/version/protocol/complete
+manifest digest, resolved in current authenticated local scope; never caller-supplied
+executable/argv or an update selector. Revalidate before launch and writable activation.
+
+Use a dedicated database only for receipt history, its active selection and lineage;
+no jobs/commands/domain state, state-core.db, archive/delete/eviction, lease-age expiry,
+schema migration of existing stores or new dependency. Configure and VERIFY
+`journal_mode=PERSIST`, `synchronous=FULL`, macOS `fullfsync=ON`, `foreign_keys=ON`,
+`trusted_schema=OFF`, and a25ms busy timeout. PERSIST is rollback journaling, not WAL;
+commit retains the journal file and invalidates its header, avoiding per-commit
+directory deletion. Keep the journal/revisions/conflicting request bytes and failed
+transactions for inspection; never truncate/prune history to meet a size envelope.
+Legacy code must not be offered this database as a compatible domain store.
+
+The sole writer before release is the OLD daemon. Prepared replacement opens with
+actual `DatabaseSync(...,{readOnly:true})` plus verified `PRAGMA query_only=ON`; it
+reads ONLY its own selected receipt/revision/lineage and target/checkpoint descriptors.
+It opens no other store even read-only unless a separately reviewed exact verification
+read is listed. Its prepared acknowledgement is sent through the authenticated old
+control channel; the old writer validates instance/restartId/expected revision/target
+digest and records it with a CAS transaction. Stale/concurrent ACK or reused ID with
+different bytes cannot advance selection. There is no prepared writer-registration
+or journal-write exception. Hosted attempted UPDATE/INSERT from this actual reader
+MUST fail, and an ACK cannot make it writable.
+
+Only after the SAME normal-release witness, or exact old nonce/PID/creation-exit
+PLUS ownership/checkpoint reconciliation, may the designated successor acquire a
+writable journal connection under the **all-store pre-writable guard**. Then it may
+acquire substantive stores/workers and CAS binding/done. release_committed alone is
+not release proof. If a readonly open encounters a hot journal requiring write
+recovery, unavailable schema, missing lineage or corrupt bytes, stay unknown/read-only;
+do not silently open read-write to repair it. Recovery writer acquisition uses the
+same guard, never PID absence, time or installed-version/cache evidence alone.
+
+Small transactions use indexed current receipt/ID lookups, BEGIN IMMEDIATE and
+expected revision/old-instance/selected-successor CAS; append revision and selection
+atomically, no transaction across asynchronous preparation/dispatch/drain. Maximum
+serialized receipt/checkpoint metadata is64KiB per revision, with at most128 owner
+descriptor entries; oversized closure evidence blocks release, never drops entries.
+The25ms lock wait is within each ratified phase cap, not an extra budget. Busy/error/
+unconfirmed COMMIT returns pending/unknown or pre-release serving failure; no hidden
+transaction retry, inferred rollback, repeated launch or ordinary request replay.
+Durable disk flush can stall despite a small transaction: disclose measurements and
+storage assumptions, do not claim a universal hard OS I/O deadline or raise10s RPC.
+No synchronous bulk scan/checkpoint/hash operation is added to the control path.
+
+Primary basis: [SQLite atomic commit](https://www.sqlite.org/atomiccommit.html),
+[locking/VFS flush behavior](https://www.sqlite.org/lockingv3.html),
+[rollback journal modes](https://www.sqlite.org/tempfiles.html),
+[Node22.16 SQLite API](https://nodejs.org/download/release/v22.16.0/docs/api/sqlite.html).
+SQLite's guarantees depend on correct VFS locking/sync, a supported local filesystem
+and storage honoring flush/barrier semantics. Filesystems/controllers that lie,
+unsupported network mounts or unverified initial creation/ACL are blockers/unknown;
+FULL/PERSIST do not eliminate hardware/power-loss risk or bounded-history storage cost.
+Hosted Node22/24 on every OS must record actual SQLite/VFS/OS/filesystem/runtime and
+phase durations, strict readonly flags/pragma, initial creation/reopen lineage, crash
+at every revision/selection/ACK/commit boundary, busy/fault injection, stale CAS,
+lost reply and same-ID conflict, exact accepted bytes and no second launch. Process
+crash/fault fixtures are not physical power-cut or arbitrary-device durability proof.
+Any missing release/durability/live-writer proof keeps lifecycle acceptance blocked.
 
 ## Writer/election barrier and replacement preparation
 
@@ -209,12 +310,18 @@ This is a narrow lifecycle generation/instance guard, not a general domain epoch
    containment and complete hashes. 1a-i initially restarts the same approved runtime;
    N-to-N+1 selector/update behavior is 1a-ii. Refuse mixed incompatible protocols.
 2. Establish a capable-client barrier. All connected eligible MCP/CLI clients and
-   retained election-capable installed runtimes must advertise/acknowledge lifecycle
+   actual live runtime/writer registrations must advertise/acknowledge lifecycle
    support bound to this exact instance/receipt revision. Discover relevant detached
    writers using existing capability/process evidence; unavailable inspection, old
    unacknowledged clients or unknown writers **blocks restart** with nonsecret reason
    codes and an explicit process/version list. Names are explanatory, not identities.
    No forced exit, eviction, cancellation or invented complete census.
+   Count only actual running processes/connected clients/live writer registrations;
+   installed inactive cache versions on disk never constitute a barrier. Source352
+   plugin-runtime.ts:156 silently filters failed liveness inspection, so that helper
+   alone cannot prove absence. storage-lock.ts:71 registers writers but its legacy
+   record lacks exact process creation identity/capability; a live unknown holder
+   blocks until proven compatible. Read registrations without retiring/deleting them.
 3. Persist accepted receipt and active canonical election gate **before** spawning a
    replacement. Updated launchers consult it before any daemon or degraded embedded
    election, including new clients never connected to the old broker. Active/pending
