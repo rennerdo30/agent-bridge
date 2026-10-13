@@ -69,6 +69,8 @@ export interface NetworkBroker {
 }
 export interface NetworkStatus {
   enabled: boolean;
+  /** Bound transport is not authenticated serving authority while owned startup is tentative. */
+  ready?: boolean;
   config?: NetworkConfig;
   identity?: NetworkIdentity;
   port?: number;
@@ -333,6 +335,8 @@ export class NetworkService {
   private discovery: NetworkDiscovery | null = null;
   private timer: NodeJS.Timeout | null = null;
   private closed = false;
+  private authorityActive = true;
+  private startupComplete = false;
   private readonly extensions = new Map<NetworkExtensionType, { capability: string; aliases: string[]; handler: NetworkExtensionHandler }>();
   private readonly linkListeners = new Set<(pair: NetworkPair) => void>();
 
@@ -373,6 +377,7 @@ export class NetworkService {
   }
 
   receiveExtension(type: NetworkExtensionType, payload: Record<string, unknown>, remote: NetworkPair): void | Promise<void> {
+    this.requireAuthority();
     const extension = this.extensions.get(type);
     if (!extension) throw new Error("unsupported network extension");
     return extension.handler(payload, remote);
@@ -398,6 +403,7 @@ export class NetworkService {
   }
 
   async sendExtension(instance: string, type: NetworkExtensionType, payload: Record<string, unknown>): Promise<void> {
+    this.requireAuthority();
     const extension = this.extensions.get(type);
     const link = this.instanceLink(instance);
     if (!extension || !link.supports(extension.capability)) return Promise.reject(new Error("remote broker does not support this extension"));
@@ -408,6 +414,7 @@ export class NetworkService {
 
   get supportsReceipts(): boolean { return Boolean(this.broker.receipt); }
   readReceipt(id: string, sender: string, recipient?: string): number | null {
+    this.requireAuthority();
     if (!this.broker.receipt) throw new Error("read receipts unavailable");
     return this.broker.receipt(id, sender, recipient);
   }
@@ -421,6 +428,7 @@ export class NetworkService {
    * logged once) instead of failing the list, which would drop every paired link (AB-242).
    */
   localPeers(): PeerInfo[] {
+    if (!this.authorityActive) return [];
     const out: PeerInfo[] = [], names = new Set<string>(), ids = new Set<string>(), dropped: string[] = [];
     for (const raw of this.broker.peers() as unknown[]) {
       const parsed = peerSchema.safeParse(raw);
@@ -436,20 +444,23 @@ export class NetworkService {
     }
     return out;
   }
-  receive(message: BridgeMessage): DeliveryResult { return this.broker.receive(message); }
+  receive(message: BridgeMessage): DeliveryResult { this.requireAuthority(); return this.broker.receive(message); }
 
-  async start(): Promise<void> {
+  async start(deferAuthority = false): Promise<void> {
     if (!this.cfg.enabled) throw new Error("networking is disabled");
     if (this.server || this.closed) throw new Error("network service already started or closed");
+    this.authorityActive = !deferAuthority;
     const acceptedKeys = new WeakMap<TLSSocket, string>();
     const server = createServer({
       minVersion: "TLSv1.3", maxVersion: "TLSv1.3", ciphers: TLS_CIPHER, handshakeTimeout: NETWORK_TIMEOUT_MS,
       pskCallback: (socket, identity) => {
+        if (!this.authorityActive) return randomBytes(PAIRING_KEY_BYTES);
         const key = this.keys.keyFor(identity);
         if (key) acceptedKeys.set(socket, key);
         return key ? Buffer.from(key, "hex") : randomBytes(PAIRING_KEY_BYTES);
       },
     }, (socket) => {
+      if (!this.authorityActive) return socket.destroy();
       const key = acceptedKeys.get(socket);
       if (!key || socket.getProtocol() !== "TLSv1.3") return socket.destroy();
       try { new Link(socket, this, key); }
@@ -469,16 +480,34 @@ export class NetworkService {
         this.discovery = new NetworkDiscovery({ identity: this.keys.identity, port: this.port, onError: (err) => this.log.warn("network discovery error", { message: err.message }) });
         await this.discovery.start();
       }
-      this.timer = setInterval(() => {
-        for (const link of this.links.values()) { try { link.refresh(); link.heartbeat(); } catch (err) { link.fail(err as Error); } }
-        for (const pair of this.keys.pairs()) if (pair.host && pair.port && !this.links.has(pair.id) && !this.connecting.has(pair.id)) void this.connectPair(pair).catch(() => {});
-      }, this.timings.refreshMs);
-      this.timer.unref();
-      for (const pair of this.keys.pairs()) if (pair.host && pair.port) void this.connectPair(pair).catch(() => {});
+      this.startupComplete = true;
+      if (!deferAuthority) this.activateAuthority();
     } catch (err) { await this.close(); throw err; }
   }
 
+  /** Called synchronously with activation of the already initialized local owner. */
+  activateAuthority(): void {
+    if (this.closed || !this.startupComplete || !this.server?.listening) throw new Error("network startup is not ready");
+    this.authorityActive = true;
+    if (this.timer) return;
+    this.timer = setInterval(() => {
+        if (!this.authorityActive || this.closed) return;
+        for (const link of this.links.values()) { try { link.refresh(); link.heartbeat(); } catch (err) { link.fail(err as Error); } }
+        for (const pair of this.keys.pairs()) if (pair.host && pair.port && !this.links.has(pair.id) && !this.connecting.has(pair.id)) void this.connectPair(pair).catch(() => {});
+    }, this.timings.refreshMs);
+    this.timer.unref();
+    for (const pair of this.keys.pairs()) if (pair.host && pair.port) void this.connectPair(pair).catch(() => {});
+  }
+  /** Inhibit all ingress before asynchronous owned startup cleanup can yield. */
+  deferAuthority(): void {
+    this.authorityActive = false;
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+  }
+  private requireAuthority(): void { if (!this.authorityActive || this.closed) throw new Error("network startup is not ready"); }
+
   attach(link: Link): void {
+    this.requireAuthority();
     const remote = link.remote!;
     if (this.closed) throw new Error("network service closed");
     const existing = this.links.get(remote.id);
@@ -507,7 +536,7 @@ export class NetworkService {
   }
 
   status(): NetworkStatus {
-    return { enabled: true, config: this.cfg, identity: this.keys.identity, port: this.port, discovered: this.discovery?.instances() ?? [], ...(this.discovery ? { discoveryDiagnostics: this.discovery.diagnostics() } : {}), paired: this.keys.pairs().map(({ id, name, fingerprint }) => ({ id, name, fingerprint, connected: this.links.has(id), ...(this.health.has(id) ? { health: this.health.get(id)! } : {}) })) };
+    return { enabled: true, ready: this.authorityActive && this.startupComplete && !this.closed, config: this.cfg, identity: this.keys.identity, port: this.port, discovered: this.discovery?.instances() ?? [], ...(this.discovery ? { discoveryDiagnostics: this.discovery.diagnostics() } : {}), paired: this.keys.pairs().map(({ id, name, fingerprint }) => ({ id, name, fingerprint, connected: this.links.has(id), ...(this.health.has(id) ? { health: this.health.get(id)! } : {}) })) };
   }
 
   async verify(id: string): Promise<{ peers: PeerInfo[]; roundTripMs: number }> {
@@ -521,6 +550,7 @@ export class NetworkService {
   }
 
   async link(code: string, host: string, port: number): Promise<NetworkIdentity> {
+    this.requireAuthority();
     const decoded = decodePairingCode(code);
     const pair = this.keys.validatePair(decoded, host, port);
     // Remember only after the TLS link proves the code belongs to the remote instance.
@@ -531,6 +561,7 @@ export class NetworkService {
   }
 
   private async connectPair(pair: NetworkPair): Promise<void> {
+    this.requireAuthority();
     if (this.closed || this.links.has(pair.id) || this.connecting.has(pair.id)) throw new Error("instance already connected or connecting");
     this.connecting.add(pair.id);
     let socket: TLSSocket | null = null;
@@ -551,6 +582,7 @@ export class NetworkService {
         secured.once("secureConnect", () => { clearTimeout(timer); secured.off("error", onError); resolve(); });
       });
       if (secured.getProtocol() !== "TLSv1.3" || Object.keys(secured.getPeerCertificate()).length) throw new Error("TLS-PSK required");
+      this.requireAuthority();
       // Outbound links authenticate against the expected pin; inbound links consume an invitation.
       await new Link(secured, this, pair.key, pair).ready;
     } catch (err) { socket?.destroy(); throw err; }

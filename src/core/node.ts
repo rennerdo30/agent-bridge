@@ -353,6 +353,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (this.broker) return true;
     if (this.stopping) return false;
     const [{ Broker }, { MessageStore }] = await Promise.all([import("./broker.js"), import("./store.js")]);
+    const { EndpointReservation } = await import("./endpoint-reservation.js");
+    let reservation: import("./endpoint-reservation.js").EndpointReservation;
+    try { reservation = await EndpointReservation.bind(this.opts.pipePath); }
+    catch (error) {
+      if (errCode(error) !== "EADDRINUSE") throw error;
+      if (!this.opts.daemon && (this.opts.platform ?? process.platform) !== "win32") await this.clearStaleSocket();
+      return false;
+    }
     let store: MessageStore;
     try {
       // Unverified living readers conservatively defer upgrades; process
@@ -360,6 +368,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       if (this.opts.dbPath !== ":memory:") void refreshStorePeerIdentities(dirname(this.opts.dbPath)).catch(error => this.log.debug("store reader identity refresh deferred", { err: String(error) }));
       store = new MessageStore(this.opts.dbPath, this.log.child("store"));
     } catch (err) {
+      await reservation.close();
       if (["EBUSY", "SQLITE_BUSY", "STORE_UPGRADE_DEFERRED"].includes(errCode(err)) || /database is locked/.test(String((err as Error).message))) {
         this.log.info("another session is preparing the store; retrying broker election", { db: this.opts.dbPath });
         return false;
@@ -367,10 +376,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join(dirname(this.opts.dbPath), JOBS_FILE), this.opts.network);
-    if (this.degradedReason) broker.setHostingMode("embedded_degraded", this.degradedReason);
     try {
-      await broker.listen();
+      const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join(dirname(this.opts.dbPath), JOBS_FILE), this.opts.network);
+      if (this.degradedReason) broker.setHostingMode("embedded_degraded", this.degradedReason);
+      await broker.listen(reservation);
       if (this.stopping) {
         // stop() ran while this node was opening the store or listening: never keep a broker nobody will close.
         await broker.close();
@@ -381,6 +390,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       return true;
     } catch (err) {
       store.close();
+      await reservation.close();
       const code = errCode(err);
       if (code === "EADDRINUSE" && (this.opts.platform ?? process.platform) !== "win32") {
         if (this.opts.daemon) return false;

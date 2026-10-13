@@ -17,6 +17,7 @@ import { isPluginCacheCwd } from "./session-visibility.js";
 import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 import { configureSqlite, isSqliteBusy, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BUSY_MS } from "./sqlite-policy.js";
 import { attachStoreCompatibility } from "./store-compatibility-overlay.js";
+import { NativeLifecycleReader, type NativeRouteSnapshot } from "./native-lifecycle-reader.js";
 
 import { SQLITE_STORE_VERSION } from "./store-version.js";
 export { SQLITE_STORE_VERSION } from "./store-version.js";
@@ -169,6 +170,7 @@ export class MessageStore {
   private nextPurgeCutoff: number | null = null;
   private archiveMaintenanceFailed = false;
   private closed = false;
+  private readonly nativeLifecycleReader = new NativeLifecycleReader();
   readonly decisions: DecisionStore;
   readonly history: HistoryIndex;
   readonly historyFile: string;
@@ -469,6 +471,15 @@ export class MessageStore {
     if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_child_routes'").get()) return [];
     return this.db.prepare("SELECT address,parent FROM native_child_routes WHERE active=1").all() as { address: string; parent: string }[];
   }
+
+  /** Lifecycle observation only: no migration, lease, repair or route retirement. */
+  committedNativeChildRoutes(ownerInstance: string, generation: number, deadline: number): Promise<NativeRouteSnapshot> {
+    if (this.db.isTransaction !== false || typeof this.db.location !== "function") return Promise.reject(new Error("native_state_unknown"));
+    const path = this.db.location("main");
+    if (!path || path === ":memory:") return Promise.reject(new Error("native_state_unknown"));
+    return this.nativeLifecycleReader.read(path, ownerInstance, generation, deadline);
+  }
+  nativeLifecyclePendingReaders(): number { return this.nativeLifecycleReader.pending(); }
 
   retainNativeChild(address: string, parent: string): void {
     this.db.exec("CREATE TABLE IF NOT EXISTS native_child_routes (address TEXT PRIMARY KEY, parent TEXT NOT NULL, active INTEGER NOT NULL)");

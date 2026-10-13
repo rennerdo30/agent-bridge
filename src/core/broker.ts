@@ -78,6 +78,7 @@ import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS
 import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
 import { OwnerQuestionService, OWNER_ADDRESS } from "./owner-question-service.js";
 import { ensurePrivateSocketDirectory } from "./paths.js";
+import type { EndpointReservation } from "./endpoint-reservation.js";
 
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
 export const PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -204,6 +205,7 @@ export class Broker {
   private decisionSync: DecisionSync | null = null;
   private readonly remoteProgress = new Map<string, string>();
   private networkChange: Promise<unknown> = Promise.resolve();
+  private networkAuthorityDeferred = false;
   private readonly handlers: { [O in Op]: Handler<O> };
   private jobsSnapshot: { active: JsonSnapshot; archive: string; records: Record<string, unknown>[] } | null = null;
   private jobsForDispatch: Record<string, unknown>[] | null = null;
@@ -520,7 +522,8 @@ export class Broker {
   }
 
   /** Bind the endpoint. Rejects with the socket error (EADDRINUSE when another broker owns it). */
-  listen(): Promise<void> {
+  listen(reservation?: EndpointReservation): Promise<void> {
+    if (reservation) return this.listenReserved(reservation);
     return new Promise((resolve, reject) => {
       const server = createServer((socket) => this.accept(socket));
       const onError = (err: Error) => {
@@ -552,6 +555,26 @@ export class Broker {
       ensurePrivateSocketDirectory(this.pipePath);
       server.listen(this.pipePath);
     });
+  }
+
+  private async listenReserved(reservation: EndpointReservation): Promise<void> {
+    this.server = reservation.ownedServer(this.pipePath);
+    this.networkAuthorityDeferred = true;
+    const optional = (what: string, step: () => void) => {
+      try { step(); } catch (err) { this.log.warn(`broker startup: ${what} failed; continuing without it`, { err: String(err) }); }
+    };
+    try {
+      await this.startServices(optional);
+      reservation.activate(socket => this.accept(socket));
+      this.network?.activateAuthority();
+      this.networkAuthorityDeferred = false;
+      this.server.on("error", err => this.log.error("broker server error", { err }));
+    } catch (error) {
+      this.network?.deferAuthority();
+      await this.abortStartup().catch(() => {});
+      await reservation.close();
+      throw error;
+    }
   }
 
   /** Undo a failed listen(): background services, timers and the bound server; the store stays open for its owner. */
@@ -609,7 +632,7 @@ export class Broker {
         recipientReceipts: true,
             }, this.log);
             this.installRemoteJobs(this.network);
-            await this.network.start();
+            await this.network.start(this.networkAuthorityDeferred);
           } catch (err) {
             this.remoteDashboard?.close();
             this.remoteDashboard = null;
@@ -660,6 +683,7 @@ export class Broker {
 
   /** Serialize listener changes and let the elected broker remain the sole network writer. */
   private async configureNetwork(value: NetworkConfig): Promise<NetworkStatus> {
+    if (this.networkAuthorityDeferred) throw new BridgeError("bad_request", "Core is initializing; network configuration was not applied.");
     if (!this.networking) throw new BridgeError("bad_request", "Restart all agent-bridge hosting sessions to load this wizard-capable broker.");
     const config = writeNetworkConfig(this.networking.home, value);
     this.remoteDashboard?.close();
@@ -679,7 +703,7 @@ export class Broker {
         recipientReceipts: true,
       }, this.log);
       this.installRemoteJobs(service);
-      try { await service.start(); this.network = service; }
+      try { await service.start(this.networkAuthorityDeferred); this.network = service; }
       catch (err) { await service.close(); throw err; }
     }
     return this.network?.status() ?? { enabled: false, config, discovered: [], paired: [] };
@@ -749,7 +773,7 @@ export class Broker {
     socket.on("close", () => {
       this.conns.delete(conn);
       if (conn.peer) {
-        void this.nativeChildren.endParent(conn.peer).catch(err => this.log.warn("native child fallback deferred", { err: String(err) }));
+        void this.nativeChildren.endParent(conn.peer, true).catch(err => this.log.warn("native child fallback deferred", { err: String(err) }));
         if (!this.closing && !conn.peer.jobAgent && !conn.peer.subagent) {
           const name = conn.peer.name, at = this.now();
           void this.store.retryWrite(() => {
@@ -1494,7 +1518,7 @@ export class Broker {
     const peer = this.requirePeer(conn);
     const previousIdentity = { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name };
     const previousName = peer.name;
-    if (args.sessionId !== undefined && args.sessionId !== peer.sessionId || args.name !== undefined && args.name !== peer.name) await this.nativeChildren.endParent(peer);
+    if (args.sessionId !== undefined && args.sessionId !== peer.sessionId || args.name !== undefined && args.name !== peer.name) await this.nativeChildren.endParent(peer, true);
     const aliases: string[] = [];
     let replay = args.unavailable === false;
     if (args.unavailable !== undefined) {
@@ -1568,7 +1592,7 @@ export class Broker {
       this.store.rememberName(old, this.now());
       this.log.info("session connected again from a new server; replacing the old connection", { name: old.name, by: peer.name, sessionId: peer.sessionId });
       this.emit(c, "replaced", { by: peer.name });
-      void this.nativeChildren.endParent(old).catch(err => this.log.warn("replaced native child fallback deferred", { err: String(err) }));
+      void this.nativeChildren.endParent(old, true).catch(err => this.log.warn("replaced native child fallback deferred", { err: String(err) }));
       this.conns.delete(c);
       c.peer = null;
       this.broadcastEvent("peer_left", old, c);

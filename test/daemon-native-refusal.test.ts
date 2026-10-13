@@ -1,0 +1,134 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { once } from "node:events";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MessageStore } from "../src/core/store.js";
+import { NativeChildren } from "../src/core/native-children.js";
+import { NativeLifecycleReader } from "../src/core/native-lifecycle-reader.js";
+import { readProcessIdentity } from "../src/core/process-identity.js";
+import { nullLogger } from "../src/core/logger.js";
+import type { PeerInfo } from "../src/core/protocol.js";
+import { makeEnv, until, type TestEnv } from "./helpers.js";
+
+let env: TestEnv, store: MessageStore, children: NativeChildren, ownedChild: ChildProcess | undefined, childCreation: string | null;
+const parent: PeerInfo = { id: "fixture-parent", name: "claude-fixture", agent: "claude", cwd: "", pid: process.pid,
+  agentPid: null, sessionId: "fixture-session", startedAt: 1, autoWake: false };
+const deadline = () => performance.now() + 1000;
+beforeEach(async () => { env = makeEnv(); store = new MessageStore(env.db, nullLogger); children = new NativeChildren(store); await children.recover(); childCreation = null; });
+afterEach(async () => {
+  vi.restoreAllMocks();
+  // Terminate only the direct fixture child via its own IPC handle after exact creation proof.
+  if (ownedChild && ownedChild.exitCode === null && ownedChild.signalCode === null) {
+    expect(await readProcessIdentity(ownedChild.pid!)).toBe(childCreation);
+    const exited = once(ownedChild, "exit"); ownedChild.send("fixture-stop"); await exited;
+  }
+  ownedChild = undefined;
+  await until(() => store.nativeLifecyclePendingReaders() === 0); store.close(); await env.cleanup();
+});
+function retainMail(address: string) {
+  store.insert({ id: "fixture-mail", from: { id: "sender", name: "codex-fixture", agent: "codex" }, to: address, recipient: address,
+    conversationId: "fixture-thread", replyTo: null, hop: 0, body: "Accepted fixture bytes", createdAt: 1, readAt: null });
+}
+async function deferredWrite() {
+  const original = store.retryWrite.bind(store); let enter!: () => void, release!: () => void;
+  const entered = new Promise<void>(resolve => { enter = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
+  const spy = vi.spyOn(store, "retryWrite").mockImplementation(async operation => { enter(); await gate; return original(operation); });
+  return { entered, release, spy };
+}
+
+describe("native active-route refusal subguard (not whole-core restart acceptance)", () => {
+  it("refuses an active route and preserves retained bytes, grants, ownership and a real fixture child", async () => {
+    ownedChild = spawn(process.execPath, ["-e", "process.on('message',m=>{if(m==='fixture-stop')process.exit(0)});process.send('fixture-ready')"],
+      { cwd: env.home, windowsHide: true, stdio: ["ignore", "ignore", "ignore", "ipc"] });
+    await once(ownedChild, "message"); childCreation = await readProcessIdentity(ownedChild.pid!); expect(childCreation).toBeTruthy();
+    const route = await children.start(parent, "native-one"); children.grant(parent, "native-one", ["codex-fixture"]); retainMail(route.address);
+    const rows = store.unread(route.address, 100), routes = store.nativeChildRoutes(), owned = children.list(parent);
+    children.freezeLifecycleAdmission();
+    const observed = await children.settleLifecycleWrites(deadline());
+    expect(observed).toMatchObject({ blocker: "native_routes_active", memoryActive: 1, durableActive: 1, pending: 0 });
+    expect(await children.zeroLifecycleWitnessCurrent(observed, deadline())).toBe(false);
+    expect(store.unread(route.address, 100)).toEqual(rows); expect(store.nativeChildRoutes()).toEqual(routes); expect(children.list(parent)).toEqual(owned);
+    expect(ownedChild.exitCode).toBeNull(); expect(await readProcessIdentity(ownedChild.pid!)).toBe(childCreation);
+    await expect(children.start(parent, "late")).rejects.toHaveProperty("code", "bad_request");
+    expect(() => children.grant(parent, "native-one", [])).toThrow(/draining/);
+    await expect(children.end(parent, "native-one")).rejects.toThrow(/draining/);
+    children.resumeLifecycleAdmission();
+    expect(children.list(parent)).toEqual(owned); expect(store.unread(route.address, 100)).toEqual(rows);
+    expect(await children.start(parent, "after-abort")).toHaveProperty("parent", parent.name);
+  });
+  it("memory cleared before delayed actual end persistence is never a zero proof; settling preserves the normal mail return", async () => {
+    const route = await children.start(parent, "native-one"); retainMail(route.address); const delay = await deferredWrite();
+    const ending = children.end(parent, "native-one"); await delay.entered;
+    expect(children.list(parent)).toEqual([]); expect(store.nativeChildRoutes()).toHaveLength(1);
+    children.freezeLifecycleAdmission();
+    const timedOut = await children.settleLifecycleWrites(performance.now() + 10);
+    expect(timedOut.pending).toBe(1); expect(timedOut.blocker).toBeTruthy(); expect(await children.zeroLifecycleWitnessCurrent(timedOut, deadline())).toBe(false);
+    expect(store.unread(route.address, 100)).toHaveLength(1);
+    const settling = children.settleLifecycleWrites(deadline()); delay.release(); await ending;
+    const settled = await settling; expect(settled).toMatchObject({ blocker: null, memoryActive: 0, durableActive: 0, pending: 0 });
+    expect(await children.zeroLifecycleWitnessCurrent(settled, deadline())).toBe(true);
+    expect(store.unread(parent.name, 100)).toContainEqual(expect.objectContaining({ id: "fixture-mail", body: "Accepted fixture bytes", readAt: null, to: route.address }));
+    children.resumeLifecycleAdmission();
+    expect(await children.start(parent, "after-end")).toHaveProperty("parent", parent.name);
+  });
+  it("committed orphan mismatch after recovery refuses without running orphan recovery or retiring any row", async () => {
+    store.retainNativeChild("claude-orphan/sub:one", "claude-orphan"); retainMail("claude-orphan/sub:one");
+    const fallback = vi.spyOn(store, "returnNativeChild"); children.freezeLifecycleAdmission();
+    expect(await children.settleLifecycleWrites(deadline())).toMatchObject({ blocker: "native_state_unknown", memoryActive: 0, durableActive: 1 });
+    expect(fallback).not.toHaveBeenCalled(); expect(store.nativeChildRoutes()).toHaveLength(1); expect(store.unread("claude-orphan/sub:one", 100)).toHaveLength(1);
+  });
+  it("actual failed durable end latches unknown even though its memory map is empty", async () => {
+    await children.start(parent, "native-one"); vi.spyOn(store, "retryWrite").mockRejectedValue(new Error("injected native persistence failure"));
+    await expect(children.end(parent, "native-one")).rejects.toThrow("injected native persistence failure");
+    children.freezeLifecycleAdmission();
+    expect(await children.settleLifecycleWrites(deadline())).toMatchObject({ blocker: "native_state_unknown", memoryActive: 0 });
+    expect(store.nativeChildRoutes()).toHaveLength(1); children.resumeLifecycleAdmission();
+    expect(children.lifecycleOwnerManifest().unknown).toBe(true);
+  });
+  it("an accepted implicit disconnect invalidates the frozen zero witness without suppressing normal parent-end behavior", async () => {
+    children.freezeLifecycleAdmission(); const zero = await children.settleLifecycleWrites(deadline()); expect(zero.blocker).toBeNull();
+    await expect(children.endParent(parent)).rejects.toThrow(/draining/);
+    await children.endParent(parent, true);
+    expect(await children.zeroLifecycleWitnessCurrent(zero, deadline())).toBe(false);
+    children.resumeLifecycleAdmission(); await expect(children.start(parent, "late")).rejects.toThrow(/ended/);
+  });
+  it("the real readonly worker finds active routes among many retained inactive rows and exports only bounded counts/digest", async () => {
+    store.retainNativeChild("claude-inactive/sub:one", "claude-inactive"); await store.retryWrite(() => store.returnNativeChild("claude-inactive/sub:one", "claude-inactive"));
+    const db = Reflect.get(store, "db"); db.exec("BEGIN");
+    try { const insert = db.prepare("INSERT INTO native_child_routes(address,parent,active) VALUES (?,?,0)"); for (let i = 0; i < 20000; i++) insert.run(`claude-inactive/sub:n${i}`, "claude-inactive"); db.exec("COMMIT"); }
+    catch (error) { db.exec("ROLLBACK"); throw error; }
+    await children.start(parent, "native-one"); children.freezeLifecycleAdmission();
+    expect(await children.settleLifecycleWrites(deadline())).toMatchObject({ blocker: "native_routes_active", durableActive: 1 });
+    const snapshot = await store.committedNativeChildRoutes(randomUUID(), 1, deadline());
+    expect(Object.keys(snapshot).sort()).toEqual(["active", "digest", "generation", "ownerInstance", "requestNonce"]); expect(snapshot.active).toBe(1);
+  });
+  it("reader timeout retains the actual worker until exit, late results do not become eligibility, and no worker is terminated", async () => {
+    const reader = new NativeLifecycleReader(), owner = randomUUID();
+    const observation = reader.read(env.db, owner, 1, performance.now() + 50), worker = Reflect.get(reader, "worker");
+    const emit = worker.emit.bind(worker); let publishExit: (() => void) | undefined;
+    // Controlled late observation only: the worker executes real SQLite and exits
+    // normally. Delay delivery of its real exit event, never its execution/SQL.
+    const spy = vi.spyOn(worker, "emit").mockImplementation((...args: unknown[]) => {
+      if (args[0] === "exit") { publishExit = () => { emit(...args); }; return true; }
+      return emit(...args);
+    });
+    await expect(observation).rejects.toThrow("native_state_unknown");
+    expect(reader.pending()).toBe(1);
+    await expect(reader.read(env.db, owner, 2, deadline())).rejects.toThrow("native_state_unknown");
+    await until(() => !!publishExit); spy.mockRestore(); publishExit!();
+    await until(() => reader.pending() === 0);
+    const fresh = await reader.read(env.db, owner, 3, deadline()); expect(fresh).toMatchObject({ active: 0, generation: 3, ownerInstance: owner });
+  });
+  it("actual authenticated native RPCs obey the freeze and ordinary admission returns after pre-abort", async () => {
+    store.close(); const host = env.node("fixture-broker", "other"); await host.start();
+    const node = env.node("claude-parent"); await node.setSessionId("fixture-native-session"); await node.start();
+    const broker = Reflect.get(host, "broker"), actual: NativeChildren = Reflect.get(broker, "nativeChildren");
+    await node.nativeChild({ agentId: "native-one", action: "start" }); actual.freezeLifecycleAdmission();
+    expect(await actual.settleLifecycleWrites(deadline())).toMatchObject({ blocker: "native_routes_active" });
+    await expect(node.nativeChild({ agentId: "late", action: "start" })).rejects.toHaveProperty("code", "bad_request");
+    await expect(node.nativeChild({ agentId: "native-one", action: "grant", sendTo: [] })).rejects.toHaveProperty("code", "bad_request");
+    await expect(node.nativeChild({ agentId: "native-one", action: "end" })).rejects.toHaveProperty("code", "bad_request");
+    actual.resumeLifecycleAdmission(); await node.nativeChild({ agentId: "native-one", action: "end" });
+    expect(await node.nativeChildren()).toEqual([]);
+  });
+});

@@ -10,6 +10,7 @@ import { loadOrCreateToken } from "../core/token.js";
 import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { BridgeError } from "../core/protocol.js";
 import type { DashboardInfo } from "./dashboard.js";
+import { EndpointReservation } from "../core/endpoint-reservation.js";
 
 /** Existing broker and services, owned by a demand-start process rather than an MCP session. */
 export async function runBrokerDaemon(home: string, pipe: string, log: Logger): Promise<number> {
@@ -21,6 +22,14 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
   } catch (error) {
     if (!["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
   }
+  let reservation: EndpointReservation;
+  try { reservation = await EndpointReservation.bind(pipe); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") return 0;
+    throw error;
+  }
+  // No broker-owner store, lease or side worker exists before exclusive bind.
+  try {
   const config = loadConfig(home, "other", log);
   // The first eligible client supplies its already-resolved startup config, as embedded hosting did.
   if (process.env.AGENT_BRIDGE_DAEMON_CONFIG) {
@@ -29,6 +38,7 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
   }
   void refreshStorePeerIdentities(home).catch(() => {});
   const store = new MessageStore(resolveDbPath(home), log.child("store"));
+  try {
   const broker = new Broker(pipe, store, log.child("broker"), token, Date.now, join(home, JOBS_FILE), { home, config: config.network }, { ensure: (force, port) => ensureDashboard(force, port) });
   broker.setHostingMode("daemon");
   let stopping = false, release!: () => void;
@@ -67,7 +77,7 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
     return dashboardOpening;
   };
   try {
-    try { await broker.listen(); listening = true; }
+    try { await broker.listen(reservation); listening = true; }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
       // Every bind loser exits without unlinking or closing the winner's endpoint.
@@ -86,4 +96,6 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
     // Losing listeners must not close/unlink the winner's endpoint.
     if (listening) await broker.close(); else store.close();
   }
+  } catch (error) { store.close(); throw error; }
+  } finally { await reservation.close(); }
 }
