@@ -1,6 +1,6 @@
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -74,9 +74,17 @@ describe("standalone demand-start broker", () => {
       env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe } }));
     expect(inspect()).toEqual({ available: false });
     expect(existsSync(join(env.home, "token"))).toBe(false);
+    expect(existsSync(join(env.home, "logs"))).toBe(false);
     const a = node("status-main"); await a.start(); const pid = await remember();
     expect(inspect()).toMatchObject({ mode: "daemon", pid, version: "0.30.14", runningJobsEvidence: "legacy_registry_labels_not_execution" });
     expect((await a.peers()).map(peer => peer.name)).toEqual(["status-main"]);
+    const token = join(env.home, "token"), retainedToken = join(env.home, "fixture-retained-token");
+    renameSync(token, retainedToken);
+    try {
+      expect(inspect).toThrow("Core status authentication material is unavailable");
+      expect(existsSync(token)).toBe(false);
+      expect((await a.health()).brokerPid).toBe(pid);
+    } finally { renameSync(retainedToken, token); }
   });
   it("ten concurrent starts share one broker, keep accepted mail and reject wrong credentials", async () => {
     const peers = Array.from({ length: 10 }, (_, i) => node(`daemon-${i}`));

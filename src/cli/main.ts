@@ -1,5 +1,6 @@
 import type { InstallResult } from "./opencode-install.js";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { bundleDirectory } from "../core/bundle-directory.js";
 import { BridgeClient } from "../core/client.js";
 import { LOG_DIR_NAME } from "../core/constants.js";
@@ -8,7 +9,7 @@ import { createLogger, nullLogger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { APP_VERSION, PROTOCOL_VERSION } from "../core/constants.js";
-import { loadOrCreateToken } from "../core/token.js";
+import { loadOrCreateToken, tokenPath } from "../core/token.js";
 import { formatMessage, formatReplyRestrictions } from "../mcp/format.js";
 import { CODING_AGENTS, type CodingAgent } from "../core/protocol.js";
 import { DEFAULT_CONFIG, loadConfig } from "../core/config.js";
@@ -29,7 +30,7 @@ async function main(argv: string[]): Promise<number> {
   // State inspection must not create logs or repair malformed configuration/stores.
   if (command === "job-state") return (await import("./job-close.js")).runJobClose(command, rest, home, DEFAULT_CONFIG, nullLogger, out);
   const pipe = resolvePipePath(home);
-  const log = createLogger({ home, component: "cli" });
+  const log = command === "core" ? nullLogger : createLogger({ home, component: "cli" });
   const makeNode = () =>
     new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: resolveDbPath(home), daemon: { cli: join(bundleDirectory(import.meta.url), "cli.mjs"), dashboard: () => loadConfig(home, "other", log).dashboard,
       config: () => { const cfg = loadConfig(home, "other", log); const port = rest.find(arg => arg.startsWith("--port="))?.slice(7); return { network: cfg.network, mobile: cfg.mobile, dashboardPort: port ? Number(port) : cfg.dashboardPort }; } }, agent: "other", name: CLI_PEER_NAME, cwd: process.cwd(), autoWake: false, log });
@@ -43,7 +44,12 @@ async function main(argv: string[]): Promise<number> {
         if (["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "")) { out(JSON.stringify({ available: false })); return 0; }
         throw error;
       }
-      try { await client.request("auth", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(home) }); out(JSON.stringify(await client.request("coreStatus", {}))); }
+      try {
+        let token: string;
+        try { token = readFileSync(tokenPath(home), "utf8").trim(); if (!token) throw new Error(); }
+        catch { throw new Error("Core status authentication material is unavailable; no material was created."); }
+        await client.request("auth", { protocol: PROTOCOL_VERSION, token }); out(JSON.stringify(await client.request("coreStatus", {})));
+      }
       finally { client.close(); }
       return 0;
     }
