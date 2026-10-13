@@ -1,0 +1,73 @@
+name: AB228 preservation proof
+
+on:
+  pull_request:
+    paths:
+      - src/core/finalize-proof.ts
+      - src/core/storage-finalize.ts
+      - src/core/storage-absorb.ts
+      - test/storage-finalize*.test.ts
+      - test/storage-absorb.test.ts
+      - .github/workflows/ab228-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preservation:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'fix/ab228-current-content-proof'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Storage finalize regression
+        run: node scripts/test.mjs integration test/storage-finalize.test.ts
+      - name: Storage proof cost and manifest diagnostics
+        run: node scripts/test.mjs integration test/storage-finalize-cost.test.ts
+      - name: Storage absorb and sole-copy CLI regression
+        run: node scripts/test.mjs integration test/storage-absorb.test.ts
+      - name: Attribute generated plugins to exact source head
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib, subprocess
+          root = pathlib.Path('plugins')
+          files = []
+          for path in sorted(root.rglob('*')):
+              if path.is_symlink():
+                  raise RuntimeError(f'Unexpected symlink: {path}')
+              if path.is_file():
+                  # Only build outputs and build-written version manifests.
+                  rel = path.as_posix()
+                  if '/dist/' in rel or rel in {
+                      'plugins/claude/.claude-plugin/plugin.json',
+                      'plugins/codex/.codex-plugin/plugin.json',
+                      'plugins/opencode/package.json',
+                      'plugins/antigravity/package.json',
+                      'plugins/antigravity/plugin.json',
+                  }:
+                      files.append({'path': rel, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+          head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          pathlib.Path('ab228-bundles.json').write_text(json.dumps({'head': head, 'files': files}, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ab228-bundles-${{ github.event.pull_request.head.sha || github.sha }}
+          if-no-files-found: error
+          include-hidden-files: true
+          path: |
+            plugins/*/dist/**
+            plugins/claude/.claude-plugin/plugin.json
+            plugins/codex/.codex-plugin/plugin.json
+            plugins/opencode/package.json
+            plugins/antigravity/package.json
+            plugins/antigravity/plugin.json
+            ab228-bundles.json

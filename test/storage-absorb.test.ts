@@ -2,8 +2,9 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { planFinalize, runFinalize } from "../src/core/storage-finalize.js";
-import { decodeAbsorbedRow, encodeAbsorbedRow, readAbsorbedRows, runAbsorb } from "../src/core/storage-absorb.js";
+import { fileCandidates, planFinalize, referenceSnapshot, runFinalize, type FinalizePlan } from "../src/core/storage-finalize.js";
+import { fileSha256, provableTables } from "../src/core/finalize-proof.js";
+import { decodeAbsorbedRow, encodeAbsorbedRow, readAbsorbedRows, runAbsorb, type AbsorbResult } from "../src/core/storage-absorb.js";
 import { historyDbPath, migrateHistoryStore, openHistoryStore } from "../src/core/history-store.js";
 import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 import { runStorage } from "../src/cli/storage.js";
@@ -15,16 +16,20 @@ beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { for (const close of closes.splice(0).reverse()) close(); await env.cleanup(); });
 
 /** A verified v2 home with a completed job archive, as finalize expects. */
-async function verifiedHome(): Promise<void> {
+async function verifiedHome(pendingOnly = false): Promise<void> {
   const old = new DatabaseSync(env.db);
   const { historySchema } = await import("../src/core/history-schema.js");
   const { CONVERSATION_SCHEMA } = await import("../src/core/conversation-schema.js");
   old.exec("CREATE TABLE messages(id TEXT,body TEXT,from_agent TEXT,from_name TEXT,from_id TEXT,recipient TEXT,to_target TEXT,created_at INTEGER)");
   old.exec("CREATE TABLE decisions(id TEXT)");
   old.exec(historySchema()); old.exec(CONVERSATION_SCHEMA); old.exec("PRAGMA journal_mode=WAL");
-  old.prepare("INSERT INTO messages VALUES('m1','kept message','codex','codex-a','a','claude-b','claude-b',1)").run();
-  old.prepare("INSERT INTO conversations(id,agent,session) VALUES('codex:a','codex','a')").run();
-  old.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('s',0,0,'codex:a',1,?,'x')").run(Buffer.from("record bytes"));
+  if (pendingOnly) {
+    old.prepare("INSERT INTO history_pending VALUES('p1','pending-only payload ü','codex','codex-a','a','claude-b','claude-b',1)").run();
+  } else {
+    old.prepare("INSERT INTO messages VALUES('m1','kept message','codex','codex-a','a','claude-b','claude-b',1)").run();
+    old.prepare("INSERT INTO conversations(id,agent,session) VALUES('codex:a','codex','a')").run();
+    old.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('s',0,0,'codex:a',1,?,'x')").run(Buffer.from("record bytes"));
+  }
   old.close();
   const history = openHistoryStore(historyDbPath(env.db));
   try { await migrateHistoryStore(env.db, history); } finally { history.close(); }
@@ -44,6 +49,80 @@ function copyOfBridge(path: string, extra?: (db: DatabaseSync) => void): void {
 }
 
 const big = 2n ** 62n + 7n;
+
+it("AB-228: CLI retains a manifest-covered sole-copy pending row until exact absorption", async () => {
+  await verifiedHome(true);
+  const history = new DatabaseSync(historyDbPath(env.db));
+  let reference: string;
+  try {
+    const state = referenceSnapshot(history)!;
+    expect(state.manifest.history_pending!.rows).toBe(1);
+    reference = state.path;
+    expect(history.prepare("SELECT count(*) n FROM history_pending").get()!.n).toBe(1);
+    // These are generated fixture stores only. No backup or other message carries p1.
+    history.exec("DELETE FROM history_pending WHERE id='p1'");
+    expect(history.prepare("SELECT count(*) n FROM history_pending").get()!.n).toBe(0);
+  } finally { history.close(); }
+  const bridge = new DatabaseSync(env.db);
+  try {
+    expect(bridge.prepare("SELECT count(*) n FROM messages").get()!.n).toBe(0);
+    expect(bridge.prepare("SELECT count(*) n FROM history_pending").get()!.n).toBe(1);
+    bridge.exec("DELETE FROM history_pending WHERE id='p1'");
+    expect(bridge.prepare("SELECT count(*) n FROM history_pending").get()!.n).toBe(0);
+  } finally { bridge.close(); }
+  // The product's job migration also creates an empty pre-DDL snapshot. Prove it has no user tables:
+  // the unchanged history snapshot is the sole payload copy, with no second history backup.
+  const candidates = fileCandidates(env.home).map(c => c.item.path);
+  expect(candidates).toHaveLength(2);
+  expect(candidates).toContain(reference);
+  const emptyJobSnapshot = candidates.find(path => path !== reference)!;
+  expect(emptyJobSnapshot).toMatch(/job-archive\.db\.backup-.*-v0-to-v1$/);
+  const empty = new DatabaseSync(emptyJobSnapshot, { readOnly: true });
+  try { expect(provableTables(empty)).toEqual([]); } finally { empty.close(); }
+  const exact = { id: "p1", body: "pending-only payload ü", from_agent: "codex", from_name: "codex-a",
+    from_id: "a", recipient: "claude-b", to_target: "claude-b", created_at: 1n };
+  const sha = fileSha256(reference);
+  const assertSnapshot = () => {
+    expect(existsSync(reference)).toBe(true);
+    expect(fileSha256(reference)).toBe(sha);
+    const db = new DatabaseSync(reference, { readOnly: true });
+    try {
+      expect(db.prepare("SELECT count(*) n FROM history_pending").get()!.n).toBe(1);
+      const row = db.prepare("SELECT * FROM history_pending"); row.setReadBigInts(true);
+      expect({ ...row.get() }).toEqual(exact);
+    } finally { db.close(); }
+  };
+  const cli = <T>(args: string[]): T => {
+    const lines: string[] = [];
+    expect(runStorage([...args, "--json"], env.home, line => lines.push(line))).toBe(0);
+    expect(lines).toHaveLength(1);
+    return JSON.parse(lines[0]!) as T;
+  };
+  const assertKept = (plan: FinalizePlan) => {
+    expect(plan).toMatchObject({ ready: true, proven: true, blockers: [] });
+    expect(plan.items.map(i => i.path)).not.toContain(reference);
+    expect(plan.kept.find(i => i.path === reference)?.reason).toMatch(/history_pending: 1 of 1 rows are not in/);
+    assertSnapshot();
+  };
+  assertKept(cli<FinalizePlan>(["finalize", "--check"]));
+  assertKept(cli<FinalizePlan>(["finalize", "--yes"]));
+  expect(cli<AbsorbResult>(["absorb"])).toMatchObject({ applied: false, rows: 1, files: 0, conflicts: 0, blockers: [] });
+  assertSnapshot();
+  expect(existsSync(join(env.home, "archive.db"))).toBe(false);
+  expect(cli<AbsorbResult>(["absorb", "--yes"])).toMatchObject({ applied: true, rows: 1, files: 0, conflicts: 0, blockers: [] });
+  expect(readAbsorbedRows(env.home, "history_pending")).toEqual([exact]);
+  assertSnapshot();
+  const checked = cli<FinalizePlan>(["finalize", "--check"]);
+  expect(checked.kept.find(i => i.path === reference)).toBeUndefined();
+  expect(checked.items.map(i => i.path)).toContain(reference);
+  assertSnapshot();
+  const finalized = cli<FinalizePlan>(["finalize", "--yes"]);
+  expect(finalized).toMatchObject({ ready: true, proven: true, blockers: [] });
+  expect(finalized.kept.find(i => i.path === reference)).toBeUndefined();
+  expect(finalized.items.map(i => i.path)).toContain(reference);
+  expect(existsSync(reference)).toBe(false);
+  expect(readAbsorbedRows(env.home, "history_pending")).toEqual([exact]);
+});
 
 it("a backup holding purged messages is kept before absorb, and removable after it with the messages readable in archive.db", async () => {
   await verifiedHome();

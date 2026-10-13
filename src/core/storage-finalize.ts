@@ -214,7 +214,7 @@ export function planFinalize(home: string, options: { prove?: boolean; report?: 
     for (const { item } of found.files) {
       const isReference = reference && samePath(reference.path, item.path);
       items.push({ ...item, reason: isReference
-        ? "source snapshot of the verified history migration; its history tables are proven by the migration manifest, every other row against the live databases at removal"
+        ? "source snapshot of the verified history migration; every row is proven against surviving live or absorbed rows at removal"
         : `${item.reason}; proven row by row at removal` });
     }
   }
@@ -294,7 +294,7 @@ function proofWork(home: string, found: Candidates): number {
  * - bridge.db: the legacy proof and every DROP run in one write transaction, so no writer can slip in between;
  * - history.db: each v1_* and retained_* table is proven against v2 inside the transaction that drops it;
  * - files: each is proven row by row (or byte by byte) right before it is removed; the verified migration's source
- *   snapshot is proven by its manifest and removed last, after every other copy.
+ *   snapshot also needs surviving-row proof and is removed last, after every other copy.
  * With `dryRun` everything is proven exactly the same way and nothing is removed or locked. */
 export function runFinalize(home: string, report: (line: string) => void, options: FinalizeOptions = {}): FinalizePlan {
   const dry = options.dryRun === true;

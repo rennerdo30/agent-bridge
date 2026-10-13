@@ -12,8 +12,8 @@ import { HISTORY_V2_COPY_TABLES } from "./history-schema-v2.js";
  * present when they are byte-identical.
  *
  * Cost (owner requirement: a 20 GB snapshot in minutes, never hours): reads are sequential.
- * - The snapshot the verified v2 migration copied from is proven by that migration's manifest: its history tables
- *   are re-hashed sequentially with the migration's own chained row digest and must match row count and sha256.
+ * - The verified v2 migration's manifest diagnoses snapshot changes, but proves only a historical copy.
+ *   Its source snapshot still needs the same surviving-row proof as every other candidate.
  * - Other history copies (bridge.db legacy tables, old snapshots and backups, v1_* and retained_* tables) are compared
  *   with the live v2 table in rowid order, because the v2 copy kept every rowid. Two sequential scans, no lookups.
  * - Only rows that do not match at their rowid, and small tables, use indexed lookups, batched by 500 keys.
@@ -399,8 +399,8 @@ export function proveTable(candidate: DatabaseSync, table: string, ctx: ProofCon
   return reasons.length ? reasons.join("; ") : null;
 }
 
-/** The verified migration's source snapshot is proven by its manifest: every history table is re-hashed in one
- * sequential pass with the migration's own chained row digest and must match the recorded row count and sha256. */
+/** Diagnose changes to the verified migration's source snapshot in one sequential pass. A matching historical
+ * row count and sha256 never proves that those rows still survive in a current store. */
 export function proveByManifest(db: DatabaseSync, reference: ReferenceSnapshot, progress?: ProofProgress): { proven: Set<string>; reasons: string[] } {
   const proven = new Set<string>(), reasons: string[] = [];
   for (const [name, expected] of Object.entries(reference.manifest)) {
@@ -443,15 +443,12 @@ export function proveDatabase(path: string, ctx: ProofContext): string[] {
   catch (err) { return [`cannot be opened (${(err as Error).message})`]; }
   try {
     const reasons: string[] = [];
-    let manifest = new Set<string>();
     if (ctx.reference && samePath(ctx.reference.path, path)) {
-      // A table that no longer matches the manifest is not trusted by it; it falls back to the row-by-row proof.
+      // AB-228: even an unchanged snapshot can hold the only surviving copy of a manifest-covered row.
       const result = proveByManifest(db, ctx.reference, ctx.progress);
-      manifest = result.proven;
       for (const reason of result.reasons) ctx.progress?.note(`  ${reason}; proving it row by row instead`);
     }
     for (const table of provableTables(db)) {
-      if (manifest.has(table)) continue;
       ctx.progress?.note(`checking ${basename(path)}:${table}…`);
       const reason = proveTable(db, table, ctx);
       if (reason) reasons.push(reason);

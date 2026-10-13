@@ -58,7 +58,7 @@ it("the plan without --yes reads no rows: its query count does not grow with the
   const plan = planFinalize(env.home);
   expect(plan.proven).toBe(false);
   expect(plan.items.map(i => i.path)).toEqual(expect.arrayContaining([reference, join(env.home, "bridge.db.backup-1-copy"), "bridge.db:conversation_records"]));
-  expect(plan.items.find(i => i.path === reference)!.reason).toMatch(/proven by the migration manifest/);
+  expect(plan.items.find(i => i.path === reference)!.reason).toMatch(/every row is proven against surviving live or absorbed rows/);
   // A handful of catalog and state queries; per-row work would be thousands.
   expect(calls.n).toBeLessThan(80);
 });
@@ -79,7 +79,7 @@ it("the proof reads sequentially: no per-row lookups for the legacy history, the
   try { expect(bridge.prepare("SELECT count(*) n FROM conversation_records").get()!.n).toBe(RECORDS); } finally { bridge.close(); }
 });
 
-it("proves the verified migration's source snapshot by its manifest, and keeps it when its bytes no longer match", async () => {
+it("AB-228: keeps manifest-covered rows missing from current stores, including a changed snapshot", async () => {
   const reference = await bigHome(true);
   // The live stores drained the pending row since the migration: only the snapshot (and a copy) still hold it.
   const history = new DatabaseSync(historyDbPath(env.db));
@@ -91,11 +91,12 @@ it("proves the verified migration's source snapshot by its manifest, and keeps i
   const copy = new DatabaseSync(backup);
   try { copy.prepare("INSERT INTO history_pending VALUES('p1','pending body','codex','codex-a','a','claude-b','claude-b',1)").run(); } finally { copy.close(); }
   let plan = runFinalize(env.home, () => {}, { dryRun: true });
-  // The snapshot is exactly what the verified migration copied; the other copy needs a live row (or absorb).
-  expect(plan.items.map(i => i.path)).toContain(reference);
+  // AB-228: the old expectation trusted a historical manifest and could delete the only surviving pending row.
+  // Both copies now need a surviving row (or exact absorption), even when the reference still matches its manifest.
+  expect(plan.items.map(i => i.path)).not.toContain(reference);
+  expect(plan.kept.find(i => i.path === reference)?.reason).toMatch(/history_pending: 1 of 1 rows are not in/);
   expect(plan.kept.find(i => i.path === backup)?.reason).toMatch(/history_pending: 1 of 1 rows are not in/);
-  // Changed after the migration verified it: the manifest no longer vouches for that table, which is then proven row
-  // by row, and the drained row keeps the snapshot.
+  // Manifest-tamper diagnostics remain, and every table still needs a current row proof.
   const tampered = new DatabaseSync(reference);
   try { tampered.prepare("INSERT INTO history_pending VALUES('p2','added later','codex','codex-a','a','claude-b','claude-b',2)").run(); } finally { tampered.close(); }
   const lines: string[] = [];

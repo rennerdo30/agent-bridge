@@ -1,12 +1,12 @@
 import { lstatSync, readFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { DB_FILE_NAME } from "./constants.js";
 import { ABSORBED_FILES, ABSORBED_ROWS, alignedTarget, candidateFiles, fileSha256, hasTable, isSqlite, logicalTable, proveFile, provableTables, tableProof, type LiveDb, type ProofContext } from "./finalize-proof.js";
 import { historyDbPath } from "./history-store.js";
 import { ARCHIVE_DB_NAME, openArchive } from "./sqlite-maintenance.js";
 import { maintenanceLock } from "./storage-lock.js";
-import { fileCandidates, historyIsVerified, LEGACY_BRIDGE_TABLES, referenceSnapshot } from "./storage-finalize.js";
+import { fileCandidates, historyIsVerified, LEGACY_BRIDGE_TABLES } from "./storage-finalize.js";
 
 /** Lossless absorb (owner decision 2026-10-09): before finalize proves old backups and snapshots redundant, every
  * row in them that exists nowhere live is imported into archive.db, so the proof can succeed without losing anything.
@@ -84,15 +84,8 @@ function absorbDatabase(path: string, ctx: ProofContext, archive: DatabaseSync |
   catch (err) { source.problems.push(`${basename(path)} cannot be opened (${(err as Error).message})`); return; }
   try {
     const sig = signature(path), origin = basename(path);
-    // The verified migration's source snapshot: its history tables are what the migration copied and verified.
-    // Absorb deletes nothing, so a matching row count suffices here; finalize re-hashes them against the manifest.
-    const reference = ctx.reference && samePath(ctx.reference.path, path) ? ctx.reference : undefined;
+    // AB-228: manifest counts describe a past copy, so every table needs the current surviving-row proof.
     for (const table of provableTables(db)) {
-      if (reference) {
-        const name = table.startsWith(reference.prefix) ? table.slice(reference.prefix.length) : undefined;
-        const expected = name !== undefined ? reference.manifest[name] : undefined;
-        if (expected && Number(db.prepare(`SELECT count(*) n FROM ${q(table)}`).get()!.n) === expected.rows) continue;
-      }
       const p = tableProof(db, table, ctx, alignedTarget(table, ctx), options.batchRows);
       if (!p.total) continue;
       const progress = archive?.prepare("SELECT after_rowid, done FROM absorb_progress WHERE source=? AND table_name=?").get(sig, table);
@@ -145,8 +138,6 @@ function absorbFile(path: string, root: string, copies: readonly string[], ctx: 
   archive.prepare(`INSERT OR IGNORE INTO ${ABSORBED_FILES}(sha256,bytes,size,origin,absorbed_at) VALUES(?,?,?,?,?)`).run(sha, bytes, bytes.length, path, now);
 }
 
-const samePath = (a: string, b: string) => process.platform === "win32" ? resolve(a).toLowerCase() === resolve(b).toLowerCase() : resolve(a) === resolve(b);
-
 /** Dry run without `apply`: counts what would be imported and the conflicts. With `apply`, imports under the
  * maintenance lock (no bridge process may be writing). */
 export function runAbsorb(home: string, options: AbsorbOptions = {}): AbsorbResult {
@@ -166,7 +157,7 @@ export function runAbsorb(home: string, options: AbsorbOptions = {}): AbsorbResu
     const live: LiveDb[] = [{ label: "bridge.db", db: open(bridge), exclude: new Set(LEGACY_BRIDGE_TABLES) }, { label: "history.db", db: history }];
     const archiveLive = archive ?? (lstatOrNull(archivePath) ? open(archivePath) : undefined);
     if (archiveLive) live.splice(1, 0, { label: "archive.db", db: archiveLive });
-    const ctx: ProofContext = { live, history, reference: referenceSnapshot(history) };
+    const ctx: ProofContext = { live, history };
     const settings = { ...options, batchRows: options.batchRows ?? BATCH_ROWS, now: options.now ?? Date.now() };
     for (const { item, copies } of fileCandidates(home)) {
       const source: AbsorbSource = { path: item.path, rows: 0, files: 0, conflicts: 0, problems: [] };
