@@ -91,15 +91,24 @@ public static class CiWindowsCleanup
         if (!string.Equals(FinalPath(entry.Handle), expected, StringComparison.OrdinalIgnoreCase))
             throw new IOException("Cleanup handle escaped its physical parent");
     }
-    static void Collect(string path, string canonical, string marker, List<Entry> entries, Action<string> beforeEnumerate) {
-        var entry = Open(path, true, string.Equals(path, marker, StringComparison.OrdinalIgnoreCase), entries.Count != 0);
+    static void Collect(string path, string canonical, string marker, List<Entry> entries, Action<string> beforeEnumerate, Action<string> beforeOpen) {
+        if (beforeOpen != null) beforeOpen(path);
+        Entry entry;
+        try { entry = Open(path, true, string.Equals(path, marker, StringComparison.OrdinalIgnoreCase), entries.Count != 0); }
+        catch (IOException error) {
+            var native = error.InnerException as Win32Exception;
+            // Enumeration is a snapshot. Nothing can be deleted through a missing
+            // child. Root/marker/target proofs are still mandatory below.
+            if (entries.Count != 0 && native != null && (native.NativeErrorCode == 2 || native.NativeErrorCode == 3)) return;
+            throw;
+        }
         entries.Add(entry);
         VerifyPath(entry, canonical);
         if ((entry.Attributes & 0x400) != 0) return; // Never enumerate a junction's target.
         if ((entry.Attributes & 0x10) != 0) {
             if (beforeEnumerate != null) beforeEnumerate(path);
             foreach (string child in Directory.EnumerateFileSystemEntries(path))
-                Collect(child, canonical + "\\" + Path.GetFileName(child), marker, entries, beforeEnumerate);
+                Collect(child, canonical + "\\" + Path.GetFileName(child), marker, entries, beforeEnumerate, beforeOpen);
         }
     }
     static string JunctionSubstitute(Entry entry) {
@@ -170,6 +179,9 @@ public static class CiWindowsCleanup
         Remove(root, markerName, contents, beforeDelete, beforeEnumerate, null);
     }
     public static void Remove(string root, string markerName, string contents, Action beforeDelete, Action<string> beforeEnumerate, Action<string> afterUnlink) {
+        Remove(root, markerName, contents, beforeDelete, beforeEnumerate, afterUnlink, null);
+    }
+    public static void Remove(string root, string markerName, string contents, Action beforeDelete, Action<string> beforeEnumerate, Action<string> afterUnlink, Action<string> beforeOpen) {
         root = Path.GetFullPath(root).TrimEnd('\\');
         string markerPath = Path.Combine(root, markerName);
         var ancestors = new List<Entry>();
@@ -188,7 +200,7 @@ public static class CiWindowsCleanup
                 VerifyPath(ancestor, canonical);
             }
             string rootCanonical = canonical + "\\" + parts[parts.Length - 1];
-            Collect(root, rootCanonical, markerPath, entries, beforeEnumerate);
+            Collect(root, rootCanonical, markerPath, entries, beforeEnumerate, beforeOpen);
             var marker = entries.Find(e => string.Equals(e.Path, markerPath, StringComparison.OrdinalIgnoreCase));
             if (marker == null) throw new IOException("Cleanup marker missing");
             VerifyMarker(marker, contents);

@@ -318,3 +318,28 @@ try {
 }
 `)).toEqual({ removed: true, ancestorSwapBlocked: true });
 });
+
+it.runIf(process.platform === "win32")("tolerates a fixture child disappearing between enumeration and opening", () => {
+  expect(guard(`
+Initialize-CiCleanupApi
+$script:disappeared = $false
+$beforeOpen = [Action[string]]{
+    param($path)
+    if ($path -ceq $sentinel) { [IO.File]::Delete($path); $script:disappeared = $true }
+}
+[CiWindowsCleanup]::Remove($owner.Root, $owner.MarkerName, $owner.MarkerContents, $null, $null, $null, $beforeOpen)
+[pscustomobject]@{ disappeared = $script:disappeared; removed = -not (Test-Path -LiteralPath $owner.Root) } | ConvertTo-Json -Compress
+`)).toEqual({ disappeared: true, removed: true });
+});
+
+it.runIf(process.platform === "win32")("still refuses when its marker disappears during enumeration", () => {
+  expect(guard(`
+Initialize-CiCleanupApi
+$beforeOpen = [Action[string]]{ param($path); if ($path -ceq $marker) { [IO.File]::Delete($path) } }
+try {
+    $refused = $false
+    try { [CiWindowsCleanup]::Remove($owner.Root, $owner.MarkerName, $owner.MarkerContents, $null, $null, $null, $beforeOpen) } catch { $refused = $true }
+    [pscustomobject]@{ refused = $refused; retained = [IO.File]::ReadAllText($sentinel) -ceq 'owned fixture' } | ConvertTo-Json -Compress
+} finally { [IO.File]::WriteAllText($marker, $owner.MarkerContents) }
+`)).toEqual({ refused: true, retained: true });
+});
