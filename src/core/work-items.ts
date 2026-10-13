@@ -34,6 +34,10 @@ export function parseWorkItem(value: string): WorkItemRef {
   if (id.length < 1 || id.length > 200) {
     throw new Error(`invalid work item ${JSON.stringify(value)}: id must be 1..200 characters`);
   }
+  // Tracker CLIs get the id as a positional argument; a leading dash could be read as an option.
+  if (id.startsWith("-")) {
+    throw new Error(`invalid work item ${JSON.stringify(value)}: id must not start with "-"`);
+  }
   if (/[\s\x00-\x1f\x7f]/.test(id)) {
     throw new Error(`invalid work item ${JSON.stringify(value)}: id must not contain whitespace or control characters`);
   }

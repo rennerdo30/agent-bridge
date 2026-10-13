@@ -18,7 +18,7 @@ export interface PairDeskAdapterOptions {
 }
 
 /**
- * Posts work-item events via `pair-desk comment <id> --author agent-bridge --text-file <file>`.
+ * Posts work-item events via `pair-desk comment --author agent-bridge --text-file <file> -- <id>`.
  *
  * Note on Windows: `command` must be a real executable (pair-desk.exe, a
  * python path or similar). `.cmd`/`.bat` wrappers need `shell: true` with
@@ -50,7 +50,8 @@ export class PairDeskAdapter implements TrackerAdapter {
       await writeFile(file, formatEvent(event), "utf8");
       await execFileAsync(
         this.command,
-        [...this.argsPrefix, "comment", ref.id, "--author", "agent-bridge", "--text-file", file],
+        // Options first, then "--", so the id can never be parsed as an option (e.g. a verdict).
+        [...this.argsPrefix, "comment", "--author", "agent-bridge", "--text-file", file, "--", ref.id],
         { timeout: this.timeoutMs },
       );
     } finally {

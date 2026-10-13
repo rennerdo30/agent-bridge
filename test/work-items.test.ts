@@ -51,6 +51,8 @@ describe("parseWorkItem", () => {
       "a:b\rc",
       "a:b\x00c",
       "a:b\x7fc",
+      "pair-desk:--verdict=passed",
+      "pair-desk:-x",
       longId,
       longTracker,
     ]) {
@@ -284,13 +286,13 @@ if (out) writeFileSync(out, JSON.stringify({ argv, text }));
       const adapter = new PairDeskAdapter({ command: process.execPath, argsPrefix: [fixture] });
       await withEnv("FIXTURE_OUT", out, () => adapter.post(ref, event));
       const { argv, text } = recorded(out);
-      expect(argv.slice(0, 4)).toEqual(["comment", "AB-1", "--author", "agent-bridge"]);
-      expect(argv[4]).toBe("--text-file");
-      expect(typeof argv[5]).toBe("string");
+      expect(argv.slice(0, 4)).toEqual(["comment", "--author", "agent-bridge", "--text-file"]);
+      expect(typeof argv[4]).toBe("string");
+      expect(argv.slice(5)).toEqual(["--", "AB-1"]);
       expect(text).toBe(formatEvent(event));
       // The text file and the temp dir it lived in are gone.
-      expect(existsSync(argv[5] as string)).toBe(false);
-      expect(existsSync(join(argv[5] as string, ".."))).toBe(false);
+      expect(existsSync(argv[4] as string)).toBe(false);
+      expect(existsSync(join(argv[4] as string, ".."))).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
