@@ -221,7 +221,9 @@ it.each([
   const { history, retained, id } = await retainedPayload(logical, moved);
   const before = retainedContent(history, retained, logical);
   expect(before.count).toBe(1);
-  const row = history.prepare(`SELECT * FROM ${retained}`).get()!;
+  const read = history.prepare(`SELECT * FROM ${retained}`);
+  read.setReadBigInts(true);
+  const row = read.get()!;
   expect(logical === "history_documents" ? decodeText(row.body, row.body_codec) : row.body).toBe(retainedBody);
   for (const checked of [planFinalize(env.home, { prove: true }), runFinalize(env.home, () => {}, { dryRun: true })]) {
     expect(checked.ready).toBe(true);
@@ -233,7 +235,7 @@ it.each([
   expect(applied.ready).toBe(true);
   expect(applied.kept.map(i => i.path)).toContain(`history.db:${retained}`);
   expect(retainedContent(history, retained, logical)).toEqual(before);
-  expect(decodeHistoryRow(logical, history.prepare(`SELECT * FROM ${retained}`).get()!).body).toBe(retainedBody);
+  expect(decodeHistoryRow(logical, read.get()!).body).toBe(retainedBody);
   // Explicit recovery in the fixture, never overwrite a conflict during finalize.
   if (logical === "conversation_records") history.exec("DROP TRIGGER conversation_records_no_update");
   history.prepare(`UPDATE ${logical} SET body=? WHERE rowid=?`).run(retainedBody, id);
