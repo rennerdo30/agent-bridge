@@ -1,6 +1,4 @@
 import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
-import * as fs from "node:fs";
-import * as sqlite from "node:sqlite";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -15,10 +13,32 @@ import { bundleFiles } from "../src/core/archive-bundle.js";
 import * as migrations from "../src/core/sqlite-migrations.js";
 import { openArchive } from "../src/core/sqlite-maintenance.js";
 
+const observations = vi.hoisted(() => ({
+  opened: undefined as string[] | undefined,
+  afterStat: undefined as (() => void) | undefined,
+}));
+vi.mock("node:sqlite", async original => {
+  const native = await original<typeof import("node:sqlite")>();
+  return { ...native, DatabaseSync: class extends native.DatabaseSync {
+    constructor(...args: ConstructorParameters<typeof DatabaseSync>) {
+      observations.opened?.push(String(args[0]));
+      super(...args);
+    }
+  } };
+});
+vi.mock("node:fs", async original => {
+  const native = await original<typeof import("node:fs")>();
+  return { ...native, fstatSync: (...args: Parameters<typeof native.fstatSync>) => {
+    const result = Reflect.apply(native.fstatSync, undefined, args);
+    observations.afterStat?.();
+    return result;
+  } };
+});
+
 let env: TestEnv;
 const closes: (() => void)[] = [];
 beforeEach(() => { env = makeEnv(); });
-afterEach(async () => { vi.restoreAllMocks(); for (const close of closes.splice(0).reverse()) close(); await env.cleanup(); });
+afterEach(async () => { observations.opened = undefined; observations.afterStat = undefined; vi.restoreAllMocks(); for (const close of closes.splice(0).reverse()) close(); await env.cleanup(); });
 
 /** A verified v2 home with a completed job archive, as finalize expects. */
 async function verifiedHome(): Promise<void> {
@@ -279,11 +299,8 @@ function currentSnapshot(path: string): void {
 
 /** Observe actual SQLite construction after setup, not just calls to the admission helper. */
 function sqliteOpens(): string[] {
-  const opened: string[] = [], Native = sqlite.DatabaseSync;
-  vi.spyOn(sqlite, "DatabaseSync").mockImplementation(function (...args: ConstructorParameters<typeof DatabaseSync>) {
-    opened.push(String(args[0]));
-    return new Native(...args);
-  } as unknown as typeof DatabaseSync);
+  const opened: string[] = [];
+  observations.opened = opened;
   return opened;
 }
 
@@ -337,17 +354,14 @@ it("keeps the exclusive new-file identity witness and refuses replacement before
   const target = join(env.home, "archive.db"), candidate = join(env.home, ".migration-snapshots", "replacement.db");
   currentSnapshot(candidate);
   const files = originalFiles([join(env.home, ".migration-snapshots")]), rows = storedInventory(candidate), opened = sqliteOpens();
-  const native = fs.fstatSync;
   let replaced = false;
-  vi.spyOn(fs, "fstatSync").mockImplementation((...args: Parameters<typeof fs.fstatSync>) => {
-    const result = native(...args);
+  observations.afterStat = () => {
     if (!replaced && existsSync(target)) {
       replaced = true;
       renameSync(target, join(env.home, "exclusive-original.db"));
       symlinkSync(candidate, target, "file");
     }
-    return result;
-  });
+  };
   expect(() => runAbsorb(env.home, { apply: true })).toThrow(/unsafe or unavailable/);
   expect(replaced).toBe(true);
   expect(opened).not.toContain(target);
