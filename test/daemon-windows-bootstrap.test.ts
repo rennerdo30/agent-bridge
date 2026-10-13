@@ -54,7 +54,21 @@ let journal: LifecycleJournal | undefined, captured: DatabaseSync | undefined;
 const sqliteExec = DatabaseSync.prototype.exec;
 const setupCloses = new Set<Promise<void>>();
 const fixtureFlushDescriptors = new Set<number>();
+function resetNativeAdapters() {
+  // restoreAllMocks does not restore module-lived vi.fn implementations/history.
+  // Reset only future calls; already accepted native children remain untouched.
+  vi.mocked(processes.spawn).mockReset().mockImplementation(originals.spawn!);
+  vi.mocked(files.openSync).mockReset().mockImplementation(originals.openSync!);
+  vi.mocked(files.fsyncSync).mockReset().mockImplementation(originals.fsyncSync!);
+  vi.mocked(files.closeSync).mockReset().mockImplementation(originals.closeSync!);
+  for (const [adapter, native] of [[processes.spawn, originals.spawn], [files.openSync, originals.openSync],
+    [files.fsyncSync, originals.fsyncSync], [files.closeSync, originals.closeSync]] as const) {
+    expect(vi.mocked(adapter).getMockImplementation()).toBe(native);
+    expect(adapter).not.toHaveBeenCalled();
+  }
+}
 beforeEach(async () => {
+  resetNativeAdapters();
   env = makeEnv(); home = join(env.home, "home"); captured = undefined;
   if (process.platform !== "win32") return;
   const bin = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
@@ -72,13 +86,13 @@ beforeEach(async () => {
   });
 });
 afterEach(async () => {
+  resetNativeAdapters();
+  vi.restoreAllMocks();
   // A setup observer timeout is not process exit or permission to remove its home.
   await Promise.all([...setupCloses]);
-  vi.restoreAllMocks();
   // Dispose ONLY exact native descriptors this isolated fixture captured; this is
   // neither production retry/cleanup nor proof the failed close had succeeded.
-  for (const fd of fixtureFlushDescriptors) files.closeSync(fd);
-  fixtureFlushDescriptors.clear();
+  for (const fd of fixtureFlushDescriptors) { originals.closeSync!(fd); fixtureFlushDescriptors.delete(fd); }
   // Exact isolated test handle disposal ONLY. No production rollback/force-close API.
   if (captured) { if (captured.isTransaction) sqliteExec.call(captured, "ROLLBACK"); captured.close(); captured = undefined; }
   if (journal) { expect(journal.close()).toBe(true); journal = undefined; }
@@ -159,6 +173,7 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
   it("a deadline crossed after registration but before native entry refuses without a child or stale pending registration", async () => {
     const b = await serving(), started = performance.now(), end = started + 1000;
     const cap = b.lifecycleServingCapability("prepare", started + 5000), spawnObserver = vi.spyOn(processes, "spawn");
+    spawnObserver.mockClear(); // Observe only the scoped identity call, not HOME setup.
     // Real scoped registry is the observation point. Source guards/auth/capability
     // remain active; the clock crosses only once the real registration exists.
     vi.spyOn(performance, "now").mockImplementation(() => pendingWindowsLifecycleVerifications() ? end + 1 : started);
