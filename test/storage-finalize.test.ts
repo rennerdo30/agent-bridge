@@ -67,25 +67,27 @@ it("refuses to delete while a late legacy record is not copied yet, and when a c
   expect(old.prepare("SELECT count(*) n FROM conversation_records").get()!.n).toBe(2);
 });
 
-it("after verification removes exactly the listed old-format data and keeps everything still in use", async () => {
+it("after verification retains every old-format candidate, including proven duplicates", async () => {
   const history = await legacyHome(true);
   // The real job archive import, on a home without legacy copies, completes immediately.
   await migrateJobArchives(join(env.home, "jobs.json"));
   const plan = planFinalize(env.home, { prove: true });
   expect(plan.blockers).toEqual([]);
-  const paths = plan.items.map(i => i.path);
+  expect(plan.items).toEqual([]);
+  expect(plan.bytes).toBe(0);
+  const paths = plan.kept.map(i => i.path);
   expect(paths).toContain("bridge.db:conversation_records");
   expect(paths).toContain("bridge.db:history_documents");
   expect(paths).not.toContain("bridge.db:messages");
   // Files that are not provably redundant row by row are kept and reported, never removed.
-  expect(paths.some(p => p.endsWith("old-snapshot.db"))).toBe(false);
-  expect(paths.some(p => p.includes(".pending-snapshot-1"))).toBe(false);
+  expect(paths.some(p => p.endsWith("old-snapshot.db"))).toBe(true);
+  expect(paths.some(p => p.includes(".pending-snapshot-1"))).toBe(true);
   expect(plan.kept.map(i => i.path).some(p => p.endsWith("old-snapshot.db"))).toBe(true);
   const lines: string[] = [];
   runFinalize(env.home, line => lines.push(line));
   expect(lines.some(l => l.includes("conversation_records"))).toBe(true);
   const bridge = new DatabaseSync(env.db, { readOnly: true }); closes.push(() => bridge.close());
-  expect(bridge.prepare("SELECT name FROM sqlite_master WHERE name='conversation_records'").get()).toBeUndefined();
+  expect(bridge.prepare("SELECT count(*) n FROM conversation_records").get()!.n).toBe(1);
   expect(bridge.prepare("SELECT body FROM messages WHERE id='m1'").get()!.body).toBe("kept message");
   expect(existsSync(join(env.home, ".migration-snapshots", "old-snapshot.db"))).toBe(true);
   expect(existsSync(join(env.home, "backups", ".pending-snapshot-1"))).toBe(true);
@@ -94,7 +96,7 @@ it("after verification removes exactly the listed old-format data and keeps ever
   expect((decodeHistoryRow("conversation_records", history.prepare("SELECT * FROM conversation_records").get()!).raw as Buffer).toString()).toBe("record bytes");
 });
 
-it("rolls back to the legacy history before finalize, keeps the copy, and refuses once finalize removed the legacy tables", async () => {
+it("rolls back to legacy history before and after retaining finalize, keeping both copies", async () => {
   const history = await legacyHome(true);
   expect(historyReadPath(env.db)).toBe(historyDbPath(env.db));
   expect(rollbackHistoryStore(env.home)).toMatch(/Rolled back/);
@@ -105,7 +107,8 @@ it("rolls back to the legacy history before finalize, keeps the copy, and refuse
   expect(historyReadPath(env.db)).toBe(historyDbPath(env.db));
   await migrateJobArchives(join(env.home, "jobs.json"));
   expect(runFinalize(env.home, () => {}).ready).toBe(true);
-  expect(() => rollbackHistoryStore(env.home)).toThrow(/no longer possible/);
+  expect(rollbackHistoryStore(env.home)).toMatch(/Rolled back/);
+  expect(historyReadPath(env.db)).toBe(env.db);
 });
 
 /** A whole-database copy of bridge.db, like the backups and snapshots earlier migrations wrote. */
@@ -117,7 +120,7 @@ function copyOfBridge(path: string, extra?: (db: DatabaseSync) => void): void {
   try { extra(copy); } finally { copy.close(); }
 }
 
-it("AB-228: keeps an old backup that holds a message the live databases no longer have, and removes a provably redundant snapshot", async () => {
+it("AB-228: keeps an old backup that holds a message the live databases no longer have, and retains a provably redundant snapshot", async () => {
   await legacyHome(true);
   await migrateJobArchives(join(env.home, "jobs.json"));
   const purged = join(env.home, "bridge.db.backup-2-purged");
@@ -125,18 +128,18 @@ it("AB-228: keeps an old backup that holds a message the live databases no longe
   const redundant = join(env.home, ".migration-snapshots", "bridge.db.backup-3-v1-to-v2");
   copyOfBridge(redundant);
   const plan = planFinalize(env.home, { prove: true });
-  expect(plan.items.map(i => i.path)).toContain(redundant);
+  expect(plan.kept.find(i => i.path === redundant)?.reason).toMatch(/retained by policy/);
   expect(plan.items.map(i => i.path)).not.toContain(purged);
   expect(plan.kept.find(i => i.path === purged)?.reason).toMatch(/messages: 1 of 2 rows/);
   const done = runFinalize(env.home, () => {});
   expect(done.ready).toBe(true);
   expect(existsSync(purged)).toBe(true);
-  expect(existsSync(redundant)).toBe(false);
+  expect(existsSync(redundant)).toBe(true);
   const backup = new DatabaseSync(purged, { readOnly: true }); closes.push(() => backup.close());
   expect(backup.prepare("SELECT body FROM messages WHERE id='m0'").get()!.body).toBe("purged by an old version");
 });
 
-it("AB-228: keeps a pending backup directory unless every file in it is proven redundant", async () => {
+it("AB-228: keeps a pending backup directory even when every file is proven redundant", async () => {
   await legacyHome(true);
   await migrateJobArchives(join(env.home, "jobs.json"));
   const pending = join(env.home, "backups", ".pending-snapshot-2");
@@ -144,7 +147,7 @@ it("AB-228: keeps a pending backup directory unless every file in it is proven r
   copyOfBridge(join(pending, "bridge.db"));
   writeFileSync(join(pending, "jobs.json"), "{\"version\":1,\"jobs\":[]}");
   writeFileSync(join(env.home, "jobs.json"), "{\"version\":1,\"jobs\":[]}");
-  expect(planFinalize(env.home, { prove: true }).items.map(i => i.path)).toContain(pending);
+  expect(planFinalize(env.home, { prove: true }).kept.find(i => i.path === pending)?.reason).toMatch(/retained by policy/);
   writeFileSync(join(pending, "runs.json"), "only here");
   expect(planFinalize(env.home, { prove: true }).kept.find(i => i.path === pending)?.reason).toMatch(/runs\.json/);
   runFinalize(env.home, () => {});
@@ -163,15 +166,15 @@ it("AB-215: keeps a retained failed-attempt table that holds a natively ingested
   const plan = planFinalize(env.home, { prove: true });
   expect(plan.items.map(i => i.path)).not.toContain(`history.db:${retained}`);
   expect(plan.kept.find(i => i.path === `history.db:${retained}`)?.reason).toMatch(/1 of 2 rows/);
-  // Retained tables whose rows all exist in v2 are proven and may go.
-  expect(plan.items.some(i => /^history\.db:retained_\d+_conversations$/.test(i.path))).toBe(true);
+  // Conservative retention also keeps tables whose rows all exist in v2.
+  expect(plan.kept.some(i => /^history\.db:retained_\d+_conversations$/.test(i.path) && /retained by policy/.test(i.reason))).toBe(true);
   for (const close of closes.splice(0).reverse()) close();
   expect(runFinalize(env.home, () => {}).ready).toBe(true);
   const after = new DatabaseSync(historyDbPath(env.db), { readOnly: true }); closes.push(() => after.close());
   expect(Buffer.from(after.prepare(`SELECT raw FROM "${retained}" WHERE source='native'`).get()!.raw as Uint8Array).toString()).toBe("native only");
 });
 
-it("AB-211: drops v1_* tables only with a row-level proof against v2", async () => {
+it("AB-211: retains v1_* tables even with a successful row-level proof against v2", async () => {
   const old = new DatabaseSync(env.db);
   old.exec("CREATE TABLE messages(id TEXT,body TEXT,from_agent TEXT,from_name TEXT,from_id TEXT,recipient TEXT,to_target TEXT,created_at INTEGER)");
   old.close();
@@ -189,25 +192,25 @@ it("AB-211: drops v1_* tables only with a row-level proof against v2", async () 
   const history = openHistoryStore(historyDbPath(env.db)); closes.push(() => history.close());
   await migrateHistoryStore(env.db, history);
   await migrateJobArchives(join(env.home, "jobs.json"));
-  expect(planFinalize(env.home, { prove: true }).items.map(i => i.path)).toContain("history.db:v1_conversation_records");
+  expect(planFinalize(env.home, { prove: true }).kept.find(i => i.path === "history.db:v1_conversation_records")?.reason).toMatch(/retained by policy/);
   // A v1 row that never reached v2 must keep its table.
   history.prepare("INSERT INTO v1_conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('v1-late',0,0,'codex:v1',2,?,'')").run(Buffer.from("late v1 record"));
   const plan = planFinalize(env.home, { prove: true });
   expect(plan.items.map(i => i.path)).not.toContain("history.db:v1_conversation_records");
-  expect(plan.items.map(i => i.path)).toContain("history.db:v1_conversations");
+  expect(plan.kept.find(i => i.path === "history.db:v1_conversations")?.reason).toMatch(/retained by policy/);
   for (const close of closes.splice(0).reverse()) close();
   runFinalize(env.home, () => {});
   const after = new DatabaseSync(historyDbPath(env.db), { readOnly: true }); closes.push(() => after.close());
   expect(after.prepare("SELECT count(*) n FROM v1_conversation_records").get()!.n).toBe(2);
-  expect(after.prepare("SELECT name FROM sqlite_master WHERE name='v1_conversations'").get()).toBeUndefined();
+  expect(after.prepare("SELECT count(*) n FROM v1_conversations").get()!.n).toBe(1);
 });
 
-it("AB-212: re-verifies inside the dropping transaction, so a legacy record written after verification survives", async () => {
+it("AB-212: re-verifies in a read-only transaction, so a late legacy record is reported and survives", async () => {
   await legacyHome(true);
   await migrateJobArchives(join(env.home, "jobs.json"));
   const plan = runFinalize(env.home, line => {
     if (!line.startsWith("verification passed")) return;
-    // A writer without a storage lease commits between verification and the drop.
+    // A writer without a storage lease commits between verification and the proof.
     const late = new DatabaseSync(env.db);
     try { late.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('late',0,0,'codex:a',1,?,'late')").run(Buffer.from("late bytes")); }
     finally { late.close(); }
@@ -218,7 +221,7 @@ it("AB-212: re-verifies inside the dropping transaction, so a legacy record writ
   expect(bridge.prepare("SELECT count(*) n FROM conversation_records").get()!.n).toBe(2);
 });
 
-it("AB-230: removes only job-copy originals listed in a verified manifest, never unlisted files in their folder", async () => {
+it("AB-230: retains job-copy originals listed in a verified manifest and unlisted files", async () => {
   await legacyHome(true);
   const archive = join(env.home, "archive");
   mkdirSync(archive, { recursive: true });
@@ -228,5 +231,6 @@ it("AB-230: removes only job-copy originals listed in a verified manifest, never
   expect(readdirSync(originals)).toHaveLength(3);
   writeFileSync(join(originals, "notes.txt"), "not in any manifest");
   expect(runFinalize(env.home, () => {}).ready).toBe(true);
-  expect(readdirSync(originals)).toEqual(["notes.txt"]);
+  expect(readdirSync(originals)).toHaveLength(4);
+  expect(readdirSync(originals)).toContain("notes.txt");
 });

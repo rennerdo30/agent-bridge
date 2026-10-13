@@ -1,0 +1,44 @@
+name: Storage retention
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/storage-retention.yml'
+      - 'src/cli/storage.ts'
+      - 'src/core/storage-*.ts'
+      - 'src/core/sqlite-maintenance.ts'
+      - 'test/storage-*.ts'
+      - 'test/data-retention.test.ts'
+
+permissions:
+  contents: read
+
+jobs:
+  preservation:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      # Generated outputs validate compilation only. The release owner rebuilds
+      # committed bundles once on the combined integration.
+      - run: npm run build
+      - name: Finalize retention and original proof failures
+        run: npm run test:integration -- test/storage-finalize.test.ts
+      - name: Original proof query limits
+        run: npm run test:integration -- test/storage-finalize-cost.test.ts
+      - name: Absorb candidate inventories and no-migration refusal
+        run: npm run test:integration -- test/storage-absorb.test.ts
+      - name: Source retention guard and existing retention regressions
+        run: npm run test:integration -- test/data-retention.test.ts

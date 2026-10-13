@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { closeSync, existsSync, openSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -44,12 +44,32 @@ PRAGMA user_version = 1;
 `;
 
 /** Archive schema has its own version sequence; primary migrations belong to MessageStore. */
-export function openArchive(path: string): DatabaseSync {
+export function openArchive(path: string, options: { migrate?: boolean } = {}): DatabaseSync {
   const existed = existsSync(path);
+  let created = false;
+  if (options.migrate === false) {
+    if (existed) {
+      const original = new DatabaseSync(path, { readOnly: true });
+      try {
+        if (Number(original.prepare("PRAGMA user_version").get()!.user_version) !== ARCHIVE_STORE_VERSION)
+          throw new Error("Storage absorb requires a current archive.db; archive migration is disabled and all originals are retained.");
+      } finally { original.close(); }
+    } else {
+      if (["-wal", "-shm", "-journal"].some(suffix => existsSync(`${path}${suffix}`)))
+        throw new Error("Storage absorb cannot initialize archive.db with existing sidecars; all originals are retained.");
+      // Never initialize over a file another process created after the existence check.
+      closeSync(openSync(path, "wx", 0o600));
+      created = true;
+    }
+  }
   const db = new DatabaseSync(path);
   try {
     db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
-    migrateSqlite(db, path, existed, ARCHIVE_STORE_VERSION, [{ version: 1, sql: ARCHIVE_SCHEMA }], nullLogger);
+    if (options.migrate === false) {
+      if (created) db.exec(ARCHIVE_SCHEMA);
+      else if (Number(db.prepare("PRAGMA user_version").get()!.user_version) !== ARCHIVE_STORE_VERSION)
+        throw new Error("Storage absorb requires a current archive.db; archive migration is disabled and all originals are retained.");
+    } else migrateSqlite(db, path, existed, ARCHIVE_STORE_VERSION, [{ version: 1, sql: ARCHIVE_SCHEMA }], nullLogger);
     configureSqlite(db);
     return db;
   } catch (err) { db.close(); throw err; }

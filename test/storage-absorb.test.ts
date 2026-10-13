@@ -1,18 +1,21 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { planFinalize, runFinalize } from "../src/core/storage-finalize.js";
 import { decodeAbsorbedRow, encodeAbsorbedRow, readAbsorbedRows, runAbsorb } from "../src/core/storage-absorb.js";
 import { historyDbPath, migrateHistoryStore, openHistoryStore } from "../src/core/history-store.js";
 import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 import { runStorage } from "../src/cli/storage.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+import { originalFiles, sha256File, storedInventory } from "./storage-retention-fixture.js";
+import { bundleFiles } from "../src/core/archive-bundle.js";
+import * as migrations from "../src/core/sqlite-migrations.js";
 
 let env: TestEnv;
 const closes: (() => void)[] = [];
 beforeEach(() => { env = makeEnv(); });
-afterEach(async () => { for (const close of closes.splice(0).reverse()) close(); await env.cleanup(); });
+afterEach(async () => { vi.restoreAllMocks(); for (const close of closes.splice(0).reverse()) close(); await env.cleanup(); });
 
 /** A verified v2 home with a completed job archive, as finalize expects. */
 async function verifiedHome(): Promise<void> {
@@ -45,7 +48,7 @@ function copyOfBridge(path: string, extra?: (db: DatabaseSync) => void): void {
 
 const big = 2n ** 62n + 7n;
 
-it("a backup holding purged messages is kept before absorb, and removable after it with the messages readable in archive.db", async () => {
+it("a backup holding purged messages is kept before absorb, and retained after it with the messages readable in archive.db", async () => {
   await verifiedHome();
   const backup = join(env.home, "bridge.db.backup-2-purged");
   copyOfBridge(backup, db => {
@@ -79,11 +82,11 @@ it("a backup holding purged messages is kept before absorb, and removable after 
   expect(readAbsorbedRows(env.home, "messages").map(r => r.id).sort()).toEqual(["m0", "m2"]);
 
   const proven = planFinalize(env.home, { prove: true });
-  expect(proven.kept.find(i => i.path === backup)?.reason).toBeUndefined();
-  expect(proven.items.map(i => i.path)).toContain(backup);
+  expect(proven.kept.find(i => i.path === backup)?.reason).toMatch(/retained by policy/);
+  expect(proven.items).toEqual([]);
   closes.splice(0).forEach(close => close());
   expect(runFinalize(env.home, () => {}).ready).toBe(true);
-  expect(existsSync(backup)).toBe(false);
+  expect(existsSync(backup)).toBe(true);
   const after = new DatabaseSync(join(env.home, "archive.db"), { readOnly: true }); closes.push(() => after.close());
   expect(after.prepare("SELECT body FROM messages WHERE id='m0'").get()!.body).toBe("purged by an old version");
 });
@@ -111,7 +114,7 @@ it("a conflicting row is never imported or overwritten; its backup stays and is 
   expect(archive.prepare("SELECT body FROM messages WHERE id='m9'").get()!.body).toBe("only here");
 });
 
-it("absorbs files that exist only in a pending backup byte-exact, so the folder becomes removable", async () => {
+it("absorbs files that exist only in a pending backup byte-exact, while retaining the original folder", async () => {
   await verifiedHome();
   const pending = join(env.home, "backups", ".pending-snapshot-9");
   mkdirSync(pending, { recursive: true });
@@ -123,9 +126,9 @@ it("absorbs files that exist only in a pending backup byte-exact, so the folder 
   const archive = new DatabaseSync(join(env.home, "archive.db"), { readOnly: true });
   try { expect(Buffer.from(archive.prepare("SELECT bytes FROM absorbed_files").get()!.bytes as Uint8Array).equals(bytes)).toBe(true); }
   finally { archive.close(); }
-  expect(planFinalize(env.home, { prove: true }).items.map(i => i.path)).toContain(pending);
+  expect(planFinalize(env.home, { prove: true }).kept.find(i => i.path === pending)?.reason).toMatch(/retained by policy/);
   runFinalize(env.home, () => {});
-  expect(existsSync(pending)).toBe(false);
+  expect(existsSync(pending)).toBe(true);
 });
 
 it("resumes from the last committed batch after an interruption", async () => {
@@ -148,7 +151,7 @@ it("resumes from the last committed batch after an interruption", async () => {
   expect(archive()).toBe(15);
   expect(runAbsorb(env.home, { apply: true, batchRows: 5 }).rows).toBe(10);
   expect(archive()).toBe(25);
-  expect(planFinalize(env.home, { prove: true }).items.map(i => i.path)).toContain(backup);
+  expect(planFinalize(env.home, { prove: true }).kept.find(i => i.path === backup)?.reason).toMatch(/retained by policy/);
 });
 
 it("round-trips every SQLite value type exactly", () => {
@@ -165,4 +168,102 @@ it("the CLI lists before importing and imports with --yes", async () => {
   expect(lines.join("\n")).toMatch(/1 rows and 0 files exist only in old copies/);
   expect(runStorage(["absorb", "--yes"], env.home, l => lines.push(l))).toBe(0);
   expect(lines.join("\n")).toMatch(/1 rows and 0 files imported into archive\.db/);
+});
+
+it("retains full candidate inventories and hashes through successful CLI finalize/absorb and repeats", async () => {
+  await verifiedHome();
+  const historyPath = historyDbPath(env.db);
+  const history = openHistoryStore(historyPath);
+  try {
+    history.exec(`CREATE TABLE retained_123_conversations AS SELECT rowid AS retained_rowid,* FROM conversations;
+      CREATE TABLE v1_conversations AS SELECT * FROM conversations;
+      CREATE TABLE snapshots(id TEXT PRIMARY KEY,payload BLOB);
+      INSERT INTO snapshots VALUES('duplicate',x'00FF01');`);
+  } finally { history.close(); }
+  const duplicate = join(env.home, "bridge.db.backup-6-duplicate");
+  copyOfBridge(duplicate);
+  const snapshot = join(env.home, ".migration-snapshots", "typed-snapshot.db");
+  const db = new DatabaseSync(snapshot);
+  try {
+    db.exec("CREATE TABLE snapshots(id TEXT PRIMARY KEY,payload BLOB); INSERT INTO snapshots VALUES('duplicate',x'00FF01'); INSERT INTO snapshots VALUES('unique',x'FF0002');");
+  } finally { db.close(); }
+  const archived = join(env.home, "archive");
+  mkdirSync(archived, { recursive: true });
+  copyOfBridge(join(archived, "bridge.db.backup-7-duplicate"));
+  const pending = join(env.home, "backups", ".pending-retention");
+  mkdirSync(pending, { recursive: true });
+  copyOfBridge(join(pending, "bridge.db"));
+  writeFileSync(join(pending, "original.bin"), Buffer.from([0, 255, 17]));
+  writeFileSync(join(pending, "original.bin-wal"), Buffer.from([18, 0, 255]));
+  const cold = join(env.home, "cold-storage", "jobs-v1");
+  for (const dir of ["archive-originals", "root-originals"]) {
+    const originals = join(cold, dir);
+    mkdirSync(originals, { recursive: true });
+    const name = `${dir}.json`;
+    writeFileSync(join(originals, name), '{"jobs":[]}');
+    bundleFiles(originals, [name], cold);
+    writeFileSync(join(originals, "unlisted.txt"), "only original");
+  }
+  const roots = [duplicate, join(env.home, ".migration-snapshots"), archived, join(env.home, "backups"), cold];
+  const files = originalFiles(roots);
+  const bridgeRows = storedInventory(env.db), historyRows = storedInventory(historyPath), snapshotRows = storedInventory(snapshot);
+  const assertOriginals = () => {
+    expect(originalFiles(roots)).toEqual(files);
+    expect(storedInventory(env.db)).toBe(bridgeRows);
+    expect(storedInventory(historyPath)).toBe(historyRows);
+    expect(storedInventory(snapshot)).toBe(snapshotRows);
+  };
+  for (const flags of [["finalize", "--check"], ["finalize", "--yes"], ["absorb", "--yes"], ["finalize", "--yes"], ["absorb", "--yes"], ["finalize", "--yes"]]) {
+    const output: string[] = [];
+    expect(runStorage([...flags, "--json"], env.home, s => output.push(s))).toBe(0);
+    const result = JSON.parse(output.join(""));
+    expect(result).toMatchObject({ removed: false, removedItems: 0, freedBytes: 0 });
+    if (flags[0] === "finalize") expect(result).toMatchObject({ ready: true, items: [], bytes: 0 });
+    assertOriginals();
+  }
+  const copied = readAbsorbedRows(env.home, "snapshots");
+  expect(copied).toHaveLength(1);
+  expect(copied[0]).toMatchObject({ id: "unique" });
+  expect(copied[0]!.payload).toEqual(Buffer.from([255, 0, 2]));
+  const archivePath = join(env.home, "archive.db");
+  const archive = new DatabaseSync(archivePath);
+  try { archive.exec("CREATE TABLE snapshots(id TEXT PRIMARY KEY,payload BLOB); INSERT INTO snapshots VALUES('original-target',x'FE0001');"); }
+  finally { archive.close(); }
+  const targetRows = storedInventory(archivePath);
+  expect(runAbsorb(env.home, { apply: true })).toMatchObject({ rows: 0, files: 0, conflicts: 0 });
+  expect(storedInventory(archivePath)).toBe(targetRows);
+  assertOriginals();
+  const output: string[] = [];
+  expect(runStorage(["finalize", "--yes"], env.home, s => output.push(s))).toBe(0);
+  expect(output.join("\n")).toMatch(/Removed 0 items, 0.00 GiB/);
+  assertOriginals();
+});
+
+it("refuses an existing archive needing migration before any helper can rotate backups or rewrite snapshot rows", async () => {
+  await verifiedHome();
+  const path = join(env.home, "archive.db");
+  const old = new DatabaseSync(path);
+  try {
+    old.exec("CREATE TABLE snapshots(id TEXT PRIMARY KEY,payload BLOB); INSERT INTO snapshots VALUES('sole-copy',x'FF00FE'); PRAGMA user_version=0;");
+  } finally { old.close(); }
+  const backups: string[] = [];
+  for (let i = 0; i < 5; i++) {
+    const backup = `${path}.backup-${i}`;
+    writeFileSync(backup, `original backup ${i}`);
+    backups.push(backup);
+  }
+  const roots = [path, ...backups, join(env.home, ".migration-snapshots")];
+  const before = originalFiles(roots), rows = storedInventory(path), hash = sha256File(path);
+  const migration = vi.spyOn(migrations, "migrateSqlite");
+  expect(() => runAbsorb(env.home, { apply: true })).toThrow(/migration is disabled.*originals are retained/);
+  const output: string[] = [];
+  expect(runStorage(["absorb", "--yes"], env.home, s => output.push(s))).toBe(1);
+  expect(output.join("\n")).toMatch(/requires a current archive.db/);
+  expect(migration).not.toHaveBeenCalled();
+  expect(originalFiles(roots)).toEqual(before);
+  expect(storedInventory(path)).toBe(rows);
+  expect(sha256File(path)).toBe(hash);
+  expect(runFinalize(env.home, () => {})).toMatchObject({ ready: true, items: [], bytes: 0 });
+  expect(originalFiles(roots)).toEqual(before);
+  expect(storedInventory(path)).toBe(rows);
 });

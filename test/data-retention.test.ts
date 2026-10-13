@@ -33,13 +33,7 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
     '"DELETE FROM history_documents"', '"DELETE FROM history_documents"'],
   // Packing bookkeeping only: the failure record of a run that has since been packed successfully.
   "core/finished-run-bundles.ts": ['"DELETE FROM bridge_metadata WHERE domain=? AND key=?"'],
-  // Absorb cursor bookkeeping only: a table with conflicts restarts its scan; the conflicting rows themselves are kept.
-  "core/storage-absorb.ts": ['"DELETE FROM absorb_progress WHERE source=? AND table_name=?"'],
-  // Owner decision 2026-10-09: the explicit, confirmed `storage finalize` removes superseded copies only after the new
-  // format is verified and each item is proven redundant row by row / byte by byte immediately before removal.
-  // Both drops (bridge.db legacy tables after verifyLegacyBridge, history.db tables after proveHistoryTables) run inside the proving transaction.
-  "core/storage-finalize.ts": ["`DROP TABLE IF EXISTS \"${name.replaceAll('\"', '\"\"')}\"`",
-    "`DROP TABLE IF EXISTS \"${name.replaceAll('\"', '\"\"')}\"`", "rmSync(path, { recursive: true, force: true })", "rmSync(path, { force: true })", "rmdirSync(group.dir)"],
+  // Finalize/absorb have no permission to delete candidates, even when proofs succeed.
   "core/notifications.ts": ["rmdirSync(lock)", "rmdirSync(lock)"],
   "mcp/rewake.ts": ["rmSync(sessionFile(this.home, this.registered), { force: true })", "rmSync(sessionFile(this.home, this.registered), { force: true })"],
   "network/files.ts": ["rmSync(staging, { recursive: true, force: true })"],
@@ -67,6 +61,11 @@ beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { await env.cleanup(); });
 
 describe("owner data retention rule", () => {
+  it("gives finalize and absorb no candidate-removal exceptions", () => {
+    for (const file of ["core/storage-finalize.ts", "core/storage-absorb.ts"])
+      expect(removalOperations(readFileSync(join(SOURCE_ROOT, file), "utf8"))).toEqual([]);
+  });
+
   it("refuses every unreviewed filesystem removal or destructive SQL in production source", () => {
     const violations: string[] = [];
     for (const file of sources(SOURCE_ROOT)) {

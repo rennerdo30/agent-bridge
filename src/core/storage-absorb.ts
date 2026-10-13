@@ -8,7 +8,7 @@ import { ARCHIVE_DB_NAME, openArchive } from "./sqlite-maintenance.js";
 import { maintenanceLock } from "./storage-lock.js";
 import { fileCandidates, historyIsVerified, LEGACY_BRIDGE_TABLES, referenceSnapshot } from "./storage-finalize.js";
 
-/** Lossless absorb (owner decision 2026-10-09): before finalize proves old backups and snapshots redundant, every
+/** Retaining absorb: originals stay at their original paths regardless of later proof results. Every
  * row in them that exists nowhere live is imported into archive.db, so the proof can succeed without losing anything.
  * - each such row is stored exactly (every column, type-tagged, integers as exact decimals) in absorbed_rows, keyed by
  *   its table and a digest of its decoded values, so identical rows from many backups are stored once;
@@ -126,7 +126,7 @@ function absorbDatabase(path: string, ctx: ProofContext, archive: DatabaseSync |
       // A table with conflicts is scanned again on every run, so each run reports them.
       if (source.conflicts === conflictsBefore) archive?.prepare("INSERT INTO absorb_progress(source,table_name,after_rowid,done) VALUES(?,?,?,1) ON CONFLICT(source,table_name) DO UPDATE SET done=1")
         .run(sig, table, after);
-      else archive?.prepare("DELETE FROM absorb_progress WHERE source=? AND table_name=?").run(sig, table);
+      else archive?.prepare("UPDATE absorb_progress SET after_rowid=-1, done=0 WHERE source=? AND table_name=?").run(sig, table);
     }
   } catch (err) {
     if ((err as { absorbWrite?: boolean }).absorbWrite) throw err;
@@ -159,7 +159,7 @@ export function runAbsorb(home: string, options: AbsorbOptions = {}): AbsorbResu
     const open = (path: string) => { const db = new DatabaseSync(path, { readOnly: true, timeout: 5000 }); opened.push(db); return db; };
     let archive: DatabaseSync | undefined;
     if (options.apply) {
-      archive = openArchive(archivePath); opened.push(archive);
+      archive = openArchive(archivePath, { migrate: false }); opened.push(archive);
       archive.exec(ABSORB_SCHEMA);
     }
     const history = open(historyPath);
