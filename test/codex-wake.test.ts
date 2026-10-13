@@ -7,7 +7,7 @@ import type { BridgeConfig } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
 import type { BridgeNode } from "../src/core/node.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
-import { CodexWaker } from "../src/mcp/codex-wake.js";
+import { CodexWaker, QUEUE_TIMEOUT_MS } from "../src/mcp/codex-wake.js";
 import { until } from "./helpers.js";
 
 /** `codex queue ...` is played by node running a script named "queue" in the node's cwd. */
@@ -42,6 +42,12 @@ const mail = (id: string): BridgeMessage => ({
   readAt: null,
 });
 
+const DEBOUNCE_MS = 20;
+const queueTimings = { debounceMs: DEBOUNCE_MS, queueTimeoutMs: QUEUE_TIMEOUT_MS };
+// Real native startup belongs to the product's execution budget. A short fixture
+// deadline can kill Node before the queue script records even its first call.
+const untilQueue = (condition: () => boolean) => until(condition, DEBOUNCE_MS + QUEUE_TIMEOUT_MS);
+
 describe("CodexWaker", () => {
   let dir: string;
   const calls = () => (existsSync(join(dir, "calls")) ? readFileSync(join(dir, "calls"), "utf8").length : 0);
@@ -57,22 +63,22 @@ describe("CodexWaker", () => {
   it("wakes the fallback master for direct job mail with auto-wake off", async () => {
     fakeCodex(dir, 0, 0);
     const node = fakeNode(dir); node.autoWakeEnabled = false;
-    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, queueTimings);
     waker.setThreadId("fallback-thread");
     node.inbox.push({ ...mail("note"), from: { id: "job:1234", name: "codex-job-1234", agent: "codex" }, conversationId: "job-1234:note" });
     node.emit("message", node.inbox[0]);
     expect((waker as unknown as { timer: unknown }).timer).toBeNull();
     node.inbox.push({ ...node.inbox[0]!, id: "fallback-note", conversationId: "job-1234:fallback" });
     node.emit("message", node.inbox[1]);
-    await until(() => calls() === 1);
-    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    await untilQueue(() => calls() === 1);
+    await untilQueue(() => !(waker as unknown as { inFlight: boolean }).inFlight);
     expect(node.inbox).toHaveLength(2);
   });
 
   it("wakes direct named mail with global auto-wake off, and leaves other targets and quiet mail alone", async () => {
     fakeCodex(dir, 0, 0);
     const node = fakeNode(dir); node.autoWakeEnabled = false;
-    const waker = new CodexWaker(node as unknown as BridgeNode, { ...cfg(), wakeOnDirect: true }, nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    const waker = new CodexWaker(node as unknown as BridgeNode, { ...cfg(), wakeOnDirect: true }, nullLogger, queueTimings);
     waker.setThreadId("thread-1");
     for (const m of [{ ...mail("kind"), to: "codex" },
       { ...mail("quiet"), conversationId: "siblings-id:note" }, { ...mail("hop"), hop: 6 }]) {
@@ -80,8 +86,8 @@ describe("CodexWaker", () => {
     }
     expect((waker as unknown as { timer: unknown }).timer).toBeNull();
     node.inbox.push(mail("direct")); node.emit("message", node.inbox.at(-1));
-    await until(() => calls() === 1);
-    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    await untilQueue(() => calls() === 1);
+    await untilQueue(() => !(waker as unknown as { inFlight: boolean }).inFlight);
     expect(node.autoWakeEnabled).toBe(false);
   });
 
@@ -89,13 +95,13 @@ describe("CodexWaker", () => {
     fakeCodex(dir, 0, 0);
     const node = fakeNode(dir); node.autoWakeEnabled = false;
     const settings = { ...cfg(), wakeOnDirect: false };
-    const waker = new CodexWaker(node as unknown as BridgeNode, settings, nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    const waker = new CodexWaker(node as unknown as BridgeNode, settings, nullLogger, queueTimings);
     waker.setThreadId("secondary-thread");
     node.inbox.push({ ...mail("broadcast"), to: "*" }); node.emit("message", node.inbox[0]);
     expect((waker as unknown as { timer: unknown }).timer).toBeNull();
     settings.wakeOnDirect = true; waker.setActivity("idle");
-    await until(() => calls() === 1);
-    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    await untilQueue(() => calls() === 1);
+    await untilQueue(() => !(waker as unknown as { inFlight: boolean }).inFlight);
     expect(node.autoWakeEnabled).toBe(false);
     expect(node.inbox).toHaveLength(1);
   });
@@ -104,18 +110,18 @@ describe("CodexWaker", () => {
     fakeCodex(dir, 0, 0);
     const node = fakeNode(dir); node.autoWakeEnabled = false;
     const settings = { ...cfg(), wakeOnDirect: false };
-    const waker = new CodexWaker(node as unknown as BridgeNode, settings, nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    const waker = new CodexWaker(node as unknown as BridgeNode, settings, nullLogger, queueTimings);
     waker.setThreadId("thread-1"); node.inbox.push(mail("direct")); node.emit("message", node.inbox[0]);
     expect((waker as unknown as { timer: unknown }).timer).toBeNull();
     settings.wakeOnDirect = true; waker.setActivity("busy"); node.emit("message", node.inbox[0]);
     expect((waker as unknown as { timer: unknown }).timer).toBeNull();
-    waker.setActivity("idle"); await until(() => calls() === 1);
-    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    waker.setActivity("idle"); await untilQueue(() => calls() === 1);
+    await untilQueue(() => !(waker as unknown as { inFlight: boolean }).inFlight);
   });
 
   it("does not schedule a wake for a quiet sibling observer copy, including on an idle report", () => {
     const node = fakeNode(dir);
-    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, queueTimings);
     waker.setThreadId("thread-1");
     node.inbox.push({ ...mail("m1"), conversationId: "siblings-conversation:note" });
     node.emit("message", node.inbox[0]);
@@ -127,30 +133,30 @@ describe("CodexWaker", () => {
   it("wakes again when the queued turn ended while `codex queue` was still running and mail is left", async () => {
     fakeCodex(dir, 0, 200);
     const node = fakeNode(dir);
-    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, queueTimings);
     waker.setThreadId("thread-1");
     node.inbox.push(mail("m1"));
     node.emit("message", node.inbox[0]);
-    await until(() => calls() === 1, 5_000);
+    await untilQueue(() => calls() === 1);
     // The queued turn runs and ends before the queue command returns; new mail arrived meanwhile.
     waker.setActivity("busy");
     node.inbox.splice(0, 1, mail("m2"));
     node.emit("message", node.inbox[0]);
     waker.setActivity("idle");
-    await until(() => calls() === 2, 6_000);
-    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    await untilQueue(() => calls() === 2);
+    await untilQueue(() => !(waker as unknown as { inFlight: boolean }).inFlight);
   });
 
   it("a failed queue call does not overwrite a busy state reported meanwhile", async () => {
     fakeCodex(dir, 1, 200);
     const node = fakeNode(dir);
-    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, queueTimings);
     waker.setThreadId("thread-1");
     node.inbox.push(mail("m1"));
     node.emit("message", node.inbox[0]);
-    await until(() => calls() === 1, 5_000);
+    await untilQueue(() => calls() === 1);
     waker.setActivity("busy"); // the user started a turn
-    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    await untilQueue(() => !(waker as unknown as { inFlight: boolean }).inFlight);
     expect((waker as unknown as { state: string }).state).toBe("busy");
     // Mail for a busy session must not trigger a wake-up.
     node.inbox.push(mail("m2"));
@@ -162,12 +168,12 @@ describe("CodexWaker", () => {
   it("does not retry a failing queue call on its own", async () => {
     fakeCodex(dir, 1, 0);
     const node = fakeNode(dir);
-    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, queueTimings);
     waker.setThreadId("thread-1");
     node.inbox.push(mail("m1"));
     node.emit("message", node.inbox[0]);
-    await until(() => calls() === 1, 5_000);
-    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    await untilQueue(() => calls() === 1);
+    await untilQueue(() => !(waker as unknown as { inFlight: boolean }).inFlight);
     await new Promise((r) => setTimeout(r, 80));
     expect(calls()).toBe(1);
   });
@@ -175,16 +181,16 @@ describe("CodexWaker", () => {
   it("allows later mail after queue acceptance without inventing permanent host activity", async () => {
     fakeCodex(dir, 0, 0);
     const node = fakeNode(dir);
-    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, queueTimings);
     waker.setThreadId("thread-1");
     node.inbox.push(mail("first")); node.emit("message", node.inbox[0]);
-    await until(() => calls() === 1);
-    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    await untilQueue(() => calls() === 1);
+    await untilQueue(() => !(waker as unknown as { inFlight: boolean }).inFlight);
     await new Promise(resolve => setTimeout(resolve, 80));
     expect(calls()).toBe(1); // No autonomous retry of unconsumed mail.
     node.inbox.push(mail("later")); node.emit("message", node.inbox[1]);
-    await until(() => calls() === 2);
-    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    await untilQueue(() => calls() === 2);
+    await untilQueue(() => !(waker as unknown as { inFlight: boolean }).inFlight);
     waker.setActivity("busy");
     node.inbox.push(mail("reported-busy")); node.emit("message", node.inbox[2]);
     await new Promise(resolve => setTimeout(resolve, 80));
@@ -195,18 +201,18 @@ describe("CodexWaker", () => {
     const release = join(dir, "release");
     writeFileSync(join(dir, "queue"), `const fs=require('fs');fs.appendFileSync(${JSON.stringify(join(dir, "calls"))},'x');setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)}))process.exit(0);},20);`);
     const node = fakeNode(dir);
-    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, queueTimings);
     waker.setThreadId("thread-1");
     node.inbox.push(mail("first")); node.emit("message", node.inbox[0]);
-    await until(() => calls() === 1);
+    await untilQueue(() => calls() === 1);
     // The native turn consumed first mail, but its queue command has not exited yet.
     // No hooks report activity: new arrivals must be caught when that command settles.
     node.inbox.splice(0, 1, mail("later")); node.emit("message", node.inbox[0]);
     expect((waker as unknown as { inFlight: boolean }).inFlight).toBe(true);
     expect(calls()).toBe(1);
     writeFileSync(release, "");
-    await until(() => calls() === 2);
-    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    await untilQueue(() => calls() === 2);
+    await untilQueue(() => !(waker as unknown as { inFlight: boolean }).inFlight);
     expect(node.inbox[0]!.body).toBe("later");
   });
 
@@ -214,28 +220,28 @@ describe("CodexWaker", () => {
     fakeCodex(dir, 1, 0);
     const node = fakeNode(dir); node.autoWakeEnabled = false;
     node.isNotificationAwaited = (m) => m.id === "awaited";
-    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, queueTimings);
     waker.setThreadId("thread-1");
     node.inbox.push(mail("unrelated")); node.emit("message", node.inbox[0]);
     expect((waker as unknown as { timer: unknown }).timer).toBeNull();
     node.inbox.push(mail("awaited")); node.emit("message", node.inbox[1]);
-    await until(() => calls() === 1);
-    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    await untilQueue(() => calls() === 1);
+    await untilQueue(() => !(waker as unknown as { inFlight: boolean }).inFlight);
     expect(node.inbox).toHaveLength(2); expect(node.autoWakeEnabled).toBe(false);
   });
 
   it("rechecks restored subscriptions on identity changes and keeps quiet and hop guards", async () => {
     fakeCodex(dir, 0, 0);
     const node = fakeNode(dir); node.autoWakeEnabled = false;
-    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, queueTimings);
     waker.setThreadId("thread-1");
     node.inbox.push({ ...mail("awaited"), hop: 6 }, { ...mail("awaited"), conversationId: "files-progress-id" });
     node.isNotificationAwaited = () => true;
     node.emit("notification_waits_changed");
     expect((waker as unknown as { timer: unknown }).timer).toBeNull();
     node.inbox.push(mail("awaited")); node.emit("notification_waits_changed");
-    await until(() => calls() === 1);
-    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    await untilQueue(() => calls() === 1);
+    await untilQueue(() => !(waker as unknown as { inFlight: boolean }).inFlight);
     expect(node.inbox).toHaveLength(3);
   });
 
