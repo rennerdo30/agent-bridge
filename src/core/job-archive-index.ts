@@ -6,6 +6,7 @@ import { cloneJson, estimatedJsonBytes, fileSignature } from "./file-cache.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
 import type { Logger } from "./logger.js";
+import { openPreservedReader } from "./storage-preservation.js";
 
 export const JOB_ARCHIVE_VERSION = 1;
 export const JOB_ARCHIVE_FILE = "job-archive.db";
@@ -69,7 +70,7 @@ CREATE VIEW v_jobs AS SELECT r.id,r.name,r.status,r.started_at,r.finished_at,r.a
 CREATE VIEW current_jobs AS SELECT * FROM v_jobs;
 PRAGMA user_version=1;`;
 
-export function openJobArchive(path: string, writable = false): DatabaseSync | undefined {
+export function openJobArchive(path: string, writable = false, options: { preserveInputs?: boolean } = {}): DatabaseSync | undefined {
   const file = jobArchivePath(path);
   physicalArchivePath(file);
   physicalArchivePath(`${file}-wal`); physicalArchivePath(`${file}-shm`);
@@ -79,7 +80,9 @@ export function openJobArchive(path: string, writable = false): DatabaseSync | u
   if (writable) mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   // Wait out transient writer locks like every other store (AB-255): 100 ms is
   // routinely exceeded by a concurrent archive migration on a loaded runner.
-  const db = new DatabaseSync(file, { readOnly: !writable, timeout: SQLITE_BUSY_TIMEOUT_MS });
+  if (writable && options.preserveInputs) throw new Error("Preserved job archive inputs are readonly.");
+  const db = options.preserveInputs ? openPreservedReader(file, SQLITE_BUSY_TIMEOUT_MS)
+    : new DatabaseSync(file, { readOnly: !writable, timeout: SQLITE_BUSY_TIMEOUT_MS });
   try {
     db.exec(`PRAGMA busy_timeout=${SQLITE_BUSY_TIMEOUT_MS}; PRAGMA foreign_keys=ON`);
     const version = Number(db.prepare("PRAGMA user_version").get()!.user_version);

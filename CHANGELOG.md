@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.30.15
+
+- Storage finalize and absorb keep backups, migration snapshots, `retained_*` tables and old archives without deleting or rewriting retained data. Linked, uncertain or WAL-mode candidates are refused before they are opened (AB-215/AB-228, #18).
+- Unchanged finished jobs are no longer archived again on every save (AB-319, #13).
+- Jobs that refuse a follow-up now return a typed reason explaining why (AB-320, #15).
+- Codex plugin hooks no longer fail with "hook input placeholder `${agent_id}` was not found" on Codex 0.162 and later (AB-299, #12).
+
 ## 0.30.14
 
 - Phone pairing over a plain home-network IP now works with `"tls": "pinned"`, with no CA or certificate setup. Scan the QR code to pin the PC key; the native phone transport checks that key before sending requests (AB-271).
