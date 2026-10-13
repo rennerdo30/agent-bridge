@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -10,6 +10,12 @@ import { snapshotMetadataTables } from "./metadata-snapshot.js";
 const VERSION = 1;
 const connections = new Map<string, DatabaseSync>();
 const readers = new Map<string,number>();
+let lifecycleRegistryGeneration = 0;
+let lifecycleRegistryUnknown = false;
+function changeLifecycleRegistry(): void {
+ if (lifecycleRegistryGeneration >= Number.MAX_SAFE_INTEGER) lifecycleRegistryUnknown = true;
+ else lifecycleRegistryGeneration++;
+}
 // Windows paths are case-insensitive: one handle per physical file, whatever spelling of home a caller passes.
 const handleKey = (path: string) => process.platform === "win32" ? path.toLowerCase() : path;
 const SCHEMA = `
@@ -62,7 +68,7 @@ export function existingMetadataDb(home: string): DatabaseSync | undefined {
  try {
   if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get() ||
     Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) !== VERSION) { db.close(); return undefined; }
-  db.exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;"); connections.set(handleKey(file),db); return db;
+  db.exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;"); connections.set(handleKey(file),db); changeLifecycleRegistry(); return db;
  } catch (error) { db.close(); throw error; }
 }
 
@@ -105,21 +111,23 @@ export function metadataDb(home: string): DatabaseSync {
    } finally { release(); }
   }
   connections.set(handleKey(file), db);
+  changeLifecycleRegistry();
   return db;
  } catch (error) { db.close(); throw error; }
 }
 
 export function closeMetadataDb(home: string): void {
  const file = join(resolve(home), "bridge.db"), db = connections.get(handleKey(file));
- if (db) { db.close(); connections.delete(handleKey(file)); }
+ if (db) { changeLifecycleRegistry(); db.close(); connections.delete(handleKey(file)); }
 }
 
 /** Bridge nodes share one handle per home and close it when the last node stops. */
 export function retainMetadataReader(home: string): () => void {
- const key = handleKey(resolve(home)); readers.set(key,(readers.get(key) ?? 0)+1);
+ const key = handleKey(resolve(home)); readers.set(key,(readers.get(key) ?? 0)+1); changeLifecycleRegistry();
  let released = false;
  return () => {
   if (released) return; released = true;
+  changeLifecycleRegistry();
   const count = (readers.get(key) ?? 1)-1;
   if (count > 0) readers.set(key,count);
   else { readers.delete(key); closeMetadataDb(home); }
@@ -143,8 +151,123 @@ export function metadataValue(home: string, domain: string, key: string): unknow
 
 /** Close this process's metadata readers during shutdown or fixture teardown. */
 export function closeMetadataDbs(): void {
+ changeLifecycleRegistry();
  for (const db of connections.values()) db.close();
  connections.clear();
+}
+
+export interface MetadataCheckpointOwner {
+ ownerInstance: string;
+ generation: number;
+ home: string;
+ /** Trusted worker-local producer seal; never supplied by a protocol/config caller. */
+ isCurrentSealed(): boolean;
+}
+export interface MetadataCheckpointObservation {
+ ownerInstance: string;
+ generation: number;
+ ownedConnections: number;
+ registryGeneration: number;
+ physicalFiles: number;
+ nonWalFiles: number;
+ completedCheckpoints: number;
+ checkpointed: boolean;
+ reason: "settled" | "not_sealed" | "bound" | "budget" | "transaction_unknown" | "durability_unknown" | "identity_unknown" | "busy" | "checkpoint_unknown";
+ handlesRetained: true;
+ ownershipReleased: false;
+ fileIdentityDigest: string | null;
+}
+/** Worker-local checkpoint stage only, after the caller seals and settles every owned producer.
+ * ALL handles are preflighted before the first checkpoint. No handle/statement is closed,
+ * registry cleared, transaction rolled back, policy upgraded or queued operation replayed.
+ * A bounded control observer must independently refuse late results; synchronous filesystem
+ * latency is not cancellable. This proves neither external writer closure nor publication. */
+export function checkpointOwnedMetadataConnections(owner: MetadataCheckpointOwner, deadline: number): MetadataCheckpointObservation {
+ const result: MetadataCheckpointObservation = { ownerInstance: owner.ownerInstance, generation: owner.generation, ownedConnections: connections.size,
+  registryGeneration: lifecycleRegistryGeneration, physicalFiles: 0, nonWalFiles: 0, completedCheckpoints: 0, checkpointed: false, reason: "not_sealed", handlesRetained: true, ownershipReleased: false, fileIdentityDigest: null };
+ const refuse = (reason: MetadataCheckpointObservation["reason"]) => { result.reason = reason; return result; };
+ const instance = owner.ownerInstance, generation = owner.generation;
+ const current = () => !lifecycleRegistryUnknown && lifecycleRegistryGeneration === result.registryGeneration &&
+  /^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(instance) && Number.isSafeInteger(generation) && generation >= 0 &&
+  owner.isCurrentSealed() === true && owner.ownerInstance === instance && owner.generation === generation && lifecycleRegistryGeneration === result.registryGeneration && !lifecycleRegistryUnknown;
+ const timely = () => Number.isFinite(deadline) && performance.now() < deadline;
+ type Entry = { key: string; file: string; db: DatabaseSync; identity: string; mode: string; timeout: number };
+ const entries: Entry[] = [];
+ const fileIdentity = (file: string, directory = false) => {
+  physicalMetadataPath(file);
+  const stat = lstatSync(file, { bigint: true });
+  if ((directory ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== 1n) || stat.isSymbolicLink()) throw Error("unknown metadata identity");
+  if (stat.ino <= 0n || stat.dev < 0n || process.platform === "win32" && stat.dev === 0n) throw Error("unresolved metadata physical identity");
+  return `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`;
+ };
+ try {
+  if (!current()) return refuse("not_sealed");
+  if (!timely()) return refuse("budget");
+  if (connections.size > 128 || readers.size) return refuse("bound");
+  const homeIdentity = fileIdentity(owner.home, true);
+  const physical = new Map<string, Entry[]>();
+  for (const [key, db] of connections) {
+   if (!timely()) return refuse("budget");
+   if (db.isTransaction !== false) return refuse("transaction_unknown");
+   const file = db.location("main");
+   if (typeof file !== "string" || !file) return refuse("identity_unknown");
+   const identity = fileIdentity(file);
+   if (fileIdentity(dirname(file), true) !== homeIdentity) return refuse("identity_unknown");
+   if (!timely()) return refuse("budget");
+   // Connection-local timeout observation precedes schema/page-reading PRAGMAs.
+   const timeout = db.prepare("PRAGMA busy_timeout").get()?.timeout;
+   if (typeof timeout !== "number" || !Number.isSafeInteger(timeout) || timeout < 0) return refuse("durability_unknown");
+   const entry: Entry = { key, file, db, identity, mode: "", timeout };
+   entries.push(entry);
+   db.exec(`PRAGMA busy_timeout=${Math.max(0, Math.min(25, Math.floor(deadline - performance.now())))};`);
+   if (db.prepare("PRAGMA synchronous").get()?.synchronous !== 2) return refuse("durability_unknown");
+   const mode = db.prepare("PRAGMA journal_mode").get()?.journal_mode;
+   if (typeof mode !== "string" || !["wal", "delete", "truncate", "persist"].includes(mode)) return refuse("durability_unknown");
+   entry.mode = mode;
+   const group = physical.get(identity) ?? []; group.push(entry); physical.set(identity, group);
+  }
+  if (!current()) return refuse("not_sealed");
+  if (!timely()) return refuse("budget");
+  result.physicalFiles = physical.size;
+  for (const group of physical.values()) {
+   // Group only AFTER every connection has its own transaction/FULL/identity preflight.
+   const entry = group[0]!;
+   if (!current()) return refuse("not_sealed");
+   if (!timely()) return refuse("budget");
+   if (group.some(member => connections.get(member.key) !== member.db || member.db.isTransaction !== false || fileIdentity(member.file) !== member.identity || member.mode !== entry.mode) || fileIdentity(owner.home, true) !== homeIdentity) return refuse("identity_unknown");
+   if (entry.mode === "wal") {
+     if (!timely()) return refuse("budget");
+     entry.db.exec(`PRAGMA busy_timeout=${Math.max(0, Math.min(25, Math.floor(deadline - performance.now())))};`);
+     const ack = entry.db.prepare("PRAGMA wal_checkpoint(FULL)").get();
+     if (!ack || typeof ack.busy !== "number" || typeof ack.log !== "number" || typeof ack.checkpointed !== "number" ||
+       !Number.isSafeInteger(ack.busy) || !Number.isSafeInteger(ack.log) || !Number.isSafeInteger(ack.checkpointed)) return refuse("checkpoint_unknown");
+     if (ack.busy !== 0) return refuse("busy");
+     if (!((ack.log === -1 && ack.checkpointed === -1) || (ack.log >= 0 && ack.checkpointed === ack.log))) return refuse("checkpoint_unknown");
+   }
+   if (!timely()) return refuse("budget");
+   if (!current()) return refuse("not_sealed");
+   if (entry.db.isTransaction !== false || fileIdentity(entry.file) !== entry.identity) return refuse("transaction_unknown");
+   if (entry.mode === "wal") result.completedCheckpoints++;
+   else result.nonWalFiles++; // FULL/autocommit verified; WAL checkpoint is explicitly not applicable.
+  }
+  if (connections.size !== entries.length || entries.some(entry => connections.get(entry.key) !== entry.db)) return refuse("identity_unknown");
+  if (!current()) return refuse("not_sealed");
+  if (!timely()) return refuse("budget");
+  result.fileIdentityDigest = createHash("sha256").update(JSON.stringify(entries.map(entry => entry.identity).sort())).digest("hex");
+  result.reason = "settled"; result.checkpointed = true; return result;
+ } catch (error) {
+  return refuse([5, 6].includes((error as { errcode?: number }).errcode ?? 0) ? "busy" : "checkpoint_unknown");
+ } finally {
+  // All admitted handles and statements remain owned. Restore only the temporary
+  // lock-wait cap; never modify FULL, journal mode, schema, transactions or data.
+  for (const entry of entries) {
+   try { entry.db.exec(`PRAGMA busy_timeout=${entry.timeout};`); }
+   catch { result.checkpointed = false; result.reason = "checkpoint_unknown"; }
+  }
+  if (!timely()) { result.checkpointed = false; result.reason = "budget"; }
+  try { if (!current()) { result.checkpointed = false; result.reason = "not_sealed"; } }
+  catch { result.checkpointed = false; result.reason = "checkpoint_unknown"; }
+ }
 }
 
 export function saveMetadataValue(home: string, domain: string, key: string, value: unknown): void {
