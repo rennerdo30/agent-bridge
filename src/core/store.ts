@@ -313,8 +313,6 @@ export class MessageStore {
 
   /** Retained registrations include offline sessions, but never worker runners or agent queue keys. */
   broadcastNames(): string[] {
-    const sessions = this.history.database.prepare("SELECT session FROM history_sessions WHERE alias=?");
-    const files = this.history.database.prepare("SELECT DISTINCT cwd FROM history_files WHERE session=? AND cwd<>''");
     return this.db.prepare(`SELECT name,identity FROM peer_name_owners
       WHERE identity NOT LIKE 'unidentified:job:%' ORDER BY name`).all().filter((row) => {
         const identity = String(row.identity);
@@ -326,8 +324,7 @@ export class MessageStore {
             else if (typeof parts[1] === "number" && typeof parts[3] === "string") return !isPluginCacheCwd(parts[3]);
           }
         } catch { /* Older unidentified registrations may still have indexed session metadata. */ }
-        session ??= String(sessions.get(identity.startsWith("unidentified:") ? identity.slice(13) : String(row.name))?.session ?? "") || undefined;
-        const cwds = session ? files.all(session).map((file) => String(file.cwd)) : [];
+        const cwds = this.history.sessionProjectPaths(identity.startsWith("unidentified:") ? identity.slice(13) : String(row.name), session);
         // Historical rows remain untouched. Unknown paths and any real project path stay eligible.
         return !cwds.length || cwds.some((cwd) => !isPluginCacheCwd(cwd));
       }).map((row) => String(row.name));

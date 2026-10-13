@@ -6,6 +6,9 @@ import { openArchive, archiveInitializationObservation } from "../src/core/sqlit
 import { openHistoryStore, historyInitializationObservation } from "../src/core/history-store.js";
 import { storageLease, storageLeaseObservation } from "../src/core/storage-lock.js";
 import { DecisionStore, DECISIONS_SCHEMA } from "../src/core/decisions.js";
+import { HistoryIndex } from "../src/core/history.js";
+import { MessageStore } from "../src/core/store.js";
+import { nullLogger } from "../src/core/logger.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -24,11 +27,13 @@ vi.mock("node:fs", async importOriginal => {
 // force-close API or evidence the source's unknown close had succeeded.
 const nativeExec = DatabaseSync.prototype.exec, nativeClose = DatabaseSync.prototype.close;
 const owned = new Map<DatabaseSync, { actuallyClosed: boolean }>();
+const ownedStores = new Set<MessageStore>();
 let env: TestEnv;
 beforeEach(() => { leaseFault.path = ""; leaseFault.mode = "none"; env = makeEnv(); });
 afterEach(async () => {
   leaseFault.path = ""; leaseFault.mode = "none";
   vi.restoreAllMocks();
+  for (const store of ownedStores) { store.close(); ownedStores.delete(store); }
   for (const [db, outcome] of owned) {
     if (!outcome.actuallyClosed) { nativeClose.call(db); outcome.actuallyClosed = true; }
     owned.delete(db);
@@ -226,5 +231,63 @@ describe("actual decision consumer admission (not complete owner or retirement a
         ownerBound: false, blocker: "owner_unsupported" });
     } finally { db.exec("ROLLBACK"); }
     decisions.resumeLifecycleConsumer(); expect(decisions.lifecycleConsumerObservation().unknown).toBe(true);
+  });
+});
+
+describe("actual history consumer admission and managed values (not full native resource closure)", () => {
+  function consumer(sink?: ConstructorParameters<typeof HistoryIndex>[4]) {
+    const db = openHistoryStore(join(env.home, "owned-history.db")); owned.set(db, { actuallyClosed: false });
+    return { db, index: new HistoryIndex(db, null, undefined, db, sink) };
+  }
+  it("typed known reads return detached values without registering a raw borrower", () => {
+    const { db, index } = consumer();
+    db.prepare("INSERT INTO history_sessions VALUES (?,?,?)").run("owned-alias", "owned-session", null);
+    db.prepare("INSERT INTO history_files(path,kind,agent,session,cwd) VALUES(?,?,?,?,?)").run("owned-file", "run", "other", "owned-session", "owned-project");
+    expect(index.sessionProjectPaths("owned-alias")).toEqual(["owned-project"]);
+    expect(index.conversationPage({ id: "owned-missing-conversation" })).toEqual({ conversation: null, records: [], next: null });
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ rawBorrower: false, pendingOperations: 0, durableObligations: "unverified",
+      ownerBound: false, settled: false, ownershipReleased: false });
+  });
+  it("seal rejects every direct producer/read/raw-borrower entry before SQL without clearing discovery or durable obligations", () => {
+    const { db, index } = consumer();
+    db.prepare("INSERT INTO history_sessions VALUES (?,?,?)").run("owned-alias", "owned-session", null);
+    index.sealLifecycleConsumer();
+    const exec = vi.spyOn(DatabaseSync.prototype, "exec"), prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
+    for (const operation of [
+      () => index.rememberPeer({ id: "new-id", name: "new-peer", sessionId: "new-session" }), () => index.tick(), () => index.wake(),
+      () => index.search({ query: "owned" }), () => index.reset(), () => index.close(), () => index.database,
+      () => index.storageDatabase, () => index.legacyReadNotice, () => index.sessionProjectPaths("owned-alias"),
+      () => index.conversationPage({ id: "owned-missing-conversation" }),
+    ]) expect(operation).toThrow(expect.objectContaining({ code: "OWNER_QUIESCED" }));
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ sealed: true, pendingOperations: 0, rawBorrower: false, durableObligations: "unverified", settled: false });
+    expect(exec).not.toHaveBeenCalled(); expect(prepare).not.toHaveBeenCalled();
+    vi.restoreAllMocks(); index.resumeLifecycleConsumer();
+    expect(db.prepare("SELECT session FROM history_sessions WHERE alias=?").get("owned-alias")!.session).toBe("owned-session");
+    expect(index.sessionProjectPaths("owned-alias")).toEqual([]);
+  });
+  it("an actual escaped legacy getter remains an unenrolled borrower after reversible resume", () => {
+    const { db, index } = consumer(); expect(index.storageDatabase).toBe(db);
+    expect(index.database).toBe(db); index.sealLifecycleConsumer(); index.resumeLifecycleConsumer();
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ rawBorrower: true, settled: false, blocker: "owner_unsupported", ownershipReleased: false });
+  });
+  it("retains an accepted sink operation across a seal while refusing new reentrant admission", () => {
+    let index!: HistoryIndex, db!: DatabaseSync;
+    const fixture = consumer(peer => {
+      expect(index.sealLifecycleConsumer()).toMatchObject({ pendingOperations: 1, callbackUnknown: true });
+      expect(() => index.wake()).toThrow(expect.objectContaining({ code: "OWNER_QUIESCED" }));
+      db.prepare("INSERT INTO history_sessions VALUES (?,?,?)").run(peer.id, peer.sessionId!, null);
+    });
+    index = fixture.index; db = fixture.db;
+    index.rememberPeer({ id: "owned-alias", name: "owned-peer", sessionId: "owned-session" });
+    expect(db.prepare("SELECT session FROM history_sessions WHERE alias=?").get("owned-alias")!.session).toBe("owned-session");
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ pendingOperations: 0, sealed: true, callbackUnknown: true, settled: false });
+    index.resumeLifecycleConsumer(); expect(index.lifecycleConsumerObservation().callbackUnknown).toBe(true);
+  });
+  it("the actual Store broadcast consumer uses typed history values without escaping a native handle", () => {
+    const store = new MessageStore(env.db, nullLogger); ownedStores.add(store);
+    store.rememberName({ id: "owned-peer", name: "owned-peer", agent: "other", sessionId: "owned-session", cwd: env.home,
+      pid: process.pid, agentPid: null, startedAt: 1, autoWake: false }, 1);
+    expect(store.broadcastNames()).toContain("owned-peer");
+    expect(store.history.lifecycleConsumerObservation()).toMatchObject({ rawBorrower: false, ownerBound: false, settled: false, ownershipReleased: false });
   });
 });

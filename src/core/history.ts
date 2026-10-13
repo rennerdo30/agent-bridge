@@ -17,6 +17,7 @@ import { ARCHIVE_DB_NAME } from "./sqlite-maintenance.js";
 import { MAX_BODY_CHARS } from "./constants.js";
 import { fileSignature } from "./file-cache.js";
 import { QUESTIONS_FILE, type OwnerQuestion } from "./owner-questions.js";
+import { readConversation, type ConversationRequest } from "./conversations.js";
 
 export const HISTORY_TICK_MS = 2_000;
 export const HISTORY_ROWS_PER_SOURCE = 100;
@@ -55,6 +56,12 @@ const RUN_FILE = /\.log(?:-\d+-[\w-]+)?$/;
 
 /** Owns only derived tables. Source files and cold databases are always opened read-only. */
 export class HistoryIndex {
+  private lifecycleSealed = false;
+  private lifecycleOperations = 0;
+  private lifecycleRevision = 0;
+  private lifecycleUnknown = false;
+  private lifecycleRawBorrower = false;
+  private lifecycleCallbackUnknown = false;
   readonly engine: HistoryResult["engine"];
   private queue: WalkRoot[] = [];
   private walk: { entry: WalkRoot; dir: Dir } | null = null;
@@ -91,14 +98,56 @@ export class HistoryIndex {
     this.checked = Number(db.prepare("SELECT coalesce(max(checked),0) AS n FROM history_files").get()!.n);
   }
 
-  get database(): DatabaseSync { return this.source !== this.db && !historyReady(this.db) && !historyV1Readable(this.db) ? this.source : this.db; }
+  private lifecycleChanged(): void {
+    this.lifecycleRevision++;
+    if (!Number.isSafeInteger(this.lifecycleRevision)) this.lifecycleUnknown = true;
+  }
+  private accepted<T>(operation: () => T): T {
+    if (this.lifecycleSealed) throw Object.assign(new Error("history consumer is quiesced"), { code: "OWNER_QUIESCED" });
+    this.lifecycleOperations++; this.lifecycleChanged();
+    if (!Number.isSafeInteger(this.lifecycleOperations)) this.lifecycleUnknown = true;
+    try { return operation(); }
+    catch (error) { this.lifecycleUnknown = true; this.lifecycleChanged(); throw error; }
+    finally { this.lifecycleOperations--; this.lifecycleChanged(); }
+  }
+  sealLifecycleConsumer() { this.lifecycleSealed = true; this.lifecycleChanged(); return this.lifecycleConsumerObservation(); }
+  resumeLifecycleConsumer() { this.lifecycleSealed = false; this.lifecycleChanged(); return this.lifecycleConsumerObservation(); }
+  lifecycleConsumerObservation() {
+    // Source records ONLY. Durable history_pending/cursor zero requires the later
+    // current sealed non-recovering preparation, not page SQL on these writers.
+    return Object.freeze({ generation: this.lifecycleRevision, sealed: this.lifecycleSealed, pendingOperations: this.lifecycleOperations,
+      unknown: this.lifecycleUnknown, rawBorrower: this.lifecycleRawBorrower, callbackUnknown: this.lifecycleCallbackUnknown,
+      queuedDiscovery: this.queue.length, activeDirectories: this.walk === null ? 0 : 1,
+      durableObligations: "unverified" as const, ownerBound: false as const, settled: false as const,
+      blocker: "owner_unsupported" as const, ownershipReleased: false as const });
+  }
+  private get readDatabase(): DatabaseSync { return this.source !== this.db && !historyReady(this.db) && !historyV1Readable(this.db) ? this.source : this.db; }
+  get database(): DatabaseSync { return this.accepted(() => { this.lifecycleRawBorrower = true; this.lifecycleChanged(); return this.readDatabase; }); }
   /** Why reads currently come from the legacy store, if they do (AB-224). */
-  get legacyReadNotice() { return this.database !== this.db ? legacyReadNotice(this.db) : undefined; }
+  get legacyReadNotice() { return this.accepted(() => this.readDatabase !== this.db ? legacyReadNotice(this.db) : undefined); }
   /** Writable isolated storage for explicit offline maintenance, regardless of read fallback. */
-  get storageDatabase(): DatabaseSync { return this.db; }
+  get storageDatabase(): DatabaseSync { return this.accepted(() => { this.lifecycleRawBorrower = true; this.lifecycleChanged(); return this.db; }); }
+
+  /** Known synchronous source consumer: only detached values can leave the index. */
+  sessionProjectPaths(alias: string, session?: string): string[] {
+    return this.accepted(() => {
+      const db = this.readDatabase;
+      session ??= String(db.prepare("SELECT session FROM history_sessions WHERE alias=?").get(alias)?.session ?? "") || undefined;
+      return session ? db.prepare("SELECT DISTINCT cwd FROM history_files WHERE session=? AND cwd<>''").all(session).map(file => String(file.cwd)) : [];
+    });
+  }
+  conversationPage(input: ConversationRequest) {
+    return this.accepted(() => {
+      const db = this.readDatabase, page = readConversation(db, input), migration = db !== this.db ? legacyReadNotice(this.db) : undefined;
+      return migration ? { ...page, migration } : page;
+    });
+  }
 
   rememberPeer(peer: Pick<PeerInfo, "id" | "name" | "sessionId"> & Partial<Pick<PeerInfo, "cwd" | "agent">>): void {
-    if (this.peerSink) { this.peerSink(peer); return; }
+    this.accepted(() => this.rememberPeerAccepted(peer));
+  }
+  private rememberPeerAccepted(peer: Pick<PeerInfo, "id" | "name" | "sessionId"> & Partial<Pick<PeerInfo, "cwd" | "agent">>): void {
+    if (this.peerSink) { this.lifecycleCallbackUnknown = true; this.lifecycleChanged(); this.peerSink(peer); return; }
     if (!peer.sessionId) return;
     const job = /^(claude|codex|opencode|antigravity)-job-/.test(peer.name) ? peer.name : null;
     for (const alias of [peer.id, peer.name, peer.sessionId]) this.rememberSession(alias, peer.sessionId, job);
@@ -172,6 +221,9 @@ export class HistoryIndex {
 
   /** Fixed budgets; idempotent documents are written before advancing their cursors. */
   tick(idleAware = false): { work: number; discovering: boolean } {
+    return this.accepted(() => this.tickAccepted(idleAware));
+  }
+  private tickAccepted(idleAware = false): { work: number; discovering: boolean } {
     this.deadline = Date.now() + HISTORY_BATCH_MS;
     const fileCount = Number(this.db.prepare("SELECT count(*) AS n FROM history_files").get()!.n);
     // Explicit callers still rescan every sweep. Background idle sweeps finish
@@ -273,8 +325,7 @@ export class HistoryIndex {
   }
   /** A watched transcript changed: rescan at the normal cadence again instead of the idle one. */
   wake(): void {
-    this.rescanMs = HISTORY_RESCAN_MS;
-    this.sweepWork++;
+    this.accepted(() => { this.rescanMs = HISTORY_RESCAN_MS; this.sweepWork++; });
   }
   /** A transcript whose size is its cursor has nothing new; indexFile would read nothing from it either. */
   private unchangedTranscript(file: FileRow): boolean {
@@ -460,8 +511,11 @@ export class HistoryIndex {
   }
 
   search(input: HistorySearch): HistoryResult {
-    if (this.database !== this.db) {
-      const result = new HistoryIndex(this.database, null).search(input), migration = legacyReadNotice(this.db);
+    return this.accepted(() => this.searchAccepted(input));
+  }
+  private searchAccepted(input: HistorySearch): HistoryResult {
+    if (this.readDatabase !== this.db) {
+      const result = new HistoryIndex(this.readDatabase, null).search(input), migration = legacyReadNotice(this.db);
       return migration ? { ...result, migration } : result;
     }
     const args = historySearchSchema.parse(input), tokens = terms(args.query);
@@ -498,13 +552,17 @@ export class HistoryIndex {
   }
 
   reset(): void {
+    this.accepted(() => this.resetAccepted());
+  }
+  private resetAccepted(): void {
     this.db.exec("BEGIN IMMEDIATE");
     try { clearHistoryDocuments(this.db); this.db.exec("DELETE FROM history_tags; DELETE FROM history_cursors WHERE source<>'legacy-record-tail'; DELETE FROM history_files;"); this.db.exec("COMMIT"); }
     catch (err) { this.db.exec("ROLLBACK"); throw err; }
-    this.close(); this.queue = []; this.lastDiscovery = 0; this.opencodeComplete = false; this.packedComplete = false; this.idleFiles = 0;
+    this.closeAccepted(); this.queue = []; this.lastDiscovery = 0; this.opencodeComplete = false; this.packedComplete = false; this.idleFiles = 0;
     this.quietSources.clear(); this.rescanMs = HISTORY_RESCAN_MS;
   }
-  close(): void { this.walk?.dir.closeSync(); this.walk = null; }
+  close(): void { this.accepted(() => this.closeAccepted()); }
+  private closeAccepted(): void { this.walk?.dir.closeSync(); this.walk = null; }
 }
 
 /** Dashboard reads never initialize, migrate, or change the derived index. */
