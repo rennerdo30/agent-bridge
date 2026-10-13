@@ -81,7 +81,9 @@ function readConnection(file: string): DatabaseSync {
   try { privatePath(dirname(file), true); privatePath(file, false); privatePath(file + "-journal", false); }
   catch { fail("lineage_unknown"); }
   const before = identity(file);
-  const db = new DatabaseSync(file, { readOnly: true, timeout: BUSY_MS });
+  let db: DatabaseSync;
+  try { db = new DatabaseSync(file, { readOnly: true, timeout: BUSY_MS }); }
+  catch { fail("lineage_unknown"); } // Hot recovery requiring writes is not a prepared-reader exception.
   try {
     db.exec("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;");
     if (db.prepare("PRAGMA query_only").get()?.query_only !== 1 || !same(before, identity(file))) fail("lineage_unknown");

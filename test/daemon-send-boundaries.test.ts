@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { type Server, type Socket } from "node:net";
+import { type DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeNode } from "../src/core/node.js";
 import { BridgeClient } from "../src/core/client.js";
@@ -69,10 +70,15 @@ describe("real transport send admission boundaries (no production recovery chang
     } finally { clientSpy.mockRestore(); serverSpy.mockRestore(); }
     const state = await sender.sendState(id);
     expect(state).toMatchObject({ id, state: "stored", message: { id, to: "offline-boundary", body: "durable accepted boundary bytes" } });
+    const db = Reflect.get(Reflect.get(broker, "store"), "db") as DatabaseSync;
+    const stored = () => db.prepare("SELECT id,recipient,to_target,body FROM messages WHERE id=?").all(id);
+    expect(db.isTransaction).toBe(false);
+    expect(stored()).toEqual([{ id, recipient: "offline-boundary", to_target: "offline-boundary", body: "durable accepted boundary bytes" }]);
     // Explicit same-ID reconciliation exercises existing durable dedupe, not
     // a production automatic resend or UUID replacement.
     const same = await sender.send({ messageId: id, to: "offline-boundary", body: "durable accepted boundary bytes" }, { quiet: true });
     expect(same.messages.map(message => message.id)).toEqual([id]);
+    expect(stored()).toEqual([{ id, recipient: "offline-boundary", to_target: "offline-boundary", body: "durable accepted boundary bytes" }]);
     const recipient = env.node("offline-boundary"); await recipient.start();
     await until(() => recipient.unread().some(message => message.id === id));
     expect(recipient.unread().filter(message => message.id === id)).toHaveLength(1);
