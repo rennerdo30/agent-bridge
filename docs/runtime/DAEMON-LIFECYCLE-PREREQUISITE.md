@@ -135,12 +135,24 @@ store/worker lease is released without cancellation; the public listener/accepte
 old connections are released without causing untracked native-route/mail changes.
 The still-live old coordinator owns no writable stores/public endpoint and cannot
 reopen them or elect. Replacement validates durable selected-successor/checkpoints
-and the authenticated exact-instance witness before binding. PID or socket absence
+and the authenticated exact-instance witness before **any writable store, lease,
+worker acquisition or initializer**, and before binding. In current source447,
+broker-daemon.ts:31 constructs MessageStore before listen:70; store.ts:196-226 opens
+and initializes multiple writable databases. A bind-only guard would leave an
+initializer gap: release_committed precedes actual old-owner release and does not
+authorize those constructors. Preparation remains read-only with no writable
+initializer until this witness, or the crash reconciliation below, is verified.
+The same guard covers successor recovery, every store constructor and side worker;
+selected-successor/release_committed publication is not actual release proof.
+Unknown or malformed receipt remains read-only/unavailable, with no automatic
+repair or promotion to writable initialization.
+PID or socket absence
 alone cannot substitute for this witness; current Broker.close is not the witness.
 
 If the old instance crashes or the witness is lost/invalid, require verified exit of
 the receipt's exact nonce/PID/process-creation identity plus checkpoint/ownership
-reconciliation. Missing nonce/creation identity, unknown process inspection, auth
+reconciliation **before any writable initializer/acquisition or binding**. Missing
+nonce/creation identity, unknown process inspection, auth
 failure, a reused PID or time expiry is unknown, never an exit witness. A release
 receipt without drain/checkpoint proof cannot be completed merely because old died.
 Both mechanisms may fail and yield unavailable/unknown; no zero-gap guarantee.
@@ -246,7 +258,9 @@ accepted writes or terminate workers to manufacture successful drain/checkpoint.
 
 After prepared replacement + verified drain/checkpoints, persist `release_committed`
 and its exact designated successor before releasing the public endpoint. Only that
-replacement may bind/open existing stores, verify/recover checkpoints, advertise its
+replacement, after the normal-release witness or exact-exit/checkpoint reconciliation
+above is verified, may acquire writable stores/leases/workers or run initializers,
+bind, verify/recover checkpoints, advertise its
 instance and persist `done`. Clients reconnect and fully refetch through existing APIs;
 no new snapshot/event cursor or automatic mutating request replay is claimed.
 
