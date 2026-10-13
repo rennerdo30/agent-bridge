@@ -408,11 +408,12 @@ export const CODEX_ASK_HINT =
 // "ask" rather than "deny": the tools stay listed (some providers reject a reduced tool set), and headless
 // `opencode run` rejects every ask without --auto, so nothing is changed.
 export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" } as const;
-/** MCP tools (named <server>_<tool>) can change things too: read-only runs keep only agent-bridge's send (to answer the parent). */
+/** MCP tools (named <server>_<tool>) can change things too: read-only runs allow only the permitted bridge routes. */
 export const OPENCODE_READ_ONLY_TOOLS = {
   "*_*": false, bridge_send: true, bridge_report_progress: true, bridge_peers: true, bridge_health: true, bridge_search_history: true, bridge_get_conversation: true,
   bridge_spawn_codex: true, bridge_spawn_claude: true, bridge_ask_codex: true, bridge_ask_claude: true,
   bridge_spawn_antigravity: true, bridge_ask_antigravity: true,
+  bridge_spawn_muse: true, bridge_ask_muse: true,
   bridge_message_subagent: true, bridge_cancel_subagent: true, bridge_inbox: true, bridge_wait_for_message: true,
 } as const;
 

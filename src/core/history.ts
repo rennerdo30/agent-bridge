@@ -327,7 +327,7 @@ export class HistoryIndex {
         const head = this.head(path), meta = entry.agent === "codex" ? object(head.payload) : head;
         // Forked Codex files may begin with ancestor metadata; the filename owns this session.
         const rolloutId = entry.agent === "codex" ? /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(item.name)?.[1] : undefined;
-        const id = entry.agent === "antigravity" ? basename(dirname(dirname(entry.path))) : entry.agent === "muse" ? basename(dirname(entry.path)) : rolloutId ?? (typeof meta.id === "string" ? meta.id : typeof meta.sessionId === "string" ? meta.sessionId : basename(path, ".jsonl"));
+        const id = entry.agent === "antigravity" ? basename(dirname(dirname(entry.path))) : entry.agent === "muse" ? basename(entry.path) : rolloutId ?? (typeof meta.id === "string" ? meta.id : typeof meta.sessionId === "string" ? meta.sessionId : basename(path, ".jsonl"));
         if (!TRANSCRIPT_ID.test(id)) continue;
         const child = entry.agent === "claude" && basename(entry.path) === "subagents" ? basename(path, ".jsonl").replace(/^agent-/, "") : null;
         this.register({ path, kind: "transcript", agent: entry.agent, session: child ? basename(dirname(entry.path)) : id, cwd: typeof meta.cwd === "string" ? meta.cwd : "", child });
@@ -362,7 +362,7 @@ export class HistoryIndex {
     for (const row of rows) {
       const file = typeof row.file === "string" ? row.file : "";
       if (!RUN_FILE.test(file) || !safeFile(cold, file)) continue;
-      this.register({ path: file, kind: "run", agent: /-(claude|codex|opencode|antigravity)-/.exec(String(row.key))?.[1] ?? "other", session: null, cwd: "", child: null });
+      this.register({ path: file, kind: "run", agent: /-(claude|codex|opencode|antigravity|muse)-/.exec(String(row.key))?.[1] ?? "other", session: null, cwd: "", child: null });
     }
     this.advance("packed-run-discovery", rows.length ? String(rows.at(-1)!.key) : "0");
     if (!rows.length) this.packedComplete = true;

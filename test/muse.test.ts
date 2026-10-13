@@ -105,7 +105,7 @@ describe("Muse delegation", () => {
 
   it("registers Muse as a shared target with ask behaving as read", () => {
     expect(delegationTargets("claude")).toContain("muse");
-    expect(delegationTargets("muse")).toEqual(["claude", "codex", "opencode", "antigravity"]);
+    expect(delegationTargets("muse")).toEqual(["claude", "codex", "opencode", "antigravity", "muse"]);
     expect(DELEGATION_TARGETS.muse.defaultModel(DEFAULT_CONFIG)).toBeNull();
     expect(DELEGATION_TARGETS.muse.permission(DEFAULT_CONFIG, {})).toBe("read");
     expect(DELEGATION_TARGETS.muse.permission(DEFAULT_CONFIG, { access: "edit" })).toBe("edit (no approval prompts)");
