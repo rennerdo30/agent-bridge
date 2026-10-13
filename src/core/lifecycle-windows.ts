@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { assertLifecycleServingCapability, type LifecycleServingCapability } from "./broker.js";
 
 type Phase = "admission" | "prepare" | "write";
 type Scope = "home" | "established";
@@ -187,5 +188,113 @@ export function assertWindowsLifecyclePathProof(proof: WindowsLifecyclePathProof
   const known = proofs.get(proof);
   if (!known || known.pid !== process.pid || proof.ownerInstance !== ownerInstance || proof.phase !== phase || proof.scope !== scope || performance.now() >= known.deadline || pending.size) throw new WindowsLifecyclePathUnavailable("unavailable");
   try { if (!same(known.paths, snapshot(home, scope))) throw new WindowsLifecyclePathUnavailable("unsafe_path"); }
+  catch { throw new WindowsLifecyclePathUnavailable("unsafe_path"); }
+}
+
+export interface WindowsLifecycleCreation { readonly __creation?: never }
+const creations = new WeakMap<WindowsLifecycleCreation, { capability: LifecycleServingCapability; proof: WindowsLifecyclePathProof;
+  home: string; owner: string; generation: number; paths: Snapshot }>();
+
+// Only an exclusively source-created directory is protected. Files are created with
+// .NET CreateNew (wx semantics) and their restrictive DACL at the actual creation.
+// No existing file, HOME or ancestor ACL is adopted/repaired. No arbitrary commands.
+const CREATE_NEW = String.raw`
+$ErrorActionPreference='Stop'; $nonce=''
+try {
+  $raw=[Console]::In.ReadToEnd(); if($raw.Length -gt 8192) { throw 'unavailable' }
+  $r=$raw | ConvertFrom-Json; $nonce=[string]$r.nonce
+  if($r.schema -ne 1 -or $nonce -notmatch '^[0-9a-f-]{36}$') { throw 'unavailable' }
+  $dir=[IO.Path]::Combine([IO.Path]::GetFullPath([string]$r.home),'.core-lifecycle')
+  $attr=[IO.File]::GetAttributes($dir)
+  if(($attr -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or ($attr -band [IO.FileAttributes]::Directory) -eq 0 -or
+     [IO.Directory]::GetCreationTimeUtc($dir).Ticks.ToString() -ne [string]$r.creationTicks) { throw 'unavailable' }
+  $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
+  $allow=[Security.AccessControl.AccessControlType]::Allow
+  $acl=New-Object Security.AccessControl.DirectorySecurity
+  $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false)
+  $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','None','None',$allow)))
+  [IO.Directory]::SetAccessControl($dir,$acl)
+  foreach($name in @('receipts.sqlite','receipts.sqlite-journal')) {
+    $acl=New-Object Security.AccessControl.FileSecurity
+    $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false)
+    $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl',$allow)))
+    $stream=New-Object IO.FileStream([IO.Path]::Combine($dir,$name),[IO.FileMode]::CreateNew,
+      [Security.AccessControl.FileSystemRights]::FullControl,[IO.FileShare]::None,4096,[IO.FileOptions]::None,$acl)
+    $stream.Dispose()
+  }
+  @{schema=1;nonce=$nonce;status='created'} | ConvertTo-Json -Compress
+} catch { @{schema=1;nonce=$nonce;status='unknown'} | ConvertTo-Json -Compress }
+`;
+
+/** Boundary1 only: actual serving capability -> exclusive new objects -> fresh ACL
+ * evidence. Neither this opaque result nor file existence grants admission/promotion. */
+export async function createWindowsLifecycleObjects(capability: LifecycleServingCapability, deadline: number): Promise<WindowsLifecycleCreation> {
+  try {
+  const initial = assertLifecycleServingCapability(capability, "prepare");
+  const expires = Math.min(deadline, performance.now() + PHASE_MS.prepare);
+  const current = () => {
+    const actual = assertLifecycleServingCapability(capability, "prepare");
+    if (process.platform !== "win32" || pending.size || !Number.isFinite(expires) || performance.now() >= expires ||
+      actual.home !== initial.home || actual.ownerInstance !== initial.ownerInstance || actual.generation !== initial.generation)
+      throw new WindowsLifecyclePathUnavailable("unavailable");
+    return actual;
+  };
+  current();
+  const homeProof = await verifyWindowsLifecyclePaths(initial.home, initial.ownerInstance, "prepare", "home", expires);
+  current(); assertWindowsLifecyclePathProof(homeProof, initial.home, initial.ownerInstance, "prepare", "home");
+  const dir = join(initial.home, DIRECTORY);
+  // Atomic exclusive mkdir; never recursive, never an existing interrupted object.
+  try { current(); mkdirSync(dir); } catch { throw new WindowsLifecyclePathUnavailable("unavailable"); }
+  const created = lstatSync(dir, { bigint: true });
+  if (!created.isDirectory() || created.isSymbolicLink() || created.ino <= 0n) throw new WindowsLifecyclePathUnavailable("unsafe_path");
+  const directoryIdentity = `${created.dev}:${created.ino}:${created.birthtimeNs}`;
+  current(); assertWindowsLifecyclePathProof(homeProof, initial.home, initial.ownerInstance, "prepare", "home");
+  const nonce = randomUUID(), bin = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(CREATE_NEW, "utf16le").toString("base64")],
+      { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
+    const registration = {}; pending.add(registration); let settled = false, output = "";
+    const refuse = () => { if (!settled) { settled = true; clearTimeout(timer); reject(new WindowsLifecyclePathUnavailable("unavailable")); } };
+    const timer = setTimeout(refuse, Math.max(0, expires - performance.now()));
+    child.on("error", refuse); child.stdin!.on("error", refuse); child.stdout!.setEncoding("utf8");
+    child.stdout!.on("data", (chunk: string) => { if (!settled) { output += chunk; if (Buffer.byteLength(output) > 512) refuse(); } });
+    child.once("close", code => {
+      pending.delete(registration); if (settled) return;
+      try {
+        current(); const response: unknown = JSON.parse(output);
+        if (!response || typeof response !== "object") return refuse();
+        const value = response as Record<string, unknown>;
+        if (code !== 0 || Object.keys(value).length !== 3 || Object.keys(value).some(key => !["schema", "nonce", "status"].includes(key)) ||
+          value.schema !== 1 || value.nonce !== nonce || value.status !== "created") return refuse();
+        settled = true; clearTimeout(timer); resolve();
+      } catch { refuse(); }
+    });
+    child.stdin!.end(JSON.stringify({ schema: 1, nonce, home: initial.home, creationTicks: String(created.birthtimeNs / 100n + 621355968000000000n) }));
+    child.unref();
+  });
+  current();
+  const after = lstatSync(dir, { bigint: true });
+  if (`${after.dev}:${after.ino}:${after.birthtimeNs}` !== directoryIdentity) throw new WindowsLifecyclePathUnavailable("unsafe_path");
+  const identities = snapshot(initial.home, "established");
+  const proof = await verifyWindowsLifecyclePaths(initial.home, initial.ownerInstance, "prepare", "established", expires);
+  current(); assertWindowsLifecyclePathProof(proof, initial.home, initial.ownerInstance, "prepare", "established");
+  if (!same(identities, snapshot(initial.home, "established"))) throw new WindowsLifecyclePathUnavailable("unsafe_path");
+  const result = Object.freeze({});
+  creations.set(result, { capability, proof, home: initial.home, owner: initial.ownerInstance, generation: initial.generation, paths: identities });
+  return result;
+  } catch (error) {
+    if (error instanceof WindowsLifecyclePathUnavailable) throw error;
+    throw new WindowsLifecyclePathUnavailable("unavailable");
+  }
+}
+
+/** Immediate source-owned identity/capability/phase recheck for the next bounded SQL
+ * action. No constructor/flag/copy can mint this exclusively-new-object provenance. */
+export function assertWindowsLifecycleCreation(creation: WindowsLifecycleCreation, capability: LifecycleServingCapability): void {
+  const record = creations.get(creation), actual = assertLifecycleServingCapability(capability, "prepare");
+  if (!record || record.capability !== capability || actual.home !== record.home || actual.ownerInstance !== record.owner ||
+    actual.generation !== record.generation) throw new WindowsLifecyclePathUnavailable("unavailable");
+  assertWindowsLifecyclePathProof(record.proof, record.home, record.owner, "prepare", "established");
+  try { if (!same(record.paths, snapshot(record.home, "established"))) throw new WindowsLifecyclePathUnavailable("unsafe_path"); }
   catch { throw new WindowsLifecyclePathUnavailable("unsafe_path"); }
 }

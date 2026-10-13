@@ -4,6 +4,8 @@ import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { readProcessIdentity } from "./process-identity.js";
+import { assertLifecycleServingCapability, type LifecycleServingCapability } from "./broker.js";
+import { createWindowsLifecycleObjects, assertWindowsLifecycleCreation } from "./lifecycle-windows.js";
 
 // These caps belong to lifecycle coordination, not ordinary request deadlines.
 export const LIFECYCLE_PRE_RELEASE_MS = 10_000;
@@ -45,10 +47,14 @@ function bytes(receipt: LifecycleReceipt): string {
   if (Buffer.byteLength(json) > LIFECYCLE_METADATA_BYTES) fail("metadata_bound");
   return json;
 }
-interface FileIdentity { dev: number; ino: number }
+interface FileIdentity { dev: string; ino: string; creation: string }
 interface Lineage { schema: 1; lineage: string; homeIdentity: string; directory: FileIdentity; file: FileIdentity; journal: FileIdentity }
-function identity(path: string): FileIdentity { const stat = lstatSync(path); return { dev: stat.dev, ino: stat.ino }; }
-function same(a: FileIdentity, b: FileIdentity): boolean { return a.dev === b.dev && a.ino === b.ino; }
+function identity(path: string): FileIdentity {
+  const stat = lstatSync(path, { bigint: true });
+  if (stat.ino <= 0n || stat.dev < 0n || stat.isSymbolicLink()) fail("private_path");
+  return { dev: String(stat.dev), ino: String(stat.ino), creation: String(stat.birthtimeNs) };
+}
+function same(a: FileIdentity, b: FileIdentity): boolean { return a.dev === b.dev && a.ino === b.ino && a.creation === b.creation; }
 function physical(path: string): void {
   for (let current = resolve(path); ; current = dirname(current)) {
     if (lstatSync(current).isSymbolicLink()) fail("private_path");
@@ -70,22 +76,24 @@ function transactionState(db: DatabaseSync): boolean {
   if (typeof state !== "boolean") fail("writer_unknown");
   return state;
 }
-function configureWriter(db: DatabaseSync): void {
+function configureWriter(db: DatabaseSync, guard: () => void = () => {}): void {
+  guard();
   db.exec(`PRAGMA busy_timeout=${BUSY_MS}; PRAGMA journal_mode=PERSIST; PRAGMA journal_size_limit=-1; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF;`);
-  if (process.platform === "darwin") db.exec("PRAGMA fullfsync=ON");
-  if (db.prepare("PRAGMA journal_mode").get()?.journal_mode !== "persist" || db.prepare("PRAGMA synchronous").get()?.synchronous !== 2 ||
-      db.prepare("PRAGMA foreign_keys").get()?.foreign_keys !== 1 || db.prepare("PRAGMA trusted_schema").get()?.trusted_schema !== 0 ||
-      (process.platform === "darwin" && db.prepare("PRAGMA fullfsync").get()?.fullfsync !== 1)) fail("publication_unproved");
+  guard(); if (process.platform === "darwin") { guard(); db.exec("PRAGMA fullfsync=ON"); guard(); }
+  const observed = (pragma: string, field: string) => { guard(); const result = db.prepare(pragma).get()?.[field]; guard(); return result; };
+  if (observed("PRAGMA journal_mode", "journal_mode") !== "persist" || observed("PRAGMA synchronous", "synchronous") !== 2 ||
+      observed("PRAGMA foreign_keys", "foreign_keys") !== 1 || observed("PRAGMA trusted_schema", "trusted_schema") !== 0 ||
+      (process.platform === "darwin" && observed("PRAGMA fullfsync", "fullfsync") !== 1)) fail("publication_unproved");
 }
-function readConnection(file: string): DatabaseSync {
-  try { privatePath(dirname(file), true); privatePath(file, false); privatePath(file + "-journal", false); }
+function readConnection(file: string, exclusivelyNewGuard?: () => void): DatabaseSync {
+  try { if (exclusivelyNewGuard) exclusivelyNewGuard(); else { privatePath(dirname(file), true); privatePath(file, false); privatePath(file + "-journal", false); } }
   catch { fail("lineage_unknown"); }
   const before = identity(file);
   let db: DatabaseSync;
-  try { db = new DatabaseSync(file, { readOnly: true, timeout: BUSY_MS }); }
+  try { exclusivelyNewGuard?.(); db = new DatabaseSync(file, { readOnly: true, timeout: BUSY_MS }); }
   catch { fail("lineage_unknown"); } // Hot recovery requiring writes is not a prepared-reader exception.
   try {
-    db.exec("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;");
+    exclusivelyNewGuard?.(); db.exec("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;"); exclusivelyNewGuard?.();
     if (db.prepare("PRAGMA query_only").get()?.query_only !== 1 || !same(before, identity(file))) fail("lineage_unknown");
     return db;
   } catch { db.close(); fail("lineage_unknown"); }
@@ -126,10 +134,56 @@ export class PreparedLifecycleReader {
   close(): void { this.db.close(); }
 }
 
+// Source-owned quarantine retention, not a public force-dispose/recovery API.
+const failedBootstrapJournals = new Set<LifecycleJournal>();
+
 /** Storage only. Dispatch/producer closure and pre-writable ownership guards belong to the coordinator; not yet wired. */
 export class LifecycleJournal {
   private quarantined = false;
   private constructor(private readonly file: string, private readonly lineage: Lineage, private readonly owner: LifecycleInstance, private readonly writer: DatabaseSync) {}
+
+  /** Boundary1 ONLY: explicit real serving issuer, exclusive new Windows objects,
+   * initial committed lineage. No ordinary admission, controller or role promotion.
+   * Existing public Windows bootstrap/reader/admission paths remain unsupported. */
+  static async bootstrapServing(capability: LifecycleServingCapability, deadline: number): Promise<LifecycleJournal> {
+    const initial = assertLifecycleServingCapability(capability, "prepare");
+    if (process.platform !== "win32" || !Number.isFinite(deadline) || performance.now() >= deadline) fail("publication_unproved");
+    const current = () => {
+      const actual = assertLifecycleServingCapability(capability, "prepare");
+      if (performance.now() >= deadline || actual.ownerInstance !== initial.ownerInstance || actual.generation !== initial.generation || actual.home !== initial.home) fail("writer_unknown");
+    };
+    current(); const creationIdentity = await readProcessIdentity(process.pid); current();
+    if (!creationIdentity) fail("writer_unknown");
+    const owner = { nonce: initial.ownerInstance, pid: process.pid, creationIdentity };
+    const created = await createWindowsLifecycleObjects(capability, deadline); current();
+    const guard = () => { current(); assertWindowsLifecycleCreation(created, capability); };
+    const dir = join(initial.home, DIRECTORY), file = join(dir, FILE);
+    guard();
+    const lineage: Lineage = { schema: 1, lineage: randomUUID(), homeIdentity: digest(initial.home), directory: identity(dir), file: identity(file), journal: identity(file + "-journal") };
+    const writer = (() => { try { guard(); return new DatabaseSync(file, { timeout: BUSY_MS }); } catch { fail("publication_unproved"); } })();
+    const journal = new LifecycleJournal(file, lineage, owner, writer);
+    try {
+      guard(); configureWriter(writer, guard); guard();
+      if (writer.prepare("PRAGMA journal_size_limit").get()?.journal_size_limit !== -1) fail("publication_unproved");
+      guard(); writer.exec("BEGIN IMMEDIATE"); guard(); writer.exec(SCHEMA);
+      guard(); writer.prepare("INSERT INTO lifecycle_lineage VALUES (1,?)").run(JSON.stringify(lineage));
+      guard(); writer.exec("COMMIT"); guard();
+      if (transactionState(writer)) fail("writer_unknown");
+      // Actual file flush/reopen evidence only. No Windows directory power-loss claim.
+      guard(); flush(file); guard(); flush(file + "-journal"); guard();
+      const reader = readConnection(file, guard);
+      try {
+        guard(); const row = reader.prepare("SELECT json FROM lifecycle_lineage WHERE singleton=1").get(); guard();
+        if (!row || row.json !== JSON.stringify(lineage)) fail("lineage_unknown");
+      } finally { reader.close(); }
+      guard(); return journal;
+    } catch {
+      // No accepted lifecycle command exists. Keep actual handles/files and any
+      // unconfirmed transaction; no rollback, close, cleanup or second bootstrap.
+      journal.quarantined = true; failedBootstrapJournals.add(journal);
+      fail("publication_unproved");
+    }
+  }
 
   static async bootstrap(home: string, owner: LifecycleInstance): Promise<LifecycleJournal> {
     instanceSchema.parse(owner);
