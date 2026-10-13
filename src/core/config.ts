@@ -7,6 +7,9 @@ import { isRecord, readJsonStore, writeJsonStore } from "./json-store.js";
 import { DEFAULT_NETWORK_CONFIG, parseNetworkConfig, type NetworkConfig } from "../network/config.js";
 import { DEFAULT_QUESTION_ALERTS, questionAlertSettingsSchema, type QuestionAlertSettings } from "./owner-questions.js";
 import { parseMobileConfig, type MobileConfig } from "../mobile/config.js";
+import { parseTrackersConfig, type TrackerConfig } from "./work-items.js";
+import { PairDeskAdapter } from "./trackers/pair-desk.js";
+import type { TrackerAdapter } from "./work-items.js";
 import { configurePathDisplay, type PathDisplaySettings } from "./display-paths.js";
 
 /**
@@ -40,6 +43,8 @@ const DEFAULT_HISTORY_ANSWER: HistoryAnswerConfig = { preference: ["codex", "cla
 export interface BridgeConfig {
   /** Restart-applied, home top-level only; never projected in effective-config diagnostics. */
   mobile?: MobileConfig;
+  /** Opt-in work-item trackers, home top-level only (user-level, never a project key). Absent means none. */
+  trackers?: Record<string, TrackerConfig>;
   /** Home-wide spelling preference, shared by sessions, CLI helpers and runners. */
   pathDisplay: PathDisplaySettings;
   history: { ingest: boolean; budgetBytes: number };
@@ -385,9 +390,26 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
   log.debug("effective config", { ...cfg });
   const mobile = parseMobileConfig(file.mobile);
   if (mobile) cfg.mobile = mobile;
+  const trackers = parseTrackersConfig(file.trackers, log);
+  if (Object.keys(trackers).length > 0) cfg.trackers = trackers;
   configurePathDisplay(cfg.pathDisplay);
   return cfg;
 }
+
+/** Build one adapter per configured tracker (only "pair-desk" exists for now). */
+export function buildTrackerAdapters(cfg: BridgeConfig): Map<string, TrackerAdapter> {
+  const out = new Map<string, TrackerAdapter>();
+  if (!cfg.trackers) return out;
+  for (const [name, t] of Object.entries(cfg.trackers)) {
+    if (t.type === "pair-desk") {
+      out.set(name, new PairDeskAdapter({ command: t.command, timeoutMs: t.timeoutMs, argsPrefix: t.argsPrefix }));
+    }
+  }
+  return out;
+}
+
+export type { TrackerConfig };
+export { parseTrackersConfig };
 
 export function parseAgentKind(v: string | undefined): AgentKind {
   return oneOf(v?.trim().toLowerCase(), AGENT_KINDS) ?? "other";
