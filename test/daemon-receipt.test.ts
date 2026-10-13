@@ -8,20 +8,36 @@ import { LifecycleJournal, LifecycleUnavailable, LIFECYCLE_ADMISSION_MS, LIFECYC
   LIFECYCLE_PREPARE_MS, LIFECYCLE_DISPATCH_DRAIN_MS, LIFECYCLE_WRITE_CHECKPOINT_MS, LIFECYCLE_BIND_OBSERVE_MS,
   type LifecycleInstance, type LifecycleRequest } from "../src/core/daemon-lifecycle.js";
 import { readProcessIdentity } from "../src/core/process-identity.js";
-import { verifyWindowsLifecyclePaths, assertWindowsLifecyclePathProof, pendingWindowsLifecycleVerifications } from "../src/core/lifecycle-windows.js";
+import { verifyWindowsLifecyclePaths, assertWindowsLifecyclePathProof, pendingWindowsLifecycleVerifications, WindowsLifecyclePathUnavailable } from "../src/core/lifecycle-windows.js";
 import { createServingJournalFixture } from "./fixtures/daemon-serving-journal.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+
+const verificationFixture = vi.hoisted(() => ({
+  before: undefined as ((home: string, phase: string, scope: string) => void) | undefined,
+  rejected: undefined as ((error: unknown) => void) | undefined,
+}));
+vi.mock("../src/core/lifecycle-windows.js", async importOriginal => {
+  const native = await importOriginal<typeof import("../src/core/lifecycle-windows.js")>();
+  return { ...native, verifyWindowsLifecyclePaths: (...args: Parameters<typeof native.verifyWindowsLifecyclePaths>) => {
+    verificationFixture.before?.(args[0], args[2], args[3]);
+    // Every proof is still produced/refused by the ORIGINAL native observer with
+    // every original capability/deadline argument; no fixture-created permission.
+    return native.verifyWindowsLifecyclePaths(...args).catch(error => { verificationFixture.rejected?.(error); throw error; });
+  } };
+});
 
 let env: TestEnv, owner: LifecycleInstance, journal: LifecycleJournal | undefined, captured: DatabaseSync | undefined;
 let journalHome: string, servingFixture: Awaited<ReturnType<typeof createServingJournalFixture>> | undefined;
 const sqliteExec = DatabaseSync.prototype.exec;
 beforeEach(async () => {
+  verificationFixture.before = undefined; verificationFixture.rejected = undefined;
   env = makeEnv(); journal = undefined; captured = undefined; servingFixture = undefined; journalHome = env.home;
   const creationIdentity = await readProcessIdentity(process.pid); expect(creationIdentity).toBeTruthy();
   owner = { nonce: randomUUID(), pid: process.pid, creationIdentity: creationIdentity! };
   if (!portable) { servingFixture = await createServingJournalFixture(env); journalHome = servingFixture.home; owner = servingFixture.owner; }
 });
 afterEach(async () => {
+  verificationFixture.before = undefined; verificationFixture.rejected = undefined;
   vi.restoreAllMocks();
   // Only exact fixture-owned local SQL transactions/handles, never product work.
   if (captured?.isTransaction) sqliteExec.call(captured, "ROLLBACK");
@@ -320,13 +336,38 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
   it("missing established journal is unknown, not repaired/recreated or treated as fresh home", async () => {
     const j = await bootstrap(), input = request(); await admit(j, input, deadline());
     expect((await lookup(j, input.restartId))?.state).toBe("accepted"); expect((await selected(j))?.restartId).toBe(input.restartId);
-    const before = readFileSync(file()), beforeRows = committedFixtureRows(), beforeJournal = readFileSync(file() + "-journal");
-    renameSync(file() + "-journal", file() + "-fixture-retained-journal");
+    const beforeRows = committedFixtureRows();
+    let before = readFileSync(file()), beforeJournal = readFileSync(file() + "-journal");
     const exec = vi.spyOn(DatabaseSync.prototype, "exec");
+    const prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
+    if (portable) renameSync(file() + "-journal", file() + "-fixture-retained-journal");
+    else {
+      let entered = false, originalMissingRefusal = false;
+      verificationFixture.before = (observedHome, phase, scope) => {
+        if (observedHome !== journalHome || phase !== "admission" || scope !== "established") return;
+        verificationFixture.before = undefined; entered = true;
+        // This source boundary follows the actual live writer transaction check.
+        // Close the exact owned autocommit handle before Windows' real rename;
+        // no reopened writer or fake isTransaction/path result is supplied.
+        expect((Reflect.get(j, "writer") as DatabaseSync).isTransaction).toBe(false);
+        expect(j.close()).toBe(true); journal = undefined;
+        before = readFileSync(file()); beforeJournal = readFileSync(file() + "-journal");
+        renameSync(file() + "-journal", file() + "-fixture-retained-journal");
+        verificationFixture.rejected = error => {
+          expect(error).toBeInstanceOf(WindowsLifecyclePathUnavailable);
+          expect((error as WindowsLifecyclePathUnavailable).reason).toBe("unsafe_path");
+          originalMissingRefusal = true;
+        };
+      };
+      await expect(admit(j, input, deadline())).rejects.toThrow(LifecycleUnavailable);
+      verificationFixture.before = undefined; verificationFixture.rejected = undefined;
+      expect(entered).toBe(true); expect(originalMissingRefusal).toBe(true);
+    }
     await expect(lookup(j, input.restartId)).rejects.toThrow(LifecycleUnavailable);
     await expect(selected(j)).rejects.toThrow(LifecycleUnavailable);
-    await expect(admit(j, input, deadline())).rejects.toThrow(LifecycleUnavailable);
-    expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE")).toBe(false);
+    if (portable) await expect(admit(j, input, deadline())).rejects.toThrow(LifecycleUnavailable);
+    expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE" || sql === "COMMIT")).toBe(false);
+    expect(prepare.mock.calls.some(([sql]) => /^INSERT\b/.test(sql))).toBe(false);
     expect(existsSync(file() + "-journal")).toBe(false); expect(readFileSync(file()).equals(before)).toBe(true);
     if (portable) await expect(LifecycleJournal.bootstrap(journalHome, owner)).rejects.toMatchObject({ reason: "lineage_unknown" });
     else {
