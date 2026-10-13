@@ -1,0 +1,34 @@
+name: AB319 archive persist profile
+
+on:
+  pull_request:
+    paths:
+      - src/mcp/jobs.ts
+      - test/jobs-archive-persist.test.ts
+      - .github/workflows/ab319-archive-profile.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-profile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Real persist regression and owned fixture broker CPU profile
+        env:
+          AB319_PROFILE_DIR: .agent-bridge-test/ab319-profile
+        run: node node_modules/vitest/vitest.mjs run test/jobs-archive-persist.test.ts --maxWorkers=1
+      - name: Preserve profile and measurements even on pre-fix failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ab319-archive-persist-${{ github.sha }}
+          path: .agent-bridge-test/ab319-profile/
+          if-no-files-found: error
