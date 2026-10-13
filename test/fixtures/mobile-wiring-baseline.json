@@ -2,14 +2,14 @@
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
     "src/core/broker.ts:constructor": "092d0659588267cedc684853f156bab5e924cdb5e37879d25068871530a0fbee",
-    "src/core/broker.ts:listen": "eb98a2820f42563b76778c1f642d8a4a704c1af4fd4af43aedee9c1263cf2b4d",
-    "src/core/broker.ts:startServices": "4d48b8bdb253d56458edfb283ed7d85b8530185391be52725961d015f5b26b85",
+    "src/core/broker.ts:listen": "d96368c44c5d53f177be9261b40b811de29dfc866a90a73b26150e52e8af6ff8",
+    "src/core/broker.ts:startServices": "c99740e533c7b6fd293656682c88daa5cbbc491459f21304268f284219cd3777",
     "src/core/broker.ts:abortStartup": "2c7b606eb6c601f877f5d0283f0f1efcb7e4bc11c1af14857c9ca582e8ad6cb5",
     "src/core/broker.ts:close": "61af8b1a2dd8e1c2f44fa39055e1963ae82e9887f99eed1d0499ae7e66ea91c2",
     "src/core/node.ts:constructor": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
     "src/core/node.ts:start": "922dd81e0ddbe0d79b70656ef14bd97cd1e6e331aeb410b8e9a9d92afce9f402",
     "src/core/node.ts:stop": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
-    "src/core/node.ts:tryBecomeBroker": "fecea4d0b4dda38e2554f9392ff13d6fc49762448f67cca006f28345122a9557",
+    "src/core/node.ts:tryBecomeBroker": "4f09383911f03a965bddce8b8da04d7a5660ab5624a0d09d2f4bb1ebc17f1db9",
     "src/cli/dashboard.ts:constructor": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
     "src/cli/dashboard.ts:open": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
@@ -153,6 +153,38 @@
           "original": "0687fdc76f2f5ee1c5eec552ad2e4e5bc50e3aad"
         }
       ]
+    },
+    "AB-325-1a-bind-first": {
+      "sourceCommit": "7f096a20cfe7ff69df5313486f5c7177ca6ef19f",
+      "sourceParent": "164a11bb4d1f5187dda7d47f00cc6e9b0633a159",
+      "base": "7adb4817ea2800e56bd26737a81dbe28d7f17219",
+      "changes": [
+        {
+          "method": "src/core/broker.ts:listen",
+          "previous": "eb98a2820f42563b76778c1f642d8a4a704c1af4fd4af43aedee9c1263cf2b4d",
+          "current": "d96368c44c5d53f177be9261b40b811de29dfc866a90a73b26150e52e8af6ff8",
+          "previousNormalizedSourceFileSha256": "55757cc76149ad6a9aa6f743809149ee13bc599baa9cd8160a91cd6969ef50c2",
+          "normalizedSourceFileSha256": "82318982cd832d9b32636a4d4d0367310ff768e094ec3dcad4d9cd451844a90c",
+          "sourceFileSha256": "82318982cd832d9b32636a4d4d0367310ff768e094ec3dcad4d9cd451844a90c"
+        },
+        {
+          "method": "src/core/broker.ts:startServices",
+          "previous": "4d48b8bdb253d56458edfb283ed7d85b8530185391be52725961d015f5b26b85",
+          "current": "c99740e533c7b6fd293656682c88daa5cbbc491459f21304268f284219cd3777",
+          "previousNormalizedSourceFileSha256": "55757cc76149ad6a9aa6f743809149ee13bc599baa9cd8160a91cd6969ef50c2",
+          "normalizedSourceFileSha256": "82318982cd832d9b32636a4d4d0367310ff768e094ec3dcad4d9cd451844a90c",
+          "sourceFileSha256": "82318982cd832d9b32636a4d4d0367310ff768e094ec3dcad4d9cd451844a90c"
+        },
+        {
+          "method": "src/core/node.ts:tryBecomeBroker",
+          "previous": "fecea4d0b4dda38e2554f9392ff13d6fc49762448f67cca006f28345122a9557",
+          "current": "4f09383911f03a965bddce8b8da04d7a5660ab5624a0d09d2f4bb1ebc17f1db9",
+          "previousNormalizedSourceFileSha256": "e8de6281d0084ce0b09acfe8ed229d25997df9dbdfc3b77204d3c418357d6767",
+          "normalizedSourceFileSha256": "4adc6c258afdc6dc8219050e8b5d6b1613f50cbd8e4d4057ac827938dfd304bb",
+          "sourceFileSha256": "4adc6c258afdc6dc8219050e8b5d6b1613f50cbd8e4d4057ac827938dfd304bb"
+        }
+      ],
+      "reason": "Owner-reviewed bind-before-store reservation dispatch and cleanup plus additive tentative-network start gate only. Other ten method pins, complete UI hash, normalizer and assertions unchanged. Real auth/tentative-network/native-write/concurrency fixtures implemented for hosted checks; hash match alone is not acceptance. Historical 352/c64/164 failures retained."
     }
   }
 }
