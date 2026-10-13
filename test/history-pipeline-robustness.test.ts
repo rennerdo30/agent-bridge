@@ -75,6 +75,7 @@ it("records a conflicting or orphan legacy-tail row and keeps copying instead of
   expect(conflicts.map(c => [c.source, c.reason])).toEqual([["rewritten", "conflict"], ["orphan", "orphan"]]);
   expect(Buffer.from(conflicts[0]!.raw as Uint8Array).toString()).toBe("older pinned writer bytes");
   // Finalize stays blocked while conflicts exist.
+  db.exec("PRAGMA journal_mode=DELETE"); // Cold verifier fixture, outside finalize.
   expect(verifyBeforeFinalize(env.home).join("\n")).toMatch(/legacy tail conflict/);
 });
 
@@ -106,6 +107,7 @@ it("keeps the v1 legacy-tail cursor and mappings across the v1 to v2 upgrade (AB
   append(old, "late-after-upgrade", "late bytes");
   expect(copyLegacyConversationTail(old, db)).toBe(1);
   expect(db.prepare("SELECT 1 FROM conversation_records WHERE source='late-after-upgrade'").get()).toBeTruthy();
+  db.exec("PRAGMA journal_mode=DELETE"); // Cold verifier fixture, outside finalize.
   const blockers = verifyBeforeFinalize(env.home).join("\n");
   expect(blockers).not.toMatch(/not in history\.db yet/);
 });

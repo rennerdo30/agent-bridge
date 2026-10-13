@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { registerHistoryFunctions } from "../src/core/history-codec.js";
@@ -40,4 +40,30 @@ export function storedInventory(path: string): string {
       typeof value === "bigint" ? { integer: value.toString() } :
         value instanceof Uint8Array ? { blob: Buffer.from(value).toString("hex") } : value);
   } finally { db.close(); }
+}
+
+/** Test setup only. Commands never checkpoint, convert, extract or repair an input.
+ * Original proof/failure fixtures use cold physical stores; separate raw command
+ * fixtures explicitly verify unavailable WAL/linked/sidecar input preservation. */
+export function coldCommandInputs(home: string, handles: readonly DatabaseSync[] = []): void {
+  for (const name of ["bridge.db", "history.db", "archive.db", "job-archive.db"]) {
+    const path = join(home, name);
+    if (!existsSync(path)) continue;
+    const st = lstatSync(path);
+    if (!st.isFile() || st.isSymbolicLink() || st.nlink !== 1) continue;
+    const sides = ["-wal", "-shm", "-journal"].map(s => path + s);
+    if (sides.some(side => {
+      try { const st = lstatSync(side); return !st.isFile() || st.isSymbolicLink() || st.nlink !== 1; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; }
+    })) continue;
+    if (readFileSync(path)[18] === 1 && !sides.some(existsSync)) continue;
+    const held = handles.find(db => {
+      try {
+        const file = String(db.prepare("PRAGMA database_list").all().find(row => row.name === "main")?.file);
+        return process.platform === "win32" ? file.toLowerCase() === path.toLowerCase() : file === path;
+      } catch { return false; }
+    });
+    const db = held ?? new DatabaseSync(path);
+    try { db.exec("PRAGMA journal_mode=DELETE"); } finally { if (!held) db.close(); }
+  }
 }

@@ -4,12 +4,13 @@ import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DB_FILE_NAME } from "./constants.js";
 import { extractBundle, readBundleManifest } from "./archive-bundle.js";
-import { historyDbPath, historyReady, legacyTailConflicts, openHistoryReader, openHistoryStore, HISTORY_STORE_VERSION } from "./history-store.js";
+import { historyDbPath, historyReady, legacyTailConflicts, openHistoryStore, HISTORY_STORE_VERSION } from "./history-store.js";
 import { HISTORY_V1_PREFIX } from "./history-migration.js";
 import { jobArchivePath, openJobArchive } from "./job-archive-index.js";
 import { maintenanceLock } from "./storage-lock.js";
 import { ARCHIVE_DB_NAME } from "./sqlite-maintenance.js";
 import { alignedTarget, derivedTables, estimateRows, logicalTable, proofProgress, proveFile, proveTable, sidecars, tableProof, type LiveDb, type ProofContext, type ProofProgress, type ReferenceSnapshot } from "./finalize-proof.js";
+import { openPreservedReader, preservedReadProblems } from "./storage-preservation.js";
 
 /** Conservative retention: finalize keeps every original, including candidates proven redundant.
  * Existing row/byte proofs remain diagnostic checks and never authorize deletion or compaction.
@@ -43,7 +44,7 @@ function size(path: string): number {
 
 function jobArchiveComplete(home: string): boolean {
   if (!existsSync(jobArchivePath(join(home, "jobs.json")))) return false;
-  const db = openJobArchive(join(home, "jobs.json"));
+  const db = openJobArchive(join(home, "jobs.json"), false, { preserveInputs: true });
   try { return db?.prepare("SELECT state FROM archive_migrations WHERE version=1").get()?.state === "complete"; }
   catch { return false; }
   finally { db?.close(); }
@@ -52,7 +53,7 @@ function jobArchiveComplete(home: string): boolean {
 export function historyIsVerified(home: string): boolean {
   const history = historyDbPath(join(home, DB_FILE_NAME));
   if (!existsSync(history)) return false;
-  const db = new DatabaseSync(history, { readOnly: true, timeout: 1000 });
+  const db = openPreservedReader(history, 1000);
   try { return historyReady(db); } finally { db.close(); }
 }
 
@@ -69,13 +70,15 @@ export function referenceSnapshot(history: DatabaseSync): ReferenceSnapshot | un
 
 /** The live databases a proof may rely on. Legacy bridge.db history tables never count as proof targets, even though finalize retains them. */
 export function openLive(home: string): { live: LiveDb[]; history?: DatabaseSync; close: () => void } {
+  const unavailable = commandReadProblems(home, false);
+  if (unavailable.length) throw new Error(unavailable.join("; "));
   const live: LiveDb[] = [];
   const bridge = join(home, DB_FILE_NAME), archive = join(home, ARCHIVE_DB_NAME), history = historyDbPath(bridge);
   let historyDb: DatabaseSync | undefined;
   try {
-    if (existsSync(bridge)) live.push({ label: "bridge.db", db: new DatabaseSync(bridge, { readOnly: true, timeout: 5000 }), exclude: new Set(LEGACY_BRIDGE_TABLES) });
-    if (existsSync(archive)) live.push({ label: "archive.db", db: new DatabaseSync(archive, { readOnly: true, timeout: 5000 }) });
-    if (existsSync(history)) { historyDb = openHistoryReader(history, 5000); live.push({ label: "history.db", db: historyDb }); }
+    if (existsSync(bridge)) live.push({ label: "bridge.db", db: openPreservedReader(bridge, 5000), exclude: new Set(LEGACY_BRIDGE_TABLES) });
+    if (existsSync(archive)) live.push({ label: "archive.db", db: openPreservedReader(archive, 5000) });
+    if (existsSync(history)) { historyDb = openPreservedReader(history, 5000); live.push({ label: "history.db", db: historyDb }); }
   } catch (err) { for (const l of live) l.db.close(); throw err; }
   return { live, history: historyDb, close: () => { for (const l of live) l.db.close(); } };
 }
@@ -173,15 +176,23 @@ function bundledOriginals(home: string, verify: boolean): { dir: string; files: 
 }
 
 interface Candidates { blockers: string[]; bridgeTables: FinalizeItem[]; history: boolean; files: { item: FinalizeItem; copies: string[] }[] }
+/** Complete live-input inventory; candidates and reopens use the same constructor policy. */
+export function commandReadProblems(home: string, includeJobArchive = true): string[] {
+  const bridge = join(home, DB_FILE_NAME);
+  const optional = [join(home, ARCHIVE_DB_NAME),
+    ...(includeJobArchive ? [jobArchivePath(join(home, "jobs.json"))] : [])];
+  return preservedReadProblems([bridge, historyDbPath(bridge), ...optional], optional);
+}
 function candidates(home: string): Candidates {
-  const blockers: string[] = [];
+  const blockers = commandReadProblems(home);
+  if (blockers.length) return { blockers, bridgeTables: [], history: false, files: [] };
   const historyVerified = historyIsVerified(home);
   if (!historyVerified) blockers.push("History store v2 is not verified yet; nothing in the old format may be removed.");
   if (!jobArchiveComplete(home)) blockers.push("Job archive import is not complete yet; job copies stay.");
   const bridgeTables: FinalizeItem[] = [];
   const bridge = join(home, DB_FILE_NAME);
   if (historyVerified && existsSync(bridge)) {
-    const db = new DatabaseSync(bridge, { readOnly: true, timeout: 1000 });
+    const db = openPreservedReader(bridge, 1000);
     try {
       for (const name of LEGACY_BRIDGE_TABLES) if (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name))
         bridgeTables.push({ kind: "table", path: `bridge.db:${name}`, bytes: 0, reason: "legacy history, copied into history.db and verified" });
@@ -203,7 +214,7 @@ export function planFinalize(home: string, options: { prove?: boolean; report?: 
   const found = candidates(home);
   const items: FinalizeItem[] = found.bridgeTables.map(i => ({ ...i, reason: `${i.reason}; checked against history.db v2; retained even when proof passes` })), kept: FinalizeItem[] = [];
   if (found.history) {
-    const db = openHistoryReader(historyDbPath(join(home, DB_FILE_NAME)), 1000);
+    const db = openPreservedReader(historyDbPath(join(home, DB_FILE_NAME)), 1000);
     let reference: ReferenceSnapshot | undefined;
     try {
       reference = referenceSnapshot(db);
@@ -261,7 +272,7 @@ export function verifyBeforeFinalize(home: string, report: (line: string) => voi
   const blockers: string[] = [];
   const bridgeFile = join(home, DB_FILE_NAME), historyFile = historyDbPath(bridgeFile);
   if (!existsSync(historyFile)) return ["history.db does not exist."];
-  const history = openHistoryReader(historyFile, 5000);
+  const history = openPreservedReader(historyFile, 5000);
   try {
     if (!historyReady(history)) return ["History store v2 is not verified."];
     // No whole-file quick_check (5 minutes on a 10 GB store): every page a proof relies on is read and checked by
@@ -280,10 +291,10 @@ function proofWork(home: string, found: Candidates): number {
   const add = (db: DatabaseSync, tables: string[]) => { for (const t of tables) { try { rows += Number(db.prepare(`SELECT coalesce(max(rowid),0) n FROM "${t.replaceAll('"', '""')}"`).get()!.n); } catch { /* none */ } } };
   const bridge = join(home, DB_FILE_NAME);
   if (found.bridgeTables.length) {
-    const db = new DatabaseSync(bridge, { readOnly: true, timeout: 5000 });
+    const db = openPreservedReader(bridge, 5000);
     try { add(db, found.bridgeTables.map(i => i.path.slice("bridge.db:".length)).filter(t => t !== "history_fts")); } finally { db.close(); }
   }
-  const history = new DatabaseSync(historyDbPath(bridge), { readOnly: true, timeout: 5000 });
+  const history = openPreservedReader(historyDbPath(bridge), 5000);
   try { add(history, historyCandidates(history).filter(c => !c.derived).map(c => c.name)); } finally { history.close(); }
   for (const { item } of found.files) for (const file of item.kind === "directory" ? [] : [item.path]) rows += estimateRows(file, true);
   return rows;
@@ -293,6 +304,8 @@ function proofWork(home: string, found: Candidates): number {
  * Database reads use read-only transactions; no writer/upgrade helper or compaction runs.
  * With `dryRun` the same diagnostics run without taking the maintenance lock. */
 export function runFinalize(home: string, report: (line: string) => void, options: FinalizeOptions = {}): FinalizePlan {
+  const unavailable = commandReadProblems(home);
+  if (unavailable.length) return plan(unavailable, [], [], true);
   const dry = options.dryRun === true;
   const release = dry ? () => {} : maintenanceLock(home);
   try {
@@ -310,11 +323,11 @@ export function runFinalize(home: string, report: (line: string) => void, option
       kept.push(retained); report(`kept ${item.path}: ${retained.reason}`);
     };
     if (found.bridgeTables.length) {
-      const db = new DatabaseSync(join(home, DB_FILE_NAME), { timeout: 30_000, readOnly: true });
+      const db = openPreservedReader(join(home, DB_FILE_NAME), 30_000);
       try {
         db.exec("BEGIN");
         try {
-          const history = openHistoryReader(historyDbPath(join(home, DB_FILE_NAME)), 5000);
+          const history = openPreservedReader(historyDbPath(join(home, DB_FILE_NAME)), 5000);
           let blockers: string[];
           try { blockers = verifyLegacyBridge(db, history, report, progress); } finally { history.close(); }
           if (blockers.length) { db.exec("ROLLBACK"); return plan(blockers, [], [], true); }
@@ -327,7 +340,7 @@ export function runFinalize(home: string, report: (line: string) => void, option
     }
     {
       const file = historyDbPath(join(home, DB_FILE_NAME));
-      const db = openHistoryReader(file, 5000);
+      const db = openPreservedReader(file, 5000);
       try {
         db.exec("BEGIN");
         try {

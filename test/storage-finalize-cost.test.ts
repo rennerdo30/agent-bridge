@@ -6,6 +6,7 @@ import { planFinalize, runFinalize } from "../src/core/storage-finalize.js";
 import { historyDbPath, migrateHistoryStore, openHistoryStore } from "../src/core/history-store.js";
 import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+import { coldCommandInputs } from "./storage-retention-fixture.js";
 
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
@@ -39,6 +40,7 @@ async function bigHome(pending = false): Promise<string> {
   // have separate no-open byte-preservation regressions in storage-absorb.
   const cold = new DatabaseSync(reference);
   try { cold.exec("PRAGMA journal_mode=DELETE"); } finally { cold.close(); }
+  coldCommandInputs(env.home);
   return reference;
 }
 

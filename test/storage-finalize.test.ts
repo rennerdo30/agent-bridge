@@ -2,16 +2,20 @@ import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { planFinalize, rollbackHistoryStore, runFinalize } from "../src/core/storage-finalize.js";
+import { planFinalize as planCommand, rollbackHistoryStore, runFinalize as finalizeCommand } from "../src/core/storage-finalize.js";
 import { historyDbPath, historyReadPath, migrateHistoryStore, openHistoryStore } from "../src/core/history-store.js";
 import { decodeHistoryRow } from "../src/core/history-migration.js";
 import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+import { coldCommandInputs } from "./storage-retention-fixture.js";
 
 let env: TestEnv;
 const closes: (() => void)[] = [];
+const held: DatabaseSync[] = [];
+const runFinalize: typeof finalizeCommand = (...args) => { coldCommandInputs(args[0], held); return finalizeCommand(...args); };
+const planFinalize: typeof planCommand = (...args) => { coldCommandInputs(args[0], held); return planCommand(...args); };
 beforeEach(() => { env = makeEnv(); });
-afterEach(async () => { vi.restoreAllMocks(); for (const close of closes.splice(0).reverse()) close(); await env.cleanup(); });
+afterEach(async () => { vi.restoreAllMocks(); for (const close of closes.splice(0).reverse()) close(); held.length = 0; await env.cleanup(); });
 
 async function legacyHome(migrate: boolean) {
   const old = new DatabaseSync(env.db);
@@ -29,7 +33,7 @@ async function legacyHome(migrate: boolean) {
   mkdirSync(join(env.home, "backups", ".pending-snapshot-1"), { recursive: true });
   writeFileSync(join(env.home, "backups", ".pending-snapshot-1", "bridge.db"), "partial");
   writeFileSync(join(env.home, "bridge.db.backup-1-x"), "old backup");
-  const db = openHistoryStore(historyDbPath(env.db)); closes.push(() => db.close());
+  const db = openHistoryStore(historyDbPath(env.db)); held.push(db); closes.push(() => db.close());
   if (migrate) await migrateHistoryStore(env.db, db);
   return db;
 }
@@ -48,7 +52,7 @@ it("refuses and removes nothing before the new storage is verified", async () =>
 it("refuses to delete while a late legacy record is not copied yet, and when a copy differs", async () => {
   const history = await legacyHome(true);
   await migrateJobArchives(join(env.home, "jobs.json"));
-  const old = new DatabaseSync(env.db); closes.push(() => old.close());
+  const old = new DatabaseSync(env.db); held.push(old); closes.push(() => old.close());
   old.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('late',0,0,'codex:a',1,?,'late')").run(Buffer.from("late bytes"));
   const lines: string[] = [];
   let plan = runFinalize(env.home, line => lines.push(line));
@@ -189,7 +193,7 @@ it("AB-211: retains v1_* tables even with a successful row-level proof against v
     PRAGMA user_version=1;`);
   v1.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,body) VALUES('v1',0,0,'codex:v1',1,?,'')").run(Buffer.from("v1 record"));
   v1.close();
-  const history = openHistoryStore(historyDbPath(env.db)); closes.push(() => history.close());
+  const history = openHistoryStore(historyDbPath(env.db)); held.push(history); closes.push(() => history.close());
   await migrateHistoryStore(env.db, history);
   await migrateJobArchives(join(env.home, "jobs.json"));
   expect(planFinalize(env.home, { prove: true }).kept.find(i => i.path === "history.db:v1_conversation_records")?.reason).toMatch(/retained by policy/);

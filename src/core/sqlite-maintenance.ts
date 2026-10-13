@@ -7,7 +7,7 @@ import { nullLogger, type Logger } from "./logger.js";
 import { configureSqlite } from "./sqlite-policy.js";
 export { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
-import { preserveArchiveTarget } from "./storage-preservation.js";
+import { openPreservedReader, preserveArchiveTarget } from "./storage-preservation.js";
 
 export const ARCHIVE_DB_NAME = "archive.db";
 export const ARCHIVE_STORE_VERSION = 1;
@@ -57,7 +57,7 @@ export function openArchive(path: string, options: { migrate?: boolean; home?: s
       path = admitted.path;
       if (!admitted.created) {
         admitted.check();
-        original = new DatabaseSync(path, { readOnly: true });
+        original = openPreservedReader(path);
         admitted.check();
         if (Number(original.prepare("PRAGMA user_version").get()!.user_version) !== ARCHIVE_STORE_VERSION)
           throw new Error("Storage absorb requires a current archive.db; archive migration is disabled and all originals are retained.");

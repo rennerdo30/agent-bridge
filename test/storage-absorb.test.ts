@@ -2,16 +2,17 @@ import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readlinkSync,
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { planFinalize, runFinalize } from "../src/core/storage-finalize.js";
-import { decodeAbsorbedRow, encodeAbsorbedRow, readAbsorbedRows, runAbsorb } from "../src/core/storage-absorb.js";
+import { openLive, planFinalize as planCommand, runFinalize as finalizeCommand, verifyBeforeFinalize } from "../src/core/storage-finalize.js";
+import { decodeAbsorbedRow, encodeAbsorbedRow, readAbsorbedRows, runAbsorb as absorbCommand } from "../src/core/storage-absorb.js";
 import { historyDbPath, migrateHistoryStore, openHistoryStore } from "../src/core/history-store.js";
 import { migrateJobArchives } from "../src/core/job-archive-migration.js";
-import { runStorage } from "../src/cli/storage.js";
+import { runStorage as storageCommand } from "../src/cli/storage.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
-import { originalFiles, sha256File, storedInventory } from "./storage-retention-fixture.js";
+import { coldCommandInputs, originalFiles, sha256File, storedInventory } from "./storage-retention-fixture.js";
 import { bundleFiles } from "../src/core/archive-bundle.js";
 import * as migrations from "../src/core/sqlite-migrations.js";
 import { openArchive } from "../src/core/sqlite-maintenance.js";
+import { openJobArchive } from "../src/core/job-archive-index.js";
 
 const observations = vi.hoisted(() => ({
   opened: undefined as string[] | undefined,
@@ -39,6 +40,12 @@ let env: TestEnv;
 const closes: (() => void)[] = [];
 beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { observations.opened = undefined; observations.afterStat = undefined; vi.restoreAllMocks(); for (const close of closes.splice(0).reverse()) close(); await env.cleanup(); });
+
+// Prepare supported cold fixture inputs OUTSIDE the actual command calls.
+const runFinalize: typeof finalizeCommand = (...args) => { coldCommandInputs(args[0]); return finalizeCommand(...args); };
+const planFinalize: typeof planCommand = (...args) => { coldCommandInputs(args[0]); return planCommand(...args); };
+const runAbsorb: typeof absorbCommand = (...args) => { coldCommandInputs(args[0]); return absorbCommand(...args); };
+const runStorage: typeof storageCommand = (...args) => { coldCommandInputs(args[1]); return storageCommand(...args); };
 
 /** A verified v2 home with a completed job archive, as finalize expects. */
 async function verifiedHome(): Promise<void> {
@@ -104,6 +111,7 @@ it("a backup holding purged messages is kept before absorb, and retained after i
   expect(exact[0]!.d).toBeNull();
   expect(readAbsorbedRows(env.home, "messages").map(r => r.id).sort()).toEqual(["m0", "m2"]);
 
+  closes.splice(0).forEach(close => close());
   const proven = planFinalize(env.home, { prove: true });
   expect(proven.kept.find(i => i.path === backup)?.reason).toMatch(/retained by policy/);
   expect(proven.items).toEqual([]);
@@ -313,7 +321,7 @@ it.each(["symlink", "hardlink"] as const)("refuses a %s archive alias to a retai
   const files = originalFiles([join(env.home, ".migration-snapshots")]), rows = storedInventory(candidate), header = readFileSync(candidate).subarray(0, 100);
   const opened = sqliteOpens();
   for (let i = 0; i < 2; i++) {
-    expect(() => runAbsorb(env.home, { apply: true })).toThrow(/unsafe or unavailable.*originals are retained/);
+    expect(runAbsorb(env.home, { apply: true }).blockers.join(" ")).toMatch(/unsafe or unavailable.*proof input unavailable/);
     expect(opened).not.toContain(target);
     expect(originalFiles([join(env.home, ".migration-snapshots")])).toEqual(files);
     expect(readFileSync(candidate).subarray(0, 100)).toEqual(header);
@@ -330,7 +338,7 @@ it.each(["-wal", "-shm", "-journal"])("refuses an archive %s hardlink to retaine
   linkSync(candidate, target + suffix);
   const files = originalFiles([target, join(env.home, ".migration-snapshots")]), rows = storedInventory(candidate);
   const opened = sqliteOpens();
-  expect(() => runAbsorb(env.home, { apply: true })).toThrow(/unsafe or unavailable/);
+  expect(runAbsorb(env.home, { apply: true }).blockers.join(" ")).toMatch(/proof input unavailable/);
   expect(opened).not.toContain(target);
   expect(originalFiles([target, join(env.home, ".migration-snapshots")])).toEqual(files);
   expect(storedInventory(candidate)).toBe(rows);
@@ -342,7 +350,7 @@ it("refuses a dangling archive sidecar link without creating its destination", a
   const target = join(env.home, "archive.db"), missing = join(env.home, ".migration-snapshots", "must-stay-absent");
   currentSnapshot(target); symlinkSync(missing, target + "-shm", "file");
   const files = originalFiles([target, join(env.home, ".migration-snapshots")]), opened = sqliteOpens();
-  expect(() => runAbsorb(env.home, { apply: true })).toThrow(/unsafe or unavailable/);
+  expect(runAbsorb(env.home, { apply: true }).blockers.join(" ")).toMatch(/proof input unavailable/);
   expect(opened).not.toContain(target);
   expect(originalFiles([target, join(env.home, ".migration-snapshots")])).toEqual(files);
   expect(readlinkSync(target + "-shm")).toBe(missing);
@@ -459,4 +467,81 @@ it("retains a checkpointed WAL-header candidate even when no sidecar files remai
     expect(inspected.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all()).toEqual(schema);
     expect(inspected.prepare("SELECT id,typeof(payload) AS type,hex(payload) AS bytes FROM snapshots").all()).toEqual(rows);
   } finally { inspected.close(); }
+});
+
+it.each(["symlink", "hardlink"] as const)("finalize and dry absorb refuse a readonly %s archive alias before their FIRST reader", async kind => {
+  await verifiedHome(); coldCommandInputs(env.home);
+  const original = join(env.home, ".migration-snapshots", "readonly-original.db"), alias = join(env.home, "archive.db");
+  currentSnapshot(original);
+  if (kind === "symlink") symlinkSync(original, alias, "file"); else linkSync(original, alias);
+  const files = originalFiles([join(env.home, ".migration-snapshots")]), rows = storedInventory(original), header = readFileSync(original).subarray(0, 100);
+  const opened = sqliteOpens();
+  for (const command of [["finalize"], ["finalize", "--check"], ["finalize", "--yes"], ["absorb"]]) {
+    for (let i = 0; i < 2; i++) {
+      const output: string[] = [];
+      expect(storageCommand([...command, "--json"], env.home, text => output.push(text))).toBe(1);
+      expect(JSON.parse(output.join(""))).toMatchObject({ removed: false, removedItems: 0, freedBytes: 0 });
+      expect(opened).toEqual([]);
+      expect(originalFiles([join(env.home, ".migration-snapshots")])).toEqual(files);
+      expect(readFileSync(original).subarray(0, 100)).toEqual(header);
+    }
+  }
+  expect(() => openLive(env.home)).toThrow(/proof input unavailable/);
+  expect(opened).toEqual([]);
+  expect(storedInventory(original)).toBe(rows);
+});
+
+it.each(["-wal", "-shm", "-journal"])("finalize and dry absorb refuse a readonly archive %s alias without touching retained schema/bytes", async suffix => {
+  await verifiedHome(); coldCommandInputs(env.home);
+  const target = join(env.home, "archive.db"), original = join(env.home, ".migration-snapshots", "readonly-sidecar.db");
+  currentSnapshot(target); currentSnapshot(original); linkSync(original, target + suffix);
+  const files = originalFiles([target, join(env.home, ".migration-snapshots")]), rows = storedInventory(original), opened = sqliteOpens();
+  for (const command of [["finalize"], ["finalize", "--check"], ["finalize", "--yes"], ["absorb"]]) {
+    const output: string[] = [];
+    expect(storageCommand([...command, "--json"], env.home, text => output.push(text))).toBe(1);
+    expect(JSON.parse(output.join("")).blockers.join(" ")).toMatch(/sidecars.*proof input unavailable/);
+    expect(opened).toEqual([]);
+    expect(originalFiles([target, join(env.home, ".migration-snapshots")])).toEqual(files);
+  }
+  expect(storedInventory(original)).toBe(rows);
+});
+
+it.each(["bridge.db", "history.db", "archive.db", "job-archive.db"])("all finalize variants refuse WAL %s input with exact DB/WAL/SHM preservation", async name => {
+  await verifiedHome(); coldCommandInputs(env.home);
+  const target = join(env.home, name);
+  const writer = new DatabaseSync(target); closes.push(() => writer.close());
+  writer.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE wal_input_original(id TEXT PRIMARY KEY,payload BLOB); INSERT INTO wal_input_original VALUES('sole-copy',x'FE00FF');");
+  const rows = writer.prepare("SELECT id,typeof(payload) AS type,hex(payload) AS bytes FROM wal_input_original").all();
+  const schema = writer.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all();
+  const files = originalFiles([target, target + "-wal", target + "-shm"]), opened = sqliteOpens();
+  const commands = [["finalize"], ["finalize", "--check"], ["finalize", "--yes"], ...(name === "job-archive.db" ? [] : [["absorb"], ["absorb", "--yes"]])];
+  for (const command of commands) {
+    const output: string[] = [];
+    expect(storageCommand([...command, "--json"], env.home, text => output.push(text))).toBe(1);
+    expect(JSON.parse(output.join("")).blockers.join(" ")).toMatch(/retained without a SQLite open/);
+    expect(opened).toEqual([]);
+    expect(originalFiles([target, target + "-wal", target + "-shm"])).toEqual(files);
+    expect(writer.prepare("SELECT id,typeof(payload) AS type,hex(payload) AS bytes FROM wal_input_original").all()).toEqual(rows);
+    expect(writer.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all()).toEqual(schema);
+  }
+  if (name === "job-archive.db") expect(() => openJobArchive(join(env.home, "jobs.json"), false, { preserveInputs: true })).toThrow(/proof input unavailable/);
+  if (name === "history.db") expect(() => verifyBeforeFinalize(env.home)).toThrow(/proof input unavailable/);
+  expect(opened).toEqual([]);
+});
+
+it("regular cold proof inputs remain compatible, and dry commands never create a missing archive", async () => {
+  await verifiedHome(); coldCommandInputs(env.home);
+  const missing = join(env.home, "archive.db"), opened = sqliteOpens();
+  expect(absorbCommand(env.home)).toMatchObject({ applied: false, blockers: [] });
+  expect(existsSync(missing)).toBe(false);
+  expect(opened).not.toContain(missing);
+  expect(finalizeCommand(env.home, () => {}, { dryRun: true })).toMatchObject({ ready: true, items: [], bytes: 0 });
+  const archive = new DatabaseSync(missing);
+  try { archive.exec("CREATE TABLE snapshots(id TEXT PRIMARY KEY,payload BLOB); INSERT INTO snapshots VALUES('retained',x'FF00FE'); PRAGMA user_version=1;"); } finally { archive.close(); }
+  const hash = sha256File(missing), rows = storedInventory(missing);
+  expect(absorbCommand(env.home)).toMatchObject({ applied: false, blockers: [], rows: 0 });
+  expect(finalizeCommand(env.home, () => {})).toMatchObject({ ready: true, items: [], bytes: 0 });
+  expect(opened).toContain(missing);
+  expect(sha256File(missing)).toBe(hash);
+  expect(storedInventory(missing)).toBe(rows);
 });

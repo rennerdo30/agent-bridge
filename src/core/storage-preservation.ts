@@ -1,5 +1,7 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync, type BigIntStats } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { registerHistoryFunctions } from "./history-codec.js";
 
 const sidecarSuffixes = ["-wal", "-shm", "-journal"];
 const samePath = (a: string, b: string) => process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
@@ -90,4 +92,25 @@ export function candidateReadProblem(path: string): string | undefined {
     if (header[18] !== 1 || header[19] !== 1) return "candidate header is unsupported; retained without a SQLite open";
   } catch { return "candidate path or identity is unsafe or unavailable; retained without a SQLite open"; }
   finally { if (fd !== undefined) closeSync(fd); }
+}
+
+/** One noncreating policy for ALL readonly finalize/absorb inputs, including live proof stores.
+ * No SQLite reader, recovery, journal setup or schema work is allowed before admission. */
+export function openPreservedReader(path: string, timeout = 1000): DatabaseSync {
+  const problem = candidateReadProblem(path);
+  if (problem) throw new Error(`${path}: ${problem}; proof input unavailable`);
+  const db = new DatabaseSync(path, { readOnly: true, timeout });
+  try { registerHistoryFunctions(db); return db; } catch (error) { db.close(); throw error; }
+}
+
+/** Existing inputs only: a missing optional archive is never created by planning or dry reads.
+ * lstat detects dangling links rather than treating them as missing. */
+export function preservedReadProblems(paths: readonly string[], optional: readonly string[] = []): string[] {
+  return paths.flatMap(path => {
+    try {
+      if (!entry(path) && optional.includes(path)) return [];
+      const problem = candidateReadProblem(path);
+      return problem ? [`${path}: ${problem}; proof input unavailable`] : [];
+    } catch { return [`${path}: path inspection unavailable; retained without a SQLite open`]; }
+  });
 }

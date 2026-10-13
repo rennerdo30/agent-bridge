@@ -6,8 +6,8 @@ import { ABSORBED_FILES, ABSORBED_ROWS, alignedTarget, candidateFiles, fileSha25
 import { historyDbPath } from "./history-store.js";
 import { ARCHIVE_DB_NAME, openArchive } from "./sqlite-maintenance.js";
 import { maintenanceLock } from "./storage-lock.js";
-import { fileCandidates, historyIsVerified, LEGACY_BRIDGE_TABLES, referenceSnapshot } from "./storage-finalize.js";
-import { candidateReadProblem } from "./storage-preservation.js";
+import { commandReadProblems, fileCandidates, historyIsVerified, LEGACY_BRIDGE_TABLES, referenceSnapshot } from "./storage-finalize.js";
+import { openPreservedReader } from "./storage-preservation.js";
 
 /** Retaining absorb: originals stay at their original paths regardless of later proof results. Every
  * row in them that exists nowhere live is imported into archive.db, so the proof can succeed without losing anything.
@@ -80,10 +80,8 @@ function archiveMessage(archive: DatabaseSync, row: Row, origin: string, now: nu
 }
 
 function absorbDatabase(path: string, ctx: ProofContext, archive: DatabaseSync | undefined, source: AbsorbSource, options: Required<Pick<AbsorbOptions, "batchRows" | "now">> & AbsorbOptions): void {
-  const unsafe = candidateReadProblem(path);
-  if (unsafe) { source.problems.push(`${basename(path)}: ${unsafe}`); return; }
   let db: DatabaseSync;
-  try { db = new DatabaseSync(path, { readOnly: true, timeout: 1000 }); }
+  try { db = openPreservedReader(path, 1000); }
   catch (err) { source.problems.push(`${basename(path)} cannot be opened (${(err as Error).message})`); return; }
   try {
     const sig = signature(path), origin = basename(path);
@@ -154,12 +152,14 @@ const samePath = (a: string, b: string) => process.platform === "win32" ? resolv
  * maintenance lock (no bridge process may be writing). */
 export function runAbsorb(home: string, options: AbsorbOptions = {}): AbsorbResult {
   const result: AbsorbResult = { applied: !!options.apply, blockers: [], sources: [], rows: 0, files: 0, conflicts: 0 };
+  result.blockers = commandReadProblems(home, false);
+  if (result.blockers.length) { result.applied = false; return result; }
   if (!historyIsVerified(home)) { result.blockers.push("History store v2 is not verified yet; old copies are compared against it, so absorb waits."); return result; }
   const release = options.apply ? maintenanceLock(home) : () => {};
   const opened: DatabaseSync[] = [];
   try {
     const bridge = join(home, DB_FILE_NAME), historyPath = historyDbPath(bridge), archivePath = join(home, ARCHIVE_DB_NAME);
-    const open = (path: string) => { const db = new DatabaseSync(path, { readOnly: true, timeout: 5000 }); opened.push(db); return db; };
+    const open = (path: string) => { const db = openPreservedReader(path, 5000); opened.push(db); return db; };
     let archive: DatabaseSync | undefined;
     if (options.apply) {
       archive = openArchive(archivePath, { migrate: false, home }); opened.push(archive);
