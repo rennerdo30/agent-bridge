@@ -109,7 +109,7 @@ All tools, parameters and behavior are in the [MCP tools reference](https://renn
 
 There is no daemon. Each agent session starts its own small agent-bridge server. The first one becomes the broker on a local pipe (a Windows named pipe or a Unix socket), and if it exits another takes over. Data lives in SQLite under `~/.agent-bridge`. Subagents run in detached job runners, so they survive plugin reloads.
 
-The unreleased AB325 standalone-core candidate is still being implemented and tested. Restart and unsafe stop refuse while native subagent addresses or unconfirmed route writes exist; retry after they finish. Deleting established Bridge lifecycle/state files outside the Bridge can erase stop/handover intent and allow demand-start again. A new journal lineage does not restore that history. Partial missing files, bootstrap/SQLite/flush failures and corrupt or hot journals remain unavailable/unknown. This candidate does not claim full state authority. See the [lifecycle contract](docs/runtime/DAEMON-LIFECYCLE-PREREQUISITE.md).
+The unreleased AB325 standalone-core candidate is still being implemented and tested. Restart and unsafe stop refuse while native subagent addresses or unconfirmed route writes exist. External deletion of established lifecycle files can lose stop/handover intent and allow demand-start again; external replacement or renaming of store files during restart is outside its guarantees. Detected changes and partial, corrupt or hot files remain unavailable/unknown. This candidate does not claim full state authority. See the [lifecycle contract](docs/runtime/DAEMON-LIFECYCLE-PREREQUISITE.md).
 
 ```
  Claude Code session                          Codex session

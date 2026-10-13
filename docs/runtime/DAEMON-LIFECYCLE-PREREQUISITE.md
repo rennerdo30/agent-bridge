@@ -319,6 +319,23 @@ bootstrap, Bridge-owned cleanup, partial absence, corrupt/hot journal or an unkn
 publication result. Those remain retained unknown/fail-closed cases, never permission
 to recreate a missing journal beside an existing DB or during an active handoff.
 
+The owner also excludes EXTERNAL same-user or privileged processes replacing or
+renaming Bridge store files DURING restart. Native fstat/atomic binding of SQLite's
+live handles is outside 1a-i. Existing regular-file identities observed immediately
+before/after open and freshly before/after checkpoint are observational hardening,
+not an atomic handle-binding guarantee. Detected change, absent-before-open or
+unprovable identity remains unknown/abort; a post-create stat is not open-time proof.
+This exclusion never covers Bridge's OWN managed workers, migrations or accepted
+writers: their seals, registry/generation checks, dispatch-then-write drains,
+retained bytes and checkpoints remain mandatory. It does not weaken the partial,
+hot, corrupt, internal COMMIT/flush/bootstrap failure or unknown receipt guards.
+Checkpoint-only metadata observation retains every connection; each has its own
+transaction/FULL/admission preflight. A bounded main-only database-list inventory
+rejects ATTACH/temp/untracked aliases before any schema-qualified main checkpoint.
+The SQLite -1/-1 no-WAL acknowledgement is not a completed WAL checkpoint. Path
+alias grouping uses physical identities only after all per-handle checks; no
+native-open, external-writer closure or ownership-release claim follows.
+
 If in-memory lineage or already-available verified installation bootstrap metadata
 shows a prior journal, status/health/logs use the fixed sanitized category
 `lifecycle_journal_missing` (display text: "lifecycle journal missing (external deletion?)").
