@@ -5,18 +5,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeJobWorktree, prepareWorktreeContinuation, recordWorktreeOrigin } from "../src/core/job-close.js";
 import { createWorktree, type Worktree } from "../src/core/worktree.js";
 import { readWorktreeState, recordWorktreeProcessProof, saveWorktreeState, worktreeLease } from "../src/core/worktree-state.js";
+import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import * as worktreeModule from "../src/core/worktree.js";
 import { setJobOutcome } from "../src/core/job-outcomes.js";
 import { nullLogger } from "../src/core/logger.js";
 import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
 import { runJobClose } from "../src/cli/job-close.js";
+import { writeRunnerStateRecord } from "../src/core/runner-store.js";
+import { processIdentity } from "../src/core/process-identity.js";
 
 let home: string, repo: string, remote: string, wt: Worktree;
 const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "core.longpaths=true", ...args], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 const close = (name = "opencode-job-test", enabled = true) => closeJobWorktree({ home, job: { name, status: "done", worktree: wt }, enabled, log: nullLogger });
 const commit = (message: string) => { git(wt.path, "add", "-A"); git(wt.path, "commit", "-qm", message); return git(wt.path, "rev-parse", "HEAD"); };
 beforeEach(async () => {
-  mkdirSync(".agent-bridge-test", { recursive: true }); home = mkdtempSync(join(process.cwd(), ".agent-bridge-test", "close-"));
+  mkdirSync(process.env.AGENT_BRIDGE_TEST_ROOT!, { recursive: true }); home = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "close-"));
   repo = join(home, "repo"); remote = join(home, "remote.git"); mkdirSync(repo);
   vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, "empty-config")); vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
   git(repo, "init", "-q"); git(repo, "config", "user.name", "Owner"); git(repo, "config", "user.email", "owner@example.test");
@@ -29,7 +32,7 @@ beforeEach(async () => {
   await recordWorktreeOrigin(home, wt, nullLogger);
   recordWorktreeProcessProof(home, wt, true);
 });
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }); });
+afterEach(() => { closeMetadataDbs(); vi.restoreAllMocks(); vi.unstubAllEnvs(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }); });
 
 describe("opt-in job close retention", () => {
   it.each(["codex", "claude", "opencode"])("pushes all %s work before dropping its own cache and retains the local branch", async (agent) => {
@@ -151,6 +154,20 @@ describe("opt-in job close retention", () => {
     expect(existsSync(wt.path)).toBe(true);
     setJobOutcome(home, stored, "parent", "discarded");
     await runJobClose("close-idle-jobs", ["--yes"], home, cfg, nullLogger, () => {});
+    expect(existsSync(wt.path)).toBe(false);
+  });
+  it("keeps a verified live runner but not a process that merely reuses the runner's PID (AB-256)", async () => {
+    writeFileSync(join(home, "jobs.json"), JSON.stringify([{ id: "test", name: "opencode-job-test", agent: "opencode", status: "done", startedAt: 1, finishedAt: 2, worktree: wt }]));
+    const cfg = { ...DEFAULT_CONFIG, jobCloseCleanup: true };
+    const output: string[] = [];
+    writeRunnerStateRecord(home, "test", { pid: process.pid, peer: "job:opencode-job-test", status: "done", updatedAt: Date.now(), identity: processIdentity(process.pid) });
+    expect(await runJobClose("job-close", ["opencode-job-test", "--yes"], home, cfg, nullLogger, line => output.push(line))).toBe(1);
+    expect(output.at(-1)).toContain("Live runner");
+    expect(existsSync(wt.path)).toBe(true);
+    // The live PID now has a different creation identity: that runner is gone.
+    writeRunnerStateRecord(home, "test", { pid: process.pid, peer: "job:opencode-job-test", status: "done", updatedAt: Date.now(), identity: "1" });
+    expect(await runJobClose("job-close", ["opencode-job-test", "--yes"], home, cfg, nullLogger, line => output.push(line))).toBe(0);
+    expect(output.at(-1)).toContain("reaped");
     expect(existsSync(wt.path)).toBe(false);
   });
   it("inspects malformed state without repairing, renaming or deleting any original", async () => {

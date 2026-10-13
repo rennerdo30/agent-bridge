@@ -20,9 +20,10 @@ import { runDelegate } from "../src/mcp/delegate-run.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import { JobManager, readStore } from "../src/mcp/jobs.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
-import { registerTools, type ServerContext } from "../src/mcp/server.js";
+import { delegationTargets, registerTools, type ServerContext } from "../src/mcp/server.js";
 import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 import { until } from "./helpers.js";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
 
 const ROOT = "root-session";
 const ROOT_NAME = "claude-owner";
@@ -32,10 +33,23 @@ let home: string;
 const managers: JobManager[] = [];
 const clients: Client[] = [];
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), "ab-nested-")); });
-afterEach(async () => {
-  for (const manager of managers.splice(0)) manager.cancelAll();
-  for (const client of clients.splice(0)) await client.close();
+afterEach(async (context) => {
+  const errors: unknown[] = [];
+  for (const manager of managers.splice(0)) {
+    try { manager.cancelAll(); } catch (error) { errors.push(error); }
+  }
+  for (const client of clients.splice(0)) {
+    try { await client.close(); } catch (error) { errors.push(error); }
+  }
   vi.unstubAllEnvs(); vi.restoreAllMocks();
+  if (context.task.result?.state === "fail" || errors.length) {
+    console.error(`Nested fixture retained: ${home}`);
+    if (errors.length) throw new AggregateError([...(context.task.result?.errors ?? []), ...errors], "Nested teardown failed; original failure and fixture retained");
+    return;
+  }
+  // Worktree leases and read marks are bridge.db metadata rows (AB-208): release this
+  // process's shared connection, or Windows refuses to remove the home.
+  closeMetadataDb(home);
   await until(() => {
     try { rmSync(home, { recursive: true, force: true }); return true; }
     catch (err) { if (["EPERM", "EBUSY", "ENOTEMPTY"].includes((err as NodeJS.ErrnoException).code ?? "")) return false; throw err; }
@@ -53,7 +67,7 @@ function nestedContext(escalate = vi.fn(async (_body: string) => {})): ServerCon
 
 async function connect(ctx: ServerContext): Promise<Client> {
   const server = new McpServer({ name: "nested-test", version: "0" });
-  registerTools(server, ctx, ["claude", "opencode"]);
+  registerTools(server, ctx, delegationTargets(ctx.agent));
   const client = new Client({ name: "test", version: "0" });
   clients.push(client);
   const [a, b] = InMemoryTransport.createLinkedPair();
@@ -112,11 +126,12 @@ describe("nested delegation", () => {
     vi.stubEnv("AGENT_BRIDGE_DELEGATE_DEPTH", "1");
     const client = await connect(nestedContext());
     const names = (await client.listTools()).tools.map((tool) => tool.name);
-    for (const name of ["spawn_claude", "ask_claude", "message_subagent", "cancel_subagent", "inbox", "wait_for_message"]) expect(names).toContain(name);
+    for (const name of ["spawn_codex", "ask_codex", "spawn_claude", "ask_claude", "message_subagent", "cancel_subagent", "inbox", "wait_for_message"]) expect(names).toContain(name);
     for (const name of ["auto_wake", "max_subagents", "send_files"]) expect(names).not.toContain(name);
     vi.stubEnv("AGENT_BRIDGE_DELEGATE_DEPTH", "2");
     const leaf = await connect(nestedContext());
-    expect((await leaf.listTools()).tools.map((tool) => tool.name)).not.toContain("spawn_claude");
+    const leafNames = (await leaf.listTools()).tools.map((tool) => tool.name);
+    for (const name of ["spawn_codex", "ask_codex", "spawn_claude", "ask_claude"]) expect(leafNames).not.toContain(name);
   });
 
   it("runs a nested ask and persists ancestry in jobs, run metadata and dashboard state", async () => {
@@ -239,6 +254,19 @@ describe("nested delegation", () => {
   it("spawns, approves, resumes and cancels children through the delegated MCP tools", async () => {
     vi.stubEnv("AGENT_BRIDGE_DELEGATE_DEPTH", "1");
     const ctx = nestedContext(); const client = await connect(ctx);
+    const responses: unknown[] = [];
+    const call = async (name: string, arguments_: Record<string, unknown>) => {
+      const result = await client.callTool({ name, arguments: arguments_ });
+      responses.push({ name, arguments: arguments_, result, waiting: ctx.jobs!.waiting().map(job => ({ name: job.name,
+        status: job.status, startedAt: job.startedAt, aborted: job.controller.signal.aborted, queue: job.queue })) });
+      expect(result.isError, JSON.stringify(result)).not.toBe(true);
+      return result;
+    };
+    const stage = async (name: string, predicate: () => boolean) => {
+      try { await until(predicate); }
+      catch (error) { throw new Error(`${name}: ${(error as Error).message}`, { cause: error }); }
+    };
+    try {
     let cancelMode = false;
     let enteredCancellation = false;
     vi.spyOn(DELEGATION_TARGETS.claude, "run").mockImplementation(async (_cfg, req) => {
@@ -246,23 +274,36 @@ describe("nested delegation", () => {
       const decision = await req.approve!({ agent: "claude", tool: "shell", detail: "run checks" });
       return { sessionId: "child-session", text: decision.allow ? "approved child result" : "denied child result", isError: false, details: {} };
     });
-    const spawned = textOf(await client.callTool({ name: "spawn_claude", arguments: { prompt: "Review", title: "Nested review" } }));
+    const spawned = textOf(await call("spawn_claude", { prompt: "Review", title: "Nested review" }));
     const name = /claude-job-[a-f0-9]+/.exec(spawned)![0];
-    await until(() => listPendingApprovals(home).length === 1);
-    await client.callTool({ name: "decide", arguments: { approval_id: listPendingApprovals(home)[0]!.id, decision: "allow" } });
-    await until(() => ctx.jobs!.find(name)!.status === "done");
+    await stage("first approval", () => listPendingApprovals(home).length === 1);
+    await call("decide", { approval_id: listPendingApprovals(home)[0]!.id, decision: "allow" });
+    await stage("first completion", () => ctx.jobs!.find(name)!.status === "done");
     expect(textOf(await client.callTool({ name: "inbox", arguments: {} }))).toContain("approved child result");
-    await client.callTool({ name: "message_subagent", arguments: { job: name, message: "Review again" } });
-    await until(() => listPendingApprovals(home).length === 1);
-    await client.callTool({ name: "decide", arguments: { approval_id: listPendingApprovals(home)[0]!.id, decision: "deny" } });
-    await until(() => ctx.jobs!.find(name)!.status === "done");
+    await call("message_subagent", { job: name, message: "Review again" });
+    await stage("resumed approval", () => listPendingApprovals(home).length === 1);
+    await call("decide", { approval_id: listPendingApprovals(home)[0]!.id, decision: "deny" });
+    await stage("resumed completion", () => ctx.jobs!.find(name)!.status === "done");
     expect(textOf(await client.callTool({ name: "wait_for_message", arguments: { from: name, timeout_sec: 1 } }))).toContain("denied child result");
     cancelMode = true;
-    await client.callTool({ name: "message_subagent", arguments: { job: name, message: "Wait" } });
-    await until(() => enteredCancellation);
-    expect(textOf(await client.callTool({ name: "cancel_subagent", arguments: { job: name } }))).toContain(name);
-    await until(() => ctx.jobs!.find(name)!.status === "failed");
+    await call("message_subagent", { job: name, message: "Wait" });
+    await stage("cancellable target entered", () => enteredCancellation);
+    expect(textOf(await call("cancel_subagent", { job: name }))).toContain(name);
+    await stage("cancelled completion", () => ctx.jobs!.find(name)!.status === "cancelled");
     expect(listPendingApprovals(home)).toEqual([]);
+    } catch (error) {
+      try {
+      const jobs = ctx.jobs!.hookJobs().map(job => ({ id: job.id, name: job.name, status: job.status, startedAt: job.startedAt,
+        owner: job.owner, sessionId: job.sessionId, aborted: job.controller.signal.aborted, queue: job.queue, progress: job.progress }));
+      writeFileSync(join(home, "fixture-diagnostics.json"), JSON.stringify({ responses, jobs,
+        waiting: ctx.jobs!.waiting().map(job => ({ name: job.name, status: job.status, startedAt: job.startedAt,
+          aborted: job.controller.signal.aborted, queue: job.queue })),
+        stored: readStore(join(home, "jobs.json")), approvals: listPendingApprovals(home) }, null, 2));
+      } catch (captureError) {
+        throw new AggregateError([error, captureError], "Nested fixture diagnostics failed; original failure retained");
+      }
+      throw error;
+    }
   });
 
   it("restores only its own children and preserves unrelated and unknown stored fields", () => {

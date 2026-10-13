@@ -1,7 +1,9 @@
+import { bundleDirectory } from "./bundle-directory.js";
 import { codexSubagentConfig } from "./codex-subagents.js";
 import { codexExecutionPrompt } from "./codex-env.js";
+import { jobEnvironment } from "./job-environment.js";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { delimiter, dirname, extname, isAbsolute, join, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -12,7 +14,7 @@ import { PARENT_URL_ENV } from "./parent-link.js";
 import { FinalAnswers } from "./final-answers.js";
 import { progressLineHandler } from "./progress.js";
 import { PermissionRelay, type PermissionDecision } from "./relay.js";
-import { codexDriveMappings, codexPathPrompt } from "./codex-paths.js";
+import { resolveCodexDriveMappings, codexPathPrompt } from "./codex-paths.js";
 import { DEFAULT_MAX_DELEGATE_DEPTH, ENV, MAX_DELEGATE_DEPTH_LIMIT } from "./constants.js";
 
 /** Env var tracking nested delegation, so a delegated agent cannot delegate back forever. */
@@ -267,7 +269,7 @@ export function runProcess(opts: {
     const child = spawn(resolved, args, {
       cwd: opts.cwd,
       // Some CLIs (opencode) take their project folder from PWD rather than the real cwd; keep them in sync.
-      env: { ...opts.env, PWD: opts.cwd },
+      env: { ...jobEnvironment(opts.env), PWD: opts.cwd },
       shell: needsShell,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
@@ -408,7 +410,7 @@ export const CODEX_ASK_HINT =
 export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" } as const;
 /** MCP tools (named <server>_<tool>) can change things too: read-only runs keep only agent-bridge's send (to answer the parent). */
 export const OPENCODE_READ_ONLY_TOOLS = {
-  "*_*": false, bridge_send: true, bridge_report_progress: true, bridge_peers: true, bridge_search_history: true, bridge_get_conversation: true,
+  "*_*": false, bridge_send: true, bridge_report_progress: true, bridge_peers: true, bridge_health: true, bridge_search_history: true, bridge_get_conversation: true,
   bridge_spawn_codex: true, bridge_spawn_claude: true, bridge_ask_codex: true, bridge_ask_claude: true,
   bridge_spawn_antigravity: true, bridge_ask_antigravity: true,
   bridge_message_subagent: true, bridge_cancel_subagent: true, bridge_inbox: true, bridge_wait_for_message: true,
@@ -419,7 +421,7 @@ export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv 
   // Each host selects its own plugin runtime; inheriting a native selector would hide other clients' updates.
   const { CLAUDE_PROJECT_DIR: _parentProject, AGENT_BRIDGE_PLUGIN_RUNTIME_HOME: _parentRuntime,
     AGENT_BRIDGE_LAUNCH_PLUGIN_ROOT: _parentPlugin, ...env } = process.env;
-  return { ...env, ...extra, [ENV.internal]: "1", [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) };
+  return jobEnvironment({ ...env, ...extra, [ENV.internal]: "1", [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) });
 }
 
 export function checkDepth(max = Number(process.env[ENV.maxDelegateDepth] ?? DEFAULT_MAX_DELEGATE_DEPTH), env: NodeJS.ProcessEnv = process.env): void {
@@ -509,8 +511,9 @@ export async function delegateToCodex(
 ): Promise<DelegateResult> {
   checkDepth(req.maxDelegateDepth);
   // Codex's Windows sandbox runs as a separate user that does not see per-user drive mappings (a mapped
-  // or subst'ed E: drive): commands fail with "no E: drive". Hand it the real path instead.
-  req = { ...req, cwd: realFolder(req.cwd), prompt: codexExecutionPrompt(codexPathPrompt(req.prompt, codexDriveMappings(`${req.cwd}\n${req.prompt}`)), req.sandbox) };
+  // or substituted drives): commands can fail because the alias is absent. Hand it the real path instead.
+  const mappings = await resolveCodexDriveMappings(`${req.cwd}\n${req.prompt}`);
+  req = { ...req, cwd: realFolder(req.cwd), prompt: codexExecutionPrompt(codexPathPrompt(req.prompt, mappings, req.sandbox === "danger-full-access"), req.sandbox) };
   // In ask mode the sandbox is read-only and every change goes through an approval the user answers;
   // without this hint Codex gives up at the sandbox instead of requesting the approval.
   if (req.relayApprovals && req.sandbox !== "danger-full-access") req = { ...req, prompt: `${req.prompt}\n\n${CODEX_ASK_HINT}` };
@@ -592,7 +595,7 @@ const CLAUDE_READ_ONLY_MODES = new Set<ClaudePermissionMode>(["default", "manual
 
 /** The CLI bundled next to this module (plugins/<x>/dist/cli.mjs next to server.mjs); null when run from source. */
 export function bundledCli(): string | null {
-  const cli = join(dirname(fileURLToPath(import.meta.url)), "cli.mjs");
+  const cli = join(bundleDirectory(import.meta.url), "cli.mjs");
   return existsSync(cli) ? cli : null;
 }
 
@@ -728,7 +731,7 @@ export function parseOpencodeJsonl(stdout: string): {
     } catch {
       continue;
     }
-    if (typeof ev.sessionID === "string") sessionId ??= ev.sessionID;
+    if (typeof ev.sessionID === "string" && ev.sessionID.trim()) sessionId ??= ev.sessionID;
     if (ev.type === "step_finish" && ev.part?.tokens) {
       sawUsage = true;
       input += Number(ev.part.tokens.input) || 0;
@@ -748,19 +751,33 @@ export function parseOpencodeJsonl(stdout: string): {
   return sawUsage ? { sessionId, text, error, usage: { input, output }, cost } : { sessionId, text, error };
 }
 
-const opencodeVersions = new Map<string, Promise<boolean>>();
+const opencodeVersions = new Map<string, { fingerprint: string; version: Promise<boolean> }>();
+
+function opencodeFingerprint(resolved: string): string {
+  const shim = process.platform === "win32" && WINDOWS_SHIM_EXTS.has(extname(resolved).toLowerCase()) ? unwrapNpmShim(resolved) : null;
+  return JSON.stringify([resolved, ...(shim ? [shim.command, ...shim.prefix] : [])].map(file => {
+    try { const s = statSync(file); return [file, s.size, s.mtimeMs, s.ctimeMs]; }
+    catch { return [file, null]; }
+  }));
+}
 
 /** Probe once per executable; v2 needs a private server to inherit child config and permissions. */
 export function opencodeV2(bin: string, cwd: string, log: Logger): Promise<boolean> {
   const key = resolveBinary(bin) ?? bin;
-  let cached = opencodeVersions.get(key);
-  if (!cached) {
-    cached = runProcess({ bin, args: ["--version"], stdin: "", cwd, timeoutMs: 10_000, env: childEnv(), log })
-      .then((res) => /(?:^|\s)(?:opencode\s+)?v?2\.\d+\.\d+/.test(res.stdout.trim()))
-      .catch(() => false);
-    opencodeVersions.set(key, cached);
-  }
-  return cached;
+  const fingerprint = opencodeFingerprint(key);
+  const cached = opencodeVersions.get(key);
+  if (cached?.fingerprint === fingerprint) return cached.version;
+  const version = runProcess({ bin, args: ["--version"], stdin: "", cwd, timeoutMs: 10_000, env: childEnv(), log })
+    .then(res => {
+      if (res.code !== 0) throw new DelegateError("Could not detect opencode version", "failed", res.stderr);
+      return /(?:^|\s)(?:opencode\s+)?v?2\.\d+\.\d+/.test(res.stdout.trim());
+    }).catch(err => {
+      // A failed probe must not permanently select V1 flags for a V2 installation.
+      if (opencodeVersions.get(key)?.version === version) opencodeVersions.delete(key);
+      throw err;
+    });
+  opencodeVersions.set(key, { fingerprint, version });
+  return version;
 }
 
 export async function delegateToOpencode(req: DelegateRequest & { bin: string; autoApprove: boolean }): Promise<DelegateResult> {

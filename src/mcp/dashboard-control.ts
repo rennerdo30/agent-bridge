@@ -6,7 +6,6 @@ import type { BridgeNode } from "../core/node.js";
 import type { BridgeMessage } from "../core/protocol.js";
 import { parseJobSettings } from "./job-settings.js";
 import type { JobManager } from "./jobs.js";
-import { canControlJob } from "../core/job-ownership.js";
 
 interface DashboardResult {
   outcome: string;
@@ -27,6 +26,11 @@ export function attachDashboardJobControl(node: BridgeNode, jobs: JobManager, lo
       return;
     }
     if (!command || typeof command.requestId !== "string" || typeof command.job !== "string") return;
+    if (command.type === "result") return;
+    if (m.jobControlAuthorized !== true) {
+      log.warn("rejected unauthorized dashboard job command", { from: m.from.name, job: command.job, type: command.type });
+      return;
+    }
     let result: DashboardResult;
     if (command.type === "handoff") {
       try {
@@ -37,11 +41,11 @@ export function attachDashboardJobControl(node: BridgeNode, jobs: JobManager, lo
       } catch (err) { result = { outcome: "rejected", text: (err as Error).message, isError: true }; }
     } else if (command.type === "message") {
       if (typeof command.body !== "string" || !command.body.trim() || command.body.length > MAX_BODY_CHARS) return;
-      await jobs.share(command.job);
-      result = followUp(node, jobs, command.job, command.body);
+      const shared = await jobs.share(command.job);
+      result = !shared && typeof jobs.findAsync === "function" ? unknown(command.job) : followUp(node, jobs, command.job, command.body);
     } else if (command.type === "settings") {
-      await jobs.share(command.job);
-      result = changeSettings(node, jobs, command.job, command.settings, log);
+      const shared = await jobs.share(command.job);
+      result = !shared && typeof jobs.findAsync === "function" ? unknown(command.job) : changeSettings(node, jobs, command.job, command.settings, log);
     } else {
       return;
     }
@@ -50,20 +54,20 @@ export function attachDashboardJobControl(node: BridgeNode, jobs: JobManager, lo
 }
 
 function followUp(node: BridgeNode, jobs: JobManager, ref: string, body: string): DashboardResult {
-  const owned = jobs.find(ref);
+  const owned = typeof jobs.findAsync === "function" ? jobs.find(ref, false) : jobs.find(ref);
   const { outcome, job } = owned ? jobs.followUp(ref, body) : { outcome: "unknown" as const, job: undefined };
   const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
   return {
     outcome,
     text: t(`followUp.${outcome}`, { name: job?.name ?? ref, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }),
-    isError: outcome === "unknown" || outcome === "no-session",
+    isError: outcome === "unknown" || outcome === "no-session" || outcome === "stopping" || outcome === "cancelled-before-start",
   };
 }
 
 /** Next-turn settings only: no follow-up, so a finished subagent stays finished until someone continues it. */
 function changeSettings(node: BridgeNode, jobs: JobManager, ref: string, input: unknown, log: Logger): DashboardResult {
-  const job = jobs.find(ref);
-  if (!job) return { outcome: "unknown", text: t("followUp.unknown", { name: ref }), isError: true };
+  const job = typeof jobs.findAsync === "function" ? jobs.find(ref, false) : jobs.find(ref);
+  if (!job) return unknown(ref);
   const settings = parseJobSettings(input, job.agent);
   if (typeof settings === "string") return { outcome: "invalid", text: settings, isError: true };
   jobs.setSettings(job.name, settings);
@@ -71,4 +75,8 @@ function changeSettings(node: BridgeNode, jobs: JobManager, ref: string, input: 
   const list = Object.entries(settings).map(([key, value]) => `${key}=${value}`).join(", ");
   const when = job.status === "running" ? "Applies from its next turn; the turn running now keeps its settings." : "Applies when it continues.";
   return { outcome: "saved", text: `Saved settings for ${job.name}: ${list}. ${when}`, isError: false };
+}
+
+function unknown(ref: string): DashboardResult {
+  return { outcome: "unknown", text: t("followUp.unknown", { name: ref }), isError: true };
 }

@@ -1,3 +1,4 @@
+import { readBodyText } from "../core/http-body.js";
 import { readFileSync } from "node:fs";
 import { resolveHome } from "../core/paths.js";
 import { sessionFile, type RewakeRegistration } from "../mcp/rewake.js";
@@ -12,9 +13,7 @@ const EXIT_WAKE = 2;
 const MAX_WAIT_MS = 7_000 * 1000;
 
 async function readStdin(): Promise<string> {
-  let raw = "";
-  for await (const chunk of process.stdin) raw += chunk;
-  return raw;
+  return readBodyText(process.stdin);
 }
 
 /** `standby`: the second hook of a turn end, which retries a wake-up that Claude Code did not take. */

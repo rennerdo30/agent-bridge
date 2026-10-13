@@ -7,6 +7,15 @@ import { FAVICON_HREF, LOGO_SVG } from "./logo.js";
 import { renderMarkdown } from "./markdown.js";
 import { DEFAULT_NETWORK_PORT, NETWORK_NAME_PATTERN } from "../network/constants.js";
 
+/** Default HTML is byte-identical; the fixed local entry is inserted only for a ready prepared host. */
+export function safeMobileStatus(value: unknown): string {
+  return typeof value === "string" && ["preparing", "config_invalid", "material_unavailable", "tls_invalid", "bind_invalid", "source_unavailable", "restart_required"].includes(value) ? value : "source_unavailable";
+}
+export function mobileDashboardPage(ready: boolean, unavailable?: string): string {
+  if (ready) return UI_PAGE.replace('<nav class="side-nav">', '<nav class="side-nav"><a href="/mobile/phones" id="tabPhones"><span class="ico" aria-hidden="true">▣</span>Phones</a>');
+  return unavailable === undefined ? UI_PAGE : UI_PAGE.replace('<nav class="side-nav">', '<nav class="side-nav"><p id="phonesStatus" role="status">Phones unavailable: ' + safeMobileStatus(unavailable) + '</p>');
+}
+
 /**
  * The renderer as page script. Bundlers may wrap functions in a __name(...) helper (keepNames); the page
  * has no such helper, so the source brings a no-op one along.
@@ -382,7 +391,7 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .dot.busy { background: var(--busy); box-shadow: 0 0 0 3px var(--busy-soft); }
 .pill { border-radius: 6px; font-weight: 600; padding: 1px 8px; }
 .pill.running { background: var(--busy-soft); color: var(--busy); }
-.pill.failed, .pill.interrupted { background: var(--warn-soft); color: var(--warn); }
+.pill.failed, .pill.interrupted, .pill.cancelled { background: var(--warn-soft); color: var(--warn); }
 .pill.failed { background: var(--bad-soft); color: var(--bad); }
 .chip { border-radius: 5px; border-color: transparent; background: var(--panel-2); }
 .av { border-radius: 8px; font-weight: 700; letter-spacing: -.02em; }
@@ -477,6 +486,20 @@ code.addr { font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-
 .disc-table table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 .disc-table th, .disc-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--panel-2); }
 .disc-table th { color: var(--muted); font-weight: 600; }
+.db-layout { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 14px; align-items: start; }
+.db-tables { padding: 6px; max-height: 70vh; overflow-y: auto; }
+.db-tables button { display: flex; width: 100%; gap: 8px; align-items: baseline; padding: 6px 8px; border: 0; border-radius: 6px; background: none; color: var(--text); text-align: left; cursor: pointer; font: inherit; font-size: 13px; }
+.db-tables button:hover { background: var(--panel-2); }
+.db-tables button[aria-current="true"] { background: var(--accent-soft); font-weight: 600; }
+.db-tables .db-name { margin: 8px 8px 4px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--faint); }
+.db-tables .meta { margin-left: auto; color: var(--faint); font-size: 11.5px; white-space: nowrap; }
+.db-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.db-bar input[type="search"] { flex: 1 1 220px; min-width: 0; }
+.db-grid td { vertical-align: top; max-width: 420px; }
+.db-grid td.cell { white-space: pre-wrap; word-break: break-word; font-family: var(--mono, ui-monospace, monospace); font-size: 12px; }
+.db-grid td.cell.clip { max-height: 7.5em; overflow: hidden; display: block; cursor: pointer; }
+.db-grid .null { color: var(--faint); font-style: italic; }
+@media (max-width: 760px) { .db-layout { grid-template-columns: minmax(0, 1fr); } .db-tables { max-height: 34vh; } }
 
 .handoff { padding: 16px; border-bottom: 1px solid var(--line); background: var(--panel-2); display: grid; gap: 12px; }
 .handoff-targets { display: grid; gap: 6px; max-height: 220px; overflow: auto; }
@@ -672,6 +695,7 @@ form#send select#to {
     <a href="#/network" id="tabNet"><span class="ico" aria-hidden="true">⇄</span>Network</a>
     <a href="#/decisions" id="tabDecisions"><span class="ico" aria-hidden="true">✓</span>Decisions</a>
     <a href="#/search" id="tabSearch"><span class="ico" aria-hidden="true">⌕</span>Search history</a>
+    <a href="#/db" id="tabDb"><span class="ico" aria-hidden="true">≣</span>Database</a>
   </nav>
   <div class="side-tree" id="sideTree"></div>
   <div class="side-foot">
@@ -698,6 +722,7 @@ form#send select#to {
         <div class="note" id="defInfo" role="status" aria-live="polite"></div>
       </form>
     </details></div>
+    <div class="block hidden" id="ovSlotsBox"><h3>Resource slots <span class="n">holders, then the queue in order</span></h3><div class="panel rows" id="ovSlots"></div></div>
     <div class="block"><h3>Sessions <span class="n" id="ovCount"></span></h3><div id="ovSessions" class="cards"></div></div>
     <div class="block"><h3>Subagents <span class="n">working first, then newest finished</span></h3><div class="panel rows" id="ovRuns"></div></div>
     <div class="block" id="ovMsgBox"><h3>Messages</h3><div class="panel"><div id="ovMsgs" class="msgs"></div></div></div>
@@ -705,7 +730,7 @@ form#send select#to {
 
   <div id="approvals" class="hidden">
     <div class="page-head">
-      <div><h2>Waiting for you</h2><p class="muted">Owner questions and tool permissions. Questions stay open until answered or dismissed. Answers never grant tool permission or accept implementation.</p></div>
+      <div><h2>Waiting for you</h2><p class="muted">Owner questions, open questions from subagents to their session, and tool permissions. Questions stay open until answered or dismissed. Answers never grant tool permission or accept implementation.</p></div>
       <button type="button" class="ghost" id="notifyBtn">Notify me in this browser</button>
     </div>
     <div class="seg" id="apFilters" role="group" aria-label="Waiting items">
@@ -741,6 +766,21 @@ form#send select#to {
     </form>
     <div id="sAnswerBox"></div>
     <div id="sResults"></div>
+  </div>
+
+  <div id="db" class="hidden">
+    <div class="page-head"><div><h2>Database</h2><p class="muted">Read-only view of the bridge's databases. Compressed text is shown decoded; switch on "Raw" to see stored values.</p></div></div>
+    <div class="db-layout">
+      <div class="panel db-tables" id="dbTables" aria-label="Tables and views"></div>
+      <div>
+        <form class="db-bar" id="dbForm">
+          <input type="search" id="dbFilter" placeholder="Filter rows (text contained in any column)" autocomplete="off" aria-label="Filter rows">
+          <label class="toggle" title="Show stored values instead of decoded text"><input type="checkbox" id="dbRaw"><span class="track" aria-hidden="true"></span>Raw</label>
+          <button type="submit">Apply</button>
+        </form>
+        <div id="dbRows"></div>
+      </div>
+    </div>
   </div>
 
   <div id="decisions" class="hidden">
@@ -791,6 +831,7 @@ form#send select#to {
   <div id="session" class="split hidden">
     <div class="side-col">
       <div class="panel sess" id="sHead"></div>
+      <div id="sQBox" class="hidden"><h3>Open questions from subagents <span class="counts" id="sQCount"></span></h3><div id="sQs"></div></div>
       <div><h3>Subagents <span class="counts" id="sCount"></span></h3><div class="panel rows" id="sGroups"></div></div>
       <div id="sMsgBox"><h3>Messages</h3><div class="panel"><div id="sMsgs" class="msgs"></div></div></div>
     </div>
@@ -856,7 +897,7 @@ const LOG_PAGES = 20;
 const FOLD_STEPS = 3;
 /** Finished subagents older than this move into the session's archive. */
 const ARCHIVE_AFTER_MS = 30 * 60_000;
-const NETWORK_HASH = "#/network", APPROVALS_HASH = "#/approvals", DECISIONS_HASH = "#/decisions", SEARCH_HASH = "#/search";
+const NETWORK_HASH = "#/network", APPROVALS_HASH = "#/approvals", DECISIONS_HASH = "#/decisions", SEARCH_HASH = "#/search", DB_HASH = "#/db";
 /** Open approval requests are re-read this often (they expire into a "deny" after a few minutes). */
 const APPROVALS_POLL_MS = 3000;
 /** Network status refresh while the tab is open, and faster while a pairing code waits for the other PC. */
@@ -864,7 +905,7 @@ const NET_POLL_MS = 3000, NET_PAIR_POLL_MS = 1500;
 const DEFAULT_NETWORK_PORT = ${DEFAULT_NETWORK_PORT};
 const NETWORK_NAME = /${NETWORK_NAME_PATTERN.source}/;
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 /** Markdown of agent messages (escaped first; see markdown.ts). */
 const md = ${MARKDOWN_SOURCE};
 const time = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -887,7 +928,9 @@ const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : 
       const tip = { low: "can look; changes need approval", mid: "can change files in its workspace", high: "no sandbox: can change anything your account can" }[risk];
       return '<span class="chip perm ' + risk + '" title="permission level: ' + tip + '">' + esc(p) + "</span>";
     }
-    const pill = (status, percent) => '<span class="pill ' + status + '">' + (status === "running" ? (typeof percent === "number" ? "working · " + percent + "%" : "working") : status) + "</span>";
+    // Statuses can come from a paired PC: only known ones become a class, and every label is escaped (AB-231).
+    const PILL_STATUSES = new Set(["running", "done", "failed", "interrupted", "cancelled"]);
+    const pill = (status, percent) => '<span class="pill' + (PILL_STATUSES.has(status) ? " " + status : "") + '">' + (status === "running" ? (typeof percent === "number" && Number.isFinite(percent) ? "working · " + percent + "%" : "working") : esc(status)) + "</span>";
 
 /** Next-turn settings the dashboard can change, per agent (the values message_subagent accepts). */
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
@@ -931,6 +974,7 @@ function parseRoute() {
   if (location.hash.split("?")[0] === APPROVALS_HASH) return { session: null, group: null, page: "approvals" };
   if (location.hash === DECISIONS_HASH) return { session: null, group: null, page: "decisions" };
   if (location.hash === SEARCH_HASH) return { session: null, group: null, page: "search" };
+  if (location.hash === DB_HASH) return { session: null, group: null, page: "db" };
   const m = /^#\\/s\\/([^/]+)(?:\\/(.+))?$/.exec(location.hash);
   return m ? { session: decodeURIComponent(m[1]), group: m[2] ? decodeURIComponent(m[2]) : null } : { session: null, group: null };
 }
@@ -1034,10 +1078,12 @@ function render() {
   $("approvals").classList.toggle("hidden", page !== "approvals");
   $("decisions").classList.toggle("hidden", page !== "decisions");
   $("search").classList.toggle("hidden", page !== "search");
+  $("db").classList.toggle("hidden", page !== "db");
   if (inNetwork) renderNetwork();
   else if (page === "approvals") renderApprovals();
   else if (page === "decisions") renderDecisions();
   else if (page === "search") renderSearch();
+  else if (page === "db") renderDb();
   else if (inSession) renderSession();
   else renderOverview();
   renderSendForm(inSession);
@@ -1145,7 +1191,10 @@ async function pullChatFrom(id, url) {
   c.loading = true;
   try {
     for (let i = 0; i < LOG_PAGES; i++) {
-      const r = await fetch(url + (c.next ? "?from=" + encodeURIComponent(c.next) : ""));
+      // A first load opens at the latest records: reading a 100 MB transcript from its start took seconds.
+      let r = await fetch(url + "?from=" + encodeURIComponent(c.next || "tail"));
+      // A paired PC on an older version rejects the tail cursor: read from the start there.
+      if (!c.next && r.status === 400) r = await fetch(url);
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(remoteErrorText(d) || (r.status === 409 ? "This session has not reported its CLI session yet: it appears after its next prompt." : d.error || "HTTP " + r.status));
       for (const item of d.items || []) {
@@ -1291,10 +1340,11 @@ function renderSide() {
   $("tabApprovals").className = (route.page === "approvals" ? "on" : "") + (approvals.length ? " attn" : "");
   $("tabDecisions").className = route.page === "decisions" ? "on" : "";
   $("tabSearch").className = route.page === "search" ? "on" : "";
+  $("tabDb").className = route.page === "db" ? "on" : "";
   setHtml("tabNet", '<span class="ico" aria-hidden="true">⇄</span>Network' + networkTabDot());
   setHtml("tabApprovals", '<span class="ico" aria-hidden="true">!</span>Waiting for you' + (approvals.length ? '<span class="count attn">' + approvals.length + "</span>" : ""));
   const cur = route.session && model.byName.get(route.session);
-  $("mTitle").textContent = route.network ? "Network" : route.page === "approvals" ? "Waiting for you" : route.page === "decisions" ? "Decisions" : route.page === "search" ? "Search history" : route.session ? (cur ? sessionTitle(cur) : route.session) : "Overview";
+  $("mTitle").textContent = route.network ? "Network" : route.page === "approvals" ? "Waiting for you" : route.page === "decisions" ? "Decisions" : route.page === "search" ? "Search history" : route.page === "db" ? "Database" : route.session ? (cur ? sessionTitle(cur) : route.session) : "Overview";
   const q = $("sessFilter").value.trim().toLowerCase();
   const groups = sideGroups(q);
   const html = groups.length
@@ -1382,11 +1432,12 @@ function groupRow(g, sel, showOwner) {
 /** How many subagents are working, finished, failed (overall and since midnight). */
 function countGroups(groups) {
   const midnight = new Date().setHours(0, 0, 0, 0);
-  const c = { working: 0, done: 0, failed: 0, total: groups.length, today: 0, doneToday: 0, failedToday: 0 };
+  const c = { working: 0, done: 0, failed: 0, cancelled: 0, total: groups.length, today: 0, doneToday: 0, failedToday: 0, cancelledToday: 0 };
   for (const g of groups) {
     const today = g.updatedAt >= midnight;
     if (g.status === "running") c.working++;
     else if (g.status === "done") c.done++, (c.doneToday += today ? 1 : 0);
+    else if (g.status === "cancelled") c.cancelled++, (c.cancelledToday += today ? 1 : 0);
     else c.failed++, (c.failedToday += today ? 1 : 0);
     if (g.startedAt >= midnight) c.today++;
   }
@@ -1394,9 +1445,25 @@ function countGroups(groups) {
 }
 
 function countsLine(c) {
-  return [c.working && '<span class="w">' + c.working + " working</span>", c.done && '<span class="d">' + c.done + " done</span>", c.failed && '<span class="f">' + c.failed + " failed</span>", c.total + " total"].filter(Boolean).join(" · ");
+  return [c.working && '<span class="w">' + c.working + " working</span>", c.done && '<span class="d">' + c.done + " done</span>", c.failed && '<span class="f">' + c.failed + " failed</span>", c.cancelled && '<span>' + c.cancelled + " cancelled</span>", c.total + " total"].filter(Boolean).join(" · ");
+}
+/* ---- Resource slots (GET /api/resource-slots, AB-40) ---- */
+let slotsAt = 0;
+async function loadSlots() {
+  if (Date.now() - slotsAt < 10000) return;
+  slotsAt = Date.now();
+  try {
+    const r = await fetch("/api/resource-slots");
+    if (!r.ok) return;
+    const busy = ((await r.json()).resources || []).filter((s) => s.held.length || s.waiting.length);
+    $("ovSlotsBox").classList.toggle("hidden", !busy.length);
+    setHtml("ovSlots", busy.map((s) => '<div class="row"><b>' + esc(s.resource) + "</b>" + (s.capacity !== null ? ' <span class="small muted">' + s.held.length + "/" + s.capacity + "</span>" : "") +
+      ' <span class="small">held by ' + (s.held.map((e) => esc(e.id)).join(", ") || "nobody") + "</span>" +
+      (s.waiting.length ? ' <span class="small muted">· waiting: ' + s.waiting.map((e) => esc(e.id)).join(", ") + "</span>" : "") + "</div>").join(""));
+  } catch { /* Slots are optional; the overview stays usable. */ }
 }
 function renderOverview() {
+  void loadSlots();
   const retained = state.peers.filter((p) => !p.version || cmpVersion(p.version, newestVersion()) < 0);
   if (cmpVersion(state.version, newestVersion()) < 0) retained.push({ name: "dashboard host", version: state.version });
   $("ovVersions").innerHTML = retained.length ? '<div class="attn-banner"><span><b>Version skew: sessions still run retained code.</b> ' + retained.map((p) => esc(p.name) + " (v" + esc(p.version || "unknown") + ")").join(", ") + ". Sessions keep working; shared format upgrades wait for compatible readers.</span></div>" : "";
@@ -1415,6 +1482,7 @@ function renderOverview() {
     stat(c.today, "started today") +
     stat(c.doneToday, "finished today", c.doneToday ? "ok" : "") +
     stat(c.failedToday, "failed or interrupted today", c.failedToday ? "bad" : "") +
+    stat(c.cancelledToday, "cancelled today", "") +
     stat(c.total, "subagents in the log");
   const card = (x) => {
     const p = x.peer;
@@ -1456,6 +1524,7 @@ function renderSession() {
     : '<div class="head" style="display:flex;gap:12px;align-items:center">' + av("other") + '<div><div style="font-weight:650">' + esc(x.name) + '</div><div class="small muted">' +
       (x.name === "earlier runs" ? "Runs from before sessions were recorded, or from sessions in other folders." : "This session has ended. Its subagents are kept for reference.") + "</div></div></div>";
   $("sCount").innerHTML = x.groups.length ? countsLine(countGroups(x.groups)) : "";
+  renderSessionQuestions();
   const sel = route.group && x.groups.find((g) => g.key === route.group) ? route.group : x.groups[0] && x.groups[0].key;
   renderSessionList(x, selectedKey(x));
   const mine = state.messages.filter((m) => m.from_name === x.name || m.to_target === x.name || String(m.recipients || "").split(", ").includes(x.name));
@@ -1897,16 +1966,29 @@ function usageCard(rep) {
   return '<div class="card"><div class="head">' + av(rep.agent, true) + esc(rep.agent) + "</div>" + body + credits + "</div>";
 }
 
-async function poll() {  try {
+/** One /api/state request at a time: a slow broker must not pile up overlapping polls (AB-233). */
+let polling = false;
+async function poll() {
+  if (polling) return;
+  polling = true;
+  try {
     const r = await fetch("/api/state");
     if (!r.ok) throw new Error(r.status === 403 ? "not authorized: open the link printed by agent-bridge ui" : "HTTP " + r.status);
-    state = await r.json();
-    $("status").innerHTML = state.brokerPid
-      ? '<span class="dot idle"></span>bridge running · v' + esc(state.version)
+    const next = await r.json();
+    if (next.brokerState === "slow" || next.brokerState === "unavailable") next.peers = (state && state.peers) || next.peers;
+    state = next;
+    const h = state.health, m = h && h.history, backup = h && h.backup;
+    const migration = (m ? ' · history ' + esc(m.phase) + ' ~' + esc(Number(m.percent).toFixed(1)) + '% · ' + (m.etaSeconds == null ? 'ETA pending' : 'ETA ~' + Math.ceil(m.etaSeconds / 60) + ' min') : '') + (backup ? ' · backup ' + esc(backup.phase) + (backup.lastError ? ' (' + esc(backup.lastError) + ')' : '') : h ? ' · backup disabled' : '');
+    $("status").innerHTML = state.brokerState === "slow"
+      ? '<span class="dot busy"></span>Bridge responding slowly' + migration
+      : state.brokerState === "unavailable" ? '<span class="dot busy"></span>Bridge status unavailable' + migration
+      : state.brokerPid ? '<span class="dot idle"></span>bridge running · v' + esc(state.version) + migration
       : '<span class="dot off"></span>no bridge running';
     render();
   } catch (e) {
-    $("status").innerHTML = '<span class="dot" style="background:var(--bad)"></span>' + esc(e.message);
+    $("status").innerHTML = '<span class="dot busy"></span>Bridge status unavailable · ' + esc(e.message);
+  } finally {
+    polling = false;
   }
 }
 
@@ -2177,7 +2259,7 @@ function renderNetwork() {
   const n = net, cfg = n && n.config;
   if (!n) {
     $("netDot").className = "dot off";
-    $("netState").textContent = netError ? "No bridge running" : "Reading the network status…";
+    $("netState").textContent = netError ? "Bridge network status unavailable" : "Reading the network status…";
     $("netWhere").textContent = netError ? "Start a Claude Code, Codex, opencode or Antigravity session with agent-bridge, then reload." : "";
   } else {
     $("netDot").className = "dot " + (n.enabled ? "idle" : "off");
@@ -2300,7 +2382,7 @@ function renderPaired() {
     ? list.map((p) => {
         const h = p.health, note = peerNotes.get(p.id);
         const status = p.connected ? "online" : "offline";
-        const health = p.connected && h ? " · checked " + ago(h.lastVerifiedAt) + " · " + h.roundTripMs + " ms" : "";
+        const health = p.connected && h ? " · checked " + ago(h.lastVerifiedAt) + " · " + esc(h.roundTripMs) + " ms" : "";
         const acts = unlinkAsk === p.id
           ? '<span class="small">Unlink ' + esc(p.name) + '? Pairing again needs a new code.</span><button type="button" class="danger" data-act="unlink" data-id="' + esc(p.id) + '">Unlink</button><button type="button" class="ghost" data-act="unlink-cancel">Keep</button>'
           : '<button type="button" class="ghost" data-act="verify" data-id="' + esc(p.id) + '"' + (p.connected ? "" : " disabled") + '>Check</button><button type="button" class="ghost danger" data-act="unlink-ask" data-id="' + esc(p.id) + '">Unlink</button>';
@@ -2511,6 +2593,7 @@ function questionCard(q) {
       '<div class="ap-actions"><input class="ap-why" data-q-text="'+esc(q.id)+'" maxlength="8000" placeholder="Your answer, or a dismissal reason" aria-label="Free-text answer"><button class="ghost" data-q-send="'+esc(q.id)+'"'+disabled+'>Send answer</button></div>'+
       '<div class="ap-actions"><label class="toggle"><input type="checkbox" data-q-pin="'+esc(q.id)+'"><span class="track" aria-hidden="true"></span>This is a lasting rule · pin as decision</label><button class="ghost" data-q-scope="'+esc(q.id)+'">'+(apDrafts.get("scope:"+q.id) === "all" ? "Scope: all projects" : "Scope: this project")+'</button><button class="ghost" data-q-cancel="'+esc(q.id)+'"'+disabled+'>Dismiss with reason</button></div>' :
       q.answer ? '<p class="q-context"><b>Answer:</b> '+esc(q.answer.text)+'</p><p class="small muted">'+esc(q.answer.author.name)+' · '+esc(new Date(q.answer.at).toLocaleString())+' · '+esc(q.answer.source)+(q.answer.decisionId ? ' · Decision '+esc(q.answer.decisionId) : '')+'</p>'+q.deliveries.map(d => '<p class="small">'+esc(d.recipient)+': '+esc(d.readAt ? "read "+new Date(d.readAt).toLocaleString() : d.state)+'. '+esc(d.detail)+'</p>').join("")+(q.mirror ? '<p class="small muted">Pair Desk mirror: '+esc(q.mirror.state+(q.mirror.detail ? " · "+q.mirror.detail : ""))+'</p>' : '') : '<p>'+esc(q.dismissal && q.dismissal.reason || '')+'</p>')+
+    (busy ? '<p class="small muted" role="status">Saving your answer…</p>' : '')+
     '<div class="small muted">'+esc(q.id)+' · An answer is not tool permission or implementation acceptance.</div></article>';
 }
 function focusQuestion() {
@@ -2519,6 +2602,7 @@ function focusQuestion() {
   const card=document.getElementById("question-"+id); if (!card) return;
   card.classList.add("focused"); card.scrollIntoView({block:"center"}); const first=card.querySelector("button,input"); if (first) first.focus(); qFocused=id;
 }
+const ANSWER_TIMEOUT_MS = 15000;
 async function answerQuestion(id, option, dismiss) {
   const q=approvals.find(a => a.id === id); if (!q || apBusy.has(id)) return;
   const text=apDrafts.get("q:"+id) || "";
@@ -2527,20 +2611,27 @@ async function answerQuestion(id, option, dismiss) {
   if (!dismiss && apDrafts.get("pin:"+id)) payload.pin={topic:q.topic,scope:apDrafts.get("scope:"+id) === "all" ? "all" : {project:q.project}};
   apBusy.add(id); renderApprovals();
   try {
-    const r=await fetch("/api/questions/"+encodeURIComponent(id)+(dismiss ? "/dismiss" : ""),{method:"POST",headers:{"content-type":"application/json","x-agent-bridge":"1"},body:JSON.stringify(payload)});
-    const data=await r.json(); apResults.set(id,{kind:r.ok ? "ok" : "err",text:r.ok ? (dismiss ? "Dismissed: " : "Answer saved: ")+q.title : data.error || "Answer failed",at:Date.now()});
+    // A slow broker must never freeze the card: bound the wait and say what is known.
+    const r=await fetch("/api/questions/"+encodeURIComponent(id)+(dismiss ? "/dismiss" : ""),{method:"POST",headers:{"content-type":"application/json","x-agent-bridge":"1"},body:JSON.stringify(payload),signal:AbortSignal.timeout(ANSWER_TIMEOUT_MS)});
+    const data=await r.json().catch(() => ({})); apResults.set(id,{kind:r.ok ? "ok" : "err",text:r.ok ? (dismiss ? "Dismissed: " : "Answer saved: ")+q.title : data.error || "Answer failed",at:Date.now()});
     if (r.ok) apDrafts.delete("q:"+id);
-  } catch (error) { apResults.set(id,{kind:"err",text:"Answer unconfirmed. Refresh before retrying: "+error.message,at:Date.now()}); }
-  finally { apBusy.delete(id); await loadApprovals(); renderApprovals(); }
+  } catch (error) {
+    const timedOut = error && (error.name === "TimeoutError" || error.name === "AbortError");
+    apResults.set(id,{kind:"err",text:timedOut ? "No confirmation yet. The bridge is busy; your answer may still be saved. Check this question again before answering twice." : "Answer unconfirmed. Refresh before retrying: "+error.message,at:Date.now()});
+  }
+  finally { apBusy.delete(id); renderApprovals(); void loadApprovals().then(renderApprovals); }
 }
 
 async function loadApprovals() {
   if (apLoading) return;
   apLoading = true;
   try {
-    const r = await fetch("/api/approvals");
+    const r = await fetch("/api/approvals", { signal: AbortSignal.timeout(ANSWER_TIMEOUT_MS) });
     if (r.ok) {
-      const data = await r.json(); approvals = data.approvals || []; questionHistory = data.questions || [];
+      const data = await r.json();
+      // Owner rule: only questions addressed to the owner (ask_owner) appear here. Subagent questions to their parent
+      // session (job-question) stay agent-to-agent: no card, counter, toast, sound or notification for the owner.
+      approvals = (data.approvals || []).filter((a) => a.kind !== "job-question"); questionHistory = data.questions || [];
       const focusId=new URLSearchParams(location.hash.split("?")[1] || "").get("question");
       if (focusId && questionHistory.some(q => q.id === focusId && q.status !== "open")) apFilter="history";
       notifyNewApprovals();
@@ -2554,7 +2645,8 @@ async function loadApprovals() {
   if (!model) return;
   renderSide();
   if (route.page === "approvals") renderApprovals();
-  else if (!route.session && !route.page) renderApprovalBanner();
+  else if (route.session) renderSessionQuestions();
+  else if (!route.page) renderApprovalBanner();
 }
 
 /** A browser notification for requests that arrive while this tab is in the background (once allowed). */
@@ -2564,13 +2656,60 @@ function notifyNewApprovals() {
   if (apFirstLoad) { apFirstLoad = false; return; }
   if (!fresh.length || typeof Notification === "undefined" || Notification.permission !== "granted" || !document.hidden) return;
   for (const a of fresh.slice(0, 3)) {
-    const n = new Notification("A subagent is waiting for you", { body: (approvalJob(a) + ": " + (a.command || a.tool || "")).slice(0, 180), tag: "ab-approval-" + a.id });
+    const n = new Notification("A subagent is waiting for you", { body: (approvalJob(a) + ": " + (a.kind === "job-question" ? a.body : a.command || a.tool || "")).slice(0, 180), tag: "ab-approval-" + a.id });
     n.onclick = () => { window.focus(); location.hash = APPROVALS_HASH; };
   }
 }
 
+/* A delegated job's open question to its session (AB-249): the parent, or the project main while the parent is offline. */
+const jobQuestionGroup = (q) => model && [...model.groups.values()].find((g) => g.job === q.job);
+function jobQuestionCard(q) {
+  const g = jobQuestionGroup(q), busy = apBusy.has(q.id), title = (g && g.title) || q.job;
+  const asked = q.rerouted
+    ? '<p class="small"><b>' + esc(q.owner || "Its session") + ' was not connected.</b> Routed to ' + esc(q.recipient) + ', the project main.</p>'
+    : '<p class="small muted">Asked ' + esc(q.recipient) + (q.readAt ? " · read " + esc(ago(q.readAt)) : " · unread") + "</p>";
+  return '<article class="ap-card question-card" id="jq-' + esc(q.id) + '"><div class="q-kind">SUBAGENT QUESTION · open</div>' +
+    '<div class="ap-head">' + av(q.agent) + '<div class="grow"><b class="ell">' + (g ? '<a class="link" href="' + href(g.owner, g.key) + '">' + esc(title) + "</a>" : esc(title)) + '</b><div class="small muted ell">' +
+    esc(q.agent + " subagent" + (q.owner ? " of " + q.owner : "")) + '</div></div><span class="ap-time">' + esc(ago(q.createdAt)) + "</span></div>" + asked +
+    '<div class="q-context">' + esc(q.body) + "</div>" +
+    (g ? '<div class="ap-actions"><input class="ap-why" data-jq-text="' + esc(q.id) + '" maxlength="8000" placeholder="Answer the subagent" aria-label="Answer the subagent"><button class="ghost" data-jq-send="' + esc(q.id) + '"' + (busy ? " disabled" : "") + ">Send to subagent</button></div>"
+      : '<p class="small muted">Its run is not listed here. Its session answers with message_subagent.</p>') +
+    '<div class="small muted">The answer reaches the subagent like message_subagent. It never grants tool permission.</div></article>';
+}
+async function answerJobQuestion(id) {
+  const q = approvals.find((a) => a.id === id), g = q && jobQuestionGroup(q), body = (apDrafts.get("jq:" + id) || "").trim();
+  if (!q || !g || apBusy.has(id)) return;
+  if (!body) { apResults.set(id, { kind: "err", text: "Write your answer first.", at: Date.now() }); return rerenderQuestions(); }
+  apBusy.add(id); rerenderQuestions();
+  try {
+    const r = await fetch("/api/subagents/message", { method: "POST", headers: { "content-type": "application/json", "x-agent-bridge": "1" }, body: JSON.stringify({ run: g.turns[g.turns.length - 1].name, body }) });
+    const d = await r.json();
+    apResults.set(id, { kind: r.ok ? "ok" : "err", text: r.ok ? "Answer sent to " + ((g && g.title) || q.job) + "." : d.error || d.text || "Answer failed", at: Date.now() });
+    if (r.ok) apDrafts.delete("jq:" + id);
+  } catch (error) { apResults.set(id, { kind: "err", text: "Answer unconfirmed. Check the subagent before retrying: " + error.message, at: Date.now() }); }
+  finally { apBusy.delete(id); await loadApprovals(); rerenderQuestions(); }
+}
+function rerenderQuestions() {
+  if (route.page === "approvals") { lastApKey = ""; renderApprovals(); }
+  else if (route.session) renderSessionQuestions();
+}
+/** The session page lists the open questions its subagents asked, or that were routed to it. */
+let lastSessionQKey = "";
+function renderSessionQuestions() {
+  const name = route.session, mine = approvals.filter((a) => a.kind === "job-question" && (a.owner === name || a.recipient === name));
+  $("sQBox").classList.toggle("hidden", !mine.length);
+  const key = JSON.stringify([name, mine, [...apResults].map(([id, r]) => id + r.text), [...apBusy]]);
+  if (key === lastSessionQKey) return;
+  lastSessionQKey = key;
+  $("sQCount").textContent = mine.length ? String(mine.length) : "";
+  $("sQs").innerHTML = mine.map((q) => jobQuestionCard(q) + (apResults.has(q.id) ? '<div class="note ' + apResults.get(q.id).kind + ' ap-note">' + esc(apResults.get(q.id).text) + "</div>" : "")).join("");
+  for (const input of $("sQs").querySelectorAll("[data-jq-text]")) input.value = apDrafts.get("jq:" + input.dataset.jqText) || "";
+}
+const approvalKind = (a) => a.kind === "job-question" ? "question" : (a.kind || "permission");
+
 function approvalCard(a) {
   if (a.kind === "question") return questionCard(a);
+  if (a.kind === "job-question") return jobQuestionCard(a);
   const left = a.deadline - Date.now(), busy = apBusy.has(a.id);
   return '<div class="ap-card">' +
     '<div class="ap-head">' + av(a.agent) + '<div class="grow"><b class="ell">' + esc(approvalJob(a)) + '</b><div class="small muted ell">' + esc(a.agent + " subagent of " + a.owner) + "</div></div>" +
@@ -2587,7 +2726,7 @@ function renderApprovals() {
   for (const [id, r] of apResults) if (Date.now() - r.at > AP_RESULT_KEEP_MS) apResults.delete(id);
   const open = new Set(approvals.map((a) => a.id));
   const done = [...apResults].filter(([id]) => !open.has(id));
-  const items = apFilter === "history" ? questionHistory.filter(q => q.status !== "open") : approvals.filter(a => apFilter === "all" || (a.kind || "permission") === apFilter);
+  const items = apFilter === "history" ? questionHistory.filter(q => q.status !== "open") : approvals.filter(a => apFilter === "all" || approvalKind(a) === apFilter);
   const shown=new Set(items.map(a => a.id));
   for (const tab of $("apFilters").querySelectorAll("button")) tab.setAttribute("aria-pressed",String(tab.dataset.apFilter === apFilter));
   const key = JSON.stringify([items,apFilter, [...apResults].map(([id, r]) => id + r.text), [...apBusy]]);
@@ -2602,6 +2741,7 @@ function renderApprovals() {
   for (const input of $("apList").querySelectorAll("[data-ap-why]")) input.value = apDrafts.get(input.dataset.apWhy) || "";
   for (const input of $("apList").querySelectorAll("[data-q-text]")) input.value = apDrafts.get("q:" + input.dataset.qText) || "";
   for (const input of $("apList").querySelectorAll("[data-q-pin]")) input.checked = apDrafts.get("pin:" + input.dataset.qPin) || false;
+  for (const input of $("apList").querySelectorAll("[data-jq-text]")) input.value = apDrafts.get("jq:" + input.dataset.jqText) || "";
   focusQuestion();
 }
 
@@ -2680,15 +2820,18 @@ function renderDecisions() {
     : '<div class="empty">' + (q ? "No decision matches." : "No decisions yet. When you settle something, ask a session to record it with the decide tool, and every session will see it.") + "</div>");
 }
 
-$("apList").addEventListener("input", (e) => { const d=e.target.dataset || {}; if (d.apWhy) apDrafts.set(d.apWhy,e.target.value); if (d.qText) apDrafts.set("q:"+d.qText,e.target.value); if (d.qPin) apDrafts.set("pin:"+d.qPin,e.target.checked); });
+$("apList").addEventListener("input", (e) => { const d=e.target.dataset || {}; if (d.apWhy) apDrafts.set(d.apWhy,e.target.value); if (d.qText) apDrafts.set("q:"+d.qText,e.target.value); if (d.qPin) apDrafts.set("pin:"+d.qPin,e.target.checked); if (d.jqText) apDrafts.set("jq:"+d.jqText,e.target.value); });
 $("apList").addEventListener("click", (e) => {
   const b=e.target.closest("button"); if (!b) return; const d=b.dataset;
   if (d.apAct) void answerApproval(d.id,d.apAct);
   if (d.qOption) void answerQuestion(d.id,d.qOption,false);
   if (d.qSend) void answerQuestion(d.qSend,null,false);
   if (d.qCancel) void answerQuestion(d.qCancel,null,true);
+  if (d.jqSend) void answerJobQuestion(d.jqSend);
   if (d.qScope) { apDrafts.set("scope:"+d.qScope,apDrafts.get("scope:"+d.qScope) === "all" ? "project" : "all"); lastApKey=""; renderApprovals(); }
 });
+$("sQs").addEventListener("input", (e) => { const d=e.target.dataset || {}; if (d.jqText) apDrafts.set("jq:"+d.jqText,e.target.value); });
+$("sQs").addEventListener("click", (e) => { const b=e.target.closest("button[data-jq-send]"); if (b) void answerJobQuestion(b.dataset.jqSend); });
 $("apFilters").addEventListener("click",e => { const b=e.target.closest("[data-ap-filter]"); if (!b) return; apFilter=b.dataset.apFilter; for (const tab of $("apFilters").querySelectorAll("button")) tab.setAttribute("aria-pressed",String(tab === b)); renderApprovals(); });
 $("questionSound").addEventListener("change",() => { qSettings.sound=$("questionSound").checked; void saveQuestionSettings(); });
 $("questionToast").addEventListener("change",() => { qSettings.toast=$("questionToast").checked; void saveQuestionSettings(); });
@@ -2730,8 +2873,9 @@ function outcomeChip(g) {
   const o = g.status !== "running" && g.job && outcomes && outcomes[g.job] && outcomes[g.job].outcome;
   const merge = o && o.merge;
   if (!merge || !OUTCOME_LABEL[merge.state]) return "";
+  if (o.observation && o.observation.state === "pending") return '<span class="chip outcome" title="Outcome verification is running in the background">checking outcome</span>';
   const [label, cls] = OUTCOME_LABEL[merge.state];
-  const tip = [merge.branch && "branch " + merge.branch, merge.baseBranch && "into " + merge.baseBranch, merge.reason].filter(Boolean).join(" · ");
+  const tip = [o.observation && o.observation.state === "stale" && "cached evidence; refresh pending", merge.branch && "branch " + merge.branch, merge.baseBranch && "into " + merge.baseBranch, merge.reason].filter(Boolean).join(" · ");
   return '<span class="chip outcome ' + cls + '" title="' + esc(tip) + '">' + label + "</span>";
 }
 /** Where a run lives: on a paired PC, or rebuilt from its job record after its log was lost. */
@@ -2897,6 +3041,78 @@ $("sResults").addEventListener("click", async (e) => {
     searchSources.set(id, { error: err.message });
   }
   renderSearch();
+});
+/* ---- Database inspector (GET /api/db/tables, /api/db/rows; read-only) ---- */
+const DB_PAGE = 100;
+let dbCatalog = null, dbSel = null, dbResult = null, dbBusy = false, dbOffset = 0;
+const dbOpenCells = new Set();
+function dbSize(n) {
+  if (typeof n !== "number") return "";
+  return n >= 1e9 ? (n / 1e9).toFixed(1) + " GB" : n >= 1e6 ? (n / 1e6).toFixed(1) + " MB" : n >= 1e3 ? Math.round(n / 1e3) + " kB" : n + " B";
+}
+function dbCell(v, key) {
+  if (v === null || v === undefined) return '<td class="cell"><span class="null">NULL</span></td>';
+  const s = typeof v === "string" ? v : JSON.stringify(v);
+  const long = s.length > 400 && !dbOpenCells.has(key);
+  return '<td class="cell' + (long ? " clip" : "") + '" data-cell="' + esc(key) + '" title="' + (long ? "Click to show everything" : "") + '">' + esc(s) + "</td>";
+}
+function renderDb() {
+  if (!dbCatalog) { void loadDbTables(); return setHtml("dbTables", '<div class="empty small muted">Reading tables…</div>'); }
+  if (dbCatalog.error) { setHtml("dbTables", '<div class="empty small muted">' + esc(dbCatalog.error) + "</div>"); return setHtml("dbRows", ""); }
+  setHtml("dbTables", (dbCatalog.dbs || []).map((d) => '<div class="db-name">' + esc(d.db) + (d.bytes ? " · " + dbSize(d.bytes) : "") + "</div>" +
+    (d.tables || []).map((t) => {
+      const cur = dbSel && dbSel.db === d.db && dbSel.table === t.name;
+      return '<button type="button" data-db="' + esc(d.db) + '" data-table="' + esc(t.name) + '" aria-current="' + cur + '"><span class="ell">' + esc(t.name) + "</span>" +
+        '<span class="meta">' + (t.kind === "view" ? "view" : (typeof t.rows === "number" ? t.rows.toLocaleString() + " rows" : "") + (t.bytes ? " · " + dbSize(t.bytes) : "")) + "</span></button>";
+    }).join("")).join(""));
+  if (!dbSel) return setHtml("dbRows", '<div class="panel empty">Pick a table or view.</div>');
+  if (dbBusy) return setHtml("dbRows", '<div class="panel empty">Loading…</div>');
+  if (!dbResult) return setHtml("dbRows", "");
+  if (dbResult.error) return setHtml("dbRows", '<div class="panel empty">' + esc(dbResult.error) + "</div>");
+  const cols = dbResult.columns || [], rows = dbResult.rows || [], total = dbResult.total;
+  const from = rows.length ? dbOffset + 1 : 0, to = dbOffset + rows.length;
+  const pager = '<div class="db-bar small muted"><span>' + from + "–" + to + (typeof total === "number" ? " of " + total.toLocaleString() : "") + "</span>" +
+    '<button type="button" class="ghost" data-db-page="-1"' + (dbOffset ? "" : " disabled") + ">Previous</button>" +
+    '<button type="button" class="ghost" data-db-page="1"' + ((typeof total === "number" ? to < total : rows.length === DB_PAGE) ? "" : " disabled") + ">Next</button></div>";
+  setHtml("dbRows", pager + '<div class="panel disc-table db-grid"><table><thead><tr>' + cols.map((c) => "<th>" + esc(c) + "</th>").join("") + "</tr></thead><tbody>" +
+    (rows.length ? rows.map((r, i) => "<tr>" + r.map((v, j) => dbCell(v, (dbOffset + i) + ":" + j)).join("") + "</tr>").join("") : '<tr><td class="small muted" colspan="' + Math.max(1, cols.length) + '">No rows.</td></tr>') +
+    "</tbody></table></div>");
+}
+async function loadDbTables() {
+  try {
+    const r = await fetch("/api/db/tables");
+    dbCatalog = r.ok ? await r.json() : { error: r.status === 404 ? "The database view is not available in this version yet." : "Could not read the tables (HTTP " + r.status + ")." };
+  } catch (err) { dbCatalog = { error: "Could not read the tables: " + err.message }; }
+  if (route.page === "db") renderDb();
+}
+async function loadDbRows() {
+  if (!dbSel) return;
+  const params = new URLSearchParams({ db: dbSel.db, table: dbSel.table, offset: String(dbOffset), limit: String(DB_PAGE) });
+  const filter = $("dbFilter").value.trim();
+  if (filter) params.set("filter", filter);
+  if ($("dbRaw").checked) params.set("raw", "true");
+  dbBusy = true; dbOpenCells.clear(); renderDb();
+  try {
+    const r = await fetch("/api/db/rows?" + params.toString());
+    const d = await r.json().catch(() => ({}));
+    dbResult = r.ok ? d : { error: d.error || "Could not read the rows (HTTP " + r.status + ")." };
+  } catch (err) { dbResult = { error: "Could not read the rows: " + err.message }; }
+  dbBusy = false;
+  if (route.page === "db") renderDb();
+}
+$("dbTables").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-table]");
+  if (!b) return;
+  dbSel = { db: b.dataset.db, table: b.dataset.table }; dbOffset = 0; dbResult = null;
+  void loadDbRows();
+});
+$("dbForm").addEventListener("submit", (e) => { e.preventDefault(); dbOffset = 0; void loadDbRows(); });
+$("dbRaw").addEventListener("change", () => { if (dbSel) void loadDbRows(); });
+$("dbRows").addEventListener("click", (e) => {
+  const p = e.target.closest("[data-db-page]");
+  if (p) { dbOffset = Math.max(0, dbOffset + Number(p.dataset.dbPage) * DB_PAGE); void loadDbRows(); return; }
+  const c = e.target.closest("td.clip[data-cell]");
+  if (c) { dbOpenCells.add(c.dataset.cell); renderDb(); }
 });
 $("netTransfers").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-xfer-cancel]");

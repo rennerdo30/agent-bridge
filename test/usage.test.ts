@@ -94,6 +94,7 @@ describe("usage limits", () => {
   });
 
   it("reads opencode spend and which models are free", () => {
+    expect(parseOpencodeStats(JSON.stringify({cost:0,tokens:{input:0,output:0}})).lines[1]).toBe("Today: cost $0, 0 input tokens, 0 output tokens");
     expect(parseOpencodeStats("│Total Cost      $0.12 │\n│Input   3.8M │\n│Output  171.3K │").lines[1]).toBe("Last 24 hours: cost $0.12, 3.8M input tokens, 171.3K output tokens");
     const verbose = [
       "opencode/muse-spark-1.3-free",

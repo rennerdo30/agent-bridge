@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { MAX_BODY_CHARS } from "./constants.js";
 import type { BridgeMessage, MessageAddress, PeerInfo } from "./protocol.js";
+import { canonicalProjectRoot, projectKey } from "./project-identity.js";
 
 export const MAX_DECISION_TOPIC_CHARS = 160;
 export const MAX_DECISION_TEXT_CHARS = MAX_BODY_CHARS - 1_024;
@@ -91,8 +92,10 @@ interface DecisionRow {
 }
 
 export function normalizeProject(folder: string): string {
-  const path = resolve(folder).replace(/\\/g, "/").replace(/\/+$/, "");
-  return process.platform === "win32" ? path.toLowerCase() : path;
+  const root = canonicalProjectRoot(folder);
+  // Share the exact project-group key when discovery succeeds. Missing/damaged
+  // folders keep only their own absolute spelling; never guess an ancestor.
+  return root ? projectKey(root) : projectKey(resolve(folder).replace(/\\/g, "/").replace(/\/+$/, ""));
 }
 
 export function normalizeScope(scope: DecisionScope): DecisionScope {
@@ -101,9 +104,9 @@ export function normalizeScope(scope: DecisionScope): DecisionScope {
   return { sessions: [...new Set(scope.sessions)].sort() };
 }
 
-export function decisionApplies(decision: OwnerDecision, peer: Pick<PeerInfo, "name" | "id" | "sessionId" | "cwd">): boolean {
+export function decisionApplies(decision: Pick<OwnerDecision, "scope">, peer: Pick<PeerInfo, "name" | "id" | "sessionId" | "cwd">): boolean {
   if (decision.scope === "all") return true;
-  if ("project" in decision.scope) return decision.scope.project === normalizeProject(peer.cwd);
+  if ("project" in decision.scope) return normalizeProject(decision.scope.project) === normalizeProject(peer.cwd);
   return decision.scope.sessions.some((s) => s === peer.name || s === peer.id || s === peer.sessionId);
 }
 
@@ -112,7 +115,7 @@ function scopeMatches(decision: OwnerDecision, filter?: DecisionScope, sessions:
   if (!filter || stored === "all") return true;
   if (filter === "all") return false;
   if ("project" in filter) {
-    return "project" in stored ? stored.project === filter.project : sessions.some((s) => stored.sessions.includes(s));
+    return "project" in stored ? normalizeProject(stored.project) === normalizeProject(filter.project) : sessions.some((s) => stored.sessions.includes(s));
   }
   return "sessions" in stored && filter.sessions.some((s) => stored.sessions.includes(s));
 }
@@ -126,7 +129,9 @@ export class DecisionStore {
     const id = randomUUID();
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const previous = this.db.prepare("SELECT id FROM decisions WHERE topic = ? ORDER BY revision DESC LIMIT 1").get(topic);
+      // The current revision, not the last inserted: a decision synced from a paired PC can be older (AB-261).
+      const previous = this.db.prepare(`SELECT id FROM decisions d WHERE topic = ? AND NOT EXISTS (SELECT 1 FROM decisions newer WHERE newer.supersedes = d.id)
+        ORDER BY created_at DESC, id DESC LIMIT 1`).get(topic);
       this.db.prepare(`INSERT INTO decisions (id, topic, body, scope, author_id, author_name, author_agent, created_at, source_message_id, supersedes)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, topic, args.text.trim(), JSON.stringify(normalizeScope(args.scope)), author.id, author.name, author.agent, at, args.sourceMessageId ?? null, previous?.id ?? null);
       this.db.exec("COMMIT");
@@ -137,8 +142,41 @@ export class DecisionStore {
     return this.list({ topic, history: true }).find((d) => d.id === id)!;
   }
 
+  /**
+   * Insert a decision synced from a paired broker, keeping its id, topic, createdAt, author,
+   * supersedes and history intact (a decision is identified by its id; an existing id is kept
+   * as-is and never duplicated). Only scope "all" is synced: project and session paths differ
+   * per PC, so narrower scopes are refused here. Returns true when the row is new.
+   *
+   * When both PCs recorded the same topic while disconnected there are two chain tips; list()
+   * treats the newer one (createdAt, id as tiebreak) as current and the other as history. Rows
+   * are never rewritten, so both PCs keep identical records and derive the same current one.
+   *
+   * `current` is derived locally from the supersedes chain, so it is not an input here.
+   */
+  importSync(decision: Omit<OwnerDecision, "current">): boolean {
+    if (decision.scope !== "all") return false;
+    const topic = decision.topic.trim().toLowerCase();
+    if (!topic || !decision.text.trim()) return false;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const inserted = this.db.prepare("INSERT OR IGNORE INTO decisions (id, topic, body, scope, author_id, author_name, author_agent, created_at, source_message_id, supersedes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(decision.id, topic, decision.text.trim(), JSON.stringify("all" as const),
+          decision.author.id, decision.author.name, decision.author.agent,
+          decision.createdAt, decision.sourceMessageId, decision.supersedes).changes === 1;
+      this.db.exec("COMMIT");
+      return inserted;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
+  }
+
   list(args: DecisionsArgs = {}, peer?: PeerInfo): OwnerDecision[] {
-    const rows = this.db.prepare(`SELECT d.*, NOT EXISTS (SELECT 1 FROM decisions newer WHERE newer.supersedes = d.id) AS current
+    // Current: not superseded, and no newer unsuperseded revision of the topic (a fork from a paired PC, AB-261).
+    const rows = this.db.prepare(`SELECT d.*, NOT EXISTS (SELECT 1 FROM decisions newer WHERE newer.supersedes = d.id)
+        AND NOT EXISTS (SELECT 1 FROM decisions o WHERE o.topic = d.topic AND (o.created_at > d.created_at OR (o.created_at = d.created_at AND o.id > d.id))
+          AND NOT EXISTS (SELECT 1 FROM decisions n WHERE n.supersedes = o.id)) AS current
       FROM decisions d ORDER BY revision DESC`).all() as unknown as DecisionRow[];
     const query = args.query?.trim().toLowerCase();
     const scope = args.scope ? normalizeScope(args.scope) : undefined;
@@ -152,7 +190,7 @@ export class DecisionStore {
   }
 
   /** The receipt and durable message commit together, before emitting any event. */
-  enqueue(decision: OwnerDecision, sessionKey: string, message: BridgeMessage, insert: () => void): boolean {
+  enqueue(decision: Pick<OwnerDecision, "id">, sessionKey: string, message: BridgeMessage, insert: () => void): boolean {
     this.db.exec("BEGIN IMMEDIATE");
     try {
       const changed = this.db.prepare("INSERT OR IGNORE INTO decision_deliveries VALUES (?, ?, ?, ?)").run(decision.id, sessionKey, message.id, message.createdAt).changes;

@@ -26,7 +26,9 @@
               "event": "UserPromptSubmit",
               "session_id": "${session_id}",
               "cwd": "${cwd}",
-              "prompt": "${prompt}"
+              "prompt": "${prompt}",
+              "agent_id": "${agent_id}",
+              "prompt_id": "${prompt_id}"
             }
           }
         ]
@@ -42,7 +44,8 @@
             "input": {
               "event": "PostToolUse",
               "session_id": "${session_id}",
-              "agent_id": "${agent_id}"
+              "agent_id": "${agent_id}",
+              "prompt_id": "${prompt_id}"
             }
           }
         ]
@@ -58,7 +61,9 @@
             "input": {
               "event": "Stop",
               "session_id": "${session_id}",
-              "stop_hook_active": "${stop_hook_active}"
+              "stop_hook_active": "${stop_hook_active}",
+              "agent_id": "${agent_id}",
+              "prompt_id": "${prompt_id}"
             }
           },
           {
@@ -83,6 +88,70 @@
             "async": true,
             "asyncRewake": true,
             "timeout": 7200
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:agent-bridge:bridge",
+            "tool": "hook_event",
+            "input": {
+              "event": "StopFailure",
+              "session_id": "${session_id}",
+              "agent_id": "${agent_id}",
+              "prompt_id": "${prompt_id}"
+            }
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:agent-bridge:bridge",
+            "tool": "hook_event",
+            "input": {
+              "event": "SubagentStart",
+              "session_id": "${session_id}",
+              "agent_id": "${agent_id}"
+            }
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:agent-bridge:bridge",
+            "tool": "hook_event",
+            "input": {
+              "event": "SubagentStop",
+              "session_id": "${session_id}",
+              "agent_id": "${agent_id}"
+            }
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "plugin:agent-bridge:bridge",
+            "tool": "hook_event",
+            "input": {
+              "event": "SessionEnd",
+              "session_id": "${session_id}"
+            }
           }
         ]
       }

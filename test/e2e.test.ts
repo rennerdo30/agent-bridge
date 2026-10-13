@@ -8,13 +8,16 @@ import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { codexHost } from "./helpers.js";
 
-/** Runs the bundled plugin server (npm run build first) as two real MCP servers. */
+/** Runs the bundled plugin server (npm run build first) for all four CLI kinds. */
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 const home = mkdtempSync(join(tmpdir(), "agent-bridge-e2e-"));
 writeFileSync(join(home,"config.json"),JSON.stringify({questionAlerts:{sound:false,toast:false,reminderMinutes:0}}));
 
-async function spawnAgent(agent: "claude" | "codex" | "antigravity" | "muse", name: string): Promise<Client> {
+async function spawnAgent(agent: "claude" | "codex" | "opencode" | "antigravity" | "muse", name: string): Promise<Client> {
+  const client = new Client({ name: `test-${agent}`, version: "0.0.0" });
+  codexHost(client, home, agent, name);
   const transport = new StdioClientTransport({
     command: process.execPath,
     cwd: home,
@@ -22,8 +25,8 @@ async function spawnAgent(agent: "claude" | "codex" | "antigravity" | "muse", na
     env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home } as Record<string, string>,
     stderr: "ignore",
   });
-  const client = new Client({ name: `test-${agent}`, version: "0.0.0" });
   await client.connect(transport);
+  if (agent === "codex") await client.callTool({ name: "peers", arguments: {} });
   return client;
 }
 
@@ -41,12 +44,14 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
   let claude: Client;
   let codex: Client;
   let antigravity: Client;
+  let opencode: Client;
   let muse: Client;
 
   beforeAll(async () => {
     claude = await spawnAgent("claude", "claude-e2e");
     codex = await spawnAgent("codex", "codex-e2e");
     antigravity = await spawnAgent("antigravity", "antigravity-e2e");
+    opencode = await spawnAgent("opencode", "opencode-e2e");
     muse = await spawnAgent("muse", "muse-e2e");
     await waitFor(async () => textOf(await claude.callTool({ name: "peers", arguments: {} })).includes("codex-e2e"));
   }, 30_000);
@@ -55,6 +60,7 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     await claude?.close();
     await codex?.close();
     await antigravity?.close();
+    await opencode?.close();
     await muse?.close();
     // Let pending child-process shutdown callbacks release Windows directory handles.
     await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
@@ -64,11 +70,16 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     const c = (await claude.listTools()).tools.map((t) => t.name).sort();
     const x = (await codex.listTools()).tools.map((t) => t.name).sort();
     const g = (await antigravity.listTools()).tools.map((t) => t.name).sort();
-    const m = (await muse.listTools()).tools.map((t) => t.name).sort();
-    expect(g).toEqual(c.filter((name) => !name.endsWith("_antigravity")).concat(["ask_claude", "spawn_claude"]).sort());
-    expect(m).toEqual(c.filter((name) => !name.endsWith("_muse")).concat(["ask_claude", "spawn_claude"]).sort());
-    expect(c).toEqual(["ask_antigravity", "ask_codex", "ask_muse", "ask_opencode", "ask_owner", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "send_status", "set_job_outcome", "spawn_antigravity", "spawn_codex", "spawn_muse", "spawn_opencode", "usage_limits", "wait_for_message", "withdraw_owner_question"]);
-    expect(x).toEqual(["ask_antigravity", "ask_claude", "ask_muse", "ask_opencode", "ask_owner", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "search_history", "send", "send_files", "send_status", "set_job_outcome", "spawn_antigravity", "spawn_claude", "spawn_muse", "spawn_opencode", "usage_limits", "wait_for_message", "withdraw_owner_question"]);
+    const o = (await opencode.listTools()).tools.map((t) => t.name).sort();
+    expect(c).toEqual([...x, "native_child_grant"].sort());
+    expect(g).toEqual(x);
+    expect(o).toEqual(x);
+    expect((await muse.listTools()).tools.map(t => t.name).sort()).toEqual(x);
+    for (const client of [claude, codex, opencode, antigravity, muse]) {
+      expect(client.getInstructions()).toContain("Any CLI can delegate to any CLI, including its own kind.");
+      for (const agent of ["claude", "codex", "opencode", "antigravity", "muse"]) expect(client.getInstructions()).toContain(`ask_${agent}`);
+    }
+    expect(x).toEqual(["ask_antigravity", "ask_claude", "ask_codex", "ask_muse", "ask_opencode", "ask_owner", "auto_wake", "cancel_subagent", "cancel_transfer", "coordinator_availability", "dashboard", "decide", "decisions", "fetch_files", "get_conversation", "handoff_subagents", "health", "hook_event", "inbox", "list_models", "max_subagents", "message_subagent", "network_status", "peers", "project_main", "resource_slots", "search_history", "send", "send_files", "send_status", "set_job_outcome", "spawn_antigravity", "spawn_claude", "spawn_codex", "spawn_muse", "spawn_opencode", "usage_limits", "wait_for_message", "withdraw_owner_question"]);
   });
 
   it("declares the Claude channel capability only for Claude", () => {

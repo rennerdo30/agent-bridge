@@ -1,0 +1,463 @@
+{
+  "startedAt": "2026-10-09T06:36:33.372Z",
+  "finishedAt": "2026-10-09T06:43:41.904Z",
+  "pageSize": {
+    "page_size": 4096
+  },
+  "pageCount": {
+    "page_count": 5187545
+  },
+  "freePages": {
+    "freelist_count": 0
+  },
+  "sizes": [
+    {
+      "name": "history_documents",
+      "pages": 2397977,
+      "bytes": 9822113792,
+      "payload_bytes": 9496734339,
+      "unused_bytes": 307115131
+    },
+    {
+      "name": "conversation_records",
+      "pages": 2171897,
+      "bytes": 8896090112,
+      "payload_bytes": 8715836523,
+      "unused_bytes": 166966196
+    },
+    {
+      "name": "history_fts_data",
+      "pages": 494805,
+      "bytes": 2026721280,
+      "payload_bytes": 1979772026,
+      "unused_bytes": 32086706
+    },
+    {
+      "name": "idx_history_tags",
+      "pages": 23724,
+      "bytes": 97173504,
+      "payload_bytes": 80470400,
+      "unused_bytes": 13182989
+    },
+    {
+      "name": "sqlite_autoindex_history_tags_1",
+      "pages": 23381,
+      "bytes": 95768576,
+      "payload_bytes": 80470400,
+      "unused_bytes": 11782177
+    },
+    {
+      "name": "history_tags",
+      "pages": 20481,
+      "bytes": 83890176,
+      "payload_bytes": 76189799,
+      "unused_bytes": 898745
+    },
+    {
+      "name": "sqlite_autoindex_conversation_records_1",
+      "pages": 12627,
+      "bytes": 51720192,
+      "payload_bytes": 43641634,
+      "unused_bytes": 6977180
+    },
+    {
+      "name": "sqlite_autoindex_history_documents_1",
+      "pages": 7547,
+      "bytes": 30912512,
+      "payload_bytes": 25148253,
+      "unused_bytes": 3956949
+    },
+    {
+      "name": "messages",
+      "pages": 6822,
+      "bytes": 27942912,
+      "payload_bytes": 21387017,
+      "unused_bytes": 6301825
+    },
+    {
+      "name": "idx_history_session",
+      "pages": 6056,
+      "bytes": 24805376,
+      "payload_bytes": 19975317,
+      "unused_bytes": 3040641
+    },
+    {
+      "name": "idx_conversation_records",
+      "pages": 4496,
+      "bytes": 18415616,
+      "payload_bytes": 15146307,
+      "unused_bytes": 2418186
+    },
+    {
+      "name": "idx_history_time",
+      "pages": 2508,
+      "bytes": 10272768,
+      "payload_bytes": 7298107,
+      "unused_bytes": 1227819
+    },
+    {
+      "name": "idx_history_job",
+      "pages": 1931,
+      "bytes": 7909376,
+      "payload_bytes": 5396527,
+      "unused_bytes": 772931
+    },
+    {
+      "name": "history_fts_idx",
+      "pages": 1703,
+      "bytes": 6975488,
+      "payload_bytes": 5039565,
+      "unused_bytes": 950821
+    },
+    {
+      "name": "history_fts_docsize",
+      "pages": 1684,
+      "bytes": 6897664,
+      "payload_bytes": 2581269,
+      "unused_bytes": 870856
+    },
+    {
+      "name": "conversation_sources",
+      "pages": 1210,
+      "bytes": 4956160,
+      "payload_bytes": 4197543,
+      "unused_bytes": 666700
+    },
+    {
+      "name": "idx_conversation_parts",
+      "pages": 973,
+      "bytes": 3985408,
+      "payload_bytes": 2809250,
+      "unused_bytes": 367311
+    },
+    {
+      "name": "history_cursors",
+      "pages": 894,
+      "bytes": 3661824,
+      "payload_bytes": 3224387,
+      "unused_bytes": 278083
+    },
+    {
+      "name": "sqlite_autoindex_history_cursors_1",
+      "pages": 863,
+      "bytes": 3534848,
+      "payload_bytes": 2941289,
+      "unused_bytes": 500131
+    },
+    {
+      "name": "conversations",
+      "pages": 744,
+      "bytes": 3047424,
+      "payload_bytes": 2605895,
+      "unused_bytes": 300414
+    },
+    {
+      "name": "history_files",
+      "pages": 603,
+      "bytes": 2469888,
+      "payload_bytes": 2131466,
+      "unused_bytes": 258831
+    },
+    {
+      "name": "sqlite_autoindex_conversation_envelopes_1",
+      "pages": 520,
+      "bytes": 2129920,
+      "payload_bytes": 1803808,
+      "unused_bytes": 233605
+    },
+    {
+      "name": "sqlite_autoindex_messages_1",
+      "pages": 485,
+      "bytes": 1986560,
+      "payload_bytes": 1465232,
+      "unused_bytes": 445120
+    },
+    {
+      "name": "conversation_envelopes",
+      "pages": 471,
+      "bytes": 1929216,
+      "payload_bytes": 1746422,
+      "unused_bytes": 19036
+    },
+    {
+      "name": "history_pending",
+      "pages": 401,
+      "bytes": 1642496,
+      "payload_bytes": 1428372,
+      "unused_bytes": 196596
+    },
+    {
+      "name": "sqlite_autoindex_history_files_1",
+      "pages": 378,
+      "bytes": 1548288,
+      "payload_bytes": 1331201,
+      "unused_bytes": 174678
+    },
+    {
+      "name": "sqlite_autoindex_conversation_sources_1",
+      "pages": 378,
+      "bytes": 1548288,
+      "payload_bytes": 1331201,
+      "unused_bytes": 174678
+    },
+    {
+      "name": "sqlite_autoindex_conversations_1",
+      "pages": 337,
+      "bytes": 1380352,
+      "payload_bytes": 1135522,
+      "unused_bytes": 173452
+    },
+    {
+      "name": "idx_messages_id",
+      "pages": 318,
+      "bytes": 1302528,
+      "payload_bytes": 962044,
+      "unused_bytes": 266280
+    },
+    {
+      "name": "idx_messages_unread",
+      "pages": 288,
+      "bytes": 1179648,
+      "payload_bytes": 913726,
+      "unused_bytes": 192078
+    },
+    {
+      "name": "sqlite_autoindex_conversation_memberships_1",
+      "pages": 274,
+      "bytes": 1122304,
+      "payload_bytes": 922534,
+      "unused_bytes": 163576
+    },
+    {
+      "name": "conversation_memberships",
+      "pages": 235,
+      "bytes": 962560,
+      "payload_bytes": 889953,
+      "unused_bytes": 14274
+    },
+    {
+      "name": "idx_conversations_project",
+      "pages": 169,
+      "bytes": 692224,
+      "payload_bytes": 533592,
+      "unused_bytes": 89232
+    },
+    {
+      "name": "idx_conversations_parent",
+      "pages": 88,
+      "bytes": 360448,
+      "payload_bytes": 244443,
+      "unused_bytes": 47615
+    },
+    {
+      "name": "job_delivery_routes",
+      "pages": 59,
+      "bytes": 241664,
+      "payload_bytes": 198687,
+      "unused_bytes": 27104
+    },
+    {
+      "name": "sqlite_autoindex_job_delivery_routes_1",
+      "pages": 37,
+      "bytes": 151552,
+      "payload_bytes": 123446,
+      "unused_bytes": 18624
+    },
+    {
+      "name": "sqlite_autoindex_history_pending_1",
+      "pages": 34,
+      "bytes": 139264,
+      "payload_bytes": 120840,
+      "unused_bytes": 12194
+    },
+    {
+      "name": "conversation_projects",
+      "pages": 19,
+      "bytes": 77824,
+      "payload_bytes": 59306,
+      "unused_bytes": 13814
+    },
+    {
+      "name": "sqlite_autoindex_conversation_projects_1",
+      "pages": 18,
+      "bytes": 73728,
+      "payload_bytes": 58272,
+      "unused_bytes": 12516
+    },
+    {
+      "name": "history_sessions",
+      "pages": 14,
+      "bytes": 57344,
+      "payload_bytes": 49426,
+      "unused_bytes": 5070
+    },
+    {
+      "name": "decision_deliveries",
+      "pages": 13,
+      "bytes": 53248,
+      "payload_bytes": 43455,
+      "unused_bytes": 7998
+    },
+    {
+      "name": "idx_history_sessions",
+      "pages": 10,
+      "bytes": 40960,
+      "payload_bytes": 30820,
+      "unused_bytes": 8365
+    },
+    {
+      "name": "sqlite_autoindex_decision_deliveries_1",
+      "pages": 9,
+      "bytes": 36864,
+      "payload_bytes": 29141,
+      "unused_bytes": 6581
+    },
+    {
+      "name": "sqlite_autoindex_history_sessions_1",
+      "pages": 8,
+      "bytes": 32768,
+      "payload_bytes": 22221,
+      "unused_bytes": 8796
+    },
+    {
+      "name": "peer_names",
+      "pages": 7,
+      "bytes": 28672,
+      "payload_bytes": 21110,
+      "unused_bytes": 6805
+    },
+    {
+      "name": "peer_name_owners",
+      "pages": 7,
+      "bytes": 28672,
+      "payload_bytes": 20557,
+      "unused_bytes": 6118
+    },
+    {
+      "name": "decisions",
+      "pages": 7,
+      "bytes": 28672,
+      "payload_bytes": 20545,
+      "unused_bytes": 7857
+    },
+    {
+      "name": "sqlite_autoindex_peer_names_1",
+      "pages": 6,
+      "bytes": 24576,
+      "payload_bytes": 16444,
+      "unused_bytes": 7610
+    },
+    {
+      "name": "sqlite_schema",
+      "pages": 4,
+      "bytes": 16384,
+      "payload_bytes": 11099,
+      "unused_bytes": 4809
+    },
+    {
+      "name": "sqlite_autoindex_session_bindings_1",
+      "pages": 4,
+      "bytes": 16384,
+      "payload_bytes": 10777,
+      "unused_bytes": 5269
+    },
+    {
+      "name": "sqlite_autoindex_peer_name_owners_1",
+      "pages": 4,
+      "bytes": 16384,
+      "payload_bytes": 9220,
+      "unused_bytes": 5911
+    },
+    {
+      "name": "session_bindings",
+      "pages": 4,
+      "bytes": 16384,
+      "payload_bytes": 11163,
+      "unused_bytes": 4800
+    },
+    {
+      "name": "sqlite_sequence",
+      "pages": 1,
+      "bytes": 4096,
+      "payload_bytes": 13,
+      "unused_bytes": 4071
+    },
+    {
+      "name": "sqlite_autoindex_peer_last_seen_1",
+      "pages": 1,
+      "bytes": 4096,
+      "payload_bytes": 652,
+      "unused_bytes": 3355
+    },
+    {
+      "name": "sqlite_autoindex_decisions_1",
+      "pages": 1,
+      "bytes": 4096,
+      "payload_bytes": 1399,
+      "unused_bytes": 2584
+    },
+    {
+      "name": "sqlite_autoindex_conversation_parts_1",
+      "pages": 1,
+      "bytes": 4096,
+      "payload_bytes": 0,
+      "unused_bytes": 4088
+    },
+    {
+      "name": "sqlite_autoindex_conversation_bindings_1",
+      "pages": 1,
+      "bytes": 4096,
+      "payload_bytes": 1109,
+      "unused_bytes": 2907
+    },
+    {
+      "name": "peer_last_seen",
+      "pages": 1,
+      "bytes": 4096,
+      "payload_bytes": 788,
+      "unused_bytes": 3192
+    },
+    {
+      "name": "idx_decisions_topic",
+      "pages": 1,
+      "bytes": 4096,
+      "payload_bytes": 1188,
+      "unused_bytes": 2795
+    },
+    {
+      "name": "idx_decisions_supersedes",
+      "pages": 1,
+      "bytes": 4096,
+      "payload_bytes": 211,
+      "unused_bytes": 3772
+    },
+    {
+      "name": "history_fts_config",
+      "pages": 1,
+      "bytes": 4096,
+      "payload_bytes": 11,
+      "unused_bytes": 4074
+    },
+    {
+      "name": "conversation_parts",
+      "pages": 1,
+      "bytes": 4096,
+      "payload_bytes": 0,
+      "unused_bytes": 4088
+    },
+    {
+      "name": "conversation_bindings",
+      "pages": 1,
+      "bytes": 4096,
+      "payload_bytes": 1968,
+      "unused_bytes": 2024
+    },
+    {
+      "name": "archived_messages",
+      "pages": 1,
+      "bytes": 4096,
+      "payload_bytes": 0,
+      "unused_bytes": 4088
+    }
+  ]
+}

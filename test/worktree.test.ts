@@ -4,12 +4,24 @@ import { tmpdir } from "node:os";
 import { join, toNamespacedPath } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
 import { createWorktree, finishWorktree, gitDirsOutside, gitStatusSnapshot, handoffWarning, removeWorktreeDirectory, subagentCommitMessage, worktreeReport } from "../src/core/worktree.js";
 import { cleanupWorktrees, type CleanupEntry } from "../src/core/worktree-cleanup.js";
 import { formatUsage } from "../src/mcp/format.js";
 import { scanWorktreeLinks } from "../src/core/worktree-links.js";
+import { preferredDriveFixture } from "./preferred-drive-fixture.js";
 
 let repo: string;
+it.each([false, true])("formats report and cleanup paths without changing worktree records (changed=%s)", async (changed) => {
+  const restore = await preferredDriveFixture();
+  try {
+    const wt = { path: "Q:/work", cwd: "Q:/work", repoRoot: "Q:/repo", branch: "saved", base: "base" };
+    const report = worktreeReport(wt, { changed, branch: "saved", diffStat: "", files: [], reviewBase: "base", otherBranches: [] });
+    expect(report).toContain("X:/work");
+    expect(report).not.toContain("Q:/work");
+    expect(wt.path).toBe("Q:/work");
+  } finally { restore(); }
+});
 let home: string;
 const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
 
@@ -39,11 +51,39 @@ afterEach(() => {
     // ignore
   }
   rmSync(repo, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  closeMetadataDb(home);
   rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   vi.unstubAllEnvs();
 });
 
 describe("worktree isolation", () => {
+  it("autosaves tracked and explicitly staged source while preserving private build outputs", async () => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: "privatefiles", log: nullLogger });
+    writeFileSync(join(wt.path, "a.txt"), "tracked source\n");
+    writeFileSync(join(wt.path, "source.txt"), "explicit new source\n");
+    execFileSync("git", ["add", "source.txt"], { cwd: wt.path });
+    writeFileSync(join(wt.path, "generated-font.ttf"), Buffer.from([0, 17, 32]));
+    writeFileSync(join(wt.path, "private.config"), "fixture private content\n");
+    const saved = await finishWorktree(wt, "checkpoint", nullLogger);
+    expect(saved.files.sort()).toEqual(["a.txt", "source.txt"]);
+    expect(saved.skippedFiles).toEqual([
+      { path: "generated-font.ttf", reason: "untracked; not explicitly staged" },
+      { path: "private.config", reason: "untracked; not explicitly staged" },
+    ]);
+    expect(readFileSync(join(wt.path, "generated-font.ttf"))).toEqual(Buffer.from([0, 17, 32]));
+    expect(readFileSync(join(wt.path, "private.config"), "utf8")).toBe("fixture private content\n");
+    expect(worktreeReport(wt, saved)).toContain("private.config");
+    expect(worktreeReport(wt, saved)).toContain("Keep this worktree");
+    expect(worktreeReport(wt, saved)).not.toContain("worktree remove --force");
+  });
+  it("creates new worktrees under a configured root without relocating existing ones", async () => {
+    const original = await createWorktree({ cwd: repo, home, jobId: "oldroot", log: nullLogger });
+    const root = join(home, "new-root");
+    const created = await createWorktree({ cwd: repo, home, jobId: "newroot", worktreeRoot: root, log: nullLogger });
+    expect(created.path).toBe(join(root, `${repo.split(/[\\/]/).at(-1)}-newroot`));
+    expect(existsSync(join(original.path, "a.txt"))).toBe(true);
+    expect(original.path).toContain("worktrees");
+  });
   it("commits with the repository identity instead of the neutral fallback", async () => {
     git("config", "user.name", "Repository Owner");
     git("config", "user.email", "owner@example.test");
@@ -80,6 +120,7 @@ describe("worktree isolation", () => {
     // The "subagent" edits inside its worktree.
     writeFileSync(join(wt.path, "a.txt"), "changed by subagent\n");
     writeFileSync(join(wt.path, "b.txt"), "new file\n");
+    execFileSync("git", ["add", "b.txt"], { cwd: wt.path });
 
     const outcome = await finishWorktree(wt, "edit a and add b", nullLogger);
     expect(outcome.changed).toBe(true);
@@ -300,6 +341,7 @@ describe("review diff and handoff files", () => {
   it("warns when a job changed HANDOFF.md or TODO.md", async () => {
     const wt = await createWorktree({ cwd: repo, home, jobId: "job7", log: nullLogger });
     writeFileSync(join(wt.path, "HANDOFF.md"), "the job's own handoff\n");
+    execFileSync("git", ["add", "HANDOFF.md"], { cwd: wt.path });
     const report = worktreeReport(wt, await finishWorktree(wt, "handoff", nullLogger));
     expect(report).toMatch(/WARNING: this job changed HANDOFF\.md/);
     expect(handoffWarning(["src/a.ts", "docs/TODO.md"])).toContain("docs/TODO.md");
@@ -381,6 +423,7 @@ describe("auto-commit filtering", () => {
     const wt = await createWorktree({ cwd: repo, home, jobId: "structural", log: nullLogger });
     execFileSync("git", ["mv", "a.txt", "renamed.txt"], { cwd: wt.path });
     writeFileSync(join(wt.path, "empty.txt"), "");
+    execFileSync("git", ["add", "empty.txt"], { cwd: wt.path });
     writeFileSync(join(wt.path, "image.bin"), Buffer.from([0, 1, 3]));
     rmSync(join(wt.path, "remove.txt"));
     const outcome = await finishWorktree(wt, "structural changes", nullLogger);
@@ -407,6 +450,7 @@ describe("auto-commit filtering", () => {
     writeFileSync(join(wt.path, "node_modules", "cache.js"), "dependency\n");
     mkdirSync(join(wt.path, "Library"));
     writeFileSync(join(wt.path, "Library", "source.txt"), "source library\n");
+    execFileSync("git", ["add", "Library/source.txt"], { cwd: wt.path });
     const outcome = await finishWorktree(wt, "source library", nullLogger);
     expect(outcome.files).toEqual(["Library/source.txt"]);
     expect(outcome.skippedFiles).toEqual([
@@ -489,6 +533,7 @@ describe("cleanup", () => {
     symlinkSync(shared, join(done.path, "Library"), "junction");
     const unmerged = await createWorktree({ cwd: repo, home, jobId: "unmerged", log: nullLogger });
     writeFileSync(join(unmerged.path, "x.txt"), "x\n");
+    execFileSync("git", ["add", "x.txt"], { cwd: unmerged.path });
     await finishWorktree(unmerged, "unmerged work", nullLogger);
     const dirty = await createWorktree({ cwd: repo, home, jobId: "dirty", log: nullLogger });
     writeFileSync(join(dirty.path, "a.txt"), "uncommitted\n");
@@ -503,14 +548,15 @@ describe("cleanup", () => {
     writeFileSync(join(foreign, "notes.txt"), "mine\n");
 
     const byBranch = (entries: CleanupEntry[]) => Object.fromEntries(entries.map((e) => [e.branch, e]));
-    const dry = byBranch(await cleanupWorktrees({ cwd: repo, home, all: true, apply: false, log: nullLogger }));
+    const dryEntries = await cleanupWorktrees({ cwd: repo, home, all: true, apply: false, log: nullLogger });
+    const dry = byBranch(dryEntries);
     expect(dry["agent-bridge/done"]!.action).toBe("would remove");
     expect(dry["agent-bridge/unmerged"]!.action).toBe("kept");
     expect(dry["agent-bridge/unmerged"]!.reason).toMatch(/not merged/);
     expect(dry["agent-bridge/dirty"]!.reason).toMatch(/uncommitted/);
     expect(dry["agent-bridge/running"]!.reason).toMatch(/codex-job-running is running/);
     expect(existsSync(done.path)).toBe(true);
-    const leftovers = (await cleanupWorktrees({ cwd: repo, home, all: true, apply: false, log: nullLogger })).filter((e) => !e.branch);
+    const leftovers = dryEntries.filter((e) => !e.branch);
     expect(leftovers.find((e) => e.path === leftover)?.action).toBe("would remove");
     expect(leftovers.find((e) => e.path === foreign)?.action).toBe("kept");
 

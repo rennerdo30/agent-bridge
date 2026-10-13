@@ -2,6 +2,27 @@ import { createInterface } from "node:readline/promises";
 import { doctor, archiveHome, fixDoctor } from "../core/doctor.js";
 import { createBackup, readBackup, restoreBackup } from "../core/backups.js";
 import { inspectPluginVersions, listServerProcesses, pluginDoctorPaths } from "./plugin-doctor.js";
+import { brokerFailureState, formatHealth, probeBrokerHealth } from "../core/health.js";
+import { resolvePipePath } from "../core/paths.js";
+import { nullLogger } from "../core/logger.js";
+import { windowsUserPathFindings } from "./windows-env-doctor.js";
+import { packArchivedRuns } from "../core/finished-run-bundles.js";
+import { closeMetadataDb } from "../core/metadata-db.js";
+
+/** doctor --archive also packs archived finished runs (AB-208); ordinary run archiving never does. */
+function packAllArchivedRuns(home: string, out: (text: string) => void): number {
+  let packed = 0;
+  try {
+    for (let pass = 0; pass < 10_000; pass++) {
+      let failed = 0;
+      const batch = packArchivedRuns(home, undefined, 100, failure => { failed++; out(`Run kept in place, not packed: ${failure.source}: ${failure.error}`); });
+      packed += batch;
+      if (!batch && !failed) break;
+    }
+  } catch (error) { out(`Run packing deferred; runs stay readable in place: ${String((error as Error).message ?? error)}`); }
+  finally { closeMetadataDb(home); }
+  return packed;
+}
 
 export type ConfirmDoctor = (question: string) => Promise<boolean>;
 
@@ -13,6 +34,13 @@ async function confirm(question: string): Promise<boolean> {
 }
 
 export async function runDoctor(args: string[], home: string, out: (text: string) => void, ask: ConfirmDoctor = confirm): Promise<number> {
+  if (args.includes("--migration-plan")) {
+    if (args.some(arg=>arg!=="--migration-plan" && arg!=="--json")) { out("Usage: agent-bridge doctor --migration-plan [--json]"); return 2; }
+    const { migrationPlan } = await import("../core/migration-plan.js");
+    const plan = migrationPlan(home);
+    out(JSON.stringify(plan,null,args.includes("--json") ? undefined : 2));
+    return 0;
+  }
   const restoreAt = args.indexOf("--restore");
   const restore = restoreAt >= 0 ? args[restoreAt + 1] : undefined;
   const actions = Number(restoreAt >= 0) + Number(args.includes("--fix")) + Number(args.includes("--archive")) + Number(args.includes("--backup"));
@@ -32,14 +60,24 @@ export async function runDoctor(args: string[], home: string, out: (text: string
   else if (args.includes("--fix") || args.includes("--archive")) {
     const archive = args.includes("--archive");
     if (!(yes || await ask(archive ? "Archive old data? Every record remains readable." : "Quarantine orphan temporary files? All data will be preserved."))) { out("Maintenance cancelled; data unchanged."); return 1; }
-    out(archive ? `Archived: ${JSON.stringify(archiveHome(home, true))}` : `Preserved files: ${JSON.stringify(fixDoctor(home, true))}`);
+    if (archive) {
+      const archived = archiveHome(home, true);
+      out(`Archived: ${JSON.stringify({ ...archived, packedRuns: packAllArchivedRuns(home, out) })}`);
+    } else out(`Preserved files: ${JSON.stringify(fixDoctor(home, true))}`);
   }
   const report = doctor(home);
+  report.brokerHealth = await probeBrokerHealth(resolvePipePath(home), nullLogger).catch(error => {
+    if (brokerFailureState(error) !== "offline") report.findings.push({ severity: "warning", code: "broker-health-unconfirmed", path: home,
+      detail: brokerFailureState(error) === "slow" ? "Bridge responding slowly; history-import progress could not be refreshed." : "Bridge health unavailable; broker absence is not confirmed.", fixable: false });
+    return null;
+  });
   const processes = await listServerProcesses();
+  report.findings.push(...await windowsUserPathFindings());
   report.findings.push(...inspectPluginVersions(pluginDoctorPaths(home), processes ?? []));
   if (processes === null) report.findings.push({ severity: "warning", code: "plugin-process-unavailable", path: home, detail: "Running server process lookup unavailable; rerun agent-bridge doctor from the host account.", fixable: false });
   if (args.includes("--json")) out(JSON.stringify(report));
   else {
+    if (report.brokerHealth) out(formatHealth(report.brokerHealth));
     for (const item of report.schema) out(`${item.path}: schema ${item.actual ?? "absent"}, code ${item.expected}`);
     for (const item of report.findings) out(`${item.severity.toUpperCase()} ${item.code}: ${item.path}: ${item.detail}${item.fixable ? " (--fix)" : ""}`);
     out(`Size: ${report.totalBytes} bytes across ${report.sizes.length} files. Recent backups: ${report.backups.length}.`);

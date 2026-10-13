@@ -9,7 +9,9 @@ import { OWNER_DIR_MODE, OWNER_FILE_MODE, NETWORK_NAME_PATTERN, MAX_NETWORK_FRAM
 import { assertTransferPath, ensureTransferDirectory, safeTransferPath, MAX_TRANSFER_DEPTH, collectTransfer, type FileTransfer, type TransferResult } from "./files.js";
 
 export const FILE_STREAM_CAPABILITY = "file-stream-v1";
+export const FILE_STREAM_WINDOW_CAPABILITY = "file-stream-window-v1";
 export const TRANSFER_CHUNK_BYTES = 256 * 1024;
+export const TRANSFER_WINDOW_CHUNKS = 8;
 export const DEFAULT_MAX_STREAM_BYTES = 8 * 1024 * 1024 * 1024;
 export const MAX_STREAM_ENTRIES = 4_096;
 export const MAX_ACTIVE_TRANSFERS = 4;
@@ -58,6 +60,7 @@ interface State {
 }
 interface TransferTransport {
   supports(remote: string): boolean;
+  window?(remote: string): number;
   send(remote: string, payload: Record<string, unknown>): Promise<void>;
   validSender(remote: string, sender: Sender): boolean;
   localPeer(name: string): (Sender & { cwd: string }) | undefined;
@@ -104,10 +107,13 @@ export function readTransferHistory(home: string): TransferProgress[] {
   return readdirSync(root).filter((file) => /^[0-9a-f-]{36}\.json$/.test(file))
     .map((file) => { const path = join(root, file); assertTransferPath(path); return { path, mtime: statSync(path).mtimeMs }; })
     .sort((a, b) => b.mtime - a.mtime).slice(0, MAX_TRANSFER_HISTORY)
-    .map(({ path }) => {
-      const state = JSON.parse(readFileSync(path, "utf8")) as State;
-      if (state.version !== 1 || !Array.isArray(state.entries) || state.entries.length > MAX_STREAM_ENTRIES) throw new Error("invalid persisted transfer");
-      return transferSummary(home, state);
+    .flatMap(({ path }) => {
+      // An unreadable or newer-format state is left out of the history, never fatal to it (AB-243).
+      try {
+        const state = JSON.parse(readFileSync(path, "utf8")) as State;
+        if (state.version !== 1 || !Array.isArray(state.entries) || state.entries.length > MAX_STREAM_ENTRIES) return [];
+        return [transferSummary(home, state)];
+      } catch { return []; }
     }).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
@@ -131,11 +137,12 @@ async function writeAll(file: FileHandle, data: Buffer, position: number): Promi
   }
 }
 
-/** One chunk per transfer in flight. Chunk digests live on disk, never in an expanding RAM array. */
+/** Bounded negotiated chunks in flight. Chunk digests live on disk, never in an expanding RAM array. */
 export class TransferManager {
   private readonly states = new Map<string, State>();
   private readonly active = new Set<string>();
   private readonly receiving = new Set<string>();
+  private readonly receiveQueues = new Map<string, { tail: Promise<void>; count: number }>();
   private readonly pending = new Map<string, Pending>();
   private readonly notified = new Map<string, number>();
   private readonly timer: NodeJS.Timeout;
@@ -149,7 +156,9 @@ export class TransferManager {
     ensureTransferDirectory(this.root);
     assertTransferPath(this.root);
     for (const file of readdirSync(this.root).filter((file) => /^[0-9a-f-]{36}\.json$/.test(file))) {
-      const state = this.read(file.slice(0, -5));
+      let state: State | undefined;
+      try { state = this.read(file.slice(0, -5)); }
+      catch (err) { this.setAside(file, err); continue; }
       if (state && (!TERMINAL.has(state.status) || state.cancelPending || state.abortPending)) {
         if (this.states.size >= MAX_ACTIVE_TRANSFERS) { this.log.warn("transfer recovery limit reached", { id: state.id }); continue; }
         state.status = TERMINAL.has(state.status) ? state.status : "paused";
@@ -158,6 +167,21 @@ export class TransferManager {
     }
     this.timer = setInterval(() => this.resume(), TRANSFER_RETRY_MS);
     this.timer.unref();
+  }
+
+  /**
+   * One bad state file must not stop networking (AB-243). Unparseable JSON (e.g. truncated by a full disk) is
+   * renamed aside for inspection; a well-formed state of another format version stays in place for the release
+   * that wrote it. Nothing is deleted.
+   */
+  private setAside(file: string, err: unknown): void {
+    const path = join(this.root, file);
+    let parsed = true;
+    try { JSON.parse(readFileSync(path, "utf8")); } catch { parsed = false; }
+    if (parsed) { this.log.warn("skipping a transfer state this version cannot read", { file, err: String(err) }); return; }
+    const aside = `${path}.unreadable-${Date.now()}`;
+    try { renameSync(path, aside); this.log.warn("set an unreadable transfer state aside", { file, aside, err: String(err) }); }
+    catch (renameErr) { this.log.warn("skipping an unreadable transfer state", { file, err: String(err), renameErr: String(renameErr) }); }
   }
 
   private read(id: string): State | undefined {
@@ -267,14 +291,26 @@ export class TransferManager {
       void Promise.resolve().then(() => this.transport.send(remote, { kind: "heartbeat", rid: request.rid, id: request.id })).catch(() => {}).finally(() => { heartbeatSending = false; });
     }, TRANSFER_HEARTBEAT_MS);
     heartbeat.unref();
-    try { data = await this.receive(request, remote, remoteName); }
+    // Preserve wire order for pipelined chunks, including finish/cancel after the window.
+    // A foreign paired instance must never join another instance's transfer queue.
+    const key = `${remote}/${request.id}`;
+    const queue = this.receiveQueues.get(key) ?? { tail: Promise.resolve(), count: 0 };
+    if (queue.count >= TRANSFER_WINDOW_CHUNKS + 2) { clearInterval(heartbeat); throw new Error("too many queued file transfer operations"); }
+    const previous = queue.tail;
+    let release!: () => void;
+    queue.tail = new Promise<void>((resolve) => { release = resolve; });
+    queue.count++; this.receiveQueues.set(key, queue);
+    try { await previous; data = await this.receive(request, remote, remoteName); }
     catch (err) {
       error = (err as Error).message.slice(0, MAX_ERROR_CHARS); this.log.warn("file transfer rejected", { id: request.id, remote, error });
       const state = this.get(request.id);
       if (state?.remote === remote && state.direction === "receive" && !TERMINAL.has(state.status) && /checksum|encoding mismatch|insufficient free disk|invalid initial|EACCES|ENOSPC|EEXIST|ENOENT|symlinks or junctions/.test(error)) {
         state.status = "failed"; state.error = error; this.save(state); this.report(state, true);
       }
-    } finally { clearInterval(heartbeat); }
+    } finally {
+      clearInterval(heartbeat); release();
+      if (--queue.count === 0) this.receiveQueues.delete(key);
+    }
     await this.transport.send(remote, { kind: "response", rid: request.rid, id: request.id, data, ...(error ? { error } : {}) });
   }
   private validateEntries(entries: Entry[]): number {
@@ -373,6 +409,19 @@ export class TransferManager {
         const file = await this.source(state, entry);
         const hash = createHash("sha256");
         const buffer = Buffer.alloc(TRANSFER_CHUNK_BYTES);
+        const window = Math.max(1, Math.min(TRANSFER_WINDOW_CHUNKS, this.transport.window?.(state.remote) ?? 1));
+        const inFlight: Promise<{ end: number; error?: Error }>[] = [];
+        let acknowledgements = 0;
+        const acknowledge = async () => {
+          const result = await inFlight.shift()!;
+          if (result.error) throw result.error;
+          if (this.stopped(state)) return;
+          entry.offset = result.end;
+          // The receiver remains authoritative and durably acknowledges every chunk.
+          // Sender checkpoints need only one snapshot per bounded negotiated window.
+          if (++acknowledgements % window === 0 || entry.offset === entry.size) this.save(state);
+          this.report(state);
+        };
         try {
           for (let position = 0; position < entry.size;) {
             if (this.stopped(state)) return;
@@ -381,15 +430,18 @@ export class TransferManager {
             if (bytesRead !== length) throw new RemoteTransferError("source file changed while reading");
             const chunk = buffer.subarray(0, length); hash.update(chunk);
             if (position >= offset) {
-              await this.rpc(state.remote, state.id, { op: "chunk", index, offset: position, data: chunk.toString("base64"), sha256: digest(chunk) });
-              if (this.stopped(state)) return;
-              entry.offset = position + length; this.save(state); this.report(state);
+              const end = position + length;
+              // Attach rejection handling immediately: a later chunk can fail before an older ack.
+              inFlight.push(this.rpc(state.remote, state.id, { op: "chunk", index, offset: position, data: chunk.toString("base64"), sha256: digest(chunk) })
+                .then(() => ({ end }), (error: Error) => ({ end, error })));
+              if (inFlight.length >= window) await acknowledge();
             }
             position += length;
           }
+          while (inFlight.length) await acknowledge();
           const st = await file.stat();
           if (st.size !== entry.size || st.mtimeMs !== entry.mtimeMs) throw new RemoteTransferError("source file changed while reading");
-        } finally { await file.close(); }
+        } finally { await Promise.all(inFlight); await file.close(); }
         entry.sha256 = hash.digest("hex");
         await this.rpc(state.remote, state.id, { op: "finish-file", index, sha256: entry.sha256 });
         if (this.stopped(state)) return;

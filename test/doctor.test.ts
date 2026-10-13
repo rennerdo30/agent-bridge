@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,17 +21,20 @@ import { JobManager, readStore } from "../src/mcp/jobs.js";
 import { BridgeNode } from "../src/core/node.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { ReadJournal } from "../src/core/read-journal.js";
+import { closeMetadataDb, closeMetadataDbs } from "../src/core/metadata-db.js";
 import { listPendingApprovals, publishApproval } from "../src/core/relay.js";
 import { readArchivedJobs } from "../src/core/job-archive.js";
+import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 
 let home: string;
 const stores: MessageStore[] = [];
-beforeEach(() => { home = mkdtempSync(join(import.meta.dirname, ".doctor-")); });
+beforeEach(() => { home = mkdtempSync(join(tmpdir(), "doctor-")); });
 afterEach(() => {
   for (const store of stores.splice(0)) store.close();
+  closeMetadataDbs();
   vi.unstubAllEnvs();
-  rmSync(home, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 function store(): MessageStore { const s = new MessageStore(join(home, "bridge.db"), nullLogger); stores.push(s); return s; }
 function message(id: string, createdAt = 1): BridgeMessage {
@@ -244,8 +248,10 @@ describe("lossless, readable archives", () => {
   it("does not overwrite different archived content sharing the same identity", () => {
     const s = store(); s.insert(message("old")); s.purgeOlderThan(2);
     s.insert({ ...message("old"), body: "different" });
-    expect(() => s.purgeOlderThan(2)).toThrow("identity conflict");
-    expect(s.unread("claude-main", 10)[0]?.body).toBe("different");
+    expect(s.purgeOlderThan(2)).toBe(1);
+    expect(s.unread("claude-main", 10)).toEqual([]);
+    expect(s.byId("old")?.body).toBe("different");
+    expect(doctor(home).findings.some(f => f.code === "archive-conflicts")).toBe(true);
   });
   it("archives aged finished jobs with raw fields and keeps them continuable", async () => {
     vi.stubEnv("AGENT_BRIDGE_ARCHIVE_AGE_MS", "10");
@@ -307,9 +313,15 @@ describe("lossless, readable archives", () => {
     archiveHome(home, true, 100);
     const node = Object.assign(new EventEmitter(), { name: "claude-main", deliverLocal: () => {} }) as unknown as BridgeNode;
     const manager = new JobManager(node, nullLogger, path);
-    manager.restore(() => () => async () => ({ text: "continued", isError: false, sessionId: "session1", details: {} }));
+    // Finish only after the running continuation reached jobs.json: completing it
+    // must archive "done" even though the replaced projection still says "running".
+    let finish!: () => void;
+    const published = new Promise<void>((resolve) => { finish = resolve; });
+    manager.restore(() => () => async () => { await published; return { text: "continued", isError: false, sessionId: "session1", details: {} }; });
     expect(manager.list().some((j) => j.id === "0")).toBe(false);
     expect(manager.followUp("codex-job-0", "continue").outcome).toBe("started");
+    await vi.waitFor(() => expect(readStore(path).find((j) => j.id === "0")?.status).toBe("running"));
+    finish();
     await vi.waitFor(() => expect(readStore(path, undefined, true).find((j) => j.id === "0")?.status).toBe("done"));
     expect(readStore(path, undefined, true).find((j) => j.id === "0")).toMatchObject({ future: "keep", supervisor: "supervisor1" });
     manager.cancelAll();
@@ -318,11 +330,14 @@ describe("lossless, readable archives", () => {
     const journal = new ReadJournal(home);
     journal.append("session", ["old"]);
     const backup = createBackup(home);
-    expect(readBackup(backup).files.some((f) => f.path.startsWith("read-state/"))).toBe(true);
+    // AB-208: receipts are rows in bridge.db, so its consistent snapshot carries the journal.
+    expect(readBackup(backup).files.map((f) => f.path)).toContain("bridge.db");
+    expect(readBackup(backup).files.some((f) => f.path.startsWith("read-state/"))).toBe(false);
     journal.append("session", ["new"]);
     const recovery = restoreBackup(home, backup, true);
     expect(journal.read("session")).toEqual(["old"]);
     expect(new ReadJournal(recovery).read("session")).toEqual(["old", "new"]);
+    closeMetadataDb(recovery);
     expect(doctor(home).findings.some((f) => f.code.startsWith("journal-"))).toBe(false);
   });
   it("preserves completed approval metadata instead of unlinking user questions", async () => {
@@ -336,15 +351,20 @@ describe("lossless, readable archives", () => {
     const dir = join(home, "approvals", "archive");
     expect(readFileSync(join(dir, readdirSync(dir)[0]!))).toEqual(raw);
   });
-  it("reads earlier JSON archive versions and refuses unknown future versions without changing bytes", () => {
+  it("reads earlier JSON archive versions and refuses unknown future versions without changing bytes", async () => {
+    // AB-206: readers never scan archive files; the elected worker imports them into the job index.
     const dir = join(home, "archive"); mkdirSync(dir);
-    const path = join(dir, "jobs-old.json");
-    writeFileSync(path, JSON.stringify({ version: 0, jobs: [savedJob("old")] }));
-    expect(readArchivedJobs(join(home, "jobs.json"))[0]?.id).toBe("old");
-    writeFileSync(path, JSON.stringify({ version: 99, jobs: [savedJob("future")] }));
-    const raw = readFileSync(path);
-    expect(() => readArchivedJobs(join(home, "jobs.json"))).toThrow("invalid job archive");
-    expect(readFileSync(path)).toEqual(raw);
+    const jobs = join(home, "jobs.json");
+    const future = join(dir, "jobs-2.json");
+    writeFileSync(future, JSON.stringify({ version: 99, jobs: [savedJob("future")] }));
+    const raw = readFileSync(future);
+    await expect(migrateJobArchives(jobs)).rejects.toThrow("unsupported job archive");
+    expect(readFileSync(future)).toEqual(raw);
+    expect(readArchivedJobs(jobs).map((j) => j.id)).not.toContain("future");
+    rmSync(future);
+    writeFileSync(join(dir, "jobs-1.json"), JSON.stringify({ version: 0, jobs: [savedJob("old")] }));
+    await migrateJobArchives(jobs);
+    expect(readArchivedJobs(jobs).find((j) => j.id === "old")).toMatchObject({ future: "keep", supervisor: "supervisor1" });
   });
 });
 

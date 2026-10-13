@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,10 @@ import { loadOrCreateToken } from "../src/core/token.js";
 import type { AgentKind } from "../src/core/protocol.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 import type { MessageStore } from "../src/core/store.js";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
+import { describeFileLockers } from "./file-lockers.js";
+import { describeOpenDatabases } from "./open-db-tracker.js";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
 export interface TestEnv {
   home: string;
@@ -16,6 +20,31 @@ export interface TestEnv {
   db: string;
   node(name: string, agent?: AgentKind, autoWake?: boolean): BridgeNode;
   cleanup(): Promise<void>;
+}
+
+/** Explicit native host identity for bundled MCP admission tests. */
+export function codexRollout(home: string, id: string, parent?: string): string {
+  const codexHome = join(home, "codex"), dir = join(codexHome, "sessions", "2026", "10", "11");
+  mkdirSync(dir, { recursive: true });
+  const payload = parent ? { id, session_id: parent, thread_source: "subagent", parent_thread_id: parent } : { id, source: "cli" };
+  writeFileSync(join(dir, `rollout-fixture-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload }) + "\n");
+  return codexHome;
+}
+
+/** A hermetic main CLI mock: generate its authoritative headers and tools/call identity. */
+export function codexHost(client: Client, home: string, agent: string, name: string): string {
+  let threadId = `fixture-${name}`;
+  const codexHome = codexRollout(home, threadId);
+  if (agent !== "codex") return codexHome;
+  const call = client.callTool.bind(client);
+  client.callTool = async (params, ...rest) => {
+    const hookId = params.name === "hook_event" ? params.arguments?.session_id : undefined;
+    if (typeof hookId === "string" && hookId && !hookId.startsWith("${")) threadId = hookId;
+    const id = typeof params._meta?.threadId === "string" ? params._meta.threadId : threadId;
+    codexRollout(home, id);
+    return call({ ...params, _meta: { ...params._meta, threadId: id } }, ...rest);
+  };
+  return codexHome;
 }
 
 /** An isolated bridge endpoint per test: its own home dir, so its own pipe and database. */
@@ -36,10 +65,42 @@ export function makeEnv(): TestEnv {
     },
     async cleanup() {
       await Promise.all(nodes.map((n) => n.stop().catch(() => {})));
-      // Yield between Windows handle-release retries so pending shutdown callbacks can finish.
-      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      await removeHome(home);
     },
   };
+}
+
+/** Delete a test home, re-closing the shared metadata handle before every attempt.
+ * Background store-identity refreshes (a PowerShell query on Windows that takes seconds
+ * under load) can reopen the handle after it is closed; without a re-close every
+ * deletion retry fails with EBUSY held by this test process (AB-255).
+ * Linear backoff gives a loaded runner about 5.5 s before the holders are named. */
+export async function removeHome(home: string): Promise<void> {
+  let attempt = 0;
+  for (;;) {
+    closeMetadataDb(home);
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 100 * attempt));
+    try {
+      await rm(home, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? "";
+      if (attempt >= 10 || !["EBUSY", "EPERM", "ENOTEMPTY", "EMFILE", "ENFILE"].includes(code)) {
+        // CI keeps only the console: name the process (this test process or a child) that still holds the file,
+        // and which in-process SQLite handles are still open on this home (AB-255).
+        const path = (error as NodeJS.ErrnoException).path;
+        if (process.platform === "win32" && path && ["EBUSY", "EPERM"].includes(code)) {
+          (error as Error).message += `
+Held by:
+${await describeFileLockers(path)}
+Open in this process under ${home}:
+${describeOpenDatabases(home) || "(none tracked)"}`;
+        }
+        throw error;
+      }
+      attempt++;
+    }
+  }
 }
 
 export async function until(pred: () => boolean, timeoutMs = 5_000, stepMs = 20): Promise<void> {

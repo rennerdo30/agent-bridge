@@ -89,7 +89,7 @@ describe("Antigravity delegation", () => {
   });
   it("registers shared targets and keeps Antigravity access settings agent-specific", () => {
     expect(delegationTargets("claude")).toContain("antigravity");
-    expect(delegationTargets("antigravity")).toEqual(["claude", "codex", "opencode", "muse"]);
+    expect(delegationTargets("antigravity")).toEqual(["claude", "codex", "opencode", "antigravity", "muse"]);
     expect(DELEGATION_TARGETS.antigravity.permission(DEFAULT_CONFIG, {})).toBe("read");
     expect(supportsAsk("antigravity", undefined)).toBe(true);
     expect(isAutoApproved({ tool: "mcp:pair-desk_pair-desk", detail: "comment: {}" }, ["pair-desk:worker"])).toBe(true);

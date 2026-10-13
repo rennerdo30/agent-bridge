@@ -92,7 +92,16 @@ describe("owner question registry",() => {
     expect(s.list()).toHaveLength(1);
     const originals=legacy.prepare("SELECT * FROM messages ORDER BY id").all();
     legacy.close(); legacyClosed=true;
-    if (SQLITE_STORE_VERSION > 8) expect(() => new MessageStore(env.db,nullLogger)).toThrow("Waiting to upgrade");
+    if (SQLITE_STORE_VERSION > 8) {
+      const deferred = new MessageStore(env.db,nullLogger);
+      try {
+        const existing = new DatabaseSync(env.db,{readOnly:true});
+        try {
+          expect(existing.prepare("PRAGMA user_version").get()?.user_version).toBe(8);
+          expect(existing.prepare("SELECT * FROM messages ORDER BY id").all()).toEqual(originals);
+        } finally { existing.close(); }
+      } finally { deferred.close(); }
+    }
     recordStorePeer(env.home,{pid:process.pid,name:"current-reader",version:"current",storeCapabilities:{json:4,sqlite:SQLITE_STORE_VERSION}});
     const upgraded=new MessageStore(env.db,nullLogger); closers.push(() => upgraded.close());
     const current=new DatabaseSync(env.db,{readOnly:true});
@@ -181,7 +190,14 @@ describe("owner dashboard API",() => {
     await expect(node.askOwner({...question(),project:join(env.home,"foreign-project")})).rejects.toThrow("own project");
     for (const delegated of [{jobAgent:"codex" as const},{subagent:true}]) {
       const client=await BridgeClient.connect(env.pipe,nullLogger); closers.push(() => client.close());
-      await client.request("hello",{protocol:PROTOCOL_VERSION,token:loadOrCreateToken(env.home),peer:{id:JSON.stringify(delegated),name:delegated.subagent ? "native-child" : "job-child",agent:"codex",cwd:env.home,pid:process.pid,agentPid:null,sessionId:null,startedAt:Date.now(),autoWake:false,...delegated}});
+      const hello=client.request("hello",{protocol:PROTOCOL_VERSION,token:loadOrCreateToken(env.home),peer:{id:JSON.stringify(delegated),name:delegated.subagent ? "native-child" : "job-child",agent:"codex",cwd:env.home,pid:process.pid,agentPid:null,sessionId:null,startedAt:Date.now(),autoWake:false,...delegated}});
+      if (delegated.subagent) {
+        // Native children stay inside their parent's bridge session (AB-268).
+        await expect(hello).rejects.toThrow("Native subagents cannot register as top-level bridge sessions");
+        await expect(client.request("askOwner",question())).rejects.toThrow("send hello first");
+        continue;
+      }
+      await hello;
       await expect(client.request("askOwner",question())).rejects.toThrow("Delegated jobs ask their main");
     }
     expect(readOwnerQuestions(env.home)).toEqual([]);

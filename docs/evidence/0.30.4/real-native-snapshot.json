@@ -1,0 +1,27 @@
+{
+  "source": "~/.agent-bridge/bridge.db",
+  "fixture": "D:\\agentbridge-fixtures-0304\\ab-tests-V5NegR",
+  "copyHome": "D:\\agentbridge-fixtures-0304\\ab-tests-V5NegR\\real-store-copy",
+  "measurement": {
+    "method": "backup",
+    "bytes": 21248184320,
+    "copyMs": 70359.0546,
+    "verifyMs": 640616.3582,
+    "mibPerSecond": 288.0062526628946
+  },
+  "counts": {
+    "messages": 23464,
+    "archived_messages": 0,
+    "conversation_records": 265725,
+    "history_documents": 572250
+  },
+  "peers": {
+    "count": 531,
+    "p95Ms": 3.171299999994517
+  },
+  "send": {
+    "count": 531,
+    "p95Ms": 44.40749999998661
+  },
+  "sourceCheckpointed": false
+}

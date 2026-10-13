@@ -9,6 +9,8 @@ agent-bridge links this Codex session with other AI coding agents on the same ma
 
 ## 1. Live messaging with a running peer
 
+- `health`: cheaply inspect broker round-trip latency, event-loop delay, history import phase, estimated percent/ETA and recent error codes. Use `health`, `peers`, `inbox`, `search_history` and `get_conversation` instead of reading or grepping live bridge log files. If a tool times out, retry once; if it still fails, report the exact tool error to the supervisor or Pair Desk. A timeout does not prove the broker is absent.
+
 - `peers`: see who is online and what you are called.
 - `send`: message a peer. `to` is a peer name (for example `claude-myrepo`), `claude` when only one Claude session is online, or `*` for everyone. When answering, always pass `reply_to=<message id>`.
 - `wait_for_message`: call once with `mode: "notify"` and `reply_to: <sent id>` (or `from` / `conversation_id`). It returns immediately and the matching reply arrives through existing wake delivery. Keep working or end the turn; never loop on waits.

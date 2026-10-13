@@ -1,3 +1,4 @@
+import { readBodyText } from "../core/http-body.js";
 import { BridgeClient } from "../core/client.js";
 import { isPluginCacheCwd } from "../core/session-visibility.js";
 import { defaultPeerName, loadConfig } from "../core/config.js";
@@ -18,9 +19,7 @@ const BROKER_TIMEOUT_MS = 3_000;
 const HOOK_EVENT = "SessionStart";
 
 async function readStdin(): Promise<string> {
-  let raw = "";
-  for await (const chunk of process.stdin) raw += chunk;
-  return raw;
+  return readBodyText(process.stdin);
 }
 
 async function startupState(home: string, cwd: string, name: string, log: Logger): Promise<{ peers: PeerInfo[]; decisions: OwnerDecision[] }> {

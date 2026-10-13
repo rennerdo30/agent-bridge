@@ -4,9 +4,10 @@ import type { DelegateResult } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 import type { BridgeNode } from "../src/core/node.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
-import { JobManager, type Run, type RunnerState } from "../src/mcp/jobs.js";
+import { jobReport, JobManager, type Run, type RunnerState } from "../src/mcp/jobs.js";
 import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { preferredDriveFixture } from "./preferred-drive-fixture.js";
 
 let env: TestEnv;
 let me: BridgeNode;
@@ -25,7 +26,28 @@ afterEach(async () => {
 
 const result = (text: string): DelegateResult => ({ sessionId: "s-9", text, isError: false, details: {} });
 
+it("formats report bodies and failure diagnostics using the preferred drive", async () => {
+  const restore = await preferredDriveFixture();
+  try {
+    const report = jobReport({ name: "saved", agent: "codex", model: null, sessionId: null }, "failed", 1, "Log: `Q:/run.log`", "could not start Q:/work");
+    expect(report).toContain("Cause: could not start X:/work");
+    expect(report).toContain("Log: `X:/run.log`");
+  } finally { restore(); }
+});
+
 describe("background subagents", () => {
+  it("keeps remote cancellation distinct for foreground and background results", async () => {
+    const cancelled = { ...result("retained remote partial answer"), isError: true, status: "cancelled" as const, workdir: "retained-workdir" };
+    const tracked = jobs.track("codex", null, "remote ask");
+    tracked.end({ result: cancelled });
+    expect(tracked.job).toMatchObject({ status: "cancelled", sessionId: "s-9", workdir: "retained-workdir" });
+    expect(tracked.job.controller.signal.aborted).toBe(false);
+    const job = jobs.start("codex", null, "remote turn", async () => cancelled);
+    await until(() => job.status === "cancelled");
+    expect(job).toMatchObject({ sessionId: "s-9", workdir: "retained-workdir" });
+    expect(me.unread()[0]!.body).toContain("cancelled after");
+    expect(me.unread()[0]!.body).toContain("retained remote partial answer");
+  });
   it("persists optional ETA and clears it when a job completes", async () => {
     const { join } = await import("node:path");
     const { readStore } = await import("../src/mcp/jobs.js");
@@ -40,6 +62,8 @@ describe("background subagents", () => {
       jobs.persist();
       return new Promise((resolve) => { release = resolve; });
     });
+    // Admission and durable writes may defer while store readers are verified.
+    await until(() => readStore(store).find((j) => j.id === job.id)?.percent === 40);
     expect(readStore(store).find((j) => j.id === job.id)).toMatchObject({ percent: 40, etaAt: job.etaAt, etaReportedAt: job.etaReportedAt });
     release(result("done"));
     await until(() => job.status === "done");
@@ -96,6 +120,7 @@ describe("background subagents", () => {
     );
     expect(jobs.cancel(job.id)).toBe(true);
     await until(() => aborted && jobs.runningCount() === 0);
+    expect(job.status).toBe("cancelled");
   });
 
   it.each(["claude", "codex", "opencode", "antigravity"] as const)("resumes a cancelled %s job with a fresh signal", async (agent) => {
@@ -103,7 +128,7 @@ describe("background subagents", () => {
     const job = jobs.start(agent, null, "long", (signal) => new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")))), () => resumed);
     job.sessionId = "saved-session";
     jobs.cancel(job.name);
-    await until(() => job.status === "failed");
+    await until(() => job.status === "cancelled");
     expect(jobs.followUp(job.name, "Continue").outcome).toBe("started");
     await until(() => job.status === "done");
     expect(resumed).toHaveBeenCalledOnce();
@@ -131,7 +156,7 @@ describe("background subagents", () => {
   it("never applies an old cancellation grace timer to the resumed runner", async () => {
     let state: RunnerState | null = null;
     const kill = vi.fn();
-    jobs.runners = { state: () => state, alive: () => true, send: vi.fn(), kill };
+    jobs.runners = { state: () => state, alive: () => state === null || state.status === "running", send: vi.fn(), kill };
     const run: Run = Object.assign(async () => result("unused"), { hosted: () => ({ pid: 123, peer: "runner", startedAt: Date.now() }) });
     const job = jobs.start("opencode", null, "task", run, () => run);
     job.sessionId = "saved";

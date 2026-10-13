@@ -33,12 +33,15 @@ const ACL_PRINCIPAL = /([^\s:][^:]*?):\(/;
  * Windows modes do not restrict ACLs: remove inherited grants, grant the current SID, and remove every other
  * explicit grant the folder already had (CI runners' temp folders carry some).
  */
-export function protect(path: string, mode: number): void {
+export function protect(path: string, mode: number, ownNewPath = false): void {
   if (process.platform !== "win32") return chmodSync(path, mode);
   const [account, sid] = (execFileSync(WHOAMI, ["/user", "/fo", "csv", "/nh"], { encoding: "utf8", windowsHide: true }).match(/"([^"]+)","(S-\d+(?:-\d+)+)"/) ?? []).slice(1);
   if (!sid || !account) throw new Error("cannot identify the account for network key permissions");
   const grant = mode === OWNER_DIR_MODE ? `*${sid}:(OI)(CI)F` : `*${sid}:F`;
   execFileSync(ICACLS, [path, "/inheritance:r", "/grant:r", grant, "/Q"], { windowsHide: true, stdio: "pipe" });
+  // Windows Server can give newly created administrator objects a group owner.
+  // Only exclusive creators opt in; existing material must never be repaired.
+  if (ownNewPath) execFileSync(ICACLS, [path, "/setowner", `*${sid}`, "/Q"], { windowsHide: true, stdio: "pipe" });
   const others = execFileSync(ICACLS, [path], { encoding: "utf8", windowsHide: true })
     .split(/\r?\n/)
     .map((line) => (line.startsWith(path) ? line.slice(path.length) : line).trim())

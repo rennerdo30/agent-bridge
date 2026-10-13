@@ -5,7 +5,24 @@ import { archiveRun, finishedRunLine } from "../src/core/run-archive.js";
 import { finishedRunOutcomes } from "../src/core/dashboard-read.js";
 import { nullLogger } from "../src/core/logger.js";
 import { watchRunLog } from "../src/cli/watch.js";
+import { readRunLogPreview } from "../src/core/run-log-preview.js";
 import { makeEnv } from "./helpers.js";
+
+it("bounds large log summaries and never turns a partial tail into completion", async () => {
+  const env = makeEnv();
+  try {
+    const file = join(env.home, "large.log"), head = "12:00:00 codex by owner\ntask preview\n---\n";
+    const terminal = "12:00:02 finished after 24s · done\n";
+    writeFileSync(file, `${head}${"x".repeat(2 * 1024 * 1024)}\n${terminal}`);
+    const preview = readRunLogPreview(file);
+    expect(Buffer.byteLength(preview)).toBeLessThan(66_000);
+    expect(preview).toContain(head);
+    expect(finishedRunLine(preview)).toBe(terminal.trimEnd());
+    // A giant single line containing marker-shaped text remains nonterminal.
+    writeFileSync(file, `${head}${"x".repeat(2 * 1024 * 1024)}${terminal}`);
+    expect(finishedRunLine(readRunLogPreview(file))).toBeNull();
+  } finally { await env.cleanup(); }
+});
 
 it("archives only a terminal runner finish marker, preserving quoted live output", async () => {
   const env = makeEnv();

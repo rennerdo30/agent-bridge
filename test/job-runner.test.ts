@@ -1,7 +1,8 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { codexHost } from "./helpers.js";
+import { execFileSync } from "node:child_process";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -14,9 +15,13 @@ import { CONTROL_CONVERSATION_PREFIX } from "../src/mcp/job-host.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { parentFromEnv } from "../src/core/parent-link.js";
 import { readRunnerState } from "../src/mcp/job-host.js";
+import { runnerStateIds } from "../src/core/runner-store.js";
+import { closeMetadataDbs } from "../src/core/metadata-db.js";
+import { removeHome } from "./helpers.js";
 import { readStore } from "../src/mcp/jobs.js";
 import { RootConcurrency } from "../src/core/root-concurrency.js";
 import { startUi } from "../src/cli/ui.js";
+import { DatabaseSync } from "node:sqlite";
 
 /**
  * Background subagents in detached job runners (bundled server and CLI: npm run build first). A fake
@@ -67,14 +72,15 @@ function installFakeClaude(dir: string): string {
 
 /** One server of the session (a Codex session: it spawns Claude subagents). */
 async function startSession(inProcess = false): Promise<{ client: Client; transport: StdioClientTransport }> {
+  const client = new Client({ name: "test-codex", version: "0.0.0" });
+  const codexHome = codexHost(client, home, "codex", SESSION);
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [SERVER, "--agent=codex"],
     cwd: home,
-    env: { ...process.env, AGENT_BRIDGE_HOME: home, CLAUDE_PROJECT_DIR: home, AGENT_BRIDGE_NAME: SESSION, AGENT_BRIDGE_CLAUDE_BIN: claudeBin, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", AGENT_BRIDGE_JOB_RUNNER: inProcess ? "0" : "1" } as Record<string, string>,
+    env: { ...process.env, CODEX_HOME: codexHome, AGENT_BRIDGE_HOME: home, CLAUDE_PROJECT_DIR: home, AGENT_BRIDGE_NAME: SESSION, AGENT_BRIDGE_CLAUDE_BIN: claudeBin, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", AGENT_BRIDGE_JOB_RUNNER: inProcess ? "0" : "1" } as Record<string, string>,
     stderr: "ignore",
   });
-  const client = new Client({ name: "test-codex", version: "0.0.0" });
   await client.connect(transport);
   const s = { client, transport };
   sessions.push(s);
@@ -121,20 +127,23 @@ beforeEach(() => {
   claudeBin = installFakeClaude(join(home, "bin"));
 });
 
-afterEach(async () => {
+afterEach(async context => {
+  const failed = context.task.result?.state === "fail";
+  if (failed) console.error(`Retained failed job-runner fixture: ${home}`);
   await ui?.close();
   ui = undefined;
   // Let every fake finish, and stop runners a test left behind.
   for (const r of releases.splice(0)) writeFileSync(r, "");
-  const runners = join(home, "jobs");
-  const pids = existsSync(runners) ? readdirSync(runners)
-    .filter((file) => file.endsWith(".json") && !file.endsWith(".spec.json"))
-    .map((file) => readRunnerState(home, file.slice(0, -5))?.pid).filter((pid): pid is number => Boolean(pid)) : [];
+  // Runner states are rows (AB-208); files only from older runners.
+  const pids = runnerStateIds(home).map((id) => readRunnerState(home, id)?.pid).filter((pid): pid is number => Boolean(pid));
   for (const pid of pids) if (pidAlive(pid)) killPid(pid);
   await waitFor(() => pids.every((pid) => !pidAlive(pid)));
   for (const s of sessions.splice(0)) await stopSession(s).catch(() => {});
   for (const n of nodes.splice(0)) await n.stop().catch(() => {});
-  await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+  closeMetadataDbs();
+  // Re-close the shared metadata handle before every deletion attempt: late
+  // background store-identity refreshes reopen it otherwise (AB-255).
+  if (!failed) await removeHome(home);
 });
 
 describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () => {
@@ -204,7 +213,8 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     const release = join(home, "release-continued");
     const link = `${release}.link.json`;
     releases.push(release);
-    await call(replacement, "message_subagent", { job: a.job, message: `release=${release} link=${link} continue the review` });
+    const continuation = await call(replacement, "message_subagent", { job: a.job, message: `release=${release} link=${link} continue the review` });
+    writeFileSync(join(home, "continuation-response.txt"), continuation);
     await waitFor(() => existsSync(link));
     const continued = parentFromEnv(JSON.parse(readFileSync(link, "utf8")))!;
     expect((await continued.siblings.policy!()).sendTo).toEqual([external.name]);
@@ -383,8 +393,43 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     const { job, pid } = await spawnHeld(a);
     expect(await call(a, "cancel_subagent", { job })).toContain(`Cancelled subagent ${job}`);
     await waitFor(() => !pidAlive(pid), 20_000);
-    expect(await call(a, "wait_for_message", { from: job, timeout_sec: 30 })).toContain("failed");
-    await waitFor(async () => (await call(a, "peers")).match(new RegExp(`${job} "Runner test": failed`)) !== null);
+    expect(await call(a, "wait_for_message", { from: job, timeout_sec: 30 })).toContain("cancelled");
+    await waitFor(async () => (await call(a, "peers")).match(new RegExp(`${job} "Runner test": cancelled`)) !== null);
+  }, TEST_TIMEOUT_MS);
+
+  it("cancel_subagent then message_subagent continues the same worktree and archives its lease", async () => {
+    const git = (args: string[]) => execFileSync("git", args, { cwd: home, windowsHide: true, encoding: "utf8", stdio: "pipe" });
+    git(["init", "--quiet"]);
+    writeFileSync(join(home, "kept.txt"), "unique fixture bytes");
+    git(["add", "kept.txt"]);
+    git(["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture"]);
+    const session = await startSession();
+    const release = join(home, "release-worktree"), link = release + ".link.json";
+    releases.push(release);
+    const output = await call(session, "spawn_claude", { prompt: `release=${release} link=${link}`, title: "Cancel worktree regression", worktree: true, cwd: home });
+    const job = /claude-job-([0-9a-f]+)/.exec(output)!;
+    await waitFor(() => existsSync(link) && Boolean(readRunnerState(home, job[1]!)?.sessionId));
+    const first = readRunnerState(home, job[1]!)!;
+    expect(first.worktree).toBeTruthy();
+    const path = first.worktree!.path;
+    writeFileSync(join(path, "retained-untracked.txt"), "retained worktree bytes");
+    expect(await call(session, "cancel_subagent", { job: job[0] })).toContain("Cancelled subagent");
+    await waitFor(() => !pidAlive(first.pid));
+    await call(session, "wait_for_message", { from: job[0], timeout_sec: 10 });
+    const nextRelease = join(home, "release-worktree-next"), nextLink = nextRelease + ".link.json";
+    releases.push(nextRelease);
+    expect(await call(session, "message_subagent", { job: job[0], message: `release=${nextRelease} link=${nextLink} Continue` })).toContain("Sent to");
+    await waitFor(() => existsSync(nextLink));
+    const continued = readRunnerState(home, job[1]!)!;
+    expect(continued.sessionId).toBe(first.sessionId);
+    expect(continued.worktree!.path).toBe(path);
+    expect(readFileSync(join(path, "retained-untracked.txt"), "utf8")).toBe("retained worktree bytes");
+    writeFileSync(nextRelease, "");
+    expect(await call(session, "wait_for_message", { from: job[0], timeout_sec: 20 })).toContain("fake answer: finished");
+    await waitFor(() => !pidAlive(continued.pid));
+    const metadata = new DatabaseSync(join(home,"bridge.db"), {readOnly:true});
+    try { expect(Number(metadata.prepare("SELECT COUNT(*) AS n FROM worktree_lease_archive").get()!.n)).toBeGreaterThan(0); }
+    finally { metadata.close(); }
   }, TEST_TIMEOUT_MS);
 
   it("continues a cancelled runner despite legacy cancellation mail", async () => {

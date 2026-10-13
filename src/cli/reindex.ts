@@ -10,6 +10,7 @@ import { transcriptPaths } from "../core/transcripts/common.js";
 import { DatabaseSync } from "node:sqlite";
 import { migrateHistoryStore } from "../core/history-store.js";
 import { loadConfig } from "../core/config.js";
+import { historyBudget } from "../core/history-budget.js";
 
 type Batch = RequestMap["reindexHistory"][1];
 
@@ -33,11 +34,13 @@ export async function runReindex(home: string, pipe: string, log: Logger, out: (
     } else {
       // Same migration/backup executor as broker startup, without chat-peer or purge side effects.
       store = new MessageStore(resolveDbPath(home), log);
-      await migrateHistoryStore(store.file, store.history.storageDatabase);
+      await migrateHistoryStore(store.file, store.history.storageDatabase, undefined, undefined, undefined, true);
       const index = store.history;
       source = new DatabaseSync(store.file,{readOnly:true,timeout:100});
       ingest=new ConversationIngestor(index.database,home,transcriptPaths(),source);
       batch = async (reset) => {
+        const budget = await historyBudget(home, loadConfig(home, "other", log).history.budgetBytes);
+        if (budget.paused) throw new Error("History storage budget reached; import paused with cursors and sources retained. Raise history.budgetBytes to resume.");
         if(reset)index.reset();const result=index.tick();const work=result.work+ingest!.tick();
         return {work,discovering:result.discovering || ingest!.discovering};
       };

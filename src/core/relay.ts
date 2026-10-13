@@ -1,4 +1,5 @@
 import { appendContextEvent } from "./context-journal.js";
+import { readBodyText } from "./http-body.js";
 import { JOBS_FILE } from "./constants.js";
 import { readStore } from "../mcp/jobs.js";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -35,6 +36,26 @@ export interface PermissionRequest {
   reason?: string;
   /** A terminal Codex auto-review refusal needs an explicit supervisor decision, not an allowlist. */
   automaticReview?: boolean;
+  /** Set when `detail` had to be cut: its original length. Such a request is refused, never decided (AB-241). */
+  detailLength?: number;
+}
+
+/**
+ * The longest command, path or patch text an approval shows. A longer one is not cut silently: the request is
+ * refused, because an owner must never allow a command whose tail they could not see (AB-241).
+ */
+export const MAX_PERMISSION_DETAIL_CHARS = 16_000;
+
+/** `detail` within the reviewable limit, with `detailLength` recording the original length when it was cut. */
+export function boundedDetail(detail: string): Pick<PermissionRequest, "detail" | "detailLength"> {
+  return detail.length > MAX_PERMISSION_DETAIL_CHARS ? { detail: detail.slice(0, MAX_PERMISSION_DETAIL_CHARS), detailLength: detail.length } : { detail };
+}
+
+/** The refusal for a request whose text was cut, or null when the whole request can be reviewed. */
+export function unreviewable(req: PermissionRequest): PermissionDecision | null {
+  if (!(typeof req.detailLength === "number" && req.detailLength > req.detail.length) && req.detail.length <= MAX_PERMISSION_DETAIL_CHARS) return null;
+  const length = Math.max(req.detailLength ?? 0, req.detail.length);
+  return { allow: false, message: `agent-bridge: denied: this ${req.tool} request is too long to review (${length} characters, limit ${MAX_PERMISSION_DETAIL_CHARS}). Split it into smaller steps or write the script to a file first.` };
 }
 
 export type PermissionDecision = { allow: true } | { allow: false; message: string };
@@ -95,19 +116,22 @@ export class PermissionRelay {
     if (req.method !== "POST" || req.url !== RELAY_PATH) throw new Error("not found");
     const auth = String(req.headers.authorization ?? "").replace(/^Bearer /, "");
     if (!tokensEqual(auth, this.secret)) throw new Error("unauthorized");
-    let raw = "";
-    for await (const chunk of req) {
-      raw += chunk;
-      if (raw.length > MAX_REQUEST_BYTES) throw new Error("request too large");
-    }
+    const raw = await readBodyText(req, MAX_REQUEST_BYTES);
     const body = JSON.parse(raw) as Partial<PermissionRequest>;
+    const detail = boundedDetail(String(body.detail ?? ""));
     const request: PermissionRequest = {
       agent: String(body.agent ?? "subagent"),
       tool: String(body.tool ?? "unknown"),
-      detail: String(body.detail ?? "").slice(0, 4_000),
+      ...detail,
+      ...(typeof body.detailLength === "number" && body.detailLength > (detail.detailLength ?? 0) ? { detailLength: body.detailLength } : {}),
       cwd: body.cwd ? String(body.cwd) : undefined,
       ...(typeof body.reason === "string" ? { reason: body.reason.slice(0, MAX_APPROVAL_REASON_CHARS) } : {}),
     };
+    const refused = unreviewable(request);
+    if (refused) {
+      this.log.warn("permission request too long to review; denied", { agent: request.agent, tool: request.tool, length: request.detailLength });
+      return refused;
+    }
     this.log.info("permission requested by subagent", { agent: request.agent, tool: request.tool });
     const decision = await this.handler(request);
     this.log.info("permission decided", { tool: request.tool, allow: decision.allow });
@@ -181,11 +205,9 @@ export async function publishApproval(home: string, approval: PendingApproval, a
     };
     void (async () => {
       if (req.method !== "POST" || req.url !== ANSWER_PATH || !tokensEqual(String(req.headers.authorization ?? ""), `Bearer ${token}`)) return reply(403, { error: "forbidden" });
-      let raw = "";
-      for await (const chunk of req) {
-        raw += chunk;
-        if (raw.length > MAX_REQUEST_BYTES) return reply(400, { error: "request too large" });
-      }
+      let raw: string;
+      try { raw = await readBodyText(req, MAX_REQUEST_BYTES); }
+      catch { return reply(400, { error: "request too large" }); }
       const body = JSON.parse(raw) as ApprovalAnswer;
       if (!body || (body.decision !== "allow" && body.decision !== "deny") || (body.reason !== undefined && (typeof body.reason !== "string" || body.reason.length > MAX_APPROVAL_REASON_CHARS))) return reply(400, { error: "invalid answer" });
       if (body.source !== undefined && body.source !== "dashboard" && body.source !== "MCP decide") return reply(400, { error: "invalid source" });

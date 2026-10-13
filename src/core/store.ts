@@ -1,24 +1,25 @@
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync, type StatementSync } from "node:sqlite";
+import { cleanupSavepoint } from "./savepoint.js";
+import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "./logger.js";
 import { isQuietMessage, SIBLING_CONVERSATION_PREFIX, type AgentKind, type BridgeMessage, type PeerInfo } from "./protocol.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
-import { archiveDbPath, archiveMessages, openArchive } from "./sqlite-maintenance.js";
+import { archiveDbPath, archiveMessages, ensureMessageQuarantine, openArchive, unquarantined } from "./sqlite-maintenance.js";
 import { storageLease } from "./storage-lock.js";
-import { backupIfDue, BACKUP_INTERVAL_ENV, DEFAULT_BACKUP_INTERVAL_MS } from "./backups.js";
-import { retentionLimit } from "./json-store.js";
+import { BackupBackground } from "./backup-background.js";
 import { historySchema } from "./history-schema.js";
 import { CONVERSATION_MIGRATION } from "./conversation-schema.js";
 import { HistoryIndex } from "./history.js";
 import { historyDbPath, openHistoryStore } from "./history-store.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
-import { configureSqlite, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BUSY_MS } from "./sqlite-policy.js";
+import { configureSqlite, isSqliteBusy, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BUSY_MS } from "./sqlite-policy.js";
+import { attachStoreCompatibility } from "./store-compatibility-overlay.js";
 
-const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1_000;
-
-export const SQLITE_STORE_VERSION = 9;
+import { SQLITE_STORE_VERSION } from "./store-version.js";
+export { SQLITE_STORE_VERSION } from "./store-version.js";
 
 /** Offline broadcasts retain recently observed sessions for one day. */
 export const BROADCAST_RECENT_MS = 24 * 60 * 60 * 1_000;
@@ -96,7 +97,7 @@ const MIGRATIONS = [
     PRAGMA user_version = 7;
   ` },
   { version: 8, sql: CONVERSATION_MIGRATION },
-  { version: 9, sql: `
+  { version: 9, backupTables: ["peer_names"], sql: `
     CREATE TABLE IF NOT EXISTS peer_last_seen (
       name TEXT PRIMARY KEY, seen_at INTEGER NOT NULL
     );
@@ -159,12 +160,21 @@ export class MessageStore {
   private readonly release: () => void;
   private readonly home: string | null;
   private readonly writeAbort = new AbortController();
-  private backupTimer: ReturnType<typeof setInterval> | null = null;
+  private backups: BackupBackground | null = null;
+  private archiveTimer: ReturnType<typeof setTimeout> | null = null;
+  private legacyArchivePending = true;
+  private purgeCutoff: number | null = null;
+  private purgeCursor: string | null = null;
+  private purgeHighWater: string | null = null;
+  private nextPurgeCutoff: number | null = null;
+  private archiveMaintenanceFailed = false;
   private closed = false;
   readonly decisions: DecisionStore;
   readonly history: HistoryIndex;
   readonly historyFile: string;
   historyPeerSink: ((peer: PeerInfo) => void) | undefined;
+  /** Told about every stored or claimed message, so a backed-off history worker indexes it promptly. */
+  historyMessageSink: (() => void) | undefined;
   readonly file: string;
   private readonly stmt: {
     insert: StatementSync;
@@ -187,8 +197,17 @@ export class MessageStore {
     try { this.db = new DatabaseSync(file); }
     catch (err) { this.release(); throw err; }
     try {
-      migrateMessageSchema(this.db, file, existed, log);
+      let deferred = false;
+      try { migrateMessageSchema(this.db, file, existed, log); }
+      catch (error) {
+        const version = Number(this.db.prepare("PRAGMA user_version").get()!.user_version);
+        if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED" || version < 4) throw error;
+        deferred = true;
+        log.info("hosting broker on compatible existing schema while upgrade waits for retained readers", { file, version, target: SQLITE_STORE_VERSION });
+      }
+      if (file !== ":memory:") attachStoreCompatibility(this.db, file, log, deferred);
       configureSqlite(this.db);
+      ensureMessageQuarantine(this.db);
     } catch (err) {
       this.db.close();
       this.release();
@@ -196,8 +215,8 @@ export class MessageStore {
     }
     try { this.archiveDb = openArchive(archiveDbPath(file)); }
     catch (err) { this.db.close(); this.release(); throw err; }
-    try { archiveMessages(this.db, this.archiveDb, "1", [], "legacy", "archived_messages"); }
-    catch (err) { this.archiveDb.close(); this.db.close(); this.release(); throw err; }
+    // Legacy archived rows stay readable in their original table. Relocation
+    // starts in bounded chunks only after the broker listener is available.
     this.decisions = new DecisionStore(this.db);
     this.historyFile = historyDbPath(file);
     let historyDb: DatabaseSync | undefined;
@@ -215,33 +234,29 @@ export class MessageStore {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
       ),
       unread: this.db.prepare(
-        `SELECT * FROM messages WHERE recipient = ? AND read_at IS NULL
+        `SELECT * FROM deliverable_messages WHERE recipient = ? AND read_at IS NULL
          ORDER BY CASE WHEN (conversation_id LIKE '%:note' OR conversation_id LIKE '%:ack' OR conversation_id LIKE 'files-progress-%') THEN 1 ELSE 0 END,
                   created_at ASC, id ASC LIMIT ?`,
       ),
-      markRead: this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL`),
-      claim: this.db.prepare(`UPDATE OR IGNORE messages SET recipient = ? WHERE recipient = ? AND read_at IS NULL`),
+      markRead: this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL AND ${unquarantined("messages")}`),
+      claim: this.db.prepare(`UPDATE OR IGNORE messages SET recipient = ? WHERE recipient = ? AND read_at IS NULL AND ${unquarantined("messages")}`),
       byId: this.db.prepare(`SELECT * FROM messages WHERE id = ? ORDER BY created_at ASC LIMIT 1`),
-      replyConflicts: this.db.prepare(`SELECT id, from_name, conversation_id FROM messages WHERE recipient = ? AND read_at IS NULL
+      replyConflicts: this.db.prepare(`SELECT id, from_name, conversation_id FROM deliverable_messages WHERE recipient = ? AND read_at IS NULL
         AND (conversation_id = ? OR from_name IN (SELECT value FROM json_each(?)))
         AND (? IS NULL OR created_at >= ?) AND id != ?
         AND conversation_id NOT LIKE '%:note' AND conversation_id NOT LIKE '%:ack'
         AND conversation_id NOT LIKE 'files-progress-%' ORDER BY created_at, id LIMIT 50`),
     };
     log.debug("message store opened", { file });
-    if (file !== ":memory:") {
-      try { backupIfDue(dirname(file)); }
-      catch (err) { log.warn("automatic backup failed", { err: String(err) }); }
-      const interval = retentionLimit(BACKUP_INTERVAL_ENV, DEFAULT_BACKUP_INTERVAL_MS);
-      if (interval) {
-        this.backupTimer = setInterval(() => {
-          try { backupIfDue(dirname(file)); }
-          catch (err) { log.warn("automatic backup failed", { err: String(err) }); }
-        }, Math.min(interval, BACKUP_CHECK_INTERVAL_MS));
-        this.backupTimer.unref();
-      }
-    }
   }
+
+  startBackups(): void {
+    this.scheduleArchiveMaintenance();
+    if (process.env.AGENT_BRIDGE_AUTO_BACKUP === "1" && this.home && !this.backups) this.backups = new BackupBackground(this.home, this.log);
+  }
+  backupPressure(pending: boolean, lockError = false): void { this.backups?.pressure(pending, lockError); }
+  backupStatus(): import("./backup-background.js").BackupHealth | null { return this.backups?.status() ?? null; }
+  async closeBackups(): Promise<void> { await this.backups?.close(); this.backups = null; }
 
   /** Append identities learned from hooks; previous session bindings remain retained. */
   rememberSession(peer: PeerInfo, at: number): void {
@@ -312,7 +327,7 @@ export class MessageStore {
 
   /** Eligibility never removes history or old queued messages. Unknown old names are skipped. */
   recentProjectSenders(address: string, previous: string, since: number): string[] {
-    return this.db.prepare(`SELECT from_name FROM messages WHERE to_target=? AND recipient=? AND created_at>=?
+    return this.db.prepare(`SELECT from_name FROM deliverable_messages WHERE to_target=? AND recipient=? AND created_at>=?
       AND from_id NOT LIKE 'job:%' GROUP BY from_name ORDER BY MAX(created_at) DESC LIMIT 64`)
       .all(address, previous, since).map((row) => String(row.from_name));
   }
@@ -351,6 +366,7 @@ export class MessageStore {
       m.body,
       m.createdAt,
     );
+    this.historyMessageSink?.();
   }
 
   unread(recipient: string, limit: number): BridgeMessage[] {
@@ -379,12 +395,13 @@ export class MessageStore {
     if (from === to) return [];
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const rows = this.db.prepare("SELECT * FROM messages WHERE recipient=? AND from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(from, `job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`) as unknown as Row[];
+      const rows = this.db.prepare("SELECT * FROM deliverable_messages WHERE recipient=? AND from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(from, `job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`) as unknown as Row[];
       const copied: BridgeMessage[] = [];
       for (const row of rows) {
         const route = this.db.prepare("SELECT recipient, consumed_at FROM job_delivery_routes WHERE id=?").get(row.id);
         if (route && (route.consumed_at !== null || route.recipient !== from)) continue;
         const m = { ...toMessage(row), recipient: to, to, readAt: null };
+        if (this.db.prepare("SELECT 1 FROM message_archive_conflicts WHERE source_table='messages' AND id=? AND recipient=?").get(m.id, to)) continue;
         if (fallback && !isQuietMessage(m)) m.conversationId = m.conversationId.replace(/:note$/, "") + (m.conversationId.endsWith(":fallback") ? "" : ":fallback");
         const existing = this.db.prepare("SELECT read_at FROM messages WHERE id=? AND recipient=?").get(m.id, to);
         if (!existing) this.insert(m);
@@ -399,11 +416,11 @@ export class MessageStore {
   }
 
   pendingJobRecipients(job: string): string[] {
-    return this.db.prepare("SELECT DISTINCT recipient FROM messages WHERE from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(`job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`).map((row) => String(row.recipient));
+    return this.db.prepare("SELECT DISTINCT recipient FROM deliverable_messages WHERE from_id=? AND read_at IS NULL AND conversation_id NOT LIKE ?").all(`job:${job}`, `${SIBLING_CONVERSATION_PREFIX}%`).map((row) => String(row.recipient));
   }
 
   pendingJobSenders(): Set<string> {
-    return new Set(this.db.prepare("SELECT DISTINCT from_id FROM messages WHERE read_at IS NULL AND from_id LIKE 'job:%' AND conversation_id NOT LIKE ?")
+    return new Set(this.db.prepare("SELECT DISTINCT from_id FROM deliverable_messages WHERE read_at IS NULL AND from_id LIKE 'job:%' AND conversation_id NOT LIKE ?")
       .all(`${SIBLING_CONVERSATION_PREFIX}%`).map((row) => String(row.from_id)));
   }
 
@@ -415,6 +432,7 @@ export class MessageStore {
 
   /** A recovered inline envelope must never replay after a recipient consumed it or it was forwarded. */
   insertJobDelivery(m: BridgeMessage): boolean {
+    if (this.db.prepare("SELECT 1 FROM message_archive_conflicts WHERE source_table='messages' AND id=? AND recipient=?").get(m.id, m.recipient)) return false;
     if (this.db.prepare("SELECT 1 FROM job_delivery_routes WHERE id=?").get(m.id)) return false;
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -440,14 +458,35 @@ export class MessageStore {
         }
         this.db.exec("RELEASE message_ack");
       } catch (err) {
-        this.db.exec("ROLLBACK TO message_ack; RELEASE message_ack");
-        throw err;
+        cleanupSavepoint(this.db, "message_ack", true, err);
       }
     }
     return changed;
   }
 
   /** Move messages waiting for "any <agent>" to a concrete peer name. */
+  nativeChildRoutes(): { address: string; parent: string }[] {
+    if (!this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_child_routes'").get()) return [];
+    return this.db.prepare("SELECT address,parent FROM native_child_routes WHERE active=1").all() as { address: string; parent: string }[];
+  }
+
+  retainNativeChild(address: string, parent: string): void {
+    this.db.exec("CREATE TABLE IF NOT EXISTS native_child_routes (address TEXT PRIMARY KEY, parent TEXT NOT NULL, active INTEGER NOT NULL)");
+    this.db.prepare("INSERT INTO native_child_routes(address,parent,active) VALUES (?,?,1) ON CONFLICT(address) DO UPDATE SET parent=excluded.parent,active=1").run(address, parent);
+  }
+
+  /** Return unread child mail and retire its route atomically; retained rows are never removed. */
+  returnNativeChild(address: string, parent: string): void {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.stmt.claim.run(parent, address);
+      this.db.prepare(`UPDATE messages SET read_at=? WHERE recipient=? AND read_at IS NULL AND ${unquarantined("messages")} AND id IN (SELECT id FROM deliverable_messages WHERE recipient=?)`).run(Date.now(), address, parent);
+      this.db.prepare("UPDATE native_child_routes SET active=0 WHERE address=?").run(address);
+      this.db.exec("COMMIT");
+      this.historyMessageSink?.();
+    } catch (err) { this.db.exec("ROLLBACK"); throw err; }
+  }
+
   claim(fromKey: string, toName: string): number {
     if (fromKey === toName) return 0;
     this.db.exec("BEGIN IMMEDIATE");
@@ -456,9 +495,10 @@ export class MessageStore {
       // A broadcast can have reached both servers before their shared session id was learned.
       // Keep the destination copy and retire the duplicate alias without replaying it later.
       const duplicates = Number(this.db.prepare(`UPDATE messages SET read_at = ?
-        WHERE recipient = ? AND read_at IS NULL AND id IN (SELECT id FROM messages WHERE recipient = ?)`)
+        WHERE recipient = ? AND read_at IS NULL AND ${unquarantined("messages")} AND id IN (SELECT id FROM deliverable_messages WHERE recipient = ?)`)
         .run(Date.now(), fromKey, toName).changes);
       this.db.exec("COMMIT");
+      if (moved) this.historyMessageSink?.();
       return moved + duplicates;
     } catch (err) {
       this.db.exec("ROLLBACK");
@@ -468,9 +508,31 @@ export class MessageStore {
 
   /** Archive unread mail waiting for a queue key or name that is older than the cutoff. */
   expireQueued(recipient: string, cutoff: number): number {
-    const n = archiveMessages(this.db, this.archiveDb, "recipient = ? AND read_at IS NULL AND created_at < ?", [recipient, cutoff], "stale queue");
+    if (!this.db.prepare("SELECT 1 FROM deliverable_messages WHERE recipient = ? AND read_at IS NULL AND created_at < ? LIMIT 1").get(recipient, cutoff)) return 0;
+    const n = archiveMessages(this.db, this.archiveDb, "recipient = ? AND read_at IS NULL AND created_at < ?", [recipient, cutoff], "stale queue", "messages", this.log);
     if (n > 0) this.log.info("archived stale queued messages", { recipient, count: n });
     return n;
+  }
+
+  /** Finish TTL archival before a broker claims/replays a reused queue name. */
+  async expireQueuedAsync(recipient: string, cutoff: number): Promise<number> {
+    let count = 0;
+    for (;;) {
+      const result = await this.retryWrite(() => {
+        this.archiveDb.exec(`PRAGMA busy_timeout = ${SQLITE_REQUEST_BUSY_MS}`);
+        try {
+          const moved = this.archiveChunk("messages", "recipient = ? AND read_at IS NULL AND created_at < ?", [recipient, cutoff], "stale queue");
+          const remaining = Boolean(this.db.prepare("SELECT 1 FROM deliverable_messages WHERE recipient = ? AND read_at IS NULL AND created_at < ? LIMIT 1").get(recipient, cutoff));
+          return { moved, remaining };
+        }
+        finally { this.archiveDb.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`); }
+      });
+      count += result.moved;
+      if (!result.remaining) break;
+      await delay(50, undefined, { signal: this.writeAbort.signal });
+    }
+    if (count) this.log.info("archived stale queued messages", { recipient, count });
+    return count;
   }
 
   receipts(id: string): { recipient: string; readAt: number | null }[] {
@@ -500,13 +562,99 @@ export class MessageStore {
   }
 
   purgeOlderThan(cutoff: number): number {
-    const n = archiveMessages(this.db, this.archiveDb, "created_at < ?", [cutoff], "expired");
+    if (!this.db.prepare("SELECT 1 FROM deliverable_messages WHERE created_at < ? LIMIT 1").get(cutoff)) return 0;
+    const n = archiveMessages(this.db, this.archiveDb, "created_at < ?", [cutoff], "expired", "messages", this.log);
     if (n > 0) this.log.info("archived expired messages", { count: n });
-    if (this.home) {
-      try { backupIfDue(this.home); }
-      catch (err) { this.log.warn("automatic backup failed", { err: String(err) }); }
-    }
     return n;
+  }
+
+  /** Broker retention queues bounded work; direct/offline purge remains synchronous. */
+  schedulePurgeOlderThan(cutoff: number): void {
+    if (this.purgeCutoff === null) this.purgeCutoff = cutoff;
+    else if (cutoff > this.purgeCutoff) this.nextPurgeCutoff = Math.max(this.nextPurgeCutoff ?? cutoff, cutoff);
+    this.scheduleArchiveMaintenance();
+  }
+
+  private scheduleArchiveMaintenance(delayMs = 50): void {
+    if (this.closed || this.archiveMaintenanceFailed || this.archiveTimer) return;
+    this.archiveTimer = setTimeout(() => {
+      this.archiveTimer = null;
+      if (this.closed) return;
+      let more = false;
+      let retryDelay = 50;
+      try {
+        this.db.exec(`PRAGMA busy_timeout = ${SQLITE_REQUEST_BUSY_MS}`);
+        this.archiveDb.exec(`PRAGMA busy_timeout = ${SQLITE_REQUEST_BUSY_MS}`);
+        if (this.legacyArchivePending) {
+          this.legacyArchivePending = this.archiveChunk("archived_messages", "1", [], "legacy") > 0;
+          more = this.legacyArchivePending;
+        } else if (this.purgeCutoff !== null) {
+          more = this.archivePurgeChunk(this.purgeCutoff);
+          if (!more) {
+            this.purgeCutoff = this.nextPurgeCutoff;
+            this.nextPurgeCutoff = null;
+            this.purgeCursor = this.purgeHighWater = null;
+          }
+        }
+        more ||= this.purgeCutoff !== null;
+      } catch (error) {
+        if (isSqliteBusy(error)) { more = true; retryDelay = 250; }
+        else {
+          this.archiveMaintenanceFailed = true;
+          this.log.warn("message archive maintenance stopped; original rows preserved", { err: String(error) });
+        }
+      } finally {
+        this.db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+        this.archiveDb.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+      }
+      if (more) this.scheduleArchiveMaintenance(retryDelay);
+    }, delayMs);
+    this.archiveTimer.unref();
+  }
+
+  private archiveChunk(table: "messages" | "archived_messages", where: string, args: (string | number)[], reason: string): number {
+    // octet_length reads SQLite's stored length without materializing TEXT.
+    // One unusually large row still makes progress; later rows wait for a yield.
+    const rows = this.db.prepare(`SELECT rowid AS id, octet_length(body) AS bytes FROM ${table} WHERE (${where}) AND ${unquarantined(table)} ORDER BY ${table === "messages" ? "created_at" : "rowid"} LIMIT 16`).all(...args);
+    const ids: string[] = [];
+    let bytes = 0;
+    for (const row of rows) {
+      if (ids.length && bytes + Number(row.bytes) > 256 * 1024) break;
+      ids.push(String(row.id)); bytes += Number(row.bytes);
+    }
+    if (!ids.length) return 0;
+    // Selection happens before BEGIN IMMEDIATE. Recheck eligibility while
+    // locked so a concurrent claim/receipt update cannot archive fresh mail.
+    return archiveMessages(this.db, this.archiveDb, `rowid IN (${ids.map(() => "?").join(",")}) AND (${where})`, [...ids, ...args], reason, table, this.log);
+  }
+
+  private archivePurgeChunk(cutoff: number): boolean {
+    // Older schemas have no global created_at index. Limit the rowid scan
+    // itself so a LIMIT cannot conceal a full-table sort/filter before yield.
+    if (this.purgeHighWater === null) {
+      const high = this.db.prepare("SELECT MAX(rowid) AS id FROM messages");
+      high.setReadBigInts(true);
+      const id = high.get()!.id;
+      if (id === null) return false;
+      this.purgeHighWater = String(id);
+    }
+    const select = this.db.prepare(`SELECT rowid AS id, created_at AS at, octet_length(body) AS bytes FROM messages WHERE ${this.purgeCursor === null ? "" : "rowid > ? AND "}rowid <= ? ORDER BY rowid LIMIT 16`);
+    select.setReadBigInts(true);
+    const rows = select.all(...(this.purgeCursor === null ? [this.purgeHighWater] : [this.purgeCursor, this.purgeHighWater]));
+    const ids: string[] = [];
+    let bytes = 0;
+    let next = this.purgeCursor;
+    for (const row of rows) {
+      if (Number(row.at) < cutoff) {
+        if (ids.length && bytes + Number(row.bytes) > 256 * 1024) break;
+        ids.push(String(row.id)); bytes += Number(row.bytes);
+      }
+      next = String(row.id);
+    }
+    if (ids.length) archiveMessages(this.db, this.archiveDb, `rowid IN (${ids.map(() => "?").join(",")}) AND created_at < ?`, [...ids, cutoff], "expired", "messages", this.log);
+    // Publish the cursor only after a successful copy+source transaction.
+    this.purgeCursor = next;
+    return rows.length > 0;
   }
 
   stopWrites(): void { this.writeAbort.abort(); }
@@ -514,10 +662,12 @@ export class MessageStore {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    if (this.archiveTimer) clearTimeout(this.archiveTimer);
+    this.archiveTimer = null;
     this.stopWrites();
     this.history.close();
     if (this.historyDb !== this.db) this.historyDb.close();
-    if (this.backupTimer) clearInterval(this.backupTimer);
+    void this.closeBackups();
     try {
       this.db.close();
       this.archiveDb.close();

@@ -7,6 +7,7 @@ import { runCleanup } from "../src/cli/cleanup.js";
 import { nullLogger } from "../src/core/logger.js";
 import { cleanupWorktrees, repositoryCommonDir } from "../src/core/worktree-cleanup.js";
 import { createWorktree } from "../src/core/worktree.js";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
 
 let root: string;
 let home: string;
@@ -24,10 +25,23 @@ beforeEach(() => {
     git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--allow-empty", "-qm", "base");
   }
 });
-afterEach(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
+afterEach(() => { for (const h of [home, join(root, "home-alias")]) closeMetadataDb(h); rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });
 const worktree = (cwd: string, jobId: string) => createWorktree({ cwd, home, jobId, log: nullLogger });
 
 describe("cleanup repository scope", () => {
+  it("finds trees under a configured worktreeRoot but never other folders there (AB-177)", async () => {
+    const custom = join(root, "custom-trees");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "config.json"), JSON.stringify({ worktreeRoot: custom }));
+    const tree = await createWorktree({ cwd: first, home, jobId: "c0ffee01", log: nullLogger, worktreeRoot: custom });
+    mkdirSync(join(custom, "unrelated-folder"));
+    const { isBridgeWorktree } = await import("../src/mcp/delegate-run.js");
+    expect(isBridgeWorktree(join(tree.path, "src"), home)).toBe(true);
+    expect(isBridgeWorktree(join(custom, "unrelated-folder"), home)).toBe(false);
+    const entries = await cleanupWorktrees({ home, cwd: first, apply: false, log: nullLogger });
+    expect(entries.map(e => e.path)).toEqual([tree.path]);
+    expect(existsSync(join(custom, "unrelated-folder"))).toBe(true);
+  });
   it("cleans through a home alias above the container while preserving linked cache sources", async () => {
     const a = await worktree(first, "alias-one");
     const alias = join(root, "home-alias"), cache = join(root, "cache-source");
@@ -125,5 +139,27 @@ describe("cleanup repository scope", () => {
     } });
     expect(entries[0]).toMatchObject({ action: "kept", reason: "repository changed after scope selection" });
     expect(existsSync(a.path)).toBe(true);
+  });
+
+  it("keeps a worktree git refuses to remove instead of deleting it recursively (AB-222)", async () => {
+    // A submodule's own ignored files are invisible to the superproject's status and ignored-file scan, and git
+    // refuses `worktree remove` for a tree with an initialized submodule. That refusal must keep the folder.
+    const sub = join(root, "sub");
+    mkdirSync(sub);
+    git(sub, "init", "-q");
+    writeFileSync(join(sub, ".gitignore"), ".env\n");
+    git(sub, "add", ".gitignore");
+    git(sub, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-qm", "sub");
+    git(first, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "sub");
+    git(first, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-qm", "add sub");
+    const a = await worktree(first, "5ab00001");
+    git(a.path, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "-q");
+    writeFileSync(join(a.path, "sub", ".env"), "unique secret\n");
+    expect(git(a.path, "status", "--porcelain")).toBe("");
+    const entries = await cleanupWorktrees({ home, cwd: first, apply: true, log: nullLogger });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.action).not.toBe("removed");
+    expect(readFileSync(join(a.path, "sub", ".env"), "utf8")).toBe("unique secret\n");
+    expect(git(first, "branch", "--list", a.branch)).toContain(a.branch);
   });
 });

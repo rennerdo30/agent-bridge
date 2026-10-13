@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { JSON_STORE_VERSION, readJsonStore, writeJsonStore } from "../src/core/json-store.js";
 import { migrateJobOwnership } from "../src/core/job-handoff.js";
+import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 import { loadConfig } from "../src/core/config.js";
 import { readHistoryJobs, readRunLogs } from "../src/core/run-history.js";
 import { ensureProjectFolder } from "../src/core/project-store.js";
@@ -28,7 +29,7 @@ function preserve(old: unknown, next: unknown, root = true): void {
   } else expect(hash(JSON.stringify(next))).toBe(hash(JSON.stringify(old)));
 }
 
-it.each(tags)("retains every captured %s JSON/run/network/approval record through upgrade and replay", (tag) => {
+it.each(tags)("retains every captured %s JSON/run/network/approval record through upgrade and replay", async (tag) => {
   const fixture = join(import.meta.dirname, "fixtures", "upgrade-json", tag);
   const manifest = JSON.parse(readFileSync(join(fixture, "manifest.json"), "utf8"));
   expect(manifest.commit).toMatch(/^[a-f0-9]{40}$/);
@@ -60,6 +61,10 @@ it.each(tags)("retains every captured %s JSON/run/network/approval record throug
     changed.add(relative);
   }
   for (const [relative, bytes] of original) if (!changed.has(relative)) expect(readFileSync(join(env.home, relative))).toEqual(bytes);
+  // AB-206: readers use the job index; the elected archive worker imports the released archive files
+  // (verified byte for byte before any original moves to cold storage).
+  const imported = await migrateJobArchives(join(env.home, "jobs.json"));
+  expect(imported.imported).toBeGreaterThan(0);
   expect([...readHistoryJobs(env.home).values()].map(job => job.id)).toEqual(expect.arrayContaining(["kept-job", "archived-job"]));
   expect(loadConfig(env.home, "codex", nullLogger, {})).toMatchObject({ maxJobs: 4, autoWake: false });
   expect(readRunLogs(env.home)).toHaveLength(1);

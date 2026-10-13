@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import type { Logger } from "./logger.js";
 import { storageLease, storeHome } from "./storage-lock.js";
 import { assertStoreUpgrade } from "./store-compatibility.js";
+import { markJobProjection, storeJobRecords } from "./job-archive-index.js";
 
 export const JSON_STORE_VERSION = 4;
 export const KEEP_STORE_BACKUPS = 3;
@@ -48,6 +49,16 @@ export function retainBackups(path: string): void {
   }
 }
 
+/** How long a store that does not parse gets to finish a write by another process before it counts as corrupt. */
+const PARTIAL_WRITE_WAIT_MS = 100;
+
+function parseJsonStore(raw: string, valid: (value: unknown) => boolean): unknown {
+  const value: unknown = JSON.parse(raw);
+  if (isRecord(value) && typeof value.version === "number" && value.version > JSON_STORE_VERSION) return value;
+  if (!valid(value)) throw new Error("invalid store structure");
+  return value;
+}
+
 export function readJsonStore(path: string, log?: Logger, valid: (value: unknown) => boolean = isRecord): unknown {
   let raw: string;
   try {
@@ -57,11 +68,17 @@ export function readJsonStore(path: string, log?: Logger, valid: (value: unknown
     throw err;
   }
   try {
-    const value: unknown = JSON.parse(raw);
-    if (isRecord(value) && typeof value.version === "number" && value.version > JSON_STORE_VERSION) return value;
-    if (!valid(value)) throw new Error("invalid store structure");
-    return value;
+    return parseJsonStore(raw, valid);
   } catch (err) {
+    // A file another process is writing in place (an editor, or a plain writeFileSync) can be read empty or half
+    // written: read it again before moving it aside as corrupt.
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, PARTIAL_WRITE_WAIT_MS);
+    try {
+      const again = readFileSync(path, "utf8");
+      if (again !== raw) return parseJsonStore(again, valid);
+    } catch (retry) {
+      if ((retry as NodeJS.ErrnoException).code === "ENOENT") return null;
+    }
     const preserved = `${path}.corrupt-${Date.now()}-${randomUUID()}`;
     const release = storageLease(storeHome(path));
     try { renameSync(path, preserved); } finally { release(); }
@@ -96,6 +113,10 @@ function writeJsonStoreUnlocked(path: string, value: Record<string, unknown>, pr
   assertWritableStore(previous);
   assertStoreUpgrade(storeHome(path), "json", isRecord(previous) && typeof previous.version === "number" ? previous.version : 0, JSON_STORE_VERSION);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  if (basename(path) === "jobs.json" && Array.isArray(value.jobs)) {
+    // Preserve changed full records before publishing the compatibility projection.
+    storeJobRecords(path, value.jobs, false, Array.isArray(previous) ? previous : isRecord(previous) && Array.isArray(previous.jobs) ? previous.jobs : []);
+  }
   if (previous !== null && (!isRecord(previous) || previous.version !== JSON_STORE_VERSION) && existsSync(path)) {
     copyFileSync(path, backupPath(path));
     retainBackups(path);
@@ -109,6 +130,7 @@ function writeJsonStoreUnlocked(path: string, value: Record<string, unknown>, pr
     for (let attempt = 1; ; attempt++) {
       try {
         renameSync(tmp, path);
+        if (basename(path) === "jobs.json" && Array.isArray(value.jobs)) markJobProjection(path, value.jobs);
         return;
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;

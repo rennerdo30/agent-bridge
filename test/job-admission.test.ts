@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
+import { processIdentity } from "../src/core/process-identity.js";
 import { ResourceSlots } from "../src/core/resource-slots.js";
 import { RootConcurrency } from "../src/core/root-concurrency.js";
 import { STARTUP_RESOURCE, STARTUP_CAPACITY } from "../src/core/startup-admission.js";
@@ -57,7 +58,9 @@ it("keeps a real live runner visible despite stale or missing heartbeat and sett
   const runners = new JobRunners({} as any, home, "unused", nullLogger); jobs.runners = runners;
   const run: Run = Object.assign(async () => result, { hosted: () => ({ pid: process.pid, peer: "runner", startedAt: Date.now() - 120_000 }) });
   const job = jobs.start("codex", null, "live", run);
-  const state = { pid: process.pid, peer: job.name, status: "running" as const, updatedAt: Date.now() - 600_000 };
+  // AB-236: runners record their process identity. With it, a heartbeat older than this process
+  // is still a live runner; without it, such an old record would mean the PID was reused.
+  const state = { pid: process.pid, identity: processIdentity(process.pid), peer: job.name, status: "running" as const, updatedAt: Date.now() - 600_000 };
   vi.spyOn(runners, "state").mockReturnValue(state);
   expect(jobs.list()).toContain(job); expect(jobs.canStart()).toBe(false);
   expect(runners.alive(job, null)).toBe(true);

@@ -5,28 +5,108 @@ import { readFileSync, statSync } from "node:fs";
  * The budget bounds resident data without removing anything from disk.
  */
 export interface JsonSnapshot { signature: string; value: unknown; bytes: number }
-// Hot dashboard/peers paths revisit every archived job and run snapshot; a budget below that
-// working set evicts on every pass and turns each poll into a full synchronous reread.
-const MAX_BYTES = 256 * 1024 * 1024;
+const MAX_BYTES = 16 * 1024 * 1024;
 const MAX_ENTRIES = 2048;
 const cache = new Map<string, JsonSnapshot & { bytes: number }>();
+const damaged = new Map<string, { signature: string; error: SyntaxError }>();
 let bytes = 0;
-
-export function fileSignature(st: { size: number; mtimeMs: number; ctimeMs: number; birthtimeMs: number; ino: number; dev: number }): string {
-  return `${st.dev}:${st.ino}:${st.birthtimeMs}:${st.ctimeMs}:${st.mtimeMs}:${st.size}`;
+/** Profiling counts retained source bytes; parsed object/V8 overhead is separate. */
+export function jsonSnapshotCacheUsage(): { bytes: number; entries: number; maxBytes: number } {
+  return { bytes, entries: cache.size, maxBytes: MAX_BYTES };
 }
 
-export function readJsonSnapshot(file: string): JsonSnapshot {
-  const st = statSync(file), signature = fileSignature(st);
+/** Conservative parsed-container budget, including UTF-16 strings and keys.
+ * Stop once over budget; oversized snapshots remain readable without retention. */
+export function estimatedJsonBytes(value: unknown, limit = MAX_BYTES): number {
+  const pending: unknown[] = [value]; let total = 0;
+  while (pending.length && total <= limit) {
+    const item = pending.pop();
+    if (typeof item === "string") total += 32 + item.length * 2;
+    else if (Array.isArray(item)) { total += 64 + item.length * 16; for (const child of item) pending.push(child); }
+    else if (item !== null && typeof item === "object") {
+      total += 64;
+      for (const key of Object.keys(item)) { total += 64 + key.length * 2; pending.push((item as Record<string, unknown>)[key]); }
+    } else total += 16;
+  }
+  return total;
+}
+export function jsonCacheBudget(): { bytes: number; limit: number; entries: number } { return { bytes, limit: MAX_BYTES, entries: cache.size }; }
+
+/** Clone JSON containers without serializing/copying large immutable prompt strings.
+ * Only use for parsed JSON and JSON-shaped projections, not arbitrary class instances.
+ */
+export function cloneJson<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(item => cloneJson(item)) as T;
+  if (value !== null && typeof value === "object") {
+    const copied: Record<string, unknown> = {};
+    // Avoid temporary entry arrays for every field in large registry projections.
+    for (const key of Object.keys(value)) {
+      const item = cloneJson((value as Record<string, unknown>)[key]);
+      if (key === "__proto__") Object.defineProperty(copied, key, { value: item, writable: true, configurable: true, enumerable: true });
+      else copied[key] = item;
+    }
+    return copied as T;
+  }
+  return value;
+}
+
+interface FileIdentityStat {
+  size: number | bigint; mtimeMs: number | bigint; ctimeMs: number | bigint; birthtimeMs: number | bigint;
+  ino: number | bigint; dev: number | bigint; mtimeNs?: bigint; ctimeNs?: bigint; birthtimeNs?: bigint;
+}
+/** Preserve fractional millisecond fields while taking exact IDs from bigint stats. */
+export const fileTimeMs = (ms: number | bigint, ns?: bigint): number => ns === undefined ? Number(ms) :
+  Number(ns / 1_000_000n) + Number(ns % 1_000_000n) / 1_000_000;
+export function fileSignature(st: FileIdentityStat): string {
+  for (const id of [st.dev, st.ino]) {
+    if (typeof id === "number" && !Number.isSafeInteger(id))
+      throw new Error("file identity changed or unverifiable; rescan with bigint stat");
+  }
+  // Older unversioned witnesses are unknown, never equal to this exact-ID format.
+  return `fs2:${st.dev}:${st.ino}:${fileTimeMs(st.birthtimeMs, st.birthtimeNs)}:${fileTimeMs(st.ctimeMs, st.ctimeNs)}:${fileTimeMs(st.mtimeMs, st.mtimeNs)}:${st.size}`;
+}
+
+/** A directory scanner may supply the fresh identity it already validated in this call.
+ * Never supply a retained/cached stat: replacement detection still requires a fresh scan. */
+export function readJsonSnapshot(file: string, scan?: { file: string; stat: Parameters<typeof fileSignature>[0] }): JsonSnapshot {
+  if (scan && scan.file !== file) throw new Error("JSON snapshot scan belongs to another file");
+  const st = scan?.stat ?? statSync(file, { bigint: true }), signature = fileSignature(st);
+  const failure = damaged.get(file);
+  if (failure?.signature === signature) throw failure.error;
+  damaged.delete(file);
   const saved = cache.get(file);
   if (saved?.signature === signature) {
+    if (scan && fileSignature(statSync(file, { bigint: true })) !== signature)
+      throw new Error("JSON snapshot identity changed before cache reuse");
     cache.delete(file); cache.set(file, saved);
     return saved;
   }
   if (saved) { cache.delete(file); bytes -= saved.bytes; }
-  const next = { signature, value: JSON.parse(readFileSync(file, "utf8")) as unknown, bytes: st.size };
-  if (st.size <= MAX_BYTES) {
-    cache.set(file, next); bytes += st.size;
+  let value: unknown;
+  try {
+    if (!scan) value = JSON.parse(readFileSync(file, "utf8"));
+    else {
+      // Keep Node's native UTF-8 pathname reader. The scan already checked the
+      // physical entry; verify identity/type again before publishing parsed bytes.
+      const raw = readFileSync(file, "utf8");
+      const after = statSync(file, { bigint: true });
+      if (!after.isFile() || fileSignature(after) !== signature)
+        throw new Error("JSON snapshot identity changed during read");
+      value = JSON.parse(raw);
+    }
+  }
+  catch (error) {
+    // Stable malformed bytes must not be reread at every poll. Sharing/IO failures
+    // stay retryable, and a changed file identity always invalidates this witness.
+    if (error instanceof SyntaxError) {
+      damaged.set(file, { signature, error });
+      if (damaged.size > 128) damaged.delete(damaged.keys().next().value!);
+    }
+    throw error;
+  }
+  const next = { signature, value, bytes: estimatedJsonBytes(value) };
+  if (next.bytes <= MAX_BYTES) {
+    cache.set(file, next); bytes += next.bytes;
     while (bytes > MAX_BYTES || cache.size > MAX_ENTRIES) {
       const first = cache.keys().next().value!;
       bytes -= cache.get(first)!.bytes; cache.delete(first);

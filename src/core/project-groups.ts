@@ -1,8 +1,7 @@
 import { canonicalProjectRoot, projectGroupsEnabled, projectKey } from "./project-identity.js";
 import type { PeerInfo } from "./protocol.js";
 import { canControlJob } from "./job-ownership.js";
-import { join } from "node:path";
-import { readJsonSnapshot } from "./file-cache.js";
+import { readPendingRunnerSpec } from "./runner-store.js";
 import { isRecord } from "./json-store.js";
 
 /** Groups are derived from verified local paths, never from peer names or paired-PC projections. */
@@ -59,7 +58,7 @@ export class ProjectGroups {
     const runner = peers.find((p) => p.jobAgent && p.id === `job:${job.id}`);
     let spec: unknown;
     if (this.home && typeof job.id === "string" && /^[a-zA-Z0-9_-]+$/.test(job.id)) {
-      try { spec = readJsonSnapshot(join(this.home, "jobs", `${job.id}.spec.json`)).value; }
+      try { spec = readPendingRunnerSpec(this.home, job.id); }
       catch { /* A running job has already archived its one-use launch spec. */ }
     }
     for (const value of [isRecord(spec) ? spec.cwd : undefined, job.workdir, runner?.cwd]) {

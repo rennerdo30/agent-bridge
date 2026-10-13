@@ -1,0 +1,385 @@
+import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
+import {
+  listAntigravitySubagents,
+  readAntigravityChat
+} from "./chunk-ZJ3DVN7A.mjs";
+import {
+  MAX_CURSOR_CHARS,
+  MAX_DISCOVERY_FILES,
+  MAX_NATIVE_SUBAGENTS,
+  MAX_TEXT_CHARS,
+  MAX_TITLE_CHARS,
+  MAX_TRANSCRIPT_CHUNK_BYTES,
+  SQLITE_READ_TIMEOUT_MS,
+  TRANSCRIPT_ID,
+  contentText,
+  directory,
+  fileStat,
+  object,
+  parse,
+  preview,
+  readHead,
+  readJsonl,
+  readTail,
+  safeFile,
+  scanJsonl,
+  time,
+  transcriptPaths
+} from "./chunk-NVDPULGI.mjs";
+
+// src/core/transcripts/claude.ts
+import { dirname, join } from "node:path";
+function claudeSessionFile(session, paths) {
+  if (!session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return null;
+  const projects = join(paths.claude, "projects");
+  const encoded = session.cwd.replace(/[^A-Za-z0-9]/g, "-");
+  const direct = safeFile(projects, join(projects, encoded, `${session.sessionId}.jsonl`));
+  if (direct) return direct;
+  for (const dir of directory(projects)) {
+    const file = safeFile(projects, join(projects, dir, `${session.sessionId}.jsonl`));
+    if (file) return file;
+  }
+  return null;
+}
+function claudeItems(row) {
+  if (!["user", "assistant"].includes(row.type)) return [];
+  const message = object(row.message), at = time(row.timestamp);
+  const content = message.content;
+  if (typeof content === "string") return row.isMeta ? [] : [{ kind: row.type, at, text: preview(content, MAX_TEXT_CHARS) }];
+  if (!Array.isArray(content)) return [];
+  const items = [];
+  for (const block of content.map(object)) {
+    if (block.type === "text" && typeof block.text === "string") items.push({ kind: row.type, at, text: preview(block.text, MAX_TEXT_CHARS) });
+    if (block.type === "tool_use" && typeof block.name === "string") items.push({ kind: "tool", at, tool: block.name, summary: preview(block.input) });
+    if (block.type === "tool_result") {
+      items.push({ kind: "tool", at, tool: typeof block.tool_use_id === "string" ? block.tool_use_id : "result", summary: preview(contentText(block.content)) });
+      const result = object(row.toolUseResult);
+      if (typeof result.agentId === "string" && TRANSCRIPT_ID.test(result.agentId)) items.push({ kind: "subagent", at, subagent: { id: result.agentId, title: preview(result.description || "Native subagent", MAX_TITLE_CHARS), agent: "claude" } });
+    }
+  }
+  return items;
+}
+function readClaudeChat(session, paths, from = "0", child) {
+  const main = claudeSessionFile(session, paths);
+  if (!main || child !== void 0 && !TRANSCRIPT_ID.test(child)) return null;
+  const nested = child ? safeFile(paths.claude, join(dirname(main), session.sessionId, "subagents", `agent-${child}.jsonl`)) : null;
+  const legacy = child && !nested ? listClaudeSubagents(session, paths).some((s) => s.id === child) : false;
+  if (child && !nested && !legacy) return null;
+  const page = readJsonl(nested ?? main, from);
+  return { items: page.entries.filter(({ value: r }) => child ? nested || r.isSidechain === true && r.agentId === child : r.isSidechain !== true).flatMap(({ value }) => claudeItems(value)), next: page.next };
+}
+function listClaudeSubagents(session, paths) {
+  const main = claudeSessionFile(session, paths);
+  if (!main) return [];
+  const out = /* @__PURE__ */ new Map();
+  const dir = join(dirname(main), session.sessionId, "subagents");
+  for (const name of directory(dir).slice(0, MAX_NATIVE_SUBAGENTS)) {
+    const id = /^agent-([A-Za-z0-9_-]+)\.jsonl$/.exec(name)?.[1];
+    if (!id || !TRANSCRIPT_ID.test(id)) continue;
+    const file = safeFile(paths.claude, join(dir, name));
+    if (!file) continue;
+    const st = fileStat(file), head = readHead(file), tail = readTail(file);
+    const last = [...tail].reverse().find((r) => r.type === "assistant");
+    out.set(id, { id, title: preview(contentText(object(head.message).content) || `Subagent ${id}`, MAX_TITLE_CHARS), status: object(last?.message).stop_reason === "end_turn" ? "done" : "unknown", startedAt: time(head.timestamp) || st?.birthtimeMs || 0, updatedAt: st?.mtimeMs || 0 });
+  }
+  const nestedIds = new Set(out.keys());
+  for (const { value: r } of scanJsonl(main)) {
+    if (r.isSidechain !== true || typeof r.agentId !== "string" || !TRANSCRIPT_ID.test(r.agentId)) continue;
+    if (nestedIds.has(r.agentId)) continue;
+    const existing = out.get(r.agentId), at = time(r.timestamp);
+    if (!existing && out.size >= MAX_NATIVE_SUBAGENTS) continue;
+    out.set(r.agentId, { id: r.agentId, title: existing?.title ?? preview(contentText(object(r.message).content) || `Subagent ${r.agentId}`, MAX_TITLE_CHARS), status: object(r.message).stop_reason === "end_turn" ? "done" : existing?.status ?? "unknown", startedAt: existing?.startedAt ?? at, updatedAt: at });
+  }
+  return [...out.values()];
+}
+
+// src/core/transcripts/muse.ts
+import { join as join2 } from "node:path";
+function museTime(row) {
+  const at = typeof row.recorded_at === "number" ? row.recorded_at : 0;
+  return at > 1e13 ? Math.floor(at / 1e3) : at;
+}
+function museSessionFile(session, paths) {
+  if (!paths.muse || !session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return null;
+  const root = join2(paths.muse, "sessions");
+  for (const year of directory(root)) for (const month of directory(join2(root, year))) for (const day of directory(join2(root, year, month))) {
+    const file = safeFile(paths.muse, join2(root, year, month, day, session.sessionId, "session.jsonl"));
+    if (file) return file;
+  }
+  return safeFile(paths.muse, join2(root, session.sessionId, "session.jsonl"));
+}
+function recordItems(ev) {
+  const at = museTime(ev);
+  const payload = object(ev.payload);
+  const id = typeof ev.id === "string" ? ev.id : typeof ev.sequence === "number" ? String(ev.sequence) : void 0;
+  if (ev.payload_type === "turn.input.user" && typeof payload.prompt === "string" && payload.prompt) {
+    return [{ kind: "user", at, text: preview(payload.prompt, MAX_TEXT_CHARS), id }];
+  }
+  if (payload.kind === "run_terminal" && typeof payload.text === "string" && payload.text) {
+    return [{ kind: "assistant", at, text: preview(payload.text, MAX_TEXT_CHARS), id }];
+  }
+  if (ev.payload_type === "tool_batch.effect.started") {
+    const rec = object(payload.record);
+    if (typeof rec.tool_name === "string" && rec.tool_name) {
+      return [{ kind: "tool", at, tool: rec.tool_name, summary: preview(rec.call_id ?? ""), id: typeof rec.effect_id === "string" ? rec.effect_id : id }];
+    }
+  }
+  if (ev.payload_type === "subagent.control.child_session_bound") {
+    const rec = object(payload.record);
+    if (typeof rec.child_session_id === "string" && TRANSCRIPT_ID.test(rec.child_session_id)) {
+      return [{ kind: "subagent", at, subagent: { id: rec.child_session_id, title: preview("Muse subagent", MAX_TITLE_CHARS), agent: "muse" }, id }];
+    }
+  }
+  return [];
+}
+function museItems(row) {
+  if (typeof row.retained_frame === "string" && Array.isArray(row.children)) {
+    return row.children.map(object).flatMap((child) => typeof child.record_json === "string" ? recordItems(parse(child.record_json)) : []);
+  }
+  return recordItems(row);
+}
+function listMuseSubagents(session, paths) {
+  const file = museSessionFile(session, paths);
+  if (!file) return [];
+  const children = /* @__PURE__ */ new Map();
+  for (const { value } of scanJsonl(file)) for (const item of museItems(value)) {
+    const child = item.subagent;
+    if (!child || children.size >= MAX_NATIVE_SUBAGENTS) continue;
+    const nested = museSessionFile({ ...session, sessionId: child.id }, paths), stat = nested ? fileStat(nested) : null;
+    children.set(child.id, { id: child.id, title: child.title, status: "unknown", startedAt: item.at, updatedAt: stat?.mtimeMs ?? item.at });
+  }
+  return [...children.values()];
+}
+function readMuseChat(session, paths, from = "0", child) {
+  if (child && (!TRANSCRIPT_ID.test(child) || !listMuseSubagents(session, paths).some((entry) => entry.id === child))) return null;
+  const file = museSessionFile(child ? { ...session, sessionId: child } : session, paths);
+  if (!file) return null;
+  const page = readJsonl(file, from);
+  return { items: page.entries.flatMap(({ value }) => museItems(value)), next: page.next };
+}
+
+// src/core/transcripts/codex.ts
+import { join as join3 } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+var ROLLOUT_NAME = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
+var DISCOVERY_CACHE_MS = 1e4;
+var MAX_INDEX_PATH_CHARS = 4096;
+var cache = /* @__PURE__ */ new Map();
+function rollout(file, id, known) {
+  const head = known && Object.keys(known).length ? known : object(readHead(file).payload);
+  const data = head.id === id ? head : object(readJsonl(file).entries.find(({ value: r }) => r.type === "session_meta" && object(r.payload).id === id)?.value.payload);
+  return { file, id, meta: Object.fromEntries(["id", "source", "thread_source", "parent_thread_id", "timestamp", "agent_nickname", "agent_path", "subagent_history_start_ordinal"].filter((key) => data[key] !== void 0).map((key) => [key, data[key]])) };
+}
+function indexedRollouts(paths, id, parentId) {
+  const name = directory(paths.codex).filter((s) => /^state_\d+\.sqlite$/.test(s)).sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))[0];
+  if (!name) return null;
+  const file = safeFile(paths.codex, join3(paths.codex, name));
+  if (!file) return null;
+  let db;
+  try {
+    db = new DatabaseSync(file, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
+    const rows = id ? db.prepare("SELECT id, substr(rollout_path, 1, ?) AS path FROM threads WHERE id = ? LIMIT 1").all(MAX_INDEX_PATH_CHARS, id) : db.prepare(`SELECT id, substr(rollout_path, 1, ?) AS path FROM threads
+          WHERE CASE WHEN json_valid(source) THEN json_extract(source, '$.subagent.thread_spawn.parent_thread_id') END = ? LIMIT ?`).all(MAX_INDEX_PATH_CHARS, parentId, MAX_NATIVE_SUBAGENTS);
+    const out = [];
+    for (const row of rows) {
+      if (typeof row.id !== "string" || !TRANSCRIPT_ID.test(row.id) || typeof row.path !== "string") continue;
+      const target = safeFile(join3(paths.codex, "sessions"), row.path);
+      if (!target) continue;
+      const entry = rollout(target, row.id);
+      if (entry.meta.id === row.id && (!parentId || parent(entry.meta) === parentId)) out.push(entry);
+    }
+    return out.length ? out : null;
+  } catch {
+    return null;
+  } finally {
+    db?.close();
+  }
+}
+function rollouts(paths) {
+  const root = join3(paths.codex, "sessions"), existing = cache.get(root);
+  if (existing && Date.now() - existing.at < DISCOVERY_CACHE_MS) return existing.files;
+  const files = [];
+  const knownFiles = new Map(existing?.files.map((r) => [r.file, r]));
+  for (const year of directory(root).filter((s) => /^\d{4}$/.test(s)).sort().reverse()) {
+    for (const month of directory(join3(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+      for (const day of directory(join3(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+        for (const name of directory(join3(root, year, month, day)).sort().reverse()) {
+          const id = ROLLOUT_NAME.exec(name)?.[1];
+          if (!id) continue;
+          const file = safeFile(root, join3(root, year, month, day, name));
+          if (!file) continue;
+          const known = knownFiles.get(file);
+          files.push(rollout(file, id, known?.meta));
+          if (files.length >= MAX_DISCOVERY_FILES) {
+            cache.set(root, { at: Date.now(), files });
+            return files;
+          }
+        }
+      }
+    }
+  }
+  cache.set(root, { at: Date.now(), files });
+  return files;
+}
+function parent(meta) {
+  const spawn = object(object(object(meta.source).subagent).thread_spawn);
+  if (!Object.keys(spawn).length && meta.thread_source !== "subagent") return void 0;
+  return typeof meta.parent_thread_id === "string" ? meta.parent_thread_id : typeof spawn.parent_thread_id === "string" ? spawn.parent_thread_id : void 0;
+}
+function codexItems(row) {
+  if (row.type !== "response_item") return [];
+  const p = object(row.payload), at = time(row.timestamp);
+  if (p.type === "message" && ["user", "assistant"].includes(p.role) && p.channel !== "analysis") {
+    const text = contentText(p.content);
+    return text ? [{ kind: p.role, at, text: preview(text, MAX_TEXT_CHARS) }] : [];
+  }
+  if (["function_call", "custom_tool_call"].includes(p.type) && typeof p.name === "string") return [{ kind: "tool", at, tool: p.name, summary: preview(p.arguments ?? p.input) }];
+  if (["function_call_output", "custom_tool_call_output"].includes(p.type)) {
+    const items = [{ kind: "tool", at, tool: typeof p.call_id === "string" ? p.call_id : "result", summary: preview(p.output) }];
+    const result = typeof p.output === "string" ? parse(p.output) : object(p.output);
+    if (typeof result.agent_id === "string" && TRANSCRIPT_ID.test(result.agent_id)) items.push({ kind: "subagent", at, subagent: { id: result.agent_id, title: preview(result.nickname || "Native subagent", MAX_TITLE_CHARS), agent: "codex" } });
+    return items;
+  }
+  return [];
+}
+function readCodexChat(session, paths, from = "0", child) {
+  if (!session.sessionId || !TRANSCRIPT_ID.test(session.sessionId) || child !== void 0 && !TRANSCRIPT_ID.test(child)) return null;
+  const id = child ?? session.sessionId;
+  const entry = (indexedRollouts(paths, id) ?? rollouts(paths)).find((r) => r.id === id);
+  if (!entry || child && parent(entry.meta) !== session.sessionId) return null;
+  const page = readJsonl(entry.file, from);
+  const start = entry.meta.subagent_history_start_ordinal;
+  return { items: page.entries.filter(({ value: r }) => typeof start !== "number" || typeof r.ordinal !== "number" || r.ordinal >= start).flatMap(({ value }) => codexItems(value)), next: page.next };
+}
+function listCodexSubagents(session, paths) {
+  if (!session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return [];
+  return (indexedRollouts(paths, void 0, session.sessionId) ?? rollouts(paths)).filter((r) => parent(r.meta) === session.sessionId).slice(0, MAX_NATIVE_SUBAGENTS).map(({ file, id, meta }) => {
+    const st = fileStat(file);
+    const last = [...readTail(file)].reverse().find((r) => r.type === "event_msg" && ["task_started", "task_complete", "turn_aborted"].includes(object(r.payload).type));
+    const state = object(last?.payload).type;
+    const spawn = object(object(object(meta.source).subagent).thread_spawn);
+    return { id, title: preview(meta.agent_nickname || spawn.agent_nickname || meta.agent_path || spawn.agent_path || `Subagent ${id}`, MAX_TITLE_CHARS), status: state === "task_complete" ? "done" : state === "turn_aborted" ? "interrupted" : "unknown", startedAt: time(meta.timestamp) || st?.birthtimeMs || 0, updatedAt: st?.mtimeMs || 0 };
+  });
+}
+
+// src/core/transcripts/opencode.ts
+import { join as join4 } from "node:path";
+import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+var MAX_SQLITE_PARTS = 200;
+var SQLITE_CURSOR = /^o:(\d+):([A-Za-z0-9_-]*)$/;
+function openDatabase(paths) {
+  const file = safeFile(paths.opencode, join4(paths.opencode, "opencode.db"));
+  if (!file) return null;
+  try {
+    return new DatabaseSync2(file, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
+  } catch {
+    return null;
+  }
+}
+function opencodeItems(data, role, at, id) {
+  const part = object(data), state = object(part.state);
+  if (part.type === "text" && typeof part.text === "string" && ["user", "assistant"].includes(String(role))) return [{ kind: role, at, text: preview(part.text, MAX_TEXT_CHARS), id }];
+  if (part.type !== "tool" || typeof part.tool !== "string") return [];
+  const items = [{ kind: "tool", at, tool: part.tool, summary: preview(state.output ?? state.error ?? state.input), id }];
+  const child = object(state.metadata).sessionId;
+  if (part.tool === "task" && typeof child === "string" && TRANSCRIPT_ID.test(child)) items.push({ kind: "subagent", at, id: `${id}-child`, subagent: { id: child, title: preview(state.title || "Native subagent", MAX_TITLE_CHARS), agent: "opencode" } });
+  return items;
+}
+function readOpencodeChat(session, paths, from = "0", child) {
+  if (!session.sessionId || !TRANSCRIPT_ID.test(session.sessionId) || child !== void 0 && !TRANSCRIPT_ID.test(child)) return null;
+  const db = openDatabase(paths);
+  if (!db) return null;
+  const match = SQLITE_CURSOR.exec(from), after = Number(match?.[1] ?? 0), afterId = match?.[2] ?? "";
+  let next = `o:${Number.isSafeInteger(after) ? after : 0}:${afterId}`;
+  try {
+    const id = child ?? session.sessionId;
+    const exists = child ? db.prepare("SELECT id FROM session WHERE id = ? AND parent_id = ?").get(id, session.sessionId) : db.prepare("SELECT id FROM session WHERE id = ?").get(id);
+    if (!exists) return null;
+    const stmt = db.prepare(`SELECT p.id, p.time_created, p.time_updated, length(CAST(p.data AS BLOB)) AS bytes,
+      substr(p.data, 1, ?) AS data, CASE WHEN json_valid(m.data) THEN json_extract(m.data, '$.role') END AS role
+      FROM part p JOIN message m ON m.id = p.message_id AND m.session_id = p.session_id
+      WHERE p.session_id = ? AND (p.time_updated > ? OR (p.time_updated = ? AND p.id > ?))
+      ORDER BY p.time_updated, p.id LIMIT ?`);
+    const items = [];
+    let bytes = 0;
+    for (const row of stmt.iterate(MAX_TRANSCRIPT_CHUNK_BYTES, id, after, after, afterId, MAX_SQLITE_PARTS)) {
+      const length = Number(row.bytes);
+      if (bytes + Math.min(length, MAX_TRANSCRIPT_CHUNK_BYTES) > MAX_TRANSCRIPT_CHUNK_BYTES) break;
+      next = `o:${Number(row.time_updated)}:${String(row.id)}`;
+      bytes += Math.min(length, MAX_TRANSCRIPT_CHUNK_BYTES);
+      if (length <= MAX_TRANSCRIPT_CHUNK_BYTES && typeof row.data === "string") items.push(...opencodeItems(parse(row.data), row.role, time(row.time_created), String(row.id)));
+    }
+    return { items, next };
+  } catch {
+    return { items: [], next };
+  } finally {
+    db.close();
+  }
+}
+function listOpencodeSubagents(session, paths) {
+  if (!session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return [];
+  const db = openDatabase(paths);
+  if (!db) return [];
+  try {
+    return db.prepare(`SELECT id, substr(title, 1, ?) AS title, time_created, time_updated FROM session
+      WHERE parent_id = ? ORDER BY time_created LIMIT ?`).all(MAX_TITLE_CHARS, session.sessionId, MAX_NATIVE_SUBAGENTS).map((row) => ({
+      id: String(row.id),
+      title: String(row.title),
+      status: "unknown",
+      startedAt: time(row.time_created),
+      updatedAt: time(row.time_updated)
+    })).filter((s) => TRANSCRIPT_ID.test(s.id));
+  } catch {
+    return [];
+  } finally {
+    db.close();
+  }
+}
+
+// src/core/transcripts/index.ts
+function validTranscriptCursor(from) {
+  const match = /^(?:(?:j:)?(\d+)(?::[01])?|o:(\d+):[A-Za-z0-9_-]*)$/.exec(from);
+  if (from === "tail") return true;
+  return from.length <= MAX_CURSOR_CHARS && !!match && Number.isSafeInteger(Number(match[1] ?? match[2]));
+}
+function readTranscript(session, from = "0", child, paths = transcriptPaths()) {
+  switch (session.agent) {
+    case "claude":
+      return readClaudeChat(session, paths, from, child);
+    case "codex":
+      return readCodexChat(session, paths, from, child);
+    case "opencode":
+      return readOpencodeChat(session, paths, from, child);
+    case "antigravity":
+      return readAntigravityChat(session, paths, from, child);
+    case "muse":
+      return readMuseChat(session, paths, from, child);
+    default:
+      return null;
+  }
+}
+function listNativeSubagents(session, paths = transcriptPaths()) {
+  switch (session.agent) {
+    case "claude":
+      return listClaudeSubagents(session, paths);
+    case "codex":
+      return listCodexSubagents(session, paths);
+    case "opencode":
+      return listOpencodeSubagents(session, paths);
+    case "antigravity":
+      return listAntigravitySubagents(session, paths);
+    case "muse":
+      return listMuseSubagents(session, paths);
+    default:
+      return [];
+  }
+}
+
+export {
+  claudeItems,
+  museItems,
+  codexItems,
+  validTranscriptCursor,
+  readTranscript,
+  listNativeSubagents
+};

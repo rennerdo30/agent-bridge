@@ -264,6 +264,18 @@ describe("authenticated history endpoint and broker API", () => {
     expect(readHistory(env.db, { query: "walnut" }).hits).toMatchObject([{ message: "standalone" }]);
     expect(out).toHaveBeenCalledWith(expect.stringContaining("History index rebuilt"));
   });
+  it("wakes a backed-off history worker so a new message is searchable within about 2 s", async () => {
+    const node = env.node("claude-main"); await node.start();
+    const searchable = (query: string, timeout: number) => vi.waitFor(async () => {
+      expect((await node.searchHistory({ query })).hits).toHaveLength(1);
+    }, { timeout, interval: 50 });
+    await node.send({ to: "offline", body: "warmup_wake_needle" });
+    await searchable("warmup_wake_needle", 30_000);
+    // Stay idle long enough for AB-147's backoff to push the next sweep well past 2 s.
+    await new Promise((resolve) => setTimeout(resolve, 20_000));
+    await node.send({ to: "offline", body: "idle_wake_needle" });
+    await searchable("idle_wake_needle", 2_500);
+  }, 90_000);
   it("exposes broker-owned search and bounded rebuild to clients", async () => {
     const node = env.node("claude-main"); await node.start(); await node.send({ to: "offline", body: "walnut broker" });
     await node.setSessionId("cli-session-example");

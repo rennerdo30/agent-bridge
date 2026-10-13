@@ -1,11 +1,13 @@
 import { readFileSync, unwatchFile, watchFile } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, isAbsolute } from "node:path";
 import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_MAX_JOBS, DEFAULT_MAX_DELEGATE_DEPTH, DEFAULT_MUSE_BIN, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV, MAX_DELEGATE_DEPTH_LIMIT, MAX_JOBS_LIMIT } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { AGENT_KINDS, type AgentKind } from "./protocol.js";
 import { isRecord, readJsonStore, writeJsonStore } from "./json-store.js";
 import { DEFAULT_NETWORK_CONFIG, parseNetworkConfig, type NetworkConfig } from "../network/config.js";
 import { DEFAULT_QUESTION_ALERTS, questionAlertSettingsSchema, type QuestionAlertSettings } from "./owner-questions.js";
+import { parseMobileConfig, type MobileConfig } from "../mobile/config.js";
+import { configurePathDisplay, type PathDisplaySettings } from "./display-paths.js";
 
 /**
  * How incoming messages reach a Claude Code session.
@@ -36,12 +38,18 @@ export interface HistoryAnswerConfig {
 const DEFAULT_HISTORY_ANSWER: HistoryAnswerConfig = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
 
 export interface BridgeConfig {
-  history: { ingest: boolean };
+  /** Restart-applied, home top-level only; never projected in effective-config diagnostics. */
+  mobile?: MobileConfig;
+  /** Home-wide spelling preference, shared by sessions, CLI helpers and runners. */
+  pathDisplay: PathDisplaySettings;
+  history: { ingest: boolean; budgetBytes: number };
   questionAlerts: QuestionAlertSettings;
   projectGroups: boolean;
   historyAnswer: HistoryAnswerConfig;
   /** Peer name; defaults to "<agent>-<cwd basename>". */
   name: string | null;
+  /** Absolute root for new job worktrees; saved worktree paths are untouched. */
+  worktreeRoot: string | null;
   autoWake: boolean;
   /** Claude: a message addressed to this session wakes it without general auto-wake. */
   wakeOnDirect: boolean;
@@ -70,7 +78,7 @@ export interface BridgeConfig {
   jobCloseCleanup: boolean;
   /** Reviewer for eligible delegated Codex approvals; does not change the sandbox. */
   codexApprovalsReviewer: CodexApprovalsReviewer;
-  /** Worktree edit runs: null inherits codexSandbox, with workspace-write for a read-only default. */
+  /** Worktree edits: null inherits codexSandbox; read-only default becomes full access on Windows. */
   codexWorktreeSandbox: CodexSandbox | null;
   /** null keeps Codex's own sandbox_workspace_write.network_access setting. */
   codexWorkspaceWriteNetworkAccess: boolean | null;
@@ -103,11 +111,13 @@ export interface BridgeConfig {
 }
 
 export const DEFAULT_CONFIG: BridgeConfig = {
-  history: { ingest: true },
+  pathDisplay: { preferAlias: true },
+  history: { ingest: true, budgetBytes: 32 * 1024 ** 3 },
   questionAlerts: DEFAULT_QUESTION_ALERTS,
   projectGroups: true,
   historyAnswer: DEFAULT_HISTORY_ANSWER,
   name: null,
+  worktreeRoot: null,
   autoWake: false,
   wakeOnDirect: true,
   maxHops: DEFAULT_MAX_HOPS,
@@ -269,6 +279,27 @@ export function saveConfigValue(home: string, key: string, value: unknown): void
   writeJsonStore(path, { ...file, [key]: value }, previous);
 }
 
+/**
+ * Keys a repository's own `.agent-bridge/config.json` may set (AB-232). Everything else (CLI binaries, sandboxes,
+ * permission modes, auto-approval, remote wake, network, dashboard, worktree root and cleanup) is read from the
+ * owner's home config only, so a cloned repository cannot choose executables or loosen approvals.
+ */
+export const PROJECT_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  "projectGroups", "codexSubagents", "native_subagents", "effort", "name",
+  "codexModel", "claudeModel", "opencodeModel", "antigravityModel",
+  "autoWake", "wakeOnDirect", "delivery", "lingerSec", "maxHops",
+]);
+
+/** The project-overridable part of a project config record; agent sections are kept and filtered by the caller. */
+function projectOverrides(values: Record<string, unknown>, ignored: Set<string>, sections = false): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (PROJECT_CONFIG_KEYS.has(key) || (sections && (AGENT_KINDS as readonly string[]).includes(key))) out[key] = value;
+    else ignored.add(key);
+  }
+  return out;
+}
+
 /** Config file (~/.agent-bridge/config.json) with optional per-agent sections, overridden by env vars. */
 export function loadConfig(home: string, agent: AgentKind, log: Logger, env: NodeJS.ProcessEnv = process.env, projectDir?: string): BridgeConfig {
   let file: Record<string, unknown> = {};
@@ -285,8 +316,12 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     try { const value: unknown = JSON.parse(readFileSync(localPath, "utf8")); if (isRecord(value)) project = value; }
     catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") log.warn("ignoring unreadable project config", { path: localPath, err: String(err) }); }
   }
+  const ignored = new Set<string>();
+  project = projectOverrides(project, ignored, true);
   const section = isRecord(file[agent]) ? file[agent] : {};
-  const localSection = isRecord(project[agent]) ? project[agent] : {};
+  const localSection = isRecord(project[agent]) ? projectOverrides(project[agent], ignored) : {};
+  for (const kind of AGENT_KINDS) if (kind !== agent && isRecord(project[kind])) projectOverrides(project[kind], ignored);
+  if (ignored.size && projectDir) log.warn("ignoring project config keys that only the home config may set", { project: projectDir, keys: [...ignored].sort() });
   for (const values of [localSection,project]) if (values.codexSubagents===undefined && values.native_subagents!==undefined) values.codexSubagents=typeof values.native_subagents === "boolean" ? (values.native_subagents ? DEFAULT_CODEX_SUBAGENTS : 0) : values.native_subagents;
   /** First valid value wins: env var, then the agent section, then the top level of the file. */
   const pick = <T>(key: keyof BridgeConfig, envKey: string | null, parse: (v: unknown) => T | undefined): T | undefined => {
@@ -302,9 +337,15 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
 
   const d = DEFAULT_CONFIG;
   const cfg: BridgeConfig = {
-    history: { ingest: env.AGENT_BRIDGE_HISTORY_INGEST === "false" || env.AGENT_BRIDGE_HISTORY_INGEST === "0" ? false : !(isRecord(file.history) && file.history.ingest === false) },
+    // Helper reads using another agent kind must not reset this process-wide preference.
+    pathDisplay: isRecord(file.pathDisplay) && typeof file.pathDisplay.preferAlias === "boolean" ? { preferAlias: file.pathDisplay.preferAlias } : d.pathDisplay,
+    history: {
+      ingest: env.AGENT_BRIDGE_HISTORY_INGEST === "false" || env.AGENT_BRIDGE_HISTORY_INGEST === "0" ? false : !(isRecord(file.history) && file.history.ingest === false),
+      budgetBytes: isRecord(file.history) && Number.isSafeInteger(file.history.budgetBytes) && Number(file.history.budgetBytes) >= 0 ? Number(file.history.budgetBytes) : d.history.budgetBytes,
+    },
     projectGroups: [localSection.projectGroups, project.projectGroups, section.projectGroups, file.projectGroups].find((v) => v !== undefined) === undefined ? true : [localSection.projectGroups, project.projectGroups, section.projectGroups, file.projectGroups].find((v) => v !== undefined) === true,
     name: pick("name", ENV.name, str) ?? d.name,
+    worktreeRoot: pick("worktreeRoot", "AGENT_BRIDGE_WORKTREE_ROOT", (v) => typeof v === "string" && isAbsolute(v) ? v : undefined) ?? d.worktreeRoot,
     autoWake: pick("autoWake", ENV.autoWake, parseBool) ?? d.autoWake,
     wakeOnDirect: pick("wakeOnDirect", ENV.wakeOnDirect, parseBool) ?? d.wakeOnDirect,
     maxHops: pick("maxHops", ENV.maxHops, (v) => parseIntInRange(v, 0, MAX_HOPS_LIMIT)) ?? d.maxHops,
@@ -348,6 +389,9 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     network: pick("network", null, parseNetworkConfig) ?? d.network,
   };
   log.debug("effective config", { ...cfg });
+  const mobile = parseMobileConfig(file.mobile);
+  if (mobile) cfg.mobile = mobile;
+  configurePathDisplay(cfg.pathDisplay);
   return cfg;
 }
 

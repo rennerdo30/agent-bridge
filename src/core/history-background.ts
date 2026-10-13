@@ -1,3 +1,4 @@
+import { bundleDirectory } from "./bundle-directory.js";
 import { Worker } from "node:worker_threads";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -6,36 +7,49 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Logger } from "./logger.js";
 import { transcriptPaths } from "./transcripts/common.js";
 import type { PeerInfo } from "./protocol.js";
-import { historyDbPath, releaseExitedHistoryLease } from "./history-store.js";
+import { historyDbPath, releaseExitedHistoryLease, HISTORY_IO_BYTES_PER_SECOND, type HistoryMigrationProgress } from "./history-store.js";
 
 type Batch = { work: number; discovering: boolean };
 /** One elected worker; no source I/O or indexing writes on message dispatch. */
+/** At most one message wake per this interval while messages stream in. */
+const WAKE_COALESCE_MS = 250;
 export class HistoryBackground {
+  private progress: HistoryMigrationProgress = { phase: "starting", percent: 0, etaSeconds: null, paused: false, completedRows: 0, totalRows: 0, snapshot: null, ioBytesPerSecond: HISTORY_IO_BYTES_PER_SECOND, error: null };
   private worker!: Worker;
   private stopped = false;
   private exited = false;
   private restart: NodeJS.Timeout | null = null;
+  private wakeTimer: NodeJS.Timeout | null = null;
+  private wakeAgain = false;
   private id = 0;
   private migrationLease: string | null = null;
+  private reconcilingAsks: Promise<Batch> | null = null;
+  private lastPressure: boolean | undefined;
   private pending = new Map<
     number,
     { resolve: (b: Batch) => void; reject: (e: Error) => void }
   >();
   constructor(file: string, log: Logger) {
-    let entry = new URL("./history-worker.mjs", import.meta.url);
+    let entry = pathToFileURL(join(bundleDirectory(import.meta.url), "history-worker.mjs"));
     if (import.meta.url.endsWith(".ts")) {
       // Source-mode tests/dev use their own checkout's dependency and ignored output.
       const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
-      const path = join(root, ".agent-bridge-test", "history-worker.mjs");
+      const path = join(process.env.AGENT_BRIDGE_TEST_ROOT ?? join(root, ".agent-bridge-test"), "history-worker.mjs");
       const inputs = [
         "config.ts",
         "history-store.ts",
+        "history-migration.ts",
         "history-schema.ts",
         "conversation-schema.ts",
         "history-worker.ts",
         "history.ts",
         "conversations.ts",
         "project-store.ts",
+        "ask-completion.ts",
+        "history-budget.ts",
+        "savepoint.ts",
+        "store-compatibility.ts",
+        "metadata-db.ts",
       ];
       if (
         !existsSync(path) ||
@@ -60,12 +74,14 @@ export class HistoryBackground {
       entry = pathToFileURL(path);
     }
     const start = () => {
+      this.lastPressure = undefined;
       this.exited = false;
       this.worker = new Worker(entry, {
         workerData: { file: historyDbPath(file), bridge: file, home: dirname(file), paths: transcriptPaths() },
         execArgv: [],
       });
       this.worker.on("message", (message) => {
+        if (message.migrationProgress) { this.progress = message.migrationProgress; return; }
         if ("migrationLease" in message) { this.migrationLease = message.migrationLease; return; }
         if (message.id) {
           const pending = this.pending.get(message.id);
@@ -101,8 +117,31 @@ export class HistoryBackground {
     };
     start();
   }
+  status(): HistoryMigrationProgress { return { ...this.progress }; }
   pressure(pending: boolean, lockError = false): void {
-    if (!this.stopped && !this.exited) this.worker.postMessage({ pressure: true, pending, lockError });
+    if (!this.stopped && !this.exited && (this.lastPressure !== pending || lockError)) {
+      this.lastPressure = pending;
+      this.worker.postMessage({ pressure: true, pending, lockError });
+    }
+  }
+  /**
+   * New bridge messages wake a backed-off worker (AB-147 backs idle sweeps off to 30 s), so a
+   * just-sent message is searchable promptly. Event driven, so an idle bridge still does nothing.
+   * The post waits for the current turn (the sending transaction commits first), and a stream of
+   * messages yields at most one wake per WAKE_COALESCE_MS.
+   */
+  messageArrived(): void {
+    if (this.stopped || this.exited) return;
+    if (this.wakeTimer) { this.wakeAgain = true; return; }
+    this.wakeTimer = setTimeout(() => {
+      if (!this.stopped && !this.exited) this.worker.postMessage({ wake: true });
+      this.wakeTimer = setTimeout(() => {
+        this.wakeTimer = null;
+        if (this.wakeAgain) { this.wakeAgain = false; this.messageArrived(); }
+      }, WAKE_COALESCE_MS);
+      this.wakeTimer.unref();
+    }, 0);
+    this.wakeTimer.unref();
   }
   rememberPeer(peer: PeerInfo): void {
     if (!this.stopped && !this.exited) this.worker.postMessage({ peer });
@@ -118,9 +157,21 @@ export class HistoryBackground {
       this.worker.postMessage({ id, reset });
     });
   }
+  reconcileAsks(): Promise<Batch> {
+    if (this.reconcilingAsks) return this.reconcilingAsks;
+    if (this.stopped || this.exited) return Promise.reject(new Error("Job reconciliation worker unavailable; retry later"));
+    this.reconcilingAsks = new Promise<Batch>((resolve, reject) => {
+      const id = ++this.id;
+      this.pending.set(id, { resolve, reject });
+      this.worker.postMessage({ id, reconcileAsks: true });
+    }).finally(() => { this.reconcilingAsks = null; });
+    return this.reconcilingAsks;
+  }
   async close(): Promise<void> {
     this.stopped = true;
     if (this.restart) clearTimeout(this.restart);
+    if (this.wakeTimer) clearTimeout(this.wakeTimer);
+    this.wakeTimer = null;
     for (const p of this.pending.values())
       p.reject(new Error("History worker closed"));
     this.pending.clear();

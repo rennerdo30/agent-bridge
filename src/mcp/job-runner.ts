@@ -1,17 +1,20 @@
 import { ProjectGroups } from "../core/project-groups.js";
+import { worktreeProcesses, worktreeProcessReport } from "../core/worktree-processes.js";
 import { canControlJob } from "../core/job-ownership.js";
 import { join } from "node:path";
 import { JOBS_FILE } from "../core/constants.js";
 import { readStore } from "./jobs.js";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { COMPLETION_DEDUPE_PREFIX } from "../core/completion.js";
-import { archiveFile, assertWritableStore, readJsonStore } from "../core/json-store.js";
+import { takeRunnerSpec } from "../core/runner-store.js";
 import { failureCause } from "../core/delegate.js";
 import { createLogger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolvePipePath } from "../core/paths.js";
 import { loadOrCreateToken } from "../core/token.js";
-import { ACK_CONVERSATION_SUFFIX, SIBLING_CONVERSATION_PREFIX } from "../core/protocol.js";
+import { ACK_CONVERSATION_SUFFIX, QUESTION_CONVERSATION_SUFFIX, SIBLING_CONVERSATION_PREFIX, type BridgeMessage, type SendResult } from "../core/protocol.js";
+import type { ParentRoute } from "../core/parent-link.js";
 import { isPureAcknowledgement } from "../core/job-messaging.js";
 import { resumeArgs, runDelegate, type JobSink, type RunContext } from "./delegate-run.js";
 import { CONTROL_CONVERSATION_PREFIX, JOB_PEER_PREFIX, RUNNER_HEARTBEAT_MS, writeRunnerState, type RunnerSpec } from "./job-host.js";
@@ -20,8 +23,11 @@ import { changedJobArgs } from "./job-settings.js";
 import { processCleanupReport, establishWindowsJobScope, type WindowsJobScope } from "../core/windows-job-scope.js";
 import type { Logger } from "../core/logger.js";
 import { closeJobWorktree } from "../core/job-close.js";
-import { recordWorktreeProcessProof } from "../core/worktree-state.js";
+import { recordWorktreeProcessProofWithRetry } from "../core/worktree-state.js";
 import { acquireStartup } from "../core/startup-admission.js";
+import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
+import { guardRunnerErrors } from "./job-runner-errors.js";
+import { configurePathDisplay } from "../core/display-paths.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
 const SEND_ATTEMPTS = 30;
@@ -32,6 +38,46 @@ const PROGRESS_SAVE_MS = 1_000;
 const SEEN_LIMIT = 100;
 /** After SIGTERM, a runner that has not wound down by then exits anyway. */
 const STOP_DEADLINE_MS = 15_000;
+/**
+ * Initial storage admission is bounded before any native turn starts. The host keeps a runner whose PID is
+ * known and alive, so a slow admission waits instead of failing the turn (AB-278).
+ */
+export const INITIAL_STATE_DEADLINE_MS = 5 * 60_000;
+const INITIAL_STATE_RETRY_MAX_MS = 2_000;
+
+export async function publishInitialRunnerState(spec: Pick<RunnerSpec, "home" | "job">, log: Logger, deadlineMs = INITIAL_STATE_DEADLINE_MS): Promise<void> {
+  const controller = new AbortController();
+  const stop = () => controller.abort(new Error("Job runner stopped before initial state publication"));
+  const deadline = setTimeout(() => controller.abort(new Error("Job runner initial state publication timed out after waiting for store admission")), deadlineMs);
+  process.on("SIGTERM", stop); process.on("SIGINT", stop);
+  try {
+    for (let attempt = 0; ; attempt++) {
+      // Cold identity readiness stays a precondition of the first write. A slow or failed identity query (a
+      // PowerShell batch on Windows under load) is retried within the deadline instead of failing the turn (AB-278).
+      try { await refreshStorePeerIdentities(spec.home, controller.signal); }
+      catch (error) {
+        controller.signal.throwIfAborted();
+        if (attempt === 0 || attempt % 30 === 0) log.info("initial runner state waits for reader identities", { job: spec.job.name, attempt, reason: String(error) });
+        await delay(Math.min(INITIAL_STATE_RETRY_MAX_MS, (attempt + 1) * 100), undefined, { signal: controller.signal });
+        continue;
+      }
+      controller.signal.throwIfAborted();
+      try {
+        // Another runner can publish presence after the asynchronous scan. Keep
+        // the compatibility guard authoritative and reverify rather than exit.
+        writeRunnerState(spec.home, spec.job.id, { pid: process.pid, peer: spec.job.name, status: "running", updatedAt: Date.now(), progress: "queued: runner startup admission" });
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED") throw error;
+        if (attempt === 0 || attempt % 30 === 0) log.info("initial runner state waits for retained store readers", { job: spec.job.name, attempt, reason: String(error) });
+        await delay(Math.min(INITIAL_STATE_RETRY_MAX_MS, (attempt + 1) * 100), undefined, { signal: controller.signal });
+      }
+    }
+  } finally {
+    clearTimeout(deadline);
+    process.off("SIGTERM", stop); process.off("SIGINT", stop);
+  }
+}
 
 /**
  * `agent-bridge job-runner <spec>`: runs one background job, detached from the session's MCP server (see
@@ -40,32 +86,39 @@ const STOP_DEADLINE_MS = 15_000;
  */
 export async function runJobRunner(specFile: string | undefined): Promise<number> {
   if (!specFile) return 2;
-  const data = readJsonStore(specFile);
-  assertWritableStore(data);
+  // The spec row (AB-208), or a spec file written by an older server or a fixture. Taken once.
+  const data = takeRunnerSpec(specFile);
   if (!data) return 2;
   const spec = data as unknown as RunnerSpec;
-  archiveFile(specFile);
   const { home } = spec;
   const log = createLogger({ home, component: "job-runner" }).child(spec.job.name);
   // This is a dedicated runner, never the shared broker/MCP server. Establish ownership
   // before any delegate can create tools, including tools whose intermediate parents exit.
   let scope: WindowsJobScope | null = null;
-  // Publish the real runner PID before Windows ownership or machine admission can wait.
-  writeRunnerState(home, spec.job.id, { pid: process.pid, peer: spec.job.name, status: "running", updatedAt: Date.now(), progress: "queued: runner startup admission" });
-  if (process.platform === "win32") {
-    const controller = new AbortController();
-    const stop = () => controller.abort();
-    process.on("SIGTERM", stop); process.on("SIGINT", stop);
-    try {
-      const release = await acquireStartup(home, controller.signal);
-      try { controller.signal.throwIfAborted(); scope = await establishWindowsJobScope(log); }
-      finally { release(); }
-    } finally { process.off("SIGTERM", stop); process.off("SIGINT", stop); }
-  }
+  const releaseErrorGuards = guardRunnerErrors(log);
   try {
+    // This detached runner has a cold process cache. Resolve retained reader generations
+    // before its first versioned state write; the broker/election hot paths never await this.
+    // Publish the real runner PID before Windows ownership or machine admission can wait.
+    await publishInitialRunnerState(spec, log);
+    if (process.platform === "win32") {
+      const controller = new AbortController();
+      const stop = () => controller.abort();
+      process.on("SIGTERM", stop); process.on("SIGINT", stop);
+      try {
+        const release = await acquireStartup(home, controller.signal);
+        try { controller.signal.throwIfAborted(); scope = await establishWindowsJobScope(log); }
+        finally { release(); }
+      } finally { process.off("SIGTERM", stop); process.off("SIGINT", stop); }
+    }
     return await runOwnedJobRunner(spec, log, scope);
+  } catch (error) {
+    // The detached runner's stderr is not retained: record why it ends without a report.
+    log.error("job runner failed", { err: String((error as Error)?.stack ?? error) });
+    throw error;
   } finally {
-    scope?.detach();
+    try { scope?.detach(); }
+    finally { releaseErrorGuards(); }
   }
 }
 
@@ -93,9 +146,9 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
 
   let extra: Partial<RunnerState> = { status: "running" };
   const save = (patch: Partial<RunnerState> = {}) => {
-    refreshOwner();
     extra = { ...extra, ...patch };
     try {
+      refreshOwner();
       writeRunnerState(home, job.id, {
         pid: process.pid,
         peer: node.name,
@@ -148,24 +201,36 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
 
   // Messages to the session, in order. Each is tried until the bridge takes it (the session may be offline:
   // then it waits in the store for the session's next server).
-  let chain: Promise<boolean> = Promise.resolve(true);
-  const deliver = async (body: string, replyTo: string | null, note = false, key?: string): Promise<boolean> => {
+  let chain: Promise<unknown> = Promise.resolve();
+  const deliver = async (body: string, replyTo: string | null, note = false, key?: string, question = false): Promise<SendResult | null> => {
     // One key for all attempts: a send that timed out here may still be queued at a slow broker.
-    refreshOwner();
     const dedupeKey = key ?? randomUUID();
     for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
       try {
-        const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
-        await node.send({ to: owner, body, conversationId: `job-${job.id}${suffix}`, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
-        return true;
+        // A retry may cross a handoff or reload. Routing changes never replace the active delegate.
+        refreshOwner();
+        // A question is marked so the broker can route it to the project main while the parent is offline (AB-249).
+        const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : question ? QUESTION_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
+        return await node.send({ to: owner, body, conversationId: `job-${job.id}${suffix}`, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
       } catch (err) {
         log.warn("could not deliver to the session; retrying", { owner, attempt, err: (err as Error).message });
         await new Promise((r) => setTimeout(r, Math.min(attempt * 1_000, SEND_RETRY_MAX_MS)));
       }
     }
-    return false;
+    return null;
   };
-  const post = (body: string, replyTo: string | null = null, note = false, key?: string): Promise<boolean> => (chain = chain.then(() => deliver(body, replyTo, note, key)));
+  const inOrder = (body: string, replyTo: string | null, note: boolean, key?: string, question = false): Promise<SendResult | null> => {
+    const sent = chain.then(() => deliver(body, replyTo, note, key, question));
+    chain = sent;
+    return sent;
+  };
+  const post = (body: string, replyTo: string | null = null, note = false, key?: string): Promise<boolean> =>
+    inOrder(body, replyTo, note, key).then((result) => result !== null);
+  /** Send a question and say where the broker put it: the parent, the project main, or a queue. */
+  const ask = async (body: string, replyTo: string | null): Promise<ParentRoute> => {
+    const result = await inOrder(body, replyTo, false, undefined, true);
+    return questionRoute(result, owner, async (name) => (await node.peers()).some((p) => p.name === name && p.projectMain === true));
+  };
 
   const sink: JobSink = {
     persist: () => save(),
@@ -176,9 +241,10 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       return answer.finally(() => save());
     },
     // Its own status notes do not wake the session (see JobManager.fromSubagent); answers and replies do.
-    fromSubagent: (j, body, replyTo, isAnswer, forceNote) => {
+    fromSubagent: (j, body, replyTo, isAnswer, forceNote, question) => {
       const answer = !forceNote && (Boolean(isAnswer) || replyTo !== null || j.awaitingAnswer === true);
       if (!forceNote && !isPureAcknowledgement(body)) j.awaitingAnswer = false;
+      if (question && !forceNote && !isPureAcknowledgement(body)) return ask(body, replyTo);
       void post(body, replyTo, !answer);
     },
     note: (j, facts) => {
@@ -189,12 +255,11 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     },
   };
 
-  node.on("message", async (m) => {
+  const handleControl = async (m: BridgeMessage) => {
     // Direct sibling chat is handled by the current turn's SiblingLink, never as supervisor control.
     if (m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX)) return;
-    node.markRead([m.id]);
     if (!m.conversationId.startsWith(CONTROL_CONVERSATION_PREFIX)) {
-      log.info("ignoring a message that is not from the job's session", { from: m.from.name });
+      log.warn("unsupported ordinary job mail retained unread", { from: m.from.name, id: m.id });
       return;
     }
     // A remote job's supervisor is fixed by the authenticated spawn, never by an incoming message.
@@ -208,8 +273,8 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     } catch {
       return;
     }
-    if (c.type === "cancel" && !isCurrentRunnerCancel(m.createdAt, spec.job.startedAt)) {
-      log.info("ignoring cancellation from an earlier job turn", { createdAt: m.createdAt, startedAt: spec.job.startedAt });
+    if (c.type === "cancel" && !isCurrentRunnerCancel(m.createdAt, job.startedAt)) {
+      log.info("ignoring cancellation from an earlier job turn", { createdAt: m.createdAt, startedAt: job.startedAt });
       return;
     }
     refreshOwner();
@@ -218,17 +283,19 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       const master = peers.find((p) => p.name === m.from.name);
       if (!master || !new ProjectGroups(home).canControl(master, job as unknown as Record<string, unknown>, peers)) return;
     }
-    // The session may be a new server now, maybe under another name: answer where it is.
-    if (m.from.name !== owner) log.info("the job's session is now", { name: m.from.name, was: owner });
+    // A project master can control the job without becoming its durable primary owner.
+    if (m.from.name !== owner) log.info("job control received from another session", { name: m.from.name, owner });
     void node.updateJob({ jobParent: owner }).catch(() => {});
     if (c.type === "message") {
       if (closing) return;
-      seen.push(c.cid);
-      if (job.live) {
-        job.awaitingAnswer = true;
-        job.live.post(c.body);
+      if (!seen.includes(c.cid)) {
+        if (job.live) {
+          job.awaitingAnswer = true;
+          job.live.post(c.body);
+        }
+        else job.queue.push(c.body);
+        seen.push(c.cid);
       }
-      else job.queue.push(c.body);
       save();
     } else if (c.type === "title") {
       job.args = { ...job.args, title: c.title };
@@ -244,8 +311,25 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       log.info("cancelled by the session");
       job.queue = [];
       job.controller.abort();
+      save({ stopping: true });
     }
-  });
+    node.markRead([m.id]);
+  };
+  let controls: Promise<void> = Promise.resolve();
+  const controlRetries = new Map<string, NodeJS.Timeout>();
+  const onControl = (m: BridgeMessage) => {
+    controls = controls.then(() => handleControl(m)).catch((err) => {
+      // EventEmitter does not observe async listener rejections. A broker timeout must never
+      // become an unhandled rejection that terminates this runner and its active CLI turn.
+      log.warn("job control deferred; active turn kept running", { id: m.id, err: String(err) });
+      if (!closing && !controlRetries.has(m.id)) {
+        const timer = setTimeout(() => { controlRetries.delete(m.id); onControl(m); }, 1_000);
+        timer.unref();
+        controlRetries.set(m.id, timer);
+      }
+    });
+  };
+  node.on("message", onControl);
   const stop = () => {
     job.queue = [];
     job.controller.abort();
@@ -263,11 +347,12 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       save();
     }, PROGRESS_SAVE_MS);
   };
+  configurePathDisplay(spec.cfg.pathDisplay ?? { preferAlias: true });
   const rc: RunContext = { agent: spec.byAgent, cfg: spec.cfg, home, log, me: () => owner, cwd: () => spec.cwd, jobs: sink, jobNode: node };
 
   let args = spec.args;
   for (;;) {
-    let status: "done" | "failed";
+    let status: "done" | "failed" | "cancelled";
     let text = "";
     let cause: string | null = null;
     let processesStopped = false;
@@ -276,7 +361,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       job.workdir = res.workdir ?? job.workdir;
       job.worktree = res.worktree ?? job.worktree;
       job.sessionId = res.sessionId ?? job.sessionId;
-      status = res.isError ? "failed" : "done";
+      status = res.status ?? (res.isError ? "failed" : "done");
       text = res.text || "(no answer text returned)";
       cause = res.isError ? failureCause({ result: res }) : null;
     } catch (err) {
@@ -300,13 +385,23 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
         text += "\n\n" + cause + ". Ownership containment remains active until the runner exits.";
       }
     }
+    if (!scope && job.worktree?.path) {
+      text += "\n\n" + worktreeProcessReport(await worktreeProcesses(job.worktree.path));
+    }
     job.etaAt = undefined;
-    if (job.worktree) recordWorktreeProcessProof(home, job.worktree, processesStopped);
+    if (job.worktree) {
+      try {
+        await recordWorktreeProcessProofWithRetry(home, job.worktree, processesStopped, { log });
+      } catch (err) {
+        log.warn("could not write the worktree process proof; worktree retained", { err: (err as Error).message });
+      }
+    }
     if (job.controller.signal.aborted && processesStopped) {
       const cleanup = await closeJobWorktree({ home, job: { ...job, status }, enabled: spec.cfg.jobCloseCleanup, log });
       text += `\n\nWorktree close: ${cleanup.action}: ${cleanup.reason}`;
     }
     job.etaReportedAt = undefined;
+    if (job.controller.signal.aborted) status = "cancelled";
     const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause);
     log.info("job turn finished", { status, sessionId: job.sessionId, cause });
     // The supervisor's JobManager emits the finish/fail notification when it settles this
@@ -333,6 +428,10 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     break;
   }
   clearInterval(heartbeat);
+  for (const timer of controlRetries.values()) clearTimeout(timer);
+  node.off("message", onControl);
+  process.off("SIGTERM", stop);
+  process.off("SIGINT", stop);
   await node.stop();
   return 0;
 }
@@ -340,4 +439,13 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
 /** Legacy 0.29.10 control mail also carries its original broker timestamp. */
 export function isCurrentRunnerCancel(createdAt: number, startedAt: number): boolean {
   return createdAt >= startedAt;
+}
+
+/** Where the broker put a job's question (AB-249), from its send result. */
+export async function questionRoute(result: SendResult | null, parent: string, isMain: (name: string) => Promise<boolean>): Promise<ParentRoute> {
+  if (!result) return { state: "unconfirmed", parent };
+  const delivered = result.deliveredTo[0];
+  if (delivered === parent) return { state: "delivered", parent };
+  if (delivered) return { state: "rerouted", parent, recipient: delivered, main: await isMain(delivered).catch(() => false) };
+  return { state: "queued", parent, recipient: result.queuedFor[0] ?? parent };
 }

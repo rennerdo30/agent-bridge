@@ -7,6 +7,8 @@ import { BridgeNode } from "../src/core/node.js";
 import { commitHandoff } from "../src/core/job-handoff.js";
 import { JobManager, readStore, type Job, type Run } from "../src/mcp/jobs.js";
 import { JOBS_FILE } from "../src/core/constants.js";
+import { archiveJobs } from "../src/core/job-archive.js";
+import { readJobVersions } from "../src/core/job-archive-index.js";
 import { nullLogger } from "../src/core/logger.js";
 import { MessageStore } from "../src/core/store.js";
 import { RootConcurrency } from "../src/core/root-concurrency.js";
@@ -150,11 +152,11 @@ describe("local subagent ownership handoff", () => {
   });
 
   it("moves archived jobs without changing their archived bytes", async () => {
-    mkdirSync(join(env.home, "archive"));
-    const archive = join(env.home, "archive", "jobs-saved.json");
-    const bytes = JSON.stringify({ jobs: [record("a")] }); writeFileSync(archive, bytes); save([]);
+    // AB-206: archived jobs are job index versions; the handoff adds a version and keeps the archived one.
+    const archived = record("a");
+    archiveJobs(path(), [archived]); save([]);
     await source.handoffSubagents({ to: target.name });
-    expect(readFileSync(archive, "utf8")).toBe(bytes);
+    expect(readJobVersions(path(), "a")[0]).toEqual(archived);
     expect(readStore(path(), undefined, true).find((j) => j.id === "a")!.owner).toBe(target.name);
   });
 
