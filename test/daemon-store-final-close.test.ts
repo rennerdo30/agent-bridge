@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openArchive, archiveInitializationObservation } from "../src/core/sqlite-maintenance.js";
 import { openHistoryStore, historyInitializationObservation } from "../src/core/history-store.js";
 import { storageLease, storageLeaseObservation } from "../src/core/storage-lock.js";
+import { DecisionStore, DECISIONS_SCHEMA } from "../src/core/decisions.js";
+import type { BridgeMessage } from "../src/core/protocol.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 const leaseFault = vi.hoisted(() => ({ path: "", mode: "none" as "none" | "before" | "after", failure: new Error("SIMULATED lease removal failure") }));
@@ -168,5 +170,61 @@ describe("actual operation-scoped storage lease evidence (not lifecycle release 
   it("never treats a repeated ordinary callback as another confirmed lease outcome", () => {
     const { release } = acquired(); release(); release();
     expect(storageLeaseObservation(release)).toMatchObject({ release: "unknown", retained: true, ownershipReleased: false });
+  });
+});
+
+describe("actual decision consumer admission (not complete owner or retirement authority)", () => {
+  function consumer() {
+    const db = new DatabaseSync(join(env.home, "owned-decisions.db")); owned.set(db, { actuallyClosed: false });
+    db.exec(DECISIONS_SCHEMA); db.exec("CREATE TABLE owned_mail(id TEXT PRIMARY KEY, body BLOB NOT NULL)");
+    return { db, decisions: new DecisionStore(db) };
+  }
+  const author = { id: "owned-author", name: "owned-author", agent: "other" as const };
+  const message: BridgeMessage = { id: "owned-notification", from: author, to: "owned-session", recipient: "owned-session",
+    conversationId: "owned-decision", replyTo: null, hop: 1, body: "Exact accepted notification bytes", createdAt: 1, readAt: null };
+  it("sealed direct record/import/list/enqueue/link entry refuses before any native SQL and reversible resume preserves normal behavior", () => {
+    const { db, decisions } = consumer();
+    const row = decisions.record({ topic: "owned", text: "Exact accepted decision bytes", scope: "all" }, author, 1);
+    decisions.sealLifecycleConsumer();
+    const exec = vi.spyOn(DatabaseSync.prototype, "exec"), prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
+    for (const operation of [
+      () => decisions.record({ topic: "next", text: "retained", scope: "all" }, author, 2),
+      () => decisions.importSync(row), () => decisions.list(),
+      () => decisions.enqueue(row, "owned-session", message, () => { throw new Error("must not enter"); }),
+      () => decisions.linkSession("owned-session", "next-session"),
+    ]) expect(operation).toThrow(expect.objectContaining({ code: "OWNER_QUIESCED" }));
+    expect(decisions.lifecycleConsumerObservation()).toMatchObject({ sealed: true, pendingOperations: 0, transactionSettled: true,
+      ownerBound: false, settled: false, blocker: "owner_unsupported", ownershipReleased: false });
+    expect(exec).not.toHaveBeenCalled(); expect(prepare).not.toHaveBeenCalled();
+    vi.restoreAllMocks(); decisions.resumeLifecycleConsumer();
+    expect(decisions.list()).toContainEqual(expect.objectContaining({ id: row.id, text: "Exact accepted decision bytes" }));
+    expect(db.prepare("SELECT count(*) AS n FROM decision_deliveries").get()!.n).toBe(0);
+  });
+  it("a seal during an already accepted arbitrary insert preserves actual COMMIT and bytes but admits no new decision entry", () => {
+    const { db, decisions } = consumer();
+    const row = decisions.record({ topic: "owned", text: "Exact accepted decision bytes", scope: "all" }, author, 1);
+    expect(decisions.enqueue(row, "owned-session", message, () => {
+      expect(decisions.sealLifecycleConsumer()).toMatchObject({ sealed: true, pendingOperations: 1, callbackUnknown: true, transactionSettled: false });
+      expect(() => decisions.linkSession("owned-session", "new-unaccepted-session")).toThrow(expect.objectContaining({ code: "OWNER_QUIESCED" }));
+      db.prepare("INSERT INTO owned_mail VALUES(?,?)").run(message.id, Buffer.from(message.body));
+    })).toBe(true);
+    expect(db.isTransaction).toBe(false);
+    expect(db.prepare("SELECT count(*) AS n FROM decision_deliveries").get()!.n).toBe(1);
+    expect(Buffer.from(db.prepare("SELECT body FROM owned_mail WHERE id=?").get(message.id)!.body as Uint8Array).toString()).toBe(message.body);
+    expect(decisions.lifecycleConsumerObservation()).toMatchObject({ sealed: true, pendingOperations: 0, callbackUnknown: true,
+      settled: false, blocker: "owner_unsupported", ownershipReleased: false });
+    decisions.resumeLifecycleConsumer(); expect(decisions.lifecycleConsumerObservation().callbackUnknown).toBe(true);
+  });
+  it("real SQL failure is retained as unknown and a native transaction property is not complete settlement proof", () => {
+    const { db, decisions } = consumer();
+    db.exec("DROP TABLE decision_deliveries");
+    expect(() => decisions.linkSession("owned-session", "next-session")).toThrow();
+    expect(decisions.lifecycleConsumerObservation()).toMatchObject({ pendingOperations: 0, unknown: true, ownershipReleased: false });
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      expect(decisions.sealLifecycleConsumer()).toMatchObject({ pendingOperations: 0, transactionSettled: false, settled: false,
+        ownerBound: false, blocker: "owner_unsupported" });
+    } finally { db.exec("ROLLBACK"); }
+    decisions.resumeLifecycleConsumer(); expect(decisions.lifecycleConsumerObservation().unknown).toBe(true);
   });
 });
