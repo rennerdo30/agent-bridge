@@ -338,6 +338,13 @@ export class LifecycleJournal {
     current(); const creationIdentity = await readOwnWindowsLifecycleIdentity(capability, deadline); current();
     if (!creationIdentity) fail("writer_unknown");
     const owner = { nonce: initial.ownerInstance, pid: process.pid, creationIdentity };
+    // Refusal only: any existing object (including a link) or unreadable/unknown
+    // fixed path cannot be adopted as exclusively NEW bootstrap state.
+    let absent = false;
+    try { lstatSync(join(initial.home, DIRECTORY)); }
+    catch (error) { if ((error as NodeJS.ErrnoException)?.code === "ENOENT") absent = true; else fail("publication_unproved"); }
+    if (!absent) fail("publication_unproved");
+    current(); // Original cap/deadline still applies before atomic exclusive creation.
     const created = await createWindowsLifecycleObjects(capability, deadline); current();
     const guard = () => { current(); assertWindowsLifecycleCreation(created, capability); };
     const dir = join(initial.home, DIRECTORY), file = join(dir, FILE);

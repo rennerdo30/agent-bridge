@@ -166,7 +166,9 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
   it("an existing partial directory and retained bytes are never adopted or repaired", async () => {
     const b = await serving(); mkdirSync(directory()); const sentinel = join(directory(), "retained"); writeFileSync(sentinel, Buffer.from([0, 255, 4]));
     const before = lstatSync(directory(), { bigint: true }), end = performance.now() + 5000;
-    await expect(LifecycleJournal.bootstrapServing(b.lifecycleServingCapability("prepare", end), end)).rejects.toThrow("unavailable");
+    const creation = vi.spyOn(windowsLifecycle, "createWindowsLifecycleObjects");
+    await expect(LifecycleJournal.bootstrapServing(b.lifecycleServingCapability("prepare", end), end)).rejects.toMatchObject({ reason: "publication_unproved" });
+    expect(creation).not.toHaveBeenCalled();
     expect(readFileSync(sentinel)).toEqual(Buffer.from([0, 255, 4])); expect(existsSync(file())).toBe(false);
     const after = lstatSync(directory(), { bigint: true }); expect([after.dev, after.ino, after.birthtimeNs]).toEqual([before.dev, before.ino, before.birthtimeNs]);
   });
