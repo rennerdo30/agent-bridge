@@ -5,7 +5,6 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi, type Mock } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
-import { pidAlive } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 import { metadataFileLease } from "../src/core/metadata-file-lease.js";
 import { JobManager, type FollowUpGate, type Job, type Resume, type Run, type RunnerState } from "../src/mcp/jobs.js";
@@ -13,9 +12,6 @@ import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 import { registerTools, type ServerContext } from "../src/mcp/server.js";
 
 // Mock external probes/leases, never the decision branches or their authorization.
-vi.mock("../src/core/delegate.js", async original => ({
-  ...await original<typeof import("../src/core/delegate.js")>(), pidAlive: vi.fn(() => true),
-}));
 vi.mock("../src/core/metadata-file-lease.js", () => ({ metadataFileLease: vi.fn(() => vi.fn()) }));
 
 const SECRET = "synthetic-private-content-must-not-escape";
@@ -23,12 +19,13 @@ const reasons: FollowUpGate["reason"][] = ["control_lock_busy", "interrupted_exe
   "cancellation_guard_foreign_or_unowned", "cancellation_guard_no_resume", "runner_terminal_not_settled"];
 let jobs: JobManager, job: Job, home: string, store: string;
 let resume: Mock<Resume>, control: Mock<(...args: unknown[]) => Promise<void>>, start: Mock<Run>;
+let probe: ReturnType<typeof vi.spyOn<typeof process, "kill">>;
 const closes: (() => Promise<void>)[] = [];
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(metadataFileLease).mockImplementation(() => vi.fn());
-  vi.mocked(pidAlive).mockReturnValue(true);
+  probe = vi.spyOn(process, "kill").mockImplementation(() => true);
   home = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "follow-up-gate-"));
   store = join(home, "jobs.json");
   const node = new LocalCoordinator("owner", "owner-session");
@@ -88,7 +85,7 @@ it.each(reasons)("labels the real %s refusal without new queue, launch, control 
   const before = Date.now();
   const result = jobs.followUp(job.name, "new synthetic message");
   expect(result.outcome).toBe("stopping");
-  expect(result.gate).toEqual({ reason, jobId: job.id, startedAt: turn, observedAt: expect.any(Number),
+  expect(result.gate).toEqual({ reason, jobId: job.id, observedLocalStartedAt: turn, durableTurn: "unknown", observedAt: expect.any(Number),
     executorIdentity: "unknown", controllerAborted: controller.signal.aborted,
     hasResume: Boolean(job.resume), hasSession: true });
   expect(result.gate!.observedAt).toBeGreaterThanOrEqual(before);
@@ -98,8 +95,8 @@ it.each(reasons)("labels the real %s refusal without new queue, launch, control 
   expect(persist).not.toHaveBeenCalled(); expect(control).not.toHaveBeenCalled();
   expect(start).not.toHaveBeenCalled(); expect(resume).not.toHaveBeenCalled();
   expect(readFileSync(store, "utf8")).toBe(bytes);
-  if (reason === "interrupted_executor_probe") expect(pidAlive).toHaveBeenCalledWith(987);
-  else expect(pidAlive).not.toHaveBeenCalled();
+  if (reason === "interrupted_executor_probe") expect(probe).toHaveBeenCalledWith(987, 0);
+  else expect(probe).not.toHaveBeenCalled();
   if (jobs.runners) expect(jobs.runners.state).toHaveBeenCalledTimes(2); // Existing reads only.
 });
 
@@ -111,6 +108,8 @@ async function clientFor(admitCodex?: ServerContext["admitCodex"]): Promise<Clie
   // outside the rejection under test; install the durable fixture only afterward.
   Object.defineProperty(jobs, "storePath", { value: null, configurable: true });
   registerTools(server, ctx, []);
+  // The controlled fake run has no startup restoration factory.
+  jobs.restore(() => undefined);
   Object.defineProperty(jobs, "storePath", { value: store, configurable: true });
   const client = new Client({ name: "test", version: "1" });
   const [a, b] = InMemoryTransport.createLinkedPair();
@@ -174,13 +173,16 @@ it("labels only the cached local turn when a newer permitted durable turn is loc
   retainFixture();
   writeFileSync(store, JSON.stringify([{ ...storedFixture(), startedAt: localTurn + 100, cancellingTurn: localTurn + 100 }]));
   prepare("control_lock_busy");
-  const bytes = readFileSync(store, "utf8"), client = await clientFor();
+  const bytes = readFileSync(store, "utf8");
+  const result = jobs.followUp(job.name, SECRET);
+  expect(result.gate).toMatchObject({ reason: "control_lock_busy", observedLocalStartedAt: localTurn,
+    durableTurn: "unknown", executorIdentity: "unknown" });
+  const client = await clientFor();
   const response = await client.callTool({ name: "message_subagent", arguments: { job: job.name, message: SECRET } });
   expect(response.isError).toBe(true);
   const rendered = JSON.stringify(response.content);
-  expect(rendered).toContain("control_lock_busy"); expect(rendered).toContain("durable current turn");
-  expect(rendered).toContain("unknown"); expect(rendered).not.toContain(SECRET);
-  expect(rendered).toContain(String(localTurn)); expect(rendered).not.toContain(String(localTurn + 100));
+  // Existing share/findAsync rejects a stale generation before MCP metadata exposure.
+  expect(rendered).not.toContain("gate observation"); expect(rendered).not.toContain(SECRET);
   expect(job.controller).toBe(controller); expect(job.startedAt).toBe(localTurn);
   expect(job.queue).toEqual([SECRET]); expect(readFileSync(store, "utf8")).toBe(bytes);
   expect(resume).not.toHaveBeenCalled(); expect(control).not.toHaveBeenCalled();

@@ -1550,7 +1550,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
         : "";
       // Explicit projection: never serialize the Job, or future additions to the gate contract.
       const gateNote = gate ? "\nLocal follow-up gate observation (local turn; durable current turn unknown; executor identity unknown): " + JSON.stringify({
-        reason: gate.reason, jobId: gate.jobId, startedAt: gate.startedAt, observedAt: gate.observedAt,
+        reason: gate.reason, jobId: gate.jobId, observedLocalStartedAt: gate.observedLocalStartedAt,
+        durableTurn: "unknown", observedAt: gate.observedAt,
         executorIdentity: "unknown", controllerAborted: gate.controllerAborted,
         hasResume: gate.hasResume, hasSession: gate.hasSession,
       }) : "";

@@ -306,7 +306,8 @@ export interface FollowUpGate {
   reason: "control_lock_busy" | "interrupted_executor_probe" | "cancellation_guard_foreign_or_unowned" | "cancellation_guard_no_resume" | "runner_terminal_not_settled";
   jobId: string;
   /** Exact local observed turn; lock contention may prevent refreshing a newer durable turn. */
-  startedAt: number;
+  observedLocalStartedAt: number;
+  durableTurn: "unknown";
   observedAt: number;
   executorIdentity: "unknown";
   controllerAborted: boolean;
@@ -1387,7 +1388,7 @@ export class JobManager {
   /** Project only local facts already present at the refusal; no storage, runner or process reads. */
   private refusedFollowUp(job: Job, reason: FollowUpGate["reason"]): FollowUpResult {
     return { outcome: "stopping", job, gate: {
-      reason, jobId: job.id, startedAt: job.startedAt, observedAt: Date.now(),
+      reason, jobId: job.id, observedLocalStartedAt: job.startedAt, durableTurn: "unknown", observedAt: Date.now(),
       executorIdentity: "unknown", controllerAborted: job.controller.signal.aborted,
       hasResume: Boolean(job.resume), hasSession: Boolean(job.sessionId),
     } };
