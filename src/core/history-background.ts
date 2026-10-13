@@ -55,7 +55,7 @@ type HistoryCapture = {
   protected: boolean;
   exited: boolean;
   checkpoint: Readonly<HistoryWorkerCheckpoint> | null;
-  request: { id: string; generation: number; deadline: number } | null;
+  request: { id: string; generation: number; deadline: number; disposition: "pending" | "completed" | "failed" } | null;
 };
 /** One elected worker; no source I/O or indexing writes on message dispatch. */
 /** At most one message wake per this interval while messages stream in. */
@@ -344,7 +344,7 @@ export class HistoryBackground {
     const request = capture.request;
     // A resumed owner's old ACK is expected but cannot certify the new generation.
     if (!request || !this.lifecycleQuiesced) return;
-    if (capture.checkpoint || !value || value.ownerInstance !== this.lifecycleOwnerInstance || value.generation !== request.generation || value.requestId !== request.id ||
+    if (request.disposition !== "pending" || this.lifecycleUnknown || capture.checkpoint || !value || value.ownerInstance !== this.lifecycleOwnerInstance || value.generation !== request.generation || value.requestId !== request.id ||
         request.generation !== this.lifecycleGeneration || capture.exited || performance.now() >= request.deadline ||
         value.quiesced !== true || value.handlesRetained !== true || value.ownershipReleased !== false ||
         !Number.isSafeInteger(value.pendingOperations) || value.pendingOperations < 0 ||
@@ -375,11 +375,15 @@ export class HistoryBackground {
     if (!this.lifecycleQuiesced || this.stopped || this.lifecycleUnknown || !capture || capture.exited) return Promise.resolve(this.lifecycleOwnerManifest());
     // Reobservation never gives an active/expired request a fresh nested allowance.
     if (capture.request) return Promise.resolve(this.lifecycleOwnerManifest(capture.checkpoint ? undefined : "budget"));
-    const request = { id: randomUUID(), generation: this.lifecycleGeneration, deadline };
+    const request: NonNullable<HistoryCapture["request"]> = { id: randomUUID(), generation: this.lifecycleGeneration, deadline, disposition: "pending" };
     capture.request = request;
     return new Promise(resolve => {
       const finish = (reason?: HistoryLifecycleObservation["reason"]) => {
         if (this.lifecycleWaiter !== waiter) return;
+        if (capture.request === request && request.disposition === "pending") {
+          request.disposition = reason !== undefined || this.lifecycleUnknown || performance.now() >= deadline || !capture.checkpoint ? "failed" : "completed";
+          capture.revision++;
+        }
         clearTimeout(timer); this.lifecycleWaiter = null;
         resolve(this.lifecycleOwnerManifest(performance.now() >= deadline ? "budget" : reason));
       };

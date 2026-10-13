@@ -205,6 +205,22 @@ describe("trusted history owner observation; unsupported store closure stays blo
     expect(await waiting).toMatchObject({ unknown: true, checkpoint: null, settled: false }); noRetirement();
   });
 
+  it("a failed exact observation cannot accept a later valid ACK even before its original deadline", async () => {
+    const tick = background.tick(true), pending = Reflect.get(background, "pending"), capture = Reflect.get(background, "lifecycleCapture");
+    background.quiesceLifecycleMaintenance(); const end = performance.now() + 2000;
+    const waiting = background.settleLifecycleMaintenance(end), request = checkpoints()[0]!;
+    worker.emit("message", { historyCheckpoint: acknowledgement(request, { ownerInstance: "foreign" }) });
+    expect(await waiting).toMatchObject({ unknown: true, checkpoint: null, settled: false });
+    expect(performance.now()).toBeLessThan(end);
+    const failed = background.lifecycleOwnerManifest();
+    worker.emit("message", { historyCheckpoint: acknowledgement(request) });
+    expect(background.lifecycleOwnerManifest()).toMatchObject({ unknown: true, checkpoint: null, settled: false });
+    expect(background.lifecycleOwnerManifest().callbackGeneration).toBeGreaterThan(failed.callbackGeneration);
+    expect(Reflect.get(background, "pending")).toBe(pending); expect(Reflect.get(background, "lifecycleCapture")).toBe(capture);
+    expect(pending.size).toBe(1); expect(checkpoints()).toHaveLength(1); expect(fixture.workers).toHaveLength(1); noRetirement();
+    const accepted = worker.sent.find(message => message.reset)!;
+    worker.emit("message", { id: accepted.id, result: { work: 1, discovering: false } }); await tick;
+  });
   it("a full source-owned manifest remains ineligible even with a timely worker/metadata stage result", async () => {
     background.quiesceLifecycleMaintenance(); const waiting = background.settleLifecycleMaintenance(performance.now() + 2000);
     worker.emit("message", { historyCheckpoint: acknowledgement(checkpoints()[0]!) });
