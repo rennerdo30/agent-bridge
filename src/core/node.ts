@@ -27,7 +27,7 @@ import { recordLocalResult } from "./local-result-receipts.js";
 import type { MessageStore } from "./store.js";
 import { SQLITE_STORE_VERSION } from "./store-version.js";
 import { JSON_STORE_VERSION } from "./json-store.js";
-import { recordStorePeer, refreshStorePeerIdentities } from "./store-compatibility.js";
+import { metadataRelease, recordStorePeer, refreshStorePeerIdentities } from "./store-compatibility.js";
 import { parentProcessIdentity } from "./process-identity.js";
 import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import type { NetworkConfig } from "../network/config.js";
@@ -39,6 +39,7 @@ import type { RemoteJobSnapshot } from "../network/remote-jobs.js";
 import type { HistorySearch, HistoryResult } from "./history.js";
 import type { TransferStarted } from "../network/transfers.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
+import { BROKER_SUCCESSOR_GRACE_MS, compareBrokerVersions } from "./broker-upgrade.js";
 
 export interface BridgeNodeOptions {
   pipePath: string;
@@ -64,6 +65,8 @@ export interface BridgeNodeOptions {
   jobSendTo?: string[];
   /** false: only connect to a broker, never become one (a short-lived job runner would take the bridge down with it). */
   canHostBroker?: boolean;
+  /** Positive interactive-launch admission, independent of general outage election. */
+  brokerEligible?: boolean;
   network?: { home: string; config: NetworkConfig };
 }
 
@@ -129,6 +132,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private unavailable = false;
   private readonly log: Logger;
   private presenceTimer: NodeJS.Timeout | null = null;
+  private brokerYieldUntil = 0;
+  private brokerYieldOnClose = false;
+  private brokerEligible: boolean;
+  private readonly version = APP_VERSION;
 
   constructor(private readonly opts: BridgeNodeOptions) {
     super();
@@ -137,6 +144,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
     this.log = opts.log.child("node");
+    this.brokerEligible = (opts.brokerEligible ?? true) && opts.canHostBroker !== false && !opts.jobAgent && opts.agent !== "other";
     if (opts.dbPath !== ":memory:") this.recordStorePresence();
     if (opts.dbPath !== ":memory:") this.releaseMetadata = retainMetadataReader(dirname(opts.dbPath));
     this.readJournal = new ReadJournal(opts.dbPath === ":memory:" ? ":memory:" : dirname(opts.dbPath), this.log);
@@ -191,6 +199,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
   get autoWakeEnabled(): boolean {
     return this.autoWake;
+  }
+
+  async setBrokerEligibility(eligible: boolean): Promise<void> {
+    const next = eligible && this.opts.canHostBroker !== false && !this.opts.jobAgent && this.opts.agent !== "other";
+    if (next === this.brokerEligible) return;
+    this.brokerEligible = next;
+    if (this.isConnected) await this.client!.request("updatePeer", { brokerEligible: this.brokerEligible });
   }
 
   async start(): Promise<void> {
@@ -290,6 +305,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.reconnectTimer.unref();
   }
 
+  private reconnectAfterUpgrade(): void {
+    // This host knows it retired locally, even if its socket missed the hint.
+    this.brokerYieldUntil = Math.max(this.brokerYieldUntil, Date.now() + BROKER_SUCCESSOR_GRACE_MS);
+    this.brokerYieldOnClose = this.isConnected;
+    this.scheduleReconnect(0);
+  }
+
   private async elect(): Promise<void> {
     for (let attempt = 1; attempt <= ELECTION_MAX_ATTEMPTS && !this.stopping; attempt++) {
       try {
@@ -319,6 +341,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   private async tryBecomeBroker(): Promise<boolean> {
+    if (Date.now() < this.brokerYieldUntil) return false;
     if (this.broker) return true;
     if (this.stopping) return false;
     const [{ Broker }, { MessageStore }] = await Promise.all([import("./broker.js"), import("./store.js")]);
@@ -336,7 +359,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       this.log.error("cannot open message store", { err, db: this.opts.dbPath });
       throw err;
     }
-    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join(dirname(this.opts.dbPath), JOBS_FILE), this.opts.network);
+    const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join(dirname(this.opts.dbPath), JOBS_FILE), this.opts.network, () => {
+      if (this.broker === broker) this.broker = null;
+      // The old server keeps its session/client state and follows the ordinary reconnect path.
+      if (!this.stopping) this.reconnectAfterUpgrade();
+    });
     try {
       await broker.listen();
       if (this.stopping) {
@@ -375,10 +402,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private async adopt(client: BridgeClient): Promise<void> {
     client.on("event", (ev, data) => this.onEvent(ev, data));
     let brokerVersion: string | undefined;
+    let handoverSupported = false;
     // Read presence before hello can trigger writes in a newer broker.
     try {
       await client.request("auth", { protocol: PROTOCOL_VERSION, token: this.opts.token });
-      brokerVersion = (await client.request("ping", {})).brokerVersion;
+      const ping = await client.request("ping", {});
+      brokerVersion = ping.brokerVersion;
+      handoverSupported = ping.handoverSupported === true && metadataRelease(brokerVersion);
       if (this.opts.dbPath !== ":memory:") for (const peer of await client.request("peers", {})) recordStorePeer(dirname(this.opts.dbPath), peer);
     } catch (error) { client.close(); throw error; }
     const agentStartedAt = this.opts.jobAgent ? null : await parentProcessIdentity();
@@ -387,7 +417,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     // which then rewrite each foreign PID record using their legacy shape.
     // Our own explicit record already protects upgrades before registration.
     const hello = await client.request("hello", { ...args, peer: { ...args.peer, agentStartedAt,
-      storeCapabilities: brokerVersion === APP_VERSION ? args.peer.storeCapabilities : undefined } }).catch((err) => {
+      storeCapabilities: brokerVersion === this.version || handoverSupported ? args.peer.storeCapabilities : undefined } }).catch((err) => {
       client.close();
       throw err;
     });
@@ -413,7 +443,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         wakeMaxHops: this.wakeMaxHops,
         activity: this.activity,
         unavailable: this.unavailable,
-        version: APP_VERSION,
+        version: this.version,
+        brokerEligible: this.brokerEligible,
         storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 },
         ...(this.opts.jobAgent ? { jobAgent: this.opts.jobAgent } : {}),
         ...(this.opts.jobOwner ? { jobOwner: this.opts.jobOwner, jobParent: this.opts.jobParent, parentJob: this.opts.parentJob, rootSession: this.opts.rootSession, rootName: this.opts.rootName, jobTitle: this.opts.jobTitle, jobSendTo: this.opts.jobSendTo } : {}),
@@ -445,6 +476,12 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (this.client !== client) return;
     this.client = null;
     if (this.stopping) return;
+    // Announcement flushing can consume part of the grace while the old
+    // listener still owns the endpoint. Give the successor its full window.
+    if (this.brokerYieldOnClose) {
+      this.brokerYieldUntil = Date.now() + BROKER_SUCCESSOR_GRACE_MS;
+      this.brokerYieldOnClose = false;
+    }
     this.log.warn("lost connection to broker; re-electing");
     this.emit("disconnected");
     // Established hosts must replace a lost listener immediately. Legacy job
@@ -455,7 +492,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   private onEvent(ev: string, data: unknown): void {
-    if (ev === "mail_retracted") {
+    if (ev === "broker_handover") {
+      const hint = data as { successor?: string; version?: string; graceMs?: number };
+      if (typeof hint.successor !== "string" || compareBrokerVersions(hint.version, this.version) === null) return;
+      // Only the announced eligible successor elects immediately; everyone else remains a client.
+      const successor = hint.successor === this.id && this.brokerEligible && compareBrokerVersions(this.version, hint.version) === 0;
+      this.brokerYieldOnClose = !successor;
+      this.brokerYieldUntil = successor ? 0 : Date.now() + BROKER_SUCCESSOR_GRACE_MS;
+    } else if (ev === "mail_retracted") {
       for (const id of (data as { ids: string[] }).ids) this.inbox.delete(id);
     } else if (ev === "shared_job_control") {
       this.emit("shared_job_control", data as BridgeNodeEvents["shared_job_control"][0]);
@@ -665,7 +709,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   health(): Promise<import("./health.js").BrokerHealth> {
     const started = performance.now();
-    return this.withClient(c => c.request("health", {})).then(health => ({ ...health, roundTripMs: performance.now() - started }));
+    return this.withReadClient((c, timeoutMs) => c.request("health", {}, timeoutMs)).then(health => ({ ...health, roundTripMs: performance.now() - started }));
   }
 
   brokerLoad() {

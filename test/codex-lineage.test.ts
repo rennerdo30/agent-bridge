@@ -13,6 +13,14 @@ function header(id: string, rows: unknown[], complete = true) {
   writeFileSync(file, rows.map(payload => JSON.stringify({ type: "session_meta", payload })).join("\n") + (complete ? "\n" : ""));
   return file;
 }
+it.each(["cli", "vscode", "exec", "mcp"])("only interactive main source %s can succeed a broker", source => {
+  header("launch", [{ id: "launch", source }]);
+  const lookup = new CodexLineageLookup(join(env.home, "sessions"));
+  expect(lookup.classify("launch")).toBe("main");
+  expect(lookup.isInteractive("launch")).toBe(["cli", "vscode"].includes(source));
+  header("child", [{ id: "child", source: { subagent: { thread_spawn: { parent_thread_id: "launch" } } } }]);
+  expect(lookup.isInteractive("child")).toBe(false);
+});
 it.each([
   { thread_source: "subagent", parent_thread_id: "root" },
   { source: { subagent: { thread_spawn: { parent_thread_id: "root" } } } },

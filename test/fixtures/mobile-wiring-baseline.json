@@ -1,21 +1,22 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "b46136a2548fb9582ce2274793775f68c635fe461ae6e3d3f11d1ac1ff3836f0",
+    "src/core/broker.ts:constructor": "31146ca21e814fe8059de8350db7e710f37c93d7bb4de5890d3622fb187bd674",
     "src/core/broker.ts:listen": "eb98a2820f42563b76778c1f642d8a4a704c1af4fd4af43aedee9c1263cf2b4d",
-    "src/core/broker.ts:startServices": "4d48b8bdb253d56458edfb283ed7d85b8530185391be52725961d015f5b26b85",
-    "src/core/broker.ts:abortStartup": "2c7b606eb6c601f877f5d0283f0f1efcb7e4bc11c1af14857c9ca582e8ad6cb5",
-    "src/core/broker.ts:close": "61af8b1a2dd8e1c2f44fa39055e1963ae82e9887f99eed1d0499ae7e66ea91c2",
-    "src/core/node.ts:constructor": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
+    "src/core/broker.ts:startServices": "6655e0a997799e78dc9150a16028f62c660155932a066db3aee7e73bfc195f43",
+    "src/core/broker.ts:abortStartup": "b8faef018929feceef74547cecc3b9ccc1c1eeef0060134c3146efa738e87296",
+    "src/core/broker.ts:close": "6b4cd15ef820390297420c470dacc62a6db60d7776716249caa5b6c1f50e7259",
+    "src/core/node.ts:constructor": "b071317e90dd8025e2ecc58f381c7a0a06ae4e11d2aa6019cb9fcf0f4b16ff01",
     "src/core/node.ts:start": "922dd81e0ddbe0d79b70656ef14bd97cd1e6e331aeb410b8e9a9d92afce9f402",
     "src/core/node.ts:stop": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
-    "src/core/node.ts:tryBecomeBroker": "ca4a0147682e50d8748825468e6ac49565d931c6a42b5e45e4ecc2f65d1cc669",
+    "src/core/node.ts:tryBecomeBroker": "fcb86e9e30984b1db662d8c8d0722d4de0098b929480a02133e297b9a6de940e",
     "src/cli/dashboard.ts:constructor": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
     "src/cli/dashboard.ts:open": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
   "uiSha256": "de79dfca55109c3f807e5608ff8bb83a5ade39e37a562263b2dd0c05e0a17845",
+  "brokerUpgradeReview": "AB-281 intentionally changes broker/node election and retirement; dashboard and UI pins stay unchanged.",
   "updates": {
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
@@ -23,92 +24,29 @@
         "src/core/broker.ts:constructor",
         "src/core/broker.ts:startServices"
       ],
-      "reason": "Scoped native child handlers and retained orphan recovery extend the broker. Other default control-flow and UI pins are unchanged.",
+      "reason": "Scoped native child handlers and retained orphan recovery; constructor/startServices compose with approved AB-281 changes.",
       "commit": "21647e7ba2c563203a606465adec0f0878536683"
-    }
-  },
-  "revertedUpdates": {
+    },
     "AB-281": {
-      "reason": "AB-281 and every release follow-up are excluded from 0.30.14 by git revert. All thirteen method hashes, historical base and UI hash exactly match the pre-AB281 merge parent. AB-280 remains approved.",
-      "preUpgradeCommit": "5b3fd8a4d987465d15d4492d3cf1389504229801",
-      "changes": [
-        {
-          "method": "src/core/broker.ts:constructor",
-          "previous": "31146ca21e814fe8059de8350db7e710f37c93d7bb4de5890d3622fb187bd674",
-          "restored": "b46136a2548fb9582ce2274793775f68c635fe461ae6e3d3f11d1ac1ff3836f0",
-          "revertedCommits": [
-            "0687fdc7"
-          ]
-        },
-        {
-          "method": "src/core/broker.ts:startServices",
-          "previous": "6655e0a997799e78dc9150a16028f62c660155932a066db3aee7e73bfc195f43",
-          "restored": "4d48b8bdb253d56458edfb283ed7d85b8530185391be52725961d015f5b26b85",
-          "revertedCommits": [
-            "0687fdc7"
-          ]
-        },
-        {
-          "method": "src/core/broker.ts:abortStartup",
-          "previous": "b8faef018929feceef74547cecc3b9ccc1c1eeef0060134c3146efa738e87296",
-          "restored": "2c7b606eb6c601f877f5d0283f0f1efcb7e4bc11c1af14857c9ca582e8ad6cb5",
-          "revertedCommits": [
-            "0687fdc7"
-          ]
-        },
-        {
-          "method": "src/core/broker.ts:close",
-          "previous": "6b4cd15ef820390297420c470dacc62a6db60d7776716249caa5b6c1f50e7259",
-          "restored": "61af8b1a2dd8e1c2f44fa39055e1963ae82e9887f99eed1d0499ae7e66ea91c2",
-          "revertedCommits": [
-            "0687fdc7"
-          ]
-        },
-        {
-          "method": "src/core/node.ts:constructor",
-          "previous": "b071317e90dd8025e2ecc58f381c7a0a06ae4e11d2aa6019cb9fcf0f4b16ff01",
-          "restored": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
-          "revertedCommits": [
-            "0687fdc7"
-          ]
-        },
-        {
-          "method": "src/core/node.ts:tryBecomeBroker",
-          "previous": "fcb86e9e30984b1db662d8c8d0722d4de0098b929480a02133e297b9a6de940e",
-          "restored": "ca4a0147682e50d8748825468e6ac49565d931c6a42b5e45e4ecc2f65d1cc669",
-          "revertedCommits": [
-            "cf8ff8d9",
-            "d97122c1",
-            "0687fdc7"
-          ]
-        }
+      "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
+      "commit": "3b5d37581818224dab0b9c6cfa0b7b38e2cdcc5c",
+      "methods": [
+        "src/core/broker.ts:constructor",
+        "src/core/broker.ts:startServices",
+        "src/core/broker.ts:abortStartup",
+        "src/core/broker.ts:close",
+        "src/core/node.ts:constructor",
+        "src/core/node.ts:tryBecomeBroker"
       ],
-      "revertedCommits": [
-        {
-          "original": "cf8ff8d9b1fe7f892f0271c57f19ce6ff67944b4"
-        },
-        {
-          "original": "d97122c1104242bf4b63f9645d169747b807bd8c"
-        },
-        {
-          "original": "b50d1669d3c8dc98605441a6782e1721eda66183"
-        },
-        {
-          "original": "6b4c7d5b10857f421e1928f2324ae91faf851491"
-        },
-        {
-          "original": "2b72b80598f228f9b4b72c0393a15785a1c5dba7"
-        },
-        {
-          "original": "84d5943bc279ce817c1c0d1d16762297be61696e"
-        },
-        {
-          "original": "9e8e20b41f501c144fbd081bc45de562c9a9384e"
-        },
-        {
-          "original": "0687fdc76f2f5ee1c5eec552ad2e4e5bc50e3aad"
-        }
-      ]
+      "reason": "Election/retirement changes from the approved commit; constructor/startServices also retain approved AB-280 additions. All other method and UI pins remain unchanged."
+    },
+    "AB-281-retirement-grace": {
+      "base": "b50d1669d3c8dc98605441a6782e1721eda66183",
+      "commit": "d97122c1104242bf4b63f9645d169747b807bd8c",
+      "methods": [
+        "src/core/node.ts:tryBecomeBroker"
+      ],
+      "reason": "Reviewed one-line retirement callback redirection to reconnectAfterUpgrade; local successor grace no longer depends on receiving the retiring host own socket event. Other twelve methods, historical base and UI pin are unchanged."
     }
   }
 }
