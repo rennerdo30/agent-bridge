@@ -1,7 +1,7 @@
 # AB325 1a-i lifecycle prerequisite proposal
 
-Status: **design only; implementation and release blocked pending independent Sol review,
-Claude assessment and coordinator approval of this exact note**. The owner now requires
+Status: **successor design only; implementation and release blocked pending independent
+recheck, Claude assessment and coordinator approval of this exact note**. The owner now requires
 core status/restart/stop before 1a-i release. 1a-ii update integration and dashboard
 controls remain separate and have not started. This is the narrow lifecycle subset
 of 1b approved for design, not permission for a general epoch/state-core/jobs rewrite.
@@ -13,6 +13,15 @@ failed its unchanged-source checksum gate after the approved dashboard lifecycle
 handler addition. New daemon fixtures passed, including Linux parent-group death
 and Windows prohibiting Job Object/current-user checks. That is initial extraction
 evidence only, not restart/stop or full owner acceptance.
+
+This successor addresses independent review AB325 comment 32318: P2 freezes the
+budget and source-pinned adapter/checkpoint obligations below; P3 separates a normal
+release witness from crash exit proof. The reviewed predecessor remains immutable
+at `354b132171e4e2e8b85c7f18b1aad052cd25e732`. Adapter inventory is pinned to source
+`44730015299fb7ad51fd5fd6c4da711348d8f071`; it is a proposed implementation contract,
+not certification that current shutdown/capability paths satisfy it. Claude ratified
+the initial numeric defaults through the coordinator; hosted phase measurements
+remain absent and must be disclosed per OS in the eventual implementation PR.
 
 ## Source obligations and gaps
 
@@ -34,6 +43,107 @@ count and explicitly labeled legacy running-row count. Labels/PIDs are not proof
 of execution. Status must not create/start a daemon or mutate jobs/ownership.
 
 ## Minimal additional boundary
+
+### P2: pinned owner/adapters and checkpoint manifest
+
+All anchors in this table refer to source `44730015299fb7ad51fd5fd6c4da711348d8f071`.
+Each row requires a reversible producer gate, tracked admitted work, settlement
+without cancellation and a verified durable checkpoint. Adapter names describe
+required responsibilities, not existing APIs. No row currently has certified
+lifecycle closure. A disabled owner must prove it was never instantiated and has
+no pending work; an unsupported active owner returns a fixed `owner_unsupported`
+blocker before release. Any newly discovered producer adds a review requirement,
+never an implicit exemption or expansion into a general state domain.
+
+| Owner and exact source anchor | Required adapter and checkpoint proof |
+| --- | --- |
+| Broker `broker.ts:714-801`, `627-657` | `dispatchAdmission`: gate before handler acceptance, track scheduled requestTurn and handler continuations independently of socket presence; settle every admitted handler, excluding only lifecycle control/lookup itself. Record accepted/settled work counts, zero unfinished operations and the complete read-only/mutating operation classification. `closing`/Conn.inFlight alone is insufficient. |
+| Disconnect/native routes `broker.ts:749-762`, `1497`, `1571`; `native-children.ts:20,67,72` | `disconnectRoutes`: register endParent/recover/replacement callbacks and their write promises; close-time disconnect must neither end surviving children nor reroute their accepted mail as a side effect of restart. Preserve exact route/mail bytes, settle already admitted fallback work; inhibit teardown producers before transport release. Missing continuity proof blocks active-child restart. |
+| Mail delivery/reroute `broker.ts:990-1057,1778-1780,1841,2019-2066` | `mailSettlement`: gate timers/new sends, settle pendingJobMailRoute/Again/retry, sendingByKey, remote response continuations and all writes they enqueue. Checkpoint original UUID/body/recipient/read-receipt bytes and unresolved delivery obligations; timeout/lost reply is not absence and cannot authorize resend. |
+| MessageStore `store.ts:347-354,521,580,660-673` | `writeSettlement`: register retryWrite before scheduling, drain only after dispatch/producers settle, include archive timer and transaction/history sinks. Verify commits plus existing message/history/archive/decision/config stores and WAL recovery identity. Infinity retry remains live if budget expires; stopWrites/close must not abort it. Directory/file durability and any untracked direct mutation are explicit blockers. |
+| History `history-background.ts:147-187`; `history-worker.ts:99-160,195-220` | `historyCheckpoint`: inhibit wake/peer/pressure/reconcile/restart producers, settle pending/reconcilingAsks/current tick and any ingestion/index work, preserve raw originals and resumable checkpoint/candidate bytes. Return an authenticated restart-bound checkpoint manifest after flush. Rejecting pending or terminating at two seconds is not proof; derive-only work may resume only from a proven persisted original/checkpoint. |
+| Archive `job-archive-background.ts:58-71`; `job-archive-worker.ts:11-74` | `archiveCheckpoint`: gate repack/import requests, settle current migration/packing/import batch, retain originals/conflicting payloads, prove published archive/index and next-work checkpoint plus released migration/storage leases. AbortController stop and worker exit alone are insufficient; no deletion/finalization/migration is authorized by the lifecycle adapter. |
+| Backup `backup-background.ts:47-93`; `backup-worker.ts:5-34` | `backupCheckpoint`: inhibit timer/restart, settle admitted capture/verification and acknowledge flushed complete or retained partial snapshot with manifest, original store remains readable. Current stop throws during capture; do not call it to pass drain or silently discard an admitted backup. Unprovable partial continuation blocks release. |
+| Networking `broker.ts:487-488,642-649`; `network/link.ts:103-124,246-280,633-644`; `network/transfers.ts:146,252-288,535-647,660-664` | `networkCheckpoint`: gate networkChange/inbound extensions/bulk producers, settle pending requests and queued socket writes; persist exact transfer parts/journals/offsets/checksums and unresolved remote UUID/outcome obligations. Closing/rejecting pending, pausing states or ignoring drain is not success. Unknown remote effect remains retained/unconfirmed; if existing protocol cannot reattach it, refuse rather than replay or invent delivery authority. |
+| Remote services `network/remote-jobs.ts:41-51,178-202,237,248-337`; `remote-dashboard.ts:13-72`; `decision-sync.ts:54-86` | `remoteCheckpoint`: include pendingStarts/starting, pending replies, mirrorIntents/Turns/States, feeds, approval publication and decision receives. Settle/persist existing remote records and accepted control/approval/result bytes without aborting a spawn, closing approvals or changing native execution. Dashboard reads must settle before resource retirement; unsupported unresolved activity blocks release. |
+| Owner questions `owner-question-service.ts:16-26,99-143`; `owner-questions.ts:79-101,153-167` | `questionCheckpoint`: inhibit maintenance/default-answer timers, await mirrors and admitted answer/delivery/decision completion, retain original question revision/answer/outbox/mirror state durably. A mirror POST with lost response remains unknown and must not be replayed to claim settlement. Closing its SQLite store is not producer settlement. |
+| Mobile/dashboard `mobile/activation.ts:52-138`; `mobile/bootstrap.ts:35-48`; `mobile/gateway.ts:22-53,164`; `mobile/store.ts:48-51`; `cli/ui.ts:289,722-726`; `cli/broker-daemon.ts:52-87` | `hostCheckpoint`: gate ensureDashboard/HTTP mutations/push/hint polls, settle all admitted handlers and dashboard sender work; flush unchanged registry/answer/grant bytes, retain selected origin/port/TLS/config/owner context. Five-second close/disposal races and late-response discard do not prove settlement. Listener teardown only after settlement; no security registry migration or UI feature is authorized. |
+| MCP/runner independent owners `mcp/server.ts` shutdown; `mcp/jobs.ts`; `mcp/job-runner.ts`; `mcp/delegate-run.ts` | `clientElectionBarrier`: require exact instance/receipt capability acknowledgement and safe delivery/backpressure/reattach proof; do not drain or mutate session job queues, cancel/kill children or call MCP shutdown. Unknown election-capable retained binaries or unprovable accepted work block restart; process-name enumeration is not a complete writer census. |
+| Receipt/storage ownership `json-store.ts:107-137`; `storage-lock.ts:17-57,91-105`; `node.ts` election | `receiptPublication`: verify restricted canonical physical home, nonce/process creation identity, atomic flushed receipt/revisions/gate/checkpoint manifest and selected-pointer durability on every OS; prove all eligible election paths consult it. Existing file fsync/lease logic is evidence to audit, not certified directory durability/canonical authority. |
+
+The private checkpoint manifest is restart-bound:
+`{schema,restartId,oldInstance,sourceManifestDigest,revision,owners:[{ownerId,
+adapterVersion,sourceAnchors,producerGate,acceptedCount,settledCount,pendingCount,
+checkpointRevision,artifacts:[{relativePath,bytes,sha256}],durabilityEvidence,
+ownershipReleaseEvidence}],closureDigest}`. It contains no tokens/content in
+public status/logs; private entries reference preserved existing bytes, never newly
+invented job/domain state. acceptedCount must equal settledCount OR every retained
+pending obligation has a verified durable original/checkpoint and an existing safe
+resume contract; absent such a contract, pendingCount must be zero. Counts alone
+are not durability proof. Replacement validates each digest/checkpoint before done.
+
+Receipt publication, durable checkpoint and writer-census proof remain implementation
+entry gates. This table freezes the obligations/file boundary; it does not authorize
+rewriting unsupported services to fit the boundary. An adapter needing a new domain,
+remote replay protocol or complete global census must return to the coordinator.
+
+### P2: ratified numeric budget and pending command semantics
+
+Named initial constants (milliseconds) are `LIFECYCLE_PRE_RELEASE_MS=10000`,
+`LIFECYCLE_ADMISSION_MS=1000`, `LIFECYCLE_PREPARE_MS=5000`,
+`LIFECYCLE_DISPATCH_DRAIN_MS=2000`, `LIFECYCLE_WRITE_CHECKPOINT_MS=2000`,
+`LIFECYCLE_BIND_OBSERVE_MS=2000`. Measure with one monotonic clock from command
+admission. Each phase deadline is min(t0+10s, phaseStart+its named cap); the maximum
+cumulative boundaries are t0+1/6/8/10s. Early completion does not donate time or
+reset/extend another phase's cap. No nested hidden retry
+or generic deadline inflation. Freeze these constants in hosted tests; record each
+phase and total per OS/runtime, adjust only through review of new measured evidence.
+
+Admission/census/durable pending acknowledgement must finish within the first second.
+An accepted restart RPC returns PENDING with the durable restartId/receipt revision,
+never a completed outcome, because ten-second RPC cannot cover ten plus two seconds.
+Receipt lookup is read-only: CLI performs at most 24 lookups at a minimum 500ms
+interval within a 12-second monotonic observation envelope; each lookup uses only
+the remaining envelope (and at most existing RPC10s). No overlapping polls, busy
+loop, mutation replay or recreated ID. Envelope expiry prints pending/unknown and
+the same receipt ID truthfully; a later explicit lookup can observe completion.
+
+Prepare includes WMI/create, exact successor authentication and ready-to-bind within
+five seconds; the creation timeout is not an extra allowance. Any pre-release phase
+overrun reopens old admission and retains serving endpoints, publishes
+`aborted:<phase>budget` as the failed_serving outcome and prohibits release. Do not
+kill a possibly created replacement: it remains bound to the original receipt and
+cannot bind without release_committed. Unknown WMI creation stays latched, no second
+launch. Already accepted store/worker work continues settling while old serves.
+If durable abort publication itself is unprovable, retain unknown receipt/election
+gate and report it; do not claim a durably clean abort or a completed command.
+
+Post-release two seconds is observation only, starting at verified endpoint release.
+Bind/outcome timeout retains unknown plus same-receipt discovery; it never proves
+death, grants takeover, replays work or permits rollback. A bind may eventually
+complete beyond the observer envelope without another launch. Stop uses the same
+admission/dispatch/write caps and total bound, skips replacement preparation, and
+still cannot treat elapsed time as job safety or authorize automatic relaunch.
+
+### P3: normal release witness versus crash exit proof
+
+Normal release does not require killing or observing death of the old process.
+After release_committed it must produce a restart-bound release witness proving:
+its mutation gate remains shut; all owned admitted/teardown/disconnect producers
+have settled or are inhibited; verified checkpoints are immutable; every writable
+store/worker lease is released without cancellation; the public listener/accepted
+old connections are released without causing untracked native-route/mail changes.
+The still-live old coordinator owns no writable stores/public endpoint and cannot
+reopen them or elect. Replacement validates durable selected-successor/checkpoints
+and the authenticated exact-instance witness before binding. PID or socket absence
+alone cannot substitute for this witness; current Broker.close is not the witness.
+
+If the old instance crashes or the witness is lost/invalid, require verified exit of
+the receipt's exact nonce/PID/process-creation identity plus checkpoint/ownership
+reconciliation. Missing nonce/creation identity, unknown process inspection, auth
+failure, a reused PID or time expiry is unknown, never an exit witness. A release
+receipt without drain/checkpoint proof cannot be completed merely because old died.
+Both mechanisms may fail and yield unavailable/unknown; no zero-gap guarantee.
 
 Proposed files: new `core/daemon-lifecycle.ts` for a **restricted lifecycle receipt**
 and its election gate; launcher/daemon/node wiring; narrow broker/protocol/CLI lifecycle
@@ -129,12 +239,10 @@ do not replay mutations merely because a connection disappears. Child heartbeat,
 report and approval delivery need explicit capable settlement/backpressure semantics;
 if current legacy adapters cannot preserve them through the bounded gap, refuse.
 
-Use one disclosed finite lifecycle preparation/drain budget compatible with the
-existing 10-second RPC deadline; return a durable pending receipt promptly rather
-than holding/replaying a mutating call. Freeze exact phase budgets in reviewed tests
-before implementation; do not increase generic RPC deadlines. Drain timeout, receipt
-flush failure or an unverifiable checkpoint returns `failed_serving`, opens admission
-again and leaves endpoint/services up. Never abort accepted writes to pass the gate.
+Use the exact monotonic budget and durable pending-receipt semantics below; do not
+increase generic RPC deadlines. A pre-release phase overrun aborts the reversible
+transition, retains the old endpoint/services and reopens admission. Never cancel
+accepted writes or terminate workers to manufacture successful drain/checkpoint.
 
 After prepared replacement + verified drain/checkpoints, persist `release_committed`
 and its exact designated successor before releasing the public endpoint. Only that
