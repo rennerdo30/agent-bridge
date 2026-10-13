@@ -22,11 +22,11 @@ try {
   db.exec('PRAGMA query_only=ON');
   db.exec('BEGIN');
   let routes = [];
-  const objects = db.prepare("SELECT type FROM sqlite_master WHERE name='native_child_routes' LIMIT 2").all();
+  const objects = db.prepare("SELECT type FROM sqlite_master WHERE name='native_child_routes' COLLATE NOCASE LIMIT 2").all();
   if (objects.length) {
     if (objects.length !== 1 || objects[0].type !== 'table') throw Error();
-    const columns = db.prepare("SELECT name,type,[notnull],pk FROM pragma_table_info('native_child_routes') LIMIT 4").all();
-    if (columns.length !== 3 || columns[0].name !== 'address' || columns[0].type !== 'TEXT' || columns[0].pk !== 1 ||
+    const columns = db.prepare("SELECT name,type,[notnull],pk,hidden FROM pragma_table_xinfo('native_child_routes') LIMIT 4").all();
+    if (columns.length !== 3 || columns.some(c => c.hidden !== 0) || columns[0].name !== 'address' || columns[0].type !== 'TEXT' || columns[0].pk !== 1 ||
         columns[1].name !== 'parent' || columns[1].type !== 'TEXT' || columns[1].notnull !== 1 || columns[1].pk !== 0 ||
         columns[2].name !== 'active' || columns[2].type !== 'INTEGER' || columns[2].notnull !== 1 || columns[2].pk !== 0) throw Error();
     // Canonical old DDL has no CHECK constraint. Ignoring unsupported retained

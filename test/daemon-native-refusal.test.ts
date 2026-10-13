@@ -116,6 +116,33 @@ describe("native active-route refusal subguard (not whole-core restart acceptanc
     expect(unknown.blocker).toBe("native_state_unknown"); expect(await children.zeroLifecycleWitnessCurrent(unknown, deadline())).toBe(false);
     expect(db.prepare("SELECT type,sql FROM sqlite_master WHERE name='native_child_routes'").get()).toEqual(object); expect(fallback).not.toHaveBeenCalled();
   });
+  it("uppercase SQL-equivalent active table is observed after prior empty recovery, never false absence or a new fallback", async () => {
+    // beforeEach completed normal recovery on an empty store. Add this retained
+    // fixture afterward; no recovery operation is run against the active row.
+    const address = "claude-retained/sub:one", db = Reflect.get(store, "db");
+    store.retainNativeChild(address, "claude-retained"); retainMail(address);
+    db.exec("ALTER TABLE native_child_routes RENAME TO fixture_case_routes; ALTER TABLE fixture_case_routes RENAME TO NATIVE_CHILD_ROUTES");
+    const row = db.prepare("SELECT address,parent,active FROM native_child_routes WHERE address=?").get(address), mail = store.unread(address, 100),
+      fallback = vi.spyOn(store, "returnNativeChild");
+    const direct = await store.committedNativeChildRoutes(randomUUID(), 1, deadline()); expect(direct.active).toBe(1);
+    children.freezeLifecycleAdmission(); const unknown = await children.settleLifecycleWrites(deadline());
+    expect(unknown).toMatchObject({ blocker: "native_state_unknown", memoryActive: 0, durableActive: 1 });
+    expect(await children.zeroLifecycleWitnessCurrent(unknown, deadline())).toBe(false); expect(fallback).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT address,parent,active FROM native_child_routes WHERE address=?").get(address)).toEqual(row); expect(store.unread(address, 100)).toEqual(mail);
+  });
+  it("uppercase inactive history permits zero; a generated fourth column refuses instead of hiding schema extensions", async () => {
+    const address = "claude-retained/sub:one", db = Reflect.get(store, "db");
+    store.retainNativeChild(address, "claude-retained"); db.prepare("UPDATE native_child_routes SET active=0 WHERE address=?").run(address);
+    db.exec("ALTER TABLE native_child_routes RENAME TO fixture_case_routes; ALTER TABLE fixture_case_routes RENAME TO NATIVE_CHILD_ROUTES");
+    children.freezeLifecycleAdmission(); const zero = await children.settleLifecycleWrites(deadline()); expect(zero.blocker).toBeNull();
+    expect(await children.zeroLifecycleWitnessCurrent(zero, deadline())).toBe(true);
+    db.exec("ALTER TABLE native_child_routes ADD COLUMN fixture_extension INTEGER GENERATED ALWAYS AS (active + 1) VIRTUAL");
+    const schema = db.prepare("SELECT sql FROM sqlite_master WHERE name='NATIVE_CHILD_ROUTES'").get();
+    const unknown = await children.settleLifecycleWrites(deadline()); expect(unknown.blocker).toBe("native_state_unknown");
+    expect(await children.zeroLifecycleWitnessCurrent(unknown, deadline())).toBe(false);
+    expect(db.prepare("SELECT sql FROM sqlite_master WHERE name='NATIVE_CHILD_ROUTES'").get()).toEqual(schema);
+    expect(db.prepare("SELECT active,fixture_extension FROM native_child_routes WHERE address=?").get(address)).toMatchObject({ active: 0, fixture_extension: 1 });
+  });
   it("an accepted implicit disconnect invalidates the frozen zero witness without suppressing normal parent-end behavior", async () => {
     children.freezeLifecycleAdmission(); const zero = await children.settleLifecycleWrites(deadline()); expect(zero.blocker).toBeNull();
     await expect(children.endParent(parent)).rejects.toThrow(/draining/);
