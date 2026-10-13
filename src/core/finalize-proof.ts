@@ -235,7 +235,8 @@ export function tableProof(candidate: DatabaseSync, table: string, ctx: ProofCon
     return typeof body === "string" ? foldedText(body) : undefined;
   };
   const sameContent = (a: Row, b: Row, c: string) => {
-    if (logical === "conversation_records" && c === "body") return sameValue(recordBody(a), recordBody(b));
+    // Normalize only SQL NULL/raw equivalence; explicit bodies retain their stored value type.
+    if (logical === "conversation_records" && c === "body") return sameStoredValue(recordBody(a), recordBody(b));
     if (logical === "history_documents" && c === "folded") {
       if (sameStoredValue(a[c], b[c])) return true;
       const av = documentFolded(a), bv = documentFolded(b);

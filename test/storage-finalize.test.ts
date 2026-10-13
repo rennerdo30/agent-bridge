@@ -392,6 +392,64 @@ it.each([[0, false], [0, true], [2, false], [2, true]] as const)("AB-215 review:
   expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toContain(`history.db:${retained}`);
 });
 
+it.each([false, true])("AB-215 review: explicit BLOB body survives equal TEXT bytes at moved rowid=%s until exact type recovery", async moved => {
+  const { history, retained, id } = await retainedPayload("conversation_records", moved);
+  history.exec("DROP TRIGGER conversation_records_no_update");
+  history.prepare("UPDATE conversation_records SET body='hi' WHERE id=?").run(id);
+  history.exec(`UPDATE ${retained} SET body=x'6869'`);
+  const types = () => {
+    expect(history.prepare(`SELECT typeof(body) t FROM ${retained}`).get()!.t).toBe("blob");
+    expect(history.prepare("SELECT typeof(body) t FROM conversation_records WHERE id=?").get(id)!.t).toBe("text");
+  };
+  types();
+  const before = retainedContent(history, retained, "stored");
+  expect(before.count).toBe(1);
+  const exported = decodeHistoryRow("conversation_records", history.prepare(`SELECT * FROM ${retained}`).get()!).body;
+  expect(exported).toBeInstanceOf(Uint8Array);
+  expect(Buffer.from(exported as Uint8Array).equals(Buffer.from("hi"))).toBe(true);
+  for (const check of [
+    () => planFinalize(env.home, { prove: true }),
+    () => runFinalize(env.home, () => {}, { dryRun: true }),
+    () => runFinalize(env.home, () => {}),
+  ]) {
+    const checked = check();
+    expect(checked.ready).toBe(true);
+    expect(checked.items.map(i => i.path)).not.toContain(`history.db:${retained}`);
+    expect(checked.kept.find(i => i.path === `history.db:${retained}`)?.reason).toMatch(/1 rows conflict with different content/);
+    expect(retainedContent(history, retained, "stored")).toEqual(before);
+    types();
+  }
+  // Equal bytes alone are insufficient; only recovery of the explicit BLOB permits removal.
+  history.prepare("UPDATE conversation_records SET body=x'6869' WHERE id=?").run(id);
+  expect(history.prepare("SELECT typeof(body) t FROM conversation_records WHERE id=?").get(id)!.t).toBe("blob");
+  expect(planFinalize(env.home, { prove: true }).items.map(i => i.path)).toContain(`history.db:${retained}`);
+  expect(runFinalize(env.home, () => {}, { dryRun: true }).items.map(i => i.path)).toContain(`history.db:${retained}`);
+  expect(retainedContent(history, retained, "stored")).toEqual(before);
+  expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toContain(`history.db:${retained}`);
+  expect(history.prepare("SELECT name FROM sqlite_master WHERE name=?").get(retained)).toBeUndefined();
+});
+
+it.each([false, true])("AB-215 review: untyped explicit record bodies distinguish INTEGER from REAL at moved rowid=%s", moved => {
+  const db = new DatabaseSync(":memory:"); closes.push(() => db.close());
+  db.exec(`CREATE TABLE conversation_records(id INTEGER PRIMARY KEY,source TEXT,generation INTEGER,offset INTEGER,conversation TEXT,raw BLOB,body);
+    CREATE UNIQUE INDEX record_key ON conversation_records(source,generation,offset);
+    INSERT INTO conversation_records VALUES(1,'numeric',0,0,'codex:a',x'31',1.0);
+    CREATE TABLE retained_223_conversation_records AS SELECT rowid AS retained_rowid,* FROM conversation_records;
+    UPDATE retained_223_conversation_records SET body=1${moved ? ",retained_rowid=101" : ""};`);
+  const retained = "retained_223_conversation_records";
+  const ctx = { live: [{ label: "fixture", db }] };
+  const aligned = { db, table: "conversation_records", by: "retained_rowid" };
+  const before = retainedContent(db, retained, "stored");
+  expect(before.count).toBe(1);
+  expect(db.prepare(`SELECT typeof(body) t FROM ${retained}`).get()!.t).toBe("integer");
+  expect(db.prepare("SELECT typeof(body) t FROM conversation_records").get()!.t).toBe("real");
+  expect(proveTable(db, retained, ctx, aligned)).toMatch(/conflict/);
+  expect(retainedContent(db, retained, "stored")).toEqual(before);
+  db.exec("UPDATE conversation_records SET body=1");
+  expect(db.prepare("SELECT typeof(body) t FROM conversation_records").get()!.t).toBe("integer");
+  expect(proveTable(db, retained, ctx, aligned)).toBeNull();
+});
+
 it.each([
   ["history_pending", false], ["history_pending", true],
   ["history_documents", false], ["history_documents", true],
