@@ -66,3 +66,15 @@ describe("fixed mobile local adapter", () => {
     expect(complete).toHaveBeenCalledTimes(1); expect(replay.deliveries).toEqual([{ recipientLabel: "main", state: "busy", consumedAt: 123 }]);
   });
 });
+describe("project identity for grant scopes", () => {
+  it("names projects for the desktop only and keeps a removed worktree's jobs in its repository project", async () => {
+    runs = [{ ...runs[0]!, name: "gone-worktree-run", workdir: join(home, "missing-worktree"), repoRoot: peer.cwd }];
+    const view = await adapter.snapshot();
+    expect(view.jobs[0]?.projectId).toBe(view.sessions[0]?.projectId);
+    expect(adapter.projectFolders().get(view.sessions[0]!.projectId!)).toBe("D:/Fixture/Project");
+    expect(JSON.stringify(view)).not.toContain("D:/Fixture");
+    const store = new MobileStore(join(home, "mobile.db"), "fixture-pc", "https://pc.example.test"); closers.push(() => store.close());
+    const catalog = ((await new MobileDesktopAdmin(store, adapter, "http://127.0.0.1:4321").handle("GET", "/api/mobile/phones", {})).body as { catalog: { projects: { name: string; sessions: number; jobs: number }[] } }).catalog;
+    expect(catalog.projects).toEqual([expect.objectContaining({ name: "Project", sessions: 1, jobs: 1 })]);
+  });
+});

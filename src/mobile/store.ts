@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import type { Capability, ClaimResult, Credentials, Grant, PairingClaim, PairingQr, Platform } from "./contract.js";
+import { grantCovers, type Capability, type ClaimResult, type Credentials, type Grant, type PairingClaim, type PairingQr, type Platform } from "./contract.js";
 
 export const secret = (): string => randomBytes(32).toString("base64url");
 export const digest = (domain: string, value: string): string => createHash("sha256").update(domain + "\0" + value).digest("hex");
@@ -181,6 +181,6 @@ export class MobileStore {
     });
   }
   can(device: Device, capability: Capability, pcId: string, entity?: { kind: "session" | "job" | "question"; id: string; projectId: string | null }): boolean {
-    return device.grants.some(g => g.pcId === pcId && g.capabilities.includes(capability) && (!entity || (entity.kind === "session" ? g.sessionIds.includes(entity.id) : entity.kind === "job" ? g.jobIds.includes(entity.id) : !!entity.projectId && g.projectIds.includes(entity.projectId))));
+    return device.grants.some(g => g.pcId === pcId && g.capabilities.includes(capability) && (!entity || grantCovers(g, entity)));
   }
 }
