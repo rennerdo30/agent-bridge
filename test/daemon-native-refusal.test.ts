@@ -105,18 +105,30 @@ describe("native active-route refusal subguard (not whole-core restart acceptanc
   it("reader timeout retains the actual worker until exit, late results do not become eligibility, and no worker is terminated", async () => {
     const reader = new NativeLifecycleReader(), owner = randomUUID();
     const observation = reader.read(env.db, owner, 1, performance.now() + 50), worker = Reflect.get(reader, "worker");
-    const emit = worker.emit.bind(worker); let publishExit: (() => void) | undefined;
+    const emit = worker.emit.bind(worker); let publishExit: (() => void) | undefined, actualExitCode: unknown, deliveries = 0;
     // Controlled late observation only: the worker executes real SQLite and exits
     // normally. Delay delivery of its real exit event, never its execution/SQL.
     const spy = vi.spyOn(worker, "emit").mockImplementation((...args: unknown[]) => {
-      if (args[0] === "exit") { publishExit = () => { emit(...args); }; return true; }
+      if (args[0] === "exit") {
+        actualExitCode = args[1];
+        // Node removes these immediately after emit returns. Preserve the real
+        // once wrappers, not an event replay after their removal.
+        const listeners = worker.rawListeners("exit");
+        publishExit = () => {
+          if (deliveries++) throw new Error("fixture exit observer delivered twice");
+          for (const listener of listeners) listener.call(worker, actualExitCode);
+        };
+        return true;
+      }
       return emit(...args);
     });
-    await expect(observation).rejects.toThrow("native_state_unknown");
-    expect(reader.pending()).toBe(1);
-    await expect(reader.read(env.db, owner, 2, deadline())).rejects.toThrow("native_state_unknown");
-    await until(() => !!publishExit); spy.mockRestore(); publishExit!();
-    await until(() => reader.pending() === 0);
+    try {
+      await expect(observation).rejects.toThrow("native_state_unknown");
+      expect(reader.pending()).toBe(1);
+      await expect(reader.read(env.db, owner, 2, deadline())).rejects.toThrow("native_state_unknown");
+      await until(() => !!publishExit); expect(actualExitCode).toBe(0); expect(reader.pending()).toBe(1);
+      spy.mockRestore(); publishExit!(); expect(deliveries).toBe(1); expect(reader.pending()).toBe(0);
+    } finally { spy.mockRestore(); if (publishExit && !deliveries) publishExit(); }
     const fresh = await reader.read(env.db, owner, 3, deadline()); expect(fresh).toMatchObject({ active: 0, generation: 3, ownerInstance: owner });
   });
   it("actual authenticated native RPCs obey the freeze and ordinary admission returns after pre-abort", async () => {
