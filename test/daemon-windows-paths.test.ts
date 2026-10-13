@@ -69,7 +69,9 @@ describe.skipIf(process.platform !== "win32")("Windows phase-local path observat
     const home = await prepare(), owner = randomUUID();
     const before = lstatSync(join(home, ".core-lifecycle", "receipts.sqlite"), { bigint: true });
     const started = performance.now();
-    const proof = await verifyWindowsLifecyclePaths(home, owner, "admission", "established", started + 1000);
+    const proof = await verifyWindowsLifecyclePaths(home, owner, "admission", "established", started + 1000).catch(error => {
+      process.stdout.write("AB325 path guard " + JSON.stringify({ rule: error.rule, role: error.role, ancestorDepth: error.ancestorDepth }) + "\n"); throw error;
+    });
     assertWindowsLifecyclePathProof(proof, home, owner, "admission", "established");
     expect(performance.now() - started).toBeLessThan(1000);
     const after = lstatSync(join(home, ".core-lifecycle", "receipts.sqlite"), { bigint: true });
@@ -79,11 +81,13 @@ describe.skipIf(process.platform !== "win32")("Windows phase-local path observat
   });
   it.each(["Modify", "Write", "DeleteSubdirectoriesAndFiles", "ChangePermissions", "TakeOwnership", "WriteAttributes", "WriteExtendedAttributes"])("refuses individual constituent ancestor control rights: %s", async grant => {
     const home = await prepare(grant);
-    await expect(verifyWindowsLifecyclePaths(home, randomUUID(), "prepare", "established", performance.now() + 5000)).rejects.toMatchObject({ reason: "unsafe_acl" });
+    await expect(verifyWindowsLifecyclePaths(home, randomUUID(), "prepare", "established", performance.now() + 5000)).rejects.toMatchObject({ reason: "unsafe_acl", rule: "foreign_write", role: "ancestor", ancestorDepth: 2 });
   });
   it.each([["CreateDirectories", "none"], ["WriteData", "none"], ["none", "Read"]])("does not reuse the ancestor exception for home or target grants (%s,%s)", async (homeGrant, targetGrant) => {
     const home = await prepare("benign", homeGrant, targetGrant);
-    await expect(verifyWindowsLifecyclePaths(home, randomUUID(), "prepare", "established", performance.now() + 5000)).rejects.toMatchObject({ reason: "unsafe_acl" });
+    await expect(verifyWindowsLifecyclePaths(home, randomUUID(), "prepare", "established", performance.now() + 5000)).rejects.toMatchObject(targetGrant === "none"
+      ? { reason: "unsafe_acl", rule: "foreign_write", role: "home", ancestorDepth: 1 }
+      : { reason: "unsafe_acl", rule: "unprotected", role: "file", ancestorDepth: 0 });
   });
   it("missing/changed identity and expiry never produce a usable phase proof; a late helper remains registered until exit", async () => {
     const home = await prepare(), owner = randomUUID();

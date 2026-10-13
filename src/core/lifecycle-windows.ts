@@ -6,8 +6,17 @@ import { dirname, join } from "node:path";
 type Phase = "admission" | "prepare" | "write";
 type Scope = "home" | "established";
 type Reason = "unsafe_path" | "unsafe_acl" | "unsupported_fs" | "unavailable" | "budget";
+const RULES = ["foreign_owner", "foreign_write", "current_deny", "unprotected", "no_owner_full"] as const;
+const ROLES = ["home", "ancestor", "directory", "file", "journal"] as const;
+type Diagnostic = { rule: typeof RULES[number]; role: typeof ROLES[number]; ancestorDepth: number };
 export class WindowsLifecyclePathUnavailable extends Error {
-  constructor(readonly reason: Reason) { super(`Core lifecycle path verification unavailable: ${reason}.`); }
+  readonly rule?: Diagnostic["rule"];
+  readonly role?: Diagnostic["role"];
+  readonly ancestorDepth?: number;
+  constructor(readonly reason: Reason, diagnostic?: Diagnostic) {
+    super(`Core lifecycle path verification unavailable: ${reason}.`);
+    if (diagnostic) { this.rule = diagnostic.rule; this.role = diagnostic.role; this.ancestorDepth = diagnostic.ancestorDepth; }
+  }
 }
 export interface WindowsLifecyclePathProof { readonly nonce: string; readonly ownerInstance: string; readonly phase: Phase; readonly scope: Scope }
 type Snapshot = Map<string, string>;
@@ -21,7 +30,11 @@ const DIRECTORY = ".core-lifecycle", FILE = "receipts.sqlite";
 const INSPECT = String.raw`
 $ErrorActionPreference='Stop'
 $nonce=''
-function Refuse([string]$code) { throw $code }
+$aclRule=$null; $aclRole=$null; $aclDepth=$null
+function Refuse([string]$code,[string]$rule='',[string]$role='',[int]$depth=0) {
+  if($code -eq 'unsafe_acl') { $script:aclRule=$rule; $script:aclRole=$role; $script:aclDepth=$depth }
+  throw $code
+}
 try {
   $raw=[Console]::In.ReadToEnd()
   if($raw.Length -gt 32768) { Refuse 'unavailable' }
@@ -40,48 +53,52 @@ try {
   $rights=[Security.AccessControl.FileSystemRights]
   $ancestorMask=[int]$rights::Delete -bor [int]$rights::DeleteSubdirectoriesAndFiles -bor [int]$rights::ChangePermissions -bor [int]$rights::TakeOwnership -bor [int]$rights::WriteAttributes -bor [int]$rights::WriteExtendedAttributes
   $homeMask=$ancestorMask -bor [int]$rights::WriteData -bor [int]$rights::AppendData
-  function Inspect([string]$path,[bool]$directory,[bool]$target,[int]$mask) {
+  function Inspect([string]$path,[bool]$directory,[bool]$target,[int]$mask,[string]$role,[int]$depth) {
     $attributes=[IO.File]::GetAttributes($path)
     if(($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or ((($attributes -band [IO.FileAttributes]::Directory) -ne 0) -ne $directory)) { Refuse 'unsafe_path' }
     if($directory) { $acl=[IO.Directory]::GetAccessControl($path) } else { $acl=[IO.File]::GetAccessControl($path) }
     $owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
     if($target) {
-      if($owner -ne $sid -or -not $acl.AreAccessRulesProtected) { Refuse 'unsafe_acl' }
-    } elseif($owner -ne $sid -and $owner -notin $privileged) { Refuse 'unsafe_acl' }
+      if($owner -ne $sid) { Refuse 'unsafe_acl' 'foreign_owner' $role $depth }
+      if(-not $acl.AreAccessRulesProtected) { Refuse 'unsafe_acl' 'unprotected' $role $depth }
+    } elseif($owner -ne $sid -and $owner -notin $privileged) { Refuse 'unsafe_acl' 'foreign_owner' $role $depth }
     $rules=$acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])
-    if($rules.Count -gt 128) { Refuse 'unsafe_acl' }
+    if($rules.Count -gt 128) { Refuse 'unavailable' }
     $ownerFull=$false
     foreach($ace in $rules) {
       $who=$ace.IdentityReference.Value
       $bits=[int]$ace.FileSystemRights
       $applies=($ace.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0
       if($ace.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow) {
-        if($target -and $who -ne $sid) { Refuse 'unsafe_acl' }
-        if($applies -and $who -ne $sid -and $who -notin $privileged -and ($bits -band $mask) -ne 0) { Refuse 'unsafe_acl' }
+        # Protected target means the entire DACL is current-SID-only, including read grants.
+        if($target -and $who -ne $sid) { Refuse 'unsafe_acl' 'unprotected' $role $depth }
+        if($applies -and $who -ne $sid -and $who -notin $privileged -and ($bits -band $mask) -ne 0) { Refuse 'unsafe_acl' 'foreign_write' $role $depth }
         if($applies -and $who -eq $sid -and ($bits -band [int]$rights::FullControl) -eq [int]$rights::FullControl) { $ownerFull=$true }
-      } elseif($applies -and $token.ContainsKey($who) -and ($bits -band $mask) -ne 0) { Refuse 'unsafe_acl' }
+      } elseif($applies -and $token.ContainsKey($who) -and ($bits -band $mask) -ne 0) { Refuse 'unsafe_acl' 'current_deny' $role $depth }
     }
-    if($target -and -not $ownerFull) { Refuse 'unsafe_acl' }
+    if($target -and -not $ownerFull) { Refuse 'unsafe_acl' 'no_owner_full' $role $depth }
   }
   $at=$lifecycleHome; $depth=0
   for(;;) {
     if(++$depth -gt 128) { Refuse 'unsafe_path' }
-    if($at -eq $lifecycleHome) { Inspect $at $true $false $homeMask } else { Inspect $at $true $false $ancestorMask }
+    if($at -eq $lifecycleHome) { Inspect $at $true $false $homeMask 'home' $depth } else { Inspect $at $true $false $ancestorMask 'ancestor' $depth }
     $parent=[IO.Directory]::GetParent($at)
     if($null -eq $parent) { break }
     $at=$parent.FullName
   }
   if($r.scope -eq 'established') {
     $dir=[IO.Path]::Combine($lifecycleHome,'.core-lifecycle')
-    Inspect $dir $true $true $homeMask
-    Inspect ([IO.Path]::Combine($dir,'receipts.sqlite')) $false $true $homeMask
-    Inspect ([IO.Path]::Combine($dir,'receipts.sqlite-journal')) $false $true $homeMask
+    Inspect $dir $true $true $homeMask 'directory' 0
+    Inspect ([IO.Path]::Combine($dir,'receipts.sqlite')) $false $true $homeMask 'file' 0
+    Inspect ([IO.Path]::Combine($dir,'receipts.sqlite-journal')) $false $true $homeMask 'journal' 0
   }
   @{schema=1;nonce=$nonce;status='verified';filesystem=$drive.DriveFormat} | ConvertTo-Json -Compress
 } catch {
   $code=[string]$_.Exception.Message
   if($code -notin @('unsafe_path','unsafe_acl','unsupported_fs')) { $code='unavailable' }
-  @{schema=1;nonce=$nonce;status=$code} | ConvertTo-Json -Compress
+  $response=@{schema=1;nonce=$nonce;status=$code}
+  if($code -eq 'unsafe_acl') { $response.rule=$aclRule; $response.role=$aclRole; $response.ancestorDepth=$aclDepth }
+  $response | ConvertTo-Json -Compress
 }
 `;
 
@@ -122,7 +139,7 @@ export async function verifyWindowsLifecyclePaths(home: string, ownerInstance: s
     const child = spawn(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(INSPECT, "utf16le").toString("base64")], { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
     const registration = {}; pending.add(registration);
     let output = "", settled = false;
-    const refuse = (reason: Reason) => { if (!settled) { settled = true; clearTimeout(timer); no(new WindowsLifecyclePathUnavailable(reason)); } };
+    const refuse = (reason: Reason, diagnostic?: Diagnostic) => { if (!settled) { settled = true; clearTimeout(timer); no(new WindowsLifecyclePathUnavailable(reason, diagnostic)); } };
     const timer = setTimeout(() => refuse("budget"), Math.max(0, expires - performance.now()));
     child.on("error", () => refuse("unavailable")); child.stdin!.on("error", () => refuse("unavailable"));
     child.stdout!.setEncoding("utf8");
@@ -135,7 +152,18 @@ export async function verifyWindowsLifecyclePaths(home: string, ownerInstance: s
         if (!response || typeof response !== "object") return refuse("unavailable");
         const r = response as Record<string, unknown>;
         if (code !== 0 || r.schema !== 1 || r.nonce !== nonce || performance.now() >= expires) return refuse("unavailable");
-        if (r.status !== "verified") return refuse(["unsafe_path", "unsafe_acl", "unsupported_fs"].includes(String(r.status)) ? r.status as Reason : "unavailable");
+        const keys = Object.keys(r);
+        if (r.status !== "verified") {
+          if (r.status === "unsafe_acl") {
+            if (keys.length !== 6 || keys.some(key => !["schema", "nonce", "status", "rule", "role", "ancestorDepth"].includes(key)) ||
+              !RULES.includes(r.rule as Diagnostic["rule"]) || !ROLES.includes(r.role as Diagnostic["role"]) ||
+              typeof r.ancestorDepth !== "number" || !Number.isSafeInteger(r.ancestorDepth) || r.ancestorDepth < 0 || r.ancestorDepth > 128) return refuse("unavailable");
+            return refuse("unsafe_acl", { rule: r.rule as Diagnostic["rule"], role: r.role as Diagnostic["role"], ancestorDepth: r.ancestorDepth });
+          }
+          if (keys.length !== 3 || keys.some(key => !["schema", "nonce", "status"].includes(key))) return refuse("unavailable");
+          return refuse(["unsafe_path", "unsupported_fs"].includes(String(r.status)) ? r.status as Reason : "unavailable");
+        }
+        if (keys.length !== 4 || keys.some(key => !["schema", "nonce", "status", "filesystem"].includes(key))) return refuse("unavailable");
         if (!["NTFS", "ReFS"].includes(String(r.filesystem)) || !same(before, snapshot(home, scope))) return refuse("unsafe_path");
         const proof = Object.freeze({ nonce, ownerInstance, phase, scope });
         proofs.set(proof, { paths: before, deadline: expires, pid: process.pid });
