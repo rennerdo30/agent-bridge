@@ -150,11 +150,47 @@ function toMessage(r: Row): BridgeMessage {
   };
 }
 
+type StoreHandleCapture = { readonly identity: symbol; readonly db: DatabaseSync; readonly kinds: Set<"main" | "archive" | "history">;
+  close: "not_attempted" | "attempted" | "returned" | "unknown" };
+type StoreConstructionCapture = { readonly identity: symbol; handles: Map<DatabaseSync, StoreHandleCapture>;
+  statements: Set<StatementSync>; consumers: Set<DecisionStore | HistoryIndex>; lease: (() => void) | null;
+  construction: "attempted" | "returned" | "unknown"; ordinaryClose: "not_attempted" | "attempted" | "returned" | "unknown"; unknown: boolean };
+const storeHandleCaptures = new WeakMap<DatabaseSync, StoreConstructionCapture>();
+const retainedStoreConstructions = new Set<StoreConstructionCapture>();
+
+/** Actual historical constructor capture only; never native handle export,
+ * current cold/schema proof, complete managed census or retirement permission.
+ */
+export function messageStoreHandleObservation(db: DatabaseSync) {
+  const owner = storeHandleCaptures.get(db), handle = owner?.handles.get(db);
+  return Object.freeze({ captured: handle !== undefined, construction: owner?.construction ?? "unavailable",
+    main: handle?.kinds.has("main") ?? false, archive: handle?.kinds.has("archive") ?? false, history: handle?.kinds.has("history") ?? false,
+    close: handle?.close ?? "not_attempted", handles: owner?.handles.size ?? 0, statements: owner?.statements.size ?? 0,
+    consumers: owner?.consumers.size ?? 0, unknown: owner?.unknown ?? true, ordinaryClose: owner?.ordinaryClose ?? "not_attempted",
+    retained: owner !== undefined && retainedStoreConstructions.has(owner), ownerBound: false as const,
+    settled: false as const, ownershipReleased: false as const });
+}
+
 /**
  * Durable message store. Only the broker process opens it, so there is a single writer at a time.
  * All statements are prepared once and bound with parameters.
  */
 export class MessageStore {
+  private readonly lifecycleConstruction: StoreConstructionCapture = { identity: Symbol("actual MessageStore constructor"),
+    handles: new Map(), statements: new Set(), consumers: new Set(), lease: null, construction: "attempted", ordinaryClose: "not_attempted", unknown: false };
+  private captureHandle(kind: "main" | "archive" | "history", db: DatabaseSync): void {
+    let capture = this.lifecycleConstruction.handles.get(db);
+    if (!capture) { capture = { identity: Symbol("actual Store native handle"), db, kinds: new Set(), close: "not_attempted" }; this.lifecycleConstruction.handles.set(db, capture); }
+    capture.kinds.add(kind); storeHandleCaptures.set(db, this.lifecycleConstruction);
+  }
+  private captureStatement(statement: StatementSync): StatementSync { this.lifecycleConstruction.statements.add(statement); return statement; }
+  private closeCapturedHandle(db: DatabaseSync): void {
+    const capture = this.lifecycleConstruction.handles.get(db);
+    if (capture) capture.close = "attempted"; else this.lifecycleConstruction.unknown = true;
+    retainedStoreConstructions.add(this.lifecycleConstruction);
+    try { db.close(); if (capture) capture.close = "returned"; }
+    catch (error) { if (capture) capture.close = "unknown"; this.lifecycleConstruction.unknown = true; throw error; }
+  }
   private readonly db: DatabaseSync;
   private readonly archiveDb: DatabaseSync;
   private readonly historyDb: DatabaseSync;
@@ -197,12 +233,15 @@ export class MessageStore {
     file: string,
     private readonly log: Logger,
   ) {
+    retainedStoreConstructions.add(this.lifecycleConstruction);
+    try {
     this.file = file;
     const existed = file !== ":memory:" && existsSync(file);
     this.home = file === ":memory:" ? null : dirname(file);
     if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true, mode: 0o700 }); // owner-only on Unix
     this.release = file === ":memory:" ? () => {} : storageLease(dirname(file));
-    try { this.db = new DatabaseSync(file); }
+    this.lifecycleConstruction.lease = this.release;
+    try { this.db = new DatabaseSync(file); this.captureHandle("main", this.db); }
     catch (err) { this.release(); throw err; }
     try {
       let deferred = false;
@@ -217,45 +256,50 @@ export class MessageStore {
       configureSqlite(this.db);
       ensureMessageQuarantine(this.db);
     } catch (err) {
-      this.db.close();
+      this.closeCapturedHandle(this.db);
       this.release();
       throw err;
     }
-    try { this.archiveDb = openArchive(archiveDbPath(file)); }
-    catch (err) { this.db.close(); this.release(); throw err; }
+    try { this.archiveDb = openArchive(archiveDbPath(file)); this.captureHandle("archive", this.archiveDb); }
+    catch (err) { this.closeCapturedHandle(this.db); this.release(); throw err; }
     // Legacy archived rows stay readable in their original table. Relocation
     // starts in bounded chunks only after the broker listener is available.
     this.decisions = new DecisionStore(this.db);
+    this.lifecycleConstruction.consumers.add(this.decisions);
     this.historyFile = historyDbPath(file);
     let historyDb: DatabaseSync | undefined;
     try {
       this.historyDb = historyDb = file === ":memory:" ? this.db : openHistoryStore(this.historyFile);
+      this.captureHandle("history", this.historyDb);
       this.history = new HistoryIndex(this.historyDb, this.home, undefined, this.db,
         file === ":memory:" ? undefined : (peer) => this.historyPeerSink?.(peer as PeerInfo));
+      this.lifecycleConstruction.consumers.add(this.history);
     } catch (err) {
-      if (historyDb && historyDb !== this.db) historyDb.close();
-      this.archiveDb.close(); this.db.close(); this.release(); throw err;
+      if (historyDb && historyDb !== this.db) this.closeCapturedHandle(historyDb);
+      this.closeCapturedHandle(this.archiveDb); this.closeCapturedHandle(this.db); this.release(); throw err;
     }
     this.stmt = {
-      insert: this.db.prepare(
+      insert: this.captureStatement(this.db.prepare(
         `INSERT INTO messages (id, recipient, from_id, from_name, from_agent, to_target, conversation_id, reply_to, hop, body, created_at, read_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
-      ),
-      unread: this.db.prepare(
+      )),
+      unread: this.captureStatement(this.db.prepare(
         `SELECT * FROM deliverable_messages WHERE recipient = ? AND read_at IS NULL
          ORDER BY CASE WHEN (conversation_id LIKE '%:note' OR conversation_id LIKE '%:ack' OR conversation_id LIKE 'files-progress-%') THEN 1 ELSE 0 END,
                   created_at ASC, id ASC LIMIT ?`,
-      ),
-      markRead: this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL AND ${unquarantined("messages")}`),
-      claim: this.db.prepare(`UPDATE OR IGNORE messages SET recipient = ? WHERE recipient = ? AND read_at IS NULL AND ${unquarantined("messages")}`),
-      byId: this.db.prepare(`SELECT * FROM messages WHERE id = ? ORDER BY created_at ASC LIMIT 1`),
-      replyConflicts: this.db.prepare(`SELECT id, from_name, conversation_id FROM deliverable_messages WHERE recipient = ? AND read_at IS NULL
+      )),
+      markRead: this.captureStatement(this.db.prepare(`UPDATE messages SET read_at = ? WHERE id = ? AND recipient = ? AND read_at IS NULL AND ${unquarantined("messages")}`)),
+      claim: this.captureStatement(this.db.prepare(`UPDATE OR IGNORE messages SET recipient = ? WHERE recipient = ? AND read_at IS NULL AND ${unquarantined("messages")}`)),
+      byId: this.captureStatement(this.db.prepare(`SELECT * FROM messages WHERE id = ? ORDER BY created_at ASC LIMIT 1`)),
+      replyConflicts: this.captureStatement(this.db.prepare(`SELECT id, from_name, conversation_id FROM deliverable_messages WHERE recipient = ? AND read_at IS NULL
         AND (conversation_id = ? OR from_name IN (SELECT value FROM json_each(?)))
         AND (? IS NULL OR created_at >= ?) AND id != ?
         AND conversation_id NOT LIKE '%:note' AND conversation_id NOT LIKE '%:ack'
-        AND conversation_id NOT LIKE 'files-progress-%' ORDER BY created_at, id LIMIT 50`),
+        AND conversation_id NOT LIKE 'files-progress-%' ORDER BY created_at, id LIMIT 50`)),
     };
     log.debug("message store opened", { file });
+    this.lifecycleConstruction.construction = "returned"; retainedStoreConstructions.delete(this.lifecycleConstruction);
+    } catch (error) { this.lifecycleConstruction.construction = "unknown"; this.lifecycleConstruction.unknown = true; throw error; }
   }
 
   startBackups(): void {
@@ -727,20 +771,26 @@ export class MessageStore {
 
   close(): void {
     if (this.closed) return;
+    this.lifecycleConstruction.ordinaryClose = "attempted"; retainedStoreConstructions.add(this.lifecycleConstruction);
+    try {
     this.closed = true;
     if (this.archiveTimer) clearTimeout(this.archiveTimer);
     this.archiveTimer = null;
     this.stopWrites();
     this.history.close();
-    if (this.historyDb !== this.db) this.historyDb.close();
+    if (this.historyDb !== this.db) this.closeCapturedHandle(this.historyDb);
     void this.closeBackups();
     try {
-      this.db.close();
-      this.archiveDb.close();
+      this.closeCapturedHandle(this.db);
+      this.closeCapturedHandle(this.archiveDb);
     } catch (err) {
       this.log.warn("error closing message store", { err });
     } finally {
       this.release();
+      if (!this.lifecycleConstruction.unknown && [...this.lifecycleConstruction.handles.values()].every(handle => handle.close === "returned"))
+        retainedStoreConstructions.delete(this.lifecycleConstruction);
     }
+    this.lifecycleConstruction.ordinaryClose = "returned";
+    } catch (error) { this.lifecycleConstruction.ordinaryClose = "unknown"; this.lifecycleConstruction.unknown = true; throw error; }
   }
 }

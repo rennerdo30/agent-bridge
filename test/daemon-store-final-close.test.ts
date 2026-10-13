@@ -7,7 +7,7 @@ import { openHistoryStore, historyInitializationObservation } from "../src/core/
 import { storageLease, storageLeaseObservation } from "../src/core/storage-lock.js";
 import { DecisionStore, DECISIONS_SCHEMA } from "../src/core/decisions.js";
 import { HistoryIndex } from "../src/core/history.js";
-import { MessageStore } from "../src/core/store.js";
+import { MessageStore, messageStoreHandleObservation } from "../src/core/store.js";
 import { nullLogger } from "../src/core/logger.js";
 import { attachStoreCompatibility, storeCompatibilityObservation } from "../src/core/store-compatibility-overlay.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
@@ -354,4 +354,57 @@ describe("actual known compatibility overlay admission (not main-only or owner c
       expect(readFileSync(fixture.path)).toEqual(fixture.bytes);
     }
   });
+});
+
+describe("actual MessageStore construction resources (not complete consumer/producer closure)", () => {
+  it("captures the actual main before initialization and actual handles/cache/consumers without census SQL", () => {
+    let main: DatabaseSync | undefined;
+    vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+      const observation = messageStoreHandleObservation(this);
+      if (observation.captured && observation.main && observation.construction === "attempted" && main === undefined) {
+        main = this; expect(observation).toMatchObject({ handles: 1, statements: 0, consumers: 0, ownerBound: false, settled: false });
+      }
+      return nativeExec.call(this, sql);
+    });
+    const store = new MessageStore(env.db, nullLogger); ownedStores.add(store); vi.restoreAllMocks();
+    const exec = vi.spyOn(DatabaseSync.prototype, "exec"), prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
+    expect(main).toBeDefined();
+    expect(messageStoreHandleObservation(main!)).toMatchObject({ construction: "returned", handles: 3, statements: 6, consumers: 2,
+      close: "not_attempted", ordinaryClose: "not_attempted", retained: false, ownerBound: false, settled: false, ownershipReleased: false });
+    expect(exec).not.toHaveBeenCalled(); expect(prepare).not.toHaveBeenCalled(); vi.restoreAllMocks();
+    store.close(); ownedStores.delete(store);
+    expect(messageStoreHandleObservation(main!)).toMatchObject({ close: "returned", ordinaryClose: "returned", ownerBound: false, settled: false, ownershipReleased: false });
+  });
+  function acceptedStore() {
+    const store = new MessageStore(env.db, nullLogger); ownedStores.add(store);
+    store.insert({ id: "accepted-construction-mail", from: { id: "owned-author", name: "owned-author", agent: "other" },
+      to: "owned-peer", recipient: "owned-peer", conversationId: "owned-construction", replyTo: null, hop: 1,
+      body: "Exact accepted construction bytes", createdAt: 1, readAt: null });
+    store.close(); ownedStores.delete(store); return readFileSync(env.db);
+  }
+  for (const closeFault of [false, true]) {
+    it(`retains actual failed construction and ${closeFault ? "SIMULATED unknown close" : "actual close return"} without losing accepted bytes`, () => {
+      const bytes = acceptedStore(), initFailure = new Error("SIMULATED Store initialization failure"), closeFailure = new Error("SIMULATED Store close failure before native close");
+      let main: DatabaseSync | undefined;
+      vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+        const result = nativeExec.call(this, sql), observation = messageStoreHandleObservation(this);
+        if (main === undefined && observation.captured && observation.main && observation.construction === "attempted") {
+          main = this; owned.set(this, { actuallyClosed: false }); throw initFailure;
+        }
+        return result;
+      });
+      vi.spyOn(DatabaseSync.prototype, "close").mockImplementation(function(this: DatabaseSync) {
+        if (this === main && closeFault) throw closeFailure;
+        const result = nativeClose.call(this); if (this === main) owned.get(this)!.actuallyClosed = true; return result;
+      });
+      expect(() => new MessageStore(env.db, nullLogger)).toThrow(closeFault ? closeFailure : initFailure);
+      expect(messageStoreHandleObservation(main!)).toMatchObject({ construction: "unknown", close: closeFault ? "unknown" : "returned",
+        unknown: true, retained: true, ownerBound: false, settled: false, ownershipReleased: false });
+      vi.restoreAllMocks(); if (!owned.get(main!)!.actuallyClosed) dispose(main!);
+      expect(messageStoreHandleObservation(main!)).toMatchObject({ construction: "unknown", close: closeFault ? "unknown" : "returned", retained: true });
+      expect(readFileSync(env.db)).toEqual(bytes);
+      const reader = new DatabaseSync(env.db, { readOnly: true }); owned.set(reader, { actuallyClosed: false });
+      expect(reader.prepare("SELECT body FROM messages WHERE id=?").get("accepted-construction-mail")!.body).toBe("Exact accepted construction bytes"); dispose(reader);
+    });
+  }
 });
