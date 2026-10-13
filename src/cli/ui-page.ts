@@ -1640,7 +1640,7 @@ function renderChatForm(x, key) {
   if (!next) return;
   const peer = x.peer || {}, remote = Boolean(pcOf(x.name) || peer.host), child = key !== CHAT_KEY;
   const jobChild = key.startsWith(JOB_CHILD_PREFIX);
-  const supported = Boolean(x.live && !remote && ["claude", "codex", "opencode", "antigravity"].includes(peer.agent));
+  const supported = Boolean(x.live && !remote && ["claude", "codex", "opencode", "antigravity", "muse"].includes(peer.agent));
   const direct = supported && (!child || (peer.agent === "codex" && !jobChild));
   $("chatBody").disabled = !supported;
   $("chatSendBtn").classList.toggle("hidden", child && !direct);
@@ -1653,7 +1653,7 @@ function renderChatForm(x, key) {
       : child ? direct ? "Native input when the CLI supports its live child thread. Parent delivery is also available."
         : "Not supported: direct input to this native subagent. Send to its parent with a note about it."
         : peer.agent === "codex" ? "Native user prompt, queued until idle. A labeled bridge message is the fallback."
-          : peer.agent === "antigravity" ? "Sent as you (owner) through the bridge. Idle mail waits for the next turn or inbox read."
+          : ["antigravity", "muse"].includes(peer.agent) ? "Sent as you (owner) through the bridge. Idle mail waits for the next turn or inbox read."
             : "Sent as you (owner) through the CLI's existing channel or prompt delivery. Wake preferences apply.";
   $("chatSendInfo").textContent = (chatResults.get(next) || {}).text || "";
   void refreshChatReceipt(next);
