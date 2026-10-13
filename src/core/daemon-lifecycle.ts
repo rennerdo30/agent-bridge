@@ -41,12 +41,14 @@ export class LifecycleUnavailable extends Error {
   readonly bootstrapStage?: BootstrapStage;
   readonly bootstrapFlushOk?: boolean;
   readonly bootstrapFlushErrno?: BootstrapFlushErrno;
+  readonly bootstrapCloseErrno?: BootstrapFlushErrno;
   constructor(readonly reason: "private_path" | "publication_unproved" | "lineage_unknown" | "writer_unknown" | "revision_conflict" | "receipt_conflict" | "budget" | "metadata_bound", bootstrapStage?: BootstrapStage,
-    flush?: { ok: boolean; errno?: BootstrapFlushErrno }) {
+    flush?: { ok: boolean; errno?: BootstrapFlushErrno; closeErrno?: BootstrapFlushErrno }) {
     super(`Core lifecycle unavailable: ${reason}.`);
     if (bootstrapStage !== undefined && BOOTSTRAP_STAGES.includes(bootstrapStage)) this.bootstrapStage = bootstrapStage;
     if (typeof flush?.ok === "boolean") this.bootstrapFlushOk = flush.ok;
     if (flush?.errno !== undefined && BOOTSTRAP_FLUSH_ERRNOS.includes(flush.errno)) this.bootstrapFlushErrno = flush.errno;
+    if (flush?.closeErrno !== undefined && BOOTSTRAP_FLUSH_ERRNOS.includes(flush.closeErrno)) this.bootstrapCloseErrno = flush.closeErrno;
   }
 }
 function fail(reason: LifecycleUnavailable["reason"]): never { throw new LifecycleUnavailable(reason); }
@@ -177,26 +179,31 @@ export class LifecycleJournal {
     const writer = (() => { try { guard(); return new DatabaseSync(file, { timeout: BUSY_MS }); } catch { fail("publication_unproved"); } })();
     const journal = new LifecycleJournal(file, lineage, owner, writer);
     let stage: BootstrapStage = "final_guard";
-    let flushOutcome: { ok: boolean; errno?: BootstrapFlushErrno } | undefined;
+    let flushOutcome: { ok: boolean; errno?: BootstrapFlushErrno; closeErrno?: BootstrapFlushErrno } | undefined;
     // Windows FlushFileBuffers requires GENERIC_WRITE. This private closure is
     // limited to the two exact newly created objects from the source-owned proof;
     // generic flush(), existing files, Unix and readonly readers keep their modes.
     const flushCreated = (path: string) => {
-      guard(); if (path !== file && path !== file + "-journal") fail("writer_unknown");
+      // CURRENT-stage fsync return only, never publication/close success or a
+      // previous file's outcome. Reset before even the first admission check.
       flushOutcome = { ok: false };
-      let fd: number | undefined;
+      let fd: number | undefined, primaryError: unknown;
+      const errno = (error: unknown): BootstrapFlushErrno => {
+        const code = (error as NodeJS.ErrnoException)?.code;
+        return BOOTSTRAP_FLUSH_ERRNOS.includes(code as BootstrapFlushErrno) ? code as BootstrapFlushErrno : "unknown";
+      };
       try {
+        guard(); if (path !== file && path !== file + "-journal") fail("writer_unknown");
         fd = openSync(path, "r+"); guard(); fsyncSync(fd); flushOutcome = { ok: true }; guard();
       } catch (error) {
-        const code = (error as NodeJS.ErrnoException)?.code;
-        flushOutcome.errno = BOOTSTRAP_FLUSH_ERRNOS.includes(code as BootstrapFlushErrno) ? code as BootstrapFlushErrno : "unknown";
-        throw error;
+        flushOutcome.errno = errno(error); primaryError = error;
       } finally {
         if (fd !== undefined) {
           try { closeSync(fd); }
-          catch (error) { failedBootstrapFlushDescriptors.add(fd); throw error; }
+          catch (error) { failedBootstrapFlushDescriptors.add(fd); flushOutcome.closeErrno = errno(error); primaryError ??= error; }
         }
       }
+      if (primaryError !== undefined) throw primaryError;
     };
     try {
       guard(); stage = "configure"; configureWriter(writer, guard); stage = "final_guard"; guard();
@@ -219,7 +226,7 @@ export class LifecycleJournal {
       // No accepted lifecycle command exists. Keep actual handles/files and any
       // unconfirmed transaction; no rollback, close, cleanup or second bootstrap.
       journal.quarantined = true; failedBootstrapJournals.add(journal);
-      throw new LifecycleUnavailable("publication_unproved", stage, flushOutcome);
+      throw new LifecycleUnavailable("publication_unproved", stage, stage === "file_flush" || stage === "journal_flush" ? flushOutcome : undefined);
     }
   }
 

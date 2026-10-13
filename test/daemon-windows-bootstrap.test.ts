@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import * as processes from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import * as files from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -33,6 +34,7 @@ let env: TestEnv, home: string, broker: Broker | undefined, reservation: Endpoin
 let journal: LifecycleJournal | undefined, captured: DatabaseSync | undefined;
 const sqliteExec = DatabaseSync.prototype.exec;
 const setupCloses = new Set<Promise<void>>();
+const fixtureFlushDescriptors = new Set<number>();
 beforeEach(async () => {
   env = makeEnv(); home = join(env.home, "home"); captured = undefined;
   if (process.platform !== "win32") return;
@@ -54,6 +56,10 @@ afterEach(async () => {
   // A setup observer timeout is not process exit or permission to remove its home.
   await Promise.all([...setupCloses]);
   vi.restoreAllMocks();
+  // Dispose ONLY exact native descriptors this isolated fixture captured; this is
+  // neither production retry/cleanup nor proof the failed close had succeeded.
+  for (const fd of fixtureFlushDescriptors) files.closeSync(fd);
+  fixtureFlushDescriptors.clear();
   // Exact isolated test handle disposal ONLY. No production rollback/force-close API.
   if (captured) { if (captured.isTransaction) sqliteExec.call(captured, "ROLLBACK"); captured.close(); captured = undefined; }
   if (journal) { expect(journal.close()).toBe(true); journal = undefined; }
@@ -80,7 +86,8 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
         const errnos = ["EPERM", "EBADF", "EACCES", "EIO", "unknown"];
         process.stderr.write("AB325 bootstrap fixture evidence " + JSON.stringify({ reason: "publication_unproved", bootstrapStage: error.bootstrapStage,
           flush_ok: typeof error.bootstrapFlushOk === "boolean" ? error.bootstrapFlushOk : undefined,
-          flush_errno: typeof error.bootstrapFlushErrno === "string" && errnos.includes(error.bootstrapFlushErrno) ? error.bootstrapFlushErrno : undefined }) + "\n");
+          flush_errno: typeof error.bootstrapFlushErrno === "string" && errnos.includes(error.bootstrapFlushErrno) ? error.bootstrapFlushErrno : undefined,
+          close_errno: typeof error.bootstrapCloseErrno === "string" && errnos.includes(error.bootstrapCloseErrno) ? error.bootstrapCloseErrno : undefined }) + "\n");
       }
       throw error;
     });
@@ -151,6 +158,46 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
       expect(pendingWindowsLifecycleVerifications()).toBe(1); expect(existsSync(directory())).toBe(false);
     } finally { await closed; deliverClose(); }
     expect(actualCode).toBe(0); expect(pendingWindowsLifecycleVerifications()).toBe(0); expect(existsSync(directory())).toBe(false);
+  });
+  it("actual DB fsync success cannot label a later journal entry guard failure as successful journal fsync", async () => {
+    const b = await serving(), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end);
+    const realOpen = files.openSync, realFsync = files.fsyncSync;
+    const owned = new Map<number, "file" | "journal">(); let dbSynced = false, journalSynced = false;
+    vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+      if (sql.includes("CREATE TABLE lifecycle_lineage")) captured = this; return sqliteExec.call(this, sql);
+    });
+    vi.spyOn(files, "openSync").mockImplementation((path, flags, mode) => {
+      const fd = realOpen(path, flags, mode);
+      if (flags === "r+" && path === file()) owned.set(fd, "file");
+      if (flags === "r+" && path === file() + "-journal") { owned.set(fd, "journal"); b.setHostingMode("daemon"); }
+      return fd;
+    });
+    vi.spyOn(files, "fsyncSync").mockImplementation(fd => {
+      realFsync(fd); if (owned.get(fd) === "file") dbSynced = true; if (owned.get(fd) === "journal") journalSynced = true;
+    });
+    await expect(LifecycleJournal.bootstrapServing(cap, end)).rejects.toMatchObject({ reason: "publication_unproved", bootstrapStage: "journal_flush", bootstrapFlushOk: false });
+    expect(dbSynced).toBe(true); expect(journalSynced).toBe(false); expect(captured!.isTransaction).toBe(false);
+  });
+  it("SIMULATED owned fsync plus close failure keeps the primary errno and separate close classification", async () => {
+    const b = await serving(), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end), realOpen = files.openSync;
+    const realFsync = files.fsyncSync, realClose = files.closeSync;
+    vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+      if (sql.includes("CREATE TABLE lifecycle_lineage")) captured = this; return sqliteExec.call(this, sql);
+    });
+    vi.spyOn(files, "openSync").mockImplementation((path, flags, mode) => {
+      const fd = realOpen(path, flags, mode); if (flags === "r+" && path === file()) fixtureFlushDescriptors.add(fd); return fd;
+    });
+    vi.spyOn(files, "fsyncSync").mockImplementation(fd => {
+      if (fixtureFlushDescriptors.has(fd)) throw Object.assign(new Error("SIMULATED owned fsync failure"), { code: "EIO" });
+      return realFsync(fd);
+    });
+    vi.spyOn(files, "closeSync").mockImplementation(fd => {
+      if (fixtureFlushDescriptors.has(fd)) throw Object.assign(new Error("SIMULATED owned close failure"), { code: "EBADF" });
+      return realClose(fd);
+    });
+    await expect(LifecycleJournal.bootstrapServing(cap, end)).rejects.toMatchObject({ reason: "publication_unproved", bootstrapStage: "file_flush",
+      bootstrapFlushOk: false, bootstrapFlushErrno: "EIO", bootstrapCloseErrno: "EBADF" });
+    expect(fixtureFlushDescriptors.size).toBe(1); expect(captured!.isTransaction).toBe(false); expect(existsSync(file() + "-journal")).toBe(true);
   });
   it("SIMULATED pre-COMMIT IO error retains actual owned transaction/objects without production cleanup or recreation", async () => {
     const b = await serving(), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end);
