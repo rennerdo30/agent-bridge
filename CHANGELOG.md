@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Codex hooks no longer fail with "hook input placeholder `${agent_id}` was not found". Codex leaves out `agent_id` for the main thread, and on SessionStart and Stop, and fails any MCP hook that references a missing field. The Codex hooks now leave it out too. Native Codex children are still recognized by the thread ID Codex attaches to every hook call, together with that thread's rollout lineage. `hook_event` also accepts `null` fields, which Codex sends for a missing transcript path.
+
 ## 0.30.14
 
 - Phone pairing over a plain home-network IP now works with `"tls": "pinned"`, with no CA or certificate setup. Scan the QR code to pin the PC key; the native phone transport checks that key before sending requests (AB-271).

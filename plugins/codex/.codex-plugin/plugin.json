@@ -31,7 +31,6 @@
                 "event": "SessionStart",
                 "session_id": "${session_id}",
                 "cwd": "${cwd}",
-                "agent_id": "${agent_id}",
                 "transcript_path": "${transcript_path}"
               }
             }
@@ -49,7 +48,6 @@
                 "event": "UserPromptSubmit",
                 "session_id": "${session_id}",
                 "cwd": "${cwd}",
-                "agent_id": "${agent_id}",
                 "transcript_path": "${transcript_path}"
               }
             }
@@ -67,7 +65,6 @@
                 "event": "PostToolUse",
                 "session_id": "${session_id}",
                 "cwd": "${cwd}",
-                "agent_id": "${agent_id}",
                 "transcript_path": "${transcript_path}"
               }
             }
@@ -98,7 +95,6 @@
                 "session_id": "${session_id}",
                 "cwd": "${cwd}",
                 "stop_hook_active": "${stop_hook_active}",
-                "agent_id": "${agent_id}",
                 "transcript_path": "${transcript_path}"
               }
             }
