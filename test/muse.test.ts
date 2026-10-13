@@ -71,11 +71,20 @@ describe("Muse delegation", () => {
 
   it("edit access disables approval prompts instead of read-only switches", async () => {
     mocks.run.mockResolvedValue({ code: 0, stdout: stream(), stderr: "" });
-    await delegateToMuse({ bin: "muse", prompt: "task", cwd: temp(), access: "edit", permissionProfile: "dev", timeoutSec: 20, log: nullLogger });
+    await delegateToMuse({ bin: "muse", prompt: "task", cwd: temp(), access: "edit", timeoutSec: 20, log: nullLogger });
     const args = mocks.run.mock.calls[0]![0].args as string[];
     expect(args).toContain("--disable-approval");
-    expect(args).toContain("--permission-profile");
     expect(args).not.toContain("--disable-write");
+  });
+
+  it("a permission profile replaces the approval flags muse exec refuses to combine", async () => {
+    mocks.run.mockResolvedValue({ code: 0, stdout: stream(), stderr: "" });
+    await delegateToMuse({ bin: "muse", prompt: "task", cwd: temp(), access: "read", permissionProfile: "dev", timeoutSec: 20, log: nullLogger });
+    const args = mocks.run.mock.calls[0]![0].args as string[];
+    expect(args).toContain("--permission-profile");
+    expect(args).toContain("--disable-write");
+    expect(args).not.toContain("--approval-mode");
+    expect(args).not.toContain("--disable-approval");
   });
 
   it("reports native failure text and keeps the session for resuming", async () => {

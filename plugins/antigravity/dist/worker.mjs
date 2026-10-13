@@ -30623,8 +30623,8 @@ async function delegateToMuse(req) {
   if (req.model) args.push("--model", req.model);
   if (req.effort) args.push("--reasoning-effort", req.effort);
   if (req.permissionProfile) args.push("--permission-profile", req.permissionProfile);
-  if (req.access === "read") args.push("--disable-write", "--disable-shell", "--approval-mode", "never");
-  else args.push("--disable-approval");
+  if (req.access === "read") args.push("--disable-write", "--disable-shell", ...req.permissionProfile ? [] : ["--approval-mode", "never"]);
+  else if (!req.permissionProfile) args.push("--disable-approval");
   const progress = progressEventHandler("muse", req.onProgress);
   let sessionId = req.sessionId ?? null;
   let sessionReported = false;
