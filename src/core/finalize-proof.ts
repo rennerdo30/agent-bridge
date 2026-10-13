@@ -5,6 +5,7 @@ import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlit
 import { decodeBytes } from "./history-codec.js";
 import { chainRows, foldedText } from "./history-migration.js";
 import { HISTORY_V2_COPY_TABLES } from "./history-schema-v2.js";
+import { cellBytes, decodeAbsorbedRow, plainCell, sameCell, storedCell, witnessRow, type StoredCell } from "./stored-row.js";
 
 /** Row-level proof that old data is redundant (owner rule: storage finalize may delete something only when every
  * row in it still exists in the live databases, checked at deletion time). Anything unproven is kept and reported.
@@ -59,6 +60,51 @@ export const ABSORBED_ROWS = "absorbed_rows";
 export const ABSORBED_FILES = "absorbed_files";
 const COPY_TABLES = new Set<string>(HISTORY_V2_COPY_TABLES);
 const q = (s: string) => `"${s.replaceAll('"', '""')}"`;
+const encodings = new WeakMap<DatabaseSync, string>();
+function encoding(db: DatabaseSync): string {
+  let name = encodings.get(db);
+  if (!name) { name = String(db.prepare("PRAGMA encoding").get()!.encoding); encodings.set(db, name); }
+  return name;
+}
+function freeAlias(base: string, names: readonly string[]): string {
+  let name = base;
+  while (names.some(n => n.toLowerCase() === name.toLowerCase())) name += "_";
+  return name;
+}
+
+/** Capture TEXT bytes inside SQLite, before its driver replaces invalid UTF8. Never cast numeric values. */
+export function proofRead(db: DatabaseSync, available: readonly string[], wanted: readonly string[], query: (projection: string) => string) {
+  const selected = [...new Set(wanted.flatMap(c => available.includes(`${c}_codec`) ? [c, `${c}_codec`] : [c]))].filter(c => available.includes(c));
+  const reserved = [...available, "__cid", "__tid"], fields: string[] = [];
+  const aliases = selected.map((name, i) => {
+    const type = freeAlias(`__proof_type_${i}`, reserved); reserved.push(type);
+    const bytes = freeAlias(`__proof_text_${i}`, reserved); reserved.push(bytes);
+    fields.push(q(name), `typeof(${q(name)}) AS ${q(type)}`, `CASE WHEN typeof(${q(name)})='text' THEN CAST(${q(name)} AS BLOB) END AS ${q(bytes)}`);
+    return { name, type, bytes };
+  });
+  const statement = db.prepare(query(fields.join(","))); statement.setReadBigInts(true);
+  const read = (row: Row): Row => {
+    const cells = new Map<string, StoredCell>();
+    for (const a of aliases) {
+      const type = String(row[a.type]), v = row[a.name] ?? null;
+      if (type === "text") {
+        if (!(row[a.bytes] instanceof Uint8Array)) throw new Error("Missing SQL TEXT byte witness");
+        cells.set(a.name, { type: "text", value: row[a.bytes]!, encoding: encoding(db) });
+      } else {
+        const cell = plainCell(v), expected = type === "integer" ? "int" : type === "real" ? "real" : type;
+        if (cell.type !== expected) throw new Error("SQL storage class changed at proof boundary");
+        cells.set(a.name, cell);
+      }
+      delete row[a.type]; delete row[a.bytes];
+    }
+    return witnessRow(row, cells);
+  };
+  return {
+    all: (...params: SQLInputValue[]): Row[] => (statement.all(...params) as Row[]).map(read),
+    get: (...params: SQLInputValue[]): Row | undefined => { const row = statement.get(...params) as Row | undefined; return row && read(row); },
+    *iterate(...params: SQLInputValue[]): Generator<Row> { for (const row of statement.iterate(...params)) yield read(row as Row); },
+  };
+}
 
 /** retained_<stamp>_<table> and v1_<table> hold rows of <table>. */
 export function logicalTable(name: string): string { return name.replace(/^retained_\d+_/, "").replace(/^v1_/, ""); }
@@ -94,60 +140,43 @@ function losslessText(bytes: Uint8Array): string | Buffer {
 
 /** v2 stores some columns encoded next to a <column>_codec column; compare losslessly decoded values. */
 function value(row: Row, column: string): SQLInputValue {
-  const v = row[column] ?? null;
+  const cell = storedCell(row, column), v = cell.value;
   const codec = row[`${column}_codec`];
-  if (codec === undefined || v === null) return v;
+  if (v === null || (cell.type !== "text" && cell.type !== "blob")) return v;
+  if (cell.type === "text" && cell.encoding !== "UTF-8") throw new Error("Unsupported TEXT encoding for codec proof; original retained");
   const bytes = decodeBytes(v, codec);
   return column === "raw" ? bytes : losslessText(bytes);
-}
-
-/** Every proof read uses setReadBigInts: INTEGER is bigint, REAL is number, even for 1.0. */
-function sameStoredValue(a: SQLInputValue | undefined, b: SQLInputValue | undefined): boolean {
-  a ??= null; b ??= null;
-  return typeof a === typeof b && (a instanceof Uint8Array) === (b instanceof Uint8Array) && sameValue(a, b);
-}
-
-function sameValue(a: SQLInputValue, b: SQLInputValue): boolean {
-  a ??= null; b ??= null;
-  if (a === null || b === null) return a === b;
-  if (a instanceof Uint8Array || b instanceof Uint8Array) {
-    const bytes = (x: SQLInputValue) => x instanceof Uint8Array ? Buffer.from(x.buffer, x.byteOffset, x.byteLength) : Buffer.from(String(x), "utf8");
-    return bytes(a).equals(bytes(b));
-  }
-  if ((typeof a === "number" || typeof a === "bigint") && (typeof b === "number" || typeof b === "bigint")) return String(a) === String(b);
-  return a === b;
 }
 
 /** Same content of one column; identically encoded values are compared without decoding. */
 function sameColumn(a: Row, b: Row, column: string): boolean {
   const ca = a[`${column}_codec`], cb = b[`${column}_codec`];
-  if (ca !== undefined && cb !== undefined && String(ca) === String(cb) && sameValue(a[column] ?? null, b[column] ?? null)) return true;
-  return sameValue(value(a, column), value(b, column));
+  if (ca !== undefined && cb !== undefined && String(ca) === String(cb) && sameCell(storedCell(a, column), storedCell(b, column))) return true;
+  return sameCell(plainCell(value(a, column)), plainCell(value(b, column)));
 }
 
 /** Stable identity of a row's decoded values over `names` (integers as exact decimal strings). */
 export function rowDigest(row: Row, names: readonly string[], decode: boolean | ReadonlySet<string> = true): string {
   const hash = createHash("sha256");
   for (const name of names) {
-    const v = (typeof decode === "boolean" ? decode : decode.has(name)) ? value(row, name) : row[name] ?? null;
-    const type = v === null ? "null" : v instanceof Uint8Array ? "blob" : typeof v === "bigint" ? "int" : typeof v === "number" ? "real" : typeof v;
-    const bytes = v instanceof Uint8Array ? Buffer.from(v) : Buffer.from(String(v), "utf8");
+    const cell = (typeof decode === "boolean" ? decode : decode.has(name)) ? plainCell(value(row, name)) : storedCell(row, name);
+    const type = cell.type === "text" ? cell.encoding === "UTF-8" ? "string" : `text:${cell.encoding}` : cell.type;
+    const bytes = cellBytes(cell);
     hash.update(`${name.length}:${name}:${type}:${bytes.length}:`).update(bytes);
   }
   return hash.digest("hex");
 }
 
 /** SQLite's ORDER BY order for BINARY collation: NULL < numbers < text (by UTF-8 bytes) < blobs. */
-function compareSql(a: SQLInputValue, b: SQLInputValue): number {
-  const rank = (v: SQLInputValue) => v === null || v === undefined ? 0 : typeof v === "number" || typeof v === "bigint" ? 1 : typeof v === "string" ? 2 : 3;
+function compareSql(a: StoredCell, b: StoredCell): number {
+  const rank = (v: StoredCell) => v.type === "null" ? 0 : v.type === "int" || v.type === "real" ? 1 : v.type === "text" ? 2 : 3;
   const ra = rank(a), rb = rank(b);
   if (ra !== rb) return ra - rb;
   if (ra === 0) return 0;
-  if (ra === 1) return (a as number | bigint) < (b as number | bigint) ? -1 : (a as number | bigint) > (b as number | bigint) ? 1 : 0;
-  const bytes = (v: SQLInputValue) => typeof v === "string" ? Buffer.from(v, "utf8") : Buffer.from(v as Uint8Array);
-  return Buffer.compare(bytes(a), bytes(b));
+  if (ra === 1) return (a.value as number | bigint) < (b.value as number | bigint) ? -1 : (a.value as number | bigint) > (b.value as number | bigint) ? 1 : 0;
+  return Buffer.compare(cellBytes(a), cellBytes(b));
 }
-const compareKeys = (a: SQLInputValue[], b: SQLInputValue[]) => { for (let i = 0; i < a.length; i++) { const c = compareSql(a[i]!, b[i]!); if (c) return c; } return 0; };
+const compareKeys = (a: StoredCell[], b: StoredCell[]) => { for (let i = 0; i < a.length; i++) { const c = compareSql(a[i]!, b[i]!); if (c) return c; } return 0; };
 
 /** True when an index (or the rowid) orders the table by exactly these columns with BINARY collation, so
  * `ORDER BY key` is a sequential walk of a small index instead of a sort of the whole table. */
@@ -161,10 +190,11 @@ function indexedBy(db: DatabaseSync, table: string, key: readonly string[]): boo
   return false;
 }
 
-/** Lookup identity of key values, consistent for integers read as number or bigint. */
-function keyOf(values: SQLInputValue[]): string {
-  return values.map(v => v === null || v === undefined ? "n" : v instanceof Uint8Array ? `b${Buffer.from(v).toString("base64")}` : typeof v === "bigint" || typeof v === "number" ? `i${String(v)}` : `t${v}`).join("\u0000");
+/** Lookup identity includes original storage class, TEXT encoding and witnessed bytes. */
+function keyOf(values: StoredCell[]): string {
+  return JSON.stringify(values.map(v => [v.type, v.encoding, cellBytes(v).toString("base64")]));
 }
+const bindCell = (cell: StoredCell) => cell.type === "text" ? "CAST(? AS TEXT)" : "?";
 
 /** present: a live copy exists (by key with identical immutable content, or as an identical row);
  * absorbed: an identical row was absorbed into archive.db; conflict: the key exists live with different immutable
@@ -186,6 +216,8 @@ export interface TableProof {
   where: string;
   problem?: string;
   digest(row: Row): string;
+  storedDigest(row: Row): string;
+  receiptMatches(row: Row, json: string): boolean;
   chunks(after?: bigint): Generator<ChunkResult>;
 }
 
@@ -196,6 +228,8 @@ export function tableProof(candidate: DatabaseSync, table: string, ctx: ProofCon
   const allColumns = own.map(c => c.name);
   const cols = allColumns.filter(c => !IGNORED_COLUMNS.has(c));
   const sorted = [...cols].sort();
+  const cid = freeAlias("__cid", allColumns), tid = freeAlias("__tid", allColumns);
+  const storedDigest = (row: Row) => rowDigest(row, allColumns, false);
   const total = Number(candidate.prepare(`SELECT count(*) n FROM ${q(table)}`).get()!.n);
   const names = ALIASES[logical] ?? [logical];
   const targets = ctx.live.flatMap(l => names.filter(n => !l.exclude?.has(n) && hasTable(l.db, n)).map(name => ({ l, name, cols: columns(l.db, name) })));
@@ -205,6 +239,12 @@ export function tableProof(candidate: DatabaseSync, table: string, ctx: ProofCon
   // Only these codecs have a documented lossless meaning; codec-looking extensions remain exact stored values.
   const encoded = new Set(logical === "conversation_records" ? ["raw"] : logical === "history_documents" ? ["body"] : []);
   const digest = (row: Row) => rowDigest(row, sorted, encoded);
+  const receiptMatches = (row: Row, json: string): boolean => {
+    try {
+      const copy = decodeAbsorbedRow(json);
+      return allColumns.every(c => Object.hasOwn(copy, c)) && digest(copy) === digest(row) && storedDigest(copy) === storedDigest(row);
+    } catch { return false; }
+  };
   const has = (t: { cols: Column[] }, wanted: readonly string[]) => wanted.every(w => t.cols.some(c => c.name === w));
   let key = KNOWN[logical]?.key ?? (primaryKey(own).length ? primaryKey(own) : undefined);
   if (!key) for (const t of targets) { const pk = primaryKey(t.cols); if (pk.length && pk.every(k => cols.includes(k))) { key = pk; break; } }
@@ -223,44 +263,41 @@ export function tableProof(candidate: DatabaseSync, table: string, ctx: ProofCon
   if (!targets.length) problem = `no live database has a ${logical} table`;
   else if (key && !keyed.length) problem = `no live ${logical} table has the key ${key.join(",")}`;
   else if (!key && !full.length) problem = `rows without a key, and no live ${logical} table can be compared row by row`;
-  const recordBody = (row: Row): SQLInputValue => {
-    if (row.body !== null && row.body !== undefined) return row.body;
+  const recordBody = (row: Row): StoredCell => {
+    if (row.body !== null && row.body !== undefined) return storedCell(row, "body");
     const raw = value(row, "raw");
     // Only SQL NULL means raw as UTF-8. Explicit empty text still carries a distinct stored value.
-    return raw instanceof Uint8Array ? losslessText(raw) : raw;
+    return plainCell(raw instanceof Uint8Array ? losslessText(raw) : raw);
   };
-  const documentFolded = (row: Row): SQLInputValue | undefined => {
-    if (row.folded !== null && row.folded !== undefined) return row.folded;
+  const documentFolded = (row: Row): StoredCell | undefined => {
+    if (row.folded !== null && row.folded !== undefined) return storedCell(row, "folded");
     const body = value(row, "body");
-    return typeof body === "string" ? foldedText(body) : undefined;
+    return typeof body === "string" ? plainCell(foldedText(body)) : undefined;
   };
   const sameContent = (a: Row, b: Row, c: string) => {
     // Normalize only SQL NULL/raw equivalence; explicit bodies retain their stored value type.
-    if (logical === "conversation_records" && c === "body") return sameStoredValue(recordBody(a), recordBody(b));
+    if (logical === "conversation_records" && c === "body") return sameCell(recordBody(a), recordBody(b));
     if (logical === "history_documents" && c === "folded") {
-      if (sameStoredValue(a[c], b[c])) return true;
+      if (sameCell(storedCell(a, c), storedCell(b, c))) return true;
       const av = documentFolded(a), bv = documentFolded(b);
-      return av !== undefined && bv !== undefined && sameStoredValue(av, bv);
+      return av !== undefined && bv !== undefined && sameCell(av, bv);
     }
     if (encoded.has(c)) return sameColumn(a, b, c);
-    return sameStoredValue(a[c], b[c]);
+    return sameCell(storedCell(a, c), storedCell(b, c));
   };
   /** Content equality under this table's rule: key plus preserved columns, or the whole row. */
   const matches = (candidateRow: Row, liveRow: Row) => key
-    ? key.every(k => sameStoredValue(candidateRow[k], liveRow[k])) && sameCols.every(c => sameContent(candidateRow, liveRow, c))
+    ? key.every(k => sameCell(storedCell(candidateRow, k), storedCell(liveRow, k))) && sameCols.every(c => sameContent(candidateRow, liveRow, c))
     : cols.every(c => sameContent(candidateRow, liveRow, c));
 
-  /** Only the columns the rule compares are read (plus their codec columns), so large payloads stay on disk. */
-  const projection = (available: readonly string[], wanted: readonly string[]) =>
-    [...new Set(wanted.flatMap(c => available.includes(`${c}_codec`) ? [c, `${c}_codec`] : [c]))].filter(c => available.includes(c)).map(q).join(",");
+  /** Only needed columns, codecs and TEXT witnesses are read; unrelated large payloads stay on disk. */
   const needed = key ? [...key, ...sameCols] : cols;
 
   let digestSets: Set<string>[] | undefined;
   const fullSets = () => digestSets ??= full.flatMap(t => {
     if (Number(t.l.db.prepare(`SELECT count(*) n FROM ${q(t.name)}`).get()!.n) > MAX_DIGEST_ROWS) return [];
-    const set = new Set<string>(), all = t.l.db.prepare(`SELECT * FROM ${q(t.name)}`);
-    all.setReadBigInts(true);
-    for (const row of all.iterate()) set.add(digest(row as Row));
+    const set = new Set<string>(), all = proofRead(t.l.db, t.cols.map(c => c.name), cols, p => `SELECT ${p} FROM ${q(t.name)}`);
+    for (const row of all.iterate()) set.add(digest(row));
     return [set];
   });
 
@@ -272,27 +309,32 @@ export function tableProof(candidate: DatabaseSync, table: string, ctx: ProofCon
     const withNull = rows.filter(row => key!.some(k => row[k] === null || row[k] === undefined));
     const plain = rows.filter(row => !withNull.includes(row));
     for (const t of keyed) {
-      if (plain.length) {
+      // A BLOB parameter cast uses the target DB encoding. Never reinterpret bytes from another encoding.
+      const compatible = (row: Row) => key!.every(k => { const c = storedCell(row, k); return c.type !== "text" || c.encoding === encoding(t.l.db); });
+      const eligible = plain.filter(compatible);
+      if (eligible.length) {
         const tuple = key!.length === 1 ? q(key![0]!) : `(${key!.map(q).join(",")})`;
-        const values = plain.map(() => key!.length === 1 ? "?" : `(${key!.map(() => "?").join(",")})`).join(",");
-        const s = t.l.db.prepare(`SELECT ${projection(t.cols.map(c => c.name), needed)} FROM ${q(t.name)} WHERE ${tuple} IN (${key!.length === 1 ? values : `VALUES ${values}`})`);
-        s.setReadBigInts(true);
-        for (const match of s.all(...plain.flatMap(row => key!.map(k => row[k]!))) as Row[]) {
-          const id = keyOf(key!.map(k => match[k]!));
+        const values = eligible.map(row => { const binds = key!.map(k => bindCell(storedCell(row, k))).join(","); return key!.length === 1 ? binds : `(${binds})`; }).join(",");
+        const s = proofRead(t.l.db, t.cols.map(c => c.name), needed, p => `SELECT ${p} FROM ${q(t.name)} WHERE ${tuple} IN (${key!.length === 1 ? values : `VALUES ${values}`})`);
+        for (const match of s.all(...eligible.flatMap(row => key!.map(k => storedCell(row, k).value)))) {
+          const id = keyOf(key!.map(k => storedCell(match, k)));
           (found.get(id) ?? found.set(id, []).get(id)!).push(match);
         }
       }
       if (withNull.length) {
-        const s = t.l.db.prepare(`SELECT ${projection(t.cols.map(c => c.name), needed)} FROM ${q(t.name)} WHERE ${key!.map(k => `${q(k)} IS ?`).join(" AND ")}`);
-        s.setReadBigInts(true);
-        for (const row of withNull) for (const match of s.all(...key!.map(k => row[k] ?? null)) as Row[]) {
-          const id = keyOf(key!.map(k => match[k]!));
-          (found.get(id) ?? found.set(id, []).get(id)!).push(match);
+        const nullable = withNull.filter(compatible);
+        if (nullable.length) {
+          const where = nullable.map(row => `(${key!.map(k => `${q(k)} IS ${bindCell(storedCell(row, k))}`).join(" AND ")})`).join(" OR ");
+          const s = proofRead(t.l.db, t.cols.map(c => c.name), needed, p => `SELECT ${p} FROM ${q(t.name)} WHERE ${where}`);
+          for (const match of s.all(...nullable.flatMap(row => key!.map(k => storedCell(row, k).value)))) {
+            const id = keyOf(key!.map(k => storedCell(match, k)));
+            (found.get(id) ?? found.set(id, []).get(id)!).push(match);
+          }
         }
       }
     }
     return rows.map(row => {
-      const candidates = found.get(keyOf(key!.map(k => row[k] ?? null)));
+      const candidates = found.get(keyOf(key!.map(k => storedCell(row, k))));
       if (!candidates?.length) return "missing";
       return candidates.some(match => matches(row, match)) ? "present" : "conflict";
     });
@@ -302,9 +344,16 @@ export function tableProof(candidate: DatabaseSync, table: string, ctx: ProofCon
     const out = new Set<Row>();
     if (!absorbedDb || !rows.length) return out;
     const digests = rows.map(digest);
-    const s = absorbedDb.prepare(`SELECT digest FROM ${ABSORBED_ROWS} WHERE source_table=? AND digest IN (${digests.map(() => "?").join(",")})`);
-    const known = new Set(s.all(logical, ...digests).map(r => String(r.digest)));
-    rows.forEach((row, n) => { if (known.has(digests[n]!)) out.add(row); });
+    const s = proofRead(absorbedDb, ["source_table", "digest", "row"], ["digest", "row"], p => `SELECT ${p} FROM ${ABSORBED_ROWS} WHERE source_table=? AND digest IN (${digests.map(() => "?").join(",")})`);
+    const known = new Map<string, string>();
+    for (const receipt of s.all(logical, ...digests)) {
+      try {
+        if (!sameCell(storedCell(receipt, "row"), plainCell(receipt.row))) continue;
+        const decoded = decodeAbsorbedRow(String(receipt.row)), claim = String(receipt.digest);
+        if (digest(decoded) === claim && allColumns.every(c => Object.hasOwn(decoded, c))) known.set(claim, String(receipt.row));
+      } catch { /* Corrupt/unsupported historical payloads are not evidence. */ }
+    }
+    rows.forEach((row, n) => { const copy = known.get(digests[n]!); if (copy && receiptMatches(row, copy)) out.add(row); });
     return out;
   };
 
@@ -314,72 +363,64 @@ export function tableProof(candidate: DatabaseSync, table: string, ctx: ProofCon
     // Key-only rule with an index on both sides: walk both indexes in key order (small, sequential). Any row this
     // merge does not find still goes through the indexed lookup below, so an ordering surprise only costs time.
     const keyList = key ? key.map(q).join(",") : "";
-    const merging = key && !sameCols.length && after === -1n && indexedBy(candidate, table, key)
-      ? keyed.filter(t => indexedBy(t.l.db, t.name, key!)) : [];
+    const merging = key && !sameCols.length && after === -1n && encoding(candidate) === "UTF-8" && indexedBy(candidate, table, key)
+      ? keyed.filter(t => encoding(t.l.db) === "UTF-8" && indexedBy(t.l.db, t.name, key!)) : [];
     const mergeCursors = merging.map(t => {
-      const s = t.l.db.prepare(`SELECT ${keyList} FROM ${q(t.name)} ORDER BY ${keyList}`);
-      s.setReadBigInts(true);
+      const s = proofRead(t.l.db, t.cols.map(c => c.name), key!, p => `SELECT ${p} FROM ${q(t.name)} ORDER BY ${keyList}`);
       const it = s.iterate() as Iterator<Row>;
       const first = it.next();
-      return { it, current: first.done ? undefined : key!.map(k => first.value[k] ?? null) };
+      return { it, current: first.done ? undefined : key!.map(k => storedCell(first.value, k)) };
     });
     const merged = (row: Row): boolean => {
-      const wanted = key!.map(k => row[k] ?? null);
+      const wanted = key!.map(k => storedCell(row, k));
       let hit = false;
       for (const c of mergeCursors) {
-        while (c.current && compareKeys(c.current, wanted) < 0) { const next = c.it.next(); c.current = next.done ? undefined : key!.map(k => next.value[k] ?? null); }
-        if (c.current && compareKeys(c.current, wanted) === 0 && wanted.every((v, i) => sameStoredValue(v, c.current![i]!))) hit = true;
+        while (c.current && compareKeys(c.current, wanted) < 0) { const next = c.it.next(); c.current = next.done ? undefined : key!.map(k => storedCell(next.value, k)); }
+        if (c.current && compareKeys(c.current, wanted) === 0 && wanted.every((v, i) => sameCell(v, c.current![i]!))) hit = true;
       }
       return hit;
     };
     if (mergeCursors.length) {
       try {
-        const s = candidate.prepare(`SELECT rowid AS "__cid", ${keyList} FROM ${q(table)} ORDER BY ${keyList}`);
-        s.setReadBigInts(true);
-        source = s.iterate() as Iterator<Row>;
+        const s = proofRead(candidate, allColumns, key!, p => `SELECT rowid AS ${q(cid)}, ${p} FROM ${q(table)} ORDER BY ${keyList}`);
+        source = s.iterate();
       } catch {
         rowid = false;
-        const s = candidate.prepare(`SELECT * FROM ${q(table)} ORDER BY ${keyList}`);
-        s.setReadBigInts(true);
-        source = s.iterate() as Iterator<Row>;
+        const s = proofRead(candidate, allColumns, allColumns, p => `SELECT ${p} FROM ${q(table)} ORDER BY ${keyList}`);
+        source = s.iterate();
       }
     } else try {
-      const s = candidate.prepare(`SELECT rowid AS "__cid", ${projection(allColumns, [...needed, ...(aligned?.by ? [aligned.by] : [])])} FROM ${q(table)} WHERE rowid>? ORDER BY rowid`);
-      s.setReadBigInts(true);
-      source = s.iterate(after) as Iterator<Row>;
+      const s = proofRead(candidate, allColumns, [...needed, ...(aligned?.by ? [aligned.by] : [])], p => `SELECT rowid AS ${q(cid)}, ${p} FROM ${q(table)} WHERE rowid>? ORDER BY rowid`);
+      source = s.iterate(after);
     } catch {
       rowid = false;
-      const s = candidate.prepare(`SELECT * FROM ${q(table)}`);
-      s.setReadBigInts(true);
-      source = s.iterate() as Iterator<Row>;
+      const s = proofRead(candidate, allColumns, allColumns, p => `SELECT ${p} FROM ${q(table)}`);
+      source = s.iterate();
     }
     // Rowid-aligned scan of the live copy (sequential); a candidate row matches the live row with the same rowid.
     let cursor: Iterator<Row> | undefined, current: Row | undefined;
-    const targetColumns = aligned ? projection(columns(aligned.db, aligned.table).map(c => c.name), needed) : "";
+    const targetColumns = aligned ? columns(aligned.db, aligned.table).map(c => c.name) : [];
     /** Rows reported as missing or in conflict are returned whole (absorb stores every column). */
     const whole = (rows: Row[]): Row[] => {
       if (!rowid || !rows.length) return rows;
-      const s = candidate.prepare(`SELECT rowid AS "__cid", * FROM ${q(table)} WHERE rowid IN (${rows.map(() => "?").join(",")})`);
-      s.setReadBigInts(true);
-      const byId = new Map((s.all(...rows.map(r => r.__cid!)) as Row[]).map(r => [String(r.__cid), r]));
-      return rows.map(r => byId.get(String(r.__cid)) ?? r);
+      const s = proofRead(candidate, allColumns, allColumns, p => `SELECT rowid AS ${q(cid)}, ${p} FROM ${q(table)} WHERE rowid IN (${rows.map(() => "?").join(",")})`);
+      const byId = new Map(s.all(...rows.map(r => r[cid]!)).map(r => [String(r[cid]), r]));
+      return rows.map(r => byId.get(String(r[cid])) ?? r);
     };
-    const point = aligned && aligned.db.prepare(`SELECT rowid AS "__tid", ${targetColumns} FROM ${q(aligned.table)} WHERE rowid=?`);
-    point?.setReadBigInts(true);
+    const point = aligned && proofRead(aligned.db, targetColumns, needed, p => `SELECT rowid AS ${q(tid)}, ${p} FROM ${q(aligned.table)} WHERE rowid=?`);
     const seek = (id: bigint) => {
       cursor?.return?.();
-      const s = aligned!.db.prepare(`SELECT rowid AS "__tid", ${targetColumns} FROM ${q(aligned!.table)} WHERE rowid>=? ORDER BY rowid`);
-      s.setReadBigInts(true);
-      cursor = s.iterate(id) as Iterator<Row>;
+      const s = proofRead(aligned!.db, targetColumns, needed, p => `SELECT rowid AS ${q(tid)}, ${p} FROM ${q(aligned!.table)} WHERE rowid>=? ORDER BY rowid`);
+      cursor = s.iterate(id);
       const next = cursor.next(); current = next.done ? undefined : next.value;
     };
     const alignedRow = (id: bigint): Row | undefined => {
       if (!cursor) seek(id);
       // Behind the scan, or past its end: one indexed rowid lookup.
-      else if (!current || id < (current.__tid as bigint)) return point!.get(id) as Row | undefined;
-      else if (id - (current.__tid as bigint) > RESEEK_GAP) seek(id);
-      while (current && (current.__tid as bigint) < id) { const next = cursor!.next(); current = next.done ? undefined : next.value; }
-      return current && current.__tid === id ? current : undefined;
+      else if (!current || id < (current[tid] as bigint)) return point!.get(id);
+      else if (id - (current[tid] as bigint) > RESEEK_GAP) seek(id);
+      while (current && (current[tid] as bigint) < id) { const next = cursor!.next(); current = next.done ? undefined : next.value; }
+      return current && current[tid] === id ? current : undefined;
     };
     try {
       for (;;) {
@@ -387,7 +428,7 @@ export function tableProof(candidate: DatabaseSync, table: string, ctx: ProofCon
         for (let next = source.next(); !next.done; next = source.next()) { batch.push(next.value); if (batch.length >= chunkRows) break; }
         if (!batch.length) return;
         // A key-ordered walk has no rowid resume point; a resumed absorb starts it again (its writes are idempotent).
-        const result: ChunkResult = { last: rowid && !mergeCursors.length ? batch.at(-1)!.__cid as bigint : null, rows: [], present: 0, absorbed: 0 };
+        const result: ChunkResult = { last: rowid && !mergeCursors.length ? batch.at(-1)![cid] as bigint : null, rows: [], present: 0, absorbed: 0 };
         let rest = batch;
         if (mergeCursors.length) {
           rest = [];
@@ -395,7 +436,7 @@ export function tableProof(candidate: DatabaseSync, table: string, ctx: ProofCon
         } else if (aligned) {
           rest = [];
           for (const row of batch) {
-            const id = aligned.by ? row[aligned.by] : row.__cid;
+            const id = aligned.by ? row[aligned.by] : row[cid];
             const match = typeof id === "bigint" ? alignedRow(id) : undefined;
             if (match && matches(row, match)) result.present++; else rest.push(row);
           }
@@ -418,7 +459,7 @@ export function tableProof(candidate: DatabaseSync, table: string, ctx: ProofCon
       }
     } finally { cursor?.return?.(); source.return?.(); for (const c of mergeCursors) c.it.return?.(); }
   }
-  return { table, logical, total, columns: sorted, allColumns, where, problem, digest, chunks };
+  return { table, logical, total, columns: sorted, allColumns, where, problem, digest, storedDigest, receiptMatches, chunks };
 }
 
 /** The live v2 table a history copy can be compared with in rowid order (the v2 copy kept every rowid). */
@@ -470,9 +511,8 @@ export function proveByManifest(db: DatabaseSync, reference: ReferenceSnapshot, 
 
 /** Rows of a candidate table, read with exact integers. */
 export function candidateRows(db: DatabaseSync, table: string): Iterable<Row> {
-  const statement = db.prepare(`SELECT * FROM ${q(table)}`);
-  statement.setReadBigInts(true);
-  return statement.iterate() as Iterable<Row>;
+  const names = columns(db, table).map(c => c.name);
+  return proofRead(db, names, names, p => `SELECT ${p} FROM ${q(table)}`).iterate();
 }
 
 export function isSqlite(path: string): boolean {

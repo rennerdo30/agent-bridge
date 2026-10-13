@@ -2,11 +2,13 @@ import { lstatSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { DB_FILE_NAME } from "./constants.js";
-import { ABSORBED_FILES, ABSORBED_ROWS, alignedTarget, candidateFiles, fileSha256, hasTable, isSqlite, logicalTable, proveFile, provableTables, tableProof, type LiveDb, type ProofContext } from "./finalize-proof.js";
+import { ABSORBED_FILES, ABSORBED_ROWS, alignedTarget, candidateFiles, fileSha256, hasTable, isSqlite, logicalTable, proofRead, proveFile, provableTables, tableProof, type LiveDb, type ProofContext } from "./finalize-proof.js";
 import { historyDbPath } from "./history-store.js";
 import { ARCHIVE_DB_NAME, openArchive } from "./sqlite-maintenance.js";
 import { maintenanceLock } from "./storage-lock.js";
 import { fileCandidates, historyIsVerified, LEGACY_BRIDGE_TABLES } from "./storage-finalize.js";
+import { decodeAbsorbedRow, encodeAbsorbedRow, plainCell, sameCell, storedCell } from "./stored-row.js";
+export { decodeAbsorbedRow, encodeAbsorbedRow } from "./stored-row.js";
 
 /** Lossless absorb (owner decision 2026-10-09): before finalize proves old backups and snapshots redundant, every
  * row in them that exists nowhere live is imported into archive.db, so the proof can succeed without losing anything.
@@ -32,30 +34,6 @@ const ABSORB_SCHEMA = `
 CREATE TABLE IF NOT EXISTS ${ABSORBED_ROWS} (source_table TEXT NOT NULL, digest TEXT NOT NULL, row TEXT NOT NULL, origin TEXT NOT NULL, absorbed_at INTEGER NOT NULL, PRIMARY KEY(source_table, digest));
 CREATE TABLE IF NOT EXISTS ${ABSORBED_FILES} (sha256 TEXT PRIMARY KEY, bytes BLOB NOT NULL, size INTEGER NOT NULL, origin TEXT NOT NULL, absorbed_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS absorb_progress (source TEXT NOT NULL, table_name TEXT NOT NULL, after_rowid INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(source, table_name));`;
-
-/** Exact, type-tagged JSON of every column: {"columns":[...],"values":[null | {"i":"<int>"} | {"r":<real>} | {"t":"<text>"} | {"b":"<base64>"}]}. */
-export function encodeAbsorbedRow(row: Row, columns: readonly string[]): string {
-  return JSON.stringify({
-    columns,
-    values: columns.map(c => {
-      const v = row[c] ?? null;
-      if (v === null) return null;
-      if (typeof v === "bigint") return { i: v.toString() };
-      if (typeof v === "number") return Number.isInteger(v) ? { i: String(v) } : { r: v };
-      if (typeof v === "string") return { t: v };
-      return { b: Buffer.from(v as Uint8Array).toString("base64") };
-    }),
-  });
-}
-
-/** The exact row back (integers as bigint, blobs as Buffer). */
-export function decodeAbsorbedRow(json: string): Record<string, bigint | number | string | Buffer | null> {
-  const value = JSON.parse(json) as { columns: string[]; values: ({ i?: string; r?: number; t?: string; b?: string } | null)[] };
-  return Object.fromEntries(value.columns.map((c, n) => {
-    const v = value.values[n];
-    return [c, v === null || v === undefined ? null : v.i !== undefined ? BigInt(v.i) : v.r !== undefined ? v.r : v.t !== undefined ? v.t : Buffer.from(v.b!, "base64")];
-  }));
-}
 
 function signature(path: string): string {
   const st = lstatSync(path);
@@ -89,27 +67,58 @@ function absorbDatabase(path: string, ctx: ProofContext, archive: DatabaseSync |
       const p = tableProof(db, table, ctx, alignedTarget(table, ctx), options.batchRows);
       if (!p.total) continue;
       const progress = archive?.prepare("SELECT after_rowid, done FROM absorb_progress WHERE source=? AND table_name=?").get(sig, table);
-      if (progress?.done) continue;
+      // Historical completion is not a current surviving-payload proof (older receipts could be lossy).
       const conflictsBefore = source.conflicts;
-      let after = BigInt(Number(progress?.after_rowid ?? -1));
+      let unsupported = false;
+      let after = progress?.done ? -1n : BigInt(Number(progress?.after_rowid ?? -1));
       options.report?.(`  ${table}: ${p.total.toLocaleString("en")} rows`);
       for (const chunk of p.chunks(after)) {
         if (archive) archive.exec("BEGIN IMMEDIATE");
         try {
-          for (const { row, status } of chunk.rows) {
-            if (status === "conflict") { source.conflicts++; continue; }
-            source.rows++;
-            if (!archive) continue;
-            archive.prepare(`INSERT OR IGNORE INTO ${ABSORBED_ROWS}(source_table,digest,row,origin,absorbed_at) VALUES(?,?,?,?,?)`)
-              .run(p.logical, p.digest(row), encodeAbsorbedRow(row, p.allColumns), origin, options.now);
-            if (p.logical === "messages" || p.logical === "archived_messages") archiveMessage(archive, row, origin, options.now);
+          const missing = chunk.rows.filter(r => r.status === "missing");
+          const payloads: { row: Row; digest: string; json: string }[] = [];
+          const receipts = () => {
+            if (!archive || !payloads.length) return new Map<string, Row>();
+            const s = proofRead(archive, ["source_table", "digest", "row"], ["digest", "row"], projection => `SELECT ${projection} FROM ${ABSORBED_ROWS} WHERE source_table=? AND digest IN (${payloads.map(() => "?").join(",")})`);
+            return new Map(s.all(p.logical, ...payloads.map(r => r.digest)).map(r => [String(r.digest), r]));
+          };
+          const valid = (item: typeof payloads[number], receipt: Row) => sameCell(storedCell(receipt, "row"), plainCell(receipt.row)) && p.receiptMatches(item.row, String(receipt.row));
+          let problem: string | undefined;
+          try {
+            for (const { row } of missing) {
+              const json = encodeAbsorbedRow(row, p.allColumns);
+              if (!p.receiptMatches(row, json)) throw new Error("Absorbed serialization changes stored type/bytes");
+              payloads.push({ row, json, digest: p.digest(row) });
+            }
+            const existing = receipts();
+            if (payloads.some(item => existing.has(item.digest) && !valid(item, existing.get(item.digest)!))) problem = "Existing absorbed payload conflicts with its claimed digest";
+          } catch (err) { problem = (err as Error).message; }
+          if (problem) {
+            if (archive?.isTransaction) archive.exec("ROLLBACK");
+            if (progress?.done) archive?.prepare("UPDATE absorb_progress SET done=0,after_rowid=-1 WHERE source=? AND table_name=?").run(sig, table);
+            source.problems.push(`${table}: ${problem}; originals kept and cursor not advanced`);
+            unsupported = true; break;
           }
+          for (const item of payloads) if (archive) {
+            archive.prepare(`INSERT OR IGNORE INTO ${ABSORBED_ROWS}(source_table,digest,row,origin,absorbed_at) VALUES(?,?,?,?,?)`)
+              .run(p.logical, item.digest, item.json, origin, options.now);
+          }
+          const stored = receipts();
+          if (archive && payloads.some(item => !stored.has(item.digest) || !valid(item, stored.get(item.digest)!))) {
+            archive.exec("ROLLBACK");
+            if (progress?.done) archive.prepare("UPDATE absorb_progress SET done=0,after_rowid=-1 WHERE source=? AND table_name=?").run(sig, table);
+            source.problems.push(`${table}: stored receipt failed exact roundtrip; originals kept and cursor not advanced`);
+            unsupported = true; break;
+          }
+          for (const item of payloads) if (archive && (p.logical === "messages" || p.logical === "archived_messages")) archiveMessage(archive, item.row, origin, options.now);
           if (chunk.last !== null) after = chunk.last;
           if (archive) {
             archive.prepare("INSERT INTO absorb_progress(source,table_name,after_rowid) VALUES(?,?,?) ON CONFLICT(source,table_name) DO UPDATE SET after_rowid=excluded.after_rowid")
               .run(sig, table, chunk.last ?? -1n);
             archive.exec("COMMIT");
           }
+          source.rows += payloads.length;
+          source.conflicts += chunk.rows.filter(r => r.status === "conflict").length;
         } catch (err) {
           if (archive?.isTransaction) archive.exec("ROLLBACK");
           // A failed write stops the run (its batch rolled back, the cursor kept); only unreadable sources are skipped.
@@ -117,9 +126,9 @@ function absorbDatabase(path: string, ctx: ProofContext, archive: DatabaseSync |
         }
       }
       // A table with conflicts is scanned again on every run, so each run reports them.
-      if (source.conflicts === conflictsBefore) archive?.prepare("INSERT INTO absorb_progress(source,table_name,after_rowid,done) VALUES(?,?,?,1) ON CONFLICT(source,table_name) DO UPDATE SET done=1")
+      if (!unsupported && source.conflicts === conflictsBefore) archive?.prepare("INSERT INTO absorb_progress(source,table_name,after_rowid,done) VALUES(?,?,?,1) ON CONFLICT(source,table_name) DO UPDATE SET done=1")
         .run(sig, table, after);
-      else archive?.prepare("DELETE FROM absorb_progress WHERE source=? AND table_name=?").run(sig, table);
+      else if (!unsupported) archive?.prepare("DELETE FROM absorb_progress WHERE source=? AND table_name=?").run(sig, table);
     }
   } catch (err) {
     if ((err as { absorbWrite?: boolean }).absorbWrite) throw err;

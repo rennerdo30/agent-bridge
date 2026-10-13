@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { fileCandidates, planFinalize, referenceSnapshot, runFinalize, type FinalizePlan } from "../src/core/storage-finalize.js";
-import { fileSha256, provableTables } from "../src/core/finalize-proof.js";
+import { candidateRows, fileSha256, provableTables, rowDigest, tableProof } from "../src/core/finalize-proof.js";
 import { decodeAbsorbedRow, encodeAbsorbedRow, readAbsorbedRows, runAbsorb, type AbsorbResult } from "../src/core/storage-absorb.js";
 import { historyDbPath, migrateHistoryStore, openHistoryStore } from "../src/core/history-store.js";
 import { migrateJobArchives } from "../src/core/job-archive-migration.js";
@@ -233,7 +233,82 @@ it("resumes from the last committed batch after an interruption", async () => {
 it("round-trips every SQLite value type exactly", () => {
   const row = { a: big, b: -0.25, c: "text ü", d: Buffer.from([1, 2, 3]), e: null, f: 7 };
   const back = decodeAbsorbedRow(encodeAbsorbedRow(row, Object.keys(row)));
-  expect(back).toEqual({ a: big, b: -0.25, c: "text ü", d: Buffer.from([1, 2, 3]), e: null, f: 7n });
+  expect(back).toEqual({ a: big, b: -0.25, c: "text ü", d: Buffer.from([1, 2, 3]), e: null, f: 7 });
+});
+
+it("AB-215 absorption boundary: integral REAL stays REAL and its exact stored receipt proves survival", async () => {
+  await verifiedHome();
+  const backup = join(env.home, "bridge.db.backup-215-real"), db = new DatabaseSync(backup); closes.push(() => db.close());
+  db.exec("CREATE TABLE numeric_row(id INTEGER PRIMARY KEY,payload,optional); INSERT INTO numeric_row VALUES(1,1.0,NULL)");
+  const before = db.prepare("SELECT typeof(payload) t,payload FROM numeric_row").get()!;
+  expect(before.t).toBe("real");
+  const applied = runAbsorb(env.home, { apply: true });
+  expect(applied.sources.find(s => s.path === backup)?.problems).toEqual([]);
+  const exported = readAbsorbedRows(env.home, "numeric_row");
+  expect(exported).toEqual([{ id: 1n, payload: 1, optional: null }]);
+  expect(typeof exported[0]!.payload).toBe("number");
+  const archive = new DatabaseSync(join(env.home, "archive.db")); closes.push(() => archive.close());
+  expect(JSON.parse(String(archive.prepare("SELECT row FROM absorbed_rows WHERE source_table='numeric_row'").get()!.row)).values[1]).toEqual({ r: 1 });
+  expect(planFinalize(env.home, { prove: true }).items.map(i => i.path)).toContain(backup);
+  expect(db.prepare("SELECT typeof(payload) t,payload FROM numeric_row").get()).toEqual(before);
+});
+
+it.each(["integer-receipt", "malformed-json", "missing-column"] as const)("AB-215 absorption boundary: %s cannot authorize removal or OR IGNORE success", async kind => {
+  await verifiedHome(); runAbsorb(env.home, { apply: true });
+  const backup = join(env.home, "bridge.db.backup-216-invalid"), db = new DatabaseSync(backup); closes.push(() => db.close());
+  db.exec("CREATE TABLE numeric_row(id INTEGER PRIMARY KEY,payload); INSERT INTO numeric_row VALUES(1,1.0)");
+  const p = tableProof(db, "numeric_row", { live: [] }), row = [...candidateRows(db, "numeric_row")][0]!;
+  const digest = p.digest(row), before = p.storedDigest(row);
+  const payload = kind === "integer-receipt" ? '{"columns":["id","payload"],"values":[{"i":"1"},{"i":"1"}]}' : kind === "malformed-json" ? '{bad' : '{"columns":["id"],"values":[{"i":"1"}]}';
+  const archive = new DatabaseSync(join(env.home, "archive.db")); closes.push(() => archive.close());
+  archive.prepare("INSERT INTO absorbed_rows VALUES('numeric_row',?,?,?,1)").run(digest, payload, "legacy");
+  // A historical completion flag must not bypass validation of the lossy receipt.
+  const st = statSync(backup), sig = `${backup}|${st.size}|${Math.trunc(st.mtimeMs)}`;
+  archive.prepare("INSERT INTO absorb_progress VALUES(?,'numeric_row',1,1)").run(sig);
+  for (const check of [() => planFinalize(env.home, { prove: true }), () => runFinalize(env.home, () => {}, { dryRun: true }), () => runFinalize(env.home, () => {})]) {
+    expect(check().kept.map(i => i.path)).toContain(backup);
+    expect(p.storedDigest([...candidateRows(db, "numeric_row")][0]!)).toBe(before);
+    expect(db.prepare("SELECT typeof(payload) t FROM numeric_row").get()!.t).toBe("real");
+  }
+  const applied = runAbsorb(env.home, { apply: true });
+  const source = applied.sources.find(s => s.path === backup)!;
+  expect(source.rows).toBe(0); expect(source.problems.join(" ")).toMatch(/conflicts/);
+  expect(archive.prepare("SELECT row FROM absorbed_rows WHERE source_table='numeric_row' AND digest=?").get(digest)!.row).toBe(payload);
+  expect(archive.prepare("SELECT after_rowid,done FROM absorb_progress WHERE source=? AND table_name='numeric_row'").get(sig)).toEqual({ after_rowid: -1, done: 0 });
+  const repeated = runAbsorb(env.home, { apply: true }).sources.find(s => s.path === backup)!;
+  expect(repeated.rows).toBe(0); expect(repeated.problems.join(" ")).toMatch(/conflicts/);
+  expect(archive.prepare("SELECT after_rowid,done FROM absorb_progress WHERE source=? AND table_name='numeric_row'").get(sig)).toEqual({ after_rowid: -1, done: 0 });
+  expect(archive.prepare("SELECT row FROM absorbed_rows WHERE source_table='numeric_row' AND digest=?").get(digest)!.row).toBe(payload);
+  expect(p.storedDigest([...candidateRows(db, "numeric_row")][0]!)).toBe(before);
+  expect(planFinalize(env.home, { prove: true }).kept.map(i => i.path)).toContain(backup);
+});
+
+it("AB-215 absorption boundary: unsupported TEXT bytes preserve whole-row witnesses and stop before counts/cursor claims", async () => {
+  await verifiedHome();
+  const backup = join(env.home, "bridge.db.backup-217-text"), db = new DatabaseSync(backup); closes.push(() => db.close());
+  db.exec("CREATE TABLE text_row(id INTEGER PRIMARY KEY,payload,__proof_text_0,__cid); INSERT INTO text_row VALUES(1,CAST(x'ff' AS TEXT),'extra','cid'); INSERT INTO text_row VALUES(2,'later','extra','cid')");
+  const original = [...candidateRows(db, "text_row")];
+  const before = original.map(r => rowDigest(r, Object.keys(r), false));
+  expect(db.prepare("SELECT typeof(payload) t,hex(CAST(payload AS BLOB)) h FROM text_row WHERE id=1").get()).toEqual({ t: "text", h: "FF" });
+  expect(() => encodeAbsorbedRow({ ...original[0]! }, Object.keys(original[0]!))).toThrow(/stored type\/bytes/);
+  for (const apply of [false, true]) {
+    const result = runAbsorb(env.home, { apply, batchRows: 1 }), source = result.sources.find(s => s.path === backup)!;
+    expect(source.rows).toBe(0); expect(source.problems.join(" ")).toMatch(/stored type\/bytes/);
+    expect([...candidateRows(db, "text_row")].map(r => rowDigest(r, Object.keys(r), false))).toEqual(before);
+  }
+  const archive = new DatabaseSync(join(env.home, "archive.db")); closes.push(() => archive.close());
+  expect(archive.prepare("SELECT count(*) n FROM absorbed_rows WHERE source_table='text_row'").get()!.n).toBe(0);
+  expect(archive.prepare("SELECT count(*) n FROM absorb_progress WHERE table_name='text_row'").get()!.n).toBe(0);
+  expect(planFinalize(env.home, { prove: true }).kept.map(i => i.path)).toContain(backup);
+  // Valid exact TEXT remains encodable/absorbable, with original byte class and payload retained.
+  db.exec("UPDATE text_row SET payload='valid ü' WHERE id=1");
+  const valid = [...candidateRows(db, "text_row")][0]!, json = encodeAbsorbedRow({ ...valid }, Object.keys(valid));
+  expect(Object.keys(JSON.parse(json))).toEqual(["columns", "values"]);
+  expect(JSON.parse(json).columns).toEqual(Object.keys(valid));
+  expect(json).not.toContain("SQL stored-cell witnesses");
+  expect(runAbsorb(env.home, { apply: true }).sources.find(s => s.path === backup)?.rows).toBe(2);
+  expect(readAbsorbedRows(env.home, "text_row").some(r => r.payload === "valid ü")).toBe(true);
+  expect(planFinalize(env.home, { prove: true }).items.map(i => i.path)).toContain(backup);
 });
 
 it("the CLI lists before importing and imports with --yes", async () => {

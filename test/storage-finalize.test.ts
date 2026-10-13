@@ -8,7 +8,7 @@ import { planFinalize, rollbackHistoryStore, runFinalize } from "../src/core/sto
 import { historyDbPath, historyReadPath, migrateHistoryStore, openHistoryStore } from "../src/core/history-store.js";
 import { decodeHistoryRow } from "../src/core/history-migration.js";
 import { decodeText } from "../src/core/history-codec.js";
-import { proveTable } from "../src/core/finalize-proof.js";
+import { candidateRows, proveTable, rowDigest, tableProof } from "../src/core/finalize-proof.js";
 import { maintenanceLock } from "../src/core/storage-lock.js";
 import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
@@ -188,6 +188,18 @@ function retainedContent(db: DatabaseSync, table: string, logical: string) {
     });
   });
   return { count: rows.length, sha256: createHash("sha256").update(JSON.stringify(rows)).digest("hex") };
+}
+
+/** SQLite byte/type witnesses are independent of the driver's lossy TEXT decoding and proof metadata. */
+function storedContent(db: DatabaseSync, table: string) {
+  const names = db.prepare(`PRAGMA table_xinfo("${table}")`).all().map(c => String(c.name));
+  const rows = names.map(name => {
+    const q = `"${name.replaceAll('"', '""')}"`;
+    const s = db.prepare(`SELECT typeof(${q}) t,CASE WHEN typeof(${q}) IN ('text','blob') THEN hex(CAST(${q} AS BLOB)) END bytes,CASE WHEN typeof(${q}) NOT IN ('text','blob') THEN ${q} END value FROM "${table}" ORDER BY rowid`);
+    s.setReadBigInts(true);
+    return [name, s.all().map(r => [r.t, r.bytes, String(r.value)])];
+  });
+  return { count: Number(db.prepare(`SELECT count(*) n FROM "${table}"`).get()!.n), sha256: createHash("sha256").update(JSON.stringify(rows)).digest("hex") };
 }
 
 const retainedBody = "retained payload only ".repeat(40);
@@ -450,6 +462,99 @@ it.each([false, true])("AB-215 review: untyped explicit record bodies distinguis
   db.exec("UPDATE conversation_records SET body=1");
   expect(db.prepare("SELECT typeof(body) t FROM conversation_records").get()!.t).toBe("integer");
   expect(proveTable(db, retained, ctx, aligned)).toBeNull();
+});
+
+it.each([
+  ["conversation_records", false], ["conversation_records", true],
+  ["history_documents", false], ["history_documents", true],
+  ["history_pending", false], ["history_pending", true],
+] as const)("AB-215 SQL boundary: %s malformed TEXT bytes survive moved rowid=%s until exact recovery", async (logical, moved) => {
+  const { history, retained, id } = await retainedPayload(logical, moved);
+  if (logical === "conversation_records") history.exec("DROP TRIGGER conversation_records_no_update");
+  history.exec(`UPDATE ${retained} SET body=CAST(x'ff' AS TEXT)${logical === "history_documents" ? ",body_codec=0" : ""}`);
+  history.prepare(`UPDATE ${logical} SET body=CAST(x'fe' AS TEXT)${logical === "history_documents" ? ",body_codec=0" : ""} WHERE rowid=?`).run(id);
+  const before = storedContent(history, retained);
+  expect(before.count).toBe(1);
+  const witnesses = () => {
+    expect(history.prepare(`SELECT typeof(body) t,hex(CAST(body AS BLOB)) h FROM ${retained}`).get()).toEqual({ t: "text", h: "FF" });
+    expect(history.prepare(`SELECT typeof(body) t,hex(CAST(body AS BLOB)) h FROM ${logical} WHERE rowid=?`).get(id)).toEqual({ t: "text", h: "FE" });
+  };
+  witnesses();
+  for (const check of [() => planFinalize(env.home, { prove: true }), () => runFinalize(env.home, () => {}, { dryRun: true }), () => runFinalize(env.home, () => {})]) {
+    expect(check().kept.map(i => i.path)).toContain(`history.db:${retained}`);
+    expect(storedContent(history, retained)).toEqual(before); witnesses();
+  }
+  history.prepare(`UPDATE ${logical} SET body=CAST(x'ff' AS TEXT) WHERE rowid=?`).run(id);
+  expect(planFinalize(env.home, { prove: true }).items.map(i => i.path)).toContain(`history.db:${retained}`);
+  expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toContain(`history.db:${retained}`);
+  expect(history.prepare("SELECT name FROM sqlite_master WHERE name=?").get(retained)).toBeUndefined();
+});
+
+it.each([false, true])("AB-215 SQL boundary: TEXT extension and internal-looking column names survive moved rowid=%s", async moved => {
+  const { history, retained, id } = await retainedPayload("conversation_records", moved);
+  history.exec("DROP TRIGGER conversation_records_no_update");
+  history.prepare("UPDATE conversation_records SET body=? WHERE id=?").run(retainedBody, id);
+  for (const table of [retained, "conversation_records"]) history.exec(`ALTER TABLE ${table} ADD COLUMN __cid; ALTER TABLE ${table} ADD COLUMN __tid; ALTER TABLE ${table} ADD COLUMN __proof_type_0; ALTER TABLE ${table} ADD COLUMN __proof_text_0; UPDATE ${table} SET __cid='cid',__tid='tid',__proof_type_0='type',__proof_text_0=CAST(x'ff' AS TEXT);`);
+  history.prepare("UPDATE conversation_records SET __proof_text_0=CAST(x'fe' AS TEXT) WHERE id=?").run(id);
+  const before = storedContent(history, retained);
+  for (const check of [() => planFinalize(env.home, { prove: true }), () => runFinalize(env.home, () => {}, { dryRun: true }), () => runFinalize(env.home, () => {})]) {
+    expect(check().kept.map(i => i.path)).toContain(`history.db:${retained}`);
+    expect(storedContent(history, retained)).toEqual(before);
+  }
+  history.prepare("UPDATE conversation_records SET __proof_text_0=CAST(x'ff' AS TEXT) WHERE id=?").run(id);
+  expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toContain(`history.db:${retained}`);
+});
+
+it.each(["keyed", "keyless", "key-only", "null-key"] as const)("AB-215 SQL boundary: malformed TEXT %s reads retain witnesses and allow exact TEXT recovery", kind => {
+  const db = new DatabaseSync(":memory:"); closes.push(() => db.close());
+  const columns = kind === "keyless" ? "payload" : kind === "key-only" ? "payload PRIMARY KEY" : kind === "null-key" ? "id,secondary,payload,PRIMARY KEY(id,secondary)" : "id TEXT PRIMARY KEY,payload";
+  const values = kind === "keyless" || kind === "key-only" ? "" : kind === "null-key" ? "NULL,'same'," : "'same',";
+  db.exec(`CREATE TABLE witness_rows(${columns}); INSERT INTO witness_rows VALUES(${values}CAST(x'fe' AS TEXT));
+    CREATE TABLE retained_224_witness_rows(${columns}); INSERT INTO retained_224_witness_rows VALUES(${values}CAST(x'ff' AS TEXT));`);
+  const ctx = { live: [{ label: "fixture", db }] }, retained = "retained_224_witness_rows";
+  const before = storedContent(db, retained);
+  expect(proveTable(db, retained, ctx)).not.toBeNull();
+  expect(storedContent(db, retained)).toEqual(before);
+  const row = [...candidateRows(db, retained)][0]!;
+  expect(tableProof(db, retained, ctx).storedDigest(row)).toBe(rowDigest({ ...row }, Object.keys(row), false));
+  expect(tableProof(db, retained, ctx).storedDigest(row)).not.toBe(rowDigest(Object.fromEntries(Object.entries(row)), Object.keys(row), false));
+  db.exec("UPDATE witness_rows SET payload=CAST(x'ff' AS TEXT)");
+  expect(proveTable(db, retained, ctx)).toBeNull();
+  // Valid exact TEXT must also remain provable; BLOB with equal bytes remains a different stored class.
+  db.exec(`UPDATE witness_rows SET payload='valid ü'; UPDATE ${retained} SET payload='valid ü'`);
+  expect(proveTable(db, retained, ctx)).toBeNull();
+  db.exec(`UPDATE ${retained} SET payload=CAST('valid ü' AS BLOB)`);
+  expect(proveTable(db, retained, ctx)).not.toBeNull();
+});
+
+it("AB-215 SQL boundary: malformed natural TEXT keys bind byte witnesses without confusing decoded replacement keys", async () => {
+  const { history, retained, id } = await retainedPayload("conversation_records", true);
+  history.exec("DROP TRIGGER conversation_records_no_update");
+  history.prepare("UPDATE conversation_records SET body=?,source=CAST(x'fe' AS TEXT) WHERE id=?").run(retainedBody, id);
+  history.exec(`UPDATE ${retained} SET source=CAST(x'ff' AS TEXT)`);
+  const before = storedContent(history, retained);
+  for (const check of [() => planFinalize(env.home, { prove: true }), () => runFinalize(env.home, () => {}, { dryRun: true }), () => runFinalize(env.home, () => {})]) {
+    expect(check().kept.map(i => i.path)).toContain(`history.db:${retained}`);
+    expect(storedContent(history, retained)).toEqual(before);
+  }
+  history.prepare("UPDATE conversation_records SET source=CAST(x'ff' AS TEXT) WHERE id=?").run(id);
+  expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toContain(`history.db:${retained}`);
+});
+
+it("AB-215 SQL boundary: collations and mixed TEXT encodings do not authorize byte-order or binding shortcuts", () => {
+  const source = new DatabaseSync(":memory:"), target = new DatabaseSync(":memory:");
+  closes.push(() => source.close(), () => target.close());
+  source.exec("CREATE TABLE retained_225_words(k TEXT COLLATE NOCASE PRIMARY KEY); INSERT INTO retained_225_words VALUES('A');");
+  target.exec("PRAGMA encoding='UTF-16le'; CREATE TABLE words(k TEXT COLLATE NOCASE PRIMARY KEY); INSERT INTO words VALUES('A');");
+  const ctx = { live: [{ label: "utf16", db: target }] };
+  expect(proveTable(source, "retained_225_words", ctx)).not.toBeNull();
+  // Even identical raw witnesses have different interpretations when DB encodings differ.
+  source.exec("UPDATE retained_225_words SET k=CAST(x'4100' AS TEXT)");
+  expect(proveTable(source, "retained_225_words", ctx)).not.toBeNull();
+  source.exec("CREATE TABLE words(k TEXT COLLATE NOCASE PRIMARY KEY); INSERT INTO words VALUES('A'); UPDATE retained_225_words SET k='A';");
+  expect(proveTable(source, "retained_225_words", { live: [{ label: "same", db: source }] })).toBeNull();
+  source.exec("UPDATE words SET k='a'");
+  expect(proveTable(source, "retained_225_words", { live: [{ label: "same", db: source }] })).not.toBeNull();
 });
 
 it.each([
