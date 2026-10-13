@@ -1,9 +1,11 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { randomUUID } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { BridgeNode } from "../src/core/node.js";
 import { BridgeClient } from "../src/core/client.js";
@@ -17,6 +19,14 @@ import { SiblingLink } from "../src/mcp/siblings.js";
 import type { Job } from "../src/mcp/jobs.js";
 import { makeEnv, seedInbox, until, type TestEnv } from "./helpers.js";
 import { codexHost } from "./helpers.js";
+import { registerAntigravityRoot } from "../src/core/antigravity-plugin.js";
+import { DEFAULT_CONFIG } from "../src/core/config.js";
+import { AntigravityHooks } from "../src/mcp/antigravity-hooks.js";
+import { registerTools } from "../src/mcp/server.js";
+
+// Native process discovery is synthetic; root evidence uses a real process
+// creation identity and the production adapter's private registration writer.
+vi.mock("../src/core/procinfo.js", async original => ({ ...await original<typeof import("../src/core/procinfo.js")>(), antigravityAncestor: async () => process.pid }));
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 let env: TestEnv;
@@ -28,8 +38,30 @@ afterEach(async () => {
 });
 const textOf = (r: any) => r.content.map((c: any) => c.text).join("\n");
 const call = async (c: Client, name: string, args = {}) => textOf(await c.callTool({ name, arguments: args }));
+const nativeRoots = new WeakMap<Client, string>();
+async function supervisorHook(c: Client, agent: string, event: "Stop" | "PostToolUse") {
+  if (agent !== "antigravity") return call(c, "hook_event", { event });
+  const reg = JSON.parse(readFileSync(join(env.home, "antigravity-hooks", `${process.pid}.json`), "utf8"));
+  const response = await fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${reg.secret}` }, body: JSON.stringify({ event: event === "Stop" ? "Stop" : "PreInvocation", input: { conversationId: nativeRoots.get(c), workspacePaths: [env.home] } }) });
+  expect(response.status).toBe(200);
+  return JSON.stringify(await response.json());
+}
 async function connect(agent: string, name: string, extra = {}) {
   const c = new Client({ name: "context-scenario", version: "1" });
+  if (agent === "antigravity") {
+    const root = `native-root-${randomUUID()}`, node = env.node(name, "antigravity");
+    await node.start();
+    cleanups.push(registerAntigravityRoot(env.home, process.pid, root));
+    const ctx = { agent: "antigravity" as const, cfg: { ...DEFAULT_CONFIG, autoWake: false, wakeOnDirect: false, lingerSec: 0 }, node, home: env.home, log: nullLogger, cwd: () => env.home, channelActive: () => false };
+    const hooks = new AntigravityHooks(ctx), server = new McpServer({ name: "native-context-fixture", version: "1" });
+    registerTools(server, ctx, []);
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    cleanups.push(async () => { await c.close(); await server.close(); }, () => hooks.stop());
+    await server.connect(a); await c.connect(b); await hooks.start();
+    nativeRoots.set(c, root);
+    await call(c, "peers");
+    return c;
+  }
   const codexHome = codexHost(c, env.home, agent, name);
   const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`], cwd: env.home,
     env: { ...process.env, CODEX_HOME: codexHome, AGENT_BRIDGE_HOME: env.home, CLAUDE_PROJECT_DIR: env.home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks",
@@ -62,7 +94,7 @@ it.each(["claude", "codex", "opencode", "antigravity"])("delivers the last real 
   await a.node.send({ to: "supervisor", conversationId: "job-a", body: "REAL_COMPLETION" });
   // No jobs are owned by this MCP manager and global/direct wake are disabled.
   // Send acknowledgement precedes delivery to the supervisor's local hook queue.
-  await expect.poll(() => call(sup, "hook_event", { event: "Stop" }),
+  await expect.poll(() => supervisorHook(sup, agent, "Stop"),
     { timeout: 5_000 }).toContain("REAL_COMPLETION");
   await expect.poll(() => call(sup, "inbox", { mark_read: false }),
     { timeout: 5_000 }).not.toContain("REAL_COMPLETION");
@@ -81,7 +113,7 @@ it.each(["opencode", "antigravity"])("%s drains 550 queued results across the re
   const sup = await connect(agent, "supervisor");
   const seen = new Set<string>();
   for (let i = 0; i < 60; i++) {
-    const text = await call(sup, "hook_event", { event: "PostToolUse" });
+    const text = await supervisorHook(sup, agent, "PostToolUse");
     expect(text).not.toContain("OBSERVER_");
     for (const result of text.matchAll(/RESULT_(\d+)_END/g)) {
       expect(seen.has(result[1]!)).toBe(false);
