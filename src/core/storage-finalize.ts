@@ -285,7 +285,7 @@ function proofWork(home: string, found: Candidates): number {
   }
   const history = new DatabaseSync(historyDbPath(bridge), { readOnly: true, timeout: 5000 });
   try { add(history, historyCandidates(history).filter(c => !c.derived).map(c => c.name)); } finally { history.close(); }
-  for (const { item } of found.files) for (const file of item.kind === "directory" ? [] : [item.path]) rows += estimateRows(file);
+  for (const { item } of found.files) for (const file of item.kind === "directory" ? [] : [item.path]) rows += estimateRows(file, true);
   return rows;
 }
 
@@ -343,7 +343,7 @@ export function runFinalize(home: string, report: (line: string) => void, option
     const { live, history, close } = openLive(home);
     try {
       const reference = history ? referenceSnapshot(history) : undefined;
-      const ctx: ProofContext = { live, history, reference, progress };
+      const ctx: ProofContext = { live, history, reference, progress, preserveCandidates: true };
       // Other copies may be compared with the reference snapshot's rows indirectly (through v2); it goes last anyway.
       const files = [...found.files].sort((a, b) => Number(!!reference && samePath(reference.path, a.item.path)) - Number(!!reference && samePath(reference.path, b.item.path)));
       for (const { item, copies } of files) {

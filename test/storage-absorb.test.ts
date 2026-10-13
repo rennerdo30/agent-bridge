@@ -1,4 +1,6 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import * as fs from "node:fs";
+import * as sqlite from "node:sqlite";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -11,6 +13,7 @@ import { makeEnv, type TestEnv } from "./helpers.js";
 import { originalFiles, sha256File, storedInventory } from "./storage-retention-fixture.js";
 import { bundleFiles } from "../src/core/archive-bundle.js";
 import * as migrations from "../src/core/sqlite-migrations.js";
+import { openArchive } from "../src/core/sqlite-maintenance.js";
 
 let env: TestEnv;
 const closes: (() => void)[] = [];
@@ -266,4 +269,168 @@ it("refuses an existing archive needing migration before any helper can rotate b
   expect(runFinalize(env.home, () => {})).toMatchObject({ ready: true, items: [], bytes: 0 });
   expect(originalFiles(roots)).toEqual(before);
   expect(storedInventory(path)).toBe(rows);
+});
+
+function currentSnapshot(path: string): void {
+  const db = new DatabaseSync(path);
+  try { db.exec("CREATE TABLE snapshots(id TEXT PRIMARY KEY,payload BLOB); INSERT INTO snapshots VALUES('sole-copy',x'FF00FE'); PRAGMA user_version=1;"); }
+  finally { db.close(); }
+}
+
+/** Observe actual SQLite construction after setup, not just calls to the admission helper. */
+function sqliteOpens(): string[] {
+  const opened: string[] = [], Native = sqlite.DatabaseSync;
+  vi.spyOn(sqlite, "DatabaseSync").mockImplementation(function (...args: ConstructorParameters<typeof DatabaseSync>) {
+    opened.push(String(args[0]));
+    return new Native(...args);
+  } as unknown as typeof DatabaseSync);
+  return opened;
+}
+
+it.each(["symlink", "hardlink"] as const)("refuses a %s archive alias to a retained current-version snapshot before any SQLite open", async kind => {
+  await verifiedHome();
+  const candidate = join(env.home, ".migration-snapshots", "current-archive.db"), target = join(env.home, "archive.db");
+  currentSnapshot(candidate);
+  if (kind === "symlink") symlinkSync(candidate, target, "file");
+  else { linkSync(candidate, target); expect(lstatSync(target, { bigint: true }).nlink).toBe(2n); }
+  const files = originalFiles([join(env.home, ".migration-snapshots")]), rows = storedInventory(candidate), header = readFileSync(candidate).subarray(0, 100);
+  const opened = sqliteOpens();
+  for (let i = 0; i < 2; i++) {
+    expect(() => runAbsorb(env.home, { apply: true })).toThrow(/unsafe or unavailable.*originals are retained/);
+    expect(opened).not.toContain(target);
+    expect(originalFiles([join(env.home, ".migration-snapshots")])).toEqual(files);
+    expect(readFileSync(candidate).subarray(0, 100)).toEqual(header);
+    expect(storedInventory(candidate)).toBe(rows);
+    if (kind === "symlink") expect(readlinkSync(target)).toBe(candidate);
+    else expect(lstatSync(target, { bigint: true }).nlink).toBe(2n);
+  }
+});
+
+it.each(["-wal", "-shm", "-journal"])("refuses an archive %s hardlink to retained bytes before the version reader", async suffix => {
+  await verifiedHome();
+  const target = join(env.home, "archive.db"), candidate = join(env.home, ".migration-snapshots", "sidecar-original.db");
+  currentSnapshot(target); currentSnapshot(candidate);
+  linkSync(candidate, target + suffix);
+  const files = originalFiles([target, join(env.home, ".migration-snapshots")]), rows = storedInventory(candidate);
+  const opened = sqliteOpens();
+  expect(() => runAbsorb(env.home, { apply: true })).toThrow(/unsafe or unavailable/);
+  expect(opened).not.toContain(target);
+  expect(originalFiles([target, join(env.home, ".migration-snapshots")])).toEqual(files);
+  expect(storedInventory(candidate)).toBe(rows);
+  expect(lstatSync(target + suffix, { bigint: true }).nlink).toBe(2n);
+});
+
+it("refuses a dangling archive sidecar link without creating its destination", async () => {
+  await verifiedHome();
+  const target = join(env.home, "archive.db"), missing = join(env.home, ".migration-snapshots", "must-stay-absent");
+  currentSnapshot(target); symlinkSync(missing, target + "-shm", "file");
+  const files = originalFiles([target, join(env.home, ".migration-snapshots")]), opened = sqliteOpens();
+  expect(() => runAbsorb(env.home, { apply: true })).toThrow(/unsafe or unavailable/);
+  expect(opened).not.toContain(target);
+  expect(originalFiles([target, join(env.home, ".migration-snapshots")])).toEqual(files);
+  expect(readlinkSync(target + "-shm")).toBe(missing);
+  expect(existsSync(missing)).toBe(false);
+});
+
+it("keeps the exclusive new-file identity witness and refuses replacement before SQLite opens", async () => {
+  await verifiedHome();
+  const target = join(env.home, "archive.db"), candidate = join(env.home, ".migration-snapshots", "replacement.db");
+  currentSnapshot(candidate);
+  const files = originalFiles([join(env.home, ".migration-snapshots")]), rows = storedInventory(candidate), opened = sqliteOpens();
+  const native = fs.fstatSync;
+  let replaced = false;
+  vi.spyOn(fs, "fstatSync").mockImplementation((...args: Parameters<typeof fs.fstatSync>) => {
+    const result = native(...args);
+    if (!replaced && existsSync(target)) {
+      replaced = true;
+      renameSync(target, join(env.home, "exclusive-original.db"));
+      symlinkSync(candidate, target, "file");
+    }
+    return result;
+  });
+  expect(() => runAbsorb(env.home, { apply: true })).toThrow(/unsafe or unavailable/);
+  expect(replaced).toBe(true);
+  expect(opened).not.toContain(target);
+  expect(originalFiles([join(env.home, ".migration-snapshots")])).toEqual(files);
+  expect(storedInventory(candidate)).toBe(rows);
+  expect(readlinkSync(target)).toBe(candidate);
+  expect(lstatSync(join(env.home, "exclusive-original.db")).size).toBe(0);
+});
+
+it("still copies into a normal compatible physical archive and keeps its snapshot rows", async () => {
+  await verifiedHome();
+  const target = join(env.home, "archive.db"), archive = openArchive(target);
+  try { archive.exec("CREATE TABLE snapshots(id TEXT PRIMARY KEY,payload BLOB); INSERT INTO snapshots VALUES('original',x'FF00FE');"); }
+  finally { archive.close(); }
+  const backup = join(env.home, "bridge.db.backup-8-positive");
+  copyOfBridge(backup, db => db.exec("INSERT INTO messages VALUES('positive','retained positive','codex','codex-a','a','claude-b','claude-b',8)"));
+  const files = originalFiles([backup, join(env.home, ".migration-snapshots")]);
+  const original = new DatabaseSync(target, { readOnly: true });
+  let before: unknown;
+  try { before = original.prepare("SELECT id,typeof(payload) AS type,hex(payload) AS bytes FROM snapshots").all(); }
+  finally { original.close(); }
+  expect(runAbsorb(env.home, { apply: true })).toMatchObject({ rows: 1, conflicts: 0 });
+  expect(runAbsorb(env.home, { apply: true })).toMatchObject({ rows: 0, conflicts: 0 });
+  expect(originalFiles([backup, join(env.home, ".migration-snapshots")])).toEqual(files);
+  const after = new DatabaseSync(target, { readOnly: true });
+  try {
+    expect(after.prepare("SELECT id,typeof(payload) AS type,hex(payload) AS bytes FROM snapshots").all()).toEqual(before);
+    expect(after.prepare("SELECT body FROM messages WHERE id='positive'").get()!.body).toBe("retained positive");
+  } finally { after.close(); }
+});
+
+it("retains a real committed-WAL candidate and its full sidecar bytes without any SQLite candidate open", async () => {
+  await verifiedHome();
+  const candidate = join(env.home, ".migration-snapshots", "committed-wal.db");
+  const writer = new DatabaseSync(candidate); closes.push(() => writer.close());
+  writer.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE snapshots(id TEXT PRIMARY KEY,payload BLOB); INSERT INTO snapshots VALUES('wal-only',x'FE00FF');");
+  const rows = writer.prepare("SELECT id,typeof(payload) AS type,hex(payload) AS bytes FROM snapshots").all();
+  const files = originalFiles([join(env.home, ".migration-snapshots")]), header = readFileSync(candidate).subarray(0, 100), opened = sqliteOpens();
+  expect(existsSync(candidate + "-wal")).toBe(true);
+  expect(existsSync(candidate + "-shm")).toBe(true);
+  for (let i = 0; i < 2; i++) {
+    const finalized = runFinalize(env.home, () => {});
+    expect(finalized).toMatchObject({ ready: true, items: [], bytes: 0 });
+    expect(finalized.kept.find(item => item.path === candidate)?.reason).toMatch(/retained without a SQLite open/);
+    const absorbed = runAbsorb(env.home, { apply: true });
+    expect(absorbed.sources.find(source => source.path === candidate)?.problems.join(" ")).toMatch(/retained without a SQLite open/);
+    expect(opened).not.toContain(candidate);
+    expect(originalFiles([join(env.home, ".migration-snapshots")])).toEqual(files);
+    expect(readFileSync(candidate).subarray(0, 100)).toEqual(header);
+    expect(writer.prepare("SELECT id,typeof(payload) AS type,hex(payload) AS bytes FROM snapshots").all()).toEqual(rows);
+  }
+});
+
+it.each(["-wal", "-shm", "-journal"])("keeps a DELETE-mode candidate with a dangling %s sidecar without opening it", async suffix => {
+  await verifiedHome();
+  const candidate = join(env.home, ".migration-snapshots", "dangling-sidecar.db"), missing = join(env.home, "must-stay-absent");
+  currentSnapshot(candidate); symlinkSync(missing, candidate + suffix, "file");
+  const files = originalFiles([candidate]), header = readFileSync(candidate).subarray(0, 100), opened = sqliteOpens();
+  const finalized = runFinalize(env.home, () => {});
+  expect(finalized.kept.find(item => item.path === candidate)?.reason).toMatch(/sidecars.*retained without a SQLite open/);
+  const absorbed = runAbsorb(env.home, { apply: true });
+  expect(absorbed.sources.find(source => source.path === candidate)?.problems.join(" ")).toMatch(/sidecars.*retained without a SQLite open/);
+  expect(opened).not.toContain(candidate);
+  expect(originalFiles([candidate])).toEqual(files);
+  expect(readFileSync(candidate).subarray(0, 100)).toEqual(header);
+  expect(readlinkSync(candidate + suffix)).toBe(missing);
+  expect(existsSync(missing)).toBe(false);
+});
+
+it("retains a checkpointed WAL-header candidate even when no sidecar files remain", async () => {
+  await verifiedHome();
+  const candidate = join(env.home, ".migration-snapshots", "wal-header-only.db"), writer = new DatabaseSync(candidate);
+  try { writer.exec("PRAGMA journal_mode=WAL; CREATE TABLE snapshots(id TEXT PRIMARY KEY,payload BLOB); INSERT INTO snapshots VALUES('checkpointed',x'FF01FE');"); }
+  finally { writer.close(); }
+  expect(existsSync(candidate + "-wal")).toBe(false);
+  expect(existsSync(candidate + "-shm")).toBe(false);
+  expect(readFileSync(candidate)[18]).toBe(2);
+  const rows = storedInventory(candidate), files = originalFiles([join(env.home, ".migration-snapshots")]), opened = sqliteOpens();
+  const finalized = runFinalize(env.home, () => {});
+  expect(finalized.kept.find(item => item.path === candidate)?.reason).toMatch(/uses WAL.*retained without a SQLite open/);
+  const absorbed = runAbsorb(env.home, { apply: true });
+  expect(absorbed.sources.find(source => source.path === candidate)?.problems.join(" ")).toMatch(/uses WAL.*retained without a SQLite open/);
+  expect(opened).not.toContain(candidate);
+  expect(originalFiles([join(env.home, ".migration-snapshots")])).toEqual(files);
+  expect(storedInventory(candidate)).toBe(rows);
 });

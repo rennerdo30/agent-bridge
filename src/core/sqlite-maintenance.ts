@@ -1,4 +1,4 @@
-import { closeSync, existsSync, openSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -7,6 +7,7 @@ import { nullLogger, type Logger } from "./logger.js";
 import { configureSqlite } from "./sqlite-policy.js";
 export { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
+import { preserveArchiveTarget } from "./storage-preservation.js";
 
 export const ARCHIVE_DB_NAME = "archive.db";
 export const ARCHIVE_STORE_VERSION = 1;
@@ -44,35 +45,39 @@ PRAGMA user_version = 1;
 `;
 
 /** Archive schema has its own version sequence; primary migrations belong to MessageStore. */
-export function openArchive(path: string, options: { migrate?: boolean } = {}): DatabaseSync {
+export function openArchive(path: string, options: { migrate?: boolean; home?: string } = {}): DatabaseSync {
   const existed = existsSync(path);
-  let created = false;
-  if (options.migrate === false) {
-    if (existed) {
-      const original = new DatabaseSync(path, { readOnly: true });
-      try {
+  let admitted: ReturnType<typeof preserveArchiveTarget> | undefined;
+  let original: DatabaseSync | undefined;
+  let db: DatabaseSync | undefined;
+  try {
+    if (options.migrate === false) {
+      if (!options.home) throw new Error("Storage absorb archive home is unavailable; all originals are retained.");
+      admitted = preserveArchiveTarget(path, options.home);
+      path = admitted.path;
+      if (!admitted.created) {
+        admitted.check();
+        original = new DatabaseSync(path, { readOnly: true });
+        admitted.check();
         if (Number(original.prepare("PRAGMA user_version").get()!.user_version) !== ARCHIVE_STORE_VERSION)
           throw new Error("Storage absorb requires a current archive.db; archive migration is disabled and all originals are retained.");
-      } finally { original.close(); }
-    } else {
-      if (["-wal", "-shm", "-journal"].some(suffix => existsSync(`${path}${suffix}`)))
-        throw new Error("Storage absorb cannot initialize archive.db with existing sidecars; all originals are retained.");
-      // Never initialize over a file another process created after the existence check.
-      closeSync(openSync(path, "wx", 0o600));
-      created = true;
+      }
     }
-  }
-  const db = new DatabaseSync(path);
-  try {
+    admitted?.check();
+    db = new DatabaseSync(path);
+    admitted?.check();
     db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     if (options.migrate === false) {
-      if (created) db.exec(ARCHIVE_SCHEMA);
+      if (admitted?.created) db.exec(ARCHIVE_SCHEMA);
       else if (Number(db.prepare("PRAGMA user_version").get()!.user_version) !== ARCHIVE_STORE_VERSION)
         throw new Error("Storage absorb requires a current archive.db; archive migration is disabled and all originals are retained.");
     } else migrateSqlite(db, path, existed, ARCHIVE_STORE_VERSION, [{ version: 1, sql: ARCHIVE_SCHEMA }], nullLogger);
+    admitted?.check();
     configureSqlite(db);
+    admitted?.check();
     return db;
-  } catch (err) { db.close(); throw err; }
+  } catch (err) { db?.close(); throw err; }
+  finally { original?.close(); admitted?.close(); }
 }
 
 export function archiveDbPath(file: string): string {

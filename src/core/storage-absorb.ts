@@ -7,6 +7,7 @@ import { historyDbPath } from "./history-store.js";
 import { ARCHIVE_DB_NAME, openArchive } from "./sqlite-maintenance.js";
 import { maintenanceLock } from "./storage-lock.js";
 import { fileCandidates, historyIsVerified, LEGACY_BRIDGE_TABLES, referenceSnapshot } from "./storage-finalize.js";
+import { candidateReadProblem } from "./storage-preservation.js";
 
 /** Retaining absorb: originals stay at their original paths regardless of later proof results. Every
  * row in them that exists nowhere live is imported into archive.db, so the proof can succeed without losing anything.
@@ -79,6 +80,8 @@ function archiveMessage(archive: DatabaseSync, row: Row, origin: string, now: nu
 }
 
 function absorbDatabase(path: string, ctx: ProofContext, archive: DatabaseSync | undefined, source: AbsorbSource, options: Required<Pick<AbsorbOptions, "batchRows" | "now">> & AbsorbOptions): void {
+  const unsafe = candidateReadProblem(path);
+  if (unsafe) { source.problems.push(`${basename(path)}: ${unsafe}`); return; }
   let db: DatabaseSync;
   try { db = new DatabaseSync(path, { readOnly: true, timeout: 1000 }); }
   catch (err) { source.problems.push(`${basename(path)} cannot be opened (${(err as Error).message})`); return; }
@@ -159,14 +162,14 @@ export function runAbsorb(home: string, options: AbsorbOptions = {}): AbsorbResu
     const open = (path: string) => { const db = new DatabaseSync(path, { readOnly: true, timeout: 5000 }); opened.push(db); return db; };
     let archive: DatabaseSync | undefined;
     if (options.apply) {
-      archive = openArchive(archivePath, { migrate: false }); opened.push(archive);
+      archive = openArchive(archivePath, { migrate: false, home }); opened.push(archive);
       archive.exec(ABSORB_SCHEMA);
     }
     const history = open(historyPath);
     const live: LiveDb[] = [{ label: "bridge.db", db: open(bridge), exclude: new Set(LEGACY_BRIDGE_TABLES) }, { label: "history.db", db: history }];
     const archiveLive = archive ?? (lstatOrNull(archivePath) ? open(archivePath) : undefined);
     if (archiveLive) live.splice(1, 0, { label: "archive.db", db: archiveLive });
-    const ctx: ProofContext = { live, history, reference: referenceSnapshot(history) };
+    const ctx: ProofContext = { live, history, reference: referenceSnapshot(history), preserveCandidates: true };
     const settings = { ...options, batchRows: options.batchRows ?? BATCH_ROWS, now: options.now ?? Date.now() };
     for (const { item, copies } of fileCandidates(home)) {
       const source: AbsorbSource = { path: item.path, rows: 0, files: 0, conflicts: 0, problems: [] };
