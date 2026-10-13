@@ -143,21 +143,36 @@ describe("standalone demand-start broker", () => {
   it("parent exit and Windows prohibiting Job Object close leave the same authenticated daemon alive", async () => {
     const runtime = join(env.home, "runtime with spaces-日本"); cpSync(join(import.meta.dirname, "../plugins/codex/dist"), runtime, { recursive: true });
     const parentCli = join(runtime, "cli.mjs");
-    const gate = "process.send('ready');process.on('message',()=>{const child=require('node:child_process').spawn(process.execPath,[process.argv[1],'tail'],{windowsHide:true,stdio:['ignore','ignore','pipe']});child.stderr.on('data',data=>process.send({event:'stderr',text:data.toString()}));child.on('error',error=>process.send({event:'spawn_error',code:error.code}));child.on('exit',code=>process.send({event:'child_exit',code}));});setInterval(()=>{},1000);";
+    const gate = String.raw`
+      process.send('ready');
+      process.on('message', message => {
+        const cli = process.argv[1];
+        process.send({event:'path_check', matches:cli === message.cli, exists:require('node:fs').existsSync(cli)});
+        const child = require('node:child_process').spawn(process.execPath,[cli,'tail'],{windowsHide:true,stdio:['ignore','ignore','pipe']});
+        let stderr = '';
+        child.stderr.on('data', data => { stderr = (stderr + data.toString()).slice(0,4096); });
+        child.on('error', error => process.send({event:'spawn_error',code:error.code}));
+        child.on('exit', code => {
+          process.send({event:'loader_check', codes:stderr.match(/\b(?:ERR_[A-Z_]+|MODULE_NOT_FOUND|SyntaxError|TypeError)\b/g) ?? [], namesCli:stderr.includes(cli), replacement:stderr.includes('\uFFFD')});
+          process.send({event:'child_exit',code});
+        });
+      });
+      setInterval(()=>{},1000);`;
     const parent = spawn(process.execPath, ["-e", gate, parentCli], { cwd: env.home, windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "ignore", "ignore", "ipc"],
       env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_DASHBOARD: "false", AGENT_BRIDGE_HISTORY_INGEST: "0" } });
     children.push(parent);
     const fixtureEvents: string[] = [];
     parent.on("message", message => {
-      const event = message as { event?: string; text?: string; code?: string | number };
-      if (event.event === "stderr") fixtureEvents.push(...(event.text?.match(/\b(?:ERR_[A-Z_]+|MODULE_NOT_FOUND|SyntaxError|TypeError)\b/g) ?? []));
+      const event = message as { event?: string; code?: string | number; codes?: string[]; matches?: boolean; exists?: boolean; namesCli?: boolean; replacement?: boolean };
+      if (event.event === "path_check") fixtureEvents.push(`argv_matches:${event.matches},file_exists:${event.exists}`);
+      else if (event.event === "loader_check") fixtureEvents.push(...(event.codes ?? []), `error_names_cli:${event.namesCli},replacement_character:${event.replacement}`);
       else if (event.event === "spawn_error" || event.event === "child_exit") fixtureEvents.push(`${event.event}:${event.code}`);
     });
     let scope: WindowsJobScope | undefined;
     try {
       await once(parent, "message");
       if (process.platform === "win32") scope = await startWindowsJobScope(nullLogger, parent.pid!);
-      parent.send("start");
+      parent.send({ cli: parentCli });
       let pid: number | undefined;
       for (const deadline = Date.now() + 10_000; !pid && Date.now() < deadline;) {
         try { pid = await remember(); }
