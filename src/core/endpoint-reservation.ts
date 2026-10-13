@@ -6,6 +6,19 @@ import { encodeFrame, FrameDecoder } from "./protocol.js";
 export const TENTATIVE_CONNECTION_LIMIT = 32;
 export const TENTATIVE_FRAME_BYTES = 64 * 1024;
 
+type ActivationWitness = { server: Server; endpoint: string; bound: boolean; closed: boolean;
+  adopter?: object; accept?: (socket: Socket) => void };
+const activationWitnesses = new WeakMap<EndpointReservation, ActivationWitness>();
+
+/** Observation only: caller metadata cannot create an actual activation witness. */
+export function hasEndpointActivationWitness(reservation: EndpointReservation, adopter: object,
+  server: Server, endpoint: string, accept: (socket: Socket) => void): boolean {
+  const witness = activationWitnesses.get(reservation);
+  return !!witness && witness.bound && !witness.closed && witness.adopter === adopter && witness.accept === accept
+    && witness.server === server && witness.endpoint === endpoint && server.listening && server.address() === endpoint
+    && server.listeners("connection").includes(accept);
+}
+
 /** Exclusive transport reservation, with no store, worker, authentication or mutation authority. */
 export class EndpointReservation {
   private readonly sockets = new Set<Socket>();
@@ -15,6 +28,9 @@ export class EndpointReservation {
   private readonly server: Server;
   private constructor(readonly endpoint: string) {
     this.server = createServer(this.tentative);
+    const witness: ActivationWitness = { server: this.server, endpoint, bound: false, closed: false };
+    activationWitnesses.set(this, witness);
+    this.server.once("close", () => { witness.closed = true; });
     // The adopting broker supplies its normal diagnostics after activation.
     this.server.on("error", () => {});
   }
@@ -45,7 +61,10 @@ export class EndpointReservation {
     const reservation = new EndpointReservation(endpoint);
     await new Promise<void>((resolve, reject) => {
       reservation.server.once("error", reject);
-      reservation.server.listen(endpoint, () => { reservation.server.removeListener("error", reject); reservation.owned = true; resolve(); });
+      reservation.server.listen(endpoint, () => {
+        reservation.server.removeListener("error", reject); reservation.owned = true;
+        activationWitnesses.get(reservation)!.bound = true; resolve();
+      });
     });
     return reservation;
   }
@@ -54,17 +73,20 @@ export class EndpointReservation {
     if (!this.owned || this.closed || this.active || this.endpoint !== endpoint || !this.server.listening) throw new Error("Core endpoint reservation unavailable.");
     return this.server;
   }
-  activate(accept: (socket: Socket) => void): void {
+  activate(accept: (socket: Socket) => void, adopter?: object): void {
     if (!this.owned || this.closed || this.active || !this.server.listening) throw new Error("Core endpoint reservation unavailable.");
     this.active = true;
     for (const socket of this.sockets) socket.destroy();
     this.sockets.clear();
     this.server.removeListener("connection", this.tentative);
     this.server.on("connection", accept);
+    const witness = activationWitnesses.get(this)!;
+    witness.adopter = adopter; witness.accept = accept;
   }
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    activationWitnesses.get(this)!.closed = true;
     for (const socket of this.sockets) socket.destroy();
     this.sockets.clear();
     // Only a verified successful binder can close its transport. No unlink or

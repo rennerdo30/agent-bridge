@@ -56,6 +56,23 @@ describe("source-owned activated serving capability (not bootstrap/role-transfer
     await start; await authenticated();
     expect(assertLifecycleServingCapability(b.lifecycleServingCapability("prepare", performance.now() + 5000), "prepare").generation).toBe(0);
   });
+  it("a structural no-op activation wrapper around the real canonical tentative server cannot mint or admit", async () => {
+    const b = await own(), real = reservation!;
+    const wrapper = { ownedServer: real.ownedServer.bind(real), activate: () => {}, close: real.close.bind(real) } as unknown as EndpointReservation;
+    await b.listen(wrapper);
+    expect(() => b.lifecycleServingCapability("prepare", performance.now() + 5000)).toThrow("unavailable");
+    const before = store!.unread("not-admitted", 100);
+    const client = await BridgeClient.connect(env.pipe, nullLogger);
+    try {
+      await expect(client.request("auth", { protocol: PROTOCOL_VERSION, token: "fixture-token" })).rejects.toThrow("Core is initializing");
+    } finally { client.close(); }
+    const sender = await BridgeClient.connect(env.pipe, nullLogger);
+    try {
+      await expect(sender.request("send", { to: "not-admitted", body: "must remain unaccepted" })).rejects.toThrow("Core is initializing");
+    } finally { sender.close(); }
+    expect(store!.unread("not-admitted", 100)).toEqual(before);
+    expect(b.lifecycleServingCapability.bind(b, "prepare", performance.now() + 5000)).toThrow("unavailable");
+  });
   it("actual activation then injected failure has no issuer while real asynchronous cleanup is held", async () => {
     const b = await own(), activate = reservation!.activate.bind(reservation), close = store!.closeBackups.bind(store);
     let cleanupEntered!: () => void, resume!: () => void;

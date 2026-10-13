@@ -78,7 +78,7 @@ import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS
 import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
 import { OwnerQuestionService, OWNER_ADDRESS } from "./owner-question-service.js";
 import { ensurePrivateSocketDirectory, resolvePipePath } from "./paths.js";
-import type { EndpointReservation } from "./endpoint-reservation.js";
+import { hasEndpointActivationWitness, type EndpointReservation } from "./endpoint-reservation.js";
 
 export type LifecycleServingPhase = "admission" | "prepare" | "write";
 /** Opaque source capability. Shape/copy/serialized flags never confer authority. */
@@ -599,19 +599,21 @@ export class Broker {
     };
     try {
       await this.startServices(optional);
-      reservation.activate(socket => this.accept(socket));
+      const accept = (socket: Socket) => this.accept(socket);
+      reservation.activate(accept, this);
       this.network?.activateAuthority();
       this.networkAuthorityDeferred = false;
       this.server.on("error", err => this.log.error("broker server error", { err }));
       // Only this real controlled reservation's completed activation registers a
       // source issuer. A constructor, legacy listener, tentative or failed start
       // cannot register/mint. Failure here leaves ordinary serving unchanged.
-      if (!servingBindings.has(this) && this.hosting.mode === "daemon" && this.store.file !== ":memory:") {
+      if (!servingBindings.has(this) && this.hosting.mode === "daemon" && this.store.file !== ":memory:"
+        && hasEndpointActivationWitness(reservation, this, this.server, this.pipePath, accept)) {
         try {
           const server = this.server, home = realpathSync.native(dirname(this.store.file)), identity = servingHomeIdentity(home), hosting = this.hosting;
           if (resolvePipePath(home, {}) === this.pipePath && server.listening && server.address() === this.pipePath) {
             const binding: ServingBinding = { server, home, identity, endpoint: this.pipePath, ownerInstance: randomUUID(), generation: 0, revoked: false,
-              current: () => this.server === server && this.hosting === hosting && !this.closing && !this.startupAuthorityRevoked && !this.networkAuthorityDeferred && !this.mobileRetiring && this.store.lifecycleWriteManifest().transactionsSettled };
+              current: () => hasEndpointActivationWitness(reservation, this, server, this.pipePath, accept) && this.server === server && this.hosting === hosting && !this.closing && !this.startupAuthorityRevoked && !this.networkAuthorityDeferred && !this.mobileRetiring && this.store.lifecycleWriteManifest().transactionsSettled };
             const revoke = () => { binding.revoked = true; binding.generation++; };
             server.once("close", revoke); server.once("error", revoke); servingBindings.set(this, binding);
           }
