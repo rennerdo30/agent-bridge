@@ -9,12 +9,29 @@ import { snapshotMetadataTables } from "./metadata-snapshot.js";
 
 const VERSION = 1;
 const connections = new Map<string, DatabaseSync>();
+type MetadataAdmissionIdentity = { home: string; file: string };
+const lifecycleAdmissions = new WeakMap<DatabaseSync, MetadataAdmissionIdentity | null>();
 const readers = new Map<string,number>();
 let lifecycleRegistryGeneration = 0;
 let lifecycleRegistryUnknown = false;
 function changeLifecycleRegistry(): void {
  if (lifecycleRegistryGeneration >= Number.MAX_SAFE_INTEGER) lifecycleRegistryUnknown = true;
  else lifecycleRegistryGeneration++;
+}
+function observeExistingMetadataAdmission(file: string): MetadataAdmissionIdentity | null {
+ try {
+  physicalMetadataPath(file);
+  const stat = lstatSync(file, { bigint: true }), home = lstatSync(dirname(file), { bigint: true });
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n || !home.isDirectory() || home.isSymbolicLink() ||
+    stat.ino <= 0n || home.ino <= 0n || stat.dev < 0n || home.dev < 0n || process.platform === "win32" && (stat.dev === 0n || home.dev === 0n)) return null;
+  return { home: `${home.dev}:${home.ino}:${home.birthtimeNs}`, file: `${stat.dev}:${stat.ino}:${stat.birthtimeNs}` };
+ } catch { return null; }
+}
+function recordMetadataAdmission(db: DatabaseSync, file: string, before: MetadataAdmissionIdentity | null): void {
+ const after = observeExistingMetadataAdmission(file);
+ // Consistent observation around an EXISTING open is not native fstat of SQLite's
+ // handle. Absent/changed/unprovable initial bindings stay unknown; never backfill.
+ lifecycleAdmissions.set(db, before && after && before.home === after.home && before.file === after.file ? before : null);
 }
 // Windows paths are case-insensitive: one handle per physical file, whatever spelling of home a caller passes.
 const handleKey = (path: string) => process.platform === "win32" ? path.toLowerCase() : path;
@@ -64,7 +81,9 @@ export function existingMetadataDb(home: string): DatabaseSync | undefined {
  if (cached) return cached;
  if (!existsSync(file)) return undefined;
  physicalMetadataPath(file);
+ const admission = observeExistingMetadataAdmission(file);
  const db = new DatabaseSync(file,{timeout:5_000});
+ recordMetadataAdmission(db, file, admission);
  try {
   if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get() ||
     Number(db.prepare("SELECT version FROM bridge_components WHERE name='metadata'").get()?.version ?? 0) !== VERSION) { db.close(); return undefined; }
@@ -86,7 +105,9 @@ export function metadataDb(home: string): DatabaseSync {
  physicalMetadataPath(file);
  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
  const existed = existsSync(file);
+ const admission = observeExistingMetadataAdmission(file);
  const db = new DatabaseSync(file, { timeout: 5_000 });
+ recordMetadataAdmission(db, file, admission);
  try {
   db.exec("PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;");
   const version = () => db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_components'").get()
@@ -170,6 +191,7 @@ export interface MetadataCheckpointObservation {
  registryGeneration: number;
  physicalFiles: number;
  nonWalFiles: number;
+ noWalFiles: number;
  completedCheckpoints: number;
  checkpointed: boolean;
  reason: "settled" | "not_sealed" | "bound" | "budget" | "transaction_unknown" | "durability_unknown" | "identity_unknown" | "busy" | "checkpoint_unknown";
@@ -184,14 +206,14 @@ export interface MetadataCheckpointObservation {
  * latency is not cancellable. This proves neither external writer closure nor publication. */
 export function checkpointOwnedMetadataConnections(owner: MetadataCheckpointOwner, deadline: number): MetadataCheckpointObservation {
  const result: MetadataCheckpointObservation = { ownerInstance: owner.ownerInstance, generation: owner.generation, ownedConnections: connections.size,
-  registryGeneration: lifecycleRegistryGeneration, physicalFiles: 0, nonWalFiles: 0, completedCheckpoints: 0, checkpointed: false, reason: "not_sealed", handlesRetained: true, ownershipReleased: false, fileIdentityDigest: null };
+  registryGeneration: lifecycleRegistryGeneration, physicalFiles: 0, nonWalFiles: 0, noWalFiles: 0, completedCheckpoints: 0, checkpointed: false, reason: "not_sealed", handlesRetained: true, ownershipReleased: false, fileIdentityDigest: null };
  const refuse = (reason: MetadataCheckpointObservation["reason"]) => { result.reason = reason; return result; };
  const instance = owner.ownerInstance, generation = owner.generation;
  const current = () => !lifecycleRegistryUnknown && lifecycleRegistryGeneration === result.registryGeneration &&
   /^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(instance) && Number.isSafeInteger(generation) && generation >= 0 &&
   owner.isCurrentSealed() === true && owner.ownerInstance === instance && owner.generation === generation && lifecycleRegistryGeneration === result.registryGeneration && !lifecycleRegistryUnknown;
  const timely = () => Number.isFinite(deadline) && performance.now() < deadline;
- type Entry = { key: string; file: string; db: DatabaseSync; identity: string; mode: string; timeout: number };
+ type Entry = { key: string; file: string; db: DatabaseSync; identity: string; mode: string; timeout: number; noWal: boolean };
  const entries: Entry[] = [];
  const fileIdentity = (file: string, directory = false) => {
   physicalMetadataPath(file);
@@ -213,13 +235,17 @@ export function checkpointOwnedMetadataConnections(owner: MetadataCheckpointOwne
    if (typeof file !== "string" || !file) return refuse("identity_unknown");
    const identity = fileIdentity(file);
    if (fileIdentity(dirname(file), true) !== homeIdentity) return refuse("identity_unknown");
+   const admission = lifecycleAdmissions.get(db);
+   if (!admission || admission.file !== identity || admission.home !== homeIdentity) return refuse("identity_unknown");
    if (!timely()) return refuse("budget");
    // Connection-local timeout observation precedes schema/page-reading PRAGMAs.
    const timeout = db.prepare("PRAGMA busy_timeout").get()?.timeout;
    if (typeof timeout !== "number" || !Number.isSafeInteger(timeout) || timeout < 0) return refuse("durability_unknown");
-   const entry: Entry = { key, file, db, identity, mode: "", timeout };
+   const entry: Entry = { key, file, db, identity, mode: "", timeout, noWal: false };
    entries.push(entry);
    db.exec(`PRAGMA busy_timeout=${Math.max(0, Math.min(25, Math.floor(deadline - performance.now())))};`);
+   const schemas = db.prepare("SELECT name,file FROM pragma_database_list LIMIT 3").all();
+   if (schemas.length !== 1 || schemas[0]!.name !== "main" || typeof schemas[0]!.file !== "string" || fileIdentity(schemas[0]!.file as string) !== identity) return refuse("identity_unknown");
    if (db.prepare("PRAGMA synchronous").get()?.synchronous !== 2) return refuse("durability_unknown");
    const mode = db.prepare("PRAGMA journal_mode").get()?.journal_mode;
    if (typeof mode !== "string" || !["wal", "delete", "truncate", "persist"].includes(mode)) return refuse("durability_unknown");
@@ -238,16 +264,18 @@ export function checkpointOwnedMetadataConnections(owner: MetadataCheckpointOwne
    if (entry.mode === "wal") {
      if (!timely()) return refuse("budget");
      entry.db.exec(`PRAGMA busy_timeout=${Math.max(0, Math.min(25, Math.floor(deadline - performance.now())))};`);
-     const ack = entry.db.prepare("PRAGMA wal_checkpoint(FULL)").get();
+     const ack = entry.db.prepare("PRAGMA main.wal_checkpoint(FULL)").get();
      if (!ack || typeof ack.busy !== "number" || typeof ack.log !== "number" || typeof ack.checkpointed !== "number" ||
        !Number.isSafeInteger(ack.busy) || !Number.isSafeInteger(ack.log) || !Number.isSafeInteger(ack.checkpointed)) return refuse("checkpoint_unknown");
      if (ack.busy !== 0) return refuse("busy");
      if (!((ack.log === -1 && ack.checkpointed === -1) || (ack.log >= 0 && ack.checkpointed === ack.log))) return refuse("checkpoint_unknown");
+     entry.noWal = ack.log === -1 && ack.checkpointed === -1;
    }
    if (!timely()) return refuse("budget");
    if (!current()) return refuse("not_sealed");
    if (entry.db.isTransaction !== false || fileIdentity(entry.file) !== entry.identity) return refuse("transaction_unknown");
-   if (entry.mode === "wal") result.completedCheckpoints++;
+   if (entry.noWal) result.noWalFiles++;
+   else if (entry.mode === "wal") result.completedCheckpoints++;
    else result.nonWalFiles++; // FULL/autocommit verified; WAL checkpoint is explicitly not applicable.
   }
   if (connections.size !== entries.length || entries.some(entry => connections.get(entry.key) !== entry.db)) return refuse("identity_unknown");
