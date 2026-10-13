@@ -9,6 +9,7 @@ import { DecisionStore, DECISIONS_SCHEMA } from "../src/core/decisions.js";
 import { HistoryIndex } from "../src/core/history.js";
 import { MessageStore } from "../src/core/store.js";
 import { nullLogger } from "../src/core/logger.js";
+import { attachStoreCompatibility, storeCompatibilityObservation } from "../src/core/store-compatibility-overlay.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -289,5 +290,68 @@ describe("actual history consumer admission and managed values (not full native 
       pid: process.pid, agentPid: null, startedAt: 1, autoWake: false }, 1);
     expect(store.broadcastNames()).toContain("owned-peer");
     expect(store.history.lifecycleConsumerObservation()).toMatchObject({ rawBorrower: false, ownerBound: false, settled: false, ownershipReleased: false });
+  });
+});
+
+describe("actual known compatibility overlay admission (not main-only or owner completeness)", () => {
+  function main(name: string) {
+    const db = new DatabaseSync(join(env.home, name)); owned.set(db, { actuallyClosed: false }); return db;
+  }
+  function existingOverlay() {
+    const db = main("overlay-seed-main.db"); attachStoreCompatibility(db, join(env.home, "overlay-seed-main.db"), nullLogger, true);
+    db.exec("CREATE TABLE store_compatibility.owned_overlay_fixture(body BLOB NOT NULL); INSERT INTO store_compatibility.owned_overlay_fixture VALUES(x'00ff04');");
+    dispose(db); const path = join(env.home, "store-compatibility.db"); return { path, bytes: readFileSync(path) };
+  }
+  it("records the actual source attachment without census SQL, preserves retained routing and does not certify arbitrary attachments", () => {
+    const db = main("owned-main.db"); attachStoreCompatibility(db, join(env.home, "owned-main.db"), nullLogger, true);
+    db.prepare("INSERT INTO peer_names VALUES(?,?,?,?,?)").run("owned-id", "Exact retained overlay name", "owned-session", "other", 1);
+    const extra = main("unknown-attachment.db"); dispose(extra);
+    db.prepare("ATTACH DATABASE ? AS unknown_attachment").run(join(env.home, "unknown-attachment.db"));
+    const exec = vi.spyOn(DatabaseSync.prototype, "exec"), prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
+    expect(storeCompatibilityObservation(db)).toMatchObject({ captures: 1, pending: 0, unknown: false, attached: 1,
+      initializedHandlesClosed: 1, retained: 0, ownerBound: false, settled: false, ownershipReleased: false });
+    expect(exec).not.toHaveBeenCalled(); expect(prepare).not.toHaveBeenCalled(); vi.restoreAllMocks();
+    expect(db.prepare("SELECT name FROM peer_names").get()!.name).toBe("Exact retained overlay name");
+    expect(db.prepare("PRAGMA database_list").all().map(row => row.name)).toContain("unknown_attachment");
+    expect(storeCompatibilityObservation({ ...db } as unknown as DatabaseSync)).toMatchObject({ captures: 0, ownerBound: false, settled: false });
+  });
+  it("retains an actual temporary initialization capture before SIMULATED failure while real close leaves accepted overlay bytes intact", () => {
+    const fixture = existingOverlay(), db = main("failed-init-main.db"), failure = new Error("SIMULATED overlay initialization failure");
+    let overlay: DatabaseSync | undefined;
+    vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+      const result = nativeExec.call(this, sql);
+      if (this !== db && /^PRAGMA busy_timeout/.test(sql)) {
+        overlay = this; owned.set(this, { actuallyClosed: false });
+        expect(storeCompatibilityObservation(db)).toMatchObject({ captures: 1, pending: 1, attached: 0, retained: 1 }); throw failure;
+      }
+      return result;
+    });
+    vi.spyOn(DatabaseSync.prototype, "close").mockImplementation(function(this: DatabaseSync) {
+      const result = nativeClose.call(this); if (this === overlay) owned.get(this)!.actuallyClosed = true; return result;
+    });
+    expect(() => attachStoreCompatibility(db, join(env.home, "failed-init-main.db"), nullLogger, false)).toThrow(failure);
+    expect(storeCompatibilityObservation(db)).toMatchObject({ pending: 0, unknown: true, attached: 0, initializedHandlesClosed: 1, retained: 1, ownershipReleased: false });
+    vi.restoreAllMocks(); expect(readFileSync(fixture.path)).toEqual(fixture.bytes);
+  });
+  it("keeps exact temporary native capture after SIMULATED close errors before or after actual native close", () => {
+    const fixture = existingOverlay();
+    for (const when of ["before", "after"] as const) {
+      const db = main(`failed-${when}-main.db`), failure = new Error("SIMULATED overlay close failure"); let overlay: DatabaseSync | undefined;
+      vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+        const result = nativeExec.call(this, sql);
+        if (this !== db && /^PRAGMA busy_timeout/.test(sql)) { overlay = this; owned.set(this, { actuallyClosed: false }); }
+        return result;
+      });
+      vi.spyOn(DatabaseSync.prototype, "close").mockImplementation(function(this: DatabaseSync) {
+        if (this !== overlay) return nativeClose.call(this);
+        if (when === "after") { nativeClose.call(this); owned.get(this)!.actuallyClosed = true; }
+        throw failure;
+      });
+      expect(() => attachStoreCompatibility(db, join(env.home, `failed-${when}-main.db`), nullLogger, false)).toThrow(failure);
+      expect(storeCompatibilityObservation(db)).toMatchObject({ pending: 0, unknown: true, attached: 0, initializedHandlesClosed: 0, retained: 1, ownershipReleased: false });
+      vi.restoreAllMocks(); if (!owned.get(overlay!)!.actuallyClosed) dispose(overlay!);
+      expect(storeCompatibilityObservation(db)).toMatchObject({ unknown: true, retained: 1, initializedHandlesClosed: 0 });
+      expect(readFileSync(fixture.path)).toEqual(fixture.bytes);
+    }
   });
 });
