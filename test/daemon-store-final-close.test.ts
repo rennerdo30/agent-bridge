@@ -1,18 +1,31 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openArchive, archiveInitializationObservation } from "../src/core/sqlite-maintenance.js";
 import { openHistoryStore, historyInitializationObservation } from "../src/core/history-store.js";
+import { storageLease, storageLeaseObservation } from "../src/core/storage-lock.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+
+const leaseFault = vi.hoisted(() => ({ path: "", mode: "none" as "none" | "before" | "after", failure: new Error("SIMULATED lease removal failure") }));
+vi.mock("node:fs", async importOriginal => {
+  const original = await importOriginal<typeof import("node:fs")>();
+  const remove: typeof original.rmSync = (path, options) => {
+    if (path === leaseFault.path && leaseFault.mode === "before") throw leaseFault.failure;
+    original.rmSync(path, options);
+    if (path === leaseFault.path && leaseFault.mode === "after") throw leaseFault.failure;
+  };
+  return { ...original, rmSync: remove, default: { ...original, rmSync: remove } };
+});
 
 // Actual isolated native resources only. Fixture disposal is not a production
 // force-close API or evidence the source's unknown close had succeeded.
 const nativeExec = DatabaseSync.prototype.exec, nativeClose = DatabaseSync.prototype.close;
 const owned = new Map<DatabaseSync, { actuallyClosed: boolean }>();
 let env: TestEnv;
-beforeEach(() => { env = makeEnv(); });
+beforeEach(() => { leaseFault.path = ""; leaseFault.mode = "none"; env = makeEnv(); });
 afterEach(async () => {
+  leaseFault.path = ""; leaseFault.mode = "none";
   vi.restoreAllMocks();
   for (const [db, outcome] of owned) {
     if (!outcome.actuallyClosed) { nativeClose.call(db); outcome.actuallyClosed = true; }
@@ -112,5 +125,48 @@ describe("owned opener capture dependency (not producer drain or final-close aut
     for (const db of captures) expect(kind.observe(db)).toMatchObject({ initialization: "failed", close: "unknown", retained: true,
       overflow: true, ownerBound: false, ownershipReleased: false });
     vi.restoreAllMocks(); expect(readFileSync(fixture.file)).toEqual(fixture.bytes); expect(retainedRow(fixture.file)).toEqual([0, 255, 4]);
+  });
+});
+
+describe("actual operation-scoped storage lease evidence (not lifecycle release authority)", () => {
+  function acquired() {
+    const release = storageLease(env.home), dir = join(env.home, ".storage-users");
+    const paths = readdirSync(dir); expect(paths).toHaveLength(1);
+    return { release, path: join(dir, paths[0]!) };
+  }
+  it("binds only the actual source release closure and observes real own-file removal", () => {
+    const { release, path } = acquired();
+    expect(storageLeaseObservation(release)).toMatchObject({ captured: true, acquisition: "returned", descriptorClose: "returned",
+      release: "not_attempted", identityObserved: true, retained: true, ownerBound: false, ownershipReleased: false });
+    expect(storageLeaseObservation(() => release())).toMatchObject({ captured: false, acquisition: "unavailable", ownershipReleased: false });
+    release(); expect(existsSync(path)).toBe(false);
+    expect(storageLeaseObservation(release)).toMatchObject({ release: "returned", retained: false, ownerBound: false, ownershipReleased: false });
+  });
+  for (const when of ["before", "after"] as const) {
+    it(`retains exact lease operation when SIMULATED removal throws ${when} actual deletion`, () => {
+      const { release, path } = acquired(), bytes = readFileSync(path);
+      leaseFault.path = path; leaseFault.mode = when;
+      expect(() => release()).toThrow(leaseFault.failure);
+      expect(storageLeaseObservation(release)).toMatchObject({ acquisition: "returned", release: "unknown", retained: true, ownershipReleased: false });
+      leaseFault.mode = "none";
+      if (when === "before") { expect(readFileSync(path)).toEqual(bytes); rmSync(path); }
+      else expect(existsSync(path)).toBe(false);
+      // Only fixture-owned disposal occurred; it does not resolve source unknown.
+      expect(storageLeaseObservation(release)).toMatchObject({ release: "unknown", retained: true, ownershipReleased: false });
+    });
+  }
+  it("does not turn an already absent own lease into a release acknowledgement", () => {
+    const { release, path } = acquired(); rmSync(path); release();
+    expect(storageLeaseObservation(release)).toMatchObject({ release: "unknown", retained: true, ownershipReleased: false });
+  });
+  it("marks changed identity unknown while preserving the ordinary callback removal behavior", () => {
+    const { release, path } = acquired(), retained = `${path}.owned-original`, bytes = readFileSync(path);
+    renameSync(path, retained); writeFileSync(path, bytes);
+    release(); expect(existsSync(path)).toBe(false); expect(readFileSync(retained)).toEqual(bytes);
+    expect(storageLeaseObservation(release)).toMatchObject({ release: "unknown", retained: true, ownershipReleased: false });
+  });
+  it("never treats a repeated ordinary callback as another confirmed lease outcome", () => {
+    const { release } = acquired(); release(); release();
+    expect(storageLeaseObservation(release)).toMatchObject({ release: "unknown", retained: true, ownershipReleased: false });
   });
 });
