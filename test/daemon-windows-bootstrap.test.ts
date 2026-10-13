@@ -53,6 +53,8 @@ try {
 let env: TestEnv, home: string, broker: Broker | undefined, reservation: EndpointReservation | undefined;
 let journal: LifecycleJournal | undefined, captured: DatabaseSync | undefined;
 const sqliteExec = DatabaseSync.prototype.exec;
+const sqliteClose = DatabaseSync.prototype.close;
+const fixtureReadonlyConnections = new Set<DatabaseSync>();
 const setupCloses = new Set<Promise<void>>();
 const fixtureFlushDescriptors = new Set<number>();
 function resetNativeAdapters() {
@@ -100,6 +102,7 @@ afterEach(async () => {
     // Dispose ONLY exact native descriptors this isolated fixture captured; this is
     // neither production retry/cleanup nor proof the failed close had succeeded.
     for (const fd of fixtureFlushDescriptors) { originals.closeSync!(fd); fixtureFlushDescriptors.delete(fd); }
+    for (const db of fixtureReadonlyConnections) { sqliteClose.call(db); fixtureReadonlyConnections.delete(db); }
     // Exact isolated test handle disposal ONLY. No production rollback/force-close API.
     if (captured) { if (captured.isTransaction) sqliteExec.call(captured, "ROLLBACK"); captured.close(); captured = undefined; }
     if (journal) { expect(journal.close()).toBe(true); journal = undefined; }
@@ -270,6 +273,53 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
 });
 
 describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Boundary2 (no role promotion or restart acceptance)", () => {
+  it("retains the exact real readonly connection when SIMULATED initialization and disposal both fail", async () => {
+    const b = await serving(), end = performance.now() + 5000, initial = b.lifecycleServingCapability("prepare", end);
+    const j = await LifecycleJournal.bootstrapServing(initial, end);
+    captured = Reflect.get(j, "writer") as DatabaseSync;
+    const actual = assertLifecycleServingCapability(initial, "prepare"), creationIdentity = await identities.readProcessIdentity(process.pid);
+    const input = { restartId: "00000000-0000-4000-8000-000000000004", operation: "restart" as const,
+      oldInstance: { nonce: actual.ownerInstance, pid: process.pid, creationIdentity: creationIdentity! },
+      target: { immutableRuntimePath: join(home, "owned-fixture-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } };
+    const admittedEnd = performance.now() + 1000;
+    const accepted = await j.admitServing(b.lifecycleServingCapability("admission", admittedEnd), input, admittedEnd);
+    const bytes = [readFileSync(file()), readFileSync(file() + "-journal")];
+    let initializations = 0, victim: DatabaseSync | undefined;
+    const exec = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+      const result = sqliteExec.call(this, sql);
+      // Three real committed observers precede the prepared-reader constructor.
+      if (sql === "PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;" && ++initializations === 4) {
+        victim = this; fixtureReadonlyConnections.add(this);
+        throw new Error("SIMULATED initialization failure after actual readonly SQL");
+      }
+      return result;
+    });
+    const close = vi.spyOn(DatabaseSync.prototype, "close").mockImplementation(function(this: DatabaseSync) {
+      if (this === victim) throw new Error("SIMULATED disposal failure before actual native close");
+      return sqliteClose.call(this);
+    });
+    const readEnd = performance.now() + 5000;
+    await expect(j.preparedReaderServing(b.lifecycleServingCapability("prepare", readEnd), input.restartId, readEnd)).rejects.toThrow("writer_unknown");
+    expect(initializations).toBe(4); expect(victim).toBeInstanceOf(DatabaseSync);
+    const records = Reflect.get(j, "ownedReadonlyConnections") as Set<{ db: DatabaseSync; state: string }>;
+    expect(records.size).toBe(1); const retained = [...records][0]!;
+    expect(retained.db).toBe(victim); expect(retained.state).toBe("unknown"); expect(j.isQuarantined).toBe(true);
+    expect((Reflect.get(j, "servingReaderAccess") as Set<object>).size).toBe(1);
+    const before = exec.mock.calls.length;
+    await expect(j.selectedServing(b.lifecycleServingCapability("prepare", readEnd), readEnd)).rejects.toThrow("writer_unknown");
+    expect(j.close()).toBe(false); expect(exec.mock.calls.length).toBe(before);
+    expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE" || sql === "COMMIT" || sql === "ROLLBACK")).toBe(false);
+    close.mockRestore(); exec.mockRestore();
+    // Exact actual fixture-owned disposal is separate evidence, never a source
+    // force-close/renewal or a claim the simulated failed disposal succeeded.
+    sqliteClose.call(victim!); fixtureReadonlyConnections.delete(victim!);
+    expect(() => victim!.prepare("SELECT 1")).toThrow();
+    expect(retained.state).toBe("unknown"); expect(j.isQuarantined).toBe(true);
+    const observer = new DatabaseSync(file(), { readOnly: true });
+    try { observer.exec("PRAGMA query_only=ON"); expect(JSON.parse(String(observer.prepare("SELECT json FROM receipt_revisions").get()!.json))).toEqual(accepted); }
+    finally { sqliteClose.call(observer); }
+    expect([readFileSync(file()), readFileSync(file() + "-journal")]).toEqual(bytes);
+  });
   it("a real readonly prepare phase cannot lend its permission to a reentrant conflicting writer", async () => {
     const b = await serving(), end = performance.now() + 5000, initial = b.lifecycleServingCapability("prepare", end);
     const j = await LifecycleJournal.bootstrapServing(initial, end);

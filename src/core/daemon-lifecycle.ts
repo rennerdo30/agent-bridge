@@ -138,7 +138,21 @@ function configureWriter(db: DatabaseSync, guard: () => void = () => {}): void {
       observed("PRAGMA foreign_keys", "foreign_keys") !== 1 || observed("PRAGMA trusted_schema", "trusted_schema") !== 0 ||
       (process.platform === "darwin" && observed("PRAGMA fullfsync", "fullfsync") !== 1)) fail("publication_unproved");
 }
-function readConnection(file: string, exclusivelyNewGuard?: () => void, deadline?: number): DatabaseSync {
+type ReadConnectionRecord = { db: DatabaseSync; file: string; state: "initializing" | "ready" | "unknown" | "closed";
+  owner?: Set<ReadConnectionRecord>; unknown?(): void };
+const readConnectionRecords = new WeakMap<DatabaseSync, ReadConnectionRecord>();
+const unconfirmedReadonlyConnections = new Set<ReadConnectionRecord>();
+function closeReadConnection(db: DatabaseSync): void {
+  const record = readConnectionRecords.get(db);
+  try { db.close(); }
+  catch {
+    if (record) { record.state = "unknown"; unconfirmedReadonlyConnections.add(record); record.unknown?.(); }
+    fail("writer_unknown");
+  }
+  if (record) { record.state = "closed"; record.owner?.delete(record); unconfirmedReadonlyConnections.delete(record); }
+}
+function readConnection(file: string, exclusivelyNewGuard?: () => void, deadline?: number,
+  owner?: Set<ReadConnectionRecord>, unknown?: () => void): DatabaseSync {
   try { if (exclusivelyNewGuard) exclusivelyNewGuard(); else { privatePath(dirname(file), true); privatePath(file, false); privatePath(file + "-journal", false); } }
   catch { fail("lineage_unknown"); }
   const before = identity(file);
@@ -146,11 +160,15 @@ function readConnection(file: string, exclusivelyNewGuard?: () => void, deadline
   try { exclusivelyNewGuard?.(); db = new DatabaseSync(file, { readOnly: true,
     timeout: deadline === undefined ? BUSY_MS : Math.max(0, Math.min(BUSY_MS, Math.floor(deadline - performance.now()))) }); }
   catch { fail("lineage_unknown"); } // Hot recovery requiring writes is not a prepared-reader exception.
+  // Capture the exact native connection before any initialization/guard can fail.
+  // Unknown disposal retains both this record and its source-owned journal owner.
+  const record: ReadConnectionRecord = { db, file, state: "initializing", owner, unknown };
+  readConnectionRecords.set(db, record); owner?.add(record);
   try {
     exclusivelyNewGuard?.(); db.exec("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;"); exclusivelyNewGuard?.();
     if (db.prepare("PRAGMA query_only").get()?.query_only !== 1 || !same(before, identity(file))) fail("lineage_unknown");
-    return db;
-  } catch { db.close(); fail("lineage_unknown"); }
+    record.state = "ready"; return db;
+  } catch { closeReadConnection(db); fail("lineage_unknown"); }
 }
 const SCHEMA = `
 CREATE TABLE lifecycle_lineage (singleton INTEGER PRIMARY KEY CHECK(singleton=1), json TEXT NOT NULL);
@@ -167,18 +185,21 @@ export class PreparedLifecycleReader {
   private readonly phaseGuard?: () => void;
   private readonly phaseDeadline?: number;
   private disposed = false;
+  private disposalUnknown = false;
   constructor(private readonly file: string, private readonly lineage: Lineage, private readonly restartId: string, private readonly access?: object) {
     z.string().uuid().parse(restartId);
     if (access !== undefined) {
       const record = preparedPhaseAccess.get(access);
       if (!record || record.claimed || record.file !== file || record.lineage !== lineage.lineage || record.id !== restartId) fail("writer_unknown");
       record.claimed = true; this.phaseGuard = record.guard; this.phaseDeadline = record.deadline;
+      record.reader = this; // Retain the constructing owner, even if initialization throws.
     }
-    this.db = readConnection(file, this.phaseGuard, this.phaseDeadline);
+    const record = access === undefined ? undefined : preparedPhaseAccess.get(access);
+    this.db = readConnection(file, this.phaseGuard, this.phaseDeadline, record?.connections, record?.unknown);
   }
   read(): LifecycleReceipt {
     try {
-      if (this.disposed) fail("lineage_unknown");
+      if (this.disposed || this.disposalUnknown) fail("lineage_unknown");
       this.phaseGuard?.();
       // One SELECT is one settled committed snapshot; no cursor/read transaction is retained.
       const row = this.db.prepare(`SELECT l.json AS lineage, r.json AS receipt,
@@ -197,7 +218,8 @@ export class PreparedLifecycleReader {
   }
   close(): void {
     if (this.disposed) return;
-    this.db.close(); // Expiry/revocation never prevents disposing this exact reader.
+    if (this.disposalUnknown) fail("writer_unknown"); // No disposal retry/renewal after an uncertain close.
+    try { closeReadConnection(this.db); } catch { this.disposalUnknown = true; fail("writer_unknown"); }
     this.disposed = true;
     if (this.access) { preparedPhaseAccess.get(this.access)?.closed(); preparedPhaseAccess.delete(this.access); }
   }
@@ -206,7 +228,8 @@ export class PreparedLifecycleReader {
 // Private, single-reader, bounded READONLY lifetime. Shape/copy/caller callbacks
 // cannot mint access; no writable role, renewal or cross-phase cache is granted.
 const preparedPhaseAccess = new WeakMap<object, { file: string; lineage: string; id: string; claimed: boolean;
-  deadline: number; reader?: PreparedLifecycleReader; guard(): void; closed(): void }>();
+  deadline: number; reader?: PreparedLifecycleReader; connections: Set<ReadConnectionRecord>;
+  unknown(): void; guard(): void; closed(): void }>();
 
 // Source-owned quarantine retention, not a public force-dispose/recovery API.
 const failedBootstrapJournals = new Set<LifecycleJournal>();
@@ -218,6 +241,7 @@ export class LifecycleJournal {
   private servingPhaseBusy = false;
   private servingPhase?: { phase: LifecycleServingPhase; deadline: number; guard(): void };
   private readonly servingReaderAccess = new Set<object>();
+  private readonly ownedReadonlyConnections = new Set<ReadConnectionRecord>();
   private constructor(private readonly file: string, private readonly lineage: Lineage, private readonly owner: LifecycleInstance, private readonly writer: DatabaseSync) {}
 
   /** Boundary2: actual CURRENT serving owner, fresh phase-local OS/lineage proof.
@@ -280,6 +304,7 @@ export class LifecycleJournal {
       const selected = this.selected(); if (!selected || selected.restartId !== id) fail("receipt_conflict");
       const access = Object.freeze({}); this.servingReaderAccess.add(access);
       const record = { file: this.file, lineage: this.lineage.lineage, id, deadline, claimed: false, reader: undefined as PreparedLifecycleReader | undefined,
+        connections: this.ownedReadonlyConnections, unknown: () => { this.quarantined = true; },
         guard: () => { this.requireKnownWriter(); guard(); }, closed: () => { this.servingReaderAccess.delete(access); } };
       preparedPhaseAccess.set(access, record);
       return record.reader = new PreparedLifecycleReader(this.file, this.lineage, id, access);
@@ -358,11 +383,11 @@ export class LifecycleJournal {
       guard(); stage = "file_flush"; flushCreated(file); stage = "final_guard"; guard();
       stage = "journal_flush"; flushCreated(file + "-journal"); stage = "final_guard"; guard();
       stage = "readonly_lineage";
-      const reader = readConnection(file, guard);
+      const reader = readConnection(file, guard, undefined, journal.ownedReadonlyConnections, () => { journal.quarantined = true; });
       try {
         guard(); const row = reader.prepare("SELECT json FROM lifecycle_lineage WHERE singleton=1").get(); guard();
         if (!row || row.json !== JSON.stringify(lineage)) fail("lineage_unknown");
-      } finally { reader.close(); }
+      } finally { closeReadConnection(reader); }
       stage = "final_guard"; guard(); return journal;
     } catch {
       // No accepted lifecycle command exists. Keep actual handles/files and any
@@ -399,17 +424,17 @@ export class LifecycleJournal {
     }
   }
   private verifyLineage(): void {
-    const guard = this.readerGuard(), reader = readConnection(this.file, guard, this.readerDeadline());
+    const guard = this.readerGuard(), reader = readConnection(this.file, guard, this.readerDeadline(), this.ownedReadonlyConnections, () => { this.quarantined = true; });
     try {
       guard?.();
       const row = reader.prepare("SELECT json FROM lifecycle_lineage WHERE singleton=1").get();
       guard?.();
       if (!row || String(row.json) !== JSON.stringify(this.lineage) || !same(this.lineage.directory, identity(dirname(this.file))) ||
           !same(this.lineage.file, identity(this.file)) || !same(this.lineage.journal, identity(this.file + "-journal"))) fail("lineage_unknown");
-    } finally { reader.close(); }
+    } finally { closeReadConnection(reader); }
   }
   private read(id?: string): LifecycleReceipt | null {
-    const guard = this.readerGuard(), reader = readConnection(this.file, guard, this.readerDeadline());
+    const guard = this.readerGuard(), reader = readConnection(this.file, guard, this.readerDeadline(), this.ownedReadonlyConnections, () => { this.quarantined = true; });
     try {
       guard?.();
       const row = id ? reader.prepare(`SELECT r.json,l.json AS lineage,
@@ -425,7 +450,7 @@ export class LifecycleJournal {
       if (id === undefined && !hasSelectedReceipt(row)) return null;
       return row.json === null ? null : receiptEnvelope(row, this.lineage.homeIdentity, id);
     } catch { fail("lineage_unknown"); }
-    finally { reader.close(); }
+    finally { closeReadConnection(reader); }
   }
   lookup(id: string): LifecycleReceipt | null { this.requireKnownWriter(); z.string().uuid().parse(id); this.verifyLineage(); return this.read(id); }
   selected(): LifecycleReceipt | null { this.requireKnownWriter(); this.verifyLineage(); return this.read(); }
@@ -470,9 +495,9 @@ export class LifecycleJournal {
           this.writerRun("INSERT INTO receipt_conflicts(restart_id,observed_digest,json) VALUES (?,?,?)", parsed.restartId, requestDigest, json);
           return requestDigest;
         }, value => {
-          const guard = this.readerGuard(), reader = readConnection(this.file, guard, this.readerDeadline());
+          const guard = this.readerGuard(), reader = readConnection(this.file, guard, this.readerDeadline(), this.ownedReadonlyConnections, () => { this.quarantined = true; });
           try { guard?.(); const found = !!reader.prepare("SELECT 1 FROM receipt_conflicts WHERE restart_id=? AND observed_digest=? AND json=?").get(parsed.restartId, value, json); guard?.(); return found; }
-          finally { reader.close(); }
+          finally { closeReadConnection(reader); }
         });
         fail("receipt_conflict");
       }
