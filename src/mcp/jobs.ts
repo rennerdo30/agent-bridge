@@ -301,6 +301,29 @@ export function waitForApproval(job: Job, question: string, timeoutMs: number, p
 /** "waiting": a finished job, but all slots are taken; it continues as soon as one frees up. */
 export type FollowUpOutcome = "started" | "delivered" | "queued" | "waiting" | "answered" | "unknown" | "no-session" | "stopping" | "cancelled-before-start";
 
+export const FOLLOW_UP_GATE_REASONS = ["control_lock_busy", "interrupted_executor_probe", "cancellation_guard_foreign_or_unowned", "cancellation_guard_no_resume", "runner_terminal_not_settled"] as const;
+
+/** Local refusal observations only: none of these facts proves executor identity or liveness. */
+export interface FollowUpGate {
+  reason: typeof FOLLOW_UP_GATE_REASONS[number];
+  jobId: string | null;
+  /** Local turn only; null for malformed retained values, never a durable authority claim. */
+  observedLocalStartedAt: number | null;
+  durableTurn: "unknown";
+  observedAt: number;
+  executorIdentity: "unknown";
+  controllerAborted: boolean;
+  hasResume: boolean;
+  hasSession: boolean;
+}
+
+export interface FollowUpResult {
+  outcome: FollowUpOutcome;
+  job?: Job;
+  approvalPending?: boolean;
+  gate?: FollowUpGate;
+}
+
 /**
  * Subagents: the other CLI running headlessly. Background jobs report their result as a message from the
  * job's pseudo peer. Every job keeps its session, so it can be continued later with its full context
@@ -1336,12 +1359,12 @@ export class JobManager {
    * Send a follow-up to a subagent: queued while it runs, otherwise its session is resumed in the background,
    * as soon as a slot is free.
    */
-  followUp(ref: string, message: string): { outcome: FollowUpOutcome; job?: Job; approvalPending?: boolean } {
+  followUp(ref: string, message: string): FollowUpResult {
     const job = this.controlJob(ref);
     if (!job) return { outcome: "unknown" };
     try { return this.transition(job, () => this.followUpCurrent(job, message)); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EJOBLOCKED") return { outcome: "stopping", job };
+      if ((error as NodeJS.ErrnoException).code === "EJOBLOCKED") return this.refusedFollowUp(job, "control_lock_busy");
       throw error;
     }
   }
@@ -1366,16 +1389,27 @@ export class JobManager {
     return this.lookupPermitted(saved) || this.sharedGrants.has(job.id) ? job : undefined;
   }
 
-  private followUpCurrent(job: Job, message: string): { outcome: FollowUpOutcome; job?: Job; approvalPending?: boolean } {
+  /** Project only local facts already present at the refusal; no storage, runner or process reads. */
+  private refusedFollowUp(job: Job, reason: FollowUpGate["reason"]): FollowUpResult {
+    return { outcome: "stopping", job, gate: {
+      reason, jobId: typeof job.id === "string" ? job.id : null,
+      observedLocalStartedAt: typeof job.startedAt === "number" && Number.isFinite(job.startedAt) ? job.startedAt : null,
+      durableTurn: "unknown", observedAt: Date.now(),
+      executorIdentity: "unknown", controllerAborted: Boolean(job.controller.signal.aborted),
+      hasResume: Boolean(job.resume), hasSession: Boolean(job.sessionId),
+    } };
+  }
+
+  private followUpCurrent(job: Job, message: string): FollowUpResult {
     // A second master may have cancelled or claimed a continuation since share() yielded.
     this.refreshControlTurn(job);
     if (this.hostedRunning(job)) this.checkHosted(job);
-    if (job.status === "interrupted" && job.executionPid && pidAlive(job.executionPid)) return { outcome: "stopping", job };
+    if (job.status === "interrupted" && job.executionPid && pidAlive(job.executionPid)) return this.refusedFollowUp(job, "interrupted_executor_probe");
     const runnerState = job.host ? this.runners?.state(job) : null;
     if (runnerState?.sessionId) this.note(job, runnerState);
     const cancelling = job.controller.signal.aborted || job.cancellingTurn === job.startedAt || runnerState?.stopping || runnerState?.status === "cancelled";
     if (!job.sessionId && (job.status === "cancelled" || job.status !== "running" && job.cancellingTurn === job.startedAt)) return { outcome: "cancelled-before-start", job };
-    if (job.status === "running" && cancelling && (!job.sessionId || this.foreignInline(job) || !this.isMine(job.owner))) return { outcome: "stopping", job };
+    if (job.status === "running" && cancelling && (!job.sessionId || this.foreignInline(job) || !this.isMine(job.owner))) return this.refusedFollowUp(job, "cancellation_guard_foreign_or_unowned");
     // A job loaded before the continuation factory was installed (startup order) and outside the restored window
     // still has its session: make it resumable here instead of reporting that it has none.
     if (!job.resume && job.sessionId && this.restoreResume) job.resume = this.restoreResume(job.agent, job.args ?? {});
@@ -1402,8 +1436,8 @@ export class JobManager {
     if (this.hostedRunning(job)) this.checkHosted(job);
     const state = job.host ? this.runners?.state(job) : null;
     const stopping = job.controller.signal.aborted || job.cancellingTurn === job.startedAt || state?.stopping || state?.status === "cancelled";
-    if (job.status === "running" && stopping && (!job.resume || !job.sessionId)) return { outcome: "stopping", job };
-    if (job.status === "running" && state && state.status !== "running") return { outcome: "stopping", job };
+    if (job.status === "running" && stopping && (!job.resume || !job.sessionId)) return this.refusedFollowUp(job, "cancellation_guard_no_resume");
+    if (job.status === "running" && state && state.status !== "running") return this.refusedFollowUp(job, "runner_terminal_not_settled");
     if (this.waitingJobs.has(job.id)) {
       job.queue.push(message);
       this.persist();
