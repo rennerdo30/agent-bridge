@@ -2,8 +2,8 @@ import { createHash, createPrivateKey, X509Certificate } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadMobileIdentity, spkiPin } from "../src/mobile/identity.js";
-import { readPrivateMaterial } from "../src/mobile/config.js";
+import { spkiPin } from "../src/mobile/identity.js";
+import { loadMobileIdentity, readPrivateMaterial } from "./mobile-acl-fixture.js";
 import { validateMobileTls } from "../src/mobile/activation.js";
 
 function home(): string { const root = resolve(".agent-bridge-test/mobile-identity"); mkdirSync(root, { recursive: true }); return mkdtempSync(join(root, "identity-")); }

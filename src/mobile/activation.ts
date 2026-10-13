@@ -46,8 +46,8 @@ export class MobileActivation {
     private readonly options: { home: string; pipe: string; port: number; log: Logger }, private readonly deps: ActivationDependencies = {}) {}
   status = (): ActivationStatus => this.state === "ready" && !this.prepared?.ready() ? "source_unavailable" : this.state;
   start(): Promise<DashboardInfo | undefined> { return this.starting ??= this.open(); }
-  private diagnostic(errorCategory: ActivationStatus): void {
-    try { this.options.log.warn("mobile unavailable", { requestId: randomUUID(), errorCategory }); } catch { /* Optional only. */ }
+  private diagnostic(errorCategory: ActivationStatus, fault?: MobileActivationFault): void {
+    try { this.options.log.warn("mobile unavailable", { requestId: randomUUID(), errorCategory, ...fault?.aclDiagnostic }); } catch { /* Optional only. */ }
   }
   private async open(): Promise<DashboardInfo | undefined> {
     try {
@@ -107,7 +107,7 @@ export class MobileActivation {
       return info;
     } catch (error) {
       this.state = error instanceof MobileActivationFault ? error.category : "restart_required";
-      this.diagnostic(this.state); this.retired = true; await this.disposeOwned(); return undefined;
+      this.diagnostic(this.state, error instanceof MobileActivationFault ? error : undefined); this.retired = true; await this.disposeOwned(); return undefined;
     }
   }
   close(): Promise<void> {

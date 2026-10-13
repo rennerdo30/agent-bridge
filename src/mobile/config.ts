@@ -30,22 +30,59 @@ export function privateAddress(address: string): boolean {
   if (isIP(address) === 4) { const [a, b] = address.split(".").map(Number); return a === 10 || a === 127 || a === 192 && b === 168 || a === 172 && b! >= 16 && b! <= 31 || a === 100 && b! >= 64 && b! <= 127; }
   return isIP(address) === 6 && (/^(fc|fd)/i.test(address) || address === "::1");
 }
+export const WINDOWS_PRIVATE_ACL_TIMEOUT_MS = 3000;
+const aclOutcomes = ["allowed", "timeout", "process_failure", "lookup_failure", "permission_refused"] as const;
+export interface PrivateAclDiagnostic { aclOutcome: typeof aclOutcomes[number]; aclElapsedMs: number }
 export class MobileActivationFault extends Error {
-  constructor(readonly category: "config_invalid" | "material_unavailable" | "tls_invalid" | "bind_invalid" | "source_unavailable" | "restart_required") { super(category); }
+  readonly aclDiagnostic?: Readonly<PrivateAclDiagnostic>;
+  constructor(readonly category: "config_invalid" | "material_unavailable" | "tls_invalid" | "bind_invalid" | "source_unavailable" | "restart_required", aclDiagnostic?: PrivateAclDiagnostic) {
+    super(category);
+    // Copy only fixed categories and monotonic elapsed time, never a native error or output.
+    if (aclDiagnostic && aclOutcomes.includes(aclDiagnostic.aclOutcome) && Number.isFinite(aclDiagnostic.aclElapsedMs) && aclDiagnostic.aclElapsedMs >= 0)
+      this.aclDiagnostic = Object.freeze({ aclOutcome: aclDiagnostic.aclOutcome, aclElapsedMs: Math.floor(aclDiagnostic.aclElapsedMs) });
+  }
 }
-/** No shell interpolation, env credentials, or diagnostic output. Allow owner, SYSTEM and administrators only. */
-export function windowsPrivateAcl(file: string): Promise<boolean> {
+/** No shell interpolation or native diagnostic output. Allow owner, SYSTEM and administrators only. */
+export function windowsPrivateAcl(file: string, diagnostic?: (outcome: PrivateAclDiagnostic) => void): Promise<boolean> {
+  const started = performance.now();
   return new Promise(resolve => {
-    const script = "$ErrorActionPreference='Stop'; try { $a=Get-Acl -LiteralPath ([Console]::In.ReadLine()); $owner=$a.GetOwner([System.Security.Principal.SecurityIdentifier]).Value; $caller=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; if($owner -ne $caller){throw 'deny'}; foreach($r in $a.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])){ $sid=$r.IdentityReference.Value; if($r.AccessControlType -eq 'Allow' -and ([int]$r.FileSystemRights -band 1) -ne 0 -and $sid -notin @($caller,'S-1-5-18','S-1-5-32-544')){throw 'deny'} }; 'allow' } catch { 'deny'; exit 1 }";
-    if (/[\r\n]/.test(file)) { resolve(false); return; }
+    let finished = false;
+    const finish = (aclOutcome: PrivateAclDiagnostic["aclOutcome"]) => {
+      if (finished) return; finished = true;
+      try { diagnostic?.({ aclOutcome, aclElapsedMs: Math.max(0, Math.floor(performance.now() - started)) }); } catch { /* Optional only. */ }
+      resolve(aclOutcome === "allowed");
+    };
+    // Permission refusals are explicit; descriptor lookup/SID translation exceptions are separate.
+    // Both still exit nonzero and deny. Never print paths, identities or PowerShell error details.
+    const script = "$ErrorActionPreference='Stop'; try { $a=Get-Acl -LiteralPath ([Console]::In.ReadLine()); $owner=$a.GetOwner([System.Security.Principal.SecurityIdentifier]).Value; $caller=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; if($owner -ne $caller){'permission_refused'; exit 1}; foreach($r in $a.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier])){ $sid=$r.IdentityReference.Value; if($r.AccessControlType -eq 'Allow' -and ([int]$r.FileSystemRights -band 1) -ne 0 -and $sid -notin @($caller,'S-1-5-18','S-1-5-32-544')){'permission_refused'; exit 1} }; 'allow' } catch { 'lookup_failure'; exit 1 }";
+    if (/[\r\n]/.test(file)) { finish("permission_refused"); return; }
     // A pwsh parent exports its incompatible module path. Let Windows PowerShell
     // select its own Security module; lookup/translation failures still deny.
     const env = { ...process.env }; for (const name of Object.keys(env)) if (name.toLowerCase() === "psmodulepath") delete env[name];
-    const child = execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { env, windowsHide: true, timeout: 3000, maxBuffer: 8192 }, (error, stdout) => resolve(!error && stdout.trim() === "allow"));
-    child.stdin?.end(file + "\n");
+    try {
+      const child = execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { env, windowsHide: true, timeout: WINDOWS_PRIVATE_ACL_TIMEOUT_MS, maxBuffer: 8192 }, (error, stdout) => {
+        const output = stdout.trim();
+        // killed alone is ambiguous: only SIGTERM at/past our bound identifies this timeout.
+        if (error?.killed && error.code === null && error.signal === "SIGTERM" && performance.now() - started >= WINDOWS_PRIVATE_ACL_TIMEOUT_MS) finish("timeout");
+        else if (error?.code === 1 && output === "lookup_failure") finish("lookup_failure");
+        else if (error?.code === 1 && output === "permission_refused") finish("permission_refused");
+        else finish(!error && output === "allow" ? "allowed" : "process_failure");
+      });
+      child.stdin?.end(file + "\n");
+    } catch { finish("process_failure"); }
   });
 }
 export interface MaterialPolicy { platform?: NodeJS.Platform; acl?: (file: string) => Promise<boolean> }
+/** Preserve the safe failed ACL category across material/identity wrappers. */
+export async function requirePrivateAcl(file: string, policy: MaterialPolicy): Promise<void> {
+  const started = performance.now(); let diagnostic: PrivateAclDiagnostic | undefined;
+  try {
+    const allowed = policy.acl ? await policy.acl(file) : await windowsPrivateAcl(file, value => { diagnostic = value; });
+    if (allowed) return;
+    diagnostic ??= { aclOutcome: "permission_refused", aclElapsedMs: performance.now() - started };
+  } catch { diagnostic = { aclOutcome: "process_failure", aclElapsedMs: performance.now() - started }; }
+  throw new MobileActivationFault("material_unavailable", diagnostic);
+}
 /** Read at explicit activation only. Reject links in the entire path and verify the opened file identity. */
 export async function readPrivateMaterial(file: string, policy: MaterialPolicy = {}): Promise<Buffer> {
   let handle: Awaited<ReturnType<typeof fs.open>> | undefined;
@@ -56,7 +93,8 @@ export async function readPrivateMaterial(file: string, policy: MaterialPolicy =
     const before = await fs.lstat(file);
     if (!before.isFile() || before.size < 1 || before.size > 64 * 1024) throw new Error();
     const platform = policy.platform ?? process.platform;
-    if (platform === "win32" ? !await (policy.acl ?? windowsPrivateAcl)(file) : (before.mode & 0o077) !== 0 || typeof process.getuid === "function" && before.uid !== process.getuid()) throw new Error();
+    if (platform === "win32") await requirePrivateAcl(file, policy);
+    else if ((before.mode & 0o077) !== 0 || typeof process.getuid === "function" && before.uid !== process.getuid()) throw new Error();
     handle = await fs.open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const opened = await handle.stat();
     if (!opened.isFile() || opened.ino !== before.ino || opened.dev !== before.dev || opened.mode !== before.mode || opened.uid !== before.uid) throw new Error();
@@ -67,6 +105,6 @@ export async function readPrivateMaterial(file: string, policy: MaterialPolicy =
     const after = await handle.stat();
     if (length > 64 * 1024 || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.mode !== opened.mode || after.uid !== opened.uid || length !== after.size) throw new Error();
     return content.subarray(0, length);
-  } catch { throw new MobileActivationFault("material_unavailable"); }
+  } catch (error) { if (error instanceof MobileActivationFault) throw error; throw new MobileActivationFault("material_unavailable"); }
   finally { await handle?.close().catch(() => {}); }
 }

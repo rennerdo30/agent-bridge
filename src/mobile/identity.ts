@@ -6,7 +6,7 @@ import { isIP } from "node:net";
 import { z } from "zod";
 import { BasicConstraintsExtension, ExtendedKeyUsageExtension, KeyUsageFlags, KeyUsagesExtension, SubjectAlternativeNameExtension, X509CertificateGenerator } from "@peculiar/x509";
 import { protect } from "../network/pairing.js";
-import { MobileActivationFault, readPrivateMaterial, windowsPrivateAcl, type MaterialPolicy } from "./config.js";
+import { MobileActivationFault, readPrivateMaterial, requirePrivateAcl, type MaterialPolicy } from "./config.js";
 
 const stateSchema = z.object({ current: z.string().uuid(), next: z.string().uuid().optional() }).strict();
 type State = z.infer<typeof stateSchema>;
@@ -25,9 +25,9 @@ async function privateDirectory(dir: string, policy: MaterialPolicy): Promise<vo
     component = dirname(component);
   }
   const info = await fs.lstat(dir);
-  if (!info.isDirectory() || ((policy.platform ?? process.platform) === "win32"
-    ? !await (policy.acl ?? windowsPrivateAcl)(dir)
-    : (info.mode & 0o077) !== 0 || typeof process.getuid === "function" && info.uid !== process.getuid())) throw new Error();
+  if (!info.isDirectory()) throw new Error();
+  if ((policy.platform ?? process.platform) === "win32") await requirePrivateAcl(dir, policy);
+  else if ((info.mode & 0o077) !== 0 || typeof process.getuid === "function" && info.uid !== process.getuid()) throw new Error();
 }
 async function ensureDirectory(dir: string, policy: MaterialPolicy): Promise<void> {
   // Validate existing ancestors before the first mutation, including a linked home.
@@ -123,7 +123,7 @@ export function loadMobileIdentity(home: string, origins: readonly string[], opt
       const key = await keyBytes(dir, state.current, options), pins = [spkiPin(key)];
       if (state.next) pins.push(spkiPin(await keyBytes(dir, state.next, options)));
       return { key, cert: await certificate(key, origins, options.now ?? Date.now()), pins };
-    } catch { throw new MobileActivationFault("material_unavailable"); }
+    } catch (error) { if (error instanceof MobileActivationFault) throw error; throw new MobileActivationFault("material_unavailable"); }
   })().finally(() => { inFlight.delete(dir); });
   inFlight.set(dir, work); return work;
 }
