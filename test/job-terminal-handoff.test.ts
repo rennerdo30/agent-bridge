@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
-import { JobManager, readStore, type Resume, type RunResult } from "../src/mcp/jobs.js";
+import { acquireLock, JobManager, readStore, ROOT_WAIT_POLL_MS, type Resume, type RunResult } from "../src/mcp/jobs.js";
+import { SQLITE_BUSY_TIMEOUT_MS } from "../src/core/sqlite-policy.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 
 let home: string;
@@ -114,8 +115,16 @@ it("retains a throwing handoff continuation's accepted queue across persistence 
   for (const body of ["first accepted", "second accepted"]) executor.emit("inline_job_control", { job: job.name, control: { type: "message", body } });
   finish(done("executor completed")); await flush();
   const completed = readStore(path())[0]!;
-  persist(target); // Same-turn terminal reconciliation schedules the post-lock microtask.
-  await flush(); await flush(); // A thrown factory must not escape this microtask.
+  const release = acquireLock(`${path()}.lock`, 0);
+  try {
+    persist(target); // Same-turn terminal reconciliation can wait for another writer's lease.
+    await flush(); await flush();
+    expect(factory).not.toHaveBeenCalled();
+  } finally { release(); }
+  // Immediate drains do not advance the product's deferred persistence/admission timers.
+  // Wait for the actual durable failure, allowing one root poll plus the SQLite lock budget.
+  await vi.waitUntil(() => readStore(path())[0]?.continuationFailure?.turn === completed.startedAt,
+    { timeout: ROOT_WAIT_POLL_MS + SQLITE_BUSY_TIMEOUT_MS });
   expect(factory).toHaveBeenCalledTimes(1);
   expect(factory).toHaveBeenCalledWith("first accepted\n\nsecond accepted", "retained-native-session", home, null);
   expect(delegate).not.toHaveBeenCalled();

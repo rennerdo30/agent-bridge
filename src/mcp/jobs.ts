@@ -41,7 +41,7 @@ const STORE_LIMIT = 200;
 const MAX_NOTES = 500;
 /** Interrupted jobs stay listed (to be recovered) this long. */
 const INTERRUPTED_LISTED_MS = 24 * 60 * 60 * 1000;
-const ROOT_WAIT_POLL_MS = 1_000;
+export const ROOT_WAIT_POLL_MS = 1_000;
 /** A job runner's status note travels as conversation "job-<id>" plus this. */
 export const NOTE_CONVERSATION_SUFFIX = ":note";
 /** Follow-up sent when a subagent is resumed without a message (e.g. after a failure). */
