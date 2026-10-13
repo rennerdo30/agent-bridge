@@ -12,9 +12,7 @@ import { BackupBackground } from "./backup-background.js";
 import { historySchema } from "./history-schema.js";
 import { CONVERSATION_MIGRATION } from "./conversation-schema.js";
 import { HistoryIndex } from "./history.js";
-import { historyDbPath, openHistoryStore, HISTORY_STORE_VERSION, liveHistoryV1Writers } from "./history-store.js";
-import { assertStoreUpgrade, type StoreCapabilities } from "./store-compatibility.js";
-import { assertMetadataAdmission } from "./metadata-db.js";
+import { historyDbPath, openHistoryStore } from "./history-store.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 import { configureSqlite, isSqliteBusy, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BUSY_MS } from "./sqlite-policy.js";
@@ -660,18 +658,6 @@ export class MessageStore {
   }
 
   stopWrites(): void { this.writeAbort.abort(); }
-
-  /** Observe formats without performing a migration or relaxing the retained reader floor. */
-  assertBrokerUpgradeReady(target: StoreCapabilities): void {
-    const version = Number(this.db.prepare("PRAGMA user_version").get()!.user_version);
-    if (version < SQLITE_STORE_VERSION || Number(this.historyDb.prepare("PRAGMA user_version").get()!.user_version) < HISTORY_STORE_VERSION &&
-      this.home && liveHistoryV1Writers(this.home).length) {
-      throw Object.assign(new Error("store upgrade deferred"), { code: "STORE_UPGRADE_DEFERRED" });
-    }
-    if (!this.home) return;
-    assertMetadataAdmission(this.home);
-    for (const format of ["json", "sqlite", "jobArchive"] as const) assertStoreUpgrade(this.home, format, 0, target[format] ?? 0);
-  }
 
   close(): void {
     if (this.closed) return;

@@ -14,7 +14,6 @@ export interface HistoryHealth {
 export interface BrokerHealth {
   brokerPid: number;
   brokerVersion: string;
-  handoverPending?: string | null;
   uptimeSeconds: number;
   checkedAt: number;
   eventLoopDelayMs: { p95: number; max: number };
@@ -81,8 +80,7 @@ export function formatHealth(health: BrokerHealth): string {
   return `Broker latency: ${health.roundTripMs == null ? "not measured" : `${Math.round(health.roundTripMs)} ms`} round trip; event loop p95 ${health.eventLoopDelayMs.p95} ms. ` +
     (history ? `History import: ${history.phase}, ~${history.percent.toFixed(1)}%, ${eta}${history.paused ? " (paused)" : ""}. ` : "History import: inactive. ") +
     (health.backup ? `Backup: ${health.backup.phase}${health.backup.lastVerifiedAt == null ? "" : `, last verified ${new Date(health.backup.lastVerifiedAt).toISOString()}`}${health.backup.lastError ? ` (${health.backup.lastError})` : ""}. ` : "Backup: disabled. ") +
-    `Recent request errors: ${health.recentErrors.length}. Broker v${health.brokerVersion}.` +
-    (health.handoverPending ? `\nHandover pending: ${health.handoverPending}` : "");
+    `Recent request errors: ${health.recentErrors.length}.`;
 }
 
 /** Only a refused or missing endpoint proves absence. A timeout is inconclusive. */
