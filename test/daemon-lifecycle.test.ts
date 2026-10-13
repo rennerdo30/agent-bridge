@@ -55,6 +55,15 @@ async function port() {
 }
 
 describe("standalone demand-start broker", () => {
+  it("core status inspects an absent or serving daemon without demand start or peer registration", async () => {
+    const inspect = () => JSON.parse(execFileSync(process.execPath, [cli, "core", "status"], { encoding: "utf8", windowsHide: true,
+      env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe } }));
+    expect(inspect()).toEqual({ available: false });
+    expect(existsSync(join(env.home, "token"))).toBe(false);
+    const a = node("status-main"); await a.start(); const pid = await remember();
+    expect(inspect()).toMatchObject({ mode: "daemon", pid, version: "0.30.14", runningJobsEvidence: "legacy_registry_labels_not_execution" });
+    expect((await a.peers()).map(peer => peer.name)).toEqual(["status-main"]);
+  });
   it("ten concurrent starts share one broker, keep accepted mail and reject wrong credentials", async () => {
     const peers = Array.from({ length: 10 }, (_, i) => node(`daemon-${i}`));
     await Promise.all(peers.map(peer => peer.start()));
