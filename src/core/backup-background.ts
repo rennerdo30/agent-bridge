@@ -89,7 +89,7 @@ export class BackupBackground {
       if (this.lifecycleCapture !== worker) return;
       if (message.error) {
         this.lifecycleUnknown = true;
-        this.advanceLifecycleGeneration(); this.lifecycleWaiter?.finish(false);
+        this.advanceLifecycleGeneration();
         this.lastError = String(message.error).includes("sustained broker pressure") ? "broker_pressure" : "backup_failed";
         const pressureOnly = this.lastError === "broker_pressure";
         this.failed = !pressureOnly; // Only pressure interruptions may retry at the next quiet interval.
@@ -103,10 +103,10 @@ export class BackupBackground {
       } else {
         // An external lock holder or an unrecognized outcome is not owned settlement proof.
         this.lifecycleUnknown = true;
-        this.advanceLifecycleGeneration(); this.lifecycleWaiter?.finish(false);
+        this.advanceLifecycleGeneration();
       }
     });
-    worker.on("error", error => { if (this.lifecycleCapture !== worker) return; this.lifecycleUnknown = true; this.advanceLifecycleGeneration(); this.lifecycleWaiter?.finish(false); this.failed = true; this.lastError = "worker_failed"; this.log.warn("automatic backup process failed", { err: String(error) }); });
+    worker.on("error", error => { if (this.lifecycleCapture !== worker) return; this.lifecycleUnknown = true; this.advanceLifecycleGeneration(); this.failed = true; this.lastError = "worker_failed"; this.log.warn("automatic backup process failed", { err: String(error) }); });
     worker.on("exit", (code, signal) => {
       if (this.lifecycleCapture !== worker) return;
       if (this.worker !== worker) { this.lifecycleUnknown = true; this.advanceLifecycleGeneration(); this.lifecycleWaiter?.finish(false); return; }
