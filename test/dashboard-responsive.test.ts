@@ -9,7 +9,8 @@ import { nullLogger } from "../src/core/logger.js";
 import * as outcomeBackground from "../src/core/outcome-background.js";
 import * as fileCache from "../src/core/file-cache.js";
 import { archiveJobs, readArchivedJobSteps } from "../src/core/job-archive.js";
-import { drainScan } from "../src/core/responsive-scan.js";
+import { archiveIndexCounters } from "../src/core/job-archive-index.js";
+import { drainScan, SCAN_SLICE_MS, SCAN_STEPS_PER_SLICE } from "../src/core/responsive-scan.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 let env: TestEnv, outside: TestEnv;
@@ -45,10 +46,19 @@ function corpus(archives = 307, logs = 1024) {
 
 it("serves the complete cold 307-archive/1024-log corpus while timers keep running, with exact sync parity and cursors", async () => {
   corpus();
+  // Force a loaded runner's per-record decode cost, without slowing a single native read.
+  const parse = JSON.parse;
+  const decoding = vi.spyOn(JSON, "parse").mockImplementation((text, reviver) => {
+    if (typeof text === "string" && text.includes('"name":"codex-job-') && text.includes('"Retained context ')) {
+      const until = performance.now() + SCAN_SLICE_MS / SCAN_STEPS_PER_SLICE;
+      while (performance.now() < until) { /* Force aggregate row cost without timer granularity. */ }
+    }
+    return parse(text, reviver);
+  });
   const now = Date.now(), ticks: number[] = [];
   const timer = setInterval(() => ticks.push(performance.now()), 1);
   let asyncRuns;
-  try { asyncRuns = await listRunsResponsive(env.home, now); } finally { clearInterval(timer); }
+  try { asyncRuns = await listRunsResponsive(env.home, now); } finally { clearInterval(timer); decoding.mockRestore(); }
   expect(asyncRuns).toHaveLength(307 * 16 + 1024 + 1);
   expect(ticks.length).toBeGreaterThan(5);
   expect(Math.max(...ticks.slice(1).map((at, i) => at - ticks[i]!))).toBeLessThan(250);
@@ -170,6 +180,32 @@ it("accepts a stable initial home ancestor alias while binding the canonical arc
   expect(drainScan(readArchivedJobSteps(aliasedStore, true)).jobs.map(value => value.id)).toEqual(["stable-alias-original"]);
   expect(readFileSync(file, "utf8")).toBe(bytes);
   console.info(JSON.stringify({ retainedArchiveAliasFixture: fixture }));
+});
+
+it("rejects an archive replacement during indexed row decoding without publishing a cache hit", () => {
+  // Keep this fixture and its link separate from recursive test-home teardown.
+  const fixture = mkdtempSync(join(tmpdir(), "ab-index-ancestor-"));
+  const home = join(fixture, "home"), archive = join(home, "archive"), retained = join(home, "retained-archive");
+  const external = join(fixture, "outside");
+  mkdirSync(archive, { recursive: true }); mkdirSync(external);
+  const file = join(archive, "jobs-1900000000000-original.json");
+  save(file, { version: 4, jobs: [job("indexed-original")] });
+  const original = readFileSync(file, "utf8"), outsideFile = join(external, "retained.json");
+  writeFileSync(outsideFile, "synthetic outside bytes");
+  const scanning = readArchivedJobSteps(join(home, "jobs.json"), true);
+  expect(scanning.next().done).toBe(false); // Facade binds the original home.
+  expect(scanning.next().done).toBe(false); // Index is open, before its first decoded batch.
+  const decoded = archiveIndexCounters.decoded;
+  renameSync(archive, retained);
+  symlinkSync(external, archive, process.platform === "win32" ? "junction" : "dir");
+  expect(() => scanning.next()).toThrow(/archive ancestor changed/);
+  expect(archiveIndexCounters.decoded).toBe(decoded);
+  expect(readFileSync(join(retained, "jobs-1900000000000-original.json"), "utf8")).toBe(original);
+  expect(readFileSync(outsideFile, "utf8")).toBe("synthetic outside bytes");
+  renameSync(archive, join(home, "retained-outside-link")); renameSync(retained, archive);
+  expect(drainScan(readArchivedJobSteps(join(home, "jobs.json"), true)).jobs.map(value => value.id)).toEqual(["indexed-original"]);
+  expect(archiveIndexCounters.decoded).toBe(decoded + 1); // Rejected traversal published no partial cache.
+  console.info(JSON.stringify({ retainedIndexAncestorFixture: fixture }));
 });
 
 it("retains malformed archive bytes and retries changed valid bytes instead of caching a partial catalog", async () => {

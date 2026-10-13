@@ -6,6 +6,7 @@ import { cloneJson, estimatedJsonBytes, fileSignature } from "./file-cache.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
 import type { Logger } from "./logger.js";
+import { drainScan, SCAN_SLICE_MS, SCAN_STEPS_PER_SLICE } from "./responsive-scan.js";
 
 export const JOB_ARCHIVE_VERSION = 1;
 export const JOB_ARCHIVE_FILE = "job-archive.db";
@@ -170,6 +171,12 @@ let cacheBytes = 0;
 const CACHE_BUDGET = 8 * 1024 * 1024;
 export const archiveIndexCounters = { reads: 0, decoded: 0 };
 export function readIndexedJobs(path: string, selection: ArchiveSelection = {}): IndexedJobSnapshot {
+  return drainScan(readIndexedJobSteps(path, false, selection));
+}
+
+/** Indexed reads must yield between bounded row batches too: one decode loop can exhaust
+ * the responsive traversal's entire budget before its next suspension. */
+export function* readIndexedJobSteps(path: string, responsive = false, selection: ArchiveSelection = {}): Generator<void, IndexedJobSnapshot> {
   const file = jobArchivePath(path);
   physicalArchivePath(file); physicalArchivePath(join(dirname(path), "archive"));
   const signature = [file, `${file}-wal`].map(p => existsSync(p) ? fileSignature(statSync(p, { bigint: true })) : "missing").join("|");
@@ -181,6 +188,33 @@ export function readIndexedJobs(path: string, selection: ArchiveSelection = {}):
   if (!db) return { signature, jobs: [] };
   const jobs: Record<string, unknown>[] = [];
   try {
+    const home = dirname(file), archive = join(home, "archive");
+    const bound = responsive ? [home, file, archive].filter(at => existsSync(at)).map(at => {
+      const st = lstatSync(at, { bigint: true });
+      return { at, dev: st.dev, ino: st.ino };
+    }) : [];
+    const unchanged = () => {
+      if (!responsive) return;
+      if (bound.some(({ at, dev, ino }) => {
+        const st = lstatSync(at, { bigint: true });
+        return st.isSymbolicLink() || st.dev !== dev || st.ino !== ino;
+      })) throw new Error("job archive ancestor changed during traversal; data kept unchanged");
+      for (const at of [archive, `${file}-wal`, `${file}-shm`]) {
+        try { if (lstatSync(at).isSymbolicLink()) throw new Error("job archive path must be physical; data kept unchanged"); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      }
+    };
+    // Validate once per bounded batch, not once per row. Native path queries on
+    // Windows otherwise dominate the scan while the opened handles stay pinned.
+    let batchStarted = performance.now(), batchSteps = SCAN_STEPS_PER_SLICE;
+    function* beforeStep(): Generator<void> {
+      if (responsive && (batchSteps >= SCAN_STEPS_PER_SLICE || performance.now() - batchStarted >= SCAN_SLICE_MS)) {
+        yield;
+        unchanged();
+        batchSteps = 0; batchStarted = performance.now();
+      }
+      batchSteps++;
+    }
     archiveIndexCounters.reads++;
     const columns = selection.metadata ? "r.metadata" : selection.history ? "r.history_json AS payload" : "v.payload";
     const from = selection.metadata || selection.history ? "job_records r" : "job_records r JOIN job_versions v USING(id,sha256)";
@@ -194,11 +228,19 @@ export function readIndexedJobs(path: string, selection: ArchiveSelection = {}):
       for (const [field, values] of [["id", selection.ids], ["name", selection.names]] as const) {
         if (!values) continue;
         const query = db.prepare(`SELECT r.id,${columns} FROM ${from} WHERE r.${field}=?${selection.active ? " AND r.active=1" : ""}`);
-        for (const value of values) for (const row of query.all(value)) {
-          if (!seen.has(String(row.id))) { seen.add(String(row.id)); decode(row); }
+        for (const value of values) {
+          yield* beforeStep(); // Missing IDs still consume a bounded native query step.
+          for (const row of query.iterate(value)) {
+            yield* beforeStep();
+            if (!seen.has(String(row.id))) { seen.add(String(row.id)); decode(row); }
+          }
         }
       }
-    } else for (const row of db.prepare(`SELECT ${columns} FROM ${from}${selection.active ? " WHERE r.active=1" : ""} ORDER BY r.observed_at,r.id`).iterate()) decode(row);
+    } else for (const row of db.prepare(`SELECT ${columns} FROM ${from}${selection.active ? " WHERE r.active=1" : ""} ORDER BY r.observed_at,r.id`).iterate()) {
+      yield* beforeStep();
+      decode(row);
+    }
+    unchanged();
   } catch (error) { throw archiveWriteError(error); }
   finally { db.close(); }
   const next = { signature, jobs, bytes: estimatedJsonBytes(jobs, CACHE_BUDGET) };
