@@ -3,13 +3,14 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openArchive, archiveInitializationObservation } from "../src/core/sqlite-maintenance.js";
-import { openHistoryStore, historyInitializationObservation } from "../src/core/history-store.js";
+import { openHistoryStore, historyInitializationObservation, legacyReadNotice } from "../src/core/history-store.js";
 import { storageLease, storageLeaseObservation } from "../src/core/storage-lock.js";
 import { DecisionStore, DECISIONS_SCHEMA } from "../src/core/decisions.js";
 import { HistoryIndex } from "../src/core/history.js";
 import { MessageStore, messageStoreHandleObservation } from "../src/core/store.js";
 import { nullLogger } from "../src/core/logger.js";
 import { attachStoreCompatibility, storeCompatibilityObservation } from "../src/core/store-compatibility-overlay.js";
+import { readConversation } from "../src/core/conversations.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -407,4 +408,33 @@ describe("actual MessageStore construction resources (not complete consumer/prod
       expect(reader.prepare("SELECT body FROM messages WHERE id=?").get("accepted-construction-mail")!.body).toBe("Exact accepted construction bytes"); dispose(reader);
     });
   }
+});
+
+describe("managed conversation DTO equivalence before pinned Broker wiring", () => {
+  function retainedPage(db: DatabaseSync) {
+    db.prepare("INSERT INTO conversations(id,agent,session,project,kind) VALUES(?,?,?,?,?)").run("other:owned-session", "other", "owned-session", "owned-project", "transcript");
+    const insert = db.prepare("INSERT INTO conversation_records(id,source,generation,offset,conversation,at,raw,body,part) VALUES(?,?,?,?,?,?,?,?,?)");
+    insert.run(1, "owned-native-source", 1, 0, "other:owned-session", 1, Buffer.from("Exact accepted raw Unicode π\n"), "Exact accepted record", null);
+    insert.run(2, "owned-native-source", 1, 31, "other:owned-session", 2, Buffer.from("Second accepted raw record\n"), "Second accepted record", null);
+  }
+  it("returns the same populated native page, raw bytes/base64, pagination and missing DTO without native escape", () => {
+    const db = openHistoryStore(join(env.home, "conversation-dto.db")); owned.set(db, { actuallyClosed: false });
+    retainedPage(db); const index = new HistoryIndex(db, null), input = { id: "other:owned-session", limit: 1 };
+    const expected = readConversation(db, input);
+    expect(expected.records).toHaveLength(1); expect(expected.next).toBe(1);
+    expect(index.conversationPage(input)).toEqual(expected);
+    expect(index.conversationPage({ ...input, after: 1 })).toEqual(readConversation(db, { ...input, after: 1 }));
+    expect(index.conversationPage({ id: "owned-absent" })).toEqual(readConversation(db, { id: "owned-absent" }));
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ rawBorrower: false, ownerBound: false, settled: false, ownershipReleased: false });
+  });
+  it("retains exact actual legacy fallback page plus unchanged migration DTO", () => {
+    const store = new MessageStore(env.db, nullLogger); ownedStores.add(store);
+    // Fixture inspection accesses its OWN real handles, never an issuer/permit.
+    const main = Reflect.get(store, "db") as DatabaseSync, history = Reflect.get(store, "historyDb") as DatabaseSync;
+    retainedPage(main); const input = { id: "other:owned-session", limit: 1 };
+    const migration = legacyReadNotice(history); expect(migration).toMatchObject({ ready: false, readsFrom: "legacy" });
+    expect(store.history.conversationPage(input)).toEqual({ ...readConversation(main, input), migration });
+    expect(store.history.legacyReadNotice).toEqual(migration);
+    expect(store.history.lifecycleConsumerObservation()).toMatchObject({ rawBorrower: false, ownerBound: false, settled: false, ownershipReleased: false });
+  });
 });
