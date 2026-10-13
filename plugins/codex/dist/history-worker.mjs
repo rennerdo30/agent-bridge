@@ -4,15 +4,15 @@ import {
 } from "./chunks/chunk-2PKS7JZW.mjs";
 import {
   ConversationIngestor
-} from "./chunks/chunk-FC4XMVT5.mjs";
+} from "./chunks/chunk-PYTRYC6J.mjs";
 import {
   HISTORY_TICK_MS,
   HistoryIndex
-} from "./chunks/chunk-XG2CM6V2.mjs";
+} from "./chunks/chunk-FZPSCI73.mjs";
 import {
   ownsProjectMirrors,
   projectDatabasePath
-} from "./chunks/chunk-C44ELGCV.mjs";
+} from "./chunks/chunk-G5ZSXC4T.mjs";
 import {
   HISTORY_IO_BYTES_PER_SECOND,
   copyLegacyConversationTail,
@@ -21,7 +21,7 @@ import {
   migrateHistoryStore,
   openHistoryStore,
   readHistoryMigrationProgress
-} from "./chunks/chunk-6NK4XVHR.mjs";
+} from "./chunks/chunk-CB77B52A.mjs";
 import "./chunks/chunk-AJ3G2ZXC.mjs";
 import "./chunks/chunk-KQJ5KQYW.mjs";
 import "./chunks/chunk-UUSRNKCB.mjs";

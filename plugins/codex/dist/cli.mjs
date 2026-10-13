@@ -9,7 +9,7 @@ import {
 } from "./chunks/chunk-CE5EGKJK.mjs";
 import {
   BridgeNode
-} from "./chunks/chunk-4C4J22S3.mjs";
+} from "./chunks/chunk-ZSJ6VLFW.mjs";
 import {
   formatMessage,
   formatReplyRestrictions
@@ -81,17 +81,17 @@ async function main(argv) {
     case "repair-permissions":
       return (await import("./chunks/permission-repair-6QG2MY7E.mjs")).runPermissionRepair(rest, home, log, out);
     case "doctor":
-      return (await import("./chunks/doctor-ZJCJSFHA.mjs")).runDoctor(rest, home, out);
+      return (await import("./chunks/doctor-PQBO7G4W.mjs")).runDoctor(rest, home, out);
     case "db":
-      return (await import("./chunks/db-IZPBBIRQ.mjs")).runDb(rest, home, out);
+      return (await import("./chunks/db-GP56EQSM.mjs")).runDb(rest, home, out);
     case "storage":
-      return (await import("./chunks/storage-4YKYLER2.mjs")).runStorage(rest, home, out);
+      return (await import("./chunks/storage-3JPBDKCG.mjs")).runStorage(rest, home, out);
     case "reindex":
       if (rest.length) {
         out("Usage: agent-bridge reindex");
         return 2;
       }
-      return (await import("./chunks/reindex-CCAYNNJL.mjs")).runReindex(home, pipe, log, out);
+      return (await import("./chunks/reindex-MJBOUL7K.mjs")).runReindex(home, pipe, log, out);
     case "history-archive":
       if (rest.length > 1) {
         out("Usage: agent-bridge history-archive [absolute-archive-root]");
@@ -180,10 +180,10 @@ async function main(argv) {
       const mobileConfig = loadConfig(home, "other", log).mobile;
       let mobileUnavailable;
       if (mobileConfig) {
-        if (rest.includes("--reset-key")) (await import("./chunks/dashboard-OOYHUKFD.mjs")).dashboardKey(home, true);
-        const existing = await (await import("./chunks/dashboard-OOYHUKFD.mjs")).findRunningDashboard(home);
+        if (rest.includes("--reset-key")) (await import("./chunks/dashboard-W7NPDRT6.mjs")).dashboardKey(home, true);
+        const existing = await (await import("./chunks/dashboard-W7NPDRT6.mjs")).findRunningDashboard(home);
         if (existing) {
-          const info2 = (await import("./chunks/dashboard-OOYHUKFD.mjs")).withMobileUnavailable(existing, "invalid" in mobileConfig ? "config_invalid" : "source_unavailable");
+          const info2 = (await import("./chunks/dashboard-W7NPDRT6.mjs")).withMobileUnavailable(existing, "invalid" in mobileConfig ? "config_invalid" : "source_unavailable");
           out(t("cli.ui.existing", { url: info2.url }));
           if (!noOpen) openBrowser(info2.url);
           return 0;
@@ -193,7 +193,7 @@ async function main(argv) {
         let activation;
         try {
           await node.start();
-          activation = await (await import("./chunks/activation-GANLJ5VH.mjs")).configuredMobileDashboard(node, mobileConfig, { home, pipe, port: portArg2 ? Number(portArg2) : cfg.dashboardPort, log });
+          activation = await (await import("./chunks/activation-CTLXOIQ2.mjs")).configuredMobileDashboard(node, mobileConfig, { home, pipe, port: portArg2 ? Number(portArg2) : cfg.dashboardPort, log });
           const info2 = await activation?.start();
           if (info2 && activation?.status() === "ready") {
             out(t("cli.ui.running", { url: info2.url }));
@@ -211,9 +211,9 @@ async function main(argv) {
           });
         }
       }
-      if (rest.includes("--reset-key")) (await import("./chunks/dashboard-OOYHUKFD.mjs")).dashboardKey(home, true);
-      const found = await (await import("./chunks/dashboard-OOYHUKFD.mjs")).findRunningDashboard(home);
-      const running = found && mobileUnavailable ? (await import("./chunks/dashboard-OOYHUKFD.mjs")).withMobileUnavailable(found, mobileUnavailable) : found;
+      if (rest.includes("--reset-key")) (await import("./chunks/dashboard-W7NPDRT6.mjs")).dashboardKey(home, true);
+      const found = await (await import("./chunks/dashboard-W7NPDRT6.mjs")).findRunningDashboard(home);
+      const running = found && mobileUnavailable ? (await import("./chunks/dashboard-W7NPDRT6.mjs")).withMobileUnavailable(found, mobileUnavailable) : found;
       if (running) {
         out(t("cli.ui.existing", { url: running.url }));
         if (!noOpen) openBrowser(running.url);
@@ -221,9 +221,9 @@ async function main(argv) {
       }
       const portArg = rest.find((a) => a.startsWith("--port="))?.slice("--port=".length);
       const port = portArg ? Number(portArg) : loadConfig(home, "other", log).dashboardPort;
-      const controller = new (await import("./chunks/dashboard-OOYHUKFD.mjs")).DashboardController({ home, pipe, port, log, ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable } : {} });
+      const controller = new (await import("./chunks/dashboard-W7NPDRT6.mjs")).DashboardController({ home, pipe, port, log, ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable } : {} });
       const hosted = await controller.ensure();
-      const info = mobileUnavailable ? (await import("./chunks/dashboard-OOYHUKFD.mjs")).withMobileUnavailable(hosted, mobileUnavailable) : hosted;
+      const info = mobileUnavailable ? (await import("./chunks/dashboard-W7NPDRT6.mjs")).withMobileUnavailable(hosted, mobileUnavailable) : hosted;
       out(t("cli.ui.running", { url: info.url }));
       if (!noOpen) openBrowser(info.url);
       if (!controller.isHosting) return 0;
@@ -248,7 +248,7 @@ async function main(argv) {
     case "permission-hook":
       return (await import("./chunks/permission-hook-T7A74LBJ.mjs")).runPermissionHook(rest[0]);
     case "job-runner":
-      return (await import("./chunks/job-runner-JMGR5VPA.mjs")).runJobRunner(rest[0]);
+      return (await import("./chunks/job-runner-G3BJ33RD.mjs")).runJobRunner(rest[0]);
     case "reliability": {
       const picked = rest.filter((a) => CODING_AGENTS.includes(a));
       const only = rest.find((a) => a.startsWith("--only="))?.slice("--only=".length);
