@@ -42,6 +42,11 @@ try {
   $grant=if($r.ancestorGrant -eq 'benign') { 'CreateDirectories,ReadAndExecute' } else { [string]$r.ancestorGrant }
   $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($foreign,$grant,$none,'None',$allow)))
   [IO.Directory]::SetAccessControl($ancestor,$acl)
+  if($r.homeOwner -eq 'administrators') {
+    $acl=[IO.Directory]::GetAccessControl($fixtureHome)
+    $acl.SetOwner((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))
+    [IO.Directory]::SetAccessControl($fixtureHome,$acl)
+  }
   if($r.homeGrant -ne 'none') {
     $acl=[IO.Directory]::GetAccessControl($fixtureHome)
     $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($foreign,[string]$r.homeGrant,$none,'None',$allow)))
@@ -56,11 +61,11 @@ try {
   [Console]::WriteLine('fixture_ready')
 } catch { [Console]::WriteLine('fixture_failed'); exit 1 }
 `;
-async function prepare(ancestorGrant = "benign", homeGrant = "none", targetGrant = "none") {
+async function prepare(ancestorGrant = "benign", homeGrant = "none", targetGrant = "none", homeOwner = "current") {
   const bin = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const child = spawn(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(PREPARE, "utf16le").toString("base64")], { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
   let output = ""; child.stdout.on("data", bytes => { output += String(bytes); });
-  child.stdin.end(JSON.stringify({ root: env.home, ancestorGrant, homeGrant, targetGrant }));
+  child.stdin.end(JSON.stringify({ root: env.home, ancestorGrant, homeGrant, targetGrant, homeOwner }));
   await new Promise<void>((resolve, reject) => { child.once("error", () => reject(new Error("Owned ACL fixture unavailable"))); child.once("close", code => code === 0 && output.trim() === "fixture_ready" ? resolve() : reject(new Error("Owned ACL fixture setup failed"))); });
   return join(env.home, "ancestor", "home");
 }
@@ -70,7 +75,7 @@ describe.skipIf(process.platform !== "win32")("Windows phase-local path observat
     const before = lstatSync(join(home, ".core-lifecycle", "receipts.sqlite"), { bigint: true });
     const started = performance.now();
     const proof = await verifyWindowsLifecyclePaths(home, owner, "admission", "established", started + 1000).catch(error => {
-      process.stdout.write("AB325 path guard " + JSON.stringify({ rule: error.rule, role: error.role, ancestorDepth: error.ancestorDepth }) + "\n"); throw error;
+      process.stdout.write("AB325 path guard " + JSON.stringify({ rule: error.rule, role: error.role, ancestorDepth: error.ancestorDepth, ownerClass: error.ownerClass }) + "\n"); throw error;
     });
     assertWindowsLifecyclePathProof(proof, home, owner, "admission", "established");
     expect(performance.now() - started).toBeLessThan(1000);
@@ -82,6 +87,10 @@ describe.skipIf(process.platform !== "win32")("Windows phase-local path observat
   it.each(["Modify", "Write", "DeleteSubdirectoriesAndFiles", "ChangePermissions", "TakeOwnership", "WriteAttributes", "WriteExtendedAttributes"])("refuses individual constituent ancestor control rights: %s", async grant => {
     const home = await prepare(grant);
     await expect(verifyWindowsLifecyclePaths(home, randomUUID(), "prepare", "established", performance.now() + 5000)).rejects.toMatchObject({ reason: "unsafe_acl", rule: "foreign_write", role: "ancestor", ancestorDepth: 2 });
+  });
+  it("HOME owner remains current-SID-only even when Administrators is permitted as an ancestor owner", async () => {
+    const home = await prepare("benign", "none", "none", "administrators");
+    await expect(verifyWindowsLifecyclePaths(home, randomUUID(), "prepare", "established", performance.now() + 5000)).rejects.toMatchObject({ reason: "unsafe_acl", rule: "foreign_owner", role: "home", ancestorDepth: 1, ownerClass: "administrators" });
   });
   it.each([["CreateDirectories", "none"], ["WriteData", "none"], ["none", "Read"]])("does not reuse the ancestor exception for home or target grants (%s,%s)", async (homeGrant, targetGrant) => {
     const home = await prepare("benign", homeGrant, targetGrant);

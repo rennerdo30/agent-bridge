@@ -8,14 +8,16 @@ type Scope = "home" | "established";
 type Reason = "unsafe_path" | "unsafe_acl" | "unsupported_fs" | "unavailable" | "budget";
 const RULES = ["foreign_owner", "foreign_write", "current_deny", "unprotected", "no_owner_full"] as const;
 const ROLES = ["home", "ancestor", "directory", "file", "journal"] as const;
-type Diagnostic = { rule: typeof RULES[number]; role: typeof ROLES[number]; ancestorDepth: number };
+const OWNER_CLASSES = ["current", "system", "administrators", "trusted_installer", "other", "unknown"] as const;
+type Diagnostic = { rule: typeof RULES[number]; role: typeof ROLES[number]; ancestorDepth: number; ownerClass: typeof OWNER_CLASSES[number] };
 export class WindowsLifecyclePathUnavailable extends Error {
   readonly rule?: Diagnostic["rule"];
   readonly role?: Diagnostic["role"];
   readonly ancestorDepth?: number;
+  readonly ownerClass?: Diagnostic["ownerClass"];
   constructor(readonly reason: Reason, diagnostic?: Diagnostic) {
     super(`Core lifecycle path verification unavailable: ${reason}.`);
-    if (diagnostic) { this.rule = diagnostic.rule; this.role = diagnostic.role; this.ancestorDepth = diagnostic.ancestorDepth; }
+    if (diagnostic) { this.rule = diagnostic.rule; this.role = diagnostic.role; this.ancestorDepth = diagnostic.ancestorDepth; this.ownerClass = diagnostic.ownerClass; }
   }
 }
 export interface WindowsLifecyclePathProof { readonly nonce: string; readonly ownerInstance: string; readonly phase: Phase; readonly scope: Scope }
@@ -30,9 +32,9 @@ const DIRECTORY = ".core-lifecycle", FILE = "receipts.sqlite";
 const INSPECT = String.raw`
 $ErrorActionPreference='Stop'
 $nonce=''
-$aclRule=$null; $aclRole=$null; $aclDepth=$null
-function Refuse([string]$code,[string]$rule='',[string]$role='',[int]$depth=0) {
-  if($code -eq 'unsafe_acl') { $script:aclRule=$rule; $script:aclRole=$role; $script:aclDepth=$depth }
+$aclRule=$null; $aclRole=$null; $aclDepth=$null; $aclOwnerClass='unknown'
+function Refuse([string]$code,[string]$rule='',[string]$role='',[int]$depth=0,[string]$ownerClass='unknown') {
+  if($code -eq 'unsafe_acl') { $script:aclRule=$rule; $script:aclRole=$role; $script:aclDepth=$depth; $script:aclOwnerClass=$ownerClass }
   throw $code
 }
 try {
@@ -50,6 +52,8 @@ try {
   $token=@{}; $token[$sid]=$true
   foreach($group in $id.Groups) { $token[$group.Value]=$true }
   $privileged=@('S-1-5-18','S-1-5-32-544')
+  # Owner policy only. Never widen the separate unchanged ACE exemptions.
+  $ancestorOwners=@('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
   $rights=[Security.AccessControl.FileSystemRights]
   $ancestorMask=[int]$rights::Delete -bor [int]$rights::DeleteSubdirectoriesAndFiles -bor [int]$rights::ChangePermissions -bor [int]$rights::TakeOwnership -bor [int]$rights::WriteAttributes -bor [int]$rights::WriteExtendedAttributes
   $homeMask=$ancestorMask -bor [int]$rights::WriteData -bor [int]$rights::AppendData
@@ -58,10 +62,11 @@ try {
     if(($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or ((($attributes -band [IO.FileAttributes]::Directory) -ne 0) -ne $directory)) { Refuse 'unsafe_path' }
     if($directory) { $acl=[IO.Directory]::GetAccessControl($path) } else { $acl=[IO.File]::GetAccessControl($path) }
     $owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    $ownerClass=if($owner -eq $sid) { 'current' } elseif($owner -eq 'S-1-5-18') { 'system' } elseif($owner -eq 'S-1-5-32-544') { 'administrators' } elseif($owner -eq $ancestorOwners[2]) { 'trusted_installer' } elseif($owner) { 'other' } else { 'unknown' }
     if($target) {
-      if($owner -ne $sid) { Refuse 'unsafe_acl' 'foreign_owner' $role $depth }
-      if(-not $acl.AreAccessRulesProtected) { Refuse 'unsafe_acl' 'unprotected' $role $depth }
-    } elseif($owner -ne $sid -and $owner -notin $privileged) { Refuse 'unsafe_acl' 'foreign_owner' $role $depth }
+      if($owner -ne $sid) { Refuse 'unsafe_acl' 'foreign_owner' $role $depth $ownerClass }
+      if(-not $acl.AreAccessRulesProtected) { Refuse 'unsafe_acl' 'unprotected' $role $depth $ownerClass }
+    } elseif(($role -eq 'home' -and $owner -ne $sid) -or ($role -eq 'ancestor' -and $owner -ne $sid -and $owner -notin $ancestorOwners)) { Refuse 'unsafe_acl' 'foreign_owner' $role $depth $ownerClass }
     $rules=$acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])
     if($rules.Count -gt 128) { Refuse 'unavailable' }
     $ownerFull=$false
@@ -71,12 +76,12 @@ try {
       $applies=($ace.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0
       if($ace.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow) {
         # Protected target means the entire DACL is current-SID-only, including read grants.
-        if($target -and $who -ne $sid) { Refuse 'unsafe_acl' 'unprotected' $role $depth }
-        if($applies -and $who -ne $sid -and $who -notin $privileged -and ($bits -band $mask) -ne 0) { Refuse 'unsafe_acl' 'foreign_write' $role $depth }
+        if($target -and $who -ne $sid) { Refuse 'unsafe_acl' 'unprotected' $role $depth $ownerClass }
+        if($applies -and $who -ne $sid -and $who -notin $privileged -and ($bits -band $mask) -ne 0) { Refuse 'unsafe_acl' 'foreign_write' $role $depth $ownerClass }
         if($applies -and $who -eq $sid -and ($bits -band [int]$rights::FullControl) -eq [int]$rights::FullControl) { $ownerFull=$true }
-      } elseif($applies -and $token.ContainsKey($who) -and ($bits -band $mask) -ne 0) { Refuse 'unsafe_acl' 'current_deny' $role $depth }
+      } elseif($applies -and $token.ContainsKey($who) -and ($bits -band $mask) -ne 0) { Refuse 'unsafe_acl' 'current_deny' $role $depth $ownerClass }
     }
-    if($target -and -not $ownerFull) { Refuse 'unsafe_acl' 'no_owner_full' $role $depth }
+    if($target -and -not $ownerFull) { Refuse 'unsafe_acl' 'no_owner_full' $role $depth $ownerClass }
   }
   $at=$lifecycleHome; $depth=0
   for(;;) {
@@ -97,7 +102,7 @@ try {
   $code=[string]$_.Exception.Message
   if($code -notin @('unsafe_path','unsafe_acl','unsupported_fs')) { $code='unavailable' }
   $response=@{schema=1;nonce=$nonce;status=$code}
-  if($code -eq 'unsafe_acl') { $response.rule=$aclRule; $response.role=$aclRole; $response.ancestorDepth=$aclDepth }
+  if($code -eq 'unsafe_acl') { $response.rule=$aclRule; $response.role=$aclRole; $response.ancestorDepth=$aclDepth; $response.ownerClass=$aclOwnerClass }
   $response | ConvertTo-Json -Compress
 }
 `;
@@ -155,10 +160,11 @@ export async function verifyWindowsLifecyclePaths(home: string, ownerInstance: s
         const keys = Object.keys(r);
         if (r.status !== "verified") {
           if (r.status === "unsafe_acl") {
-            if (keys.length !== 6 || keys.some(key => !["schema", "nonce", "status", "rule", "role", "ancestorDepth"].includes(key)) ||
+            if (keys.length !== 7 || keys.some(key => !["schema", "nonce", "status", "rule", "role", "ancestorDepth", "ownerClass"].includes(key)) ||
               !RULES.includes(r.rule as Diagnostic["rule"]) || !ROLES.includes(r.role as Diagnostic["role"]) ||
+              !OWNER_CLASSES.includes(r.ownerClass as Diagnostic["ownerClass"]) ||
               typeof r.ancestorDepth !== "number" || !Number.isSafeInteger(r.ancestorDepth) || r.ancestorDepth < 0 || r.ancestorDepth > 128) return refuse("unavailable");
-            return refuse("unsafe_acl", { rule: r.rule as Diagnostic["rule"], role: r.role as Diagnostic["role"], ancestorDepth: r.ancestorDepth });
+            return refuse("unsafe_acl", { rule: r.rule as Diagnostic["rule"], role: r.role as Diagnostic["role"], ancestorDepth: r.ancestorDepth, ownerClass: r.ownerClass as Diagnostic["ownerClass"] });
           }
           if (keys.length !== 3 || keys.some(key => !["schema", "nonce", "status"].includes(key))) return refuse("unavailable");
           return refuse(["unsafe_path", "unsupported_fs"].includes(String(r.status)) ? r.status as Reason : "unavailable");
