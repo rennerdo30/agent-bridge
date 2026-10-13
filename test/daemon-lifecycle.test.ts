@@ -1,10 +1,11 @@
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeNode } from "../src/core/node.js";
+import { Broker } from "../src/core/broker.js";
 import { BridgeClient } from "../src/core/client.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
@@ -93,6 +94,56 @@ function dashboardSender(url: string, cookie: string) {
   return (body: string, extra: Record<string, unknown> = {}) => fetch(origin + "/api/send", { method: "POST", signal: AbortSignal.timeout(10_000),
     headers: { cookie, "x-agent-bridge": "1", "content-type": "application/json" }, body: JSON.stringify({ to: "ui-retained", body, ...extra }) });
 }
+function observeUiSender() {
+  const starts: BridgeNode[] = [], metadataAtStart: boolean[] = [];
+  const original = BridgeNode.prototype.start;
+  const start = vi.spyOn(BridgeNode.prototype, "start").mockImplementation(function (this: BridgeNode) {
+    // The existing constructor records metadata/read state before election.
+    // Presence here is evidence about that path, not an elected broker.
+    starts.push(this); metadataAtStart.push(existsSync(env.db));
+    return original.call(this);
+  });
+  // Pass through every attempted listen, including attempts that reject.
+  const listen = vi.spyOn(Broker.prototype, "listen");
+  return { starts, metadataAtStart, listen, close: () => { start.mockRestore(); listen.mockRestore(); } };
+}
+async function cliCreationEvidence(child: ChildProcess, identity: string | null) {
+  const events: Array<{ kind: string; stage?: string; code?: number; count: number }> = [];
+  if (!child.pid || !identity || await readProcessIdentity(child.pid) !== identity) return { verifiedOwner: false, events };
+  // Only this test's exact isolated home; no logs are exported or printed.
+  const file = join(env.home, "logs", "agent-bridge.log");
+  try {
+    for (const path of [env.home, join(env.home, "logs"), file]) if (lstatSync(path).isSymbolicLink()) return { verifiedOwner: false, events };
+    const stat = lstatSync(file);
+    if (!stat.isFile() || stat.size > 1024 * 1024) return { verifiedOwner: false, events };
+    const bytes = readFileSync(file);
+    if (bytes.length > 1024 * 1024) return { verifiedOwner: false, events };
+    for (const line of bytes.toString("utf8").split("\n")) {
+      const match = line.match(/^\d{4}-\d\d-\d\dT[^ ]+ INFO +\[cli:node\] pid=(\d+) daemon creation observation; authenticated readiness still required (\{.*\})$/);
+      if (!match || Number(match[1]) !== child.pid) continue;
+      let data: Record<string, unknown>;
+      try { data = JSON.parse(match[2]!); } catch { continue; }
+      if (!["created", "unknown", "unavailable"].includes(String(data.kind))) continue;
+      const kind = String(data.kind), stage = ["read", "startup", "create"].includes(String(data.stage)) ? String(data.stage) : undefined;
+      const code = Number.isSafeInteger(data.errorCode) ? Number(data.errorCode) : undefined;
+      const existing = events.find(event => event.kind === kind && event.stage === stage && event.code === code);
+      if (existing) existing.count++;
+      else if (events.length < 16) events.push({ kind, ...(stage ? { stage } : {}), ...(code === undefined ? {} : { code }), count: 1 });
+    }
+    return { verifiedOwner: true, events };
+  } catch { return { verifiedOwner: false, events }; }
+}
+async function httpFailureCategory(response: Response): Promise<string> {
+  if (response.ok) return "none";
+  try {
+    const data = await response.clone().json() as { error?: unknown }, error = typeof data.error === "string" ? data.error : "";
+    if (error.includes("could not connect to or start")) return "discovery_unavailable";
+    if (error.includes("connection to broker closed")) return "connection_closed";
+    if (error.includes("timed out")) return "timeout";
+    if (/unauthorized|authentication/i.test(error)) return "auth_rejection";
+    return "unclassified";
+  } catch { return "invalid_response"; }
+}
 function copyFixtureRuntime(source: string, target: string): void {
   // Node's native cpSync has Windows Unicode regressions (nodejs/node#59636).
   // Set up the fixture with ordinary file APIs, then prove every copied byte.
@@ -116,6 +167,7 @@ describe("standalone demand-start broker", () => {
       env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_HISTORY_INGEST: "0" } }); children.push(child);
     let info: ReturnType<typeof readDashboardInfo> = null;
     await until(() => !!(info = readDashboardInfo(env.home)), 10_000);
+    const childIdentity = mobile ? null : await readProcessIdentity(child.pid!);
     const visit = await fetch(info!.url, { redirect: "manual", signal: AbortSignal.timeout(10_000) }), cookie = visit.headers.get("set-cookie")!.split(";")[0]!;
     expect((await fetch(new URL("/api/send", info!.url), { method: "POST", signal: AbortSignal.timeout(10_000), headers: { "x-agent-bridge": "1", "content-type": "application/json" }, body: '{"to":"ui-retained","body":"unauthorized"}' })).status).toBe(403);
     const send = dashboardSender(info!.url, cookie);
@@ -132,23 +184,39 @@ describe("standalone demand-start broker", () => {
       await until(() => { const current = readDashboardInfo(env.home); return !!current && current.pid !== first; }, 10_000);
       info = readDashboardInfo(env.home);
     }
-    const after = await dashboardSender(info!.url, cookie)("after-crash"); expect(after.status).toBe(200);
+    const after = await dashboardSender(info!.url, cookie)("after-crash");
+    if (!mobile) process.stderr.write("AB325 CLI UI fixture evidence " + JSON.stringify({
+      ...await cliCreationEvidence(child, childIdentity), afterError: await httpFailureCategory(after),
+    }) + "\n");
+    expect(after.status).toBe(200);
     const nextPid = await remember(); expect(nextPid).not.toBe(first); expect(nextPid).not.toBe(child.pid);
     const recipient = node("ui-retained"); await recipient.start();
     await until(() => recipient.unread().some(message => message.id === accepted.id));
     expect(recipient.unread().find(message => message.id === accepted.id)!.body).toBe("before-crash-0");
   });
   it("default UI sender stays connect-only and HTTP data cannot opt into embedding", async () => {
-    const send = await dashboard();
-    expect((await send("connect-only", { embeddedCompatibility: true })).status).toBe(500);
-    expect(existsSync(env.db)).toBe(false);
-    await expect(client()).rejects.toMatchObject({ code: "ENOENT" });
+    const observed = observeUiSender();
+    try {
+      const send = await dashboard();
+      expect((await send("connect-only", { embeddedCompatibility: true })).status).toBe(500);
+      expect(observed.starts).toHaveLength(1); expect(observed.starts[0]!.isBroker).toBe(false);
+      expect(observed.listen).not.toHaveBeenCalled();
+      process.stderr.write("AB325 UI pre-election metadata evidence " + JSON.stringify(observed.metadataAtStart) + "\n");
+      await expect(client()).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { observed.close(); }
   });
   it("UI unknown creation remains in one retained node across authorized sends", async () => {
-    const launch = vi.fn(async () => ({ kind: "unknown" as const })), send = await dashboard({ brokerDaemon: { cli, launch } });
-    expect((await send("unconfirmed-1")).status).toBe(500);
-    expect((await send("unconfirmed-2")).status).toBe(500);
-    expect(launch).toHaveBeenCalledOnce(); expect(existsSync(env.db)).toBe(false);
+    const observed = observeUiSender();
+    try {
+      const launch = vi.fn(async () => ({ kind: "unknown" as const })), send = await dashboard({ brokerDaemon: { cli, launch } });
+      expect((await send("unconfirmed-1")).status).toBe(500);
+      expect((await send("unconfirmed-2")).status).toBe(500);
+      expect(launch).toHaveBeenCalledOnce(); expect(observed.starts).toHaveLength(2);
+      expect(observed.starts[1]).toBe(observed.starts[0]); expect(observed.starts[0]!.isBroker).toBe(false);
+      expect(observed.listen).not.toHaveBeenCalled();
+      process.stderr.write("AB325 UI pre-election metadata evidence " + JSON.stringify(observed.metadataAtStart) + "\n");
+      await expect(client()).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { observed.close(); }
   });
   it("UI definitive unavailable creation preserves explicit degraded compatibility only", async () => {
     const launch = vi.fn(async () => ({ kind: "unavailable" as const, reason: "windows_wmi_unavailable" as const }));
