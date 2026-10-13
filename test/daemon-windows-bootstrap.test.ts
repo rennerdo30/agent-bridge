@@ -272,14 +272,15 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
 describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Boundary2 (no role promotion or restart acceptance)", () => {
   it("a real readonly prepare phase cannot lend its permission to a reentrant conflicting writer", async () => {
     const b = await serving(), end = performance.now() + 5000, initial = b.lifecycleServingCapability("prepare", end);
-    journal = await LifecycleJournal.bootstrapServing(initial, end);
+    const j = await LifecycleJournal.bootstrapServing(initial, end);
+    captured = Reflect.get(j, "writer"); // Exact owned handle retained BEFORE any assertion can fail.
     const actual = assertLifecycleServingCapability(initial, "prepare"), creationIdentity = await identities.readProcessIdentity(process.pid);
     expect(creationIdentity).toBeTruthy();
     const input = { restartId: "00000000-0000-4000-8000-000000000004", operation: "restart" as const,
       oldInstance: { nonce: actual.ownerInstance, pid: process.pid, creationIdentity: creationIdentity! },
       target: { immutableRuntimePath: join(home, "owned-fixture-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } };
     const admittedEnd = performance.now() + 1000;
-    const accepted = await journal.admitServing(b.lifecycleServingCapability("admission", admittedEnd), input, admittedEnd);
+    const accepted = await j.admitServing(b.lifecycleServingCapability("admission", admittedEnd), input, admittedEnd);
     const bytes = [readFileSync(file()), readFileSync(file() + "-journal")], prepare = DatabaseSync.prototype.prepare;
     let attempted = false, denied: unknown;
     const exec = vi.spyOn(DatabaseSync.prototype, "exec");
@@ -288,14 +289,14 @@ describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Bound
         attempted = true;
         // Actual source API/SQL handle; this controlled reentrancy is a fixture
         // injection, not a supplied role flag or writable prepared-node grant.
-        try { journal!.admit({ ...input, operation: "stop" }, performance.now() + 1000); } catch (error) { denied = error; }
+        try { j.admit({ ...input, operation: "stop" }, performance.now() + 1000); } catch (error) { denied = error; }
       }
       return prepare.call(this, sql);
     });
     const readEnd = performance.now() + 5000;
-    await expect(journal.selectedServing(b.lifecycleServingCapability("prepare", readEnd), readEnd)).rejects.toThrow("writer_unknown");
+    await expect(j.selectedServing(b.lifecycleServingCapability("prepare", readEnd), readEnd)).rejects.toThrow("writer_unknown");
     expect(attempted).toBe(true); expect(denied).toBeInstanceOf(LifecycleUnavailable);
-    expect((denied as LifecycleUnavailable).reason).toBe("owner_unsupported"); expect(journal.isQuarantined).toBe(true);
+    expect((denied as LifecycleUnavailable).reason).toBe("owner_unsupported"); expect(j.isQuarantined).toBe(true);
     expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE" || sql === "COMMIT" || sql === "ROLLBACK")).toBe(false);
     const observer = new DatabaseSync(file(), { readOnly: true });
     try {
@@ -304,8 +305,6 @@ describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Bound
       expect(JSON.parse(String(observer.prepare("SELECT json FROM receipt_revisions").get()!.json))).toEqual(accepted);
     } finally { observer.close(); }
     expect([readFileSync(file()), readFileSync(file() + "-journal")]).toEqual(bytes);
-    // Only this exact owned fixture handle is disposed by the existing teardown.
-    captured = Reflect.get(journal, "writer"); journal = undefined;
   });
   it("fresh real phase APIs retain default/copy/wrong-phase refusal without a caller-created permission", async () => {
     const b = await serving(), end = performance.now() + 5000, initial = b.lifecycleServingCapability("prepare", end);
