@@ -308,8 +308,31 @@ or proven successor writer owns that publication, otherwise committed lookup say
 unknown. Done follows initialization/checkpoint validation and serving readiness.
 
 Fresh clients that have never observed lineage cannot distinguish a lost journal
-from a virgin home without an extra anchor. The proposed compatibility choice lets
-journal absence use existing 0.30.14 election, but this does NOT override remembered
+from a virgin home without an extra anchor. Claude's explicit bounded fault choice
+excludes wholesale EXTERNAL deletion of an ESTABLISHED lifecycle DB AND PERSIST
+journal from stop/restart guarantees; there is no extra anchor or provisioning flow.
+Deleting Bridge lifecycle/state files outside the Bridge can lose persisted stop/
+handover intent, and ordinary demand-start may start again. Bind-first does not
+restore lost history, checkpoints or intentional-stop evidence. This exclusion is
+ONLY wholesale external deletion, NOT SQLite COMMIT/flush errors, failed or interrupted
+bootstrap, Bridge-owned cleanup, partial absence, corrupt/hot journal or an unknown
+publication result. Those remain retained unknown/fail-closed cases, never permission
+to recreate a missing journal beside an existing DB or during an active handoff.
+
+If in-memory lineage or already-available verified installation bootstrap metadata
+shows a prior journal, status/health/logs use the fixed sanitized category
+`lifecycle_journal_missing` (display text: "lifecycle journal missing (external deletion?)").
+Restart/stop are unavailable while a normally SERVING holder establishes a new lineage;
+it must make that NEW lineage explicit, with no silent continuity/history-restoration
+claim. An old active/unknown lifecycle coordinator or designated successor must not
+bootstrap or promote based on absence; an unresolved receipt remains unknown. A normal
+serving role must independently prove its ownership/admission state before any new
+establishment. No new main-store anchor write is authorized: use existing metadata
+evidence only if already present/verified, never fabricate past establishment. A fresh
+process with no such evidence cannot claim whether a new lineage is the home's first.
+
+The compatibility choice lets journal absence use existing 0.30.14 election ONLY
+within that disclosed whole-external-loss fault exclusion; it does NOT override remembered
 lineage, malformed/hot/partial journal, designated-successor or active-receipt guards.
 Therefore a fresh competing controlled daemon must win tentative bind before any
 broker-owner writable acquisition, including while a successor waits. If it wins,
@@ -317,7 +340,8 @@ the designated successor remains readonly and the original handoff is UNKNOWN;
 no false graceful-continuity or job-ownership rollback claim. Unknown legacy election
 clients must have blocked restart before release; no forced eviction. Completeness
 of the live writer/capability barrier and lost-journal gap behavior remain mandatory
-source/race proof. Endpoint exclusivity proves only ONE controlled BROKER-OWNER;
+source/race proof. Successful bind or reopened lineage alone does not classify a
+publication failure as external deletion. Endpoint exclusivity proves only ONE controlled BROKER-OWNER;
 legacy MCP/job/runner domain writers still exist and no full AB325 authority claim
 follows. If this bounded compatibility choice cannot preserve accepted bytes or
 prevent competing broker-owner writes, report the exact blocker for review.
@@ -339,7 +363,9 @@ every writer reopen's mode/flush/size-limit settings; no per-restart ACL mutatio
 new journal entry; fresh client versus designated successor tentative-bind race;
 bind loser zero broker-owner writes/unlinks; failure after bind before initialization;
 bounded tentative readiness/connection buffers; no job launch/ownership rollback;
-existing COMMIT/flush/quarantine/stop/revision/crash gates remain unchanged. Preserve
+explicit NEW-lineage/missing status on remembered whole external deletion, disclosure
+that stop intent may be lost in that excluded case, and refusal for internal/partial/
+hot/unknown failures; existing COMMIT/flush/quarantine/stop/revision/crash gates remain unchanged. Preserve
 unavailable/unknown outcomes and all existing ratified budgets.
 
 Windows must verify current SID ownership and a restrictive directory/file ACL
