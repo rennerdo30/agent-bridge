@@ -73,6 +73,8 @@ function absorbDatabase(path: string, ctx: ProofContext, archive: DatabaseSync |
       let after = progress?.done ? -1n : BigInt(Number(progress?.after_rowid ?? -1));
       options.report?.(`  ${table}: ${p.total.toLocaleString("en")} rows`);
       for (const chunk of p.chunks(after)) {
+        // Re-proven rows need no write batch. Keep interruption boundaries on actual imports.
+        if (!chunk.rows.length) { if (chunk.last !== null) after = chunk.last; continue; }
         if (archive) archive.exec("BEGIN IMMEDIATE");
         try {
           const missing = chunk.rows.filter(r => r.status === "missing");
