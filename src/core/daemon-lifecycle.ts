@@ -79,6 +79,18 @@ function bytes(receipt: LifecycleReceipt): string {
   if (Buffer.byteLength(json) > LIFECYCLE_METADATA_BYTES) fail("metadata_bound");
   return json;
 }
+function receiptEnvelope(row: Record<string, unknown>, homeIdentity: string, expectedId?: string): LifecycleReceipt {
+  try {
+    if (typeof row.json !== "string") fail("lineage_unknown");
+    const receipt = receiptSchema.parse(JSON.parse(row.json));
+    const acceptedRequest: LifecycleRequest = { restartId: receipt.restartId, operation: receipt.operation,
+      oldInstance: receipt.oldInstance, target: receipt.target };
+    if (row.receipt_id !== receipt.restartId || expectedId !== undefined && row.receipt_id !== expectedId ||
+        row.receipt_revision !== receipt.revision || row.receipt_digest !== receipt.requestDigest ||
+        receipt.requestDigest !== digest(acceptedRequest) || receipt.homeIdentity !== homeIdentity) fail("lineage_unknown");
+    return receipt;
+  } catch { fail("lineage_unknown"); }
+}
 interface FileIdentity { dev: string; ino: string; creation: string }
 interface Lineage { schema: 1; lineage: string; homeIdentity: string; directory: FileIdentity; file: FileIdentity; journal: FileIdentity }
 function identity(path: string): FileIdentity {
@@ -148,13 +160,14 @@ export class PreparedLifecycleReader {
   read(): LifecycleReceipt {
     try {
       // One SELECT is one settled committed snapshot; no cursor/read transaction is retained.
-      const row = this.db.prepare(`SELECT l.json AS lineage, r.json AS receipt FROM lifecycle_lineage l
+      const row = this.db.prepare(`SELECT l.json AS lineage, r.json AS receipt,
+        r.restart_id AS receipt_id, r.revision AS receipt_revision, r.request_digest AS receipt_digest FROM lifecycle_lineage l
         JOIN selected_receipt s ON s.singleton=l.singleton JOIN receipt_revisions r
         ON r.restart_id=s.restart_id AND r.revision=s.revision WHERE l.singleton=1 AND r.restart_id=?`).get(this.restartId);
       if (!row || JSON.stringify(JSON.parse(String(row.lineage))) !== JSON.stringify(this.lineage) ||
           !same(this.lineage.directory, identity(dirname(this.file))) || !same(this.lineage.file, identity(this.file)) ||
           !same(this.lineage.journal, identity(this.file + "-journal"))) fail("lineage_unknown");
-      return receiptSchema.parse(JSON.parse(String(row.receipt)));
+      return receiptEnvelope({ ...row, json: row.receipt }, this.lineage.homeIdentity, this.restartId);
     } catch { fail("lineage_unknown"); }
   }
   close(): void { this.db.close(); }
@@ -278,13 +291,15 @@ export class LifecycleJournal {
   private read(id?: string): LifecycleReceipt | null {
     const reader = readConnection(this.file);
     try {
-      const row = id ? reader.prepare(`SELECT r.json,l.json AS lineage FROM lifecycle_lineage l LEFT JOIN receipt_revisions r
+      const row = id ? reader.prepare(`SELECT r.json,l.json AS lineage,
+        r.restart_id AS receipt_id,r.revision AS receipt_revision,r.request_digest AS receipt_digest FROM lifecycle_lineage l LEFT JOIN receipt_revisions r
         ON r.restart_id=? AND r.revision=(SELECT max(revision) FROM receipt_revisions WHERE restart_id=?) WHERE l.singleton=1`).get(id, id)
-        : reader.prepare(`SELECT r.json,l.json AS lineage FROM lifecycle_lineage l LEFT JOIN selected_receipt s ON s.singleton=l.singleton
+        : reader.prepare(`SELECT r.json,l.json AS lineage,
+          r.restart_id AS receipt_id,r.revision AS receipt_revision,r.request_digest AS receipt_digest FROM lifecycle_lineage l LEFT JOIN selected_receipt s ON s.singleton=l.singleton
           LEFT JOIN receipt_revisions r ON r.restart_id=s.restart_id AND r.revision=s.revision WHERE l.singleton=1`).get();
       if (!row || (String(row.lineage) !== JSON.stringify(this.lineage) || !same(this.lineage.directory, identity(dirname(this.file))) ||
           !same(this.lineage.file, identity(this.file)) || !same(this.lineage.journal, identity(this.file + "-journal")))) fail("lineage_unknown");
-      return row.json === null ? null : receiptSchema.parse(JSON.parse(String(row.json)));
+      return row.json === null ? null : receiptEnvelope(row, this.lineage.homeIdentity, id);
     } catch { fail("lineage_unknown"); }
     finally { reader.close(); }
   }

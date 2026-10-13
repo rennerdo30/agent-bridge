@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -35,6 +35,13 @@ const request = (): LifecycleRequest => ({ restartId: randomUUID(), operation: "
   target: { immutableRuntimePath: join(env.home, "fixture-immutable-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } });
 async function bootstrap() { journal = await LifecycleJournal.bootstrap(env.home, owner); return journal; }
 const portable = process.platform !== "win32";
+function acceptedRequestDigest(input: LifecycleRequest): string {
+  // The counterexample is valid JSON for a DIFFERENT accepted request, not an
+  // invalid actor/schema. Canonicalize only these exact accepted request fields.
+  const canonical = (value: unknown): unknown => value && typeof value === "object"
+    ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b, "en")).map(([key, item]) => [key, canonical(item)])) : value;
+  return createHash("sha256").update(JSON.stringify(canonical(input))).digest("hex");
+}
 function publicQuarantineRefuses(j: LifecycleJournal, id: string) {
   const sql = vi.spyOn(DatabaseSync.prototype, "prepare"), close = vi.spyOn(DatabaseSync.prototype, "close"), exec = vi.spyOn(DatabaseSync.prototype, "exec");
   const counts = [sql.mock.calls.length, close.mock.calls.length, exec.mock.calls.length];
@@ -116,6 +123,33 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     expect(() => j.advance(input.restartId, 4, "unknown", forgedFields, deadline())).toThrow("revision_conflict");
     expect(j.selected()).toEqual(retained);
     expect(j.selected()?.state).toBe("prepared");
+  });
+  it.skipIf(!portable).each(["id", "revision", "digest", "home", "sql_digest"] as const)("retained %s envelope mismatch refuses lookup/selection/prepared read/advance without repair or BEGIN", async mismatch => {
+    const j = await bootstrap(), input = request(), accepted = j.admit(input, deadline());
+    expect(j.lookup(input.restartId)).toEqual(accepted); expect(j.selected()).toEqual(accepted);
+    const reader = j.preparedReader(input.restartId), fixture = new DatabaseSync(file());
+    try {
+      expect(reader.read()).toEqual(accepted);
+      const corrupted = { ...accepted };
+      if (mismatch === "id") {
+        const otherRequest = { ...input, restartId: randomUUID() };
+        corrupted.restartId = otherRequest.restartId; corrupted.requestDigest = acceptedRequestDigest(otherRequest);
+      } else if (mismatch === "revision") corrupted.revision++;
+      else if (mismatch === "digest") corrupted.requestDigest = "b".repeat(64);
+      else if (mismatch === "home") corrupted.homeIdentity = "c".repeat(64);
+      fixture.prepare("UPDATE receipt_revisions SET json=?,request_digest=? WHERE restart_id=? AND revision=1")
+        .run(JSON.stringify(corrupted), mismatch === "sql_digest" ? "d".repeat(64) : accepted.requestDigest, input.restartId);
+      const rows = () => fixture.prepare("SELECT restart_id,revision,request_digest,json FROM receipt_revisions ORDER BY revision").all();
+      const selection = () => fixture.prepare("SELECT * FROM selected_receipt").all();
+      const retainedRows = rows(), retainedSelection = selection(), retainedBytes = [readFileSync(file()), readFileSync(file() + "-journal")];
+      const exec = vi.spyOn(DatabaseSync.prototype, "exec");
+      expect(() => j.lookup(input.restartId)).toThrow("lineage_unknown"); expect(() => j.selected()).toThrow("lineage_unknown");
+      expect(() => reader.read()).toThrow("lineage_unknown");
+      expect(() => j.advance(input.restartId, 1, "preparing", {}, deadline())).toThrow("lineage_unknown");
+      expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE")).toBe(false);
+      expect(rows()).toEqual(retainedRows); expect(selection()).toEqual(retainedSelection);
+      expect([readFileSync(file()), readFileSync(file() + "-journal")]).toEqual(retainedBytes);
+    } finally { reader.close(); fixture.close(); }
   });
   it.skipIf(!portable)("real COMMIT_BUSY is locally settled and quarantined, never replayed or visible as acceptance", async () => {
     const j = await bootstrap(), input = request(), blocker = new DatabaseSync(file(), { readOnly: true });
