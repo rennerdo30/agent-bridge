@@ -301,12 +301,14 @@ export function waitForApproval(job: Job, question: string, timeoutMs: number, p
 /** "waiting": a finished job, but all slots are taken; it continues as soon as one frees up. */
 export type FollowUpOutcome = "started" | "delivered" | "queued" | "waiting" | "answered" | "unknown" | "no-session" | "stopping" | "cancelled-before-start";
 
+export const FOLLOW_UP_GATE_REASONS = ["control_lock_busy", "interrupted_executor_probe", "cancellation_guard_foreign_or_unowned", "cancellation_guard_no_resume", "runner_terminal_not_settled"] as const;
+
 /** Local refusal observations only: none of these facts proves executor identity or liveness. */
 export interface FollowUpGate {
-  reason: "control_lock_busy" | "interrupted_executor_probe" | "cancellation_guard_foreign_or_unowned" | "cancellation_guard_no_resume" | "runner_terminal_not_settled";
-  jobId: string;
-  /** Exact local observed turn; lock contention may prevent refreshing a newer durable turn. */
-  observedLocalStartedAt: number;
+  reason: typeof FOLLOW_UP_GATE_REASONS[number];
+  jobId: string | null;
+  /** Local turn only; null for malformed retained values, never a durable authority claim. */
+  observedLocalStartedAt: number | null;
   durableTurn: "unknown";
   observedAt: number;
   executorIdentity: "unknown";
@@ -1388,8 +1390,10 @@ export class JobManager {
   /** Project only local facts already present at the refusal; no storage, runner or process reads. */
   private refusedFollowUp(job: Job, reason: FollowUpGate["reason"]): FollowUpResult {
     return { outcome: "stopping", job, gate: {
-      reason, jobId: job.id, observedLocalStartedAt: job.startedAt, durableTurn: "unknown", observedAt: Date.now(),
-      executorIdentity: "unknown", controllerAborted: job.controller.signal.aborted,
+      reason, jobId: typeof job.id === "string" ? job.id : null,
+      observedLocalStartedAt: typeof job.startedAt === "number" && Number.isFinite(job.startedAt) ? job.startedAt : null,
+      durableTurn: "unknown", observedAt: Date.now(),
+      executorIdentity: "unknown", controllerAborted: Boolean(job.controller.signal.aborted),
       hasResume: Boolean(job.resume), hasSession: Boolean(job.sessionId),
     } };
   }

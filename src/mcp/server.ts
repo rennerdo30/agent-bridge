@@ -61,7 +61,7 @@ import type { DashboardInfo } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
 import { MessageWaitStore, matchesNotificationWait, matchesWait, resumeWaitHint, singleWaitTimeoutMs, SINGLE_WAIT_SEC, waitForReadReceipt, type WaitFilters } from "./message-wait.js";
 import { RewakeEndpoint, shouldWakeClaudeMessage } from "./rewake.js";
-import { DEFAULT_FOLLOW_UP, JobManager, type Job, type Resume, type Run, type RunResult } from "./jobs.js";
+import { DEFAULT_FOLLOW_UP, FOLLOW_UP_GATE_REASONS, JobManager, type Job, type Resume, type Run, type RunResult } from "./jobs.js";
 import { isBridgeWorktree, isInside, resumeArgs, runDelegate, type DelegateArgs, type RunContext } from "./delegate-run.js";
 import { JobRunners } from "./job-host.js";
 import { JOB_SETTING_KEYS, PERMISSION_KEY_AGENT, type JobSettings } from "./job-settings.js";
@@ -1550,10 +1550,13 @@ ${res.text || t("delegate.empty")}`, res.isError);
         : "";
       // Explicit projection: never serialize the Job, or future additions to the gate contract.
       const gateNote = gate ? "\nLocal follow-up gate observation (local turn; durable current turn unknown; executor identity unknown): " + JSON.stringify({
-        reason: gate.reason, jobId: gate.jobId, observedLocalStartedAt: gate.observedLocalStartedAt,
-        durableTurn: "unknown", observedAt: gate.observedAt,
-        executorIdentity: "unknown", controllerAborted: gate.controllerAborted,
-        hasResume: gate.hasResume, hasSession: gate.hasSession,
+        reason: FOLLOW_UP_GATE_REASONS.includes(gate.reason) ? gate.reason : null,
+        jobId: typeof gate.jobId === "string" ? gate.jobId : null,
+        observedLocalStartedAt: typeof gate.observedLocalStartedAt === "number" && Number.isFinite(gate.observedLocalStartedAt) ? gate.observedLocalStartedAt : null,
+        durableTurn: "unknown", observedAt: typeof gate.observedAt === "number" && Number.isFinite(gate.observedAt) ? gate.observedAt : null,
+        executorIdentity: "unknown", controllerAborted: typeof gate.controllerAborted === "boolean" ? gate.controllerAborted : null,
+        hasResume: typeof gate.hasResume === "boolean" ? gate.hasResume : null,
+        hasSession: typeof gate.hasSession === "boolean" ? gate.hasSession : null,
       }) : "";
       return text(
         t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote + approvalNote + gateNote,

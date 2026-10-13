@@ -190,3 +190,32 @@ it("labels only the cached local turn when a newer permitted durable turn is loc
   expect(job.queue).toEqual([SECRET]); expect(readFileSync(store, "utf8")).toBe(bytes);
   expect(resume).not.toHaveBeenCalled(); expect(control).not.toHaveBeenCalled();
 });
+
+it.each(["interrupted_executor_probe", "control_lock_busy"] as const)("keeps a real hydrated malformed turn private at %s", async reason => {
+  const record = { ...storedFixture(), status: "interrupted", executionPid: 987, startedAt: { privateMarker: SECRET } };
+  jobs.cancelAll();
+  jobs = new JobManager(new LocalCoordinator("owner", "owner-session"), nullLogger);
+  const client = await clientFor();
+  writeFileSync(store, JSON.stringify([record]));
+  // Exercise production retained-record hydration, not a mocked gate or timestamp.
+  jobs.restore(() => undefined);
+  const restored = jobs.find(record.name)!;
+  expect(restored.startedAt).toEqual(record.startedAt);
+  expect(restored.status).toBe("interrupted");
+  if (reason === "control_lock_busy") prepare(reason);
+  const bytes = readFileSync(store, "utf8"), queue = [...restored.queue], controller = restored.controller;
+  const persist = vi.spyOn(jobs, "persist");
+  const response = await client.callTool({ name: "message_subagent", arguments: { job: record.name, message: "check gate" } });
+  expect(response.isError).toBe(true);
+  const rendered = JSON.stringify(response.content);
+  expect(rendered).toContain(reason); expect(rendered).not.toContain(SECRET); expect(rendered).not.toContain("privateMarker");
+  const item = response.content as { type: string; text?: string }[];
+  const line = item.map(part => part.text ?? "").join("\n").split("\n").find(part => part.startsWith("Local follow-up gate observation"))!;
+  const gate = JSON.parse(line.slice(line.indexOf("{ ") >= 0 ? line.indexOf("{ ") : line.indexOf("{")));
+  expect(gate.observedLocalStartedAt).toBeNull();
+  for (const value of Object.values(gate)) expect(value === null || ["string", "number", "boolean"].includes(typeof value)).toBe(true);
+  expect(restored.startedAt).toEqual(record.startedAt); expect(restored.status).toBe("interrupted");
+  expect(restored.controller).toBe(controller); expect(restored.queue).toEqual(queue);
+  expect(readFileSync(store, "utf8")).toBe(bytes); expect(persist).not.toHaveBeenCalled();
+  expect(resume).not.toHaveBeenCalled(); expect(start).not.toHaveBeenCalled(); expect(control).not.toHaveBeenCalled();
+});
