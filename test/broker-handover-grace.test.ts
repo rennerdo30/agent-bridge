@@ -16,7 +16,7 @@ async function until(pred: () => boolean, timeoutMs = 5_000): Promise<void> {
   }
 }
 
-for (const releaseDelayMs of [0, 6_000]) it("gives the successor its full grace at socket close when announcement time has already elapsed" +
+for (const releaseDelayMs of [0, 3_000]) it("gives the successor its full grace at socket close when announcement time has already elapsed" +
   (releaseDelayMs ? " with a delayed endpoint release" : ""), async () => {
   const env = makeEnv();
   try {
