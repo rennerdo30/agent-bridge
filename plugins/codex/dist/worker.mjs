@@ -59,24 +59,24 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-UGHJS5SD.mjs";
+} from "./chunks/chunk-7UF5IGEM.mjs";
 import {
   codexAppServerCall,
   describeModels,
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-QWUZHAXF.mjs";
+} from "./chunks/chunk-FJ3X3N6X.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-4KQNJTYQ.mjs";
+} from "./chunks/chunk-46IKC7IA.mjs";
 import {
   readWorktreeState
 } from "./chunks/chunk-UISHVEDU.mjs";
-import "./chunks/chunk-FLLYRAG7.mjs";
+import "./chunks/chunk-6MTH2X4R.mjs";
 import {
   openBrowser
 } from "./chunks/chunk-LWVK3CB7.mjs";
@@ -86,7 +86,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-Z6XTWDM4.mjs";
+} from "./chunks/chunk-6VYQG75I.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -121,20 +121,21 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-7X6IIOMW.mjs";
-import "./chunks/chunk-P6QMJMAF.mjs";
+} from "./chunks/chunk-XQ3ZK7BU.mjs";
+import "./chunks/chunk-M4BQJE3A.mjs";
 import "./chunks/chunk-DUUQFMF5.mjs";
 import {
   antigravityAncestor,
   antigravityHookOutput,
   inspectClaudeLaunch
-} from "./chunks/chunk-VZXVXDQ4.mjs";
+} from "./chunks/chunk-WFMOBWEZ.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   ACCESS_LEVELS,
   DEFAULT_FOLLOW_UP,
   DELEGATION_TARGETS,
   DelegateError,
+  FOLLOW_UP_GATE_REASONS,
   JOB_SETTING_KEYS,
   JobManager,
   PARENT_JOB_ENV,
@@ -155,7 +156,7 @@ import {
   resolveBinary,
   runProcess,
   verifiedGoneJobOwners
-} from "./chunks/chunk-QGW2TYBL.mjs";
+} from "./chunks/chunk-FB4GHP3T.mjs";
 import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   ResourceSlots,
@@ -3014,7 +3015,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-J42Z2XIB.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-RJQMOY3P.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3026,9 +3027,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-ZSYWGNRR.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-YQCFHKVR.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-ZSYWGNRR.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-YQCFHKVR.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3223,7 +3224,7 @@ ${JSON.stringify(result)}`);
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
       const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-XOY3WDS2.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-WUX6Z5S4.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-SN7BZ2LC.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
@@ -4003,15 +4004,15 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       const settingsNote = job && Object.keys(settings).length ? `
 Saved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value}`).join(", ")}.${wasRunning ? " Applies from its next turn; the turn running now keeps its settings." : " Applies to this continuation and later turns."}` : "";
       const gateNote = gate ? "\nLocal follow-up gate observation (local turn; durable current turn unknown; executor identity unknown): " + JSON.stringify({
-        reason: gate.reason,
-        jobId: gate.jobId,
-        observedLocalStartedAt: gate.observedLocalStartedAt,
+        reason: FOLLOW_UP_GATE_REASONS.includes(gate.reason) ? gate.reason : null,
+        jobId: typeof gate.jobId === "string" ? gate.jobId : null,
+        observedLocalStartedAt: typeof gate.observedLocalStartedAt === "number" && Number.isFinite(gate.observedLocalStartedAt) ? gate.observedLocalStartedAt : null,
         durableTurn: "unknown",
-        observedAt: gate.observedAt,
+        observedAt: typeof gate.observedAt === "number" && Number.isFinite(gate.observedAt) ? gate.observedAt : null,
         executorIdentity: "unknown",
-        controllerAborted: gate.controllerAborted,
-        hasResume: gate.hasResume,
-        hasSession: gate.hasSession
+        controllerAborted: typeof gate.controllerAborted === "boolean" ? gate.controllerAborted : null,
+        hasResume: typeof gate.hasResume === "boolean" ? gate.hasResume : null,
+        hasSession: typeof gate.hasSession === "boolean" ? gate.hasSession : null
       }) : "";
       return text(
         t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote + approvalNote + gateNote,
