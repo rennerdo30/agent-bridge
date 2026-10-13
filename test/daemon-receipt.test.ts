@@ -204,7 +204,7 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
       import { DatabaseSync } from 'node:sqlite';
       const db=new DatabaseSync(process.argv[1]);
       db.exec('PRAGMA journal_mode=PERSIST; PRAGMA synchronous=FULL; PRAGMA cache_size=4; BEGIN IMMEDIATE');
-      const insert=db.prepare('INSERT INTO receipt_conflicts VALUES(?,?,?)');
+      const insert=db.prepare('INSERT INTO receipt_conflicts(restart_id,observed_digest,json) VALUES(?,?,?)');
       for(let n=0;n<512;n++) insert.run('hot-fixture',String(n),'x'.repeat(8192));
       process.exit(23);
     `, file()], { stdio: "ignore", windowsHide: true });
