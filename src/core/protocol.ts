@@ -226,6 +226,8 @@ export interface AuthArgs {
 }
 
 export interface RequestMap {
+  /** Local authenticated daemon lifecycle wiring; no remote target or configuration mutation. */
+  ensureDashboard: [{ force: boolean; port?: number }, import("../cli/dashboard.js").DashboardInfo | null];
   /** Virtual addresses are controlled only by the registered parent connection. */
   nativeChild: [{ agentId: string; action: "start" | "end" | "grant"; sendTo?: string[]; maxHops?: number }, NativeChildAddress | null];
   nativeChildren: [Record<string, never>, NativeChildAddress[]];

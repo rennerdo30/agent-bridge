@@ -272,6 +272,8 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
         pipePath: resolvePipePath(home),
         token: loadOrCreateToken(home),
         dbPath: resolveDbPath(home),
+        daemon: { cli: join(bundleDirectory(import.meta.url), "cli.mjs"), dashboard: () => cfg.dashboard && !ctx.headless,
+          config: () => ({ network: cfg.network, mobile: mobileAtStartup, dashboardPort: mobilePortAtStartup }) },
         network: { home, config: cfg.network },
         agent,
         // Until the project dir is known, the folder name would be the plugin version.
@@ -449,6 +451,10 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   const ensureDashboard = async (force: boolean): Promise<DashboardInfo | null> => {
     try {
       if (!force && !cfg.dashboard) return null;
+      if (node?.usesDaemon && !node.isBroker) {
+        try { return await node.ensureDashboard(force, mobilePortAtStartup); }
+        catch (error) { if (!isUnsupportedOperation(error, "ensureDashboard")) throw error; }
+      }
       if (mobileAtStartup && node) {
         try {
           mobileDashboard ??= import("../mobile/activation.js").then(({ configuredMobileDashboard }) => configuredMobileDashboard(node, mobileAtStartup,
@@ -535,7 +541,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       if (node.currentSessionId) ctx.onSessionId?.(node.currentSessionId);
       if (channel) for (const m of node.unread()) void pushChannel(m);
       // The session that hosts the bridge also hosts the web dashboard (not a short headless run).
-      if (isBroker && cfg.dashboard && !ctx.headless) void ensureDashboard(false);
+      if ((isBroker || node.usesDaemon) && cfg.dashboard && !ctx.headless) void ensureDashboard(false);
       // Jobs this session started under a "-N" stand-in name: adopt them once that name is gone (now, and
       // again shortly, when a replaced server of this session has left the bridge).
       const adopt = () =>
@@ -645,7 +651,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     description: "Cheap broker health: round-trip latency, event-loop delay, cached history-import phase, estimated percent and ETA, backup phase and last verification time, and recent error codes. Uses no log or archive reads. If tools are slow, use health or peers instead of reading live bridge log files. Retry a timeout once; report the exact tool error if it persists.",
     inputSchema: {},
     annotations: { readOnlyHint: true },
-  }, guarded("health", async () => text(JSON.stringify(await probeBrokerHealth(resolvePipePath(home), log)))));
+  }, guarded("health", async () => text(JSON.stringify({ ...await probeBrokerHealth(resolvePipePath(home), log), nodeHosting: ctx.node?.hostingEvidence() ?? null }))));
 
   register("ask_owner", {
     title: "Ask the owner a decision question",

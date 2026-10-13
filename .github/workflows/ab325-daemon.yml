@@ -1,0 +1,53 @@
+name: AB325 daemon candidate
+on:
+  pull_request:
+    paths:
+      - 'src/core/daemon-launcher.ts'
+      - 'src/cli/broker-daemon.ts'
+      - 'src/core/node.ts'
+      - 'src/core/broker.ts'
+      - 'src/core/protocol.ts'
+      - 'src/cli/main.ts'
+      - 'src/mcp/server.ts'
+      - 'test/daemon-*.test.ts'
+      - 'scripts/ab325-artifact.mjs'
+      - '.github/workflows/ab325-daemon.yml'
+permissions:
+  contents: read
+jobs:
+  lifecycle:
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    env:
+      SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+      BASE_HEAD: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Preserve exact hosted bundles and runtime manifest
+        run: node scripts/ab325-artifact.mjs
+      - name: Launcher classification
+        run: npm test -- test/daemon-launcher.test.ts
+      - name: Startup, concurrency, auth, lifecycle and existing mobile compatibility
+        run: npm run test:integration -- test/daemon-lifecycle.test.ts test/mobile-activation.test.ts test/mobile-wiring.test.ts test/mobile-owner-startup.test.ts test/job-process-scope.test.ts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: ab325-${{ matrix.os }}-node${{ matrix.node }}-${{ github.event.pull_request.head.sha }}
+          path: .agent-bridge-test/ab325-artifact
+          include-hidden-files: true
+          if-no-files-found: error

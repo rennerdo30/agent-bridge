@@ -19,6 +19,7 @@ import {
   RECONNECT_BACKOFF_MIN_MS,
 } from "./constants.js";
 import type { Logger } from "./logger.js";
+import { launchDaemon, type DaemonLaunch } from "./daemon-launcher.js";
 import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
 import { ReadJournal } from "./read-journal.js";
@@ -64,6 +65,8 @@ export interface BridgeNodeOptions {
   jobSendTo?: string[];
   /** false: only connect to a broker, never become one (a short-lived job runner would take the bridge down with it). */
   canHostBroker?: boolean;
+  /** Production MCP/CLI use the daemon. Omission retains library/fixture embedding. */
+  daemon?: { cli: string; dashboard?: () => boolean; config?: () => Pick<import("./config.js").BridgeConfig, "network" | "mobile" | "dashboardPort">; launch?: typeof launchDaemon };
   network?: { home: string; config: NetworkConfig };
 }
 
@@ -98,6 +101,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   readonly id: string;
   private client: BridgeClient | null = null;
   private broker: Broker | null = null;
+  private daemonLaunch: DaemonLaunch | undefined;
+  private degradedReason: string | undefined;
   private stopping = false;
   /** The bridge gave this session to another server of it (see reclaim). */
   private replaced = false;
@@ -168,6 +173,15 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
   get isBroker(): boolean {
     return this.broker !== null;
+  }
+  get usesDaemon(): boolean { return !!this.opts.daemon; }
+  ensureDashboard(force: boolean, port?: number): Promise<import("../cli/dashboard.js").DashboardInfo | null> {
+    return this.withClient(client => client.request("ensureDashboard", { force, ...(port === undefined ? {} : { port }) }));
+  }
+  /** Local node evidence, never an inferred hosting mode for a foreign broker. */
+  hostingEvidence(): { hostingMode: string; reason?: string } {
+    return { hostingMode: this.broker ? (this.degradedReason ? "embedded_degraded" : "embedded_library") : "connected_client_unknown_host",
+      ...(this.broker && this.degradedReason ? { reason: this.degradedReason } : {}) };
   }
   initializeMobileOwnerQuestions(): boolean {
     return !this.stopping && !this.replaced && !!this.broker?.initializeMobileOwnerQuestions();
@@ -312,7 +326,19 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         }
       }
       // Nobody is listening: try to become the broker.
-      if (this.opts.canHostBroker !== false && (await this.tryBecomeBroker())) continue; // next loop iteration connects to ourselves
+      if (this.opts.canHostBroker !== false) {
+        if (this.opts.daemon) {
+          this.daemonLaunch ??= await (this.opts.daemon.launch ?? launchDaemon)({ cli: this.opts.daemon.cli, home: dirname(this.opts.dbPath), pipe: this.opts.pipePath,
+            cwd: this.currentCwd, dashboard: this.opts.daemon.dashboard?.(), config: this.opts.daemon.config?.() });
+          if (this.daemonLaunch.kind === "unavailable") {
+            // Only definite creation failure AND fresh concrete endpoint absence permit embedding.
+            try { const client = await BridgeClient.connect(this.opts.pipePath, this.log); await this.adopt(client); return; }
+            catch (error) { if (!["ENOENT", "ECONNREFUSED"].includes(errCode(error))) throw error; }
+            if (!this.degradedReason) { this.degradedReason = this.daemonLaunch.reason; this.log.warn("daemon creation unavailable; using session-owned legacy broker", { reason: this.degradedReason }); }
+            if (await this.tryBecomeBroker()) continue;
+          }
+        } else if (await this.tryBecomeBroker()) continue;
+      }
       await sleep(jitter());
     }
     throw new Error(`could not connect to or start the agent-bridge broker at ${this.opts.pipePath}`);
@@ -351,6 +377,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       store.close();
       const code = errCode(err);
       if (code === "EADDRINUSE" && (this.opts.platform ?? process.platform) !== "win32") {
+        if (this.opts.daemon) return false;
         // A Unix socket file can outlive its process. If connecting failed, the file is stale.
         try {
           await BridgeClient.connect(this.opts.pipePath, this.log).then((c) => c.close());
@@ -423,6 +450,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number; sessionId?: string | null }): void {
     if (this.stopping) { client.close(); return; }
+    // An authenticated registration settles creation. Ambiguous attempts stay latched for life.
+    if (this.daemonLaunch?.kind === "created") this.daemonLaunch = undefined;
     this.client = client;
     this.currentName = hello.name;
     this.recordOwnStorePeer();

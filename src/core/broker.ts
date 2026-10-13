@@ -214,10 +214,18 @@ export class Broker {
     /** The supervisor's job registry, for siblings whose peers are not connected between turns. */
     private readonly jobsPath?: string,
     private readonly networking?: { home: string; config: NetworkConfig },
+    private readonly dashboardHost?: { ensure(force: boolean, port?: number): Promise<import("../cli/dashboard.js").DashboardInfo | null> },
   ) {
     this.groups = new ProjectGroups(jobsPath ? dirname(jobsPath) : undefined);
     this.nativeChildren = new NativeChildren(this.store);
     this.handlers = {
+      ensureDashboard: (c, a) => {
+        if (c.peer?.jobAgent || c.peer?.subagent) throw new BridgeError("unauthorized", "Only local project sessions and CLI clients can open the dashboard.");
+        const parsed = z.object({ force: z.boolean(), port: z.number().int().min(1).max(65535).optional() }).strict().safeParse(a);
+        if (!parsed.success) throw new BridgeError("bad_request", "Invalid dashboard startup request.");
+        if (!this.dashboardHost) throw new BridgeError("protocol_mismatch", "This broker does not support ensureDashboard hosting; no operation was applied.", { operation: "ensureDashboard" });
+        return this.dashboardHost.ensure(parsed.data.force, parsed.data.port);
+      },
       askOwner: (c,a) => {
         const peer = this.requirePeer(c);
         if (peer.jobAgent || peer.subagent || peer.agent === "other") throw new BridgeError("unauthorized", "Delegated jobs ask their main; only project sessions file owner questions.");

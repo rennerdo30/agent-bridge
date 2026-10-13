@@ -1,5 +1,6 @@
 import type { InstallResult } from "./opencode-install.js";
 import { join } from "node:path";
+import { bundleDirectory } from "../core/bundle-directory.js";
 import { BridgeClient } from "../core/client.js";
 import { LOG_DIR_NAME } from "../core/constants.js";
 import { formatDateTime, t } from "../core/i18n.js";
@@ -30,9 +31,13 @@ async function main(argv: string[]): Promise<number> {
   const pipe = resolvePipePath(home);
   const log = createLogger({ home, component: "cli" });
   const makeNode = () =>
-    new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: "other", name: CLI_PEER_NAME, cwd: process.cwd(), autoWake: false, log });
+    new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: resolveDbPath(home), daemon: { cli: join(bundleDirectory(import.meta.url), "cli.mjs"), dashboard: () => loadConfig(home, "other", log).dashboard,
+      config: () => { const cfg = loadConfig(home, "other", log); const port = rest.find(arg => arg.startsWith("--port="))?.slice(7); return { network: cfg.network, mobile: cfg.mobile, dashboardPort: port ? Number(port) : cfg.dashboardPort }; } }, agent: "other", name: CLI_PEER_NAME, cwd: process.cwd(), autoWake: false, log });
 
   switch (command) {
+    case "broker-daemon":
+      if (rest.length) throw new Error("broker-daemon accepts no arguments");
+      return (await import("./broker-daemon.js")).runBrokerDaemon(home, pipe, log);
     case "antigravity-hook": return (await import("./antigravity-hook.js")).runAntigravityHook(rest[0] ?? "PreInvocation");
     case "job-state":
     case "job-close":
@@ -141,6 +146,11 @@ async function main(argv: string[]): Promise<number> {
         const node = makeNode(); let activation: import("../mobile/activation.js").MobileActivation | undefined;
         try {
           await node.start();
+          if (node.usesDaemon && !node.isBroker) {
+            const info = await node.ensureDashboard(true, portArg ? Number(portArg) : cfg.dashboardPort);
+            if (info) { out(t("cli.ui.existing", { url: info.url })); if (!noOpen) openBrowser(info.url); return 0; }
+            mobileUnavailable = "source_unavailable";
+          } else {
           activation = await (await import("../mobile/activation.js")).configuredMobileDashboard(node, mobileConfig, { home, pipe, port: portArg ? Number(portArg) : cfg.dashboardPort, log });
           const info = await activation?.start();
           if (info && activation?.status() === "ready") {
@@ -148,6 +158,7 @@ async function main(argv: string[]): Promise<number> {
             await new Promise<void>(resolve => process.once("SIGINT", resolve)); return 0;
           }
           mobileUnavailable = activation?.status() ?? "source_unavailable";
+          }
         } catch { mobileUnavailable = "restart_required"; }
         finally { await activation?.close().catch(() => {}); await node.stop().catch(() => {}); }
       }
