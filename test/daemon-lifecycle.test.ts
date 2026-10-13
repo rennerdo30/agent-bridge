@@ -81,7 +81,11 @@ describe("standalone demand-start broker", () => {
   it("ten concurrent starts share one broker, keep accepted mail and reject wrong credentials", async () => {
     const peers = Array.from({ length: 10 }, (_, i) => node(`daemon-${i}`));
     await Promise.all(peers.map(peer => peer.start()));
-    const pid = await remember(); expect(pid).not.toBe(process.pid);
+    // Inspect through an existing authenticated peer: a throwaway connection's
+    // asynchronous close can still be counted by the next exact status sample.
+    const pid = (await peers[0]!.health()).brokerPid;
+    const identity = await readProcessIdentity(pid);
+    expect(identity).toBeTruthy(); owned.set(pid, identity!); expect(pid).not.toBe(process.pid);
     const statusClient = await client();
     try { expect(await statusClient.request("coreStatus", {})).toMatchObject({ mode: "daemon", pid, version: "0.30.14", connectedClients: 11, runningJobsEvidence: "legacy_registry_labels_not_execution" }); }
     finally { statusClient.close(); }
