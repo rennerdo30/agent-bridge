@@ -33,7 +33,13 @@ async function bigHome(pending = false): Promise<string> {
   try { await migrateHistoryStore(env.db, history); } finally { history.close(); }
   await migrateJobArchives(join(env.home, "jobs.json"));
   const snapshots = join(env.home, ".migration-snapshots");
-  return join(snapshots, readdirSync(snapshots).find(name => /^history-v2-source-.*\.db$/.test(name))!);
+  const reference = join(snapshots, readdirSync(snapshots).find(name => /^history-v2-source-.*\.db$/.test(name))!);
+  // Prepare a cold synthetic candidate outside the commands so the original
+  // manifest/tamper proofs and query budgets still run. Actual WAL candidates
+  // have separate no-open byte-preservation regressions in storage-absorb.
+  const cold = new DatabaseSync(reference);
+  try { cold.exec("PRAGMA journal_mode=DELETE"); } finally { cold.close(); }
+  return reference;
 }
 
 function copyOfBridge(path: string): void {
