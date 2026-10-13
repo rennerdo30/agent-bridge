@@ -404,7 +404,9 @@ it.each([false, true])("AB-215 review: explicit BLOB body survives equal TEXT by
   types();
   const before = retainedContent(history, retained, "stored");
   expect(before.count).toBe(1);
-  const exported = decodeHistoryRow("conversation_records", history.prepare(`SELECT * FROM ${retained}`).get()!).body;
+  const read = history.prepare(`SELECT * FROM ${retained}`);
+  read.setReadBigInts(true);
+  const exported = decodeHistoryRow("conversation_records", read.get()!).body;
   expect(exported).toBeInstanceOf(Uint8Array);
   expect(Buffer.from(exported as Uint8Array).equals(Buffer.from("hi"))).toBe(true);
   for (const check of [
