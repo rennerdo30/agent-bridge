@@ -133,187 +133,172 @@ complete beyond the observer envelope without another launch. Stop uses the same
 admission/dispatch/write caps and total bound, skips replacement preparation, and
 still cannot treat elapsed time as job safety or authorize automatic relaunch.
 
-### P3: normal release witness versus crash exit proof
+### P3: exact exit and new successor durability point (review required)
 
-Normal release does not require killing or observing death of the old process.
-After release_committed it must produce a restart-bound release witness proving:
-its mutation gate remains shut; all owned admitted/teardown/disconnect producers
-have settled or are inhibited; verified checkpoints are immutable; every writable
-store/worker lease is released without cancellation; the public listener/accepted
-old connections are released without causing untracked native-route/mail changes.
-The still-live old coordinator owns no writable stores/public endpoint and cannot
-reopen them or elect. Replacement validates durable selected-successor/checkpoints
-and the authenticated exact-instance witness before **any writable store, lease,
-worker acquisition or initializer**, and before binding. In current source447,
-broker-daemon.ts:31 constructs MessageStore before listen:70; store.ts:196-226 opens
-and initializes multiple writable databases. A bind-only guard would leave an
-initializer gap: release_committed precedes actual old-owner release and does not
-authorize those constructors. Preparation remains read-only with no writable
-initializer until this witness, or the crash reconciliation below, is verified.
-The same guard covers successor recovery, every store constructor and side worker;
-selected-successor/release_committed publication is not actual release proof.
-Unknown or malformed receipt remains read-only/unavailable, with no automatic
-repair or promotion to writable initialization.
-PID or socket absence
-alone cannot substitute for this witness; current Broker.close is not the witness.
+This DOC-only successor records coordinator-relayed Claude decision6652d1e6 and
+independent assessment32823, superseding db416c30's released-plus-lock variant and
+737485e7's live-old post-close ACK alternative. Source pin for this contract is
+`b6e30e7606a1142b76281c5226e87cbd76665754`; earlier owner anchors remain unchanged.
+Ledger/controller/role-transfer code is HELD until independent review and Claude
+short final of this exact note. Existing adapters are checkpoint/producer observers,
+not proof of final closure. Unsupported history/project/other closure blocks release.
 
-If the old instance crashes or the witness is lost/invalid, require verified exit of
-the receipt's exact nonce/PID/process-creation identity plus checkpoint/ownership
-reconciliation **before any writable initializer/acquisition or binding**. Missing
-nonce/creation identity, unknown process inspection, auth
-failure, a reused PID or time expiry is unknown, never an exit witness. A release
-receipt without drain/checkpoint proof cannot be completed merely because old died.
-Both mechanisms may fail and yield unavailable/unknown; no zero-gap guarantee.
+There is ONE successor activation path below. The prior intent-only exit fallback
+is REMOVED: old death plus release_committed, a lost ACK, time, an absent endpoint,
+or acquiring a journal lock does not authorize promotion. A still-live old daemon
+cannot be replaced under a normal post-close ACK. The exact old daemon AND EVERY
+manifest-owned child writer must exit before successor journal writer acquisition.
+This applies to successful graceful retirement and crash reconciliation alike.
+Unrelated MCP sessions, detached job executors and native children remain untouched;
+unknown or unsupported independent writers block rather than being killed to pass.
 
-### Proposed final-close ledger and last control-journal ordering (review required)
+#### Seals, irreversible retirement and per-handle accounting
 
-This successor note proposes the final release boundary; it does not authorize
-ledger, store-close, worker-release or role-promotion code. Source pin for this
-proposal is `3e53b13b0a8cf9c6102b265575fa8fca2063ac4b`. The current additive
-metadata stage is checkpoint-only/all-handles-retained; archive settlement observes
-producers, not store release. Neither default `close()` nor a worker exit supplies
-the following proofs. History/project closure is still unsupported.
+Gate new mutating admission and seal every accepted dispatch, raw/cached SQL,
+retry/continuation, opener, timer, worker, maintenance, teardown/disconnect, route,
+lease renewal and election producer. Drain dispatch THEN writes; preserve admitted
+bytes and queues without cancellation. Revalidate the complete owner/generation
+manifest under the seals. Every supported owner supplies actual checkpoint and
+handle/lease retirement evidence. Native routes use the reviewed committed zero
+proof, not endParent/recoverOrphans to manufacture zero. Any pending/unknown route
+or newly observed writer refuses before irreversible release; unsupported network,
+mobile/question continuity refuses rather than silently discarding work.
 
-`release_committed` (or `stop_committed`) is durable INTENT, NEVER promotion
-permission. Before it, every required managed producer, opener, migration,
-accepted dispatch/disconnect/native-route/mail operation, renewal and teardown
-producer must be sealed and settled under its exact owner instance/nonce,
-process-creation identity and generation. Include owned dashboard sender/HTTP
-operations and metadata-reader registrations; an HTTP close that creates a late
-broker disconnect/write is itself an owned producer, not cleanup proof. Unsupported
-closure, an unaccounted handle, a changed owner/generation or a pending unknown
-result blocks BEFORE endpoint release. Freeze actual FULL/autocommit/identity and
-checkpoint evidence for every owned handle and schema; do not infer external-process
-writer closure or treat installed inactive versions as live participants.
+Before any irreversible resource close, a proven reversible phase-budget refusal
+may reopen admission only if every ownership/producer state is intact and no final
+intent outcome is uncertain. Once retirement begins, no partial-close rollback or
+old-serving resume is claimed. This is an availability gap, not a force close.
+Keep all attempted/unattempted resources accounted for if failure interrupts it.
+The endpoint reservation does not own accepted Broker connections: inventory exact
+listener, sockets, scheduled handlers and disconnect side effects separately.
+Seal teardown writes BEFORE releasing sockets/listener; release only owned transport.
+No old callback may mutate routes/mail merely because a core close disconnects it.
 
-All substantive handles and leases remain owned during reversible preparation.
-Pre-release failure/overrun BEFORE any uncertain intent COMMIT leaves the endpoint
-serving and restores only proven reversible producer/admission gates. Once intent
-COMMIT is ATTEMPTED, a throw/timeout/unavailable transaction observation may have
-committed it. Latch all seals and retain substantive handles/leases/endpoint; do not
-resume ordinary old writes, release, close or promote the target from absence or
-timeout. Independent committed-only observation and known local settlement must
-prove rejection or a durable matching abort that cannot later be interpreted as
-release-ready before any resume claim. If that outcome is unprovable, old stays up
-with truthful unavailable/unknown control admission; it is not a clean normal-serving
-resume. Never clear quarantine, issue another intent attempt or force-close to
-manufacture resolution. This is distinct from a proven reversible drain refusal.
-No partial close/reopen or cached-statement
-reconstruction is authorized as that abort mechanism. Once selected replacement
-preparation, checkpoints and intent are committed, irreversibly inhibit all old
-managed writes/openers/teardown/renewal callbacks and release only the actual owned
-endpoint/accepted transports. Native routes must already have the frozen committed
-zero proof; do not call endParent/recoverOrphans to manufacture it. Any unexpected
-disconnect/registration/generation invalidates release eligibility. Stop applies the
-same ownership ordering, with persisted stop intent and no prepared successor.
+Retain per-handle ledger `{ownerInstance,ownerNonce,generation,handleId,fileIdentity,
+schemaIdentities,checkpointRevision,status}` with status `unattempted`, `attempted`,
+`closed`, `failed` or `unknown`. Register ALL handles before the first attempt,
+including aliases as separate connections and each worker's handles/leases. Count
+closed only after actual successful return plus source-owned statement/cache
+invalidation. Never clear failed entries or release leases in finally to fake it.
+Actual worker exit alone is not accepted-byte durability; verify checkpoint/lease
+retirement as well. No termination/cancellation, close-based rollback, SQLite repair,
+migration, new initializer or queued-effect replay is part of this ledger.
 
-After actual endpoint release, close the substantive resources with a retained
-per-handle ledger `{ownerInstance, ownerNonce, generation, handleId, fileIdentity,
-schemaIdentities, checkpointRevision, status}`. Status is exactly `unattempted`,
-`attempted`, `closed`, `failed` or `unknown`. Register every handle before any attempt;
-record a close only after the real owned call returns successfully and source-owned
-consumer/statement invalidation is accounted for. A close error retains the entry
-and any remaining handle; never clear the registry or release its lease in a finally
-block to fake completion. Count aliases per connection, not just physical files.
-Worker release ACKs must bind the exact request/worker/generation and attest all
-owned handles plus accepted queues; actual exit alone is insufficient. No abort,
-termination, rollback, replay, migration, repair or close-based durability claim.
+All substantive managed writers/handles/leases and endpoint/ordinary connections
+must retire BEFORE the final released transaction. The lifecycle journal is the
+explicit LAST logically retired CONTROL tail. Set a permanent source-owned old
+write-authority retirement latch BEFORE attempting that transaction; consume its
+single-use final-transaction permission BEFORE issuance. All other old write APIs,
+raw handles, cached statements, queued callbacks, openers/renewals and election paths
+remain irrevocably denied, even if COMMIT throws or returns late. No startup may
+revive this retired generation. A public boolean/role flag is not this proof.
+The final transaction alone may append `released` (or terminal stop intent) and its
+exact checkpoint/selection revision; no subsequent old SQL effect may follow.
 
-The post-release two-second monotonic deadline is ONE shared observation envelope
-for ledger returns, final post-close ACK transmission/observation, replacement bind/readiness
-and outcome observation, not a fresh two seconds per resource. Sync SQLite close,
-COMMIT and filesystem operations cannot be cancelled by that observer. Do not start
-a new attempt after expiry. A return/error/ACK after the deadline yields UNKNOWN to
-the expired observer; it never proves timely settlement, authorizes another launch,
-or reopens old admission. Retain exact attempted/unattempted/unknown entries and
-durable intent. Availability can remain interrupted: no old rollback or zero-gap
-claim after endpoint release.
+`release_committed` is preparation INTENT, never promotion permission. The final
+`released` record is likewise necessary but INSUFFICIENT by itself. Its current
+revision binds exact old nonce/PID/creation identity, journal lineage, owner/gate
+generations, manifest/ledger digest, restartId/request digest, selected successor
+nonce/PID/creation identity and immutable target/version/manifest. Logical retirement
+is not a claim the last physical journal connection closed. Attempt that close and
+release the exact control-role lease; failure remains failed/unknown in the ledger.
+Do not write a receipt after closing the last journal, reopen it, or disguise close
+as rollback/durability proof. Normal old exit occurs only after supported retirement;
+verify every owned writer process/thread exited through its actual creation identity.
+A parent exit does not prove its workers/children or accepted queues settled.
 
-The restricted lifecycle journal is the explicit LAST control resource. While its
-writer remains open, it may commit only release-ready INTENT/checkpoint revisions
-under sealed ownership; no durable record claims that this still-open writer is
-already released or that a successor is eligible. Validate the final intended
-revision through a separate verified committed readonly snapshot first. Then
-irrevocably revoke old admit/advance/open/renewal/queued journal permissions, drain
-prior journal transactions, close the actual LAST journal connection and release
-the exact owned control-role lease without a renewal task. Register and account for
-each attempted native close. Unknown COMMIT/transaction state stays quarantined;
-no writer SELECT, fresh BEGIN, repeated effect or auto-close as rollback proof.
-An unknown/failed last close/lease release cannot generate a witness. No journal
-write, reopen or fresh reader constructor in the old process after final closure.
+#### Budget and uncertain final COMMIT
 
-Only AFTER actual last-journal/control-lease closure may old send a NONMUTATING
-authenticated exact-instance post-close ACK to the original selected successor.
-Bind the ACK to restartId, committed intent revision/digest, journal lineage/file
-identities, old nonce/PID/creation identity, owner generation, original authenticated
-prepared ACK, selected replacement nonce/PID/creation identity, verified target
-version/manifest and complete actual close-ledger digest. The ACK is an ephemeral
-release witness, not a new journal write or a durable eligibility record. A trusted
-source-owned role must have revoked EVERY captured callback/opener, not merely
-flipped a caller-supplied/public boolean. A still-eligible old writer cannot ACK.
+Keep ratified 1/5/2/2 phases and aggregate10s. Final write/checkpoint/close attempts
+share the original write2s/remaining-total envelope. Do not issue final COMMIT after
+that deadline. This final-COMMIT gate governs ISSUANCE, not its uncancellable durable
+completion: successful COMMIT/autocommit/independent observation after the deadline
+is explicitly `released(late)`, NEVER timely success. Record actual phase/return
+measurements. No other phase cap, RPC10s or observer envelope is enlarged.
+A started synchronous COMMIT/close may finish late or throw; a pre-call clock check
+cannot guarantee no released row exists after expiry. Retain seals, ownership/ledger
+and unknown outcome, never resume old serving or launch a second successor.
 
-The selected replacement's exact authenticated control connection is an explicitly
-retained NONMUTATING channel while the public endpoint and ordinary accepted
-connections are released. Inventory listener identity, every ordinary/control
-socket and inflight/disconnect producer separately: EndpointReservation.close
-does not own Broker.conns or their route/last-seen/mail side effects. Convert only
-the already-bound original prepared channel to this private role; it accepts no
-generic auth/hello/send/control/extension dispatch, registration or mutation while
-retained. It is not a public role flag, a new general transport, or a wire/config
-option arbitrary callers can select. Refuse queued ordinary frames before any
-handler/pressure/store side effects. Its send/flush/EOF/actual-close observations
-must be bounded and instance-bound; do not assume Node Server.close's callback
-completes with a retained connection or equate listening=false with native endpoint
-release without hosted supported-transport proof. If the existing primitive cannot
-release the endpoint while retaining this safely fenced channel, block/review the
-smallest alternative; do not silently add another unsafe authority path.
+Post-endpoint2s is bounded observation, including exits, selected bind and outcome;
+expiry reports pending/unknown with the SAME receipt, without takeover or hidden
+retry. No new observation-owned acquisition/effect is issued after its deadline.
+Later explicit same-receipt reconciliation may use a fresh bounded observation
+for the SAME selected successor; it does not rewrite late timing as timely acceptance.
+Pending RPC/CLI lookup semantics above remain unchanged, with no replay of controls.
 
-Replacement first reads the matching committed intent/checkpoints with actual
-readonly/query_only/non-hot lineage checks. It cannot promote from this INTENT
-alone. It must receive the SAME authenticated post-close ACK, verify the original
-channel/instance/ledger and actual release observations, then win exclusive
-tentative bind. Its all-store guard and source-owned selected-role CAS precede ANY
-writable acquisition/worker/initializer. After promotion only the selected successor
-may append binding/done (or complete stopped evidence under its defined safe stop
-role); old cannot write an outcome after its handles are closed. Preserve oldInstance
-as receipt provenance and distinguish current journal writer from that historical
-instance; current portable advance() does not yet implement successor role transfer.
-No ordinary client, bind loser or unselected process gets promotion permission.
+[SQLite's pager source](https://github.com/sqlite/sqlite/blob/master/src/pager.c)
+`zeroJournalHdr` writes PERSIST header invalidation before its final sync, and
+transaction finalization may attempt unlock after an error. A visible released row,
+nonhot-looking header, autocommit or acquired lock alone therefore does not establish
+that an earlier failing sync was durable. Pin the actual hosted SQLite/VFS version;
+source inspection and process-crash fixtures are not physical power-loss proof.
+Distinguish controlled wrapper-throw AFTER a successful actual COMMIT from an actual
+VFS final-sync IOERR: the former has a known successful underlying operation; the
+latter remains uncertain even if the row is readable. Neither may bypass quarantine.
 
-Missing/lost/invalid ACK, last-close failure, unknown channel release or late close
-return keeps the successor readonly/UNKNOWN. Do not start an ACK send after the
-shared deadline. An ACK sent only after proven actual closure may arrive late;
-that cannot turn the expired observer into SUCCESS. Same-receipt discovery may
-later observe the SAME selected successor's valid bind/readiness, never authorize
-a second launch or interpret elapsed time as a release witness. If ACK is lost,
-normal promotion is unavailable; only verified exact old-instance EXIT plus
-ownership/checkpoint reconciliation supplies the separate recovery alternative.
-Stop has no replacement: publish terminal stop INTENT while the last journal is
-still open, independently validate it, then close actual resources. Observers must
-not call that intent fully stopped while old resources/instance remain unproved;
-it still blocks demand-start. Lost stop completion remains pending/unknown, not a
-force stop or an opportunity to bootstrap. No write-after-close or old rollback.
+#### Successor guard: read-only, all writer exits, then new durable CAS
 
-Crash recovery is the separate exact old nonce/PID/process-creation EXIT plus
-ownership/checkpoint reconciliation alternative, before bind and ANY writable
-acquisition. A lost/invalid final witness, hot/partial journal, unknown PID identity,
-unsettled ledger or unknown writer is not repaired or promoted merely because an
-endpoint is absent. No second replacement launch, rollback, forced eviction or
-automatic missing-journal bootstrap. Stop's valid terminal receipt must retain its
-no-demand-start intent; an unknown stop is unavailable, not a force-stop success.
+The designated successor follows this order, without an alternative fallback:
 
-Required hosted Windows/Linux/macOS cases: partial close at each ledger position;
-close error before/after actual native return; delayed worker release ACK/exit;
-last-journal COMMIT_BUSY/IO/FULL/rollback failure and committed-only observation;
-retired-role late callback/admit/renewal rejection; journal-close error preventing
-post-close ACK; intent COMMIT late/unknown return retaining seals/ownership without
-second effect or clean serving resume; last native close late return/ACK loss;
-queued ordinary frames on the retained private channel and actual endpoint release;
-new-client/selected-successor bind race; receipt loss/auth rejection; exact old crash
-and replacement failures; accepted bytes/active detached jobs/connected dashboard
-unchanged. Instrument only bounded primitive phase/ledger outcomes. No fixture or
-source subset certifies full lifecycle closure until every required owner supports
-this reviewed contract and the original timing/acceptance assertions pass.
+1. FIRST open only the established lifecycle journal using actual readOnly flags
+   and query_only=ON; validate private paths/file identities/lineage and read the
+   matching committed receipt/checkpoint/selected current revision. Missing,
+   partial, corrupt, hot or unsupported read remains UNKNOWN. No writable reopen,
+   sidecar creation, hot recovery, repair or malformed-receipt reconstruction.
+2. SECOND verify exact old daemon nonce/PID/process-creation EXIT AND every
+   manifest-owned child writer's exact creation-bound exit, plus all original
+   checkpoint/accepted-byte/lease reconciliation. Unknown process identity or a
+   missing child ledger refuses. No kill/eviction or parent-absence shortcut.
+3. Win exclusive canonical endpoint bind as TENTATIVE before journal acquisition.
+   Bind loser exits readonly, without store/worker/cleanup/unlink or journal writes.
+   The active receipt forbids ordinary client/embedded/other daemon election.
+   No tentative auth/ready/mutation authority until the remaining guard completes.
+4. ONLY THEN acquire the narrowly scoped established writable journal connection,
+   with fresh instance/phase/file/lineage proof and bounded BEGIN IMMEDIATE. This is
+   a control-journal acquisition exception, NOT substantive store promotion. Under
+   that SAME held transaction re-read CURRENT revision and CAS exact selected
+   successor/lineage/nonce/generation/target/checkpoint digest. No cached snapshot,
+   probe-and-release lock or lock-age takeover. No CREATE/recovery on missing/hot
+   journal: [SQLite locking behavior](https://www.sqlite.org/lockingv3.html) can
+   recover a hot journal on writable access BEFORE BEGIN; BEGIN is not a no-hot test.
+   Prepared reader/writer guards and controlled-file-change checks must prevent
+   this path, otherwise remain unavailable without attempting writable recovery.
+5. The CAS writes a NEW successor authorization revision. Require actual successful
+   CAS/change count, successful COMMIT, strict autocommit and independent actual
+   committed-only read matching that new revision, with FULL/PERSIST/VFS assumptions,
+   BEFORE ANY substantive writable store/lease/worker/recovery initializer. This
+   establishes a NEW independently verified durability point; it does NOT certify
+   retroactive old COMMIT/flush success. A readable old released revision or BEGIN
+   alone cannot transport an old in-memory quarantine or establish this point.
+   Failed/uncertain successor COMMIT/observation latches quarantine and stays UNKNOWN,
+   even if a row is visible: no retry/replay, public close/reopen/fallback, ownership
+   promotion or second launch. Retain original bytes and committed history.
+
+An earlier uncertain old COMMIT is not declared successful by step1 or step4.
+Only the complete exit/checkpoint reconciliation and independently successful NEW
+step5 may establish a new current authorization, preserving the old unknown outcome.
+If original accepted receipt/checkpoint bytes or selected identity are unprovable,
+there is no safe CAS and no automatic recovery. Physical arbitrary-power-loss
+assurance still depends on disclosed VFS/filesystem/flush assumptions. Internal
+COMMIT/bootstrap/hot/partial failures are NOT the external deletion fault exclusion.
+
+Stop has no prepared successor and must persist demand-start inhibition. Its final
+stop intent remains pending/unknown until actual old/all-owned-writer exits and
+checkpoint/lease evidence are proven; no row alone is fully stopped proof. Updated
+clients honor stopped indefinitely; unknown cannot elect or bootstrap. No child
+kill/cancel, automatic restart, lost-reply replay or unreviewed resume command.
+
+Required hosted Windows/Linux/macOS cases: partial close ledger at every position;
+retired old raw/cached/queued/open/election refusal after COMMIT uncertainty; actual
+last-close failure/late return; old daemon exit with live owned child refuses;
+actual readonly hot-journal refusal BEFORE any writable acquisition; wrapper-throw
+AFTER successful COMMIT distinct from injected VFS-style uncertainty; competing
+selected/ordinary bind; stale revision/current CAS under one held transaction;
+successor successful NEW commit/independent read before store initializer; failed
+successor commit even with readable row remains unknown; accepted mail/reports,
+active detached jobs and connected dashboard preserved. Controlled SQL/IO fault
+injection must be labeled simulation, not native VFS/power-loss proof. Every owner
+must support the contract before full restart/stop acceptance can be claimed.
 
 Proposed files: new `core/daemon-lifecycle.ts` for a **restricted lifecycle receipt**
 and its election gate; launcher/daemon/node wiring; narrow broker/protocol/CLI lifecycle
@@ -437,10 +422,9 @@ do not promise fencing of arbitrary same-user removers. Unknown proof blocks eff
 ordinary daemon and explicit embedded compatibility): validate the canonical gate
 and exact home; bind the exclusive canonical endpoint FIRST, THEN acquire/initialize
 any writable broker-owner store, lease, lifecycle journal or side worker. A designated
-successor additionally verifies the SAME authenticated normal release witness OR
-exact old nonce/PID/creation-exit PLUS ownership/checkpoint reconciliation BEFORE the
-first writable acquisition; it must also have won bind. Neither release_committed,
-designation nor a valid witness alone bypasses endpoint exclusivity. Unknown remains
+successor additionally satisfies the exact-exit/new-durable-CAS guard above BEFORE
+the first substantive writable acquisition; it must also have won bind. Neither
+release_committed, designation nor an exit observation alone bypasses endpoint exclusivity. Unknown remains
 readonly/unavailable. Prepared replacement opens no other stores even readonly.
 
 The endpoint is initially **TENTATIVE**, distinct from SERVING. Before initialization
@@ -571,14 +555,13 @@ different bytes cannot advance selection. There is no prepared writer-registrati
 or journal-write exception. Hosted attempted UPDATE/INSERT from this actual reader
 MUST fail, and an ACK cannot make it writable.
 
-Only after the SAME normal-release witness, or exact old nonce/PID/creation-exit
-PLUS ownership/checkpoint reconciliation, may the designated successor acquire a
-writable journal connection under the **all-store pre-writable guard**. Then it may
-acquire substantive stores/workers and CAS binding/done. release_committed alone is
-not release proof. If a readonly open encounters a hot journal requiring write
-recovery, unavailable schema, missing lineage or corrupt bytes, stay unknown/read-only;
-do not silently open read-write to repair it. Recovery writer acquisition uses the
-same guard, never PID absence, time or installed-version/cache evidence alone.
+The designated successor uses ONLY the exact ordered guard above: actual committed
+readonly observation, exact old AND manifest child-writer exits/checkpoints, tentative
+exclusive bind, bounded control-journal BEGIN/current-revision CAS, independently
+verified successful NEW durable revision, THEN substantive store/worker acquisition.
+No live-old witness or intent-only exit fallback remains. Hot/missing/corrupt/unknown
+reader outcome never permits writable recovery. release_committed, readable released
+or a lock alone does not prove earlier flush success or permit store initialization.
 
 Small transactions use indexed current receipt/ID lookups, BEGIN IMMEDIATE and
 expected revision/old-instance/selected-successor CAS; append revision and selection
@@ -607,7 +590,9 @@ lineage/restartId/revision/old instance/request digest. It sees only a committed
 snapshot; do not retain a reader transaction/iterator that obstructs COMMIT. Success
 requires returned COMMIT success, writer autocommit true, expected committed revision
 from that reader AND the configured VFS/durability assumptions. A readable tentative
-or even newly visible row after an I/O error is not proof a flush succeeded.
+or even newly visible row after an I/O error is not proof that earlier flush succeeded.
+Only the separately reviewed exact-exit/new-successor-durable-CAS path above may
+establish a NEW authorization; it never retroactively validates the failing commit.
 
 On failed BEGIN/COMMIT or I/O/FULL/unknown transaction error, latch lifecycle writes
 and effect advancement BEFORE another observer/control request can use tentative
@@ -716,9 +701,8 @@ accepted writes or terminate workers to manufacture successful drain/checkpoint.
 
 After prepared replacement + verified drain/checkpoints, persist `release_committed`
 and its exact designated successor before releasing the public endpoint. Only that
-replacement, after the normal-release witness or exact-exit/checkpoint reconciliation
-above is verified, may acquire writable stores/leases/workers or run initializers,
-bind, verify/recover checkpoints, advertise its
+replacement, after the exact-exit/new-durable-CAS guard above is verified, may acquire
+substantive writable stores/leases/workers or run initializers, verify checkpoints, advertise its
 instance and persist `done`. Clients reconnect and fully refetch through existing APIs;
 no new snapshot/event cursor or automatic mutating request replay is claimed.
 
@@ -765,7 +749,7 @@ or call MCP shutdown; ordinary future demand cannot override the stop receipt.
 ## Review and hosted acceptance
 
 Mandatory fixtures on Windows/Linux/macOS with Node 22/24: same-home alias/new-client
-restart race, active MCP and detached runner/native-child continuity, exact accepted
+restart race, active MCP and detached runner continuity, exact accepted
 mail/report/approval bytes, dashboard reconnect, forced parent job containment, receipt
 write/flush faults, deferred SQLite and worker checkpoints, drain-timeout-stays-serving,
 lost reply/same-ID conflict, legacy/unknown writer refusal, all crash rows above and
@@ -773,6 +757,25 @@ replacement bind/version/identity failure. Fixture-only processes/stores, no mod
 or owner-PC workloads. Preserve raw outcomes, checkpoint hashes, source/target/runtime
 manifests and any unavailable/unknown result; no skipped race, timeout inflation or
 assertion weakening. A green initial launch test cannot satisfy these gates.
+
+1a-i live native-child routes conservatively REFUSE restart/unsafe stop under the
+reviewed frozen-admission + settled accepted route-write + memory/committed-route
+guard. Pending/mismatched/unverified routes also refuse. The all-OS fixture must
+preserve mail/routes/processes and reopen ordinary admission after pre-abort; zero
+routes is not evidence native execution ended. Grant/route checkpoint continuity
+is deferred, with no active-native restart acceptance or permission expansion.
+
+The explicit release-owner9702e9bb gate requires ALL11 receipt/journal/hot cases in
+daemon-receipt.test.ts to EXECUTE on hosted Windows22 AND24: committed revisions/
+same-ID conflict, actual prepared readonly writes, stale prepared ACK CAS, actual
+COMMIT_BUSY, injected active IOERR, injected FULL auto-rollback, failed ROLLBACK,
+simulated unavailable transaction API, wrapper throw after actual successful COMMIT,
+actual child-crash hot journal, and missing established PERSIST journal. The current
+Windows publication_unproved primitive skips are NOT RC acceptance. An unsupported
+Windows path must exercise actual truthful restart refusal, never skip; refusal-only
+coverage does not satisfy the owner's functional Windows restart requirement.
+Actual and simulated faults must be identified separately, with per-case outcomes
+and exact source/runtime/OS/run/job packets. No Unix proof transfer to Windows.
 
 Independent reviewer must identify whether complete source closure, durability and
 canonical election gating are achievable within the named narrow subset. If not,
