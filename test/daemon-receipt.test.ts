@@ -12,32 +12,50 @@ import { verifyWindowsLifecyclePaths, assertWindowsLifecyclePathProof, pendingWi
 import { createServingJournalFixture } from "./fixtures/daemon-serving-journal.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
+type TimingBucket = "expired" | "0_25" | "26_100" | "101_500" | "501_1000" | "1001_plus" | "unavailable";
+type AdmissionDiagnostic = { entry: TimingBucket; resolution: TimingBucket; wall: TimingBucket;
+  result: "not_entered" | "resolved" | "rejected"; queryOnly: boolean; lineage: boolean; busyClamp: boolean; begin: boolean };
+function timingBucket(value: number): TimingBucket {
+  if (!Number.isFinite(value)) return "unavailable";
+  if (value <= 0) return "expired";
+  return value <= 25 ? "0_25" : value <= 100 ? "26_100" : value <= 500 ? "101_500" : value <= 1000 ? "501_1000" : "1001_plus";
+}
 const verificationFixture = vi.hoisted(() => ({
   before: undefined as ((home: string, phase: string, scope: string) => void) | undefined,
   rejected: undefined as ((error: unknown) => void) | undefined,
+  diagnostic: undefined as AdmissionDiagnostic | undefined,
 }));
 vi.mock("../src/core/lifecycle-windows.js", async importOriginal => {
   const native = await importOriginal<typeof import("../src/core/lifecycle-windows.js")>();
   return { ...native, verifyWindowsLifecyclePaths: (...args: Parameters<typeof native.verifyWindowsLifecyclePaths>) => {
     verificationFixture.before?.(args[0], args[2], args[3]);
+    const diagnostic = args[2] === "admission" && args[3] === "established" && verificationFixture.diagnostic?.result === "not_entered"
+      ? verificationFixture.diagnostic : undefined;
+    const started = performance.now();
+    if (diagnostic) { diagnostic.entry = timingBucket(args[4] - started); diagnostic.result = "rejected"; }
+    const completed = (result: "resolved" | "rejected") => {
+      if (diagnostic) { const now = performance.now(); diagnostic.resolution = timingBucket(args[4] - now); diagnostic.wall = timingBucket(now - started); diagnostic.result = result; }
+    };
     // Every proof is still produced/refused by the ORIGINAL native observer with
     // every original capability/deadline argument; no fixture-created permission.
-    return native.verifyWindowsLifecyclePaths(...args).catch(error => { verificationFixture.rejected?.(error); throw error; });
+    return native.verifyWindowsLifecyclePaths(...args).then(value => { completed("resolved"); return value; },
+      error => { completed("rejected"); verificationFixture.rejected?.(error); throw error; });
   } };
 });
 
 let env: TestEnv, owner: LifecycleInstance, journal: LifecycleJournal | undefined, captured: DatabaseSync | undefined;
 let journalHome: string, servingFixture: Awaited<ReturnType<typeof createServingJournalFixture>> | undefined;
 const sqliteExec = DatabaseSync.prototype.exec;
+const sqlitePrepare = DatabaseSync.prototype.prepare;
 beforeEach(async () => {
-  verificationFixture.before = undefined; verificationFixture.rejected = undefined;
+  verificationFixture.before = undefined; verificationFixture.rejected = undefined; verificationFixture.diagnostic = undefined;
   env = makeEnv(); journal = undefined; captured = undefined; servingFixture = undefined; journalHome = env.home;
   const creationIdentity = await readProcessIdentity(process.pid); expect(creationIdentity).toBeTruthy();
   owner = { nonce: randomUUID(), pid: process.pid, creationIdentity: creationIdentity! };
   if (!portable) { servingFixture = await createServingJournalFixture(env); journalHome = servingFixture.home; owner = servingFixture.owner; }
 });
 afterEach(async () => {
-  verificationFixture.before = undefined; verificationFixture.rejected = undefined;
+  verificationFixture.before = undefined; verificationFixture.rejected = undefined; verificationFixture.diagnostic = undefined;
   vi.restoreAllMocks();
   // Only exact fixture-owned local SQL transactions/handles, never product work.
   if (captured?.isTransaction) sqliteExec.call(captured, "ROLLBACK");
@@ -334,7 +352,33 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     expect(readFileSync(file())).toEqual(main); expect(readFileSync(file() + "-journal")).toEqual(rollback);
   });
   it("missing established journal is unknown, not repaired/recreated or treated as fresh home", async () => {
-    const j = await bootstrap(), input = request(); await admit(j, input, deadline());
+    const j = await bootstrap(), input = request();
+    if (portable) await admit(j, input, deadline());
+    else {
+      // One bounded record for the original initial admission. No IDs, paths,
+      // SQL text, absolute timestamps or alleged native helper timing are emitted.
+      const diagnostic: AdmissionDiagnostic = { entry: "unavailable", resolution: "unavailable", wall: "unavailable", result: "not_entered",
+        queryOnly: false, lineage: false, busyClamp: false, begin: false };
+      verificationFixture.diagnostic = diagnostic;
+      const exec = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+        if (sql === "PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;") diagnostic.queryOnly = true;
+        if (/^PRAGMA busy_timeout=\d+$/.test(sql)) diagnostic.busyClamp = true;
+        if (sql === "BEGIN IMMEDIATE") diagnostic.begin = true;
+        return sqliteExec.call(this, sql);
+      });
+      const prepare = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+        if (sql === "SELECT json FROM lifecycle_lineage WHERE singleton=1") diagnostic.lineage = true;
+        return sqlitePrepare.call(this, sql);
+      });
+      try { await admit(j, input, deadline()); }
+      finally {
+        verificationFixture.diagnostic = undefined; exec.mockRestore(); prepare.mockRestore();
+        console.info("receipt admission diagnostic", JSON.stringify({ phase: "admission", remaining_at_verifier_entry: diagnostic.entry,
+          remaining_at_verifier_resolution: diagnostic.resolution, verifier_call_wall: diagnostic.wall, verifier_result: diagnostic.result,
+          real_query_only: diagnostic.queryOnly, real_lineage: diagnostic.lineage, real_busy_clamp: diagnostic.busyClamp,
+          begin_entered: diagnostic.begin }));
+      }
+    }
     expect((await lookup(j, input.restartId))?.state).toBe("accepted"); expect((await selected(j))?.restartId).toBe(input.restartId);
     const beforeRows = committedFixtureRows();
     let before = readFileSync(file()), beforeJournal = readFileSync(file() + "-journal");
