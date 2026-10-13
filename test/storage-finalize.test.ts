@@ -570,15 +570,17 @@ it("AB-215 SQL boundary: first proof includes minimum/negative/zero rowids and e
 });
 
 it("AB-215 SQL boundary: malformed TEXT codec metadata cannot use an identical-payload fast path", async () => {
-  const { history, retained, id } = await retainedPayload("history_documents", false);
-  history.prepare("UPDATE history_documents SET body=?,body_codec=CAST(x'fe' AS TEXT) WHERE rowid=?").run(retainedBody, id);
-  history.prepare(`UPDATE ${retained} SET body=?,body_codec=CAST(x'ff' AS TEXT)`).run(retainedBody);
+  const { history, retained, id } = await retainedPayload("conversation_records", false);
+  history.exec("DROP TRIGGER conversation_records_no_update");
+  // Record fixture setup bypasses only its append-only guard, without an FTS writer decoding the invalid codec.
+  history.prepare("UPDATE conversation_records SET body=?,raw_codec=CAST(x'fe' AS TEXT) WHERE rowid=?").run(retainedBody, id);
+  history.exec(`UPDATE ${retained} SET raw_codec=CAST(x'ff' AS TEXT)`);
   const before = storedContent(history, retained);
   expect(() => runFinalize(env.home, () => {})).toThrow(/Unknown history codec/);
   expect(storedContent(history, retained)).toEqual(before);
-  expect(history.prepare(`SELECT typeof(body_codec) t,hex(CAST(body_codec AS BLOB)) h FROM ${retained}`).get()).toEqual({ t: "text", h: "FF" });
-  history.prepare("UPDATE history_documents SET body_codec=0 WHERE rowid=?").run(id);
-  history.exec(`UPDATE ${retained} SET body_codec=0`);
+  expect(history.prepare(`SELECT typeof(raw_codec) t,hex(CAST(raw_codec AS BLOB)) h FROM ${retained}`).get()).toEqual({ t: "text", h: "FF" });
+  history.prepare("UPDATE conversation_records SET raw_codec=0 WHERE rowid=?").run(id);
+  history.exec(`UPDATE ${retained} SET raw_codec=0`);
   expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toContain(`history.db:${retained}`);
 });
 
