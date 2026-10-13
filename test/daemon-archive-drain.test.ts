@@ -34,7 +34,7 @@ describe("archive reversible producer seal (not store release/durability)", () =
     expect(archive.isCurrentLifecycleWitness(witness, () => false)).toBe(false);
     archive.resumeLifecycleMaintenance();
     expect(archive.isCurrentLifecycleWitness(witness, () => true)).toBe(false); expect(Reflect.get(archive, "worker")).toBe(worker);
-    expect(terminate).not.toHaveBeenCalled(); expect(post.mock.calls.some(call => call[0]?.stop)).toBe(false);
+    expect(terminate).not.toHaveBeenCalled(); expect(post.mock.calls.some(call => (call[0] as { stop?: boolean })?.stop)).toBe(false);
     await archive.close(); expect(archive.lifecycleOwnerManifest().closed).toBe(true);
   });
   it("actual migration blocked by its fixture-owned SQL writer remains alive at observer timeout; no cancellation or second worker", async () => {
@@ -47,7 +47,7 @@ describe("archive reversible producer seal (not store release/durability)", () =
     expect(await archive.settleLifecycleMaintenance(deadline())).toMatchObject({ settled: false, pendingWorkers: 1 });
     expect(await pending).toMatchObject({ settled: false, pendingWorkers: 1 });
     expect(Reflect.get(archive, "worker")).toBe(worker); expect(terminate).not.toHaveBeenCalled();
-    expect(post.mock.calls.some(call => call[0]?.stop)).toBe(false);
+    expect(post.mock.calls.some(call => (call[0] as { stop?: boolean })?.stop)).toBe(false);
     expect(lock.prepare("SELECT body FROM retained_fixture").get()!.body).toEqual(new Uint8Array([0, 255, 51]));
     lock.exec("ROLLBACK"); lock.close(); lock = undefined;
     await normalIdle();
@@ -65,7 +65,7 @@ describe("archive reversible producer seal (not store release/durability)", () =
     expect(archive.lifecycleOwnerManifest()).toMatchObject({ queuedRepack: true, settled: false });
     expect(archive.isCurrentLifecycleWitness(witness, () => true)).toBe(false); expect(post).not.toHaveBeenCalled();
     archive.resumeLifecycleMaintenance();
-    expect(post.mock.calls.filter(call => call[0]?.repack)).toHaveLength(1);
+    expect(post.mock.calls.filter(call => (call[0] as { repack?: boolean })?.repack)).toHaveLength(1);
     expect(Reflect.get(archive, "worker")).toBe(worker); expect(archive.lifecycleOwnerManifest().queuedRepack).toBe(false);
   });
   it("SIMULATED late owned worker error latches unknown and invalidates a full witness", async () => {
