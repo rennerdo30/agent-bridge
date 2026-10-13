@@ -27,6 +27,7 @@ const managers: JobManager[] = [];
 const connections: { client: Client; server: McpServer }[] = [];
 const remotes: RemoteJobs[] = [];
 beforeEach(() => {
+  vi.stubEnv("AGENT_BRIDGE_MUSE_EXEC", "1");
   env = makeEnv();
   const script = join(env.home, "muse.cjs");
   writeFileSync(script, String.raw`#!/usr/bin/env node
@@ -45,6 +46,7 @@ afterEach(async () => {
   for (const { client, server } of connections.splice(0)) { await client.close(); await server.close(); }
   for (const remote of remotes.splice(0)) remote.close();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   await env.cleanup();
 });
 function calls(): { args: string[]; session: string; prompt: string; cwd: string }[] {
@@ -67,7 +69,7 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
   return { error: result.isError, text: (result.content as { text?: string }[]).map(c => c.text ?? "").join("\n") };
 }
 
-describe("Muse durable MCP settings", () => {
+describe("Muse legacy exec profile persistence", () => {
   it("keeps the initial profile through continuation and reload, and replaces exact profiles with access", async () => {
     const node = env.node("claude-muse-jobs"); await node.start();
     let { client, jobs } = await session(node);
@@ -120,7 +122,7 @@ describe("Muse durable MCP settings", () => {
   });
 });
 
-describe("Muse remote contracts", () => {
+describe("Muse legacy exec remote profile contracts", () => {
   function receiver() {
     let receive!: (payload: Record<string, unknown>, pair: any) => Promise<void>;
     const responses: any[] = [];
