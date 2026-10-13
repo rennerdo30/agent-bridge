@@ -6,7 +6,7 @@ import type { PeerInfo } from "../src/core/protocol.js";
 
 type Message = Record<string, any>;
 type OwnedWorker = EventEmitter & { sent: Message[]; postMessage: Mock<(message: Message) => void>; terminate: Mock<() => Promise<number>> };
-type FixturePort = EventEmitter & { postMessage: Mock<(message: Message) => void>; close: Mock<() => void> };
+type FixturePort = EventEmitter & { postMessage: Mock<(message: Message) => boolean | undefined>; close: ReturnType<typeof vi.fn> };
 const fixture = vi.hoisted(() => ({
   workers: [] as OwnedWorker[], port: null as FixturePort | null,
   workerData: {} as Message, connected: false, nativeFixture: false,
