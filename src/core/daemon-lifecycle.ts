@@ -35,11 +35,18 @@ export type LifecycleReceipt = z.infer<typeof receiptSchema>;
 export type LifecycleRequest = Pick<LifecycleReceipt, "restartId" | "operation" | "oldInstance" | "target">;
 const BOOTSTRAP_STAGES = ["configure", "schema", "commit", "file_flush", "journal_flush", "readonly_lineage", "final_guard"] as const;
 type BootstrapStage = typeof BOOTSTRAP_STAGES[number];
+const BOOTSTRAP_FLUSH_ERRNOS = ["EPERM", "EBADF", "EACCES", "EIO", "unknown"] as const;
+type BootstrapFlushErrno = typeof BOOTSTRAP_FLUSH_ERRNOS[number];
 export class LifecycleUnavailable extends Error {
   readonly bootstrapStage?: BootstrapStage;
-  constructor(readonly reason: "private_path" | "publication_unproved" | "lineage_unknown" | "writer_unknown" | "revision_conflict" | "receipt_conflict" | "budget" | "metadata_bound", bootstrapStage?: BootstrapStage) {
+  readonly bootstrapFlushOk?: boolean;
+  readonly bootstrapFlushErrno?: BootstrapFlushErrno;
+  constructor(readonly reason: "private_path" | "publication_unproved" | "lineage_unknown" | "writer_unknown" | "revision_conflict" | "receipt_conflict" | "budget" | "metadata_bound", bootstrapStage?: BootstrapStage,
+    flush?: { ok: boolean; errno?: BootstrapFlushErrno }) {
     super(`Core lifecycle unavailable: ${reason}.`);
     if (bootstrapStage !== undefined && BOOTSTRAP_STAGES.includes(bootstrapStage)) this.bootstrapStage = bootstrapStage;
+    if (typeof flush?.ok === "boolean") this.bootstrapFlushOk = flush.ok;
+    if (flush?.errno !== undefined && BOOTSTRAP_FLUSH_ERRNOS.includes(flush.errno)) this.bootstrapFlushErrno = flush.errno;
   }
 }
 function fail(reason: LifecycleUnavailable["reason"]): never { throw new LifecycleUnavailable(reason); }
@@ -142,6 +149,7 @@ export class PreparedLifecycleReader {
 
 // Source-owned quarantine retention, not a public force-dispose/recovery API.
 const failedBootstrapJournals = new Set<LifecycleJournal>();
+const failedBootstrapFlushDescriptors = new Set<number>();
 
 /** Storage only. Dispatch/producer closure and pre-writable ownership guards belong to the coordinator; not yet wired. */
 export class LifecycleJournal {
@@ -169,6 +177,27 @@ export class LifecycleJournal {
     const writer = (() => { try { guard(); return new DatabaseSync(file, { timeout: BUSY_MS }); } catch { fail("publication_unproved"); } })();
     const journal = new LifecycleJournal(file, lineage, owner, writer);
     let stage: BootstrapStage = "final_guard";
+    let flushOutcome: { ok: boolean; errno?: BootstrapFlushErrno } | undefined;
+    // Windows FlushFileBuffers requires GENERIC_WRITE. This private closure is
+    // limited to the two exact newly created objects from the source-owned proof;
+    // generic flush(), existing files, Unix and readonly readers keep their modes.
+    const flushCreated = (path: string) => {
+      guard(); if (path !== file && path !== file + "-journal") fail("writer_unknown");
+      flushOutcome = { ok: false };
+      let fd: number | undefined;
+      try {
+        fd = openSync(path, "r+"); guard(); fsyncSync(fd); flushOutcome = { ok: true }; guard();
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException)?.code;
+        flushOutcome.errno = BOOTSTRAP_FLUSH_ERRNOS.includes(code as BootstrapFlushErrno) ? code as BootstrapFlushErrno : "unknown";
+        throw error;
+      } finally {
+        if (fd !== undefined) {
+          try { closeSync(fd); }
+          catch (error) { failedBootstrapFlushDescriptors.add(fd); throw error; }
+        }
+      }
+    };
     try {
       guard(); stage = "configure"; configureWriter(writer, guard); stage = "final_guard"; guard();
       if (writer.prepare("PRAGMA journal_size_limit").get()?.journal_size_limit !== -1) fail("publication_unproved");
@@ -177,8 +206,8 @@ export class LifecycleJournal {
       guard(); stage = "commit"; writer.exec("COMMIT"); stage = "final_guard"; guard();
       if (transactionState(writer)) fail("writer_unknown");
       // Actual file flush/reopen evidence only. No Windows directory power-loss claim.
-      guard(); stage = "file_flush"; flush(file); stage = "final_guard"; guard();
-      stage = "journal_flush"; flush(file + "-journal"); stage = "final_guard"; guard();
+      guard(); stage = "file_flush"; flushCreated(file); stage = "final_guard"; guard();
+      stage = "journal_flush"; flushCreated(file + "-journal"); stage = "final_guard"; guard();
       stage = "readonly_lineage";
       const reader = readConnection(file, guard);
       try {
@@ -190,7 +219,7 @@ export class LifecycleJournal {
       // No accepted lifecycle command exists. Keep actual handles/files and any
       // unconfirmed transaction; no rollback, close, cleanup or second bootstrap.
       journal.quarantined = true; failedBootstrapJournals.add(journal);
-      throw new LifecycleUnavailable("publication_unproved", stage);
+      throw new LifecycleUnavailable("publication_unproved", stage, flushOutcome);
     }
   }
 

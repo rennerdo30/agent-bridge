@@ -69,8 +69,12 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
     const before = lstatSync(home, { bigint: true });
     journal = await LifecycleJournal.bootstrapServing(cap, end).catch(error => {
       const stages = ["configure", "schema", "commit", "file_flush", "journal_flush", "readonly_lineage", "final_guard"];
-      if (error?.reason === "publication_unproved" && typeof error.bootstrapStage === "string" && stages.includes(error.bootstrapStage))
-        process.stderr.write("AB325 bootstrap fixture evidence " + JSON.stringify({ reason: "publication_unproved", bootstrapStage: error.bootstrapStage }) + "\n");
+      if (error?.reason === "publication_unproved" && typeof error.bootstrapStage === "string" && stages.includes(error.bootstrapStage)) {
+        const errnos = ["EPERM", "EBADF", "EACCES", "EIO", "unknown"];
+        process.stderr.write("AB325 bootstrap fixture evidence " + JSON.stringify({ reason: "publication_unproved", bootstrapStage: error.bootstrapStage,
+          flush_ok: typeof error.bootstrapFlushOk === "boolean" ? error.bootstrapFlushOk : undefined,
+          flush_errno: typeof error.bootstrapFlushErrno === "string" && errnos.includes(error.bootstrapFlushErrno) ? error.bootstrapFlushErrno : undefined }) + "\n");
+      }
       throw error;
     });
     expect(pendingWindowsLifecycleVerifications()).toBe(0);
