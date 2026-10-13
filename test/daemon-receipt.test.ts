@@ -129,6 +129,7 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     expect(j.lookup(input.restartId)).toEqual(accepted); expect(j.selected()).toEqual(accepted);
     const reader = j.preparedReader(input.restartId), fixture = new DatabaseSync(file());
     try {
+      fixture.exec("PRAGMA journal_mode=PERSIST; PRAGMA synchronous=FULL;");
       expect(reader.read()).toEqual(accepted);
       const corrupted = { ...accepted };
       if (mismatch === "id") {
