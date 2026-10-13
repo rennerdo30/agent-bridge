@@ -1,13 +1,14 @@
 import { EventEmitter } from "node:events";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type { HistoryBackground, HistoryWorkerCheckpoint } from "../src/core/history-background.js";
 import type { Logger } from "../src/core/logger.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 
 type Message = Record<string, any>;
-type OwnedWorker = EventEmitter & { sent: Message[]; postMessage: ReturnType<typeof vi.fn>; terminate: ReturnType<typeof vi.fn> };
+type OwnedWorker = EventEmitter & { sent: Message[]; postMessage: Mock<(message: Message) => void>; terminate: Mock<() => Promise<number>> };
+type FixturePort = EventEmitter & { postMessage: Mock<(message: Message) => void>; close: Mock<() => void> };
 const fixture = vi.hoisted(() => ({
-  workers: [] as OwnedWorker[], port: null as (EventEmitter & { postMessage: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }) | null,
+  workers: [] as OwnedWorker[], port: null as FixturePort | null,
   workerData: {} as Message, connected: false, nativeFixture: false,
   budget: vi.fn(), metadata: vi.fn(), migration: vi.fn(), reconcile: vi.fn(),
   indexReset: vi.fn(), indexPeer: vi.fn(), indexTick: vi.fn(), indexWake: vi.fn(), indexClose: vi.fn(),
@@ -48,7 +49,7 @@ vi.mock("node:worker_threads", async importOriginal => {
         const owned = Object.assign(actual, { sent });
         owned.postMessage = vi.fn((message: Message) => { sent.push(structuredClone(message)); post(message); });
         owned.terminate = vi.fn(actual.terminate.bind(actual));
-        fixture.workers.push(owned as OwnedWorker);
+        fixture.workers.push(owned as unknown as OwnedWorker);
         return owned as unknown as Worker;
       }
       fixture.workers.push(this);
@@ -100,7 +101,7 @@ beforeEach(async () => {
     ownedConnections: 1, registryGeneration: 1, physicalFiles: 1, nonWalFiles: 0, noWalFiles: 0, completedCheckpoints: 1,
     checkpointed: true, reason: "settled", fileIdentityDigest: "a".repeat(64), handlesRetained: true, ownershipReleased: false }));
   const { HistoryBackground } = await import("../src/core/history-background.js");
-  fixture.port = (await import("node:worker_threads")).parentPort as unknown as typeof fixture.port;
+  fixture.port = (await import("node:worker_threads")).parentPort as unknown as FixturePort | null;
   fixture.port?.removeAllListeners();
   background = new HistoryBackground("/fixture/bridge.db", { warn: vi.fn() } as unknown as Logger);
   worker = fixture.workers[0]!;
