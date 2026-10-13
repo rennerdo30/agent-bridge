@@ -43,7 +43,7 @@ The `ask_*` and `spawn_*` tools are expanded for each supported CLI; a session m
 | `message_subagent` | `job`, `message?`, `title?`, `effort?`, `model?`, `access?`, `sandbox?`, `terminal_sandbox?`, `bypass_permissions?`, `native_subagents?`, `approvals_reviewer?`, `permission_mode?`, `auto_approve?` | Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. It continues in its own session with its full context, in the same folder or worktree. While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. The answer arrives as a message from the job. Plain messages never answer pending approvals; use decide or the dashboard. Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent. If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it). |
 | `cancel_subagent` | `job` | Stop a background subagent started with spawn_*, or drop a queued continuation (message_subagent while all slots were taken). Pass its job name (e.g. codex-job-1a2b3c4d). |
 | `report_progress` | `percent`, `eta_minutes?`, `note?` | Tell your supervisor, which gave you your current task, how far you are: the percent of the whole task done and a few words on the current step. Call it when you start, after each milestone, and at least every few minutes. Give eta_minutes when you can estimate minutes until completion and update it as you go. It does not interrupt your work. |
-| `hook_event` | `event`, `session_id?`, `stop_hook_active?`, `cwd?`, `agent_id?`, `prompt?` | Internal endpoint for agent-bridge's own hooks. Do not call this tool. |
+| `hook_event` | `event`, `session_id?`, `stop_hook_active?`, `cwd?`, `agent_id?`, `prompt?`, `prompt_id?`, `transcript_path?` | Internal endpoint for agent-bridge's own hooks. Do not call this tool. |
 
 ## Delegation options
 
@@ -362,9 +362,11 @@ note: z.string().max(200).optional().describe('The current step in a few words, 
 
 ```ts
 event: z.string()
-session_id: z.string().optional()
-stop_hook_active: z.union([z.boolean(), z.string()]).optional()
-cwd: z.string().optional()
-agent_id: z.string().optional()
-prompt: z.string().optional()
+session_id: z.string().nullish()
+stop_hook_active: z.union([z.boolean(), z.string()]).nullish()
+cwd: z.string().nullish()
+agent_id: z.string().nullish()
+prompt: z.string().nullish()
+prompt_id: z.string().nullish()
+transcript_path: z.string().nullish()
 ```
