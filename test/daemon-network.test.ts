@@ -78,10 +78,61 @@ describe("tentative network authority during owned daemon initialization", () =>
     const { listening, release, network } = await delayedStartup(), { remote } = await remoteService();
     const code = network.keys.invite(), lookup = vi.spyOn(network.keys, "keyFor");
     const port = network.port;
+    let cleanupEntered!: () => void, releaseCleanup!: () => void;
+    const entered = new Promise<void>(resolve => { cleanupEntered = resolve; }), gate = new Promise<void>(resolve => { releaseCleanup = resolve; });
+    const closeBackups = store.closeBackups.bind(store);
+    vi.spyOn(store, "closeBackups").mockImplementation(async () => { cleanupEntered(); await gate; await closeBackups(); });
+    const insert = vi.spyOn(store, "insert"), nativeFallback = vi.spyOn(Reflect.get(broker, "nativeChildren"), "endParent");
     vi.spyOn(network, "activateAuthority").mockImplementation(() => { throw new Error("fixture activation failure"); });
-    release(); await expect(listening).rejects.toThrow("fixture activation failure");
+    const failed = expect(listening).rejects.toThrow("fixture activation failure");
+    release(); await entered;
+    const probe = async (op: "auth" | "trackedSend") => {
+      let client: BridgeClient | undefined;
+      try {
+        client = await BridgeClient.connect(env.pipe, nullLogger);
+        if (op === "auth") return await client.request("auth", { protocol: PROTOCOL_VERSION, token }, 2000);
+        return await client.request("trackedSend", { messageId: randomUUID(), to: "fixture-recipient", body: "Unadmitted fixture bytes" }, 2000);
+      } finally { client?.close(); }
+    };
+    try {
+      expect(Reflect.get(broker, "startupAuthorityRevoked")).toBe(true);
+      await expect(probe("auth")).rejects.toThrow(); await expect(probe("trackedSend")).rejects.toThrow();
+      expect(Reflect.get(broker, "conns").size).toBe(0); expect(insert).not.toHaveBeenCalled(); expect(nativeFallback).not.toHaveBeenCalled();
+    } finally { releaseCleanup(); }
+    await failed;
     expect(network.status().ready).toBe(false); expect(Reflect.get(network, "timer")).toBeNull(); expect(network.peers()).toEqual([]);
     await expect(remote.link(code, host, port)).rejects.toThrow(); expect(lookup).not.toHaveBeenCalled();
+    await expect(BridgeClient.connect(env.pipe, nullLogger)).rejects.toHaveProperty("code");
+  });
+  it("revocation refuses already accepted and queued IPC requests before their handlers while actual cleanup is held", async () => {
+    const { listening, release } = await delayedStartup(); release(); await listening;
+    const client = await BridgeClient.connect(env.pipe, nullLogger);
+    await client.request("auth", { protocol: PROTOCOL_VERSION, token });
+    await client.request("hello", { protocol: PROTOCOL_VERSION, token, peer: { id: randomUUID(), name: "accepted-fixture", agent: "other", cwd: env.home,
+      pid: process.pid, agentPid: null, sessionId: "accepted-fixture", startedAt: 1, autoWake: false } });
+    let releaseTurn!: () => void, cleanupEntered!: () => void, releaseCleanup!: () => void;
+    const turn = new Promise<void>(resolve => { releaseTurn = resolve; }), entered = new Promise<void>(resolve => { cleanupEntered = resolve; }),
+      gate = new Promise<void>(resolve => { releaseCleanup = resolve; });
+    Reflect.set(broker, "requestTurn", turn);
+    const insert = vi.spyOn(store, "insert"), nativeFallback = vi.spyOn(Reflect.get(broker, "nativeChildren"), "endParent"),
+      healthStart = vi.spyOn(Reflect.get(broker, "healthMonitor"), "start");
+    const id = randomUUID(), request = client.request("trackedSend", { messageId: id, to: "fixture-recipient", body: "Unadmitted queued fixture bytes" }, 2000);
+    const rejected = expect(request).rejects.toMatchObject({ code: "internal" });
+    await until(() => Reflect.get(broker, "historyPendingRequests") === 1);
+    const closeBackups = store.closeBackups.bind(store);
+    vi.spyOn(store, "closeBackups").mockImplementation(async () => { cleanupEntered(); await gate; await closeBackups(); });
+    // Simulated late revocation of a real accepted socket. The normal failure
+    // path's synchronous transition has no event-loop window before activation
+    // throws; this separately proves its retained/queued dispatch guard.
+    Reflect.set(broker, "startupAuthorityRevoked", true);
+    const cleanup = Reflect.get(broker, "abortStartup").call(broker);
+    await entered; healthStart.mockClear();
+    try {
+      releaseTurn(); await rejected;
+      await expect(client.request("auth", { protocol: PROTOCOL_VERSION, token }, 2000)).rejects.toMatchObject({ code: "internal" });
+      expect(healthStart).not.toHaveBeenCalled(); expect(insert).not.toHaveBeenCalled(); expect(nativeFallback).not.toHaveBeenCalled();
+      expect(store.unread("fixture-recipient", 100).some(message => message.id === id)).toBe(false);
+    } finally { releaseTurn(); releaseCleanup(); await cleanup; client.close(); }
     await expect(BridgeClient.connect(env.pipe, nullLogger)).rejects.toHaveProperty("code");
   });
 });

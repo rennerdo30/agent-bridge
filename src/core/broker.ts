@@ -206,6 +206,7 @@ export class Broker {
   private readonly remoteProgress = new Map<string, string>();
   private networkChange: Promise<unknown> = Promise.resolve();
   private networkAuthorityDeferred = false;
+  private startupAuthorityRevoked = false;
   private readonly handlers: { [O in Op]: Handler<O> };
   private jobsSnapshot: { active: JsonSnapshot; archive: string; records: Record<string, unknown>[] } | null = null;
   private jobsForDispatch: Record<string, unknown>[] | null = null;
@@ -570,6 +571,7 @@ export class Broker {
       this.networkAuthorityDeferred = false;
       this.server.on("error", err => this.log.error("broker server error", { err }));
     } catch (error) {
+      this.startupAuthorityRevoked = true;
       this.network?.deferAuthority();
       await this.abortStartup().catch(() => {});
       await reservation.close();
@@ -735,6 +737,7 @@ export class Broker {
   }
 
   private accept(socket: Socket): void {
+    if (this.startupAuthorityRevoked) { socket.destroy(); return; }
     const conn: Conn = { socket, peer: null, authed: false, inFlight: 0, mailGeneration: 0 };
     this.conns.add(conn);
     socket.setEncoding("utf8");
@@ -788,6 +791,7 @@ export class Broker {
   }
 
   private async dispatch(conn: Conn, frame: RequestFrame): Promise<void> {
+    if (this.refuseRevokedStartup(conn, frame)) return;
     this.healthMonitor.start();
     // In-memory probes must not pause background work just to observe its status.
     const countsPressure = !["reindexHistory", "health", "ping"].includes(frame.op);
@@ -802,6 +806,7 @@ export class Broker {
       const turn = this.requestTurn.then(() => new Promise<void>((resolve) => setImmediate(resolve)));
       this.requestTurn = turn;
       await turn;
+      if (this.refuseRevokedStartup(conn, frame)) return;
       if (this.closing) return;
       if (!conn.authed && !UNAUTHENTICATED_OPS.has(frame.op)) throw new BridgeError("unauthorized", "authenticate first");
       this.log.debug("request", { op: frame.op, peer: conn.peer?.name });
@@ -822,6 +827,12 @@ export class Broker {
       this.historyBackground?.pressure(this.historyPendingRequests > 0);
       this.store.backupPressure(this.historyPendingRequests > 0);
     }
+  }
+
+  private refuseRevokedStartup(conn: Conn, frame: RequestFrame): boolean {
+    if (!this.startupAuthorityRevoked) return false;
+    this.write(conn, { t: "res", id: frame.id, ok: false, error: { code: "internal", message: "Core initialization is unavailable; no request was admitted." } });
+    return true;
   }
 
   private write(conn: Conn, frame: Parameters<typeof encodeFrame>[0]): boolean {
