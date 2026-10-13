@@ -138,13 +138,16 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
       return sqliteExec.call(this, sql);
     });
     const j = await bootstrap(); spy.mockRestore();
-    Object.defineProperty(captured!, "isTransaction", { configurable: true, get: () => undefined });
+    // Native isTransaction is nonconfigurable. Inject ONLY the unavailable
+    // observation at this private fixture boundary; keep real SQLite methods.
+    const actual = captured!;
+    expect(Reflect.set(j, "writer", { isTransaction: undefined, exec: actual.exec.bind(actual), prepare: actual.prepare.bind(actual) })).toBe(true);
     try {
       const exec = vi.spyOn(DatabaseSync.prototype, "exec");
       expect(() => j.admit(request(), deadline())).toThrow(LifecycleUnavailable);
       expect(j.isQuarantined).toBe(true); expect(j.close()).toBe(false);
       expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE")).toBe(false);
-    } finally { Reflect.deleteProperty(captured!, "isTransaction"); }
+    } finally { Reflect.set(j, "writer", actual); }
   });
   it.skipIf(!portable)("missing established journal is unknown, not repaired/recreated or treated as fresh home", async () => {
     const j = await bootstrap(), input = request(); j.admit(input, deadline());
