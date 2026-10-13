@@ -28,6 +28,7 @@ export function encodeAbsorbedRow(row: StoredRow, columns: readonly string[]): s
     if (typeof v === "bigint") return { i: v.toString() };
     if (typeof v === "number") return { r: v };
     if (typeof v === "string") return { t: v };
+    if (!(v instanceof Uint8Array)) throw new Error(`Unsupported stored value of ${c}; original retained`);
     return { b: Buffer.from(v).toString("base64") };
   }) });
 }
