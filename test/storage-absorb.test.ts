@@ -434,17 +434,29 @@ it.each(["-wal", "-shm", "-journal"])("keeps a DELETE-mode candidate with a dang
 it("retains a checkpointed WAL-header candidate even when no sidecar files remain", async () => {
   await verifiedHome();
   const candidate = join(env.home, ".migration-snapshots", "wal-header-only.db"), writer = new DatabaseSync(candidate);
-  try { writer.exec("PRAGMA journal_mode=WAL; CREATE TABLE snapshots(id TEXT PRIMARY KEY,payload BLOB); INSERT INTO snapshots VALUES('checkpointed',x'FF01FE');"); }
+  let schema: unknown, rows: unknown;
+  try {
+    writer.exec("PRAGMA journal_mode=WAL; CREATE TABLE snapshots(id TEXT PRIMARY KEY,payload BLOB); INSERT INTO snapshots VALUES('checkpointed',x'FF01FE');");
+    schema = writer.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all();
+    rows = writer.prepare("SELECT id,typeof(payload) AS type,hex(payload) AS bytes FROM snapshots").all();
+  }
   finally { writer.close(); }
   expect(existsSync(candidate + "-wal")).toBe(false);
   expect(existsSync(candidate + "-shm")).toBe(false);
   expect(readFileSync(candidate)[18]).toBe(2);
-  const rows = storedInventory(candidate), files = originalFiles([join(env.home, ".migration-snapshots")]), opened = sqliteOpens();
+  // Capture schema/rows before writer close: a separate readonly inventory
+  // would itself create sidecars and stop this exercising the header-only case.
+  const files = originalFiles([join(env.home, ".migration-snapshots")]), opened = sqliteOpens();
   const finalized = runFinalize(env.home, () => {});
   expect(finalized.kept.find(item => item.path === candidate)?.reason).toMatch(/uses WAL.*retained without a SQLite open/);
   const absorbed = runAbsorb(env.home, { apply: true });
   expect(absorbed.sources.find(source => source.path === candidate)?.problems.join(" ")).toMatch(/uses WAL.*retained without a SQLite open/);
   expect(opened).not.toContain(candidate);
   expect(originalFiles([join(env.home, ".migration-snapshots")])).toEqual(files);
-  expect(storedInventory(candidate)).toBe(rows);
+  // Independent inspection follows the command no-open and byte/hash checks.
+  const inspected = new DatabaseSync(candidate, { readOnly: true });
+  try {
+    expect(inspected.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all()).toEqual(schema);
+    expect(inspected.prepare("SELECT id,typeof(payload) AS type,hex(payload) AS bytes FROM snapshots").all()).toEqual(rows);
+  } finally { inspected.close(); }
 });
