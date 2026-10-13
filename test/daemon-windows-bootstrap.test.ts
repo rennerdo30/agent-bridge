@@ -16,6 +16,25 @@ import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
 import { nullLogger } from "../src/core/logger.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
+const originals = vi.hoisted(() => ({ spawn: undefined as typeof import("node:child_process").spawn | undefined,
+  openSync: undefined as typeof import("node:fs").openSync | undefined,
+  fsyncSync: undefined as typeof import("node:fs").fsyncSync | undefined,
+  closeSync: undefined as typeof import("node:fs").closeSync | undefined }));
+// Configurable private fixture exports; every default operation calls the ORIGINAL
+// native implementation. No same-shape child/file/proof or production adapter.
+vi.mock("node:child_process", async importOriginal => {
+  const native = await importOriginal<typeof import("node:child_process")>(); originals.spawn = native.spawn;
+  const spawn = vi.fn(native.spawn);
+  return { ...native, spawn, default: { ...(Reflect.get(native, "default") ?? native), spawn } };
+});
+vi.mock("node:fs", async importOriginal => {
+  const native = await importOriginal<typeof import("node:fs")>();
+  originals.openSync = native.openSync; originals.fsyncSync = native.fsyncSync; originals.closeSync = native.closeSync;
+  const openSync = vi.fn(native.openSync), fsyncSync = vi.fn(native.fsyncSync), closeSync = vi.fn(native.closeSync);
+  return { ...native, openSync, fsyncSync, closeSync,
+    default: { ...(Reflect.get(native, "default") ?? native), openSync, fsyncSync, closeSync } };
+});
+
 // Exact fixture-owned NEW HOME only. No real profile/ancestor ACL mutation.
 const HOME = String.raw`
 $ErrorActionPreference='Stop'
@@ -138,7 +157,7 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
     expect(existsSync(directory())).toBe(false);
   });
   it("identity observer expiry retains the actual helper until its held real close, without creation or late promotion", async () => {
-    const b = await serving(), cap = b.lifecycleServingCapability("prepare", performance.now() + 5000), realSpawn = processes.spawn;
+    const b = await serving(), cap = b.lifecycleServingCapability("prepare", performance.now() + 5000), realSpawn = originals.spawn!;
     let actualClose!: () => void, deliverClose!: () => void, actualCode: number | null = null;
     const closed = new Promise<void>(resolve => { actualClose = resolve; });
     vi.spyOn(processes, "spawn").mockImplementation((...args: Parameters<typeof processes.spawn>) => {
@@ -161,7 +180,7 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
   });
   it("actual DB fsync success cannot label a later journal entry guard failure as successful journal fsync", async () => {
     const b = await serving(), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end);
-    const realOpen = files.openSync, realFsync = files.fsyncSync;
+    const realOpen = originals.openSync!, realFsync = originals.fsyncSync!;
     const owned = new Map<number, "file" | "journal">(); let dbSynced = false, journalSynced = false;
     vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
       if (sql.includes("CREATE TABLE lifecycle_lineage")) captured = this; return sqliteExec.call(this, sql);
@@ -179,8 +198,8 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
     expect(dbSynced).toBe(true); expect(journalSynced).toBe(false); expect(captured!.isTransaction).toBe(false);
   });
   it("SIMULATED owned fsync plus close failure keeps the primary errno and separate close classification", async () => {
-    const b = await serving(), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end), realOpen = files.openSync;
-    const realFsync = files.fsyncSync, realClose = files.closeSync;
+    const b = await serving(), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end), realOpen = originals.openSync!;
+    const realFsync = originals.fsyncSync!, realClose = originals.closeSync!;
     vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
       if (sql.includes("CREATE TABLE lifecycle_lineage")) captured = this; return sqliteExec.call(this, sql);
     });
