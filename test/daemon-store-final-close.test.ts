@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openArchive, archiveInitializationObservation } from "../src/core/sqlite-maintenance.js";
-import { openHistoryStore, historyInitializationObservation, legacyReadNotice } from "../src/core/history-store.js";
+import { openHistoryStore, historyInitializationObservation, legacyReadNotice, historyReadStatus, openHistoryReader, historyReaderObservation } from "../src/core/history-store.js";
 import { storageLease, storageLeaseObservation } from "../src/core/storage-lock.js";
 import { DecisionStore, DECISIONS_SCHEMA } from "../src/core/decisions.js";
 import { HistoryIndex } from "../src/core/history.js";
@@ -28,6 +28,7 @@ vi.mock("node:fs", async importOriginal => {
 // Actual isolated native resources only. Fixture disposal is not a production
 // force-close API or evidence the source's unknown close had succeeded.
 const nativeExec = DatabaseSync.prototype.exec, nativeClose = DatabaseSync.prototype.close;
+const nativeFunction = DatabaseSync.prototype.function, nativePrepare = DatabaseSync.prototype.prepare;
 const owned = new Map<DatabaseSync, { actuallyClosed: boolean }>();
 const ownedStores = new Set<MessageStore>();
 let env: TestEnv;
@@ -437,4 +438,69 @@ describe("managed conversation DTO equivalence before pinned Broker wiring", () 
     expect(store.history.legacyReadNotice).toEqual(migration);
     expect(store.history.lifecycleConsumerObservation()).toMatchObject({ rawBorrower: false, ownerBound: false, settled: false, ownershipReleased: false });
   });
+});
+
+describe("actual readonly history helper capture (not enrolled consumer or cold ownership proof)", () => {
+  function fixture() {
+    const db = openHistoryStore(join(env.home, "history.db")); owned.set(db, { actuallyClosed: false });
+    db.exec("CREATE TABLE owned_reader_fixture(body BLOB NOT NULL); INSERT INTO owned_reader_fixture VALUES(x'00ff04')");
+    dispose(db); const path = join(env.home, "history.db"); return { path, bytes: readFileSync(path) };
+  }
+  it("returned actual readonly reader stays unenrolled and external actual close cannot manufacture a source ACK", () => {
+    const input = fixture(), db = openHistoryReader(input.path); owned.set(db, { actuallyClosed: false });
+    const exec = vi.spyOn(DatabaseSync.prototype, "exec"), prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
+    expect(historyReaderObservation(db)).toMatchObject({ captured: true, kind: "reader", open: "returned", initialize: "returned",
+      close: "not_attempted", retained: false, physicalIdentity: "unproved", consumer: "unenrolled", ownerBound: false, settled: false, ownershipReleased: false });
+    expect(exec).not.toHaveBeenCalled(); expect(prepare).not.toHaveBeenCalled(); vi.restoreAllMocks();
+    expect(() => db.exec("INSERT INTO owned_reader_fixture VALUES(x'01')")).toThrow();
+    expect([...db.prepare("SELECT body FROM owned_reader_fixture").get()!.body as Uint8Array]).toEqual([0, 255, 4]);
+    dispose(db); expect(historyReaderObservation(db)).toMatchObject({ close: "not_attempted", consumer: "unenrolled", ownershipReleased: false });
+    expect(readFileSync(input.path)).toEqual(input.bytes);
+  });
+  it("retains actual unreturned readonly constructor attempts without inventing a DB or physical identity", () => {
+    const input = fixture(), db = openHistoryReader(input.path); owned.set(db, { actuallyClosed: false });
+    const before = historyReaderObservation(db).unknownOpens;
+    expect(() => openHistoryReader(join(env.home, "owned-absent-reader.db"))).toThrow();
+    expect(historyReaderObservation(db)).toMatchObject({ unknownOpens: before + 1, physicalIdentity: "unproved", settled: false, ownershipReleased: false });
+    expect(existsSync(join(env.home, "owned-absent-reader.db"))).toBe(false);
+  });
+  for (const kind of ["reader", "status"] as const) {
+    it(`${kind} captures the actual readonly connection before initialization/page SQL and retains SIMULATED init/close uncertainty`, () => {
+      const input = fixture(), initializationFailure = new Error("SIMULATED readonly helper initialization error"), closeFailure = new Error("SIMULATED readonly close outcome");
+      for (const closeFault of [false, true]) {
+        let captured: DatabaseSync | undefined;
+        if (kind === "reader") {
+          vi.spyOn(DatabaseSync.prototype, "function").mockImplementation(function(this: DatabaseSync, ...args: Parameters<DatabaseSync["function"]>) {
+            const result = nativeFunction.apply(this, args);
+            if (captured === undefined) {
+              captured = this; owned.set(this, { actuallyClosed: false });
+              expect(historyReaderObservation(this)).toMatchObject({ captured: true, kind, open: "returned", initialize: "attempted", close: "not_attempted" });
+              throw initializationFailure;
+            }
+            return result;
+          });
+        } else {
+          vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+            const statement = nativePrepare.call(this, sql);
+            if (captured === undefined) {
+              captured = this; owned.set(this, { actuallyClosed: false });
+              expect(historyReaderObservation(this)).toMatchObject({ captured: true, kind, open: "returned", initialize: "attempted", close: "not_attempted" });
+              throw initializationFailure;
+            }
+            return statement;
+          });
+        }
+        vi.spyOn(DatabaseSync.prototype, "close").mockImplementation(function(this: DatabaseSync) {
+          if (this === captured && closeFault) throw closeFailure;
+          const result = nativeClose.call(this); if (this === captured) owned.get(this)!.actuallyClosed = true; return result;
+        });
+        expect(() => kind === "reader" ? openHistoryReader(input.path) : historyReadStatus(env.db)).toThrow(closeFault ? closeFailure : initializationFailure);
+        expect(historyReaderObservation(captured!)).toMatchObject({ captured: true, initialize: "unknown", close: closeFault ? "unknown" : "returned",
+          retained: true, consumer: "unenrolled", physicalIdentity: "unproved", ownershipReleased: false });
+        vi.restoreAllMocks(); if (!owned.get(captured!)!.actuallyClosed) dispose(captured!);
+        expect(historyReaderObservation(captured!)).toMatchObject({ initialize: "unknown", retained: true, ownershipReleased: false });
+        expect(readFileSync(input.path)).toEqual(input.bytes);
+      }
+    });
+  }
 });
