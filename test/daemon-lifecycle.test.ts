@@ -59,6 +59,9 @@ describe("standalone demand-start broker", () => {
     const peers = Array.from({ length: 10 }, (_, i) => node(`daemon-${i}`));
     await Promise.all(peers.map(peer => peer.start()));
     const pid = await remember(); expect(pid).not.toBe(process.pid);
+    const statusClient = await client();
+    try { expect(await statusClient.request("coreStatus", {})).toMatchObject({ mode: "daemon", pid, version: "0.30.14", connectedClients: 11, runningJobsEvidence: "legacy_registry_labels_not_execution" }); }
+    finally { statusClient.close(); }
     expect(peers.every(peer => !peer.isBroker)).toBe(true);
     expect(await peers[0]!.peers()).toHaveLength(10);
     const ids = await Promise.all(peers.map(peer => peer.health().then(health => health.brokerPid)));
@@ -105,6 +108,9 @@ describe("standalone demand-start broker", () => {
     const a = node("degraded", launch); await a.start();
     expect(a.isBroker).toBe(true); expect(a.hostingEvidence()).toEqual({ hostingMode: "embedded_degraded", reason: "windows_wmi_unavailable" });
     expect(launch).toHaveBeenCalledOnce();
+    const c = await client();
+    try { expect(await c.request("coreStatus", {})).toMatchObject({ mode: "embedded_degraded", reason: "windows_wmi_unavailable" }); }
+    finally { c.close(); }
     const b = node("later", launch); await b.start();
     expect(launch).toHaveBeenCalledOnce(); expect(b.isBroker).toBe(false);
     await b.send({ to: a.name, body: "legacy behavior preserved" }); await until(() => a.unread().length === 1);

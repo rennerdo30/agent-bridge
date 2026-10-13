@@ -31,6 +31,7 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
   void refreshStorePeerIdentities(home).catch(() => {});
   const store = new MessageStore(resolveDbPath(home), log.child("store"));
   const broker = new Broker(pipe, store, log.child("broker"), token, Date.now, join(home, JOBS_FILE), { home, config: config.network }, { ensure: (force, port) => ensureDashboard(force, port) });
+  broker.setHostingMode("daemon");
   let stopping = false, release!: () => void;
   const stopped = new Promise<void>(resolve => { release = resolve; });
   const stop = () => { stopping = true; release(); };

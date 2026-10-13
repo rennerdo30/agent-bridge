@@ -35,6 +35,18 @@ async function main(argv: string[]): Promise<number> {
       config: () => { const cfg = loadConfig(home, "other", log); const port = rest.find(arg => arg.startsWith("--port="))?.slice(7); return { network: cfg.network, mobile: cfg.mobile, dashboardPort: port ? Number(port) : cfg.dashboardPort }; } }, agent: "other", name: CLI_PEER_NAME, cwd: process.cwd(), autoWake: false, log });
 
   switch (command) {
+    case "core": {
+      if (rest.length !== 1 || rest[0] !== "status") throw new Error("Usage: agent-bridge core status. Safe restart/stop awaits the lifecycle prerequisite review.");
+      let client: BridgeClient;
+      try { client = await BridgeClient.connect(pipe, log); }
+      catch (error) {
+        if (["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "")) { out(JSON.stringify({ available: false })); return 0; }
+        throw error;
+      }
+      try { await client.request("auth", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(home) }); out(JSON.stringify(await client.request("coreStatus", {}))); }
+      finally { client.close(); }
+      return 0;
+    }
     case "broker-daemon":
       if (rest.length) throw new Error("broker-daemon accepts no arguments");
       return (await import("./broker-daemon.js")).runBrokerDaemon(home, pipe, log);

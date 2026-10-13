@@ -127,6 +127,10 @@ type Handler<O extends Op> = (conn: Conn, args: RequestMap[O][0]) => RequestMap[
 const HANDOFF_LOCK_WAIT_MS = 2_000;
 const HANDOFF_LOCK_RETRY_MS = 25;
 export class Broker {
+  private hosting: { mode: "daemon" | "embedded" | "embedded_degraded"; reason?: string } = { mode: "embedded" };
+  setHostingMode(mode: "daemon" | "embedded_degraded", reason?: "windows_wmi_unavailable" | "windows_wmi_create_rejected"): void {
+    this.hosting = { mode, ...(reason ? { reason } : {}) };
+  }
   private mobileResources?: Set<() => Promise<void>>;
   private mobileRetiring?: boolean;
   /** Deliberate owner-only activation, after caller validation; no change to ordinary startup. */
@@ -219,6 +223,9 @@ export class Broker {
     this.groups = new ProjectGroups(jobsPath ? dirname(jobsPath) : undefined);
     this.nativeChildren = new NativeChildren(this.store);
     this.handlers = {
+      coreStatus: () => ({ version: APP_VERSION, pid: process.pid, uptimeSeconds: Math.floor(process.uptime()), ...this.hosting,
+        connectedClients: [...this.conns].filter(c => c.authed).length, connectedJobClients: [...this.conns].filter(c => c.authed && c.peer?.jobAgent).length,
+        runningJobs: this.storedJobs().filter(job => job.status === "running").length, runningJobsEvidence: "legacy_registry_labels_not_execution" }),
       ensureDashboard: (c, a) => {
         if (c.peer?.jobAgent || c.peer?.subagent) throw new BridgeError("unauthorized", "Only local project sessions and CLI clients can open the dashboard.");
         const parsed = z.object({ force: z.boolean(), port: z.number().int().min(1).max(65535).optional() }).strict().safeParse(a);

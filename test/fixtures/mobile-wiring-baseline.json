@@ -1,7 +1,7 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "b46136a2548fb9582ce2274793775f68c635fe461ae6e3d3f11d1ac1ff3836f0",
+    "src/core/broker.ts:constructor": "092d0659588267cedc684853f156bab5e924cdb5e37879d25068871530a0fbee",
     "src/core/broker.ts:listen": "eb98a2820f42563b76778c1f642d8a4a704c1af4fd4af43aedee9c1263cf2b4d",
     "src/core/broker.ts:startServices": "4d48b8bdb253d56458edfb283ed7d85b8530185391be52725961d015f5b26b85",
     "src/core/broker.ts:abortStartup": "2c7b606eb6c601f877f5d0283f0f1efcb7e4bc11c1af14857c9ca582e8ad6cb5",
@@ -9,7 +9,7 @@
     "src/core/node.ts:constructor": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
     "src/core/node.ts:start": "922dd81e0ddbe0d79b70656ef14bd97cd1e6e331aeb410b8e9a9d92afce9f402",
     "src/core/node.ts:stop": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
-    "src/core/node.ts:tryBecomeBroker": "ca4a0147682e50d8748825468e6ac49565d931c6a42b5e45e4ecc2f65d1cc669",
+    "src/core/node.ts:tryBecomeBroker": "d41e6d558b3b4b20b8fa6335cc3665ca7e4543b8dd7282195fef5a4fd52ac450",
     "src/cli/dashboard.ts:constructor": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
     "src/cli/dashboard.ts:open": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
@@ -25,6 +25,25 @@
       ],
       "reason": "Scoped native child handlers and retained orphan recovery extend the broker. Other default control-flow and UI pins are unchanged.",
       "commit": "21647e7ba2c563203a606465adec0f0878536683"
+    },
+    "AB-325-1a": {
+      "changes": [
+        {
+          "normalizedSourceFileSha256": "55757cc76149ad6a9aa6f743809149ee13bc599baa9cd8160a91cd6969ef50c2",
+          "previous": "b46136a2548fb9582ce2274793775f68c635fe461ae6e3d3f11d1ac1ff3836f0",
+          "method": "src/core/broker.ts:constructor",
+          "current": "092d0659588267cedc684853f156bab5e924cdb5e37879d25068871530a0fbee"
+        },
+        {
+          "normalizedSourceFileSha256": "e1fe528a267c2a94e28bbbc0e1a6ea69ce13ea418ff515b6514c3868e8e859a9",
+          "previous": "ca4a0147682e50d8748825468e6ac49565d931c6a42b5e45e4ecc2f65d1cc669",
+          "method": "src/core/node.ts:tryBecomeBroker",
+          "current": "d41e6d558b3b4b20b8fa6335cc3665ca7e4543b8dd7282195fef5a4fd52ac450"
+        }
+      ],
+      "reason": "Approved daemon lifecycle handler/read-only status and degraded legacy hosting wiring only. All other method pins and the complete startUi hash remain unchanged. Real hosted daemon auth/concurrency/parent-exit fixtures cover the new path. Failed run 38373145537 remains evidence.",
+      "base": "7adb4817ea2800e56bd26737a81dbe28d7f17219",
+      "initialSourceCommit": "107444c7c705ba723cb69621d87dbbc60a733154"
     }
   },
   "revertedUpdates": {

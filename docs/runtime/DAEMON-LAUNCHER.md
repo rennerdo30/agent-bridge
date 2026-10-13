@@ -4,6 +4,13 @@ Base: `7adb4817ea2800e56bd26737a81dbe28d7f17219`. Frozen design:
 `a7d87f8fa30bae99a0fdd577c5e7c587a4142759`. Owner decision is AB325
 comment 32216; coordinator narrowed 1a to unchanged legacy behavior extraction.
 
+**Release blocked:** the owner subsequently required core status plus safe restart/stop
+for 1a-i. Read-only `agent-bridge core status` reports the actual serving broker's
+version, PID, uptime, mode, clients and explicitly unverified legacy running-job count.
+It does not demand-start. Restart/stop code is held for independent review of
+`DAEMON-LIFECYCLE-PREREQUISITE.md` at frozen note commit
+`354b132171e4e2e8b85c7f18b1aad052cd25e732`; no status-only release is permitted.
+
 Production MCP and CLI nodes first discover the existing broker. Concrete endpoint
 absence permits demand start of `node <bundled-cli> broker-daemon`. All peers remain
 clients. The daemon owns the existing Broker/MessageStore and background services;

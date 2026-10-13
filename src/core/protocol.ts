@@ -226,6 +226,8 @@ export interface AuthArgs {
 }
 
 export interface RequestMap {
+  coreStatus: [Record<string, never>, { version: string; pid: number; uptimeSeconds: number; mode: "daemon" | "embedded" | "embedded_degraded";
+    reason?: string; connectedClients: number; connectedJobClients: number; runningJobs: number; runningJobsEvidence: "legacy_registry_labels_not_execution" }];
   /** Local authenticated daemon lifecycle wiring; no remote target or configuration mutation. */
   ensureDashboard: [{ force: boolean; port?: number }, import("../cli/dashboard.js").DashboardInfo | null];
   /** Virtual addresses are controlled only by the registered parent connection. */

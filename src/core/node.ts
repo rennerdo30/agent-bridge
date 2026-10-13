@@ -102,7 +102,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private client: BridgeClient | null = null;
   private broker: Broker | null = null;
   private daemonLaunch: DaemonLaunch | undefined;
-  private degradedReason: string | undefined;
+  private degradedReason: "windows_wmi_unavailable" | "windows_wmi_create_rejected" | undefined;
   private stopping = false;
   /** The bridge gave this session to another server of it (see reclaim). */
   private replaced = false;
@@ -363,6 +363,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       throw err;
     }
     const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join(dirname(this.opts.dbPath), JOBS_FILE), this.opts.network);
+    if (this.degradedReason) broker.setHostingMode("embedded_degraded", this.degradedReason);
     try {
       await broker.listen();
       if (this.stopping) {
