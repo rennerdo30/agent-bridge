@@ -4,7 +4,8 @@ import { HistoryIndex, HISTORY_TICK_MS } from "./history.js";
 import { ConversationIngestor } from "./conversations.js";
 import { transcriptPaths } from "./transcripts/common.js";
 import { copyLegacyConversationTail, historyMigrationFailure, HISTORY_IO_BYTES_PER_SECOND, legacyTailConflicts, migrateHistoryStore, openHistoryStore } from "./history-store.js";
-import { closeMetadataDbs } from "./metadata-db.js";
+import { checkpointOwnedMetadataConnections, closeMetadataDbs } from "./metadata-db.js";
+import type { HistoryWorkerCheckpoint } from "./history-background.js";
 import { loadConfig } from "./config.js";
 import { nullLogger } from "./logger.js";
 import type { PeerInfo } from "./protocol.js";
@@ -36,6 +37,53 @@ let legacyConflicts = -1;
 let timer: NodeJS.Timeout | null = null;
 let stopped = false, pending = false, ready = false, running = false;
 let requestedReset = false;
+// Keep unapplied accepted intent for a lifecycle seal without changing normal
+// tick/reset admission or its existing backoff behavior.
+let activeReset = false, unappliedReset = false;
+// This identity comes from the owning HistoryBackground's Worker constructor,
+// never from config, a tool argument or an incoming lifecycle request.
+const lifecycleOwnerInstance = workerData.lifecycleOwnerInstance;
+let lifecycleGeneration = 0, lifecycleQuiesced = false, lifecycleUnknown = false;
+const acceptedOperations = new Set<symbol>();
+let checkpointRequest: { requestId: string; generation: number; deadline: number } | null = null;
+let checkpointReported = false;
+let retainedDueAt: number | null = null;
+function acceptOperation(): () => void {
+  const operation = Symbol();
+  acceptedOperations.add(operation);
+  return () => { acceptedOperations.delete(operation); restoreRetainedSchedule(); reportCheckpoint(); };
+}
+function restoreRetainedSchedule(): void {
+  if (lifecycleQuiesced || stopped || running || acceptedOperations.size || timer || retainedDueAt === null) return;
+  const due = retainedDueAt; retainedDueAt = null;
+  schedule(Math.max(0, due - Date.now()));
+}
+function reportCheckpoint(): void {
+  const request = checkpointRequest;
+  if (!request || checkpointReported || !lifecycleQuiesced || running || checkingBudget || acceptedOperations.size) return;
+  checkpointReported = true;
+  const pendingOperations = acceptedOperations.size + peers.size + Number(requestedReset) + pressureWaiters.size + Number(pending);
+  const producerSettled = !stopped && !lifecycleUnknown && pendingOperations === 0;
+  // Only the metadata registry has an existing trusted stage API. HistoryIndex,
+  // ConversationIngestor/history.db and project-store have no owned store closure
+  // contract. Never turn a zero in-memory queue or this stage into release proof.
+  // Metadata path observations do not bind native SQLite handles. The approved
+  // external-replacement fault exclusion never exempts Bridge-owned writers.
+  const metadata = producerSettled && performance.now() < request.deadline
+    ? checkpointOwnedMetadataConnections({ ownerInstance: lifecycleOwnerInstance, generation: request.generation, home: workerData.home,
+        isCurrentSealed: () => lifecycleQuiesced && !stopped && !lifecycleUnknown && lifecycleGeneration === request.generation &&
+          checkpointRequest === request && !running && !checkingBudget && acceptedOperations.size === 0 && !peers.size && !requestedReset && !pressureWaiters.size && !pending }, request.deadline)
+    : null;
+  const unknown = lifecycleUnknown || Boolean(metadata && !metadata.checkpointed && metadata.reason !== "budget" && metadata.reason !== "busy");
+  if (unknown) lifecycleUnknown = true;
+  const result: HistoryWorkerCheckpoint = { ownerInstance: lifecycleOwnerInstance, generation: request.generation, requestId: request.requestId,
+    quiesced: lifecycleQuiesced, pendingOperations, retainedPeers: peers.size, retainedReset: requestedReset,
+    retainedSchedule: retainedDueAt !== null || wakeAfterTick || transcriptsChanged,
+    pressureWaiters: pressureWaiters.size, pressurePending: pending, budgetRunning: checkingBudget, unknown, producerSettled: producerSettled && !unknown,
+    reason: unknown ? "unknown" : producerSettled ? "owner_unsupported" : "pending", metadata,
+    handlesRetained: true, ownershipReleased: false };
+  parentPort?.postMessage({ historyCheckpoint: result });
+}
 const idle = new IdleBackoff(HISTORY_TICK_MS);
 let pauseUntil = 0;
 let storageBudgetPaused = false;
@@ -82,12 +130,14 @@ async function checkStorageBudget(): Promise<boolean> {
 }
 // Migration yields between paced chunks. Recheck admission while it is in progress.
 let checkingBudget = false;
-const budgetTimer = setInterval(() => {
-  if (!running || checkingBudget || stopped) return;
+function budgetTick(): void {
+  if (!running || checkingBudget || stopped || lifecycleQuiesced) return;
+  const finish = acceptOperation();
   checkingBudget = true;
   void checkStorageBudget().catch(error => { storageBudgetPaused = true; parentPort?.postMessage({ error: String(error) }); })
-    .finally(() => { checkingBudget = false; });
-}, 1000);
+    .finally(() => { checkingBudget = false; finish(); });
+}
+let budgetTimer: NodeJS.Timeout | null = setInterval(budgetTick, 1000);
 budgetTimer.unref();
 async function waitForPressureGap(): Promise<void> {
   while (pending && !stopped) await new Promise<void>(resolve => { pressureWaiters.add(resolve); });
@@ -105,6 +155,7 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
     if (await checkStorageBudget()) return { work: 0, discovering: !ready };
     reset = requestedReset;
     requestedReset = false;
+    activeReset = reset;
     if (migrationFailure && !reset) throw new Error(migrationFailure);
     if (importState.error && !reset) throw new Error(importState.error);
     if (reset && importState.error) {
@@ -140,7 +191,7 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
     await waitForPressureGap();
     if (stopped || paused()) return { work: legacyWork, discovering: true };
     for (const [id, peer] of [...peers].slice(0, 32)) { index.rememberPeer(peer); peers.delete(id); }
-    if (reset) index.reset();
+    if (reset) { index.reset(); activeReset = false; unappliedReset = false; requestedReset = false; }
     // Preserve raw bytes before spending the next idle gap on derived indexing.
     // Otherwise a full index batch can consume every gap in sustained traffic.
     const rawWork = ingest.tick();
@@ -157,23 +208,35 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
       parentPort?.postMessage({ migrationProgress });
     }
     throw error;
-  } finally { running = false; }
+  } finally {
+    if (activeReset) { unappliedReset = true; if (lifecycleQuiesced) requestedReset = true; }
+    activeReset = false;
+    running = false;
+  }
 }
 let dueAt = 0, transcriptsChanged = false, wakeAfterTick = false;
 /** A watched transcript change brings a backed-off worker forward to the normal cadence; it never postpones a tick. */
 function wakeSoon(): void {
+  if (lifecycleQuiesced) return;
   if (stopped || !timer || dueAt - Date.now() <= HISTORY_TICK_MS) return;
   idle.reset();
   schedule(HISTORY_TICK_MS);
 }
 // The ingestor is created once the store is ready; it reports watched transcript changes through this hook.
-const onTranscriptChange = () => { transcriptsChanged = true; wakeSoon(); };
+const onTranscriptChange = () => {
+  transcriptsChanged = true;
+  if (lifecycleQuiesced && checkpointReported) parentPort?.postMessage({ historyLifecycleChanged: true });
+  wakeSoon();
+};
 function schedule(delay = HISTORY_TICK_MS): void {
   if (stopped) return;
+  if (lifecycleQuiesced) { retainedDueAt = Date.now() + delay; return; }
+  retainedDueAt = null;
   if (timer) clearTimeout(timer);
   dueAt = Date.now() + delay;
   timer = setTimeout(async () => {
     timer = null;
+    const finish = acceptOperation();
     let next = idle.next(0, false);
     try {
       // Resume on the pressure-clear event; polling can miss short idle gaps.
@@ -190,35 +253,81 @@ function schedule(delay = HISTORY_TICK_MS): void {
     // Backfill gets seconds-scale cadence, never a hot loop. A message wake during the tick runs one more now.
     if (wakeAfterTick) { wakeAfterTick = false; next = 0; }
     schedule(next);
+    finish();
   }, delay);
 }
-function close(): void { clearInterval(budgetTimer); index?.close(); ingest?.close(); source.close(); db.close(); closeMetadataDbs(); parentPort?.close(); }
+function close(): void { if (budgetTimer) clearInterval(budgetTimer); index?.close(); ingest?.close(); source.close(); db.close(); closeMetadataDbs(); parentPort?.close(); }
 parentPort?.on("message", async (message) => {
-  if (message.pressure) {
-    const wasPending = pending;
-    pending = !!message.pending;
-    if (message.lockError) pauseUntil = Date.now() + 5000;
-    if (!pending) { releasePressure(); if (wasPending && !running) { idle.reset(); schedule(0); } }
-    return;
-  }
-  if (message.peer) { peers.set(message.peer.id, message.peer); idle.reset(); if (!running) schedule(0); return; }
-  // A new bridge message: index it now rather than after an idle backoff; during a tick, right after it.
-  if (message.wake) { idle.reset(); if (running) wakeAfterTick = true; else schedule(0); return; }
-  if (message.stop) {
-    stopped = true;
-    releasePressure();
-    if (timer) clearTimeout(timer);
-    while (running) await yieldTurn(10);
-    close(); return;
-  }
-  try {
-    if (message.reconcileAsks) {
-      parentPort?.postMessage({ id: message.id, result: { work: reconcileAskCompletions(join(workerData.home, "jobs.json")), discovering: false } });
+  if (message.historyLifecycle) {
+    if (typeof lifecycleOwnerInstance !== "string" || message.ownerInstance !== lifecycleOwnerInstance ||
+        !Number.isSafeInteger(message.generation) || message.generation < lifecycleGeneration) {
+      lifecycleUnknown = true; return;
+    }
+    if (message.historyLifecycle === "quiesce") {
+      if (message.generation <= lifecycleGeneration) return;
+      lifecycleGeneration = message.generation;
+      lifecycleQuiesced = true;
+      requestedReset ||= unappliedReset || activeReset;
+      checkpointRequest = null; checkpointReported = false;
+      if (timer) { clearTimeout(timer); timer = null; retainedDueAt = dueAt; }
+      if (budgetTimer) clearInterval(budgetTimer);
+      budgetTimer = null;
       return;
     }
-    while (running && !stopped) await yieldTurn(10);
-    parentPort?.postMessage({ id: message.id, result: await tick(message.reset) });
+    if (message.historyLifecycle === "resume") {
+      if (message.generation <= lifecycleGeneration) return;
+      lifecycleGeneration = message.generation;
+      lifecycleQuiesced = false;
+      checkpointRequest = null; checkpointReported = false;
+      if (!budgetTimer && !stopped) { budgetTimer = setInterval(budgetTick, 1000); budgetTimer.unref(); }
+      restoreRetainedSchedule();
+      if (retainedDueAt === null && !timer && (wakeAfterTick || peers.size || requestedReset || transcriptsChanged) && !running) schedule(0);
+      return;
+    }
+    if (message.historyLifecycle === "checkpoint") {
+      if (!lifecycleQuiesced || message.generation !== lifecycleGeneration || checkpointRequest ||
+          typeof message.requestId !== "string" || !Number.isFinite(message.deadline)) { lifecycleUnknown = true; return; }
+      checkpointRequest = { requestId: message.requestId, generation: message.generation, deadline: message.deadline };
+      reportCheckpoint();
+      return;
+    }
+    lifecycleUnknown = true;
+    return;
   }
-  catch (err) { parentPort?.postMessage({ id: message.id, error: String(err) }); }
+  // Pressure clear is a continuation of the accepted writer that caused the
+  // original pressure wait. Inhibiting it would strand already admitted work.
+  if (lifecycleQuiesced && !message.stop && !(message.pressure && !message.pending && !message.lockError)) {
+    lifecycleUnknown = true;
+    return;
+  }
+  const finish = acceptOperation();
+  try {
+    if (message.pressure) {
+      const wasPending = pending;
+      pending = !!message.pending;
+      if (message.lockError) pauseUntil = Date.now() + 5000;
+      if (!pending) { releasePressure(); if (wasPending && !running) { idle.reset(); schedule(0); } }
+      return;
+    }
+    if (message.peer) { peers.set(message.peer.id, message.peer); idle.reset(); if (!running) schedule(0); return; }
+    // A new bridge message: index it now rather than after an idle backoff; during a tick, right after it.
+    if (message.wake) { idle.reset(); if (running) wakeAfterTick = true; else schedule(0); return; }
+    if (message.stop) {
+      stopped = true;
+      releasePressure();
+      if (timer) clearTimeout(timer);
+      while (running) await yieldTurn(10);
+      close(); return;
+    }
+    try {
+      if (message.reconcileAsks) {
+        parentPort?.postMessage({ id: message.id, result: { work: reconcileAskCompletions(join(workerData.home, "jobs.json")), discovering: false } });
+        return;
+      }
+      while (running && !stopped) await yieldTurn(10);
+      parentPort?.postMessage({ id: message.id, result: await tick(message.reset) });
+    }
+    catch (err) { parentPort?.postMessage({ id: message.id, error: String(err) }); }
+  } finally { finish(); }
 });
 schedule();
