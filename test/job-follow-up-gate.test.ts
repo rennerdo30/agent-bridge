@@ -3,12 +3,12 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi, type Mock } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { pidAlive } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 import { metadataFileLease } from "../src/core/metadata-file-lease.js";
-import { JobManager, type FollowUpGate, type Job, type RunnerState } from "../src/mcp/jobs.js";
+import { JobManager, type FollowUpGate, type Job, type Resume, type Run, type RunnerState } from "../src/mcp/jobs.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 import { registerTools, type ServerContext } from "../src/mcp/server.js";
 
@@ -25,7 +25,7 @@ const SECRET = "synthetic-private-content-must-not-escape";
 const reasons: FollowUpGate["reason"][] = ["control_lock_busy", "interrupted_executor_probe",
   "cancellation_guard_foreign_or_unowned", "cancellation_guard_no_resume", "runner_terminal_not_settled"];
 let jobs: JobManager, job: Job, home: string, store: string;
-let resume: ReturnType<typeof vi.fn>, control: ReturnType<typeof vi.fn>, start: ReturnType<typeof vi.fn>;
+let resume: Mock<Resume>, control: Mock<(...args: unknown[]) => Promise<void>>, start: Mock<Run>;
 const closes: (() => Promise<void>)[] = [];
 
 beforeEach(() => {
@@ -35,11 +35,11 @@ beforeEach(() => {
   home = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "follow-up-gate-"));
   store = join(home, "jobs.json");
   const node = new LocalCoordinator("owner", "owner-session");
-  control = vi.fn(async () => {});
+  control = vi.fn<(...args: unknown[]) => Promise<void>>(async () => {});
   Object.assign(node, { controlInlineJob: control });
   jobs = new JobManager(node, nullLogger);
-  start = vi.fn(async () => ({ text: SECRET, sessionId: SECRET, isError: false, details: {} }));
-  resume = vi.fn(() => start);
+  start = vi.fn<Run>(async () => ({ text: SECRET, sessionId: SECRET, isError: false, details: {} }));
+  resume = vi.fn<Resume>(() => start);
   job = jobs.track("codex", null, SECRET, resume, { command: SECRET, auth: SECRET, env: SECRET }).job;
   job.sessionId = SECRET; job.workdir = SECRET; job.progress = SECRET;
   job.queue = [SECRET];
