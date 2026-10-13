@@ -128,6 +128,59 @@ function snapshot(home: string, scope: Scope): Snapshot {
 function same(a: Snapshot, b: Snapshot): boolean { return a.size === b.size && [...a].every(([path, identity]) => b.get(path) === identity); }
 export function pendingWindowsLifecycleVerifications(): number { return pending.size; }
 
+const OWN_IDENTITY = String.raw`
+$ErrorActionPreference='Stop'; $nonce=''
+try {
+  $raw=[Console]::In.ReadToEnd(); if($raw.Length -gt 512) { throw 'unknown' }
+  $r=$raw | ConvertFrom-Json; $nonce=[string]$r.nonce
+  if($r.schema -ne 1 -or $nonce -notmatch '^[0-9a-f-]{36}$' -or [int]$r.pid -le 0) { throw 'unknown' }
+  $process=Get-Process -Id ([int]$r.pid) -ErrorAction Stop
+  @{schema=1;nonce=$nonce;status='verified';pid=[int]$process.Id;creationTicks=$process.StartTime.ToUniversalTime().Ticks.ToString()} | ConvertTo-Json -Compress
+} catch { @{schema=1;nonce=$nonce;status='unknown'} | ConvertTo-Json -Compress }
+`;
+
+/** Bootstrap-only observer. Original remaining budget; no generic fresh5s process
+ * query. Registration precedes spawn and survives expiry until actual child close. */
+export async function readOwnWindowsLifecycleIdentity(capability: LifecycleServingCapability, deadline: number): Promise<string> {
+  const initial = assertLifecycleServingCapability(capability, "prepare");
+  const current = () => {
+    const actual = assertLifecycleServingCapability(capability, "prepare");
+    if (process.platform !== "win32" || !Number.isFinite(deadline) || performance.now() >= deadline ||
+      actual.ownerInstance !== initial.ownerInstance || actual.generation !== initial.generation || actual.home !== initial.home)
+      throw new WindowsLifecyclePathUnavailable("unavailable");
+  };
+  current(); if (pending.size) throw new WindowsLifecyclePathUnavailable("unavailable");
+  const nonce = randomUUID(), registration = { capability, owner: initial.ownerInstance, generation: initial.generation, nonce,
+    child: undefined as ReturnType<typeof spawn> | undefined };
+  pending.add(registration);
+  return new Promise((resolve, reject) => {
+    let settled = false, output = "";
+    const refuse = (reason: "unavailable" | "budget") => { if (!settled) { settled = true; clearTimeout(timer); reject(new WindowsLifecyclePathUnavailable(reason)); } };
+    const timer = setTimeout(() => refuse("budget"), Math.max(0, deadline - performance.now()));
+    try {
+      current();
+      const bin = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+      const child = registration.child = spawn(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(OWN_IDENTITY, "utf16le").toString("base64")],
+        { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
+      child.on("error", () => refuse("unavailable")); child.stdin!.on("error", () => refuse("unavailable")); child.stdout!.setEncoding("utf8");
+      child.stdout!.on("data", (chunk: string) => { if (!settled) { output += chunk; if (Buffer.byteLength(output) > 512) refuse("unavailable"); } });
+      child.once("close", code => {
+        pending.delete(registration); if (settled) return;
+        try {
+          current(); const response: unknown = JSON.parse(output);
+          if (!response || typeof response !== "object") return refuse("unavailable");
+          const value = response as Record<string, unknown>;
+          if (code !== 0 || Object.keys(value).length !== 5 || Object.keys(value).some(key => !["schema", "nonce", "status", "pid", "creationTicks"].includes(key)) ||
+            value.schema !== 1 || value.nonce !== nonce || value.status !== "verified" || value.pid !== process.pid ||
+            typeof value.creationTicks !== "string" || !/^[1-9]\d{0,127}$/.test(value.creationTicks)) return refuse("unavailable");
+          settled = true; clearTimeout(timer); resolve(value.creationTicks);
+        } catch { refuse("unavailable"); }
+      });
+      child.stdin!.end(JSON.stringify({ schema: 1, nonce, pid: process.pid })); child.unref();
+    } catch { refuse("unavailable"); /* Unconfirmed spawn retains registration; no false exit or cleanup. */ }
+  });
+}
+
 /** Fresh phase-local ACL/file observation only. It does NOT open SQLite or prove committed
  * lineage, a non-hot journal, directory-entry power-loss durability, or writable-role ownership. */
 export async function verifyWindowsLifecyclePaths(home: string, ownerInstance: string, phase: Phase, scope: Scope, deadline: number): Promise<WindowsLifecyclePathProof> {

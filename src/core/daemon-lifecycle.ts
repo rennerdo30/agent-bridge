@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { readProcessIdentity } from "./process-identity.js";
 import { assertLifecycleServingCapability, type LifecycleServingCapability } from "./broker.js";
-import { createWindowsLifecycleObjects, assertWindowsLifecycleCreation } from "./lifecycle-windows.js";
+import { createWindowsLifecycleObjects, assertWindowsLifecycleCreation, readOwnWindowsLifecycleIdentity } from "./lifecycle-windows.js";
 
 // These caps belong to lifecycle coordination, not ordinary request deadlines.
 export const LIFECYCLE_PRE_RELEASE_MS = 10_000;
@@ -166,7 +166,7 @@ export class LifecycleJournal {
       const actual = assertLifecycleServingCapability(capability, "prepare");
       if (performance.now() >= deadline || actual.ownerInstance !== initial.ownerInstance || actual.generation !== initial.generation || actual.home !== initial.home) fail("writer_unknown");
     };
-    current(); const creationIdentity = await readProcessIdentity(process.pid); current();
+    current(); const creationIdentity = await readOwnWindowsLifecycleIdentity(capability, deadline); current();
     if (!creationIdentity) fail("writer_unknown");
     const owner = { nonce: initial.ownerInstance, pid: process.pid, creationIdentity };
     const created = await createWindowsLifecycleObjects(capability, deadline); current();
