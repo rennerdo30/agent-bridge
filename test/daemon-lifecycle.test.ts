@@ -143,10 +143,16 @@ describe("standalone demand-start broker", () => {
   it("parent exit and Windows prohibiting Job Object close leave the same authenticated daemon alive", async () => {
     const runtime = join(env.home, "runtime with spaces-日本"); cpSync(join(import.meta.dirname, "../plugins/codex/dist"), runtime, { recursive: true });
     const parentCli = join(runtime, "cli.mjs");
-    const gate = "process.send('ready');process.on('message',()=>{const child=require('node:child_process').spawn(process.execPath,[process.argv[1],'tail'],{windowsHide:true,stdio:'ignore'});child.on('error',()=>process.exit(1));});setInterval(()=>{},1000);";
+    const gate = "process.send('ready');process.on('message',()=>{const child=require('node:child_process').spawn(process.execPath,[process.argv[1],'tail'],{windowsHide:true,stdio:['ignore','ignore','pipe']});child.stderr.on('data',data=>process.send({event:'stderr',text:data.toString()}));child.on('error',error=>process.send({event:'spawn_error',code:error.code}));child.on('exit',code=>process.send({event:'child_exit',code}));});setInterval(()=>{},1000);";
     const parent = spawn(process.execPath, ["-e", gate, parentCli], { cwd: env.home, windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "ignore", "ignore", "ipc"],
       env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_DASHBOARD: "false", AGENT_BRIDGE_HISTORY_INGEST: "0" } });
     children.push(parent);
+    const fixtureEvents: string[] = [];
+    parent.on("message", message => {
+      const event = message as { event?: string; text?: string; code?: string | number };
+      if (event.event === "stderr") fixtureEvents.push(...(event.text?.match(/\b(?:ERR_[A-Z_]+|MODULE_NOT_FOUND|SyntaxError|TypeError)\b/g) ?? []));
+      else if (event.event === "spawn_error" || event.event === "child_exit") fixtureEvents.push(`${event.event}:${event.code}`);
+    });
     let scope: WindowsJobScope | undefined;
     try {
       await once(parent, "message");
@@ -166,7 +172,7 @@ describe("standalone demand-start broker", () => {
           .map(line => line.slice(line.indexOf("daemon creation observation"))).join("\n"); }
         catch { return "no fixture creation observation"; }
       };
-      expect(pid, observations()).toBeDefined();
+      expect(pid, observations() + "; fixture codes: " + fixtureEvents.join(",")).toBeDefined();
       const a = node("observer", async () => { throw new Error("observer must not launch the tested daemon"); });
       await a.start();
       expect((await a.health()).history).toBeNull();
