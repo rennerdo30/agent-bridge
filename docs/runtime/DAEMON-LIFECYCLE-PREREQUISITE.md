@@ -252,8 +252,13 @@ schema migration of existing stores or new dependency. Configure and VERIFY
 `journal_mode=PERSIST`, `synchronous=FULL`, macOS `fullfsync=ON`, `foreign_keys=ON`,
 `trusted_schema=OFF`, and a25ms busy timeout. PERSIST is rollback journaling, not WAL;
 commit retains the journal file and invalidates its header, avoiding per-commit
-directory deletion. Keep the journal/revisions/conflicting request bytes and failed
-transactions for inspection; never truncate/prune history to meet a size envelope.
+directory deletion. Durable history means COMMITTED receipt/revision/conflict table
+rows. The physical PERSIST rollback file is reusable, not an append-only archive
+of failed/uncommitted SQL or acknowledged receipt history. Do not archive/delete an
+active/hot journal as a retention action. A failed/unacknowledged transaction may
+have no durable failure row; disclose unknown rather than claiming its bytes were
+retained. Separately committed failure evidence is retained when safely provable.
+Never truncate/prune committed lifecycle history to meet a size envelope.
 Legacy code must not be offered this database as a compatible domain store.
 
 The sole writer before release is the OLD daemon. Prepared replacement opens with
@@ -287,6 +292,53 @@ transaction retry, inferred rollback, repeated launch or ordinary request replay
 Durable disk flush can stall despite a small transaction: disclose measurements and
 storage assumptions, do not claim a universal hard OS I/O deadline or raise10s RPC.
 No synchronous bulk scan/checkpoint/hash operation is added to the control path.
+
+#### Failed COMMIT settlement and committed-only observation
+
+[SQLite transaction semantics](https://www.sqlite.org/lang_transaction.html) distinguish
+a BUSY COMMIT, which can leave the transaction active, from automatic rollback on
+some errors; an exception alone proves neither rollback nor persistence. Use
+Node22.16's `database.isTransaction` (SQLite autocommit state) to inspect this LOCAL
+receipt transaction. Never publish, prepare, release, promote ownership or report
+done from a SELECT on the writer connection: it can see tentative uncommitted rows.
+
+Every externally observed transition is checked through a separate verified strict
+readOnly/query_only connection and fully settled indexed SELECT, with matching
+lineage/restartId/revision/old instance/request digest. It sees only a committed
+snapshot; do not retain a reader transaction/iterator that obstructs COMMIT. Success
+requires returned COMMIT success, writer autocommit true, expected committed revision
+from that reader AND the configured VFS/durability assumptions. A readable tentative
+or even newly visible row after an I/O error is not proof a flush succeeded.
+
+On failed BEGIN/COMMIT or I/O/FULL/unknown transaction error, latch lifecycle writes
+and effect advancement BEFORE another observer/control request can use tentative
+state. Within the remaining phase budget, if isTransaction is true attempt ONE
+explicit ROLLBACK of ONLY this known local UNCOMMITTED receipt transaction, then
+require isTransaction false and independent committed-snapshot verification. This
+is transaction settlement, not rollback of accepted work, stores, jobs, a committed
+lifecycle effect, replacement creation or public endpoint release. Never retry COMMIT,
+replay a CAS/effect, begin a nested transaction or infer absence from an exception.
+
+If settlement/autocommit/committed observation/durability is unprovable or the phase
+budget is exhausted, quarantine that writer/connection and keep the command unknown.
+Do not use its tentative revision; do not automatically reacquire another writer,
+repair a hot journal, launch another replacement or report a durable failed outcome.
+Release an owned connection only through proven local settlement; failure to release
+its lock remains an explicit blocker. Committed prior rows and any hot artifacts
+remain preserved. Receipt queries use the strict reader and disclose unknown when
+blocked; no writer-state fallback. A separately persisted failure revision, if one
+can be safely committed without retrying the effect, is distinct from the failed CAS.
+
+Before public release, the old daemon may continue/reopen serving admission ONLY
+after proving its substantive ownership stayed intact, no release or successor
+writable acquisition occurred, and reversible producer/admission state is safe.
+Otherwise retain a truthful blocked/unknown state; do not manufacture failed_serving.
+After release, no old-serving/rollback claim follows from a journal exception.
+Required hosted faults: BUSY COMMIT with active transaction, I/O/FULL auto-rollback
+versus active state, ROLLBACK failure/budget exhaustion, writer tentative selection
+invisible to strict receipt reads, success-but-reader-failure quarantine, no prepared
+write/ownership advancement, preserved committed history and reusable PERSIST-file
+semantics. These are code-entry/acceptance obligations, not existing runtime proof.
 
 Primary basis: [SQLite atomic commit](https://www.sqlite.org/atomiccommit.html),
 [locking/VFS flush behavior](https://www.sqlite.org/lockingv3.html),
