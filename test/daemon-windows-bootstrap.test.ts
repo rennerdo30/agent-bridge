@@ -32,12 +32,15 @@ try {
 let env: TestEnv, home: string, broker: Broker | undefined, reservation: EndpointReservation | undefined;
 let journal: LifecycleJournal | undefined, captured: DatabaseSync | undefined;
 const sqliteExec = DatabaseSync.prototype.exec;
+const setupCloses = new Set<Promise<void>>();
 beforeEach(async () => {
   env = makeEnv(); home = join(env.home, "home"); captured = undefined;
   if (process.platform !== "win32") return;
   const bin = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const child = spawn(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(HOME, "utf16le").toString("base64")],
     { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
+  const actualClose = new Promise<void>(resolve => child.once("close", () => resolve()));
+  setupCloses.add(actualClose); void actualClose.then(() => setupCloses.delete(actualClose));
   let output = "";
   child.stdout.on("data", bytes => { output += String(bytes); });
   child.stdin.end(JSON.stringify({ path: home }));
@@ -48,6 +51,8 @@ beforeEach(async () => {
   });
 });
 afterEach(async () => {
+  // A setup observer timeout is not process exit or permission to remove its home.
+  await Promise.all([...setupCloses]);
   vi.restoreAllMocks();
   // Exact isolated test handle disposal ONLY. No production rollback/force-close API.
   if (captured) { if (captured.isTransaction) sqliteExec.call(captured, "ROLLBACK"); captured.close(); captured = undefined; }
