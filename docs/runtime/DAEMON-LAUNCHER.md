@@ -61,8 +61,16 @@ drains owned activation/controller before retiring the same existing services.
 
 Remaining production BridgeNode callers: `mcp/server.ts` and `cli/main.ts` choose
 daemon; `mcp/job-runner.ts` and `mcp/delegate-run.ts` are explicitly connect-only.
-Library/source fixtures that omit daemon options retain embedded behavior, allowing
-mixed retained-client compatibility tests without enabling a production fallback.
+`startUi`'s backend sender defaults to connect-only; the nonmobile manual CLI host
+passes trusted daemon options through DashboardController. Daemon-owned and configured
+mobile hosts remain connect-only and cannot recursively launch themselves. One sender
+node is retained for the complete UI-host lifetime, including failed starts/sends,
+so an unknown launch cannot be erased by retrying an HTTP request. HTTP/config input
+cannot select embedding; library/fixtures require explicit `embeddedCompatibility`.
+Other BridgeNode library/source fixtures that omit daemon options retain the existing
+embedded compatibility path without making it production eligible. Mobile CLI startup
+failure before authenticated connection returns unavailable instead of creating a
+second sender/launch attempt through a desktop fallback. No routes/visuals change.
 
 Hosted workflow checks the exact PR source head on all three documented OSes and
 Node 22/24, compiles JS bundles only there, and retains SOURCE_HEAD plus every plugin

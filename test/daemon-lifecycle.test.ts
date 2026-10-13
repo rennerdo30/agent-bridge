@@ -13,13 +13,17 @@ import { readProcessIdentity } from "../src/core/process-identity.js";
 import { startWindowsJobScope, type WindowsJobScope } from "../src/core/windows-job-scope.js";
 import { fixtureProcessGeneration, fixtureProcessExists } from "./fixture-process-generation.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { startUi, type UiOptions } from "../src/cli/ui.js";
+import { readDashboardInfo } from "../src/cli/dashboard.js";
 
 const cli = join(import.meta.dirname, "../plugins/codex/dist/cli.mjs");
 let env: TestEnv, nodes: BridgeNode[], children: ChildProcess[], owned: Map<number, string>;
 let startupEvidence: Array<Array<{ phase: string; code?: string | number; stage?: string; elapsedMs: number; count: number }>>;
+let dashboards: Array<() => Promise<void>>;
 beforeEach(() => {
   env = makeEnv(); nodes = []; children = []; owned = new Map();
   startupEvidence = [];
+  dashboards = [];
   writeFileSync(join(env.home, "config.json"), JSON.stringify({ dashboard: false }));
 });
 async function client(token = loadOrCreateToken(env.home)) {
@@ -44,12 +48,13 @@ afterEach(async () => {
   // Fixture-only fixed categories. No raw stderr, commands, peer names, paths,
   // authentication material or request/accepted content enters this evidence.
   if (startupEvidence.length) process.stderr.write("AB325 fixture startup evidence " + JSON.stringify(startupEvidence) + "\n");
+  for (const close of dashboards) await close();
   await Promise.all(nodes.map(node => node.stop()));
   for (const child of children) { if (child.exitCode === null && child.signalCode === null) { const closed = once(child, "close"); child.kill(); await closed; } }
   for (const pid of owned.keys()) await stopOwned(pid);
   await env.cleanup();
 });
-function node(name: string, launch?: NonNullable<ConstructorParameters<typeof BridgeNode>[0]["daemon"]>["launch"]) {
+function fixtureStartupLogger(): typeof nullLogger {
   const evidence: typeof startupEvidence[number] = []; startupEvidence.push(evidence);
   const started = performance.now();
   const record = (phase: string, code?: string | number, stage?: string) => {
@@ -66,13 +71,27 @@ function node(name: string, launch?: NonNullable<ConstructorParameters<typeof Br
           ["read", "startup", "create"].includes(String(data?.stage)) ? String(data!.stage) : undefined);
       }
     } };
-  const n = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name, agent: "codex", cwd: env.home, autoWake: false, log: fixtureLog,
+  return fixtureLog;
+}
+function node(name: string, launch?: NonNullable<ConstructorParameters<typeof BridgeNode>[0]["daemon"]>["launch"]) {
+  const n = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name, agent: "codex", cwd: env.home, autoWake: false, log: fixtureStartupLogger(),
     daemon: { cli, launch } });
   nodes.push(n); return n;
 }
 async function port() {
   const server = createServer(); await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const value = (server.address() as { port: number }).port; await new Promise<void>(resolve => server.close(() => resolve())); return value;
+}
+async function dashboard(options: Pick<UiOptions, "brokerDaemon" | "embeddedCompatibility"> = {}) {
+  const ui = await startUi({ home: env.home, pipe: env.pipe, port: 0, log: fixtureStartupLogger(), ...options }); dashboards.push(ui.close);
+  const visit = await fetch(ui.url, { redirect: "manual", signal: AbortSignal.timeout(10_000) });
+  const cookie = visit.headers.get("set-cookie")!.split(";")[0]!;
+  return dashboardSender(ui.url, cookie);
+}
+function dashboardSender(url: string, cookie: string) {
+  const origin = new URL(url).origin;
+  return (body: string, extra: Record<string, unknown> = {}) => fetch(origin + "/api/send", { method: "POST", signal: AbortSignal.timeout(10_000),
+    headers: { cookie, "x-agent-bridge": "1", "content-type": "application/json" }, body: JSON.stringify({ to: "ui-retained", body, ...extra }) });
 }
 function copyFixtureRuntime(source: string, target: string): void {
   // Node's native cpSync has Windows Unicode regressions (nodejs/node#59636).
@@ -90,6 +109,65 @@ function copyFixtureRuntime(source: string, target: string): void {
 }
 
 describe("standalone demand-start broker", () => {
+  it.each([false, true])("actual CLI ui authorized sends use a daemon before/after crash (mobile-configured=%s)", async mobile => {
+    const selected = await port();
+    if (mobile) writeFileSync(join(env.home, "config.json"), JSON.stringify({ dashboard: false, mobile: { enabled: true } }));
+    const child = spawn(process.execPath, [cli, "ui", "--no-open", `--port=${selected}`], { cwd: env.home, windowsHide: true, stdio: "ignore",
+      env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_HISTORY_INGEST: "0" } }); children.push(child);
+    let info: ReturnType<typeof readDashboardInfo> = null;
+    await until(() => !!(info = readDashboardInfo(env.home)), 10_000);
+    const visit = await fetch(info!.url, { redirect: "manual", signal: AbortSignal.timeout(10_000) }), cookie = visit.headers.get("set-cookie")!.split(";")[0]!;
+    expect((await fetch(new URL("/api/send", info!.url), { method: "POST", signal: AbortSignal.timeout(10_000), headers: { "x-agent-bridge": "1", "content-type": "application/json" }, body: '{"to":"ui-retained","body":"unauthorized"}' })).status).toBe(403);
+    const send = dashboardSender(info!.url, cookie);
+    const replies = await Promise.all(Array.from({ length: 5 }, (_, index) => send(`before-crash-${index}`)));
+    expect(replies.map(reply => reply.status)).toEqual([200, 200, 200, 200, 200]);
+    const accepted = await replies[0]!.json() as { id: string }, first = await remember(); expect(first).not.toBe(child.pid);
+    const status = await client(); try { expect(await status.request("coreStatus", {})).toMatchObject({ mode: "daemon", pid: first }); } finally { status.close(); }
+    await stopOwned(first);
+    // A configured mobile desktop was owned by the daemon; re-open the SAME
+    // configured CLI path. The nonmobile desktop remains in the original CLI.
+    if (mobile) {
+      const next = spawn(process.execPath, [cli, "ui", "--no-open", `--port=${selected}`], { cwd: env.home, windowsHide: true, stdio: "ignore",
+        env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_HISTORY_INGEST: "0" } }); children.push(next);
+      await until(() => { const current = readDashboardInfo(env.home); return !!current && current.pid !== first; }, 10_000);
+      info = readDashboardInfo(env.home);
+    }
+    const after = await dashboardSender(info!.url, cookie)("after-crash"); expect(after.status).toBe(200);
+    const nextPid = await remember(); expect(nextPid).not.toBe(first); expect(nextPid).not.toBe(child.pid);
+    const recipient = node("ui-retained"); await recipient.start();
+    await until(() => recipient.unread().some(message => message.id === accepted.id));
+    expect(recipient.unread().find(message => message.id === accepted.id)!.body).toBe("before-crash-0");
+  });
+  it("default UI sender stays connect-only and HTTP data cannot opt into embedding", async () => {
+    const send = await dashboard();
+    expect((await send("connect-only", { embeddedCompatibility: true })).status).toBe(500);
+    expect(existsSync(env.db)).toBe(false);
+    await expect(client()).rejects.toMatchObject({ code: "ENOENT" });
+  });
+  it("UI unknown creation remains in one retained node across authorized sends", async () => {
+    const launch = vi.fn(async () => ({ kind: "unknown" as const })), send = await dashboard({ brokerDaemon: { cli, launch } });
+    expect((await send("unconfirmed-1")).status).toBe(500);
+    expect((await send("unconfirmed-2")).status).toBe(500);
+    expect(launch).toHaveBeenCalledOnce(); expect(existsSync(env.db)).toBe(false);
+  });
+  it("UI definitive unavailable creation preserves explicit degraded compatibility only", async () => {
+    const launch = vi.fn(async () => ({ kind: "unavailable" as const, reason: "windows_wmi_unavailable" as const }));
+    const send = await dashboard({ brokerDaemon: { cli, launch } });
+    expect((await send("degraded-ui")).status).toBe(200); expect(launch).toHaveBeenCalledOnce();
+    const status = await client();
+    try { expect(await status.request("coreStatus", {})).toMatchObject({ mode: "embedded_degraded", pid: process.pid, reason: "windows_wmi_unavailable" }); }
+    finally { status.close(); }
+  });
+  it("UI authentication rejection never creates or degrades a competing broker", async () => {
+    const host = env.node("existing-authority"); await host.start();
+    const token = join(env.home, "token"), saved = join(env.home, "fixture-original-token"); renameSync(token, saved);
+    writeFileSync(token, "wrong-fixture-token");
+    const launch = vi.fn(async () => ({ kind: "unavailable" as const, reason: "windows_wmi_unavailable" as const }));
+    try {
+      const send = await dashboard({ brokerDaemon: { cli, launch } });
+      expect((await send("rejected-ui")).status).toBe(500); expect(launch).not.toHaveBeenCalled(); expect(host.isBroker).toBe(true);
+    } finally { writeFileSync(token, readFileSync(saved)); }
+  });
   it("core status inspects an absent or serving daemon without demand start or peer registration", async () => {
     const inspect = () => JSON.parse(execFileSync(process.execPath, [cli, "core", "status"], { encoding: "utf8", windowsHide: true,
       env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe } }));
