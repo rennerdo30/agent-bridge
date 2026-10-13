@@ -8,10 +8,10 @@ import { makeEnv } from "./helpers.js";
 
 // The fixture advances Date.now for product election deadlines. Its polling
 // budget must use an independent clock so that jump cannot spend 5.1s of it.
-async function until(pred: () => boolean, timeoutMs = 5_000): Promise<void> {
+async function until(pred: () => boolean, timeoutMs = 5_000, diagnostics?: () => unknown): Promise<void> {
   const end = performance.now() + timeoutMs;
   while (!pred()) {
-    if (performance.now() > end) throw new Error("condition not met in time");
+    if (performance.now() > end) throw new Error("condition not met in time" + (diagnostics ? ": " + JSON.stringify(diagnostics()) : ""));
     await delay(20);
   }
 }
@@ -21,6 +21,7 @@ for (const releaseDelayMs of [0, 3_000]) it("gives the successor its full grace 
   const env = makeEnv();
   try {
     let elapsed = 0;
+    const timeline: unknown[] = [];
     const now = Date.now.bind(Date), connect = BridgeClient.connect.bind(BridgeClient);
     vi.spyOn(Date, "now").mockImplementation(() => now() + elapsed);
     vi.spyOn(BridgeClient, "connect").mockImplementation(async (...args) => {
@@ -29,7 +30,10 @@ for (const releaseDelayMs of [0, 3_000]) it("gives the successor its full grace 
         if (op === "hello" && args.peer?.name === "old") {
           // Simulate time consumed between announcement and socket close,
           // after the node's event listener records the original deadline.
-          client.on("event", event => { if (event === "broker_handover") elapsed = BROKER_SUCCESSOR_GRACE_MS + 100; });
+          client.on("event", event => { if (event === "broker_handover") {
+            elapsed = BROKER_SUCCESSOR_GRACE_MS + 100;
+            timeline.push({ event, at: performance.now() });
+          } });
         }
         return request(op, args, timeout);
       });
@@ -50,11 +54,18 @@ for (const releaseDelayMs of [0, 3_000]) it("gives the successor its full grace 
     }
     const sent = await old.send({ to: "later", body: "retained across delayed successor" });
     const next = env.node("next"); await next.setBrokerEligibility(false); await next.start();
+    for (const [name, node] of [["old", old], ["next", next]] as const) {
+      node.on("connected", () => timeline.push({ name, event: "connected", at: performance.now() }));
+      node.on("disconnected", () => timeline.push({ name, event: "disconnected", at: performance.now() }));
+    }
     const ensure = next.ensureConnected.bind(next);
     vi.spyOn(next, "ensureConnected").mockImplementation(async () => { if (elapsed) await delay(200); return ensure(); });
     await next.setBrokerEligibility(true);
     const budget = BROKER_SUCCESSOR_GRACE_MS + RECONNECT_BACKOFF_MIN_MS + ELECTION_RETRY_MAX_MS + 2 * CONNECT_TIMEOUT_MS;
-    await until(() => next.isBroker && old.isConnected && !old.isBroker, budget);
+    timeline.push({ event: "wait-start", at: performance.now(), elapsed });
+    await until(() => next.isBroker && old.isConnected && !old.isBroker, budget, () => ({ releaseDelayMs, elapsed, timeline,
+      states: [old, next].map(node => ({ name: node.name, broker: node.isBroker, connected: node.isConnected,
+        yieldRemaining: (node as any).brokerYieldUntil - Date.now(), yieldOnClose: (node as any).brokerYieldOnClose })) }));
     expect(elapsed).toBe(BROKER_SUCCESSOR_GRACE_MS + 100);
     const later = env.node("later"); await later.start();
     await until(() => later.unread().length === 1);
