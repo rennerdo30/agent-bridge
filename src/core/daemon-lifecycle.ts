@@ -33,8 +33,14 @@ const receiptSchema = z.object({ schema: z.literal(1), restartId: z.string().uui
 export type LifecycleInstance = z.infer<typeof instanceSchema>;
 export type LifecycleReceipt = z.infer<typeof receiptSchema>;
 export type LifecycleRequest = Pick<LifecycleReceipt, "restartId" | "operation" | "oldInstance" | "target">;
+const BOOTSTRAP_STAGES = ["configure", "schema", "commit", "file_flush", "journal_flush", "readonly_lineage", "final_guard"] as const;
+type BootstrapStage = typeof BOOTSTRAP_STAGES[number];
 export class LifecycleUnavailable extends Error {
-  constructor(readonly reason: "private_path" | "publication_unproved" | "lineage_unknown" | "writer_unknown" | "revision_conflict" | "receipt_conflict" | "budget" | "metadata_bound") { super(`Core lifecycle unavailable: ${reason}.`); }
+  readonly bootstrapStage?: BootstrapStage;
+  constructor(readonly reason: "private_path" | "publication_unproved" | "lineage_unknown" | "writer_unknown" | "revision_conflict" | "receipt_conflict" | "budget" | "metadata_bound", bootstrapStage?: BootstrapStage) {
+    super(`Core lifecycle unavailable: ${reason}.`);
+    if (bootstrapStage !== undefined && BOOTSTRAP_STAGES.includes(bootstrapStage)) this.bootstrapStage = bootstrapStage;
+  }
 }
 function fail(reason: LifecycleUnavailable["reason"]): never { throw new LifecycleUnavailable(reason); }
 function digest(value: unknown): string {
@@ -162,26 +168,29 @@ export class LifecycleJournal {
     const lineage: Lineage = { schema: 1, lineage: randomUUID(), homeIdentity: digest(initial.home), directory: identity(dir), file: identity(file), journal: identity(file + "-journal") };
     const writer = (() => { try { guard(); return new DatabaseSync(file, { timeout: BUSY_MS }); } catch { fail("publication_unproved"); } })();
     const journal = new LifecycleJournal(file, lineage, owner, writer);
+    let stage: BootstrapStage = "final_guard";
     try {
-      guard(); configureWriter(writer, guard); guard();
+      guard(); stage = "configure"; configureWriter(writer, guard); stage = "final_guard"; guard();
       if (writer.prepare("PRAGMA journal_size_limit").get()?.journal_size_limit !== -1) fail("publication_unproved");
-      guard(); writer.exec("BEGIN IMMEDIATE"); guard(); writer.exec(SCHEMA);
+      guard(); stage = "schema"; writer.exec("BEGIN IMMEDIATE"); guard(); writer.exec(SCHEMA);
       guard(); writer.prepare("INSERT INTO lifecycle_lineage VALUES (1,?)").run(JSON.stringify(lineage));
-      guard(); writer.exec("COMMIT"); guard();
+      guard(); stage = "commit"; writer.exec("COMMIT"); stage = "final_guard"; guard();
       if (transactionState(writer)) fail("writer_unknown");
       // Actual file flush/reopen evidence only. No Windows directory power-loss claim.
-      guard(); flush(file); guard(); flush(file + "-journal"); guard();
+      guard(); stage = "file_flush"; flush(file); stage = "final_guard"; guard();
+      stage = "journal_flush"; flush(file + "-journal"); stage = "final_guard"; guard();
+      stage = "readonly_lineage";
       const reader = readConnection(file, guard);
       try {
         guard(); const row = reader.prepare("SELECT json FROM lifecycle_lineage WHERE singleton=1").get(); guard();
         if (!row || row.json !== JSON.stringify(lineage)) fail("lineage_unknown");
       } finally { reader.close(); }
-      guard(); return journal;
+      stage = "final_guard"; guard(); return journal;
     } catch {
       // No accepted lifecycle command exists. Keep actual handles/files and any
       // unconfirmed transaction; no rollback, close, cleanup or second bootstrap.
       journal.quarantined = true; failedBootstrapJournals.add(journal);
-      fail("publication_unproved");
+      throw new LifecycleUnavailable("publication_unproved", stage);
     }
   }
 

@@ -67,7 +67,12 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
   it("actual serving issuer publishes real committed lineage with protected new objects and a strict independent reader", async () => {
     const b = await serving(), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end);
     const before = lstatSync(home, { bigint: true });
-    journal = await LifecycleJournal.bootstrapServing(cap, end);
+    journal = await LifecycleJournal.bootstrapServing(cap, end).catch(error => {
+      const stages = ["configure", "schema", "commit", "file_flush", "journal_flush", "readonly_lineage", "final_guard"];
+      if (error?.reason === "publication_unproved" && typeof error.bootstrapStage === "string" && stages.includes(error.bootstrapStage))
+        process.stderr.write("AB325 bootstrap fixture evidence " + JSON.stringify({ reason: "publication_unproved", bootstrapStage: error.bootstrapStage }) + "\n");
+      throw error;
+    });
     expect(pendingWindowsLifecycleVerifications()).toBe(0);
     const after = lstatSync(home, { bigint: true });
     expect([after.dev, after.ino, after.birthtimeNs]).toEqual([before.dev, before.ino, before.birthtimeNs]);
