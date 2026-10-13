@@ -61,6 +61,16 @@ again before final released. Reversible abort resumes only while original
 ownership/producers are intact, no handle or permission was irreversibly retired,
 and the committed-only intent/abort outcome is proved nonuncertain.
 
+Observation and authorized writer preparation are different stages. The registry
+census reads only source-owned records and native transaction properties; it must
+not step schema/page-reading SQL on cached writable connections. A read-looking
+PRAGMA or `authority:false` label is not a no-effect guarantee: a writable handle
+can perform hot-journal recovery while stepping it. Strict actual read-only,
+query-only, committed/nonhot observation precedes any separately authorized
+checkpoint/writer-preparation SQL. Unknown cold/schema/borrower state blocks proof;
+there is no writable probe, implicit recovery or fallback. The metadata observer
+under review at comment 32936 is not an accepted dependency.
+
 The canonical issuer then performs the source-owned `release_intent` transaction
 for the exact selected receipt/lineage/revision/old actor/generation and verifies
 successful COMMIT, autocommit and an independent committed read. Only this source
