@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { closeSync, existsSync, lstatSync, openSync, readSync, readdirSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
-import { decodeBytes, decodeText } from "./history-codec.js";
-import { chainRows } from "./history-migration.js";
+import { decodeBytes } from "./history-codec.js";
+import { chainRows, foldedText } from "./history-migration.js";
 import { HISTORY_V2_COPY_TABLES } from "./history-schema-v2.js";
 
 /** Row-level proof that old data is redundant (owner rule: storage finalize may delete something only when every
@@ -65,7 +65,7 @@ export function logicalTable(name: string): string { return name.replace(/^retai
 
 interface Column { name: string; pk: number }
 function columns(db: DatabaseSync, table: string): Column[] {
-  return db.prepare(`PRAGMA table_info(${q(table)})`).all().map(row => ({ name: String(row.name), pk: Number(row.pk) }));
+  return db.prepare(`PRAGMA table_xinfo(${q(table)})`).all().map(row => ({ name: String(row.name), pk: Number(row.pk) }));
 }
 export function hasTable(db: DatabaseSync, name: string): boolean {
   return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
@@ -86,12 +86,25 @@ export function provableTables(db: DatabaseSync): string[] {
     .map(row => String(row.name)).filter(name => !derived.has(name));
 }
 
-/** v2 stores some columns encoded next to a <column>_codec column; compare decoded values. */
+/** UTF-8 replacement is not an equality proof: keep non-round-trippable bytes as bytes. */
+function losslessText(bytes: Uint8Array): string | Buffer {
+  const buffer = Buffer.from(bytes), text = buffer.toString("utf8");
+  return Buffer.from(text, "utf8").equals(buffer) ? text : buffer;
+}
+
+/** v2 stores some columns encoded next to a <column>_codec column; compare losslessly decoded values. */
 function value(row: Row, column: string): SQLInputValue {
   const v = row[column] ?? null;
   const codec = row[`${column}_codec`];
   if (codec === undefined || v === null) return v;
-  return column === "raw" ? decodeBytes(v, codec) : decodeText(v, codec);
+  const bytes = decodeBytes(v, codec);
+  return column === "raw" ? bytes : losslessText(bytes);
+}
+
+/** Every proof read uses setReadBigInts: INTEGER is bigint, REAL is number, even for 1.0. */
+function sameStoredValue(a: SQLInputValue | undefined, b: SQLInputValue | undefined): boolean {
+  a ??= null; b ??= null;
+  return typeof a === typeof b && (a instanceof Uint8Array) === (b instanceof Uint8Array) && sameValue(a, b);
 }
 
 function sameValue(a: SQLInputValue, b: SQLInputValue): boolean {
@@ -113,11 +126,11 @@ function sameColumn(a: Row, b: Row, column: string): boolean {
 }
 
 /** Stable identity of a row's decoded values over `names` (integers as exact decimal strings). */
-export function rowDigest(row: Row, names: readonly string[], decode = true): string {
+export function rowDigest(row: Row, names: readonly string[], decode: boolean | ReadonlySet<string> = true): string {
   const hash = createHash("sha256");
   for (const name of names) {
-    const v = decode ? value(row, name) : row[name] ?? null;
-    const type = v === null ? "null" : v instanceof Uint8Array ? "blob" : typeof v === "bigint" || (typeof v === "number" && Number.isInteger(v)) ? "int" : typeof v;
+    const v = (typeof decode === "boolean" ? decode : decode.has(name)) ? value(row, name) : row[name] ?? null;
+    const type = v === null ? "null" : v instanceof Uint8Array ? "blob" : typeof v === "bigint" ? "int" : typeof v === "number" ? "real" : typeof v;
     const bytes = v instanceof Uint8Array ? Buffer.from(v) : Buffer.from(String(v), "utf8");
     hash.update(`${name.length}:${name}:${type}:${bytes.length}:`).update(bytes);
   }
@@ -189,15 +202,20 @@ export function tableProof(candidate: DatabaseSync, table: string, ctx: ProofCon
   const where = [...new Set(targets.map(t => t.l.label))].join(", ");
   const absorbedDb = ctx.live.find(l => hasTable(l.db, ABSORBED_ROWS))?.db;
   const known = KNOWN[logical];
-  // Unknown schemas have no documented codec or NULL equivalences: preserve their stored values exactly.
-  const digest = (row: Row) => rowDigest(row, sorted, !!known);
+  // Only these codecs have a documented lossless meaning; codec-looking extensions remain exact stored values.
+  const encoded = new Set(logical === "conversation_records" ? ["raw"] : logical === "history_documents" ? ["body"] : []);
+  const digest = (row: Row) => rowDigest(row, sorted, encoded);
   const has = (t: { cols: Column[] }, wanted: readonly string[]) => wanted.every(w => t.cols.some(c => c.name === w));
   let key = KNOWN[logical]?.key ?? (primaryKey(own).length ? primaryKey(own) : undefined);
   if (!key) for (const t of targets) { const pk = primaryKey(t.cols); if (pk.length && pk.every(k => cols.includes(k))) { key = pk; break; } }
   if (key && !key.every(k => cols.includes(k))) key = undefined;
-  // An inferred PK identifies a row, never its payload. Compare every other candidate column too.
-  const sameCols = known?.same ?? cols.filter(c => !key?.includes(c));
-  const keyed = key ? targets.filter(t => has(t, key!) && has(t, sameCols)) : [];
+  // Natural keys do not prove any other content. Cover extensions and metadata on recognized names too.
+  // Record ids can move; raw/body codec fields describe the lossless values already compared below.
+  const equivalent = new Set([...encoded].map(c => `${c}_codec`));
+  if (logical === "conversation_records") equivalent.add("id");
+  const sameCols = [...new Set([...(known?.same ?? []), ...cols.filter(c => !key?.includes(c) && !equivalent.has(c))])];
+  const complete = !known || [...known.key, ...known.same].every(c => cols.includes(c));
+  const keyed = key && complete ? targets.filter(t => has(t, key!) && has(t, sameCols)) : [];
   const full = key ? [] : targets.filter(t => has(t, cols));
   // The aligned shortcut must obey the same schema and excluded-target checks as lookup.
   if (aligned && !(key ? keyed : full).some(t => t.l.db === aligned!.db && t.name === aligned!.table)) aligned = undefined;
@@ -206,21 +224,29 @@ export function tableProof(candidate: DatabaseSync, table: string, ctx: ProofCon
   else if (key && !keyed.length) problem = `no live ${logical} table has the key ${key.join(",")}`;
   else if (!key && !full.length) problem = `rows without a key, and no live ${logical} table can be compared row by row`;
   const recordBody = (row: Row): SQLInputValue => {
-    if (row.body !== null && row.body !== undefined) return value(row, "body");
+    if (row.body !== null && row.body !== undefined) return row.body;
     const raw = value(row, "raw");
     // Only SQL NULL means raw as UTF-8. Explicit empty text still carries a distinct stored value.
-    return raw instanceof Uint8Array ? Buffer.from(raw).toString("utf8") : raw;
+    return raw instanceof Uint8Array ? losslessText(raw) : raw;
+  };
+  const documentFolded = (row: Row): SQLInputValue | undefined => {
+    if (row.folded !== null && row.folded !== undefined) return row.folded;
+    const body = value(row, "body");
+    return typeof body === "string" ? foldedText(body) : undefined;
   };
   const sameContent = (a: Row, b: Row, c: string) => {
     if (logical === "conversation_records" && c === "body") return sameValue(recordBody(a), recordBody(b));
-    if (known) return sameColumn(a, b, c);
-    const av = a[c] ?? null, bv = b[c] ?? null;
-    if ((av instanceof Uint8Array) !== (bv instanceof Uint8Array)) return false;
-    return sameValue(av, bv);
+    if (logical === "history_documents" && c === "folded") {
+      if (sameStoredValue(a[c], b[c])) return true;
+      const av = documentFolded(a), bv = documentFolded(b);
+      return av !== undefined && bv !== undefined && sameStoredValue(av, bv);
+    }
+    if (encoded.has(c)) return sameColumn(a, b, c);
+    return sameStoredValue(a[c], b[c]);
   };
   /** Content equality under this table's rule: key plus preserved columns, or the whole row. */
   const matches = (candidateRow: Row, liveRow: Row) => key
-    ? key.every(k => known ? sameValue(candidateRow[k] ?? null, liveRow[k] ?? null) : sameContent(candidateRow, liveRow, k)) && sameCols.every(c => sameContent(candidateRow, liveRow, c))
+    ? key.every(k => sameStoredValue(candidateRow[k], liveRow[k])) && sameCols.every(c => sameContent(candidateRow, liveRow, c))
     : cols.every(c => sameContent(candidateRow, liveRow, c));
 
   /** Only the columns the rule compares are read (plus their codec columns), so large payloads stay on disk. */
@@ -301,7 +327,7 @@ export function tableProof(candidate: DatabaseSync, table: string, ctx: ProofCon
       let hit = false;
       for (const c of mergeCursors) {
         while (c.current && compareKeys(c.current, wanted) < 0) { const next = c.it.next(); c.current = next.done ? undefined : key!.map(k => next.value[k] ?? null); }
-        if (c.current && compareKeys(c.current, wanted) === 0) hit = true;
+        if (c.current && compareKeys(c.current, wanted) === 0 && wanted.every((v, i) => sameStoredValue(v, c.current![i]!))) hit = true;
       }
       return hit;
     };

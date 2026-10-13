@@ -359,6 +359,110 @@ it("AB-215: a codec proof error keeps every retained table and releases the main
   expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toContain(`history.db:${retained}`);
 });
 
+/** Inspect stored bytes and SQL numeric classes independently of semantic decoding and the proof digest. */
+function assertRetainedPayload(history: DatabaseSync, retained: string) {
+  const before = retainedContent(history, retained, "stored");
+  expect(before.count).toBe(1);
+  for (const checked of [planFinalize(env.home, { prove: true }), runFinalize(env.home, () => {}, { dryRun: true }), runFinalize(env.home, () => {})]) {
+    expect(checked.ready).toBe(true);
+    expect(checked.items.map(i => i.path)).not.toContain(`history.db:${retained}`);
+    expect(checked.kept.map(i => i.path)).toContain(`history.db:${retained}`);
+    expect(retainedContent(history, retained, "stored")).toEqual(before);
+  }
+  return before;
+}
+
+it.each([[0, false], [0, true], [2, false], [2, true]] as const)("AB-215 review: malformed document bytes survive codec=%s moved rowid=%s until lossless recovery", async (codec, moved) => {
+  const { history, retained, id } = await retainedPayload("history_documents", moved);
+  const original = Buffer.from([0xff]), different = Buffer.from([0xfe]);
+  const encode = (bytes: Buffer) => codec === 2 ? brotliCompressSync(bytes) : bytes;
+  history.prepare(`UPDATE ${retained} SET body=?,body_codec=?`).run(encode(original), codec);
+  history.prepare("UPDATE history_documents SET body=?,body_codec=? WHERE rowid=?").run(encode(different), codec, id);
+  // This is the destructive trigger: permissive UTF-8 decoding erases the byte distinction.
+  expect(decodeText(encode(original), codec)).toBe(decodeText(encode(different), codec));
+  const before = assertRetainedPayload(history, retained);
+  expect(Buffer.from(history.prepare(`SELECT body FROM ${retained}`).get()!.body as Uint8Array).equals(encode(original))).toBe(true);
+  // The replacement character is not recovery of the original malformed bytes either.
+  history.prepare("UPDATE history_documents SET body=?,body_codec=0 WHERE rowid=?").run("\ufffd", id);
+  expect(runFinalize(env.home, () => {}, { dryRun: true }).kept.map(i => i.path)).toContain(`history.db:${retained}`);
+  expect(retainedContent(history, retained, "stored")).toEqual(before);
+  // Same decompressed bytes across codecs are losslessly provable, including malformed text.
+  history.prepare("UPDATE history_documents SET body=?,body_codec=? WHERE rowid=?").run(codec === 2 ? original : brotliCompressSync(original), codec === 2 ? 0 : 2, id);
+  expect(runFinalize(env.home, () => {}, { dryRun: true }).items.map(i => i.path)).toContain(`history.db:${retained}`);
+  expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toContain(`history.db:${retained}`);
+});
+
+it.each([
+  ["history_pending", false], ["history_pending", true],
+  ["history_documents", false], ["history_documents", true],
+  ["conversation_records", false], ["conversation_records", true],
+] as const)("AB-215 review: %s extension bytes survive missing/different live columns at moved rowid=%s", async (logical, moved) => {
+  const { history, retained, id } = await retainedPayload(logical, moved);
+  if (logical === "conversation_records") history.exec("DROP TRIGGER conversation_records_no_update");
+  history.prepare(`UPDATE ${logical} SET body=? WHERE rowid=?`).run(retainedBody, id);
+  history.exec(`ALTER TABLE ${retained} ADD COLUMN original_payload;
+    ALTER TABLE ${retained} ADD COLUMN original_payload_codec;
+    UPDATE ${retained} SET original_payload=x'ff',original_payload_codec=0;`);
+  const absent = assertRetainedPayload(history, retained);
+  history.exec(`ALTER TABLE ${logical} ADD COLUMN original_payload;
+    ALTER TABLE ${logical} ADD COLUMN original_payload_codec;
+    UPDATE ${logical} SET original_payload=x'fe',original_payload_codec=0;`);
+  // A codec-looking extension has no documented semantic equivalence, even on a recognized name.
+  expect(decodeText(Buffer.from([0xff]), 0)).toBe(decodeText(Buffer.from([0xfe]), 0));
+  expect(assertRetainedPayload(history, retained)).toEqual(absent);
+  history.prepare(`UPDATE ${logical} SET original_payload=x'ff' WHERE rowid=?`).run(id);
+  expect(runFinalize(env.home, () => {}, { dryRun: true }).items.map(i => i.path)).toContain(`history.db:${retained}`);
+  expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toContain(`history.db:${retained}`);
+});
+
+it.each([true, false])("AB-215 review: unknown keyed=%s rows preserve INTEGER versus integral REAL payloads", async keyed => {
+  const history = await legacyHome(true);
+  await migrateJobArchives(join(env.home, "jobs.json"));
+  history.exec(`CREATE TABLE unknown_numeric(${keyed ? "id TEXT PRIMARY KEY," : ""}payload);
+    INSERT INTO unknown_numeric VALUES(${keyed ? "'n'," : ""}1.0);
+    CREATE TABLE retained_220_unknown_numeric AS SELECT rowid AS retained_rowid,* FROM unknown_numeric;
+    UPDATE retained_220_unknown_numeric SET payload=1;`);
+  const retained = "retained_220_unknown_numeric";
+  const ctx = { live: [{ label: "fixture", db: history }] };
+  expect(history.prepare(`SELECT typeof(payload) t FROM ${retained}`).get()!.t).toBe("integer");
+  expect(history.prepare("SELECT typeof(payload) t FROM unknown_numeric").get()!.t).toBe("real");
+  expect(proveTable(history, retained, ctx, { db: history, table: "unknown_numeric", by: "retained_rowid" })).not.toBeNull();
+  expect(retainedContent(history, retained, "stored").sha256).not.toBe(retainedContent(history, "unknown_numeric", "stored").sha256);
+  const before = assertRetainedPayload(history, retained);
+  expect(history.prepare(`SELECT typeof(payload) t FROM ${retained}`).get()!.t).toBe("integer");
+  expect(retainedContent(history, retained, "stored")).toEqual(before);
+  history.exec("UPDATE unknown_numeric SET payload=1");
+  expect(runFinalize(env.home, () => {}, { dryRun: true }).items.map(i => i.path)).toContain(`history.db:${retained}`);
+  expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toContain(`history.db:${retained}`);
+});
+
+it("AB-215 review: the indexed key-only merge retains an unknown INTEGER key against a REAL key", async () => {
+  const history = await legacyHome(true);
+  await migrateJobArchives(join(env.home, "jobs.json"));
+  history.exec(`CREATE TABLE unknown_numeric_key(k PRIMARY KEY);
+    CREATE TABLE retained_221_unknown_numeric_key(k PRIMARY KEY);
+    INSERT INTO unknown_numeric_key VALUES(1.0);
+    INSERT INTO retained_221_unknown_numeric_key VALUES(1);`);
+  const retained = "retained_221_unknown_numeric_key";
+  expect(history.prepare("SELECT typeof(k) t FROM unknown_numeric_key").get()!.t).toBe("real");
+  const before = assertRetainedPayload(history, retained);
+  expect(history.prepare(`SELECT typeof(k) t FROM ${retained}`).get()!.t).toBe("integer");
+  expect(retainedContent(history, retained, "stored")).toEqual(before);
+  history.exec("DELETE FROM unknown_numeric_key; INSERT INTO unknown_numeric_key VALUES(1)");
+  expect(runFinalize(env.home, () => {}, { dryRun: true }).items.map(i => i.path)).toContain(`history.db:${retained}`);
+  expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toContain(`history.db:${retained}`);
+});
+
+it("AB-215 review: document folded derivation and record relocated ids retain their documented equivalences", async () => {
+  const { history, retained, id } = await retainedPayload("history_documents", true);
+  history.prepare("UPDATE history_documents SET body=?,folded=NULL WHERE rowid=?").run(retainedBody, id);
+  history.prepare(`UPDATE ${retained} SET folded=?`).run(retainedBody.toLowerCase());
+  history.exec("CREATE TABLE retained_222_conversation_records AS SELECT rowid AS retained_rowid,* FROM conversation_records");
+  history.exec("UPDATE retained_222_conversation_records SET id=id+100,retained_rowid=retained_rowid+100");
+  const result = runFinalize(env.home, () => {});
+  expect(result.items.map(i => i.path)).toEqual(expect.arrayContaining([`history.db:${retained}`, "history.db:retained_222_conversation_records"]));
+});
+
 it("AB-211: drops v1_* tables only with a row-level proof against v2", async () => {
   const old = new DatabaseSync(env.db);
   old.exec("CREATE TABLE messages(id TEXT,body TEXT,from_agent TEXT,from_name TEXT,from_id TEXT,recipient TEXT,to_target TEXT,created_at INTEGER)");
