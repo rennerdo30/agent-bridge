@@ -28,9 +28,9 @@ try {
   $r=$raw | ConvertFrom-Json
   $nonce=[string]$r.nonce
   if($r.schema -ne 1 -or $nonce -notmatch '^[0-9a-f-]{36}$' -or $r.scope -notin @('home','established')) { Refuse 'unavailable' }
-  $home=[IO.Path]::GetFullPath([string]$r.home)
-  if($home -notmatch '^[A-Za-z]:\\' -or $home.Length -gt 4096) { Refuse 'unsafe_path' }
-  $drive=New-Object IO.DriveInfo([IO.Path]::GetPathRoot($home))
+  $lifecycleHome=[IO.Path]::GetFullPath([string]$r.home)
+  if($lifecycleHome -notmatch '^[A-Za-z]:\\' -or $lifecycleHome.Length -gt 4096) { Refuse 'unsafe_path' }
+  $drive=New-Object IO.DriveInfo([IO.Path]::GetPathRoot($lifecycleHome))
   if($drive.DriveType -ne [IO.DriveType]::Fixed -or $drive.DriveFormat -notin @('NTFS','ReFS')) { Refuse 'unsupported_fs' }
   $id=[Security.Principal.WindowsIdentity]::GetCurrent()
   $sid=$id.User.Value
@@ -63,16 +63,16 @@ try {
     }
     if($target -and -not $ownerFull) { Refuse 'unsafe_acl' }
   }
-  $at=$home; $depth=0
+  $at=$lifecycleHome; $depth=0
   for(;;) {
     if(++$depth -gt 128) { Refuse 'unsafe_path' }
-    if($at -eq $home) { Inspect $at $true $false $homeMask } else { Inspect $at $true $false $ancestorMask }
+    if($at -eq $lifecycleHome) { Inspect $at $true $false $homeMask } else { Inspect $at $true $false $ancestorMask }
     $parent=[IO.Directory]::GetParent($at)
     if($null -eq $parent) { break }
     $at=$parent.FullName
   }
   if($r.scope -eq 'established') {
-    $dir=[IO.Path]::Combine($home,'.core-lifecycle')
+    $dir=[IO.Path]::Combine($lifecycleHome,'.core-lifecycle')
     Inspect $dir $true $true $homeMask
     Inspect ([IO.Path]::Combine($dir,'receipts.sqlite')) $false $true $homeMask
     Inspect ([IO.Path]::Combine($dir,'receipts.sqlite-journal')) $false $true $homeMask

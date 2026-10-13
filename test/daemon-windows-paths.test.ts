@@ -27,8 +27,8 @@ try {
     [void][IO.Directory]::CreateDirectory($path,$acl)
   }
   $ancestor=[IO.Path]::Combine([string]$r.root,'ancestor'); CreatePrivate $ancestor
-  $home=[IO.Path]::Combine($ancestor,'home'); CreatePrivate $home
-  $dir=[IO.Path]::Combine($home,'.core-lifecycle'); CreatePrivate $dir
+  $fixtureHome=[IO.Path]::Combine($ancestor,'home'); CreatePrivate $fixtureHome
+  $dir=[IO.Path]::Combine($fixtureHome,'.core-lifecycle'); CreatePrivate $dir
   foreach($name in @('receipts.sqlite','receipts.sqlite-journal')) {
     $path=[IO.Path]::Combine($dir,$name)
     $stream=New-Object IO.FileStream($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
@@ -43,9 +43,9 @@ try {
   $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($foreign,$grant,$none,'None',$allow)))
   [IO.Directory]::SetAccessControl($ancestor,$acl)
   if($r.homeGrant -ne 'none') {
-    $acl=[IO.Directory]::GetAccessControl($home)
+    $acl=[IO.Directory]::GetAccessControl($fixtureHome)
     $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($foreign,[string]$r.homeGrant,$none,'None',$allow)))
-    [IO.Directory]::SetAccessControl($home,$acl)
+    [IO.Directory]::SetAccessControl($fixtureHome,$acl)
   }
   if($r.targetGrant -ne 'none') {
     $path=[IO.Path]::Combine($dir,'receipts.sqlite')
