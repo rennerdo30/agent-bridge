@@ -136,6 +136,12 @@ schema: { permission_mode: z.enum(CLAUDE_PERMISSION_MODES as [string, ...string[
 ```
 
 ```ts
+schema: {
+      permission_profile: z.string().min(1).max(80).optional().describe("Named Muse permission profile from its settings (--permission-profile)"),
+    }
+```
+
+```ts
 schema: { auto_approve: z.boolean().optional().describe("Overrides access: auto-approve every opencode permission request (opencode run --auto)") }
 ```
 

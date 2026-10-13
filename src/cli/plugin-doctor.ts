@@ -104,7 +104,7 @@ export function inspectPluginVersions(paths: PluginDoctorPaths, processes: Serve
   }
   const recorded = new Map<number, { client: PluginClient; version: string; worker: string }>();
   for (const home of [paths.bridge, join(paths.opencode, "agent-bridge"), join(dirname(paths.antigravity), ".agent-bridge-runtime")]) {
-    for (const client of ["claude", "codex", "opencode", "antigravity"] as const) {
+    for (const client of ["claude", "codex", "opencode", "antigravity", "muse"] as const) {
       try { for (const session of liveRuntimeSessions(home, client)) recorded.set(session.pid, session); } catch { /* separately inspected selectors report link errors */ }
     }
   }
@@ -114,10 +114,10 @@ export function inspectPluginVersions(paths: PluginDoctorPaths, processes: Serve
   };
   for (const proc of processes) {
     const normalized = proc.command.replaceAll("\\", "/");
-    const client = /--agent=(claude|codex|opencode|antigravity)\b/.exec(normalized)?.[1] as PluginClient | undefined;
+    const client = /--agent=(claude|codex|opencode|antigravity|muse)\b/.exec(normalized)?.[1] as PluginClient | undefined;
     if (!client || !/\/(?:server|worker)\.mjs(?:"|\s|$)/.test(normalized) || !normalized.includes("agent-bridge")) continue;
     const session = recorded.get(proc.pid);
-    const version = session?.version ?? /(?:cache\/agent-bridge\/agent-bridge|plugin-versions\/(?:claude|codex|opencode|antigravity))\/(\d+\.\d+\.\d+)\//.exec(normalized)?.[1];
+    const version = session?.version ?? /(?:cache\/agent-bridge\/agent-bridge|plugin-versions\/(?:claude|codex|opencode|antigravity|muse))\/(\d+\.\d+\.\d+)\//.exec(normalized)?.[1];
     reportProcess(proc.pid, client, version, session?.worker ?? proc.command); recorded.delete(proc.pid);
   }
   for (const [pid, session] of recorded) reportProcess(pid, session.client, session.version, session.worker);

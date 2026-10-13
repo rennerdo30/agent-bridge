@@ -110,6 +110,13 @@ export async function describeModels(agent: CodingAgent, cfg: BridgeConfig, cwd:
         ...tail,
       ];
     }
+    if (agent === "muse") {
+      return [
+        `Muse cannot list its models. Pass any model id muse accepts verbatim (e.g. "muse-spark-1.3"); "muse model-profile show <model>" resolves one known model.`,
+        `Efforts: none, minimal, low, medium, high, xhigh, max, ultra.`,
+        ...tail,
+      ];
+    }
     if (agent === "antigravity") {
       const rows = (await captureOutput(cfg.antigravityBin, ["models"], cwd, log)).split(/\r?\n/).map((line) => /^([A-Za-z0-9][\w.-]*)\t+(.+)$/.exec(line.trim())).filter((row) => row && match(row[1], row[2]));
       return [`Antigravity CLI models (${rows.length}):`, ...rows.slice(0, MAX_LISTED).map((row) => `- ${row![1]}: ${row![2]}`), "Efforts: low, medium, high, xhigh, max (model-dependent).", ...tail];

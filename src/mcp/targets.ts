@@ -1,6 +1,7 @@
 import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS } from "../core/constants.js";
 import { z } from "zod";
 import { delegateToAntigravity } from "../core/antigravity.js";
+import { delegateToMuse } from "../core/muse.js";
 import { CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES, type BridgeConfig, type ClaudePermissionMode, type CodexApprovalsReviewer, type CodexSandbox } from "../core/config.js";
 import { DelegateError, delegateToClaude, delegateToCodex, delegateToOpencode, type DelegateRequest, type DelegateResult } from "../core/delegate.js";
 import { listOpencodeModels, resolveOpencodeModel } from "../core/opencode-models.js";
@@ -42,6 +43,7 @@ export interface TargetArgs {
   auto_approve?: boolean;
   terminal_sandbox?: boolean;
   bypass_permissions?: boolean;
+  permission_profile?: string;
 }
 
 export interface DelegationTarget {
@@ -171,6 +173,24 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
         ...base,
         bin: cfg.claudeBin,
         permissionMode: claudeModeFor(cfg, a),
+      }),
+  },
+  muse: {
+    title: "Muse (muse)",
+    modelExample: '"muse-spark-1.3" or any model id muse accepts',
+    effortExample: '"none", "minimal", "low", "medium", "high", "xhigh", "max" or "ultra"',
+    defaultModel: (cfg) => cfg.museModel,
+    schema: {
+      permission_profile: z.string().min(1).max(80).optional().describe("Named Muse permission profile from its settings (--permission-profile)"),
+    },
+    permissionNote: () => "Muse read runs disable workspace writes and shell and never approve prompts; edit runs disable approval prompts while the OS sandbox stays on. Ask behaves as read for Muse in this version (no external approval relay).",
+    permission: (_cfg, a) => a.permission_profile ?? (a.access === "edit" ? "edit (no approval prompts)" : "read"),
+    run: (cfg, base, a) =>
+      delegateToMuse({
+        ...base,
+        bin: cfg.museBin,
+        access: a.access === "edit" ? "edit" : "read",
+        permissionProfile: a.permission_profile ?? null,
       }),
   },
   opencode: {

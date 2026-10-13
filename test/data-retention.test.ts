@@ -36,6 +36,8 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   "core/sqlite-migrations.ts": ["`DELETE FROM ${quoted}`"],
   // Temporary working folder (mkdtempSync) of the low-cost model that answers search questions.
   "core/history-answer.ts": ["rmSync(cwd, { recursive: true, force: true })"],
+  // Bridge-owned scratch folder (mkdtempSync) holding only the prompt file of one Muse run.
+  "core/muse.ts": ["rmSync(dir, { recursive: true, force: true })"],
   // Derived search index only (pending queue, full rebuild by reindex); source messages, logs and transcripts are read-only.
   "core/history.ts": ['"DELETE FROM history_pending WHERE id=? AND recipient=?"', '"DELETE FROM history_documents; DELETE FROM history_tags; DELETE FROM history_cursors WHERE source<>\'legacy-record-tail\'; DELETE FROM history_files;"'],
   // Temporary duplicates after whole-file SHA-256 verification and exclusive publication of the final file; truncation trims

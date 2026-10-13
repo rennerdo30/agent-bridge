@@ -1,6 +1,6 @@
 import { readFileSync, unwatchFile, watchFile } from "node:fs";
 import { basename, join } from "node:path";
-import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_MAX_JOBS, DEFAULT_MAX_DELEGATE_DEPTH, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV, MAX_DELEGATE_DEPTH_LIMIT, MAX_JOBS_LIMIT } from "./constants.js";
+import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_MAX_JOBS, DEFAULT_MAX_DELEGATE_DEPTH, DEFAULT_MUSE_BIN, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV, MAX_DELEGATE_DEPTH_LIMIT, MAX_JOBS_LIMIT } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { AGENT_KINDS, type AgentKind } from "./protocol.js";
 import { isRecord, readJsonStore, writeJsonStore } from "./json-store.js";
@@ -85,6 +85,8 @@ export interface BridgeConfig {
   /** Google's Antigravity CLI is named agy. */
   antigravityBin: string;
   antigravityModel: string | null;
+  museBin: string;
+  museModel: string | null;
   /** opencode model as provider/model, e.g. "anthropic/claude-sonnet-5". */
   opencodeModel: string | null;
   /** Default reasoning effort for subagents: one level for all, or per target agent ({ "codex": "high" }). */
@@ -130,6 +132,8 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   opencodeBin: DEFAULT_OPENCODE_BIN,
   antigravityBin: "agy",
   antigravityModel: null,
+  museBin: DEFAULT_MUSE_BIN,
+  museModel: null,
   opencodeModel: null,
   effort: {},
   opencodeAutoApprove: false,
@@ -331,6 +335,8 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     opencodeBin: pick("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
     antigravityBin: pick("antigravityBin", "AGENT_BRIDGE_ANTIGRAVITY_BIN", str) ?? d.antigravityBin,
     antigravityModel: pick("antigravityModel", null, modelName) ?? d.antigravityModel,
+    museBin: pick("museBin", ENV.museBin, str) ?? d.museBin,
+    museModel: pick("museModel", null, modelName) ?? d.museModel,
     opencodeModel: pick("opencodeModel", null, modelName) ?? d.opencodeModel,
     effort: Object.assign({}, d.effort, ...[file, section, project, localSection].map((values) => effortLevels(values.effort) ?? {})),
     opencodeAutoApprove: pick("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,

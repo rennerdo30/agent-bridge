@@ -197,6 +197,7 @@ var ENV = {
   claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
   codexBin: "AGENT_BRIDGE_CODEX_BIN",
   opencodeBin: "AGENT_BRIDGE_OPENCODE_BIN",
+  museBin: "AGENT_BRIDGE_MUSE_BIN",
   dashboard: "AGENT_BRIDGE_DASHBOARD",
   /** "0": background subagents run inside the session's MCP server instead of detached job runners (they then end with it). */
   jobRunner: "AGENT_BRIDGE_JOB_RUNNER"
@@ -218,6 +219,7 @@ var MAX_JOB_TIMEOUT_SEC = 24 * 60 * 60;
 var DEFAULT_CLAUDE_BIN = "claude";
 var DEFAULT_CODEX_BIN = "codex";
 var DEFAULT_OPENCODE_BIN = "opencode";
+var DEFAULT_MUSE_BIN = "muse";
 var DEFAULT_DASHBOARD_PORT = 4777;
 var DEFAULT_LINGER_SEC = 300;
 var DEFAULT_MAX_JOBS = 8;
@@ -984,7 +986,7 @@ function copyLegacyConversationTail(source2, target) {
 // src/core/history.ts
 import { createHash as createHash4 } from "node:crypto";
 import { closeSync as closeSync5, existsSync as existsSync12, fstatSync as fstatSync2, openSync as openSync5, opendirSync, readSync as readSync2, statSync as statSync4 } from "node:fs";
-import { basename as basename4, dirname as dirname10, join as join18 } from "node:path";
+import { basename as basename4, dirname as dirname10, join as join19 } from "node:path";
 import { DatabaseSync as DatabaseSync10 } from "node:sqlite";
 
 // node_modules/zod/v4/classic/external.js
@@ -20677,7 +20679,8 @@ function transcriptPaths(env = process.env, home = homedir2()) {
     claude: resolve4(env.CLAUDE_CONFIG_DIR?.trim() || join12(home, ".claude")),
     codex: resolve4(env.CODEX_HOME?.trim() || join12(home, ".codex")),
     opencode: resolve4(join12(env.XDG_DATA_HOME?.trim() || join12(home, ".local", "share"), "opencode")),
-    antigravity: resolve4(env.ANTIGRAVITY_CLI_HOME?.trim() || join12(home, ".gemini", "antigravity-cli"))
+    antigravity: resolve4(env.ANTIGRAVITY_CLI_HOME?.trim() || join12(home, ".gemini", "antigravity-cli")),
+    muse: resolve4(join12(env.XDG_DATA_HOME?.trim() || join12(home, ".local", "share"), "muse"))
   };
 }
 function object2(value) {
@@ -20912,8 +20915,73 @@ function readAntigravityChat(session, paths2, from = "0", child) {
   return { items: page.entries.flatMap(({ value }) => antigravityItems(value)), next: page.next };
 }
 
-// src/core/transcripts/codex.ts
+// src/core/transcripts/muse.ts
 import { join as join15 } from "node:path";
+function museTime(row) {
+  const at = typeof row.recorded_at === "number" ? row.recorded_at : 0;
+  return at > 1e13 ? Math.floor(at / 1e3) : at;
+}
+function museSessionFile(session, paths2) {
+  if (!paths2.muse || !session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return null;
+  const root = join15(paths2.muse, "sessions");
+  for (const year of directory(root)) for (const month of directory(join15(root, year))) for (const day of directory(join15(root, year, month))) {
+    const file2 = safeFile(paths2.muse, join15(root, year, month, day, session.sessionId, "session.jsonl"));
+    if (file2) return file2;
+  }
+  return safeFile(paths2.muse, join15(root, session.sessionId, "session.jsonl"));
+}
+function recordItems(ev) {
+  const at = museTime(ev);
+  const payload = object2(ev.payload);
+  const id = typeof ev.id === "string" ? ev.id : typeof ev.sequence === "number" ? String(ev.sequence) : void 0;
+  if (ev.payload_type === "turn.input.user" && typeof payload.prompt === "string" && payload.prompt) {
+    return [{ kind: "user", at, text: preview(payload.prompt, MAX_TEXT_CHARS), id }];
+  }
+  if (payload.kind === "run_terminal" && typeof payload.text === "string" && payload.text) {
+    return [{ kind: "assistant", at, text: preview(payload.text, MAX_TEXT_CHARS), id }];
+  }
+  if (ev.payload_type === "tool_batch.effect.started") {
+    const rec = object2(payload.record);
+    if (typeof rec.tool_name === "string" && rec.tool_name) {
+      return [{ kind: "tool", at, tool: rec.tool_name, summary: preview(rec.call_id ?? ""), id: typeof rec.effect_id === "string" ? rec.effect_id : id }];
+    }
+  }
+  if (ev.payload_type === "subagent.control.child_session_bound") {
+    const rec = object2(payload.record);
+    if (typeof rec.child_session_id === "string" && TRANSCRIPT_ID.test(rec.child_session_id)) {
+      return [{ kind: "subagent", at, subagent: { id: rec.child_session_id, title: preview("Muse subagent", MAX_TITLE_CHARS), agent: "muse" }, id }];
+    }
+  }
+  return [];
+}
+function museItems(row) {
+  if (typeof row.retained_frame === "string" && Array.isArray(row.children)) {
+    return row.children.map(object2).flatMap((child) => typeof child.record_json === "string" ? recordItems(parse3(child.record_json)) : []);
+  }
+  return recordItems(row);
+}
+function listMuseSubagents(session, paths2) {
+  const file2 = museSessionFile(session, paths2);
+  if (!file2) return [];
+  const children = /* @__PURE__ */ new Map();
+  for (const { value } of scanJsonl(file2)) for (const item of museItems(value)) {
+    const child = item.subagent;
+    if (!child || children.size >= MAX_NATIVE_SUBAGENTS) continue;
+    const nested = museSessionFile({ ...session, sessionId: child.id }, paths2), stat = nested ? fileStat(nested) : null;
+    children.set(child.id, { id: child.id, title: child.title, status: "unknown", startedAt: item.at, updatedAt: stat?.mtimeMs ?? item.at });
+  }
+  return [...children.values()];
+}
+function readMuseChat(session, paths2, from = "0", child) {
+  if (child && (!TRANSCRIPT_ID.test(child) || !listMuseSubagents(session, paths2).some((entry) => entry.id === child))) return null;
+  const file2 = museSessionFile(child ? { ...session, sessionId: child } : session, paths2);
+  if (!file2) return null;
+  const page = readJsonl(file2, from);
+  return { items: page.entries.flatMap(({ value }) => museItems(value)), next: page.next };
+}
+
+// src/core/transcripts/codex.ts
+import { join as join16 } from "node:path";
 import { DatabaseSync as DatabaseSync6 } from "node:sqlite";
 var ROLLOUT_NAME = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
 var DISCOVERY_CACHE_MS = 1e4;
@@ -20927,7 +20995,7 @@ function rollout(file2, id, known) {
 function indexedRollouts(paths2, id, parentId) {
   const name = directory(paths2.codex).filter((s) => /^state_\d+\.sqlite$/.test(s)).sort((a, b) => Number(b.match(/\d+/)?.[0]) - Number(a.match(/\d+/)?.[0]))[0];
   if (!name) return null;
-  const file2 = safeFile(paths2.codex, join15(paths2.codex, name));
+  const file2 = safeFile(paths2.codex, join16(paths2.codex, name));
   if (!file2) return null;
   let db2;
   try {
@@ -20937,7 +21005,7 @@ function indexedRollouts(paths2, id, parentId) {
     const out = [];
     for (const row of rows) {
       if (typeof row.id !== "string" || !TRANSCRIPT_ID.test(row.id) || typeof row.path !== "string") continue;
-      const target = safeFile(join15(paths2.codex, "sessions"), row.path);
+      const target = safeFile(join16(paths2.codex, "sessions"), row.path);
       if (!target) continue;
       const entry = rollout(target, row.id);
       if (entry.meta.id === row.id && (!parentId || parent(entry.meta) === parentId)) out.push(entry);
@@ -20950,17 +21018,17 @@ function indexedRollouts(paths2, id, parentId) {
   }
 }
 function rollouts(paths2) {
-  const root = join15(paths2.codex, "sessions"), existing = cache.get(root);
+  const root = join16(paths2.codex, "sessions"), existing = cache.get(root);
   if (existing && Date.now() - existing.at < DISCOVERY_CACHE_MS) return existing.files;
   const files = [];
   const knownFiles = new Map(existing?.files.map((r) => [r.file, r]));
   for (const year of directory(root).filter((s) => /^\d{4}$/.test(s)).sort().reverse()) {
-    for (const month of directory(join15(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-      for (const day of directory(join15(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
-        for (const name of directory(join15(root, year, month, day)).sort().reverse()) {
+    for (const month of directory(join16(root, year)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+      for (const day of directory(join16(root, year, month)).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+        for (const name of directory(join16(root, year, month, day)).sort().reverse()) {
           const id = ROLLOUT_NAME.exec(name)?.[1];
           if (!id) continue;
-          const file2 = safeFile(root, join15(root, year, month, day, name));
+          const file2 = safeFile(root, join16(root, year, month, day, name));
           if (!file2) continue;
           const known = knownFiles.get(file2);
           files.push(rollout(file2, id, known?.meta));
@@ -21007,12 +21075,12 @@ function readCodexChat(session, paths2, from = "0", child) {
 }
 
 // src/core/transcripts/opencode.ts
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 import { DatabaseSync as DatabaseSync7 } from "node:sqlite";
 var MAX_SQLITE_PARTS = 200;
 var SQLITE_CURSOR = /^o:(\d+):([A-Za-z0-9_-]*)$/;
 function openDatabase(paths2) {
-  const file2 = safeFile(paths2.opencode, join16(paths2.opencode, "opencode.db"));
+  const file2 = safeFile(paths2.opencode, join17(paths2.opencode, "opencode.db"));
   if (!file2) return null;
   try {
     return new DatabaseSync7(file2, { readOnly: true, timeout: SQLITE_READ_TIMEOUT_MS });
@@ -21072,6 +21140,8 @@ function readTranscript(session, from = "0", child, paths2 = transcriptPaths()) 
       return readOpencodeChat(session, paths2, from, child);
     case "antigravity":
       return readAntigravityChat(session, paths2, from, child);
+    case "muse":
+      return readMuseChat(session, paths2, from, child);
     default:
       return null;
   }
@@ -21080,7 +21150,7 @@ function readTranscript(session, from = "0", child, paths2 = transcriptPaths()) 
 // src/core/owner-questions.ts
 import { randomUUID as randomUUID7 } from "node:crypto";
 import { existsSync as existsSync11, mkdirSync as mkdirSync8 } from "node:fs";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 import { DatabaseSync as DatabaseSync9 } from "node:sqlite";
 
 // src/core/decisions.ts
@@ -21161,7 +21231,7 @@ var historyFiltersSchema = external_exports.object({
   project: external_exports.string().min(1).max(4096).transform(conversationProject).optional(),
   session: external_exports.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(),
   job: external_exports.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(),
-  agent: external_exports.enum(["claude", "codex", "opencode", "antigravity", "other"]).optional(),
+  agent: external_exports.enum(["claude", "codex", "opencode", "antigravity", "muse", "other"]).optional(),
   kind: external_exports.enum(["message", "run", "decision", "transcript", "approval", "progress", "report", "question"]).optional(),
   since: dateFilter.optional(),
   until: dateFilter.optional()
@@ -21215,7 +21285,7 @@ var HistoryIndex = class _HistoryIndex {
       return;
     }
     if (!peer.sessionId) return;
-    const job = /^(claude|codex|opencode|antigravity)-job-/.test(peer.name) ? peer.name : null;
+    const job = /^(claude|codex|opencode|antigravity|muse)-job-/.test(peer.name) ? peer.name : null;
     for (const alias of [peer.id, peer.name, peer.sessionId]) this.rememberSession(alias, peer.sessionId, job);
     if (peer.cwd && peer.agent && this.db.prepare("SELECT name FROM sqlite_master WHERE name='conversation_bindings'").get()) {
       this.db.prepare(`INSERT INTO conversation_bindings(session,agent,cwd,job) VALUES(?,?,?,?) ON CONFLICT(session,agent) DO UPDATE SET cwd=excluded.cwd,job=coalesce(excluded.job,conversation_bindings.job),pending=1`).run(peer.sessionId, peer.agent, peer.cwd, job);
@@ -21249,7 +21319,7 @@ var HistoryIndex = class _HistoryIndex {
   }
   message(row) {
     const sessions = [row.from_id, row.from_name, row.recipient, row.to_target].filter((s) => typeof s === "string");
-    const jobs = sessions.filter((s) => /^(claude|codex|opencode|antigravity)-job-/.test(s));
+    const jobs = sessions.filter((s) => /^(claude|codex|opencode|antigravity|muse)-job-/.test(s));
     this.put({
       id: `message:${row.id}`,
       kind: "message",
@@ -21324,7 +21394,7 @@ ${row.body}`,
         }, [row.author_id, row.author_name, ...sessions]);
       });
       if (this.home) {
-        const questionFile = join18(this.home, QUESTIONS_FILE);
+        const questionFile = join19(this.home, QUESTIONS_FILE);
         if (existsSync12(questionFile)) {
           const questions = new DatabaseSync10(questionFile, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
           try {
@@ -21353,7 +21423,7 @@ ${row.body}`,
             questions.close();
           }
         }
-        const archivePath = join18(this.home, ARCHIVE_DB_NAME);
+        const archivePath = join19(this.home, ARCHIVE_DB_NAME);
         if (existsSync12(archivePath)) {
           const archive = new DatabaseSync10(archivePath, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
           try {
@@ -21400,13 +21470,14 @@ ${row.body}`,
       this.lastDiscovery = Date.now();
       this.opencodeComplete = false;
       this.queue = [
-        { path: join18(this.home, "context-events"), root: this.home, kind: "context", agent: "other" },
-        { path: join18(this.home, "approvals"), root: this.home, kind: "approval", agent: "other" },
-        { path: join18(this.home, "archive"), root: this.home, kind: "approval", agent: "other" },
-        { path: join18(this.home, "runs"), root: join18(this.home, "runs"), kind: "run", agent: "other" },
-        { path: join18(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
-        ...this.paths.antigravity ? [{ path: join18(this.paths.antigravity, "brain"), root: this.paths.antigravity, kind: "transcript", agent: "antigravity" }] : [],
-        ...["sessions", "archived_sessions"].map((dir) => ({ path: join18(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" }))
+        { path: join19(this.home, "context-events"), root: this.home, kind: "context", agent: "other" },
+        { path: join19(this.home, "approvals"), root: this.home, kind: "approval", agent: "other" },
+        { path: join19(this.home, "archive"), root: this.home, kind: "approval", agent: "other" },
+        { path: join19(this.home, "runs"), root: join19(this.home, "runs"), kind: "run", agent: "other" },
+        { path: join19(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
+        ...this.paths.antigravity ? [{ path: join19(this.paths.antigravity, "brain"), root: this.paths.antigravity, kind: "transcript", agent: "antigravity" }] : [],
+        ...this.paths.muse ? [{ path: join19(this.paths.muse, "sessions"), root: this.paths.muse, kind: "transcript", agent: "muse" }] : [],
+        ...["sessions", "archived_sessions"].map((dir) => ({ path: join19(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" }))
       ];
     }
     let work = 0;
@@ -21426,7 +21497,7 @@ ${row.body}`,
         this.walk = null;
         continue;
       }
-      const path2 = join18(entry.path, item.name);
+      const path2 = join19(entry.path, item.name);
       if (item.isDirectory()) {
         this.queue.push({ ...entry, path: path2 });
         continue;
@@ -21435,18 +21506,19 @@ ${row.body}`,
       if (entry.kind === "context" && item.name.endsWith(".jsonl") || entry.kind === "approval" && /^.*\.json(?:-.*)?$/.test(item.name) && (entry.path.includes("approvals") || /^.*approval/.test(item.name))) {
         this.register({ path: path2, kind: entry.kind, agent: "other", session: null, cwd: "", child: null });
       } else if (entry.kind === "run" && /\.(?:log|json)(?:-\d+-[\w-]+)?$/.test(item.name)) {
-        this.register({ path: path2, kind: "run", agent: /-(claude|codex|opencode|antigravity)-/.exec(item.name)?.[1] ?? "other", session: null, cwd: "", child: null });
+        this.register({ path: path2, kind: "run", agent: /-(claude|codex|opencode|antigravity|muse)-/.exec(item.name)?.[1] ?? "other", session: null, cwd: "", child: null });
       } else if (entry.kind === "transcript" && item.name.endsWith(".jsonl")) {
         if (entry.agent === "antigravity" && item.name !== "transcript.jsonl") continue;
+        if (entry.agent === "muse" && item.name !== "session.jsonl") continue;
         const head = this.head(path2), meta3 = entry.agent === "codex" ? object2(head.payload) : head;
         const rolloutId = entry.agent === "codex" ? /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(item.name)?.[1] : void 0;
-        const id = entry.agent === "antigravity" ? basename4(dirname10(dirname10(entry.path))) : rolloutId ?? (typeof meta3.id === "string" ? meta3.id : typeof meta3.sessionId === "string" ? meta3.sessionId : basename4(path2, ".jsonl"));
+        const id = entry.agent === "antigravity" ? basename4(dirname10(dirname10(entry.path))) : entry.agent === "muse" ? basename4(dirname10(entry.path)) : rolloutId ?? (typeof meta3.id === "string" ? meta3.id : typeof meta3.sessionId === "string" ? meta3.sessionId : basename4(path2, ".jsonl"));
         if (!TRANSCRIPT_ID.test(id)) continue;
         const child = entry.agent === "claude" && basename4(entry.path) === "subagents" ? basename4(path2, ".jsonl").replace(/^agent-/, "") : null;
         this.register({ path: path2, kind: "transcript", agent: entry.agent, session: child ? basename4(dirname10(entry.path)) : id, cwd: typeof meta3.cwd === "string" ? meta3.cwd : "", child });
       }
     }
-    const path = safeFile(this.paths.opencode, join18(this.paths.opencode, "opencode.db"));
+    const path = safeFile(this.paths.opencode, join19(this.paths.opencode, "opencode.db"));
     if (path && !this.opencodeComplete) {
       const db2 = new DatabaseSync10(path, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
       try {
@@ -21483,7 +21555,7 @@ ${row.body}`,
   indexFile(file2) {
     if (file2.kind === "context" || file2.kind === "approval" || file2.kind === "run" && /\.json(?:-.*)?$/.test(file2.path)) return 0;
     if (file2.agent !== "opencode") {
-      const root = file2.kind === "run" ? join18(this.home, "runs") : this.paths[file2.agent];
+      const root = file2.kind === "run" ? join19(this.home, "runs") : this.paths[file2.agent];
       if (!root) return 0;
       if (!safeFile(root, file2.path)) return 0;
     }
@@ -21503,7 +21575,7 @@ ${row.body}`,
       for (const row of page.entries) {
         const target = file2.agent === "claude" && row.value.isSidechain === true && typeof row.value.agentId === "string" && TRANSCRIPT_ID.test(row.value.agentId) ? { ...file2, child: row.value.agentId } : file2;
         if (typeof start === "number" && typeof row.value.ordinal === "number" && row.value.ordinal < start) continue;
-        const items = file2.agent === "antigravity" ? antigravityItems(row.value) : file2.agent === "claude" ? claudeItems(row.value) : codexItems(row.value);
+        const items = file2.agent === "antigravity" ? antigravityItems(row.value) : file2.agent === "muse" ? museItems(row.value) : file2.agent === "claude" ? claudeItems(row.value) : codexItems(row.value);
         items.forEach((item, i) => this.transcript(target, item, `j:${row.offset}:0`, i));
       }
       this.advance(file2.path, page.next);
@@ -21520,7 +21592,7 @@ ${row.body}`,
       let meta3 = {};
       let metaText = "";
       const metaPath = file2.path.replace(/\.log(?:-\d+-[\w-]+)?$/, ".json");
-      const safeMeta = safeFile(join18(this.home, "runs"), metaPath);
+      const safeMeta = safeFile(join19(this.home, "runs"), metaPath);
       if (safeMeta) {
         const metaFd = openSync5(safeMeta, "r");
         try {
@@ -21676,13 +21748,13 @@ import {
   readSync as readSync3,
   watch
 } from "node:fs";
-import { basename as basename6, join as join20 } from "node:path";
+import { basename as basename6, join as join21 } from "node:path";
 import { DatabaseSync as DatabaseSync11 } from "node:sqlite";
 
 // src/core/job-archive.ts
 import { randomUUID as randomUUID8 } from "node:crypto";
 import { closeSync as closeSync6, existsSync as existsSync13, fsyncSync as fsyncSync2, mkdirSync as mkdirSync9, openSync as openSync6, readdirSync as readdirSync6, writeFileSync as writeFileSync4 } from "node:fs";
-import { basename as basename5, dirname as dirname11, join as join19 } from "node:path";
+import { basename as basename5, dirname as dirname11, join as join20 } from "node:path";
 
 // src/core/file-cache.ts
 import { readFileSync as readFileSync8, statSync as statSync5 } from "node:fs";
@@ -21722,14 +21794,14 @@ function readJsonSnapshot(file2) {
 var snapshots = /* @__PURE__ */ new Map();
 var EMPTY_SNAPSHOT = { signature: "", jobs: [] };
 function readArchivedJobSnapshot(path) {
-  const dir = join19(dirname11(path), "archive");
+  const dir = join20(dirname11(path), "archive");
   if (!existsSync13(dir)) return EMPTY_SNAPSHOT;
   const sources = [];
   const signatures = [];
   let bytes2 = 0;
   for (const file2 of readdirSync6(dir).sort()) {
     if (!file2.startsWith(`${basename5(path)}.overflow.json-`) && !/^jobs-.*\.json$/.test(file2)) continue;
-    const snapshot = readJsonSnapshot(join19(dir, file2));
+    const snapshot = readJsonSnapshot(join20(dir, file2));
     const value = snapshot.value;
     if (!isRecord(value) || value.version !== void 0 && (!Number.isInteger(value.version) || value.version < 0 || value.version > JSON_STORE_VERSION) || !Array.isArray(value.jobs)) throw new Error(`invalid job archive: ${file2}`);
     signatures.push(`${file2}:${snapshot.signature}`);
@@ -21811,10 +21883,10 @@ var ConversationIngestor = class {
   idleSources = 0;
   watchRoots() {
     for (const root of [
-      join20(this.paths.claude, "projects"),
-      join20(this.paths.codex, "sessions"),
+      join21(this.paths.claude, "projects"),
+      join21(this.paths.codex, "sessions"),
       this.paths.opencode,
-      ...this.paths.antigravity ? [join20(this.paths.antigravity, "brain")] : []
+      ...this.paths.antigravity ? [join21(this.paths.antigravity, "brain")] : []
     ]) {
       if (this.watched.has(root)) continue;
       try {
@@ -21823,7 +21895,7 @@ var ConversationIngestor = class {
           { recursive: true, persistent: false },
           (_, name) => {
             if (name && this.dirty.size < 2048)
-              this.dirty.add(join20(root, String(name)));
+              this.dirty.add(join21(root, String(name)));
           }
         );
         watcher.on("error", () => {
@@ -21950,7 +22022,7 @@ var ConversationIngestor = class {
   jobs() {
     if (Date.now() - this.jobsAt < 3e4) return;
     this.jobsAt = Date.now();
-    const path = join20(this.home, "jobs.json");
+    const path = join21(this.home, "jobs.json");
     let active = {};
     try {
       active = object2(readJsonSnapshot(path).value);
@@ -22168,7 +22240,7 @@ var ConversationIngestor = class {
       "SELECT * FROM messages WHERE id=? ORDER BY recipient=? DESC LIMIT 1"
     ).get(envelope.message, envelope.recipient);
     if (!row) {
-      const path = join20(this.home, "archive.db");
+      const path = join21(this.home, "archive.db");
       if (existsSync14(path)) {
         const archive = new DatabaseSync11(path, { readOnly: true, timeout: 50 });
         try {
@@ -22435,7 +22507,7 @@ var ConversationIngestor = class {
   sqlite(source2) {
     const path = safeFile(
       this.paths.opencode,
-      join20(this.paths.opencode, "opencode.db")
+      join21(this.paths.opencode, "opencode.db")
     );
     if (!path) return 0;
     const input2 = new DatabaseSync11(path, { readOnly: true, timeout: 50 });
@@ -22538,7 +22610,7 @@ var ConversationIngestor = class {
       work += this.jobSnapshot();
       work += this.envelopes();
       work += this.events(this.source, "decisions", "durable-decisions");
-      const archive = join20(this.home, "archive.db");
+      const archive = join21(this.home, "archive.db");
       if (existsSync14(archive)) {
         const input2 = new DatabaseSync11(archive, {
           readOnly: true,
@@ -22622,16 +22694,16 @@ var ConversationIngestor = class {
 
 // src/core/config.ts
 import { readFileSync as readFileSync10, unwatchFile, watchFile } from "node:fs";
-import { basename as basename7, join as join22 } from "node:path";
+import { basename as basename7, join as join23 } from "node:path";
 
 // src/core/protocol.ts
-var AGENT_KINDS = ["claude", "codex", "opencode", "antigravity", "other"];
-var CODING_AGENTS = ["claude", "codex", "opencode", "antigravity"];
+var AGENT_KINDS = ["claude", "codex", "opencode", "antigravity", "muse", "other"];
+var CODING_AGENTS = ["claude", "codex", "opencode", "antigravity", "muse"];
 
 // src/network/config.ts
 import { hostname as hostname3 } from "node:os";
 import { readFileSync as readFileSync9 } from "node:fs";
-import { isAbsolute as isAbsolute2, join as join21 } from "node:path";
+import { isAbsolute as isAbsolute2, join as join22 } from "node:path";
 
 // src/network/constants.ts
 var DEFAULT_NETWORK_PORT = 48148;
@@ -22705,6 +22777,8 @@ var DEFAULT_CONFIG = {
   opencodeBin: DEFAULT_OPENCODE_BIN,
   antigravityBin: "agy",
   antigravityModel: null,
+  museBin: DEFAULT_MUSE_BIN,
+  museModel: null,
   opencodeModel: null,
   effort: {},
   opencodeAutoApprove: false,
@@ -22788,7 +22862,7 @@ function toolPatterns(v) {
 }
 function loadConfig(home, agent, log, env = process.env, projectDir) {
   let file2 = {};
-  const path = join22(home, CONFIG_FILE_NAME);
+  const path = join23(home, CONFIG_FILE_NAME);
   try {
     file2 = readJsonStore(path, log) ?? {};
     log.debug("config file loaded", { path });
@@ -22797,7 +22871,7 @@ function loadConfig(home, agent, log, env = process.env, projectDir) {
   }
   let project = {};
   if (projectDir) {
-    const localPath = join22(projectDir, ".agent-bridge", CONFIG_FILE_NAME);
+    const localPath = join23(projectDir, ".agent-bridge", CONFIG_FILE_NAME);
     try {
       const value = JSON.parse(readFileSync10(localPath, "utf8"));
       if (isRecord(value)) project = value;
@@ -22853,6 +22927,8 @@ function loadConfig(home, agent, log, env = process.env, projectDir) {
     opencodeBin: pick2("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
     antigravityBin: pick2("antigravityBin", "AGENT_BRIDGE_ANTIGRAVITY_BIN", str) ?? d.antigravityBin,
     antigravityModel: pick2("antigravityModel", null, modelName) ?? d.antigravityModel,
+    museBin: pick2("museBin", ENV.museBin, str) ?? d.museBin,
+    museModel: pick2("museModel", null, modelName) ?? d.museModel,
     opencodeModel: pick2("opencodeModel", null, modelName) ?? d.opencodeModel,
     effort: Object.assign({}, d.effort, ...[file2, section, project, localSection].map((values) => effortLevels(values.effort) ?? {})),
     opencodeAutoApprove: pick2("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,

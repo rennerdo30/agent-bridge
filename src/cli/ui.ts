@@ -186,6 +186,7 @@ function readAllUsage(home: string, log: Logger): Promise<UsageReport[]> {
     readUsage("codex", cfg.codexBin, home, log),
     readUsage("opencode", cfg.opencodeBin, home, log, cfg.opencodeModel ?? null),
     readUsage("antigravity", cfg.antigravityBin, home, log, cfg.antigravityModel),
+    readUsage("muse", cfg.museBin, home, log, cfg.museModel),
   ]);
 }
 

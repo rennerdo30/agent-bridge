@@ -2,7 +2,7 @@
 
 # agent-bridge
 
-**Let Claude Code, OpenAI Codex, opencode and Google Antigravity CLI work together.**
+**Let Claude Code, OpenAI Codex, opencode, Google Antigravity CLI and Muse work together.**
 
 agent-bridge connects the coding agents on your machine, and on PCs you pair, into one team. They message each other, hand each other work as subagents, and share history. You follow and steer everything from one local dashboard.
 
@@ -28,7 +28,7 @@ Requires **Node.js 22.13+**. Install for every supported CLI it finds on your ma
 npx -y github:rennerdo30/agent-bridge install
 ```
 
-It shows its plan per tool and asks first; add `--yes` to skip the questions, or name tools: `install claude codex opencode antigravity`. In Codex, open `/hooks` once and trust the agent-bridge hooks. Per-CLI details: [Installation](https://rennerdo30.github.io/agent-bridge/getting-started/install/).
+It shows its plan per tool and asks first; add `--yes` to skip the questions, or name tools: `install claude codex opencode antigravity muse`. In Codex, open `/hooks` once and trust the agent-bridge hooks. Per-CLI details: [Installation](https://rennerdo30.github.io/agent-bridge/getting-started/install/).
 
 ## Update
 

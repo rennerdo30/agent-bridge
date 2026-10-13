@@ -30,7 +30,7 @@ describe("installer plans", () => {
 
   it("selects tools from the arguments, or all of them", () => {
     expect(parseInstallerArgs("install", ["codex", "--yes"])).toEqual(["codex"]);
-    expect(parseInstallerArgs("install", [])).toEqual(["claude", "codex", "opencode", "antigravity"]);
+    expect(parseInstallerArgs("install", [])).toEqual(["claude", "codex", "opencode", "antigravity", "muse"]);
   });
 
   it("updates a mocked Codex without enumerating or stopping twenty running sessions", async () => {

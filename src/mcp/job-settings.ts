@@ -2,14 +2,15 @@ import { MAX_CODEX_SUBAGENTS } from "../core/constants.js";
 import { CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES, MODEL_NAME_PATTERN } from "../core/config.js";
 import type { AgentKind } from "../core/protocol.js";
 import { ANTIGRAVITY_EFFORTS } from "../core/antigravity.js";
+import { MUSE_EFFORTS } from "../core/muse.js";
 import { ACCESS_LEVELS, type TargetArgs } from "./targets.js";
 
 /** Settings that can change between turns without replacing a job's session or worktree. */
-export type JobSettings = Pick<TargetArgs, "access" | "sandbox" | "terminal_sandbox" | "bypass_permissions" | "native_subagents" | "approvals_reviewer" | "permission_mode" | "auto_approve"> & { model?: string; effort?: string };
-export const JOB_SETTING_KEYS = ["native_subagents", "model", "effort", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve"] as const;
-const EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve", "bypass_permissions"] as const;
+export type JobSettings = Pick<TargetArgs, "access" | "sandbox" | "terminal_sandbox" | "bypass_permissions" | "native_subagents" | "approvals_reviewer" | "permission_mode" | "auto_approve" | "permission_profile"> & { model?: string; effort?: string };
+export const JOB_SETTING_KEYS = ["native_subagents", "model", "effort", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "permission_profile"] as const;
+const EXACT_PERMISSION_KEYS = ["sandbox", "permission_mode", "auto_approve", "bypass_permissions", "permission_profile"] as const;
 /** Each exact permission key belongs to one agent's CLI. */
-export const PERMISSION_KEY_AGENT = { native_subagents: "codex", sandbox: "codex", terminal_sandbox: "antigravity", bypass_permissions: "antigravity", approvals_reviewer: "codex", permission_mode: "claude", auto_approve: "opencode" } as const;
+export const PERMISSION_KEY_AGENT = { native_subagents: "codex", sandbox: "codex", terminal_sandbox: "antigravity", bypass_permissions: "antigravity", approvals_reviewer: "codex", permission_mode: "claude", auto_approve: "opencode", permission_profile: "muse" } as const;
 export const EFFORT_PATTERN = /^[A-Za-z0-9_-]{1,20}$/;
 
 /** An access change replaces an earlier exact override; an exact override replaces earlier access. */
@@ -42,6 +43,7 @@ export function parseJobSettings(input: unknown, agent: AgentKind): JobSettings 
   if (raw.effort !== undefined) {
     if (typeof raw.effort !== "string" || !EFFORT_PATTERN.test(raw.effort)) return "invalid effort";
     if (agent === "antigravity" && !(ANTIGRAVITY_EFFORTS as readonly string[]).includes(raw.effort)) return "Antigravity effort must be low, medium, high, xhigh or max";
+    if (agent === "muse" && !(MUSE_EFFORTS as readonly string[]).includes(raw.effort)) return `Muse effort must be ${MUSE_EFFORTS.join(", ")}`;
     settings.effort = raw.effort;
   }
   if (raw.access !== undefined) {
@@ -67,6 +69,10 @@ export function parseJobSettings(input: unknown, agent: AgentKind): JobSettings 
   if (raw.terminal_sandbox !== undefined) {
     if (typeof raw.terminal_sandbox !== "boolean") return "invalid terminal_sandbox";
     settings.terminal_sandbox = raw.terminal_sandbox;
+  }
+  if (raw.permission_profile !== undefined) {
+    if (typeof raw.permission_profile !== "string" || !raw.permission_profile.trim() || raw.permission_profile.length > 80) return "invalid permission_profile";
+    settings.permission_profile = raw.permission_profile;
   }
   if (raw.bypass_permissions !== undefined) {
     if (typeof raw.bypass_permissions !== "boolean") return "invalid bypass_permissions";
