@@ -145,13 +145,15 @@ export async function readOwnWindowsLifecycleIdentity(capability: LifecycleServi
   const initial = assertLifecycleServingCapability(capability, "prepare");
   const current = () => {
     const actual = assertLifecycleServingCapability(capability, "prepare");
-    if (process.platform !== "win32" || !Number.isFinite(deadline) || performance.now() >= deadline ||
+    if (!Number.isFinite(deadline) || performance.now() >= deadline) throw new WindowsLifecyclePathUnavailable("budget");
+    if (process.platform !== "win32" ||
       actual.ownerInstance !== initial.ownerInstance || actual.generation !== initial.generation || actual.home !== initial.home)
       throw new WindowsLifecyclePathUnavailable("unavailable");
   };
   current(); if (pending.size) throw new WindowsLifecyclePathUnavailable("unavailable");
   const nonce = randomUUID(), registration = { capability, owner: initial.ownerInstance, generation: initial.generation, nonce,
-    child: undefined as ReturnType<typeof spawn> | undefined };
+    child: undefined as ReturnType<typeof spawn> | undefined,
+    state: "not_attempted" as "not_attempted" | "attempted_unconfirmed" | "child_known" | "closed" };
   pending.add(registration);
   return new Promise((resolve, reject) => {
     let settled = false, output = "";
@@ -160,12 +162,15 @@ export async function readOwnWindowsLifecycleIdentity(capability: LifecycleServi
     try {
       current();
       const bin = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-      const child = registration.child = spawn(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(OWN_IDENTITY, "utf16le").toString("base64")],
+      const args = ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(OWN_IDENTITY, "utf16le").toString("base64")];
+      registration.state = "attempted_unconfirmed"; // BEFORE native entry; catch/undefined PID never proves no attempt.
+      const child = registration.child = spawn(bin, args,
         { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
+      registration.state = "child_known";
       child.on("error", () => refuse("unavailable")); child.stdin!.on("error", () => refuse("unavailable")); child.stdout!.setEncoding("utf8");
       child.stdout!.on("data", (chunk: string) => { if (!settled) { output += chunk; if (Buffer.byteLength(output) > 512) refuse("unavailable"); } });
       child.once("close", code => {
-        pending.delete(registration); if (settled) return;
+        registration.state = "closed"; pending.delete(registration); if (settled) return;
         try {
           current(); const response: unknown = JSON.parse(output);
           if (!response || typeof response !== "object") return refuse("unavailable");
@@ -177,7 +182,13 @@ export async function readOwnWindowsLifecycleIdentity(capability: LifecycleServi
         } catch { refuse("unavailable"); }
       });
       child.stdin!.end(JSON.stringify({ schema: 1, nonce, pid: process.pid })); child.unref();
-    } catch { refuse("unavailable"); /* Unconfirmed spawn retains registration; no false exit or cleanup. */ }
+    } catch (error) {
+      // ONLY source-proven refusal before native spawn entry can retire this exact
+      // not-attempted registration. Unknown attempts/known children await real close.
+      if (registration.state === "not_attempted" && registration.capability === capability && registration.owner === initial.ownerInstance &&
+        registration.generation === initial.generation && registration.nonce === nonce) pending.delete(registration);
+      refuse(error instanceof WindowsLifecyclePathUnavailable && error.reason === "budget" ? "budget" : "unavailable");
+    }
   });
 }
 

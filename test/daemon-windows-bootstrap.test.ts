@@ -156,6 +156,15 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
     await entering; await b.close(); resume(); await failed;
     expect(existsSync(directory())).toBe(false);
   });
+  it("a deadline crossed after registration but before native entry refuses without a child or stale pending registration", async () => {
+    const b = await serving(), started = performance.now(), end = started + 1000;
+    const cap = b.lifecycleServingCapability("prepare", started + 5000), spawnObserver = vi.spyOn(processes, "spawn");
+    // Real scoped registry is the observation point. Source guards/auth/capability
+    // remain active; the clock crosses only once the real registration exists.
+    vi.spyOn(performance, "now").mockImplementation(() => pendingWindowsLifecycleVerifications() ? end + 1 : started);
+    await expect(windowsLifecycle.readOwnWindowsLifecycleIdentity(cap, end)).rejects.toMatchObject({ reason: "budget" });
+    expect(spawnObserver).not.toHaveBeenCalled(); expect(pendingWindowsLifecycleVerifications()).toBe(0); expect(existsSync(directory())).toBe(false);
+  });
   it("identity observer expiry retains the actual helper until its held real close, without creation or late promotion", async () => {
     const b = await serving(), cap = b.lifecycleServingCapability("prepare", performance.now() + 5000), realSpawn = originals.spawn!;
     let actualClose!: () => void, deliverClose!: () => void, actualCode: number | null = null;
