@@ -112,8 +112,8 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     expect(() => j.advance(input.restartId, 4, "release_intent", { checkpointManifest: {
       closureDigest: "a".repeat(64), owners: [] } }, deadline())).toThrow("owner_unsupported");
     expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE")).toBe(false);
-    expect(() => j.advance(input.restartId, 4, "unknown", ({ currentActor: { kind: "successor", instance: replacement } } as unknown
-      as Parameters<typeof j.advance>[3]), deadline())).toThrow("revision_conflict");
+    const forgedFields = { currentActor: { kind: "successor", instance: replacement } } as unknown as Parameters<typeof j.advance>[3];
+    expect(() => j.advance(input.restartId, 4, "unknown", forgedFields, deadline())).toThrow("revision_conflict");
     expect(j.selected()).toEqual(retained);
     expect(j.selected()?.state).toBe("prepared");
   });
