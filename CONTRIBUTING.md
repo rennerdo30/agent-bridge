@@ -10,7 +10,10 @@ Run `npm run test:ci-windows` on Windows to run both lanes with the CI flag,
 unchanged test deadlines, and a fresh temporary fixture root. The root disables
 ACL inheritance and grants the current user, SYSTEM and Administrators explicit
 access. TEMP/TMP and the test home live there; cleanup removes only this
-invocation's marked root, without following directory links.
+invocation's marked root. The marker must exactly match its random token and path;
+missing/changed markers or any reparse point retain the whole tree. Every cleanup
+entry is checked for containment and links before nonrecursive removal. Native
+handles prevent entry replacement or in-place link conversion during deletion.
 
 ```powershell
 npm run test:ci-windows -- -Throttle
@@ -21,7 +24,8 @@ npm run test:ci-windows -- --shard=1/4
 
 `-Throttle` lowers priority and restricts children to one allowed CPU.
 `-FreshVolume` creates, formats and mounts a new disposable NTFS VHDX for fixtures,
-then detaches it in `finally`. It requires administrator rights and Windows
+then detaches it in `finally` only after checking its recorded creation path and
+actual VHD GUID (checked again on the native detach handle). It requires administrator rights and Windows
 Storage cmdlets; otherwise it prints a skip message and uses the fresh folder.
 It never selects an existing volume. A forcibly terminated shell can leave its
 marked fixtures or VHDX behind; inspect those before any manual cleanup.

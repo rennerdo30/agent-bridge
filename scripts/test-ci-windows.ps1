@@ -14,8 +14,9 @@ tools, CPU model or contention from other tenants. A fresh VHD is not a guarante
 of >2^53 file IDs. Throttle approximates CPU contention, not IO latency.
 No elevation is requested. Tests/assertions/deadlines are unchanged. An interrupted
 or forcibly killed shell may leave its marked root/VHD for manual inspection.
-Cleanup verifies its unique marker and unlinks reparse points without following
-them. Never point this script at an existing volume or an existing fixture root.
+Cleanup verifies its unique token-plus-path marker and refuses reparse points
+without following them. VHD detach verifies the recorded path and actual VHD GUID.
+Never point this script at an existing volume or an existing fixture root.
 .EXAMPLE
 npm run test:ci-windows -- -Throttle
 npm run test:ci-windows -- -FreshVolume --shard=1/4
@@ -31,11 +32,10 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
-$token = [guid]::NewGuid().ToString('N')
-$tempParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
-# Keep the added path budget small: SQLite on Node 22 still hits MAX_PATH.
-$root = Join-Path $tempParent ('abci-' + $token)
-$markerName = '.ab-ci-windows-owner'
+. (Join-Path $PSScriptRoot 'ci-windows-ownership.ps1')
+$owner = New-CiOwnership ([IO.Path]::GetTempPath())
+$token = $owner.Token
+$root = $owner.Root
 $vhd = Join-Path $root 'fixtures.vhdx'
 $mountAttempted = $false
 $exitCode = 1
@@ -43,25 +43,6 @@ $process = Get-Process -Id $PID
 $oldPriority = $process.PriorityClass
 $oldAffinity = $process.ProcessorAffinity
 
-function Assert-PhysicalPath([string]$Path) {
-    for ($component = [IO.Path]::GetFullPath($Path); $component; $component = Split-Path -Parent $component) {
-        if (Test-Path -LiteralPath $component) {
-            if ((Get-Item -LiteralPath $component -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
-                throw "Refusing a linked fixture/cleanup path: $component"
-            }
-            if (Test-Path -LiteralPath (Join-Path $component '.git')) { throw 'Fixtures must be outside every repository' }
-        }
-    }
-}
-function Assert-OwnedRoot {
-    Assert-PhysicalPath $root
-    $expected = Join-Path $tempParent ('abci-' + $token)
-    if ([IO.Path]::GetFullPath($root) -ne [IO.Path]::GetFullPath($expected)) { throw 'Cleanup root changed' }
-    $marker = Join-Path $root $markerName
-    $item = Get-Item -LiteralPath $marker -Force
-    if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-        [IO.File]::ReadAllText($marker) -ne $token) { throw 'Cleanup marker missing or changed; retaining fixtures' }
-}
 function Set-RunnerAcl([string]$Path) {
     $acl = New-Object System.Security.AccessControl.DirectorySecurity
     $acl.SetAccessRuleProtection($true, $false)
@@ -74,27 +55,9 @@ function Set-RunnerAcl([string]$Path) {
     }
     Set-Acl -LiteralPath $Path -AclObject $acl
 }
-function Remove-OwnedEntry([string]$Path) {
-    $absolute = [IO.Path]::GetFullPath($Path)
-    if (-not $absolute.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Cleanup escaped its root' }
-    $item = Get-Item -LiteralPath $absolute -Force
-    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-        # Directory.Delete with no recursive flag removes the link, never its target.
-        if ($item.PSIsContainer) { [IO.Directory]::Delete($absolute) } else { [IO.File]::Delete($absolute) }
-    } elseif ($item.PSIsContainer) {
-        foreach ($child in Get-ChildItem -LiteralPath $absolute -Force) { Remove-OwnedEntry $child.FullName }
-        [IO.Directory]::Delete($absolute)
-    } else {
-        if ($item.IsReadOnly) { $item.IsReadOnly = $false }
-        [IO.File]::Delete($absolute)
-    }
-}
 
 try {
-    Assert-PhysicalPath $tempParent
-    # New-Item without -Force must fail on any collision; never adopt existing data.
-    $null = New-Item -ItemType Directory -Path $root
-    [IO.File]::WriteAllText((Join-Path $root $markerName), $token)
+    Initialize-CiOwnedRoot $owner
     Set-RunnerAcl $root
     $fixtures = Join-Path $root 'f'
     if ($FreshVolume) {
@@ -104,12 +67,16 @@ try {
         } elseif (-not (Get-Command Mount-DiskImage -ErrorAction SilentlyContinue)) {
             Write-Host 'FreshVolume skipped: Windows Storage cmdlets are unavailable; using a fresh ACL-isolated folder.'
         } else {
-            Assert-OwnedRoot
+            Assert-CiOwnedRoot $owner
+            Assert-CiOwnedEntry $owner $vhd
+            if (Test-Path -LiteralPath $vhd) { throw 'Refusing an existing VHDX' }
             $createScript = Join-Path $root 'create-vhd.txt'
             [IO.File]::WriteAllText($createScript, "create vdisk file=`"$vhd`" maximum=4096 type=expandable`r`nexit`r`n")
             & (Join-Path $env:SystemRoot 'System32\diskpart.exe') /s $createScript
             if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $vhd -PathType Leaf)) { throw 'Creating the new VHDX failed' }
-            Assert-PhysicalPath $vhd
+            Assert-CiOwnedEntry $owner $vhd
+            $owner.Vhd = [pscustomobject]@{ Created = $true; Path = $vhd; Guid = (Get-CiVhdGuid $vhd); MountPath = $null }
+            Assert-CiOwnedVhd $owner $vhd
             $mountAttempted = $true
             $image = Mount-DiskImage -ImagePath $vhd -NoDriveLetter -PassThru
             if ($image.ImagePath -ne $vhd -or -not $image.Attached) { throw 'Unexpected mounted image' }
@@ -122,6 +89,7 @@ try {
             $null = Format-Volume -Partition $partition -FileSystem NTFS -NewFileSystemLabel ('ABCI-' + $token.Substring(0, 8)) -Confirm:$false
             $mount = Join-Path $root 'volume'
             $null = New-Item -ItemType Directory -Path $mount
+            $owner.Vhd.MountPath = $mount
             Add-PartitionAccessPath -DiskNumber $disk.Number -PartitionNumber $partition.PartitionNumber -AccessPath ($mount + '\')
             $fixtures = Join-Path $mount 'f'
             Write-Host 'FreshVolume: new disposable NTFS VHDX mounted for fixtures.'
@@ -163,18 +131,29 @@ try {
     try {
         if ($mountAttempted) {
             # Always detach our exact image, including after a partial mount/format failure.
-            Assert-PhysicalPath $vhd
+            Assert-CiOwnedVhd $owner $vhd
             $image = Get-DiskImage -ImagePath $vhd
-            if ($image.Attached) { Dismount-DiskImage -ImagePath $vhd }
+            if ($image.Attached) {
+                # Remove only our access path on our verified image. This clears the
+                # volume reparse point before the no-links cleanup preflight.
+                if ($owner.Vhd.MountPath) {
+                    if ($owner.Vhd.MountPath -cne (Join-Path $root 'volume')) { throw 'VHD mount path changed' }
+                    $accessPath = $owner.Vhd.MountPath + '\'
+                    $disks = @($image | Get-Disk)
+                    if ($disks.Count -ne 1 -or $disks[0].IsBoot -or $disks[0].IsSystem) { throw 'Unexpected VHD disk during detach' }
+                    foreach ($partition in @($disks[0] | Get-Partition)) {
+                        if ($partition.AccessPaths -contains $accessPath) {
+                            Remove-PartitionAccessPath -DiskNumber $disks[0].Number -PartitionNumber $partition.PartitionNumber -AccessPath $accessPath
+                        }
+                    }
+                }
+                Dismount-CiOwnedVhd $owner $vhd
+            }
             if ((Get-DiskImage -ImagePath $vhd).Attached) { throw 'VHDX detach failed; retaining its root' }
             Write-Host 'FreshVolume: detached disposable VHDX.'
         }
         if (Test-Path -LiteralPath $root) {
-            Assert-OwnedRoot
-            foreach ($item in Get-ChildItem -LiteralPath $root -Force | Where-Object Name -ne $markerName) { Remove-OwnedEntry $item.FullName }
-            Assert-OwnedRoot
-            [IO.File]::Delete((Join-Path $root $markerName))
-            [IO.Directory]::Delete($root)
+            Remove-CiOwnedRoot $owner
             Write-Host 'Cleanup: removed only the verified marked root created by this invocation.'
         }
     } catch {
