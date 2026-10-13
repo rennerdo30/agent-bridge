@@ -221,7 +221,9 @@ receipt/revision/old-instance/designated-successor projection commit in ONE tran
 The projection is disposable only by verified reconciliation, not guessed absence.
 
 Initial bootstrap is performed by the authenticated current daemon owner, never by
-a prepared replacement or ordinary discovering client. Verify all ancestors and
+a prepared replacement or ordinary discovering client. The successor role/absence
+contract below refines this to the already-bound normally serving singleton; absence
+alone does not authorize bootstrap. Verify all ancestors and
 the database/journal are regular, nonlinked, correctly owned private paths; retain
 the physical-directory/file identities in lineage evidence. Create the new directory
 0700 and files0600 on Unix, flush initial schema/lineage and validate reopen through
@@ -235,6 +237,110 @@ to re-bootstrap or elect. A participant that has observed lineage must retain th
 identity for its lifetime; release must not occur while a new participant can mistake
 a missing journal for a never-initialized home. Prove this discovery boundary in
 fixtures, including interrupted first creation; unknown lineage blocks election.
+
+#### Successor: serving bootstrap, established journal and tentative endpoint
+
+This section records the coordinator-relayed Claude choice after the independent
+Windows establishment assessment. It is a DOC-only revision requiring independent
+recheck and Claude short final BEFORE its new startup/bootstrap behavior is coded.
+Portable receipt API/fault work under de420 is separate. Source anchors for this
+mechanism correction are `02b1fe6d5860e4f509ec879544b784c50b526d85` (UI diagnostic
+successor), `35227bed`/source447 for the earlier inventory, and the unchanged source
+sections referenced below. It is not certification of current release safety.
+
+There is no user provisioning command and no extra durable discovery anchor.
+Only the controlled daemon instance that already exclusively owns the canonical
+endpoint and is **SERVING normally** may perform first journal bootstrap. Clients,
+prepared/designated successors, tentative listeners and a process in a handoff gap
+must never bootstrap. A virgin home first obtains the existing transport singleton,
+initializes its normal broker and serves; that owner then establishes the lifecycle
+journal. Missing/unestablished journal makes restart/stop return the fixed
+`journal_not_established` reason while that normal owner keeps serving. It is not a
+receipt acknowledgement or lifecycle effect. Bootstrap failures retain their bytes;
+no implicit repair/recreation of an interrupted or ambiguous existing directory.
+
+Establishment requires a real committed bootstrap write that creates/uses the DB
+and physical PERSIST journal, verified independent committed lineage and retained
+DB/journal/directory identities, restrictive ownership/ACL and a later independent
+strict readonly reopen. Initial file flush and reopened lineage are **operational
+evidence**, not proof of directory-entry durability after arbitrary power loss.
+Record actual SQLite version/compile options/default VFS, local filesystem/runtime,
+flush results and Windows creation assumptions. Without the reviewed publication/
+establishment evidence, remain lifecycle unavailable; never promote file existence
+or a self-recorded marker to a universal durability claim. Hosted process-crash
+fixtures do not certify physical power-cut behavior. ACL creation/protection is
+bootstrap-only and only for exclusively created receipt paths; each restart still
+validates ownership, permissions, nonlinks and identity without repair or ACL changes.
+
+Every writable lifecycle connection verifies PERSIST/FULL, journal_size_limit=-1,
+trusted_schema=OFF, foreign_keys=ON, 25ms busy cap and macOS fullfsync. Established
+DB AND PERSIST file must already exist with the verified lineage/identities before
+receipt writes. Missing/replaced files or hot-journal recovery ambiguity during an
+active or designated handoff remain UNKNOWN. Never open/create a new empty journal,
+recover writable from a prepared reader, change modes, ATTACH, VACUUM or prune history.
+SQLite's pager can open its journal READWRITE|CREATE; preflight alone cannot atomically
+prevent recreation under external removal. The supported controlled workload and
+path protections must be explicit, with check/write-race detection and quarantine;
+do not promise fencing of arbitrary same-user removers. Unknown proof blocks effects.
+
+**Ordering for ALL controlled broker-owner startup paths** (designated successor,
+ordinary daemon and explicit embedded compatibility): validate the canonical gate
+and exact home; bind the exclusive canonical endpoint FIRST, THEN acquire/initialize
+any writable broker-owner store, lease, lifecycle journal or side worker. A designated
+successor additionally verifies the SAME authenticated normal release witness OR
+exact old nonce/PID/creation-exit PLUS ownership/checkpoint reconciliation BEFORE the
+first writable acquisition; it must also have won bind. Neither release_committed,
+designation nor a valid witness alone bypasses endpoint exclusivity. Unknown remains
+readonly/unavailable. Prepared replacement opens no other stores even readonly.
+
+The endpoint is initially **TENTATIVE**, distinct from SERVING. Before initialization
+and all applicable guards finish, it cannot acknowledge authenticated authority/ready,
+admit a mutation or create an unbounded request queue. Use a typed fixed not-ready
+response or strictly bounded frame/connection buffering with existing frame bounds;
+preserve supported transport/auth semantics and disclose compatibility behavior.
+Failure after bind but before initialization never advertises ready/done; report a
+retained same-receipt unknown/unavailable outcome through the original authorized
+journal writer/committed reader, release only the exact owned tentative endpoint,
+and never start another successor automatically. A bind loser stays readonly, exits
+without broker/store/journal initialization, cleanup, auth replacement or endpoint
+unlink. It cannot write an UNKNOWN receipt on its own; the authorized old coordinator
+or proven successor writer owns that publication, otherwise committed lookup says
+unknown. Done follows initialization/checkpoint validation and serving readiness.
+
+Fresh clients that have never observed lineage cannot distinguish a lost journal
+from a virgin home without an extra anchor. The proposed compatibility choice lets
+journal absence use existing 0.30.14 election, but this does NOT override remembered
+lineage, malformed/hot/partial journal, designated-successor or active-receipt guards.
+Therefore a fresh competing controlled daemon must win tentative bind before any
+broker-owner writable acquisition, including while a successor waits. If it wins,
+the designated successor remains readonly and the original handoff is UNKNOWN;
+no false graceful-continuity or job-ownership rollback claim. Unknown legacy election
+clients must have blocked restart before release; no forced eviction. Completeness
+of the live writer/capability barrier and lost-journal gap behavior remain mandatory
+source/race proof. Endpoint exclusivity proves only ONE controlled BROKER-OWNER;
+legacy MCP/job/runner domain writers still exist and no full AB325 authority claim
+follows. If this bounded compatibility choice cannot preserve accepted bytes or
+prevent competing broker-owner writes, report the exact blocker for review.
+
+Current source needs an explicit listener/store split: broker-daemon.ts constructs
+MessageStore before Broker.listen; node.ts tryBecomeBroker does likewise. Separately,
+node.ts constructor records store presence and restores ReadJournal metadata BEFORE
+election. Those are existing CLIENT metadata writes, not broker initialization;
+inventory and barrier their actual owners, never silently assert all writes occur
+after bind. This contract requires startup wiring review; it does not authorize a
+domain rewrite or certify client queues. Proposed narrow files: broker listener
+reservation/adoption, daemon/node controlled startup, receipt path/reader guards,
+and fixture acceptance. Any additional owner adapter returns to the coordinator.
+
+Hosted acceptance additions: interrupted first bootstrap; actual committed bootstrap
+write/reopen; lost DB/lineage marker versus virgin home from a fresh client; missing/
+replaced PERSIST journal and check/write race; hot journal strict readonly refusal;
+every writer reopen's mode/flush/size-limit settings; no per-restart ACL mutations or
+new journal entry; fresh client versus designated successor tentative-bind race;
+bind loser zero broker-owner writes/unlinks; failure after bind before initialization;
+bounded tentative readiness/connection buffers; no job launch/ownership rollback;
+existing COMMIT/flush/quarantine/stop/revision/crash gates remain unchanged. Preserve
+unavailable/unknown outcomes and all existing ratified budgets.
 
 Windows must verify current SID ownership and a restrictive directory/file ACL
 equivalent to the existing private authentication-material scope, using built-in
