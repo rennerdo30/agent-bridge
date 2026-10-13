@@ -16,8 +16,10 @@ import { makeEnv, until, type TestEnv } from "./helpers.js";
 
 const cli = join(import.meta.dirname, "../plugins/codex/dist/cli.mjs");
 let env: TestEnv, nodes: BridgeNode[], children: ChildProcess[], owned: Map<number, string>;
+let startupEvidence: Array<Array<{ phase: string; code?: string | number; stage?: string; elapsedMs: number; count: number }>>;
 beforeEach(() => {
   env = makeEnv(); nodes = []; children = []; owned = new Map();
+  startupEvidence = [];
   writeFileSync(join(env.home, "config.json"), JSON.stringify({ dashboard: false }));
 });
 async function client(token = loadOrCreateToken(env.home)) {
@@ -39,13 +41,32 @@ async function stopOwned(pid: number) {
   owned.delete(pid);
 }
 afterEach(async () => {
+  // Fixture-only fixed categories. No raw stderr, commands, peer names, paths,
+  // authentication material or request/accepted content enters this evidence.
+  if (startupEvidence.length) process.stderr.write("AB325 fixture startup evidence " + JSON.stringify(startupEvidence) + "\n");
   await Promise.all(nodes.map(node => node.stop()));
   for (const child of children) { if (child.exitCode === null && child.signalCode === null) { const closed = once(child, "close"); child.kill(); await closed; } }
   for (const pid of owned.keys()) await stopOwned(pid);
   await env.cleanup();
 });
 function node(name: string, launch?: NonNullable<ConstructorParameters<typeof BridgeNode>[0]["daemon"]>["launch"]) {
-  const n = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name, agent: "codex", cwd: env.home, autoWake: false, log: nullLogger,
+  const evidence: typeof startupEvidence[number] = []; startupEvidence.push(evidence);
+  const started = performance.now();
+  const record = (phase: string, code?: string | number, stage?: string) => {
+    const previous = evidence.find(event => event.phase === phase && event.code === code && event.stage === stage);
+    if (previous) { previous.count++; previous.elapsedMs = Math.round(performance.now() - started); }
+    else evidence.push({ phase, ...(code === undefined ? {} : { code }), ...(stage ? { stage } : {}), elapsedMs: Math.round(performance.now() - started), count: 1 });
+  };
+  const fixtureLog: typeof nullLogger = { ...nullLogger, child: () => fixtureLog,
+    debug: (message, data) => { if (message === "connect attempt failed" && ["ENOENT", "ECONNREFUSED", "ETIMEDOUT", "EUNSAFESOCKETDIR"].includes(String(data?.code))) record("discovery", String(data!.code)); },
+    info: (message, data) => {
+      if (message === "connected to broker") record("authenticated_ready");
+      else if (message === "daemon creation observation; authenticated readiness still required" && ["created", "unknown", "unavailable"].includes(String(data?.kind))) {
+        record("creation_" + String(data!.kind), Number.isSafeInteger(data?.errorCode) ? Number(data!.errorCode) : undefined,
+          ["read", "startup", "create"].includes(String(data?.stage)) ? String(data!.stage) : undefined);
+      }
+    } };
+  const n = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name, agent: "codex", cwd: env.home, autoWake: false, log: fixtureLog,
     daemon: { cli, launch } });
   nodes.push(n); return n;
 }

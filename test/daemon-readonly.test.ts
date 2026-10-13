@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync } from "node:fs";
 import { connect } from "node:net";
-import { posix } from "node:path";
+import { join, posix } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { BridgeClient } from "../src/core/client.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
@@ -36,7 +36,8 @@ let env: TestEnv, token: string;
 beforeEach(async () => {
   env = makeEnv();
   location.directory = shortSocketDirectory(); location.requested = posix.join(location.directory, `readonly-${randomUUID()}.sock`);
-  location.actual = env.pipe; location.home = env.home; location.state = "valid";
+  location.actual = env.pipe; location.home = join(env.home, "private-validation-directory"); location.state = "valid";
+  mkdirSync(location.home, { mode: 0o700 });
   // Only the environment location is substituted. No shared per-UID directory
   // is created, chmodded or used as the real server endpoint by this fixture.
   if (process.platform !== "win32") expect(posix.dirname(env.pipe)).not.toBe(location.directory);
@@ -48,7 +49,7 @@ function noPreparationWrites() {
   expect(mkdirSync).not.toHaveBeenCalled(); expect(chmodSync).not.toHaveBeenCalled();
 }
 it("read-only connect validates the directory, preserves metadata and uses real broker authentication", async () => {
-  const before = lstatSync(env.home);
+  const before = lstatSync(location.home);
   const client = await BridgeClient.connect(location.requested, nullLogger, undefined, { readOnlyDirectory: true });
   try {
     await client.request("auth", { protocol: PROTOCOL_VERSION, token });
@@ -57,7 +58,7 @@ it("read-only connect validates the directory, preserves metadata and uses real 
   const rejected = await BridgeClient.connect(location.requested, nullLogger, undefined, { readOnlyDirectory: true });
   try { await expect(rejected.request("auth", { protocol: PROTOCOL_VERSION, token: "wrong-fixture-token" })).rejects.toMatchObject({ code: "unauthorized" }); }
   finally { rejected.close(); }
-  const after = lstatSync(env.home);
+  const after = lstatSync(location.home);
   expect([after.dev, after.ino, after.uid, after.mode, after.mtimeMs, after.ctimeMs])
     .toEqual([before.dev, before.ino, before.uid, before.mode, before.mtimeMs, before.ctimeMs]);
   if (process.platform !== "win32") expect(lstatSync).toHaveBeenCalledWith(location.directory);
