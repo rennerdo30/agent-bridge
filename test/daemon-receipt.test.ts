@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { spawn } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LifecycleJournal, LifecycleUnavailable, LIFECYCLE_ADMISSION_MS, LIFECYCLE_PRE_RELEASE_MS,
   LIFECYCLE_PREPARE_MS, LIFECYCLE_DISPATCH_DRAIN_MS, LIFECYCLE_WRITE_CHECKPOINT_MS, LIFECYCLE_BIND_OBSERVE_MS,
@@ -20,7 +21,13 @@ afterEach(async () => {
   vi.restoreAllMocks();
   // Only exact fixture-owned local SQL transactions/handles, never product work.
   if (captured?.isTransaction) sqliteExec.call(captured, "ROLLBACK");
-  journal?.close(); await env.cleanup();
+  if (journal && !journal.close()) {
+    // Explicit disposal is fixture teardown ONLY, not a production force-close
+    // API or proof that an unknown lifecycle outcome was rolled back/settled.
+    const actual = captured ?? Reflect.get(journal, "writer");
+    expect(actual).toBeInstanceOf(DatabaseSync); actual.close();
+  }
+  await env.cleanup();
 });
 const file = () => join(env.home, ".core-lifecycle", "receipts.sqlite");
 const deadline = () => performance.now() + LIFECYCLE_ADMISSION_MS;
@@ -28,6 +35,18 @@ const request = (): LifecycleRequest => ({ restartId: randomUUID(), operation: "
   target: { immutableRuntimePath: join(env.home, "fixture-immutable-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } });
 async function bootstrap() { journal = await LifecycleJournal.bootstrap(env.home, owner); return journal; }
 const portable = process.platform !== "win32";
+function publicQuarantineRefuses(j: LifecycleJournal, id: string) {
+  const sql = vi.spyOn(DatabaseSync.prototype, "prepare"), close = vi.spyOn(DatabaseSync.prototype, "close"), exec = vi.spyOn(DatabaseSync.prototype, "exec");
+  const counts = [sql.mock.calls.length, close.mock.calls.length, exec.mock.calls.length];
+  expect(() => j.lookup(id)).toThrow("writer_unknown"); expect(() => j.selected()).toThrow("writer_unknown");
+  expect(() => j.preparedReader(id)).toThrow("writer_unknown"); expect(j.close()).toBe(false);
+  expect([sql.mock.calls.length, close.mock.calls.length, exec.mock.calls.length]).toEqual(counts);
+}
+function committedFixtureRows() {
+  const observer = new DatabaseSync(file(), { readOnly: true });
+  try { observer.exec("PRAGMA query_only=ON"); return observer.prepare("SELECT json FROM receipt_revisions ORDER BY revision").all(); }
+  finally { observer.close(); }
+}
 
 describe("lifecycle-only committed receipt storage (not restart acceptance)", () => {
   it("freezes lifecycle budgets and refuses the currently unproved Windows bootstrap without mutation", async () => {
@@ -101,7 +120,7 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     try {
       expect(() => j.admit(input, deadline())).toThrow(LifecycleUnavailable);
       expect(j.isQuarantined).toBe(true); expect(captured?.isTransaction).toBe(false); expect(commits).toBe(1);
-      expect(j.lookup(input.restartId)).toBeNull();
+      publicQuarantineRefuses(j, input.restartId); expect(committedFixtureRows()).toHaveLength(0);
       expect(() => j.admit(input, deadline())).toThrow(LifecycleUnavailable); expect(begins).toBe(1);
     } finally { spy.mockRestore(); blocker.exec("ROLLBACK"); blocker.close(); }
   });
@@ -118,7 +137,7 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     });
     expect(() => j.admit(input, deadline())).toThrow(LifecycleUnavailable);
     expect(j.isQuarantined).toBe(true); expect(captured?.isTransaction).toBe(false);
-    expect(rollbacks).toBe(autoRollback ? 0 : 1); expect(j.lookup(input.restartId)).toBeNull();
+    expect(rollbacks).toBe(autoRollback ? 0 : 1); publicQuarantineRefuses(j, input.restartId); expect(committedFixtureRows()).toHaveLength(0);
   });
   it.skipIf(!portable)("failed ROLLBACK retains unknown transaction/lock without forced close or tentative receipt reads", async () => {
     const j = await bootstrap(), input = request();
@@ -130,7 +149,7 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     expect(() => j.admit(input, deadline())).toThrow(LifecycleUnavailable);
     expect(captured?.isTransaction).toBe(true); expect(j.isQuarantined).toBe(true); expect(j.close()).toBe(false);
     expect(captured!.prepare("SELECT count(*) AS n FROM receipt_revisions").get()?.n).toBe(1);
-    expect(j.lookup(input.restartId)).toBeNull();
+    publicQuarantineRefuses(j, input.restartId); expect(committedFixtureRows()).toHaveLength(0);
   });
   it.skipIf(!portable)("unknown transaction-state API quarantines before BEGIN and cannot authorize close", async () => {
     const spy = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function (this: DatabaseSync, sql: string) {
@@ -149,9 +168,54 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
       expect(() => j.advance(input.restartId, 1, "preparing", {}, deadline())).toThrow(LifecycleUnavailable);
       expect(j.isQuarantined).toBe(true); expect(j.close()).toBe(false);
       expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE")).toBe(false);
-      expect(j.lookup(input.restartId)).toEqual(retained);
+      publicQuarantineRefuses(j, input.restartId);
+      expect(JSON.parse(String(committedFixtureRows()[0]!.json))).toEqual(retained);
       expect(reads.mock.contexts.some(context => context === actual)).toBe(false);
     } finally { Reflect.set(j, "writer", actual); }
+  });
+  it.skipIf(!portable)("SIMULATED error after actual COMMIT retains committed bytes but quarantined public APIs cannot claim readiness or close", async () => {
+    const j = await bootstrap(), input = request();
+    vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function (this: DatabaseSync, sql: string) {
+      if (sql === "BEGIN IMMEDIATE") captured = this;
+      const result = sqliteExec.call(this, sql);
+      if (sql === "COMMIT") throw Object.assign(new Error("SIMULATED error after real COMMIT"), { errcode: 10 });
+      return result;
+    });
+    expect(() => j.admit(input, deadline())).toThrow(LifecycleUnavailable);
+    expect(captured!.isTransaction).toBe(false); expect(j.isQuarantined).toBe(true);
+    const before = readFileSync(file()), rows = committedFixtureRows(); expect(rows).toHaveLength(1);
+    expect(JSON.parse(String(rows[0]!.json))).toMatchObject({ restartId: input.restartId, state: "accepted", revision: 1 });
+    publicQuarantineRefuses(j, input.restartId);
+    expect(readFileSync(file())).toEqual(before); expect(committedFixtureRows()).toEqual(rows);
+  });
+  it.skipIf(!portable)("actual crash hot journal cannot be repaired or reopened through quarantined public APIs", async () => {
+    const j = await bootstrap(), input = request();
+    const fault = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function (this: DatabaseSync, sql: string) {
+      if (sql === "BEGIN IMMEDIATE") captured = this;
+      const result = sqliteExec.call(this, sql);
+      if (sql === "COMMIT") throw new Error("SIMULATED error after real COMMIT");
+      return result;
+    });
+    expect(() => j.admit(input, deadline())).toThrow(LifecycleUnavailable); fault.mockRestore();
+    // The exact owned synthetic child deliberately exits mid-transaction. Its
+    // small pager cache forces real journal/database spill; no signals or fake
+    // journal header, writable recovery, or production teardown are used.
+    const child = spawn(process.execPath, ["--input-type=module", "-e", `
+      import { DatabaseSync } from 'node:sqlite';
+      const db=new DatabaseSync(process.argv[1]);
+      db.exec('PRAGMA journal_mode=PERSIST; PRAGMA synchronous=FULL; PRAGMA cache_size=4; BEGIN IMMEDIATE');
+      const insert=db.prepare('INSERT INTO receipt_conflicts VALUES(?,?,?)');
+      for(let n=0;n<512;n++) insert.run('hot-fixture',String(n),'x'.repeat(8192));
+      process.exit(23);
+    `, file()], { stdio: "ignore", windowsHide: true });
+    const code = await new Promise<number | null>((resolve, reject) => { child.once("error", () => reject(new Error("Owned hot-journal fixture creation failed"))); child.once("exit", resolve); });
+    expect(code).toBe(23);
+    const main = readFileSync(file()), rollback = readFileSync(file() + "-journal"); expect(rollback.length).toBeGreaterThan(512);
+    let observer: DatabaseSync | undefined;
+    try { expect(() => { observer = new DatabaseSync(file(), { readOnly: true }); observer.exec("PRAGMA query_only=ON"); observer.prepare("SELECT count(*) FROM receipt_revisions").get(); }).toThrow(); }
+    finally { observer?.close(); }
+    publicQuarantineRefuses(j, input.restartId);
+    expect(readFileSync(file())).toEqual(main); expect(readFileSync(file() + "-journal")).toEqual(rollback);
   });
   it.skipIf(!portable)("missing established journal is unknown, not repaired/recreated or treated as fresh home", async () => {
     const j = await bootstrap(), input = request(); j.admit(input, deadline());

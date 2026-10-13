@@ -178,10 +178,11 @@ export class LifecycleJournal {
     } catch { fail("lineage_unknown"); }
     finally { reader.close(); }
   }
-  lookup(id: string): LifecycleReceipt | null { z.string().uuid().parse(id); this.verifyLineage(); return this.read(id); }
-  selected(): LifecycleReceipt | null { this.verifyLineage(); return this.read(); }
-  preparedReader(id: string): PreparedLifecycleReader { this.verifyLineage(); return new PreparedLifecycleReader(this.file, this.lineage, id); }
+  lookup(id: string): LifecycleReceipt | null { this.requireKnownWriter(); z.string().uuid().parse(id); this.verifyLineage(); return this.read(id); }
+  selected(): LifecycleReceipt | null { this.requireKnownWriter(); this.verifyLineage(); return this.read(); }
+  preparedReader(id: string): PreparedLifecycleReader { this.requireKnownWriter(); this.verifyLineage(); return new PreparedLifecycleReader(this.file, this.lineage, id); }
   get isQuarantined(): boolean { return this.quarantined; }
+  private requireKnownWriter(): void { if (this.quarantined) fail("writer_unknown"); }
   private transaction<T>(deadline: number, work: () => T, committed: (value: T) => boolean): T {
     if (this.quarantined) fail("writer_unknown");
     try { if (transactionState(this.writer)) fail("writer_unknown"); }
@@ -251,6 +252,7 @@ export class LifecycleJournal {
     }, value => this.lookup(id)?.revision === value.revision && digest(this.selected()) === digest(value));
   }
   close(): boolean {
+    if (this.quarantined) return false;
     // No forced close of an unresolved local transaction/lock.
     try { if (transactionState(this.writer)) return false; }
     catch { this.quarantined = true; return false; }
