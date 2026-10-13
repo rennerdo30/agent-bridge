@@ -17,9 +17,6 @@ vi.mock("../src/core/delegate.js", async original => ({
   ...await original<typeof import("../src/core/delegate.js")>(), pidAlive: vi.fn(() => true),
 }));
 vi.mock("../src/core/metadata-file-lease.js", () => ({ metadataFileLease: vi.fn(() => vi.fn()) }));
-vi.mock("../src/core/relay.js", async original => ({
-  ...await original<typeof import("../src/core/relay.js")>(), listPendingApprovals: vi.fn(() => []),
-}));
 
 const SECRET = "synthetic-private-content-must-not-escape";
 const reasons: FollowUpGate["reason"][] = ["control_lock_busy", "interrupted_executor_probe",
@@ -54,7 +51,7 @@ afterEach(async () => {
 function retainFixture(): string {
   writeFileSync(store, JSON.stringify([storedFixture()]));
   // Install only a synthetic durable fixture after creating the tracked exact turn.
-  Object.defineProperty(jobs, "storePath", { value: store });
+  Object.defineProperty(jobs, "storePath", { value: store, configurable: true });
   return readFileSync(store, "utf8");
 }
 
@@ -110,7 +107,11 @@ async function clientFor(admitCodex?: ServerContext["admitCodex"]): Promise<Clie
   const ctx: ServerContext = { node: null, jobs, home, cfg: DEFAULT_CONFIG, agent: "codex", log: nullLogger,
     cwd: () => home, channelActive: () => false, admitCodex };
   const server = new McpServer({ name: "gate-test", version: "1" });
+  // Registration ordinarily restores/persists saved jobs. That is fixture setup,
+  // outside the rejection under test; install the durable fixture only afterward.
+  Object.defineProperty(jobs, "storePath", { value: null, configurable: true });
   registerTools(server, ctx, []);
+  Object.defineProperty(jobs, "storePath", { value: store, configurable: true });
   const client = new Client({ name: "test", version: "1" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(a), client.connect(b)]);
@@ -166,4 +167,21 @@ it("preserves a valid active executor and never reuses an earlier refusal", () =
   expect(control).toHaveBeenCalledExactlyOnceWith("active message");
   expect(job.status).toBe("running"); expect(job.controller).toBe(controller);
   expect(controller.signal.aborted).toBe(false); expect(job.queue).toEqual(queue); expect(start).not.toHaveBeenCalled();
+});
+
+it("labels only the cached local turn when a newer permitted durable turn is locked", async () => {
+  const localTurn = job.startedAt, controller = job.controller;
+  retainFixture();
+  writeFileSync(store, JSON.stringify([{ ...storedFixture(), startedAt: localTurn + 100, cancellingTurn: localTurn + 100 }]));
+  prepare("control_lock_busy");
+  const bytes = readFileSync(store, "utf8"), client = await clientFor();
+  const response = await client.callTool({ name: "message_subagent", arguments: { job: job.name, message: SECRET } });
+  expect(response.isError).toBe(true);
+  const rendered = JSON.stringify(response.content);
+  expect(rendered).toContain("control_lock_busy"); expect(rendered).toContain("durable current turn");
+  expect(rendered).toContain("unknown"); expect(rendered).not.toContain(SECRET);
+  expect(rendered).toContain(String(localTurn)); expect(rendered).not.toContain(String(localTurn + 100));
+  expect(job.controller).toBe(controller); expect(job.startedAt).toBe(localTurn);
+  expect(job.queue).toEqual([SECRET]); expect(readFileSync(store, "utf8")).toBe(bytes);
+  expect(resume).not.toHaveBeenCalled(); expect(control).not.toHaveBeenCalled();
 });

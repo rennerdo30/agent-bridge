@@ -305,6 +305,7 @@ export type FollowUpOutcome = "started" | "delivered" | "queued" | "waiting" | "
 export interface FollowUpGate {
   reason: "control_lock_busy" | "interrupted_executor_probe" | "cancellation_guard_foreign_or_unowned" | "cancellation_guard_no_resume" | "runner_terminal_not_settled";
   jobId: string;
+  /** Exact local observed turn; lock contention may prevent refreshing a newer durable turn. */
   startedAt: number;
   observedAt: number;
   executorIdentity: "unknown";
