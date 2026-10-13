@@ -43,7 +43,96 @@
         "enabledDefault": true
       }
     ],
-    "hooks": [],
+    "hooks": [
+      {
+        "id": "bridge-sessionstart",
+        "event": "SessionStart",
+        "command": [
+          "node",
+          "dist/cli.mjs",
+          "muse-hook",
+          "SessionStart"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-userpromptsubmit",
+        "event": "UserPromptSubmit",
+        "command": [
+          "node",
+          "dist/cli.mjs",
+          "muse-hook",
+          "UserPromptSubmit"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-pretooluse",
+        "event": "PreToolUse",
+        "command": [
+          "node",
+          "dist/cli.mjs",
+          "muse-hook",
+          "PreToolUse"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-posttooluse",
+        "event": "PostToolUse",
+        "command": [
+          "node",
+          "dist/cli.mjs",
+          "muse-hook",
+          "PostToolUse"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-prellmcall",
+        "event": "PreLLMCall",
+        "command": [
+          "node",
+          "dist/cli.mjs",
+          "muse-hook",
+          "PreLLMCall"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-stop",
+        "event": "Stop",
+        "command": [
+          "node",
+          "dist/cli.mjs",
+          "muse-hook",
+          "Stop"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-stopfailure",
+        "event": "StopFailure",
+        "command": [
+          "node",
+          "dist/cli.mjs",
+          "muse-hook",
+          "StopFailure"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-sessionend",
+        "event": "SessionEnd",
+        "command": [
+          "node",
+          "dist/cli.mjs",
+          "muse-hook",
+          "SessionEnd"
+        ],
+        "timeoutMs": 25000
+      }
+    ],
     "mcpServers": [
       {
         "id": "bridge",

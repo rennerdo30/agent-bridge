@@ -253,6 +253,8 @@ export function runProcess(opts: {
   signal?: AbortSignal;
   /** Called with every complete stdout line as it arrives (for progress reporting). */
   onLine?: (line: string) => void;
+  /** Bind sanitized native plugin children to the owned CLI before it reads input. */
+  onSpawn?: (pid: number) => void;
   /** What runs, for the timeout message (e.g. "git worktree add"); default: a delegated agent run. */
   what?: string;
 }): Promise<RunResult> {
@@ -334,6 +336,10 @@ export function runProcess(opts: {
     child.stdin.on("error", () => {
       // The child may exit before reading stdin; the close handler reports the outcome.
     });
+    try { if (child.pid) opts.onSpawn?.(child.pid); } catch (error) {
+      finish(() => { void kill("delegate bootstrap failed").then(() => reject(error), () => reject(error)); });
+      return;
+    }
     child.stdin.end(opts.stdin);
   });
 }

@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DelegateError, checkDepth, childEnv, runProcess, withResumeHint, type DelegateRequest, type DelegateResult } from "./delegate.js";
+import { MUSE_ACCESS_ENV, registerMuseContext } from "./muse-context.js";
 import { progressEventHandler } from "./progress.js";
 import { object, parse } from "./transcripts/common.js";
 
@@ -69,6 +70,8 @@ export async function delegateToMuse(req: DelegateRequest & { bin: string; acces
   if (req.access === "read") args.push("--disable-write", "--disable-shell", ...(req.permissionProfile ? [] : ["--approval-mode", "never"]));
   else if (!req.permissionProfile) args.push("--disable-approval");
   const progress = progressEventHandler("muse", req.onProgress);
+  const env = childEnv({ ...req.extraEnv, CLAUDE_PROJECT_DIR: req.cwd, [MUSE_ACCESS_ENV]: req.access });
+  let releaseContext: (() => void) | undefined;
   let sessionId = req.sessionId ?? null;
   let sessionReported = false;
   try {
@@ -78,7 +81,8 @@ export async function delegateToMuse(req: DelegateRequest & { bin: string; acces
       stdin: "",
       cwd: req.cwd,
       timeoutMs: req.timeoutSec * 1000,
-      env: childEnv(req.extraEnv),
+      env,
+      onSpawn: pid => { releaseContext = registerMuseContext(pid, env); },
       log: req.log,
       signal: req.signal,
       onLine: (line) => {
@@ -104,6 +108,7 @@ export async function delegateToMuse(req: DelegateRequest & { bin: string; acces
     if (err instanceof DelegateError && !err.sessionId) err.sessionId = sessionId;
     throw err;
   } finally {
+    releaseContext?.();
     rmSync(dir, { recursive: true, force: true });
   }
 }

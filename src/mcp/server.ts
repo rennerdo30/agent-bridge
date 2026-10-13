@@ -7,6 +7,8 @@ import { readOutcomeDecision } from "../core/job-outcomes.js";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { MuseHooks } from "./muse-hooks.js";
+import { restoreMuseContext } from "../core/muse-context.js";
 import { AntigravityHooks } from "./antigravity-hooks.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
@@ -245,6 +247,7 @@ function instructionsFor(agent: AgentKind, targets: CodingAgent[]): string {
 export async function startServer(argv: string[] = process.argv.slice(2)): Promise<void> {
   const agentArg = argv.find((a) => a.startsWith("--agent="))?.slice("--agent=".length);
   const agent = parseAgentKind(agentArg ?? process.env[ENV.agent]);
+  if (agent === "muse") await restoreMuseContext();
   const targets = delegationTargets(agent);
   const home = resolveHome();
   const log = createLogger({ home, component: `mcp-${agent}` });
@@ -296,6 +299,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     });
   }
   if (node) {
+    if (agent === "muse" && process.env.MUSE_SESSION_ID) await node.setSessionId(process.env.MUSE_SESSION_ID);
     ctx.jobs = new JobManager(node, log.child("jobs"), join(home, JOBS_FILE), cfg.maxJobs, undefined, {
       canRestore: () => node.isConnected && (agent !== "claude" || ctx.restoreEligible === true),
       canReceiveHandoff: () => node.isConnected,
@@ -471,6 +475,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
 
   const transport = new StdioServerTransport();
   const antigravityHooks = agent === "antigravity" ? new AntigravityHooks(ctx) : null;
+  const museHooks = agent === "muse" ? new MuseHooks(ctx) : null;
   let shuttingDown = false;
   let closeSweepBusy = false;
   const closeSweep = setInterval(() => {
@@ -525,6 +530,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   }
   if (agent === "claude" && node) await node.setWakePolicy(cfg.wakeOnDirect, Boolean(ctx.rewakeAvailable || channel), cfg.maxHops);
   launchInspected();
+  await museHooks?.start().catch(err => log.warn("Muse hooks unavailable", { err: String(err) }));
   await antigravityHooks?.start().catch((err) => log.warn("Antigravity hooks unavailable", { err: String(err) }));
   if (node) {
     node.on("connected", ({ isBroker }) => {
@@ -767,7 +773,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     {
       title: "List peers",
       description:
-        "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity): name, agent type, busy/idle, uptime, working directory and session id. " +
+        "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity, Muse): name, agent type, busy/idle, uptime, working directory and session id. " +
         "Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
       inputSchema: { native_child: z.string().optional().describe("Native Claude agent_id issued by its start hook; scopes this call to the child") },
       annotations: { readOnlyHint: true },
@@ -1466,7 +1472,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
     "handoff_subagents",
     {
       title: "Hand off subagents",
-      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex, opencode or Antigravity session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
+      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex, opencode, Antigravity or Muse session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
       inputSchema: {
         to: z.string().min(1).max(64).describe("Exact live local session name from peers"),
         jobs: z.union([z.literal("all"), z.array(z.string().min(1).max(80)).min(1).max(1000)]).optional().describe("Exact job names, or all (default)"),
