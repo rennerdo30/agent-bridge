@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { retryRequest, transientRequestError } from "./request-retry.js";
 import { EventEmitter } from "node:events";
-import { unlinkSync } from "node:fs";
+import { lstatSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Broker } from "./broker.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
@@ -328,6 +328,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       // Nobody is listening: try to become the broker.
       if (this.opts.canHostBroker !== false) {
         if (this.opts.daemon) {
+          if (!(await this.clearStaleSocket())) { await sleep(jitter()); continue; }
           this.daemonLaunch ??= await (this.opts.daemon.launch ?? launchDaemon)({ cli: this.opts.daemon.cli, home: dirname(this.opts.dbPath), pipe: this.opts.pipePath,
             cwd: this.currentCwd, dashboard: this.opts.daemon.dashboard?.(), config: this.opts.daemon.config?.() });
           if (this.daemonLaunch.kind === "unavailable") {
@@ -386,11 +387,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         } catch (probeErr) {
           if (errCode(probeErr) === "ECONNREFUSED") {
             this.log.warn("removing stale broker socket", { pipe: this.opts.pipePath });
-            try {
-              unlinkSync(this.opts.pipePath);
-            } catch {
-              // Another node may have removed it first.
-            }
+            await this.clearStaleSocket();
           }
         }
       } else {
@@ -398,6 +395,27 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       }
       return false;
     }
+  }
+
+  /** Legacy Unix stale endpoint handling, shared by embedded election and demand start. */
+  private async clearStaleSocket(): Promise<boolean> {
+    if ((this.opts.platform ?? process.platform) === "win32") return true;
+    try { const client = await BridgeClient.connect(this.opts.pipePath, this.log); client.close(); return false; }
+    catch (error) {
+      if (errCode(error) === "ENOENT") return true;
+      if (errCode(error) !== "ECONNREFUSED") return false;
+    }
+    try {
+      const before = lstatSync(this.opts.pipePath), uid = process.getuid?.();
+      if (!before.isSocket() || uid === undefined || before.uid !== uid) return false;
+      const current = lstatSync(this.opts.pipePath);
+      if (current.dev !== before.dev || current.ino !== before.ino || !current.isSocket() || current.uid !== uid) return false;
+      // Probe again immediately before removal. This retains the documented legacy race, not an OS lock.
+      try { const client = await BridgeClient.connect(this.opts.pipePath, this.log); client.close(); return false; }
+      catch (error) { if (errCode(error) !== "ECONNREFUSED") return false; }
+      unlinkSync(this.opts.pipePath);
+      return true;
+    } catch (error) { return errCode(error) === "ENOENT"; }
   }
 
   private async adopt(client: BridgeClient): Promise<void> {

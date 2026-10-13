@@ -1,4 +1,3 @@
-import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { Broker } from "../core/broker.js";
 import { BridgeClient } from "../core/client.js";
@@ -71,14 +70,8 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
     try { await broker.listen(); listening = true; }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") throw error;
-      if (process.platform === "win32") return 0;
-      // Preserve legacy stale Unix endpoint handling; this is NOT a native lifetime lock.
-      try { const client = await BridgeClient.connect(pipe, log); client.close(); return 0; }
-      catch (probe) {
-        if ((probe as NodeJS.ErrnoException).code !== "ECONNREFUSED") throw probe;
-        try { unlinkSync(pipe); } catch { return 0; }
-        await broker.listen(); listening = true;
-      }
+      // Every bind loser exits without unlinking or closing the winner's endpoint.
+      return 0;
     }
     if (!stopping && process.env.AGENT_BRIDGE_DAEMON_DASHBOARD === "1") {
       await ensureDashboard(false).catch(() => log.warn("daemon dashboard unavailable"));

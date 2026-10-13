@@ -9,7 +9,7 @@
     "src/core/node.ts:constructor": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
     "src/core/node.ts:start": "922dd81e0ddbe0d79b70656ef14bd97cd1e6e331aeb410b8e9a9d92afce9f402",
     "src/core/node.ts:stop": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
-    "src/core/node.ts:tryBecomeBroker": "d41e6d558b3b4b20b8fa6335cc3665ca7e4543b8dd7282195fef5a4fd52ac450",
+    "src/core/node.ts:tryBecomeBroker": "fecea4d0b4dda38e2554f9392ff13d6fc49762448f67cca006f28345122a9557",
     "src/cli/dashboard.ts:constructor": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
     "src/cli/dashboard.ts:open": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
@@ -44,6 +44,18 @@
       "reason": "Approved daemon lifecycle handler/read-only status and degraded legacy hosting wiring only. All other method pins and the complete startUi hash remain unchanged. Real hosted daemon auth/concurrency/parent-exit fixtures cover the new path. Failed run 38373145537 remains evidence.",
       "base": "7adb4817ea2800e56bd26737a81dbe28d7f17219",
       "initialSourceCommit": "107444c7c705ba723cb69621d87dbbc60a733154"
+    },
+    "AB-325-1a-retention": {
+      "parent": "f4e0c2aac6a0b5606b9f37a71a7906ba4ab3910a",
+      "changes": [
+        {
+          "normalizedSourceFileSha256": "f05bf3f717ef421d4c3183a054afae33b7f2f5411f0bf8a9bccf57318836d703",
+          "method": "src/core/node.ts:tryBecomeBroker",
+          "previous": "d41e6d558b3b4b20b8fa6335cc3665ca7e4543b8dd7282195fef5a4fd52ac450",
+          "current": "fecea4d0b4dda38e2554f9392ff13d6fc49762448f67cca006f28345122a9557"
+        }
+      ],
+      "reason": "Approved centralization of legacy stale-socket cleanup in the existing exact reviewed unlink site, with socket type/current UID/fresh ECONNREFUSED checks. Bind losers never unlink. The retention allowlist, all other method pins, schema/backup deadlines/assertions and complete UI pin remain unchanged. Failed full job 115219351847/run38374490738 retained."
     }
   },
   "revertedUpdates": {

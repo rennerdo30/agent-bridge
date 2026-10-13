@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -12,6 +12,8 @@ import { assertStoreUpgrade, liveStorePeers, refreshStorePeerIdentities } from "
 import { APP_VERSION } from "../src/core/constants.js";
 import { SQLITE_STORE_VERSION } from "../src/core/store.js";
 import { until } from "./helpers.js";
+import { readProcessIdentity } from "../src/core/process-identity.js";
+import { fixtureProcessGeneration } from "./fixture-process-generation.js";
 
 const textOf = (result: any): string => result.content.map((part: any) => part.text ?? "").join("\n");
 
@@ -25,6 +27,7 @@ it("keeps released and current MCP processes talking until the older reader exit
   expect(oldArtifact.toString("utf8")).not.toContain("storage-capabilities");
   writeFileSync(oldServer, oldArtifact);
   const clients: Client[] = [];
+  const daemonIdentities = new Map<number, string>();
   const owned: { name: string; pid: number; stderr: () => string }[] = [];
   const env = { ...process.env } as Record<string, string>;
   // Test workers must never inherit a delegated job's live supervisor link or runtime selector.
@@ -49,8 +52,19 @@ it("keeps released and current MCP processes talking until the older reader exit
     try { return Number(db.prepare("PRAGMA user_version").get()!.user_version); } finally { db.close(); }
   };
   let failure: unknown;
+  const daemonLog = () => readFileSync(join(home, "logs", "agent-bridge.log"), "utf8");
+  const rememberDaemon = async (pid: number) => {
+    const identity = await readProcessIdentity(pid); expect(identity).toBeTruthy(); daemonIdentities.set(pid, identity!);
+  };
+  const stopFixtureDaemon = async (pid: number) => {
+    if (await fixtureProcessGeneration(pid, daemonIdentities.get(pid)!, "Mixed fixture daemon identity changed; no signal sent")) process.kill(pid, "SIGTERM");
+    await until(() => exited(pid), 3_000); daemonIdentities.delete(pid);
+  };
   try {
     await build({ entryPoints: [join(import.meta.dirname, "../src/mcp/main.ts")], outfile: newServer, bundle: true, platform: "node", format: "esm", logLevel: "silent",
+      banner: { js: "import { createRequire as __mixedRequire } from 'node:module'; const require = __mixedRequire(import.meta.url);" },
+    });
+    await build({ entryPoints: [join(import.meta.dirname, "../src/cli/main.ts")], outfile: join(home, "cli.mjs"), bundle: true, platform: "node", format: "esm", logLevel: "silent",
       banner: { js: "import { createRequire as __mixedRequire } from 'node:module'; const require = __mixedRequire(import.meta.url);" },
     });
     const { client: old, transport: oldTransport } = await start(oldServer, "old-release14", "codex");
@@ -87,9 +101,11 @@ it("keeps released and current MCP processes talking until the older reader exit
     // an early disk probe may precede the completed election after old.close().
     const health = await current.callTool({ name: "health", arguments: {} });
     expect(health.isError).not.toBe(true);
-    expect(JSON.parse(textOf(health))).toMatchObject({ brokerPid: currentPid, brokerVersion: APP_VERSION });
-    await until(() => currentLog().includes(`pid=${currentPid} broker listening`), 3_000);
-    const electionLog = currentLog().split("\n").filter(line => line.includes(`pid=${currentPid} `));
+    const daemonPid = JSON.parse(textOf(health)).brokerPid as number;
+    expect(daemonPid).not.toBe(currentPid); expect(JSON.parse(textOf(health))).toMatchObject({ brokerVersion: APP_VERSION });
+    await rememberDaemon(daemonPid);
+    await until(() => daemonLog().includes(`pid=${daemonPid} broker listening`), 3_000);
+    const electionLog = daemonLog().split("\n").filter(line => line.includes(`pid=${daemonPid} `));
     const listener = electionLog.findIndex(line => line.includes("broker listening"));
     const admittedSchema = schema();
     const protectedDir = join(home, ".migration-snapshots");
@@ -119,13 +135,18 @@ it("keeps released and current MCP processes talking until the older reader exit
     } finally { db.close(); }
     await current.close();
     await until(() => exited(currentPid), 3_000);
+    expect(await fixtureProcessGeneration(daemonPid, daemonIdentities.get(daemonPid)!, "Daemon did not outlive MCP")).toBe(true);
     expect(schema()).toBe(admittedSchema);
+    // A fresh elected daemon, rather than MCP exit, creates the next schema admission opportunity.
+    await stopFixtureDaemon(daemonPid);
     const { client: elected, transport: electedTransport } = await start(newServer, "current-release", "claude");
     expect(elected.getServerVersion()!.version).toBe(APP_VERSION);
     expect(electedTransport.pid).not.toBeNull(); expect(electedTransport.pid).toBeGreaterThan(0);
     await until(() => schema() === SQLITE_STORE_VERSION, 3_000);
     expect(textOf(await elected.callTool({ name: "peers", arguments: {} }))).toContain("current-release");
-    expect(JSON.parse(textOf(await elected.callTool({ name: "health", arguments: {} })))).toMatchObject({ brokerPid: electedTransport.pid, brokerVersion: APP_VERSION });
+    const electedHealth = JSON.parse(textOf(await elected.callTool({ name: "health", arguments: {} })));
+    expect(electedHealth).toMatchObject({ brokerVersion: APP_VERSION });
+    expect(electedHealth.brokerPid).not.toBe(electedTransport.pid); await rememberDaemon(electedHealth.brokerPid);
     const upgraded = new DatabaseSync(join(home, "bridge.db"), { readOnly: true });
     try {
       expect(upgraded.prepare("SELECT body FROM messages ORDER BY created_at").all().map((row) => row.body)).toEqual(["new-to-old protocol2", "old-to-new protocol2"]);
@@ -144,6 +165,10 @@ it("keeps released and current MCP processes talking until the older reader exit
     failure = error;
   } finally {
     await Promise.all(clients.map((client) => client.close().catch(() => {})));
+    for (const pid of daemonIdentities.keys()) {
+      try { await stopFixtureDaemon(pid); }
+      catch (error) { failure = new AggregateError([failure, error].filter(Boolean), "Exact fixture daemon exit was not proven; retained."); }
+    }
     try { await until(() => owned.every(child => exited(child.pid)), 3_000); }
     catch (error) { failure = new AggregateError([failure, error].filter(Boolean), "Owned MCP child exit was not proven; fixture retained."); }
     // liveStorePeers reads the capability rows through this process's shared metadata connection.
