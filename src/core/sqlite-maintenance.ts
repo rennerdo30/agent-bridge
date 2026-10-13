@@ -44,15 +44,39 @@ PRAGMA user_version = 1;
 `;
 
 /** Archive schema has its own version sequence; primary migrations belong to MessageStore. */
+type ArchiveInitialization = { readonly identity: symbol; readonly db: DatabaseSync; readonly file: string;
+  state: "initializing" | "returned" | "failed"; close: "not_attempted" | "attempted" | "returned" | "unknown" };
+const archiveInitializations = new WeakMap<DatabaseSync, ArchiveInitialization>();
+const retainedArchiveInitializations = new Set<ArchiveInitialization>();
+/** Internal non-authorizing observation of this exact opener's historical native
+ * capture/outcome. It steps no SQLite SQL, exports no native resource or permission,
+ * and cannot certify a parent owner, current closure, consumer drain or retirement. */
+export function archiveInitializationObservation(db: DatabaseSync): Readonly<{
+  captured: boolean; initialization: ArchiveInitialization["state"] | "unavailable";
+  close: ArchiveInitialization["close"]; retained: boolean; overflow: boolean;
+  ownerBound: false; ownershipReleased: false;
+}> {
+  const record = archiveInitializations.get(db);
+  return Object.freeze({ captured: !!record, initialization: record?.state ?? "unavailable", close: record?.close ?? "not_attempted",
+    retained: !!record && retainedArchiveInitializations.has(record), overflow: retainedArchiveInitializations.size > 128,
+    ownerBound: false, ownershipReleased: false });
+}
 export function openArchive(path: string): DatabaseSync {
   const existed = existsSync(path);
   const db = new DatabaseSync(path);
+  const record: ArchiveInitialization = { identity: Symbol(), db, file: path, state: "initializing", close: "not_attempted" };
+  archiveInitializations.set(db, record); // BEFORE initialization, with nonreused native identity.
   try {
     db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     migrateSqlite(db, path, existed, ARCHIVE_STORE_VERSION, [{ version: 1, sql: ARCHIVE_SCHEMA }], nullLogger);
     configureSqlite(db);
-    return db;
-  } catch (err) { db.close(); throw err; }
+    record.state = "returned"; return db;
+  } catch (err) {
+    record.state = "failed"; retainedArchiveInitializations.add(record); record.close = "attempted";
+    try { db.close(); record.close = "returned"; }
+    catch (closeError) { record.close = "unknown"; throw closeError; } // Preserve the original close-error throw behavior.
+    throw err;
+  }
 }
 
 export function archiveDbPath(file: string): string {

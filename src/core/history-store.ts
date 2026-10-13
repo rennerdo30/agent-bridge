@@ -107,19 +107,42 @@ function deferUpgrade(writers: string[]): never {
 /** Independent version sequence. No broker tables, triggers, or attached writable databases.
  * v1 → v2 keeps every v1 table inside the file, renamed v1_*, and copies from it (or from bridge.db) verified.
  * The in-place v1 rename waits while a v1 writer is alive; the store then stays v1 until upgradeHistoryStore. */
+type HistoryInitialization = { readonly identity: symbol; readonly db: DatabaseSync; readonly file: string;
+  state: "initializing" | "returned" | "failed"; close: "not_attempted" | "attempted" | "returned" | "unknown" };
+const historyInitializations = new WeakMap<DatabaseSync, HistoryInitialization>();
+const retainedHistoryInitializations = new Set<HistoryInitialization>();
+/** Internal historical native-open observation only; no SQLite page SQL, raw
+ * resource export, parent-owner certification or close/retirement permission. */
+export function historyInitializationObservation(db: DatabaseSync): Readonly<{
+  captured: boolean; initialization: HistoryInitialization["state"] | "unavailable";
+  close: HistoryInitialization["close"]; retained: boolean; overflow: boolean;
+  ownerBound: false; ownershipReleased: false;
+}> {
+  const record = historyInitializations.get(db);
+  return Object.freeze({ captured: !!record, initialization: record?.state ?? "unavailable", close: record?.close ?? "not_attempted",
+    retained: !!record && retainedHistoryInitializations.has(record), overflow: retainedHistoryInitializations.size > 128,
+    ownerBound: false, ownershipReleased: false });
+}
 export function openHistoryStore(file: string): DatabaseSync {
   const db = new DatabaseSync(file, { timeout: 3000 });
+  const record: HistoryInitialization = { identity: Symbol(), db, file, state: "initializing", close: "not_attempted" };
+  historyInitializations.set(db, record); // Capture before configuration or migration can fail.
   try {
     db.exec("PRAGMA busy_timeout=3000");
     registerHistoryFunctions(db);
     const version = Number(db.prepare("PRAGMA user_version").get()!.user_version);
     if (version > HISTORY_STORE_VERSION) throw new Error(`unsupported history store version: ${version}`);
     configureSqlite(db);
-    if (version === HISTORY_STORE_VERSION) { refreshHistoryViews(db); return db; }
-    if (version === 1 && file !== ":memory:" && liveHistoryV1Writers(dirname(file)).length) return db;
+    if (version === HISTORY_STORE_VERSION) { refreshHistoryViews(db); record.state = "returned"; return db; }
+    if (version === 1 && file !== ":memory:" && liveHistoryV1Writers(dirname(file)).length) { record.state = "returned"; return db; }
     upgradeHistoryStore(db, file);
-    return db;
-  } catch (err) { db.close(); throw err; }
+    record.state = "returned"; return db;
+  } catch (err) {
+    record.state = "failed"; retainedHistoryInitializations.add(record); record.close = "attempted";
+    try { db.close(); record.close = "returned"; }
+    catch (closeError) { record.close = "unknown"; throw closeError; }
+    throw err;
+  }
 }
 
 /** Views are derived; a store created by an earlier build gets the current definition. Best effort: a busy store
