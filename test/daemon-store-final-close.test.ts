@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openArchive, archiveInitializationObservation } from "../src/core/sqlite-maintenance.js";
@@ -15,14 +15,39 @@ import type { BridgeMessage } from "../src/core/protocol.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 const leaseFault = vi.hoisted(() => ({ path: "", mode: "none" as "none" | "before" | "after", failure: new Error("SIMULATED lease removal failure") }));
+const acquisitionFault = vi.hoisted(() => ({ directory: "", stage: "none" as "none" | "write" | "close_before" | "close_after",
+  failure: new Error("SIMULATED lease acquisition/descriptor failure"),
+  descriptors: new Set<{ fd: number; path: string; closed: boolean }>(), active: new Map<number, { fd: number; path: string; closed: boolean }>(),
+  actualClose: undefined as typeof import("node:fs").closeSync | undefined }));
 vi.mock("node:fs", async importOriginal => {
   const original = await importOriginal<typeof import("node:fs")>();
+  acquisitionFault.actualClose = original.closeSync;
   const remove: typeof original.rmSync = (path, options) => {
     if (path === leaseFault.path && leaseFault.mode === "before") throw leaseFault.failure;
     original.rmSync(path, options);
     if (path === leaseFault.path && leaseFault.mode === "after") throw leaseFault.failure;
   };
-  return { ...original, rmSync: remove, default: { ...original, rmSync: remove } };
+  const open: typeof original.openSync = (path, flags, mode) => {
+    const fd = original.openSync(path, flags, mode);
+    if (typeof path === "string" && acquisitionFault.directory && dirname(path) === acquisitionFault.directory) {
+      const capture = { fd, path, closed: false }; acquisitionFault.descriptors.add(capture); acquisitionFault.active.set(fd, capture);
+    }
+    return fd;
+  };
+  const write: typeof original.writeSync = (...args: unknown[]) => {
+    const result = Reflect.apply(original.writeSync, original, args) as number;
+    if (typeof args[0] === "number" && acquisitionFault.active.has(args[0]) && acquisitionFault.stage === "write") throw acquisitionFault.failure;
+    return result;
+  };
+  const close: typeof original.closeSync = fd => {
+    const capture = acquisitionFault.active.get(fd);
+    if (capture && acquisitionFault.stage === "close_before") throw acquisitionFault.failure;
+    original.closeSync(fd);
+    if (capture) { capture.closed = true; acquisitionFault.active.delete(fd); }
+    if (capture && acquisitionFault.stage === "close_after") throw acquisitionFault.failure;
+  };
+  const forwarding = { rmSync: remove, openSync: open, writeSync: write, closeSync: close };
+  return { ...original, ...forwarding, default: { ...original, ...forwarding } };
 });
 
 // Actual isolated native resources only. Fixture disposal is not a production
@@ -32,10 +57,15 @@ const nativeFunction = DatabaseSync.prototype.function, nativePrepare = Database
 const owned = new Map<DatabaseSync, { actuallyClosed: boolean }>();
 const ownedStores = new Set<MessageStore>();
 let env: TestEnv;
-beforeEach(() => { leaseFault.path = ""; leaseFault.mode = "none"; env = makeEnv(); });
+beforeEach(() => { leaseFault.path = ""; leaseFault.mode = "none"; acquisitionFault.directory = ""; acquisitionFault.stage = "none"; env = makeEnv(); });
 afterEach(async () => {
   leaseFault.path = ""; leaseFault.mode = "none";
+  acquisitionFault.directory = ""; acquisitionFault.stage = "none";
   vi.restoreAllMocks();
+  for (const capture of acquisitionFault.descriptors) {
+    if (!capture.closed) { acquisitionFault.actualClose!(capture.fd); capture.closed = true; acquisitionFault.active.delete(capture.fd); }
+    acquisitionFault.descriptors.delete(capture);
+  }
   for (const store of ownedStores) { store.close(); ownedStores.delete(store); }
   for (const [db, outcome] of owned) {
     if (!outcome.actuallyClosed) { nativeClose.call(db); outcome.actuallyClosed = true; }
@@ -503,4 +533,38 @@ describe("actual readonly history helper capture (not enrolled consumer or cold 
       }
     });
   }
+});
+
+describe("lease acquisition native fault coverage (historical records only)", () => {
+  for (const stage of ["write", "close_before", "close_after"] as const) {
+    it(`captures actual owned descriptor and preserves original SIMULATED ${stage} error without inventing a returned lease`, () => {
+      acquisitionFault.directory = join(env.home, ".storage-users"); acquisitionFault.stage = stage;
+      expect(() => storageLease(env.home)).toThrow(acquisitionFault.failure);
+      expect(acquisitionFault.descriptors.size).toBe(1);
+      const capture = [...acquisitionFault.descriptors][0]!;
+      expect(capture.closed).toBe(stage !== "close_before");
+      expect(existsSync(capture.path)).toBe(true);
+      const bytes = readFileSync(capture.path); expect(bytes.byteLength).toBeGreaterThan(0);
+      acquisitionFault.stage = "none";
+      if (!capture.closed) { acquisitionFault.actualClose!(capture.fd); capture.closed = true; acquisitionFault.active.delete(capture.fd); }
+      expect(readFileSync(capture.path)).toEqual(bytes);
+      // No release closure was returned. No invented observer key, transfer,
+      // owner proof or source ACK follows this exact fixture-owned disposal.
+    });
+  }
+  it("retains failed acquisition records past128 and exposes only overflow refusal, not source/native disposal proof", () => {
+    const anchor = storageLease(env.home);
+    acquisitionFault.directory = join(env.home, ".storage-users"); acquisitionFault.stage = "close_before";
+    for (let n = 0; n < 129; n++) expect(() => storageLease(env.home)).toThrow(acquisitionFault.failure);
+    expect(acquisitionFault.descriptors.size).toBe(129);
+    expect([...acquisitionFault.descriptors].every(capture => !capture.closed)).toBe(true);
+    expect(new Set([...acquisitionFault.descriptors].map(capture => capture.path)).size).toBe(129);
+    expect(storageLeaseObservation(anchor)).toMatchObject({ overflow: true, ownerBound: false, ownershipReleased: false });
+    acquisitionFault.stage = "none";
+    for (const capture of acquisitionFault.descriptors) {
+      acquisitionFault.actualClose!(capture.fd); capture.closed = true; acquisitionFault.active.delete(capture.fd);
+    }
+    anchor();
+    expect(storageLeaseObservation(anchor)).toMatchObject({ overflow: true, ownerBound: false, ownershipReleased: false });
+  });
 });
