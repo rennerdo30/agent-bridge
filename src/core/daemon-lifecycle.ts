@@ -287,7 +287,7 @@ export class LifecycleJournal {
   }
   private readerGuard(): (() => void) | undefined { return process.platform === "win32" ? this.servingPhase?.guard : undefined; }
   private readerDeadline(): number | undefined { return process.platform === "win32" ? this.servingPhase?.deadline : undefined; }
-  private writerGuard(): void { if (process.platform === "win32") { if (!this.servingPhase) fail("owner_unsupported"); this.servingPhase.guard(); } }
+  private writerGuard(): void { if (process.platform === "win32") { if (!this.servingPhase || this.servingPhase.phase === "prepare") fail("owner_unsupported"); this.servingPhase.guard(); } }
   private writerExec(sql: string): void {
     this.writerGuard();
     if (process.platform === "win32") {
