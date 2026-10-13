@@ -118,7 +118,7 @@ the same receipt ID truthfully; a later explicit lookup can observe completion.
 
 Prepare includes WMI/create, exact successor authentication and ready-to-bind within
 five seconds; the creation timeout is not an extra allowance. Any pre-release phase
-overrun reopens old admission and retains serving endpoints, publishes
+overrun BEFORE an uncertain intent COMMIT reopens old admission and retains serving endpoints, publishes
 `aborted:<phase>budget` as the failed_serving outcome and prohibits release. Do not
 kill a possibly created replacement: it remains bound to the original receipt and
 cannot bind without release_committed. Unknown WMI creation stays latched, no second
@@ -169,7 +169,7 @@ Both mechanisms may fail and yield unavailable/unknown; no zero-gap guarantee.
 
 This successor note proposes the final release boundary; it does not authorize
 ledger, store-close, worker-release or role-promotion code. Source pin for this
-proposal is `9b2e38f2ddae4533daf04e233ffdd9466c6d9dc8`. The current additive
+proposal is `3e53b13b0a8cf9c6102b265575fa8fca2063ac4b`. The current additive
 metadata stage is checkpoint-only/all-handles-retained; archive settlement observes
 producers, not store release. Neither default `close()` nor a worker exit supplies
 the following proofs. History/project closure is still unsupported.
@@ -187,8 +187,18 @@ checkpoint evidence for every owned handle and schema; do not infer external-pro
 writer closure or treat installed inactive versions as live participants.
 
 All substantive handles and leases remain owned during reversible preparation.
-Pre-release failure/overrun leaves the endpoint serving and restores only proven
-reversible producer/admission gates. No partial close/reopen or cached-statement
+Pre-release failure/overrun BEFORE any uncertain intent COMMIT leaves the endpoint
+serving and restores only proven reversible producer/admission gates. Once intent
+COMMIT is ATTEMPTED, a throw/timeout/unavailable transaction observation may have
+committed it. Latch all seals and retain substantive handles/leases/endpoint; do not
+resume ordinary old writes, release, close or promote the target from absence or
+timeout. Independent committed-only observation and known local settlement must
+prove rejection or a durable matching abort that cannot later be interpreted as
+release-ready before any resume claim. If that outcome is unprovable, old stays up
+with truthful unavailable/unknown control admission; it is not a clean normal-serving
+resume. Never clear quarantine, issue another intent attempt or force-close to
+manufacture resolution. This is distinct from a proven reversible drain refusal.
+No partial close/reopen or cached-statement
 reconstruction is authorized as that abort mechanism. Once selected replacement
 preparation, checkpoints and intent are committed, irreversibly inhibit all old
 managed writes/openers/teardown/renewal callbacks and release only the actual owned
@@ -210,7 +220,7 @@ owned handles plus accepted queues; actual exit alone is insufficient. No abort,
 termination, rollback, replay, migration, repair or close-based durability claim.
 
 The post-release two-second monotonic deadline is ONE shared observation envelope
-for ledger returns, final witness publication/observation, replacement bind/readiness
+for ledger returns, final post-close ACK transmission/observation, replacement bind/readiness
 and outcome observation, not a fresh two seconds per resource. Sync SQLite close,
 COMMIT and filesystem operations cannot be cancelled by that observer. Do not start
 a new attempt after expiry. A return/error/ACK after the deadline yields UNKNOWN to
@@ -219,45 +229,70 @@ or reopens old admission. Retain exact attempted/unattempted/unknown entries and
 durable intent. Availability can remain interrupted: no old rollback or zero-gap
 claim after endpoint release.
 
-The restricted lifecycle journal is the explicit LAST control-resource exception
-to substantive-store closure. It cannot publish a witness after literally every
-SQL handle has closed. The proposal therefore requires a source-private, irrevocable
-old control-role revocation BEFORE one final witness CAS: every ordinary admit,
-advance, renewal, writer lookup, preparation and queued journal mutation becomes
-ineligible. Drain prior journal transactions first; revoke all grants/captured
-callbacks, not just a public boolean. The sole remaining permission is one bounded
-final CAS for the original receipt/revision and exact selected successor (or stop),
-carrying the frozen closure-ledger digest and old writer-role retirement evidence.
-It cannot create another receipt, change executable/arguments/target, reopen a store,
-renew a lease or retry ambiguous effects. This retiring permission is not a reusable
-general writer role. No substantive store lease remains; any control-role lease
-must be retired by this same reviewed capability transition, with no renewal task.
+The restricted lifecycle journal is the explicit LAST control resource. While its
+writer remains open, it may commit only release-ready INTENT/checkpoint revisions
+under sealed ownership; no durable record claims that this still-open writer is
+already released or that a successor is eligible. Validate the final intended
+revision through a separate verified committed readonly snapshot first. Then
+irrevocably revoke old admit/advance/open/renewal/queued journal permissions, drain
+prior journal transactions, close the actual LAST journal connection and release
+the exact owned control-role lease without a renewal task. Register and account for
+each attempted native close. Unknown COMMIT/transaction state stays quarantined;
+no writer SELECT, fresh BEGIN, repeated effect or auto-close as rollback proof.
+An unknown/failed last close/lease release cannot generate a witness. No journal
+write, reopen or fresh reader constructor in the old process after final closure.
 
-The final durable witness must bind restartId, journal lineage/file identities,
-old instance nonce/PID/creation identity, owner generation, original authenticated
-prepared ACK/revision, selected replacement nonce/PID/creation identity and verified
-target version/manifest, closure digest and `oldControlWriterEligible=false`.
-The old process becomes permanently non-writing even if the last physical journal
-connection has not yet closed. A prepared reader accepts ONLY the SAME authenticated
-exact-instance witness from a separate verified committed readonly snapshot, with
-strict non-hot lineage/file/owner checks and no writable recovery. Then, and only
-then, the selected successor may win exclusive tentative bind; it still cannot
-initialize writable stores or workers before its all-store guard and role CAS.
-No ordinary client, bind loser or unselected process gets that permission.
+Only AFTER actual last-journal/control-lease closure may old send a NONMUTATING
+authenticated exact-instance post-close ACK to the original selected successor.
+Bind the ACK to restartId, committed intent revision/digest, journal lineage/file
+identities, old nonce/PID/creation identity, owner generation, original authenticated
+prepared ACK, selected replacement nonce/PID/creation identity, verified target
+version/manifest and complete actual close-ledger digest. The ACK is an ephemeral
+release witness, not a new journal write or a durable eligibility record. A trusted
+source-owned role must have revoked EVERY captured callback/opener, not merely
+flipped a caller-supplied/public boolean. A still-eligible old writer cannot ACK.
 
-After the final COMMIT, the old process attempts the last journal connection close
-and records its actual in-memory ledger outcome without another journal write. This
-connection is now a retired resource, not an eligible writer or a proof that all
-native resources have vanished. Unknown COMMIT/transaction state stays quarantined;
-no writer SELECT, fresh BEGIN, second witness CAS or auto-close as rollback proof.
-Within the original remaining budget only known-local transaction settlement may
-be observed under the reviewed failure rules. If no committed valid witness is
-provable, the successor remains readonly/UNKNOWN. A final COMMIT that actually
-completes after observer expiry cannot turn the expired command into SUCCESS;
-same-receipt discovery may later observe a valid witness and the SAME selected
-successor's bind/readiness. Permission comes from that committed retirement/closure
-proof, never elapsed time. This distinction requires hosted fault/source proof; it
-does not assume thrown COMMIT rolled back or cancellation stopped an effect.
+The selected replacement's exact authenticated control connection is an explicitly
+retained NONMUTATING channel while the public endpoint and ordinary accepted
+connections are released. Inventory listener identity, every ordinary/control
+socket and inflight/disconnect producer separately: EndpointReservation.close
+does not own Broker.conns or their route/last-seen/mail side effects. Convert only
+the already-bound original prepared channel to this private role; it accepts no
+generic auth/hello/send/control/extension dispatch, registration or mutation while
+retained. It is not a public role flag, a new general transport, or a wire/config
+option arbitrary callers can select. Refuse queued ordinary frames before any
+handler/pressure/store side effects. Its send/flush/EOF/actual-close observations
+must be bounded and instance-bound; do not assume Node Server.close's callback
+completes with a retained connection or equate listening=false with native endpoint
+release without hosted supported-transport proof. If the existing primitive cannot
+release the endpoint while retaining this safely fenced channel, block/review the
+smallest alternative; do not silently add another unsafe authority path.
+
+Replacement first reads the matching committed intent/checkpoints with actual
+readonly/query_only/non-hot lineage checks. It cannot promote from this INTENT
+alone. It must receive the SAME authenticated post-close ACK, verify the original
+channel/instance/ledger and actual release observations, then win exclusive
+tentative bind. Its all-store guard and source-owned selected-role CAS precede ANY
+writable acquisition/worker/initializer. After promotion only the selected successor
+may append binding/done (or complete stopped evidence under its defined safe stop
+role); old cannot write an outcome after its handles are closed. Preserve oldInstance
+as receipt provenance and distinguish current journal writer from that historical
+instance; current portable advance() does not yet implement successor role transfer.
+No ordinary client, bind loser or unselected process gets promotion permission.
+
+Missing/lost/invalid ACK, last-close failure, unknown channel release or late close
+return keeps the successor readonly/UNKNOWN. Do not start an ACK send after the
+shared deadline. An ACK sent only after proven actual closure may arrive late;
+that cannot turn the expired observer into SUCCESS. Same-receipt discovery may
+later observe the SAME selected successor's valid bind/readiness, never authorize
+a second launch or interpret elapsed time as a release witness. If ACK is lost,
+normal promotion is unavailable; only verified exact old-instance EXIT plus
+ownership/checkpoint reconciliation supplies the separate recovery alternative.
+Stop has no replacement: publish terminal stop INTENT while the last journal is
+still open, independently validate it, then close actual resources. Observers must
+not call that intent fully stopped while old resources/instance remain unproved;
+it still blocks demand-start. Lost stop completion remains pending/unknown, not a
+force stop or an opportunity to bootstrap. No write-after-close or old rollback.
 
 Crash recovery is the separate exact old nonce/PID/process-creation EXIT plus
 ownership/checkpoint reconciliation alternative, before bind and ANY writable
@@ -270,8 +305,10 @@ no-demand-start intent; an unknown stop is unavailable, not a force-stop success
 Required hosted Windows/Linux/macOS cases: partial close at each ledger position;
 close error before/after actual native return; delayed worker release ACK/exit;
 last-journal COMMIT_BUSY/IO/FULL/rollback failure and committed-only observation;
-retired-role late callback/admit/renewal rejection; journal-close error after valid
-retirement witness; final COMMIT late return retaining UNKNOWN without second CAS;
+retired-role late callback/admit/renewal rejection; journal-close error preventing
+post-close ACK; intent COMMIT late/unknown return retaining seals/ownership without
+second effect or clean serving resume; last native close late return/ACK loss;
+queued ordinary frames on the retained private channel and actual endpoint release;
 new-client/selected-successor bind race; receipt loss/auth rejection; exact old crash
 and replacement failures; accepted bytes/active detached jobs/connected dashboard
 unchanged. Instrument only bounded primitive phase/ledger outcomes. No fixture or
