@@ -90,7 +90,7 @@ const SUBAGENT_TOOLS = new Set(["health", "peers", "send", "report_progress", "h
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 /** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
 const STAND_IN_RECHECK_MS = 30_000;
-const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title", "notes"] as const;
+const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "permission_profile", "allow_tools", "send_to", "title", "notes"] as const;
 /** Plugin root: dist/server.mjs lives one level below it. */
 const PLUGIN_ROOT = resolve(bundleDirectory(import.meta.url), "..");
 
@@ -1513,6 +1513,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         approvals_reviewer: z.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Codex reviewer for the next turn: auto_review or user. A running turn keeps its reviewer."),
         permission_mode: z.enum(CLAUDE_PERMISSION_MODES as [string, ...string[]]).optional().describe("Claude permission mode for the next turn."),
         auto_approve: z.boolean().optional().describe("opencode auto-approval for the next turn."),
+        permission_profile: z.string().trim().min(1).max(80).optional().describe("Named Muse permission profile for the next turn. Replaces earlier access."),
       },
     },
     guarded("message_subagent", async (a: { job: string; message?: string; title?: string } & JobSettings) => {

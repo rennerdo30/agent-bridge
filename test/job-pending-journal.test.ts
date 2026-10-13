@@ -52,6 +52,24 @@ it.each(["done", "failed", "cancelled"])("keeps durable %s state ahead of a stal
   expect(mergePendingJob(current, stale)).toBeNull();
 });
 
+it("recovers a newer admitted turn's removed permission profile without dropping unknown args", () => {
+  const current = snapshot({ agent: "muse", startedAt: 100, args: { permission_profile: "old-profile", futureSetting: { keep: true } } });
+  const next = { ...current, startedAt: 101, args: { access: "edit" } };
+  retainPendingJob(path, { name: "owner", session: "owner-session", nonce: randomUUID() }, next, current);
+  writeFileSync(path, JSON.stringify({ version: 4, jobs: [current] }));
+  manager().restore(() => undefined);
+  expect(readStore(path)[0]?.args).toEqual({ access: "edit", futureSetting: { keep: true } });
+});
+
+it("keeps newer same-turn access settings ahead of a stale exact-profile receipt", () => {
+  const base = snapshot({ agent: "muse", args: { permission_profile: "old-profile", futureSetting: { keep: true } } });
+  const current = { ...base, args: { access: "read", futureSetting: { keep: true } } };
+  retainPendingJob(path, { name: "owner", session: "owner-session", nonce: randomUUID() }, base, base);
+  writeFileSync(path, JSON.stringify({ version: 4, jobs: [current] }));
+  manager().restore(() => undefined);
+  expect(readStore(path)[0]?.args).toEqual(current.args);
+});
+
 it.each(["done", "cancelled"])("preserves newer same-turn durable queues, forwarded facts, %s status and exact envelopes", status => {
   const base = snapshot({ status: "running", finishedAt: undefined, queuedMessages: [], forwarded: [], deliveryHistory: [] });
   const current = { ...base, status, finishedAt: Date.now(), queuedMessages: ["new accepted follow-up"],

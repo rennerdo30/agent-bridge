@@ -29,6 +29,7 @@ export const remoteSpawnArgsSchema = z.object({
   notes: z.enum(["none", "milestones", "blockers"]).optional(),
   sandbox: z.enum(CODEX_SANDBOXES).optional(), permission_mode: z.enum(CLAUDE_PERMISSION_MODES).optional(),
   auto_approve: z.boolean().optional(),
+  permission_profile: z.string().trim().min(1).max(80).optional(),
   native_subagents: z.number().int().min(0).max(MAX_CODEX_SUBAGENTS).optional(),
   approvals_reviewer: z.enum(CODEX_APPROVALS_REVIEWERS).optional(),
 }).strict();
