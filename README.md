@@ -26,8 +26,8 @@ This table describes the current **agent-bridge 0.30.16 source implementation**.
 
 | Feature | Claude Code | Codex | opencode | Antigravity | Muse |
 | --- | --- | --- | --- | --- | --- |
-| Session connection, peers, send/receive | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Messages while busy (hooks / next tool or model step) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Session connection, peers, send/receive | ✅ | ✅ | ✅ | ⚠️[^antigravity-root] | ✅ |
+| Messages while busy (hooks / next tool or model step) | ✅ | ✅ | ✅ | ⚠️[^antigravity-root] | ✅ |
 | Idle message delivery / auto-wake | ⚠️[^claude-wake] | ⚠️[^codex-wake] | ✅ | ⚠️[^antigravity-wake] | ⚠️[^muse-wake] |
 | Delegate **to** (`ask_*` / `spawn_*` target) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Delegate **from** (all five targets, including itself) | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -49,7 +49,7 @@ This table describes the current **agent-bridge 0.30.16 source implementation**.
 | Pinned decisions (`decisions`) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Project main / secondary roles | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Paired-PC messaging | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Jobs on a paired PC | ✅ | ✅ | ✅ | ⚠️[^remote-antigravity] | ✅ |
+| Jobs on a paired PC | ✅ | ✅ | ✅ | ✅[^remote-antigravity] | ✅ |
 | Mobile app session / job visibility | ⚠️[^mobile] | ⚠️[^mobile] | ⚠️[^mobile] | ⚠️[^mobile] | ⚠️[^mobile] |
 | `install` / `update` setup | ✅ Marketplace plugin[^install] | ✅ Marketplace plugin[^install] | ✅ Native plugin[^install] | ✅ Native plugin[^install] | ✅ Native plugin[^muse-install] |
 
@@ -57,7 +57,8 @@ Nested bridge delegation defaults to depth **2**, configurable up to **3**; dept
 
 [^claude-wake]: Idle delivery uses a channel when enabled, the wake module on Claude Code 2.1.287+, or the host's `asyncRewake` Stop hooks. It depends on an available wake transport and the session's wake settings; otherwise mail stays queued for a later prompt or inbox.
 [^codex-wake]: Requires a known main-thread ID, native `codex queue` support and a TUI consuming that queue. Queue acceptance does not confirm a started turn or read mail. Trust the bridge hooks in `/hooks` for automatic injection.
-[^antigravity-wake]: Active `PreInvocation` / Stop hooks deliver mail, but an already idle TUI cannot be woken. Queued mail arrives on the next turn or through inbox.
+[^antigravity-root]: Native hooks and Bridge tool calls require independently proven root identity: delegated stream `init`, inspected `--conversation`, or an exact-host restored binding. A fresh unbound interactive session must establish that evidence before using Bridge tools; the first child hook cannot claim its root.
+[^antigravity-wake]: Once root identity is proven, active `PreInvocation` / Stop hooks deliver mail, but an already idle TUI cannot be woken. Queued mail arrives on the next turn or through inbox.
 [^claude-models]: Returns native help's model aliases and effort levels, with alias fallbacks; Claude Code has no full model-catalog query here.
 [^opencode-models]: The catalog is a non-exhaustive provider/model list and can be empty; explicit IDs still resolve at startup. Effort is a provider-specific variant. OpenCode 2 requires an explicit model when selecting effort.
 [^claude-permissions]: `ask` stays read-only, like `read`: allowed native edits cannot reliably be intercepted. In editable modes, actual native permission prompts can be relayed through a PermissionRequest hook (Claude Code 2.1.268+, bundled hook and a launch without a shell); native allow/deny rules run first.
@@ -66,15 +67,15 @@ Nested bridge delegation defaults to depth **2**, configurable up to **3**; dept
 [^antigravity-permissions]: `ask` relays non-reading tools through the installed PreToolUse gate. `edit` retains native policy, whose headless prompts may be denied rather than relayed. `bypass_permissions` explicitly overrides the read/ask access policy; `terminal_sandbox` is separate.
 [^nested-opencode]: Read-only opencode jobs' tool allowlist enables delegation to the other four CLIs, including Muse, but omits opencode self-delegation, `list_models` and `decide`. Top-level opencode sessions expose all five targets.
 [^native-addresses]: Claude only: a live native child gets `<parent>/sub:<agent_id>` on its registered parent's connection. It may use only `peers`, `inbox` and `send`, with explicit child identity, ownership and hop limits; recipients are its parent, the parent's owned jobs and exact local recipient grants. No independent registration, delegation, broadcast or remote address; remaining mail returns to the parent when the child ends.
-[^native-isolation]: Antigravity ignores hooks for a child conversation on the parent's shared server. It has no equivalent MCP caller-lineage admission check, so separate child-server registration is not established by this implementation.
+[^native-isolation]: Antigravity ignores child delivery hooks and its PreToolUse gate denies Bridge tools unless the native conversation matches independently proven root identity. Separate native child-server registration and scoped child Bridge addresses remain unverified.
 [^usage]: opencode reports today's spend/tokens and free-model information, not remaining provider quotas. Antigravity reports quota availability as unknown; inspect native `/usage` or `/quota` (delegated results can include token usage).
-[^remote-antigravity]: Antigravity is a remote-job target, but the remote spawn schema does not accept its `terminal_sandbox` or `bypass_permissions` options.
+[^remote-antigravity]: Paired jobs accept `terminal_sandbox` and `bypass_permissions`, preserve explicit false settings on continuation, and reject these options for other agents before launch.
 [^mobile]: With the mobile gateway enabled and a phone paired, each enrolled PC exposes local registered sessions and retained jobs, with chats/steps where available. Paired-PC peer projections are excluded and native child hierarchy is not projected.
 [^install]: `npx -y github:rennerdo30/agent-bridge install` sets up detected CLIs; `update` publishes their next runtime while retaining old versions. Claude gets MCP/channel support, hooks, the wake module, skills, commands and agent definitions. Codex gets MCP, skills and hooks (trust them in `/hooks`). opencode gets the native plugin with `bridge_*` tools, its runtime, skill and agent definitions for both plugin API generations. Antigravity gets the native plugin, MCP configuration, skill, delivery/permission hooks and a bridge MCP grant. Running integrations adopt updates on reload or restart; an existing broker keeps its version until its host closes or reloads.
 [^muse-wake]: Native command hooks deliver active-turn mail and can continue a stopping turn. Native idle-TUI wake is not confirmed; queued mail waits for another turn or inbox.
 [^muse-msp]: Stable MSP v1 over `muse serve` is the default job transport, including live steering and native item progress. `AGENT_BRIDGE_MUSE_EXEC=1` explicitly selects the exec compatibility path without MSP steering/approval relay. A failed MSP turn is never automatically replayed through exec.
 [^muse-models]: MSP `model/list` reports catalog IDs, defaults and effort variants without starting a session/turn. Empty or failed catalog reads mean unknown availability; explicit IDs still go to Muse for resolution.
-[^muse-permissions]: Read and ask require an enabled, approved native Bridge permission hook before turn submission. Read denies mutations; ask forwards mutation approvals even under native allow rules. An unavailable gate/supervisor cannot approve them. Edit retains native policy. Named profiles must match served session state before any turn. In explicit exec compatibility mode, ask behaves as read.
+[^muse-permissions]: MSP jobs require an enabled, approved native Bridge permission hook before turn submission, including edit jobs where it isolates native children. Read denies mutations; ask forwards mutation approvals even under native allow rules. An unavailable gate/supervisor cannot approve them. Edit retains native policy. Named profiles must match served session state before any turn. In explicit exec compatibility mode, ask behaves as read.
 [^muse-native]: Native children share their root's MCP server. Their PreToolUse gate denies Bridge tool calls to prevent root impersonation, and their delivery hooks cannot consume root mail or change root identity/activity. Sanitized delegated MCP processes restore owned parent/depth context and publish no top-level peer. Muse has no separate scoped native child Bridge address.
 [^muse-usage]: MSP session usage does not establish account quotas. Account limit availability is reported as unknown, without invented quota percentages or reset times.
 [^muse-install]: Uses Muse's native plugin manager and explicit capability approval. The bundle includes MCP, command hooks, a coordination skill and peer commands. See [Muse configuration](https://rennerdo30.github.io/agent-bridge/configuration/muse/) for requirements and remaining live acceptance checks.

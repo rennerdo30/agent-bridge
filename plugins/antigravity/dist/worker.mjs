@@ -1,5 +1,8 @@
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 import {
+  guardServerErrors
+} from "./chunks/chunk-Q4TGWKCP.mjs";
+import {
   AjvJsonSchemaValidator,
   CallToolRequestSchema,
   CallToolResultSchema,
@@ -42,41 +45,42 @@ import {
   safeParseAsync,
   serializeMessage,
   toJsonSchemaCompat
-} from "./chunks/chunk-NDPWAKN5.mjs";
+} from "./chunks/chunk-IA5PGORH.mjs";
 import {
   RewakeEndpoint,
   WAKE_HEADER,
   shouldWakeClaudeMessage
-} from "./chunks/chunk-FFCKDKLJ.mjs";
+} from "./chunks/chunk-5WTTMCWT.mjs";
 import {
-  guardServerErrors
-} from "./chunks/chunk-Q4TGWKCP.mjs";
+  antigravityHookOutput
+} from "./chunks/chunk-ZH4ECEZH.mjs";
 import {
   MAX_STREAM_ENTRIES
-} from "./chunks/chunk-UYON3V43.mjs";
+} from "./chunks/chunk-7G5MEQQK.mjs";
 import {
   isBridgeWorktree,
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-I4JVNDDN.mjs";
+} from "./chunks/chunk-5XYVICBX.mjs";
+import {
+  JobRunners,
+  closeJobWorktree
+} from "./chunks/chunk-ZCC24LWZ.mjs";
+import {
+  readWorktreeState
+} from "./chunks/chunk-OX7SZC2E.mjs";
+import "./chunks/chunk-J5N35M2O.mjs";
+import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   codexAppServerCall,
   describeModels,
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-SODCJPRY.mjs";
+} from "./chunks/chunk-PT46H5U6.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
-import {
-  JobRunners,
-  closeJobWorktree
-} from "./chunks/chunk-2NYV2BYX.mjs";
-import {
-  readWorktreeState
-} from "./chunks/chunk-35AJKN2K.mjs";
-import "./chunks/chunk-HAKFXQK7.mjs";
 import {
   openBrowser
 } from "./chunks/chunk-LWVK3CB7.mjs";
@@ -86,7 +90,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-74LOJSYI.mjs";
+} from "./chunks/chunk-T4PTNLD3.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -97,39 +101,32 @@ import {
   formatProjectRoute,
   formatReplyRestrictions,
   formatVersionSkew
-} from "./chunks/chunk-PJ6KNMAP.mjs";
-import {
-  formatHealth,
-  probeBrokerHealth
-} from "./chunks/chunk-56HU5FPS.mjs";
-import "./chunks/chunk-KHJ7NWLJ.mjs";
-import "./chunks/chunk-RQUYBZWF.mjs";
+} from "./chunks/chunk-IJ23GQO3.mjs";
 import {
   REMOTE_JOB_POLL_MS,
   remoteSpawnArgsSchema
-} from "./chunks/chunk-4CVWYGKW.mjs";
+} from "./chunks/chunk-VM6TCC5W.mjs";
+import {
+  formatHealth,
+  probeBrokerHealth
+} from "./chunks/chunk-RMYSUGWB.mjs";
+import "./chunks/chunk-KI74TW6B.mjs";
+import "./chunks/chunk-RQUYBZWF.mjs";
 import {
   conversationPageSchema
-} from "./chunks/chunk-BSXAZE4Y.mjs";
+} from "./chunks/chunk-4PRKEOTA.mjs";
 import {
   HISTORY_MAX_LIMIT,
   HISTORY_MAX_QUERY_CHARS,
   historyFiltersSchema
-} from "./chunks/chunk-GHAZFZ5Y.mjs";
+} from "./chunks/chunk-FJQBDJW5.mjs";
 import {
   MAX_HOLD_REASON_CHARS,
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-XPOMKZ7P.mjs";
-import "./chunks/chunk-QIMXHKU5.mjs";
-import "./chunks/chunk-PB5MFDGJ.mjs";
-import {
-  antigravityAncestor,
-  antigravityHookOutput,
-  inspectClaudeLaunch
-} from "./chunks/chunk-OSLOB2XU.mjs";
-import "./chunks/chunk-HFRXC4WN.mjs";
+} from "./chunks/chunk-6Y7KTL55.mjs";
+import "./chunks/chunk-MEZ7KS7C.mjs";
 import {
   ACCESS_LEVELS,
   DEFAULT_FOLLOW_UP,
@@ -143,6 +140,7 @@ import {
   ROOT_NAME_ENV,
   ROOT_SESSION_ENV,
   answerPendingApproval,
+  antigravityRootSession,
   appendContextEvent,
   bundledCli,
   currentDelegateDepth,
@@ -153,24 +151,21 @@ import {
   nativeSubagentsSchema,
   parentFromEnv,
   parseJobSettings,
+  readAntigravityPrivateJson,
   resolveBinary,
   runProcess,
   verifiedGoneJobOwners
-} from "./chunks/chunk-FZP4L5IJ.mjs";
-import "./chunks/chunk-6KTEQAZ2.mjs";
+} from "./chunks/chunk-EKPMR5TV.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
   formatResourceSlots
-} from "./chunks/chunk-Z36M4AXO.mjs";
+} from "./chunks/chunk-B3W3QHI5.mjs";
+import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   bundleDirectory
 } from "./chunks/chunk-D5ZW6VFT.mjs";
-import {
-  resolveDbPath,
-  resolveHome,
-  resolvePipePath
-} from "./chunks/chunk-P2QFDD4K.mjs";
+import "./chunks/chunk-GFW3TLS7.mjs";
 import "./chunks/chunk-JTZGNEMM.mjs";
 import {
   MAX_JOB_SEND_TARGETS,
@@ -179,9 +174,12 @@ import {
 } from "./chunks/chunk-CHGUU5ZH.mjs";
 import {
   loadOrCreateToken,
+  resolveDbPath,
+  resolveHome,
+  resolvePipePath,
   tokensEqual
-} from "./chunks/chunk-V4WDBMEN.mjs";
-import "./chunks/chunk-XTNJIED4.mjs";
+} from "./chunks/chunk-4KEPNGTB.mjs";
+import "./chunks/chunk-PFE27QT3.mjs";
 import {
   CLAUDE_PERMISSION_MODES,
   CODEX_APPROVALS_REVIEWERS,
@@ -193,7 +191,7 @@ import {
   parseAgentKind,
   saveConfigValue,
   watchConfig
-} from "./chunks/chunk-GJIKD3BI.mjs";
+} from "./chunks/chunk-EEDWAH3M.mjs";
 import {
   AGENT_KINDS,
   BROADCAST,
@@ -210,24 +208,16 @@ import {
   askOwnerSchema,
   decisionScopeSchema,
   formatDecisionSummary
-} from "./chunks/chunk-6BINHEQ6.mjs";
+} from "./chunks/chunk-QPC3MXWY.mjs";
 import {
   ZodOptional,
   canonicalProjectRoot,
   external_exports,
   isInternalBridgeProcess,
   isPluginCacheCwd
-} from "./chunks/chunk-EROR3PLN.mjs";
-import "./chunks/chunk-M47AHXAM.mjs";
-import "./chunks/chunk-SANO3VTN.mjs";
-import {
-  TRANSCRIPT_ID,
-  directory,
-  object,
-  readJsonl,
-  safeFile,
-  transcriptPaths
-} from "./chunks/chunk-NVDPULGI.mjs";
+} from "./chunks/chunk-IMOU3QNL.mjs";
+import "./chunks/chunk-4N7H4HNI.mjs";
+import "./chunks/chunk-DZRYUILM.mjs";
 import "./chunks/chunk-HYOPFLLN.mjs";
 import {
   archiveFile,
@@ -235,8 +225,10 @@ import {
   isRecord,
   readJsonStore,
   writeJsonStore
-} from "./chunks/chunk-EEV363TZ.mjs";
-import "./chunks/chunk-DC5UK7YY.mjs";
+} from "./chunks/chunk-ALNAEOQM.mjs";
+import {
+  assertUnlinked
+} from "./chunks/chunk-FFMVR4KN.mjs";
 import {
   APP_NAME,
   APP_VERSION,
@@ -250,7 +242,33 @@ import {
   MAX_JOBS_LIMIT,
   MAX_JOB_TIMEOUT_SEC,
   MAX_WAIT_SEC
-} from "./chunks/chunk-KVKEQK7G.mjs";
+} from "./chunks/chunk-G5PLFO4A.mjs";
+import {
+  museBridgeTool,
+  museHookOutput,
+  museReadingTool
+} from "./chunks/chunk-6S6BR754.mjs";
+import {
+  MUSE_ACCESS_ENV,
+  antigravityAncestor,
+  inspectClaudeLaunch,
+  lookup,
+  museHookFile,
+  museHostPid,
+  readMusePrivateJson,
+  restoreMuseContext
+} from "./chunks/chunk-FWUDSZDW.mjs";
+import {
+  TRANSCRIPT_ID,
+  directory,
+  object,
+  readJsonl,
+  safeFile,
+  transcriptPaths
+} from "./chunks/chunk-NVDPULGI.mjs";
+import {
+  processIdentity
+} from "./chunks/chunk-6KVDLO53.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/mcp/server.ts
@@ -1760,11 +1778,10 @@ var EMPTY_COMPLETION_RESULT = {
   }
 };
 
-// src/mcp/antigravity-hooks.ts
+// src/mcp/muse-hooks.ts
 import { randomBytes } from "node:crypto";
-import { mkdirSync as mkdirSync2, writeFileSync } from "node:fs";
+import { renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { join as join2 } from "node:path";
 
 // src/mcp/message-wait.ts
 import { randomUUID } from "node:crypto";
@@ -2197,7 +2214,135 @@ ${STOP_REASON_FOOTER}` };
   }
 }
 
+// src/mcp/muse-hooks.ts
+var MuseHooks = class {
+  constructor(ctx, session = process.env.MUSE_SESSION_ID ?? "") {
+    this.ctx = ctx;
+    this.session = session;
+  }
+  ctx;
+  session;
+  server = null;
+  file = null;
+  retired = false;
+  secret = randomBytes(24).toString("hex");
+  requests = /* @__PURE__ */ new Set();
+  register = null;
+  onReplaced = () => {
+    this.retired = true;
+    for (const request of this.requests) request.abort();
+  };
+  onReclaimed = () => {
+    if (!this.server?.listening) return;
+    try {
+      this.register?.();
+      this.retired = false;
+    } catch (error) {
+      this.retired = true;
+      this.ctx.log?.warn("Muse hook registration unavailable", { error: String(error) });
+    }
+  };
+  async start() {
+    if (this.server) return;
+    if (!this.session || !this.ctx.node && !this.ctx.parent) return;
+    const host = await museHostPid(), hostIdentity = host ? processIdentity(host) : void 0;
+    if (!host || !hostIdentity) return;
+    this.retired = false;
+    const secret = this.secret;
+    this.server = createServer((req, res) => {
+      if (req.method !== "POST" || req.url !== "/hook" || !tokensEqual(String(req.headers.authorization ?? ""), `Bearer ${secret}`) || this.retired) {
+        res.writeHead(403).end();
+        return;
+      }
+      const controller = new AbortController();
+      this.requests.add(controller);
+      const abort = () => controller.abort();
+      req.once("aborted", abort);
+      res.once("close", abort);
+      void (async () => {
+        let raw = "";
+        for await (const part of req) {
+          raw += part;
+          if (raw.length > 256 * 1024) throw new Error("hook input too large");
+        }
+        const body = object(JSON.parse(raw)), input = object(body.input);
+        if (body.session !== this.session) return {};
+        const event = String(body.event ?? "");
+        if (event === "PreToolUse") {
+          if (body.thread && body.thread !== this.session && museBridgeTool(input)) return { hookSpecificOutput: { hookEventName: event, permissionDecision: "deny", permissionDecisionReason: "Muse native children share the root MCP connection; ask the parent to use Bridge tools." } };
+          const access = process.env[MUSE_ACCESS_ENV];
+          if (access === "read" && !museReadingTool(input)) return { hookSpecificOutput: { hookEventName: event, permissionDecision: "deny", permissionDecisionReason: "agent-bridge read access forbids this tool" } };
+          if (access === "ask" && !museReadingTool(input)) return { hookSpecificOutput: { hookEventName: event, permissionDecision: "ask" } };
+        }
+        if (body.thread && body.thread !== this.session) return {};
+        const mapped = event === "PreLLMCall" || event === "PreToolUse" ? "PostToolUse" : event;
+        if (!["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "StopFailure", "SessionEnd"].includes(mapped)) return {};
+        const output = await buildHookResponse(this.ctx, { event: mapped, sessionId: this.session, cwd: typeof input.cwd === "string" ? input.cwd : null, stopHookActive: input.stop_hook_active === true, prompt: typeof input.prompt === "string" ? input.prompt : null, promptId: typeof input.turn_id === "string" ? input.turn_id : null, signal: controller.signal });
+        return controller.signal.aborted || this.retired ? {} : museHookOutput(event, output);
+      })().then((output) => {
+        if (!res.destroyed) res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(output));
+      }, () => {
+        if (!res.writableEnded && !res.destroyed) res.writeHead(500).end("{}");
+      }).finally(() => {
+        this.requests.delete(controller);
+        req.removeListener("aborted", abort);
+        res.removeListener("close", abort);
+      });
+    });
+    await new Promise((resolve2, reject) => {
+      this.server.once("error", reject);
+      this.server.listen(0, "127.0.0.1", resolve2);
+    });
+    this.file = museHookFile(host, this.session);
+    this.register = () => {
+      if (!this.server?.listening || !this.file) return;
+      const temporary = `${this.file}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
+      try {
+        writeFileSync(temporary, JSON.stringify({ port: this.server.address().port, secret, hostIdentity, pid: process.pid, identity: processIdentity(process.pid), session: this.session }), { mode: 384, flag: "wx" });
+        renameSync(temporary, this.file);
+      } finally {
+        try {
+          unlinkSync(temporary);
+        } catch {
+        }
+      }
+    };
+    try {
+      this.register();
+    } catch (error) {
+      await this.stop();
+      throw error;
+    }
+    this.ctx.node?.on("replaced", this.onReplaced);
+    this.ctx.node?.on("reclaimed", this.onReclaimed);
+  }
+  async stop() {
+    const server = this.server;
+    this.server = null;
+    this.onReplaced();
+    this.register = null;
+    this.ctx.node?.off("replaced", this.onReplaced);
+    this.ctx.node?.off("reclaimed", this.onReclaimed);
+    if (this.file) {
+      try {
+        const reg = readMusePrivateJson(this.file);
+        if (reg.pid === process.pid && reg.secret === this.secret) unlinkSync(this.file);
+      } catch {
+      }
+      this.file = null;
+    }
+    if (server) {
+      server.closeAllConnections();
+      await new Promise((resolve2) => server.close(() => resolve2()));
+    }
+  }
+};
+
 // src/mcp/antigravity-hooks.ts
+import { randomBytes as randomBytes2 } from "node:crypto";
+import { mkdirSync as mkdirSync2, renameSync as renameSync2, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { createServer as createServer2 } from "node:http";
+import { join as join2 } from "node:path";
 var AntigravityHooks = class {
   constructor(ctx) {
     this.ctx = ctx;
@@ -2206,16 +2351,52 @@ var AntigravityHooks = class {
   server = null;
   retired = false;
   conversationId = null;
+  file = null;
+  secret = randomBytes2(24).toString("hex");
+  requests = /* @__PURE__ */ new Set();
+  register = null;
+  replaced = () => {
+    this.retired = true;
+    for (const request of this.requests) request.abort();
+  };
+  reclaimed = () => {
+    if (!this.server?.listening) return;
+    this.retired = false;
+    this.register?.();
+  };
   async start() {
+    if (this.server) return;
     if (!this.ctx.node && !this.ctx.parent) return;
     const pid = await antigravityAncestor();
     if (!pid) return;
-    const secret = randomBytes(24).toString("hex");
-    this.server = createServer((req, res) => {
+    const hostIdentity = processIdentity(pid), identity = processIdentity(process.pid);
+    if (!hostIdentity || !identity) return;
+    const tokens = (await lookup(pid))?.cmdline.match(/"[^"]*"|'[^']*'|\S+/g)?.map((token) => token.replace(/^["']|["']$/g, "")) ?? [];
+    const conversations = tokens.flatMap((token, index) => token === "--conversation" ? [tokens[index + 1] ?? ""] : token.startsWith("--conversation=") ? [token.slice("--conversation=".length)] : []);
+    const resumed = conversations.length === 1 && TRANSCRIPT_ID.test(conversations[0]) ? conversations[0] : null;
+    this.file = join2(this.ctx.home, "antigravity-hooks", `${pid}.json`);
+    assertUnlinked(join2(this.ctx.home, "antigravity-hooks"));
+    mkdirSync2(join2(this.ctx.home, "antigravity-hooks"), { recursive: true, mode: 448 });
+    assertUnlinked(this.file);
+    let restored = null;
+    try {
+      const previous = readAntigravityPrivateJson(this.file);
+      if (previous.hostIdentity === hostIdentity && typeof previous.conversationId === "string" && TRANSCRIPT_ID.test(previous.conversationId)) restored = previous.conversationId;
+    } catch {
+    }
+    this.conversationId = resumed ?? antigravityRootSession(this.ctx.home, pid, hostIdentity) ?? restored ?? this.ctx.node?.currentSessionId ?? null;
+    this.retired = false;
+    const secret = this.secret;
+    this.server = createServer2((req, res) => {
       if (req.method !== "POST" || req.url !== "/hook" || !tokensEqual(String(req.headers.authorization ?? ""), `Bearer ${secret}`) || this.retired) {
         res.writeHead(403).end();
         return;
       }
+      const controller = new AbortController();
+      this.requests.add(controller);
+      const abort = () => controller.abort();
+      req.once("aborted", abort);
+      res.once("close", abort);
       void (async () => {
         let raw = "";
         for await (const part of req) {
@@ -2224,42 +2405,71 @@ var AntigravityHooks = class {
         }
         const body = object(JSON.parse(raw)), input = object(body.input);
         if (!["PreInvocation", "Stop"].includes(body.event)) throw new Error("unknown event");
-        const id = typeof input.conversationId === "string" ? input.conversationId : null;
-        this.conversationId ??= this.ctx.node?.currentSessionId ?? id;
-        if (id && this.conversationId && id !== this.conversationId) {
+        const id = typeof input.conversationId === "string" && TRANSCRIPT_ID.test(input.conversationId) ? input.conversationId : null;
+        if (!this.conversationId) {
+          this.conversationId = antigravityRootSession(this.ctx.home, pid, hostIdentity) ?? this.ctx.node?.currentSessionId ?? null;
+          if (this.conversationId) this.register?.();
+        }
+        if (!id || !this.conversationId || id !== this.conversationId || this.retired || controller.signal.aborted) {
           res.writeHead(200, { "content-type": "application/json" }).end("{}");
           return;
         }
-        const output = await buildHookResponse(this.ctx, { event: body.event === "Stop" ? "Stop" : "UserPromptSubmit", sessionId: typeof input.conversationId === "string" ? input.conversationId : null, cwd: Array.isArray(input.workspacePaths) && typeof input.workspacePaths[0] === "string" ? input.workspacePaths[0] : null, stopHookActive: false });
+        const output = await buildHookResponse(this.ctx, { event: body.event === "Stop" ? "Stop" : "UserPromptSubmit", sessionId: id, cwd: Array.isArray(input.workspacePaths) && typeof input.workspacePaths[0] === "string" ? input.workspacePaths[0] : null, stopHookActive: false, signal: controller.signal });
         const text2 = "reason" in output ? String(output.reason) : "hookSpecificOutput" in output ? output.hookSpecificOutput.additionalContext : "";
-        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(antigravityHookOutput(body.event, text2)));
+        if (!res.destroyed) res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(controller.signal.aborted || this.retired ? {} : antigravityHookOutput(body.event, text2)));
       })().catch(() => {
-        if (!res.writableEnded) res.writeHead(500).end("{}");
+        if (!res.writableEnded && !res.destroyed) res.writeHead(500).end("{}");
+      }).finally(() => {
+        this.requests.delete(controller);
+        req.removeListener("aborted", abort);
+        res.removeListener("close", abort);
       });
     });
     await new Promise((resolve2, reject) => {
       this.server.once("error", reject);
       this.server.listen(0, "127.0.0.1", resolve2);
     });
-    mkdirSync2(join2(this.ctx.home, "antigravity-hooks"), { recursive: true });
-    const register = () => {
+    this.register = () => {
       if (!this.server?.listening) return;
-      writeFileSync(join2(this.ctx.home, "antigravity-hooks", `${pid}.json`), JSON.stringify({ port: this.server.address().port, secret, pid: process.pid }), { mode: 384 });
+      const temporary = `${this.file}.${process.pid}.${randomBytes2(8).toString("hex")}.tmp`;
+      try {
+        writeFileSync2(temporary, JSON.stringify({ port: this.server.address().port, secret, pid: process.pid, identity, hostIdentity, conversationId: this.conversationId }), { mode: 384, flag: "wx" });
+        renameSync2(temporary, this.file);
+      } finally {
+        try {
+          unlinkSync2(temporary);
+        } catch {
+        }
+      }
     };
-    register();
-    this.ctx.node?.on("replaced", () => {
-      this.retired = true;
-    });
-    this.ctx.node?.on("reclaimed", () => {
-      this.retired = false;
-      register();
-    });
+    try {
+      this.register();
+    } catch (error) {
+      await this.stop();
+      throw error;
+    }
+    this.ctx.node?.on("replaced", this.replaced);
+    this.ctx.node?.on("reclaimed", this.reclaimed);
   }
   async stop() {
     const server = this.server;
     this.server = null;
-    this.retired = true;
-    if (server) await new Promise((resolve2) => server.close(() => resolve2()));
+    this.replaced();
+    this.register = null;
+    this.ctx.node?.removeListener("replaced", this.replaced);
+    this.ctx.node?.removeListener("reclaimed", this.reclaimed);
+    if (this.file) {
+      try {
+        const reg = readAntigravityPrivateJson(this.file);
+        if (reg.secret === this.secret && reg.pid === process.pid) unlinkSync2(this.file);
+      } catch {
+      }
+      this.file = null;
+    }
+    if (server) {
+      server.closeAllConnections();
+      await new Promise((resolve2) => server.close(() => resolve2()));
+    }
   }
 };
 
@@ -2768,7 +2978,7 @@ var CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 var MAX_TITLE_CHARS = 80;
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["health", "peers", "send", "report_progress", "hook_event", "search_history", "get_conversation"]);
 var STAND_IN_RECHECK_MS = 3e4;
-var KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title", "notes"];
+var KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "permission_profile", "allow_tools", "send_to", "title", "notes"];
 var PLUGIN_ROOT = resolve(bundleDirectory(import.meta.url), "..");
 function pathFromUriOrPath(v) {
   if (typeof v !== "string" || !v) return null;
@@ -2836,6 +3046,7 @@ function instructionsFor(agent, targets) {
 async function startServer(argv = process.argv.slice(2)) {
   const agentArg = argv.find((a) => a.startsWith("--agent="))?.slice("--agent=".length);
   const agent = parseAgentKind(agentArg ?? process.env[ENV.agent]);
+  if (agent === "muse") await restoreMuseContext();
   const targets = delegationTargets(agent);
   const home = resolveHome();
   const log = createLogger({ home, component: `mcp-${agent}` });
@@ -2888,6 +3099,7 @@ async function startServer(argv = process.argv.slice(2)) {
     });
   }
   if (node) {
+    if (agent === "muse" && process.env.MUSE_SESSION_ID) await node.setSessionId(process.env.MUSE_SESSION_ID);
     ctx.jobs = new JobManager(node, log.child("jobs"), join5(home, JOBS_FILE), cfg.maxJobs, void 0, {
       canRestore: () => node.isConnected && (agent !== "claude" || ctx.restoreEligible === true),
       canReceiveHandoff: () => node.isConnected
@@ -3017,7 +3229,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-IBWTUQUG.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-OONL5RQG.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3029,9 +3241,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-XJDU7UOE.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-FPFH4AZ5.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-XJDU7UOE.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-FPFH4AZ5.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3044,6 +3256,7 @@ async function startServer(argv = process.argv.slice(2)) {
   };
   const transport = new StdioServerTransport();
   const antigravityHooks = agent === "antigravity" ? new AntigravityHooks(ctx) : null;
+  const museHooks = agent === "muse" ? new MuseHooks(ctx) : null;
   let shuttingDown = false;
   let closeSweepBusy = false;
   const closeSweep = setInterval(() => {
@@ -3101,6 +3314,7 @@ async function startServer(argv = process.argv.slice(2)) {
   }
   if (agent === "claude" && node) await node.setWakePolicy(cfg.wakeOnDirect, Boolean(ctx.rewakeAvailable || channel), cfg.maxHops);
   launchInspected();
+  await museHooks?.start().catch((err) => log.warn("Muse hooks unavailable", { err: String(err) }));
   await antigravityHooks?.start().catch((err) => log.warn("Antigravity hooks unavailable", { err: String(err) }));
   if (node) {
     node.on("connected", ({ isBroker }) => {
@@ -3225,8 +3439,8 @@ ${JSON.stringify(result)}`);
     },
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-Z4OZOZD2.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-HM7G3THJ.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-APGXVYWW.mjs")).readHistory(resolveDbPath(ctx.home), args);
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-QIYOWMIK.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
@@ -3234,7 +3448,7 @@ ${JSON.stringify(result)}`);
     description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
     inputSchema: conversationPageSchema.shape,
     annotations: { readOnlyHint: true }
-  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-HUXIMKQQ.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
+  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-F5MFTVKX.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
   register(
     "decide",
     {
@@ -3315,7 +3529,7 @@ ${JSON.stringify(result)}`);
     "peers",
     {
       title: "List peers",
-      description: "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity): name, agent type, busy/idle, uptime, working directory and session id. Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
+      description: "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity, Muse): name, agent type, busy/idle, uptime, working directory and session id. Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
       inputSchema: { native_child: external_exports.string().optional().describe("Native Claude agent_id issued by its start hook; scopes this call to the child") },
       annotations: { readOnlyHint: true }
     },
@@ -3943,7 +4157,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
     "handoff_subagents",
     {
       title: "Hand off subagents",
-      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex, opencode or Antigravity session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
+      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex, opencode, Antigravity or Muse session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
       inputSchema: {
         to: external_exports.string().min(1).max(64).describe("Exact live local session name from peers"),
         jobs: external_exports.union([external_exports.literal("all"), external_exports.array(external_exports.string().min(1).max(80)).min(1).max(1e3)]).optional().describe("Exact job names, or all (default)"),
@@ -3977,7 +4191,8 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
         native_subagents: nativeSubagentsSchema,
         approvals_reviewer: external_exports.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Codex reviewer for the next turn: auto_review or user. A running turn keeps its reviewer."),
         permission_mode: external_exports.enum(CLAUDE_PERMISSION_MODES).optional().describe("Claude permission mode for the next turn."),
-        auto_approve: external_exports.boolean().optional().describe("opencode auto-approval for the next turn.")
+        auto_approve: external_exports.boolean().optional().describe("opencode auto-approval for the next turn."),
+        permission_profile: external_exports.string().trim().min(1).max(80).optional().describe("Named Muse permission profile for the next turn. Replaces earlier access.")
       }
     },
     guarded("message_subagent", async (a) => {
@@ -4073,6 +4288,7 @@ Saved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value
       }
     },
     async (a, extra) => {
+      if (ctx.agent === "muse" || ctx.agent === "antigravity") return text("{}");
       const given = (v) => typeof v === "string" && v && !v.startsWith("${") ? v : null;
       try {
         const nativeId = given(a.agent_id) ?? given(extra._meta?.agent_id) ?? given(extra._meta?.agentId);
