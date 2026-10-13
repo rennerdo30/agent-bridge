@@ -1,10 +1,15 @@
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { brotliCompressSync } from "node:zlib";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { planFinalize, rollbackHistoryStore, runFinalize } from "../src/core/storage-finalize.js";
 import { historyDbPath, historyReadPath, migrateHistoryStore, openHistoryStore } from "../src/core/history-store.js";
 import { decodeHistoryRow } from "../src/core/history-migration.js";
+import { decodeText } from "../src/core/history-codec.js";
+import { proveTable } from "../src/core/finalize-proof.js";
+import { maintenanceLock } from "../src/core/storage-lock.js";
 import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -169,6 +174,187 @@ it("AB-215: keeps a retained failed-attempt table that holds a natively ingested
   expect(runFinalize(env.home, () => {}).ready).toBe(true);
   const after = new DatabaseSync(historyDbPath(env.db), { readOnly: true }); closes.push(() => after.close());
   expect(Buffer.from(after.prepare(`SELECT raw FROM "${retained}" WHERE source='native'`).get()!.raw as Uint8Array).toString()).toBe("native only");
+});
+
+/** Independent count + canonical decoded-content hash, not the proof's digest or just its key. */
+function retainedContent(db: DatabaseSync, table: string, logical: string) {
+  const statement = db.prepare(`SELECT * FROM "${table}" ORDER BY rowid`);
+  statement.setReadBigInts(true);
+  const rows = statement.all().map(row => {
+    const decoded = ["conversation_records", "history_documents"].includes(logical) ? decodeHistoryRow(logical, row) : row;
+    return Object.keys(decoded).filter(k => k !== "retained_rowid").sort().map(k => {
+      const v = decoded[k];
+      return [k, v === null ? "null" : v instanceof Uint8Array ? "blob" : typeof v, v instanceof Uint8Array ? Buffer.from(v).toString("base64") : String(v)];
+    });
+  });
+  return { count: rows.length, sha256: createHash("sha256").update(JSON.stringify(rows)).digest("hex") };
+}
+
+const retainedBody = "retained payload only ".repeat(40);
+const currentBody = "current payload only ".repeat(40);
+
+async function retainedPayload(logical: "history_pending" | "history_documents" | "conversation_records", moved: boolean) {
+  const history = await legacyHome(true);
+  await migrateJobArchives(join(env.home, "jobs.json"));
+  if (logical === "history_pending") {
+    history.prepare("INSERT INTO history_pending VALUES('p-body',?,'codex','codex-a','a','claude-b','claude-b',2)").run(currentBody);
+  } else if (logical === "history_documents") {
+    history.prepare("INSERT INTO history_documents(id,kind,agent,at,body,body_codec,link) VALUES('d-body','message','codex',2,?,0,'test')").run(currentBody);
+  } else {
+    history.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,raw_codec,body) VALUES('body-source',0,9007199254740993,'codex:a',2,?,0,?)").run(Buffer.from("same raw ".repeat(40)), currentBody);
+  }
+  const predicate = logical === "conversation_records" ? "source='body-source'" : `id='${logical === "history_pending" ? "p-body" : "d-body"}'`;
+  const id = history.prepare(`SELECT rowid AS id FROM ${logical} WHERE ${predicate}`).get()!.id as number;
+  const retained = `retained_215_${logical}`;
+  history.exec(`CREATE TABLE ${retained} AS SELECT rowid AS retained_rowid,* FROM ${logical} WHERE ${predicate}`);
+  history.prepare(`UPDATE ${retained} SET body=?`).run(retainedBody);
+  if (moved) history.prepare(`UPDATE ${retained} SET retained_rowid=?`).run(id + 100);
+  if (logical === "history_documents") history.prepare(`UPDATE ${retained} SET body=?,body_codec=2`).run(brotliCompressSync(Buffer.from(retainedBody)));
+  return { history, retained, logical, id };
+}
+
+it.each([
+  ["history_pending", false], ["history_pending", true],
+  ["history_documents", false], ["history_documents", true],
+  ["conversation_records", false], ["conversation_records", true],
+] as const)("AB-215: preserves %s same-key differing payload at moved rowid=%s through check/apply until exact recovery", async (logical, moved) => {
+  const { history, retained, id } = await retainedPayload(logical, moved);
+  const before = retainedContent(history, retained, logical);
+  expect(before.count).toBe(1);
+  const row = history.prepare(`SELECT * FROM ${retained}`).get()!;
+  expect(logical === "history_documents" ? decodeText(row.body, row.body_codec) : row.body).toBe(retainedBody);
+  for (const checked of [planFinalize(env.home, { prove: true }), runFinalize(env.home, () => {}, { dryRun: true })]) {
+    expect(checked.ready).toBe(true);
+    expect(checked.items.map(i => i.path)).not.toContain(`history.db:${retained}`);
+    expect(checked.kept.find(i => i.path === `history.db:${retained}`)?.reason).toMatch(/1 rows conflict with different content/);
+    expect(retainedContent(history, retained, logical)).toEqual(before);
+  }
+  const applied = runFinalize(env.home, () => {});
+  expect(applied.ready).toBe(true);
+  expect(applied.kept.map(i => i.path)).toContain(`history.db:${retained}`);
+  expect(retainedContent(history, retained, logical)).toEqual(before);
+  expect(decodeHistoryRow(logical, history.prepare(`SELECT * FROM ${retained}`).get()!).body).toBe(retainedBody);
+  // Explicit recovery in the fixture, never overwrite a conflict during finalize.
+  if (logical === "conversation_records") history.exec("DROP TRIGGER conversation_records_no_update");
+  history.prepare(`UPDATE ${logical} SET body=? WHERE rowid=?`).run(retainedBody, id);
+  expect(planFinalize(env.home, { prove: true }).items.map(i => i.path)).toContain(`history.db:${retained}`);
+  expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toContain(`history.db:${retained}`);
+  expect(history.prepare("SELECT name FROM sqlite_master WHERE name=?").get(retained)).toBeUndefined();
+});
+
+it.each([false, true])("AB-215: decoded document and raw content across codecs may match at moved rowid=%s", async moved => {
+  const { history, retained: document, id } = await retainedPayload("history_documents", moved);
+  history.prepare("UPDATE history_documents SET body=? WHERE rowid=?").run(retainedBody, id);
+  const raw = Buffer.from("raw content across codecs ".repeat(40));
+  history.prepare("INSERT INTO conversation_records(source,generation,offset,conversation,at,raw,raw_codec,body) VALUES('codec-source',0,0,'codex:a',2,?,0,?)").run(raw, raw.toString("utf8"));
+  history.exec("CREATE TABLE retained_216_conversation_records AS SELECT rowid AS retained_rowid,* FROM conversation_records WHERE source='codec-source'");
+  history.prepare("UPDATE retained_216_conversation_records SET raw=?,raw_codec=2,body=NULL").run(brotliCompressSync(raw));
+  if (moved) history.exec("UPDATE retained_216_conversation_records SET retained_rowid=100");
+  const plan = runFinalize(env.home, () => {}, { dryRun: true });
+  expect(plan.items.map(i => i.path)).toEqual(expect.arrayContaining([`history.db:${document}`, "history.db:retained_216_conversation_records"]));
+  expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toEqual(expect.arrayContaining([`history.db:${document}`, "history.db:retained_216_conversation_records"]));
+});
+
+it.each([false, true])("AB-215: NULL/raw equivalence does not turn explicit empty body into raw at moved rowid=%s", async moved => {
+  const { history, retained, id } = await retainedPayload("conversation_records", moved);
+  history.exec("DROP TRIGGER conversation_records_no_update");
+  history.prepare("UPDATE conversation_records SET body=NULL WHERE id=?").run(id);
+  history.exec(`UPDATE ${retained} SET body=''`);
+  const before = retainedContent(history, retained, "conversation_records");
+  expect(runFinalize(env.home, () => {}, { dryRun: true }).kept.find(i => i.path === `history.db:${retained}`)?.reason).toMatch(/conflict/);
+  expect(runFinalize(env.home, () => {}).kept.map(i => i.path)).toContain(`history.db:${retained}`);
+  expect(retainedContent(history, retained, "conversation_records")).toEqual(before);
+  history.prepare("UPDATE conversation_records SET body='' WHERE id=?").run(id);
+  expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toContain(`history.db:${retained}`);
+});
+
+it("AB-215: inferred keys and keyless unknown schemas compare bigint/blob/null payloads conservatively", async () => {
+  const history = await legacyHome(true);
+  await migrateJobArchives(join(env.home, "jobs.json"));
+  history.exec(`CREATE TABLE unknown_payload(id INTEGER PRIMARY KEY,payload,optional);
+    CREATE TABLE unknown_keyless(payload,optional);
+    CREATE TABLE retained_217_unknown_payload(retained_rowid,id,payload,optional);
+    CREATE TABLE retained_217_unknown_keyless(payload,optional);`);
+  const big = 9007199254740993n, bytes = Buffer.from([0, 255, 128]);
+  history.prepare("INSERT INTO unknown_payload VALUES(?,?,NULL)").run(big, bytes);
+  history.prepare("INSERT INTO retained_217_unknown_payload VALUES(?,?,?,NULL)").run(big, big, Buffer.from([0, 255, 129]));
+  history.prepare("INSERT INTO unknown_keyless VALUES(?,NULL)").run(bytes);
+  history.prepare("INSERT INTO retained_217_unknown_keyless VALUES(?,NULL)").run(Buffer.from([0, 255, 129]));
+  const ctx = { live: [{ label: "fixture", db: history }] };
+  expect(proveTable(history, "retained_217_unknown_payload", ctx, { db: history, table: "unknown_payload", by: "retained_rowid" })).toMatch(/conflict/);
+  const tables = ["retained_217_unknown_payload", "retained_217_unknown_keyless"];
+  const before = tables.map(t => retainedContent(history, t, "unknown"));
+  for (const dryRun of [true, false]) {
+    const result = runFinalize(env.home, () => {}, { dryRun });
+    expect(result.kept.map(i => i.path)).toEqual(expect.arrayContaining(tables.map(t => `history.db:${t}`)));
+    expect(tables.map(t => retainedContent(history, t, "unknown"))).toEqual(before);
+  }
+  history.prepare("UPDATE unknown_payload SET payload=?").run(Buffer.from([0, 255, 129]));
+  history.prepare("UPDATE unknown_keyless SET payload=?").run(Buffer.from([0, 255, 129]));
+  expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toEqual(expect.arrayContaining(tables.map(t => `history.db:${t}`)));
+});
+
+it("AB-215: missing columns, NULL keys, unknown codecs and excluded aligned targets cannot prove payload presence", () => {
+  const db = new DatabaseSync(":memory:"); closes.push(() => db.close());
+  db.exec(`CREATE TABLE unknown_schema(id TEXT PRIMARY KEY,payload,nullable);
+    CREATE TABLE retained_218_unknown_schema(retained_rowid,id,payload,nullable,extra);
+    INSERT INTO unknown_schema VALUES(NULL,'text',NULL);
+    INSERT INTO retained_218_unknown_schema VALUES(1,NULL,'text',NULL,NULL);`);
+  const ctx = { live: [{ label: "fixture", db }] };
+  const aligned = { db, table: "unknown_schema", by: "retained_rowid" };
+  expect(proveTable(db, "retained_218_unknown_schema", ctx, aligned)).toMatch(/no live/);
+  db.exec("ALTER TABLE unknown_schema ADD COLUMN extra; UPDATE retained_218_unknown_schema SET payload=x'74657874'");
+  expect(proveTable(db, "retained_218_unknown_schema", ctx, aligned)).toMatch(/conflict/);
+  db.exec("UPDATE retained_218_unknown_schema SET payload='text',nullable=''");
+  expect(proveTable(db, "retained_218_unknown_schema", ctx, aligned)).toMatch(/conflict/);
+  db.exec("UPDATE retained_218_unknown_schema SET nullable=NULL");
+  expect(proveTable(db, "retained_218_unknown_schema", ctx, aligned)).toBeNull();
+  expect(proveTable(db, "retained_218_unknown_schema", { live: [{ label: "excluded", db, exclude: new Set(["unknown_schema"]) }] }, aligned)).toMatch(/no live database/);
+  // No codec/UTF-8 equivalence is documented for an unknown schema, even with codec-looking columns.
+  db.exec(`CREATE TABLE unknown_codec(id TEXT PRIMARY KEY,body,body_codec);
+    CREATE TABLE retained_219_unknown_codec AS SELECT * FROM unknown_codec;
+    INSERT INTO unknown_codec VALUES('c',x'ff',0);
+    INSERT INTO retained_219_unknown_codec VALUES('c',x'fe',0);`);
+  expect(proveTable(db, "retained_219_unknown_codec", ctx)).toMatch(/conflict/);
+});
+
+it("AB-215: apply rechecks changed retained content under the maintenance lock and atomic proof/DROP transaction", async () => {
+  const { history, retained } = await retainedPayload("history_pending", false);
+  history.prepare("UPDATE history_pending SET body=?").run(retainedBody);
+  expect(planFinalize(env.home, { prove: true }).items.map(i => i.path)).toContain(`history.db:${retained}`);
+  let locked = false, transaction = false;
+  const before = retainedContent(history, retained, "history_pending");
+  const result = runFinalize(env.home, line => {
+    if (line.startsWith("verification passed")) {
+      expect(() => maintenanceLock(env.home)).toThrow(/maintenance is in progress/); locked = true;
+      history.prepare(`UPDATE ${retained} SET body=?`).run("late retained payload");
+    }
+    if (line === `checking history.db:${retained}…`) {
+      // A second connection with no busy wait cannot begin a writer while proof is running.
+      const writer = new DatabaseSync(historyDbPath(env.db), { timeout: 0 });
+      try { expect(() => writer.exec("BEGIN IMMEDIATE")).toThrow(/locked/); transaction = true; }
+      finally { writer.close(); }
+    }
+  });
+  expect(locked && transaction).toBe(true);
+  expect(result.kept.find(i => i.path === `history.db:${retained}`)?.reason).toMatch(/conflict/);
+  expect(retainedContent(history, retained, "history_pending").count).toBe(before.count);
+  expect(history.prepare(`SELECT body FROM ${retained}`).get()!.body).toBe("late retained payload");
+  const release = maintenanceLock(env.home); release();
+});
+
+it("AB-215: a codec proof error keeps every retained table and releases the maintenance lock", async () => {
+  const { history, retained, id } = await retainedPayload("history_documents", false);
+  history.exec("CREATE TABLE retained_001_history_pending AS SELECT rowid AS retained_rowid,* FROM history_pending");
+  history.prepare(`UPDATE ${retained} SET body_codec=999`).run();
+  const before = history.prepare(`SELECT body,body_codec FROM ${retained}`).get()!;
+  expect(() => runFinalize(env.home, () => {})).toThrow(/Unknown history codec 999/);
+  expect(history.prepare("SELECT name FROM sqlite_master WHERE name='retained_001_history_pending'").get()).toBeDefined();
+  expect(history.prepare(`SELECT body,body_codec FROM ${retained}`).get()).toEqual(before);
+  const release = maintenanceLock(env.home); release();
+  history.prepare(`UPDATE ${retained} SET body_codec=2`).run();
+  history.prepare("UPDATE history_documents SET body=? WHERE rowid=?").run(retainedBody, id);
+  expect(runFinalize(env.home, () => {}).items.map(i => i.path)).toContain(`history.db:${retained}`);
 });
 
 it("AB-211: drops v1_* tables only with a row-level proof against v2", async () => {
