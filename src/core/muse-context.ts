@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,8 +10,9 @@ const EXTRA_KEYS = new Set(["CLAUDE_PROJECT_DIR", "CLAUDE_CONFIG_DIR", "CODEX_HO
 const allowed = (key: string) => key.startsWith("AGENT_BRIDGE_") || EXTRA_KEYS.has(key);
 
 /** Muse deliberately sanitizes plugin environments; recover only this owned host's Bridge context. */
-export function museContextDirectory(): string {
-  const dir = join(tmpdir(), `agent-bridge-muse-${process.getuid?.() ?? "user"}`);
+export function museContextDirectory(env: NodeJS.ProcessEnv = process.env): string {
+  const temp = process.platform === "win32" ? env.TEMP || env.TMP : env.TMPDIR || env.TMP || env.TEMP;
+  const dir = join(temp || tmpdir(), `agent-bridge-muse-${process.getuid?.() ?? "user"}`);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const stat = lstatSync(dir);
   if (!stat.isDirectory() || stat.isSymbolicLink() || (process.getuid && (stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0))) throw new Error("Unsafe Muse context directory");
@@ -33,11 +34,12 @@ export function readMusePrivateJson(path: string): Record<string, any> {
 export function registerMuseContext(pid: number, env: NodeJS.ProcessEnv): () => void {
   const identity = processIdentity(pid);
   if (!identity || !Number.isSafeInteger(pid) || pid <= 0) throw new Error("Muse host identity unavailable");
-  const path = join(museContextDirectory(), `host-${pid}.json`);
+  const path = join(museContextDirectory({ ...process.env, ...env }), `host-${pid}.json`);
+  const nonce = randomUUID();
   const context = Object.fromEntries(Object.entries(env).filter(([key, value]) => allowed(key) && typeof value === "string"));
-  writeFileSync(path, JSON.stringify({ version: 1, pid, identity, env: context }), { mode: 0o600, flag: "wx" });
+  writeFileSync(path, JSON.stringify({ version: 1, pid, identity, nonce, env: context }), { mode: 0o600, flag: "wx" });
   return () => {
-    try { if (readMusePrivateJson(path).identity === identity) unlinkSync(path); } catch { /* Retain an unknown replacement. */ }
+    try { const record = readMusePrivateJson(path); if (record.identity === identity && record.nonce === nonce) unlinkSync(path); } catch { /* Retain an unknown replacement. */ }
   };
 }
 
@@ -52,6 +54,10 @@ export async function museHostPid(start = process.ppid): Promise<number | null> 
   for (let i = 0; i < 8 && pid > 1; i++) {
     const info = await lookup(pid);
     if (!info) break;
+    try {
+      const record = readMusePrivateJson(join(museContextDirectory(), `host-${pid}.json`));
+      if (record.version === 1 && record.pid === pid && record.identity === processIdentity(pid)) return pid;
+    } catch { /* A custom/SDK host must have an owned registration. */ }
     if (museHostCommand(info.cmdline)) return pid;
     pid = info.ppid;
   }
@@ -77,7 +83,7 @@ export async function restoreMuseContext(env: NodeJS.ProcessEnv = process.env): 
         return false;
       }
     }
-    if (museHostCommand(info.cmdline) && /(?:^|\s)exec(?:\s|$)/.test(info.cmdline)) env.AGENT_BRIDGE_INTERNAL = "1";
+    if (museHostCommand(info.cmdline) && /(?:^|\s)(?:exec|serve)(?:\s|$)/.test(info.cmdline)) env.AGENT_BRIDGE_INTERNAL = "1";
     pid = info.ppid;
   }
   return false;

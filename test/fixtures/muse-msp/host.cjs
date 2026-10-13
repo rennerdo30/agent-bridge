@@ -37,10 +37,12 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (m.method === 'initialize') return reply(m, { ...text[1].result, grantedCapabilities: process.env.MSP_TEST_NO_MCP ? [] : ['sessionMcp'] });
   if (m.method === 'session/start' || m.method === 'session/resume') {
     sid = m.params.sessionId || sid;
-    return reply(m, { session: { ...sessionTemplate, sessionId: sid, modelId: 'effective-native-model', ...(m.params.permissionProfile && !process.env.MSP_TEST_PROFILE_READ ? { permissionState: { profileId: process.env.MSP_TEST_PROFILE || m.params.permissionProfile } } : {}), approvalMode: { mode: m.params.approvalMode || 'allowAll', source: 'startup', lastCommandId: null } }, viewCursor: 'opaque-cursor', ...(m.method === 'session/resume' ? { history: { mode: 'none', items: [], snapshot: null }, pendingRequests: [] } : {}) });
+    reply(m, { session: { ...sessionTemplate, sessionId: sid, modelId: 'effective-native-model', ...(m.params.permissionProfile && !process.env.MSP_TEST_PROFILE_READ ? { permissionState: { profileId: process.env.MSP_TEST_PROFILE || m.params.permissionProfile } } : {}), approvalMode: { mode: m.params.approvalMode || 'allowAll', source: 'startup', lastCommandId: null } }, viewCursor: 'opaque-cursor', ...(m.method === 'session/resume' ? { history: { mode: 'none', items: [], snapshot: null }, pendingRequests: [] } : {}) });
+    if (process.env.MSP_TEST_RESUME_APPROVAL) write({ ...approval, id: 1000, params: { ...approval.params, sessionId: sid, turnId: 'previous-turn' } });
+    return;
   }
   if (m.method === 'session/read') return reply(m, { session: { ...sessionTemplate, sessionId: sid, ...(process.env.MSP_TEST_PROFILE ? { permissionState: { profileId: process.env.MSP_TEST_PROFILE } } : {}) }, history: { mode: 'none', items: [], snapshot: null }, viewCursor: 'opaque-cursor', pendingRequests: [] });
-  if (m.method === 'hook/list') return reply(m, { hooks: JSON.parse(process.env.MSP_TEST_HOOKS || '[{"enabled":true,"event":"preToolUse","handlerKind":"plugin","key":"agent-bridge:PreToolUse:0"}]') });
+  if (m.method === 'hook/list') return reply(m, { hooks: JSON.parse(process.env.MSP_TEST_HOOKS || '[{"enabled":true,"event":"preToolUse","handlerKind":"plugin","key":"plugin:agent-bridge:bridge-pretooluse"}]') });
   if (m.method === 'session/setApprovalMode') return reply(m, { commandId: m.params.commandId, status: 'accepted', applyOutcome: 'completed', effectiveMode: { mode: process.env.MSP_TEST_APPROVAL_MODE || m.params.mode, source: 'approvalReconfigure', lastCommandId: m.params.commandId } });
   if (m.method === 'model/list') return reply(m, text.find((m) => m.result?.models).result);
   if (m.method === 'usage/read') return reply(m, {});
@@ -56,7 +58,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     if (mode === 'failure') return notify('turn/completed', { ...failure.params, sessionId: sid, turnId: tid });
     if (mode === 'foreign') { notify('turn/completed', { turnId: 'other-turn', terminal: 'failed' }); notify('item/completed', { sessionId: 'other-session', item: { ...agentTemplate, turnId: tid, text: 'foreign' } }); }
     if (mode === 'approval') {
-      const params = { ...approval.params, sessionId: sid, turnId: tid, subject: process.env.MSP_TEST_SUBJECT ? JSON.parse(process.env.MSP_TEST_SUBJECT) : approval.params.subject, ...(process.env.MSP_TEST_NO_CHOICES ? { availableChoices: [] } : {}) };
+      const params = { ...approval.params, sessionId: sid, turnId: process.env.MSP_TEST_FOREIGN_APPROVAL ? 'foreign-turn' : tid, subject: process.env.MSP_TEST_SUBJECT ? JSON.parse(process.env.MSP_TEST_SUBJECT) : approval.params.subject, ...(process.env.MSP_TEST_CHOICES ? { availableChoices: JSON.parse(process.env.MSP_TEST_CHOICES) } : {}), ...(process.env.MSP_TEST_NO_CHOICES ? { availableChoices: [] } : {}) };
       write({ ...approval, id: 1000, params });
       if (process.env.MSP_TEST_DUPLICATE) write({ ...approval, id: 1001, params });
       return;

@@ -1624,6 +1624,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
       },
     },
     async (a: { event: string; session_id?: string | null; stop_hook_active?: boolean | string | null; cwd?: string | null; agent_id?: string | null; prompt?: string | null; prompt_id?: string | null; transcript_path?: string | null }, extra: ToolExtra) => {
+      // These hosts use authenticated native command hooks; model tool calls cannot impersonate lifecycle events.
+      if (ctx.agent === "muse" || ctx.agent === "antigravity") return text("{}");
       // An unsubstituted "${...}" template (Claude Code) or null (Codex) means the host had no value for that field.
       const given = (v: unknown) => (typeof v === "string" && v && !v.startsWith("${") ? v : null);
       try {

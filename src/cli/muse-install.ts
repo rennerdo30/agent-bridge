@@ -9,7 +9,7 @@ export const museSourceDir = (from?: string) => pluginSourceDir("muse", join(".m
 /** The exact Muse plugin commands for each installer action. Approval trusts the bundle's capabilities. */
 export function musePluginArgs(action: Action, source: string): string[][] {
   if (action === "install") return [["plugins", "install", source], ["plugins", "approve", "agent-bridge"]];
-  if (action === "update") return [["plugins", "update", "agent-bridge"]];
+  if (action === "update") return [["plugins", "update", "agent-bridge"], ["plugins", "approve", "agent-bridge"]];
   return [["plugins", "remove", "agent-bridge"]];
 }
 

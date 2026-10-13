@@ -32,7 +32,8 @@ describe("Muse stable MSP delegation", () => {
     const calls = f.calls();
     expect(calls[0].params).toMatchObject({ clientInfo: { name: "agent_bridge" }, capabilities: { experimentalApi: false, userInputDialogs: false } });
     expect(calls[1].method).toBe("initialized");
-    expect(calls.find((m) => m.method === "session/start").params).toMatchObject({ workspaceRoot: f.cwd, approvalMode: "promptUnmatched", modelId: "chosen-model", permissionProfile: "workspace" });
+    expect(calls.find((m) => m.method === "session/start").params).toMatchObject({ workspaceRoot: f.cwd, modelId: "chosen-model", permissionProfile: "workspace" });
+    expect(calls.find((m) => m.method === "session/start").params).not.toHaveProperty("approvalMode");
     expect(calls.find((m) => m.method === "turn/start").params).toMatchObject({ reasoningEffort: "high", ifBusy: "queue", input: [{ type: "text", text: "Complete this task" }] });
     expect(onSession).toHaveBeenCalledTimes(1);
     expect(onInfo).toHaveBeenCalledWith(expect.objectContaining({ model: "effective-native-model" }));
@@ -199,7 +200,9 @@ describe("Muse stable MSP delegation", () => {
   });
 
   it("bounds cleanup when the host ignores cancellation, stdin EOF and SIGTERM", async () => {
-    const f = fixture({ timeoutSec: 0.15 }, { MSP_TEST_MODE: "stubborn" });
+    // Allow the host to initialize under the full suite's process load; this
+    // case exercises cancellation after admission, not a startup deadline.
+    const f = fixture({ timeoutSec: 1 }, { MSP_TEST_MODE: "stubborn" });
     const start = Date.now();
     await expect(delegateToMuseMsp(f.req)).rejects.toMatchObject({ kind: "timeout" });
     expect(Date.now() - start).toBeLessThan(5000);
@@ -249,6 +252,33 @@ describe("Muse no-turn queries", () => {
 });
 
 describe("Muse approval decisions", () => {
+  it.each(["profile", "hook"])("does not authorize a resumed pending approval before failed %s verification", async kind => {
+    const approve = vi.fn().mockResolvedValue({ allow: true });
+    const f = fixture({ access: "ask", canApprove: true, approve, sessionId: "saved", ...(kind === "profile" ? { permissionProfile: "new-profile" } : { requirePermissionHooks: true }) }, { MSP_TEST_RESUME_APPROVAL: "1", MSP_TEST_HOOKS: "[]" });
+    await expect(delegateToMuseMsp(f.req)).rejects.toMatchObject({ startupFailed: true });
+    expect(approve).not.toHaveBeenCalled();
+    expect(f.calls().some(m => m.method === "approval/decide" || m.method === "turn/start")).toBe(false);
+  });
+  it("refuses approval requests from another turn", async () => {
+    const approve = vi.fn().mockResolvedValue({ allow: true });
+    const f = fixture({ access: "ask", canApprove: true, approve }, { MSP_TEST_MODE: "approval", MSP_TEST_FOREIGN_APPROVAL: "1" });
+    await expect(delegateToMuseMsp(f.req)).rejects.toThrow("another turn");
+    expect(approve).not.toHaveBeenCalled();
+    expect(f.calls().some(m => m.method === "approval/decide")).toBe(false);
+  });
+  it("selects a one-time abort instead of writing a persistent denial policy", async () => {
+    const choices = [{ choiceId: "deny_forever", decision: "denied", scope: "localPersistent" }, { choiceId: "abort_once", decision: "abort", scope: "once" }];
+    const f = fixture({ access: "read" }, { MSP_TEST_MODE: "approval", MSP_TEST_CHOICES: JSON.stringify(choices) });
+    await delegateToMuseMsp(f.req);
+    expect(f.calls().find(m => m.method === "approval/decide").params.choiceId).toBe("abort_once");
+  });
+  it("denies approvals too long for a supervisor to review without presenting a truncated request", async () => {
+    const approve = vi.fn().mockResolvedValue({ allow: true });
+    const f = fixture({ access: "ask", canApprove: true, approve }, { MSP_TEST_MODE: "approval", MSP_TEST_SUBJECT: JSON.stringify({ kind: "shell", command: "x".repeat(20_000) }) });
+    await delegateToMuseMsp(f.req);
+    expect(approve).not.toHaveBeenCalled();
+    expect(f.calls().find(m => m.method === "approval/decide").params).toMatchObject({ choiceId: "abort", feedback: expect.stringContaining("too long to review") });
+  });
   it.each([
     { kind: "fileAccess", path: "/tmp/write", access: "write" },
     { kind: "shell", command: "rm -rf work" },
@@ -339,5 +369,26 @@ describe("Muse approval decisions", () => {
     await delegateToMuseMsp(f.req);
     expect(f.calls().find((m) => m.method === "approval/decide").params.choiceId).toBe("abort");
     expect(approve).toHaveBeenCalledOnce();
+  });
+});
+
+describe("Muse native policy and catalog boundaries", () => {
+  it("does not substitute an approval mode for a named profile on continuation", async () => {
+    const f = fixture({ sessionId: "saved", permissionProfile: "review" }, { MSP_TEST_PROFILE: "review" });
+    await delegateToMuseMsp(f.req);
+    expect(f.calls().some(m => m.method === "session/setApprovalMode")).toBe(false);
+  });
+  it("does not accept a different plugin merely containing the Bridge name", async () => {
+    const f = fixture({ requirePermissionHooks: true }, { MSP_TEST_HOOKS: JSON.stringify([{ enabled: true, event: "preToolUse", handlerKind: "plugin", key: "plugin:evil-agent-bridge:gate" }]) });
+    await expect(delegateToMuseMsp(f.req)).rejects.toThrow("permission hook");
+    expect(f.calls().some(m => m.method === "turn/start")).toBe(false);
+  });
+  it("lists models at the delegation limit without creating another coding turn", async () => {
+    vi.stubEnv("AGENT_BRIDGE_DELEGATE_DEPTH", "3");
+    const f = fixture();
+    try {
+      await museMspQuery({ bin: f.req.bin, cwd: f.req.cwd, log: nullLogger, method: "model/list", serveArgs: f.req.serveArgs, extraEnv: f.req.extraEnv });
+      expect(f.calls().some(m => m.method === "turn/start" || m.method === "session/start")).toBe(false);
+    } finally { vi.unstubAllEnvs(); }
   });
 });

@@ -48,9 +48,10 @@ an explicit model ID still goes to Muse for resolution.
 | `ask` | The native hook requires approval for mutation tools even when a native allow rule would otherwise permit them. MSP approval requests are forwarded to the supervisor; an unavailable supervisor or gate cannot approve the action. |
 | `edit` | Retains native policy. Workspace file approvals can be accepted within the job's writable roots; other surfaced requests need an available supervisor and remain subject to native restrictions. |
 
-Read and ask jobs require an enabled Bridge permission hook before the first
-turn is submitted. Install and approve the native plugin before using those
-jobs. A named `permission_profile` selects Muse's native policy independently
+MSP jobs require an enabled Bridge permission hook before the first
+turn is submitted, including edit jobs where it isolates native children.
+Install and approve the native plugin before using those jobs.
+A named `permission_profile` selects Muse's native policy independently
 of Bridge access. The bridge checks the served profile on session start or
 resume, querying session state if needed. A missing or mismatched profile
 stops startup before any prompt is submitted. It does not silently replace

@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BridgeConfig } from "./config.js";
+import { museMspQuery } from "./muse-msp.js";
 import { defaultEffort } from "./effort.js";
 import type { Logger } from "./logger.js";
 import { listOpencodeModels } from "./opencode-models.js";
@@ -67,11 +68,11 @@ export async function readModels(agent: CodingAgent, cfg: BridgeConfig, cwd: str
         ? /Aliases for the latest of each family: ([^;]+)/.exec(lines[0] ?? "")?.[1]?.split(", ") ?? []
         : lines.flatMap((l) => {
             const id = /^- (\S+)/.exec(l)?.[1];
-            return id ? [agent === "codex" || agent === "antigravity" ? id.replace(/:$/, "") : id] : [];
+            return id ? [agent === "codex" || agent === "antigravity" || agent === "muse" ? id.replace(/:$/, "") : id] : [];
           });
       const defaultModel = lines.flatMap((l) => /^- (\S+) \(default\)/.exec(l)?.[1] ?? [])[0] ?? null;
       const report: ModelReport = { agent, defaultModel, models, lines };
-      if (!lines[0]?.startsWith("Could not list") && (agent !== "opencode" || models.length > 0)) {
+      if (!lines[0]?.startsWith("Could not list") && (!["opencode", "muse"].includes(agent) || models.length > 0)) {
         try {
           mkdirSync(home, { recursive: true });
           writeFileSync(modelCachePath(home, agent), JSON.stringify({ at: Date.now(), bin: modelBin(agent, cfg), effort: cfg.effort[agent] ?? null, report }), { mode: 0o600 });
@@ -112,11 +113,10 @@ export async function describeModels(agent: CodingAgent, cfg: BridgeConfig, cwd:
       ];
     }
     if (agent === "muse") {
-      return [
-        `Muse cannot list its models. Pass any model id muse accepts verbatim (e.g. "muse-spark-1.3"); "muse model-profile show <model>" resolves one known model.`,
-        `Efforts: none, minimal, low, medium, high, xhigh, max, ultra.`,
-        ...tail,
-      ];
+      const catalog = await museMspQuery({ bin: cfg.museBin, cwd, log, method: "model/list" });
+      const rows: any[] = Array.isArray(catalog.models) ? catalog.models.filter((m: any) => typeof m?.modelId === "string" && m.modelId && match(m.modelId, m.displayLabel, m.description)) : [];
+      const lines = rows.slice(0, MAX_LISTED).map(m => `- ${m.modelId}${m.isDefault ? " (default)" : ""}: ${m.displayLabel ?? m.modelId}${m.description ? `, ${m.description}` : ""}${Array.isArray(m.variants) ? `. Efforts: ${m.variants.join(", ")}${m.defaultReasoningEffort ? ` (default ${m.defaultReasoningEffort})` : ""}` : ". Efforts: unknown"}`);
+      return [`Muse models (${rows.length}; source ${typeof catalog.source === "string" ? catalog.source : "unknown"}):`, ...lines, ...(rows.length ? [] : ["Catalog is empty or unavailable; explicit model IDs are still passed to Muse for resolution."]), ...tail];
     }
     if (agent === "antigravity") {
       const rows = (await captureOutput(cfg.antigravityBin, ["models"], cwd, log)).split(/\r?\n/).map((line) => /^([A-Za-z0-9][\w.-]*)\t+(.+)$/.exec(line.trim())).filter((row) => row && match(row[1], row[2]));

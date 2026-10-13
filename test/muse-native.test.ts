@@ -172,15 +172,16 @@ describe("Muse hook permission enforcement", () => {
     for (const tool of ["write_file", "bash", "mcp__dangerous_server__delete_everything"]) {
       expect(await call(tool)).toEqual(access === "edit" ? {} : { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: access === "read" ? "deny" : "ask", ...(access === "read" ? { permissionDecisionReason: "agent-bridge read access forbids this tool" } : {}) } });
     }
-    for (const tool of ["read_file", "grep", "mcp__plugin_agent_bridge_bridge__send", "mcp__agent_bridge__ask_muse"]) expect(await call(tool)).toEqual({});
+    for (const tool of ["read_file", "grep"]) expect(await call(tool)).toEqual({});
+    for (const tool of ["mcp__plugin_agent_bridge_bridge__inbox", "mcp__plugin_agent_bridge_bridge__send", "mcp__agent_bridge__ask_muse"]) expect(await call(tool)).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: expect.stringContaining("share the root MCP") } });
     node.emit("replaced");
     expect((await fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${reg.secret}` }, body: "{}" })).status).toBe(403);
     node.emit("reclaimed"); expect(await call("read_file")).toEqual({});
   });
-  it.each(["read", "ask", "internal"])("fails closed when the %s delegated permission gate is unavailable", async access => {
+  it.each(["read", "ask", "internal", "missing-session"])("fails closed when the %s delegated permission gate is unavailable", async access => {
     const env = fixture();
     const pending = exec(process.execPath, [CLI, "muse-hook", "PreToolUse"], { timeout: 10_000, env: { HOME: env.home, PATH: process.env.PATH, TMPDIR: env.home,
-      MUSE_SESSION_ID: "missing-endpoint", ...(access === "internal" ? { AGENT_BRIDGE_INTERNAL: "1" } : { AGENT_BRIDGE_MUSE_ACCESS: access }) } });
+      ...(access === "missing-session" ? { AGENT_BRIDGE_INTERNAL: "1" } : { MUSE_SESSION_ID: "missing-endpoint" }), ...(access === "internal" ? { AGENT_BRIDGE_INTERNAL: "1" } : { AGENT_BRIDGE_MUSE_ACCESS: access }) } });
     pending.child.stdin!.end("{}");
     const result = await pending;
     expect(JSON.parse(result.stdout)).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: "agent-bridge permission gate unavailable" } });
@@ -192,5 +193,23 @@ describe("Muse hook permission enforcement", () => {
     await old.start(); cleanups.push(() => old.stop()); await successor.start(); cleanups.push(() => successor.stop());
     const file = museHookFile(process.ppid, "successor-root"), record = readMusePrivateJson(file);
     await old.stop(); expect(readMusePrivateJson(file)).toEqual(record);
+    expect(ctx.node!.listenerCount("replaced")).toBe(1);
+    expect(ctx.node!.listenerCount("reclaimed")).toBe(1);
+    await successor.stop();
+    expect(ctx.node!.listenerCount("replaced")).toBe(0);
+    expect(ctx.node!.listenerCount("reclaimed")).toBe(0);
+  });
+  it("republishes the owned endpoint when a predecessor reclaims its native host", async () => {
+    const env = fixture(); vi.stubEnv("TMPDIR", env.home); vi.stubEnv("MUSE_SESSION_ID", "reclaimed-root");
+    const ctx = { node: new EventEmitter() } as unknown as ServerContext;
+    const old = new MuseHooks(ctx), successor = new MuseHooks({ node: new EventEmitter() } as unknown as ServerContext);
+    await old.start(); cleanups.push(() => old.stop());
+    const file = museHookFile(process.ppid, "reclaimed-root"), original = readMusePrivateJson(file);
+    ctx.node!.emit("replaced"); await successor.start(); cleanups.push(() => successor.stop());
+    expect(readMusePrivateJson(file).secret).not.toBe(original.secret);
+    await successor.stop(); ctx.node!.emit("reclaimed");
+    expect(readMusePrivateJson(file)).toEqual(original);
+    const response = await fetch(`http://127.0.0.1:${original.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${original.secret}` }, body: JSON.stringify({ session: "reclaimed-root", thread: "child", event: "PreToolUse", input: { tool_name: "read_file" } }) });
+    expect(response.status).toBe(200);
   });
 });

@@ -9,6 +9,7 @@ import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
 import { DELEGATION_TARGETS, supportsAsk } from "../src/mcp/targets.js";
 import { delegationTargets } from "../src/mcp/server.js";
 import { parseJobSettings } from "../src/mcp/job-settings.js";
+import { museMspQuery } from "../src/core/muse-msp.js";
 import { describeModels } from "../src/core/models.js";
 import { museItems } from "../src/core/transcripts/muse.js";
 import { listNativeSubagents, readTranscript } from "../src/core/transcripts/index.js";
@@ -18,6 +19,7 @@ import { historyFiltersSchema } from "../src/core/history.js";
 
 const mocks = vi.hoisted(() => ({ run: vi.fn() }));
 vi.mock("../src/core/delegate.js", async (original) => ({ ...await original<typeof import("../src/core/delegate.js")>(), runProcess: mocks.run }));
+vi.mock("../src/core/muse-msp.js", () => ({ museMspQuery: vi.fn(), delegateToMuseMsp: vi.fn() }));
 const temporary: string[] = [];
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), "ab-muse-")); temporary.push(dir); return dir; };
 afterEach(() => { vi.clearAllMocks(); for (const dir of temporary.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -103,12 +105,12 @@ describe("Muse delegation", () => {
     expect(mocks.run).not.toHaveBeenCalled();
   });
 
-  it("registers Muse as a shared target with ask behaving as read", () => {
+  it("registers Muse as a shared target with native approval relay support", () => {
     expect(delegationTargets("claude")).toContain("muse");
     expect(delegationTargets("muse")).toEqual(["claude", "codex", "opencode", "antigravity", "muse"]);
     expect(DELEGATION_TARGETS.muse.defaultModel(DEFAULT_CONFIG)).toBeNull();
     expect(DELEGATION_TARGETS.muse.permission(DEFAULT_CONFIG, {})).toBe("read");
-    expect(DELEGATION_TARGETS.muse.permission(DEFAULT_CONFIG, { access: "edit" })).toBe("edit (no approval prompts)");
+    expect(DELEGATION_TARGETS.muse.permission(DEFAULT_CONFIG, { access: "edit" })).toBe("edit");
     expect(supportsAsk("muse", undefined)).toBe(false);
     expect(parseJobSettings({ permission_profile: "dev" }, "muse")).toEqual({ permission_profile: "dev" });
     expect(parseJobSettings({ permission_profile: "dev" }, "codex")).toContain("only to muse");
@@ -128,7 +130,7 @@ describe("Muse delegation", () => {
     expect(planFor("muse", "install")).toEqual([{ kind: "muse", action: "install" }]);
     expect(describeStep({ kind: "muse", action: "install" })).toContain("approve");
     expect(musePluginArgs("install", "/src/muse")).toEqual([["plugins", "install", "/src/muse"], ["plugins", "approve", "agent-bridge"]]);
-    expect(musePluginArgs("update", "/src/muse")).toEqual([["plugins", "update", "agent-bridge"]]);
+    expect(musePluginArgs("update", "/src/muse")).toEqual([["plugins", "update", "agent-bridge"], ["plugins", "approve", "agent-bridge"]]);
     expect(musePluginArgs("uninstall", "/src/muse")).toEqual([["plugins", "remove", "agent-bridge"]]);
     expect(historyFiltersSchema.parse({ agent: "muse" }).agent).toBe("muse");
   });
@@ -157,9 +159,10 @@ describe("Muse delegation", () => {
     expect(museItems({ type: "unknown" })).toEqual([]);
   });
 
-  it("describes Muse models as pass-through with its effort levels", async () => {
+  it("describes Muse models from the no-turn native catalog", async () => {
+    vi.mocked(museMspQuery).mockResolvedValue({ source: "providerCatalog", models: [{ modelId: "muse-test", displayLabel: "Muse test", variants: ["low", "ultra"] }] });
     const lines = await describeModels("muse", DEFAULT_CONFIG, temp(), nullLogger);
-    expect(lines[0]).toContain("cannot list its models");
+    expect(lines[0]).toContain("Muse models (1; source providerCatalog)");
     expect(lines.join("\n")).toContain("ultra");
   });
 });

@@ -4,7 +4,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { APP_VERSION } from "./constants.js";
 import { checkDepth, childEnv, DelegateError, exitDescription, killTree, realFolder, resolveCommand, trackChild, type DelegateRequest, type DelegateResult } from "./delegate.js";
-import type { PermissionDecision } from "./relay.js";
+import { boundedDetail, unreviewable, type PermissionDecision } from "./relay.js";
 
 /** Stable MSP v1, pinned to the @muse-code/sdk 1.4.7 schema. No experimental traffic. */
 export type MuseApprovalMode = "allowAll" | "promptUnmatched" | "onRequest" | "denyUnmatched";
@@ -94,13 +94,16 @@ async function decideApproval(req: MuseMspRequest, params: RecordValue, cwd: str
   if (known && req.access === "full") return { allow: true };
   if (known && req.access === "edit" && subject.kind === "fileAccess" && !params.protectedWrite && typeof subject.path === "string" && inside(subject.path, [cwd, ...(req.writableRoots ?? []).map(realFolder)])) return { allow: true };
   if (!req.canApprove || !req.approve) return { allow: false, message: "Denied by agent-bridge: no supervisor can answer this approval." };
-  try { return await req.approve({ agent: "muse", tool, detail, cwd }); }
+  const request = { agent: "muse", tool, ...boundedDetail(detail), cwd };
+  const refused = unreviewable(request);
+  if (refused) return refused;
+  try { return await req.approve(request); }
   catch (error) { return { allow: false, message: `Approval forwarding failed: ${String((error as Error).message ?? error)}` }; }
 }
 
 /** Own one Muse serve process and one submitted turn. Acknowledgements never count as completion. */
 async function runMuseMsp(req: MuseMspRequest & { query?: { method: "model/list" | "usage/read"; params: Record<string, unknown> } }): Promise<DelegateResult> {
-  checkDepth(req.maxDelegateDepth);
+  if (!req.query) checkDepth(req.maxDelegateDepth);
   if (req.signal?.aborted) throw new DelegateError("delegate aborted", "aborted", "", "", req.sessionId ?? null);
   const cwd = realFolder(req.cwd);
   const env = childEnv(req.extraEnv);
@@ -111,10 +114,14 @@ async function runMuseMsp(req: MuseMspRequest & { query?: { method: "model/list"
   let nextId = 1, sessionId = req.sessionId ?? null, turnId: string | null = null;
   let stderr = "", step = "initialize", submitted = false, closing = false, awaitingAnswer = false;
   let effectiveModel: string | null | undefined, effectiveEffort: string | null | undefined;
+  let policyVerified = false;
+  const permissionName = (native: string) => policyVerified && req.requirePermissionHooks
+    ? `${req.permissionProfile ? `${req.permissionProfile}; ` : ""}Bridge ${req.access} (native ${native})` : native;
   const pending = new Map<number, Pending>();
   const completions = new Map<string, RecordValue>();
   const messages = new Map<string, RecordValue>();
   const approvalTasks = new Map<string, Promise<void>>();
+  const earlyApprovals: { id: number; params: RecordValue }[] = [];
   let finish!: (value: RecordValue) => void, fail!: (error: Error) => void;
   const done = new Promise<RecordValue>((r, j) => { finish = r; fail = j; });
   done.catch(() => {});
@@ -134,17 +141,21 @@ async function runMuseMsp(req: MuseMspRequest & { query?: { method: "model/list"
     if ("effort" in info) effectiveEffort = info.effort;
     req.onInfo?.(info);
   };
-  const answerApproval = async (id: number, params: RecordValue) => {
+  const answerApproval = async (id: number, params: RecordValue, received = false) => {
     if (params.sessionId !== sessionId) { write({ id, error: { code: -32602, message: "approval belongs to another session" } }); return; }
     // This is only a presentation receipt; it does not decide an approval.
-    write({ id, result: { received: true } });
+    if (!received) write({ id, result: { received: true } });
+    // Resume can reissue pending requests, and turn events can precede admission.
+    // Never approve until policy preflight succeeds and the owned turn is known.
+    if (!turnId) { earlyApprovals.push({ id, params }); return; }
+    if (params.turnId !== turnId) { fail(error("Muse approval belongs to another turn; refusing to decide it")); return; }
     const key = `${params.approvalId}:${params.currentRequirementId?.sourceIndex}`;
     if (approvalTasks.has(key)) return;
     const task = (async () => {
       const decision = await decideApproval(req, params, cwd);
       if (closing) return;
       const choices: RecordValue[] = Array.isArray(params.availableChoices) ? params.availableChoices : [];
-      const choice = decision.allow ? choices.find((c) => c.decision === "approved" && c.scope === "once") : choices.find((c) => c.decision === "denied") ?? choices.find((c) => c.decision === "abort" && c.scope === "once");
+      const choice = decision.allow ? choices.find((c) => c.decision === "approved" && c.scope === "once") : choices.find((c) => c.decision === "denied" && c.scope === "once") ?? choices.find((c) => c.decision === "abort" && c.scope === "once");
       if (!choice || !params.currentRequirementId) throw error("Muse approval has no safe one-time decision choice");
       const feedback = (!decision.allow && decision.message) || "Denied by agent-bridge.";
       await command("approval/decide", { sessionId, approvalId: params.approvalId, requirementId: params.currentRequirementId, choiceId: choice.choiceId, ...(!decision.allow && choice.acceptsFeedback ? { feedback } : {}) });
@@ -180,7 +191,7 @@ async function runMuseMsp(req: MuseMspRequest & { query?: { method: "model/list"
     switch (msg.method) {
       case "session/modelChanged": report({ model: p.modelId }); break;
       case "session/reasoningEffortChanged": report({ effort: p.reasoningEffort }); break;
-      case "session/approvalModeChanged": report({ permission: p.mode }); break;
+      case "session/approvalModeChanged": report({ permission: permissionName(p.mode) }); break;
       case "session/tokenUsage": if (typeof p.modelId === "string") report({ model: p.modelId }); break;
       case "view/gap": case "session/viewHealthChanged": fail(error(`Muse view stream unavailable (${msg.method}); turn outcome cannot be verified`)); break;
       case "item/started": case "item/updated": case "item/completed": {
@@ -261,9 +272,10 @@ async function runMuseMsp(req: MuseMspRequest & { query?: { method: "model/list"
       const response = await race(request(step, req.query.params), true);
       return { sessionId: null, text: "", isError: false, details: { transport: "msp", response } };
     }
-    const mode = req.approvalMode ?? (req.access === "full" ? "allowAll" : "promptUnmatched");
+    // An exact named profile owns its native approval policy; access is enforced independently by the Bridge hook.
+    const mode = req.approvalMode ?? (req.permissionProfile ? undefined : req.access === "full" ? "allowAll" : "promptUnmatched");
     step = req.sessionId ? "session/resume" : "session/start";
-    const session = await race(command(step, req.sessionId ? { sessionId: req.sessionId, excludeItems: true, ...(req.sessionConfig ? { config: req.sessionConfig } : {}) } : { workspaceRoot: cwd, approvalMode: mode, ...(req.permissionProfile ? { permissionProfile: req.permissionProfile } : {}), ...(req.model ? { modelId: req.model } : {}), ...(req.sessionConfig ? { config: req.sessionConfig } : {}) }), true);
+    const session = await race(command(step, req.sessionId ? { sessionId: req.sessionId, excludeItems: true, ...(req.sessionConfig ? { config: req.sessionConfig } : {}) } : { workspaceRoot: cwd, ...(mode ? { approvalMode: mode } : {}), ...(req.permissionProfile ? { permissionProfile: req.permissionProfile } : {}), ...(req.model ? { modelId: req.model } : {}), ...(req.sessionConfig ? { config: req.sessionConfig } : {}) }), true);
     if (typeof session.session?.sessionId !== "string") throw error("Muse serve returned no session identity");
     sessionId = session.session.sessionId;
     req.onSession?.(sessionId!);
@@ -286,20 +298,23 @@ async function runMuseMsp(req: MuseMspRequest & { query?: { method: "model/list"
       step = "hook/list";
       const catalog = await race(request(step, { sessionId }), true);
       const hooks: RecordValue[] = Array.isArray(catalog.hooks) ? catalog.hooks : [];
-      if (!hooks.some((h) => h.enabled === true && h.event === "preToolUse" && h.handlerKind === "plugin" && typeof h.key === "string" && h.key.includes("agent-bridge"))) throw error("Muse is missing the enabled agent-bridge PreToolUse permission hook; refusing to submit this job");
+      if (!hooks.some((h) => h.enabled === true && h.event === "preToolUse" && h.handlerKind === "plugin" && typeof h.key === "string" && /^(?:plugin:)?agent-bridge:/.test(h.key))) throw error("Muse is missing the enabled agent-bridge PreToolUse permission hook; refusing to submit this job");
     }
-    if (!req.sessionId && session.session.approvalMode?.mode !== undefined && session.session.approvalMode.mode !== mode) throw error(`Muse did not apply the requested approval mode ${mode}`);
-    if (req.sessionId || session.session.approvalMode?.mode === undefined) {
+    if (mode && !req.sessionId && session.session.approvalMode?.mode !== undefined && session.session.approvalMode.mode !== mode) throw error(`Muse did not apply the requested approval mode ${mode}`);
+    if (mode && (req.sessionId || session.session.approvalMode?.mode === undefined)) {
       step = "session/setApprovalMode";
       const changed = await race(command(step, { sessionId, mode }), true);
       if (changed.effectiveMode?.mode !== mode) throw error(`Muse did not confirm the requested approval mode ${mode}`);
     }
+    policyVerified = true;
+    report({ permission: permissionName(mode ?? session.session.approvalMode?.mode ?? "unknown") });
     if (req.sessionId && req.model) { step = "session/setModel"; await race(command(step, { sessionId, model: { modelId: req.model } }), true); }
     step = "turn/start";
     submitted = true; // Never fall back once input may have reached admission.
     const turn = await race(command(step, { sessionId, input: [{ type: "text", text: req.prompt }], ifBusy: "queue", ...(req.effort ? { reasoningEffort: req.effort } : {}) }), true);
     if (turn.status !== "accepted" || typeof turn.turnId !== "string") throw error("Muse serve returned an invalid turn admission");
     turnId = turn.turnId;
+    for (const approval of earlyApprovals.splice(0)) void answerApproval(approval.id, approval.params, true).catch(err => fail(err));
     if (req.effort) report({ effort: req.effort });
     clearTimeout(startup);
     // Events may precede the acknowledgement in the same stdout chunk.

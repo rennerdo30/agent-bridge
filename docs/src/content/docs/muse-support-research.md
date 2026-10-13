@@ -22,7 +22,8 @@ the result. Native item events supply progress; effective model and effort
 come from served state/events. Active jobs accept live steering through
 `message_subagent`; finished jobs can resume their native session.
 
-Read and ask jobs require the installed and approved Bridge PreToolUse hook.
+MSP jobs require the installed and approved Bridge PreToolUse hook, including
+edit jobs where it isolates native children on the shared MCP connection.
 It denies mutation tools for read access and requires approval for ask access,
 including actions covered by native allow rules. MSP approval requests can
 then be answered by the supervisor. Missing gates, unsupported interactions

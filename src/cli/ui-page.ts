@@ -939,7 +939,7 @@ const PERMISSIONS = {
   claude: { key: "permission_mode", options: [["manual", "manual · asks first"], ["plan", "plan · plans only"], ["acceptEdits", "acceptEdits · edits files"], ["auto", "auto · decides itself"], ["bypassPermissions", "bypassPermissions · anything"]] },
   opencode: { key: "auto_approve", options: [["false", "asks first"], ["true", "auto-approve · anything"]] },
   antigravity: { key: "access", options: [["read", "read · looks only"], ["ask", "ask · forwards approvals"], ["edit", "edit · native permissions"]] },
-  muse: { key: "access", options: [["read", "read · looks only"], ["edit", "edit · no approval prompts"]] },
+  muse: { key: "access", options: [["read", "read · looks only"], ["ask", "ask · forwards approvals"], ["edit", "edit · native permissions"]] },
 };
 /** The permission a job's saved settings give its next turn, named like the run's own permission. */
 function nextPermission(next) {

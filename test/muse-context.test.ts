@@ -1,7 +1,7 @@
 import { buildSync } from "esbuild";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { chmodSync, existsSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { museContextDirectory, museHostCommand, readMusePrivateJson, registerMuseContext } from "../src/core/muse-context.js";
@@ -35,6 +35,15 @@ describe("Muse private host context", () => {
     writeFileSync(path, JSON.stringify(record));
     expect(await restore()).toEqual({ restored: true, env: { MUSE_SESSION_ID: "native-session", AGENT_BRIDGE_HOME: env.home,
       AGENT_BRIDGE_DELEGATE_DEPTH: "2", AGENT_BRIDGE_PARENT_NAME: "parent", AGENT_BRIDGE_INTERNAL: "1", CODEX_HOME: join(env.home, "codex") } });
+  });
+  it("restores from the child temp directory when it differs from the launcher", async () => {
+    const childTemp = join(env.home, "child-temp"); mkdirSync(childTemp);
+    releases.push(registerMuseContext(process.pid, { TMPDIR: childTemp, TMP: childTemp, TEMP: childTemp, AGENT_BRIDGE_INTERNAL: "1", AGENT_BRIDGE_PARENT_NAME: "owner" }));
+    expect(existsSync(path)).toBe(false);
+    const result = await exec(process.execPath, ["--input-type=module", "-e", `const m=await import(${JSON.stringify(module)}); const env={}; console.log(JSON.stringify({restored:await m.restoreMuseContext(env), host:await m.museHostPid(), env}));`], {
+      env: { HOME: env.home, PATH: process.env.PATH, TMPDIR: childTemp, TMP: childTemp, TEMP: childTemp },
+    });
+    expect(JSON.parse(result.stdout)).toEqual({ restored: true, host: process.pid, env: { AGENT_BRIDGE_INTERNAL: "1", AGENT_BRIDGE_PARENT_NAME: "owner" } });
   });
   it.each(["corrupt", "reused-pid", "wrong-pid", "wrong-version", "unsafe-mode"])("refuses %s context and marks the child internal", async kind => {
     register(); const record = readMusePrivateJson(path);

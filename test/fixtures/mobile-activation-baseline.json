@@ -1,5 +1,11 @@
 {
   "base": "0fed680017e823197b1fb3344598632f5cd219ed",
   "uiSha256": "876fbc073c419e55a05c806b75c4993d254510c444cbd81d70098efbd22fb98c",
-  "pageSha256": "dd7d05adc3c0c999cceadfd487ca154f2e7c4cd2eb37231023cd454c536d7bf8"
+  "pageSha256": "4dfa974dd7b3839369d289461c0bc5af1399186b3ca0ca4f0c187f288dfa5b4f",
+  "updates": {
+    "PR-20": {
+      "base": "0761d56fe4c36e505550f9b889841fdf8e82c80a",
+      "reason": "Add Muse agent colors, filter, name, handoff target and read/ask/edit job controls. The optional mobile page and default activation behavior are unchanged."
+    }
+  }
 }
