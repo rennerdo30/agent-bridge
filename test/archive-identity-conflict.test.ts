@@ -10,6 +10,7 @@ import { doctor } from "../src/core/doctor.js";
 import { MessageStore } from "../src/core/store.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+import { holdFixtureWriter, openFixtureDatabase } from "./sqlite-fixture.js";
 
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
@@ -111,21 +112,28 @@ it.each(["marker", "remove", "archive"])("rolls back marker and evidence on %s f
   const store = new MessageStore(env.db, nullLogger);
   try { seedConflict(store); seedConflict(store, "poison-2"); store.insert(mail("healthy", "normal stale mail")); }
   finally { store.close(); }
-  const primary = new DatabaseSync(env.db), archive = new DatabaseSync(archiveDbPath(env.db));
-  const before = primary.prepare("SELECT * FROM messages ORDER BY id").all();
-  if (failure === "marker") primary.exec("CREATE TRIGGER reject_marker BEFORE INSERT ON message_archive_conflicts WHEN NEW.id='poison-2' BEGIN SELECT RAISE(ABORT,'fixture marker failure'); END");
-  if (failure === "remove") primary.exec("CREATE TRIGGER reject_remove BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT,'fixture remove failure'); END");
-  if (failure === "archive") archive.exec("CREATE TRIGGER reject_archive BEFORE INSERT ON messages WHEN NEW.id='healthy' BEGIN SELECT RAISE(ABORT,'fixture archive failure'); END");
-  const raw = await BridgeClient.connect(env.pipe, nullLogger), received: BridgeMessage[] = [];
-  raw.on("event", (event, message) => { if (event === "message") received.push(message as BridgeMessage); });
+  let primary: DatabaseSync | undefined, archive: DatabaseSync | undefined, raw: BridgeClient | undefined;
+  let writer: Awaited<ReturnType<typeof holdFixtureWriter>> | undefined;
   try {
+    primary = openFixtureDatabase(env.db); archive = openFixtureDatabase(archiveDbPath(env.db));
+    const before = primary.prepare("SELECT * FROM messages ORDER BY id").all();
+    // AB-284: background writers can hold either database before fault-injection DDL.
+    // Keep that interleaving deterministic; setup must wait for the real writer to commit.
+    writer = await holdFixtureWriter(failure === "archive" ? archiveDbPath(env.db) : env.db);
+    writer.release();
+    if (failure === "marker") primary.exec("CREATE TRIGGER reject_marker BEFORE INSERT ON message_archive_conflicts WHEN NEW.id='poison-2' BEGIN SELECT RAISE(ABORT,'fixture marker failure'); END");
+    if (failure === "remove") primary.exec("CREATE TRIGGER reject_remove BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT,'fixture remove failure'); END");
+    if (failure === "archive") archive.exec("CREATE TRIGGER reject_archive BEFORE INSERT ON messages WHEN NEW.id='healthy' BEGIN SELECT RAISE(ABORT,'fixture archive failure'); END");
+    raw = await BridgeClient.connect(env.pipe, nullLogger);
+    const received: BridgeMessage[] = [];
+    raw.on("event", (event, message) => { if (event === "message") received.push(message as BridgeMessage); });
     await expect(hello(raw)).rejects.toMatchObject({ code: "internal", message: `fixture ${failure} failure` });
     expect(await raw.request("pending", { limit: 500 })).toEqual([]);
     expect(received).toEqual([]);
     expect(primary.prepare("SELECT * FROM messages ORDER BY id").all()).toEqual(before);
     expect(primary.prepare("SELECT COUNT(*) AS n FROM message_archive_conflicts").get()!.n).toBe(0);
     expect(archive.prepare("SELECT body FROM messages WHERE id='poison'").get()!.body).toBe("canonical archive variant");
-  } finally { raw.close(); primary.close(); archive.close(); }
+  } finally { raw?.close(); primary?.close(); archive?.close(); await writer?.close(); }
 });
 
 it("freezes conflicts across claim, receipt, handoff, inline delivery, sync/async expiry and purge", async () => {
