@@ -132,6 +132,20 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     expect(captured!.prepare("SELECT count(*) AS n FROM receipt_revisions").get()?.n).toBe(1);
     expect(j.lookup(input.restartId)).toBeNull();
   });
+  it.skipIf(!portable)("unknown transaction-state API quarantines before BEGIN and cannot authorize close", async () => {
+    const spy = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function (this: DatabaseSync, sql: string) {
+      if (sql.includes("PRAGMA journal_mode=PERSIST")) captured = this;
+      return sqliteExec.call(this, sql);
+    });
+    const j = await bootstrap(); spy.mockRestore();
+    Object.defineProperty(captured!, "isTransaction", { configurable: true, get: () => undefined });
+    try {
+      const exec = vi.spyOn(DatabaseSync.prototype, "exec");
+      expect(() => j.admit(request(), deadline())).toThrow(LifecycleUnavailable);
+      expect(j.isQuarantined).toBe(true); expect(j.close()).toBe(false);
+      expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE")).toBe(false);
+    } finally { Reflect.deleteProperty(captured!, "isTransaction"); }
+  });
   it.skipIf(!portable)("missing established journal is unknown, not repaired/recreated or treated as fresh home", async () => {
     const j = await bootstrap(), input = request(); j.admit(input, deadline());
     const before = readFileSync(file()); renameSync(file() + "-journal", file() + "-fixture-retained-journal");

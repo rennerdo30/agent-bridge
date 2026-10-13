@@ -64,6 +64,12 @@ function privatePath(path: string, directory: boolean): void {
   if (process.getuid?.() !== stat.uid || (stat.mode & 0o077) !== 0) fail("private_path");
 }
 function flush(path: string): void { const fd = openSync(path, "r"); try { fsyncSync(fd); } finally { closeSync(fd); } }
+function transactionState(db: DatabaseSync): boolean {
+  // Added in the documented minimum Node22.16. Unknown cannot mean autocommit.
+  const state: unknown = db.isTransaction;
+  if (typeof state !== "boolean") fail("writer_unknown");
+  return state;
+}
 function configureWriter(db: DatabaseSync): void {
   db.exec(`PRAGMA busy_timeout=${BUSY_MS}; PRAGMA journal_mode=PERSIST; PRAGMA journal_size_limit=-1; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF;`);
   if (process.platform === "darwin") db.exec("PRAGMA fullfsync=ON");
@@ -140,12 +146,12 @@ export class LifecycleJournal {
     try {
       configureWriter(writer); writer.exec("BEGIN IMMEDIATE"); writer.exec(SCHEMA);
       writer.prepare("INSERT INTO lifecycle_lineage VALUES (1,?)").run(JSON.stringify(lineage)); writer.exec("COMMIT");
-      if (writer.isTransaction) fail("writer_unknown");
+      if (transactionState(writer)) fail("writer_unknown");
       privatePath(file + "-journal", false); flush(file); flush(file + "-journal"); flush(dir); flush(physicalHome);
       const journal = new LifecycleJournal(file, lineage, owner, writer); journal.verifyLineage(); return journal;
     } catch {
       // No accepted lifecycle effect exists at bootstrap. Retain all files, never repair/rebootstrap.
-      try { if (writer.isTransaction) writer.exec("ROLLBACK"); if (!writer.isTransaction) writer.close(); } catch { /* quarantine unresolved connection */ }
+      try { if (transactionState(writer)) writer.exec("ROLLBACK"); if (!transactionState(writer)) writer.close(); } catch { /* quarantine unresolved connection */ }
       fail("publication_unproved");
     }
   }
@@ -175,14 +181,16 @@ export class LifecycleJournal {
   preparedReader(id: string): PreparedLifecycleReader { this.verifyLineage(); return new PreparedLifecycleReader(this.file, this.lineage, id); }
   get isQuarantined(): boolean { return this.quarantined; }
   private transaction<T>(deadline: number, work: () => T, committed: (value: T) => boolean): T {
-    if (this.quarantined || this.writer.isTransaction) fail("writer_unknown");
+    if (this.quarantined) fail("writer_unknown");
+    try { if (transactionState(this.writer)) fail("writer_unknown"); }
+    catch { this.quarantined = true; fail("writer_unknown"); }
     if (performance.now() >= deadline) fail("budget");
     this.verifyLineage();
     try {
       this.writer.exec("BEGIN IMMEDIATE"); const value = work();
       if (performance.now() >= deadline) fail("budget");
       this.writer.exec("COMMIT");
-      if (this.writer.isTransaction || performance.now() >= deadline || !committed(value)) fail("writer_unknown");
+      if (transactionState(this.writer) || performance.now() >= deadline || !committed(value)) fail("writer_unknown");
       return value;
     } catch (error) {
       // Latch before any further observer/effect. COMMIT throw does not imply rollback.
@@ -190,8 +198,8 @@ export class LifecycleJournal {
       let settled = false;
       try {
         if (performance.now() < deadline) {
-          if (this.writer.isTransaction) this.writer.exec("ROLLBACK");
-          if (!this.writer.isTransaction && performance.now() < deadline) { this.verifyLineage(); this.read(); settled = true; }
+          if (transactionState(this.writer)) this.writer.exec("ROLLBACK");
+          if (!transactionState(this.writer) && performance.now() < deadline) { this.verifyLineage(); this.read(); settled = true; }
         }
       } catch { /* unresolved locks/visibility stay quarantined, without another BEGIN/COMMIT */ }
       // Only definitely local pre-COMMIT conflicts can resume. Commit/observation failures stay latched.
@@ -242,7 +250,8 @@ export class LifecycleJournal {
   }
   close(): boolean {
     // No forced close of an unresolved local transaction/lock.
-    if (this.writer.isTransaction) return false;
+    try { if (transactionState(this.writer)) return false; }
+    catch { this.quarantined = true; return false; }
     this.writer.close(); return true;
   }
 }
