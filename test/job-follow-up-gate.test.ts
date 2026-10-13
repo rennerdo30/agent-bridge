@@ -3,7 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, it, vi, type Mock } from "vitest";
+import { afterEach, beforeEach, expect, it, vi, type Mock, type MockInstance } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
 import { metadataFileLease } from "../src/core/metadata-file-lease.js";
@@ -19,7 +19,7 @@ const reasons: FollowUpGate["reason"][] = ["control_lock_busy", "interrupted_exe
   "cancellation_guard_foreign_or_unowned", "cancellation_guard_no_resume", "runner_terminal_not_settled"];
 let jobs: JobManager, job: Job, home: string, store: string;
 let resume: Mock<Resume>, control: Mock<(...args: unknown[]) => Promise<void>>, start: Mock<Run>;
-let probe: ReturnType<typeof vi.spyOn<typeof process, "kill">>;
+let probe: MockInstance<typeof process.kill>;
 const closes: (() => Promise<void>)[] = [];
 
 beforeEach(() => {
