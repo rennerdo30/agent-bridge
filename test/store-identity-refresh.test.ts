@@ -58,8 +58,13 @@ it("keeps verified readers known when a later identity query fails, but not read
   expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);
   // A positively identified system process cannot be the recorded Bridge reader, even beyond its old ceiling.
   names.mockReturnValue(new Map([[pid, "svchost"]]));
-  expect(() => assertStoreUpgrade(env.home, "json", 4, 5)).not.toThrow();
-  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).not.toThrow();
+  if (process.platform === "win32") {
+    expect(() => assertStoreUpgrade(env.home, "json", 4, 5)).not.toThrow();
+    expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).not.toThrow();
+  } else {
+    expect(() => assertStoreUpgrade(env.home, "json", 4, 5)).toThrow(/Waiting to upgrade json store 4→5/);
+    expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);
+  }
   // No name evidence means the reader is still unknown.
   names.mockReturnValue(undefined);
   expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);
@@ -94,7 +99,7 @@ function unreadableReader() {
   return record;
 }
 
-it.each(["svchost", "WmiPrvSE.EXE", "C:\\Windows\\System32\\SearchFilterHost.exe"])("unblocks a positively identified nonruntime replacement %s without changing records", name => {
+it.runIf(process.platform === "win32").each(["svchost", "WmiPrvSE.EXE", "C:\\Windows\\System32\\SearchFilterHost.exe", "SearchProtocolHost", "SearchIndexer", "MsMpEng", "dllhost", "RuntimeBroker", "csrss", "lsass", "services", "wininit", "smss"])("unblocks a positively identified OS host replacement %s without changing records", name => {
   unreadableReader();
   const db = metadataDb(env.home);
   const before = db.prepare("SELECT * FROM bridge_metadata WHERE domain='storage-capabilities' AND key=?").get(String(pid));
@@ -104,7 +109,7 @@ it.each(["svchost", "WmiPrvSE.EXE", "C:\\Windows\\System32\\SearchFilterHost.exe
   expect(db.prepare("SELECT * FROM bridge_metadata WHERE domain='storage-capabilities' AND key=?").get(String(pid))).toEqual(before);
 });
 
-it.each(["node.exe", "BUN", "deno", "claude", "codex", "opencode", "agy", "antigravity", "/usr/local/bin/MUSE"])("keeps unreadable runtime %s blocked despite sufficient old capabilities and shadowed legacy publication", name => {
+it.each(["node.exe", "node22", "unknown-host", "BUN", "deno", "claude", "codex", "opencode", "agy", "antigravity", "/usr/local/bin/MUSE"])("keeps unreadable runtime or unknown name %s blocked despite sufficient old capabilities and shadowed legacy publication", name => {
   unreadableReader();
   const path = join(env.home, "storage-capabilities", `${pid}.json`);
   mkdirSync(join(env.home, "storage-capabilities"), { recursive: true });

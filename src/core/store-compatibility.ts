@@ -13,7 +13,8 @@ interface Presence extends StoreCapabilities { pid: number; name: string; versio
 const identities = new Map<string, { identity: string | null; at: number; signature: string }>();
 const refreshes = new Map<string, Promise<void>>();
 const IDENTITY_REFRESH_MS = 10_000;
-const BRIDGE_RUNTIME_NAMES = new Set(["node", "bun", "deno", "claude", "codex", "opencode", "agy", "antigravity", "muse"]);
+// Only these known Windows OS hosts prove non-Bridge PID reuse; arbitrary/renamed runtimes remain unknown.
+const NON_BRIDGE_WINDOWS_HOST_NAMES = new Set(["svchost", "wmiprvse", "searchfilterhost", "searchprotocolhost", "searchindexer", "msmpeng", "dllhost", "runtimebroker", "csrss", "lsass", "services", "wininit", "smss"]);
 
 /** Re-exported: the boot rule lives in boot-time.ts so lock modules can share it without import cycles. */
 export { writtenBeforeBoot };
@@ -282,8 +283,8 @@ function storedPresence(home: string, pid: number): { record: Presence; at: numb
  * - a successful query shows another process under that PID, or no running process at all (an exited process
  *   whose PID a lingering handle keeps answering): the recorded reader is gone.
  * A failed query or a record without an identity keeps the reader blocking. A listed process with an unreadable
- * start time is gone only when a successful image-name query identifies a non-Bridge runtime (AB-362: protected
- * processes reusing dead jobs' PIDs). An unreadable agent runtime stays blocking regardless of old capabilities.
+ * start time is gone only when a successful image-name query identifies a known Windows OS service host (AB-362:
+ * protected processes reusing dead jobs' PIDs). Every other name stays blocking regardless of old capabilities.
  */
 function verifiedNow(home: string, peers: Presence[], format: keyof StoreCapabilities, target: number): Set<number> {
   const candidates = peers.flatMap(peer => {
@@ -305,7 +306,7 @@ function verifiedNow(home: string, peers: Presence[], format: keyof StoreCapabil
     const sufficient = validStoreCapabilities(record) && (record[format] ?? 0) >= target;
     if (now === "") {
       const name = names?.get(pid)?.trim().split(/[\\/]/).pop()?.replace(/\.exe$/i, "").toLowerCase();
-      return Boolean(name && !BRIDGE_RUNTIME_NAMES.has(name));
+      return process.platform === "win32" && Boolean(name && NON_BRIDGE_WINDOWS_HOST_NAMES.has(name));
     }
     return now !== record.processIdentity || sufficient;
   }).map(candidate => candidate.pid));
