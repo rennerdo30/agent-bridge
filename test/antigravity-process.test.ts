@@ -85,7 +85,7 @@ describe("Antigravity process protocol", () => {
       const launched = JSON.parse(result.text);
       expect(launched).toEqual(expect.arrayContaining(["--sandbox", "--model", "example", "--effort", "high"]));
       expect(launched.includes("--dangerously-skip-permissions")).toBe(bypass);
-      expect(readdirSync(join(env.home, "antigravity-hooks"))).toEqual([]);
+      expect(existsSync(join(env.home, "antigravity-hooks")) ? readdirSync(join(env.home, "antigravity-hooks")) : []).toEqual([]);
     } finally { await env.cleanup(); }
   });
   it("enforces read access against native writes and MCP mutations with headless bypass present", async () => {
@@ -123,7 +123,7 @@ describe("Antigravity process protocol", () => {
       expect(owned).toHaveLength(2);
       await expect.poll(() => owned.every(pid => !pidAlive(pid)), { timeout: 5_000 }).toBe(true);
       expect(existsSync(marker)).toBe(false);
-      expect(readdirSync(join(env.home, "antigravity-hooks"))).toEqual([]);
+      expect(existsSync(join(env.home, "antigravity-hooks")) ? readdirSync(join(env.home, "antigravity-hooks")) : []).toEqual([]);
     } finally { await env.cleanup(); }
   });
   it("reports native nonzero errors and preserves timeout identity through real process IO", async () => {
@@ -132,7 +132,7 @@ describe("Antigravity process protocol", () => {
       const bin = fakeCli(env.home), base = { bin, cwd: env.home, access: "read" as const, timeoutSec: 1, log: nullLogger, extraEnv: { AGENT_BRIDGE_HOME: env.home } };
       expect(await delegateToAntigravity({ ...base, prompt: "failure" })).toMatchObject({ isError: true, sessionId: "fake-session", details: { exitCode: 3, error: expect.stringContaining("provider unavailable"), stderr: "native provider failure" } });
       await expect(delegateToAntigravity({ ...base, prompt: "hang" })).rejects.toMatchObject({ kind: "timeout", sessionId: "fake-session" });
-      expect(readdirSync(join(env.home, "antigravity-hooks"))).toEqual([]);
+      expect(existsSync(join(env.home, "antigravity-hooks")) ? readdirSync(join(env.home, "antigravity-hooks")) : []).toEqual([]);
     } finally { await env.cleanup(); }
   });
 });
