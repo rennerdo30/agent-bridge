@@ -170,6 +170,10 @@ export function storeJobRecords(path: string, jobs: readonly unknown[], archived
 export interface ArchiveSelection { ids?: ReadonlySet<string>; names?: ReadonlySet<string>; metadata?: boolean; active?: boolean; history?: boolean }
 export interface IndexedJobSnapshot { signature: string; jobs: Record<string, unknown>[] }
 const cache = new Map<string, IndexedJobSnapshot & { bytes: number }>();
+/** Decoded rows of the last full read per selection, keyed by id with the row's sha256. A row's metadata and
+ * history are written only together with a new sha256 (putJobRecords), so an unchanged sha256 means unchanged JSON.
+ * Any archive write changes the WAL signature; without this, every broker request re-decoded all records (AB-300). */
+const decodedRows = new Map<string, Map<string, { sha: string; job: Record<string, unknown> }>>();
 let cacheBytes = 0;
 const CACHE_BUDGET = 8 * 1024 * 1024;
 export const archiveIndexCounters = { reads: 0, decoded: 0 };
@@ -239,9 +243,20 @@ export function* readIndexedJobSteps(path: string, responsive = false, selection
           }
         }
       }
-    } else for (const row of db.prepare(`SELECT ${columns} FROM ${from}${selection.active ? " WHERE r.active=1" : ""} ORDER BY r.observed_at,r.id`).iterate()) {
-      yield* beforeStep();
-      decode(row);
+    } else {
+      // Only rows whose sha256 changed since the last full read of this selection are decoded again.
+      const previous = decodedRows.get(key), current = new Map<string, { sha: string; job: Record<string, unknown> }>();
+      const one = db.prepare(`SELECT ${columns} FROM ${from} WHERE r.id=? AND r.sha256=?`);
+      for (const row of db.prepare(`SELECT r.id,r.sha256 FROM ${from}${selection.active ? " WHERE r.active=1" : ""} ORDER BY r.observed_at,r.id`).iterate()) {
+        yield* beforeStep();
+        const id = String(row.id), sha = String(row.sha256), known = previous?.get(id);
+        if (known?.sha === sha) { jobs.push(known.job); current.set(id, known); continue; }
+        const full = one.get(id, sha);
+        if (!full) continue;
+        decode(full);
+        current.set(id, { sha, job: jobs[jobs.length - 1]! });
+      }
+      decodedRows.set(key, current);
     }
     unchanged();
   } catch (error) { throw archiveWriteError(error); }

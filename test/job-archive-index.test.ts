@@ -102,3 +102,20 @@ it("selects only requested IDs and invalidates warm selections after an external
   archiveJobs(path, [{ ...job, owner: "new-owner" }]);
   expect(readIndexedJobs(path, { ids: new Set([job.id]) }).jobs[0]!.owner).toBe("new-owner");
 });
+
+// AB-300: every archive write changes the WAL signature, so full reads used to decode every record again and
+// broker requests (jobAuthority, peers, dispatch) timed out with about a dozen jobs running.
+it("re-decodes only changed records on a full read after an archive write", () => {
+  const others = Array.from({ length: 40 }, (_, i) => ({ ...job, id: `job-${i}`, name: `codex-job-${i}` }));
+  archiveJobs(path, [job, ...others]);
+  const first = readIndexedJobs(path, { metadata: true }).jobs.map(record => record.id);
+  expect(first).toHaveLength(41);
+  archiveJobs(path, [{ ...others[7]!, status: "running" }]);
+  const before = archiveIndexCounters.decoded;
+  const after = readIndexedJobs(path, { metadata: true }).jobs;
+  expect(archiveIndexCounters.decoded - before).toBe(1);
+  expect(after.find(record => record.id === "job-7")!.status).toBe("running");
+  // Same records in the same observed order; only the changed one may move.
+  expect(after.map(record => record.id).sort()).toEqual([...first].sort());
+  expect(after.map(record => record.id).filter(id => id !== "job-7")).toEqual(first.filter(id => id !== "job-7"));
+});

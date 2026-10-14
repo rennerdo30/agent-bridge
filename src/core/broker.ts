@@ -1078,7 +1078,7 @@ export class Broker {
   }
 
   private async jobForControl(peer: PeerInfo, ref: string): Promise<Record<string, unknown> | undefined> {
-    let known = this.storedJobs().find((j) => j.name === ref || j.id === ref);
+    let known = this.storedJob(ref);
     let active = false;
     if (known && this.jobsPath) {
       try {
@@ -1097,7 +1097,7 @@ export class Broker {
     // A connected inline executor is the only source of its runtime controller.
     if (active && known?.status === "running" && !known.host && this.connByName(String(known.executionOwner ?? known.owner))) return known;
     const recovered = this.jobsPath ? await recoverJobRecordAsync(dirname(this.jobsPath), ref) : undefined;
-    const current = this.storedJobs().find((j) => j.name === ref || j.id === ref);
+    const current = this.storedJob(ref);
     if (!recovered) return typeof current?.prompt === "string" && typeof current.owner === "string" ? current : undefined;
     if (!this.groups.canControl(peer, recovered as unknown as Record<string, unknown>, this.localPeers())) return current;
     this.recoveredJobs.set(recovered.id, recovered as unknown as Record<string, unknown>);
@@ -1122,7 +1122,7 @@ export class Broker {
     }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined; }
     this.jobsForDispatch = null;
-    const current = active ?? findHistoryJob(dirname(this.jobsPath), String(job.name), job.id) ?? this.storedJobs().find(record => record.id === job.id);
+    const current = active ?? findHistoryJob(dirname(this.jobsPath), String(job.name), job.id) ?? this.storedJob(job.id, false);
     if (!current) return undefined;
     for (const key of ["id", "name", "agent", "startedAt", "sessionId", "threadId"]) {
       if (current[key] !== undefined && current[key] !== null && current[key] !== job[key]) return undefined;
@@ -1138,6 +1138,22 @@ export class Broker {
     }
     if (typeof current.prompt === "string") latest.prompt = current.prompt;
     return latest;
+  }
+
+  /** storedJobs().find(name or id === ref) through indexed probes instead of a full registry read (AB-300).
+   * Control and authority requests resolve one job; a full read per request saturated the broker under load. */
+  private storedJob(ref: string, byName = true): Record<string, unknown> | undefined {
+    const matches = (job: Record<string, unknown>) => job.id === ref || byName && job.name === ref;
+    if (!this.jobsPath || this.jobsForDispatch) return this.storedJobs().find(matches);
+    try {
+      if (indexedJobProjectionCurrent(this.jobsPath)) {
+        const stored = readIndexedJobs(this.jobsPath, { metadata: true, ids: new Set([ref]), ...(byName ? { names: new Set([ref]) } : {}) }).jobs.find(matches);
+        // As in storedJobs: a recovered record only stands in for a job the store does not list.
+        if (stored) { if (typeof stored.id === "string") this.recoveredJobs.delete(stored.id); return stored; }
+        return [...this.recoveredJobs.values()].find(matches);
+      }
+    } catch { /* Fall back to the full registry read, which handles its own failures. */ }
+    return this.storedJobs().find(matches);
   }
 
   private storedJobs(): Record<string, unknown>[] {
