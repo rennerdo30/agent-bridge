@@ -24,15 +24,18 @@ Delegated runs use `muse exec --json`; the prompt is passed as a file, never
 on the command line. `read` runs with workspace writes and shell disabled and
 never approves prompts. `edit` disables approval prompts while Muse's OS
 sandbox stays on. `ask` behaves as `read` for Muse in this version: no
-external approval relay is implemented. Muse cannot list its models, so any
-model id is passed through verbatim (`list_models` explains this), and account
-limits are reported as unknown because Muse exposes no machine-readable
-quota command.
+external approval relay is implemented. `list_models` reads Muse's catalog
+from a short-lived `muse serve` host (MSP `model/list`) and falls back to
+pass-through model ids when no catalog answers. Account limits are reported
+as unknown: MSP `usage/read` answers only for sessions of a running host.
 
-**Idle Muse sessions receive mail on their next turn or through `inbox`;
-waking an idle session is not implemented.** Muse's hook payloads have not
-been verified against the bridge's wake delivery, so the bridge does not
-advertise wake for Muse.
+The plugin's lifecycle hooks (SessionStart, UserPromptSubmit, PostToolUse,
+Stop) bind the live session and inject unread mail at turn boundaries; Stop
+can continue a turn that has waiting mail, and the dashboard sees the session
+as busy while it works. **Waking an idle Muse session is still not
+implemented**: a session that never starts a turn runs no hooks, so mail to an
+idle session waits for its next turn or an explicit `inbox` call. The bridge
+therefore does not advertise wake for Muse.
 
 Native chats are read from Muse session logs
 (`~/.local/share/muse/sessions`) without modifying them, including retained

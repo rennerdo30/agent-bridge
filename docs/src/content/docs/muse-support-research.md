@@ -9,10 +9,13 @@ from local command probes (`--help` output, `muse plugins validate --json`,
 and `muse exec --provider echo --json` runs), not from documentation guesses.
 
 **Status: implemented on the `feat/muse-support` branch** — headless
-delegation, the native plugin and installer, transcripts and history, and
-dashboard labels. Unit tests mock the CLI and make no paid API calls; the
-`smoke muse` two-turn check against the real provider is the remaining live
-gate. Known subsets are listed under "Open questions and risks".
+delegation, the native plugin and installer, transcripts and history,
+dashboard labels, lifecycle-hook mail injection, and MSP-backed model
+listing. Verified live against Muse 1.4.7: `smoke muse`, `ask_muse`
+read/edit/ask-as-read/resume, `permission_profile`, `spawn_muse` delivery,
+plugin install/approve in an isolated profile, and hook execution through
+`muse plugins hook test`. Known subsets are listed under "Open questions
+and risks".
 
 ## Verdict
 
@@ -239,10 +242,27 @@ Enough for every other agent to call `ask_muse` / `spawn_muse`:
 
 ## Open questions and risks
 
-- **Hook semantics are the one unknown that changes the design.** Event
-  names, stdin/argv payload, and whether output can inject context or
-  trigger a turn are unprobed. Phase 2 is planned so this only affects
-  wake, never basic peer messaging.
+- **Hooks are verified, idle wake is not.** Muse's lifecycle events
+  (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Stop, and more)
+  mirror Claude Code's contract: stdin JSON in, `hookSpecificOutput`
+  additional context or a Stop `decision: "block"` out. The plugin's four
+  command hooks were executed through `muse plugins hook test` against a
+  recording endpoint and returned the mapped context. Hooks did not fire
+  under `muse exec`, so delegated runs do not depend on them. A session
+  that never starts a turn still runs no hook: no idle wake.
+- **MSP is the remaining parity decision.** `muse serve` speaks MSP
+  (JSON-RPC over stdio; `muse schema generate-json-schema` exports the
+  exact 1.4.7 surface offline). The handshake, `model/list` and
+  `usage/read` were probed live; `model/list` now backs `list_models`.
+  `turn/steer`, `approval/decide`, `session/setApprovalMode` and
+  `userInput/answer` could close in-flight steering, the approval relay
+  and per-session usage, at the cost of a long-lived host transport like
+  Codex's app-server. That is a follow-up integration decision, not a
+  blocker for this agent kind.
+- **MCP child env is sanitized by Muse.** Plugin children do not inherit
+  the host's environment verbatim; the bridge therefore binds Muse
+  sessions from `MUSE_SESSION_ID` (injected by Muse itself) and passes
+  identity by argv, never by `AGENT_BRIDGE_*` env, inside Muse.
 - **Edit-mode approvals in headless runs.** `--approval-mode never`,
   `on-request` with nobody to answer, and `--disable-approval` differ in
   ways only a real-provider probe can settle. Phase 1 ships `read`
