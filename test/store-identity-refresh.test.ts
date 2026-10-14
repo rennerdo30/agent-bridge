@@ -139,10 +139,19 @@ it("does not apply process evidence to a record replaced during the name query",
   expect(metadataDb(env.home).prepare("SELECT value FROM bridge_metadata WHERE domain='storage-capabilities' AND key=?").get(String(pid))?.value).toBe(JSON.stringify(replacement));
 });
 
-it("reads this runtime's process image with a single bounded name query", () => {
+it("reads this runtime's OS process name with a single bounded name query", () => {
   const names = identity.readProcessNamesSync([process.pid, process.pid, -1, Number.NaN]);
   expect(names?.size).toBe(1);
-  expect(names?.get(process.pid)?.split(/[\\/]/).pop()?.replace(/\.exe$/i, "").toLowerCase()).toBe("node");
+  const name = names?.get(process.pid);
+  if (process.platform === "win32") {
+    expect(name?.split(/[\\/]/).pop()?.replace(/\.exe$/i, "").toLowerCase()).toBe("node");
+  } else if (process.platform === "linux") {
+    // Linux comm may name the Node worker thread (e.g. MainThread), rather than the executable.
+    expect(name).toBe(readFileSync(`/proc/${process.pid}/comm`, "utf8").trim());
+  } else {
+    expect(name).toEqual(expect.any(String));
+    expect(name?.trim().length).toBeGreaterThan(0);
+  }
 });
 
 it.runIf(process.platform === "win32")("reports a failed batch query instead of an empty result", async () => {
