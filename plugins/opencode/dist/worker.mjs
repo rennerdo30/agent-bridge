@@ -59,7 +59,7 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-L4WSJDDD.mjs";
+} from "./chunks/chunk-EVUUOKTH.mjs";
 import {
   codexAppServerCall,
   describeModels,
@@ -86,7 +86,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-NVLBXJSM.mjs";
+} from "./chunks/chunk-YBJYTHBQ.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -115,7 +115,7 @@ import {
   HISTORY_MAX_LIMIT,
   HISTORY_MAX_QUERY_CHARS,
   historyFiltersSchema
-} from "./chunks/chunk-YES4373V.mjs";
+} from "./chunks/chunk-T4YBZ23I.mjs";
 import {
   MAX_HOLD_REASON_CHARS,
   deriveJobOutcome,
@@ -3017,7 +3017,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-3XPSK635.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-B6YAE5CX.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3029,9 +3029,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-T3E5YV6Z.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-IMH3F3EX.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-T3E5YV6Z.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-IMH3F3EX.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3214,18 +3214,18 @@ ${JSON.stringify(result)}`);
     "search_history",
     {
       title: "Search bridge and CLI history",
-      description: "Search local bridge messages (including archives), decisions, delegated run logs and CLI transcripts. Returns bounded snippets with stable source ids and links. Ordinary search makes no model calls. answer=true explicitly spends model tokens on a configured cheap model chosen by availability and usage_limits. Indexing is incremental; use agent-bridge reindex to rebuild.",
+      description: "Search local bridge messages (including archives), owner decisions and questions, delegated run logs and job reports, and native Claude, Codex, opencode and Antigravity transcripts. Use it before starting or resuming work, after a handoff or restart, and whenever someone refers to an earlier decision, job, branch or message: search instead of guessing or reading log files. Queries are full-text words or phrases; exact ids such as job names, issue keys or commit hashes work as terms. Narrow results with filters (kind, project, job, since). Returns bounded snippets with stable source ids and links; pass a hit's conversation to get_conversation to read the whole thread. Ordinary search makes no model calls. answer=true explicitly spends model tokens on a configured cheap model chosen by availability and usage_limits. Indexing is incremental; use agent-bridge reindex to rebuild.",
       inputSchema: {
-        query: external_exports.string().trim().min(1).max(HISTORY_MAX_QUERY_CHARS),
+        query: external_exports.string().trim().min(1).max(HISTORY_MAX_QUERY_CHARS).describe('Words, a quoted phrase or an exact id, e.g. "branch limit" or codex-job-1a2b3c4d'),
         filters: historyFiltersSchema.optional(),
-        limit: external_exports.number().int().min(1).max(HISTORY_MAX_LIMIT).optional(),
-        answer: external_exports.boolean().optional()
+        limit: external_exports.number().int().min(1).max(HISTORY_MAX_LIMIT).optional().describe(`Maximum hits (1-${HISTORY_MAX_LIMIT}); raise it for broad questions`),
+        answer: external_exports.boolean().optional().describe("Also summarize the hits with a cheap model (spends tokens); default false")
       },
       annotations: { readOnlyHint: true }
     },
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-YPA7P652.mjs")).readHistory(resolveDbPath(ctx.home), args);
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-3ZTW2OCR.mjs")).readHistory(resolveDbPath(ctx.home), args);
       return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-X6RWVXRV.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
