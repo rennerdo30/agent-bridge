@@ -112,7 +112,8 @@ try {
     await card.locator('[data-ph="mode"][value="project"]').check();
     assert.equal(await card.locator('[data-ph="confirm"]').isDisabled(), true);
     await card.locator('[data-ph="project"][value="opaque-project-alpha"]').check();
-    await card.locator('[data-ph="answers"]').check();
+    await card.locator("label.ph-toggle").click();
+    assert.equal(await card.locator('[data-ph="answers"]').isChecked(), true);
     assert.equal(await card.locator('[data-ph="confirm"]').isDisabled(), false);
     await shot(page, "claim-projects-" + theme, { theme, viewport, scenario: "one opaque project and answer opt-in" });
     await card.locator("details.ph-adv summary").click();
