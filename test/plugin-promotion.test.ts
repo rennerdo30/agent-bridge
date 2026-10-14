@@ -8,12 +8,21 @@ import * as delegate from "../src/core/delegate.js";
 import * as antigravity from "../src/cli/antigravity-install.js";
 import * as sources from "../src/cli/opencode-install.js";
 import * as liveUpdate from "../src/cli/live-update.js";
+import { APP_VERSION } from "../src/core/constants.js";
 
 let root: string, source: string;
 const clients: PluginClient[] = ["antigravity", "claude", "codex"];
 const errno = (code: string) => Object.assign(new Error(`${code}: injected rename failure`), { code });
 const payload = (dir: string) => readFileSync(join(dir, "dist", "worker.mjs"), "utf8");
 const stages = (base: string) => readdirSync(join(base, "..")).filter(name => name.startsWith(".agent-bridge-stage-"));
+function captureFailure(action: () => unknown): Error {
+  try { action(); } catch (error) { return error as Error; }
+  throw new Error("Expected publication to fail");
+}
+function expectDiagnostic(error: Error, stage: string, target: string): void {
+  for (const text of [stage, target, "No runtime was activated by this publication", "active.json was not changed by it", "Old version bytes are retained", "stage is kept", "Antigravity/agy/Claude/Codex", "before re-running"]) expect(error.message).toContain(text);
+  expect(error.message).not.toContain("previous install is unchanged");
+}
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "ab-promotion-"));
@@ -64,7 +73,8 @@ describe("shared immutable plugin promotion", () => {
     catch (error) { thrown = error; }
     expect(thrown).toBeInstanceOf(Error);
     const message = (thrown as Error).message;
-    for (const text of [retained, join(base, "0.1.1"), "EPERM", "previous install is unchanged", "stage is kept", "Antigravity/agy/Claude/Codex", "before re-running"]) expect(message).toContain(text);
+    expectDiagnostic(thrown as Error, retained, join(base, "0.1.1"));
+    expect(message).toContain("EPERM");
     expect((thrown as Error).cause).toBe(failure);
     expect(rename).toHaveBeenCalledTimes(PLUGIN_PROMOTION_MAX_ATTEMPTS);
     expect(waits).toEqual([50, 100, 150, 200]);
@@ -103,12 +113,91 @@ describe("shared immutable plugin promotion", () => {
       throw errno("EPERM");
     });
     const sleep = vi.fn();
-    expect(() => selectRuntime(home, "claude", source, "0.1.1", { platform: "win32", rename, sleep })).toThrow("stage is kept");
+    const error = captureFailure(() => selectRuntime(home, "claude", source, "0.1.1", { platform: "win32", rename, sleep }));
+    expect(error.message).toContain("content conflict");
     expect(rename).toHaveBeenCalledTimes(1);
     expect(sleep).not.toHaveBeenCalled();
     expect(payload(join(base, "0.1.1"))).toBe("concurrent different payload");
     expect(payload(join(base, "..", stages(base)[0]!))).toBe("new plugin payload");
     expect(readFileSync(selector, "utf8")).toBe(before);
+  });
+
+  it("reports a content conflict that appears inside the backoff sleep with the original rename cause", () => {
+    const { home, base, selector, before } = previous("claude");
+    const target = join(base, "0.1.1"), failure = errno("EPERM");
+    let retained = "";
+    const rename = vi.fn((stage: string) => { retained = stage; throw failure; });
+    const sleep = vi.fn(() => {
+      mkdirSync(join(target, "dist"), { recursive: true });
+      writeFileSync(join(target, "dist", "worker.mjs"), "backoff winner payload");
+    });
+    const error = captureFailure(() => selectRuntime(home, "claude", source, "0.1.1", { platform: "win32", rename, sleep }));
+    expectDiagnostic(error, retained, target);
+    expect(error.message).toContain("content conflict");
+    expect(error.message).toContain("EPERM");
+    expect(error.cause).toBe(failure);
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledExactlyOnceWith(50);
+    expect(payload(target)).toBe("backoff winner payload");
+    expect(payload(retained)).toBe("new plugin payload");
+    expect(readFileSync(selector, "utf8")).toBe(before);
+  });
+
+  it("wraps a reconciliation digest inspection failure and retains the original rename cause", () => {
+    const { home, base, selector, before } = previous("codex");
+    const target = join(base, "0.1.1"), failure = errno("EPERM");
+    let retained = "";
+    const rename = vi.fn((stage: string) => {
+      retained = stage;
+      // A file cannot be inspected as a plugin directory; digest's readdir fails.
+      writeFileSync(target, "concurrent file retained");
+      throw failure;
+    });
+    const sleep = vi.fn();
+    const error = captureFailure(() => selectRuntime(home, "codex", source, "0.1.1", { platform: "win32", rename, sleep }));
+    expectDiagnostic(error, retained, target);
+    expect(error.message).toContain("scandir");
+    expect(error.message).toContain("Original promotion error: Error: EPERM");
+    expect(error.cause).toBe(failure);
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(readFileSync(target, "utf8")).toBe("concurrent file retained");
+    expect(payload(retained)).toBe("new plugin payload");
+    expect(readFileSync(selector, "utf8")).toBe(before);
+  });
+
+  it("reports only publication preservation after the installer has completed a native Codex update", async () => {
+    const { home, base, selector, before } = previous("codex");
+    const nativeHome = join(root, "native-codex");
+    const oldNative = liveUpdate.updateCodex(join(root, "old-source"), nativeHome, "0.1.0");
+    vi.stubEnv("CODEX_HOME", nativeHome);
+    vi.stubEnv("AGENT_BRIDGE_HOME", home);
+    vi.spyOn(delegate, "resolveBinary").mockReturnValue("fixture-codex");
+    vi.spyOn(sources, "pluginSourceDir").mockReturnValue(source);
+    vi.spyOn(liveUpdate, "reportConnectedVersions").mockResolvedValue();
+    const update = vi.spyOn(liveUpdate, "updateCodex");
+    const failure = errno("EPERM"), sleep = vi.fn();
+    let retained = "", publicationError: Error | undefined;
+    const rename = vi.fn((stage: string) => { retained = stage; throw failure; });
+    vi.spyOn(liveUpdate, "activatePluginRuntime").mockImplementation((dir, client, runtimeHome, version) => {
+      try { return selectRuntime(runtimeHome, client, dir, version, { platform: "win32", rename, sleep }); }
+      catch (error) { publicationError = error as Error; throw error; }
+    });
+    const lines: string[] = [];
+    expect(await runInstaller({ action: "update", tools: ["codex"], yes: true, out: line => lines.push(line) })).toBe(1);
+    expect(update).toHaveBeenCalledExactlyOnceWith(source);
+    const nativeRoot = join(nativeHome, "plugins", "cache", "agent-bridge", "agent-bridge", APP_VERSION);
+    const marketplace = JSON.parse(readFileSync(join(nativeHome, "agent-bridge-marketplace", ".agents", "plugins", "marketplace.json"), "utf8"));
+    expect(marketplace.plugins[0].source.path).toBe(`./plugins/${APP_VERSION}`);
+    expect(payload(nativeRoot)).toBe("new plugin payload");
+    expect(payload(oldNative)).toBe("old plugin payload");
+    expectDiagnostic(publicationError!, retained, join(base, APP_VERSION));
+    expect(publicationError!.cause).toBe(failure);
+    expect(lines.join("\n")).toContain(publicationError!.message);
+    expect(rename).toHaveBeenCalledTimes(PLUGIN_PROMOTION_MAX_ATTEMPTS);
+    expect(payload(retained)).toBe("new plugin payload");
+    expect(readFileSync(selector, "utf8")).toBe(before);
+    expect(existsSync(join(base, APP_VERSION))).toBe(false);
   });
 
   it.each(["EACCES", "EBUSY"])("also retries Windows %s", code => {

@@ -68,38 +68,43 @@ export function publishPlugin(source: string, base: string, version = APP_VERSIO
   const staging = join(dirname(base), `.agent-bridge-stage-${randomUUID()}`);
   assertUnlinked(staging);
   mkdirSync(staging, { recursive: true });
-  for (const rel of files) {
-    mkdirSync(dirname(join(staging, rel)), { recursive: true });
-    copyFileSync(join(source, rel), join(staging, rel));
-  }
-  mkdirSync(base, { recursive: true });
   const rename = options.rename ?? renameSync, sleep = options.sleep ?? promotionSleep;
   let failure: unknown, attempts = 0;
-  for (;;) {
-    assertUnlinked(staging); assertUnlinked(target);
-    // If another updater won the race, never replace its version directory.
-    if (existsSync(target)) {
-      if (digest(staging) !== digest(target)) throw new Error(`Concurrent immutable version differs: ${target}`);
-      return target;
+  try {
+    for (const rel of files) {
+      mkdirSync(dirname(join(staging, rel)), { recursive: true });
+      copyFileSync(join(source, rel), join(staging, rel));
     }
-    attempts++;
-    try {
-      rename(staging, target);
-      return target;
-    } catch (error) {
-      failure = error;
-      // A concurrent publisher may have completed between the check and rename.
-      assertUnlinked(target);
+    mkdirSync(base, { recursive: true });
+    for (;;) {
+      assertUnlinked(staging); assertUnlinked(target);
+      // If another updater won the race, never replace its version directory.
       if (existsSync(target)) {
-        if (digest(staging) === digest(target)) return target;
-        break;
+        if (digest(staging) !== digest(target)) throw new Error(`Plugin content conflict: concurrent immutable target differs: ${target}`);
+        return target;
       }
-      const code = (error as NodeJS.ErrnoException)?.code;
-      if ((options.platform ?? process.platform) !== "win32" || !["EPERM", "EACCES", "EBUSY"].includes(code ?? "") || attempts >= PLUGIN_PROMOTION_MAX_ATTEMPTS) break;
-      sleep(PLUGIN_PROMOTION_RETRY_DELAY_MS * attempts);
+      attempts++;
+      try {
+        rename(staging, target);
+        return target;
+      } catch (error) {
+        failure = error;
+        // A concurrent publisher may have completed between the check and rename.
+        assertUnlinked(target);
+        if (existsSync(target)) {
+          if (digest(staging) !== digest(target)) throw new Error(`Plugin content conflict: concurrent immutable target differs: ${target}`);
+          return target;
+        }
+        const code = (error as NodeJS.ErrnoException)?.code;
+        if ((options.platform ?? process.platform) !== "win32" || !["EPERM", "EACCES", "EBUSY"].includes(code ?? "") || attempts >= PLUGIN_PROMOTION_MAX_ATTEMPTS) throw error;
+        sleep(PLUGIN_PROMOTION_RETRY_DELAY_MS * attempts);
+      }
     }
+  } catch (error) {
+    const cause = failure ?? error;
+    const detail = error === cause ? String(error) : `${String(error)}. Original promotion error: ${String(cause)}`;
+    throw new Error(`Plugin publication failed from ${staging} to ${target} after ${attempts} promotion attempt(s): ${detail}. No runtime was activated by this publication; active.json was not changed by it. Old version bytes are retained and the stage is kept. Close Antigravity/agy/Claude/Codex sessions using the plugin before re-running.`, { cause });
   }
-  throw new Error(`Plugin promotion failed from ${staging} to ${target} after ${attempts} attempt(s): ${String(failure)}. The previous install is unchanged and the stage is kept. Close Antigravity/agy/Claude/Codex sessions using the plugin before re-running.`, { cause: failure });
 }
 
 /** Preserve every previous metadata revision. Do not rename the old file away before replacement. */
