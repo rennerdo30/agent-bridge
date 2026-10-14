@@ -1,6 +1,6 @@
 import { Dir, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, StatementSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openArchive, archiveInitializationObservation } from "../src/core/sqlite-maintenance.js";
 import { openHistoryStore, historyInitializationObservation, legacyReadNotice, historyReadStatus, openHistoryReader, historyReaderObservation } from "../src/core/history-store.js";
@@ -12,7 +12,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { attachStoreCompatibility, storeCompatibilityObservation } from "../src/core/store-compatibility-overlay.js";
 import { readConversation } from "../src/core/conversations.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { makeEnv, until, type TestEnv } from "./helpers.js";
 
 const leaseFault = vi.hoisted(() => ({ path: "", mode: "none" as "none" | "before" | "after", failure: new Error("SIMULATED lease removal failure") }));
 const acquisitionFault = vi.hoisted(() => ({ directory: "", stage: "none" as "none" | "write" | "close_before" | "close_after",
@@ -57,6 +57,8 @@ const nativeFunction = DatabaseSync.prototype.function, nativePrepare = Database
 const owned = new Map<DatabaseSync, { actuallyClosed: boolean }>();
 const ownedStores = new Set<MessageStore>();
 const ownedIndexes = new Set<HistoryIndex>();
+const ownedWriteLocks = new Set<DatabaseSync>();
+const acceptedFixturePromises = new Set<Promise<unknown>>();
 let env: TestEnv;
 beforeEach(() => { leaseFault.path = ""; leaseFault.mode = "none"; acquisitionFault.directory = ""; acquisitionFault.stage = "none"; env = makeEnv(); });
 afterEach(async () => {
@@ -67,13 +69,17 @@ afterEach(async () => {
     if (!capture.closed) { acquisitionFault.actualClose!(capture.fd); capture.closed = true; acquisitionFault.active.delete(capture.fd); }
     acquisitionFault.descriptors.delete(capture);
   }
+  for (const lock of ownedWriteLocks) { if (lock.isTransaction) nativeExec.call(lock, "ROLLBACK"); dispose(lock); ownedWriteLocks.delete(lock); }
+  const acceptedOutcomes = await Promise.allSettled([...acceptedFixturePromises]); acceptedFixturePromises.clear();
   for (const index of ownedIndexes) { index.resumeLifecycleConsumer(); index.close(); ownedIndexes.delete(index); }
-  for (const store of ownedStores) { store.close(); ownedStores.delete(store); }
+  for (const store of ownedStores) { if (store.lifecycleProducerObservation().sealed) store.resumeLifecycleProducers(); store.close(); ownedStores.delete(store); }
   for (const [db, outcome] of owned) {
     if (!outcome.actuallyClosed) { nativeClose.call(db); outcome.actuallyClosed = true; }
     owned.delete(db);
   }
   await env.cleanup();
+  const acceptedFailures = acceptedOutcomes.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []);
+  if (acceptedFailures.length) throw new AggregateError(acceptedFailures, "owned accepted fixture operation failed during cleanup");
 });
 function dispose(db: DatabaseSync): void { nativeClose.call(db); owned.get(db)!.actuallyClosed = true; }
 const kinds = [
@@ -620,5 +626,61 @@ describe("retained overlay DTO and actual unknown history obligations", () => {
     expect(history.prepare("SELECT * FROM history_pending").all()).toEqual(remaining);
     // Normal accepted tick indexed its work; no pending flags/rows/cursors were
     // cleared to manufacture a complete cold/worker/owner witness.
+  });
+});
+
+describe("actual Store operation/native admission (not current cold or joint-owner grant)", () => {
+  const mail: BridgeMessage = { id: "owned-admission-mail", from: { id: "owned-author", name: "owned-author", agent: "other" },
+    recipient: "owned-recipient", to: "owned-recipient", conversationId: "owned-admission", replyTo: null, hop: 1,
+    body: "Exact accepted admission bytes", createdAt: 1, readAt: null };
+  function store() { const value = new MessageStore(env.db, nullLogger); ownedStores.add(value); return value; }
+  it("outside-context direct/cache/child writes and default abort/close refuse before native SQL under the own-store seal", () => {
+    const value = store(); value.insert(mail); const sealed = value.sealLifecycleProducers();
+    expect(sealed).toMatchObject({ sealed: true, pendingOperations: 0, consumersSealed: true, coldPreparation: "unverified", settled: false, ownershipReleased: false });
+    const exec = vi.spyOn(DatabaseSync.prototype, "exec"), prepare = vi.spyOn(DatabaseSync.prototype, "prepare"), close = vi.spyOn(DatabaseSync.prototype, "close");
+    const all = vi.spyOn(StatementSync.prototype, "all"), cached = Reflect.get(value, "stmt").unread;
+    for (const operation of [() => value.insert({ ...mail, id: "not-admitted" }), () => value.unread(mail.recipient, 10),
+      () => value.markPeerSeen("not-admitted", 2), () => value.retainNativeChild("not-admitted", "owned-parent"),
+      () => value.markRead(mail.recipient, [mail.id]), () => value.claim(mail.recipient, "not-admitted"),
+      () => value.schedulePurgeOlderThan(2), () => value.stopWrites(), () => value.close(),
+      () => cached.all(mail.recipient, 10),
+      () => value.decisions.list(), () => value.history.wake()]) expect(operation).toThrow(expect.objectContaining({ code: "OWNER_QUIESCED" }));
+    expect(exec).not.toHaveBeenCalled(); expect(prepare).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled();
+    expect(all).not.toHaveBeenCalled();
+    vi.restoreAllMocks(); value.resumeLifecycleProducers();
+    expect(value.unread(mail.recipient, 10)).toContainEqual(expect.objectContaining({ id: mail.id, body: mail.body, readAt: null }));
+    expect(value.nativeChildRoutes()).toEqual([]);
+  });
+  it("an actual SQLite-busy accepted retry keeps its original promise/bytes past observer expiry and naturally finishes after lock release", async () => {
+    const value = store(), lock = new DatabaseSync(env.db, { timeout: 25 }); owned.set(lock, { actuallyClosed: false }); ownedWriteLocks.add(lock);
+    lock.exec("BEGIN IMMEDIATE"); let completed = false;
+    const pending = value.retryWrite(() => value.insert(mail)); acceptedFixturePromises.add(pending);
+    void pending.then(() => { completed = true; }, () => {});
+    expect(value.sealLifecycleProducers()).toMatchObject({ pendingOperations: 1, consumersSealed: false, callbackUnknown: true });
+    expect(await value.observeLifecycleProducers(performance.now() + 10)).toMatchObject({ pendingOperations: 1, sealed: true, settled: false });
+    expect(completed).toBe(false); expect(() => value.stopWrites()).toThrow(expect.objectContaining({ code: "OWNER_QUIESCED" }));
+    lock.exec("ROLLBACK"); await pending; acceptedFixturePromises.delete(pending);
+    expect(await value.observeLifecycleProducers(performance.now() + 2000)).toMatchObject({ pendingOperations: 0, consumersSealed: true,
+      callbackUnknown: true, coldPreparation: "unverified", settled: false, ownershipReleased: false });
+    value.resumeLifecycleProducers(); expect(value.unread(mail.recipient, 10)).toContainEqual(expect.objectContaining({ id: mail.id, body: mail.body }));
+  });
+  it("a seal inside an accepted batch cannot abort its original transaction or drop nested accepted mail", () => {
+    const value = store();
+    value.insertBatch([mail], () => {
+      expect(value.sealLifecycleProducers()).toMatchObject({ pendingOperations: 1, consumersSealed: false, callbackUnknown: true, settled: false });
+      expect(() => value.close()).toThrow(expect.objectContaining({ code: "OWNER_QUIESCED" }));
+    });
+    expect(value.lifecycleProducerObservation()).toMatchObject({ pendingOperations: 0, consumersSealed: true, callbackUnknown: true, settled: false });
+    value.resumeLifecycleProducers(); expect(value.byId(mail.id)).toMatchObject({ body: mail.body, readAt: null });
+  });
+  it("actual scheduled maintenance remains accepted through timer pause and only natural work completion removes its pending record", async () => {
+    const value = store(); value.insert(mail); value.schedulePurgeOlderThan(0); value.quiesceLifecycleMaintenance();
+    expect(value.sealLifecycleProducers()).toMatchObject({ pendingMaintenance: true, pendingOperations: 1, legacyArchivePending: true, purgePending: true });
+    expect(await value.observeLifecycleProducers(performance.now() + 10)).toMatchObject({ pendingMaintenance: true, pendingOperations: 1, settled: false });
+    value.resumeLifecycleProducers(); value.resumeLifecycleMaintenance();
+    await until(() => value.lifecycleProducerObservation().pendingOperations === 0);
+    expect(value.lifecycleProducerObservation()).toMatchObject({ pendingMaintenance: false, legacyArchivePending: false, purgePending: false,
+      purgeCursorPending: false, coldPreparation: "unverified", settled: false, ownershipReleased: false });
+    expect(value.byId(mail.id)).toMatchObject({ body: mail.body, readAt: null });
   });
 });
