@@ -68,7 +68,7 @@ describe("Muse public delegation routing", () => {
 
   it("requires explicit compatibility selection and keeps ask restricted in legacy exec", async () => {
     vi.stubEnv("AGENT_BRIDGE_MUSE_EXEC", "1");
-    writeFileSync(join(env.home, "muse.cjs"), `#!/usr/bin/env node\nconst fs = require('node:fs');\nfs.writeFileSync(process.env.MSP_TEST_ARGV, JSON.stringify(process.argv.slice(2)));\nfs.writeFileSync(process.env.MSP_TEST_PID, String(process.pid));\nconsole.log(JSON.stringify({stream:{kind:'session',id:'legacy-session'},payload:{kind:'run_terminal',terminal:'completed',text:'legacy answer'}}));\n`);
+    writeFileSync(join(env.home, "muse.cjs"), `#!/usr/bin/env node\nconst fs = require('node:fs');\nfs.writeFileSync(process.env.MSP_TEST_ARGV, JSON.stringify(process.argv.slice(2)));\nfs.writeFileSync(process.env.MSP_TEST_PID, String(process.pid));\nprocess.stdin.resume(); process.stdin.once('end',()=>console.log(JSON.stringify({stream:{kind:'session',id:'legacy-session'},payload:{kind:'run_terminal',terminal:'completed',text:'legacy answer'}})));\n`);
     await expect(runMuse({ ...request(), access: "ask", permissionProfile: "review" })).resolves.toMatchObject({ sessionId: "legacy-session", text: "legacy answer" });
     const args: string[] = JSON.parse(readFileSync(join(env.home, "argv.json"), "utf8"));
     expect(args).toEqual(expect.arrayContaining(["exec", "--disable-write", "--disable-shell", "--permission-profile", "review"]));

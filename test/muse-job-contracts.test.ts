@@ -35,7 +35,7 @@ const fs = require("node:fs"), path = require("node:path");
 const args = process.argv.slice(2), flag = key => args[args.indexOf(key) + 1];
 const session = args.includes("--session-id") ? flag("--session-id") : "muse-saved-session";
 fs.appendFileSync(path.join(__dirname, "calls.jsonl"), JSON.stringify({args, session, prompt:fs.readFileSync(flag("--prompt-file"), "utf8"), cwd:process.cwd()}) + "\n");
-console.log(JSON.stringify({stream:{kind:"session",id:session},payload_type:"run.terminal.completed",payload:{kind:"run_terminal",terminal:"completed",text:"fixture done"}}));
+process.stdin.resume(); process.stdin.once("end",()=>console.log(JSON.stringify({stream:{kind:"session",id:session},payload_type:"run.terminal.completed",payload:{kind:"run_terminal",terminal:"completed",text:"fixture done"}})));
 `);
   bin = process.platform === "win32" ? join(env.home, "muse.cmd") : script;
   if (process.platform === "win32") writeFileSync(bin, '@ECHO off\r\n"%dp0%\\muse.cjs" %*\r\n');

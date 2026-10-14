@@ -64,7 +64,7 @@ export function planFor(tool: Tool, action: Action): Step[] {
 export function describeStep(step: Step): string {
   if (step.kind === "command") return `${step.bin} ${step.args.join(" ")}`;
   if (step.kind === "antigravity") return `${step.action} immutable Antigravity plugin (keep all old versions)`;
-  if (step.kind === "muse") return step.action !== "uninstall" ? `${step.action} Muse plugin via muse plugins, then approve its capabilities` : `${step.action} Muse plugin via muse plugins`;
+  if (step.kind === "muse") return step.action === "install" ? "install Muse plugin via muse plugins, then approve its capabilities" : step.action === "update" ? "update and inspect Muse plugin; explicit capability review/approval required" : "uninstall Muse plugin via muse plugins";
   if (step.kind === "live-update") return `publish immutable ${step.tool} plugin version (keep all old versions)`;
   return step.action === "uninstall" ? t("installer.opencodeRemove") : t("installer.opencodeCopy");
 }

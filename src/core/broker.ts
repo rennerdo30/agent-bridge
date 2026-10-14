@@ -7,7 +7,9 @@ import { historySearchSchema } from "./history.js";
 import { ReadJournal } from "./read-journal.js";
 import { recordStorePeer, refreshStorePeerIdentities, validStoreCapabilities } from "./store-compatibility.js";
 import { randomUUID } from "node:crypto";
-import { existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, renameSync, unlinkSync } from "node:fs";
+import { readMusePrivateJson, writeMusePrivateJson } from "./muse-context.js";
+import { processIdentity } from "./process-identity.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { createServer, type Server, type Socket } from "node:net";
 import {
@@ -77,7 +79,7 @@ import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, decisionApplies, decisionScopeSchema, type OwnerDecision } from "./decisions.js";
 import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
 import { OwnerQuestionService, OWNER_ADDRESS } from "./owner-question-service.js";
-import { BROKER_TCP_FILE, ensurePrivateSocketDirectory } from "./paths.js";
+import { BROKER_TCP_FILE, ensurePrivateSocketDirectory, isEphemeralBrokerTcpRecord } from "./paths.js";
 
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
 export const PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -182,6 +184,9 @@ export class Broker {
   private readonly projectRoutes = new Map<string, import("./protocol.js").ProjectRoute>();
   private server: Server | null = null;
   private tcpServer: Server | null = null;
+  private tcpReady: Promise<void> | null = null;
+  private tcpNonce: string | null = null;
+  private tcpPort: number | null = null;
   private readonly conns = new Set<Conn>();
   private readonly nativeChildren: NativeChildren;
   private historyBackground: HistoryBackground | null = null;
@@ -523,6 +528,8 @@ export class Broker {
         this.server = server;
         try {
           await this.startServices(optional);
+          this.tcpReady = this.startTcpFallback();
+          await this.tcpReady.catch(err => this.log.warn("broker TCP fallback unavailable", { err: String(err) }));
           resolve();
         } catch (err) {
           // Never leave a bound, half-started broker behind or an unhandled rejection: release the endpoint and let
@@ -546,6 +553,7 @@ export class Broker {
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     this.purgeTimer = null;
     if (this.mobileResources) await this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed"));
+    await this.stopTcpFallback();
     this.questions?.close(); this.questions = null;
     await this.historyBackground?.close().catch(() => {});
     this.historyBackground = null;
@@ -582,7 +590,6 @@ export class Broker {
           void history.reconcileAsks().catch(error => this.log.debug("startup ask reconciliation deferred", { error: String(error) }));
         });
         this.purge();
-        optional("loopback TCP fallback", () => this.startTcpFallback());
         this.log.info("broker listening", { pipe: this.pipePath });
         if (this.store.file !== ":memory:" && existsSync(join(dirname(this.store.file),QUESTIONS_FILE))) optional("owner questions", () => { this.ownerQuestions(); });
         // Another broker may have enabled or changed pairing since this session started.
@@ -617,25 +624,54 @@ export class Broker {
    * the named pipe; loopback stays reachable. The port is recorded in the private
    * bridge home, and the protocol still requires the broker token on hello.
    */
-  private startTcpFallback(): void {
+  private async startTcpFallback(): Promise<void> {
     if (process.platform !== "win32" || this.store.file === ":memory:") return;
     const home = dirname(this.store.file);
+    const identity = processIdentity(process.pid);
+    if (!identity || this.closing) return;
+    const nonce = this.tcpNonce = randomUUID();
     const server = createServer((socket) => this.accept(socket));
+    this.tcpServer = server;
     server.on("error", (err) => this.log.warn("broker TCP fallback error", { err: String(err) }));
-    server.listen(0, "127.0.0.1", () => {
+    await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => {
+      server.removeListener("error", reject);
       const address = server.address();
-      if (!address || typeof address === "string") return;
-      this.tcpServer = server;
-      try { writeFileSync(join(home, BROKER_TCP_FILE), JSON.stringify({ port: address.port, pid: process.pid }), { mode: 0o600 }); }
+      if (!address || typeof address === "string" || this.closing) { resolve(); return; }
+      this.tcpPort = address.port;
+      const temporary = join(home, `${BROKER_TCP_FILE}.${nonce}.tmp`);
+      let staged = false;
+      try {
+        const file = join(home, BROKER_TCP_FILE);
+        // This recreated descriptor is ephemeral. Unknown content may be durable
+        // user state: neither publication nor shutdown may overwrite/remove it.
+        if (existsSync(file) && !isEphemeralBrokerTcpRecord(readMusePrivateJson(file))) throw new Error("Retaining unknown TCP discovery state");
+        writeMusePrivateJson(temporary, { port: address.port, pid: process.pid, identity, nonce, protocol: PROTOCOL_VERSION, pipePath: this.pipePath });
+        staged = true;
+        renameSync(temporary, file);
+      }
       catch (err) { this.log.warn("broker TCP fallback port could not be recorded", { err: String(err) }); }
+      finally { if (staged) try { unlinkSync(temporary); } catch { /* Exclusively owned unpublished staging only. */ } }
       this.log.info("broker loopback fallback listening", { port: address.port });
-    });
+      resolve();
+    }); });
   }
 
   private async stopTcpFallback(): Promise<void> {
+    await this.tcpReady?.catch(() => {});
+    this.tcpReady = null;
     const server = this.tcpServer;
     this.tcpServer = null;
-    if (this.store.file !== ":memory:") { try { unlinkSync(join(dirname(this.store.file), BROKER_TCP_FILE)); } catch { /* already gone */ } }
+    if (this.store.file !== ":memory:" && this.tcpNonce) {
+      const file = join(dirname(this.store.file), BROKER_TCP_FILE);
+      try {
+        const record = readMusePrivateJson(file);
+        if (isEphemeralBrokerTcpRecord(record) && record.pid === process.pid && record.identity === processIdentity(process.pid) &&
+          record.nonce === this.tcpNonce && record.port === this.tcpPort && record.protocol === PROTOCOL_VERSION && record.pipePath === this.pipePath) unlinkSync(file);
+      }
+      catch { /* Preserve corrupt, foreign or successor metadata. */ }
+    }
+    this.tcpNonce = null;
+    this.tcpPort = null;
     if (server) await new Promise<void>((r) => server.close(() => r()));
   }
 

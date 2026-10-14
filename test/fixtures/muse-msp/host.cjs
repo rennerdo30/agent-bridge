@@ -8,7 +8,7 @@ const text = corpus('text-run-single-turn');
 const approval = corpus('approval-deny-round-trip').find((m) => m.method === 'approval/request');
 const failure = corpus('provider-failure-turn').find((m) => m.method === 'turn/completed');
 const cancelled = corpus('cancel-mid-turn').find((m) => m.method === 'turn/completed');
-let sid = '0198f0aa-1111-7000-8000-0000000000aa', tid, initialized = false, tool;
+let sid = '0198f0aa-1111-7000-8000-0000000000aa', tid, initialized = false, tool, profile = process.env.MSP_TEST_PROFILE;
 const mode = process.env.MSP_TEST_MODE || 'finish';
 const write = (m) => process.stdout.write(JSON.stringify({ jsonrpc: '2.0', ...m }) + '\n');
 const reply = (m, result) => write({ id: m.id, result });
@@ -34,14 +34,19 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (!['initialize', 'hook/list', 'session/read', 'model/list', 'usage/read'].includes(m.method) && !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(m.params.commandId)) throw new Error('commandId is not UUIDv7');
   if (process.env.MSP_TEST_UNSUPPORTED === m.method) return write({ id: m.id, error: { code: -32601, message: 'Method not found' } });
   if (process.env.MSP_TEST_HANG === m.method) return;
-  if (m.method === 'initialize') return reply(m, { ...text[1].result, grantedCapabilities: process.env.MSP_TEST_NO_MCP ? [] : ['sessionMcp'] });
+  if (m.method === 'initialize') return reply(m, { ...text[1].result, experimentalApi: m.params.capabilities.experimentalApi === true && process.env.MSP_TEST_EXPERIMENTAL === '1', serverInfo: { name: 'muse-fixture', version: '1.4.7' }, grantedCapabilities: process.env.MSP_TEST_NO_MCP ? [] : ['sessionMcp'] });
   if (m.method === 'session/start' || m.method === 'session/resume') {
     sid = m.params.sessionId || sid;
     reply(m, { session: { ...sessionTemplate, sessionId: sid, modelId: 'effective-native-model', ...(m.params.permissionProfile && !process.env.MSP_TEST_PROFILE_READ ? { permissionState: { profileId: process.env.MSP_TEST_PROFILE || m.params.permissionProfile } } : {}), approvalMode: { mode: m.params.approvalMode || 'allowAll', source: 'startup', lastCommandId: null } }, viewCursor: 'opaque-cursor', ...(m.method === 'session/resume' ? { history: { mode: 'none', items: [], snapshot: null }, pendingRequests: [] } : {}) });
     if (process.env.MSP_TEST_RESUME_APPROVAL) write({ ...approval, id: 1000, params: { ...approval.params, sessionId: sid, turnId: 'previous-turn' } });
     return;
   }
-  if (m.method === 'session/read') return reply(m, { session: { ...sessionTemplate, sessionId: sid, ...(process.env.MSP_TEST_PROFILE ? { permissionState: { profileId: process.env.MSP_TEST_PROFILE } } : {}) }, history: { mode: 'none', items: [], snapshot: null }, viewCursor: 'opaque-cursor', pendingRequests: [] });
+  if (m.method === 'session/read') return reply(m, { session: { ...sessionTemplate, sessionId: sid, ...(profile ? { permissionState: { profileId: profile } } : {}) }, history: { mode: 'none', items: [], snapshot: null }, viewCursor: 'opaque-cursor', pendingRequests: [] });
+  if (m.method === 'session/setPermissionProfile') {
+    if (process.env.MSP_TEST_EXPERIMENTAL !== '1') return write({ id: m.id, error: { code: -32601, message: 'Method not found' } });
+    if (!process.env.MSP_TEST_IGNORE_PROFILE) profile = m.params.profileId;
+    return reply(m, { commandId: m.params.commandId, status: 'accepted' });
+  }
   if (m.method === 'hook/list') return reply(m, { hooks: JSON.parse(process.env.MSP_TEST_HOOKS || '[{"enabled":true,"event":"preToolUse","handlerKind":"plugin","key":"plugin:agent-bridge:bridge-pretooluse"}]') });
   if (m.method === 'session/setApprovalMode') return reply(m, { commandId: m.params.commandId, status: 'accepted', applyOutcome: 'completed', effectiveMode: { mode: process.env.MSP_TEST_APPROVAL_MODE || m.params.mode, source: 'approvalReconfigure', lastCommandId: m.params.commandId } });
   if (m.method === 'model/list') return reply(m, text.find((m) => m.result?.models).result);

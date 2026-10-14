@@ -24,6 +24,12 @@ const EXPECTED = "AGENT_BRIDGE_OK";
 const PROMPT = `Reply with exactly ${EXPECTED} and nothing else.`;
 const RESUME_PROMPT = "What did you reply last time? Reply with exactly that word and nothing else.";
 
+/** A terminal error or a different native session must never satisfy the gate. */
+export function smokeResumeSucceeded(first: DelegateResult, second: DelegateResult | null): boolean {
+  return !first.isError && first.text.includes(EXPECTED) && Boolean(first.sessionId) &&
+    Boolean(second && !second.isError && second.sessionId === first.sessionId && second.text.includes(EXPECTED));
+}
+
 async function version(bin: string, log: Logger): Promise<string> {
   try {
     const res = await runProcess({ bin, args: ["--version"], stdin: "", cwd: process.cwd(), timeoutMs: VERSION_TIMEOUT_MS, env: process.env, log });
@@ -61,10 +67,10 @@ export async function runSmoke(opts: { agents: CodingAgent[]; out: (s: string) =
       };
       try {
         const first = await run(PROMPT, null);
-        const okAnswer = first.text.includes(EXPECTED);
+        const okAnswer = !first.isError && first.text.includes(EXPECTED);
         const okSession = Boolean(first.sessionId);
         const second = okSession ? await run(RESUME_PROMPT, first.sessionId) : null;
-        const okResume = Boolean(second?.text.includes(EXPECTED));
+        const okResume = smokeResumeSucceeded(first, second);
         const passed = okAnswer && okSession && okResume;
         if (!passed) failures++;
         opts.out(

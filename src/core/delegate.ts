@@ -77,7 +77,7 @@ export function resolveBinary(bin: string, env: NodeJS.ProcessEnv = process.env,
  * npm installs CLIs on Windows as .cmd shims. Spawning those needs a shell, so find what the shim
  * runs instead: either a native executable (`"%dp0%\...\x.exe" %*`) or a JS entry run by node.
  */
-export function unwrapNpmShim(shimPath: string, readFile: (p: string) => string = (p) => readFileSync(p, "utf8")): { command: string; prefix: string[] } | null {
+export function unwrapNpmShim(shimPath: string, readFile: (p: string) => string = (p) => readFileSync(p, "utf8")): { command: string; prefix: string[]; paths?: string[] } | null {
   let text: string;
   try {
     text = readFile(shimPath);
@@ -93,8 +93,11 @@ export function unwrapNpmShim(shimPath: string, readFile: (p: string) => string 
   // PowerShell launchers (Muse's muse.cmd): powershell.exe <flags> -File "%~dp0\launcher.ps1" %*
   const ps1 = /"([^"]*powershell(?:\.exe)?)"\s+(.+?)\s*-File\s+"%~?dp0%?(?:\\)?([^"]+?\.ps1)"\s+%\*/i.exec(text);
   if (ps1) {
+    if (ps1[2]!.trim().toLowerCase() !== "-noprofile -executionpolicy bypass" || ps1[3]!.includes("..")) return null;
     const command = ps1[1]!.replace(/%([^%]+)%/g, (_m, name: string) => process.env[name] ?? "");
-    return { command, prefix: [...ps1[2]!.trim().split(/\s+/).filter(Boolean), "-File", win32.join(dir, ps1[3]!)] };
+    if (!win32.isAbsolute(command) || /[%\r\n]/.test(command)) return null;
+    const script = win32.join(dir, ps1[3]!);
+    return { command, prefix: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script], paths: [script] };
   }
   return null;
 }
@@ -215,7 +218,7 @@ export function resolveCommand(bin: string, argsIn: string[], env: NodeJS.Proces
   let needsShell = process.platform === "win32" && WINDOWS_SHIM_EXTS.has(extname(resolved).toLowerCase());
   if (needsShell) {
     const target = unwrapNpmShim(resolved);
-    if (target && existsSync(target.command) && target.prefix.every((p) => existsSync(p))) {
+    if (target && existsSync(target.command) && (target.paths ?? target.prefix).every((p) => existsSync(p))) {
       log.debug("unwrapped npm shim", { shim: resolved, command: target.command, prefix: target.prefix });
       resolved = target.command;
       args = [...target.prefix, ...args];
@@ -260,7 +263,7 @@ export function runProcess(opts: {
   /** Called with every complete stdout line as it arrives (for progress reporting). */
   onLine?: (line: string) => void;
   /** Bind sanitized native plugin children to the owned CLI before it reads input. */
-  onSpawn?: (pid: number) => void;
+  onSpawn?: (pid: number) => void | Promise<void>;
   /** What runs, for the timeout message (e.g. "git worktree add"); default: a delegated agent run. */
   what?: string;
 }): Promise<RunResult> {
@@ -342,11 +345,14 @@ export function runProcess(opts: {
     child.stdin.on("error", () => {
       // The child may exit before reading stdin; the close handler reports the outcome.
     });
-    try { if (child.pid) opts.onSpawn?.(child.pid); } catch (error) {
-      finish(() => { void kill("delegate bootstrap failed").then(() => reject(error), () => reject(error)); });
-      return;
-    }
-    child.stdin.end(opts.stdin);
+    void (async () => {
+      try {
+        if (child.pid) await opts.onSpawn?.(child.pid);
+        if (!settled) child.stdin.end(opts.stdin);
+      } catch (error) {
+        finish(() => { void kill("delegate bootstrap failed").then(() => reject(error), () => reject(error)); });
+      }
+    })();
   });
 }
 

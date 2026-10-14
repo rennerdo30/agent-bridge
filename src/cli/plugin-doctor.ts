@@ -8,16 +8,19 @@ import type { DoctorFinding } from "../core/doctor.js";
 import { assertUnlinked, liveRuntimeSessions, type PluginClient } from "../core/plugin-runtime.js";
 import { claudeMarketplace } from "./marketplace-sync.js";
 
-export interface PluginDoctorPaths { claude: string; codex: string; opencode: string; antigravity: string; bridge: string }
+export interface PluginDoctorPaths { claude: string; codex: string; opencode: string; antigravity: string; bridge: string; muse?: string }
 export interface ServerProcess { pid: number; command: string }
 export function pluginDoctorPaths(bridge: string, userHome = homedir(), env = process.env): PluginDoctorPaths {
   return { bridge, claude: env.CLAUDE_CONFIG_DIR || join(userHome, ".claude"), codex: env.CODEX_HOME || join(userHome, ".codex"),
-    opencode: join(env.XDG_CONFIG_HOME || join(userHome, ".config"), "opencode"), antigravity: join(userHome, ".gemini", "config", "plugins", "agent-bridge") };
+    opencode: join(env.XDG_CONFIG_HOME || join(userHome, ".config"), "opencode"), antigravity: join(userHome, ".gemini", "config", "plugins", "agent-bridge"),
+    muse: join(env.XDG_DATA_HOME || join(userHome, ".local", "share"), "muse") };
 }
 
 /** No client, token, database or plugin manager is started by this check. All reads reject links. */
 export function inspectPluginVersions(paths: PluginDoctorPaths, processes: ServerProcess[] = [], expected = APP_VERSION): DoctorFinding[] {
   const findings: DoctorFinding[] = [];
+  if (paths.muse) findings.push({ severity: "warning", code: "muse-installation-inspection-unavailable", path: paths.muse,
+    detail: "Muse installation/trust metadata inspection is unavailable without its native manager. Running-process versions alone cannot establish that the installed plugin is present, current or trusted. Review with muse plugins inspect agent-bridge; activation occurs in a new session.", fixable: false });
   const add = (client: PluginClient, path: string, label: string, actual: unknown, target = expected) => {
     if (actual !== target) findings.push({ severity: "warning", code: "plugin-version-mismatch", path,
       detail: `${client} ${label}: ${String(actual ?? "missing")}; expected ${target}. Fix: agent-bridge update ${client} --yes`, fixable: false });

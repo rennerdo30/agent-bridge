@@ -1,11 +1,11 @@
 import { randomBytes } from "node:crypto";
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { renameSync, unlinkSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { MUSE_ACCESS_ENV, museHookFile, museHostPid, readMusePrivateJson } from "../core/muse-context.js";
+import { MUSE_ACCESS_ENV, museHookFile, museHostPid, readMusePrivateJson, writeMusePrivateJson } from "../core/muse-context.js";
 import { processIdentity } from "../core/process-identity.js";
 import { tokensEqual } from "../core/token.js";
-import { object } from "../core/transcripts/common.js";
+import { object, TRANSCRIPT_ID } from "../core/transcripts/common.js";
 import { museBridgeTool, museReadingTool, museHookOutput } from "../cli/muse-hook.js";
 import { buildHookResponse, type HookEvent } from "./hooks.js";
 import type { ServerContext } from "./server.js";
@@ -24,10 +24,10 @@ export class MuseHooks {
     try { this.register?.(); this.retired = false; }
     catch (error) { this.retired = true; this.ctx.log?.warn("Muse hook registration unavailable", { error: String(error) }); }
   };
-  constructor(private readonly ctx: ServerContext, private readonly session = process.env.MUSE_SESSION_ID ?? "") {}
+  constructor(private readonly ctx: ServerContext, private session = process.env.MUSE_SESSION_ID ?? "") {}
   async start(): Promise<void> {
     if (this.server) return;
-    if (!this.session || (!this.ctx.node && !this.ctx.parent)) return;
+    if ((!this.ctx.node && !this.ctx.parent) || (this.session && !TRANSCRIPT_ID.test(this.session))) return;
     const host = await museHostPid(), hostIdentity = host ? processIdentity(host) : undefined;
     if (!host || !hostIdentity) return;
     this.retired = false;
@@ -41,7 +41,15 @@ export class MuseHooks {
         let raw = "";
         for await (const part of req) { raw += part; if (raw.length > 256 * 1024) throw new Error("hook input too large"); }
         const body = object(JSON.parse(raw)), input = object(body.input);
-        if (body.session !== this.session) return {};
+        if (typeof body.session !== "string" || !TRANSCRIPT_ID.test(body.session)) throw new Error("Invalid Muse session identity");
+        // The endpoint capability is private and bound to the owned host. Its
+        // first root hook can supply the host-injected identity after SDK start.
+        if (!this.session) {
+          if (body.thread && body.thread !== body.session) throw new Error("Native child cannot bind root identity");
+          this.session = body.session;
+          await this.ctx.node?.setSessionId(this.session);
+        }
+        if (body.session !== this.session) throw new Error("Foreign Muse session");
         const event = String(body.event ?? "");
         if (event === "PreToolUse") {
           if (body.thread && body.thread !== this.session && museBridgeTool(input)) return { hookSpecificOutput: { hookEventName: event, permissionDecision: "deny", permissionDecisionReason: "Muse native children share the root MCP connection; ask the parent to use Bridge tools." } };
@@ -58,14 +66,16 @@ export class MuseHooks {
       })().then(output => { if (!res.destroyed) res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(output)); }, () => { if (!res.writableEnded && !res.destroyed) res.writeHead(500).end("{}"); }).finally(() => { this.requests.delete(controller); req.removeListener("aborted", abort); res.removeListener("close", abort); });
     });
     await new Promise<void>((resolve, reject) => { this.server!.once("error", reject); this.server!.listen(0, "127.0.0.1", resolve); });
-    this.file = museHookFile(host, this.session);
+    this.file = museHookFile(host, this.session || "bootstrap");
     this.register = () => {
       if (!this.server?.listening || !this.file) return;
       const temporary = `${this.file}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
+      let staged = false;
       try {
-        writeFileSync(temporary, JSON.stringify({ port: (this.server.address() as AddressInfo).port, secret, hostIdentity, pid: process.pid, identity: processIdentity(process.pid), session: this.session }), { mode: 0o600, flag: "wx" });
+        writeMusePrivateJson(temporary, { port: (this.server.address() as AddressInfo).port, secret, hostIdentity, pid: process.pid, identity: processIdentity(process.pid), session: this.session || null });
+        staged = true;
         renameSync(temporary, this.file);
-      } finally { try { unlinkSync(temporary); } catch { /* Already renamed. */ } }
+      } finally { if (staged) try { unlinkSync(temporary); } catch { /* Already renamed. */ } }
     };
     try { this.register(); } catch (error) { await this.stop(); throw error; }
     this.ctx.node?.on("replaced", this.onReplaced);

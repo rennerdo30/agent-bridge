@@ -24,6 +24,18 @@ async function until(predicate: () => boolean): Promise<void> {
 }
 
 describe("Muse stable MSP delegation", () => {
+  it("applies and verifies a resumed experimental profile only after negotiation", async () => {
+    const f = fixture({ sessionId: "saved", permissionProfile: "new-profile" }, { MSP_TEST_EXPERIMENTAL: "1", MSP_TEST_PROFILE: "old-profile" });
+    const result = await delegateToMuseMsp(f.req);
+    expect(f.calls()[0].params.capabilities.experimentalApi).toBe(true);
+    expect(f.calls().find(c => c.method === "session/setPermissionProfile").params).toMatchObject({ profileId: "new-profile", sessionId: "saved" });
+    expect(result.details.contract).toMatchObject({ sdkVersion: "1.4.7", nativeVersion: "1.4.7", experimentalApi: true });
+  });
+  it.each([{ MSP_TEST_EXPERIMENTAL: "0" }, { MSP_TEST_EXPERIMENTAL: "1", MSP_TEST_UNSUPPORTED: "session/setPermissionProfile" }, { MSP_TEST_EXPERIMENTAL: "1", MSP_TEST_IGNORE_PROFILE: "1" }] as Record<string, string>[])("refuses unsupported or ignored resumed profile changes (%j)", async env => {
+    const f = fixture({ sessionId: "saved", permissionProfile: "new-profile" }, { MSP_TEST_PROFILE: "old-profile", ...env });
+    await expect(delegateToMuseMsp(f.req)).rejects.toThrow("permission profile change on resume unsupported");
+    expect(f.calls().some(c => c.method === "turn/start")).toBe(false);
+  });
   it("initializes v1, creates a native session, submits UUIDv7 commands and reads authoritative final items", async () => {
     const onSession = vi.fn(), onInfo = vi.fn(), onSpawn = vi.fn();
     const f = fixture({ onSession, onInfo, onSpawn, model: "chosen-model", effort: "high", permissionProfile: "workspace" });

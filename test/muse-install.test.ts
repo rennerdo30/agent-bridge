@@ -13,7 +13,7 @@ afterEach(() => { vi.clearAllMocks(); });
 describe("Muse native plugin lifecycle", () => {
   it.each(["install", "update"] as const)("%s approves the installed bundle only after the plugin command succeeds", async action => {
     const commands = action === "install" ? [["plugins", "install", source], ["plugins", "approve", "agent-bridge"]]
-      : [["plugins", "update", "agent-bridge"], ["plugins", "approve", "agent-bridge"]];
+      : [["plugins", "update", "agent-bridge"], ["plugins", "inspect", "agent-bridge"]];
     let finish!: (code: number) => void;
     const run = vi.fn<(args: string[]) => Promise<number>>()
       .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
@@ -22,12 +22,14 @@ describe("Muse native plugin lifecycle", () => {
     expect(run).toHaveBeenCalledTimes(1);
     expect(run).toHaveBeenNthCalledWith(1, commands[0]);
     finish(0);
-    await expect(result).resolves.toEqual(commands.map(args => `muse ${args.join(" ")}`));
+    const done = await result;
+    expect(done.slice(0, 2)).toEqual(commands.map(args => `muse ${args.join(" ")}`));
+    if (action === "update") expect(done[2]).toContain("modified/review_needed");
     expect(run.mock.calls.map(([args]) => args)).toEqual(commands);
     expect(musePluginArgs(action, source)).toEqual(commands);
     const plan = planFor("muse", action);
     expect(plan).toEqual([{ kind: "muse", action }]);
-    expect(describeStep(plan[0]!)).toContain("approve");
+    expect(describeStep(plan[0]!)).toContain(action === "install" ? "approve" : "review");
   });
 
   it.each(["install", "update"] as const)("failed %s never approves a bundle or reports success", async action => {
@@ -39,9 +41,10 @@ describe("Muse native plugin lifecycle", () => {
 
   it.each(["install", "update"] as const)("failed approval after %s surfaces the approval failure", async action => {
     const run = vi.fn<(args: string[]) => Promise<number>>().mockResolvedValueOnce(0).mockResolvedValueOnce(29);
-    await expect(installMusePlugin(action, run)).rejects.toThrow("muse plugins approve agent-bridge failed with code 29");
+    const finalAction = action === "install" ? "approve" : "inspect";
+    await expect(installMusePlugin(action, run)).rejects.toThrow(`muse plugins ${finalAction} agent-bridge failed with code 29`);
     expect(run).toHaveBeenCalledTimes(2);
-    expect(run).toHaveBeenLastCalledWith(["plugins", "approve", "agent-bridge"]);
+    expect(run).toHaveBeenLastCalledWith(["plugins", finalAction, "agent-bridge"]);
   });
 
   it.each(["install", "update"] as const)("preserves a rejected %s command's diagnostic without proceeding to approval", async action => {
@@ -55,7 +58,7 @@ describe("Muse native plugin lifecycle", () => {
     const failure = new Error("Synthetic Muse stderr: capability approval denied");
     const run = vi.fn<(args: string[]) => Promise<number>>().mockResolvedValueOnce(0).mockRejectedValueOnce(failure);
     await expect(installMusePlugin("update", run)).rejects.toBe(failure);
-    expect(run.mock.calls.map(([args]) => args)).toEqual([["plugins", "update", "agent-bridge"], ["plugins", "approve", "agent-bridge"]]);
+    expect(run.mock.calls.map(([args]) => args)).toEqual([["plugins", "update", "agent-bridge"], ["plugins", "inspect", "agent-bridge"]]);
   });
 
   it.each(["install", "update"] as Action[])("rejects %s before invoking Muse when the packaged source is absent", async action => {

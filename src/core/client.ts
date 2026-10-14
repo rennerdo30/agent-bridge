@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { connect, type Socket } from "node:net";
 import { APP_VERSION, CONNECT_TIMEOUT_MS, MAX_FRAME_BYTES, REQUEST_TIMEOUT_MS } from "./constants.js";
 import type { Logger } from "./logger.js";
-import { brokerTcpPort, ensurePrivateSocketDirectory, resolveHome } from "./paths.js";
+import { brokerTcpPort, ensurePrivateSocketDirectory, resolveHome, resolvePipePath } from "./paths.js";
 import {
   BridgeError,
   encodeFrame,
@@ -77,7 +77,9 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
       // Sandboxed children (Muse on Windows runs plugin processes under a restricted
       // token) may be unable to open the named pipe at all. The broker also serves the
       // same token-authenticated protocol on loopback; fall back to it.
-      const port = process.platform === "win32" ? brokerTcpPort(resolveHome()) : null;
+      const home = resolveHome();
+      // An ambient home must never redirect a caller's unrelated endpoint.
+      const port = process.platform === "win32" && pipePath === resolvePipePath(home) ? brokerTcpPort(home, pipePath) : null;
       if (!port) throw err;
       log.debug("broker pipe unreachable; trying the loopback fallback", { err: (err as Error).message, port });
       return BridgeClient.connectSocket(() => connect(port, "127.0.0.1"), log, timeoutMs);

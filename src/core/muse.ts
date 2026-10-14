@@ -3,15 +3,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DelegateError, checkDepth, childEnv, runProcess, withResumeHint, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { delegateToMuseMsp } from "./muse-msp.js";
-import { MUSE_ACCESS_ENV, registerMuseContext } from "./muse-context.js";
+import { MUSE_ACCESS_ENV, registerMuseContextAsync } from "./muse-context.js";
 import { progressEventHandler } from "./progress.js";
-import { object, parse } from "./transcripts/common.js";
+import { object, parse, TRANSCRIPT_ID } from "./transcripts/common.js";
 
 export const MUSE_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
 
 /** Muse injects its session identity into child processes; the bridge binds it so transcripts and the dashboard can find the live session. */
 export function museEnvSessionId(env: NodeJS.ProcessEnv = process.env): string | null {
-  return env.MUSE_SESSION_ID?.trim() || env.MUSE_THREAD_ID?.trim() || null;
+  const id = env.MUSE_SESSION_ID?.trim();
+  return id && TRANSCRIPT_ID.test(id) ? id : null;
 }
 
 /**
@@ -52,10 +53,11 @@ export function parseMuseJsonl(stdout: string): DelegateResult {
 }
 
 /** Prompt text goes through a file: muse takes it as an argument otherwise, and user text never belongs in argv. */
-export function musePromptFile(prompt: string): { dir: string; file: string } {
+export function musePromptFile(prompt: string, write = writeFileSync): { dir: string; file: string } {
   const dir = mkdtempSync(join(tmpdir(), "agent-bridge-muse-"));
   const file = join(dir, "prompt.txt");
-  writeFileSync(file, prompt, "utf8");
+  try { write(file, prompt, { encoding: "utf8", mode: 0o600, flag: "wx" }); }
+  catch (error) { try { rmSync(dir, { recursive: true, force: true }); } catch { /* Preserve the original allocation failure. */ } throw error; }
   return { dir, file };
 }
 
@@ -78,6 +80,7 @@ export async function delegateToMuse(req: DelegateRequest & { bin: string; acces
   const progress = progressEventHandler("muse", req.onProgress);
   const env = childEnv({ ...req.extraEnv, CLAUDE_PROJECT_DIR: req.cwd, [MUSE_ACCESS_ENV]: req.access });
   let releaseContext: (() => void) | undefined;
+  let finished = false;
   let sessionId = req.sessionId ?? null;
   let sessionReported = false;
   try {
@@ -88,7 +91,7 @@ export async function delegateToMuse(req: DelegateRequest & { bin: string; acces
       cwd: req.cwd,
       timeoutMs: req.timeoutSec * 1000,
       env,
-      onSpawn: pid => { releaseContext = registerMuseContext(pid, env); },
+      onSpawn: async pid => { const release = await registerMuseContextAsync(pid, env); if (finished) release(); else releaseContext = release; },
       log: req.log,
       signal: req.signal,
       onLine: (line) => {
@@ -118,6 +121,7 @@ export async function delegateToMuse(req: DelegateRequest & { bin: string; acces
     if (err instanceof DelegateError && !err.sessionId) err.sessionId = sessionId;
     throw err;
   } finally {
+    finished = true;
     releaseContext?.();
     rmSync(dir, { recursive: true, force: true });
   }
@@ -131,7 +135,8 @@ export async function runMuse(req: DelegateRequest & { bin: string; access: "rea
   const extraEnv = { ...req.extraEnv, CLAUDE_PROJECT_DIR: req.cwd, [MUSE_ACCESS_ENV]: req.access };
   const env = childEnv(extraEnv);
   let releaseContext: (() => void) | undefined;
+  let finished = false;
   try {
-    return await delegateToMuseMsp({ ...req, extraEnv, permissionProfile: req.permissionProfile ?? undefined, requirePermissionHooks: true, onSpawn: pid => { releaseContext = registerMuseContext(pid, env); } });
-  } finally { releaseContext?.(); }
+    return await delegateToMuseMsp({ ...req, extraEnv, permissionProfile: req.permissionProfile ?? undefined, requirePermissionHooks: true, onSpawn: async pid => { const release = await registerMuseContextAsync(pid, env); if (finished) release(); else releaseContext = release; } });
+  } finally { finished = true; releaseContext?.(); }
 }

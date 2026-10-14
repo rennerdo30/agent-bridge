@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { readMusePrivateJson } from "./muse-context.js";
+import { processIdentity } from "./process-identity.js";
 import { chmodSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join, posix, resolve } from "node:path";
 import { DB_FILE_NAME, DEFAULT_HOME, ENV, SOCKET_FILE_NAME, WINDOWS_PIPE_PREFIX, APP_NAME, PROTOCOL_VERSION } from "./constants.js";
@@ -72,10 +74,19 @@ export function ensurePrivateSocketDirectory(pipePath: string, platform: NodeJS.
 /** Loopback fallback endpoint a Windows broker also serves (see Broker.startTcpFallback). */
 export const BROKER_TCP_FILE = "broker-tcp.json";
 
+/** This disposable endpoint descriptor has no durable records or registrations.
+ * Extra data makes it unknown state: retain it instead of treating it as scratch. */
+export function isEphemeralBrokerTcpRecord(value: Record<string, any>): boolean {
+  return Object.keys(value).sort().join(",") === "identity,nonce,pid,pipePath,port,protocol" &&
+    typeof value.port === "number" && Number.isInteger(value.port) && value.port > 0 && value.port <= 65535;
+}
+
 /** The loopback port recorded by the running broker, or null when it serves no fallback. */
-export function brokerTcpPort(home: string): number | null {
+export function brokerTcpPort(home: string, pipePath = resolvePipePath(home)): number | null {
   try {
-    const value = JSON.parse(readFileSync(join(home, BROKER_TCP_FILE), "utf8")) as { port?: unknown };
+    const value = readMusePrivateJson(join(home, BROKER_TCP_FILE));
+    if (!isEphemeralBrokerTcpRecord(value) || value.pipePath !== pipePath || value.protocol !== PROTOCOL_VERSION || !Number.isSafeInteger(value.pid) ||
+      typeof value.identity !== "string" || value.identity !== processIdentity(value.pid) || typeof value.nonce !== "string" || !value.nonce) return null;
     return typeof value.port === "number" && Number.isInteger(value.port) && value.port > 0 && value.port <= 65535 ? value.port : null;
   } catch {
     return null;

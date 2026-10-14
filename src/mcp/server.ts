@@ -300,7 +300,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     });
   }
   if (node) {
-    if (agent === "muse" && process.env.MUSE_SESSION_ID) await node.setSessionId(process.env.MUSE_SESSION_ID);
+    if (agent === "muse") { const id = museEnvSessionId(); if (id) await node.setSessionId(id); }
     ctx.jobs = new JobManager(node, log.child("jobs"), join(home, JOBS_FILE), cfg.maxJobs, undefined, {
       canRestore: () => node.isConnected && (agent !== "claude" || ctx.restoreEligible === true),
       canReceiveHandoff: () => node.isConnected,
@@ -333,12 +333,6 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       await node.relocate(projectDir, name).catch((err) => log.warn("relocate failed", { err: (err as Error).message }));
       applyConfig(loadConfig(home, agent, log, process.env, projectConfigRoot(node.cwd)));
     };
-  }
-  if (agent === "muse" && node) {
-    // Muse injects its session id into child processes; bind it so the live
-    // session's transcript and native children resolve in the dashboard.
-    const id = museEnvSessionId();
-    if (id) void node.setSessionId(id).catch(() => {});
   }
   if (agent === "codex" && node) {
     ctx.admitCodex = codexMainThreadAdmission();
@@ -538,7 +532,6 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   }
   if (agent === "claude" && node) await node.setWakePolicy(cfg.wakeOnDirect, Boolean(ctx.rewakeAvailable || channel), cfg.maxHops);
   launchInspected();
-  await museHooks?.start().catch(err => log.warn("Muse hooks unavailable", { err: String(err) }));
   await antigravityHooks?.start().catch((err) => log.warn("Antigravity hooks unavailable", { err: String(err) }));
   await museHooks?.start().catch((err) => log.warn("Muse hooks unavailable", { err: String(err) }));
   if (node) {

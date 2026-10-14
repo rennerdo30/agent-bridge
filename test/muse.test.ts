@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { delegateToMuse, parseMuseJsonl } from "../src/core/muse.js";
+import { delegateToMuse, parseMuseJsonl, musePromptFile, museEnvSessionId } from "../src/core/muse.js";
 import { DelegateError, unwrapNpmShim } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
@@ -40,6 +40,17 @@ const failedStream = () => [
 ].join("\n");
 
 describe("Muse delegation", () => {
+  it("removes only owned prompt scratch on partial creation failure and keeps the original error", () => {
+    const error = new Error("fixture prompt write failed");
+    let file = "";
+    expect(() => musePromptFile("private prompt", ((path: any) => { file = String(path); writeFileSync(file, "partial"); throw error; }) as typeof writeFileSync)).toThrow(error);
+    expect(existsSync(dirname(file))).toBe(false);
+  });
+  it("binds only a validated host session, never its native thread identity", () => {
+    expect(museEnvSessionId({ MUSE_SESSION_ID: "native-root", MUSE_THREAD_ID: "child" })).toBe("native-root");
+    expect(museEnvSessionId({ MUSE_THREAD_ID: "child" })).toBeNull();
+    expect(museEnvSessionId({ MUSE_SESSION_ID: "../../foreign" })).toBeNull();
+  });
   it("parses the terminal record, session id and output deltas", () => {
     expect(parseMuseJsonl(stream())).toMatchObject({ sessionId: "sess-1", text: "echo: hi", isError: false, details: { terminal: "completed" } });
     expect(parseMuseJsonl(failedStream())).toMatchObject({ sessionId: "sess-1", text: "", isError: true, details: { terminal: "failed", error: "provider does not support base instructions" } });
@@ -128,6 +139,7 @@ describe("Muse delegation", () => {
 
   it("unwraps Muse's PowerShell launcher shim instead of spawning the .cmd", () => {
     const cmd = '@echo off\r\nsetlocal\r\n"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0.muse-launcher.ps1" %*\r\nexit /b %ERRORLEVEL%\r\n';
+    vi.stubEnv("SystemRoot", "C:\\Windows");
     const unwrapped = unwrapNpmShim("C:\\Tools\\muse\\muse.cmd", () => cmd)!;
     expect(unwrapped.command).toMatch(/powershell\.exe$/i);
     expect(unwrapped.command).not.toContain("%");
@@ -138,7 +150,7 @@ describe("Muse delegation", () => {
     expect(planFor("muse", "install")).toEqual([{ kind: "muse", action: "install" }]);
     expect(describeStep({ kind: "muse", action: "install" })).toContain("approve");
     expect(musePluginArgs("install", "/src/muse")).toEqual([["plugins", "install", "/src/muse"], ["plugins", "approve", "agent-bridge"]]);
-    expect(musePluginArgs("update", "/src/muse")).toEqual([["plugins", "update", "agent-bridge"], ["plugins", "approve", "agent-bridge"]]);
+    expect(musePluginArgs("update", "/src/muse")).toEqual([["plugins", "update", "agent-bridge"], ["plugins", "inspect", "agent-bridge"]]);
     expect(musePluginArgs("uninstall", "/src/muse")).toEqual([["plugins", "remove", "agent-bridge"]]);
     expect(historyFiltersSchema.parse({ agent: "muse" }).agent).toBe("muse");
   });

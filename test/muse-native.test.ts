@@ -1,5 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { buildSync } from "esbuild";
+import { pathToFileURL } from "node:url";
 import { EventEmitter } from "node:events";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -7,7 +9,7 @@ import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { delegateToMuse } from "../src/core/muse.js";
-import { museHookFile, readMusePrivateJson } from "../src/core/muse-context.js";
+import { museHookFile, readMusePrivateJson, registerMuseContext, writeMusePrivateJson } from "../src/core/muse-context.js";
 import { MuseHooks } from "../src/mcp/muse-hooks.js";
 import { ParentLink } from "../src/core/parent-link.js";
 import { nullLogger } from "../src/core/logger.js";
@@ -19,12 +21,14 @@ const CLI = join(import.meta.dirname, "../plugins/muse/dist/cli.mjs");
 const cleanups: (() => void | Promise<void>)[] = [];
 const exec = promisify(execFile);
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.unstubAllEnvs(); });
-function fixture() { const env = makeEnv(); cleanups.push(() => env.cleanup()); return env; }
+function fixture() { const env = makeEnv(); vi.stubEnv("TMPDIR", env.home); vi.stubEnv("TMP", env.home); vi.stubEnv("TEMP", env.home); cleanups.push(() => env.cleanup()); cleanups.push(registerMuseContext(process.ppid, { TEMP: env.home, TMP: env.home, TMPDIR: env.home, AGENT_BRIDGE_INTERNAL: "1" })); return env; }
 const text = (result: any) => result.content?.map((item: any) => item.text ?? "").join("\n") ?? "";
 
 /** A real Muse-shaped host: the MCP child receives Muse's sanitized plugin environment. */
 function host(env: ReturnType<typeof makeEnv>, delegated = false, invalid: string | null = null) {
   const file = join(env.home, "muse.mjs");
+  const context = join(env.home, "context.mjs");
+  buildSync({ entryPoints: [join(import.meta.dirname, "../src/core/muse-context.ts")], outfile: context, bundle: true, platform: "node", format: "esm" });
   writeFileSync(file, `#!/usr/bin/env node
 import {spawn,execFile} from 'node:child_process';
 import {createServer} from 'node:http';
@@ -33,26 +37,29 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {Client} from ${JSON.stringify(import.meta.resolve("@modelcontextprotocol/sdk/client/index.js"))};
 import {StdioClientTransport} from ${JSON.stringify(import.meta.resolve("@modelcontextprotocol/sdk/client/stdio.js"))};
+const {readMusePrivateJson,writeMusePrivateJson}=await import(${JSON.stringify(pathToFileURL(context).href)});
 const session='native-root';
-const nativeEnv={HOME:process.env.HOME,PATH:process.env.PATH,TMPDIR:process.env.TMPDIR,MUSE_SESSION_ID:session};
+const nativeEnv={HOME:process.env.HOME,PATH:process.env.PATH,SystemRoot:process.env.SystemRoot,USERPROFILE:process.env.USERPROFILE,TEMP:process.env.TEMP,TMP:process.env.TMP,TMPDIR:process.env.TMPDIR,MUSE_SESSION_ID:session};
 if (${delegated}) {
+ if (${JSON.stringify(invalid)} !== 'early-mcp') { process.stdin.resume(); await new Promise(resolve=>process.stdin.once('end',resolve)); }
  const invalid=${JSON.stringify(invalid)};
- if(invalid){
+ if(invalid && invalid!=='early-mcp'){
   const path=join(tmpdir(),'agent-bridge-muse-'+(process.getuid?.()??'user'),'host-'+process.pid+'.json');
-  const record=JSON.parse(readFileSync(path,'utf8'));
+  const record=readMusePrivateJson(path);
   if(invalid==='reused-pid')record.identity='stale-identity';
   if(invalid==='wrong-pid')record.pid++;
-  writeFileSync(path,invalid==='corrupt'?'{':JSON.stringify(record));
-  if(invalid==='unsafe-mode')chmodSync(path,0o644);
+  if(invalid==='corrupt')writeFileSync(path,'{');else writeMusePrivateJson(path,record,'w');
+  if(invalid==='unsafe-mode'){if(process.platform==='win32')writeFileSync(path,JSON.stringify(record));else chmodSync(path,0o644);}
  }
  const client=new Client({name:'sanitized-muse-child',version:'1'});
  const transport=new StdioClientTransport({command:process.execPath,args:[${JSON.stringify(SERVER)},'--agent=muse'],cwd:process.cwd(),env:nativeEnv,stderr:'inherit'});
  await client.connect(transport);
  const names=(await client.listTools()).tools.map(t=>t.name);
  const peers=await client.callTool({name:'peers',arguments:{}});
- const send=invalid?null:await client.callTool({name:'send',arguments:{to:'parent',message:'sanitized child report'}});
- const progress=invalid?null:await client.callTool({name:'report_progress',arguments:{percent:50,note:'registry restored'}});
- const hook=invalid?null:await new Promise((resolve,reject)=>{
+ const refused=invalid && invalid!=='early-mcp';
+ const send=refused?null:await client.callTool({name:'send',arguments:{to:'parent',message:'sanitized child report'}});
+ const progress=refused?null:await client.callTool({name:'report_progress',arguments:{percent:50,note:'registry restored'}});
+ const hook=refused?null:await new Promise((resolve,reject)=>{
   execFile(process.execPath,[${JSON.stringify(CLI)},'muse-hook','UserPromptSubmit'],{env:nativeEnv,timeout:10000},(error,stdout)=>error?reject(error):resolve(JSON.parse(stdout))).stdin.end('{}');
  });
  await client.close();
@@ -71,13 +78,14 @@ if (${delegated}) {
  process.on('SIGTERM',()=>{child.kill('SIGTERM');control.close()});
 }
 `);
-  chmodSync(file, 0o755); return file;
+  chmodSync(file, 0o755); if (process.platform === "win32") { const shim=join(env.home,"muse.cmd"); writeFileSync(shim, `@echo off\r\n"${process.execPath}" "%~dp0\\muse.mjs" %*\r\n`); return shim; } return file;
 }
 
 async function native() {
-  const env = fixture(), file = host(env), client = new Client({ name: "muse-native-owner", version: "1" });
+  const env = fixture(); host(env);
+  const file = join(env.home, "muse.mjs"), client = new Client({ name: "muse-native-owner", version: "1" });
   const transport = new StdioClientTransport({ command: process.execPath, args: [file], cwd: env.home, stderr: "inherit",
-    env: { ...process.env, HOME: env.home, TMPDIR: env.home, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_NAME: "muse-owner", AGENT_BRIDGE_MUSE_ACCESS: "read", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_AUTO_WAKE: "off", AGENT_BRIDGE_WAKE_ON_DIRECT: "off" } as Record<string, string> });
+    env: { ...process.env, HOME: env.home, TEMP: env.home, TMP: env.home, TMPDIR: env.home, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_NAME: "muse-owner", AGENT_BRIDGE_MUSE_ACCESS: "read", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_AUTO_WAKE: "off", AGENT_BRIDGE_WAKE_ON_DIRECT: "off" } as Record<string, string> });
   await client.connect(transport); cleanups.push(() => client.close());
   const observer = env.node("observer", "other"); await observer.start();
   await client.callTool({ name: "peers", arguments: {} });
@@ -126,10 +134,10 @@ describe("Muse native bootstrap and hook delivery", () => {
     expect((await fetch(`http://127.0.0.1:${reg.port}/other`, { method: "POST", headers: { authorization: `Bearer ${reg.secret}` }, body: "{}" })).status).toBe(403);
     expect(await (await fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${reg.secret}` }, body: JSON.stringify({ session: "wrong", event: "Stop" }) })).json()).toEqual({});
     for (const patch of [{ hostIdentity: "reused-host-pid" }, { identity: "reused-server-pid" }, { session: "foreign-session" }, { pid: 2_147_483_647 }]) {
-      writeFileSync(registration, JSON.stringify({ ...reg, ...patch }));
+      writeMusePrivateJson(registration, { ...reg, ...patch }, "w");
       expect(await hook("PreToolUse", undefined, { tool_name: "read_file" })).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: "agent-bridge permission gate unavailable" } });
     }
-    writeFileSync(registration, JSON.stringify(reg));
+    writeMusePrivateJson(registration, reg, "w");
     expect(await hook("PreToolUse", "native-child", { tool_name: "read_file" })).toEqual({});
     writeFileSync(registration, "{");
     expect(await hook("PreToolUse", undefined, { tool_name: "read_file" })).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
@@ -142,7 +150,7 @@ describe("Muse native bootstrap and hook delivery", () => {
     const link = new ParentLink("native-parent", body => reports.push(body), nullLogger, percent => progress.push(percent));
     await link.start(); cleanups.push(async () => { await link.close(); }); link.post("private parent instructions");
     const result = await delegateToMuse({ bin: host(env, true), prompt: "fixture task", cwd: env.home, access: "read", timeoutSec: 20, log: nullLogger,
-      extraEnv: { ...link.childEnv(), HOME: env.home, TMPDIR: env.home, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_MAX_DELEGATE_DEPTH: String(cap), AGENT_BRIDGE_PARENT_JOB: "muse-job-parent", AGENT_BRIDGE_ROOT_SESSION: "root", AGENT_BRIDGE_ROOT_NAME: "root-owner", ARBITRARY_SECRET: "must not escape" } });
+      extraEnv: { ...link.childEnv(), HOME: env.home, TEMP: env.home, TMP: env.home, TMPDIR: env.home, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_MAX_DELEGATE_DEPTH: String(cap), AGENT_BRIDGE_PARENT_JOB: "muse-job-parent", AGENT_BRIDGE_ROOT_SESSION: "root", AGENT_BRIDGE_ROOT_NAME: "root-owner", ARBITRARY_SECRET: "must not escape" } });
     const output = JSON.parse(result.text);
     expect(result.sessionId).toBe("native-root");
     expect(text(output.peers)).toContain("native-parent"); expect(output.send.isError).not.toBe(true); expect(reports).toEqual(["sanitized child report"]);
@@ -150,11 +158,23 @@ describe("Muse native bootstrap and hook delivery", () => {
     expect(output.names.includes("ask_muse")).toBe(cap > 1); expect(output.names).toContain("report_progress");
     expect((await observer.peers()).map(peer => peer.name)).toEqual(["observer"]);
   });
+  it("authenticates an MCP child launched before the handoff is published", async () => {
+    const env = fixture(), reports: string[] = [];
+    const observer = env.node("observer", "other"); await observer.start();
+    const link = new ParentLink("early-parent", body => reports.push(body), nullLogger);
+    await link.start(); cleanups.push(async () => { await link.close(); });
+    const result = await delegateToMuse({ bin: host(env, true, "early-mcp"), prompt: "fixture task", cwd: env.home, access: "read", timeoutSec: 25, log: nullLogger,
+      extraEnv: { ...link.childEnv(), HOME: env.home, TEMP: env.home, TMP: env.home, TMPDIR: env.home, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PARENT_JOB: "early-job", AGENT_BRIDGE_ROOT_SESSION: "root", AGENT_BRIDGE_ROOT_NAME: "root-owner" } });
+    const output = JSON.parse(result.text);
+    expect(text(output.peers)).toContain("early-parent"); expect(output.send.isError).not.toBe(true);
+    expect(reports).toEqual(["sanitized child report"]);
+    expect((await observer.peers()).map(peer => peer.name)).toEqual(["observer"]);
+  });
   it.each(["corrupt", "reused-pid", "wrong-pid", "unsafe-mode"])("refuses top-level registration after a %s delegated host record", async invalid => {
     const env = fixture(); vi.stubEnv("TMPDIR", env.home);
     const observer = env.node("observer", "other"); await observer.start();
     const result = await delegateToMuse({ bin: host(env, true, invalid), prompt: "fixture task", cwd: env.home, access: "read", timeoutSec: 20, log: nullLogger,
-      extraEnv: { HOME: env.home, TMPDIR: env.home, AGENT_BRIDGE_HOME: env.home } });
+      extraEnv: { HOME: env.home, TEMP: env.home, TMP: env.home, TMPDIR: env.home, AGENT_BRIDGE_HOME: env.home } });
     const output = JSON.parse(result.text);
     expect(output.peers.isError).toBe(true); expect(output.names).not.toContain("report_progress");
     expect((await observer.peers()).map(peer => peer.name)).toEqual(["observer"]);
@@ -162,6 +182,23 @@ describe("Muse native bootstrap and hook delivery", () => {
 });
 
 describe("Muse hook permission enforcement", () => {
+  it("binds a late SDK root identity only through the authenticated host endpoint", async () => {
+    fixture();
+    const bind = vi.fn(async () => {});
+    const node = Object.assign(new EventEmitter(), { setSessionId: bind });
+    const hooks = new MuseHooks({ node, headless: true, log: nullLogger } as unknown as ServerContext, "");
+    await hooks.start(); cleanups.push(() => hooks.stop());
+    const reg = readMusePrivateJson(museHookFile(process.ppid, "bootstrap"));
+    expect(reg.session).toBeNull();
+    const call = (session: string, thread?: string, secret = reg.secret) => fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ session, thread, event: "PreToolUse", input: { tool_name: "read_file" } }) });
+    expect((await call("late-root", undefined, "wrong")).status).toBe(403);
+    expect((await call("late-root", "native-child")).status).toBe(500);
+    expect(bind).not.toHaveBeenCalled();
+    expect((await call("late-root")).status).toBe(200);
+    expect(bind).toHaveBeenCalledExactlyOnceWith("late-root");
+    expect((await call("foreign-root")).status).toBe(500);
+    expect(bind).toHaveBeenCalledTimes(1);
+  });
   it.each(["read", "ask", "edit"])("enforces %s access over native allow rules, including native children", async access => {
     const env = fixture(); vi.stubEnv("TMPDIR", env.home); vi.stubEnv("MUSE_SESSION_ID", "permission-root"); vi.stubEnv("AGENT_BRIDGE_MUSE_ACCESS", access);
     const node = Object.assign(new EventEmitter(), { currentSessionId: "permission-root" });
@@ -180,7 +217,7 @@ describe("Muse hook permission enforcement", () => {
   });
   it.each(["read", "ask", "internal", "missing-session"])("fails closed when the %s delegated permission gate is unavailable", async access => {
     const env = fixture();
-    const pending = exec(process.execPath, [CLI, "muse-hook", "PreToolUse"], { timeout: 10_000, env: { HOME: env.home, PATH: process.env.PATH, TMPDIR: env.home,
+    const pending = exec(process.execPath, [CLI, "muse-hook", "PreToolUse"], { timeout: 10_000, env: { HOME: env.home, PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, USERPROFILE: process.env.USERPROFILE, TEMP: env.home, TMP: env.home, TMPDIR: env.home,
       ...(access === "missing-session" ? { AGENT_BRIDGE_INTERNAL: "1" } : { MUSE_SESSION_ID: "missing-endpoint" }), ...(access === "internal" ? { AGENT_BRIDGE_INTERNAL: "1" } : { AGENT_BRIDGE_MUSE_ACCESS: access }) } });
     pending.child.stdin!.end("{}");
     const result = await pending;

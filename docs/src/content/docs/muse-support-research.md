@@ -3,7 +3,7 @@ title: "Muse support research"
 slug: muse-support-research
 ---
 
-Updated 2026-10-13 for the `feat/muse-support` implementation. This page records
+Updated 2026-10-15 for the `feat/muse-support` implementation. This page records
 the implemented behavior and the evidence supporting it. For installation and
 settings, see [Muse configuration](../configuration/muse/).
 
@@ -16,7 +16,11 @@ uses the existing depth, slot, ownership, hop and durable-job guards.
 Delegated jobs use stable MSP schema v1 over `muse serve` by default. Protocol
 shapes are checked against the [official Muse SDK schema source](https://github.com/meta-models/muse-code-sdk/tree/main/schema/msp)
 and [versioned 1.4 documentation](https://meta-models.github.io/muse-code-sdk/1.4/).
-The bridge initializes with experimental APIs disabled, starts
+The bridge keeps experimental APIs disabled except for a resumed job requesting
+a named profile. That connection requests experimental negotiation solely for
+`session/setPermissionProfile`; a declined capability, missing/rejected method
+or unverifiable resulting profile stops before turn submission. SDK 1.4.7 and
+the served version/capability/fingerprint are recorded in diagnostics. It starts
 or resumes a session, submits a turn and uses its terminal event to establish
 the result. Native item events supply progress; effective model and effort
 come from served state/events. Active jobs accept live steering through
@@ -33,8 +37,9 @@ retains native policy and its restrictions.
 Named permission profiles are selected on session start and verified against
 served state on start or resume, before any prompt is submitted. Missing or
 mismatched profile state is a startup failure. Profiles do not replace Bridge
-access enforcement. A resumed MSP session must retain the same verified
-profile; a request for a different profile fails before turn submission.
+access enforcement. A changed profile on resume requires negotiated experimental
+support for `session/setPermissionProfile` and a verified resulting profile. If
+that contract is unavailable or rejected, the request fails before submission.
 
 The explicit `AGENT_BRIDGE_MUSE_EXEC=1` compatibility path uses
 `muse exec --json`, prompt files and native session IDs. It does not provide
@@ -112,3 +117,19 @@ continuation, effective model/effort and profile reporting, and read/ask
 approval behavior. `smoke muse` checks initial and resumed provider turns;
 it does not replace native-hook acceptance or prove native idle wake. Do not treat
 protocol or fake-host success as that live acceptance.
+
+## Candidate gates and privacy
+
+This candidate uses authenticated per-run process bindings with an exact context
+allowlist. Windows private records use current-user DPAPI over stdin; unknown
+headless lineage fails closed. Late SDK session identities bind only through the
+private authenticated hook endpoint. Updates inspect capability changes without
+automatically renewing approvals. Prompt creation failure removes only owned
+scratch; native transcripts and archives remain retained. The shared Windows TCP
+record contains only a recreated endpoint/identity/nonce descriptor; cleanup must
+prove the complete owned generation and preserve extra data or replacements.
+
+Source and synthetic fixture checks are separate from exact-head hosted CI and
+installed native acceptance. The one owner-approved two-turn smoke remains
+reserved for a reviewed candidate. No native/provider run is implied by this
+source change.

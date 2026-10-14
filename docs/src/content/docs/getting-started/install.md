@@ -21,7 +21,9 @@ The installer finds which tools you have. For each one it shows its plan and ask
 npx -y github:rennerdo30/agent-bridge install muse --yes
 ```
 
-The installer uses Muse's plugin manager and approves the bundle's capabilities.
+Installation uses Muse's plugin manager and discloses capability approval.
+Updates inspect changed capabilities without renewing approval; review them
+before explicitly running `muse plugins approve agent-bridge`.
 Start a new Muse session after installation and approval. Read and ask jobs
 require the enabled native Bridge permission hook. Delegation defaults to stable
 MSP over `muse serve`, with steering and approval relay; native command hooks

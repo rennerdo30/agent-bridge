@@ -4,15 +4,20 @@ title: "Muse"
 
 ```bash
 npx -y github:rennerdo30/agent-bridge install muse --yes
-# Later:
+# Later: update inspects changed capabilities; it does not renew approval.
 npx -y github:rennerdo30/agent-bridge update muse --yes
+# Read the inspected package before explicitly approving it:
+muse plugins approve agent-bridge
 ```
 
 Requires an installed, authenticated `muse`. The integration uses stable MSP
 schema v1, with protocol shapes checked against the Muse SDK 1.4.7 source.
 The installer runs Muse's plugin manager (`muse plugins install`, followed by
 `muse plugins approve agent-bridge`) and shows both steps before running them.
-Start a new Muse session after installation and capability approval. The bundle
+Updates run `plugins update` and `plugins inspect`; changed capabilities remain
+`modified`/`review_needed` until explicitly reviewed and approved. Running
+sessions retain their original package. Start a new Muse session after installation
+and capability approval. The bundle
 includes the bridge MCP server, native delivery and permission hooks, a
 coordination skill and peer commands. Uninstall runs
 `muse plugins remove agent-bridge`.
@@ -56,8 +61,16 @@ of Bridge access. The bridge checks the served profile on session start or
 resume, querying session state if needed. A missing or mismatched profile
 stops startup before any prompt is submitted. It does not silently replace
 the profile with a different approval mode.
-A resumed MSP session must already have the requested profile; choosing a
-different profile fails before the turn. Start a new job to select a new profile.
+Changing a profile on resume uses the **experimental**, Muse-version-dependent
+`session/setPermissionProfile` method. Only resumed jobs requesting a profile
+opt into experimental API negotiation. The host must advertise effective
+`experimentalApi:true`; the bridge then verifies the selected profile with
+`session/read` before submitting the turn. A missing method, rejected selection
+or unverified result fails closed with `permission profile change on resume
+unsupported (Muse MSP setPermissionProfile is experimental)`. A saved profile
+that already matches needs no change. Diagnostics record the pinned SDK 1.4.7,
+served Muse version, schema fingerprint and negotiated capability. Other jobs
+and no-turn queries keep experimental APIs disabled.
 
 ## Native mail and history
 
@@ -68,8 +81,13 @@ eligible for delivery. Native child hooks cannot consume the root inbox or
 change root session/activity. Native children share the root's MCP server;
 their PreToolUse gate denies Bridge tool calls to prevent root impersonation.
 Delegated plugin processes recover only their
-owned Bridge parent/depth context from a private process-identity registry and
-stay out of top-level peer registration.
+owned Bridge parent/depth/token/job/root context from an exact per-run allowlist
+and a host-creation-identity/nonce binding. Windows handoff and endpoint records
+are authenticated/encrypted with current-account DPAPI; POSIX records require
+owner-only permissions. Secrets never enter prompts, argv or manifests. Unknown
+headless/SDK ancestry or damaged/missing handoffs cannot register a main peer.
+The authenticated endpoint can bind the first host-injected root session after
+SDK startup; native children cannot claim that binding.
 
 **Native idle-TUI wake is not confirmed.** Mail for an already idle Muse TUI
 waits for the next turn or an explicit `inbox` call. Active hook delivery and

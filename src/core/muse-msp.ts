@@ -6,7 +6,10 @@ import { APP_VERSION } from "./constants.js";
 import { checkDepth, childEnv, DelegateError, exitDescription, killTree, realFolder, resolveCommand, trackChild, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { boundedDetail, unreviewable, type PermissionDecision } from "./relay.js";
 
-/** Stable MSP v1, pinned to the @muse-code/sdk 1.4.7 schema. No experimental traffic. */
+/** MSP v1 pinned to SDK 1.4.7. Only resumed profile selection opts into an
+ * experimental method, after initialize explicitly grants experimentalApi. */
+export const MUSE_MSP_SDK_VERSION = "1.4.7";
+const PROFILE_CHANGE_METHOD = "session/setPermissionProfile";
 export type MuseApprovalMode = "allowAll" | "promptUnmatched" | "onRequest" | "denyUnmatched";
 export type MuseMcpServer = { transport: "stdio"; command: string; args?: string[]; env?: Record<string, string>; framing?: "auto" | "lineDelimitedJson" | "contentLength"; mode?: "required" | "optional" } | { transport: "streamableHttp"; url: string; headers?: Record<string, string>; mode?: "required" | "optional" };
 export interface MuseSteering {
@@ -24,7 +27,7 @@ export interface MuseMspRequest extends DelegateRequest {
   /** Require the installed native plugin to gate implicitly permitted tool calls. */
   requirePermissionHooks?: boolean;
   sessionConfig?: { mcpServers?: Record<string, MuseMcpServer> };
-  onSpawn?: (pid: number) => void;
+  onSpawn?: (pid: number) => void | Promise<void>;
   startupTimeoutMs?: number;
   cleanupTimeoutMs?: number;
 }
@@ -262,9 +265,15 @@ async function runMuseMsp(req: MuseMspRequest & { query?: { method: "model/list"
     rename: async (title) => { await race(command("session/rename", { sessionId, name: title })); },
   };
   try {
-    if (child.pid) req.onSpawn?.(child.pid);
-    const init = await race(request("initialize", { clientInfo: { name: "agent_bridge", title: "Agent Bridge", version: APP_VERSION }, capabilities: { experimentalApi: false, userInputDialogs: false, requestedCapabilities: req.sessionConfig?.mcpServers ? ["sessionMcp"] : [] } }), true);
+    if (child.pid) await req.onSpawn?.(child.pid);
+    const profileResume = Boolean(req.sessionId && req.permissionProfile);
+    const init = await race(request("initialize", { clientInfo: { name: "agent_bridge", title: "Agent Bridge", version: APP_VERSION }, capabilities: { experimentalApi: profileResume, userInputDialogs: false, requestedCapabilities: req.sessionConfig?.mcpServers ? ["sessionMcp"] : [] } }), true);
     if (init.schema?.version !== 1) throw error("Muse serve returned an unsupported MSP schema version");
+    const nativeVersion = typeof init.serverInfo?.version === "string" ? init.serverInfo.version : "unknown";
+    const contract = { sdkVersion: MUSE_MSP_SDK_VERSION, nativeVersion, fingerprint: init.schema?.fingerprint ?? "unknown",
+      experimentalApi: init.experimentalApi === true, experimentalMethod: profileResume ? PROFILE_CHANGE_METHOD : null };
+    req.log.info("Muse MSP contract negotiated", contract);
+    if (!nativeVersion.startsWith(MUSE_MSP_SDK_VERSION)) req.log.warn("Muse MSP version differs from the pinned SDK contract", contract);
     if (req.sessionConfig?.mcpServers && !init.grantedCapabilities?.includes("sessionMcp")) throw error("Muse serve did not grant the sessionMcp capability required by this job");
     write({ method: "initialized" });
     if (req.query) {
@@ -291,6 +300,20 @@ async function runMuseMsp(req: MuseMspRequest & { query?: { method: "model/list"
         step = "session/read";
         const read = await race(request(step, { sessionId, excludeItems: true }), true);
         profile = read.session?.permissionState?.profileId;
+      }
+      if (profile !== req.permissionProfile && req.sessionId) {
+        const unsupported = () => error("permission profile change on resume unsupported (Muse MSP setPermissionProfile is experimental)");
+        if (init.experimentalApi !== true) throw unsupported();
+        step = PROFILE_CHANGE_METHOD;
+        try {
+          await race(command(step, { sessionId, profileId: req.permissionProfile }), true);
+          const read = await race(request("session/read", { sessionId, excludeItems: true }), true);
+          profile = read.session?.permissionState?.profileId;
+        } catch (cause) {
+          req.log.warn("Muse experimental profile selection refused", { ...contract, rpcCode: cause instanceof RpcError ? cause.code : null });
+          throw unsupported();
+        }
+        if (profile !== req.permissionProfile) throw unsupported();
       }
       if (profile !== req.permissionProfile) throw error(`Muse permission profile was not applied: requested ${req.permissionProfile}, served ${typeof profile === "string" ? profile : "unknown"}`);
     }
@@ -324,7 +347,7 @@ async function runMuseMsp(req: MuseMspRequest & { query?: { method: "model/list"
     const terminal = await Promise.race([done, stop, aborted]);
     const text = [...messages.values()].map((m) => m.text ?? "").filter(Boolean).join("\n\n");
     if (terminal.terminal !== "completed") throw error(terminal.error?.message ?? terminal.reason ?? `Muse turn ${terminal.terminal}`, terminal.terminal === "cancelled" ? "aborted" : "failed");
-    return { sessionId, text, isError: false, details: { transport: "msp", turnId, terminal: terminal.terminal, ...(terminal.usage ? { usage: terminal.usage } : {}), ...(effectiveModel !== undefined ? { model: effectiveModel } : {}), ...(effectiveEffort !== undefined ? { effort: effectiveEffort } : {}) } };
+    return { sessionId, text, isError: false, details: { transport: "msp", contract, turnId, terminal: terminal.terminal, ...(terminal.usage ? { usage: terminal.usage } : {}), ...(effectiveModel !== undefined ? { model: effectiveModel } : {}), ...(effectiveEffort !== undefined ? { effort: effectiveEffort } : {}) } };
   } catch (err) {
     const failure = err instanceof DelegateError ? err : error(`Muse MSP ${step} failed: ${(err as Error).message}`);
     if (err instanceof RpcError) Object.assign(failure, { rpcCode: err.code, rpcMethod: step });
