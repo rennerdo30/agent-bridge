@@ -67,6 +67,20 @@ describe("fixed mobile local adapter", () => {
   });
 });
 describe("project identity for grant scopes", () => {
+  it("uses authoritative project roots across session generations and excludes paired-PC peers", async () => {
+    peer.cwd = join(home, "missing-session-worktree"); peer.projectRoot = home;
+    runs = [{ ...runs[0]!, workdir: join(home, "missing-job-worktree"), repoRoot: home }];
+    const peers = [peer, { ...peer, id: "foreign", name: "paired-pc/foreign" }];
+    const local = new LocalMobileSource({ home, log: nullLogger, peers: () => peers }, questions, "fixture-pc", () => true);
+    const first = await local.snapshot();
+    expect(first.sessions).toHaveLength(1); expect(first.jobs[0]!.projectId).toBe(first.sessions[0]!.projectId);
+    expect(local.projectFolders().get(first.sessions[0]!.projectId!)).toBe(home);
+    peer.sessionId = "restarted-native-session"; const later = await local.snapshot();
+    expect(later.sessions[0]!.id).not.toBe(first.sessions[0]!.id); expect(later.sessions[0]!.projectId).toBe(first.sessions[0]!.projectId);
+    expect(JSON.stringify(later)).not.toContain(home); expect(JSON.stringify(later)).not.toContain("missing-session-worktree");
+    peers.length = 0; runs = []; await local.snapshot(); expect(local.projectFolders().size).toBe(0);
+  });
+
   it("names projects for the desktop only and keeps a removed worktree's jobs in its repository project", async () => {
     runs = [{ ...runs[0]!, name: "gone-worktree-run", workdir: join(home, "missing-worktree"), repoRoot: peer.cwd }];
     const view = await adapter.snapshot();

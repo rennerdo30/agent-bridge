@@ -44,6 +44,48 @@ async function visible(c: Credentials): Promise<{ sessions: string[]; jobs: stri
 }
 
 describe("whole-PC and project grant scopes", () => {
+  it("requires explicit answer capability and preserves project boundaries on the real answer route", async () => {
+    const qa = question("project-a"), qb = question("project-b"); view.questions = [qa, qb];
+    source.answer = vi.fn(async (id, body, deviceId, key) => projectQuestion(questions.answerMobile(id, body, deviceId, key, { id: "owner:fixture", name: "Owner fixture", agent: "other" }), pcId));
+    const grant: Grant = { pcId, scope: "project", projectIds: [qa.projectId], sessionIds: [], jobIds: [], capabilities: reads };
+    const readOnly = pair([grant]), optedIn = pair([{ ...grant, capabilities: [...reads, "questions.answer"] }]);
+    const answer = async (c: Credentials, q: Question) => {
+      const snapshot = await gateway.handle(req("/snapshot", c)); expect(snapshot.status).toBe(200);
+      const request = req("/questions/" + q.id + "/answer", c);
+      return gateway.handle({ ...request, method: "POST", headers: { ...request.headers, "content-type": "application/json", "idempotency-key": randomUUID(), "x-mobile-view": (snapshot.body as Snapshot).cursor }, body: JSON.stringify({ expectedVersion: q.version, option: "keep" }) });
+    };
+    expect((await answer(readOnly, qa)).status).toBe(404);
+    expect((await answer(optedIn, qb)).status).toBe(404); expect(source.answer).not.toHaveBeenCalled();
+    const result = await answer(optedIn, qa); expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ question: { id: qa.id, status: "answered", answer: { source: "owner", option: "keep" } } });
+    expect(source.answer).toHaveBeenCalledTimes(1); expect(questions.get(qb.id)!.status).toBe("open");
+  });
+
+  it("revokes an all-scope phone during a suspended snapshot and retains its grants", async () => {
+    view.sessions = [session("s1", "pa")];
+    const c = pair([{ pcId, scope: "all", projectIds: [], sessionIds: [], jobIds: [], capabilities: reads }]);
+    let release!: () => void, entered!: () => void;
+    const waiting = new Promise<void>(resolve => { entered = resolve; }), blocked = new Promise<void>(resolve => { release = resolve; });
+    source.snapshot = async () => { entered(); await blocked; return view; };
+    const pending = gateway.handle(req("/snapshot", c)); await waiting; store.revoke(c.deviceId); release();
+    expect((await pending).status).toBe(401);
+    expect(store.get("device", c.deviceId)).toMatchObject({ revoked: true, grants: [{ scope: "all" }] });
+    expect((await gateway.handle(req("/me", c))).status).toBe(401);
+  });
+
+  it("never projects desktop folders to phones or accepts phone-supplied grant or broadcast targets", async () => {
+    view.sessions = [session("s1", "opaque-a")]; source.projectFolders = () => new Map([["opaque-a", "E:/Fixture/private-project"]]);
+    const c = pair([{ pcId, scope: "project", projectIds: ["opaque-a"], sessionIds: [], jobIds: [], capabilities: reads }]);
+    for (const path of ["/snapshot", "/me", "/sessions"]) {
+      const result = await gateway.handle(req(path, c)); expect(result.status).toBe(200); expect(JSON.stringify(result.body)).not.toContain("E:/Fixture");
+    }
+    for (const path of ["/snapshot?folder=E%3A%2FFixture", "/sessions?projectScopes=all", "/jobs?targets=*"]) expect((await gateway.handle(req(path, c))).status).toBe(400);
+    for (const path of ["/grants", "/send", "/broadcast"]) {
+      const request = req(path, c);
+      expect((await gateway.handle({ ...request, method: "POST", headers: { ...request.headers, "content-type": "application/json", "idempotency-key": randomUUID() }, body: JSON.stringify({ targets: ["*"], grants: [{ scope: "all" }], folder: "E:/Fixture" }) })).status).toBe(404);
+    }
+  });
+
   it("an all-grant sees sessions, jobs and owner questions created after pairing", async () => {
     const qa = question("project-a");
     view.sessions = [session("s1", qa.projectId)]; view.jobs = [job("j1", qa.projectId)]; view.questions = [qa];
@@ -113,5 +155,21 @@ describe("desktop claim review with scopes", () => {
       { scope: "all", projects: 0, sessions: 0, jobs: 0, answers: false },
       { scope: "project", projects: 1, sessions: 0, jobs: 0, answers: true }]));
     expect(devices.every(d => !("grants" in d))).toBe(true);
+  });
+
+  it("rejects folders, stale IDs, remote PCs and caller-added authority fields without consuming the claim", async () => {
+    view.sessions = [session("s1", "opaque-a")]; source.projectFolders = () => new Map([["opaque-a", "E:/Fixture/alpha"]]);
+    const { desktop, headers } = await admin(), pending = claim();
+    const base = { pcId, scope: "project", projectIds: ["opaque-a"], sessionIds: [], jobIds: [], capabilities: reads };
+    for (const grant of [{ ...base, projectIds: ["E:/Fixture/alpha"] }, { ...base, projectIds: ["stale-id"] }, { ...base, pcId: "remote-pc" }, { ...base, folder: "E:/Fixture/alpha" }, { ...base, targets: ["*"] }, { ...base, capabilities: ["permissions.approve"] }]) {
+      await expect(desktop.handle("POST", "/api/mobile/claims/" + pending.claimId, headers(), JSON.stringify({ comparisonCode: pending.comparisonCode, allow: true, grants: [grant] }))).rejects.toThrow();
+      expect(store.pending().map(c => c.claimId)).toContain(pending.claimId);
+    }
+    await expect(desktop.handle("POST", "/api/mobile/claims/" + pending.claimId, headers(), JSON.stringify({ comparisonCode: pending.comparisonCode === "000000" ? "111111" : "000000", allow: true, grants: [base] }))).rejects.toThrow("pairing_conflict");
+    const request = { comparisonCode: pending.comparisonCode, allow: true, grants: [base] };
+    expect((await desktop.handle("POST", "/api/mobile/claims/" + pending.claimId, headers(), JSON.stringify(request))).status).toBe(200);
+    at += 120_000;
+    const expired = claim(); at += 120_000;
+    await expect(desktop.handle("POST", "/api/mobile/claims/" + expired.claimId, headers(), JSON.stringify({ ...request, comparisonCode: expired.comparisonCode }))).rejects.toThrow("pairing_conflict");
   });
 });

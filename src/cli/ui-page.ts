@@ -114,7 +114,7 @@ const PH_ERRORS = {
 };
 const phMessage = (err) => PH_ERRORS[err.code] || "The result is unknown (" + (err.code || err.message) + "). Check the lists below before you try again.";
 let ph = null, phError = "", phBusy = false, phLoadedAt = 0, phQr = null, phRevokeAsk = null, phRevokedOpen = false, phPendingSeen = null, phStatusAt = 0;
-const phSel = new Map(), phKeys = {};
+const phSel = new Map(), phKeys = {}, phWrites = new Set();
 const phPlatform = (p) => (p === "ios" ? "iOS" : p === "android" ? "Android" : String(p || "phone"));
 const plural = (n, word) => n + " " + word + (n === 1 ? "" : "s");
 
@@ -154,6 +154,13 @@ async function phLoad() {
     if (phQr && !phQr.claimed && phQr.before && d.pending.some((c) => !phQr.before.has(c.claimId))) phQr.claimed = true;
     if (fresh.length) phNotice(fresh.map((c) => c.name).join(", ") + " wants to pair. Compare the matching code before you confirm.");
     for (const id of phSel.keys()) if (!phPendingSeen.has(id)) phSel.delete(id);
+    const projects = new Set(d.catalog.projects.map((p) => p.id)), sessions = new Set(d.catalog.sessions.map((s) => s.id));
+    for (const s of phSel.values()) {
+      let removed = false;
+      for (const id of s.projects) if (!projects.has(id)) { s.projects.delete(id); removed = true; }
+      for (const id of s.sessions) if (!sessions.has(id)) { s.sessions.delete(id); removed = true; }
+      if (removed) s.note = { text: "Some selected projects or sessions are no longer available. Review the remaining choice.", err: true };
+    }
     ph = d; phError = "";
   } catch (err) { phError = err.code || err.message || "unavailable"; }
   finally { phBusy = false; phLoadedAt = Date.now(); }
@@ -203,8 +210,9 @@ function phState(id) {
   return phSel.get(id);
 }
 function phProjectName(p) { return p ? p.name || "Unnamed project" : "Other project"; }
-function phValid(s) { return s.mode === "all" || (s.mode === "project" ? s.projects.size > 0 : s.sessions.size > 0); }
-function phHint(s) {
+function phValid(s, c) { return (!c || c.expiresAt > Date.now()) && (s.mode === "all" || (s.mode === "project" ? s.projects.size > 0 : s.sessions.size > 0)); }
+function phHint(s, c) {
+  if (c && c.expiresAt <= Date.now()) return "This claim expired. Scan a new QR to pair.";
   if (s.mode === "project" && !s.projects.size) return "Choose at least one project.";
   if (s.mode === "sessions" && !s.sessions.size) return "Choose at least one session.";
   return "";
@@ -232,8 +240,8 @@ function phClaimHtml(c) {
     opt("sessions", "Only these sessions", "Exactly the chosen live sessions. A restarted session, new sessions, jobs and owner questions are not included.", sessionList) + "</details></fieldset>" +
     '<div class="ph-toggle-row"><label class="toggle ph-toggle"><input type="checkbox" data-ph="answers"' + (s.answers && s.mode !== "sessions" ? " checked" : "") + (s.mode === "sessions" ? " disabled" : "") + '><span class="track" aria-hidden="true"></span>Let this phone answer owner questions</label>' +
     "<small>" + (s.mode === "sessions" ? "Not available when only sessions are shared." : "Answers are recorded as yours. They never approve tool permissions.") + "</small></div>" +
-    '<div class="ph-actions"><button type="button" data-ph="confirm"' + (phValid(s) && !s.busy ? "" : " disabled") + ">Codes match, pair phone</button>" +
-    '<button type="button" class="ghost danger" data-ph="deny"' + (s.busy ? " disabled" : "") + '>Deny</button><span class="ph-hint" data-ph-hint>' + esc(phHint(s)) + "</span></div>" +
+    '<div class="ph-actions"><button type="button" data-ph="confirm"' + (phValid(s, c) && !s.busy ? "" : " disabled") + ">Codes match, pair phone</button>" +
+    '<button type="button" class="ghost danger" data-ph="deny"' + (s.busy || c.expiresAt <= Date.now() ? " disabled" : "") + '>Deny</button><span class="ph-hint" data-ph-hint>' + esc(phHint(s, c)) + "</span></div>" +
     '<div class="note' + (s.note && s.note.err ? " err" : "") + '" role="status">' + esc(s.note ? s.note.text : "") + "</div></div>";
 }
 const phPending = () => ph.pending.slice().sort((a, b) => a.expiresAt - b.expiresAt);
@@ -289,6 +297,11 @@ function phTick() {
   for (const el of document.querySelectorAll("#phClaims [data-ph-exp]")) {
     const left = Number(el.dataset.phExp) - now;
     el.textContent = left > 0 ? mmss(left) + " left" : "expired";
+    if (left <= 0) {
+      const card = el.closest("[data-claim]");
+      for (const button of card.querySelectorAll('[data-ph="confirm"], [data-ph="deny"]')) button.disabled = true;
+      card.querySelector("[data-ph-hint]").textContent = "This claim expired. Scan a new QR to pair.";
+    }
   }
 }
 async function phStatusCheck() {
@@ -305,6 +318,8 @@ $("phones").addEventListener("click", async (e) => {
   if (b.id === "phRecheck") { b.disabled = true; await phStatusCheck(); b.disabled = false; return; }
   const act = b.dataset.ph, card = b.closest("[data-claim]"), claim = card && ph && ph.pending.find((c) => c.claimId === card.dataset.claim);
   if (act === "invite") {
+    if (phWrites.has("invite")) return;
+    phWrites.add("invite");
     b.disabled = true; phNotice("");
     try {
       const d = await phSend("/api/mobile/invitations", "POST", {});
@@ -313,24 +328,30 @@ $("phones").addEventListener("click", async (e) => {
       phRenderPair(); phTick();
       const img = document.querySelector("#phPair .ph-qr-img"); if (img) img.setAttribute("tabindex", "-1");
       const hide = document.querySelector('#phPair [data-ph="hide-qr"]'); if (hide) hide.focus();
-    } catch (err) { phNotice("No QR created: " + phMessage(err), "err"); b.disabled = false; }
+    } catch (err) { phNotice("QR request: " + phMessage(err), "err"); b.disabled = false; }
+    finally { phWrites.delete("invite"); }
     return;
   }
   if (act === "hide-qr") { phQr = null; phRenderPair(); const n = document.querySelector('#phPair [data-ph="invite"]'); if (n) n.focus(); return; }
   if (act === "revoke-ask") { phRevokeAsk = b.dataset.id; phRenderDevices(); const k = document.querySelector('#phDevices [data-ph="revoke-cancel"]'); if (k) k.focus(); return; }
   if (act === "revoke-cancel") { const id = phRevokeAsk; phRevokeAsk = null; phRenderDevices(); const r = [...document.querySelectorAll('#phDevices [data-ph="revoke-ask"]')].find((x) => x.dataset.id === id); if (r) r.focus(); return; }
   if (act === "revoke") {
+    const write = "revoke:" + b.dataset.id;
+    if (phWrites.has(write)) return;
+    phWrites.add(write);
     const d = ph.devices.find((x) => x.id === b.dataset.id);
     b.disabled = true;
     try { await phSend("/api/mobile/devices/" + encodeURIComponent(b.dataset.id), "DELETE", {}); phRevokeAsk = null; phNotice((d ? d.name : "The phone") + " is revoked and can no longer connect.", "ok"); }
-    catch (err) { phNotice("Not revoked: " + phMessage(err), "err"); b.disabled = false; }
+    catch (err) { phNotice("Revoke request: " + phMessage(err), "err"); b.disabled = false; }
+    finally { phWrites.delete(write); }
     return void phLoad();
   }
   if (!claim) return;
   const s = phState(claim.claimId);
   if (act === "confirm" || act === "deny") {
+    if (s.busy || claim.expiresAt <= Date.now()) return;
     const allow = act === "confirm";
-    if (allow && !phValid(s)) return;
+    if (allow && !phValid(s, claim)) return;
     const caps = PH_CAPS.concat(s.answers && s.mode !== "sessions" ? ["questions.answer"] : []), pcId = ph.catalog.pcId;
     const grant = s.mode === "all" ? { pcId, scope: "all", projectIds: [], sessionIds: [], jobIds: [], capabilities: caps }
       : s.mode === "project" ? { pcId, scope: "project", projectIds: [...s.projects], sessionIds: [], jobIds: [], capabilities: caps }
@@ -341,7 +362,7 @@ $("phones").addEventListener("click", async (e) => {
       phSel.delete(claim.claimId);
       phNotice(allow ? claim.name + " is paired. It appears under Paired phones once the app finishes." : claim.name + " was denied.", "ok");
       if (phQr && phQr.claimed) phQr = null;
-    } catch (err) { s.busy = false; s.note = { text: (allow ? "Not paired: " : "Not denied: ") + phMessage(err), err: true }; phRenderClaims(); }
+    } catch (err) { s.busy = false; s.note = { text: (allow ? "Pair request: " : "Deny request: ") + phMessage(err), err: true }; phRenderClaims(); }
     return void phLoad();
   }
 });
@@ -349,14 +370,16 @@ $("phones").addEventListener("change", (e) => {
   const el = e.target, card = el.closest && el.closest("[data-claim]");
   if (!card) return;
   const s = phState(card.dataset.claim);
+  if (s.busy) return;
   if (el.dataset.ph === "mode") { s.mode = el.value; s.note = null; return phRenderClaims(true); }
   if (el.dataset.ph === "answers") s.answers = el.checked;
   else if (el.dataset.ph === "project" || el.dataset.ph === "session") { const set = el.dataset.ph === "project" ? s.projects : s.sessions; if (el.checked) set.add(el.value); else set.delete(el.value); }
   else return;
   // The controls already show the choice: update the button and hint in place, so focus stays put.
   const btn = card.querySelector('[data-ph="confirm"]'), hint = card.querySelector("[data-ph-hint]");
-  if (btn) btn.disabled = !phValid(s) || s.busy;
-  if (hint) hint.textContent = phHint(s);
+  const claim = ph.pending.find((c) => c.claimId === card.dataset.claim);
+  if (btn) btn.disabled = !claim || !phValid(s, claim) || s.busy;
+  if (hint) hint.textContent = phHint(s, claim);
   phKeys.phClaims = phClaimsKey(phPending());
 });
 $("phones").addEventListener("toggle", (e) => {
