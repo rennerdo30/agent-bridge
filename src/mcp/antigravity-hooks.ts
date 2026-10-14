@@ -13,6 +13,7 @@ import type { ServerContext } from "./server.js";
 /** Mail at active model boundaries; idle TUI wake is unavailable in agy 1.2.0. */
 export class AntigravityHooks {
   private server: Server | null = null;
+  private registerFn: (() => void) | null = null;
   private retired = false;
   private conversationId: string | null = null;
   private learnedCwd: string | null = null;
@@ -30,20 +31,25 @@ export class AntigravityHooks {
     const secret = randomBytes(24).toString("hex");
     mkdirSync(join(this.ctx.home, "antigravity-hooks"), { recursive: true });
     const register = () => {
-      if (!this.server?.listening || this.retired) return;
+      if (!this.server?.listening) return;
+      const rawCwd = this.learnedCwd ?? (typeof this.ctx.cwd === "function" ? this.ctx.cwd() : this.ctx.cwd ?? null);
       writeFileSync(
         join(this.ctx.home, "antigravity-hooks", `${pid}.json`),
         JSON.stringify({
           port: (this.server.address() as AddressInfo).port,
           secret,
           pid: process.pid,
+          ancestorPid: pid,
+          retired: this.retired,
+          connected: Boolean(this.ctx.node ? this.ctx.node.isConnected !== false : this.ctx.parent),
           conversationId: this.conversationId ?? this.ctx.node?.currentSessionId ?? null,
-          cwd: this.learnedCwd ?? this.ctx.cwd ?? null,
+          cwd: typeof rawCwd === "string" && rawCwd.trim() ? rawCwd : null,
           stopPending: this.stopPending,
         }),
         { mode: 0o600 },
       );
     };
+    this.registerFn = register;
     this.server = createServer((req, res) => {
       if (req.method !== "POST" || req.url !== "/hook" || !tokensEqual(String(req.headers.authorization ?? ""), `Bearer ${secret}`) || this.retired) { res.writeHead(403).end(); return; }
       void (async () => {
@@ -116,17 +122,20 @@ export class AntigravityHooks {
     });
     await new Promise<void>((resolve, reject) => { this.server!.once("error", reject); this.server!.listen(0, "127.0.0.1", resolve); });
     register();
-    this.ctx.node?.on("replaced", () => { this.retired = true; this.stopPending = false; this.lastStopExecutionNum = null; this.lastInvocationNum = null; this.lastStopInvocationNum = null; });
+    this.ctx.node?.on("connected", () => register());
+    this.ctx.node?.on("replaced", () => { this.retired = true; this.stopPending = false; this.lastStopExecutionNum = null; this.lastInvocationNum = null; this.lastStopInvocationNum = null; register(); });
     this.ctx.node?.on("reclaimed", () => { this.retired = false; register(); });
   }
   async stop(): Promise<void> {
     const server = this.server;
-    this.server = null;
     this.retired = true;
     this.stopPending = false;
     this.lastStopExecutionNum = null;
-    this.lastInvocationNum = null;
     this.lastStopInvocationNum = null;
+    this.lastInvocationNum = null;
+    try { this.registerFn?.(); } catch {}
+    this.registerFn = null;
+    this.server = null;
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 }

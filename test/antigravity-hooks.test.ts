@@ -11,7 +11,7 @@ import { grantAntigravityBridgeMcp, installAntigravity } from "../src/cli/antigr
 import { execFileSync } from "node:child_process";
 import { makeEnv } from "./helpers.js";
 import type { ServerContext } from "../src/mcp/server.js";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 
 vi.mock("../src/core/procinfo.js", () => ({ antigravityAncestor: vi.fn(async () => 12345) }));
 vi.mock("../src/mcp/hooks.js", () => ({ buildHookResponse: vi.fn(), confirmAntigravityStopDelivery: vi.fn() }));
@@ -105,13 +105,19 @@ describe("Antigravity native hook routing", () => {
       expect(await (await call("Stop", "parent", reg.secret, { executionNum: 2, terminationReason: "MAX_FORCED_INVOCATIONS" })).json()).toEqual({});
       expect(buildHookResponse).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ event: "StopFailure" }));
       node.emit("replaced"); expect((await call("Stop")).status).toBe(403);
+      expect(needsInteractivePreToolPost({ conversationId: "parent", workspacePaths: [env.home] }, env.home)).toBe(true);
       writeFileSync(join(env.home, "antigravity-hooks", "12345.json"), '{"port":1,"secret":"replacement"}');
       node.emit("reclaimed"); vi.mocked(buildHookResponse).mockResolvedValue({});
       expect(JSON.parse(readFileSync(join(env.home, "antigravity-hooks", "12345.json"), "utf8"))).toEqual({ ...reg, conversationId: "parent", cwd: env.home, stopPending: false });
       expect((await call("Stop")).status).toBe(200);
+      expect(needsInteractivePreToolPost({ workspacePaths: [env.home] }, env.home)).toBe(true);
       vi.mocked(buildHookResponse).mockResolvedValueOnce({ decision: "block", reason: "held mail" });
       expect(await (await call("Stop", "parent", reg.secret, { executionNum: 3, terminationReason: "NO_TOOL_CALL" })).json()).toEqual({ decision: "continue", reason: "held mail" });
       expect(needsInteractivePreToolPost({ conversationId: "parent", workspacePaths: [env.home] }, env.home)).toBe(true);
+      // Even if a stale live row for the same conversation has stopPending:false, held Stop on the active row must not be skipped.
+      writeFileSync(join(env.home, "antigravity-hooks", "99999.json"), JSON.stringify({ ...reg, conversationId: "parent", cwd: env.home, stopPending: false }));
+      expect(needsInteractivePreToolPost({ conversationId: "parent", workspacePaths: [env.home] }, env.home)).toBe(true);
+      rmSync(join(env.home, "antigravity-hooks", "99999.json"));
       vi.mocked(antigravityAncestor).mockImplementationOnce((_start, signal) => new Promise((resolve) => {
         signal?.addEventListener("abort", () => resolve(null), { once: true });
       }));

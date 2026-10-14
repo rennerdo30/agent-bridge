@@ -121,17 +121,18 @@ export function needsInteractivePreToolPost(input: Record<string, any>, home = r
   const id = typeof input.conversationId === "string" && input.conversationId.trim() ? input.conversationId : null;
   const cwd = Array.isArray(input.workspacePaths) && typeof input.workspacePaths[0] === "string" && input.workspacePaths[0].trim() ? input.workspacePaths[0] : null;
   if (!id && !cwd) return false;
+  if (!id) return true;
   try {
     const dir = join(home, "antigravity-hooks");
     const regs = readdirSync(dir).flatMap((file) => {
       if (!file.endsWith(".json")) return [];
-      try {
-        const reg = object(JSON.parse(readFileSync(join(dir, file), "utf8")));
-        return Number.isInteger(reg.port) && typeof reg.secret === "string" && Number.isInteger(reg.pid) && pidAlive(reg.pid) ? [reg] : [];
-      } catch { return []; }
+      const reg = object(JSON.parse(readFileSync(join(dir, file), "utf8")));
+      const alive = Number.isInteger(reg.port) && typeof reg.secret === "string" && Number.isInteger(reg.pid) && pidAlive(reg.pid);
+      return alive ? [reg] : [];
     });
-    if (id) return !regs.some((reg) => reg.conversationId === id && reg.stopPending === false && (!cwd || reg.cwd === cwd));
-    return !(regs.length === 1 && regs[0]!.conversationId === null && regs[0]!.stopPending === false && regs[0]!.cwd === cwd);
+    if (regs.some((reg) => !reg.conversationId)) return true;
+    const matching = regs.filter((reg) => reg.conversationId === id);
+    return !(matching.length === 1 && matching[0]!.retired === false && matching[0]!.connected === true && matching[0]!.stopPending === false && (!cwd || matching[0]!.cwd === cwd));
   } catch { return true; }
 }
 

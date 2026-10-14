@@ -200,6 +200,7 @@ export async function publishApproval(home: string, approval: PendingApproval, a
   const file = join(dir, `${approval.id}.json`);
   const server = createServer((req, res) => {
     const reply = (status: number, body: unknown) => {
+      if (res.headersSent || res.writableEnded) return;
       res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
       res.end(JSON.stringify(body));
     };
@@ -219,7 +220,9 @@ export async function publishApproval(home: string, approval: PendingApproval, a
         reply(accepted ? 200 : 409, { outcome: accepted ? "answered" : "expired" });
       } finally {
         answering--;
-        if (closeRequested && answering === 0) doClose();
+        if (closeRequested && answering === 0) {
+          try { doClose(); } catch { /* Post-response archive failure must not reject or send a second HTTP response. */ }
+        }
       }
     })().catch(() => reply(400, { error: "invalid answer" }));
   });
@@ -228,9 +231,12 @@ export async function publishApproval(home: string, approval: PendingApproval, a
   let closed = false;
   const doClose = () => {
     if (closed) return;
-    closed = true;
-    try { archiveFile(file); }
-    finally { server.close(); }
+    try {
+      archiveFile(file);
+      closed = true;
+    } finally {
+      server.close();
+    }
   };
   server.requestTimeout = ANSWER_TIMEOUT_MS;
   server.headersTimeout = ANSWER_TIMEOUT_MS;
