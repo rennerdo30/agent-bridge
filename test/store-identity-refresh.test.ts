@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { metadataDb, saveMetadataValue } from "../src/core/metadata-db.js";
 import { importMetadataDomain } from "../src/core/metadata-import.js";
 import * as identity from "../src/core/process-identity.js";
@@ -49,13 +51,18 @@ it("keeps verified readers known when a later identity query fails, but not read
   expire();
   await refreshStorePeerIdentities(env.home);
   expect(versionOf()).toBe("unknown");
-  // The upgrade check verifies it directly. A listed process whose start time cannot be read (elevated or
-  // protected) is either that reader or a protected process that reused its PID (AB-362: svchost): it keeps
-  // blocking an upgrade beyond its recorded capabilities...
+  // An unreadable agent runtime remains unknown regardless of the old row's capabilities.
   const direct = vi.spyOn(identity, "readProcessIdentitiesSync").mockReturnValue(new Map([[pid, ""]]));
+  const names = vi.spyOn(identity, "readProcessNamesSync").mockReturnValue(new Map([[pid, "node.exe"]]));
   expect(() => assertStoreUpgrade(env.home, "json", 4, 5)).toThrow(/Waiting to upgrade json store 4→5/);
-  // ...but not one its recorded capabilities already read.
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);
+  // A positively identified system process cannot be the recorded Bridge reader, even beyond its old ceiling.
+  names.mockReturnValue(new Map([[pid, "svchost"]]));
+  expect(() => assertStoreUpgrade(env.home, "json", 4, 5)).not.toThrow();
   expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).not.toThrow();
+  // No name evidence means the reader is still unknown.
+  names.mockReturnValue(undefined);
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);
   // ...a failed direct query keeps blocking...
   direct.mockReturnValue(undefined);
   expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);
@@ -67,31 +74,79 @@ it("keeps verified readers known when a later identity query fails, but not read
   expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).not.toThrow();
 });
 
-// AB-362 (2026-10-15): a dead job's PID reused by a protected process froze every job start until reboot.
-it("verifies readers recorded without an identity instead of blocking on them forever", () => {
+it("keeps identityless readers deferred while discovery is pending", () => {
   metadataDb(env.home); importMetadataDomain(env.home, "storage-capabilities");
-  const observedAt = Date.now() - 3_600_000;
-  saveMetadataValue(env.home, "storage-capabilities", String(pid), { schemaVersion: 1, json: 3, sqlite: 9, pid, name: "old-reader", version: "0.30.0", explicit: true, observedAt });
-  const direct = vi.spyOn(identity, "readProcessIdentitiesSync");
-  // An unreadable start time with insufficient recorded capabilities keeps blocking...
-  direct.mockReturnValue(new Map([[pid, ""]]));
-  expect(() => assertStoreUpgrade(env.home, "json", 3, 4)).toThrow(/Waiting to upgrade json store 3→4/);
-  // ...a readable process started before the observation may still be that reader...
-  const startedBefore = observedAt - 60_000;
-  const stamp = (at: number) => process.platform === "win32" ? String(BigInt(at) * 10000n + 621355968000000000n) : new Date(at).toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
-  direct.mockReturnValue(new Map([[pid, stamp(startedBefore)]]));
-  expect(() => assertStoreUpgrade(env.home, "json", 3, 4)).toThrow(/Waiting to upgrade json store 3→4/);
-  // ...while a process started after it reused the PID: the recorded reader is gone.
-  if (process.platform !== "linux") {
-    direct.mockReturnValue(new Map([[pid, stamp(Date.now())]]));
-    expect(() => assertStoreUpgrade(env.home, "json", 3, 4)).not.toThrow();
-  }
+  vi.spyOn(identity, "readProcessIdentities").mockResolvedValue(new Map());
+  saveMetadataValue(env.home, "storage-capabilities", String(pid), { schemaVersion: 1, json: 4, sqlite: 9, pid, name: "reader", version: "0.30.6", explicit: true, observedAt: Date.now() });
+  const direct = vi.spyOn(identity, "readProcessIdentitiesSync").mockReturnValue(new Map([[pid, "new-generation"]]));
+  const names = vi.spyOn(identity, "readProcessNamesSync").mockReturnValue(new Map([[pid, "svchost"]]));
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);
+  expect(direct).not.toHaveBeenCalled();
+  expect(names).not.toHaveBeenCalled();
+});
+
+function unreadableReader() {
+  metadataDb(env.home); importMetadataDomain(env.home, "storage-capabilities");
+  vi.spyOn(identity, "readProcessIdentities").mockResolvedValue(new Map());
+  const record = { schemaVersion: 1, json: 4, sqlite: 9, jobArchive: 1, pid, name: "finished-reader", version: "0.30.6", explicit: true, observedAt: Date.now(), processIdentity: "old-generation" };
+  saveMetadataValue(env.home, "storage-capabilities", String(pid), record);
+  vi.spyOn(identity, "readProcessIdentitiesSync").mockReturnValue(new Map([[pid, ""]]));
+  return record;
+}
+
+it.each(["svchost", "WmiPrvSE.EXE", "C:\\Windows\\System32\\SearchFilterHost.exe"])("unblocks a positively identified nonruntime replacement %s without changing records", name => {
+  unreadableReader();
+  const db = metadataDb(env.home);
+  const before = db.prepare("SELECT * FROM bridge_metadata WHERE domain='storage-capabilities' AND key=?").get(String(pid));
+  const names = vi.spyOn(identity, "readProcessNamesSync").mockReturnValue(new Map([[pid, name]]));
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).not.toThrow();
+  expect(names).toHaveBeenCalledWith([pid]);
+  expect(db.prepare("SELECT * FROM bridge_metadata WHERE domain='storage-capabilities' AND key=?").get(String(pid))).toEqual(before);
+});
+
+it.each(["node.exe", "BUN", "deno", "claude", "codex", "opencode", "agy", "antigravity", "/usr/local/bin/MUSE"])("keeps unreadable runtime %s blocked despite sufficient old capabilities and shadowed legacy publication", name => {
+  unreadableReader();
+  const path = join(env.home, "storage-capabilities", `${pid}.json`);
+  mkdirSync(join(env.home, "storage-capabilities"), { recursive: true });
+  const legacy = JSON.stringify({ schemaVersion: 1, json: 3, sqlite: 8, pid, name: "legacy-reader", version: "0.29.12", explicit: true, processIdentity: "new-generation" }) + "\n";
+  writeFileSync(path, legacy);
+  vi.spyOn(identity, "readProcessNamesSync").mockReturnValue(new Map([[pid, name]]));
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);
+  expect(() => assertStoreUpgrade(env.home, "sqlite", 8, 9)).toThrow(/Waiting to upgrade sqlite store 8→9/);
+  expect(() => assertStoreUpgrade(env.home, "jobArchive", 0, 1)).toThrow(/Waiting to upgrade jobArchive store 0→1/);
+  expect(readFileSync(path, "utf8")).toBe(legacy);
+});
+
+it.each([undefined, new Map<number, string>(), new Map([[pid, " "]])])("keeps unreadable readers blocked without positive name evidence %s", result => {
+  unreadableReader();
+  vi.spyOn(identity, "readProcessNamesSync").mockReturnValue(result);
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);
+});
+
+it("does not apply process evidence to a record replaced during the name query", () => {
+  const record = unreadableReader();
+  const replacement = { ...record, name: "new-reader", processIdentity: "new-generation", json: 3 };
+  vi.spyOn(identity, "readProcessNamesSync").mockImplementation(() => {
+    saveMetadataValue(env.home, "storage-capabilities", String(pid), replacement);
+    return new Map([[pid, "svchost"]]);
+  });
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);
+  expect(metadataDb(env.home).prepare("SELECT value FROM bridge_metadata WHERE domain='storage-capabilities' AND key=?").get(String(pid))?.value).toBe(JSON.stringify(replacement));
+});
+
+it("reads this runtime's process image with a single bounded name query", () => {
+  const names = identity.readProcessNamesSync([process.pid, process.pid, -1, Number.NaN]);
+  expect(names?.size).toBe(1);
+  expect(names?.get(process.pid)?.split(/[\\/]/).pop()?.replace(/\.exe$/i, "").toLowerCase()).toBe("node");
 });
 
 it.runIf(process.platform === "win32")("reports a failed batch query instead of an empty result", async () => {
   // An invalid executable path makes the PowerShell launch itself fail.
   vi.stubEnv("SystemRoot", "Z:\\nonexistent");
   vi.stubEnv("PATH", "Z:\\nonexistent");
-  try { await expect(identity.readProcessIdentities([process.pid])).rejects.toMatchObject({ code: identity.IDENTITY_QUERY_FAILED }); }
+  try {
+    await expect(identity.readProcessIdentities([process.pid])).rejects.toMatchObject({ code: identity.IDENTITY_QUERY_FAILED });
+    expect(identity.readProcessNamesSync([process.pid])).toBeUndefined();
+  }
   finally { vi.unstubAllEnvs(); }
 });
