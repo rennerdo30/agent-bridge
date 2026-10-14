@@ -95,8 +95,9 @@ describe("real source-owned child capture (hosted Node fixture, never a provider
 
 /** Explicit simulation, NOT a real native child or process-generation witness. */
 function simulatedChild() {
-  const child = new ChildProcess();
-  Object.assign(child, { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), exitCode: 0 });
+  const child = Object.assign(new ChildProcess(), {
+    stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), exitCode: 0,
+  });
   expect(child.pid).toBeUndefined();
   simulatedChildren.push(child);
   return child;
