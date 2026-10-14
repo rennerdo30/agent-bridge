@@ -28,3 +28,17 @@ describe("search_history filter schema", () => {
     expect(historySearchSchema.safeParse({ query: "x", filters: { unknown: 1 } }).success).toBe(false);
   });
 });
+
+describe("search_history tool metadata", () => {
+  it("describes the real query grammar and the get_conversation follow-up", async () => {
+    const { HISTORY_SEARCH_TOOL_DESCRIPTION, historySearchToolInput } = await import("../src/core/history-query.js");
+    expect(HISTORY_SEARCH_TOOL_DESCRIPTION).toMatch(/must all match/);
+    expect(HISTORY_SEARCH_TOOL_DESCRIPTION).toMatch(/OR or AND are searched as ordinary words/);
+    expect(HISTORY_SEARCH_TOOL_DESCRIPTION).toMatch(/get_conversation/);
+    expect(HISTORY_SEARCH_TOOL_DESCRIPTION).not.toMatch(/quoted phrase|operators are ignored/);
+    const tool = z.toJSONSchema(z.object(historySearchToolInput), { io: "input" }) as { properties: Record<string, { description?: string }>; required?: string[] };
+    for (const field of ["query", "limit", "answer"]) expect(tool.properties[field]?.description, field).toBeTruthy();
+    expect(tool.properties.query?.description).toMatch(/must all appear/);
+    expect(tool.required).toEqual(["query"]);
+  });
+});

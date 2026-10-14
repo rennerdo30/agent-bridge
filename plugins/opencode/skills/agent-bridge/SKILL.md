@@ -53,7 +53,7 @@ unknown to the bridge; inspect native `/usage`.
 
 Before starting or resuming work, after a handoff or restart, and whenever someone refers to an earlier decision, job, branch or message, call `bridge_search_history` instead of guessing or reading log files. It searches bridge mail, owner decisions and questions, job runs and reports, and native CLI transcripts locally, without model calls.
 
-- The query is split into words that must all appear, in any order; quotes and operators are ignored. Put ids that scope the search (job, session, project) into `filters`, not only into the query.
+- The query is split into words that must all appear, in any order. Punctuation and quotes are dropped, and words like OR or AND are searched as ordinary words. Put ids that scope the search (job, session, project) into `filters`, not only into the query.
 - Narrow with `filters`: `kind` (message, run, decision, transcript, approval, progress, report = job reports and snapshots, question), `project` (your cwd), `job`, `session`, `agent`, `since`/`until` (epoch ms or ISO 8601 with offset).
 - Read a whole thread by passing a hit's `conversation` to `bridge_get_conversation`; page with `next` as `after`.
 

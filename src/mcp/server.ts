@@ -70,7 +70,7 @@ import { deriveJobTitle } from "./job-title.js";
 import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "../core/job-messaging.js";
 import { appendContextEvent } from "../core/context-journal.js";
 import { conversationPageSchema, type ConversationRequest } from "../core/conversation-query.js";
-import { historyFiltersSchema, HISTORY_MAX_QUERY_CHARS, HISTORY_MAX_LIMIT, type HistorySearch } from "../core/history-query.js";
+import { HISTORY_SEARCH_TOOL_DESCRIPTION, historySearchToolInput, type HistorySearch } from "../core/history-query.js";
 
 import { decisionScopeSchema, MAX_DECISION_TOPIC_CHARS, MAX_DECISION_TEXT_CHARS, type DecideArgs, type DecisionsArgs } from "../core/decisions.js";
 import { askOwnerSchema, type AskOwnerArgs } from "../core/owner-questions.js";
@@ -658,17 +658,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     "search_history",
     {
       title: "Search bridge and CLI history",
-      description: "Search local bridge messages (including archives), owner decisions and questions, delegated run logs and job reports, and native Claude, Codex, opencode and Antigravity transcripts. " +
-        "Use it before starting or resuming work, after a handoff or restart, and whenever someone refers to an earlier decision, job, branch or message: search instead of guessing or reading log files. " +
-        "The query is split into at most 32 literal word/number tokens that must all match, in any order; quotes and operators are ignored. Put ids that scope the search (job, session, project) into filters, not only into the query. " +
-        "Returns bounded snippets with stable source ids and links; pass a hit's conversation to get_conversation to read the whole thread. " +
-        "Ordinary search makes no model calls. answer=true explicitly spends model tokens on a configured cheap model chosen by availability and usage_limits. Indexing is incremental; use agent-bridge reindex to rebuild.",
-      inputSchema: {
-        query: z.string().trim().min(1).max(HISTORY_MAX_QUERY_CHARS).describe("Words that must all appear (AND, any order, punctuation ignored), e.g. branch limit; scope by job, session or project with filters"),
-        filters: historyFiltersSchema.optional(),
-        limit: z.number().int().min(1).max(HISTORY_MAX_LIMIT).optional().describe(`Maximum hits (1-${HISTORY_MAX_LIMIT}); raise it for broad questions`),
-        answer: z.boolean().optional().describe("Also summarize the hits with a cheap model (spends tokens); default false"),
-      },
+      description: HISTORY_SEARCH_TOOL_DESCRIPTION,
+      inputSchema: historySearchToolInput,
       annotations: { readOnlyHint: true },
     },
     guarded("search_history", async (a: HistorySearch & { answer?: boolean }) => {
