@@ -1797,6 +1797,9 @@ export class Broker {
     const refuse = (reason: string): never => {
       throw new BridgeError("bad_request", `Requested ${a.mode} refused: ${reason}. No mode operation applied.`, { modeReport: { ...mode, reason } });
     };
+    const queueIssuerSupported = (peer: PeerInfo): boolean => !peer.subagent && !peer.jobAgent &&
+      !peer.id.startsWith("job:") && peer.agent !== "other" &&
+      !this.storedJobs().some(job => job.name === peer.name || `job:${job.id}` === peer.id);
     if (a.to === "muse" || /^muse-(?:job|ask)-/.test(a.to)) refuse("Muse support belongs to PR20 and is unavailable");
     if (a.mode === "queue" && (a.messageId !== undefined || a.dedupeKey !== undefined)) refuse("one-shot queue rejects caller IDs and dedupe keys");
     // Scoped sender selection never changes the connection or grants authority.
@@ -1825,7 +1828,8 @@ export class Broker {
       const targetPeer = target?.peer;
       const nativeOwner = native ? this.connByName(native.parent) : undefined;
       const nativeCurrent = Boolean(native && nativeOwner?.peer && nativeOwner.peer.id === native.owner &&
-        nativeOwner.peer.sessionId === native.session && this.queueReady(nativeOwner, nativeOwner.peer));
+        nativeOwner.peer.sessionId === native.session && nativeOwner.peer.agent === "claude" &&
+        !nativeOwner.peer.subagent && !nativeOwner.peer.jobAgent && this.queueReady(nativeOwner, nativeOwner.peer));
       mode.effective = nativeRoute ? "nativequeue" : "mailbox";
       mode.stage = send.storage?.state === "stored" || send.messages.length > 0 &&
         send.messages.every(message => Boolean(this.store.byId(message.id))) ? "stored" : "requested";
@@ -1833,7 +1837,7 @@ export class Broker {
         receiverRole: nativeRoute ? "native_child" : targetPeer?.jobAgent ? "delegated_job" : targetPeer ? "session" : "unknown",
         ownedSession: native ? native.owner === sender.id : target === conn,
         generationKnown: nativeRoute ? nativeCurrent : Boolean(target && targetPeer && this.queueReady(target, targetPeer)),
-        queue: Boolean(native && nativeCurrent && !fromChild && !sender.jobAgent && !sender.id.startsWith("job:") && sender.agent !== "other" &&
+        queue: Boolean(native && nativeCurrent && !fromChild && queueIssuerSupported(sender) &&
           this.queueReady(conn, sender) && this.nativeAllowed(native, sender.name)),
         idleWake: !nativeRoute && targetPeer?.wakeAvailable && !targetPeer.jobAgent && targetPeer.agent !== "antigravity" ? "conditional" : false };
       return { send, mode };
@@ -1841,8 +1845,7 @@ export class Broker {
     if (fromChild || !isNativeChildAddress(a.to)) refuse("explicit queue is available only to an existing scoped Claude native target");
     // Legacy runner registrations can contain caller-supplied ownership hints.
     // New queue admission never turns those DTOs into an issuer generation.
-    if (sender.jobAgent || sender.id.startsWith("job:") || sender.agent === "other" ||
-        this.storedJobs().some(job => job.name === sender.name || `job:${job.id}` === sender.id)) {
+    if (!queueIssuerSupported(sender)) {
       refuse("delegated or unknown issuer generation is unsupported for one-shot queue");
     }
     const child = this.nativeChildren.target(a.to), ownerConn = this.connByName(child.parent), owner = ownerConn?.peer;
@@ -1853,6 +1856,8 @@ export class Broker {
     const current = () => {
       this.assertQueueRegistration(conn, sender, sourceRegistration!);
       this.assertQueueRegistration(ownerConn!, owner!, ownerRegistration!);
+      if (!queueIssuerSupported(this.requirePeer(conn))) refuse("registered issuer role is unsupported for one-shot queue");
+      this.nativeChildren.own(this.requirePeer(ownerConn!), child.agentId);
     };
     current();
     const id = randomUUID();

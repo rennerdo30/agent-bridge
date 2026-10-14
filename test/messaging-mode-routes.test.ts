@@ -163,6 +163,58 @@ it("delegated registrations and job-owner DTO labels cannot create a new queue i
   expect(await parent.nativeChildPending(childId)).toEqual([]);
 });
 
+it("malformed retained subagent hello plus an exact grant cannot admit queue or advertise queue support", async () => {
+  const { parent, address, childId, broker } = await native();
+  const raw = await BridgeClient.connect(env.pipe, nullLogger);
+  closes.push(async () => { raw.close(); });
+  const parentPeer = (await parent.peers()).find(peer => peer.id === parent.id)!;
+  const id = randomUUID();
+  const hello = await raw.request("hello", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(env.home),
+    peer: { ...parentPeer, id, name: "codex-malformed-role", agent: "codex", sessionId: "malformed-role-session",
+      subagent: true, jobAgent: "unsupported-kind" as AgentKind } });
+  const registered = [...broker.conns].find((connection: any) => connection.peer?.id === id).peer;
+  expect(registered.subagent).toBe(true); expect(registered.jobAgent).toBeUndefined();
+  await parent.nativeChild({ agentId: childId, action: "grant", sendTo: [hello.name] });
+  expect((await parent.nativeChildren())[0]!.sendTo).toContain(hello.name);
+  const insert = vi.spyOn(broker.store, "insertBatch"), emit = vi.spyOn(broker, "emit");
+  const parentInbox = broker.store.unread(parent.name, 100);
+  await expect(raw.request("modeSend", { mode: "queue", to: address, body: "malformed role queue must not be stored" }))
+    .rejects.toMatchObject({ code: "bad_request", details: { modeReport: { effective: "refused", stage: "requested", capabilities: { queue: false } } } });
+  expect(insert).not.toHaveBeenCalled(); expect(emit).not.toHaveBeenCalled();
+  expect(await parent.nativeChildPending(childId)).toEqual([]);
+  expect(broker.store.unread(parent.name, 100)).toEqual(parentInbox);
+  // Legacy auto is unchanged; its real insertion cannot confer the NEW queue capability.
+  const automatic = await raw.request("modeSend", { mode: "auto", to: address, body: "legacy malformed-role auto" });
+  expect(automatic.mode.capabilities.queue).toBe(false);
+  expect(automatic.mode.sharedIdempotentDelivery).toBe(false);
+  expect((await parent.nativeChildPending(childId)).map(message => message.body)).toEqual(["legacy malformed-role auto"]);
+});
+
+it.each(["issuer role", "parent role", "grant"] as const)("rechecks current %s after BEGIN before queue insertion", async fault => {
+  const { parent, address, childId, broker } = await native();
+  const sender = env.node("codex-current-role", "codex");
+  await sender.setSessionId("current-role-session"); await sender.start();
+  await parent.nativeChild({ agentId: childId, action: "grant", sendTo: [sender.name] });
+  const senderPeer = [...broker.conns].find((connection: any) => connection.peer?.id === sender.id).peer;
+  const parentPeer = [...broker.conns].find((connection: any) => connection.peer?.id === parent.id).peer;
+  const child = broker.nativeChildren.target(address), parentInbox = broker.store.unread(parent.name, 100);
+  const originalInsert = broker.store.insertBatch.bind(broker.store), emit = vi.spyOn(broker, "emit");
+  let afterBegin = false;
+  vi.spyOn(broker.store, "insertBatch").mockImplementation((messages: any, before: any) => originalInsert(messages, () => {
+    // Negative fault inside the REAL transaction, after BEGIN IMMEDIATE. No authority is fabricated.
+    afterBegin = true;
+    if (fault === "issuer role") senderPeer.subagent = true;
+    else if (fault === "parent role") parentPeer.subagent = true;
+    else child.sendTo = [];
+    before();
+  }));
+  await expect(sender.sendWithMode({ mode: "queue", to: address, body: "must roll back after role or grant changes" }))
+    .rejects.toMatchObject({ code: fault === "issuer role" ? "bad_request" : "unauthorized" });
+  expect(afterBegin).toBe(true); expect(emit).not.toHaveBeenCalled();
+  expect(broker.store.unread(address, 100)).toEqual([]);
+  expect(broker.store.unread(parent.name, 100)).toEqual(parentInbox);
+});
+
 it("queue rejects caller IDs, dedupe keys, generation/identity/grant DTOs before storage", async () => {
   const { parent, address, childId } = await native();
   for (const extra of [{ messageId: randomUUID() }, { dedupeKey: "caller-command" },
@@ -177,7 +229,7 @@ it("queue rejects caller IDs, dedupe keys, generation/identity/grant DTOs before
 });
 
 it("real native grant, revocation, hop and parent-generation checks remain authoritative", async () => {
-  const { parent, address, childId } = await native();
+  const { parent, address, childId, broker } = await native();
   const stranger = env.node("mode-stranger", "codex"); await stranger.start();
   await expect(stranger.sendWithMode({ mode: "queue", to: address, body: "not granted" })).rejects.toMatchObject({ code: "unauthorized" });
   await parent.nativeChild({ agentId: childId, action: "grant", sendTo: [stranger.name] });
@@ -189,7 +241,16 @@ it("real native grant, revocation, hop and parent-generation checks remain autho
   const second = await parent.sendWithMode({ mode: "queue", to: address, body: "second hop", replyTo: rootFirst.send.messages[0]!.id });
   await expect(parent.sendWithMode({ mode: "queue", to: address, body: "third hop", replyTo: second.send.messages[0]!.id })).rejects.toMatchObject({ code: "bad_request" });
   await parent.setSessionId("new-root");
-  await expect(parent.sendWithMode({ mode: "queue", to: address, body: "old generation" })).rejects.toMatchObject({ code: "bad_request" });
+  const originalIds = [first, rootFirst, second].map(result => result.send.messages[0]!.id);
+  const retained = originalIds.map(id => broker.store.messagesById(id));
+  expect(retained.every(messages => messages.length > 0)).toBe(true);
+  const parentInbox = broker.store.unread(parent.name, 100), insert = vi.spyOn(broker.store, "insertBatch");
+  await expect(parent.sendWithMode({ mode: "queue", to: address, body: "old generation" })).rejects.toMatchObject({
+    code: "unauthorized", message: "Native child address is unavailable or unauthorized.",
+  });
+  expect(insert).not.toHaveBeenCalled(); expect(broker.store.unread(address, 100)).toEqual([]);
+  expect(broker.store.unread(parent.name, 100)).toEqual(parentInbox);
+  expect(originalIds.map(id => broker.store.messagesById(id))).toEqual(retained);
 });
 
 it("rechecks actual broker registrations after storage yields, before native insertion", async () => {
