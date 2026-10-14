@@ -333,6 +333,55 @@ describe("actual history consumer admission and managed values (not full native 
   });
 });
 
+describe("actual History native statement admission (not cold or retirement permission)", () => {
+  it("retains an accepted real history batch across a seal and rejects later admission before SQL", () => {
+    const store = new MessageStore(env.db, nullLogger); ownedStores.add(store);
+    const db = Reflect.get(store, "historyDb") as DatabaseSync, source = Reflect.get(store, "db") as DatabaseSync;
+    const index = new HistoryIndex(db, null, undefined, source); ownedIndexes.add(index);
+    db.prepare("INSERT INTO history_pending VALUES(?,?,?,?,?,?,?,?)").run("owned-native-pending", "Accepted native batch bytes", "other", "owned-sender", "owned-id", "owned-recipient", "owned-recipient", 1);
+    let sealedDuringAcceptedBatch = false;
+    vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+      const result = nativeExec.call(this, sql);
+      if (this === db && sql === "SAVEPOINT history_rows" && !sealedDuringAcceptedBatch) {
+        sealedDuringAcceptedBatch = true;
+        expect(index.sealLifecycleConsumer()).toMatchObject({ pendingOperations: 1, settled: false, ownershipReleased: false });
+        expect(() => index.wake()).toThrow(expect.objectContaining({ code: "OWNER_QUIESCED" }));
+      }
+      return result;
+    });
+    index.tick(); expect(sealedDuringAcceptedBatch).toBe(true);
+    vi.restoreAllMocks();
+    expect(db.prepare("SELECT * FROM history_pending WHERE id=?").all("owned-native-pending")).toEqual([]);
+    expect(db.prepare("SELECT body FROM history_documents WHERE id=?").get("message:owned-native-pending")!.body).toBe("Accepted native batch bytes");
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ sealed: true, pendingOperations: 0, nativeBorrower: false,
+      nativeCompositeCoverage: "unverified", durableObligations: "unverified", settled: false, ownershipReleased: false });
+    const prepare = vi.spyOn(DatabaseSync.prototype, "prepare"), exec = vi.spyOn(DatabaseSync.prototype, "exec");
+    expect(() => index.tick()).toThrow(expect.objectContaining({ code: "OWNER_QUIESCED" }));
+    expect(prepare).not.toHaveBeenCalled(); expect(exec).not.toHaveBeenCalled();
+  });
+  it("actual retained native frames refuse get/all/run and iterator creation or stepping after seal", () => {
+    const db = openHistoryStore(join(env.home, "native-frame-history.db")); owned.set(db, { actuallyClosed: false });
+    const index = new HistoryIndex(db, null); ownedIndexes.add(index);
+    db.exec("CREATE TABLE owned_native_history(id INTEGER PRIMARY KEY, body TEXT NOT NULL); INSERT INTO owned_native_history VALUES(1,'Exact retained bytes'),(2,'Second retained bytes');");
+    // Private source frame inspection is test-only and expressly records an
+    // unenrolled native borrower; it never mints owner/retirement permission.
+    type Frame = { get(): unknown; all(): unknown; run(): unknown; iterate(): IterableIterator<unknown> };
+    const capture = Reflect.get(index, "statement") as (db: DatabaseSync, sql: string) => Frame;
+    const read = capture.call(index, db, "SELECT * FROM owned_native_history ORDER BY id");
+    const write = capture.call(index, db, "INSERT INTO owned_native_history VALUES(3,'Forbidden later bytes')");
+    const iterator = read.iterate(); expect(iterator.next().value).toMatchObject({ id: 1, body: "Exact retained bytes" });
+    index.sealLifecycleConsumer();
+    const get = vi.spyOn(StatementSync.prototype, "get"), all = vi.spyOn(StatementSync.prototype, "all"), run = vi.spyOn(StatementSync.prototype, "run");
+    const iterate = vi.spyOn(StatementSync.prototype, "iterate");
+    for (const operation of [() => read.get(), () => read.all(), () => write.run(), () => read.iterate(), () => iterator.next(), () => iterator.return!()])
+      expect(operation).toThrow(expect.objectContaining({ code: "OWNER_QUIESCED" }));
+    expect(get).not.toHaveBeenCalled(); expect(all).not.toHaveBeenCalled(); expect(run).not.toHaveBeenCalled(); expect(iterate).not.toHaveBeenCalled();
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ nativeBorrower: true, settled: false, ownershipReleased: false });
+    vi.restoreAllMocks(); index.resumeLifecycleConsumer(); iterator.return!();
+    expect(read.all()).toEqual([{ id: 1, body: "Exact retained bytes" }, { id: 2, body: "Second retained bytes" }]);
+  });
+});
+
 describe("actual known compatibility overlay admission (not main-only or owner completeness)", () => {
   function main(name: string) {
     const db = new DatabaseSync(join(env.home, name)); owned.set(db, { actuallyClosed: false }); return db;

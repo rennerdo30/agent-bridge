@@ -5,7 +5,7 @@ import { decodeText, encodeText, registerHistoryFunctions } from "./history-code
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, fstatSync, openSync, opendirSync, readSync, statSync, type Dir } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { z } from "zod";
 import { claudeItems } from "./transcripts/claude.js";
 import { antigravityItems } from "./transcripts/antigravity.js";
@@ -48,6 +48,12 @@ export type { HistorySearch, HistoryHit, HistoryResult } from "./history-query.j
 interface Document extends Omit<HistoryHit, "snippet" | "sourceLink"> { body: string }
 interface FileRow { path: string; kind: string; agent: string; session: string | null; cwd: string; child: string | null }
 interface WalkRoot { path: string; root: string; kind: string; agent: string }
+type HistoryStatement = {
+  get(...args: SQLInputValue[]): ReturnType<StatementSync["get"]>;
+  all(...args: SQLInputValue[]): ReturnType<StatementSync["all"]>;
+  run(...args: SQLInputValue[]): ReturnType<StatementSync["run"]>;
+  iterate(...args: SQLInputValue[]): IterableIterator<Record<string, any>>;
+};
 
 function folded(text: string): string { return text.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase(); }
 function terms(query: string): string[] { return folded(query).match(/[\p{L}\p{N}_]+/gu)?.slice(0, HISTORY_MAX_TERMS) ?? []; }
@@ -62,6 +68,9 @@ export class HistoryIndex {
   private lifecycleUnknown = false;
   private lifecycleRawBorrower = false;
   private lifecycleCallbackUnknown = false;
+  private lifecycleNativeBorrower = false;
+  private lifecycleConstructing = true;
+  private readonly lifecycleStatements = new WeakMap<StatementSync, DatabaseSync>();
   readonly engine: HistoryResult["engine"];
   private queue: WalkRoot[] = [];
   private walk: { entry: WalkRoot; dir: Dir } | null = null;
@@ -80,10 +89,10 @@ export class HistoryIndex {
   private encodedValue = false;
   /** Re-read when the schema changes: a store deferred at v1 (AB-225) can be upgraded in place under this connection. */
   private get encoded(): boolean {
-    const schema = Number(this.db.prepare("PRAGMA schema_version").get()!.schema_version);
+    const schema = Number(this.statement(this.db, "PRAGMA schema_version").get()!.schema_version);
     if (schema !== this.encodedSchema) {
       this.encodedSchema = schema;
-      this.encodedValue = !!this.db.prepare("SELECT 1 FROM pragma_table_info('history_documents') WHERE name='body_codec'").get();
+      this.encodedValue = !!this.statement(this.db, "SELECT 1 FROM pragma_table_info('history_documents') WHERE name='body_codec'").get();
     }
     return this.encodedValue;
   }
@@ -92,10 +101,11 @@ export class HistoryIndex {
   constructor(private readonly db: DatabaseSync, private readonly home: string | null, paths?: TranscriptPaths,
     private readonly source: DatabaseSync = db, private readonly peerSink?: (peer: Pick<PeerInfo, "id" | "name" | "sessionId"> & Partial<Pick<PeerInfo, "cwd" | "agent">>) => void) {
     this.paths = paths ?? transcriptPaths();
-    this.engine = db.prepare("SELECT name FROM sqlite_master WHERE name = 'history_fts'").get() ? "fts5" : "plain";
+    this.engine = this.statement(db, "SELECT name FROM sqlite_master WHERE name = 'history_fts'").get() ? "fts5" : "plain";
     // FTS snippets and writes decode v2 text in SQL; any connection handed to the index can use it.
-    registerHistoryFunctions(db);
-    this.checked = Number(db.prepare("SELECT coalesce(max(checked),0) AS n FROM history_files").get()!.n);
+    this.native(db, () => registerHistoryFunctions(db));
+    this.checked = Number(this.statement(db, "SELECT coalesce(max(checked),0) AS n FROM history_files").get()!.n);
+    this.lifecycleConstructing = false;
   }
 
   private lifecycleChanged(): void {
@@ -110,6 +120,43 @@ export class HistoryIndex {
     catch (error) { this.lifecycleUnknown = true; this.lifecycleChanged(); throw error; }
     finally { this.lifecycleOperations--; this.lifecycleChanged(); }
   }
+  private native<T>(db: DatabaseSync, operation: () => T): T {
+    // A seal preserves an already accepted synchronous operation, but blocks
+    // later cached statement steps once that actual operation has returned.
+    if (this.lifecycleSealed && this.lifecycleOperations === 0)
+      throw Object.assign(new Error("history consumer is quiesced"), { code: "OWNER_QUIESCED" });
+    if (!this.lifecycleConstructing && this.lifecycleOperations === 0) this.lifecycleNativeBorrower = true;
+    // Temporary/native helper enrollment is a separate capture slice. Its
+    // absence cannot become a complete supported consumer census here.
+    if (db !== this.db && db !== this.source) this.lifecycleNativeBorrower = true;
+    this.lifecycleChanged();
+    try { return operation(); }
+    catch (error) { this.lifecycleUnknown = true; this.lifecycleChanged(); throw error; }
+  }
+  private exec(db: DatabaseSync, sql: string): void { this.native(db, () => db.exec(sql)); }
+  private statement(db: DatabaseSync, sql: string): HistoryStatement {
+    const statement = this.native(db, () => db.prepare(sql));
+    this.lifecycleStatements.set(statement, db);
+    const step = <T>(operation: () => T): T => {
+      if (this.lifecycleStatements.get(statement) !== db) { this.lifecycleUnknown = true; this.lifecycleChanged(); }
+      return this.native(db, operation);
+    };
+    return {
+      get: (...args) => step(() => statement.get(...args)),
+      all: (...args) => step(() => statement.all(...args)),
+      run: (...args) => step(() => statement.run(...args)),
+      iterate: (...args) => {
+        const iterator = step(() => statement.iterate(...args));
+        // Guard each real native next/return, not just iterator creation. No
+        // native statement or iterator is exposed by the managed DTO methods.
+        return {
+          next: () => step(() => iterator.next()),
+          return: () => step(() => iterator.return!()),
+          [Symbol.iterator]() { return this; },
+        };
+      },
+    };
+  }
   sealLifecycleConsumer() { this.lifecycleSealed = true; this.lifecycleChanged(); return this.lifecycleConsumerObservation(); }
   resumeLifecycleConsumer() { this.lifecycleSealed = false; this.lifecycleChanged(); return this.lifecycleConsumerObservation(); }
   lifecycleConsumerObservation() {
@@ -117,6 +164,7 @@ export class HistoryIndex {
     // current sealed non-recovering preparation, not page SQL on these writers.
     return Object.freeze({ generation: this.lifecycleRevision, sealed: this.lifecycleSealed, pendingOperations: this.lifecycleOperations,
       unknown: this.lifecycleUnknown, rawBorrower: this.lifecycleRawBorrower, callbackUnknown: this.lifecycleCallbackUnknown,
+      nativeBorrower: this.lifecycleNativeBorrower, nativeCompositeCoverage: "unverified" as const,
       queuedDiscovery: this.queue.length, activeDirectories: this.walk === null ? 0 : 1,
       durableObligations: "unverified" as const, ownerBound: false as const, settled: false as const,
       blocker: "owner_unsupported" as const, ownershipReleased: false as const });
@@ -132,8 +180,8 @@ export class HistoryIndex {
   sessionProjectPaths(alias: string, session?: string): string[] {
     return this.accepted(() => {
       const db = this.readDatabase;
-      session ??= String(db.prepare("SELECT session FROM history_sessions WHERE alias=?").get(alias)?.session ?? "") || undefined;
-      return session ? db.prepare("SELECT DISTINCT cwd FROM history_files WHERE session=? AND cwd<>''").all(session).map(file => String(file.cwd)) : [];
+      session ??= String(this.statement(db, "SELECT session FROM history_sessions WHERE alias=?").get(alias)?.session ?? "") || undefined;
+      return session ? this.statement(db, "SELECT DISTINCT cwd FROM history_files WHERE session=? AND cwd<>''").all(session).map(file => String(file.cwd)) : [];
     });
   }
   conversationPage(input: ConversationRequest) {
@@ -151,18 +199,18 @@ export class HistoryIndex {
     if (!peer.sessionId) return;
     const job = /^(claude|codex|opencode|antigravity)-job-/.test(peer.name) ? peer.name : null;
     for (const alias of [peer.id, peer.name, peer.sessionId]) this.rememberSession(alias, peer.sessionId, job);
-    if (peer.cwd && peer.agent && this.db.prepare("SELECT name FROM sqlite_master WHERE name='conversation_bindings'").get()) {
-      this.db.prepare(`INSERT INTO conversation_bindings(session,agent,cwd,job) VALUES(?,?,?,?) ON CONFLICT(session,agent) DO UPDATE SET cwd=excluded.cwd,job=coalesce(excluded.job,conversation_bindings.job),pending=1`).run(peer.sessionId,peer.agent,peer.cwd,job);
+    if (peer.cwd && peer.agent && this.statement(this.db, "SELECT name FROM sqlite_master WHERE name='conversation_bindings'").get()) {
+      this.statement(this.db, `INSERT INTO conversation_bindings(session,agent,cwd,job) VALUES(?,?,?,?) ON CONFLICT(session,agent) DO UPDATE SET cwd=excluded.cwd,job=coalesce(excluded.job,conversation_bindings.job),pending=1`).run(peer.sessionId,peer.agent,peer.cwd,job);
     }
   }
   private rememberSession(alias: string, session: string, job: string | null): void {
-    this.db.prepare(`INSERT INTO history_sessions VALUES (?,?,?) ON CONFLICT(alias) DO UPDATE SET
+    this.statement(this.db, `INSERT INTO history_sessions VALUES (?,?,?) ON CONFLICT(alias) DO UPDATE SET
       session=excluded.session,job=coalesce(excluded.job,history_sessions.job)`).run(alias, session, job);
   }
 
-  private cursor(source: string): string { return String(this.db.prepare("SELECT cursor FROM history_cursors WHERE source = ?").get(source)?.cursor ?? "0"); }
+  private cursor(source: string): string { return String(this.statement(this.db, "SELECT cursor FROM history_cursors WHERE source = ?").get(source)?.cursor ?? "0"); }
   private advance(source: string, cursor: string): void {
-    this.db.prepare("INSERT INTO history_cursors VALUES (?, ?) ON CONFLICT(source) DO UPDATE SET cursor=excluded.cursor").run(source, cursor);
+    this.statement(this.db, "INSERT INTO history_cursors VALUES (?, ?) ON CONFLICT(source) DO UPDATE SET cursor=excluded.cursor").run(source, cursor);
   }
   private put(doc: Document, sessions: string[] = [], jobs: string[] = []): void {
     const body = doc.body.slice(0, HISTORY_MAX_BODY_CHARS), searchable = folded(body);
@@ -171,20 +219,20 @@ export class HistoryIndex {
     const foldedValue = this.encoded && this.engine === "fts5" ? null : searchable;
     // One document and its tags form a short DB-only step; all source reads
     // and project resolution happen before this writer transaction.
-    this.db.exec("SAVEPOINT history_document");
+    this.exec(this.db, "SAVEPOINT history_document");
     try {
-      if (this.encoded) this.db.prepare(`INSERT INTO history_documents (id,kind,agent,at,body,body_codec,folded,link,message,job,run,session,cursor)
+      if (this.encoded) this.statement(this.db, `INSERT INTO history_documents (id,kind,agent,at,body,body_codec,folded,link,message,job,run,session,cursor)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body,body_codec=excluded.body_codec,folded=excluded.folded,
         agent=excluded.agent,at=excluded.at,job=excluded.job,session=excluded.session,link=excluded.link,cursor=excluded.cursor`)
         .run(doc.id, doc.kind, doc.agent, doc.at, stored.value, stored.codec, foldedValue, doc.link, doc.message, doc.job, doc.run, doc.session, doc.cursor);
-      else this.db.prepare(`INSERT INTO history_documents (id,kind,agent,at,body,folded,link,message,job,run,session,cursor)
+      else this.statement(this.db, `INSERT INTO history_documents (id,kind,agent,at,body,folded,link,message,job,run,session,cursor)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET body=excluded.body,folded=excluded.folded,
         agent=excluded.agent,at=excluded.at,job=excluded.job,session=excluded.session,link=excluded.link,cursor=excluded.cursor`)
         .run(doc.id, doc.kind, doc.agent, doc.at, body, searchable, doc.link, doc.message, doc.job, doc.run, doc.session, doc.cursor);
       for (const [type, values] of [["session", [...sessions, doc.session]], ["job", [...jobs, doc.job]]] as const) {
-        for (const value of values) if (value) this.db.prepare("INSERT OR IGNORE INTO history_tags VALUES (?,?,?)").run(doc.id, type, value);
+        for (const value of values) if (value) this.statement(this.db, "INSERT OR IGNORE INTO history_tags VALUES (?,?,?)").run(doc.id, type, value);
       }
-      this.db.exec("RELEASE history_document");
+      this.exec(this.db, "RELEASE history_document");
     } catch (err) {
       cleanupSavepoint(this.db, "history_document", true, err);
     }
@@ -202,9 +250,9 @@ export class HistoryIndex {
     // reads (including question project resolution) outside writer transactions.
     const batch = ["messages", "history_pending", "decisions"].includes(table);
     let failed = false;
-    if(batch)this.db.exec("SAVEPOINT history_rows");
+    if(batch)this.exec(this.db, "SAVEPOINT history_rows");
     try {
-      for (const row of db.prepare(`SELECT rowid AS history_rowid, * FROM ${table} WHERE rowid > ? ORDER BY rowid LIMIT ?`).iterate(after,HISTORY_ROWS_PER_SOURCE)) {
+      for (const row of this.statement(db, `SELECT rowid AS history_rowid, * FROM ${table} WHERE rowid > ? ORDER BY rowid LIMIT ?`).iterate(after,HISTORY_ROWS_PER_SOURCE)) {
         consume(row);cursor=Number(row.history_rowid);count++;bytes+=Buffer.byteLength(typeof row.body === "string" ? row.body : "");
         if(bytes>=HISTORY_BATCH_BODY_BYTES || Date.now() >= this.deadline)break;
       }
@@ -216,7 +264,7 @@ export class HistoryIndex {
       failed = true;
       if (batch) cleanupSavepoint(this.db, "history_rows", false, err);
       throw err;
-    } finally { if(batch && !failed)this.db.exec("RELEASE history_rows"); }
+    } finally { if(batch && !failed)this.exec(this.db, "RELEASE history_rows"); }
   }
 
   /** Fixed budgets; idempotent documents are written before advancing their cursors. */
@@ -225,7 +273,7 @@ export class HistoryIndex {
   }
   private tickAccepted(idleAware = false): { work: number; discovering: boolean } {
     this.deadline = Date.now() + HISTORY_BATCH_MS;
-    const fileCount = Number(this.db.prepare("SELECT count(*) AS n FROM history_files").get()!.n);
+    const fileCount = Number(this.statement(this.db, "SELECT count(*) AS n FROM history_files").get()!.n);
     // Explicit callers still rescan every sweep. Background idle sweeps finish
     // once, then rediscover changed/unwatched files on the bounded fallback.
     if (!idleAware && this.idleFiles >= fileCount) this.idleFiles = 0;
@@ -236,15 +284,15 @@ export class HistoryIndex {
       if (this.source !== this.db) work += this.rows("broker-pending", this.source, "history_pending", row => this.message(row));
       let pendingCount=0,pendingBytes=0;
       let pendingFailed = false;
-      this.db.exec("SAVEPOINT history_pending_batch");
+      this.exec(this.db, "SAVEPOINT history_pending_batch");
       try {
-        for (const row of this.db.prepare("SELECT * FROM history_pending LIMIT ?").iterate(HISTORY_ROWS_PER_SOURCE)) {
+        for (const row of this.statement(this.db, "SELECT * FROM history_pending LIMIT ?").iterate(HISTORY_ROWS_PER_SOURCE)) {
           this.message(row);
-          this.db.prepare("DELETE FROM history_pending WHERE id=? AND recipient=?").run(String(row.id), String(row.recipient));
+          this.statement(this.db, "DELETE FROM history_pending WHERE id=? AND recipient=?").run(String(row.id), String(row.recipient));
           pendingCount++;pendingBytes+=Buffer.byteLength(String(row.body));if(pendingBytes>=HISTORY_BATCH_BODY_BYTES || Date.now()>=this.deadline)break;
         }
       } catch (err) { pendingFailed = true; cleanupSavepoint(this.db, "history_pending_batch", false, err); }
-      finally { if (!pendingFailed) this.db.exec("RELEASE history_pending_batch"); }
+      finally { if (!pendingFailed) this.exec(this.db, "RELEASE history_pending_batch"); }
       work += pendingCount;
       work += this.rows("decisions", this.source, "decisions", (row) => {
         const scope = parse(row.scope), sessions = Array.isArray(scope.sessions) ? scope.sessions.filter((s: unknown) => typeof s === "string") : [];
@@ -261,7 +309,7 @@ export class HistoryIndex {
               body:[q.title,q.context,q.topic,...q.options.map(o => `${o.label}: ${o.consequence}`),q.answer?.text,q.dismissal?.reason].filter(Boolean).join("\n"),
               link:`/#/approvals?question=${q.id}`,message:null,job:q.job ?? null,run:null,session:q.askers[0]?.session ?? null,cursor:String(row.history_rowid) },
               q.askers.map(a => a.session),q.askers.flatMap(a => a.job ? [a.job] : []));
-            for (const project of q.affectedProjects) this.db.prepare("INSERT OR IGNORE INTO history_tags VALUES (?, 'project', ?)").run(`question:${q.id}`,conversationProject(project));
+            for (const project of q.affectedProjects) this.statement(this.db, "INSERT OR IGNORE INTO history_tags VALUES (?, 'project', ?)").run(`question:${q.id}`,conversationProject(project));
           }); } finally { questions.close(); }
         });
         const archivePath = join(this.home, ARCHIVE_DB_NAME);
@@ -271,25 +319,25 @@ export class HistoryIndex {
           finally { archive.close(); }
         });
         walked = this.discover(idleAware); work += walked;
-        const files = idleAware && this.idleFiles >= fileCount ? [] : this.db.prepare("SELECT * FROM history_files ORDER BY checked,path LIMIT ?")
+        const files = idleAware && this.idleFiles >= fileCount ? [] : this.statement(this.db, "SELECT * FROM history_files ORDER BY checked,path LIMIT ?")
           .all(idleAware ? HISTORY_STAT_FILES_PER_TICK : HISTORY_FILES_PER_TICK) as unknown as FileRow[];
         let opened = 0;
         for (const file of files) {
           if (Date.now() >= this.deadline || opened >= HISTORY_FILES_PER_TICK) break;
           if (idleAware && this.unchangedTranscript(file)) {
             this.idleFiles++;
-            this.db.prepare("UPDATE history_files SET checked=? WHERE path=?").run(++this.checked, file.path);
+            this.statement(this.db, "UPDATE history_files SET checked=? WHERE path=?").run(++this.checked, file.path);
             continue;
           }
           opened++;
           const indexed = this.indexFile(file);
           work += indexed;
           this.idleFiles = indexed ? 0 : this.idleFiles + 1;
-          this.db.prepare("UPDATE history_files SET checked=? WHERE path=?").run(++this.checked, file.path);
+          this.statement(this.db, "UPDATE history_files SET checked=? WHERE path=?").run(++this.checked, file.path);
         }
       }
     }
-    const registered = Number(this.db.prepare("SELECT count(*) AS n FROM history_files").get()!.n);
+    const registered = Number(this.statement(this.db, "SELECT count(*) AS n FROM history_files").get()!.n);
     // Walking directories is not a change; new files and indexed content are.
     this.sweepWork += work - walked + Math.max(0, registered - fileCount);
     return { work, discovering: this.walk !== null || this.queue.length > 0 || this.idleFiles < registered };
@@ -311,8 +359,8 @@ export class HistoryIndex {
   }
   private register(file: FileRow): void {
     // A file found after this sweep's idle pass ended still needs its first check in this sweep.
-    if (!this.db.prepare("SELECT 1 FROM history_files WHERE path=?").get(file.path)) this.idleFiles = 0;
-    this.db.prepare(`INSERT INTO history_files(path,kind,agent,session,cwd,child) VALUES (?,?,?,?,?,?)
+    if (!this.statement(this.db, "SELECT 1 FROM history_files WHERE path=?").get(file.path)) this.idleFiles = 0;
+    this.statement(this.db, `INSERT INTO history_files(path,kind,agent,session,cwd,child) VALUES (?,?,?,?,?,?)
       ON CONFLICT(path) DO UPDATE SET session=excluded.session,cwd=excluded.cwd,child=excluded.child`).run(file.path, file.kind, file.agent, file.session, file.cwd, file.child);
   }
   /** Side databases are opened again only after they change, once a read found nothing new (AB-147). */
@@ -388,7 +436,7 @@ export class HistoryIndex {
       const db = new DatabaseSync(path, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
       try {
         const after = this.cursor("opencode-discovery");
-        const rows = db.prepare("SELECT * FROM session WHERE id > ? ORDER BY id LIMIT ?").all(after === "0" ? "" : after, HISTORY_DISCOVERY_PER_TICK);
+        const rows = this.statement(db, "SELECT * FROM session WHERE id > ? ORDER BY id LIMIT ?").all(after === "0" ? "" : after, HISTORY_DISCOVERY_PER_TICK);
         for (const row of rows) if (TRANSCRIPT_ID.test(String(row.id))) this.register({ path: `opencode:${row.id}`, kind: "transcript", agent: "opencode", session: String(row.id), cwd: String(row.directory ?? ""), child: null });
         this.advance("opencode-discovery", rows.length ? String(rows.at(-1)!.id) : "0");
         if (!rows.length) this.opencodeComplete = true;
@@ -402,9 +450,9 @@ export class HistoryIndex {
    * retained originals, so a reindex finds them without walking cold storage (AB-227). */
   private discoverPackedRuns(): number {
     if (this.packedComplete || !this.home || this.source === this.db) return 0;
-    if (!this.source.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='bridge_metadata'").get()) { this.packedComplete = true; return 0; }
+    if (!this.statement(this.source, "SELECT 1 FROM sqlite_master WHERE type='table' AND name='bridge_metadata'").get()) { this.packedComplete = true; return 0; }
     const after = this.cursor("packed-run-discovery");
-    const rows = this.source.prepare("SELECT key,json_extract(value,'$.file') AS file FROM bridge_metadata WHERE domain='finished-runs' AND key>? ORDER BY key LIMIT ?")
+    const rows = this.statement(this.source, "SELECT key,json_extract(value,'$.file') AS file FROM bridge_metadata WHERE domain='finished-runs' AND key>? ORDER BY key LIMIT ?")
       .all(after === "0" ? "" : after, HISTORY_DISCOVERY_PER_TICK);
     const cold = join(this.home, "cold", "originals");
     for (const row of rows) {
@@ -495,10 +543,10 @@ export class HistoryIndex {
           this.advance(source, hash); metadataChanged = 1;
         }
       }
-      const changed = this.db.prepare(`UPDATE history_documents SET session=?,job=? WHERE rowid IN
+      const changed = this.statement(this.db, `UPDATE history_documents SET session=?,job=? WHERE rowid IN
         (SELECT rowid FROM history_documents WHERE run=? AND (session IS NOT ? OR job IS NOT ?) LIMIT ?) RETURNING id`)
         .all(session, job, run, session, job, HISTORY_ROWS_PER_SOURCE);
-      for (const row of changed) if (session) this.db.prepare("INSERT OR IGNORE INTO history_tags VALUES (?, 'session', ?)").run(row.id!, session);
+      for (const row of changed) if (session) this.statement(this.db, "INSERT OR IGNORE INTO history_tags VALUES (?, 'session', ?)").run(row.id!, session);
       if (!length) return changed.length + metadataChanged;
       this.put({ id: `run:${run}:${offset}`, kind: "run", agent: file.agent, at, body: `${typeof meta.title === "string" ? meta.title : ""}\n${buffer.subarray(0, length).toString("utf8")}`,
         link: `/api/runs/${enc(basename(run, ".log"))}?from=${offset}`, message: null, job, run, session, cursor: String(offset) }, [meta.by].filter((s): s is string => typeof s === "string"));
@@ -520,7 +568,7 @@ export class HistoryIndex {
     }
     const args = historySearchSchema.parse(input), tokens = terms(args.query);
     if (!tokens.length) return { engine: this.engine, hits: [] };
-    const durable = this.db.prepare("SELECT name FROM sqlite_master WHERE name='conversation_records'").get();
+    const durable = this.statement(this.db, "SELECT name FROM sqlite_master WHERE name='conversation_records'").get();
     const where: string[] = [], values: SQLInputValue[] = [];
     if (this.engine === "fts5") { where.push("history_fts MATCH ?"); values.push(tokens.map((t) => `"${t}"`).join(" AND ")); }
     else for (const token of tokens) { where.push("instr(d.folded,?)>0"); values.push(token); }
@@ -535,12 +583,12 @@ export class HistoryIndex {
     const snippet = this.engine === "fts5" ? "snippet(history_fts,0,'','',' … ',40)" : this.encoded ? "ab_text(d.body,d.body_codec)" : "d.body";
     const order = this.engine === "fts5" ? "bm25(history_fts),d.at DESC,d.id" : "d.at DESC,d.id";
     const retained = durable ? ", (SELECT r.conversation FROM conversation_records r WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%') AS conversation, (SELECT c.project FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%') AS project" : "";
-    const rows = this.db.prepare(`SELECT d.id,d.kind,d.agent,d.at,d.link,d.message,coalesce(d.job,${durable ? "(SELECT c.job FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%')," : ""}(SELECT job FROM history_sessions s WHERE (s.session=d.session OR s.alias=d.session) AND s.job IS NOT NULL LIMIT 1)) AS job,d.run,coalesce((SELECT session FROM history_sessions s WHERE s.alias=d.session),d.session) AS session,d.cursor${retained},${snippet} AS snippet
+    const rows = this.statement(this.db, `SELECT d.id,d.kind,d.agent,d.at,d.link,d.message,coalesce(d.job,${durable ? "(SELECT c.job FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=CAST(substr(d.id,9) AS INTEGER) AND d.id LIKE 'durable:%')," : ""}(SELECT job FROM history_sessions s WHERE (s.session=d.session OR s.alias=d.session) AND s.job IS NOT NULL LIMIT 1)) AS job,d.run,coalesce((SELECT session FROM history_sessions s WHERE s.alias=d.session),d.session) AS session,d.cursor${retained},${snippet} AS snippet
       FROM history_documents d ${joinFts} WHERE ${where.join(" AND ")} ORDER BY ${order} LIMIT ?`).all(...values, (args.limit ?? HISTORY_DEFAULT_LIMIT)*2+8);
     const seen=new Set<string>();
     return { engine: this.engine, hits: rows.flatMap((r) => {
       if (durable && r.kind === "message") {
-        const record=String(r.id).startsWith("durable:") ? this.db.prepare("SELECT r.part,r.conversation,c.project FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=?").get(Number(String(r.id).slice(8))) : this.db.prepare("SELECT r.part,r.conversation,c.project FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.part=? LIMIT 1").get(`messages:${r.message}`);
+        const record=String(r.id).startsWith("durable:") ? this.statement(this.db, "SELECT r.part,r.conversation,c.project FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.id=?").get(Number(String(r.id).slice(8))) : this.statement(this.db, "SELECT r.part,r.conversation,c.project FROM conversation_records r JOIN conversations c ON c.id=r.conversation WHERE r.part=? LIMIT 1").get(`messages:${r.message}`);
         if(record) { r.message=String(record.part).slice("messages:".length); r.conversation=record.conversation!; r.project=record.project!; }
       }
       const identity=r.message && r.kind === "message" ? `message:${r.message}` : String(r.id);
@@ -555,9 +603,9 @@ export class HistoryIndex {
     this.accepted(() => this.resetAccepted());
   }
   private resetAccepted(): void {
-    this.db.exec("BEGIN IMMEDIATE");
-    try { clearHistoryDocuments(this.db); this.db.exec("DELETE FROM history_tags; DELETE FROM history_cursors WHERE source<>'legacy-record-tail'; DELETE FROM history_files;"); this.db.exec("COMMIT"); }
-    catch (err) { this.db.exec("ROLLBACK"); throw err; }
+    this.exec(this.db, "BEGIN IMMEDIATE");
+    try { clearHistoryDocuments(this.db); this.exec(this.db, "DELETE FROM history_tags; DELETE FROM history_cursors WHERE source<>'legacy-record-tail'; DELETE FROM history_files;"); this.exec(this.db, "COMMIT"); }
+    catch (err) { this.exec(this.db, "ROLLBACK"); throw err; }
     this.closeAccepted(); this.queue = []; this.lastDiscovery = 0; this.opencodeComplete = false; this.packedComplete = false; this.idleFiles = 0;
     this.quietSources.clear(); this.rescanMs = HISTORY_RESCAN_MS;
   }
