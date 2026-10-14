@@ -2,7 +2,7 @@ import { HistoryBackground } from "./history-background.js";
 import { NativeChildren, isNativeChildAddress } from "./native-children.js";
 import { HealthMonitor } from "./health.js";
 import { loadConfig } from "./config.js";
-import { conversationPageSchema, readConversation } from "./conversations.js";
+import { conversationPageSchema } from "./conversations.js";
 import { historySearchSchema } from "./history.js";
 import { ReadJournal } from "./read-journal.js";
 import { recordStorePeer, refreshStorePeerIdentities, validStoreCapabilities } from "./store-compatibility.js";
@@ -449,8 +449,7 @@ export class Broker {
         return this.store.history.search(parsed.data);
       },
       getConversation: (_, a) => {
-        const page = readConversation(this.store.history.database, conversationPageSchema.parse(a)), migration = this.store.history.legacyReadNotice;
-        return migration ? { ...page, migration } : page;
+        return this.store.history.conversationPage(conversationPageSchema.parse(a));
       },
       reindexHistory: (_, a) => {
         const args = z.object({ reset: z.boolean().optional() }).strict().parse(a);

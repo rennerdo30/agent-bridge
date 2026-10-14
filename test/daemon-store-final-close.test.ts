@@ -3,14 +3,18 @@ import { dirname, join } from "node:path";
 import { DatabaseSync, StatementSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openArchive, archiveInitializationObservation, ARCHIVE_DB_NAME } from "../src/core/sqlite-maintenance.js";
-import { openHistoryStore, historyInitializationObservation, legacyReadNotice, historyReadStatus, openHistoryReader, historyReaderObservation } from "../src/core/history-store.js";
+import { openHistoryStore, historyInitializationObservation, legacyReadNotice, historyReadStatus, openHistoryReader, historyReaderObservation, migrateHistoryStore } from "../src/core/history-store.js";
 import { storageLease, storageLeaseObservation } from "../src/core/storage-lock.js";
 import { DecisionStore, DECISIONS_SCHEMA } from "../src/core/decisions.js";
 import { HistoryIndex } from "../src/core/history.js";
 import { MessageStore, messageStoreHandleObservation } from "../src/core/store.js";
 import { nullLogger } from "../src/core/logger.js";
 import { attachStoreCompatibility, storeCompatibilityObservation } from "../src/core/store-compatibility-overlay.js";
-import { readConversation } from "../src/core/conversations.js";
+import { conversationPageSchema, readConversation, type ConversationRequest } from "../src/core/conversations.js";
+import { Broker } from "../src/core/broker.js";
+import { BridgeClient } from "../src/core/client.js";
+import { EndpointReservation } from "../src/core/endpoint-reservation.js";
+import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
@@ -785,6 +789,150 @@ describe("managed conversation DTO equivalence before pinned Broker wiring", () 
     expect(store.history.conversationPage(input)).toEqual({ ...readConversation(main, input), migration });
     expect(store.history.legacyReadNotice).toEqual(migration);
     expect(store.history.lifecycleConsumerObservation()).toMatchObject({ rawBorrower: false, ownerBound: false, settled: false, ownershipReleased: false });
+  });
+});
+
+describe("actual owned Broker managed conversation RPC (not cold or retirement authority)", () => {
+  const conversation = "other:owned-rpc-session", input = { id: conversation, limit: 1 };
+  const raw = [Buffer.from("Exact RPC retained Unicode π\n"), Buffer.from([0, 255, 4, 10])];
+  async function rpcFixture(current: boolean, overlay: boolean, action: (fixture: {
+    store: MessageStore; main: DatabaseSync; history: DatabaseSync; client: BridgeClient;
+  }) => Promise<void>) {
+    // This fixture alone uses the supported history-ingest switch to retain a
+    // deterministic real legacy/current selection. It makes no worker-census
+    // claim, creates no fake verified migration, and restores the original env.
+    const priorIngest = process.env.AGENT_BRIDGE_HISTORY_INGEST;
+    process.env.AGENT_BRIDGE_HISTORY_INGEST = "0";
+    let main: DatabaseSync | undefined, history: DatabaseSync | undefined;
+    let store: MessageStore | undefined, broker: Broker | undefined, reservation: EndpointReservation | undefined;
+    let client: BridgeClient | undefined, clientClosed: Promise<void> | undefined;
+    let actionFailed = false, actionError: unknown;
+    try {
+      reservation = await EndpointReservation.bind(env.pipe);
+      const capture = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+        const storeRecord = messageStoreHandleObservation(this), historyRecord = historyInitializationObservation(this);
+        // ORIGINAL initializer receiver, before its first page SQL; never a
+        // product getter, arbitrary same-shaped DB or source ownership permit.
+        if (!main && storeRecord.captured && storeRecord.main && storeRecord.construction === "attempted") main = this;
+        if (!history && historyRecord.captured && historyRecord.initialization === "initializing") history = this;
+        return nativeExec.call(this, sql);
+      });
+      try { store = new MessageStore(env.db, nullLogger); ownedStores.add(store); }
+      finally { capture.mockRestore(); }
+      expect(main).toBeInstanceOf(DatabaseSync); expect(history).toBeInstanceOf(DatabaseSync); expect(main).not.toBe(history);
+      expect(messageStoreHandleObservation(history!)).toMatchObject({ captured: true, history: true, construction: "returned", ownerBound: false });
+      main!.prepare("INSERT INTO conversations(id,agent,session,project,kind) VALUES(?,?,?,?,?)")
+        .run(conversation, "other", "owned-rpc-session", "owned-rpc-project", "transcript");
+      const insert = main!.prepare("INSERT INTO conversation_records(id,source,generation,offset,conversation,at,raw,body,part) VALUES(?,?,?,?,?,?,?,?,?)");
+      for (let n = 0; n < raw.length; n++) insert.run(n + 1, "owned-rpc-source", 1, n * 32, conversation, n + 1, raw[n]!, `Retained RPC body ${n}`, n ? "owned-part" : null);
+      if (overlay) {
+        attachStoreCompatibility(main!, env.db, nullLogger, true);
+        main!.prepare("INSERT INTO store_compatibility.peer_names VALUES(?,?,?,?,?)")
+          .run("owned-rpc-overlay", "Exact retained RPC overlay registration", "owned-rpc-session", "other", 1);
+      }
+      if (current) {
+        // Actual production migration copies/verifies this isolated accepted
+        // history. No UPDATE of a ready flag or replacement HistoryIndex is used.
+        await migrateHistoryStore(env.db, history!);
+        expect(legacyReadNotice(history!)).toBeUndefined();
+      } else expect(legacyReadNotice(history!)).toMatchObject({ ready: false, readsFrom: "legacy" });
+      broker = new Broker(env.pipe, store, nullLogger, "owned-conversation-token");
+      await broker.listen(reservation);
+      // Let only the already accepted ordinary startup maintenance finish. No
+      // pending cursor/flag is cleared and no new timeout/budget is introduced.
+      await until(() => { const state = store!.lifecycleProducerObservation(); return !state.pendingMaintenance && !state.legacyArchivePending && !state.purgePending; });
+      client = await BridgeClient.connect(env.pipe, nullLogger);
+      clientClosed = new Promise<void>(resolve => client!.once("close", () => resolve()));
+      await client.request("auth", { protocol: PROTOCOL_VERSION, token: "owned-conversation-token" });
+      await action({ store, main: main!, history: history!, client });
+    } catch (error) { actionFailed = true; actionError = error; }
+    finally {
+      const cleanupErrors: unknown[] = [];
+      try { if (client) { client.close(); await clientClosed; } } catch (error) { cleanupErrors.push(error); }
+      // Ordinary owned fixture disposal only, never lifecycle final-close proof.
+      // The authenticated client never sends hello/owns an active parent route.
+      try { if (broker) { await broker.close(); ownedStores.delete(store!); } } catch (error) { cleanupErrors.push(error); }
+      try { await reservation?.close(); } catch (error) { cleanupErrors.push(error); }
+      if (priorIngest === undefined) delete process.env.AGENT_BRIDGE_HISTORY_INGEST;
+      else process.env.AGENT_BRIDGE_HISTORY_INGEST = priorIngest;
+      if (actionFailed && cleanupErrors.length) throw new AggregateError([actionError, ...cleanupErrors], "owned RPC assertion and cleanup failed");
+      if (actionFailed) throw actionError;
+      if (cleanupErrors.length) throw new AggregateError(cleanupErrors, "owned RPC cleanup failed");
+    }
+  }
+  function retainedRows(main: DatabaseSync, history: DatabaseSync) {
+    return [main, history].map(db => ({ conversations: db.prepare("SELECT * FROM conversations ORDER BY id").all(),
+      records: db.prepare("SELECT * FROM conversation_records ORDER BY id").all() }));
+  }
+  function retainedFiles(store: MessageStore) { return [readFileSync(env.db), readFileSync(store.historyFile)]; }
+  it("real RPC returns the full current populated/raw/base64/page/next/missing DTO without a native borrower", async () => {
+    await rpcFixture(true, false, async ({ store, main, history, client }) => {
+      const rows = retainedRows(main, history), bytes = retainedFiles(store), expected = readConversation(history, input);
+      expect(expected.records).toHaveLength(1); expect(expected.next).toBe(1);
+      expect(expected.records[0]).toMatchObject({ text: raw[0]!.toString("utf8"), raw: raw[0]!.toString("base64"), part: null });
+      const page = await client.request("getConversation", input); expect(page).toEqual(expected); expect(page.migration).toBeUndefined();
+      const next = await client.request("getConversation", { ...input, after: 1 });
+      expect(next).toEqual(readConversation(history, { ...input, after: 1 }));
+      expect(next.records[0]).toMatchObject({ text: raw[1]!.toString("utf8"), raw: raw[1]!.toString("base64"), part: "owned-part" });
+      expect(next.next).toBeNull();
+      expect(await client.request("getConversation", { id: "owned-rpc-absent" })).toEqual(readConversation(history, { id: "owned-rpc-absent" }));
+      expect(store.history.lifecycleConsumerObservation()).toMatchObject({ rawBorrower: false, ownerBound: false, settled: false, ownershipReleased: false });
+      expect(retainedRows(main, history)).toEqual(rows); expect(retainedFiles(store)).toEqual(bytes);
+    });
+  });
+  it("real RPC preserves legacy fallback/migration and actual attached retained-overlay rows and bytes", async () => {
+    await rpcFixture(false, true, async ({ store, main, history, client }) => {
+      const rows = retainedRows(main, history), bytes = retainedFiles(store), migration = legacyReadNotice(history);
+      const overlayPath = join(env.home, "store-compatibility.db"), overlayBytes = readFileSync(overlayPath);
+      const overlayRows = main.prepare("SELECT * FROM store_compatibility.peer_names ORDER BY identity").all();
+      expect(migration).toMatchObject({ ready: false, readsFrom: "legacy" });
+      for (const query of [input, { ...input, after: 1 }, { id: "owned-rpc-absent" }])
+        expect(await client.request("getConversation", query)).toEqual({ ...readConversation(main, query), migration });
+      expect(store.history.lifecycleConsumerObservation()).toMatchObject({ rawBorrower: false, ownerBound: false, settled: false, ownershipReleased: false });
+      expect(main.prepare("SELECT * FROM store_compatibility.peer_names ORDER BY identity").all()).toEqual(overlayRows);
+      expect(readFileSync(overlayPath)).toEqual(overlayBytes); expect(retainedRows(main, history)).toEqual(rows); expect(retainedFiles(store)).toEqual(bytes);
+    });
+  });
+  it("real invalid-schema RPC keeps the exact parser failure without borrowing first or writing accepted history", async () => {
+    await rpcFixture(false, false, async ({ store, main, history, client }) => {
+      const rows = retainedRows(main, history), bytes = retainedFiles(store);
+      for (const invalid of [{ id: 7 }, { id: conversation, limit: 0 }, { id: conversation, extra: true }]) {
+        const parsed = conversationPageSchema.safeParse(invalid); expect(parsed.success).toBe(false);
+        if (parsed.success) throw new Error("fixture invalid schema unexpectedly accepted");
+        const exec = vi.spyOn(DatabaseSync.prototype, "exec"), prepare = vi.spyOn(DatabaseSync.prototype, "prepare"), adapter = vi.spyOn(store.history, "conversationPage");
+        try {
+          // Deliberately malformed wire arguments only. The new handler parses
+          // before the adapter; the former getter-before-parse ordering is gone.
+          await expect(client.request("getConversation", invalid as unknown as ConversationRequest)).rejects
+            .toMatchObject({ code: "internal", message: parsed.error.message });
+          expect(adapter).not.toHaveBeenCalled();
+          expect(exec.mock.contexts.some(db => db === main || db === history)).toBe(false);
+          expect(prepare.mock.contexts.some(db => db === main || db === history)).toBe(false);
+        } finally { exec.mockRestore(); prepare.mockRestore(); adapter.mockRestore(); }
+      }
+      expect(store.history.lifecycleConsumerObservation()).toMatchObject({ rawBorrower: false, ownerBound: false, settled: false });
+      expect(retainedRows(main, history)).toEqual(rows); expect(retainedFiles(store)).toEqual(bytes);
+    });
+  });
+  it("actual reversible index seal refuses real RPC before page SQL and retains resources until ordinary prefinal resume", async () => {
+    await rpcFixture(false, false, async ({ store, main, history, client }) => {
+      const migration = legacyReadNotice(history), expected = { ...readConversation(main, input), migration };
+      expect(await client.request("getConversation", input)).toEqual(expected);
+      const rows = retainedRows(main, history), bytes = retainedFiles(store);
+      expect(store.history.sealLifecycleConsumer()).toMatchObject({ sealed: true, pendingOperations: 0, settled: false, ownershipReleased: false });
+      const exec = vi.spyOn(DatabaseSync.prototype, "exec"), prepare = vi.spyOn(DatabaseSync.prototype, "prepare");
+      try {
+        await expect(client.request("getConversation", input)).rejects.toMatchObject({ code: "internal", message: "history consumer is quiesced" });
+        expect(exec.mock.contexts.some(db => db === main || db === history)).toBe(false);
+        expect(prepare.mock.contexts.some(db => db === main || db === history)).toBe(false);
+        expect(retainedRows(main, history)).toEqual(rows); expect(retainedFiles(store)).toEqual(bytes);
+        expect(messageStoreHandleObservation(main)).toMatchObject({ close: "not_attempted", ownerBound: false, settled: false, ownershipReleased: false });
+        expect(messageStoreHandleObservation(history)).toMatchObject({ close: "not_attempted", history: true, ownerBound: false, settled: false, ownershipReleased: false });
+      } finally { exec.mockRestore(); prepare.mockRestore(); store.history.resumeLifecycleConsumer(); }
+      expect(await client.request("getConversation", input)).toEqual(expected);
+      expect(store.history.lifecycleConsumerObservation()).toMatchObject({ sealed: false, rawBorrower: false, ownerBound: false, settled: false, ownershipReleased: false });
+      expect(retainedRows(main, history)).toEqual(rows); expect(retainedFiles(store)).toEqual(bytes);
+    });
   });
 });
 
