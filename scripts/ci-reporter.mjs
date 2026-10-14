@@ -34,10 +34,21 @@ export function censusMetadata() {
 }
 
 export function moduleCensus(module) {
+  // Suite hook errors do not necessarily appear on the module or on a case.
+  // Retain deterministic scope/count only, never arbitrary hook message/stack.
+  const suiteErrors = [];
+  function visit(entity) {
+    const count = entity.errors().length;
+    if (count > 0) suiteErrors.push({ id: entity.id, count });
+    for (const suite of entity.children.suites()) visit(suite);
+  }
+  for (const suite of module.children.suites()) visit(suite);
+  const moduleErrors = module.errors().length;
   return {
     file: relative(realpathSync.native(process.cwd()), realpathSync.native(module.moduleId)).replaceAll("\\", "/"),
     project: module.project.name, id: module.id,
-    state: module.state(), diagnostic: module.diagnostic(), errors: module.errors(),
+    state: module.state(), diagnostic: module.diagnostic(),
+    errors: moduleErrors > 0 ? [{ id: module.id, count: moduleErrors }] : [], suiteErrors,
     tests: [...module.children.allTests()].map(test => ({
       id: test.id, name: test.fullName, state: test.result().state,
       note: test.result().note, errors: test.result().errors, ...test.diagnostic(),

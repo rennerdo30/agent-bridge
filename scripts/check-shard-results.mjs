@@ -28,7 +28,8 @@ export function checkShardResults(root, shard, metadata) {
           `${lane}: shard union differs from unsharded files`);
         const allCases = unsharded.flatMap(file => file.tests.map(test => caseIdentity(file, test)));
         assert.equal(new Set(allCases).size, allCases.length, `${lane}: duplicate unsharded cases`);
-        assert(unsharded.every(file => file.errors.length === 0 && file.tests.every(test => ["pending", "skipped"].includes(test.state))),
+        assert(unsharded.every(file => file.errors.length === 0 && file.suiteErrors.length === 0 &&
+          file.tests.every(test => ["pending", "skipped"].includes(test.state))),
           `${lane}: invalid unsharded collection`);
         const expected = unsharded.filter(file => inventory.lanes[lane][shard - 1].includes(file.file));
         const census = read(`${lane}-census.json`);
@@ -47,6 +48,7 @@ export function checkShardResults(root, shard, metadata) {
         for (const file of results.files) {
           const baseline = expected.find(item => item.file === file.file);
           assert.equal(file.errors.length, 0, `${lane}: ${file.file}: module/hook error`);
+          assert.equal(file.suiteErrors.length, 0, `${lane}: ${file.file}: nested suite/hook error; execution unknown`);
           assert.deepEqual(file.tests.map(test => caseIdentity(file, test)).sort(),
             baseline.tests.map(test => caseIdentity(baseline, test)).sort(), `${lane}: ${file.file}: missing or repeated cases`);
           for (const test of file.tests) {

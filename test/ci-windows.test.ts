@@ -40,7 +40,7 @@ it.runIf(process.platform === "win32" && process.env.AGENT_BRIDGE_CI_WINDOWS ===
   expect(process.env.CI).toBe("true");
 });
 
-function coverageFixture() {
+function coverageFixture(fastFile = "test/fast.test.ts") {
   const root = mkdtempSync(join(tmpdir(), "ci-census-"));
   const metadata = {
     revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", windowsHide: true }).trim(),
@@ -50,11 +50,11 @@ function coverageFixture() {
     event: process.env.GITHUB_EVENT_NAME ?? null,
   };
   const unsharded = {
-    fast: [{ file: "test/fast.test.ts", project: "", id: "fast", errors: [], tests: [
+    fast: [{ file: fastFile, project: "", id: "fast", errors: [], suiteErrors: [], tests: [
       { id: "fast_0", name: "same name", state: "pending" },
       { id: "fast_1", name: "same name", state: "skipped" },
     ] }],
-    integration: [{ file: "test/integration.test.ts", project: "", id: "integration", errors: [], tests: [
+    integration: [{ file: "test/integration.test.ts", project: "", id: "integration", errors: [], suiteErrors: [], tests: [
       { id: "integration_0", name: "runs", state: "pending" },
     ] }],
   };
@@ -64,7 +64,7 @@ function coverageFixture() {
       return [identity, file.tests.map(test => [JSON.stringify([identity, test.id]), test.state])];
     })]))).digest("hex");
   const inventory = { count: 4, metadata, complete: true, unsharded, censusSha256, totalFiles: 2,
-    lanes: { fast: [["test/fast.test.ts"], [], [], []], integration: [["test/integration.test.ts"], [], [], []] } };
+    lanes: { fast: [[fastFile], [], [], []], integration: [["test/integration.test.ts"], [], [], []] } };
   const reports = {
     fast: { metadata, complete: true, unhandledErrors: [], files: structuredClone(unsharded.fast) },
     integration: { metadata, complete: true, unhandledErrors: [], files: structuredClone(unsharded.integration) },
@@ -106,6 +106,42 @@ it("matches a source-bound case ID while retaining PID-varying display names", (
   expect(proof.coverage).toBe("known");
   expect(proof.lanes.fast.collectionNames[0].tests[0].name).toBe("recovers identity for PID 9852");
   expect(proof.lanes.fast.files[0].tests[0].name).toBe("recovers identity for PID 2768");
+});
+
+it.each(["beforeAll", "afterAll", "aroundAll"])("retains nested %s hook failure as unknown coverage without exporting error text", hook => {
+  const fixture = coverageFixture("test/ci-windows.test.ts");
+  const reporter = new URL("../scripts/ci-reporter.mjs", import.meta.url).href;
+  const moduleId = fileURLToPath(import.meta.url);
+  const input = `
+import { moduleCensus } from ${JSON.stringify(reporter)};
+const hookError = { hook: ${JSON.stringify(hook)}, message: 'do-not-export-hook-secret', stack: 'do-not-export-hook-stack' };
+const leaf = { id: 'fast_suite_inner', errors: () => [hookError], children: { suites: () => [] } };
+const parent = { id: 'fast_suite_outer', errors: () => [], children: { suites: () => [leaf] } };
+const grandparent = { id: 'fast_suite_root', errors: () => [], children: { suites: () => [parent] } };
+const subtree = ${JSON.stringify(hook)} === 'beforeAll' ? leaf : ${JSON.stringify(hook)} === 'afterAll' ? parent : grandparent;
+const tests = [
+  { id: 'fast_0', fullName: 'same name', result: () => ({ state: 'failed', errors: [{ message: 'original test failure' }] }), diagnostic: () => undefined },
+  { id: 'fast_1', fullName: 'same name', result: () => ({ state: 'skipped' }), diagnostic: () => undefined },
+];
+console.log(JSON.stringify(moduleCensus({ moduleId: ${JSON.stringify(moduleId)}, project: { name: '' }, id: 'fast',
+  state: () => 'failed', diagnostic: () => undefined, errors: () => [],
+  children: { suites: () => [subtree], allTests: () => tests } })));
+`;
+  const output = execFileSync(process.execPath, ["--input-type=module", "-"], { input, encoding: "utf8", windowsHide: true });
+  const captured = JSON.parse(output);
+  expect(captured.errors).toEqual([]);
+  expect(captured.suiteErrors).toEqual([{ id: "fast_suite_inner", count: 1 }]);
+  expect(output).not.toContain("do-not-export-hook-secret");
+  expect(output).not.toContain("do-not-export-hook-stack");
+  expect(captured.tests[0].errors[0].message).toBe("original test failure");
+  // The case membership is exact even though a nested suite hook failed.
+  fixture.reports.fast.files[0] = captured;
+  fixture.save();
+  expect(() => fixture.check()).toThrow();
+  const proof = JSON.parse(readFileSync(join(fixture.root, "shard-coverage.json"), "utf8"));
+  expect(proof.coverage).toBe("unknown");
+  expect(proof.problems.join("\n")).toContain("nested suite/hook error");
+  expect(proof.lanes.fast.files[0].tests[0].errors[0].message).toBe("original test failure");
 });
 
 it.each(["duplicate", "duplicate-id-different-name", "changed-id", "omitted", "pending", "skip-changed", "invalid-disposition",

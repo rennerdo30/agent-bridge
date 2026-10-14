@@ -66,7 +66,8 @@ for (const lane of ["fast", "integration"]) {
       inventory.collectionErrors = result.unhandledErrors;
       save();
       assert.equal(result.unhandledErrors.length, 0, `${lane}: collection errors; coverage unknown`);
-      assert(inventory.unsharded[lane].every(file => file.errors.length === 0), `${lane}: module collection failed`);
+      assert(inventory.unsharded[lane].every(file => file.errors.length === 0 && file.suiteErrors.length === 0),
+        `${lane}: module/nested suite collection failed`);
       assert(inventory.unsharded[lane].every(file => file.tests.every(test => ["pending", "skipped"].includes(test.state))),
         `${lane}: collect-only unexpectedly executed a case`);
       assert.deepEqual(inventory.unsharded[lane].map(file => file.file).sort(), normalize(specs), `${lane}: incomplete collection`);
