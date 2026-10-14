@@ -44,13 +44,19 @@ export async function lookup(pid: number): Promise<ProcInfo | null> {
 
 const CHANNEL_FLAGS = ["--channels", "--dangerously-load-development-channels"];
 
-/** The native executable, never a hook argument merely mentioning agy. */
+/** The native executable, never a hook argument merely mentioning agy or antigravity. */
+export function cmdlineIsAntigravity(cmdline: string): boolean {
+  if (/^(?:"[^"\r\n]*[\\/]|[^\s"\r\n]*[\\/])?(?:agy|antigravity)(?:\.exe)?(?:"|\s|$)/i.test(cmdline)) return true;
+  return /^(?:"[^"\r\n]*[\\/]|[^\s"\r\n]*[\\/])?language_server[^\s"\\/*]*(?:\.exe)?(?:"|\s|$)/i.test(cmdline) &&
+    /(?:--app_data_dir|--override_ide_name)(?:=|\s+)["']?antigravity(?:-cli|-ide)?(?:["']|\s|$)/i.test(cmdline);
+}
+
 export async function antigravityAncestor(start = process.ppid): Promise<number | null> {
   let pid = start;
   for (let i = 0; i < 6 && pid > 1; i++) {
     const info = await lookup(pid);
     if (!info) return null;
-    if (/^(?:"[^"\r\n]*[\\/]|[^\s"\r\n]*[\\/])?agy(?:\.exe)?(?:"|\s|$)/i.test(info.cmdline)) return pid;
+    if (cmdlineIsAntigravity(info.cmdline)) return pid;
     pid = info.ppid;
   }
   return null;

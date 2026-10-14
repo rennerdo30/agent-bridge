@@ -83,7 +83,13 @@ export function installAntigravity(source: string, target = antigravityPluginDir
     Stop: [{ type: "command", command: command("Stop"), timeout: 30 }],
   } }, null, 2) + "\n");
   write("mcp_config.json", JSON.stringify(config, null, 2) + "\n");
-  if (target === antigravityPluginDir()) grantAntigravityBridgeMcp();
+  if (target === antigravityPluginDir()) {
+    grantAntigravityBridgeMcp();
+    for (const dir of ["antigravity", "antigravity-ide"]) {
+      const home = join(homedir(), ".gemini", dir);
+      if (existsSync(home)) grantAntigravityBridgeMcp(join(home, "settings.json"));
+    }
+  }
   return result;
 }
 

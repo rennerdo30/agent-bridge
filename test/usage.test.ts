@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeOpencodeCosts, formatCodexLimits, parseClaudeUsage, parseOpencodeModelCosts, parseOpencodeStats } from "../src/core/usage.js";
+import { describeOpencodeCosts, formatCodexLimits, parseAntigravityUsage, parseClaudeUsage, parseOpencodeModelCosts, parseOpencodeStats, supportsAntigravityUsage } from "../src/core/usage.js";
 
 describe("usage limits", () => {
   it("formats Codex rate limits with windows and the highest usage", () => {
@@ -111,4 +111,53 @@ describe("usage limits", () => {
     expect(lines[0]).toBe("Model anthropic/claude-sonnet-5 costs $3 input / $15 output per million tokens.");
     expect(lines[1]).toContain("opencode/muse-spark-1.3-free");
   });
+
+  it("parses standalone Antigravity usage, quota, and credits JSONL output", () => {
+    expect(supportsAntigravityUsage("Antigravity CLI version 1.1.10")).toBe(false);
+    expect(supportsAntigravityUsage("Antigravity CLI version 1.1.11")).toBe(true);
+    expect(supportsAntigravityUsage("1.3.5 (f1ff571a79d7b6b5bd3be1fa9dd9c3ca4ab6fb48)")).toBe(true);
+    const json = JSON.stringify({
+      type: "result",
+      status: "SUCCESS",
+      num_turns: 0,
+      conversation_id: "",
+      command: {
+        name: "usage",
+        data: {
+          groups: [
+            {
+              name: "Claude / GPT-OSS",
+              buckets: [
+                { window: "5h", remaining_fraction: 0.8, reset_time: "2026-10-14T12:00:00Z" },
+                { window: "weekly", disabled: true },
+              ],
+            },
+            {
+              name: "Gemini 3.1 Pro",
+              buckets: [
+                { window: "5h", remaining_fraction: 1, reset_time: "2026-10-14T15:00:00Z" },
+              ],
+            },
+          ],
+          credits: { balance: 0, unlimited: false },
+        },
+      },
+    });
+    const parsed = parseAntigravityUsage(json);
+    expect(parsed.agent).toBe("antigravity");
+    expect(parsed.maxUsedPercent).toBe(20);
+    expect(parsed.credits).toBeNull();
+    expect(parsed.limits).toEqual([
+      { name: "Claude / GPT-OSS: 5-hour window", usedPercent: 20, resets: expect.any(String) },
+      { name: "Gemini 3.1 Pro: 5-hour window", usedPercent: 0, resets: expect.any(String) },
+    ]);
+    expect(parsed.lines[0]).toContain("Claude / GPT-OSS: 5-hour window 20% used");
+    expect(parsed.lines[0]).toContain("weekly disabled");
+    expect(parsed.lines.at(-1)).toBe("Credits: 0 available (plan quota remains usable)");
+    const turn = parseAntigravityUsage(JSON.stringify({ type: "result", status: "SUCCESS", num_turns: 1, conversation_id: "conv-1", command: { name: "usage", data: {} } }));
+    expect(turn.maxUsedPercent).toBeNull();
+    expect(turn.lines[0]).toContain("conversation turn");
+  });
 });
+
+

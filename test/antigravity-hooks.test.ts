@@ -62,15 +62,22 @@ describe("Antigravity native hook routing", () => {
     try {
       await hooks.start();
       const reg = JSON.parse(readFileSync(join(env.home, "antigravity-hooks", "12345.json"), "utf8"));
-      const call = (event: string, id = "parent", secret = reg.secret) => fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ event, input: { conversationId: id, workspacePaths: [env.home] } }) });
+      const call = (event: string, id = "parent", secret = reg.secret, extra: Record<string, unknown> = {}) => fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ event, input: { conversationId: id, workspacePaths: [env.home], ...extra } }) });
       expect((await call("Stop", "parent", "wrong")).status).toBe(403);
       vi.mocked(buildHookResponse).mockResolvedValueOnce({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "new mail" } });
       expect(await (await call("PreInvocation")).json()).toEqual({ injectSteps: [{ ephemeralMessage: "new mail" }] });
-      expect(buildHookResponse).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sessionId: "parent", cwd: env.home }));
+      expect(buildHookResponse).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sessionId: "parent", cwd: env.home, stopHookActive: false }));
       vi.mocked(buildHookResponse).mockResolvedValueOnce({ decision: "block", reason: "result arrived" });
-      expect(await (await call("Stop")).json()).toEqual({ decision: "continue", reason: "result arrived" });
+      expect(await (await call("Stop", "parent", reg.secret, { executionNum: 1, terminationReason: "NO_TOOL_CALL" })).json()).toEqual({ decision: "continue", reason: "result arrived" });
       expect(await (await call("Stop", "child")).json()).toEqual({});
       expect(buildHookResponse).toHaveBeenCalledTimes(2);
+      // Repeated Stop at the same executionNum or with a cap terminationReason maps to StopFailure without continuing.
+      vi.mocked(buildHookResponse).mockResolvedValueOnce({});
+      expect(await (await call("Stop", "parent", reg.secret, { executionNum: 1, terminationReason: "NO_TOOL_CALL" })).json()).toEqual({});
+      expect(buildHookResponse).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ event: "StopFailure" }));
+      vi.mocked(buildHookResponse).mockResolvedValueOnce({});
+      expect(await (await call("Stop", "parent", reg.secret, { executionNum: 2, terminationReason: "MAX_FORCED_INVOCATIONS" })).json()).toEqual({});
+      expect(buildHookResponse).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ event: "StopFailure" }));
       node.emit("replaced"); expect((await call("Stop")).status).toBe(403);
       writeFileSync(join(env.home, "antigravity-hooks", "12345.json"), '{"port":1,"secret":"replacement"}');
       node.emit("reclaimed"); vi.mocked(buildHookResponse).mockResolvedValue({});

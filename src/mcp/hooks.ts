@@ -59,8 +59,34 @@ export function discardFinishedNotes(ctx: ServerContext): void {
   node.markRead(obsolete.map((m) => m.id));
 }
 
+const antigravityStopPending = new WeakMap<ServerContext, Set<string>>();
+
+function holdOrMarkRead(ctx: ServerContext, ids: string[], hold: boolean): void {
+  if (!ids.length) return;
+  if (hold) {
+    let pending = antigravityStopPending.get(ctx);
+    if (!pending) { pending = new Set(); antigravityStopPending.set(ctx, pending); }
+    for (const id of ids) pending.add(id);
+    return;
+  }
+  ctx.node?.markRead(ids);
+}
+
+/** Confirm that an Antigravity Stop continuation started a model step or tool call. */
+export function confirmAntigravityStopDelivery(ctx: ServerContext): void {
+  const pending = antigravityStopPending.get(ctx);
+  if (!pending?.size) return;
+  antigravityStopPending.delete(ctx);
+  ctx.node?.markRead([...pending]);
+}
+
+/** Release unconfirmed Antigravity Stop mail so the next turn or inbox call still sees it unread. */
+export function releaseAntigravityStopDelivery(ctx: ServerContext): void {
+  antigravityStopPending.delete(ctx);
+}
+
 /** Messages eligible to be injected now. `wakeOnly` limits to those allowed to trigger work (below the hop limit). */
-function take(ctx: ServerContext, wakeOnly: boolean, notesOnly = false): BridgeMessage[] {
+function take(ctx: ServerContext, wakeOnly: boolean, notesOnly = false, hold = false): BridgeMessage[] {
   const node = ctx.node!;
   discardFinishedNotes(ctx);
   const msgs = node
@@ -72,7 +98,7 @@ function take(ctx: ServerContext, wakeOnly: boolean, notesOnly = false): BridgeM
     // Ending a turn: a running subagent's status note does not keep it going; it comes with the next prompt.
     .filter((m) => !wakeOnly || (m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m)))
     .slice(0, HOOK_MAX_MESSAGES);
-  node.markRead(msgs.map((m) => m.id));
+  holdOrMarkRead(ctx, msgs.map((m) => m.id), hold);
   return msgs;
 }
 
@@ -205,7 +231,11 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
   await withinHook(node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: (err as Error).message })), input.signal!);
   if (!current()) return {};
   // The host discards StopFailure output. Never read/confirm mail that it cannot deliver.
-  if (input.event === "StopFailure") { finishHookTurn(ctx, input); return {}; }
+  if (input.event === "StopFailure") { releaseAntigravityStopDelivery(ctx); finishHookTurn(ctx, input); return {}; }
+  if (ctx.agent === "antigravity") {
+    if (input.event === "PostToolUse" || (input.event === "UserPromptSubmit" && input.stopHookActive) || (input.event === "Stop" && input.stopHookActive)) confirmAntigravityStopDelivery(ctx);
+    else releaseAntigravityStopDelivery(ctx);
+  }
   const stopJobsRunning = input.event === "Stop" ? ctx.jobs?.runningCount() ?? 0 : 0;
   const replay = node.refreshPending().catch((err) => ctx.log.warn("pending mail refresh failed; retained for retry", { err: String(err) }));
   // Stop can deliver buffered mail or arm a child-result notification immediately. A slow
@@ -224,6 +254,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
   if (input.event === "PostToolUse" || input.event === "UserPromptSubmit") ctx.wakeDelivery?.active();
   // With a live channel, Claude Code receives messages by push; hooks would only duplicate them.
   const channel = ctx.channelActive();
+  const holdStop = ctx.agent === "antigravity";
 
   switch (input.event) {
     case "SessionStart": {
@@ -271,18 +302,18 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
         // Finishing the last job ends runningCount before Stop. Its result still owns delivery.
         const awaited = node.unread().filter((m) => (node.isNotificationAwaited(m) ||
           (m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node, ctx.cfg, m)) ||
-          (ctx.agent === "opencode" && m.to !== BROADCAST && !(AGENT_KINDS as readonly string[]).includes(m.to) &&
+          ((ctx.agent === "opencode" || ctx.agent === "antigravity") && m.to !== BROADCAST && !(AGENT_KINDS as readonly string[]).includes(m.to) &&
             shouldWakeClaudeMessage(node, ctx.cfg, m))) && m.hop < ctx.cfg.maxHops &&
           !isQuietMessage(m) && !m.conversationId.endsWith(":note")).slice(0, HOOK_MAX_MESSAGES);
         if (awaited.length) {
-          node.markRead(awaited.map((m) => m.id));
+          holdOrMarkRead(ctx, awaited.map((m) => m.id), holdStop);
           ctx.activity?.("busy");
           return { decision: "block", reason: formatMessages(awaited, { replyHint: false }) };
         }
         finishHookTurn(ctx, input);
         return {};
       }
-      const msgs = take(ctx, true);
+      const msgs = take(ctx, true, false, holdStop);
       // Stop never long-polls. Notify-mode subscriptions and the existing wake path deliver later.
       if (!msgs.length && jobsRunning > 0) {
         const waits = new MessageWaitStore(ctx.home);

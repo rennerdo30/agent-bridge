@@ -15,6 +15,8 @@ export class AntigravityHooks {
   private server: Server | null = null;
   private retired = false;
   private conversationId: string | null = null;
+  private stopPending = false;
+  private lastStopExecutionNum: number | null = null;
   constructor(private readonly ctx: ServerContext) {}
   async start(): Promise<void> {
     // Infrastructure probes have neither a peer nor a parent inbox to deliver.
@@ -29,13 +31,47 @@ export class AntigravityHooks {
         let raw = "";
         for await (const part of req) { raw += part; if (raw.length > 256 * 1024) throw new Error("hook input too large"); }
         const body = object(JSON.parse(raw)), input = object(body.input);
-        if (!["PreInvocation", "Stop"].includes(body.event)) throw new Error("unknown event");
+        if (!["PreInvocation", "PreToolUse", "Stop"].includes(body.event)) throw new Error("unknown event");
         const id = typeof input.conversationId === "string" ? input.conversationId : null;
+        const cwd = Array.isArray(input.workspacePaths) && typeof input.workspacePaths[0] === "string" ? input.workspacePaths[0] : null;
         // Native children can share agy's OS process; they must never consume their parent's inbox.
         this.conversationId ??= this.ctx.node?.currentSessionId ?? id;
         if (id && this.conversationId && id !== this.conversationId) { res.writeHead(200, { "content-type": "application/json" }).end("{}"); return; }
-        const output = await buildHookResponse(this.ctx, { event: body.event === "Stop" ? "Stop" : "UserPromptSubmit", sessionId: typeof input.conversationId === "string" ? input.conversationId : null, cwd: Array.isArray(input.workspacePaths) && typeof input.workspacePaths[0] === "string" ? input.workspacePaths[0] : null, stopHookActive: false });
+        if (body.event === "PreToolUse") {
+          this.stopPending = false;
+          this.lastStopExecutionNum = null;
+          await buildHookResponse(this.ctx, { event: "PostToolUse", sessionId: id, cwd, stopHookActive: true });
+          res.writeHead(200, { "content-type": "application/json" }).end("{}");
+          return;
+        }
+        if (body.event === "PreInvocation") {
+          const continued = this.stopPending && typeof input.invocationNum === "number" && input.invocationNum > 1;
+          this.stopPending = false;
+          this.lastStopExecutionNum = null;
+          const output = await buildHookResponse(this.ctx, { event: "UserPromptSubmit", sessionId: id, cwd, stopHookActive: continued });
+          const text = "reason" in output ? String(output.reason) : "hookSpecificOutput" in output ? output.hookSpecificOutput.additionalContext : "";
+          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(antigravityHookOutput(body.event, text)));
+          return;
+        }
+        const reason = typeof input.terminationReason === "string" ? input.terminationReason.trim() : "";
+        const hasError = typeof input.error === "string" && input.error.trim().length > 0;
+        const executionNum = typeof input.executionNum === "number" && Number.isFinite(input.executionNum) ? input.executionNum : null;
+        const capReached = this.stopPending && executionNum !== null && this.lastStopExecutionNum !== null && executionNum <= this.lastStopExecutionNum;
+        const canContinue = !hasError && (!reason || ["model_stop", "NO_TOOL_CALL", "STOP"].includes(reason)) && !capReached;
+        const continued = this.stopPending && executionNum !== null && this.lastStopExecutionNum !== null && executionNum > this.lastStopExecutionNum;
+        this.stopPending = false;
+        this.lastStopExecutionNum = null;
+        if (!canContinue) {
+          await buildHookResponse(this.ctx, { event: "StopFailure", sessionId: id, cwd, stopHookActive: false });
+          res.writeHead(200, { "content-type": "application/json" }).end("{}");
+          return;
+        }
+        const output = await buildHookResponse(this.ctx, { event: "Stop", sessionId: id, cwd, stopHookActive: continued });
         const text = "reason" in output ? String(output.reason) : "hookSpecificOutput" in output ? output.hookSpecificOutput.additionalContext : "";
+        if (text) {
+          this.stopPending = true;
+          this.lastStopExecutionNum = executionNum;
+        }
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(antigravityHookOutput(body.event, text)));
       })().catch(() => { if (!res.writableEnded) res.writeHead(500).end("{}"); });
     });
@@ -46,13 +82,15 @@ export class AntigravityHooks {
       writeFileSync(join(this.ctx.home, "antigravity-hooks", `${pid}.json`), JSON.stringify({ port: (this.server.address() as AddressInfo).port, secret, pid: process.pid }), { mode: 0o600 });
     };
     register();
-    this.ctx.node?.on("replaced", () => { this.retired = true; });
+    this.ctx.node?.on("replaced", () => { this.retired = true; this.stopPending = false; this.lastStopExecutionNum = null; });
     this.ctx.node?.on("reclaimed", () => { this.retired = false; register(); });
   }
   async stop(): Promise<void> {
     const server = this.server;
     this.server = null;
     this.retired = true;
+    this.stopPending = false;
+    this.lastStopExecutionNum = null;
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 }

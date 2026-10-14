@@ -14,6 +14,8 @@ import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { DELEGATION_TARGETS, supportsAsk } from "../src/mcp/targets.js";
 import { isAutoApproved, isHandoffToolCall } from "../src/core/tool-allow.js";
 import { delegationTargets } from "../src/mcp/server.js";
+import { cmdlineIsAntigravity } from "../src/core/procinfo.js";
+import { remoteSpawnArgsSchema, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY } from "../src/network/remote-job-protocol.js";
 
 const mocks = vi.hoisted(() => ({ run: vi.fn(), ask: vi.fn() }));
 vi.mock("../src/core/delegate.js", async (original) => ({ ...await original<typeof import("../src/core/delegate.js")>(), runProcess: mocks.run }));
@@ -126,9 +128,20 @@ describe("Antigravity hooks", () => {
     expect(await antigravityPermission(input, "ask")).toEqual({ decision: "allow", permissionOverrides: ["command(npm test)"] });
     expect(await antigravityPermission(input, "ask")).toEqual({ decision: "deny", reason: "owner denied" });
     expect(mocks.ask).toHaveBeenCalledWith(expect.objectContaining({ agent: "antigravity", tool: "run_command", cwd: "/project" }));
-    expect(await antigravityPermission(input, "edit")).toEqual({});
+    expect(await antigravityPermission(input, undefined)).toEqual({ decision: "ask" });
+    expect(await antigravityPermission(input, "edit", false)).toEqual({ decision: "ask" });
     expect(antigravityHookOutput("PreInvocation", "mail")).toEqual({ injectSteps: [{ ephemeralMessage: "mail" }] });
     expect(antigravityHookOutput("Stop", "mail")).toEqual({ decision: "continue", reason: "mail" });
+  });
+  it("relays non-workspace or shell actions in edit mode with auto_approve while auto-approving workspace edits", async () => {
+    const root = temp();
+    mocks.ask.mockResolvedValueOnce({ allow: true }).mockResolvedValueOnce({ allow: false, message: "denied command" });
+    expect(await antigravityPermission({ toolCall: { name: "view_file", args: { AbsolutePath: join(root, "a.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "auto_approve" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(root, "src", "a.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "auto_approve" });
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(root, ".git", "config") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "auto_approve", permissionOverrides: [`write_file(${join(root, ".git", "config")})`] });
+    expect(await antigravityPermission({ toolCall: { name: "run_command", args: { CommandLine: "npm test" } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied command" });
+    expect(mocks.ask).toHaveBeenCalledTimes(2);
   });
   it("normalizes MCP approvals for shared allow rules and declines handoff writes", async () => {
     mocks.ask.mockResolvedValue({ allow: true });
@@ -189,4 +202,27 @@ describe("Antigravity retained transcripts and installation", () => {
     expect(uninstallAntigravity(target).skipped).toEqual([target]);
     expect(readFileSync(join(target, "owner.txt"), "utf8")).toBe("safe");
   });
+  it("recognizes Antigravity Desktop language_server command lines, alternate brain dirs, and remote spawn options", () => {
+    expect(cmdlineIsAntigravity("language_server_windows_x64.exe --app_data_dir antigravity --enable_lsp")).toBe(true);
+    expect(cmdlineIsAntigravity("language_server_macos_arm --override_ide_name antigravity-ide")).toBe(true);
+    expect(cmdlineIsAntigravity("node server.mjs")).toBe(false);
+    const geminiRoot = join(temp(), ".gemini");
+    const cliHome = join(geminiRoot, "antigravity-cli");
+    const appHome = join(geminiRoot, "antigravity");
+    const file = join(appHome, "brain", "desktop-conv", ".system_generated", "logs", "transcript.jsonl");
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify({ type: "USER_INPUT", content: "from desktop", step_index: 0 }) + "\n");
+    const paths = { claude: geminiRoot, codex: geminiRoot, opencode: geminiRoot, antigravity: cliHome };
+    const page = readTranscript({ agent: "antigravity", cwd: geminiRoot, sessionId: "desktop-conv" }, "0", undefined, paths);
+    expect(page?.items).toEqual([expect.objectContaining({ kind: "user", text: "from desktop" })]);
+    expect(REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY).toBe("remote-jobs-antigravity-options-v1");
+    expect(remoteSpawnArgsSchema.parse({ title: "t", prompt: "run", cwd: "/tmp", terminal_sandbox: false, bypass_permissions: true })).toMatchObject({
+      title: "t",
+      prompt: "run",
+      cwd: "/tmp",
+      terminal_sandbox: false,
+      bypass_permissions: true,
+    });
+  });
 });
+

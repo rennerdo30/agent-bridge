@@ -49,7 +49,7 @@ export async function delegateToAntigravity(req: DelegateRequest & { bin: string
     try { return await Promise.race([req.approve!(request), aborted]); }
     finally { approvals.signal.removeEventListener("abort", stop); }
   };
-  const relay = req.access === "ask" && req.approve ? new PermissionRelay(approve, req.log) : null;
+  const relay = (req.access === "ask" || (req.access === "edit" && req.autoApprove === undefined && req.canApprove !== false)) && req.approve ? new PermissionRelay(approve, req.log) : null;
   try {
     await relay?.start();
     const res = await runProcess({ bin: req.bin, args, cwd: req.cwd, stdin: JSON.stringify({ event: "user", message: { content: req.prompt } }) + "\n", timeoutMs: req.timeoutSec * 1000, signal: req.signal, env: childEnv({ ...req.extraEnv, ...relay?.childEnv(), [ANTIGRAVITY_ACCESS_ENV]: req.access }), log: req.log,
