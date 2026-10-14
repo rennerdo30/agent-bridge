@@ -42,41 +42,41 @@ import {
   safeParseAsync,
   serializeMessage,
   toJsonSchemaCompat
-} from "./chunks/chunk-H75XJZ7U.mjs";
+} from "./chunks/chunk-LQ3P2ZKF.mjs";
 import {
   RewakeEndpoint,
   WAKE_HEADER,
   shouldWakeClaudeMessage
-} from "./chunks/chunk-R342P4MW.mjs";
+} from "./chunks/chunk-OVWCDNNU.mjs";
 import {
   guardServerErrors
 } from "./chunks/chunk-Q4TGWKCP.mjs";
 import {
   MAX_STREAM_ENTRIES
-} from "./chunks/chunk-63LK7MZ6.mjs";
+} from "./chunks/chunk-QIFOQBYV.mjs";
 import {
   isBridgeWorktree,
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-KZU6N4XJ.mjs";
+} from "./chunks/chunk-T5FU43EJ.mjs";
 import {
   codexAppServerCall,
   describeModels,
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-T5XVNXIB.mjs";
+} from "./chunks/chunk-UH4DBFBO.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-D27MKF4Q.mjs";
+} from "./chunks/chunk-LQSNLAZX.mjs";
 import {
   readWorktreeState
-} from "./chunks/chunk-K75RSJAB.mjs";
-import "./chunks/chunk-SNW5OVKT.mjs";
+} from "./chunks/chunk-RNPUM4IO.mjs";
+import "./chunks/chunk-2DCATTQB.mjs";
 import {
   openBrowser
 } from "./chunks/chunk-LWVK3CB7.mjs";
@@ -86,7 +86,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-X7YO4BAM.mjs";
+} from "./chunks/chunk-RYDC2DBO.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -97,37 +97,37 @@ import {
   formatProjectRoute,
   formatReplyRestrictions,
   formatVersionSkew
-} from "./chunks/chunk-L532E7LB.mjs";
+} from "./chunks/chunk-V6CGH7KV.mjs";
 import {
   formatHealth,
   probeBrokerHealth
-} from "./chunks/chunk-KI75P4EZ.mjs";
-import "./chunks/chunk-KYNOWJ7J.mjs";
+} from "./chunks/chunk-GW53Z4WX.mjs";
+import "./chunks/chunk-ADQUZKU5.mjs";
 import "./chunks/chunk-RQUYBZWF.mjs";
 import {
   REMOTE_JOB_POLL_MS,
   remoteSpawnArgsSchema
-} from "./chunks/chunk-2WMKH6ET.mjs";
+} from "./chunks/chunk-Q6XI6F3Q.mjs";
 import {
   conversationPageSchema
-} from "./chunks/chunk-6X5RM53J.mjs";
+} from "./chunks/chunk-2UMLJJQY.mjs";
 import {
   HISTORY_SEARCH_TOOL_DESCRIPTION,
   historySearchToolInput
-} from "./chunks/chunk-HL77AKKV.mjs";
+} from "./chunks/chunk-2FPS6L4N.mjs";
 import {
   MAX_HOLD_REASON_CHARS,
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-VEVZLUIE.mjs";
-import "./chunks/chunk-L4FJJHBQ.mjs";
-import "./chunks/chunk-JLBQW5ZM.mjs";
+} from "./chunks/chunk-LZFNDI2B.mjs";
+import "./chunks/chunk-LOOKH7PF.mjs";
+import "./chunks/chunk-WEE5ID6F.mjs";
 import {
   antigravityAncestor,
   antigravityHookOutput,
   inspectClaudeLaunch
-} from "./chunks/chunk-YGUGPEM4.mjs";
+} from "./chunks/chunk-KE2T7TTK.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   ACCESS_LEVELS,
@@ -155,13 +155,13 @@ import {
   resolveBinary,
   runProcess,
   verifiedGoneJobOwners
-} from "./chunks/chunk-6YY4CXED.mjs";
+} from "./chunks/chunk-AUV6LQDA.mjs";
 import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
   formatResourceSlots
-} from "./chunks/chunk-U5Y4NKJO.mjs";
+} from "./chunks/chunk-LYN4ISWN.mjs";
 import {
   bundleDirectory
 } from "./chunks/chunk-D5ZW6VFT.mjs";
@@ -169,7 +169,7 @@ import {
   resolveDbPath,
   resolveHome,
   resolvePipePath
-} from "./chunks/chunk-6QYUKHRG.mjs";
+} from "./chunks/chunk-DVAOPRWF.mjs";
 import "./chunks/chunk-JTZGNEMM.mjs";
 import {
   MAX_JOB_SEND_TARGETS,
@@ -180,7 +180,7 @@ import {
   loadOrCreateToken,
   tokensEqual
 } from "./chunks/chunk-V4WDBMEN.mjs";
-import "./chunks/chunk-HJNZCLEX.mjs";
+import "./chunks/chunk-V7UNUAVR.mjs";
 import {
   CLAUDE_PERMISSION_MODES,
   CODEX_APPROVALS_REVIEWERS,
@@ -192,7 +192,7 @@ import {
   parseAgentKind,
   saveConfigValue,
   watchConfig
-} from "./chunks/chunk-GLDOOU7N.mjs";
+} from "./chunks/chunk-HKQQT7BO.mjs";
 import {
   AGENT_KINDS,
   BROADCAST,
@@ -209,16 +209,16 @@ import {
   askOwnerSchema,
   decisionScopeSchema,
   formatDecisionSummary
-} from "./chunks/chunk-7B4JQYIA.mjs";
+} from "./chunks/chunk-XM7RU6XM.mjs";
 import {
   ZodOptional,
   canonicalProjectRoot,
   external_exports,
   isInternalBridgeProcess,
   isPluginCacheCwd
-} from "./chunks/chunk-EA6YAI7Y.mjs";
-import "./chunks/chunk-2EM5QMTJ.mjs";
-import "./chunks/chunk-I6JYRIAB.mjs";
+} from "./chunks/chunk-DZGAXL47.mjs";
+import "./chunks/chunk-7UMP3ZX3.mjs";
+import "./chunks/chunk-2G536Z7N.mjs";
 import {
   TRANSCRIPT_ID,
   directory,
@@ -234,8 +234,8 @@ import {
   isRecord,
   readJsonStore,
   writeJsonStore
-} from "./chunks/chunk-BQ7FXNML.mjs";
-import "./chunks/chunk-DWEB5DXC.mjs";
+} from "./chunks/chunk-SMS7ER7Z.mjs";
+import "./chunks/chunk-DL3HILYV.mjs";
 import {
   APP_NAME,
   APP_VERSION,
@@ -249,7 +249,7 @@ import {
   MAX_JOBS_LIMIT,
   MAX_JOB_TIMEOUT_SEC,
   MAX_WAIT_SEC
-} from "./chunks/chunk-EZXQJRQM.mjs";
+} from "./chunks/chunk-3JDCYGXE.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/mcp/server.ts
@@ -1976,11 +1976,34 @@ function discardFinishedNotes(ctx) {
   });
   node.markRead(obsolete.map((m) => m.id));
 }
-function take(ctx, wakeOnly, notesOnly = false) {
+var antigravityStopPending = /* @__PURE__ */ new WeakMap();
+function holdOrMarkRead(ctx, ids, hold) {
+  if (!ids.length) return;
+  if (hold) {
+    let pending = antigravityStopPending.get(ctx);
+    if (!pending) {
+      pending = /* @__PURE__ */ new Set();
+      antigravityStopPending.set(ctx, pending);
+    }
+    for (const id of ids) pending.add(id);
+    return;
+  }
+  ctx.node?.markRead(ids);
+}
+function confirmAntigravityStopDelivery(ctx) {
+  const pending = antigravityStopPending.get(ctx);
+  if (!pending?.size) return;
+  antigravityStopPending.delete(ctx);
+  ctx.node?.markRead([...pending]);
+}
+function releaseAntigravityStopDelivery(ctx) {
+  antigravityStopPending.delete(ctx);
+}
+function take(ctx, wakeOnly, notesOnly = false, hold = false) {
   const node = ctx.node;
   discardFinishedNotes(ctx);
   const msgs = node.unread().filter((m) => !isQuietMessage(m)).filter((m) => !notesOnly || ctx.jobs?.isNote(m) || !shouldWakeClaudeMessage(node, ctx.cfg, m)).filter((m) => !wakeOnly || m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m)).slice(0, HOOK_MAX_MESSAGES);
-  node.markRead(msgs.map((m) => m.id));
+  holdOrMarkRead(ctx, msgs.map((m) => m.id), hold);
   return msgs;
 }
 var parentReads = /* @__PURE__ */ new WeakMap();
@@ -2113,8 +2136,13 @@ async function runHook(ctx, input, current, busyAtIngress) {
   await withinHook(node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: err.message })), input.signal);
   if (!current()) return {};
   if (input.event === "StopFailure") {
+    releaseAntigravityStopDelivery(ctx);
     finishHookTurn(ctx, input);
     return {};
+  }
+  if (ctx.agent === "antigravity") {
+    if (input.event === "PostToolUse" || input.event === "UserPromptSubmit" && input.stopHookActive || input.event === "Stop" && input.stopHookActive) confirmAntigravityStopDelivery(ctx);
+    else releaseAntigravityStopDelivery(ctx);
   }
   const stopJobsRunning = input.event === "Stop" ? ctx.jobs?.runningCount() ?? 0 : 0;
   const replay = node.refreshPending().catch((err) => ctx.log.warn("pending mail refresh failed; retained for retry", { err: String(err) }));
@@ -2126,6 +2154,7 @@ async function runHook(ctx, input, current, busyAtIngress) {
   else ctx.wakeDelivery?.release();
   if (input.event === "PostToolUse" || input.event === "UserPromptSubmit") ctx.wakeDelivery?.active();
   const channel = ctx.channelActive();
+  const holdStop = ctx.agent === "antigravity";
   switch (input.event) {
     case "SessionStart": {
       ctx.activity?.("idle");
@@ -2166,16 +2195,16 @@ ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online rig
       const jobsRunning = stopJobsRunning;
       const inConversation = lingerRemaining > 0 || jobsRunning > 0;
       if (!node.autoWakeEnabled && !inConversation) {
-        const awaited = node.unread().filter((m) => (node.isNotificationAwaited(m) || m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node, ctx.cfg, m) || ctx.agent === "opencode" && m.to !== BROADCAST && !AGENT_KINDS.includes(m.to) && shouldWakeClaudeMessage(node, ctx.cfg, m)) && m.hop < ctx.cfg.maxHops && !isQuietMessage(m) && !m.conversationId.endsWith(":note")).slice(0, HOOK_MAX_MESSAGES);
+        const awaited = node.unread().filter((m) => (node.isNotificationAwaited(m) || m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node, ctx.cfg, m) || (ctx.agent === "opencode" || ctx.agent === "antigravity") && m.to !== BROADCAST && !AGENT_KINDS.includes(m.to) && shouldWakeClaudeMessage(node, ctx.cfg, m)) && m.hop < ctx.cfg.maxHops && !isQuietMessage(m) && !m.conversationId.endsWith(":note")).slice(0, HOOK_MAX_MESSAGES);
         if (awaited.length) {
-          node.markRead(awaited.map((m) => m.id));
+          holdOrMarkRead(ctx, awaited.map((m) => m.id), holdStop);
           ctx.activity?.("busy");
           return { decision: "block", reason: formatMessages(awaited, { replyHint: false }) };
         }
         finishHookTurn(ctx, input);
         return {};
       }
-      const msgs = take(ctx, true);
+      const msgs = take(ctx, true, false, holdStop);
       if (!msgs.length && jobsRunning > 0) {
         const waits = new MessageWaitStore(ctx.home);
         waits.save(node, {}, "notify");
@@ -2205,6 +2234,10 @@ var AntigravityHooks = class {
   server = null;
   retired = false;
   conversationId = null;
+  stopPending = false;
+  lastStopExecutionNum = null;
+  lastInvocationNum = null;
+  lastStopInvocationNum = null;
   async start() {
     if (!this.ctx.node && !this.ctx.parent) return;
     const pid = await antigravityAncestor();
@@ -2222,15 +2255,66 @@ var AntigravityHooks = class {
           if (raw.length > 256 * 1024) throw new Error("hook input too large");
         }
         const body = object(JSON.parse(raw)), input = object(body.input);
-        if (!["PreInvocation", "Stop"].includes(body.event)) throw new Error("unknown event");
+        if (!["PreInvocation", "PreToolUse", "Stop"].includes(body.event)) throw new Error("unknown event");
         const id = typeof input.conversationId === "string" ? input.conversationId : null;
+        const cwd = Array.isArray(input.workspacePaths) && typeof input.workspacePaths[0] === "string" ? input.workspacePaths[0] : null;
         this.conversationId ??= this.ctx.node?.currentSessionId ?? id;
         if (id && this.conversationId && id !== this.conversationId) {
           res.writeHead(200, { "content-type": "application/json" }).end("{}");
           return;
         }
-        const output = await buildHookResponse(this.ctx, { event: body.event === "Stop" ? "Stop" : "UserPromptSubmit", sessionId: typeof input.conversationId === "string" ? input.conversationId : null, cwd: Array.isArray(input.workspacePaths) && typeof input.workspacePaths[0] === "string" ? input.workspacePaths[0] : null, stopHookActive: false });
+        if (body.event === "PreToolUse") {
+          this.stopPending = false;
+          this.lastStopExecutionNum = null;
+          this.lastStopInvocationNum = null;
+          await (this.ctx.launchKnown ?? Promise.resolve());
+          if (!this.ctx.headless && this.ctx.node) {
+            if (id) {
+              await this.ctx.node.setSessionId(id).catch(() => {
+              });
+              this.ctx.onSessionId?.(id);
+            }
+            if (cwd && this.ctx.learnCwd) await this.ctx.learnCwd(cwd);
+            await this.ctx.node.ensureConnected().catch(() => {
+            });
+            confirmAntigravityStopDelivery(this.ctx);
+          }
+          res.writeHead(200, { "content-type": "application/json" }).end("{}");
+          return;
+        }
+        if (body.event === "PreInvocation") {
+          const invocationNum = typeof input.invocationNum === "number" && Number.isFinite(input.invocationNum) ? input.invocationNum : null;
+          const continued2 = this.stopPending && invocationNum !== null && (this.lastStopInvocationNum !== null ? invocationNum > this.lastStopInvocationNum : invocationNum > 0);
+          this.lastInvocationNum = invocationNum;
+          this.stopPending = false;
+          this.lastStopExecutionNum = null;
+          this.lastStopInvocationNum = null;
+          const output2 = await buildHookResponse(this.ctx, { event: "UserPromptSubmit", sessionId: id, cwd, stopHookActive: continued2 });
+          const text3 = "reason" in output2 ? String(output2.reason) : "hookSpecificOutput" in output2 ? output2.hookSpecificOutput.additionalContext : "";
+          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(antigravityHookOutput(body.event, text3)));
+          return;
+        }
+        const reason = typeof input.terminationReason === "string" ? input.terminationReason.trim() : "";
+        const hasError = typeof input.error === "string" && input.error.trim().length > 0;
+        const executionNum = typeof input.executionNum === "number" && Number.isFinite(input.executionNum) ? input.executionNum : null;
+        const capReached = this.stopPending && executionNum !== null && this.lastStopExecutionNum !== null && executionNum <= this.lastStopExecutionNum;
+        const canContinue = !hasError && (!reason || ["model_stop", "NO_TOOL_CALL", "STOP"].includes(reason)) && !capReached;
+        const continued = this.stopPending && executionNum !== null && this.lastStopExecutionNum !== null && executionNum > this.lastStopExecutionNum;
+        this.stopPending = false;
+        this.lastStopExecutionNum = null;
+        this.lastStopInvocationNum = null;
+        if (!canContinue) {
+          await buildHookResponse(this.ctx, { event: "StopFailure", sessionId: id, cwd, stopHookActive: false });
+          res.writeHead(200, { "content-type": "application/json" }).end("{}");
+          return;
+        }
+        const output = await buildHookResponse(this.ctx, { event: "Stop", sessionId: id, cwd, stopHookActive: continued });
         const text2 = "reason" in output ? String(output.reason) : "hookSpecificOutput" in output ? output.hookSpecificOutput.additionalContext : "";
+        if (text2) {
+          this.stopPending = true;
+          this.lastStopExecutionNum = executionNum;
+          this.lastStopInvocationNum = this.lastInvocationNum;
+        }
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(antigravityHookOutput(body.event, text2)));
       })().catch(() => {
         if (!res.writableEnded) res.writeHead(500).end("{}");
@@ -2248,6 +2332,10 @@ var AntigravityHooks = class {
     register();
     this.ctx.node?.on("replaced", () => {
       this.retired = true;
+      this.stopPending = false;
+      this.lastStopExecutionNum = null;
+      this.lastInvocationNum = null;
+      this.lastStopInvocationNum = null;
     });
     this.ctx.node?.on("reclaimed", () => {
       this.retired = false;
@@ -2258,6 +2346,10 @@ var AntigravityHooks = class {
     const server = this.server;
     this.server = null;
     this.retired = true;
+    this.stopPending = false;
+    this.lastStopExecutionNum = null;
+    this.lastInvocationNum = null;
+    this.lastStopInvocationNum = null;
     if (server) await new Promise((resolve2) => server.close(() => resolve2()));
   }
 };
@@ -3051,7 +3143,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-M34ETDFH.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-5J7A6D3E.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3063,9 +3155,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-ABYHRK3Z.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-O3CYBNHI.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-ABYHRK3Z.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-O3CYBNHI.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3235,6 +3327,13 @@ ${JSON.stringify(result)}`);
     }
     if (name !== "health" && ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: err.message }));
     await ctx.observeMeta?.(extra._meta);
+    if (ctx.agent === "antigravity" && name !== "health" && name !== "hook_event") {
+      if (name === "inbox") {
+        if (a.mark_read !== false) releaseAntigravityStopDelivery(ctx);
+      } else {
+        confirmAntigravityStopDelivery(ctx);
+      }
+    }
     try {
       const result = await fn(args, extra);
       if ((name === "send" || name === "message_subagent") && a.mode === "auto" && !result.structuredContent?.mode) {
@@ -3274,8 +3373,8 @@ ${JSON.stringify(result)}`);
     },
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-5ABIMBYC.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-GV36ISAP.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-6ONDUHEC.mjs")).readHistory(resolveDbPath(ctx.home), args);
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-OR2TLR7L.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
@@ -3283,7 +3382,7 @@ ${JSON.stringify(result)}`);
     description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
     inputSchema: conversationPageSchema.shape,
     annotations: { readOnlyHint: true }
-  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-V3NBEZDQ.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
+  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-RLDAZBDD.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
   register(
     "decide",
     {
@@ -3926,7 +4025,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job2) => ({ ...a, _job: job2.name }), a), resumeFor(a), keep(a));
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
-        const exact = a.sandbox !== void 0 || a.permission_mode !== void 0 || a.auto_approve !== void 0;
+        const exact = a.sandbox !== void 0 || a.permission_mode !== void 0 || a.auto_approve !== void 0 || a.bypass_permissions !== void 0;
         const note = exact ? "" : `
 ${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
         return text(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${derivedTitle ? `
