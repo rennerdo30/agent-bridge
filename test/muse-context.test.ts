@@ -38,14 +38,24 @@ describe("Muse private host context", () => {
     expect(await museHostPid()).toBe(process.ppid);
     expect(query).not.toHaveBeenCalled();
   });
-  it("rechecks an authenticated handoff published during an unavailable CIM query", async () => {
+  it("waits for an authenticated handoff after an unavailable CIM query", async () => {
     vi.spyOn(procinfo, "lookup").mockImplementation(async pid => {
-      releases.push(registerMuseContext(pid, { AGENT_BRIDGE_INTERNAL: "1" }));
+      setTimeout(() => releases.push(registerMuseContext(pid, { AGENT_BRIDGE_INTERNAL: "1" })), 50);
       return null;
     });
     const restored = { MUSE_SESSION_ID: "native-session" };
     expect(await restoreMuseContext(restored)).toBe(true);
     expect(restored).toEqual({ MUSE_SESSION_ID: "native-session", AGENT_BRIDGE_INTERNAL: "1" });
+  });
+  it("waits at a headless host instead of inheriting another ancestor's context", async () => {
+    releases.push(registerMuseContext(process.pid, { AGENT_BRIDGE_INTERNAL: "1", CODEX_HOME: "wrong-ancestor" }));
+    vi.spyOn(procinfo, "lookup").mockImplementation(async pid => {
+      setTimeout(() => releases.push(registerMuseContext(pid, { AGENT_BRIDGE_INTERNAL: "1", CODEX_HOME: "owned-host" })), 50);
+      return { pid, ppid: process.pid, cmdline: "muse serve" };
+    });
+    const restored = { MUSE_SESSION_ID: "native-session" };
+    expect(await restoreMuseContext(restored)).toBe(true);
+    expect(restored).toEqual({ MUSE_SESSION_ID: "native-session", AGENT_BRIDGE_INTERNAL: "1", CODEX_HOME: "owned-host" });
   });
   it("refuses unknown sanitized ancestry even when a session ID is supplied", async () => {
     expect(await restore()).toEqual({ restored: false, env: { MUSE_SESSION_ID: "native-session", AGENT_BRIDGE_INTERNAL: "1" } });

@@ -101,7 +101,6 @@ export async function restoreMuseContext(env: NodeJS.ProcessEnv = process.env): 
   let pid = process.ppid;
   const directory = museContextDirectory();
   const pending: number[] = [];
-  let headless = false;
   const refuse = (): false => { for (const key of CONTEXT_KEYS) delete env[key]; env.AGENT_BRIDGE_INTERNAL = "1"; return false; };
   const restore = (host: number): boolean => {
     const record = readMusePrivateJson(join(directory, `host-${host}.json`));
@@ -149,15 +148,17 @@ export async function restoreMuseContext(env: NodeJS.ProcessEnv = process.env): 
       if (!/(?:^|\s)(?:exec|serve)(?:\s|$)/.test(info.cmdline) && env.MUSE_SESSION_ID) {
         return env.AGENT_BRIDGE_INTERNAL || env.AGENT_BRIDGE_DELEGATE_DEPTH || env.AGENT_BRIDGE_PARENT_URL ? refuse() : false;
       }
-      headless = true;
       env.AGENT_BRIDGE_INTERNAL = "1";
+      // Its handoff must win; walking farther could restore another job's
+      // authenticated ancestor while this host's registration is still pending.
+      break;
     }
     pid = info.ppid;
   }
-  // A native serve/exec host can launch plugins before the adapter's async
-  // creation-identity lookup publishes its handoff. Retry only the observed
-  // ancestors, for a bounded interval, without granting any ambient privilege.
-  if (headless) for (const deadline = Date.now() + 5_000; Date.now() < deadline;) {
+  // Registration may lag plugin startup even when CIM cannot identify the host.
+  // Retry only observed ancestors within the existing bound. A private record
+  // and matching creation identity remain mandatory; ambient values grant nothing.
+  for (const deadline = Date.now() + 5_000; Date.now() < deadline;) {
     for (const host of pending) try { return restore(host); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return refuse(); }
     await delay(100);
