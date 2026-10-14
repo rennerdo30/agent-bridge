@@ -60,6 +60,12 @@ type HistoryReadCapture = {
   close: "not_attempted" | "attempted" | "returned" | "unknown";
 };
 const retainedHistoryReadAttempts = new Set<HistoryReadCapture>();
+type HistoryDirectoryCapture = {
+  readonly identity: symbol; readonly ownerIdentity: symbol; readonly acceptedGeneration: number; readonly entry: WalkRoot;
+  open: "attempted_unconfirmed" | "returned" | "unknown"; dir?: Dir;
+  close: "not_attempted" | "attempted" | "returned" | "unknown"; uncertain: boolean;
+};
+const retainedHistoryDirectoryAttempts = new Set<HistoryDirectoryCapture>();
 
 function folded(text: string): string { return text.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase(); }
 function terms(query: string): string[] { return folded(query).match(/[\p{L}\p{N}_]+/gu)?.slice(0, HISTORY_MAX_TERMS) ?? []; }
@@ -79,6 +85,12 @@ export class HistoryIndex {
   private readonly lifecycleStatements = new WeakMap<StatementSync, DatabaseSync>();
   private readonly lifecycleReadAttempts = new Set<HistoryReadCapture>();
   private readonly lifecycleReadHandles = new WeakMap<DatabaseSync, HistoryReadCapture>();
+  readonly #directoryOwnerIdentity = Symbol("actual History directory owner");
+  readonly #directoryAttempts = new Set<HistoryDirectoryCapture>();
+  readonly #directoryHandles = new WeakMap<Dir, HistoryDirectoryCapture>();
+  #directoryCaptures = 0;
+  #unknownDirectoryAttempts = 0;
+  #directoryCloseReturns = 0;
   readonly engine: HistoryResult["engine"];
   private queue: WalkRoot[] = [];
   private walk: { entry: WalkRoot; dir: Dir } | null = null;
@@ -142,6 +154,59 @@ export class HistoryIndex {
     catch (error) { this.lifecycleUnknown = true; this.lifecycleChanged(); throw error; }
   }
   private exec(db: DatabaseSync, sql: string): void { this.native(db, () => db.exec(sql)); }
+  private assertDirectoryAdmission(): void {
+    if (this.lifecycleSealed && this.lifecycleOperations === 0)
+      throw Object.assign(new Error("history consumer is quiesced"), { code: "OWNER_QUIESCED" });
+  }
+  private uncertainDirectory(capture: HistoryDirectoryCapture): void {
+    if (!capture.uncertain) { capture.uncertain = true; this.#unknownDirectoryAttempts++; }
+    this.lifecycleUnknown = true; this.lifecycleChanged();
+  }
+  private openSourceDirectory(entry: WalkRoot): Dir {
+    this.assertDirectoryAdmission();
+    const capture: HistoryDirectoryCapture = { identity: Symbol("actual History directory attempt"), ownerIdentity: this.#directoryOwnerIdentity,
+      acceptedGeneration: this.lifecycleRevision, entry, open: "attempted_unconfirmed", close: "not_attempted", uncertain: false };
+    this.#directoryAttempts.add(capture); retainedHistoryDirectoryAttempts.add(capture); this.lifecycleChanged();
+    try {
+      const dir = opendirSync(entry.path);
+      // Attach the exact returned object before any read or caller exposure.
+      // No exception/error shape or builtin-reference equality proves absence.
+      capture.dir = dir; capture.open = "returned"; this.#directoryHandles.set(dir, capture);
+      this.#directoryCaptures++; this.lifecycleChanged();
+      return dir;
+    } catch (error) { capture.open = "unknown"; this.uncertainDirectory(capture); throw error; }
+  }
+  private readSourceDirectory(dir: Dir): ReturnType<Dir["readSync"]> {
+    this.assertDirectoryAdmission(); this.lifecycleChanged();
+    try { return dir.readSync(); }
+    catch (error) {
+      const capture = this.#directoryHandles.get(dir);
+      if (capture) this.uncertainDirectory(capture); else this.lifecycleUnknown = true;
+      throw error;
+    }
+  }
+  private closeSourceDirectory(dir: Dir): void {
+    this.assertDirectoryAdmission();
+    const capture = this.#directoryHandles.get(dir), previouslyUncertain = capture?.uncertain;
+    if (capture) capture.close = "attempted"; else this.lifecycleUnknown = true;
+    this.lifecycleChanged();
+    try {
+      // One original close per original caller action, no retry/cleanup loop.
+      // A previously uncertain record cannot be acknowledged by a later call.
+      dir.closeSync(); this.#directoryCloseReturns++; this.lifecycleChanged();
+      if (capture) {
+        capture.close = previouslyUncertain ? "unknown" : "returned";
+        if (!capture.uncertain) {
+          this.#directoryHandles.delete(dir); this.#directoryAttempts.delete(capture);
+          retainedHistoryDirectoryAttempts.delete(capture); this.#directoryCaptures--;
+        }
+      }
+    } catch (error) {
+      if (capture) { capture.close = "unknown"; this.uncertainDirectory(capture); }
+      else { this.lifecycleUnknown = true; this.lifecycleChanged(); }
+      throw error;
+    }
+  }
   private openSourceReader(file: string, kind: HistoryReadCapture["kind"]): DatabaseSync {
     if (this.lifecycleSealed && this.lifecycleOperations === 0)
       throw Object.assign(new Error("history consumer is quiesced"), { code: "OWNER_QUIESCED" });
@@ -209,6 +274,13 @@ export class HistoryIndex {
       nativeBorrower: this.lifecycleNativeBorrower, nativeCompositeCoverage: "unverified" as const,
       sourceReaders: Math.min(readers, 129), unknownSourceReads: Math.min(unknownReadAttempts, 129),
       sourceReadOverflow: this.lifecycleReadAttempts.size > 128, sourceReadIdentity: "unproved" as const,
+      // Constant-cost directory diagnostics only, never a complete census.
+      // Keep every retained record even when these primitive counts overflow.
+      directoryAttempts: Math.min(this.#directoryAttempts.size, 129), directoryCaptures: Math.min(this.#directoryCaptures, 129),
+      unknownDirectoryAttempts: Math.min(this.#unknownDirectoryAttempts, 129), directoryCloseReturns: Math.min(this.#directoryCloseReturns, 129),
+      directoryOverflow: this.#directoryAttempts.size > 128 || !Number.isSafeInteger(this.#directoryCaptures) ||
+        !Number.isSafeInteger(this.#unknownDirectoryAttempts) || !Number.isSafeInteger(this.#directoryCloseReturns),
+      directoryNoResource: "unsupported" as const,
       queuedDiscovery: this.queue.length, activeDirectories: this.walk === null ? 0 : 1,
       durableObligations: "unverified" as const, ownerBound: false as const, settled: false as const,
       blocker: "owner_unsupported" as const, ownershipReleased: false as const });
@@ -451,10 +523,10 @@ export class HistoryIndex {
       work++;
       if (!this.walk) {
         const entry = this.queue.shift()!;
-        try { this.walk = { entry, dir: opendirSync(entry.path) }; } catch { continue; }
+        try { this.walk = { entry, dir: this.openSourceDirectory(entry) }; } catch { continue; }
       }
-      const item = this.walk.dir.readSync(), entry = this.walk.entry;
-      if (!item) { this.walk.dir.closeSync(); this.walk = null; continue; }
+      const item = this.readSourceDirectory(this.walk.dir), entry = this.walk.entry;
+      if (!item) { this.closeSourceDirectory(this.walk.dir); this.walk = null; continue; }
       const path = join(entry.path, item.name);
       if (item.isDirectory()) { this.queue.push({ ...entry, path }); continue; }
       if (!item.isFile() || !safeFile(entry.root, path)) continue;
@@ -654,7 +726,7 @@ export class HistoryIndex {
     this.quietSources.clear(); this.rescanMs = HISTORY_RESCAN_MS;
   }
   close(): void { this.accepted(() => this.closeAccepted()); }
-  private closeAccepted(): void { this.walk?.dir.closeSync(); this.walk = null; }
+  private closeAccepted(): void { if (this.walk) this.closeSourceDirectory(this.walk.dir); this.walk = null; }
 }
 
 /** Dashboard reads never initialize, migrate, or change the derived index. */

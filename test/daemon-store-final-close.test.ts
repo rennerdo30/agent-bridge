@@ -19,9 +19,14 @@ const acquisitionFault = vi.hoisted(() => ({ directory: "", stage: "none" as "no
   failure: new Error("SIMULATED lease acquisition/descriptor failure"),
   descriptors: new Set<{ fd: number; path: string; closed: boolean }>(), active: new Map<number, { fd: number; path: string; closed: boolean }>(),
   actualClose: undefined as typeof import("node:fs").closeSync | undefined }));
+const directoryFault = vi.hoisted(() => ({ path: "", stage: "none" as "none" | "before" | "after", calls: 0, nativeEntries: 0,
+  failure: Object.assign(new Error("SIMULATED directory opener ENOENT"), { code: "ENOENT" }),
+  before: undefined as (() => void) | undefined, returned: undefined as ((dir: import("node:fs").Dir) => void) | undefined,
+  owned: new Map<import("node:fs").Dir, { closed: boolean }>(), actualClose: undefined as typeof import("node:fs").Dir.prototype.closeSync | undefined }));
 vi.mock("node:fs", async importOriginal => {
   const original = await importOriginal<typeof import("node:fs")>();
   acquisitionFault.actualClose = original.closeSync;
+  directoryFault.actualClose = original.Dir.prototype.closeSync;
   const remove: typeof original.rmSync = (path, options) => {
     if (path === leaseFault.path && leaseFault.mode === "before") throw leaseFault.failure;
     original.rmSync(path, options);
@@ -46,7 +51,16 @@ vi.mock("node:fs", async importOriginal => {
     if (capture) { capture.closed = true; acquisitionFault.active.delete(fd); }
     if (capture && acquisitionFault.stage === "close_after") throw acquisitionFault.failure;
   };
-  const forwarding = { rmSync: remove, openSync: open, writeSync: write, closeSync: close };
+  const openDirectory: typeof original.opendirSync = (path, options) => {
+    if (path !== directoryFault.path) return original.opendirSync(path, options);
+    directoryFault.calls++; directoryFault.before?.();
+    if (directoryFault.stage === "before") throw directoryFault.failure;
+    directoryFault.nativeEntries++;
+    const dir = original.opendirSync(path, options); directoryFault.owned.set(dir, { closed: false }); directoryFault.returned?.(dir);
+    if (directoryFault.stage === "after") throw directoryFault.failure;
+    return dir;
+  };
+  const forwarding = { rmSync: remove, openSync: open, writeSync: write, closeSync: close, opendirSync: openDirectory };
   return { ...original, ...forwarding, default: { ...original, ...forwarding } };
 });
 
@@ -60,10 +74,15 @@ const ownedIndexes = new Set<HistoryIndex>();
 const ownedWriteLocks = new Set<DatabaseSync>();
 const acceptedFixturePromises = new Set<Promise<unknown>>();
 let env: TestEnv;
-beforeEach(() => { leaseFault.path = ""; leaseFault.mode = "none"; acquisitionFault.directory = ""; acquisitionFault.stage = "none"; env = makeEnv(); });
+beforeEach(() => {
+  leaseFault.path = ""; leaseFault.mode = "none"; acquisitionFault.directory = ""; acquisitionFault.stage = "none";
+  directoryFault.path = ""; directoryFault.stage = "none"; directoryFault.calls = 0; directoryFault.nativeEntries = 0; directoryFault.before = undefined; directoryFault.returned = undefined;
+  env = makeEnv();
+});
 afterEach(async () => {
   leaseFault.path = ""; leaseFault.mode = "none";
   acquisitionFault.directory = ""; acquisitionFault.stage = "none";
+  directoryFault.path = ""; directoryFault.stage = "none"; directoryFault.before = undefined; directoryFault.returned = undefined;
   vi.restoreAllMocks();
   for (const capture of acquisitionFault.descriptors) {
     if (!capture.closed) { acquisitionFault.actualClose!(capture.fd); capture.closed = true; acquisitionFault.active.delete(capture.fd); }
@@ -71,8 +90,19 @@ afterEach(async () => {
   }
   for (const lock of ownedWriteLocks) { if (lock.isTransaction) nativeExec.call(lock, "ROLLBACK"); dispose(lock); ownedWriteLocks.delete(lock); }
   const acceptedOutcomes = await Promise.allSettled([...acceptedFixturePromises]); acceptedFixturePromises.clear();
-  for (const index of ownedIndexes) { index.resumeLifecycleConsumer(); index.close(); ownedIndexes.delete(index); }
+  for (const index of ownedIndexes) {
+    const dir = (Reflect.get(index, "walk") as { dir: Dir } | null)?.dir;
+    // Do not retry an uncertain source close. Dispose only an exact native
+    // object actually obtained by this isolated fixture, without source ACK.
+    if (dir && directoryFault.owned.has(dir)) disposeDirectory(dir);
+    else { index.resumeLifecycleConsumer(); index.close(); }
+    ownedIndexes.delete(index);
+  }
   for (const store of ownedStores) { if (store.lifecycleProducerObservation().sealed) store.resumeLifecycleProducers(); store.close(); ownedStores.delete(store); }
+  for (const [dir, outcome] of directoryFault.owned) {
+    if (!outcome.closed) disposeDirectory(dir);
+    directoryFault.owned.delete(dir);
+  }
   for (const [db, outcome] of owned) {
     if (!outcome.actuallyClosed) { nativeClose.call(db); outcome.actuallyClosed = true; }
     owned.delete(db);
@@ -82,6 +112,11 @@ afterEach(async () => {
   if (acceptedFailures.length) throw new AggregateError(acceptedFailures, "owned accepted fixture operation failed during cleanup");
 });
 function dispose(db: DatabaseSync): void { nativeClose.call(db); owned.get(db)!.actuallyClosed = true; }
+function disposeDirectory(dir: Dir): void {
+  const outcome = directoryFault.owned.get(dir);
+  if (!outcome) throw new Error("fixture directory ownership is unknown");
+  if (!outcome.closed) { directoryFault.actualClose!.call(dir); outcome.closed = true; }
+}
 const kinds = [
   { name: "archive", open: openArchive, observe: archiveInitializationObservation, initialSql: "PRAGMA busy_timeout = 3000" },
   { name: "history", open: openHistoryStore, observe: historyInitializationObservation, initialSql: "PRAGMA busy_timeout=3000" },
@@ -453,6 +488,144 @@ describe("actual History owned readonly source captures (not cold or ownership p
       sourceReadIdentity: "unproved", settled: false, ownershipReleased: false });
     expect(prepare).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled();
     vi.restoreAllMocks(); expect(readFileSync(archive.file)).toEqual(archive.bytes); expect(retainedRow(archive.file)).toEqual([0, 255, 4]);
+  });
+});
+
+describe("source-owned History directory bookkeeping (no resource-absence or retirement authority)", () => {
+  function consumer(sink?: (index: HistoryIndex) => void) {
+    const db = openHistoryStore(join(env.home, "owned-directory-history.db")); owned.set(db, { actuallyClosed: false });
+    let index!: HistoryIndex;
+    index = new HistoryIndex(db, null, undefined, db, sink ? () => sink(index) : undefined); ownedIndexes.add(index);
+    return { db, index };
+  }
+  function open(index: HistoryIndex, path: string): Dir {
+    const operation = Reflect.get(index, "openSourceDirectory") as (entry: { path: string; root: string; kind: string; agent: string }) => Dir;
+    return operation.call(index, { path, root: env.home, kind: "run", agent: "other" });
+  }
+  function read(index: HistoryIndex, dir: Dir) {
+    return (Reflect.get(index, "readSourceDirectory") as (dir: Dir) => ReturnType<Dir["readSync"]>).call(index, dir);
+  }
+  function close(index: HistoryIndex, dir: Dir): void {
+    (Reflect.get(index, "closeSourceDirectory") as (dir: Dir) => void).call(index, dir);
+  }
+  function trackClose(failure?: Error, when?: "before" | "after") {
+    return vi.spyOn(Dir.prototype, "closeSync").mockImplementation(function(this: Dir) {
+      const outcome = directoryFault.owned.get(this);
+      if (outcome && when === "before") throw failure;
+      const result = directoryFault.actualClose!.call(this); if (outcome) outcome.closed = true;
+      if (outcome && when === "after") throw failure;
+      return result;
+    });
+  }
+  it("captures a real empty Dir before reading and completes only its actual source close through an accepted seal", () => {
+    const path = join(env.home, "owned-empty-directory"); mkdirSync(path); directoryFault.path = path;
+    let returned: Dir | undefined;
+    const { index } = consumer(actual => {
+      const dir = open(actual, path); expect(dir).toBe(returned);
+      expect(actual.lifecycleConsumerObservation()).toMatchObject({ directoryAttempts: 1, directoryCaptures: 1,
+        unknownDirectoryAttempts: 0, pendingOperations: 1, directoryNoResource: "unsupported" });
+      expect(read(actual, dir)).toBe(null);
+      actual.sealLifecycleConsumer(); close(actual, dir);
+    });
+    directoryFault.before = () => expect(index.lifecycleConsumerObservation()).toMatchObject({ directoryAttempts: 1, directoryCaptures: 0, pendingOperations: 1 });
+    directoryFault.returned = dir => { returned = dir; expect(index.lifecycleConsumerObservation().directoryCaptures).toBe(0); };
+    const closed = trackClose(); index.rememberPeer({ id: "owned-dir-peer", name: "owned-dir-peer", sessionId: "owned-dir-session" });
+    expect(directoryFault.nativeEntries).toBe(1); expect(closed).toHaveBeenCalledTimes(1); expect(directoryFault.owned.get(returned!)!.closed).toBe(true);
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ sealed: true, pendingOperations: 0, directoryAttempts: 0, directoryCaptures: 0,
+      directoryCloseReturns: 1, unknownDirectoryAttempts: 0, callbackUnknown: true, ownerBound: false, settled: false, ownershipReleased: false });
+  });
+  it("an actual original missing-directory error stays unknown with no invented returned object or authority", () => {
+    const { index } = consumer(); directoryFault.path = join(env.home, "owned-missing-directory");
+    expect(() => open(index, directoryFault.path)).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    expect(directoryFault.nativeEntries).toBe(1); expect(directoryFault.owned.size).toBe(0);
+    const before = index.lifecycleConsumerObservation();
+    expect(before).toMatchObject({ directoryAttempts: 1, directoryCaptures: 0, unknownDirectoryAttempts: 1, directoryCloseReturns: 0,
+      unknown: true, directoryNoResource: "unsupported", ownerBound: false, settled: false, ownershipReleased: false });
+    const prepare = vi.spyOn(DatabaseSync.prototype, "prepare"), exec = vi.spyOn(DatabaseSync.prototype, "exec"), next = vi.spyOn(Dir.prototype, "readSync"), closed = vi.spyOn(Dir.prototype, "closeSync");
+    for (let n = 0; n < 50; n++) expect(index.lifecycleConsumerObservation()).toEqual(before);
+    expect(directoryFault.nativeEntries).toBe(1); expect(prepare).not.toHaveBeenCalled(); expect(exec).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled(); expect(closed).not.toHaveBeenCalled();
+    index.sealLifecycleConsumer(); index.resumeLifecycleConsumer(); expect(index.lifecycleConsumerObservation().unknownDirectoryAttempts).toBe(1);
+  });
+  it("a reversible seal refuses a new directory action before any native entry or attempt publication", () => {
+    const { index } = consumer(); directoryFault.path = join(env.home, "owned-unentered-directory"); mkdirSync(directoryFault.path);
+    index.sealLifecycleConsumer();
+    expect(() => open(index, directoryFault.path)).toThrow(expect.objectContaining({ code: "OWNER_QUIESCED" }));
+    expect(directoryFault.calls).toBe(0); expect(directoryFault.nativeEntries).toBe(0); expect(directoryFault.owned.size).toBe(0);
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ directoryAttempts: 0, directoryCaptures: 0, unknownDirectoryAttempts: 0,
+      directoryNoResource: "unsupported", settled: false, ownershipReleased: false });
+  });
+  for (const stage of ["before", "after"] as const) it(`SIMULATED ENOENT ${stage} the native opener cannot certify resource absence`, () => {
+    const { index } = consumer(), path = join(env.home, `owned-${stage}-directory`); mkdirSync(path);
+    directoryFault.path = path; directoryFault.stage = stage;
+    let returned: Dir | undefined; directoryFault.returned = dir => { returned = dir; };
+    expect(() => open(index, path)).toThrow(directoryFault.failure);
+    expect(directoryFault.nativeEntries).toBe(stage === "before" ? 0 : 1);
+    expect(directoryFault.owned.size).toBe(stage === "before" ? 0 : 1);
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ directoryAttempts: 1, directoryCaptures: 0, unknownDirectoryAttempts: 1,
+      directoryNoResource: "unsupported", settled: false, ownershipReleased: false });
+    // A wrapper-owned object never received by the source is disposed ONLY by
+    // its actual isolated fixture. This cannot acknowledge the source attempt.
+    if (returned) disposeDirectory(returned);
+    expect(index.lifecycleConsumerObservation().unknownDirectoryAttempts).toBe(1); expect(existsSync(path)).toBe(true);
+  });
+  it("a real native read on an explicitly fixture-disposed Dir retains the source's exact capture as unknown", () => {
+    const { index } = consumer(), path = join(env.home, "owned-disposed-read-directory"); mkdirSync(path); directoryFault.path = path;
+    const dir = open(index, path); disposeDirectory(dir);
+    expect(() => read(index, dir)).toThrow(expect.objectContaining({ code: "ERR_DIR_CLOSED" }));
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ directoryAttempts: 1, directoryCaptures: 1, unknownDirectoryAttempts: 1,
+      directoryCloseReturns: 0, unknown: true, settled: false, ownershipReleased: false });
+    index.sealLifecycleConsumer(); index.resumeLifecycleConsumer();
+    expect(index.lifecycleConsumerObservation().directoryCaptures).toBe(1);
+  });
+  for (const when of ["before", "after"] as const) it(`SIMULATED close failure ${when} actual native disposal retains exact unacknowledged capture`, () => {
+    const { index } = consumer(), path = join(env.home, `owned-close-${when}-directory`); mkdirSync(path); directoryFault.path = path;
+    const dir = open(index, path), failure = new Error("SIMULATED directory close outcome error");
+    const closed = trackClose(failure, when);
+    expect(() => close(index, dir)).toThrow(failure); expect(closed).toHaveBeenCalledTimes(1);
+    expect(directoryFault.owned.get(dir)!.closed).toBe(when === "after");
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ directoryAttempts: 1, directoryCaptures: 1, unknownDirectoryAttempts: 1,
+      directoryCloseReturns: 0, unknown: true, directoryNoResource: "unsupported", settled: false, ownershipReleased: false });
+    vi.restoreAllMocks(); disposeDirectory(dir);
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ directoryCaptures: 1, unknownDirectoryAttempts: 1, ownershipReleased: false });
+  });
+  it("actual partial discovery keeps the same Dir, accepted queue and cursors while a seal refuses new admission", () => {
+    const store = new MessageStore(env.db, nullLogger); ownedStores.add(store);
+    const main = Reflect.get(store, "db") as DatabaseSync, db = Reflect.get(store, "historyDb") as DatabaseSync;
+    const paths = { claude: join(env.home, "owned-directory-claude"), codex: join(env.home, "owned-directory-codex"), opencode: join(env.home, "owned-directory-opencode") };
+    const projects = join(paths.claude, "projects"); mkdirSync(projects, { recursive: true });
+    for (let n = 0; n < 100; n++) mkdirSync(join(projects, `owned-partial-${n}`));
+    const index = new HistoryIndex(db, env.home, paths, main); ownedIndexes.add(index); directoryFault.path = projects;
+    let returned: Dir | undefined, observed = false; directoryFault.returned = dir => { returned = dir; };
+    const originalRead = Dir.prototype.readSync;
+    vi.spyOn(Dir.prototype, "readSync").mockImplementation(function(this: Dir) {
+      if (this === returned && !observed) {
+        observed = true; expect(index.lifecycleConsumerObservation()).toMatchObject({ directoryCaptures: 1, activeDirectories: 1, pendingOperations: 1 });
+        index.sealLifecycleConsumer();
+      }
+      return originalRead.call(this);
+    });
+    index.tick(); expect(observed).toBe(true);
+    expect((Reflect.get(index, "walk") as { dir: Dir }).dir).toBe(returned);
+    const queue = [...Reflect.get(index, "queue")], cursors = db.prepare("SELECT * FROM history_cursors ORDER BY source").all();
+    expect(queue.length).toBeGreaterThan(0);
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ sealed: true, pendingOperations: 0, directoryCaptures: 1, activeDirectories: 1,
+      durableObligations: "unverified", directoryNoResource: "unsupported", settled: false, ownershipReleased: false });
+    expect(() => index.tick()).toThrow(expect.objectContaining({ code: "OWNER_QUIESCED" }));
+    expect(Reflect.get(index, "queue")).toEqual(queue); expect(db.prepare("SELECT * FROM history_cursors ORDER BY source").all()).toEqual(cursors);
+  });
+  it("overflow diagnostics remain clamped and probe-free while every actual failed attempt stays retained", () => {
+    const { index } = consumer(); directoryFault.path = join(env.home, "owned-overflow-missing-directory");
+    for (let n = 0; n < 130; n++) expect(() => open(index, directoryFault.path)).toThrow(expect.objectContaining({ code: "ENOENT" }));
+    expect(directoryFault.nativeEntries).toBe(130);
+    const before = index.lifecycleConsumerObservation();
+    expect(before).toMatchObject({ directoryAttempts: 129, directoryCaptures: 0, unknownDirectoryAttempts: 129, directoryOverflow: true,
+      directoryNoResource: "unsupported", ownerBound: false, settled: false, ownershipReleased: false });
+    const prepare = vi.spyOn(DatabaseSync.prototype, "prepare"), exec = vi.spyOn(DatabaseSync.prototype, "exec"), next = vi.spyOn(Dir.prototype, "readSync"), closed = vi.spyOn(Dir.prototype, "closeSync");
+    for (let n = 0; n < 50; n++) expect(index.lifecycleConsumerObservation()).toEqual(before);
+    expect(directoryFault.nativeEntries).toBe(130); expect(prepare).not.toHaveBeenCalled(); expect(exec).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled(); expect(closed).not.toHaveBeenCalled();
+    index.sealLifecycleConsumer(); index.resumeLifecycleConsumer(); expect(index.lifecycleConsumerObservation().directoryOverflow).toBe(true);
   });
 });
 
