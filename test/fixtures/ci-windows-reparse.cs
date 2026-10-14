@@ -8,12 +8,32 @@ using Microsoft.Win32.SafeHandles;
 // Test-only mutation of a directory created by the guard fixture, never user data.
 public static class CiReparseFixture
 {
+    [StructLayout(LayoutKind.Sequential)]
+    struct AttributeTag { public uint Attributes, Tag; }
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern SafeFileHandle CreateFile(string path, uint access, uint share,
         IntPtr security, uint creation, uint flags, IntPtr template);
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool DeviceIoControl(SafeFileHandle handle, uint code, byte[] input,
         uint inputSize, IntPtr output, uint outputSize, out uint returned, IntPtr overlapped);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass,
+        out AttributeTag info, uint size);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern bool CreateHardLink(string path, string existing, IntPtr security);
+    public static int TryCreateHardLink(string path, string existing) {
+        return CreateHardLink(path, existing, IntPtr.Zero) ? 0 : Marshal.GetLastWin32Error();
+    }
+    public static uint ReadFileAttributes(string path) {
+        // Query the actual object, not a hard link's potentially stale directory entry.
+        using (var handle = CreateFile(path, 0x80, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero)) {
+            if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+            AttributeTag info;
+            if (!GetFileInformationByHandleEx(handle, 9, out info, 8)) throw new Win32Exception(Marshal.GetLastWin32Error());
+            if ((info.Attributes & 0x410) != 0) throw new IOException("Fixture attribute probe requires a physical regular file");
+            return info.Attributes;
+        }
+    }
     public static SafeFileHandle HoldWriteDirectory(string path) {
         var handle = CreateFile(path, 0x40000000, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
         if (handle.IsInvalid) {

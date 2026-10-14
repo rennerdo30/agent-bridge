@@ -14,6 +14,18 @@ invocation's marked root. The marker must exactly match its random token and pat
 missing/changed markers and outside, chained or unproven links retain the whole tree. Every cleanup
 entry is checked for containment and links before nonrecursive removal. Native
 handles prevent entry replacement or in-place link conversion during deletion.
+Before any deletion or metadata change, every regular file and marker must have
+one observed link, a known volume/full 128-bit file identity on its held handle,
+and canonical containment in the marked physical root. Unsupported queries,
+unknown/multiple links or changed identities refuse the whole preflight. Link
+count is a snapshot; handle sharing does not establish an atomic topology lock.
+Read-only regular files use native `FileDispositionInfoEx` with only DELETE and
+IGNORE_READONLY_ATTRIBUTE; cleanup never clears their shared read-only flags.
+That flag requires Windows 10 1809 or a supporting server/filesystem. Unsupported
+deletion fails without an attribute-clearing fallback and retains remaining
+fixtures/marker evidence; it may fail after earlier admitted entries were removed.
+Ordinary delete-on-close semantics remain: other open handles can delay final
+removal, and failures/partial cleanup are not reported as complete success.
 Only a directory junction to a physical directory in the same marked root can be
 unlinked, by its own handle, with no traversal. Each unlink logs its path, target
 and reason; symlinks and volume mount points are refused.

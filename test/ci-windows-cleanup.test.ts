@@ -129,6 +129,91 @@ Remove-CiOwnedRoot $owner
 `)).toEqual({ exact: true, removed: true });
 });
 
+it.runIf(process.platform === "win32").each(["ordinary", "marker"])(
+  "retains every fixture and outside read-only hard-link metadata (%s)", kind => {
+    expect(guard(`
+Add-Type -Path $reparseFixture
+$outside = Join-Path $parent 'outside-readonly.txt'
+$outsideBytes = ${kind === "marker" ? "$owner.MarkerContents" : "'outside owned fixture bytes'"}
+[IO.File]::WriteAllText($outside, $outsideBytes)
+$link = ${kind === "marker" ? "$marker" : "(Join-Path $owner.Root 'hard-link.txt')"}
+${kind === "marker" ? "[IO.File]::Delete($marker)" : ""}
+$null = New-Item -ItemType HardLink -Path $link -Target $outside -ErrorAction Stop
+[IO.File]::SetAttributes($outside, [IO.FileAttributes]::ReadOnly)
+[IO.File]::SetAttributes($sentinel, [IO.FileAttributes]::ReadOnly)
+$outsideAttributes = [CiReparseFixture]::ReadFileAttributes($outside)
+$ownedAttributes = [CiReparseFixture]::ReadFileAttributes($sentinel)
+$outsideReader = [IO.File]::Open($outside, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+try {
+    $refused = $false
+    $linkProofRefused = $false
+    try { Remove-CiOwnedRoot $owner } catch {
+        $refused = $true
+        $linkProofRefused = $_.Exception.ToString().Contains('exactly one known link')
+    }
+    [pscustomobject]@{ refused = $refused; linkProofRefused = $linkProofRefused;
+        outsideBytes = [IO.File]::ReadAllText($outside) -ceq $outsideBytes;
+        outsideAttributes = [CiReparseFixture]::ReadFileAttributes($outside) -eq $outsideAttributes;
+        ownedBytes = [IO.File]::ReadAllText($sentinel) -ceq 'owned fixture';
+        ownedAttributes = [CiReparseFixture]::ReadFileAttributes($sentinel) -eq $ownedAttributes;
+        marker = [IO.File]::ReadAllText($marker) -ceq $owner.MarkerContents;
+        root = [IO.Directory]::Exists($owner.Root); link = [IO.File]::Exists($link);
+        resource = $outsideReader.CanRead -and $outsideReader.ReadByte() -eq [Text.Encoding]::UTF8.GetBytes($outsideBytes)[0]
+    } | ConvertTo-Json -Compress
+} finally {
+    # Restore only these two fixture endpoints after recording the refusal.
+    $outsideReader.Dispose()
+    [IO.File]::SetAttributes($outside, [IO.FileAttributes]::Normal)
+    [IO.File]::Delete($link)
+    ${kind === "marker" ? "[IO.File]::WriteAllText($marker, $owner.MarkerContents)" : ""}
+    [IO.File]::Delete($outside)
+}
+`)).toEqual({ refused: true, linkProofRefused: true, outsideBytes: true, outsideAttributes: true,
+      ownedBytes: true, ownedAttributes: true, marker: true, root: true, link: true, resource: true });
+  },
+);
+
+it.runIf(process.platform === "win32")("retains outside read-only metadata if a link appears after complete proof", () => {
+  const result = guard(`
+Add-Type -Path $reparseFixture
+$outside = Join-Path $parent 'late-hard-link.txt'
+$target = Join-Path $owner.Root 'target'
+$link = Join-Path $owner.Root 'internal-junction'
+$null = New-Item -ItemType Directory -Path $target
+$null = New-Item -ItemType Junction -Path $link -Target $target
+[IO.File]::SetAttributes($sentinel, [IO.FileAttributes]::ReadOnly)
+$attributes = [CiReparseFixture]::ReadFileAttributes($sentinel)
+$script:linkError = -1
+$afterUnlink = [Action[string]]{
+    param($path)
+    # The complete proof has finished; a junction has been unlinked. Try a new
+    # alias to this test's regular file through the native hard-link operation.
+    $script:linkError = [CiReparseFixture]::TryCreateHardLink($outside, $sentinel)
+}
+try {
+    Initialize-CiCleanupApi
+    [CiWindowsCleanup]::Remove($owner.Root, $owner.MarkerName, $owner.MarkerContents, $null, $null, $afterUnlink)
+    $preserved = if ($script:linkError -eq 0) {
+        [IO.File]::ReadAllText($outside) -ceq 'owned fixture' -and [CiReparseFixture]::ReadFileAttributes($outside) -eq $attributes
+    } else { -not [IO.File]::Exists($outside) }
+    [pscustomobject]@{ linkError = $script:linkError; outsidePreserved = $preserved;
+        rootRemoved = -not [IO.Directory]::Exists($owner.Root) } | ConvertTo-Json -Compress
+} finally {
+    if ([IO.File]::Exists($outside)) {
+        # Only this test-created alias after its bytes/flags have been observed.
+        [IO.File]::SetAttributes($outside, [IO.FileAttributes]::Normal)
+        [IO.File]::Delete($outside)
+    }
+}
+`);
+  // A successful creation exercises the late-link path. A sharing refusal is
+  // recorded as that platform's control result, not as a topology-lock proof.
+  console.info(`Late hard-link control: win32=${result.linkError}`);
+  expect([0, 32]).toContain(result.linkError);
+  expect(result.outsidePreserved).toBe(true);
+  expect(result.rootRemoved).toBe(true);
+});
+
 it.runIf(process.platform === "win32")("pins identities against an outside junction swap after cleanup validation", () => {
   expect(guard(`
 $outside = Join-Path $parent 'outside'

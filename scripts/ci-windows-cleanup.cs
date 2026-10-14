@@ -14,18 +14,30 @@ public static class CiWindowsCleanup
     [StructLayout(LayoutKind.Sequential)]
     struct AttributeTag { public uint Attributes; public uint Tag; }
     [StructLayout(LayoutKind.Sequential)]
+    struct FileIdentity { public ulong Volume, Low, High; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct StandardInfo {
+        public long AllocationSize, EndOfFile;
+        public uint NumberOfLinks;
+        public byte DeletePending, Directory;
+    }
+    [StructLayout(LayoutKind.Sequential)]
     struct BasicInfo {
         public long CreationTime, LastAccessTime, LastWriteTime, ChangeTime;
         public uint Attributes;
     }
     [StructLayout(LayoutKind.Sequential)]
-    struct Disposition { [MarshalAs(UnmanagedType.Bool)] public bool Delete; }
+    struct Disposition { public byte Delete; } // Win32 FILE_DISPOSITION_INFO uses BOOLEAN.
+    [StructLayout(LayoutKind.Sequential)]
+    struct DispositionEx { public uint Flags; } // Win32 FILE_DISPOSITION_INFO_EX uses DWORD.
     sealed class Entry {
         public string Path;
         public SafeFileHandle Handle;
         public uint Attributes;
         public Entry Target;
         public string Substitute;
+        public FileIdentity Identity;
+        public bool OwnedFileProof;
     }
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     static extern SafeFileHandle CreateFile(string path, uint access, uint share,
@@ -34,8 +46,17 @@ public static class CiWindowsCleanup
     static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass,
         out AttributeTag info, uint size);
     [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass,
+        out FileIdentity info, uint size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass,
+        out StandardInfo info, uint size);
+    [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool SetFileInformationByHandle(SafeFileHandle handle, int infoClass,
         ref Disposition info, uint size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool SetFileInformationByHandle(SafeFileHandle handle, int infoClass,
+        ref DispositionEx info, uint size);
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool SetFileInformationByHandle(SafeFileHandle handle, int infoClass,
         ref BasicInfo info, uint size);
@@ -90,6 +111,41 @@ public static class CiWindowsCleanup
     static void VerifyPath(Entry entry, string expected) {
         if (!string.Equals(FinalPath(entry.Handle), expected, StringComparison.OrdinalIgnoreCase))
             throw new IOException("Cleanup handle escaped its physical parent");
+    }
+    static FileIdentity ReadIdentity(Entry entry) {
+        FileIdentity identity;
+        // FILE_ID_INFO: volume serial + full 128-bit ID, queried on the held handle.
+        Check(GetFileInformationByHandleEx(entry.Handle, 18, out identity, 24));
+        if (identity.Volume == 0 || (identity.Low == 0 && identity.High == 0))
+            throw new IOException("Cleanup file identity is unknown: " + entry.Path);
+        return identity;
+    }
+    static bool SameIdentity(FileIdentity a, FileIdentity b) {
+        return a.Volume == b.Volume && a.Low == b.Low && a.High == b.High;
+    }
+    static void VerifyFileOwnership(List<Entry> entries, string rootCanonical, FileIdentity rootIdentity) {
+        if (!SameIdentity(ReadIdentity(entries[0]), rootIdentity)) throw new IOException("Cleanup root identity changed");
+        var identities = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var entry in entries) {
+            if ((entry.Attributes & 0x10) != 0) continue;
+            AttributeTag attributes;
+            StandardInfo standard;
+            Check(GetFileInformationByHandleEx(entry.Handle, 9, out attributes, 8));
+            Check(GetFileInformationByHandleEx(entry.Handle, 1, out standard, 24));
+            if ((attributes.Attributes & 0x410) != 0 || standard.Directory != 0 || standard.DeletePending != 0 || standard.NumberOfLinks != 1)
+                throw new IOException("Cleanup retained entire root: regular file must have exactly one known link: " + entry.Path);
+            var identity = ReadIdentity(entry);
+            string canonical = FinalPath(entry.Handle);
+            if (identity.Volume != rootIdentity.Volume || !canonical.StartsWith(rootCanonical + "\\", StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Cleanup file ownership escaped its marked physical root: " + entry.Path);
+            string key = identity.Volume.ToString("X16") + identity.High.ToString("X16") + identity.Low.ToString("X16");
+            if (!identities.Add(key)) throw new IOException("Cleanup duplicate held file identity: " + entry.Path);
+            if (entry.OwnedFileProof && !SameIdentity(entry.Identity, identity)) throw new IOException("Cleanup file identity changed: " + entry.Path);
+            entry.Identity = identity;
+            entry.OwnedFileProof = true;
+        }
+        // This is complete preflight evidence, not an atomic topology lock.
+        // FILE_SHARE_DELETE denial does not prove that new hard links cannot appear.
     }
     static void Collect(string path, string canonical, string marker, List<Entry> entries, Action<string> beforeEnumerate, Action<string> beforeOpen) {
         if (beforeOpen != null) beforeOpen(path);
@@ -205,8 +261,11 @@ public static class CiWindowsCleanup
             if (marker == null) throw new IOException("Cleanup marker missing");
             VerifyMarker(marker, contents);
             VerifyJunctions(entries, rootCanonical, false);
+            var rootIdentity = ReadIdentity(entries[0]);
+            VerifyFileOwnership(entries, rootCanonical, rootIdentity);
             if (beforeDelete != null) beforeDelete();
             VerifyJunctions(entries, rootCanonical, true);
+            VerifyFileOwnership(entries, rootCanonical, rootIdentity);
             // All guards finish before any deletion. Unlink admitted junctions first;
             // targets remain pinned and are removed only by the normal physical walk.
             foreach (var link in entries) {
@@ -232,12 +291,24 @@ public static class CiWindowsCleanup
     }
     static void Delete(Entry entry) {
         if ((entry.Attributes & 1) != 0) {
+            if ((entry.Attributes & 0x10) == 0) {
+                if (!entry.OwnedFileProof) throw new IOException("Cleanup regular file lacks held ownership proof: " + entry.Path);
+                // Win32 FILE_INFO_BY_HANDLE_CLASS=21 (not the driver enum).
+                // DELETE | IGNORE_READONLY_ATTRIBUTE; no POSIX/ON_CLOSE/image flags.
+                // This marks only the held entry for ordinary delete-on-close and
+                // never clears shared attributes, even if link topology changes.
+                var extended = new DispositionEx { Flags = 0x11u };
+                Check(SetFileInformationByHandle(entry.Handle, 21, ref extended, 4));
+                entry.Handle.Dispose();
+                return;
+            }
+            // Physical directories/junction entries cannot be regular hard links.
             uint attributes = entry.Attributes & ~1u;
             var basic = new BasicInfo { Attributes = attributes == 0 ? 0x80u : attributes };
             Check(SetFileInformationByHandle(entry.Handle, 0, ref basic, (uint)Marshal.SizeOf(typeof(BasicInfo))));
         }
-        var disposition = new Disposition { Delete = true };
-        Check(SetFileInformationByHandle(entry.Handle, 4, ref disposition, 4));
+        var disposition = new Disposition { Delete = 1 };
+        Check(SetFileInformationByHandle(entry.Handle, 4, ref disposition, 1));
         entry.Handle.Dispose();
     }
 }
