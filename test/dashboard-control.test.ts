@@ -1,14 +1,14 @@
 import { join } from "node:path";
 import { writeFileSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { JOBS_FILE, PROTOCOL_VERSION } from "../src/core/constants.js";
+import { JOBS_FILE, PROTOCOL_VERSION, REQUEST_TIMEOUT_MS } from "../src/core/constants.js";
 import { controlDashboardJob, DASHBOARD_JOB_CONVERSATION } from "../src/core/job-control.js";
 import { BridgeClient } from "../src/core/client.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import type { BridgeMessage } from "../src/core/protocol.js";
 import { nullLogger } from "../src/core/logger.js";
 import { attachDashboardJobControl } from "../src/mcp/dashboard-control.js";
-import { JobManager } from "../src/mcp/jobs.js";
+import { acquireLock, JobManager } from "../src/mcp/jobs.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -56,7 +56,7 @@ it.each(["settings", "handoff"])("rejects a non-owner's %s command and logs with
   expect((await attacker.send({ to: owner.name, body: "ordinary mail still works" })).deliveredTo).toEqual([owner.name]);
 });
 
-it("authorizes a granted master for message and settings, but checks all handoff roots", async () => {
+it.each(["ready", "deferred"])("authorizes a granted master for message and settings, but checks all handoff roots (%s persistence)", async persistence => {
   const owner = env.node("claude-owner"), master = env.node("codex-master", "codex"), target = env.node("claude-target");
   await owner.start(); await master.start(); await target.start();
   jobs = new JobManager(owner, nullLogger, join(env.home, JOBS_FILE));
@@ -66,7 +66,24 @@ it("authorizes a granted master for message and settings, but checks all handoff
     running.live = { post: body => posted.push(body) }; return new Promise(() => {});
   });
   await until(() => Boolean(job.live));
-  job.masters = [master.name]; jobs.persist();
+  job.masters = [master.name];
+  let firstAuthority: Awaited<ReturnType<typeof master.jobAuthority>> | undefined;
+  if (persistence === "deferred") {
+    // persist() is best effort: force the registry writer to yield, then release
+    // its lease only after the first authority read observes the old grant.
+    const release = acquireLock(join(env.home, `${JOBS_FILE}.lock`), REQUEST_TIMEOUT_MS);
+    const authority = master.jobAuthority.bind(master);
+    vi.spyOn(master, "jobAuthority").mockImplementationOnce(async ref => {
+      try { return firstAuthority = await authority(ref); }
+      finally { release(); }
+    });
+  }
+  jobs.persist();
+  // Persistence can retry after lease contention or reader-identity verification.
+  // Wait for broker-visible authority, not a fixed delay or only the local grant.
+  await expect.poll(async () => (await master.jobAuthority(job.name))?.masters?.includes(master.name),
+    { timeout: REQUEST_TIMEOUT_MS }).toBe(true);
+  if (persistence === "deferred") expect(firstAuthority).toBeNull();
   expect((await master.jobAuthority(job.name))?.masters).toContain(master.name);
   expect(await controlDashboardJob(master, owner.name, job.name, { type: "message", body: "authorized follow-up" })).toMatchObject({ outcome: "delivered", isError: false });
   expect(posted).toEqual(["authorized follow-up"]);
