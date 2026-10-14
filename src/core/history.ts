@@ -54,6 +54,12 @@ type HistoryStatement = {
   run(...args: SQLInputValue[]): ReturnType<StatementSync["run"]>;
   iterate(...args: SQLInputValue[]): IterableIterator<Record<string, any>>;
 };
+type HistoryReadCapture = {
+  readonly identity: symbol; readonly requestedFile: string; readonly kind: "questions" | "archive" | "opencode";
+  open: "attempted" | "returned" | "unknown"; db?: DatabaseSync;
+  close: "not_attempted" | "attempted" | "returned" | "unknown";
+};
+const retainedHistoryReadAttempts = new Set<HistoryReadCapture>();
 
 function folded(text: string): string { return text.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase(); }
 function terms(query: string): string[] { return folded(query).match(/[\p{L}\p{N}_]+/gu)?.slice(0, HISTORY_MAX_TERMS) ?? []; }
@@ -71,6 +77,8 @@ export class HistoryIndex {
   private lifecycleNativeBorrower = false;
   private lifecycleConstructing = true;
   private readonly lifecycleStatements = new WeakMap<StatementSync, DatabaseSync>();
+  private readonly lifecycleReadAttempts = new Set<HistoryReadCapture>();
+  private readonly lifecycleReadHandles = new WeakMap<DatabaseSync, HistoryReadCapture>();
   readonly engine: HistoryResult["engine"];
   private queue: WalkRoot[] = [];
   private walk: { entry: WalkRoot; dir: Dir } | null = null;
@@ -128,12 +136,41 @@ export class HistoryIndex {
     if (!this.lifecycleConstructing && this.lifecycleOperations === 0) this.lifecycleNativeBorrower = true;
     // Temporary/native helper enrollment is a separate capture slice. Its
     // absence cannot become a complete supported consumer census here.
-    if (db !== this.db && db !== this.source) this.lifecycleNativeBorrower = true;
+    if (db !== this.db && db !== this.source && this.lifecycleReadHandles.get(db)?.open !== "returned") this.lifecycleNativeBorrower = true;
     this.lifecycleChanged();
     try { return operation(); }
     catch (error) { this.lifecycleUnknown = true; this.lifecycleChanged(); throw error; }
   }
   private exec(db: DatabaseSync, sql: string): void { this.native(db, () => db.exec(sql)); }
+  private openSourceReader(file: string, kind: HistoryReadCapture["kind"]): DatabaseSync {
+    if (this.lifecycleSealed && this.lifecycleOperations === 0)
+      throw Object.assign(new Error("history consumer is quiesced"), { code: "OWNER_QUIESCED" });
+    const capture: HistoryReadCapture = { identity: Symbol("actual History source read attempt"), requestedFile: file, kind,
+      open: "attempted", close: "not_attempted" };
+    this.lifecycleReadAttempts.add(capture); retainedHistoryReadAttempts.add(capture); this.lifecycleChanged();
+    try {
+      // The original readOnly/timeout policy is unchanged. Capture the actual
+      // returned connection before any page SQL; an unreturned attempt is not
+      // a fabricated native handle or a physical-file identity proof.
+      const db = new DatabaseSync(file, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+      capture.db = db; capture.open = "returned"; this.lifecycleReadHandles.set(db, capture); this.lifecycleChanged();
+      return db;
+    } catch (error) { capture.open = "unknown"; this.lifecycleUnknown = true; this.lifecycleChanged(); throw error; }
+  }
+  private closeSourceReader(db: DatabaseSync): void {
+    const capture = this.lifecycleReadHandles.get(db);
+    if (!capture || capture.db !== db || capture.close !== "not_attempted") {
+      this.lifecycleUnknown = true; this.lifecycleChanged();
+      throw Object.assign(new Error("history source reader ownership is unknown"), { code: "OWNER_UNSUPPORTED" });
+    }
+    capture.close = "attempted"; this.lifecycleChanged();
+    try {
+      this.native(db, () => db.close()); capture.close = "returned"; this.lifecycleChanged();
+      // Only this source-owned actual close outcome completes this read scope.
+      // External disposal cannot acknowledge this record or confer authority.
+      this.lifecycleReadHandles.delete(db); this.lifecycleReadAttempts.delete(capture); retainedHistoryReadAttempts.delete(capture);
+    } catch (error) { capture.close = "unknown"; this.lifecycleUnknown = true; this.lifecycleChanged(); throw error; }
+  }
   private statement(db: DatabaseSync, sql: string): HistoryStatement {
     const statement = this.native(db, () => db.prepare(sql));
     this.lifecycleStatements.set(statement, db);
@@ -162,9 +199,16 @@ export class HistoryIndex {
   lifecycleConsumerObservation() {
     // Source records ONLY. Durable history_pending/cursor zero requires the later
     // current sealed non-recovering preparation, not page SQL on these writers.
+    let readers = 0, unknownReadAttempts = 0;
+    for (const capture of this.lifecycleReadAttempts) {
+      if (capture.db) readers++;
+      if (capture.open === "unknown" || capture.close === "unknown") unknownReadAttempts++;
+    }
     return Object.freeze({ generation: this.lifecycleRevision, sealed: this.lifecycleSealed, pendingOperations: this.lifecycleOperations,
       unknown: this.lifecycleUnknown, rawBorrower: this.lifecycleRawBorrower, callbackUnknown: this.lifecycleCallbackUnknown,
       nativeBorrower: this.lifecycleNativeBorrower, nativeCompositeCoverage: "unverified" as const,
+      sourceReaders: Math.min(readers, 129), unknownSourceReads: Math.min(unknownReadAttempts, 129),
+      sourceReadOverflow: this.lifecycleReadAttempts.size > 128, sourceReadIdentity: "unproved" as const,
       queuedDiscovery: this.queue.length, activeDirectories: this.walk === null ? 0 : 1,
       durableObligations: "unverified" as const, ownerBound: false as const, settled: false as const,
       blocker: "owner_unsupported" as const, ownershipReleased: false as const });
@@ -302,7 +346,7 @@ export class HistoryIndex {
       if (this.home) {
         const questionFile = join(this.home, QUESTIONS_FILE);
         if (existsSync(questionFile)) work += this.unlessQuiet(questionFile, () => {
-          const questions = new DatabaseSync(questionFile,{readOnly:true,timeout:HISTORY_READ_TIMEOUT_MS});
+          const questions = this.openSourceReader(questionFile, "questions");
           try { return this.rows("questions",questions,"question_events",row => {
             const q = JSON.parse(String(row.record)) as OwnerQuestion;
             this.put({ id:`question:${q.id}`,kind:"question",agent:q.askers[0]?.agent ?? "other",at:q.answer?.at ?? q.askedAt,
@@ -310,13 +354,13 @@ export class HistoryIndex {
               link:`/#/approvals?question=${q.id}`,message:null,job:q.job ?? null,run:null,session:q.askers[0]?.session ?? null,cursor:String(row.history_rowid) },
               q.askers.map(a => a.session),q.askers.flatMap(a => a.job ? [a.job] : []));
             for (const project of q.affectedProjects) this.statement(this.db, "INSERT OR IGNORE INTO history_tags VALUES (?, 'project', ?)").run(`question:${q.id}`,conversationProject(project));
-          }); } finally { questions.close(); }
+          }); } finally { this.closeSourceReader(questions); }
         });
         const archivePath = join(this.home, ARCHIVE_DB_NAME);
         if (existsSync(archivePath)) work += this.unlessQuiet(archivePath, () => {
-          const archive = new DatabaseSync(archivePath, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+          const archive = this.openSourceReader(archivePath, "archive");
           try { return this.rows("archive", archive, "messages", (row) => this.message(row)); }
-          finally { archive.close(); }
+          finally { this.closeSourceReader(archive); }
         });
         walked = this.discover(idleAware); work += walked;
         const files = idleAware && this.idleFiles >= fileCount ? [] : this.statement(this.db, "SELECT * FROM history_files ORDER BY checked,path LIMIT ?")
@@ -433,7 +477,7 @@ export class HistoryIndex {
     // opencode's indexed session registry avoids a filesystem crawl.
     const path = safeFile(this.paths.opencode, join(this.paths.opencode, "opencode.db"));
     if (path && !this.opencodeComplete) {
-      const db = new DatabaseSync(path, { readOnly: true, timeout: HISTORY_READ_TIMEOUT_MS });
+      const db = this.openSourceReader(path, "opencode");
       try {
         const after = this.cursor("opencode-discovery");
         const rows = this.statement(db, "SELECT * FROM session WHERE id > ? ORDER BY id LIMIT ?").all(after === "0" ? "" : after, HISTORY_DISCOVERY_PER_TICK);
@@ -441,7 +485,7 @@ export class HistoryIndex {
         this.advance("opencode-discovery", rows.length ? String(rows.at(-1)!.id) : "0");
         if (!rows.length) this.opencodeComplete = true;
         work += rows.length;
-      } finally { db.close(); }
+      } finally { this.closeSourceReader(db); }
     }
     return work;
   }

@@ -2,7 +2,7 @@ import { Dir, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSy
 import { dirname, join } from "node:path";
 import { DatabaseSync, StatementSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { openArchive, archiveInitializationObservation } from "../src/core/sqlite-maintenance.js";
+import { openArchive, archiveInitializationObservation, ARCHIVE_DB_NAME } from "../src/core/sqlite-maintenance.js";
 import { openHistoryStore, historyInitializationObservation, legacyReadNotice, historyReadStatus, openHistoryReader, historyReaderObservation } from "../src/core/history-store.js";
 import { storageLease, storageLeaseObservation } from "../src/core/storage-lock.js";
 import { DecisionStore, DECISIONS_SCHEMA } from "../src/core/decisions.js";
@@ -379,6 +379,80 @@ describe("actual History native statement admission (not cold or retirement perm
     expect(index.lifecycleConsumerObservation()).toMatchObject({ nativeBorrower: true, settled: false, ownershipReleased: false });
     vi.restoreAllMocks(); index.resumeLifecycleConsumer(); iterator.return!();
     expect(read.all()).toEqual([{ id: 1, body: "Exact retained bytes" }, { id: 2, body: "Second retained bytes" }]);
+  });
+});
+
+describe("actual History owned readonly source captures (not cold or ownership proof)", () => {
+  function fixture() {
+    const store = new MessageStore(env.db, nullLogger); ownedStores.add(store);
+    const home = join(env.home, "owned-source-read-home"); mkdirSync(home);
+    const archive = initialized(kinds[0], join("owned-source-read-home", ARCHIVE_DB_NAME));
+    const history = Reflect.get(store, "historyDb") as DatabaseSync, main = Reflect.get(store, "db") as DatabaseSync;
+    const paths = { claude: join(home, "owned-claude"), codex: join(home, "owned-codex"), opencode: join(home, "owned-opencode") };
+    const index = new HistoryIndex(history, home, paths, main); ownedIndexes.add(index);
+    return { index, archive, history, main };
+  }
+  it("records the actual readonly archive connection before page SQL and completes only its actual native close", () => {
+    const { index, archive, history, main } = fixture(); let captured: DatabaseSync | undefined, actualClose = false;
+    vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+      if (this !== history && this !== main && index.lifecycleConsumerObservation().sourceReaders === 1) {
+        captured = this; owned.set(this, { actuallyClosed: false });
+        expect(index.lifecycleConsumerObservation()).toMatchObject({ sourceReaders: 1, unknownSourceReads: 0, sourceReadIdentity: "unproved", settled: false });
+      }
+      return nativePrepare.call(this, sql);
+    });
+    vi.spyOn(DatabaseSync.prototype, "close").mockImplementation(function(this: DatabaseSync) {
+      if (this === captured) expect(index.lifecycleConsumerObservation()).toMatchObject({ sourceReaders: 1, unknownSourceReads: 0 });
+      const result = nativeClose.call(this);
+      if (this === captured) { actualClose = true; owned.get(this)!.actuallyClosed = true; }
+      return result;
+    });
+    index.tick(); expect(captured).toBeInstanceOf(DatabaseSync); expect(actualClose).toBe(true);
+    const prepare = vi.spyOn(DatabaseSync.prototype, "prepare"), calls = prepare.mock.calls.length;
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ sourceReaders: 0, unknownSourceReads: 0, nativeBorrower: false,
+      sourceReadIdentity: "unproved", settled: false, ownershipReleased: false });
+    expect(prepare.mock.calls.length).toBe(calls);
+    vi.restoreAllMocks(); expect(readFileSync(archive.file)).toEqual(archive.bytes); expect(retainedRow(archive.file)).toEqual([0, 255, 4]);
+  });
+  for (const when of ["before", "after"] as const) it(`retains the exact actual reader when SIMULATED page initialization and close ${when} native disposal fail`, () => {
+    const { index, archive, history, main } = fixture();
+    const initializationFailure = new Error("SIMULATED readonly page initialization failure after actual prepare"), closeFailure = new Error("SIMULATED reader close outcome error");
+    let captured: DatabaseSync | undefined;
+    vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+      const result = nativePrepare.call(this, sql);
+      if (this !== history && this !== main && index.lifecycleConsumerObservation().sourceReaders === 1) {
+        captured = this; owned.set(this, { actuallyClosed: false });
+        expect(index.lifecycleConsumerObservation()).toMatchObject({ sourceReaders: 1, unknownSourceReads: 0 });
+        throw initializationFailure;
+      }
+      return result;
+    });
+    vi.spyOn(DatabaseSync.prototype, "close").mockImplementation(function(this: DatabaseSync) {
+      if (this !== captured) return nativeClose.call(this);
+      if (when === "after") { nativeClose.call(this); owned.get(this)!.actuallyClosed = true; }
+      throw closeFailure;
+    });
+    // Original finally-close exception precedence remains unchanged.
+    expect(() => index.tick()).toThrow(closeFailure); expect(captured).toBeInstanceOf(DatabaseSync);
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ sourceReaders: 1, unknownSourceReads: 1, unknown: true,
+      settled: false, ownershipReleased: false, blocker: "owner_unsupported" });
+    vi.restoreAllMocks(); if (when === "before") dispose(captured!);
+    // Fixture disposal is a separate native outcome, never a source ACK or a
+    // public renewal/force-close API for the source's uncertain resource.
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ sourceReaders: 1, unknownSourceReads: 1, ownershipReleased: false });
+    expect(readFileSync(archive.file)).toEqual(archive.bytes); expect(retainedRow(archive.file)).toEqual([0, 255, 4]);
+  });
+  it("retains an actual unreturned readonly constructor attempt without inventing a DB or creating a missing file", () => {
+    const { index, archive } = fixture(), missing = join(env.home, "owned-missing-source.db");
+    const open = Reflect.get(index, "openSourceReader") as (file: string, kind: "archive") => DatabaseSync;
+    // Test-only inspection of the existing private source call; no public
+    // authority factory or counterfeit returned native object is provided.
+    expect(() => open.call(index, missing, "archive")).toThrow(); expect(existsSync(missing)).toBe(false);
+    const prepare = vi.spyOn(DatabaseSync.prototype, "prepare"), close = vi.spyOn(DatabaseSync.prototype, "close");
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ sourceReaders: 0, unknownSourceReads: 1, unknown: true,
+      sourceReadIdentity: "unproved", settled: false, ownershipReleased: false });
+    expect(prepare).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled();
+    vi.restoreAllMocks(); expect(readFileSync(archive.file)).toEqual(archive.bytes); expect(retainedRow(archive.file)).toEqual([0, 255, 4]);
   });
 });
 
