@@ -6,6 +6,7 @@ import { metadataDb, physicalMetadataPath } from "./metadata-db.js";
 import { retainMetadataFiles } from "./metadata-import.js";
 import { finishedRunLine } from "./run-archive.js";
 import { readRunLogPreview } from "./run-log-preview.js";
+import { isSqliteBusy } from "./sqlite-policy.js";
 
 const RUN_LOG = /\.log(?:-\d+-[\w-]+)?$/;
 /** Bumped in every transaction that writes finished-runs rows; readers use it as a cheap cache signature. */
@@ -124,6 +125,9 @@ export function packedRunRecords(home: string, names?: Set<string>): PackedRun[]
   return pick(records);
  } catch (error) {
   if (saved) return pick(saved.records);
+  // AB-290: the outcome worker can initialize bridge.db before this reader has a cache.
+  // Defer only contention; do not cache an empty snapshot, so the next poll reads retained rows.
+  if (isSqliteBusy(error)) return [];
   throw error;
  } finally { db?.close(); }
 }
