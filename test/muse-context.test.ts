@@ -20,8 +20,11 @@ beforeEach(() => {
 });
 afterEach(async () => { vi.restoreAllMocks(); for (const release of releases.splice(0)) release(); vi.unstubAllEnvs(); await env.cleanup(); });
 async function restore() {
-  const script = `const {restoreMuseContext}=await import(${JSON.stringify(pathToFileURL(module).href)}); const env={MUSE_SESSION_ID:'native-session'}; const restored=await restoreMuseContext(env); console.log(JSON.stringify({restored,env}));`;
+  const identityModule = join(env.home, "identity.mjs");
+  buildSync({ entryPoints: [join(import.meta.dirname, "../src/core/process-identity.ts")], outfile: identityModule, bundle: true, platform: "node", format: "esm" });
+  const script = `const {restoreMuseContext,readMusePrivateJson,museContextDirectory}=await import(${JSON.stringify(pathToFileURL(module).href)}); const env={MUSE_SESSION_ID:'native-session'}; const restored=await restoreMuseContext(env); if(!restored){const {processIdentity}=await import(${JSON.stringify(pathToFileURL(identityModule).href)}); const {join}=await import('node:path'); const {existsSync}=await import('node:fs'); const path=join(museContextDirectory(),'host-'+process.ppid+'.json'); const d={parent:process.ppid,recordExists:existsSync(path),pathAvailable:!!process.env.PATH,systemRootAvailable:!!process.env.SystemRoot};try{const r=readMusePrivateJson(path);d.recordReadable=true;const identity=processIdentity(process.ppid);d.identityAvailable=!!identity;d.identityMatches=r.identity===identity;d.pidMatches=r.pid===process.ppid;}catch(e){d.recordReadable=false;d.errorCode=e.code??e.name;d.exitStatus=e.status??null;}console.error('Muse fixture binding diagnostics '+JSON.stringify(d));} console.log(JSON.stringify({restored,env}));`;
   const result = await exec(process.execPath, ["--input-type=module", "-e", script], { env: { HOME: env.home, PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, USERPROFILE: process.env.USERPROFILE, TEMP: env.home, TMP: env.home, TMPDIR: env.home } });
+  if (result.stderr) console.warn(result.stderr);
   return JSON.parse(result.stdout);
 }
 function register() {

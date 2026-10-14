@@ -27,5 +27,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+      - name: Signed handoff diagnostic (synthetic, no secret values)
+        run: npm run test:integration -- test/muse-context.test.ts -t "restores only sanctioned Bridge context"
       - name: Synthetic context and native-shaped hosts only
         run: npm run test:integration -- test/muse-context.test.ts test/muse-native.test.ts
