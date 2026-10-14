@@ -24,10 +24,21 @@ const repository = realpathSync.native(process.cwd());
 const normalize = specs => specs.map(spec => relative(repository, realpathSync.native(spec.moduleId)).replaceAll("\\", "/")).sort();
 async function specifications(lane, visit) {
   process.env.AGENT_BRIDGE_TEST_LANE = lane;
-  const ctx = await createVitest({ watch: false, reporters: [], ...(collect ? {
-    cacheDir: resolve(process.env.AGENT_BRIDGE_TEST_ROOT, "collection-cache", lane),
-  } : {}) });
+  const cache = collect ? resolve(process.env.AGENT_BRIDGE_TEST_ROOT, "collection-cache", lane) : undefined;
+  // Pinned createVitest(options, viteOverrides): cacheDir belongs to Vite.
+  const ctx = await createVitest({ watch: false, reporters: [] }, cache ? { cacheDir: cache } : {});
   try {
+    if (collect) {
+      const actual = resolve(ctx.viteConfig.cacheDir);
+      assert.equal(actual, cache, `${lane}: Vite collection cache override was not applied`);
+      mkdirSync(actual, { recursive: true });
+      const physicalRoot = realpathSync.native(process.env.AGENT_BRIDGE_TEST_ROOT);
+      const physicalCache = realpathSync.native(actual);
+      const expectedCache = resolve(physicalRoot, "collection-cache", lane);
+      assert.equal(physicalCache, expectedCache, `${lane}: collection cache escaped the marked physical root`);
+      (inventory.collectionCaches ??= {})[lane] = { resolved: actual, physical: physicalCache, root: physicalRoot };
+      save();
+    }
     await ctx.standalone();
     await visit(ctx, await ctx.globTestSpecifications());
   } finally { await ctx.close(); }
