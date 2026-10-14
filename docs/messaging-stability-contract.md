@@ -1,7 +1,8 @@
 # AB345 source packet and proposed fence
 
-This is a source audit and contract draft, not a delivery implementation or an
-integration acceptance report. The owner requested initial messaging items 1+2
+This packet implements bounded optional modes and retains the shared delivery
+contract draft. It is not shared idempotent delivery or provider/model integration
+acceptance. The owner requested initial messaging items 1+2
 on the sole `feat/messaging-stability` branch. The frozen released base is
 `0761d56fe4c36e505550f9b889841fdf8e82c80a`. The worktree is
 `E:/AgentData/worktrees/agentbridge-messaging-stability-20261015`.
@@ -11,21 +12,21 @@ The owner branch reason is messaging reliability.
 
 1. Audit all actual routes and their authority and persistence boundaries.
 2. Submit the source fence and command/receipt contract to root.
-3. Draft isolated policy helpers and refusal fixtures while root resolves the
-   issuer/transaction prerequisite. These files have no runtime callers.
-4. Prepare the exact optional-mode four-file delta for root review without
-   applying it. Genuine delivery is the next reviewed package on the same
-   branch after the initial merge.
-5. Freeze this NEW-only small draft PR with exact source evidence and NOT RUN
-   gates. Root's sequential-scope decision expressly leaves item 2 incomplete.
+3. Publish the isolated three-file draft at
+   `f7c444fa93f0532d1ee9865f217441580e337f6d` / draft PR32. Its policy helpers have
+   no runtime callers and remain distinct from the bounded wire implementation.
+4. Record root's next exact four-file method/hunk fence on AB345 before editing;
+   implement optional modes plus one real-boundary hosted fixture file.
+5. Freeze that source packet on the same branch. Genuine shared delivery is the
+   next reviewed transaction/issuer package after merge; item 2 is incomplete.
 
-Safe draft fence: this document, `src/core/messaging-contract.ts`, and
-`test/messaging-contract.test.ts`. Proposed shared-source fence, subject to
-root's contract decision: `src/core/protocol.ts`, `src/core/broker.ts`,
-`src/core/node.ts`, `src/mcp/server.ts`. Store, runner, provider, launcher,
-network, UI, generated bundles and other PRs are outside this draft fence.
-Implementing durable effect reconciliation across the routes below requires
-more than those four shared files. Root must resolve that scope first.
+Initial draft fence: this document, `src/core/messaging-contract.ts`, and
+`test/messaging-contract.test.ts`. Next approved fence: exactly
+`src/core/protocol.ts`, `src/core/broker.ts`, `src/core/node.ts`,
+`src/mcp/server.ts`, new `test/messaging-mode-routes.test.ts`, and this existing
+source packet. Store, runner, provider, launcher, network, UI, generated bundles
+and other PRs remain outside the fence. Implementing durable effect
+reconciliation requires the separately reviewed next package.
 
 ## Source route and ownership audit
 
@@ -130,33 +131,49 @@ delivery. Muse remains a refusal until PR20 supplies a real supported route.
 Every consumer reuses existing authorization and lifecycle gates. These
 consumers, issuer/schema changes and real-route tests are outside this PR.
 
-## Exact optional-mode delta submitted for separate root review
+## Approved optional-mode implementation and method/hunk fence
 
-No shared-source edits are applied in this PR. Proposed four-file seams:
+Root approved this bounded delta after the initial draft. The exact method/hunk
+fence was recorded on AB345 before edits; no existing tests or JSON baselines,
+normalizers, assertions or deadlines were changed.
 
-| File / released seam | Concrete proposed change |
+| File / released seam | Actual bounded change |
 | --- | --- |
-| `core/protocol.ts:155`, `core/protocol.ts:228` | Optional wire-only mode and mode-result types; one new `modeSend` opcode so old brokers explicitly refuse instead of ignoring semantics. Report requested/effective/refusal, actual route/role/ownership/generation-known facts and lowest provable stage. Do not widen AgentKind or shared store formats. |
-| `core/broker.ts:390`, `core/broker.ts:1723`, `core/broker.ts:1791` | Require the existing current authenticated connection first. Derive route/role/generation and preserve existing authorization. Auto delegates to the existing send route. Refuse unsupported steer/restart, unknown-generation explicit modes and unverified receivers before effects. Scoped native queues can only use routeNativeSend's current child/parent/grant/hop rechecks; no foreign TUI control. |
-| `core/node.ts:542`, `core/node.ts:660` | Add a mode-aware request method using modeSend, including the existing scoped-child selector where applicable. No automatic mode retry. Only explicit unknown-op refusal permits legacy auto fallback. Timeout/disconnect yields unknown outcome with no retry/fallback effect. |
-| `mcp/server.ts:624`, `mcp/server.ts:868`, `mcp/server.ts:1518` | Add optional enum mode to send/message_subagent and handle it inside the native-child guard too. Omitted auto keeps legacy execution. Refuse unsupported explicit job modes before title/settings/followUp so refusal cannot resume a finished/stale job or mutate its settings. Include honest requested/effective/lowest-stage information. |
+| `core/protocol.ts:155`, `core/protocol.ts:228` | Add SendMode/ModeSendArgs/SendModeReport/ModeSendResult and exactly one modeSend RequestMap opcode. Wire-only requested/effective/stage/capability facts; no AgentKind or shared format change. |
+| `core/broker.ts:203`, `core/broker.ts:751`, `core/broker.ts:1791` | Exclude modeSend from the constructor handler map's type and select NEW onModeSend in dispatch instead. Constructor/default lifecycle pins unchanged. New strict mode handler; auto calls existing send/native route; native queue adds an optional current-registration callback to routeNativeSend's check and reuses existing insertBatch. No existing auth/ownership/grant/hop logic replaced. |
+| `core/node.ts:542`, `core/node.ts:660` | Import wire types and add sendWithMode, one authenticated modeSend request, no read-reconnect/send-retry route. Only typed protocol_mismatch with operation=modeSend permits auto-only legacy fallback; errors/timeout/closed socket/unknown effects never retry. Existing send and lifecycle methods unchanged. |
+| `mcp/server.ts:624`, `mcp/server.ts:868`, `mcp/server.ts:1518` | Add mode report/error helpers, optional enums on send/message_subagent, native guard mode branch, explicit-mode preflight before old send/job paths, explicit auto report, and job refusal before lookup/title/settings/followUp/resume. Omitted paths unchanged. |
 
-Conservative proposed capability result for that later delta:
+Actual capability/outcome boundaries:
 
 - All unsupported native kinds and Muse: every explicit capability false.
-- Authenticated live Claude native target: existing durable mailbox queue
-  mechanism only; no active steering, interrupt/restart or idle wake claim.
+- Authenticated live Claude native target: one-shot queue only. The broker
+  creates a fresh UUID; caller messageId/dedupeKey refuses before effects. Two
+  identical body sends are distinct legacy attempts, not idempotent retries.
+- New queue issuers: current parent connection or an exact granted top-level
+  Claude/Codex/opencode/Antigravity connection. Both sender and native parent's
+  broker mailReady registrations must be ready/current. Captured registrations
+  are rechecked inside the existing transaction alongside child activity,
+  owner/session, grant and hop checks. No caller generation is minted or trusted.
+- Delegated/other issuers and scoped native senders cannot use new queue. Their
+  genuine issuer generation is unimplemented; even a grant cannot replace it.
+  JobOwner/session/name DTO labels do not create new queue authority.
+- Existing insertion success reports stored only, never transport accepted,
+  model consumed/completed or exactly-once effects. Stop returns original mail
+  using the existing retained native fallback; this patch schedules no timer,
+  mode retry, replay or automatic restart.
 - Session hooks and delegated job links: boundary/mailbox mechanisms are
   inventoried; no queue-after-active or steer support advertised from a void
   emission. Foreign Codex queue acceptance cannot become consumed/completed.
 - `auto` result: actual broker storage can report stored; fire-and-forget job
   events report requested/unknown. A local array push is not durable queueing.
-- All explicit queue behavior remains subject to root review of immutable
-  mode/issuer binding. Existing native recovered() at `core/broker.ts:1818`
-  compares sender name/content, not an issuer generation or requested mode.
-  Therefore this draft enables no functional queue retry. Root was asked
-  whether a single-attempt native queue with no caller explicit ID is acceptable,
-  or all explicit modes must remain refused until the transactional package.
+- Existing native recovered() at frozen `core/broker.ts:1818` still compares
+  sender name/content, not a durable issuer generation or requested mode. New
+  one-shot queue uses no caller identity/dedupe key and has no automatic retry.
+  It does not repair or claim the next transactional acceptance layer.
+- A downstream opcode/protocol failure cannot impersonate refusal of modeSend
+  after effects begin. The new broker handler wraps it as unknown outcome;
+  Node cannot downgrade it into another legacy send.
 
 The proposed opcode is an internal negotiation boundary, not a new MCP tool
 family. There is no blanket capability advertisement on peer registration.
@@ -165,14 +182,29 @@ cannot itself authorize a route or issue a receipt.
 
 ## Evidence gates
 
-The isolated fixtures are policy/refusal tests only. A 25-pair sender/receiver
-matrix in idle and busy states is not integration proof when routes are not
-wired. Real supported-route hosted fixtures, lost ACK/restart/stop/terminal
-cases and migration review remain required. Root prepares the independent
-read-only protocol fixture design.
+The original isolated fixtures remain policy/refusal tests only. New
+`test/messaging-mode-routes.test.ts` exercises real hermetic Broker/Node/MCP
+boundaries: 25-pair idle/busy session and native-role matrices, authentic Muse
+registration refusal, actual native insertions, duplicate-body distinct IDs,
+stop retention, grants/revocation/hops, stale registration after an admitted
+write yields, caller ID/generation/grant spoof refusal, authenticated old-opcode
+wire refusal, unknown effects/lost ACK after real storage, and refusal before
+job continuation/native acknowledgement. Old-opcode and lost-ACK cases inject
+failures, never positive provider outcomes. No provider/model consumption or
+live session acceptance is proved. Shared issuer/receiver transaction,
+reconciliation, restart/retry/terminal integration and migration review remain
+required. Root prepares the independent protocol fixture design.
 
 NOT RUN by this allocation: local tests/suites, build, typecheck, JS imports,
 native/provider/process/OS probes, owner DB and live Bridge probes. No peer
 messages or controls were exercised except authorized questions to parent.
 Only normal automatic hosted CI is authorized; no dispatch, rerun, cancellation
-or polling loop. No generated runtime bundles have been built.
+or polling loop. No generated runtime bundles have been built. Root separately
+allocates fresh hosted packaging against the independently reviewed frozen
+head. The automatic CI generated-bundle freshness check remains a real pending
+packaging gate; a source packet or policy fixture is not a runtime pass.
+
+ACP research now lives on AB347 (Bridge0761/T37ac952c6) and its proposal-only
+children. It adds no authority, dependency, provider, launcher or queue/steer
+scope to this allocation. ACP insertion ACKs, idle states, old fixture versions
+and native model completion remain distinct future evidence questions.

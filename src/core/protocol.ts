@@ -167,6 +167,32 @@ export interface SendArgs {
    */
   dedupeKey?: string;
 }
+/** Optional wire support only; no store-format or provider capability upgrade. */
+export type SendMode = "auto" | "queue" | "steer" | "restart";
+export interface ModeSendArgs extends SendArgs {
+  mode: SendMode;
+  /** Existing scoped Claude sender selector, authorized by the current parent. */
+  nativeChild?: string;
+}
+export interface SendModeReport {
+  requested: SendMode;
+  effective: "mailbox" | "nativequeue" | "legacyunconfirmed" | "refused";
+  stage: "requested" | "stored" | "unknown";
+  protocolSupport: "mode-v1" | "legacy" | "unknown";
+  sharedIdempotentDelivery: false;
+  reason?: string;
+  capabilities: {
+    route: "mailbox" | "nativequeue" | "legacyunconfirmed" | "unsupported";
+    receiverRole: "session" | "delegated_job" | "native_child" | "unknown";
+    ownedSession: boolean;
+    generationKnown: boolean;
+    activeSteering: false;
+    interruptRestart: false;
+    queue: boolean;
+    idleWake: false | "conditional";
+  };
+}
+export interface ModeSendResult { send: SendResult; mode: SendModeReport }
 export interface MessageReceipt {
   recipient: string;
   readAt: number | null;
@@ -226,6 +252,8 @@ export interface AuthArgs {
 }
 
 export interface RequestMap {
+  /** Old peers must explicitly refuse this opcode, never ignore a mode. */
+  modeSend: [ModeSendArgs, ModeSendResult];
   /** Virtual addresses are controlled only by the registered parent connection. */
   nativeChild: [{ agentId: string; action: "start" | "end" | "grant"; sendTo?: string[]; maxHops?: number }, NativeChildAddress | null];
   nativeChildren: [Record<string, never>, NativeChildAddress[]];
