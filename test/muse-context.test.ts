@@ -36,29 +36,28 @@ describe("Muse private host context", () => {
     const root = process.env.SystemRoot || process.env.SYSTEMROOT || "C:\\Windows";
     const profile = process.env.USERPROFILE || "";
     const bare = { HOME: env.home, PATH: process.env.PATH, SystemRoot: root, USERPROFILE: profile, TEMP: env.home, TMP: env.home };
-    const extra = {
-      windir: { windir: root },
-      modules: { PSModulePath: join(root, "System32", "WindowsPowerShell", "v1.0", "Modules") },
-      shell: { ComSpec: join(root, "System32", "cmd.exe"), SystemDrive: root.slice(0, 2) },
-      profile: { APPDATA: join(profile, "AppData", "Roaming"), LOCALAPPDATA: join(profile, "AppData", "Local") },
-      machine: { ProgramData: join(root.slice(0, 3), "ProgramData"), ProgramFiles: join(root.slice(0, 3), "Program Files"), "ProgramFiles(x86)": join(root.slice(0, 3), "Program Files (x86)"), ProgramW6432: join(root.slice(0, 3), "Program Files") },
-      extensions: { PATHEXT: ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC" },
+    const cmdlet = `[Console]::Write('ready'); (Get-Process -Id ${process.pid} -ErrorAction Stop).Id`;
+    const variants = {
+      cmdlet,
+      explicitExit: cmdlet + "; exit 0",
+      dotnet: `[Console]::Write('ready'+[Diagnostics.Process]::GetProcessById(${process.pid}).Id); exit 0`,
+      dpapi: `$null=[Reflection.Assembly]::LoadWithPartialName('System.Security'); $b=[Text.Encoding]::UTF8.GetBytes('fixture-only'); $p=[Security.Cryptography.ProtectedData]::Protect($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser); $r=[Security.Cryptography.ProtectedData]::Unprotect($p,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser); if([Text.Encoding]::UTF8.GetString($r) -eq 'fixture-only'){[Console]::Write('ready${process.pid}')}; exit 0`,
     };
-    const variants = { bare: {}, ...extra, all: Object.assign({}, ...Object.values(extra)) };
     const results = [];
-    for (const [variant, added] of Object.entries(variants)) {
+    for (const [variant, command] of Object.entries(variants)) {
       const started = Date.now();
       try {
         const pending = exec(join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-          ["-NoProfile", "-NonInteractive", "-Command", `[Console]::Write('ready'); (Get-Process -Id ${process.pid} -ErrorAction Stop).Id`],
-          { env: { ...bare, ...added }, timeout: 5_000, windowsHide: true });
+          ["-NoProfile", "-NonInteractive", "-Command", command],
+          { env: bare, timeout: 5_000, windowsHide: true });
         pending.child.stdin?.end();
         const result = await pending;
         results.push({ variant, ok: result.stdout.trim() === "ready" + process.pid, elapsedMs: Date.now() - started });
-      } catch (error) { const failure = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string }; results.push({ variant, ok: false, code: failure.code, readyWritten: !!failure.stdout?.includes("ready"), hasStderr: !!failure.stderr, elapsedMs: Date.now() - started }); }
+      } catch (error) { const failure = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string }; results.push({ variant, ok: false, code: failure.code, readyWritten: !!failure.stdout?.includes("ready"), pidWritten: !!failure.stdout?.includes(String(process.pid)), hasStderr: !!failure.stderr, elapsedMs: Date.now() - started }); }
     }
     console.warn("Muse Windows runtime diagnostics " + JSON.stringify(results));
-    expect(results.find(result => result.variant === "all")?.ok).toBe(true);
+    expect(results.find(result => result.variant === "dotnet")?.ok).toBe(true);
+    expect(results.find(result => result.variant === "dpapi")?.ok).toBe(true);
   });
   it("authenticates the bound parent before querying an unavailable CIM service", async () => {
     releases.push(registerMuseContext(process.ppid, { AGENT_BRIDGE_INTERNAL: "1", CODEX_HOME: "owned-storage" }));
