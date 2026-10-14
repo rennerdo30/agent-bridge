@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AntigravityHooks } from "../src/mcp/antigravity-hooks.js";
-import { needsInteractivePreToolPost, postAntigravityHook } from "../src/cli/antigravity-hook.js";
+import { postAntigravityHook } from "../src/cli/antigravity-hook.js";
 import { antigravityAncestor } from "../src/core/procinfo.js";
 import { buildHookResponse, confirmAntigravityStopDelivery } from "../src/mcp/hooks.js";
 import { antigravityHookCommand, requireAntigravityPlugin } from "../src/core/antigravity-plugin.js";
@@ -11,7 +11,7 @@ import { grantAntigravityBridgeMcp, installAntigravity } from "../src/cli/antigr
 import { execFileSync } from "node:child_process";
 import { makeEnv } from "./helpers.js";
 import type { ServerContext } from "../src/mcp/server.js";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 vi.mock("../src/core/procinfo.js", () => ({ antigravityAncestor: vi.fn(async () => 12345) }));
 vi.mock("../src/mcp/hooks.js", () => ({ buildHookResponse: vi.fn(), confirmAntigravityStopDelivery: vi.fn() }));
@@ -65,13 +65,10 @@ describe("Antigravity native hook routing", () => {
     try {
       await hooks.start();
       const reg = JSON.parse(readFileSync(join(env.home, "antigravity-hooks", "12345.json"), "utf8"));
-      expect(needsInteractivePreToolPost({ conversationId: "parent", workspacePaths: [env.home] }, env.home)).toBe(true);
       const call = (event: string, id = "parent", secret = reg.secret, extra: Record<string, unknown> = {}) => fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ event, input: { conversationId: id, workspacePaths: [env.home], ...extra } }) });
       expect((await call("Stop", "parent", "wrong")).status).toBe(403);
       // PreToolUse learns session/cwd and confirms pending Stop mail without calling buildHookResponse (F1).
       expect(await (await call("PreToolUse", "parent", reg.secret)).json()).toEqual({});
-      expect(needsInteractivePreToolPost({ conversationId: "parent", workspacePaths: [env.home] }, env.home)).toBe(false);
-      expect(needsInteractivePreToolPost({ conversationId: "parent", workspacePaths: [join(env.home, "other")] }, env.home)).toBe(true);
       expect(setSessionId).toHaveBeenCalledWith("parent");
       expect(learnCwd).toHaveBeenCalledWith(env.home);
       expect(ensureConnected).toHaveBeenCalledTimes(1);
@@ -83,10 +80,8 @@ describe("Antigravity native hook routing", () => {
       expect(buildHookResponse).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sessionId: "parent", cwd: env.home, stopHookActive: false }));
       vi.mocked(buildHookResponse).mockResolvedValueOnce({ decision: "block", reason: "result arrived" });
       expect(await (await call("Stop", "parent", reg.secret, { executionNum: 0, terminationReason: "NO_TOOL_CALL" })).json()).toEqual({ decision: "continue", reason: "result arrived" });
-      expect(needsInteractivePreToolPost({ conversationId: "parent", workspacePaths: [env.home] }, env.home)).toBe(true);
       vi.mocked(buildHookResponse).mockResolvedValueOnce({});
       expect(await (await call("PreInvocation", "parent", reg.secret, { invocationNum: 1 })).json()).toEqual({});
-      expect(needsInteractivePreToolPost({ conversationId: "parent", workspacePaths: [env.home] }, env.home)).toBe(false);
       expect(buildHookResponse).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ event: "UserPromptSubmit", stopHookActive: true }));
       // If Stop continuation is not taken and a fresh turn starts at invocationNum=0, stopHookActive is false.
       vi.mocked(buildHookResponse).mockResolvedValueOnce({ decision: "block", reason: "second result" });
@@ -105,26 +100,20 @@ describe("Antigravity native hook routing", () => {
       expect(await (await call("Stop", "parent", reg.secret, { executionNum: 2, terminationReason: "MAX_FORCED_INVOCATIONS" })).json()).toEqual({});
       expect(buildHookResponse).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ event: "StopFailure" }));
       node.emit("replaced"); expect((await call("Stop")).status).toBe(403);
-      expect(needsInteractivePreToolPost({ conversationId: "parent", workspacePaths: [env.home] }, env.home)).toBe(true);
       writeFileSync(join(env.home, "antigravity-hooks", "12345.json"), '{"port":1,"secret":"replacement"}');
       node.emit("reclaimed"); vi.mocked(buildHookResponse).mockResolvedValue({});
-      expect(JSON.parse(readFileSync(join(env.home, "antigravity-hooks", "12345.json"), "utf8"))).toEqual({ ...reg, conversationId: "parent", cwd: env.home, stopPending: false });
+      expect(JSON.parse(readFileSync(join(env.home, "antigravity-hooks", "12345.json"), "utf8"))).toEqual(reg);
       expect((await call("Stop")).status).toBe(200);
-      expect(needsInteractivePreToolPost({ workspacePaths: [env.home] }, env.home)).toBe(true);
       vi.mocked(buildHookResponse).mockResolvedValueOnce({ decision: "block", reason: "held mail" });
       expect(await (await call("Stop", "parent", reg.secret, { executionNum: 3, terminationReason: "NO_TOOL_CALL" })).json()).toEqual({ decision: "continue", reason: "held mail" });
-      expect(needsInteractivePreToolPost({ conversationId: "parent", workspacePaths: [env.home] }, env.home)).toBe(true);
-      // Even if a stale live row for the same conversation has stopPending:false, held Stop on the active row must not be skipped.
-      writeFileSync(join(env.home, "antigravity-hooks", "99999.json"), JSON.stringify({ ...reg, conversationId: "parent", cwd: env.home, stopPending: false }));
-      expect(needsInteractivePreToolPost({ conversationId: "parent", workspacePaths: [env.home] }, env.home)).toBe(true);
-      rmSync(join(env.home, "antigravity-hooks", "99999.json"));
+      vi.mocked(confirmAntigravityStopDelivery).mockClear();
       vi.mocked(antigravityAncestor).mockImplementationOnce((_start, signal) => new Promise((resolve) => {
         signal?.addEventListener("abort", () => resolve(null), { once: true });
       }));
       expect(await postAntigravityHook("PreToolUse", { conversationId: "parent", workspacePaths: [env.home] }, 50, env.home)).toEqual({});
-      expect(needsInteractivePreToolPost({ conversationId: "parent", workspacePaths: [env.home] }, env.home)).toBe(true);
+      expect(confirmAntigravityStopDelivery).not.toHaveBeenCalled();
       expect(await postAntigravityHook("PreToolUse", { conversationId: "parent", workspacePaths: [env.home] }, 1_500, env.home)).toEqual({});
-      expect(needsInteractivePreToolPost({ conversationId: "parent", workspacePaths: [env.home] }, env.home)).toBe(false);
+      expect(confirmAntigravityStopDelivery).toHaveBeenCalledTimes(1);
     } finally { await hooks.stop(); await env.cleanup(); }
   });
   it("rejects missing or disabled native permission gates before a CLI can run", async () => {

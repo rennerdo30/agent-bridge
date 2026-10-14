@@ -13,10 +13,8 @@ import type { ServerContext } from "./server.js";
 /** Mail at active model boundaries; idle TUI wake is unavailable in agy 1.2.0. */
 export class AntigravityHooks {
   private server: Server | null = null;
-  private registerFn: (() => void) | null = null;
   private retired = false;
   private conversationId: string | null = null;
-  private learnedCwd: string | null = null;
   private stopPending = false;
   private lastStopExecutionNum: number | null = null;
   private lastInvocationNum: number | null = null;
@@ -29,27 +27,6 @@ export class AntigravityHooks {
     const pid = await antigravityAncestor();
     if (!pid) return;
     const secret = randomBytes(24).toString("hex");
-    mkdirSync(join(this.ctx.home, "antigravity-hooks"), { recursive: true });
-    const register = () => {
-      if (!this.server?.listening) return;
-      const rawCwd = this.learnedCwd ?? (typeof this.ctx.cwd === "function" ? this.ctx.cwd() : this.ctx.cwd ?? null);
-      writeFileSync(
-        join(this.ctx.home, "antigravity-hooks", `${pid}.json`),
-        JSON.stringify({
-          port: (this.server.address() as AddressInfo).port,
-          secret,
-          pid: process.pid,
-          ancestorPid: pid,
-          retired: this.retired,
-          connected: Boolean(this.ctx.node ? this.ctx.node.isConnected !== false : this.ctx.parent),
-          conversationId: this.conversationId ?? this.ctx.node?.currentSessionId ?? null,
-          cwd: typeof rawCwd === "string" && rawCwd.trim() ? rawCwd : null,
-          stopPending: this.stopPending,
-        }),
-        { mode: 0o600 },
-      );
-    };
-    this.registerFn = register;
     this.server = createServer((req, res) => {
       if (req.method !== "POST" || req.url !== "/hook" || !tokensEqual(String(req.headers.authorization ?? ""), `Bearer ${secret}`) || this.retired) { res.writeHead(403).end(); return; }
       void (async () => {
@@ -62,7 +39,6 @@ export class AntigravityHooks {
         // Native children can share agy's OS process; they must never consume their parent's inbox.
         this.conversationId ??= this.ctx.node?.currentSessionId ?? id;
         if (id && this.conversationId && id !== this.conversationId) { res.writeHead(200, { "content-type": "application/json" }).end("{}"); return; }
-        if (cwd) this.learnedCwd = cwd;
         if (body.event === "PreToolUse") {
           this.stopPending = false;
           this.lastStopExecutionNum = null;
@@ -77,7 +53,6 @@ export class AntigravityHooks {
             await this.ctx.node.ensureConnected().catch(() => {});
             confirmAntigravityStopDelivery(this.ctx);
           }
-          register();
           res.writeHead(200, { "content-type": "application/json" }).end("{}");
           return;
         }
@@ -89,7 +64,6 @@ export class AntigravityHooks {
           this.lastStopExecutionNum = null;
           this.lastStopInvocationNum = null;
           const output = await buildHookResponse(this.ctx, { event: "UserPromptSubmit", sessionId: id, cwd, stopHookActive: continued });
-          register();
           const text = "reason" in output ? String(output.reason) : "hookSpecificOutput" in output ? output.hookSpecificOutput.additionalContext : "";
           res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(antigravityHookOutput(body.event, text)));
           return;
@@ -105,7 +79,6 @@ export class AntigravityHooks {
         this.lastStopInvocationNum = null;
         if (!canContinue) {
           await buildHookResponse(this.ctx, { event: "StopFailure", sessionId: id, cwd, stopHookActive: false });
-          register();
           res.writeHead(200, { "content-type": "application/json" }).end("{}");
           return;
         }
@@ -116,26 +89,27 @@ export class AntigravityHooks {
           this.lastStopExecutionNum = executionNum;
           this.lastStopInvocationNum = this.lastInvocationNum;
         }
-        register();
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(antigravityHookOutput(body.event, text)));
       })().catch(() => { if (!res.writableEnded) res.writeHead(500).end("{}"); });
     });
     await new Promise<void>((resolve, reject) => { this.server!.once("error", reject); this.server!.listen(0, "127.0.0.1", resolve); });
+    mkdirSync(join(this.ctx.home, "antigravity-hooks"), { recursive: true });
+    const register = () => {
+      if (!this.server?.listening) return;
+      writeFileSync(join(this.ctx.home, "antigravity-hooks", `${pid}.json`), JSON.stringify({ port: (this.server.address() as AddressInfo).port, secret, pid: process.pid }), { mode: 0o600 });
+    };
     register();
-    this.ctx.node?.on("connected", () => register());
-    this.ctx.node?.on("replaced", () => { this.retired = true; this.stopPending = false; this.lastStopExecutionNum = null; this.lastInvocationNum = null; this.lastStopInvocationNum = null; register(); });
+    this.ctx.node?.on("replaced", () => { this.retired = true; this.stopPending = false; this.lastStopExecutionNum = null; this.lastInvocationNum = null; this.lastStopInvocationNum = null; });
     this.ctx.node?.on("reclaimed", () => { this.retired = false; register(); });
   }
   async stop(): Promise<void> {
     const server = this.server;
+    this.server = null;
     this.retired = true;
     this.stopPending = false;
     this.lastStopExecutionNum = null;
-    this.lastStopInvocationNum = null;
     this.lastInvocationNum = null;
-    try { this.registerFn?.(); } catch {}
-    this.registerFn = null;
-    this.server = null;
+    this.lastStopInvocationNum = null;
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 }

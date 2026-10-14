@@ -47,7 +47,6 @@ export class RemoteJobs {
   private readonly mirrorStates = new Map<string, RunnerState>();
   private readonly approvals = new Map<string, () => void>();
   private readonly publishingApprovals = new Set<string>();
-  private readonly answeringApprovals = new Set<string>();
   private readonly starting = new Set<string>();
   private readonly pendingStarts = new Map<string, { record: RemoteRecord; previous?: RemoteRecord; controller: AbortController; cancelRequested: boolean; committed: boolean }>();
   private readonly runners: JobRunners | null;
@@ -287,31 +286,18 @@ export class RemoteJobs {
     }
     this.updateMirror(key, snapshot);
     const active = new Set(snapshot.approvals.map((a) => `${key}/${a.id}`));
-    for (const [id, close] of this.approvals) if (id.startsWith(`${key}/`) && !active.has(id) && !this.answeringApprovals.has(id)) { close(); this.approvals.delete(id); }
+    for (const [id, close] of this.approvals) if (id.startsWith(`${key}/`) && !active.has(id)) { close(); this.approvals.delete(id); }
     for (const approval of snapshot.approvals) {
       const id = `${key}/${approval.id}`;
       if (this.approvals.has(id) || this.publishingApprovals.has(id)) continue;
       this.publishingApprovals.add(id);
       try {
         const close = await publishApproval(this.home, { ...approval, owner, job: `${host}/${approval.job}` }, async (body) => {
-          if (Date.now() >= approval.deadline || this.answeringApprovals.has(id)) return false;
-          this.answeringApprovals.add(id);
-          let settled = false;
+          if (Date.now() >= approval.deadline) return false;
           try {
-            const next = await this.request(host, peer, { op: "approval", job: request.job, id: approval.id, decision: body.startsWith("allow") ? "allow" : "deny", reason: body.includes(":") ? body.slice(body.indexOf(":") + 1).trim() : undefined }, supervisor);
-            settled = !next.approvals.some((a) => a.id === approval.id);
+            await this.request(host, peer, { op: "approval", job: request.job, id: approval.id, decision: body.startsWith("allow") ? "allow" : "deny", reason: body.includes(":") ? body.slice(body.indexOf(":") + 1).trim() : undefined }, supervisor);
             return true;
           } catch { return false; }
-          finally {
-            this.answeringApprovals.delete(id);
-            if (settled) {
-              const current = this.approvals.get(id);
-              if (current) {
-                this.approvals.delete(id);
-                current();
-              }
-            }
-          }
         });
         if (this.closed) close(); else this.approvals.set(id, close);
       } finally { this.publishingApprovals.delete(id); }

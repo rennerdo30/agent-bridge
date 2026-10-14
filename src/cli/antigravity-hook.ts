@@ -1,7 +1,6 @@
-import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ANTIGRAVITY_ACCESS_ENV, ANTIGRAVITY_EDIT_RELAY_ENV } from "../core/antigravity.js";
-import { pidAlive } from "../core/delegate.js";
 import { antigravityAncestor } from "../core/procinfo.js";
 import { resolveHome } from "../core/paths.js";
 import { askRelay, boundedDetail, RELAY_TOKEN_ENV, RELAY_URL_ENV } from "../core/relay.js";
@@ -117,25 +116,6 @@ export function antigravityHookOutput(event: string, text: string): Record<strin
   return event === "Stop" ? { decision: "continue", reason: text } : { injectSteps: [{ ephemeralMessage: text }] };
 }
 
-export function needsInteractivePreToolPost(input: Record<string, any>, home = resolveHome()): boolean {
-  const id = typeof input.conversationId === "string" && input.conversationId.trim() ? input.conversationId : null;
-  const cwd = Array.isArray(input.workspacePaths) && typeof input.workspacePaths[0] === "string" && input.workspacePaths[0].trim() ? input.workspacePaths[0] : null;
-  if (!id && !cwd) return false;
-  if (!id) return true;
-  try {
-    const dir = join(home, "antigravity-hooks");
-    const regs = readdirSync(dir).flatMap((file) => {
-      if (!file.endsWith(".json")) return [];
-      const reg = object(JSON.parse(readFileSync(join(dir, file), "utf8")));
-      const alive = Number.isInteger(reg.port) && typeof reg.secret === "string" && Number.isInteger(reg.pid) && pidAlive(reg.pid);
-      return alive ? [reg] : [];
-    });
-    if (regs.some((reg) => !reg.conversationId)) return true;
-    const matching = regs.filter((reg) => reg.conversationId === id);
-    return !(matching.length === 1 && matching[0]!.retired === false && matching[0]!.connected === true && matching[0]!.stopPending === false && (!cwd || matching[0]!.cwd === cwd));
-  } catch { return true; }
-}
-
 export async function postAntigravityHook(event: string, input: Record<string, any>, timeoutMs = 20_000, home = resolveHome()): Promise<Record<string, unknown>> {
   const signal = AbortSignal.timeout(timeoutMs);
   const pid = await antigravityAncestor(process.ppid, signal);
@@ -154,7 +134,7 @@ export async function runAntigravityHook(event: string): Promise<number> {
     const input = object(JSON.parse(raw || "{}"));
     if (event === "PreToolUse") {
       const decision = await antigravityPermission(input), call = object(input.toolCall), args = object(call.args);
-      if (!process.env[ANTIGRAVITY_ACCESS_ENV] && needsInteractivePreToolPost(input)) {
+      if (!process.env[ANTIGRAVITY_ACCESS_ENV] && (typeof input.conversationId === "string" || Array.isArray(input.workspacePaths))) {
         await postAntigravityHook("PreToolUse", input, 1_500).catch(() => {});
       }
       try {

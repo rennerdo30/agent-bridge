@@ -24,7 +24,7 @@ export async function lookup(pid: number, signal?: AbortSignal): Promise<ProcInf
   if (signal?.aborted) return null;
   try {
     if (process.platform === "linux") {
-      const [cmd, stat] = await Promise.all([readFile(`/proc/${pid}/cmdline`, "utf8"), readFile(`/proc/${pid}/stat`, "utf8")]);
+      const [cmd, stat] = await Promise.all([readFile(`/proc/${pid}/cmdline`, { encoding: "utf8", signal }), readFile(`/proc/${pid}/stat`, { encoding: "utf8", signal })]);
       const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
       return { pid, ppid, cmdline: cmd.split("\0").join(" ") };
     }
