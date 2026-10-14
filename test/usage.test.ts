@@ -257,17 +257,108 @@ describe("usage limits", () => {
     }));
     expect(unlimitedNotInUse.credits).toEqual({ balance: "unlimited", unlimited: true, inUse: false });
     expect(unlimitedNotInUse.lines.at(-1)).toBe("Credits: unlimited available");
+
+    // F5 regression: every group's weekly window is exhausted (remaining_fraction: 0), even though 5h is 100% remaining.
+    const weeklyBlockedAllGroups = parseAntigravityUsage([
+      JSON.stringify({
+        type: "result",
+        status: "SUCCESS",
+        num_turns: 0,
+        conversation_id: "",
+        command: {
+          name: "usage",
+          data: {
+            groups: [
+              {
+                name: "Gemini Models",
+                buckets: [
+                  { window: "weekly", remaining_fraction: 0 },
+                  { window: "5h", remaining_fraction: 1 },
+                ],
+              },
+              {
+                name: "Claude and GPT models",
+                buckets: [
+                  { window: "weekly", remaining_fraction: 0 },
+                  { window: "5h", remaining_fraction: 1 },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+      JSON.stringify({
+        type: "result",
+        status: "SUCCESS",
+        num_turns: 0,
+        conversation_id: "",
+        command: { name: "credits", data: { remaining_credits: 0 } },
+      }),
+    ].join("\n"));
+    expect(weeklyBlockedAllGroups.maxUsedPercent).toBe(100);
+    expect(weeklyBlockedAllGroups.credits).toBeNull();
+    expect(weeklyBlockedAllGroups.lines.at(-1)).toBe("Credits: 0 available");
+    expect(weeklyBlockedAllGroups.lines.join("\n")).not.toContain("plan quota remains usable");
+
+    // Distinct usable-group case: one group is blocked by its weekly window, while another group is unexhausted across all its windows.
+    const oneUsableGroupWithZeroCredits = parseAntigravityUsage([
+      JSON.stringify({
+        type: "result",
+        status: "SUCCESS",
+        num_turns: 0,
+        conversation_id: "",
+        command: {
+          name: "usage",
+          data: {
+            groups: [
+              {
+                name: "Claude and GPT models",
+                buckets: [
+                  { window: "weekly", remaining_fraction: 0 },
+                  { window: "5h", remaining_fraction: 1 },
+                ],
+              },
+              {
+                name: "Gemini Models",
+                buckets: [
+                  { window: "weekly", remaining_fraction: 0.5 },
+                  { window: "5h", remaining_fraction: 0.8 },
+                ],
+              },
+            ],
+          },
+        },
+      }),
+      JSON.stringify({
+        type: "result",
+        status: "SUCCESS",
+        num_turns: 0,
+        conversation_id: "",
+        command: { name: "credits", data: { remaining_credits: 0 } },
+      }),
+    ].join("\n"));
+    expect(oneUsableGroupWithZeroCredits.maxUsedPercent).toBe(100);
+    expect(oneUsableGroupWithZeroCredits.credits).toBeNull();
+    expect(oneUsableGroupWithZeroCredits.lines.at(-1)).toBe("Credits: 0 available (plan quota remains usable)");
   });
 
   it("handles Antigravity CLI transport errors and oversized output safely", async () => {
     const log = { debug() {}, info() {}, warn() {}, error() {}, child() { return this; } } as any;
     const nonZero = await antigravityUsage(process.execPath, process.cwd(), log, [
       "-e",
-      "const arg = process.argv.at(-1); if (arg === '--version') { console.log('1.3.5'); } else { console.log(JSON.stringify({ status: 'SUCCESS', num_turns: 0, conversation_id: '', command: { name: 'usage', data: {} } })); process.exit(1); }",
+      "const arg = process.argv.at(-1); if (arg === '--version') { console.log('1.3.5'); } else { console.log(JSON.stringify({ status: 'SUCCESS', num_turns: 0, conversation_id: '', command: { name: 'usage', data: { groups: [{ name: 'Gemini Models', buckets: [{ window: '5h', remaining_fraction: 0.8 }] }] } } })); process.exit(1); }",
       "--",
     ]);
     expect(nonZero.maxUsedPercent).toBeNull();
-    expect(nonZero.lines[0]).toContain("Account limit availability is unknown");
+    expect(nonZero.lines[0]).toContain("exit code 1");
+
+    const unsupportedVersion = await antigravityUsage(process.execPath, process.cwd(), log, [
+      "-e",
+      "const arg = process.argv.at(-1); if (arg === '--version') { console.log('1.1.10'); } else { console.log(JSON.stringify({ status: 'SUCCESS', num_turns: 0, conversation_id: '', command: { name: 'usage', data: { groups: [{ name: 'Gemini Models', buckets: [{ window: '5h', remaining_fraction: 0.8 }] }] } } })); }",
+      "--",
+    ]);
+    expect(unsupportedVersion.maxUsedPercent).toBeNull();
+    expect(unsupportedVersion.lines[0]).toContain("requires agy 1.1.11+");
 
     const oversized = await antigravityUsage(process.execPath, process.cwd(), log, [
       "-e",

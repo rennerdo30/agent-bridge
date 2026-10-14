@@ -61,7 +61,7 @@ cancel with `cancel_subagent`; these use the existing durable job lifecycle.
 `read` denies non-reading tools; `ask` forwards those tool approvals to the
 supervisor. Both use the installed bridge gate before every tool, with native
 headless prompting bypassed because 1.2.0 otherwise auto-denies approved calls.
-`edit` auto-approves reading tools and workspace file edits while forwarding commands
+`edit` delegates workspace reads/writes (and pathless reading tools) to native policy—which still enforces native Ask/deny rules and soft-denies headless prompts—while forwarding outside-workspace file actions, commands
 and external tools to the supervisor (`auto_approve`, preserving explicit native deny rules). Explicit `bypass_permissions: true` runs with native approvals bypassed;
 `false` selects native policy without supervisor relay. Either exact override replaces read/ask access.
 The installer grants only the bridge MCP server and backs up native

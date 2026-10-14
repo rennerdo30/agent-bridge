@@ -100,7 +100,10 @@ function capture(
     child.on("error", (e) => finish(() => reject(e)));
     child.on("close", (code) => finish(() => {
       if (code === 0 || (!options?.requireZeroExit && out)) return resolve(out);
-      return reject(new Error(err.trim().slice(-300) || out.trim().slice(-300) || `exit code ${code}`));
+      const detail = options?.requireZeroExit
+        ? err.trim().slice(-300) || `exit code ${code}`
+        : err.trim().slice(-300) || out.trim().slice(-300) || `exit code ${code}`;
+      return reject(new Error(detail));
     }));
     if (stdin) stdin((s) => child.stdin.write(s), () => out, () => finish(() => resolve(out)));
     else child.stdin.end();
@@ -355,13 +358,20 @@ export function parseAntigravityUsage(text: string): UsageReport {
   const lines: string[] = [];
   const limits: UsageLimit[] = [];
   let max: number | null = null;
+  let hasUsableGroup = false;
   for (const group of validGroups) {
     const groupName = group.name.trim();
     const parts: string[] = [];
+    let groupNumericBuckets = 0;
+    let groupAllWindowsUsable = group.buckets.length > 0;
     for (const b of group.buckets) {
-      if (!b || typeof b !== "object" || Array.isArray(b)) continue;
+      if (!b || typeof b !== "object" || Array.isArray(b)) {
+        groupAllWindowsUsable = false;
+        continue;
+      }
       const windowLabel = antigravityWindowName(b.window, b.name);
       if (b.disabled === true || b.enabled === false) {
+        groupAllWindowsUsable = false;
         parts.push(`${windowLabel} disabled`);
         continue;
       }
@@ -379,13 +389,19 @@ export function parseAntigravityUsage(text: string): UsageReport {
       } else if (typeof b.remaining_percent === "number" && Number.isFinite(b.remaining_percent) && b.remaining_percent >= 0 && b.remaining_percent <= FULL_USAGE_PERCENT) {
         usedPercent = clampUsed(FULL_USAGE_PERCENT - b.remaining_percent, b.remaining_percent === 0);
       }
-      if (usedPercent === null) continue;
+      if (usedPercent === null) {
+        groupAllWindowsUsable = false;
+        continue;
+      }
+      groupNumericBuckets++;
+      if (usedPercent >= FULL_USAGE_PERCENT) groupAllWindowsUsable = false;
       const resetEpoch = typeof b.reset_time === "string" && /(?:Z|[+-]\d{2}:?\d{2})$/i.test(b.reset_time.trim()) ? Date.parse(b.reset_time) : NaN;
       const resets = Number.isFinite(resetEpoch) ? resetTime(resetEpoch) : null;
       max = Math.max(max ?? 0, usedPercent);
       parts.push(`${windowLabel} ${usedPercent}% used${resets ? ` (resets ${resets})` : ""}`);
       limits.push({ name: validGroups.length > 1 ? `${groupName}: ${windowLabel}` : windowLabel, usedPercent, resets });
     }
+    if (groupAllWindowsUsable && groupNumericBuckets > 0) hasUsableGroup = true;
     if (parts.length) lines.push(`${groupName}: ${parts.join(", ")}`);
   }
   let credits: UsageReport["credits"] = undefined;
@@ -403,7 +419,7 @@ export function parseAntigravityUsage(text: string): UsageReport {
         lines.push(explicitInUse ? `Credits: usable, running on credits (${balance} left)` : `Credits: ${balance} available`);
       } else if (n === 0) {
         credits = null;
-        lines.push(limits.some((l) => l.usedPercent < FULL_USAGE_PERCENT) ? "Credits: 0 available (plan quota remains usable)" : "Credits: 0 available");
+        lines.push(hasUsableGroup ? "Credits: 0 available (plan quota remains usable)" : "Credits: 0 available");
       }
     }
   }
