@@ -90,6 +90,12 @@ export function unwrapNpmShim(shimPath: string, readFile: (p: string) => string 
   if (exe) return { command: win32.join(dir, exe[1]!), prefix: [] };
   const js = /"%~?dp0%?\\([^"]+?\.(?:c|m)?js)"\s+%\*/i.exec(text);
   if (js) return { command: process.execPath, prefix: [win32.join(dir, js[1]!)] };
+  // PowerShell launchers (Muse's muse.cmd): powershell.exe <flags> -File "%~dp0\launcher.ps1" %*
+  const ps1 = /"([^"]*powershell(?:\.exe)?)"\s+(.+?)\s*-File\s+"%~?dp0%?(?:\\)?([^"]+?\.ps1)"\s+%\*/i.exec(text);
+  if (ps1) {
+    const command = ps1[1]!.replace(/%([^%]+)%/g, (_m, name: string) => process.env[name] ?? "");
+    return { command, prefix: [...ps1[2]!.trim().split(/\s+/).filter(Boolean), "-File", win32.join(dir, ps1[3]!)] };
+  }
   return null;
 }
 

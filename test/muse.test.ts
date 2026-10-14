@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { delegateToMuse, parseMuseJsonl } from "../src/core/muse.js";
-import { DelegateError } from "../src/core/delegate.js";
+import { DelegateError, unwrapNpmShim } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
 import { DELEGATION_TARGETS, supportsAsk } from "../src/mcp/targets.js";
@@ -124,6 +124,14 @@ describe("Muse delegation", () => {
     expect(cfg.museBin).toBe("muse-custom");
     expect(cfg.museModel).toBeNull();
     expect(DEFAULT_CONFIG.museBin).toBe("muse");
+  });
+
+  it("unwraps Muse's PowerShell launcher shim instead of spawning the .cmd", () => {
+    const cmd = '@echo off\r\nsetlocal\r\n"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0.muse-launcher.ps1" %*\r\nexit /b %ERRORLEVEL%\r\n';
+    const unwrapped = unwrapNpmShim("C:\\Tools\\muse\\muse.cmd", () => cmd)!;
+    expect(unwrapped.command).toMatch(/powershell\.exe$/i);
+    expect(unwrapped.command).not.toContain("%");
+    expect(unwrapped.prefix).toEqual(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:\\Tools\\muse\\.muse-launcher.ps1"]);
   });
 
   it("plans Muse installation through its own plugin manager", () => {
