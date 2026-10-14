@@ -44,8 +44,19 @@ export function releaseVersion(version: string): void {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`Expected a patch release version, got ${version}`);
 }
 
+export const PLUGIN_PROMOTION_MAX_ATTEMPTS = 5;
+export const PLUGIN_PROMOTION_RETRY_DELAY_MS = 50;
+export interface PluginPromotionOptions {
+  platform?: NodeJS.Platform;
+  rename?: (source: string, target: string) => void;
+  sleep?: (milliseconds: number) => void;
+}
+const promotionSleep = (milliseconds: number): void => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+};
+
 /** Complete staging lives outside the version selector's directory. Nothing is pruned, even on failure. */
-export function publishPlugin(source: string, base: string, version = APP_VERSION): string {
+export function publishPlugin(source: string, base: string, version = APP_VERSION, options: PluginPromotionOptions = {}): string {
   releaseVersion(version); assertUnlinked(source); assertUnlinked(base);
   const target = join(base, version);
   assertUnlinked(target);
@@ -62,13 +73,33 @@ export function publishPlugin(source: string, base: string, version = APP_VERSIO
     copyFileSync(join(source, rel), join(staging, rel));
   }
   mkdirSync(base, { recursive: true });
-  // If another updater won the race, never replace its version directory.
-  if (existsSync(target)) {
-    if (digest(staging) !== digest(target)) throw new Error(`Concurrent immutable version differs: ${target}`);
-    return target;
+  const rename = options.rename ?? renameSync, sleep = options.sleep ?? promotionSleep;
+  let failure: unknown, attempts = 0;
+  for (;;) {
+    assertUnlinked(staging); assertUnlinked(target);
+    // If another updater won the race, never replace its version directory.
+    if (existsSync(target)) {
+      if (digest(staging) !== digest(target)) throw new Error(`Concurrent immutable version differs: ${target}`);
+      return target;
+    }
+    attempts++;
+    try {
+      rename(staging, target);
+      return target;
+    } catch (error) {
+      failure = error;
+      // A concurrent publisher may have completed between the check and rename.
+      assertUnlinked(target);
+      if (existsSync(target)) {
+        if (digest(staging) === digest(target)) return target;
+        break;
+      }
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if ((options.platform ?? process.platform) !== "win32" || !["EPERM", "EACCES", "EBUSY"].includes(code ?? "") || attempts >= PLUGIN_PROMOTION_MAX_ATTEMPTS) break;
+      sleep(PLUGIN_PROMOTION_RETRY_DELAY_MS * attempts);
+    }
   }
-  renameSync(staging, target);
-  return target;
+  throw new Error(`Plugin promotion failed from ${staging} to ${target} after ${attempts} attempt(s): ${String(failure)}. The previous install is unchanged and the stage is kept. Close Antigravity/agy/Claude/Codex sessions using the plugin before re-running.`, { cause: failure });
 }
 
 /** Preserve every previous metadata revision. Do not rename the old file away before replacement. */
@@ -87,7 +118,7 @@ export function atomicPluginWrite(path: string, text: string | Uint8Array): void
   renameSync(tmp, path);
 }
 
-export function selectRuntime(home: string, client: PluginClient, source: string, version = APP_VERSION): string {
+export function selectRuntime(home: string, client: PluginClient, source: string, version = APP_VERSION, options: PluginPromotionOptions = {}): string {
   releaseVersion(version);
   const base = runtimeRoot(home, client);
   const path = join(base, "active.json");
@@ -102,7 +133,7 @@ export function selectRuntime(home: string, client: PluginClient, source: string
       if (a[i]! < b[i]!) break;
     }
   }
-  const root = publishPlugin(source, base, version);
+  const root = publishPlugin(source, base, version, options);
   atomicPluginWrite(path, JSON.stringify({ schemaVersion: RUNTIME_SCHEMA, version, protocol: PROTOCOL_VERSION }, null, 2) + "\n");
   return root;
 }
