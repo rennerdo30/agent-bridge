@@ -19,12 +19,9 @@ beforeEach(() => {
   buildSync({ entryPoints: [join(import.meta.dirname, "../src/core/muse-context.ts")], outfile: module, bundle: true, platform: "node", format: "esm" });
 });
 afterEach(async () => { vi.restoreAllMocks(); for (const release of releases.splice(0)) release(); vi.unstubAllEnvs(); await env.cleanup(); });
-async function restore() {
-  const identityModule = join(env.home, "identity.mjs");
-  buildSync({ entryPoints: [join(import.meta.dirname, "../src/core/process-identity.ts")], outfile: identityModule, bundle: true, platform: "node", format: "esm" });
-  const script = `const {restoreMuseContext,readMusePrivateJson,museContextDirectory}=await import(${JSON.stringify(pathToFileURL(module).href)}); const env={MUSE_SESSION_ID:'native-session'}; const restored=await restoreMuseContext(env); if(!restored){const {processIdentity}=await import(${JSON.stringify(pathToFileURL(identityModule).href)}); const {join}=await import('node:path'); const {existsSync}=await import('node:fs'); const path=join(museContextDirectory(),'host-'+process.ppid+'.json'); const d={parent:process.ppid,recordExists:existsSync(path),pathAvailable:!!process.env.PATH,systemRootAvailable:!!process.env.SystemRoot};try{const r=readMusePrivateJson(path);d.recordReadable=true;const identity=processIdentity(process.ppid);d.identityAvailable=!!identity;d.identityMatches=r.identity===identity;d.pidMatches=r.pid===process.ppid;}catch(e){d.recordReadable=false;d.errorCode=e.code??e.name;d.exitStatus=e.status??null;}console.error('Muse fixture binding diagnostics '+JSON.stringify(d));} console.log(JSON.stringify({restored,env}));`;
-  const result = await exec(process.execPath, ["--input-type=module", "-e", script], { env: { HOME: env.home, PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, USERPROFILE: process.env.USERPROFILE, TEMP: env.home, TMP: env.home, TMPDIR: env.home } });
-  if (result.stderr) console.warn(result.stderr);
+async function restore(extra: NodeJS.ProcessEnv = {}) {
+  const script = `const {restoreMuseContext}=await import(${JSON.stringify(pathToFileURL(module).href)}); const env={MUSE_SESSION_ID:'native-session'}; const restored=await restoreMuseContext(env); console.log(JSON.stringify({restored,env}));`;
+  const result = await exec(process.execPath, ["--input-type=module", "-e", script], { env: { HOME: env.home, PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, USERPROFILE: process.env.USERPROFILE, TEMP: env.home, TMP: env.home, TMPDIR: env.home, ...extra } });
   return JSON.parse(result.stdout);
 }
 function register() {
@@ -32,32 +29,10 @@ function register() {
 }
 
 describe("Muse private host context", () => {
-  it.skipIf(process.platform !== "win32")("probes the sanitized Windows runtime without environment values", async () => {
-    const root = process.env.SystemRoot || process.env.SYSTEMROOT || "C:\\Windows";
-    const profile = process.env.USERPROFILE || "";
-    const bare = { HOME: env.home, PATH: process.env.PATH, SystemRoot: root, USERPROFILE: profile, TEMP: env.home, TMP: env.home };
-    const cmdlet = `[Console]::Write('ready'); (Get-Process -Id ${process.pid} -ErrorAction Stop).Id`;
-    const variants = {
-      cmdlet,
-      explicitExit: cmdlet + "; exit 0",
-      dotnet: `[Console]::Write('ready'+[Diagnostics.Process]::GetProcessById(${process.pid}).Id); exit 0`,
-      dpapi: `$null=[Reflection.Assembly]::LoadWithPartialName('System.Security'); $b=[Text.Encoding]::UTF8.GetBytes('fixture-only'); $p=[Security.Cryptography.ProtectedData]::Protect($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser); $r=[Security.Cryptography.ProtectedData]::Unprotect($p,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser); if([Text.Encoding]::UTF8.GetString($r) -eq 'fixture-only'){[Console]::Write('ready${process.pid}')}; exit 0`,
-    };
-    const results = [];
-    for (const [variant, command] of Object.entries(variants)) {
-      const started = Date.now();
-      try {
-        const pending = exec(join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-          ["-NoProfile", "-NonInteractive", "-Command", command],
-          { env: bare, timeout: 5_000, windowsHide: true });
-        pending.child.stdin?.end();
-        const result = await pending;
-        results.push({ variant, ok: result.stdout.trim() === "ready" + process.pid, elapsedMs: Date.now() - started });
-      } catch (error) { const failure = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string }; results.push({ variant, ok: false, code: failure.code, readyWritten: !!failure.stdout?.includes("ready"), pidWritten: !!failure.stdout?.includes(String(process.pid)), hasStderr: !!failure.stderr, elapsedMs: Date.now() - started }); }
-    }
-    console.warn("Muse Windows runtime diagnostics " + JSON.stringify(results));
-    expect(results.find(result => result.variant === "dotnet")?.ok).toBe(true);
-    expect(results.find(result => result.variant === "dpapi")?.ok).toBe(true);
+  it.skipIf(process.platform !== "win32")("authenticates a sanitized host without PowerShell module autoload", async () => {
+    register();
+    expect(await restore({ PSModulePath: env.home })).toMatchObject({ restored: true,
+      env: { AGENT_BRIDGE_DELEGATE_DEPTH: "2", AGENT_BRIDGE_PARENT_TOKEN: "fixture-token" } });
   });
   it("authenticates the bound parent before querying an unavailable CIM service", async () => {
     releases.push(registerMuseContext(process.ppid, { AGENT_BRIDGE_INTERNAL: "1", CODEX_HOME: "owned-storage" }));

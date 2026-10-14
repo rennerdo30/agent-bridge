@@ -1,6 +1,18 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { expect, it } from "vitest";
-import { processIdentity, readProcessIdentities } from "../src/core/process-identity.js";
+import { processIdentity, readProcessIdentities, readProcessIdentity } from "../src/core/process-identity.js";
+
+it.skipIf(process.platform !== "win32")("preserves the exact persisted Get-Process UTC tick identity", async () => {
+  const old = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+    `(Get-Process -Id ${process.pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`],
+  { encoding: "utf8", windowsHide: true, timeout: 5_000, stdio: ["ignore", "pipe", "ignore"] }).trim();
+  expect(old).toMatch(/^\d+$/);
+  const sync = processIdentity(process.pid), async = await readProcessIdentity(process.pid);
+  expect(sync).toBe(old);
+  expect(async).toBe(old);
+  expect(Buffer.from(sync!, "utf8")).toEqual(Buffer.from(old, "utf8"));
+  expect(Buffer.from(async!, "utf8")).toEqual(Buffer.from(old, "utf8"));
+});
 
 it("retains a requested live identity when another requested process has exited", async () => {
   const child = spawn(process.execPath, ["-e", "process.send('ready');setInterval(()=>{},1000)"], { stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true });

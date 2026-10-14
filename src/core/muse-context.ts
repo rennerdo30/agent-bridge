@@ -25,7 +25,9 @@ const allowed = (key: string) => CONTEXT_KEYS.has(key);
  * refuses replay; an unknown or damaged protected record fails closed. */
 function windowsProtect(value: string, decrypt: boolean): string {
   const operation = decrypt ? "Unprotect" : "Protect";
-  const script = `Add-Type -AssemblyName System.Security; [Console]::InputEncoding=[Text.UTF8Encoding]::new($false); [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $s=[Console]::In.ReadToEnd(); $b=${decrypt ? "[Convert]::FromBase64String($s)" : "[Text.Encoding]::UTF8.GetBytes($s)"}; $r=[Security.Cryptography.ProtectedData]::${operation}($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Write(${decrypt ? "[Text.Encoding]::UTF8.GetString($r)" : "[Convert]::ToBase64String($r)"})`;
+  // Reflection avoids Add-Type's Utility module autoload, which can stall in
+  // Muse's stripped Windows environment. DPAPI scope and ciphertext stay identical.
+  const script = `$null=[Reflection.Assembly]::LoadWithPartialName('System.Security'); [Console]::InputEncoding=[Text.UTF8Encoding]::new($false); [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $s=[Console]::In.ReadToEnd(); $b=${decrypt ? "[Convert]::FromBase64String($s)" : "[Text.Encoding]::UTF8.GetBytes($s)"}; $r=[Security.Cryptography.ProtectedData]::${operation}($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Write(${decrypt ? "[Text.Encoding]::UTF8.GetString($r)" : "[Convert]::ToBase64String($r)"}); exit 0`;
   return execFileSync(join(process.env.SystemRoot || process.env.SYSTEMROOT || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
     ["-NoProfile", "-NonInteractive", "-Command", script], { input: value, encoding: "utf8", timeout: 15_000, windowsHide: true, maxBuffer: 128 * 1024, stdio: ["pipe", "pipe", "ignore"] });
 }
@@ -101,6 +103,7 @@ export async function restoreMuseContext(env: NodeJS.ProcessEnv = process.env): 
   let pid = process.ppid;
   const directory = museContextDirectory();
   const pending: number[] = [];
+  const handoffDeadline = Date.now() + 5_000;
   const refuse = (): false => { for (const key of CONTEXT_KEYS) delete env[key]; env.AGENT_BRIDGE_INTERNAL = "1"; return false; };
   const restore = (host: number): boolean => {
     const record = readMusePrivateJson(join(directory, `host-${host}.json`));
@@ -136,6 +139,7 @@ export async function restoreMuseContext(env: NodeJS.ProcessEnv = process.env): 
     }
     // The private handoff and creation identity authenticate an observed parent
     // without a command-line query. CIM is only needed to discover ancestors.
+    if (Date.now() >= handoffDeadline) break;
     const info = await lookup(pid);
     if (!info) {
       // Registration may have completed while the bounded OS lookup was pending.
@@ -158,7 +162,7 @@ export async function restoreMuseContext(env: NodeJS.ProcessEnv = process.env): 
   // Registration may lag plugin startup even when CIM cannot identify the host.
   // Retry only observed ancestors within the existing bound. A private record
   // and matching creation identity remain mandatory; ambient values grant nothing.
-  for (const deadline = Date.now() + 5_000; Date.now() < deadline;) {
+  for (; Date.now() < handoffDeadline;) {
     for (const host of pending) try { return restore(host); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return refuse(); }
     await delay(100);
