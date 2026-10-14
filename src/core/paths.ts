@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmodSync, lstatSync, mkdirSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join, posix, resolve } from "node:path";
 import { DB_FILE_NAME, DEFAULT_HOME, ENV, SOCKET_FILE_NAME, WINDOWS_PIPE_PREFIX, APP_NAME, PROTOCOL_VERSION } from "./constants.js";
 
@@ -67,6 +67,19 @@ export function ensurePrivateSocketDirectory(pipePath: string, platform: NodeJS.
   }
   // Our own directory with a loose mode (an old umask, a manual mkdir): tighten it rather than refuse.
   if ((stat.mode & 0o077) !== 0) chmodSync(dir, 0o700);
+}
+
+/** Loopback fallback endpoint a Windows broker also serves (see Broker.startTcpFallback). */
+export const BROKER_TCP_FILE = "broker-tcp.json";
+
+/** The loopback port recorded by the running broker, or null when it serves no fallback. */
+export function brokerTcpPort(home: string): number | null {
+  try {
+    const value = JSON.parse(readFileSync(join(home, BROKER_TCP_FILE), "utf8")) as { port?: unknown };
+    return typeof value.port === "number" && Number.isInteger(value.port) && value.port > 0 && value.port <= 65535 ? value.port : null;
+  } catch {
+    return null;
+  }
 }
 
 export function resolveDbPath(home: string): string {

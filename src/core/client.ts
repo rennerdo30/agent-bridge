@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { connect, type Socket } from "node:net";
 import { APP_VERSION, CONNECT_TIMEOUT_MS, MAX_FRAME_BYTES, REQUEST_TIMEOUT_MS } from "./constants.js";
 import type { Logger } from "./logger.js";
-import { ensurePrivateSocketDirectory } from "./paths.js";
+import { brokerTcpPort, ensurePrivateSocketDirectory, resolveHome } from "./paths.js";
 import {
   BridgeError,
   encodeFrame,
@@ -71,10 +71,22 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
 
   /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
   static connect(pipePath: string, log: Logger, timeoutMs: number = CONNECT_TIMEOUT_MS): Promise<BridgeClient> {
+    // Never hand the token to an endpoint in a short-socket directory another user controls.
+    ensurePrivateSocketDirectory(pipePath);
+    return BridgeClient.connectSocket(() => connect(pipePath), log, timeoutMs).catch(async (err) => {
+      // Sandboxed children (Muse on Windows runs plugin processes under a restricted
+      // token) may be unable to open the named pipe at all. The broker also serves the
+      // same token-authenticated protocol on loopback; fall back to it.
+      const port = process.platform === "win32" ? brokerTcpPort(resolveHome()) : null;
+      if (!port) throw err;
+      log.debug("broker pipe unreachable; trying the loopback fallback", { err: (err as Error).message, port });
+      return BridgeClient.connectSocket(() => connect(port, "127.0.0.1"), log, timeoutMs);
+    });
+  }
+
+  private static connectSocket(open: () => Socket, log: Logger, timeoutMs: number): Promise<BridgeClient> {
     return new Promise((resolve, reject) => {
-      // Never hand the token to an endpoint in a short-socket directory another user controls.
-      ensurePrivateSocketDirectory(pipePath);
-      const socket = connect(pipePath);
+      const socket = open();
       const timer = setTimeout(() => {
         socket.destroy();
         reject(Object.assign(new Error("timed out connecting to broker"), { code: "ETIMEDOUT" }));

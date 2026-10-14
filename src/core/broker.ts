@@ -7,7 +7,7 @@ import { historySearchSchema } from "./history.js";
 import { ReadJournal } from "./read-journal.js";
 import { recordStorePeer, refreshStorePeerIdentities, validStoreCapabilities } from "./store-compatibility.js";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { createServer, type Server, type Socket } from "node:net";
 import {
@@ -77,7 +77,7 @@ import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, decisionApplies, decisionScopeSchema, type OwnerDecision } from "./decisions.js";
 import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
 import { OwnerQuestionService, OWNER_ADDRESS } from "./owner-question-service.js";
-import { ensurePrivateSocketDirectory } from "./paths.js";
+import { BROKER_TCP_FILE, ensurePrivateSocketDirectory } from "./paths.js";
 
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
 export const PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -181,6 +181,7 @@ export class Broker {
   private readonly projectMains = new Map<string, ProjectMainIdentity>();
   private readonly projectRoutes = new Map<string, import("./protocol.js").ProjectRoute>();
   private server: Server | null = null;
+  private tcpServer: Server | null = null;
   private readonly conns = new Set<Conn>();
   private readonly nativeChildren: NativeChildren;
   private historyBackground: HistoryBackground | null = null;
@@ -581,6 +582,7 @@ export class Broker {
           void history.reconcileAsks().catch(error => this.log.debug("startup ask reconciliation deferred", { error: String(error) }));
         });
         this.purge();
+        optional("loopback TCP fallback", () => this.startTcpFallback());
         this.log.info("broker listening", { pipe: this.pipePath });
         if (this.store.file !== ":memory:" && existsSync(join(dirname(this.store.file),QUESTIONS_FILE))) optional("owner questions", () => { this.ownerQuestions(); });
         // Another broker may have enabled or changed pairing since this session started.
@@ -609,6 +611,34 @@ export class Broker {
         }
   }
 
+  /**
+   * On Windows, also serve the same token-authenticated protocol on loopback TCP.
+   * Sandboxed plugin children (Muse) run under a restricted token that cannot open
+   * the named pipe; loopback stays reachable. The port is recorded in the private
+   * bridge home, and the protocol still requires the broker token on hello.
+   */
+  private startTcpFallback(): void {
+    if (process.platform !== "win32" || this.store.file === ":memory:") return;
+    const home = dirname(this.store.file);
+    const server = createServer((socket) => this.accept(socket));
+    server.on("error", (err) => this.log.warn("broker TCP fallback error", { err: String(err) }));
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") return;
+      this.tcpServer = server;
+      try { writeFileSync(join(home, BROKER_TCP_FILE), JSON.stringify({ port: address.port, pid: process.pid }), { mode: 0o600 }); }
+      catch (err) { this.log.warn("broker TCP fallback port could not be recorded", { err: String(err) }); }
+      this.log.info("broker loopback fallback listening", { port: address.port });
+    });
+  }
+
+  private async stopTcpFallback(): Promise<void> {
+    const server = this.tcpServer;
+    this.tcpServer = null;
+    if (this.store.file !== ":memory:") { try { unlinkSync(join(dirname(this.store.file), BROKER_TCP_FILE)); } catch { /* already gone */ } }
+    if (server) await new Promise<void>((r) => server.close(() => r()));
+  }
+
   async close(): Promise<void> {
     this.healthMonitor.close();
     this.closing = true;
@@ -635,6 +665,7 @@ export class Broker {
     this.network = null;
     for (const c of this.conns) c.socket.destroy();
     this.conns.clear();
+    await this.stopTcpFallback();
     const server = this.server;
     this.server = null;
     if (server) await new Promise<void>((r) => server.close(() => r()));
