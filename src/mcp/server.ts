@@ -70,7 +70,7 @@ import { deriveJobTitle } from "./job-title.js";
 import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "../core/job-messaging.js";
 import { appendContextEvent } from "../core/context-journal.js";
 import { conversationPageSchema, type ConversationRequest } from "../core/conversation-query.js";
-import { historyFiltersSchema, HISTORY_MAX_QUERY_CHARS, HISTORY_MAX_LIMIT, type HistorySearch } from "../core/history-query.js";
+import { HISTORY_SEARCH_TOOL_DESCRIPTION, historySearchToolInput, type HistorySearch } from "../core/history-query.js";
 
 import { decisionScopeSchema, MAX_DECISION_TOPIC_CHARS, MAX_DECISION_TEXT_CHARS, type DecideArgs, type DecisionsArgs } from "../core/decisions.js";
 import { askOwnerSchema, type AskOwnerArgs } from "../core/owner-questions.js";
@@ -691,13 +691,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     "search_history",
     {
       title: "Search bridge and CLI history",
-      description: "Search local bridge messages (including archives), decisions, delegated run logs and CLI transcripts. Returns bounded snippets with stable source ids and links. Ordinary search makes no model calls. answer=true explicitly spends model tokens on a configured cheap model chosen by availability and usage_limits. Indexing is incremental; use agent-bridge reindex to rebuild.",
-      inputSchema: {
-        query: z.string().trim().min(1).max(HISTORY_MAX_QUERY_CHARS),
-        filters: historyFiltersSchema.optional(),
-        limit: z.number().int().min(1).max(HISTORY_MAX_LIMIT).optional(),
-        answer: z.boolean().optional(),
-      },
+      description: HISTORY_SEARCH_TOOL_DESCRIPTION,
+      inputSchema: historySearchToolInput,
       annotations: { readOnlyHint: true },
     },
     guarded("search_history", async (a: HistorySearch & { answer?: boolean }) => {
