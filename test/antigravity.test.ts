@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { delegateToAntigravity, parseAntigravityJsonl } from "../src/core/antigravity.js";
 import { DelegateError, retryTransient } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
-import { antigravityPermission, antigravityHookOutput } from "../src/cli/antigravity-hook.js";
+import { antigravityPermission, antigravityHookOutput, hasAntigravityEditRelay } from "../src/cli/antigravity-hook.js";
 import { installAntigravity, uninstallAntigravity } from "../src/cli/antigravity-install.js";
 import { readTranscript, listNativeSubagents } from "../src/core/transcripts/index.js";
 import { antigravityItems } from "../src/core/transcripts/antigravity.js";
@@ -104,13 +104,40 @@ describe("Antigravity delegation", () => {
     expect(changedJobArgs({ access: "read", terminal_sandbox: true }, { bypass_permissions: true })).toEqual({ terminal_sandbox: true, bypass_permissions: true });
     expect(changedJobArgs({ bypass_permissions: true, terminal_sandbox: true }, { access: "read" })).toEqual({ terminal_sandbox: true, access: "read" });
   });
-  it.each([false, true])("honors explicit native approval override=%s and keeps the terminal sandbox", async (bypass) => {
+  it.each([false, true])("honors explicit native approval override=%s, strips inherited relay credentials, and keeps the terminal sandbox", async (bypass) => {
     mocks.run.mockResolvedValue({ code: 0, stdout: stream(), stderr: "" });
-    await DELEGATION_TARGETS.antigravity.run(DEFAULT_CONFIG, { prompt: "task", cwd: temp(), timeoutSec: 20, log: nullLogger }, { access: "read", bypass_permissions: bypass, terminal_sandbox: true });
+    const cwd = temp();
+    const prevUrl = process.env.AGENT_BRIDGE_RELAY_URL, prevToken = process.env.AGENT_BRIDGE_RELAY_TOKEN, prevEdit = process.env.AGENT_BRIDGE_ANTIGRAVITY_EDIT_RELAY;
+    process.env.AGENT_BRIDGE_RELAY_URL = "http://127.0.0.1:9/permission";
+    process.env.AGENT_BRIDGE_RELAY_TOKEN = "ancestor-token";
+    process.env.AGENT_BRIDGE_ANTIGRAVITY_EDIT_RELAY = "1";
+    try {
+      await DELEGATION_TARGETS.antigravity.run(DEFAULT_CONFIG, {
+        prompt: "task",
+        cwd,
+        timeoutSec: 20,
+        log: nullLogger,
+        extraEnv: { AGENT_BRIDGE_RELAY_URL: "http://127.0.0.1:9/permission", AGENT_BRIDGE_RELAY_TOKEN: "ancestor-token", AGENT_BRIDGE_ANTIGRAVITY_EDIT_RELAY: "1" },
+      }, { access: "read", bypass_permissions: bypass, terminal_sandbox: true });
+    } finally {
+      if (prevUrl === undefined) delete process.env.AGENT_BRIDGE_RELAY_URL; else process.env.AGENT_BRIDGE_RELAY_URL = prevUrl;
+      if (prevToken === undefined) delete process.env.AGENT_BRIDGE_RELAY_TOKEN; else process.env.AGENT_BRIDGE_RELAY_TOKEN = prevToken;
+      if (prevEdit === undefined) delete process.env.AGENT_BRIDGE_ANTIGRAVITY_EDIT_RELAY; else process.env.AGENT_BRIDGE_ANTIGRAVITY_EDIT_RELAY = prevEdit;
+    }
     const opts = mocks.run.mock.calls[0]![0];
     expect(opts.env.AGENT_BRIDGE_ANTIGRAVITY_ACCESS).toBe("edit");
+    expect(opts.env.AGENT_BRIDGE_RELAY_URL).toBeUndefined();
+    expect(opts.env.AGENT_BRIDGE_RELAY_TOKEN).toBeUndefined();
+    expect(opts.env.AGENT_BRIDGE_ANTIGRAVITY_EDIT_RELAY).toBeUndefined();
+    expect(hasAntigravityEditRelay(opts.env)).toBe(false);
     expect(opts.args.includes("--dangerously-skip-permissions")).toBe(bypass);
     expect(opts.args).toContain("--sandbox");
+    const editRelay = hasAntigravityEditRelay(opts.env);
+    expect(await antigravityPermission({ toolCall: { name: "view_file", args: { AbsolutePath: join(cwd, "a.ts") } }, workspacePaths: [cwd] }, opts.env.AGENT_BRIDGE_ANTIGRAVITY_ACCESS, editRelay)).toEqual({ decision: "allow" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(cwd, "a.ts") } }, workspacePaths: [cwd] }, opts.env.AGENT_BRIDGE_ANTIGRAVITY_ACCESS, editRelay)).toEqual({ decision: "allow" });
+    expect(await antigravityPermission({ toolCall: { name: "run_command", args: { CommandLine: "npm test" } }, workspacePaths: [cwd] }, opts.env.AGENT_BRIDGE_ANTIGRAVITY_ACCESS, editRelay)).toEqual({ decision: "allow" });
+    expect(await antigravityPermission({ toolCall: { name: "call_mcp_tool", args: { ServerName: "pair-desk", ToolName: "update_handoff" } }, workspacePaths: [cwd] }, opts.env.AGENT_BRIDGE_ANTIGRAVITY_ACCESS, editRelay)).toMatchObject({ decision: "deny" });
+    expect(mocks.ask).not.toHaveBeenCalled();
   });
 });
 
@@ -128,16 +155,18 @@ describe("Antigravity hooks", () => {
     expect(await antigravityPermission(input, "ask")).toEqual({ decision: "allow", permissionOverrides: ["command(npm test)"] });
     expect(await antigravityPermission(input, "ask")).toEqual({ decision: "deny", reason: "owner denied" });
     expect(mocks.ask).toHaveBeenCalledWith(expect.objectContaining({ agent: "antigravity", tool: "run_command", cwd: "/project" }));
-    expect(await antigravityPermission(input, undefined)).toEqual({ decision: "ask" });
-    expect(await antigravityPermission(input, "edit", false)).toEqual({ decision: "ask" });
+    expect(await antigravityPermission(input, undefined)).toEqual({ decision: "allow" });
+    expect(await antigravityPermission(input, "edit", false)).toEqual({ decision: "allow" });
+    expect(await antigravityPermission({ toolCall: { name: "view_file", args: { AbsolutePath: "/project/a.ts" } }, workspacePaths: ["/project"] }, undefined)).toEqual({ decision: "allow" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: "/project/a.ts" } }, workspacePaths: ["/project"] }, undefined)).toEqual({ decision: "allow" });
     expect(antigravityHookOutput("PreInvocation", "mail")).toEqual({ injectSteps: [{ ephemeralMessage: "mail" }] });
     expect(antigravityHookOutput("Stop", "mail")).toEqual({ decision: "continue", reason: "mail" });
   });
-  it("relays non-workspace or shell actions in edit mode with auto_approve while auto-approving workspace edits", async () => {
+  it("relays non-workspace or shell actions in edit mode with auto_approve while delegating workspace files to native policy", async () => {
     const root = temp();
     mocks.ask.mockResolvedValueOnce({ allow: true }).mockResolvedValueOnce({ allow: false, message: "denied command" });
-    expect(await antigravityPermission({ toolCall: { name: "view_file", args: { AbsolutePath: join(root, "a.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "auto_approve" });
-    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(root, "src", "a.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "auto_approve" });
+    expect(await antigravityPermission({ toolCall: { name: "view_file", args: { AbsolutePath: join(root, "a.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "allow" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(root, "src", "a.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "allow" });
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(root, ".git", "config") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "auto_approve", permissionOverrides: [`write_file(${join(root, ".git", "config")})`] });
     expect(await antigravityPermission({ toolCall: { name: "run_command", args: { CommandLine: "npm test" } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied command" });

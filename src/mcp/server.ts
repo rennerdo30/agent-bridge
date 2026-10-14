@@ -629,8 +629,11 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       if (name !== "health" && ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: (err as Error).message }));
       await ctx.observeMeta?.(extra._meta);
       if (ctx.agent === "antigravity" && name !== "health" && name !== "hook_event") {
-        if (name === "inbox") releaseAntigravityStopDelivery(ctx);
-        else confirmAntigravityStopDelivery(ctx);
+        if (name === "inbox") {
+          if (a.mark_read !== false) releaseAntigravityStopDelivery(ctx);
+        } else {
+          confirmAntigravityStopDelivery(ctx);
+        }
       }
       try {
         return await fn(args, extra);

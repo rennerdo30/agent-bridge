@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AntigravityHooks } from "../src/mcp/antigravity-hooks.js";
 import { antigravityAncestor } from "../src/core/procinfo.js";
-import { buildHookResponse } from "../src/mcp/hooks.js";
+import { buildHookResponse, confirmAntigravityStopDelivery } from "../src/mcp/hooks.js";
 import { antigravityHookCommand, requireAntigravityPlugin } from "../src/core/antigravity-plugin.js";
 import { grantAntigravityBridgeMcp, installAntigravity } from "../src/cli/antigravity-install.js";
 import { execFileSync } from "node:child_process";
@@ -13,7 +13,7 @@ import type { ServerContext } from "../src/mcp/server.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 
 vi.mock("../src/core/procinfo.js", () => ({ antigravityAncestor: vi.fn(async () => 12345) }));
-vi.mock("../src/mcp/hooks.js", () => ({ buildHookResponse: vi.fn() }));
+vi.mock("../src/mcp/hooks.js", () => ({ buildHookResponse: vi.fn(), confirmAntigravityStopDelivery: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
 
 describe("Antigravity native hook routing", () => {
@@ -57,21 +57,41 @@ describe("Antigravity native hook routing", () => {
     } finally { await env.cleanup(); }
   });
   it("authenticates mail, continues at Stop and isolates native children and replaced peers", async () => {
-    const env = makeEnv(), node = Object.assign(new EventEmitter(), { currentSessionId: "parent" });
-    const hooks = new AntigravityHooks({ home: env.home, node } as unknown as ServerContext);
+    const env = makeEnv();
+    const setSessionId = vi.fn(async () => {}), ensureConnected = vi.fn(async () => {}), learnCwd = vi.fn(async () => {});
+    const node = Object.assign(new EventEmitter(), { currentSessionId: "parent", setSessionId, ensureConnected });
+    const hooks = new AntigravityHooks({ home: env.home, node, learnCwd } as unknown as ServerContext);
     try {
       await hooks.start();
       const reg = JSON.parse(readFileSync(join(env.home, "antigravity-hooks", "12345.json"), "utf8"));
       const call = (event: string, id = "parent", secret = reg.secret, extra: Record<string, unknown> = {}) => fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ event, input: { conversationId: id, workspacePaths: [env.home], ...extra } }) });
       expect((await call("Stop", "parent", "wrong")).status).toBe(403);
+      // PreToolUse learns session/cwd and confirms pending Stop mail without calling buildHookResponse (F1).
+      expect(await (await call("PreToolUse", "parent", reg.secret)).json()).toEqual({});
+      expect(setSessionId).toHaveBeenCalledWith("parent");
+      expect(learnCwd).toHaveBeenCalledWith(env.home);
+      expect(ensureConnected).toHaveBeenCalledTimes(1);
+      expect(confirmAntigravityStopDelivery).toHaveBeenCalledTimes(1);
+      expect(buildHookResponse).not.toHaveBeenCalled();
+      // Zero-based invocationNum=0 on initial prompt -> Stop(executionNum=0) -> continuation invocationNum=1 sets stopHookActive:true.
       vi.mocked(buildHookResponse).mockResolvedValueOnce({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "new mail" } });
-      expect(await (await call("PreInvocation")).json()).toEqual({ injectSteps: [{ ephemeralMessage: "new mail" }] });
+      expect(await (await call("PreInvocation", "parent", reg.secret, { invocationNum: 0 })).json()).toEqual({ injectSteps: [{ ephemeralMessage: "new mail" }] });
       expect(buildHookResponse).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sessionId: "parent", cwd: env.home, stopHookActive: false }));
       vi.mocked(buildHookResponse).mockResolvedValueOnce({ decision: "block", reason: "result arrived" });
-      expect(await (await call("Stop", "parent", reg.secret, { executionNum: 1, terminationReason: "NO_TOOL_CALL" })).json()).toEqual({ decision: "continue", reason: "result arrived" });
-      expect(await (await call("Stop", "child")).json()).toEqual({});
-      expect(buildHookResponse).toHaveBeenCalledTimes(2);
+      expect(await (await call("Stop", "parent", reg.secret, { executionNum: 0, terminationReason: "NO_TOOL_CALL" })).json()).toEqual({ decision: "continue", reason: "result arrived" });
+      vi.mocked(buildHookResponse).mockResolvedValueOnce({});
+      expect(await (await call("PreInvocation", "parent", reg.secret, { invocationNum: 1 })).json()).toEqual({});
+      expect(buildHookResponse).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ event: "UserPromptSubmit", stopHookActive: true }));
+      // If Stop continuation is not taken and a fresh turn starts at invocationNum=0, stopHookActive is false.
+      vi.mocked(buildHookResponse).mockResolvedValueOnce({ decision: "block", reason: "second result" });
+      expect(await (await call("Stop", "parent", reg.secret, { executionNum: 1, terminationReason: "NO_TOOL_CALL" })).json()).toEqual({ decision: "continue", reason: "second result" });
+      vi.mocked(buildHookResponse).mockResolvedValueOnce({});
+      expect(await (await call("PreInvocation", "parent", reg.secret, { invocationNum: 0 })).json()).toEqual({});
+      expect(buildHookResponse).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ event: "UserPromptSubmit", stopHookActive: false }));
       // Repeated Stop at the same executionNum or with a cap terminationReason maps to StopFailure without continuing.
+      vi.mocked(buildHookResponse).mockResolvedValueOnce({ decision: "block", reason: "third result" });
+      expect(await (await call("Stop", "parent", reg.secret, { executionNum: 1, terminationReason: "NO_TOOL_CALL" })).json()).toEqual({ decision: "continue", reason: "third result" });
+      expect(await (await call("Stop", "child")).json()).toEqual({});
       vi.mocked(buildHookResponse).mockResolvedValueOnce({});
       expect(await (await call("Stop", "parent", reg.secret, { executionNum: 1, terminationReason: "NO_TOOL_CALL" })).json()).toEqual({});
       expect(buildHookResponse).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ event: "StopFailure" }));

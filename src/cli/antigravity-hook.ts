@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import { ANTIGRAVITY_ACCESS_ENV } from "../core/antigravity.js";
+import { ANTIGRAVITY_ACCESS_ENV, ANTIGRAVITY_EDIT_RELAY_ENV } from "../core/antigravity.js";
 import { antigravityAncestor } from "../core/procinfo.js";
 import { resolveHome } from "../core/paths.js";
-import { askRelay, boundedDetail, RELAY_URL_ENV } from "../core/relay.js";
+import { askRelay, boundedDetail, RELAY_TOKEN_ENV, RELAY_URL_ENV } from "../core/relay.js";
 import { object } from "../core/transcripts/common.js";
 import { isHandoffToolCall } from "../core/tool-allow.js";
 import { createLogger } from "../core/logger.js";
@@ -36,8 +36,12 @@ function insideWorkspace(targetPath: unknown, workspacePaths: unknown): boolean 
   return workspacePaths.some((root) => {
     if (typeof root !== "string" || !isAbsolute(root)) return false;
     const rel = relative(resolve(root), resolvedTarget);
-    return Boolean(rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+    return Boolean(!rel || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)));
   });
+}
+
+export function hasAntigravityEditRelay(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[ANTIGRAVITY_EDIT_RELAY_ENV] === "1" && Boolean(env[RELAY_URL_ENV]?.trim()) && Boolean(env[RELAY_TOKEN_ENV]?.trim());
 }
 
 /** Unknown tools fail closed for restricted delegation. Bridge coordination remains usable. */
@@ -54,7 +58,7 @@ export function antigravityReadingTool(input: Record<string, any>): boolean {
 export async function antigravityPermission(
   input: Record<string, any>,
   access = process.env[ANTIGRAVITY_ACCESS_ENV],
-  relay = Boolean(process.env[RELAY_URL_ENV]),
+  relay = hasAntigravityEditRelay(),
 ): Promise<Record<string, unknown>> {
   const call = object(input.toolCall), args = object(call.args);
   const server = args.ServerName ?? args.server_name ?? args.serverName;
@@ -62,11 +66,12 @@ export async function antigravityPermission(
   const request = { agent: "antigravity", tool: call.name === "call_mcp_tool" ? `mcp:${server ?? "unknown"}` : String(call.name ?? "unknown"), ...boundedDetail((call.name === "call_mcp_tool" ? `${tool ?? "unknown"}: ` : "") + JSON.stringify(args)), cwd: Array.isArray(input.workspacePaths) ? input.workspacePaths[0] : undefined };
   if (access && isHandoffToolCall(request)) return { decision: "deny", reason: "Delegated jobs report to their supervisor; handoff writes are declined" };
   if ((!access || access === "edit") && call.name === "call_mcp_tool" && OWN_SERVERS.includes(server)) return allowed(input);
-  if (!access) return { decision: "ask" };
+  // Top-level "allow" without permissionOverrides delegates to Antigravity's default policy.
+  if (!access) return { decision: "allow" };
   if (access === "edit") {
-    if (!relay) return { decision: "ask" };
-    const path = args.TargetFile ?? args.AbsolutePath ?? args.FilePath;
-    if (antigravityReadingTool(input) || (WRITE_TOOLS.includes(call.name) && insideWorkspace(path, input.workspacePaths))) return { decision: "auto_approve" };
+    if (!relay) return { decision: "allow" };
+    const path = args.TargetFile ?? args.AbsolutePath ?? args.FilePath ?? args.DirectoryPath ?? args.SearchDirectory ?? args.SearchPath;
+    if ((antigravityReadingTool(input) && (!path || insideWorkspace(path, input.workspacePaths))) || (WRITE_TOOLS.includes(call.name) && insideWorkspace(path, input.workspacePaths))) return { decision: "allow" };
     const decision = await askRelay(request);
     return decision.allow ? allowed(input, "auto_approve") : { decision: "deny", reason: decision.message };
   }
@@ -109,8 +114,8 @@ export async function runAntigravityHook(event: string): Promise<number> {
     process.stdout.write(JSON.stringify(await postAntigravityHook(event, input)));
   } catch {
     // Even edit runs retain delegated handoff restrictions; an unreadable gate cannot waive them.
-    // Interactive sessions fall back to "ask" so native policy decides rather than failing with an empty PreToolUse decision.
-    process.stdout.write(JSON.stringify(event === "PreToolUse" ? (process.env[ANTIGRAVITY_ACCESS_ENV] ? { decision: "deny", reason: "agent-bridge permission hook unavailable" } : { decision: "ask" }) : {}));
+    // Interactive sessions fall back to "allow" so native policy decides rather than failing with an empty PreToolUse decision.
+    process.stdout.write(JSON.stringify(event === "PreToolUse" ? (process.env[ANTIGRAVITY_ACCESS_ENV] ? { decision: "deny", reason: "agent-bridge permission hook unavailable" } : { decision: "allow" }) : {}));
   }
   return 0;
 }

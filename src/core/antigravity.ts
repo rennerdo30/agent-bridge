@@ -1,10 +1,11 @@
 import { DelegateError, checkDepth, childEnv, runProcess, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { object, parse } from "./transcripts/common.js";
-import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "./relay.js";
+import { PermissionRelay, RELAY_TOKEN_ENV, RELAY_URL_ENV, type PermissionDecision, type PermissionRequest } from "./relay.js";
 import { requireAntigravityPlugin } from "./antigravity-plugin.js";
 import { progressEventHandler } from "./progress.js";
 
 export const ANTIGRAVITY_ACCESS_ENV = "AGENT_BRIDGE_ANTIGRAVITY_ACCESS";
+export const ANTIGRAVITY_EDIT_RELAY_ENV = "AGENT_BRIDGE_ANTIGRAVITY_EDIT_RELAY";
 export const ANTIGRAVITY_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 
 /** agy stream-json has envelopes, unlike Gemini CLI's events. */
@@ -50,9 +51,10 @@ export async function delegateToAntigravity(req: DelegateRequest & { bin: string
     finally { approvals.signal.removeEventListener("abort", stop); }
   };
   const relay = (req.access === "ask" || (req.access === "edit" && req.autoApprove === undefined && req.canApprove !== false)) && req.approve ? new PermissionRelay(approve, req.log) : null;
+  const { [RELAY_URL_ENV]: _inheritedUrl, [RELAY_TOKEN_ENV]: _inheritedToken, [ANTIGRAVITY_EDIT_RELAY_ENV]: _inheritedEditRelay, ...extraEnv } = req.extraEnv ?? {};
   try {
     await relay?.start();
-    const res = await runProcess({ bin: req.bin, args, cwd: req.cwd, stdin: JSON.stringify({ event: "user", message: { content: req.prompt } }) + "\n", timeoutMs: req.timeoutSec * 1000, signal: req.signal, env: childEnv({ ...req.extraEnv, ...relay?.childEnv(), [ANTIGRAVITY_ACCESS_ENV]: req.access }), log: req.log,
+    const res = await runProcess({ bin: req.bin, args, cwd: req.cwd, stdin: JSON.stringify({ event: "user", message: { content: req.prompt } }) + "\n", timeoutMs: req.timeoutSec * 1000, signal: req.signal, env: childEnv({ ...extraEnv, ...relay?.childEnv(), ...(req.access === "edit" && relay ? { [ANTIGRAVITY_EDIT_RELAY_ENV]: "1" } : {}), [ANTIGRAVITY_ACCESS_ENV]: req.access }), log: req.log,
       onLine: (line) => {
         const ev = parse(line), id = ev.conversation_id ?? ev.step_update?.conversation_id ?? ev.result?.conversation_id;
         if (!sessionId && typeof id === "string" && id) { sessionId = id; req.onSession?.(id); }

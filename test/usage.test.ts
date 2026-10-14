@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeOpencodeCosts, formatCodexLimits, parseAntigravityUsage, parseClaudeUsage, parseOpencodeModelCosts, parseOpencodeStats, supportsAntigravityUsage } from "../src/core/usage.js";
+import { antigravityUsage, describeOpencodeCosts, formatCodexLimits, parseAntigravityUsage, parseClaudeUsage, parseOpencodeModelCosts, parseOpencodeStats, supportsAntigravityUsage } from "../src/core/usage.js";
 
 describe("usage limits", () => {
   it("formats Codex rate limits with windows and the highest usage", () => {
@@ -115,8 +115,78 @@ describe("usage limits", () => {
   it("parses standalone Antigravity usage, quota, and credits JSONL output", () => {
     expect(supportsAntigravityUsage("Antigravity CLI version 1.1.10")).toBe(false);
     expect(supportsAntigravityUsage("Antigravity CLI version 1.1.11")).toBe(true);
+    expect(supportsAntigravityUsage("1.2.0-rc.1")).toBe(false);
+    expect(supportsAntigravityUsage("unknown")).toBe(false);
     expect(supportsAntigravityUsage("1.3.5 (f1ff571a79d7b6b5bd3be1fa9dd9c3ca4ab6fb48)")).toBe(true);
-    const json = JSON.stringify({
+    const liveUsageJson = JSON.stringify({
+      conversation_id: "",
+      status: "SUCCESS",
+      response: "Gemini Models\nWeekly Limit Remaining: 91%\nFive Hour Limit Remaining: 67%\n",
+      duration_seconds: 0,
+      num_turns: 0,
+      usage: { input_tokens: 0, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 0 },
+      command: {
+        name: "usage",
+        data: {
+          description: "Your Google AI Plan includes two types of limits",
+          groups: [
+            {
+              name: "Gemini Models",
+              buckets: [
+                { id: "gemini-weekly", name: "Weekly Limit Remaining", window: "weekly", remaining_fraction: 0.9197499752044678, reset_time: "2026-10-21T06:31:30Z" },
+                { id: "gemini-5h", name: "Five Hour Limit Remaining", window: "5h", remaining_fraction: 0.6790000796318054, reset_time: "2026-10-14T11:31:30Z" },
+              ],
+            },
+            {
+              name: "Claude and GPT models",
+              buckets: [
+                { id: "3p-weekly", name: "Weekly Limit Remaining", window: "weekly", remaining_fraction: 1, reset_time: "2026-10-21T09:18:22Z" },
+                { id: "3p-5h", name: "Five Hour Limit Remaining", window: "5h", remaining_fraction: 1, reset_time: "2026-10-14T14:18:22Z" },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    const liveCreditsJson = JSON.stringify({
+      conversation_id: "",
+      status: "SUCCESS",
+      response: "Remaining credits\t0\nUpgrade\thttps://antigravity.google/g1-upgrade\n",
+      duration_seconds: 0,
+      num_turns: 0,
+      command: {
+        name: "credits",
+        data: {
+          remaining_credits: 0,
+          upgrade_uri: "https://antigravity.google/g1-upgrade",
+        },
+      },
+    });
+    const parsed = parseAntigravityUsage([liveUsageJson, liveCreditsJson].join("\n"));
+    expect(parsed.agent).toBe("antigravity");
+    expect(parsed.maxUsedPercent).toBe(32);
+    expect(parsed.credits).toBeNull();
+    expect(parsed.limits).toEqual([
+      { name: "Gemini Models: weekly", usedPercent: 8, resets: expect.any(String) },
+      { name: "Gemini Models: 5-hour window", usedPercent: 32, resets: expect.any(String) },
+      { name: "Claude and GPT models: weekly", usedPercent: 0, resets: expect.any(String) },
+      { name: "Claude and GPT models: 5-hour window", usedPercent: 0, resets: expect.any(String) },
+    ]);
+    expect(parsed.lines[0]).toContain("Gemini Models: weekly 8% used");
+    expect(parsed.lines[0]).toContain("5-hour window 32% used");
+    expect(parsed.lines.at(-1)).toBe("Credits: 0 available (plan quota remains usable)");
+
+    const turn = parseAntigravityUsage(JSON.stringify({ type: "result", status: "SUCCESS", num_turns: 1, conversation_id: "conv-1", command: { name: "usage", data: {} } }));
+    expect(turn.maxUsedPercent).toBeNull();
+    expect(turn.lines[0]).toContain("conversation turn");
+
+    const authErr = parseAntigravityUsage(JSON.stringify({ type: "result", status: "ERROR", error: "Authentication required" }));
+    expect(authErr.maxUsedPercent).toBeNull();
+    expect(authErr.lines).toEqual(["Account limit availability is unknown: Antigravity usage report failed (Authentication required)."]);
+  });
+
+  it("does not round non-exhausted Antigravity buckets to 100% or infer active credit spend across model groups", () => {
+    const nearExhausted = parseAntigravityUsage(JSON.stringify({
       type: "result",
       status: "SUCCESS",
       num_turns: 0,
@@ -126,38 +196,88 @@ describe("usage limits", () => {
         data: {
           groups: [
             {
-              name: "Claude / GPT-OSS",
+              name: "Gemini Models",
               buckets: [
-                { window: "5h", remaining_fraction: 0.8, reset_time: "2026-10-14T12:00:00Z" },
+                { window: "5h", remaining_fraction: 0.004, reset_time: "2026-10-14T12:00:00Z" },
                 { window: "weekly", disabled: true },
               ],
             },
-            {
-              name: "Gemini 3.1 Pro",
-              buckets: [
-                { window: "5h", remaining_fraction: 1, reset_time: "2026-10-14T15:00:00Z" },
-              ],
-            },
           ],
-          credits: { balance: 0, unlimited: false },
+          remaining_credits: 4200,
         },
       },
-    });
-    const parsed = parseAntigravityUsage(json);
-    expect(parsed.agent).toBe("antigravity");
-    expect(parsed.maxUsedPercent).toBe(20);
-    expect(parsed.credits).toBeNull();
-    expect(parsed.limits).toEqual([
-      { name: "Claude / GPT-OSS: 5-hour window", usedPercent: 20, resets: expect.any(String) },
-      { name: "Gemini 3.1 Pro: 5-hour window", usedPercent: 0, resets: expect.any(String) },
+    }));
+    expect(nearExhausted.maxUsedPercent).toBe(99);
+    expect(nearExhausted.limits[0]?.usedPercent).toBe(99);
+    expect(nearExhausted.credits).toEqual({ balance: "4,200", unlimited: false, inUse: false });
+    expect(nearExhausted.lines.at(-1)).toBe("Credits: 4,200 available");
+    expect(nearExhausted.lines.join("\n")).not.toContain("running on credits");
+
+    const mixedExhausted = parseAntigravityUsage([
+      JSON.stringify({
+        type: "result",
+        status: "SUCCESS",
+        num_turns: 0,
+        conversation_id: "",
+        command: {
+          name: "usage",
+          data: {
+            groups: [
+              { name: "Claude and GPT models", buckets: [{ window: "5h", remaining_fraction: 0 }] },
+              { name: "Gemini Models", buckets: [{ window: "5h", remaining_fraction: 1 }] },
+            ],
+          },
+        },
+      }),
+      JSON.stringify({
+        type: "result",
+        status: "SUCCESS",
+        num_turns: 0,
+        conversation_id: "",
+        command: { name: "credits", data: { remaining_credits: 250 } },
+      }),
+    ].join("\n"));
+    expect(mixedExhausted.maxUsedPercent).toBe(100);
+    expect(mixedExhausted.credits).toEqual({ balance: "250", unlimited: false, inUse: false });
+    expect(mixedExhausted.lines.at(-1)).toBe("Credits: 250 available");
+    expect(mixedExhausted.lines.join("\n")).not.toContain("running on credits");
+
+    const unlimitedNotInUse = parseAntigravityUsage(JSON.stringify({
+      type: "result",
+      status: "SUCCESS",
+      num_turns: 0,
+      conversation_id: "",
+      command: {
+        name: "usage",
+        data: {
+          groups: [{ name: "Claude and GPT models", buckets: [{ window: "5h", remaining_fraction: 0 }] }],
+          credits: { unlimited: true },
+        },
+      },
+    }));
+    expect(unlimitedNotInUse.credits).toEqual({ balance: "unlimited", unlimited: true, inUse: false });
+    expect(unlimitedNotInUse.lines.at(-1)).toBe("Credits: unlimited available");
+  });
+
+  it("handles Antigravity CLI transport errors and oversized output safely", async () => {
+    const log = { debug() {}, info() {}, warn() {}, error() {}, child() { return this; } } as any;
+    const nonZero = await antigravityUsage(process.execPath, process.cwd(), log, [
+      "-e",
+      "const arg = process.argv.at(-1); if (arg === '--version') { console.log('1.3.5'); } else { console.log(JSON.stringify({ status: 'SUCCESS', num_turns: 0, conversation_id: '', command: { name: 'usage', data: {} } })); process.exit(1); }",
+      "--",
     ]);
-    expect(parsed.lines[0]).toContain("Claude / GPT-OSS: 5-hour window 20% used");
-    expect(parsed.lines[0]).toContain("weekly disabled");
-    expect(parsed.lines.at(-1)).toBe("Credits: 0 available (plan quota remains usable)");
-    const turn = parseAntigravityUsage(JSON.stringify({ type: "result", status: "SUCCESS", num_turns: 1, conversation_id: "conv-1", command: { name: "usage", data: {} } }));
-    expect(turn.maxUsedPercent).toBeNull();
-    expect(turn.lines[0]).toContain("conversation turn");
+    expect(nonZero.maxUsedPercent).toBeNull();
+    expect(nonZero.lines[0]).toContain("Account limit availability is unknown");
+
+    const oversized = await antigravityUsage(process.execPath, process.cwd(), log, [
+      "-e",
+      "const arg = process.argv.at(-1); if (arg === '--version') { console.log('1.3.5'); } else { console.log('x'.repeat(300000)); }",
+      "--",
+    ]);
+    expect(oversized.maxUsedPercent).toBeNull();
+    expect(oversized.lines[0]).toContain("exceeded 262144 bytes");
   });
 });
+
 
 
