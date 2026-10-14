@@ -1,12 +1,18 @@
 import { configDefaults, defineConfig } from "vitest/config";
+import { fastTests, integrationTests } from "./scripts/test-lanes.mjs";
 
 /** Tests start real named pipes / sockets and child processes; shared CI runners can be slow. */
-const TEST_TIMEOUT_MS = 30_000;
+const lane = process.env.AGENT_BRIDGE_TEST_LANE ?? "all";
+const TEST_TIMEOUT_MS = lane === "fast" ? 30_000 : 120_000;
 
 export default defineConfig({
+  // Root tests import the portable mobile client without installing the Expo app.
+  tsconfig: "./tsconfig.json",
   // Keep writable test caches in this checkout when dependencies are shared read-only.
   cacheDir: ".agent-bridge-test/vite",
   test: {
+    include: lane === "fast" ? fastTests : lane === "integration" ? integrationTests : ["test/**/*.test.ts"],
+    maxWorkers: process.platform === "win32" && lane !== "fast" ? 1 : undefined,
     exclude: [...configDefaults.exclude, ".agent-bridge-test/**"],
     testTimeout: TEST_TIMEOUT_MS,
     hookTimeout: TEST_TIMEOUT_MS,

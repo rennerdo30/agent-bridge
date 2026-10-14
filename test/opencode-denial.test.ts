@@ -6,12 +6,12 @@ import { delegateToOpencodeServed } from "../src/core/opencode-served.js";
 import { pidAlive } from "../src/core/delegate.js";
 
 it("passes the supervisor's denial reason through opencode's permission reply", async () => {
-  const root = join(process.cwd(), ".agent-bridge-test");
+  const root = process.env.AGENT_BRIDGE_TEST_ROOT!;
   mkdirSync(root, { recursive: true });
   const dir = mkdtempSync(join(root, "opencode-denial-"));
   writeFileSync(join(dir, "serve"), `
-import { createServer } from "node:http";
-import { writeFileSync } from "node:fs";
+const { createServer } = require("node:http");
+const { writeFileSync } = require("node:fs");
 writeFileSync("serve.pid", String(process.pid));
 let events; let decision;
 const event = (type, properties) => events.write("data: " + JSON.stringify({ type, properties }) + "\\n\\n");

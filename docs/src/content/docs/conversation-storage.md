@@ -11,17 +11,23 @@ take the broker database's write lock. Both databases set a busy timeout.
 
 ### Lossless split migration (AB-167)
 
-The elected worker creates a WAL-inclusive, integrity-checked backup in
-`.migration-snapshots/bridge-history-v1-<uuid>.db` **before copying**. It copies
-all legacy history/conversation tables, retaining rowids and every raw byte,
-in batches bounded by 32 rows, 512 KiB or a 50 ms elapsed budget (a single row
-can exceed the byte/time limit). Every copied table is checked against the
-snapshot by row count and SHA-256 over typed, length-delimited row contents.
-FTS is rebuilt by document insert triggers and checked against its content.
-The manifest and snapshot path are stored in `history.db.history_migration`.
+The elected worker snapshots only the legacy history/conversation tables into
+`.migration-snapshots/bridge-history-v1-<uuid>.db` **before copying**. It never
+vacuums or backs up the entire broker database for this migration. Rowids and
+every raw byte are retained. Snapshot, copy and verification each yield in
+batches bounded by 32 rows, 512 KiB or a 50 ms elapsed budget (a single row
+can exceed the byte/time limit). Typed, length-delimited row hashes and byte
+comparisons verify each chunk incrementally. FTS is rebuilt by document insert
+triggers. A versioned companion `.progress.db` persists phase and chunk cursors;
+the manifest and snapshot path are also stored in `history.db.history_migration`.
 
-Interrupted copies resume against the same backup. Conflicts fail closed and
-preserve both databases and the backup. Until verification completes, broker,
+Interrupted snapshot, copy and verification phases resume from committed
+checkpoints. After a restart the worker revalidates saved chunks against a new
+consistent source view. Unchanged chunks are reused; changed mutable tables
+retain their previous snapshot generation before being copied again. Conflicts
+and verification failures fail closed and preserve both databases and the
+backup. Failed verification stays latched until an explicit `agent-bridge reindex`
+retry; it does not loop automatically. Until verification completes, broker,
 MCP and dashboard readers use the legacy tables; after it completes, they use
 `history.db`. Snapshot creation and copying run in the worker, so broker startup
 does not wait for a multi-GB history migration.
@@ -42,10 +48,11 @@ to stop using `bridge.db`; this patch does not alter running pinned binaries.
 
 Set `"history": { "ingest": false }` in the bridge home's `config.json`, or set
 **`AGENT_BRIDGE_HISTORY_INGEST=false`** (also accepts `0`) before starting the
-broker. No background worker starts when disabled. A running worker observes
-config changes and pauses ingestion/migration at the next yield; stored search
-and conversation reads remain available. Explicit reindex also honors the
-switch. Re-enable the config and restart a broker that started disabled.
+broker. The config switch pauses the monitoring worker at the next yield and
+keeps its committed cursor; stored search and conversation reads remain
+available. Re-enable the config to continue without restarting the broker.
+The environment switch prevents the worker from starting and requires a broker
+restart after removal. Explicit reindex also honors the switch.
 
 ## What is retained
 
@@ -92,6 +99,10 @@ generation to reconstruct the exact captured bytes.
 
 The elected broker starts one `history-worker.mjs`. Source discovery, parsing,
 FTS writes, backfill and mirrors run in that worker, away from message dispatch.
+Migration payload IO defaults to 8 MiB/s, counting reads, writes and chunk
+checks. Pressure pauses apply during snapshot, copy and verification; sustained
+pressure releases the pinned source read transaction. Health, status, doctor
+and the dashboard expose cached phase, percentage and estimated remaining time.
 Backfill runs on a two-second cadence, with real timer yields between migration,
 index and conversation batches. Broker request pressure pauses ingestion; lock
 errors cause a five-second cooldown. No automatic 100 ms backfill loop remains.

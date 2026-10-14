@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "agent-bridge",
   "displayName": "agent-bridge",
-  "version": "0.30.1",
+  "version": "0.30.15",
   "description": "Peer messaging, delegation and conversation history across coding agents.",
   "compat": {
     "source": "native",
@@ -43,7 +43,44 @@
         "enabledDefault": true
       }
     ],
-    "hooks": [],
+    "hooks": [
+      {
+        "id": "muse-session-start",
+        "event": "SessionStart",
+        "command": [
+          "node",
+          "hooks/session-start.mjs"
+        ],
+        "timeoutMs": 10000
+      },
+      {
+        "id": "muse-user-prompt",
+        "event": "UserPromptSubmit",
+        "command": [
+          "node",
+          "hooks/user-prompt.mjs"
+        ],
+        "timeoutMs": 10000
+      },
+      {
+        "id": "muse-post-tool",
+        "event": "PostToolUse",
+        "command": [
+          "node",
+          "hooks/post-tool.mjs"
+        ],
+        "timeoutMs": 10000
+      },
+      {
+        "id": "muse-stop",
+        "event": "Stop",
+        "command": [
+          "node",
+          "hooks/stop.mjs"
+        ],
+        "timeoutMs": 15000
+      }
+    ],
     "mcpServers": [
       {
         "id": "bridge",

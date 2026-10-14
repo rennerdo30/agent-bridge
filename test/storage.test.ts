@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,7 +13,10 @@ import type { BridgeMessage } from "../src/core/protocol.js";
 import { runMetaPath, startRunFeed } from "../src/core/runfeed.js";
 import { MessageStore, SQLITE_STORE_VERSION } from "../src/core/store.js";
 import { JobRunners, readRunnerState, runnerStatePath, writeRunnerState } from "../src/mcp/job-host.js";
-import { JobManager, readStore } from "../src/mcp/jobs.js";
+import { acquireLock, JobManager, readStore } from "../src/mcp/jobs.js";
+import { archiveJobs, readArchivedJobs } from "../src/core/job-archive.js";
+import { readJobVersions } from "../src/core/job-archive-index.js";
+import { closeMetadataDbs } from "../src/core/metadata-db.js";
 
 const V1_SCHEMA = `
 CREATE TABLE messages (
@@ -29,13 +33,14 @@ const OLD_TIME = new Date(0);
 let home: string;
 
 beforeEach(() => {
-  home = mkdtempSync(join(import.meta.dirname, ".storage-"));
+  home = mkdtempSync(join(tmpdir(), "storage-"));
 });
 
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
-  rmSync(home, { recursive: true, force: true });
+  closeMetadataDbs();
+  rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 function stubNode(): BridgeNode {
@@ -155,9 +160,9 @@ describe("JSON store upgrades", () => {
     writeFileSync(path, JSON.stringify(entries));
     const manager = new JobManager(stubNode(), nullLogger, path);
     expect(readStore(path)).toHaveLength(1);
-    manager.persist();
+    manager.restore(() => undefined);
     expect(json(path).version).toBe(JSON_STORE_VERSION);
-    expect(json(path).jobs).toEqual(expect.arrayContaining(entries));
+    expect(json(path).jobs).toEqual(expect.arrayContaining(entries.map(entry => expect.objectContaining(entry))));
     const backup = readdirSync(home).find((f) => f.startsWith("jobs.json.backup-"))!;
     expect(JSON.parse(readFileSync(join(home, backup), "utf8"))).toEqual(entries);
     writeFileSync(path, JSON.stringify({ ...json(path), futureEnvelope: "keep" }));
@@ -238,8 +243,11 @@ describe("JSON store upgrades", () => {
     const path = runnerStatePath(home, "old");
     mkdirSync(join(home, "jobs"));
     writeFileSync(path, JSON.stringify({ pid: 1, peer: "p", status: "running", updatedAt: 1, future: { keep: true } }));
+    const before = readFileSync(path);
     writeRunnerState(home, "old", { pid: 1, peer: "p", status: "done", updatedAt: 2 });
-    expect(json(path)).toMatchObject({ version: JSON_STORE_VERSION, status: "done", future: { keep: true } });
+    // AB-208: the state is a row now; the older file stays byte-identical until its verified import.
+    expect(readRunnerState(home, "old")).toMatchObject({ version: JSON_STORE_VERSION, status: "done", future: { keep: true } });
+    expect(readFileSync(path)).toEqual(before);
     const feed = startRunFeed({ home, name: "meta", header: "test" });
     const metaPath = runMetaPath(feed.logPath);
     writeFileSync(metaPath, JSON.stringify({ version: JSON_STORE_VERSION, future: "keep" }));
@@ -255,20 +263,60 @@ describe("JSON store upgrades", () => {
 });
 
 describe("retention archives", () => {
+  it("publishes identical job archives once across nodes and retains changed records", () => {
+    // AB-206: archives are rows of the job index, one version per distinct serialized record.
+    const path = join(home, "jobs.json"), old = storedJob("old", 1);
+    const first = archiveJobs(path, [old]);
+    expect(archiveJobs(path, [{ ...old }])).toBe(first);
+    expect(readJobVersions(path, "old")).toEqual([old]);
+    expect(existsSync(join(home, "archive"))).toBe(false);
+    expect(archiveJobs(path, [{ ...old, prompt: "updated task" }])).toBe(first);
+    expect(readJobVersions(path, "old")).toEqual([old, { ...old, prompt: "updated task" }]);
+    expect(readArchivedJobs(path)).toEqual([{ ...old, prompt: "updated task" }]);
+  });
+
+  it("does not let a stale manager rearchive identical finished jobs", () => {
+    vi.stubEnv("AGENT_BRIDGE_JOB_STORE_LIMIT", "1");
+    const path = join(home, "jobs.json"), entries = [storedJob("old", 1), storedJob("new", 2)];
+    const versions: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      writeFileSync(path, JSON.stringify({ version: JSON_STORE_VERSION, jobs: entries }));
+      new JobManager(stubNode(), nullLogger, path).restore(() => undefined);
+      versions.push(readJobVersions(path, "old").length);
+    }
+    // The original and the archived record are retained once; stale managers add no copies.
+    expect(versions).toEqual([versions[0], versions[0], versions[0]]);
+    expect(readJobVersions(path, "old")).toContainEqual(storedJob("old", 1));
+    expect(readArchivedJobs(path).find(job => job.id === "old")).toMatchObject({ ...storedJob("old", 1), status: "done" });
+    expect(readStore(path).map(job => job.id)).toEqual(["new"]);
+  });
+
+  it("keeps live job-store locks exclusive beyond the old age deadline", () => {
+    const path = join(home, "jobs.json.lock"), release = acquireLock(path, 0);
+    try {
+      utimesSync(path, 0, 0);
+      expect(() => acquireLock(path, 0)).toThrow("locking jobs store");
+      expect(JSON.parse(readFileSync(path, "utf8")).pid).toBe(process.pid);
+    } finally { release(); }
+    acquireLock(path, 0)();
+  });
+
   it("archives only finished overflow jobs and keeps every running or interrupted job", () => {
     vi.stubEnv("AGENT_BRIDGE_JOB_STORE_LIMIT", "1");
     const path = join(home, "jobs.json");
-    writeFileSync(path, JSON.stringify([storedJob("old", 1), storedJob("new", 2), storedJob("running", 0, "running"), storedJob("interrupted", 0, "interrupted")]));
+    writeFileSync(path, JSON.stringify([storedJob("old", 1), storedJob("new", 2), { ...storedJob("running", 0, "running"), host: { pid: process.pid, peer: "codex-job-running", startedAt: 0 } }, storedJob("interrupted", 0, "interrupted")]));
     const manager = new JobManager(stubNode(), nullLogger, path);
-    manager.persist();
+    manager.runners = { alive: () => true, state: () => null, send: () => {}, kill: () => {} };
+    manager.restore(() => undefined);
     expect(readStore(path).map((j) => j.id)).toEqual(["running", "interrupted", "new"]);
-    const archive = readdirSync(join(home, "archive")).find((f) => /^jobs-.*\.json$/.test(f))!;
-    expect(archive).toBeDefined();
-    expect(json(join(home, "archive", archive)).jobs).toEqual([storedJob("old", 1)]);
+    expect(readArchivedJobs(path).filter((j) => !readStore(path).some((active) => active.id === j.id)))
+      .toEqual([expect.objectContaining(storedJob("old", 1))]);
     vi.stubEnv("AGENT_BRIDGE_JOB_STORE_LIMIT", "0");
     writeFileSync(path, JSON.stringify([storedJob("old", 1), storedJob("new", 2)]));
-    manager.persist();
-    expect(readStore(path)).toHaveLength(2);
+    new JobManager(stubNode(), nullLogger, path).restore(() => undefined);
+    // Nothing is archived without a limit. Indexed jobs this session owns may be restored too.
+    expect(readStore(path).map((j) => j.id)).toEqual(expect.arrayContaining(["old", "new"]));
+    manager.cancelAll();
   });
 
   it("archives log and metadata pairs and never prunes a live feed", () => {
@@ -295,7 +343,9 @@ describe("retention archives", () => {
     vi.stubEnv("AGENT_BRIDGE_RUNNER_KEEP_MS", "1");
     const dir = join(home, "jobs");
     for (const [id, status] of [["old", "done"], ["live", "running"]] as const) {
-      writeRunnerState(home, id, { pid: 1, peer: "p", status, updatedAt: 1 });
+      // Files of an older runner (current ones write rows).
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(runnerStatePath(home, id), JSON.stringify({ version: JSON_STORE_VERSION, pid: 1, peer: "p", status, updatedAt: 1 }));
       writeFileSync(join(dir, `${id}.spec.json`), JSON.stringify({ original: id }));
       utimesSync(runnerStatePath(home, id), OLD_TIME, OLD_TIME);
       utimesSync(join(dir, `${id}.spec.json`), OLD_TIME, OLD_TIME);

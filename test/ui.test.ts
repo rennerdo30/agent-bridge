@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { join } from "node:path";
+import { indexFixtureFile, retainedRootJobCopy } from "./archive-fixture.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { classifyPeers, startUi, summarizeRun, type RunSummary } from "../src/cli/ui.js";
 import type { PeerInfo } from "../src/core/protocol.js";
@@ -46,6 +47,8 @@ describe("web dashboard", () => {
     const name = "codex-job-1234abcd";
     const backup = JSON.stringify({ version: 2, jobs: [{ id: "1234abcd", name, agent: "codex", owner: "claude-offline", projectRoot: env.home, workdir: env.home, startedAt: 1, status: "running", sessionId: "original-native-thread", prompt: "original task" }] });
     writeFileSync(join(env.home, "jobs.json.backup-1"), backup);
+    // AB-206: readers never discover legacy copies; a release-era copy reaches them through the job index.
+    indexFixtureFile(join(env.home, "jobs.json.backup-1"));
     const jobs = new JobManager(master, nullLogger, join(env.home, JOBS_FILE)); managers.push(jobs);
     const sessions: string[] = [];
     jobs.restore(() => (_body, session) => async () => { sessions.push(session); return { sessionId: session, text: "continued", isError: false, details: {} }; });
@@ -57,7 +60,7 @@ describe("web dashboard", () => {
     expect(await r.json()).toMatchObject({ outcome: "delivered", isError: false });
     await until(() => sessions.length === 1);
     expect(sessions).toEqual(["original-native-thread"]);
-    expect(readFileSync(join(env.home, "jobs.json.backup-1"), "utf8")).toBe(backup);
+    expect(retainedRootJobCopy(env.home, "jobs.json.backup-1")).toBe(backup);
   });
 
   it("sets a year-long protected cookie and shows safe recovery for missing or invalid credentials", async () => {
@@ -98,9 +101,18 @@ describe("web dashboard", () => {
     const meta = join(env.home, "runs", `${RUN}.json`);
     writeFileSync(meta, legacy);
     setJobOutcome(env.home, job, "supervisor", "held", "CPU A/B", startedAt + 2_000);
-    const response = await fetch(`${base()}/api/job-outcomes`, { headers: { cookie } });
-    expect(response.status).toBe(200);
-    const state = await response.json() as any;
+    const inspected = async () => {
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        const response = await fetch(`${base()}/api/job-outcomes`, { headers: { cookie } });
+        expect(response.status).toBe(200);
+        const state = await response.json() as any;
+        if (state.jobs[job.name].outcome.observation.state === 'ready' && state.runs[RUN].observation.state === 'ready') return state;
+        if (Date.now() > deadline) throw new Error('Dashboard outcome inspection did not finish');
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    };
+    const state = await inspected();
     expect(state.contractVersion).toBe(1);
     expect(state.jobs[job.name].outcome).toMatchObject({ delivery: { status: "unknown" }, merge: { state: "held", branch: job.worktree.branch, reason: "CPU A/B" } });
     expect(state.runs[RUN].merge.state).toBe("held");
@@ -108,7 +120,7 @@ describe("web dashboard", () => {
     expect(readFileSync(meta, "utf8")).toBe(legacy);
     writeFileSync(join(env.home, JOBS_FILE), JSON.stringify([{ ...job, startedAt: startedAt + 10_000, remote: { host: "paired-pc", name: "remote-job" } }]));
     writeFileSync(meta, JSON.stringify({ job: job.name, by: "supervisor", jobStartedAt: startedAt + 10_000, remote: { host: "paired-pc", name: "remote-job" } }));
-    const remote = await (await fetch(`${base()}/api/job-outcomes`, { headers: { cookie } })).json() as any;
+    const remote = await inspected();
     expect(remote.jobs[job.name].outcome.merge.reason).toContain("paired PC");
     expect(remote.runs[RUN].merge.reason).toContain("paired PC");
   });
@@ -167,14 +179,14 @@ describe("web dashboard", () => {
     expect(state.messages[0]).toMatchObject({ from_name: "you", body: "hello from the dashboard" });
   });
 
-  it("shows restricted job reply guidance in a dashboard send result", async () => {
+  it("visibly rejects unsupported ordinary mail to a foreign job", async () => {
     const peer = env.node("claude-owner", "claude"); await peer.start();
     writeFileSync(join(env.home, JOBS_FILE), JSON.stringify({ version: 4, jobs: [{ id: "one", name: "codex-job-one", agent: "codex", owner: peer.name, rootName: peer.name, supervisor: "root", status: "running", workdir: env.home }] }));
     const r = await fetch(`${base()}/api/send`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ to: "codex-job-one", body: "Please answer" }) });
-    expect(r.status).toBe(200);
+    expect(r.status).toBe(400);
     const result = await r.json();
-    expect(result.replyRestrictions).toEqual([{ name: "codex-job-one", supervisor: peer.name }]);
-    expect(result.replyGuidance[0]).toContain("can't reply to you directly. Its replies go to its supervisor claude-owner");
+    expect(result.error).toContain("Ask its supervisor");
+    expect(result.error).toContain("No message was stored");
   });
 
   it("concurrent first sends share one sender peer", async () => {
@@ -332,8 +344,7 @@ describe("web dashboard", () => {
     attachDashboardJobControl(peer, jobs, nullLogger);
     const job = jobs.start("codex", null, "foreign task", async () => new Promise(() => {}));
     job.owner = "another-session";
-    const sent = await sender.send({ to: peer.name, body: "null", conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true });
-    await until(() => peer.hasSeen(sent.messages[0]!.id));
+    await expect(sender.send({ to: peer.name, body: "null", conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true })).rejects.toMatchObject({ code: "unauthorized" });
     expect(peer.unread()).toEqual([]);
     recordJob(peer.name, job);
     const r = await fetch(`${base()}/api/subagents/message`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ run: RUN, body: "wrong owner" }) });
@@ -387,10 +398,11 @@ describe("summarizeRun", () => {
     expect(summarizeRun(file, `${header}\n${quoted}\n`, 1000, 2000, meta).status).toBe("running");
   });
 
-  it("detects running, failed and interrupted runs", () => {
+  it("detects running, failed, cancelled and interrupted runs", () => {
     const f = "2026-09-29-06-32-18-codex-x.log";
     expect(summarizeRun(f, "06:32:18 h\n06:33:00 1m · step 3 · bash: x\n", 1_000, 2_000).status).toBe("running");
     expect(summarizeRun(f, "06:32:18 h\n06:40:00 finished after 400s · failed: boom\n", 1_000, 2_000).status).toBe("failed");
+    expect(summarizeRun(f, "06:32:18 h\n06:40:00 finished after 400s · cancelled\n", 1_000, 2_000).status).toBe("cancelled");
     expect(summarizeRun(f, "06:32:18 h\n", 0, 10 * 60_000).status).toBe("interrupted");
   });
 

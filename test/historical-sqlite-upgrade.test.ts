@@ -8,7 +8,8 @@ import { migrateSqlite } from "../src/core/sqlite-migrations.js";
 import { nullLogger } from "../src/core/logger.js";
 import { HistoryIndex } from "../src/core/history.js";
 import { ConversationIngestor } from "../src/core/conversations.js";
-import { makeEnv, type TestEnv } from "./helpers.js";
+import { Broker } from "../src/core/broker.js";
+import { makeEnv, until, type TestEnv } from "./helpers.js";
 
 type Table = { name: string; count: number; sha256: string };
 type Capture = { tag: string; commit: string; storeSourceSha256: string; archiveSourceSha256: string | null; files: { name: string; version: number; sha256: string; tables: Table[] }[] };
@@ -72,8 +73,11 @@ it.each(captures)("preserves every captured table through the $tag schema upgrad
     for (const file of capture.files.filter((file) => file.name === "archive.db")) expect(digest(readFileSync(join(env.home, file.name)))).toBe(file.sha256);
   } finally { db.close(); }
 });
-it.each(captures)("keeps all $tag messages and archival metadata readable and searchable after real startup", (capture) => {
+it.each(captures)("keeps all $tag messages and archival metadata readable and searchable after real startup", async (capture) => {
   install(capture);
+  // Keep the original explicit indexing gate and historical live messages isolated from background ingest/TTL.
+  vi.stubEnv("AGENT_BRIDGE_HISTORY_INGEST", "false");
+  vi.stubEnv("AGENT_BRIDGE_MESSAGE_TTL_MS", "0");
   // Captured project metadata must never direct a test mirror into a real outside folder.
   expect(existsSync("D:/retention-witness")).toBe(false);
   const before = new DatabaseSync(env.db, { readOnly: true });
@@ -86,11 +90,19 @@ it.each(captures)("keeps all $tag messages and archival metadata readable and se
   const cold = oldCold?.prepare("SELECT * FROM messages").all() ?? [];
   oldCold?.close();
   const store = new MessageStore(env.db, nullLogger);
+  const broker = new Broker(env.pipe, store, nullLogger, "historical-fixture-token");
   const db = new DatabaseSync(env.db), archive = new DatabaseSync(join(env.home, "archive.db"), { readOnly: true });
   const cli = { claude: join(env.home, "empty-cli/claude"), codex: join(env.home, "empty-cli/codex"), opencode: join(env.home, "empty-cli/opencode") };
   const index = new HistoryIndex(db, env.home, cli), ingest = new ConversationIngestor(db, env.home, cli);
   try {
     expect(db.prepare("SELECT * FROM messages").all()).toEqual(live);
+    expect(db.prepare("SELECT * FROM archived_messages").all()).toEqual(legacy);
+    expect(archive.prepare("SELECT * FROM messages").all().map(encode).sort()).toEqual(cold.map(encode).sort());
+    for (const row of [...live, ...legacy, ...cold]) expect(store.byId(String(row.id))?.body).toBe(row.body);
+    // Normal listener startup schedules bounded archival; originals remain readable until verified publication.
+    await broker.listen();
+    await until(() => Number(db.prepare("SELECT count(*) AS n FROM archived_messages").get()!.n) === 0 &&
+      Number(archive.prepare("SELECT count(*) AS n FROM messages").get()!.n) === legacy.length + cold.length);
     const retained = archive.prepare("SELECT * FROM messages").all();
     expect(retained.map(encode).sort()).toEqual([...legacy, ...cold].map(encode).sort());
     for (const row of [...live, ...legacy, ...cold]) expect(store.byId(String(row.id))?.body).toBe(row.body);
@@ -107,5 +119,6 @@ it.each(captures)("keeps all $tag messages and archival metadata readable and se
     }
     expect(table(db, "witness_user_extensions")).toEqual(capture.files[0]!.tables.find((entry) => entry.name === "witness_user_extensions"));
     expect(archive.prepare("SELECT * FROM messages").all().map(encode).sort()).toEqual(retained.map(encode).sort());
-  } finally { ingest.close(); index.close(); archive.close(); db.close(); store.close(); }
+    expect(db.prepare("SELECT * FROM messages").all()).toEqual(live);
+  } finally { ingest.close(); index.close(); archive.close(); db.close(); await broker.close(); }
 });

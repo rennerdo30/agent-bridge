@@ -4,7 +4,7 @@ title: "Installation"
 
 ## Requirements
 
-- Node.js **22.13+** (the bridge uses built-in `node:sqlite`).
+- Node.js **22.16+** (the bridge uses built-in `node:sqlite` and incremental backups).
 - At least one installed, authenticated CLI: Claude Code or Codex with plugin support, opencode, or Antigravity. Earlier bridge testing used Codex 0.156; current native queue delivery is verified with 0.160.1. See [delivery requirements](../../messaging-delivery/) when using idle wake.
 
 ### All at once
@@ -37,7 +37,7 @@ Codex does not run plugin hooks until you trust them. Open `/hooks` in a Codex s
 npx -y github:rennerdo30/agent-bridge install-opencode
 ```
 
-This copies the plugin into opencode's global config (`~/.config/opencode/plugins/`), plus a skill and the `codex` / `claude` subagents. Existing files you created yourself are never overwritten. Restart opencode afterwards. It needs Node.js 22.13+ on `PATH`. Remove it with `npx -y github:rennerdo30/agent-bridge uninstall-opencode`.
+This copies the plugin into opencode's global config (`~/.config/opencode/plugins/`), plus a skill and the `codex` / `claude` subagents. Existing files you created yourself are never overwritten. Restart opencode afterwards. It needs Node.js 22.16+ on `PATH`. Remove it with `npx -y github:rennerdo30/agent-bridge uninstall-opencode`.
 
 In opencode the tools are called `bridge_peers`, `bridge_send`, `bridge_ask_claude`, `bridge_spawn_codex`, and so on. Because opencode plugins can start turns themselves, opencode receives peer messages live, even while idle, whenever its listen window or auto-wake applies.
 

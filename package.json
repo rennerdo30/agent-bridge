@@ -1,6 +1,6 @@
 {
   "name": "agent-bridge",
-  "version": "0.30.1",
+  "version": "0.30.15",
   "description": "Let Claude Code and OpenAI Codex talk to each other: live peer messaging over a local pipe plus headless delegation.",
   "license": "MIT",
   "type": "module",
@@ -9,16 +9,20 @@
     "agent-bridge": "plugins/opencode/dist/cli.mjs"
   },
   "engines": {
-    "node": ">=22.13"
+    "node": ">=22.16"
   },
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "node scripts/test.mjs fast",
+    "test:integration": "node scripts/test.mjs integration",
+    "test:all": "node scripts/test.mjs all",
     "check": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.1",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@peculiar/x509": "2.1.0",
+    "reflect-metadata": "0.2.2",
     "zod": "4.6.5"
   },
   "devDependencies": {

@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
+import { retryRequest, transientRequestError } from "./request-retry.js";
 import { EventEmitter } from "node:events";
 import { unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { Broker } from "./broker.js";
+import type { Broker } from "./broker.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
-import { BridgeClient } from "./client.js";
+import { BridgeClient, brokerConnectionClosedError } from "./client.js";
 import {
   ELECTION_MAX_ATTEMPTS,
   ELECTION_RETRY_MAX_MS,
+  CONNECT_TIMEOUT_MS,
   APP_VERSION,
   DEFAULT_MAX_HOPS,
   ELECTION_RETRY_MIN_MS,
@@ -20,10 +22,12 @@ import type { Logger } from "./logger.js";
 import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
 import { ReadJournal } from "./read-journal.js";
+import { existingMetadataDb, retainMetadataReader } from "./metadata-db.js";
 import { recordLocalResult } from "./local-result-receipts.js";
-import { MessageStore, SQLITE_STORE_VERSION } from "./store.js";
+import type { MessageStore } from "./store.js";
+import { SQLITE_STORE_VERSION } from "./store-version.js";
 import { JSON_STORE_VERSION } from "./json-store.js";
-import { recordStorePeer } from "./store-compatibility.js";
+import { recordStorePeer, refreshStorePeerIdentities } from "./store-compatibility.js";
 import { parentProcessIdentity } from "./process-identity.js";
 import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import type { NetworkConfig } from "../network/config.js";
@@ -104,6 +108,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private readonly inbox = new Map<string, BridgeMessage>();
   private readonly readIds = new Set<string>();
   private readonly readJournal: ReadJournal;
+  private releaseMetadata: (() => void) | undefined;
   private readonly unflushedAcks = new Set<string>();
   private readonly pendingAcks = new Set<Promise<unknown>>();
   private pendingRefreshTimer: NodeJS.Timeout | null = null;
@@ -123,6 +128,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private activity: PeerActivity | null = null;
   private unavailable = false;
   private readonly log: Logger;
+  private presenceTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly opts: BridgeNodeOptions) {
     super();
@@ -131,9 +137,30 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.currentCwd = opts.cwd;
     this.autoWake = opts.autoWake;
     this.log = opts.log.child("node");
-    if (opts.dbPath !== ":memory:") recordStorePeer(dirname(opts.dbPath), { pid: process.pid, name: opts.name, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION } });
-    this.readJournal = new ReadJournal(dirname(opts.dbPath));
+    if (opts.dbPath !== ":memory:") this.recordStorePresence();
+    if (opts.dbPath !== ":memory:") this.releaseMetadata = retainMetadataReader(dirname(opts.dbPath));
+    this.readJournal = new ReadJournal(opts.dbPath === ":memory:" ? ":memory:" : dirname(opts.dbPath), this.log);
     this.restoreReadState(`name:${this.currentName}`);
+  }
+
+  /**
+   * Publish this process's store capabilities. A deferred metadata store (an older reader, or this
+   * process's identity not yet verifiable for the fail-closed migration lease) must never stop the
+   * node from starting: the record then stays in its pre-AB-208 file, and this retries with backoff
+   * until the store opens and holds the row.
+   */
+  private recordStorePresence(delay = 1_000): void {
+    const home = dirname(this.opts.dbPath);
+    let error: unknown;
+    try { recordStorePeer(home, { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 } }); }
+    catch (err) { error = err; }
+    let open = false;
+    try { open = Boolean(existingMetadataDb(home)); } catch { /* Not open yet. */ }
+    if (open && !error) return;
+    if (error && delay === 1_000) this.log.warn("store presence deferred; retrying in the background", { err: String((error as Error).message ?? error) });
+    if (this.presenceTimer) clearTimeout(this.presenceTimer);
+    this.presenceTimer = setTimeout(() => { this.presenceTimer = null; if (!this.stopping) this.recordStorePresence(Math.min(60_000, delay * 2)); }, delay);
+    this.presenceTimer.unref();
   }
 
   get name(): string {
@@ -141,6 +168,23 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
   get isBroker(): boolean {
     return this.broker !== null;
+  }
+  initializeMobileOwnerQuestions(): boolean {
+    return !this.stopping && !this.replaced && !!this.broker?.initializeMobileOwnerQuestions();
+  }
+  /** No election or service creation. Only an explicitly prepared local broker owner can borrow this. */
+  mobileHostContext(): import("../mobile/host.js").MobileHostContext | undefined {
+    const broker = this.broker;
+    if (!broker || this.stopping || this.replaced) return undefined;
+    const context = broker.mobileHostContext(); if (!context) return undefined;
+    let live = true;
+    return { ...context, ready: () => live && this.broker === broker && !this.stopping && !this.replaced && context.ready(),
+      onDispose: dispose => {
+        const lost = () => { live = false; void dispose().catch(() => {}); };
+        const unregister = context.onDispose(dispose);
+        this.on("stopped", lost); this.on("disconnected", lost);
+        return () => { unregister(); this.off("stopped", lost); this.off("disconnected", lost); };
+      } };
   }
   get isConnected(): boolean {
     return this.client !== null && !this.client.isClosed;
@@ -150,6 +194,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   async start(): Promise<void> {
+    if (!this.releaseMetadata && this.opts.dbPath !== ":memory:") this.releaseMetadata = retainMetadataReader(dirname(this.opts.dbPath));
     await this.ensureConnected();
   }
 
@@ -190,7 +235,20 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       if (this.broker) await this.broker.close();
       this.broker = null;
     }
+    // An election that was already past its stopping check may still finish now. Wait for it, so a broker it
+    // started (listener, bridge.db, archive.db and history.db handles) is closed here instead of outliving stop().
+    const electing = this.electing;
+    if (electing) {
+      await electing.catch(() => {});
+      (this.client as BridgeClient | null)?.close();
+      this.client = null;
+      const late = this.broker as Broker | null;
+      if (closeBroker && late) { await late.close(); this.broker = null; }
+    }
+    if (this.presenceTimer) clearTimeout(this.presenceTimer);
+    this.presenceTimer = null;
     this.log.info("bridge node stopped");
+    this.releaseMetadata?.(); this.releaseMetadata = undefined;
   }
 
   /**
@@ -245,6 +303,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
           throw err;
         }
         const code = errCode(err);
+        // Another user's short-socket directory stays unsafe however often we retry.
+        if (code === "EUNSAFESOCKETDIR") throw err;
         this.log.debug("connect attempt failed", { attempt, code, message: (err as Error).message });
         if (code !== "ENOENT" && code !== "ECONNREFUSED") {
           await sleep(jitter());
@@ -260,8 +320,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private async tryBecomeBroker(): Promise<boolean> {
     if (this.broker) return true;
+    if (this.stopping) return false;
+    const [{ Broker }, { MessageStore }] = await Promise.all([import("./broker.js"), import("./store.js")]);
     let store: MessageStore;
     try {
+      // Unverified living readers conservatively defer upgrades; process
+      // discovery must not delay hosting their existing compatible schema.
+      if (this.opts.dbPath !== ":memory:") void refreshStorePeerIdentities(dirname(this.opts.dbPath)).catch(error => this.log.debug("store reader identity refresh deferred", { err: String(error) }));
       store = new MessageStore(this.opts.dbPath, this.log.child("store"));
     } catch (err) {
       if (["EBUSY", "SQLITE_BUSY", "STORE_UPGRADE_DEFERRED"].includes(errCode(err)) || /database is locked/.test(String((err as Error).message))) {
@@ -274,6 +339,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     const broker = new Broker(this.opts.pipePath, store, this.log.child("broker"), this.opts.token, Date.now, join(dirname(this.opts.dbPath), JOBS_FILE), this.opts.network);
     try {
       await broker.listen();
+      if (this.stopping) {
+        // stop() ran while this node was opening the store or listening: never keep a broker nobody will close.
+        await broker.close();
+        return false;
+      }
       this.broker = broker;
       this.log.info("became broker", { pipe: this.opts.pipePath });
       return true;
@@ -304,14 +374,20 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private async adopt(client: BridgeClient): Promise<void> {
     client.on("event", (ev, data) => this.onEvent(ev, data));
+    let brokerVersion: string | undefined;
     // Read presence before hello can trigger writes in a newer broker.
     try {
       await client.request("auth", { protocol: PROTOCOL_VERSION, token: this.opts.token });
+      brokerVersion = (await client.request("ping", {})).brokerVersion;
       if (this.opts.dbPath !== ":memory:") for (const peer of await client.request("peers", {})) recordStorePeer(dirname(this.opts.dbPath), peer);
     } catch (error) { client.close(); throw error; }
     const agentStartedAt = this.opts.jobAgent ? null : await parentProcessIdentity();
     const args = this.helloArgs();
-    const hello = await client.request("hello", { ...args, peer: { ...args.peer, agentStartedAt } }).catch((err) => {
+    // Older brokers publish hello capabilities directly to their observers,
+    // which then rewrite each foreign PID record using their legacy shape.
+    // Our own explicit record already protects upgrades before registration.
+    const hello = await client.request("hello", { ...args, peer: { ...args.peer, agentStartedAt,
+      storeCapabilities: brokerVersion === APP_VERSION ? args.peer.storeCapabilities : undefined } }).catch((err) => {
       client.close();
       throw err;
     });
@@ -338,7 +414,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         activity: this.activity,
         unavailable: this.unavailable,
         version: APP_VERSION,
-        storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION },
+        storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 },
         ...(this.opts.jobAgent ? { jobAgent: this.opts.jobAgent } : {}),
         ...(this.opts.jobOwner ? { jobOwner: this.opts.jobOwner, jobParent: this.opts.jobParent, parentJob: this.opts.parentJob, rootSession: this.opts.rootSession, rootName: this.opts.rootName, jobTitle: this.opts.jobTitle, jobSendTo: this.opts.jobSendTo } : {}),
       },
@@ -346,8 +422,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number; sessionId?: string | null }): void {
+    if (this.stopping) { client.close(); return; }
     this.client = client;
     this.currentName = hello.name;
+    this.recordOwnStorePeer();
     if (!this.sessionId && hello.sessionId) {
       this.sessionId = hello.sessionId;
       this.restoreReadState(`session:${this.sessionId}`);
@@ -369,7 +447,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (this.stopping) return;
     this.log.warn("lost connection to broker; re-electing");
     this.emit("disconnected");
-    this.scheduleReconnect(jitter());
+    // Established hosts must replace a lost listener immediately. Legacy job
+    // runners already add their own reconnect jitter; delaying the eligible
+    // host as well compounds the outage. Contending hosts still back off in
+    // elect() when another process wins or holds the store migration lock.
+    this.scheduleReconnect(this.opts.canHostBroker === false ? jitter() : 0);
   }
 
   private onEvent(ev: string, data: unknown): void {
@@ -417,8 +499,52 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return fn(this.client!);
   }
 
+  /** A read may cross listener retirement; retry only that actual closed socket once. */
+  private async withReadClient<T>(fn: (c: BridgeClient, timeoutMs?: number) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const cancelled = new AbortController();
+    const stopped = () => cancelled.abort(new Error("bridge node stopped"));
+    const aborted = () => cancelled.abort(signal?.reason);
+    this.on("stopped", stopped);
+    signal?.addEventListener("abort", aborted, { once: true });
+    if (this.stopping) stopped();
+    if (signal?.aborted) aborted();
+    const wait = (pending: Promise<T>) => new Promise<T>((resolve, reject) => {
+      const abort = () => { cancelled.signal.removeEventListener("abort", abort); reject(cancelled.signal.reason); };
+      cancelled.signal.addEventListener("abort", abort, { once: true });
+      pending.then(value => { cancelled.signal.removeEventListener("abort", abort); resolve(value); }, error => { cancelled.signal.removeEventListener("abort", abort); reject(error); });
+      if (cancelled.signal.aborted) abort();
+    });
+    let usedClient: BridgeClient | null = null;
+    const invoke = async (timeoutMs?: number) => {
+      cancelled.signal.throwIfAborted();
+      const before = this.client;
+      await this.ensureConnected();
+      cancelled.signal.throwIfAborted();
+      usedClient = this.client ?? before;
+      if (!usedClient || usedClient.isClosed) throw brokerConnectionClosedError();
+      return fn(usedClient, timeoutMs);
+    };
+    try {
+      try { return await wait(invoke()); }
+      catch (error) {
+        if (cancelled.signal.aborted || this.stopping || errCode(error) !== "BROKER_CONNECTION_CLOSED" || !(usedClient as BridgeClient | null)?.isClosed) throw error;
+      }
+      const timer = setTimeout(() => cancelled.abort(Object.assign(new Error("broker read reconnect timed out"), { code: "ETIMEDOUT" })), CONNECT_TIMEOUT_MS);
+      try { return await wait(invoke(CONNECT_TIMEOUT_MS)); }
+      finally { clearTimeout(timer); }
+    } finally {
+      this.off("stopped", stopped);
+      signal?.removeEventListener("abort", aborted);
+    }
+  }
+
   /** quiet: not part of a conversation of this agent (no listen window, replies are not awaited), e.g. control messages to a job runner. */
   send(args: SendArgs, opts: { quiet?: boolean } = {}): Promise<SendResult> {
+    const request = { ...args, dedupeKey: args.dedupeKey || randomUUID() };
+    const messageId = args.messageId ?? (args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) && this.opts.jobAgent
+      ? completionMessageId(this.id, args.dedupeKey.slice(COMPLETION_DEDUPE_PREFIX.length))
+      : args.dedupeKey ? completionMessageId(`send:${this.name}`, args.dedupeKey) : randomUUID());
+    let submitted = false;
     return this.withClient(async (c) => {
       if (args.ifNoNewerThan) {
         // inbox marks consumed locally before its batched ack. A guarded reply must observe
@@ -430,15 +556,22 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
           ids.forEach(id => this.unflushedAcks.delete(id));
         }
       }
-      const request = { ...args, dedupeKey: args.dedupeKey || randomUUID() };
+      submitted = true;
       const res = args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX) && !args.messageId
         ? await this.sendRequest(c, "send", request)
-        : await this.trackedSend(c, { ...request, messageId: args.messageId ?? (args.dedupeKey ? completionMessageId(`send:${this.name}`, args.dedupeKey) : randomUUID()) }, Boolean(args.messageId));
+        : await this.trackedSend(c, { ...request, messageId }, Boolean(args.messageId));
       if (opts.quiet) return res;
       this.lastSent = Date.now();
       if (!args.replyTo) for (const m of res.messages) this.asked.add(m.id);
       if (this.asked.size > QUESTION_ID_MEMORY) this.asked.delete(this.asked.values().next().value!);
       return res;
+    }).catch((error) => {
+      if (submitted) throw error;
+      // Connection/guarded-ack failure precedes submission. A caller-supplied
+      // identity may nevertheless refer to a previously stored attempt.
+      throw new BridgeError(error instanceof BridgeError ? error.code : "internal",
+        `This send attempt was not submitted; message ${messageId} storage state is unknown: ${(error as Error).message}. Query send_status or retry send with message_id="${messageId}".`,
+        { ...(error instanceof BridgeError ? error.details : {}), messageId, state: "unknown", submitted: false });
     });
   }
 
@@ -455,11 +588,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         const { messageId: _unused, ...legacy } = args;
         return this.sendRequest(client, "send", legacy);
       }
-      if (!(error instanceof Error) || error.message !== "broker request timed out: trackedSend") {
+      if (!transientRequestError(error)) {
         if (error instanceof BridgeError) throw error;
-        throw new BridgeError("internal", `Storage cannot be confirmed for message ${args.messageId}: ${(error as Error).message}. Query send_status(message_id="${args.messageId}") or retry send with the same message_id.`, { messageId: args.messageId, state: "unconfirmed" });
+        throw new BridgeError("internal", `Storage cannot be confirmed for message ${args.messageId}; storage state is unknown: ${(error as Error).message}. Query send_status(message_id="${args.messageId}") or retry send with the same message_id.`, { messageId: args.messageId, state: "unknown" });
       }
-      try { return await client.request("trackedSend", args); }
+      try {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return await client.request("trackedSend", args);
+      }
       catch (retryError) {
         if (retryError instanceof BridgeError && retryError.code !== "internal" && retryError.code !== "timeout") throw retryError;
         try {
@@ -475,10 +611,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
             return { messages: [message], deliveredTo: [], queuedFor: [],
               storage: { id: state.id, state: "stored", recovered: true, receipts: state.receipts } };
           }
-          throw new BridgeError("timeout", `Message ${state.id} is ${state.state} as of ${new Date(state.checkedAt).toISOString()}; an outstanding request can still store it. Query send_status(message_id="${state.id}") or retry send with the same message_id.`, { messageId: state.id, state: state.state });
+          throw new BridgeError("timeout", `Message ${state.id} storage state is unknown; this local broker reports ${state.state} as of ${new Date(state.checkedAt).toISOString()}. An outstanding or remote request can still store it. Query send_status(message_id="${state.id}") or retry send with the same message_id.`, { messageId: state.id, state: "unknown", localState: state.state });
         } catch (lookupError) {
           if (lookupError instanceof BridgeError && lookupError.details?.messageId) throw lookupError;
-          throw new BridgeError("timeout", `Storage cannot be confirmed for message ${args.messageId}: broker lookup unavailable. Query send_status(message_id="${args.messageId}") or retry send with the same message_id; use a new id only for a new message.`, { messageId: args.messageId, state: "unconfirmed", cause: String(retryError) });
+          throw new BridgeError("timeout", `Storage cannot be confirmed for message ${args.messageId}; storage state is unknown: broker lookup unavailable. Query send_status(message_id="${args.messageId}") or retry send with the same message_id; use a new id only for a new message.`, { messageId: args.messageId, state: "unknown", cause: String(retryError) });
         }
       }
     }
@@ -488,10 +624,16 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private async sendRequest<O extends "send" | "sendSibling" | "guardedSend">(client: BridgeClient, op: O, args: RequestMap[O][0]): Promise<SendResult> {
     try { return await client.request(op, args); }
     catch (err) {
-      if ((err as Error).message !== `broker request timed out: ${op}`) throw err;
-      try { return await client.request(op, args); }
+      if ((err as Error).message !== `broker request timed out: ${op}`) {
+        if (err instanceof BridgeError && err.code !== "internal" && err.code !== "timeout") throw err;
+        throw new BridgeError(err instanceof BridgeError ? err.code : "internal", `Message storage state is unknown after ${op}: ${(err as Error).message}. This legacy operation has no durable send_status identity; check inbox/history before resending.`, { ...(err instanceof BridgeError ? err.details : {}), state: "unknown", dedupeKey: args.dedupeKey });
+      }
+      try {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return await client.request(op, args);
+      }
       catch (retryError) {
-        throw new Error(`Delivery is unconfirmed after a timed-out ${op}. Check inbox/history before resending. ${(retryError as Error).message}`, { cause: retryError });
+        throw new BridgeError("timeout", `Message storage state is unknown after a timed-out ${op}. This legacy operation has no durable send_status identity; check inbox/history before resending. ${(retryError as Error).message}`, { state: "unknown", dedupeKey: args.dedupeKey });
       }
     }
   }
@@ -510,8 +652,20 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return this.withClient((c) => c.request("messageReceipt", { id }));
   }
 
-  peers(): Promise<PeerInfo[]> {
-    return this.withClient((c) => c.request("peers", {})).then((peers) => peers.filter((p) => !isPluginCacheCwd(p.cwd)));
+  nativeChild(args: RequestMap["nativeChild"][0]) { return this.withClient(c => c.request("nativeChild", args)); }
+  nativeChildren() { return this.withClient(c => c.request("nativeChildren", {})); }
+  nativeChildrenEnd() { return this.withClient(c => c.request("nativeChildrenEnd", {})); }
+  nativeChildPending(agentId: string) { return this.withClient(c => c.request("nativeChildPending", { agentId })); }
+  nativeChildAck(agentId: string, ids: string[]) { return this.withClient(c => c.request("nativeChildAck", { agentId, ids })); }
+  nativeChildSend(agentId: string, args: SendArgs) { return this.withClient(c => c.request("nativeChildSend", { ...args, agentId })); }
+
+  peers(signal?: AbortSignal): Promise<PeerInfo[]> {
+    return this.withReadClient((c, timeoutMs) => c.request("peers", {}, timeoutMs), signal).then((peers) => peers.filter((p) => !isPluginCacheCwd(p.cwd)));
+  }
+
+  health(): Promise<import("./health.js").BrokerHealth> {
+    const started = performance.now();
+    return this.withClient(c => c.request("health", {})).then(health => ({ ...health, roundTripMs: performance.now() - started }));
   }
 
   brokerLoad() {
@@ -519,7 +673,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   projectJobs(): Promise<Record<string, unknown>[]> { return this.withClient((c) => c.request("projectJobs", {})); }
-  jobRecipient(job: string): Promise<string> { return this.withClient((c) => c.request("jobRecipient", { job })); }
+  jobRecipient(job: string): Promise<string> { return retryRequest("jobRecipient (read only; no control submitted)", () => this.withClient((c) => c.request("jobRecipient", { job }))); }
   async setUnavailable(unavailable: boolean): Promise<PeerInfo> {
     const peer = await this.withClient((c) => c.request("coordinatorAvailability", { unavailable }));
     this.unavailable = unavailable;
@@ -538,7 +692,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   jobAuthority(job: string): Promise<import("../mcp/jobs.js").Job | null> {
-    return this.withClient((c) => c.request("jobAuthority", { job }));
+    return retryRequest("jobAuthority (read only; no control submitted)", () => this.withClient((c) => c.request("jobAuthority", { job })));
   }
 
   controlInlineJob(job: string, control: import("../mcp/jobs.js").RunnerControl): Promise<unknown> {
@@ -582,7 +736,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   sendSibling(args: SendArgs, maxHops: number): Promise<SendResult> {
-    return this.withClient((c) => this.sendRequest(c, "sendSibling", { ...args, maxHops, dedupeKey: args.dedupeKey || randomUUID() }));
+    let submitted = false;
+    return this.withClient((c) => {
+      submitted = true;
+      return this.sendRequest(c, "sendSibling", { ...args, maxHops, dedupeKey: args.dedupeKey || randomUUID() });
+    }).catch(error => {
+      if (submitted) throw error;
+      throw new BridgeError(error instanceof BridgeError ? error.code : "internal", `This sibling send attempt was not submitted; message storage state is unknown: ${(error as Error).message}. Check inbox/history for previous attempts before resending.`, { state: "unknown", submitted: false });
+    });
   }
 
   async updateJob(patch: { jobParent?: string; jobTitle?: string }): Promise<void> {
@@ -664,7 +825,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
    * background subagent. It is handled exactly like a peer message (hooks, wait_for_message, channel).
    */
   deliverLocal(m: BridgeMessage): void {
-    try { recordLocalResult(dirname(this.opts.dbPath), m); }
+    try { if (this.opts.dbPath !== ":memory:") recordLocalResult(dirname(this.opts.dbPath), m); }
     catch (err) { this.log.warn("could not retain local result receipt", { id: m.id, err: String(err) }); }
     this.onEvent("message", m);
   }
@@ -757,6 +918,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.sessionId = sessionId;
     // The broker may hand us the name of an older server of this session that we replace.
     if (this.isConnected) this.currentName = (await this.client!.request("updatePeer", { sessionId })).name;
+    this.recordOwnStorePeer();
     if (sessionId) this.restoreReadState(`session:${sessionId}`);
     this.notificationWaitsChanged();
   }
@@ -803,5 +965,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       const peer = await this.client!.request("updatePeer", { cwd, ...(name ? { name } : {}) });
       this.currentName = peer.name;
     }
+    this.recordOwnStorePeer();
+  }
+
+  private recordOwnStorePeer(): void {
+    if (this.opts.dbPath !== ":memory:") recordStorePeer(dirname(this.opts.dbPath), { pid: process.pid, name: this.currentName, version: APP_VERSION, storeCapabilities: { json: JSON_STORE_VERSION, sqlite: SQLITE_STORE_VERSION, jobArchive: 1 } }, { authoritative: true });
   }
 }

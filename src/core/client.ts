@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { connect, type Socket } from "node:net";
 import { APP_VERSION, CONNECT_TIMEOUT_MS, MAX_FRAME_BYTES, REQUEST_TIMEOUT_MS } from "./constants.js";
 import type { Logger } from "./logger.js";
+import { ensurePrivateSocketDirectory } from "./paths.js";
 import {
   BridgeError,
   encodeFrame,
@@ -17,6 +18,10 @@ interface Pending {
   resolve: (v: unknown) => void;
   reject: (e: Error) => void;
   timer: NodeJS.Timeout;
+}
+
+export function brokerConnectionClosedError(): Error & { code: string } {
+  return Object.assign(new Error("connection to broker closed"), { code: "BROKER_CONNECTION_CLOSED" });
 }
 
 export interface BridgeClientEvents {
@@ -57,7 +62,7 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
       this.closed = true;
       for (const [, p] of this.pending) {
         clearTimeout(p.timer);
-        p.reject(new Error("connection to broker closed"));
+        p.reject(brokerConnectionClosedError());
       }
       this.pending.clear();
       this.emit("close");
@@ -67,6 +72,8 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
   /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
   static connect(pipePath: string, log: Logger, timeoutMs: number = CONNECT_TIMEOUT_MS): Promise<BridgeClient> {
     return new Promise((resolve, reject) => {
+      // Never hand the token to an endpoint in a short-socket directory another user controls.
+      ensurePrivateSocketDirectory(pipePath);
       const socket = connect(pipePath);
       const timer = setTimeout(() => {
         socket.destroy();
@@ -89,7 +96,7 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
   }
 
   request<O extends Op>(op: O, args: RequestMap[O][0], timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<RequestMap[O][1]> {
-    if (this.closed) return Promise.reject(new Error("connection to broker closed"));
+    if (this.closed) return Promise.reject(brokerConnectionClosedError());
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {

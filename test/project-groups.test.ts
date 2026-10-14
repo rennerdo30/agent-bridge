@@ -10,10 +10,13 @@ import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 import { ReadJournal } from "../src/core/read-journal.js";
-import { JobManager } from "../src/mcp/jobs.js";
+import { JobManager, readStore } from "../src/mcp/jobs.js";
+import { metadataFileLease } from "../src/core/metadata-file-lease.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
 import type { ServerContext } from "../src/mcp/server.js";
+import { withDirectoryAlias } from "./directory-alias-fixture.js";
+import { normalizeProject } from "../src/core/decisions.js";
 
 let env: TestEnv;
 const nodes: BridgeNode[] = [];
@@ -39,6 +42,14 @@ function registry(project: string) {
 }
 
 describe("local project permission groups", () => {
+  it("shares physical project identity with decision scopes through a drive/directory alias", async () => {
+    const path = repo();
+    await withDirectoryAlias(path, (alias) => {
+      expect(canonicalProjectRoot(alias)).toBe(canonicalProjectRoot(path));
+      expect(normalizeProject(alias)).toBe(normalizeProject(path));
+      expect(canonicalProjectRoot(alias)).toBe(realpathSync.native(path));
+    });
+  });
   it("lets a secondary become primary after the starter has closed", async () => {
     await env.node("broker", "other").start();
     const path = repo(); registry(path);
@@ -60,12 +71,14 @@ describe("local project permission groups", () => {
       await source.setUnavailable(true);
       expect(await shared.share(job.name)).toBeTruthy();
       expect(shared.followUp(job.name, "Redirect inline work").outcome).toBe("delivered");
-      await expect.poll(() => job.queue).toContain("Redirect inline work");
+      // Cross-node job control travels through the broker named pipe, which is
+      // slow on loaded Windows runners: poll past the 1 s default (AB-255).
+      await expect.poll(() => job.queue, { timeout: 10_000 }).toContain("Redirect inline work");
       shared.setTitle(job.name, "Shared inline title");
       shared.setSettings(job.name, { effort: "high" });
-      await expect.poll(() => job.args).toMatchObject({ title: "Shared inline title", effort: "high" });
+      await expect.poll(() => job.args, { timeout: 10_000 }).toMatchObject({ title: "Shared inline title", effort: "high" });
       expect(shared.cancel(job.name)).toBe(true);
-      await expect.poll(() => job.controller.signal.aborted).toBe(true);
+      await expect.poll(() => job.controller.signal.aborted, { timeout: 10_000 }).toBe(true);
     } finally { original.cancelAll(); }
   });
   it("switches the main with an all-jobs handoff and rejects a cross-group switch atomically", async () => {
@@ -77,6 +90,18 @@ describe("local project permission groups", () => {
     await source.handoffSubagents({ to: target.name, jobs: "all", switch_project_main: true });
     expect((await source.peers()).find((p) => p.name === target.name)?.projectMain).toBe(true);
     expect(await source.jobAuthority("codex-job-one")).toBeTruthy();
+  });
+  it("waits for a registry lease held briefly in the broker's own process instead of failing the handoff", async () => {
+    const path = repo(); registry(path);
+    const source = await node("claude-master", path), target = await node("codex-master", path);
+    // The broker's history worker reconciles ask completions under this lease from the same PID (never stale).
+    const release = metadataFileLease(join(env.home, "jobs.json.lock"));
+    const released = new Promise<void>((resolve) => setTimeout(() => { release(); resolve(); }, 300));
+    try {
+      const receipt = await source.handoffSubagents({ to: target.name, jobs: "all" });
+      expect(receipt.jobs.map((j) => j.name)).toContain("codex-job-one");
+    } finally { await released; }
+    expect(readStore(join(env.home, "jobs.json")).find((j) => j.id === "one")?.owner).toBe(target.name);
   });
   it("keeps handoff grants outside the group and falls back to the previous primary first", async () => {
     const path = repo(); const jobs = registry(path);

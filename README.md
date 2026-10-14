@@ -13,16 +13,68 @@ agent-bridge connects the coding agents on your machine, and on PCs you pair, in
 ## What it does
 
 - **Messaging between agents.** Sessions send each other questions, reviews and results. Messages to an offline or idle agent wait and wake it when possible.
-- **Subagents across CLIs.** Any agent can run another one headlessly (`ask_codex`, `ask_claude`, …) or start it in the background (`spawn_*`). You can talk to a running subagent, continue a finished one with its full context, cancel it, or hand all of them to another session. Edits can run in their own git worktree.
+- **Any CLI can delegate to any CLI, including itself.** Claude, Codex, opencode and Antigravity each expose every coding agent's `ask_*` and `spawn_*` tools. Depth, slot, ownership and hop guards still apply. You can talk to a running subagent, continue a finished one with its full context, cancel it, or hand all of them to another session. Edits can run in their own git worktree.
 - **Projects with a main and a secondary.** A Claude and a Codex session in the same folder share their project's jobs. The main session is the first contact. If it closes or runs out of usage, the secondary takes over and nothing is lost.
 - **Questions to you.** Agents ask you decisions in one place. You hear a chime in the dashboard, or get a Windows notification that opens the question. Your answer goes straight back to the agent that asked.
 - **A dashboard for everything.** Sessions, subagent trees, chats, progress with ETA, approvals, pinned decisions, full history search and paired PCs, at `http://127.0.0.1:4777`.
 - **Paired PCs.** Two PCs pair once over TLS. Their agents then message each other, transfer files and start jobs on the other PC.
 - **Nothing gets lost.** Every message, job, chat and decision is stored and searchable. History is archived, never deleted, and upgrades migrate your data with a backup first.
 
+## CLI feature support matrix
+
+This table describes **agent-bridge 0.30.14** with the broker and CLI integrations on that version. ✅ supported · ⚠️ partial (see footnotes) · ❌ not supported. Delegation rows describe the CLI running the job; “delegate from” describes the supervising session.
+
+| Feature | Claude Code | Codex | opencode | Antigravity |
+| --- | --- | --- | --- | --- |
+| Session connection, peers, send/receive | ✅ | ✅ | ✅ | ✅ |
+| Messages while busy (hooks / next tool or model step) | ✅ | ✅ | ✅ | ✅ |
+| Idle message delivery / auto-wake | ⚠️[^claude-wake] | ⚠️[^codex-wake] | ✅ | ⚠️[^antigravity-wake] |
+| Delegate **to** (`ask_*` / `spawn_*` target) | ✅ | ✅ | ✅ | ✅ |
+| Delegate **from** (all four targets, including itself) | ✅ | ✅ | ✅ | ✅ |
+| Follow-ups / resume (`message_subagent`) | ✅ | ✅ | ✅ | ✅ |
+| Jobs in isolated git worktrees | ✅ | ✅ | ✅ | ✅ |
+| Live job steps, progress and ETA | ✅ | ✅ | ✅ | ✅ |
+| Job model and effort selection | ✅ | ✅ | ⚠️[^opencode-models] | ✅ |
+| `list_models` for this CLI | ⚠️[^claude-models] | ✅ | ⚠️[^opencode-models] | ✅ |
+| Job access: `read` / `ask` / `edit` | ⚠️[^claude-permissions] | ⚠️[^codex-permissions] | ✅ | ✅ |
+| Job approval relay to supervisor | ⚠️[^claude-permissions] | ⚠️[^codex-permissions] | ⚠️[^opencode-permissions] | ⚠️[^antigravity-permissions] |
+| Native job approval / sandbox options | ✅ `permission_mode` | ⚠️ `sandbox`, `approvals_reviewer`[^codex-permissions] | ✅ `auto_approve` | ✅ `terminal_sandbox`, `bypass_permissions` |
+| Nested bridge subagents (depth limit) | ✅ | ✅ | ⚠️[^nested-opencode] | ✅ |
+| Scoped native child bridge addresses | ⚠️[^native-addresses] | ❌ | ❌ | ❌ |
+| Native children excluded from top-level registration | ✅ | ✅ | ✅ | ⚠️[^native-isolation] |
+| `usage_limits` for this CLI | ✅ | ✅ | ⚠️[^usage] | ⚠️[^usage] |
+| Native transcript ingestion and `search_history` | ✅ | ✅ | ✅ | ✅ |
+| Dashboard native chat and child transcripts | ✅ | ✅ | ✅ | ✅ |
+| Owner questions (`ask_owner`) | ✅ | ✅ | ✅ | ✅ |
+| Pinned decisions (`decisions`) | ✅ | ✅ | ✅ | ✅ |
+| Project main / secondary roles | ✅ | ✅ | ✅ | ✅ |
+| Paired-PC messaging | ✅ | ✅ | ✅ | ✅ |
+| Jobs on a paired PC | ✅ | ✅ | ✅ | ⚠️[^remote-antigravity] |
+| Mobile app session / job visibility | ⚠️[^mobile] | ⚠️[^mobile] | ⚠️[^mobile] | ⚠️[^mobile] |
+| `install` / `update` setup | ✅ Marketplace plugin[^install] | ✅ Marketplace plugin[^install] | ✅ Native plugin[^install] | ✅ Native plugin[^install] |
+
+Nested bridge delegation defaults to depth **2**, configurable up to **3**; depth, slot, ownership and hop guards apply to every CLI. Owner questions, decisions and project roles belong to top-level project sessions; delegated jobs use their supervisor. Transcript views and search require the CLI's local transcript files or database. Paired-PC jobs require an enabled remote-job policy, an allowed agent and an absolute working directory within the receiving PC's allowed roots.
+
+[^claude-wake]: Idle delivery uses a channel when enabled, the wake module on Claude Code 2.1.287+, or the host's `asyncRewake` Stop hooks. It depends on an available wake transport and the session's wake settings; otherwise mail stays queued for a later prompt or inbox.
+[^codex-wake]: Requires a known main-thread ID, native `codex queue` support and a TUI consuming that queue. Queue acceptance does not confirm a started turn or read mail. Trust the bridge hooks in `/hooks` for automatic injection.
+[^antigravity-wake]: Active `PreInvocation` / Stop hooks deliver mail, but an already idle TUI cannot be woken. Queued mail arrives on the next turn or through inbox.
+[^claude-models]: Returns native help's model aliases and effort levels, with alias fallbacks; Claude Code has no full model-catalog query here.
+[^opencode-models]: The catalog is a non-exhaustive provider/model list and can be empty; explicit IDs still resolve at startup. Effort is a provider-specific variant. OpenCode 2 requires an explicit model when selecting effort.
+[^claude-permissions]: `ask` stays read-only, like `read`: allowed native edits cannot reliably be intercepted. In editable modes, actual native permission prompts can be relayed through a PermissionRequest hook (Claude Code 2.1.268+, bundled hook and a launch without a shell); native allow/deny rules run first.
+[^codex-permissions]: Access maps to Codex's sandbox. In app-server jobs, `approvals_reviewer` defaults to `auto_review`; choose `user` for forwarded native requests. Automatic review refusals can be escalated for a supervised retry without overriding sandbox policy. Full-access jobs and the `codex exec` fallback fix the reviewer to `user`. The exec fallback needs a trusted PermissionRequest hook for `ask`; without it, `ask` stays read-only.
+[^opencode-permissions]: `ask`, and eligible `edit` runs, relay native permission events through a private served session. Plain headless runs reject requests or auto-approve with `auto_approve=true`; those requests are not relayed.
+[^antigravity-permissions]: `ask` relays non-reading tools through the installed PreToolUse gate. `edit` retains native policy, whose headless prompts may be denied rather than relayed. `bypass_permissions` explicitly overrides the read/ask access policy; `terminal_sandbox` is separate.
+[^nested-opencode]: Read-only opencode jobs' tool allowlist enables delegation to the other three CLIs, but omits opencode self-delegation, `list_models` and `decide`. Top-level opencode sessions expose all four targets.
+[^native-addresses]: Claude only: a live native child gets `<parent>/sub:<agent_id>` on its registered parent's connection. It may use only `peers`, `inbox` and `send`, with explicit child identity, ownership and hop limits; recipients are its parent, the parent's owned jobs and exact local recipient grants. No independent registration, delegation, broadcast or remote address; remaining mail returns to the parent when the child ends.
+[^native-isolation]: Antigravity ignores hooks for a child conversation on the parent's shared server. It has no equivalent MCP caller-lineage admission check, so separate child-server registration is not established by this implementation.
+[^usage]: opencode reports today's spend/tokens and free-model information, not remaining provider quotas. Antigravity reports quota availability as unknown; inspect native `/usage` or `/quota` (delegated results can include token usage).
+[^remote-antigravity]: Antigravity is a remote-job target, but the remote spawn schema does not accept its `terminal_sandbox` or `bypass_permissions` options.
+[^mobile]: With the mobile gateway enabled and a phone paired, each enrolled PC exposes local registered sessions and retained jobs, with chats/steps where available. Paired-PC peer projections are excluded and native child hierarchy is not projected.
+[^install]: `npx -y github:rennerdo30/agent-bridge install` sets up detected CLIs; `update` publishes their next runtime while retaining old versions. Claude gets MCP/channel support, hooks, the wake module, skills, commands and agent definitions. Codex gets MCP, skills and hooks (trust them in `/hooks`). opencode gets the native plugin with `bridge_*` tools, its runtime, skill and agent definitions for both plugin API generations. Antigravity gets the native plugin, MCP configuration, skill, delivery/permission hooks and a bridge MCP grant. Running integrations adopt updates on reload or restart; an existing broker keeps its version until its host closes or reloads.
+
 ## Install
 
-Requires **Node.js 22.13+**. Install for every supported CLI it finds on your machine:
+Requires **Node.js 22.16+**. Install for every supported CLI it finds on your machine:
 
 ```bash
 npx -y github:rennerdo30/agent-bridge install
@@ -65,6 +117,18 @@ There is no daemon. Each agent session starts its own small agent-bridge server.
 └───────────────────────┘         │          └───────────────────────┘
           first server to start is the broker · messages in SQLite
 ```
+
+## ⚠️ WHAT AGENT-BRIDGE MAY DELETE ON YOUR DISK
+
+> [!WARNING]
+> **Read this before you turn on any cleanup.** By default agent-bridge removes nothing of yours.
+>
+> - **Job worktrees only, and only ones agent-bridge created itself.** When a subagent gets its own git worktree, agent-bridge writes an ownership record for it at creation time. A worktree without that record, or whose folder was replaced, is **never** touched, whatever its branch or folder name. Your own worktrees and checkouts are never removed.
+> - **Automatic removal when a job closes is OFF by default** (`jobCloseCleanup: false`). If you turn it on, a finished job's worktree is removed only when **all** of these hold: no uncommitted or untracked files, no unknown ignored files, no links into other folders, and every commit has first been pushed and verified on your remote (as `wip/<job>`). If any check fails, the worktree is kept and the reason is recorded. Local branches are always kept.
+> - **`agent-bridge cleanup`** is manual. Without `--yes` it only lists what it would remove. With `--yes` it removes only worktrees that are inside agent-bridge's own worktree folder, belong to a recorded agent-bridge job, are on an `agent-bridge/*` branch fully merged into its base, and have nothing uncommitted. Everything else is kept.
+> - **Your history and messages are never deleted.** Old data is archived. `agent-bridge storage finalize` removes old backup copies only after a migration has been verified with counts and hashes, and only when you confirm with `--yes`.
+>
+> If you are unsure, leave cleanup off. Nothing breaks; worktrees simply stay until you remove them.
 
 ## Security
 

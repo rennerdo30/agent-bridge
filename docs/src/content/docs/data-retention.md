@@ -24,8 +24,13 @@ transcript bytes after reads. No automated test uses the owner's actual data roo
 | Source | Permitted removal and why it contains no unique user data |
 | --- | --- |
 | `core/json-store.ts` | Unpublished atomic-write `.tmp` file only. |
-| `mcp/jobs.ts` | Job-store `.lock` files, including stale locks. |
-| `core/storage-lock.ts` | Maintenance lock and empty per-process lease files. |
+| `core/storage-lock.ts` | Maintenance lock and per-process lease files (PID, start time and nonce only). A stale lock is moved aside and removed only while its nonce still matches; a lease only after its owner process is gone. |
+| `core/token.ts` | Only the exclusively created, unpublished token staging file (or its duplicate hard link after publication). The active token is never removed. |
+| `core/history-store.ts` | A failed history copy attempt: every row moves into `retained_<stamp>_*` tables in the same transaction before the copy tables are emptied. Derived search documents are cleared with FTS delete-all for that retry or a reindex. |
+| `core/history.ts` | Derived search index only (pending queue, tags, cursors, files); a reindex rebuilds it from the read-only sources. |
+| `core/finished-run-bundles.ts` | The packing failure record of a run that was packed successfully afterwards. |
+| `core/storage-absorb.ts` | The absorb cursor of a table with conflicts, so the next run scans it again. Conflicting rows are kept. |
+| `core/storage-finalize.ts` | Owner decision 2026-10-09: only the explicit, confirmed `agent-bridge storage finalize` command, after the new format is migrated and verified. Each legacy table, file or bundled original is proven redundant (row by row, or byte-exact in a verified bundle) immediately before removal; anything unproven is kept and reported. |
 | `core/migration-lock.ts` | Exclusive migration lock (PID and nonce only) on release, failed lock publication or confirmed exited owner; empty recovery coordination file. Never the database or snapshot. |
 | `core/notifications.ts` | Empty notification lock directory. |
 | `core/node.ts` | Abandoned Unix-domain socket path. |
@@ -34,14 +39,24 @@ transcript bytes after reads. No automated test uses the owner's actual data roo
 | `network/files.ts` | Unpublished `.partial-*` transfer staging directory after a failed receive. The sender's original is retained. |
 | `cli/smoke.ts`, `cli/reliability.ts`, `cli/reliability-live.ts` | Explicitly created temporary test homes/repositories only. |
 | `cli/dashboard-key.ts` | Only the random staging file successfully created by this call with exclusive creation. It is an unpublished credential or a duplicate hard link after atomic publication. The active `dashboard-key` is never removed; replacement requires the owner's explicit `ui --reset-key` command. |
-| `core/worktree-links.ts` | Symlink/junction itself only; never its destination. Shared by normal cleanup and failed-checkout removal; traversal through a linked root/container or linked components inside that boundary is refused; leaf link entries are detached without traversal. System/home aliases above that boundary are resolved before removal. The private `ab-cache-ignore-*` mkdtemp view contains only empty directories and copies of ignore rules; its exact removal is permitted and never reaches linked caches. |
-| `core/worktree.ts` | A disposable worktree copy after its callers verify clean, merged Git content, or an unpublished failed checkout. The opt-in job-close caller additionally verifies all checkout/reflog commits on remote branches before non-force Git removal. Its only cache-removal call covers physical, untracked Unity Libraries proven absent at job creation; these are job-created regenerable caches. Linked/shared caches, unknown ignored files, uncommitted work, unknown provenance and unproven process shutdown are retained. See `docs/worktree-lifecycle.md`. No new removal expression is allowlisted. |
+| `core/worktree-links.ts` | Symlink/junction itself only; never its destination. Used by explicitly authorized cleanup; traversal through a linked root/container or linked components inside that boundary is refused; leaf link entries are detached without traversal. System/home aliases above that boundary are resolved before removal. The private `ab-cache-ignore-*` mkdtemp view contains only empty directories and copies of ignore rules; its exact removal is permitted and never reaches linked caches. |
+| `core/worktree.ts` | A disposable worktree copy after its callers verify clean, merged Git content. Failed creation retains existing branches and partial checkout data. The opt-in job-close caller additionally verifies all checkout/reflog commits on remote branches before non-force Git removal. Its only cache-removal call covers physical, untracked Unity Libraries proven absent at job creation; these are job-created regenerable caches. Linked/shared caches, unknown ignored files, uncommitted work, unknown provenance and unproven process shutdown are retained. See `docs/worktree-lifecycle.md`. No new removal expression is allowlisted. |
 | `core/sqlite-maintenance.ts` | Exact archived row selection, after archive commit; copy failure rolls the source transaction back. |
 | `core/sqlite-migrations.ts` | Backup recovery under the migration writer lock, after reading original rows from the durable pre-migration snapshot. Failure rolls back and retains the snapshot. |
 
 Approvals and completed wait records are not exceptions: they are archived.
 Run pruning and job overflow are not exceptions: they are archived. No removal
 or mutation is allowed in `src/core/transcripts/` or the history inspector.
+
+Job-store locks and worktree leases are also archived. Their versioned metadata
+records a process creation identity and a unique nonce. Complete metadata is
+published with an exclusive hard link, so interrupted publication cannot leave an
+empty canonical lock. Confirmed dead owners are claimed by an exact nonce rename
+before the canonical lock moves into its owner directory and that directory moves
+to a unique archive under `.metadata-leases/`. Original metadata bytes are retained;
+worktree contents are untouched. Live, unverifiable, malformed and legacy owners
+stay protected. Recovery never expires a live owner by age. Filesystems without
+hard-link support fail closed.
 
 ## Read-only owner-data audit
 

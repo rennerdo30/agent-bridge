@@ -3,6 +3,9 @@ import { join } from "node:path";
 import { isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "./json-store.js";
 import { archiveOldRuns, archiveRun, finishedRunLine } from "./run-archive.js";
 import { storageLease } from "./storage-lock.js";
+import { refreshStorePeerIdentities } from "./store-compatibility.js";
+import { setTimeout as delay } from "node:timers/promises";
+import { displayPathText } from "./display-paths.js";
 
 /**
  * Live feed of one delegated run: every progress line goes to ~/.agent-bridge/runs/<name>.log (so the
@@ -96,7 +99,7 @@ function pruneOldLogs(dir: string): void {
   }
 }
 
-export function startRunFeed(opts: {
+export interface RunFeedOptions {
   home: string;
   name: string;
   header: string;
@@ -104,15 +107,36 @@ export function startRunFeed(opts: {
   meta?: RunMeta;
   now?: () => number;
   heartbeatMs?: number;
-}): RunFeed {
+  /** A delegated turn must retain its initial context before launching its CLI. */
+  requireMetadata?: boolean;
+}
+
+/** Per-turn admission: a supervisor reload can publish a new reader after the
+ * runner's startup scan. A raced deferred write is retried before any log/CLI. */
+export async function startRunFeedReady(opts: RunFeedOptions, signal: AbortSignal): Promise<RunFeed> {
+  let queued = false;
+  for (;;) {
+    signal.throwIfAborted();
+    await refreshStorePeerIdentities(opts.home, signal);
+    signal.throwIfAborted();
+    try { return startRunFeed({ ...opts, requireMetadata: true }); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED") throw error;
+      if (!queued) { opts.forward?.("queued: waiting for compatible storage readers to retain run context"); queued = true; }
+      try { await delay(250, undefined, { signal }); }
+      catch (error) { signal.throwIfAborted(); throw error; }
+    }
+  }
+}
+
+export function startRunFeed(opts: RunFeedOptions): RunFeed {
   const now = opts.now ?? Date.now;
   const release = storageLease(opts.home);
   const dir = join(opts.home, RUNS_DIR_NAME);
-  mkdirSync(dir, { recursive: true });
   const logPath = join(dir, `${new Date(now()).toISOString().slice(0, 19).replace(/[:T]/g, "-")}-${opts.name}.log`);
   /** One entry; extra lines of a multi-line text are indented under it. */
   const write = (line: string) => {
-    const [first, ...rest] = line.replace(/\r/g, "").split("\n");
+    const [first, ...rest] = displayPathText(line).replace(/\r/g, "").split("\n");
     const body = [first, ...rest.map((l) => `${CONTINUATION}${l}`)].join("\n");
     try {
       appendFileSync(logPath, `${stamp(now())} ${body}\n`);
@@ -121,17 +145,19 @@ export function startRunFeed(opts: {
     }
   };
   let meta: RunMeta = { ...opts.meta };
-  const writeMeta = () => {
+  const writeMeta = (required = false) => {
     try {
       const path = runMetaPath(logPath);
       const previous = readJsonStore(path);
       writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...meta }), previous);
     } catch (err) {
+      if (required) throw err;
       process.stderr.write(`could not save run metadata: ${String(err)}\n`);
       // never break a run because of the feed
     }
   };
-  writeMeta();
+  try { mkdirSync(dir, { recursive: true }); writeMeta(opts.requireMetadata); }
+  catch (error) { release(); throw error; }
   write(opts.header);
   pruneOldLogs(dir);
 
@@ -140,7 +166,7 @@ export function startRunFeed(opts: {
   let lastAt = started;
   const emit = (m: string) => {
     write(m);
-    opts.forward?.(m);
+    opts.forward?.(displayPathText(m));
   };
   emit(`started · follow live: agent-bridge watch ${opts.name}`);
   const timer = setInterval(() => {
@@ -156,7 +182,7 @@ export function startRunFeed(opts: {
       lastAt = now();
       // The log keeps the full text (whole message or command); the host gets the short line.
       write(full ?? m);
-      opts.forward?.(m);
+      opts.forward?.(displayPathText(m));
     },
     end: (summary, answer) => {
       clearInterval(timer);

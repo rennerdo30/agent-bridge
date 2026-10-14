@@ -5,6 +5,7 @@ import { CODING_AGENTS } from "../core/protocol.js";
 import { NETWORK_NAME_PATTERN } from "./constants.js";
 
 export const REMOTE_JOB_CAPABILITY = "remote-jobs-v1";
+export const REMOTE_JOB_CANCELLED_CAPABILITY = "remote-jobs-cancelled-v1";
 export const REMOTE_JOB_FRAME = "remote-job";
 export const REMOTE_JOB_POLL_MS = 2_000;
 export const REMOTE_JOB_REQUEST_TIMEOUT_MS = 30_000;
@@ -27,6 +28,7 @@ export const remoteSpawnArgsSchema = z.object({
   allow_tools: z.array(z.string().min(1).max(200)).max(50).optional(),
   notes: z.enum(["none", "milestones", "blockers"]).optional(),
   sandbox: z.enum(CODEX_SANDBOXES).optional(), permission_mode: z.enum(CLAUDE_PERMISSION_MODES).optional(),
+  permission_profile: z.string().min(1).max(80).optional(),
   auto_approve: z.boolean().optional(),
   native_subagents: z.number().int().min(0).max(MAX_CODEX_SUBAGENTS).optional(),
   approvals_reviewer: z.enum(CODEX_APPROVALS_REVIEWERS).optional(),
@@ -47,10 +49,17 @@ export const remoteJobRequestSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("approval"), job: z.string().regex(/^[0-9a-f]{8}$/), id: z.uuid(), decision: z.enum(["allow", "deny"]), reason: z.string().max(4_000).optional() }).strict(),
 ]);
 export type RemoteJobRequest = z.infer<typeof remoteJobRequestSchema>;
+/** Compatibility projection only; retained cancelled records/reports remain authoritative. */
+export function remoteSnapshotForPeer<T extends { state: { status: string; report?: string } | null }>(snapshot: T, supportsCancelled: boolean): T {
+  if (!snapshot.state || snapshot.state.status !== "cancelled" || supportsCancelled) return snapshot;
+  return { ...snapshot, state: { ...snapshot.state, status: "failed", report: snapshot.state.report
+    ? snapshot.state.report.replace(/^(Subagent .+) cancelled after /, "$1 failed after ") + "\n\nCause: cancelled (legacy paired broker status compatibility)."
+    : "Cancelled (legacy paired broker status compatibility)." } };
+}
 const worktreeSchema = z.object({ repoRoot: z.string(), path: z.string(), cwd: z.string(), branch: z.string(), base: z.string(), baseBranch: z.string().nullable().optional() });
 export const remoteJobSnapshotSchema = z.object({
   alive: z.boolean(),
-  state: z.object({ pid: z.number().int().nonnegative(), peer: z.string().regex(NETWORK_NAME_PATTERN), status: z.enum(["running", "done", "failed"]), updatedAt: z.number().nonnegative(),
+  state: z.object({ pid: z.number().int().nonnegative(), peer: z.string().regex(NETWORK_NAME_PATTERN), status: z.enum(["running", "done", "failed", "cancelled"]), updatedAt: z.number().nonnegative(),
     model: z.string().nullable().optional(), sessionId: z.string().nullable().optional(), workdir: z.string().nullable().optional(), worktree: worktreeSchema.nullable().optional(),
     progress: z.string().nullable().optional(), percent: z.number().min(0).max(100).optional(), progressNote: z.string().optional(), etaAt: z.number().finite().nonnegative().optional(), etaReportedAt: z.number().finite().nonnegative().optional(), asking: z.boolean().optional(), live: z.boolean().optional(),
     seen: z.array(z.string()).optional(), report: z.string().optional(), delivered: z.boolean().optional(), finishedAt: z.number().optional() }).nullable(),

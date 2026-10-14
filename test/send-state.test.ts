@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { BridgeClient } from "../src/core/client.js";
 import { MessageStore } from "../src/core/store.js";
@@ -8,6 +10,37 @@ import { makeEnv, until, type TestEnv } from "./helpers.js";
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { vi.restoreAllMocks(); await env.cleanup(); });
+
+it("retries SQLite busy sends with one identity and one retained message", async () => {
+  const sender = env.node("busy-sender"), recipient = env.node("busy-recipient");
+  await sender.start(); await recipient.start();
+  const client = (sender as any).client as BridgeClient, request = client.request.bind(client), attempts: string[] = [];
+  vi.spyOn(client, "request").mockImplementation(async (op, args: any) => {
+    if (op === "trackedSend") {
+      attempts.push(args.messageId);
+      if (attempts.length === 1) throw new BridgeError("internal", "database is locked");
+    }
+    return request(op, args);
+  });
+  const result = await sender.send({ to: recipient.name, body: "Retain under busy pressure" });
+  expect(attempts).toEqual([result.messages[0]!.id, result.messages[0]!.id]);
+  expect(result.storage?.state).toBe("stored");
+  await until(() => recipient.unread().length === 1);
+});
+
+it("retries authority reads through the broker before any job control is submitted", async () => {
+  const owner = env.node("retry-owner"); await owner.start();
+  const job = { id: "authorityfixture", name: "codex-job-authorityfixture", owner: owner.name, agent: "codex", status: "interrupted", startedAt: 1, sessionId: "fixture", prompt: "exact task", args: {} };
+  writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: [job] }));
+  const client = (owner as any).client as BridgeClient, request = client.request.bind(client);
+  let attempts = 0;
+  vi.spyOn(client, "request").mockImplementation(async (op, args: any) => {
+    if (op === "jobAuthority" && ++attempts === 1) throw new Error("broker request timed out: jobAuthority");
+    return request(op, args);
+  });
+  expect(await owner.jobAuthority(job.name)).toMatchObject({ owner: owner.name, prompt: job.prompt });
+  expect(attempts).toBe(2);
+});
 
 it("recovers two lost replies through unindexed broker storage", async () => {
   const sender = env.node("sender"), recipient = env.node("recipient");
@@ -68,4 +101,41 @@ it("only falls back on explicit old-broker refusal, never silently discarding an
   ops.length = 0;
   await expect(sender.send({ to: "offline", body: "Durable send", messageId: randomUUID() })).rejects.toThrow("unsupported");
   expect(ops).toEqual(["trackedSend"]);
+});
+
+it("reports unknown storage when routing fails before a remote acknowledgement", async () => {
+  const sender = env.node("sender"); await sender.start();
+  const broker = (sender as any).broker;
+  vi.spyOn(broker, "routeSend").mockRejectedValue(new BridgeError("timeout", "remote acknowledgement timed out"));
+  const id = randomUUID();
+  const error = await sender.send({ to: "paired/recipient", body: "Remote uncertain", messageId: id }).catch(error => error);
+  expect(error).toBeInstanceOf(BridgeError);
+  expect(error.details).toMatchObject({ messageId: id, state: "unknown" });
+  expect(error.message).toContain("retry with the same message_id");
+  expect(error.message).not.toContain("not_stored");
+});
+
+it("reports a guarded acknowledgement timeout before send submission without losing the retry identity", async () => {
+  const sender = env.node("sender"); await sender.start();
+  const client = (sender as unknown as { client: BridgeClient }).client;
+  (sender as any).unflushedAcks.add(randomUUID());
+  const request = vi.spyOn(client, "request").mockRejectedValue(new Error("broker request timed out: ack"));
+  const id = randomUUID();
+  const error = await sender.send({ to: "offline", body: "Guarded", ifNoNewerThan: randomUUID(), messageId: id }).catch(error => error);
+  expect(error.details).toMatchObject({ messageId: id, state: "unknown", submitted: false });
+  expect(error.message).toContain("not submitted");
+  expect(request.mock.calls.map(call => call[0])).toEqual(["ack"]);
+});
+
+it("does not mistake a local absence observation after send timeout for remote absence", async () => {
+  const sender = env.node("sender"); await sender.start();
+  const client = (sender as unknown as { client: BridgeClient }).client;
+  const id = randomUUID();
+  vi.spyOn(client, "request").mockImplementation(async (op) => {
+    if (op === "trackedSend") throw new Error("broker request timed out: trackedSend");
+    return { id, state: "not_stored", checkedAt: Date.now(), message: null, receipts: [] } as any;
+  });
+  const error = await sender.send({ to: "paired/recipient", body: "No local mirror", messageId: id }).catch(error => error);
+  expect(error.details).toMatchObject({ messageId: id, state: "unknown", localState: "not_stored" });
+  expect(error.message).toContain("this local broker reports not_stored");
 });

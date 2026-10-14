@@ -1,14 +1,16 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { codexHost } from "./helpers.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeClient } from "../src/core/client.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
-import { killPid, pidAlive } from "../src/core/delegate.js";
+import { pidAlive } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import { BridgeNode } from "../src/core/node.js";
@@ -18,11 +20,15 @@ import { parentFromEnv } from "../src/core/parent-link.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { listRuns, startUi } from "../src/cli/ui.js";
 import { readRunnerState } from "../src/mcp/job-host.js";
+import { runnerStateIds } from "../src/core/runner-store.js";
+import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import { readStore } from "../src/mcp/jobs.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { NetworkService } from "../src/network/link.js";
 import { allowedRemoteDirectory, RemoteJobs } from "../src/network/remote-jobs.js";
 import { REMOTE_JOB_RATE_LIMIT, remoteSpawnArgsSchema } from "../src/network/remote-job-protocol.js";
+import { readProcessIdentities } from "../src/core/process-identity.js";
+import { fixtureProcessExists, fixtureProcessGeneration } from "./fixture-process-generation.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 const TEST_TIMEOUT_MS = 90_000;
@@ -33,6 +39,7 @@ let remoteHome: string;
 let localHome: string;
 let repo: string;
 const pids = new Set<number>();
+let diagnosticResponses: { at: number; name: string; args: Record<string, unknown>; text?: string; error?: string }[];
 const FAKE = `#!/usr/bin/env node
 import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 let prompt=''; process.stdin.setEncoding('utf8'); process.stdin.on('data',d=>prompt+=d);
@@ -54,45 +61,147 @@ process.stdin.on('end',async()=>{
 `;
 
 beforeEach(() => {
+  // Failed cleanup keeps its own fixture evidence; those PIDs never belong to the next fixture.
+  pids.clear();
   // Transfer fixtures must have no linked ancestors (/var on macOS); native also expands Windows 8.3 names.
   // Short names: macOS caps Unix socket paths at 104 bytes, and its real temp path (/private/var/folders/…) is long.
   root = realpathSync.native(mkdtempSync(join(tmpdir(), "abr-")));
   localHome = join(root, "w"); remoteHome = join(root, "m"); repo = join(root, "allowed");
   for (const path of [localHome, remoteHome, repo]) mkdirSync(path, { recursive: true });
   cleanup = [];
+  diagnosticResponses = [];
 });
-afterEach(async () => {
-  if (existsSync(join(remoteHome, "jobs"))) for (const file of readdirSync(join(remoteHome, "jobs")).filter((file) => file.endsWith(".json") && !file.endsWith(".spec.json"))) {
-    const state = readRunnerState(remoteHome, file.replace(/\.json$/, ""));
+function diagnosticSnapshot(stage: string): void {
+  const files = (home: string, directory: string) => {
+    const path = join(home, directory);
+    return existsSync(path) ? Object.fromEntries(readdirSync(path).filter(file => file.endsWith(".json") && !file.endsWith(".spec.json")).map(file => {
+      try { return [file, JSON.parse(readFileSync(join(path, file), "utf8"))]; }
+      catch (error) { return [file, { inspectionError: String(error) }]; }
+    })) : {};
+  };
+  const registry = (home: string, file: string) => {
+    try { return existsSync(join(home, file)) ? JSON.parse(readFileSync(join(home, file), "utf8")) : null; }
+    catch (error) { return { inspectionError: String(error) }; }
+  };
+  writeFileSync(join(root, `diagnostics-${stage}.json`), JSON.stringify({ stage, root, repo, localHome, remoteHome,
+    cwd: process.cwd(), gitCeiling: process.env.GIT_CEILING_DIRECTORIES, diagnosticResponses, observedRunnerPids: [...pids],
+    local: { jobs: registry(localHome, "jobs.json"), states: files(localHome, "remote-job-states"), runs: files(localHome, "runs") },
+    remote: { jobs: registry(remoteHome, "remote-jobs.json"), states: files(remoteHome, "jobs"), runs: files(remoteHome, "runs") },
+  }, null, 2));
+}
+afterEach(async context => {
+  let failed = context.task.result?.state === "fail";
+  let cleanupError: unknown;
+  if (failed) {
+    try { diagnosticSnapshot("before-cleanup"); }
+    catch (error) { cleanupError = error; }
+  }
+  try {
+  // Runner states are rows (AB-208); files only from older runners.
+  for (const id of runnerStateIds(remoteHome)) {
+    const state = readRunnerState(remoteHome, id);
     if (state?.pid) pids.add(state.pid);
   }
-  for (const pid of pids) if (pidAlive(pid)) killPid(pid);
-  await waitFor(() => [...pids].every((pid) => !pidAlive(pid)));
+  // Only this freshly created fixture's published process generation authorizes a kill.
+  const generations = await readProcessIdentities([...pids]);
+  for (const pid of pids) if (fixtureProcessExists(pid, `Unable to verify fixture runner ${pid}; retained at ${root}`)) {
+    const recorded = storePresence(remoteHome, pid);
+    const refusal = `Fixture runner ${pid} has no matching owned process identity; retained at ${root}`;
+    if (!recorded?.processIdentity) throw new Error(refusal);
+    if (!await fixtureProcessGeneration(pid, recorded.processIdentity, refusal, {
+      identities: async () => generations, exists: pid => { process.kill(pid, 0); },
+    })) continue;
+    await stopFixtureRunner(pid, recorded.processIdentity);
+  }
+  await waitFor(() => [...pids].every((pid) => !fixtureProcessExists(pid, `Unable to verify fixture runner exit ${pid}; retained at ${root}`)));
   pids.clear();
-  for (const close of cleanup.reverse()) await close();
-  vi.useRealTimers();
-  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (error) { failed = true; cleanupError ??= error; }
+  finally {
+    // Closing owned transports must still happen when an identity check refuses a PID signal.
+    for (const close of cleanup.reverse()) {
+      try { await close(); }
+      catch (error) { failed = true; cleanupError ??= error; }
+    }
+    vi.useRealTimers();
+    closeMetadataDbs();
+    if (failed) {
+      try { diagnosticSnapshot("after-cleanup"); }
+      catch (error) { cleanupError ??= error; }
+      console.error(`Retained failed remote-job fixture: ${root}`);
+    }
+    else rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+  if (cleanupError) throw cleanupError;
 });
+/** AB-208: a process's presence is a bridge.db metadata row; the file remains only while the store is deferred. */
+function storePresence(home: string, pid: number): Record<string, any> | null {
+  const path = resolveDbPath(home);
+  if (existsSync(path)) {
+    const db = new DatabaseSync(path, { readOnly: true, timeout: 5_000 });
+    try {
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_metadata'").get()) {
+        const row = db.prepare("SELECT value FROM bridge_metadata WHERE domain='storage-capabilities' AND key=?").get(String(pid));
+        if (row) return JSON.parse(String(row.value));
+      }
+    } finally { db.close(); }
+  }
+  const file = join(home, "storage-capabilities", `${pid}.json`);
+  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
+}
+async function stopFixtureRunner(pid: number, identity: string): Promise<void> {
+  const refusal = `Refusing to signal changed fixture runner ${pid}; retained at ${root}`;
+  const sameGeneration = () => fixtureProcessGeneration(pid, identity, refusal);
+  if (!await sameGeneration()) return;
+  if (process.platform === "win32") {
+    // No numeric-PID fallback is allowed when taskkill cannot start or fails.
+    try { execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }); }
+    catch (error) { if (fixtureProcessExists(pid, refusal)) throw error; }
+    return;
+  }
+  try { process.kill(pid, "SIGTERM"); }
+  catch (error) { if (fixtureProcessExists(pid, refusal)) throw error; return; }
+  await new Promise(resolve => setTimeout(resolve, 3_000));
+  // The initial proof never authorizes a delayed signal after PID reuse.
+  if (await sameGeneration()) {
+    try { process.kill(pid, "SIGKILL"); }
+    catch (error) { if (fixtureProcessExists(pid, refusal)) throw error; }
+  }
+}
 async function waitFor(test: () => boolean | Promise<boolean>, ms = 30_000): Promise<void> {
   const deadline = Date.now() + ms;
   while (!await test()) { if (Date.now() > deadline) throw new Error("Remote test timed out"); await new Promise((r) => setTimeout(r, 50)); }
+}
+/** The remote broker reads config.json concurrently: replace it whole, never truncate it in place. */
+function writeAtomic(path: string, text: string): void {
+  writeFileSync(`${path}.tmp`, text);
+  renameSync(`${path}.tmp`, path);
 }
 function config(home: string, name: string, allowed = false): void {
   const bin = join(remoteHome, "fake-claude.mjs");
   writeFileSync(bin, FAKE); chmodSync(bin, 0o755);
   let claudeBin = bin;
   if (process.platform === "win32") { claudeBin = join(remoteHome, "claude.cmd"); writeFileSync(claudeBin, '@ECHO off\r\n"%dp0%\\fake-claude.mjs" %*\r\n'); }
-  writeFileSync(join(home, "config.json"), JSON.stringify({ dashboard: false, claudeBin, network: { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: LOOPBACK, port: 0, remoteJobs: { enabled: allowed, allowRoots: [repo], agents: ["claude"], allowPeers: allowed ? ["windows"] : [] } } }));
+  writeAtomic(join(home, "config.json"), JSON.stringify({ dashboard: false, claudeBin, network: { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: LOOPBACK, port: 0, remoteJobs: { enabled: allowed, allowRoots: [repo], agents: ["claude"], allowPeers: allowed ? ["windows"] : [] } } }));
 }
 async function session(home: string, name: string, agent = "codex"): Promise<Client> {
+  const client = new Client({ name: "remote-test", version: "1" });
+  const codexHome = codexHost(client, home, agent, name);
   const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`],
-    env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug" } as Record<string, string>, stderr: "ignore" });
-  const client = new Client({ name: "remote-test", version: "1" }); await client.connect(transport);
+    env: { ...process.env, CODEX_HOME: codexHome, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug" } as Record<string, string>, stderr: "pipe" });
+  const stderrPath = join(root, `session-${name}-${agent}.stderr.log`);
+  let stderrError: unknown;
+  transport.stderr?.on("data", data => {
+    try { appendFileSync(stderrPath, data); }
+    catch (error) { stderrError ??= error; }
+  });
   cleanup.push(async () => {
     const pid = transport.pid;
-    await client.close();
+    try { await client.close(); }
+    finally { await transport.close(); }
     if (pid) await waitFor(() => !pidAlive(pid));
+    if (stderrError) throw stderrError;
   });
+  await client.connect(transport);
   await call(client, "peers", {});
   return client;
 }
@@ -123,7 +232,11 @@ async function paired(agent = "codex"): Promise<{ local: Client; admin: BridgeCl
 }
 const textOf = (r: any) => r.content.map((c: any) => c.text).join("\n");
 async function call(client: Client, name: string, args: Record<string, unknown>): Promise<string> {
-  return textOf(await client.callTool({ name, arguments: args }, undefined, { timeout: TEST_TIMEOUT_MS }));
+  try {
+    const text = textOf(await client.callTool({ name, arguments: args }, undefined, { timeout: TEST_TIMEOUT_MS }));
+    diagnosticResponses.push({ at: Date.now(), name, args, text });
+    return text;
+  } catch (error) { diagnosticResponses.push({ at: Date.now(), name, args, error: String(error) }); throw error; }
 }
 async function held(client: Client, extra: Record<string, unknown> = {}): Promise<{ name: string; id: string; release: string; marker: string }> {
   const defaultRelease = join(repo, `release-${randomUUID()}`);
@@ -135,6 +248,38 @@ async function held(client: Client, extra: Record<string, unknown> = {}): Promis
   await waitFor(() => existsSync(marker) && Boolean(readRunnerState(remoteHome, id)?.sessionId));
   pids.add(readRunnerState(remoteHome, id)!.pid);
   return { name: `claude-job-${id}`, id, release, marker };
+}
+async function cancelledRemoteJob(local: Client, id: string, title: string, prompt: string): Promise<void> {
+  const saved = () => readStore(join(localHome, "jobs.json")).find(job => job.id === id);
+  await waitFor(() => saved()?.status === "cancelled");
+  expect(saved()!.prompt).toBe(prompt);
+  const state = readRunnerState(remoteHome, id);
+  if (state) {
+    // A real launched runner retains the original native cancellation and process-exit gates.
+    expect(state.status).toBe("cancelled");
+    expect(state.pid).toBeGreaterThan(0);
+    expect(state.report).toContain("cancelled");
+    pids.add(state.pid);
+    await waitFor(() => !pidAlive(state.pid));
+  } else {
+    // Cancellation before admission launches nothing; no synthetic remote PID/state is appropriate.
+    expect(saved()!.host).toBeNull();
+    expect(saved()!.deliveryHistory?.some(message => message.body.includes("cancelled"))).toBe(true);
+    const registry = join(remoteHome, "remote-jobs.json");
+    const records = existsSync(registry) ? JSON.parse(readFileSync(registry, "utf8")).jobs : [];
+    expect(records.some((record: { job: { id: string } }) => record.job.id === id)).toBe(false);
+    expect(readRunnerState(remoteHome, id)).toBeNull();
+  }
+  await waitFor(async () => {
+    const inbox = await call(local, "inbox", { mark_read: false });
+    return inbox.includes(`claude-job-${id}`) && inbox.includes("cancelled");
+  });
+  // The remote state file and the requester's cached job state settle independently.
+  await waitFor(async () => {
+    const peers = await call(local, "peers", {});
+    return peers.includes(`claude-job-${id} "${title}": cancelled`) &&
+      (!state || peers.includes(`Remote job claude-job-${id}: mac/claude-job-${id}`));
+  });
 }
 
 describe("remote jobs security", () => {
@@ -199,8 +344,10 @@ describe.skipIf(!existsSync(SERVER))("remote jobs with two paired TLS brokers", 
     cfg.codexBin = process.execPath;
     cfg.codexSubagents = 2;
     cfg.network.remoteJobs.agents.push("codex");
-    writeFileSync(path, JSON.stringify(cfg));
+    writeAtomic(path, JSON.stringify(cfg));
     const callsPath = join(repo, "native-calls.jsonl");
+    // This extensionless fake CLI uses CommonJS even when the temp fixture lives inside an ESM checkout.
+    writeFileSync(join(repo, "package.json"), JSON.stringify({ type: "commonjs" }));
     writeFileSync(join(repo, "app-server"), `
 const fs = require("node:fs");
 const rl = require("node:readline").createInterface({ input: process.stdin });
@@ -264,7 +411,7 @@ rl.on("line", (line) => {
     const policyFile = join(remoteHome, "config.json");
     const deniedPair = JSON.parse(readFileSync(policyFile, "utf8"));
     deniedPair.network.remoteJobs.allowPeers = ["another-pc"];
-    writeFileSync(policyFile, JSON.stringify(deniedPair));
+    writeAtomic(policyFile, JSON.stringify(deniedPair));
     await expect(inspector.remoteJob("mac", { ...spawn, args: { ...spawn.args, cwd: repo } })).rejects.toThrow(/disabled for this pair/);
     config(remoteHome, "mac", true);
     const escape = join(repo, "remote-escape");
@@ -333,24 +480,34 @@ rl.on("line", (line) => {
     await waitFor(() => listPendingApprovals(localHome).length === 0 && listPendingApprovals(remoteHome).length === 0);
     expect(await answerPendingApproval(localHome, approval.id, { decision: "allow" })).toBe("expired");
     await call(local, "cancel_subagent", { job: job.name });
-    await waitFor(() => readRunnerState(remoteHome, job.id)?.status === "failed");
+    await waitFor(() => readRunnerState(remoteHome, job.id)?.status === "cancelled");
     await waitFor(() => !pidAlive(readRunnerState(remoteHome, job.id)!.pid));
   }, TEST_TIMEOUT_MS);
 
   it("cancels a job while the remote spawn is still starting", async () => {
     const { local } = await paired();
-    const text = await call(local, "spawn_claude", { host: "mac", cwd: repo, title: "Cancel during startup", prompt: `release=${join(repo, "never-release")}` });
+    const prompt = `release=${join(repo, "never-release")}`;
+    const text = await call(local, "spawn_claude", { host: "mac", cwd: repo, title: "Cancel during startup", prompt });
     const id = /claude-job-([0-9a-f]{8})/.exec(text)![1]!;
     await call(local, "cancel_subagent", { job: `claude-job-${id}` });
-    await waitFor(() => readRunnerState(remoteHome, id)?.status === "failed");
-    // The remote state file and the requester's cached job state settle independently.
-    await waitFor(async () => {
-      const peers = await call(local, "peers", {});
-      return peers.includes(`Remote job claude-job-${id}: mac/claude-job-${id}`) &&
-        peers.includes(`claude-job-${id} "Cancel during startup": failed`);
+    await cancelledRemoteJob(local, id, "Cancel during startup", prompt);
+  }, TEST_TIMEOUT_MS);
+
+  it("cancels an observed remote runner during startup and retains its real cancelled state", async () => {
+    const { local } = await paired();
+    const prompt = `release=${join(repo, "never-release")}`;
+    const title = "Cancel observed startup";
+    const text = await call(local, "spawn_claude", { host: "mac", cwd: repo, title, prompt });
+    const id = /claude-job-([0-9a-f]{8})/.exec(text)![1]!;
+    // Published native runner state is the barrier; no sleep or synthesized PID stands in for launch.
+    await waitFor(() => {
+      const state = readRunnerState(remoteHome, id);
+      return Boolean(state?.status === "running" && state.pid > 0 && pidAlive(state.pid));
     });
-    const state = readRunnerState(remoteHome, id)!; pids.add(state.pid);
-    await waitFor(() => !pidAlive(state.pid));
+    pids.add(readRunnerState(remoteHome, id)!.pid);
+    await call(local, "cancel_subagent", { job: `claude-job-${id}` });
+    await waitFor(() => readRunnerState(remoteHome, id)?.status === "cancelled");
+    await cancelledRemoteJob(local, id, title, prompt);
   }, TEST_TIMEOUT_MS);
 
   it("creates and continues an allowed worktree on the remote repository and supports blocking asks", async () => {

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { readFileSync, writeFileSync } from "node:fs";
 import { DelegateError } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 import type { BridgeNode } from "../src/core/node.js";
@@ -68,6 +69,23 @@ describe("messaging subagents", () => {
     expect(agent.calls[0]).toMatchObject({ sessionId: "ses-crashed", message: DEFAULT_FOLLOW_UP });
   });
 
+  it("continues a job that was loaded before its continuation factory existed (startup order)", async () => {
+    const agent = fakeAgent();
+    // Loaded without a continuation, as a job seen through a startup event before restore installed the factory.
+    const early = jobs.start("codex", null, "early task", async () => ok("early answer", "ses-early"), undefined as unknown as Resume);
+    await until(() => bodies().some((b) => b.includes("early answer")));
+    jobs.restore(() => agent.resume);
+    expect(jobs.followUp(early.name, "continue the early one").outcome).toBe("started");
+    await until(() => agent.calls.length === 1);
+    expect(agent.calls[0]).toMatchObject({ sessionId: "ses-early", message: "continue the early one" });
+    // A job that still lacks it after restore (outside the restored window) becomes resumable on follow-up.
+    const late = jobs.start("codex", null, "late task", async () => ok("late answer", "ses-late"), undefined as unknown as Resume);
+    await until(() => bodies().some((b) => b.includes("late answer")));
+    expect(jobs.followUp(late.name, "continue the late one").outcome).toBe("started");
+    await until(() => agent.calls.length === 2);
+    expect(agent.calls[1]).toMatchObject({ sessionId: "ses-late", message: "continue the late one" });
+  });
+
   it("explains when a subagent cannot be continued", async () => {
     expect(jobs.followUp("codex-job-nope", "hi").outcome).toBe("unknown");
     const job = jobs.start("codex", null, "task", async () => {
@@ -108,12 +126,18 @@ describe("messaging subagents", () => {
     const first = new JobManager(me, nullLogger, store);
     const agent = fakeAgent();
     const done = first.start("codex", "gpt-x", "task one", async () => ok("one", "ses-A", "/wt/a"), agent.resume, { access: "edit" });
-    await until(() => first.recent().some((j) => j.id === done.id));
+    await until(() => done.status === "done" && done.sessionId === "ses-A");
     const running = first.start("claude", null, "task two", (_s, _p, job) => {
       first.note(job, { sessionId: "ses-B", workdir: "/wt/b" });
       return new Promise(() => {});
     }, agent.resume);
     await until(() => running.sessionId === "ses-B");
+
+    // Model an exited MCP executor, rather than two live managers resuming its turn.
+    first.setDormant(true); first.cancelAll();
+    const saved = JSON.parse(readFileSync(store, "utf8"));
+    saved.jobs.find((j: { id: string }) => j.id === running.id).executionPid = 2_147_483_647;
+    writeFileSync(store, JSON.stringify(saved));
 
     // The session restarts: a new manager reads what the old one saved.
     const args: Record<string, unknown>[] = [];
@@ -256,7 +280,8 @@ describe("jobs of a session under a stand-in name", () => {
     second.adoptStandIns(new Set(["claude-f", "claude-f-2"]));
     expect(second.recent().map((j) => j.name)).not.toContain(done.name);
     // Gone (a reload's stand-in): its jobs are this session's.
-    second.adoptStandIns(new Set(["claude-f"]));
+    await standIn.stop();
+    second.adoptStandIns(new Set(["claude-f"]), new Set(["claude-f-2"]));
     expect(second.recent().map((j) => j.name)).toContain(done.name);
     second.cancelAll();
     first.cancelAll();

@@ -24,6 +24,7 @@ describe("reliability live helpers", () => {
   it("tells a job's final result from a live answer", () => {
     expect(finalStatusOf("claude-job-1a", "Subagent claude-job-1a (claude, model haiku) done after 12s. Continue it ...\n\nsummary")).toBe("done");
     expect(finalStatusOf("codex-job-2b", "Subagent codex-job-2b (codex) failed after 3s.")).toBe("failed");
+    expect(finalStatusOf("codex-job-2b", "Subagent codex-job-2b (codex) cancelled after 3s.")).toBe("cancelled");
     expect(finalStatusOf("claude-job-1a", "I have read 4 of the 12 files so far.")).toBeNull();
     expect(finalStatusOf("claude-job-1a", "Subagent claude-job-1a asks for approval: edit")).toBeNull();
   });

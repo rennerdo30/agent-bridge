@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
+import { observeAskToolRecord } from "./ask-completion.js";
 import {
   closeSync,
   existsSync,
   fstatSync,
   openSync,
   readSync,
+  statSync,
   watch,
   type FSWatcher,
 } from "node:fs";
@@ -19,75 +21,31 @@ import {
 } from "./transcripts/common.js";
 import { conversationProject, syncProjectMirror } from "./project-store.js";
 import { readArchivedJobSnapshot } from "./job-archive.js";
-import { readJsonSnapshot } from "./file-cache.js";
+import { fileSignature, readJsonSnapshot } from "./file-cache.js";
+import { jobArchivePath } from "./job-archive-index.js";
 import { antigravityItems } from "./transcripts/antigravity.js";
-import { historyReadPath, HISTORY_BATCH_MS } from "./history-store.js";
+import { historyReadStatus, openHistoryReader, HISTORY_BATCH_MS } from "./history-store.js";
+import { decodeBytes, encodeBytes, encodeText, registerHistoryFunctions } from "./history-codec.js";
+import { decodeHistoryRow } from "./history-migration.js";
 
-export const CONVERSATION_BYTES = 64 * 1024;
-export const conversationPageSchema = z
-  .object({
-    id: z.string().min(1).max(512),
-    after: z.number().int().nonnegative().optional(),
-    limit: z.number().int().min(1).max(100).optional(),
-  })
-  .strict();
-export type ConversationRequest = z.input<typeof conversationPageSchema>;
-export interface ConversationPage {
-  conversation: {
-    id: string;
-    agent: string;
-    session: string;
-    parent: string | null;
-    project: string;
-    job: string | null;
-    kind: string;
-  } | null;
-  records: {
-    id: number;
-    source: string;
-    generation: number;
-    offset: number;
-    at: number;
-    text: string;
-    raw: string;
-    part: string | null;
-    /** Conclusive fixture provenance, retained for inspection rather than deleted. */
-    foreignHome?: true;
-  }[];
-  next: number | null;
-}
+import { CONVERSATION_BYTES, indexedConversationText } from "./conversation-text.js";
+export { CONVERSATION_BYTES, indexedConversationText } from "./conversation-text.js";
+const JOB_SNAPSHOTS_PER_TICK = 16;
+import { conversationPageSchema, type ConversationRequest, type ConversationPage } from "./conversation-query.js";
+export { conversationPageSchema } from "./conversation-query.js";
+export type { ConversationRequest, ConversationPage } from "./conversation-query.js";
 const hash = (b: Uint8Array | string) =>
   createHash("sha256").update(b).digest("hex");
 const fold = (s: string) =>
   s.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase();
 
-/** Searchable human/tool text, without another full copy of raw transcript JSON. */
-export function indexedConversationText(raw: Buffer): string {
-  const text = raw.toString("utf8");
-  let value: unknown;
-  try { value = JSON.parse(text); } catch {
-    const lines = text.trim().split("\n");
-    if (lines.length > 1 && lines.every(line => { try { JSON.parse(line); return true; } catch { return false; } })) return lines.map(line => indexedConversationText(Buffer.from(line))).join("\n");
-    // Oversized/incomplete records remain searchable in bounded 64 KiB fragments.
-    return text;
-  }
-  const found: string[] = [];
-  const visit = (item: unknown, depth = 0): void => {
-    if (depth > 8 || found.join("\n").length >= CONVERSATION_BYTES) return;
-    if (Array.isArray(item)) { for (const v of item.slice(0, 100)) visit(v, depth + 1); }
-    else if (item && typeof item === "object") for (const [key, v] of Object.entries(item)) {
-      if (["text", "body", "content", "summary", "prompt", "title", "topic", "description", "note", "reason", "detail", "question", "answer"].includes(key) && typeof v === "string") found.push(v);
-      else if (["message", "payload", "content", "parts", "output", "data"].includes(key)) visit(v, depth + 1);
-    }
-  };
-  visit(value);
-  return found.join("\n").slice(0, CONVERSATION_BYTES);
-}
-
 /** Preserves bytes independently of the deliberately lossy dashboard readers. Worker-only. */
 export class ConversationIngestor {
   private checked = 0;
   private jobsAt = 0;
+  /** Stores seen by the last complete job pass; unchanged stores need no reread and rehash (AB-147). */
+  private jobsSignature = "";
+  private quietArchive = "";
   private jobQueue: {
     job: Record<string, any>;
     raw: Buffer;
@@ -95,15 +53,23 @@ export class ConversationIngestor {
     hash: string;
   }[] = [];
   private watchers: FSWatcher[] = [];
+  /** Called on a watched CLI transcript change, so an idle background worker can wake early (AB-147). */
+  onChange?: () => void;
   private watched = new Set<string>();
   private dirty = new Set<string>();
   private idleSources = 0;
+  private readonly encoded: boolean;
+  private readonly fts: boolean;
   constructor(
     private db: DatabaseSync,
     private home: string,
     private paths: TranscriptPaths,
     private source: DatabaseSync = db,
   ) {
+    // History store v2 compresses raw bytes (raw_codec); bridge.db and v1 stores keep them plain.
+    this.encoded = !!db.prepare("SELECT 1 FROM pragma_table_info('conversation_records') WHERE name='raw_codec'").get();
+    this.fts = !!db.prepare("SELECT name FROM sqlite_master WHERE name='history_fts'").get();
+    if (this.encoded) registerHistoryFunctions(db);
     this.checked = Number(
       db
         .prepare("SELECT coalesce(max(checked),0) n FROM (SELECT checked FROM conversation_sources UNION ALL SELECT checked FROM conversation_projects)")
@@ -126,6 +92,7 @@ export class ConversationIngestor {
           (_, name) => {
             if (name && this.dirty.size < 2048)
               this.dirty.add(join(root, String(name)));
+            this.onChange?.();
           },
         );
         watcher.on("error", () => {});
@@ -313,9 +280,15 @@ export class ConversationIngestor {
     }
   }
   private jobs(): void {
-    if (Date.now() - this.jobsAt < 30_000) return;
+    // A pass cut short by the queue bound continues as soon as the queue drains.
+    if (Date.now() - this.jobsAt < 30_000 && (this.jobsSignature || this.jobQueue.length)) return;
     this.jobsAt = Date.now();
     const path = join(this.home, "jobs.json");
+    const archive = jobArchivePath(path);
+    const stores = [path, archive, `${archive}-wal`, join(this.home, "archive")]
+      .map((file) => { try { return fileSignature(statSync(file, { bigint: true })); } catch { return "missing"; } }).join("|");
+    if (stores === this.jobsSignature) return;
+    let complete = true;
     let active: Record<string, any> = {};
     try {
       active = object(readJsonSnapshot(path).value);
@@ -328,7 +301,7 @@ export class ConversationIngestor {
     ];
     let queuedBytes = this.jobQueue.reduce((n, item) => n + item.raw.length, 0);
     for (const job of records) {
-      if (this.jobQueue.length >= 100 || queuedBytes >= 8 * 1024 * 1024) break;
+      if (this.jobQueue.length >= 100 || queuedBytes >= 8 * 1024 * 1024) { complete = false; break; }
       if (typeof job.name !== "string") continue;
       const raw = Buffer.from(JSON.stringify(job)),
         signature = hash(raw);
@@ -342,6 +315,7 @@ export class ConversationIngestor {
       this.jobQueue.push({ job, raw, hash: signature, offset: 0 });
       queuedBytes += raw.length;
     }
+    this.jobsSignature = complete ? stores : "";
   }
   private jobSnapshot(): number {
     const next = this.jobQueue[0];
@@ -422,17 +396,24 @@ export class ConversationIngestor {
       return;
     }
     // Retain bytes exactly once. The derived text omits bulky JSON/tool metadata.
-    const body = indexedConversationText(raw);
-    const result = this.db
-      .prepare(
-        "INSERT OR IGNORE INTO conversation_records(source,generation,offset,conversation,at,raw,body,part) VALUES(?,?,?,?,?,?,?,?)",
-      )
-      .run(source, generation, offset, conversation, at, raw, body === raw.toString("utf8") ? "" : body, part);
+    const body = indexedConversationText(raw), stored = body === raw.toString("utf8") ? "" : body;
+    const encoded = this.encoded ? encodeBytes(raw) : null;
+    const result = encoded
+      ? this.db.prepare("INSERT OR IGNORE INTO conversation_records(source,generation,offset,conversation,at,raw,raw_codec,body,part) VALUES(?,?,?,?,?,?,?,?,?)")
+        .run(source, generation, offset, conversation, at, encoded.value, encoded.codec, stored, part)
+      : this.db.prepare("INSERT OR IGNORE INTO conversation_records(source,generation,offset,conversation,at,raw,body,part) VALUES(?,?,?,?,?,?,?,?)")
+        .run(source, generation, offset, conversation, at, raw, stored, part);
     // A lock can interrupt derived indexing after retaining the bytes. Replay repairs
     // documents/tags before the caller advances its source cursor.
     const record = Number(result.changes) ? Number(result.lastInsertRowid) : Number(this.db
       .prepare("SELECT id FROM conversation_records WHERE source=? AND generation=? AND offset=?")
       .get(source, generation, offset)!.id);
+    const retained = this.db.prepare("SELECT * FROM conversation_records WHERE id=?").get(record)!;
+    if (!decodeBytes(retained.raw, retained.raw_codec).equals(raw)) {
+      throw Object.assign(new Error(`History import verification failed at ${source}:${generation}:${offset}; cursor not advanced, originals retained`), { code: "HISTORY_IMPORT_VERIFICATION_FAILED" });
+    }
+    const native = this.db.prepare("SELECT kind,agent FROM conversations WHERE id=?").get(conversation);
+    if (part === null && native?.kind === "transcript" && native.agent === "claude") observeAskToolRecord(this.db, this.home, source, generation, raw, at, offset);
     this.indexRecord(
       record,
       conversation,
@@ -463,8 +444,9 @@ export class ConversationIngestor {
       recordProject = c.project!,
       recordKind = c.kind!;
     if (c.kind === "message" || c.kind === "decision") {
-      const first = Buffer.from(this.db.prepare("SELECT raw FROM conversation_records WHERE source=? AND generation=? ORDER BY offset LIMIT 1")
-        .get(recordInfo.source!, recordInfo.generation!)!.raw as Uint8Array).toString("utf8");
+      const firstRow = this.db.prepare("SELECT * FROM conversation_records WHERE source=? AND generation=? ORDER BY offset LIMIT 1")
+        .get(recordInfo.source!, recordInfo.generation!)!;
+      const first = decodeBytes(firstRow.raw, firstRow.raw_codec).toString("utf8");
       const metadata = parse(first);
       for (const key of [
         "from_agent",
@@ -512,7 +494,7 @@ export class ConversationIngestor {
           : recordSession === c.session
             ? recordJob
             : null);
-      const report = /"body"\s*:\s*"Subagent ([A-Za-z0-9][A-Za-z0-9_-]*) \(([a-z][a-z0-9_-]*)(?:, model [^"\r\n]*)?\) (?:done|failed) after \d+s\./.exec(first.slice(0, 8192));
+      const report = /"body"\s*:\s*"Subagent ([A-Za-z0-9][A-Za-z0-9_-]*) \(([a-z][a-z0-9_-]*)(?:, model [^"\r\n]*)?\) (?:done|failed|cancelled) after \d+s\./.exec(first.slice(0, 8192));
       if (c.kind === "message" && report) {
         recordKind = "report";
         recordJob = report[1]!;
@@ -520,9 +502,14 @@ export class ConversationIngestor {
       }
     }
     const eventKind = String(recordInfo.part ?? "").replace(/^event:/, "");
+    // History store v2: compressed body; FTS needs no folded copy.
+    const storedBody = this.encoded ? encodeText(body) : null;
+    const foldedBody = storedBody && this.fts ? null : fold(body);
     this.db
       .prepare(
-        "INSERT OR IGNORE INTO history_documents(id,kind,agent,at,body,folded,link,message,job,run,session,cursor) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        storedBody
+          ? "INSERT OR IGNORE INTO history_documents(id,kind,agent,at,body,body_codec,folded,link,message,job,run,session,cursor) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
+          : "INSERT OR IGNORE INTO history_documents(id,kind,agent,at,body,folded,link,message,job,run,session,cursor) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
       )
       .run(
         id,
@@ -533,8 +520,8 @@ export class ConversationIngestor {
             : recordKind,
         recordAgent,
         at,
-        body,
-        fold(body),
+        ...(storedBody ? [storedBody.value, storedBody.codec] : [body]),
+        foldedBody,
         `/api/conversations/${encodeURIComponent(conversation)}`,
         null,
         recordJob,
@@ -590,12 +577,18 @@ export class ConversationIngestor {
           "INSERT OR IGNORE INTO conversation_projects(project) VALUES(?)",
         )
         .run(project);
-    const raw = Buffer.from(JSON.stringify(row)),
-      offset = Number(saved.offset ?? 0),
+    // SQL rowid is a cursor alias, not an envelope field. Archive/read-state
+    // changes get deterministic retained versions rather than overwriting raw bytes.
+    const { n: _cursorRowid, ...record } = row;
+    const raw = Buffer.from(JSON.stringify(record)),
+      fingerprint = createHash("sha256").update(raw).digest("hex"),
+      // 48 bits fit SQLite/JavaScript integer limits. Any collision still fails byte verification.
+      generation = 1 + Number.parseInt(fingerprint.slice(0, 12), 16),
+      offset = saved.fingerprint && saved.fingerprint !== fingerprint ? 0 : Number(saved.offset ?? 0),
       chunk = raw.subarray(offset, offset + CONVERSATION_BYTES);
     this.put(
       `${table}:${row.id}:${row.recipient ?? row.revision}`,
-      0,
+      generation,
       offset,
       id,
       chunk,
@@ -607,12 +600,13 @@ export class ConversationIngestor {
       JSON.stringify(
         offset + chunk.length >= raw.length
           ? { after: Number(row.n) }
-          : { after, offset: offset + chunk.length },
+          : { after, offset: offset + chunk.length, fingerprint },
       ),
     );
     return 1;
   }
   private envelopes(): number {
+    if (!this.source.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='conversation_envelopes'").get()) return 0;
     const key = "durable-envelope-keys",
       saved = parse(this.cursor(key)),
       after = Number(saved.after ?? 0);
@@ -671,11 +665,13 @@ export class ConversationIngestor {
     const raw = Buffer.from(
         JSON.stringify({ ...row, recipient: envelope.recipient }),
       ),
-      offset = Number(saved.offset ?? 0),
+      fingerprint = createHash("sha256").update(raw).digest("hex"),
+      generation = 1 + Number.parseInt(fingerprint.slice(0, 12), 16),
+      offset = saved.fingerprint && saved.fingerprint !== fingerprint ? 0 : Number(saved.offset ?? 0),
       chunk = raw.subarray(offset, offset + CONVERSATION_BYTES);
     this.put(
       `messages:${row.id}:${envelope.recipient}`,
-      0,
+      generation,
       offset,
       id,
       chunk,
@@ -687,7 +683,7 @@ export class ConversationIngestor {
       JSON.stringify(
         offset + chunk.length >= raw.length
           ? { after: Number(envelope.id) }
-          : { after, offset: offset + chunk.length },
+          : { after, offset: offset + chunk.length, fingerprint },
       ),
     );
     return 1;
@@ -1091,17 +1087,26 @@ export class ConversationIngestor {
     // Filesystem reads and Git discovery must never hold the shared writer lock.
     let work = 0;
     {
-      work += this.jobSnapshot();
+      // Several queued snapshots per batch (bounded by the batch deadline), so a retained backlog
+      // converges in minutes rather than one job per tick (AB-147).
+      for (let i = 0; i < JOB_SNAPSHOTS_PER_TICK && this.jobQueue.length && Date.now() < deadline; i++) {
+        if (i) { const next = this.jobQueue[0]!.job; conversationProject(String(next.cwd ?? next.workdir ?? "")); }
+        work += this.jobSnapshot();
+      }
       work += this.envelopes();
       work += this.events(this.source, "decisions", "durable-decisions");
       const archive = join(this.home, "archive.db");
-      if (existsSync(archive)) {
+      // The archive database is opened again only after it changes, once a read found nothing new (AB-147).
+      const archiveSignature = [archive, `${archive}-wal`].map((file) => { try { return fileSignature(statSync(file, { bigint: true })); } catch { return "missing"; } }).join("|");
+      if (existsSync(archive) && archiveSignature !== this.quietArchive) {
         const input = new DatabaseSync(archive, {
           readOnly: true,
           timeout: 50,
         });
         try {
-          work += this.events(input, "messages", "durable-archive");
+          const archived = this.events(input, "messages", "durable-archive");
+          this.quietArchive = archived ? "" : archiveSignature;
+          work += archived;
         } finally {
           input.close();
         }
@@ -1154,10 +1159,11 @@ export class ConversationIngestor {
         )
         .all(indexed)) {
         if (Date.now() >= deadline) break;
+        const record = decodeHistoryRow("conversation_records", row);
         this.indexRecord(
           Number(row.id),
           String(row.conversation),
-          String(row.body) || indexedConversationText(Buffer.from(row.raw as Uint8Array)),
+          String(record.body) || indexedConversationText(record.raw as Buffer),
           Number(row.at),
           Number(row.offset),
         );
@@ -1247,7 +1253,7 @@ export function readConversation(
   const records: ConversationPage["records"] = [];
   let bytes = 0;
   for (const row of rows) {
-    const raw = Buffer.from(row.raw as Uint8Array);
+    const raw = decodeBytes(row.raw, row.raw_codec);
     if (records.length >= (args.limit ?? 20) || bytes + raw.length > 512 * 1024)
       break;
     records.push({
@@ -1274,11 +1280,12 @@ export function readConversationFile(
   file: string,
   input: ConversationRequest,
 ): ConversationPage {
-  file = historyReadPath(file);
-  if (!existsSync(file)) return { conversation: null, records: [], next: null };
-  const db = new DatabaseSync(file, { readOnly: true, timeout: 100 });
+  const status = historyReadStatus(file), migration = status.migration ? { migration: status.migration } : {};
+  file = status.path;
+  if (!existsSync(file)) return { conversation: null, records: [], next: null, ...migration };
+  const db = openHistoryReader(file);
   try {
-    return readConversation(db, input);
+    return { ...readConversation(db, input), ...migration };
   } finally {
     db.close();
   }

@@ -13,14 +13,16 @@ import { answerPendingApproval, listPendingApprovals, type PermissionDecision, t
 import { until } from "./helpers.js";
 import { readWorktreeState, rootId, saveWorktreeState } from "../src/core/worktree-state.js";
 import { closeJobWorktree } from "../src/core/job-close.js";
+import { preferredDriveFixture } from "./preferred-drive-fixture.js";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
 
 let home: string;
 beforeEach(() => {
-  const root = join(process.cwd(), ".agent-bridge-test");
+  const root = process.env.AGENT_BRIDGE_TEST_ROOT!;
   mkdirSync(root, { recursive: true });
   home = mkdtempSync(join(root, "run-"));
 });
-afterEach(() => { vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); closeMetadataDb(home); rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });
 
 const context = (): RunContext => ({ agent: "claude", cfg: { ...DEFAULT_CONFIG }, home, log: nullLogger, me: () => "parent", cwd: () => home,
   jobs: { askParent: vi.fn(async () => ({ allow: false, reason: "Publish builds only from merged master" })), fromSubagent: vi.fn(), note: vi.fn() },
@@ -28,6 +30,15 @@ const context = (): RunContext => ({ agent: "claude", cfg: { ...DEFAULT_CONFIG }
 const job = (): Job => ({ id: "test", name: "codex-job-test", agent: "codex", model: null, prompt: "task", startedAt: Date.now(), controller: new AbortController(), progress: null, status: "running", sessionId: null, workdir: null, worktree: null, queue: [] });
 
 describe("delegated worktree contracts", () => {
+  it("formats job answer paths while retaining managed worktree records", async () => {
+    await preferredDriveFixture();
+    const root = join(home, "worktrees", "existing"); mkdirSync(root, { recursive: true });
+    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockResolvedValue({ sessionId: "saved", text: "Output Q:/future/result.md", isError: false, details: {} });
+    const wt = { repoRoot: home, path: root, cwd: root, branch: "saved", base: "base" };
+    const result = await runDelegate(context(), "codex", { title: "paths", prompt: "task", access: "read", _worktree: wt }, new AbortController().signal, undefined, true);
+    expect(result.text).toContain("Output X:/future/result.md");
+    expect(result.worktree?.path).toBe(root);
+  });
   it.each(["codex", "claude", "opencode"] as const)("fences implicit managed cwd jobs and invalidates prior shutdown proof for %s", async (target) => {
     const root = join(home, "worktrees", "existing"); const cwd = join(root, "client");
     mkdirSync(cwd, { recursive: true });

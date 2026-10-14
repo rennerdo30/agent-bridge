@@ -7,6 +7,11 @@ import { object, parse } from "./transcripts/common.js";
 
 export const MUSE_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
 
+/** Muse injects its session identity into child processes; the bridge binds it so transcripts and the dashboard can find the live session. */
+export function museEnvSessionId(env: NodeJS.ProcessEnv = process.env): string | null {
+  return env.MUSE_SESSION_ID?.trim() || env.MUSE_THREAD_ID?.trim() || null;
+}
+
 /**
  * Parse `muse exec --json` output: the session-log record stream.
  * The session id is `stream.id` on every record; the final answer is the
@@ -88,6 +93,10 @@ export async function delegateToMuse(req: DelegateRequest & { bin: string; acces
           sessionReported = true;
           sessionId = stream.id;
           req.onSession?.(sessionId);
+        }
+        if (ev.payload_type === "run.model.configured") {
+          const model = object(object(ev.payload).record).model_id;
+          if (typeof model === "string" && model) req.onInfo?.({ model, effort: req.effort ?? null });
         }
         progress?.(ev);
       },

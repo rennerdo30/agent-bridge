@@ -1,0 +1,261 @@
+{
+  "root": {
+    "@modelcontextprotocol/sdk": [
+      {
+        "location": "node_modules/@modelcontextprotocol/sdk",
+        "dependencyPath": [
+          "agent-bridge",
+          "@modelcontextprotocol/sdk@1.30.1"
+        ]
+      }
+    ],
+    "source-map-js": [
+      {
+        "location": "node_modules/source-map-js",
+        "dependencyPath": [
+          "agent-bridge",
+          "vitest@5.0.2",
+          "vite@8.3.1",
+          "postcss@8.5.28",
+          "source-map-js@1.2.1"
+        ]
+      }
+    ]
+  },
+  "mobile": {
+    "@expo/cli": [
+      {
+        "location": "node_modules/expo/node_modules/@expo/cli",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/cli@57.0.28"
+        ]
+      }
+    ],
+    "@expo/code-signing-certificates": [
+      {
+        "location": "node_modules/@expo/code-signing-certificates",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/cli@57.0.28",
+          "@expo/code-signing-certificates@0.0.6"
+        ]
+      }
+    ],
+    "@expo/config": [
+      {
+        "location": "node_modules/@expo/config",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/config@57.0.10"
+        ]
+      }
+    ],
+    "@expo/config-plugins": [
+      {
+        "location": "node_modules/@expo/config-plugins",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/config-plugins@57.0.10"
+        ]
+      }
+    ],
+    "@expo/inline-modules": [
+      {
+        "location": "node_modules/@expo/inline-modules",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/cli@57.0.28",
+          "@expo/inline-modules@0.1.7"
+        ]
+      }
+    ],
+    "@expo/local-build-cache-provider": [
+      {
+        "location": "node_modules/@expo/local-build-cache-provider",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/local-build-cache-provider@57.0.8"
+        ]
+      }
+    ],
+    "@expo/metro": [
+      {
+        "location": "node_modules/@expo/metro",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/metro@56.0.2"
+        ]
+      }
+    ],
+    "@expo/metro-config": [
+      {
+        "location": "node_modules/@expo/metro-config",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/metro-config@57.0.13"
+        ]
+      }
+    ],
+    "@expo/prebuild-config": [
+      {
+        "location": "node_modules/@expo/prebuild-config",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/cli@57.0.28",
+          "@expo/prebuild-config@57.0.17"
+        ]
+      }
+    ],
+    "@react-native/community-cli-plugin": [
+      {
+        "location": "node_modules/@react-native/community-cli-plugin",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "react-native@0.86.3",
+          "@react-native/community-cli-plugin@0.86.3"
+        ]
+      }
+    ],
+    "@react-native/virtualized-lists": [
+      {
+        "location": "node_modules/@react-native/virtualized-lists",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "react-native@0.86.3",
+          "@react-native/virtualized-lists@0.86.3"
+        ]
+      }
+    ],
+    "braces": [
+      {
+        "location": "node_modules/braces",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/metro@56.0.2",
+          "metro-file-map@0.84.5",
+          "micromatch@4.0.8",
+          "braces@3.0.3"
+        ]
+      }
+    ],
+    "expo": [
+      {
+        "location": "node_modules/expo",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27"
+        ]
+      }
+    ],
+    "metro": [
+      {
+        "location": "node_modules/metro",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/metro@56.0.2",
+          "metro@0.84.5"
+        ]
+      }
+    ],
+    "metro-config": [
+      {
+        "location": "node_modules/metro-config",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/metro@56.0.2",
+          "metro-config@0.84.5"
+        ]
+      }
+    ],
+    "metro-file-map": [
+      {
+        "location": "node_modules/metro-file-map",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/metro@56.0.2",
+          "metro-file-map@0.84.5"
+        ]
+      }
+    ],
+    "metro-transform-worker": [
+      {
+        "location": "node_modules/metro-transform-worker",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/metro@56.0.2",
+          "metro-transform-worker@0.84.5"
+        ]
+      }
+    ],
+    "micromatch": [
+      {
+        "location": "node_modules/micromatch",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/metro@56.0.2",
+          "metro-file-map@0.84.5",
+          "micromatch@4.0.8"
+        ]
+      }
+    ],
+    "node-forge": [
+      {
+        "location": "node_modules/node-forge",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/cli@57.0.28",
+          "node-forge@1.4.0"
+        ]
+      }
+    ],
+    "react-native": [
+      {
+        "location": "node_modules/react-native",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "react-native@0.86.3"
+        ]
+      }
+    ],
+    "uuid": [
+      {
+        "location": "node_modules/uuid",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/config-plugins@57.0.10",
+          "xcode@3.0.1",
+          "uuid@7.0.3"
+        ]
+      }
+    ],
+    "xcode": [
+      {
+        "location": "node_modules/xcode",
+        "dependencyPath": [
+          "agent-bridge-mobile",
+          "expo@57.0.27",
+          "@expo/config-plugins@57.0.10",
+          "xcode@3.0.1"
+        ]
+      }
+    ]
+  }
+}

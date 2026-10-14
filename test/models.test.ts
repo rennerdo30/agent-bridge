@@ -23,6 +23,17 @@ beforeEach(() => {
 afterEach(async () => env.cleanup());
 
 describe("available subagent models", () => {
+  it("reports empty opencode catalogs as unknown and does not retain an empty cache", async () => {
+    vi.mocked(listOpencodeModels).mockResolvedValue([]);
+    const configured = { ...cfg, opencodeModel: "provider/dynamic" };
+    const report = await readModels("opencode", configured, env.home, nullLogger, env.home);
+    expect(report.models).toEqual([]);
+    expect(report.defaultModel).toBe("provider/dynamic");
+    expect(report.lines.join("\n")).toContain("not necessarily unavailable");
+    expect(report.lines.join("\n")).toContain("not availability verification");
+    await readModels("opencode", configured, env.home, nullLogger, env.home);
+    expect(listOpencodeModels).toHaveBeenCalledTimes(2);
+  });
   it("reads installed Antigravity model slugs without treating status text as a model", async () => {
     vi.mocked(captureOutput).mockResolvedValue("Fetching available models...\nexample-flash-high\tExample Flash High\nexample-pro\tExample Pro\n");
     const report = await readModels("antigravity", cfg, env.home, nullLogger, env.home);

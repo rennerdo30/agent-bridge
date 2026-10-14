@@ -1,5 +1,7 @@
+import { describeResourceSlots, ResourceSlots } from "../core/resource-slots.js";
+import { inspectCatalog, inspectRows, MAX_INSPECT_ROWS } from "../core/db-inspect.js";
 import { DatabaseSync } from "node:sqlite";
-import { historyReadPath } from "../core/history-store.js";
+import { historyReadStatus } from "../core/history-store.js";
 import { conversationPageSchema, readConversation } from "../core/conversations.js";
 import { formatReplyRestrictions } from "../mcp/format.js";
 import { chooseJobRecipient } from "../core/job-ownership.js";
@@ -11,6 +13,10 @@ import { currentDashboardKey, loadDashboardKey } from "./dashboard-key.js";
 import { UI_RECOVERY_PAGE } from "./ui-recovery.js";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { MobileDesktopAdmin } from "../mobile/desktop.js";
+import { readMobileDesktopBody } from "../mobile/desktop.js";
+import { MobileFault } from "../mobile/store.js";
+import { MOBILE_DESKTOP_PAGE } from "../mobile/desktop-page.js";
 import type { AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
@@ -19,14 +25,15 @@ import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, APP_VERSION, MAX_BODY_CHA
 import type { Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath } from "../core/paths.js";
-import { BridgeError, CODING_AGENTS, type PeerInfo } from "../core/protocol.js";
+import { BridgeError, CODING_AGENTS, isUnsupportedOperation, type PeerInfo } from "../core/protocol.js";
+import { brokerFailureState } from "../core/health.js";
 import { readModels, type ModelReport } from "../core/models.js";
 import { RUNS_DIR_NAME } from "../core/runfeed.js";
 import { loadOrCreateToken, tokensEqual } from "../core/token.js";
 import { loadConfig, saveConfigValue } from "../core/config.js";
 import { readUsage, type UsageReport } from "../core/usage.js";
 import { controlDashboardJob, JobControlError, type DashboardJobCommand } from "../core/job-control.js";
-import { UI_PAGE } from "./ui-page.js";
+import { UI_PAGE, mobileDashboardPage, safeMobileStatus } from "./ui-page.js";
 import { codexQueue, deliverDashboardChat, childNote, type QueuePrompt } from "../core/dashboard-chat.js";
 import { networkConfigSchema } from "../network/config.js";
 import { planFirewall, detectFirewall, applyWindowsFirewall } from "../network/firewall.js";
@@ -43,11 +50,13 @@ import { answerHistory, type HistoryAnswerDependencies } from "../core/history-a
 import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, type DecisionsArgs } from "../core/decisions.js";
 import { answerPendingApproval, listPendingApprovals, MAX_APPROVAL_REASON_CHARS } from "../core/relay.js";
 import { questionAnswerSchema, questionAlertSettingsSchema, readOwnerQuestions } from "../core/owner-questions.js";
-import { classifyPeers, listRuns, readStoredJobs, readDashboard, readMeta } from "../core/dashboard-read.js";
+import { classifyPeers, listRunsResponsive, readStoredJobsResponsive, readDashboard, readMeta } from "../core/dashboard-read.js";
+import { openJobQuestions, type JobQuestion } from "../core/job-questions.js";
 export { classifyPeers, listRuns, readStoredJobs, summarizeRun, finishedRunOutcomes } from "../core/dashboard-read.js";
 export type { RunSummary, DashboardPeer, StoredJobView } from "../core/dashboard-read.js";
 import { dashboardError } from "../network/remote-dashboard.js";
 import { markRemoteDashboard } from "../network/dashboard-projection.js";
+import { readBodyText } from "../core/http-body.js";
 import { dashboardRequestSchema, isDashboardReadPath, DASHBOARD_TIMEOUT_MS, type DashboardReadRequest, type DashboardReadResult } from "../network/dashboard-protocol.js";
 
 /**
@@ -87,14 +96,24 @@ export function recentMessages(dbPath: string): MessageRow[] {
   return searchMessages(dbPath, { limit: MAX_MESSAGES });
 }
 
-async function brokerPeers(pipe: string, token: string, log: Logger): Promise<{ brokerPid: number | null; peers: PeerInfo[] }> {
+async function brokerPeers(pipe: string, token: string, log: Logger): Promise<{ brokerPid: number | null; peers: PeerInfo[]; brokerState: "running" | "offline" | "slow" | "unavailable"; health: import("../core/health.js").BrokerHealth | null }> {
   let client: BridgeClient | null = null;
+  let brokerPid: number | null = null;
+  let health: import("../core/health.js").BrokerHealth | null = null;
+  const started = performance.now();
   try {
-    client = await BridgeClient.connect(pipe, log);
-    const { brokerPid } = await client.request("auth", { protocol: PROTOCOL_VERSION, token });
-    return { brokerPid, peers: await client.request("dashboardPeers", {}).catch(() => client!.request("peers", {})) };
-  } catch {
-    return { brokerPid: null, peers: [] };
+    client = await BridgeClient.connect(pipe, log, 1_000);
+    const ping = await client.request("ping", {}, 1_000);
+    brokerPid = ping.brokerPid;
+    health = ping.health ? { ...ping.health, roundTripMs: performance.now() - started } : null;
+    await client.request("auth", { protocol: PROTOCOL_VERSION, token }, 1_000);
+    const peers = await client.request("dashboardPeers", {}, 1_000).catch(error => {
+      if (isUnsupportedOperation(error, "dashboardPeers")) return client!.request("peers", {}, 1_000);
+      throw error;
+    });
+    return { brokerPid, peers, health, brokerState: performance.now() - started >= 1_000 ? "slow" : "running" };
+  } catch (error) {
+    return { brokerPid, peers: [], health, brokerState: brokerFailureState(error) };
   } finally {
     client?.close();
   }
@@ -106,11 +125,7 @@ function send(res: ServerResponse, status: number, body: unknown, type = "applic
 }
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
-  let raw = "";
-  for await (const chunk of req) {
-    raw += chunk;
-    if (raw.length > MAX_POST_BYTES) throw new Error("request too large");
-  }
+  const raw = await readBodyText(req, MAX_POST_BYTES);
   return JSON.parse(raw || "{}");
 }
 
@@ -168,6 +183,9 @@ export interface UiOptions {
   historyAnswer?: HistoryAnswerDependencies;
   /** Replace only the native queue transport in tests; never supplied by an HTTP request. */
   chatQueue?: QueuePrompt;
+  /** Inert opt-in: owner-provisioned mobile registry and exact loopback origin only. */
+  mobileAdmin?: MobileDesktopAdmin;
+  mobileStatus?: () => string;
 }
 
 /** The paired PCs' runs in /api/state are re-fetched in the background at most this often. */
@@ -221,6 +239,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       return await client.request(op, args, op === "dashboardRead" ? DASHBOARD_TIMEOUT_MS + 2_000 : undefined);
     } finally { client.close(); }
   };
+  const dashboardControl = async (node: BridgeNode, owner: string, job: string, command: DashboardJobCommand) =>
+    controlDashboardJob(node, owner, job, command, args => networkRequest("dashboardJobSend", { ...args, senderId: node.id }));
 
   const remoteRead = async (host: string, request: DashboardReadRequest): Promise<DashboardReadResult> => {
     try {
@@ -277,12 +297,44 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     const fromUrl = url.searchParams.get("t");
     if (url.pathname === "/" && fromUrl) {
       if (!tokensEqual(fromUrl, activeSecret)) return send(res, 403, UI_RECOVERY_PAGE, "text/html; charset=utf-8");
-      res.writeHead(302, { location: "/", "cache-control": "no-store", "referrer-policy": "no-referrer", "set-cookie": `${COOKIE}=${activeSecret}; Max-Age=31536000; HttpOnly; SameSite=Strict; Path=/` });
+      res.writeHead(302, { location: url.searchParams.has("phonesStatus") ? "/?phonesStatus=" + safeMobileStatus(url.searchParams.get("phonesStatus")) : "/", "cache-control": "no-store", "referrer-policy": "no-referrer", "set-cookie": `${COOKIE}=${activeSecret}; Max-Age=31536000; HttpOnly; SameSite=Strict; Path=/` });
       return res.end();
     }
     if (!tokensEqual(cookieSecret(req), activeSecret)) return send(res, 403, UI_RECOVERY_PAGE, "text/html; charset=utf-8");
 
-    if (req.method === "GET" && url.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
+    if (req.method === "GET" && url.pathname === "/api/mobile/status" && opts.mobileStatus) {
+      if (req.headers.host !== `127.0.0.1:${req.socket.localPort}` || url.search) return send(res, 403, { code: "desktop_origin" });
+      const status = opts.mobileStatus(); return send(res, 200, { state: status === "ready" ? "ready" : safeMobileStatus(status) });
+    }
+
+    if (req.method === "GET" && url.pathname === "/mobile/phones") {
+      if (!opts.mobileAdmin) return send(res, 404, { code: "mobile_not_provisioned" });
+      if (`http://${req.headers.host}` !== opts.mobileAdmin.localOrigin) return send(res, 403, { code: "desktop_origin" });
+      if (!opts.mobileAdmin.isReady() || opts.mobileStatus && opts.mobileStatus() !== "ready") return send(res, 503, { code: "source_unavailable" });
+      res.setHeader("cache-control", "no-store"); res.setHeader("referrer-policy", "no-referrer");
+      return send(res, 200, MOBILE_DESKTOP_PAGE, "text/html; charset=utf-8");
+    }
+
+    if (url.pathname.startsWith("/api/mobile/")) {
+      if (!opts.mobileAdmin) return send(res, 404, { code: "mobile_not_provisioned" });
+      if (`http://${req.headers.host}` !== opts.mobileAdmin.localOrigin || url.search) return send(res, 403, { code: "desktop_origin" });
+      if (req.method === "GET" && url.pathname === "/api/mobile/status") return send(res, 200, { state: opts.mobileStatus?.() ?? (opts.mobileAdmin.isReady() ? "ready" : "source_unavailable") });
+      try {
+        const headers: Record<string, string | undefined> = {};
+        for (const [key, value] of Object.entries(req.headers)) {
+          if (Array.isArray(value)) return send(res, 400, { code: "invalid_headers" });
+          headers[key] = value;
+        }
+        const body = req.method === "GET" ? undefined : await readMobileDesktopBody(req);
+        const result = await opts.mobileAdmin.handle(req.method ?? "", url.pathname, headers, body);
+        res.setHeader("cache-control", "no-store");
+        return send(res, result.status, result.body ?? "");
+      } catch (error) { return send(res, error instanceof MobileFault ? error.status : 400, { code: error instanceof MobileFault ? error.code : "invalid_request" }); }
+    }
+
+    const mobileReady = !!opts.mobileAdmin?.isReady() && (!opts.mobileStatus || opts.mobileStatus() === "ready");
+    const mobileUnavailable = opts.mobileStatus && !mobileReady ? safeMobileStatus(opts.mobileStatus()) : url.searchParams.has("phonesStatus") ? safeMobileStatus(url.searchParams.get("phonesStatus")) : undefined;
+    if (req.method === "GET" && url.pathname === "/") return send(res, 200, mobileDashboardPage(mobileReady, mobileUnavailable), "text/html; charset=utf-8");
     if (req.method === "POST" && url.pathname === "/api/coordinator/availability") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
       const body = await readJson(req);
@@ -318,8 +370,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       let id: string; try { id=decodeURIComponent(url.pathname.slice("/api/conversations/".length)); } catch { return send(res,400,{error:"Invalid conversation id."}); }
       const args=conversationPageSchema.safeParse({id,...(url.searchParams.has("after") ? {after:Number(url.searchParams.get("after"))} : {}),...(url.searchParams.has("limit") ? {limit:Number(url.searchParams.get("limit"))} : {})});
       if (!args.success) return send(res,400,{error:"Invalid conversation page."});
-      const db=new DatabaseSync(historyReadPath(dbPath),{readOnly:true,timeout:100});
-      try { const page=readConversation(db,args.data); return send(res,page.conversation ? 200 : 404,page); } finally { db.close(); }
+      const status=historyReadStatus(dbPath), db=new DatabaseSync(status.path,{readOnly:true,timeout:100});
+      try { const page=readConversation(db,args.data); return send(res,page.conversation ? 200 : 404,status.migration ? {...page,migration:status.migration} : page); } finally { db.close(); }
     }
     if (req.method === "GET" && url.pathname.startsWith("/api/history/")) {
       let id: string;
@@ -328,6 +380,25 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (!id || id.length > HISTORY_MAX_QUERY_CHARS) return send(res, 400, { error: "Invalid history source id." });
       const source = readHistorySource(dbPath, id);
       return source ? send(res, 200, source) : send(res, 404, { error: "No such indexed history source." });
+    }
+    if (req.method === "GET" && url.pathname === "/api/resource-slots") {
+      const slots = new ResourceSlots(opts.home);
+      try { return send(res, 200, { resources: describeResourceSlots(slots.snapshot(), loadConfig(opts.home, "other", opts.log).resourceSlots) }); }
+      finally { slots.close(); }
+    }
+    // Read-only Database inspector: bounded pages, compressed history text decoded unless raw=true.
+    if (req.method === "GET" && url.pathname === "/api/db/tables") {
+      try { return send(res, 200, inspectCatalog(opts.home)); }
+      catch (err) { return send(res, 500, { error: String((err as Error).message) }); }
+    }
+    if (req.method === "GET" && url.pathname === "/api/db/rows") {
+      const allowed = new Set(["db", "table", "offset", "limit", "filter", "raw"]);
+      if ([...url.searchParams.keys()].some((key) => !allowed.has(key) || url.searchParams.getAll(key).length !== 1)) return send(res, 400, { error: "Unknown or duplicate parameter." });
+      const offset = url.searchParams.get("offset") ?? "0", limit = url.searchParams.get("limit") ?? "100", raw = url.searchParams.get("raw");
+      if (!/^\d+$/.test(offset) || !/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > MAX_INSPECT_ROWS || (raw !== null && !["true", "false"].includes(raw))) return send(res, 400, { error: "Invalid offset, limit or raw flag." });
+      try {
+        return send(res, 200, inspectRows(opts.home, { db: url.searchParams.get("db") ?? "", table: url.searchParams.get("table") ?? "", offset: Number(offset), limit: Number(limit), filter: url.searchParams.get("filter") ?? undefined, raw: raw === "true" }));
+      } catch (err) { return send(res, (err as { status?: number }).status ?? 500, { error: String((err as Error).message) }); }
     }
     if (req.method === "GET" && url.pathname === "/api/search") {
       const allowed = new Set(["q", "project", "session", "job", "agent", "kind", "since", "until", "limit", "answer"]);
@@ -362,7 +433,14 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (req.method === "GET" && url.pathname === "/api/approvals") {
       let questions = readOwnerQuestions(opts.home);
       try { questions = await networkRequest("ownerQuestions", {}); } catch { /* Legacy brokers cannot answer; retained questions remain visible. */ }
-      return send(res, 200, { approvals: [...listPendingApprovals(opts.home).map(a => ({ ...a, kind: "permission" })), ...questions.filter(q => q.status === "open")], questions });
+      // Unanswered questions from delegated jobs to their parent (or the project main) are listed too (AB-249).
+      let jobQuestions: (JobQuestion & { kind: "job-question"; owner: string | null })[] = [];
+      try {
+        const open = openJobQuestions(dbPath);
+        const owners = open.length ? await readStoredJobsResponsive(opts.home, new Set(open.map((q) => q.job))) : new Map();
+        jobQuestions = open.map((q) => ({ ...q, kind: "job-question", owner: owners.get(q.job)?.owner ?? null }));
+      } catch (err) { opts.log.debug("job questions unavailable", { err: String(err) }); }
+      return send(res, 200, { approvals: [...listPendingApprovals(opts.home).map(a => ({ ...a, kind: "permission" })), ...questions.filter(q => q.status === "open"), ...jobQuestions], questions });
     }
     if (req.method === "POST" && url.pathname === "/api/dashboard/heartbeat") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res,403,{error:"missing header"});
@@ -406,8 +484,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       return send(res, 200, { outcome, id: approvalMatch[1], answeredBy: "dashboard", decision: body.decision });
     }
     if (req.method === "GET" && url.pathname === "/api/state") {
-      const { brokerPid, peers } = await brokerPeers(opts.pipe, token, opts.log);
-      const runs = listRuns(opts.home);
+      const { brokerPid, peers, brokerState, health } = await brokerPeers(opts.pipe, token, opts.log);
+      const runs = await listRunsResponsive(opts.home);
       const page = pageRuns(runs, null, DEFAULT_RUN_PAGE_SIZE);
       const remote = await remoteStateNow();
       const remoteStates = Object.values(remote).filter((r) => r.status === 200).map((r) => r.body as { runs: unknown[]; jobs: Record<string, unknown> });
@@ -415,6 +493,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       return send(res, 200, {
         version: APP_VERSION,
         brokerPid,
+        brokerState,
+        health,
         peers: classifyPeers(peers, runs, opts.home),
         runs: [...page.runs, ...remoteStates.flatMap((r) => r.runs)],
         runsNext: page.next,
@@ -423,7 +503,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         remoteErrors,
         messages: recentMessages(dbPath),
         // Saved next-turn settings per job (message_subagent or the dashboard may have changed them).
-        jobs: { ...Object.fromEntries([...readStoredJobs(opts.home)].map(([name, j]) => [name, { next: j.next, projectRoot: j.projectRoot, ...(j.remote ? { remote: j.remote } : {}) }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) },
+        jobs: { ...Object.fromEntries([...(await readStoredJobsResponsive(opts.home))].map(([name, j]) => [name, { next: j.next, projectRoot: j.projectRoot, ...(j.remote ? { remote: j.remote } : {}) }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) },
       });
     }
     if (req.method === "GET" && url.pathname === "/api/network") {
@@ -548,11 +628,11 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (job) {
         // A native child of a delegated job belongs to that job, not the dashboard session.
         if (!child || body.target !== "parent") return send(res, 409, { state: "not-supported", transport: "parent", text: "Direct input to this job's native subagent is not supported. Send to its parent with a note." });
-        const run = listRuns(opts.home).find((r) => r.job === name && !r.remote);
+        const run = (await listRunsResponsive(opts.home)).find((r) => r.job === name && !r.remote);
         if (!run?.by) return send(res, 409, { error: "parent job has no local owning session" });
         try {
           const sender = await getSender();
-          const result = await controlDashboardJob(sender, await jobOwner(opts.home, name, run.by, sender), name, { type: "message", body: childNote(child.id, child.title, body.body.trim()) });
+          const result = await dashboardControl(sender, await jobOwner(opts.home, name, run.by, sender), name, { type: "message", body: childNote(child.id, child.title, body.body.trim()) });
           return send(res, result.isError ? 409 : 200, { state: result.isError ? "not-supported" : "queued", transport: "parent", text: result.text });
         } catch (err) {
           if (err instanceof JobControlError) return send(res, 409, { error: err.message });
@@ -584,8 +664,13 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const to = String(body.to ?? "").trim();
       const text = String(body.body ?? "").trim();
       if (!to || !text) return send(res, 400, { error: "to and body are required" });
-      const r = await (await getSender()).send({ to, body: text });
-      return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor, replyRestrictions: r.replyRestrictions, replyGuidance: formatReplyRestrictions(r) });
+      try {
+        const r = await (await getSender()).send({ to, body: text });
+        return send(res, 200, { id: r.messages[0]?.id, deliveredTo: r.deliveredTo, queuedFor: r.queuedFor, replyRestrictions: r.replyRestrictions, replyGuidance: formatReplyRestrictions(r) });
+      } catch (err) {
+        if (err instanceof BridgeError && err.code === "bad_request") return send(res, 400, { error: err.message });
+        throw err;
+      }
     }
     if (req.method === "POST" && url.pathname === "/api/subagents/handoff") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
@@ -593,7 +678,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const parsed = handoffSchema.safeParse({ to: body.to, jobs: body.jobs, note: body.note, switch_project_main: body.switch_project_main });
       if (!parsed.success || typeof body.from !== "string" || body.from.includes("/")) return send(res, 400, { error: "An exact local source and valid handoff arguments are required." });
       try {
-        const result = await controlDashboardJob(await getSender(), body.from, "", { type: "handoff", ...parsed.data });
+        const result = await dashboardControl(await getSender(), body.from, "", { type: "handoff", ...parsed.data });
         return send(res, result.isError ? 409 : 200, result);
       } catch (err) {
         if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });
@@ -607,11 +692,11 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const run = typeof body.run === "string" ? body.run : "";
       const command = jobCommand(body);
       if (!RUN_NAME.test(`${run}.log`) || !command) return send(res, 400, { error: "a valid run and request are required" });
-      const meta = listRuns(opts.home).find((r) => r.name === run);
+      const meta = (await listRunsResponsive(opts.home)).find((r) => r.name === run);
       if (!meta) return send(res, 404, { error: "no such run" });
       if (!meta.by || !meta.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
-        const result = await controlDashboardJob(await getSender(), await jobOwner(opts.home, meta.job, meta.by, await getSender()), meta.job, command);
+        const result = await dashboardControl(await getSender(), await jobOwner(opts.home, meta.job, meta.by, await getSender()), meta.job, command);
         return send(res, result.isError ? 409 : 200, result);
       } catch (err) {
         if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });

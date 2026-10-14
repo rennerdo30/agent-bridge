@@ -1,10 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { codexTurnSandbox, delegateToCodexAppServer, innerCommand, type Steering } from "../src/core/codex-appserver.js";
+import { codexTurnSandbox, CODEX_FULL_ACCESS_APPROVAL_POLICY, delegateToCodexAppServer, innerCommand, type Steering } from "../src/core/codex-appserver.js";
 import { nullLogger } from "../src/core/logger.js";
 import { delegateToCodex } from "../src/core/delegate.js";
+import * as codexPaths from "../src/core/codex-paths.js";
+import { preferredDriveFixture } from "./preferred-drive-fixture.js";
 
 const TIMEOUT_SEC = 10;
 const FAKE_REPLY_DELAY_MS = 20;
@@ -62,6 +64,26 @@ describe("innerCommand", () => {
   });
 });
 
+it.each(["danger-full-access", "read-only"] as const)("keeps preferred prompts and physical execution distinct for %s", async (sandbox) => {
+  const dir = mkdtempSync(join(tmpdir(), "ab-path-policy-"));
+  const requests = join(dir, "requests.jsonl");
+  writeFileSync(join(dir, "app-server"), FAKE_CODEX_APPSERVER);
+  writeFileSync(join(dir, "exec"), 'const fs=require("node:fs");let text="";process.stdin.on("data",d=>text+=d);process.stdin.on("end",()=>{fs.writeFileSync("prompt.txt",text);fs.writeFileSync("cwd.txt",process.cwd());console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"done"}}));});');
+  const restore = await preferredDriveFixture();
+  const mappings = vi.spyOn(codexPaths, "resolveCodexDriveMappings").mockResolvedValue([{ alias: "X:\\", real: "Q:\\" }]);
+  try {
+    const prompt = "Write X:/future.md and read Q:/existing.md";
+    await delegateToCodex({ bin: process.execPath, cwd: dir, prompt, sandbox, timeoutSec: 10, log: nullLogger });
+    const expected = sandbox === "danger-full-access" ? "Write X:/future.md and read X:/existing.md" : "Write Q:\\future.md and read Q:/existing.md";
+    expect(readFileSync(join(dir, "prompt.txt"), "utf8")).toContain(expected);
+    expect(realpathSync.native(readFileSync(join(dir, "cwd.txt"), "utf8"))).toBe(realpathSync.native(dir));
+    await delegateToCodexAppServer({ bin: process.execPath, cwd: dir, prompt, sandbox, timeoutSec: 10, log: nullLogger, extraEnv: { AB_TEST_REQUESTS: requests } });
+    const calls = readFileSync(requests, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(calls.find((call) => call.method === "thread/start").params.cwd).toBe(realpathSync.native(dir));
+    expect(calls.find((call) => call.method === "turn/start").params.input[0].text).toContain(expected);
+  } finally { mappings.mockRestore(); restore(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 it("records native command failures even when the Codex turn recovers successfully", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ab-command-failure-"));
   writeFileSync(join(dir, "app-server"), FAKE_CODEX_APPSERVER.replace(
@@ -100,6 +122,47 @@ describe("next-turn Codex settings", () => {
         expect(turn.sandboxPolicy.type).toBe(sandbox === "danger-full-access" ? "dangerFullAccess" : sandbox === "read-only" ? "readOnly" : "workspaceWrite");
         expect(turn.input[0].text.includes("can't see devices from the sandbox")).toBe(process.platform === "win32");
       }
+    } finally {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  });
+
+  it.each(["read-only", "workspace-write", "danger-full-access"] as const)("sends identical approval policy, reviewer and sandbox on app-server start and resume for %s (AB-262)", async (sandbox) => {
+    const dir = mkdtempSync(join(tmpdir(), "ab-start-resume-policy-"));
+    const requests = join(dir, "requests.jsonl");
+    writeFileSync(join(dir, "app-server"), FAKE_CODEX_APPSERVER);
+    const run = async (sessionId: string | undefined) => {
+      writeFileSync(requests, "");
+      await delegateToCodexAppServer({ bin: process.execPath, cwd: dir, prompt: "inspect phone", sandbox, sessionId, approvalsReviewer: "auto_review", timeoutSec: 10, log: nullLogger, extraEnv: { AB_TEST_REQUESTS: requests } });
+      return readFileSync(requests, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    };
+    try {
+      const startCalls = await run(undefined);
+      const resumeCalls = await run("saved-thread");
+      const startThread = startCalls.find((call) => call.method === "thread/start").params;
+      const resumeCall = resumeCalls.find((call) => call.method === "thread/resume");
+      expect(resumeCall.params.threadId).toBe("saved-thread");
+      const { threadId: _resumeId, excludeTurns: _exclude, ...resumeThread } = resumeCall.params;
+      // thread/resume carries exactly the thread/start settings (plus its thread id): same access
+      // level resumes with the same approvalPolicy, approvalsReviewer, sandbox and config.
+      expect(resumeThread).toEqual(startThread);
+      const expectedPolicy = sandbox === "danger-full-access" ? CODEX_FULL_ACCESS_APPROVAL_POLICY : "on-request";
+      expect(startThread.approvalPolicy).toEqual(expectedPolicy);
+      // Full access never routes sandbox approvals to a reviewer model; other levels keep the setting.
+      expect(startThread.approvalsReviewer).toBe(sandbox === "danger-full-access" ? "user" : "auto_review");
+      const stripTurn = (params: any) => {
+        const { threadId: _turnThread, input: _input, ...rest } = params;
+        return rest;
+      };
+      const startTurn = stripTurn(startCalls.find((call) => call.method === "turn/start").params);
+      const resumeTurn = stripTurn(resumeCalls.find((call) => call.method === "turn/start").params);
+      expect(resumeTurn).toEqual(startTurn);
+      expect(startTurn.approvalPolicy).toEqual(expectedPolicy);
+      expect(startTurn.approvalsReviewer).toBe(startThread.approvalsReviewer);
+      const startInit = startCalls.find((call) => call.method === "initialize").params;
+      const resumeInit = resumeCalls.find((call) => call.method === "initialize").params;
+      expect(resumeInit).toEqual(startInit);
+      expect(startInit.capabilities.experimentalApi).toBe(sandbox === "danger-full-access");
     } finally {
       rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     }
@@ -208,11 +271,11 @@ rl.on("line", (line) => {
 
 describe("Codex denial explanations", () => {
   for (const askMode of [true, false]) it(`delivers reasons as live input after protocol declines (askMode=${askMode})`, async () => {
-    const root = join(process.cwd(), ".agent-bridge-test");
+    const root = process.env.AGENT_BRIDGE_TEST_ROOT!;
     mkdirSync(root, { recursive: true });
     const dir = mkdtempSync(join(root, "denials-"));
     writeFileSync(join(dir, "app-server"), `
-import { createInterface } from "node:readline";
+const { createInterface } = require("node:readline");
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 const replies = []; const reasons = [];
 function finish() {

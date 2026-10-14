@@ -1,9 +1,11 @@
 import { HistoryBackground } from "./history-background.js";
+import { NativeChildren, isNativeChildAddress } from "./native-children.js";
+import { HealthMonitor } from "./health.js";
 import { loadConfig } from "./config.js";
 import { conversationPageSchema, readConversation } from "./conversations.js";
 import { historySearchSchema } from "./history.js";
 import { ReadJournal } from "./read-journal.js";
-import { recordStorePeer, validStoreCapabilities } from "./store-compatibility.js";
+import { recordStorePeer, refreshStorePeerIdentities, validStoreCapabilities } from "./store-compatibility.js";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { isPluginCacheCwd } from "./session-visibility.js";
@@ -11,6 +13,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import {
   APP_VERSION,
   DEFAULT_MAX_HOPS,
+  HOOK_MAX_MESSAGES,
   MAX_BODY_CHARS,
   BROKER_TESTED_JOB_LOAD,
   MAX_FRAME_BYTES,
@@ -30,6 +33,7 @@ import {
   SIBLING_CONVERSATION_PREFIX,
   SIBLING_NOTE_SUFFIX,
   isQuietMessage,
+  isJobQuestion,
   type AgentKind,
   type BridgeMessage,
   type EventFrame,
@@ -43,29 +47,37 @@ import {
 } from "./protocol.js";
 import { agentQueueKey, MessageStore, registrationIdentity } from "./store.js";
 import { tokensEqual } from "./token.js";
-import { commitHandoff, handoffJournal, handoffSchema, } from "./job-handoff.js";
+import { commitHandoff, handoffJournal, handoffSchema, type HandoffReceipt } from "./job-handoff.js";
+import { setTimeout as delay } from "node:timers/promises";
 import { canControlJob, mastersFor, chooseJobRecipient, primaryFor } from "./job-ownership.js";
 import { RootConcurrency } from "./root-concurrency.js";
 import { isRecord, retentionLimit } from "./json-store.js";
 import { readArchivedJobSnapshot } from "./job-archive.js";
+import { JobArchiveBackground } from "./job-archive-background.js";
+import { indexedJobProjectionCurrent, readIndexedJobs } from "./job-archive-index.js";
 import { readJsonSnapshot, type JsonSnapshot } from "./file-cache.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
+import { projectAskCompletions } from "./ask-completion.js";
 import { isJobSendTarget, MAX_JOB_SEND_TARGETS } from "./job-messaging.js";
 import { NetworkService, type NetworkStatus } from "../network/link.js";
 import { readNetworkConfig, writeNetworkConfig, type NetworkConfig } from "../network/config.js";
 import { z } from "zod";
 import { basename, dirname, join } from "node:path";
 import { ProjectGroups } from "./project-groups.js";
-import { recoverJobRecord } from "./job-recovery.js";
+import { recoverJobRecordAsync } from "./job-recovery.js";
+import { findHistoryJob, selectHistoryJobs } from "./run-history.js";
 import { collectTransfer, receiveTransfer, type TransferResult } from "../network/files.js";
 import { cancelStoredTransfer, MAX_STREAM_ENTRIES, readTransferHistory, type TransferStarted } from "../network/transfers.js";
 import { MAX_NETWORK_HOST_CHARS, MAX_PAIRING_CODE_CHARS, MAX_PORT } from "../network/constants.js";
 import { RemoteDashboard, dashboardError } from "../network/remote-dashboard.js";
 import { RemoteJobs } from "../network/remote-jobs.js";
+import { DecisionSync } from "../network/decision-sync.js";
 import { CONTROL_CONVERSATION_PREFIX } from "../mcp/job-host.js";
+import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, decisionApplies, decisionScopeSchema, type OwnerDecision } from "./decisions.js";
 import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
 import { OwnerQuestionService, OWNER_ADDRESS } from "./owner-question-service.js";
+import { ensurePrivateSocketDirectory } from "./paths.js";
 
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
 export const PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -77,12 +89,17 @@ const PENDING_MAX_LIMIT = 500;
 const NAME_SUFFIX_LIMIT = 100;
 const MAX_FILE_ADDRESS_CHARS = 256;
 const MAX_FILE_PATH_CHARS = 1_024;
-const SIBLING_STATUSES = new Set<SiblingPeer["status"]>(["running", "done", "failed", "interrupted"]);
+const SIBLING_STATUSES = new Set<SiblingPeer["status"]>(["running", "done", "failed", "interrupted", "cancelled"]);
 const MAX_INFLIGHT_PER_CONNECTION = 128;
 const PAUSE_INFLIGHT_PER_CONNECTION = 32;
 const MAX_CONNECTION_BUFFER_BYTES = 4 * MAX_FRAME_BYTES;
+/** Allow the existing 5s OS probe budget, while staying below the 10s RPC deadline. */
+const HANDOFF_STORE_READY_MS = 5_500;
 
 type StoredSibling = SiblingPeer & { id: string; report: string | null };
+type QueueRegistration = Pick<PeerInfo, "id" | "name" | "sessionId"> & { generation: number };
+type ProjectMainIdentity = Pick<PeerInfo, "id" | "agent" | "sessionId" | "name">;
+const ownsProjectMain = (owner: ProjectMainIdentity, peer: PeerInfo) => owner.agent === peer.agent && (owner.sessionId ? owner.sessionId === peer.sessionId : owner.id === peer.id);
 
 interface Conn {
   socket: Socket;
@@ -90,6 +107,9 @@ interface Conn {
   /** Presented the right token (via hello or auth). */
   authed: boolean;
   inFlight: number;
+  mailGeneration: number;
+  /** Published only after this exact registration finished queued-mail expiry. */
+  mailReady?: QueueRegistration;
 }
 
 /** Operations allowed before a connection has authenticated. */
@@ -102,7 +122,54 @@ type Handler<O extends Op> = (conn: Conn, args: RequestMap[O][0]) => RequestMap[
  * agent-bridge MCP server bound the pipe first. It persists every message so peers that are offline,
  * or a broker hand-over, lose nothing.
  */
+
+/** A handoff commit retries a briefly held registry lease asynchronously, as long as a blocking writer would wait. */
+const HANDOFF_LOCK_WAIT_MS = 2_000;
+const HANDOFF_LOCK_RETRY_MS = 25;
 export class Broker {
+  private mobileResources?: Set<() => Promise<void>>;
+  private mobileRetiring?: boolean;
+  /** Deliberate owner-only activation, after caller validation; no change to ordinary startup. */
+  initializeMobileOwnerQuestions(): boolean {
+    if (this.closing || this.mobileRetiring || !this.server?.listening) return false;
+    this.ownerQuestions(); return true;
+  }
+  /** Explicit host-only opt-in; borrow an already-existing service, never initialize one here. */
+  mobileHostContext(): import("../mobile/host.js").MobileHostContext | undefined {
+    const service = this.questions;
+    if (!service || this.closing || this.mobileRetiring || !this.server?.listening) return undefined;
+    let live = true;
+    const home = dirname(this.store.file);
+    const ready = () => live && !this.mobileRetiring && !this.closing && !!this.server?.listening && this.questions === service;
+    const requireReady = () => { if (!ready()) throw new Error("source_unavailable"); };
+    return { home, pipe: this.pipePath, log: this.log,
+      local: { home, log: this.log, peers: () => { requireReady(); return this.dashboardPeers(); } },
+      ownerQuestions: { store: {
+        get: id => { requireReady(); return service.store.get(id); },
+        list: () => { requireReady(); return service.store.list(); },
+        answerMobile: (...args) => { requireReady(); return service.store.answerMobile(...args); },
+      }, list: () => { requireReady(); return service.list(); }, complete: q => { requireReady(); return service.complete(q); } },
+      ready,
+      onDispose: dispose => {
+        const wrapped = () => { live = false; return dispose(); };
+        (this.mobileResources ??= new Set()).add(wrapped);
+        return () => { this.mobileResources?.delete(wrapped); };
+      } };
+  }
+  private async disposeMobileResources(): Promise<void> {
+    this.mobileRetiring = true;
+    const resources = this.mobileResources; this.mobileResources = undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const work = Promise.allSettled([...resources ?? []].map(dispose => Promise.resolve().then(dispose)));
+      const settled = await Promise.race([work, new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), 5000); })]);
+      if (!settled) this.mobileDisposalDiagnostic("mobile_disposal_timeout");
+      else if (settled.some(result => result.status === "rejected")) this.mobileDisposalDiagnostic("mobile_disposal_failed");
+    } finally { if (timer) clearTimeout(timer); }
+  }
+  private mobileDisposalDiagnostic(errorCategory: "mobile_disposal_timeout" | "mobile_disposal_failed"): void {
+    try { this.log.warn("mobile shutdown requires restart", { requestId: randomUUID(), errorCategory }); } catch { /* Optional diagnostics must never block core teardown. */ }
+  }
   private questions: OwnerQuestionService | null = null;
   private ownerQuestions(): OwnerQuestionService {
     return this.questions ??= new OwnerQuestionService(dirname(this.store.file), this.store, this.log, () => this.localPeers().map(p => this.projectPeer(p)), (peer, message) => { const c = this.connByName(peer.name); if (c) this.emit(c, "message", message); }, decision => {
@@ -111,21 +178,26 @@ export class Broker {
   }
   private readonly groups: ProjectGroups;
   /** Live role selection, recomputed after broker restart; no durable ownership is rewritten. */
-  private readonly projectMains = new Map<string, string>();
+  private readonly projectMains = new Map<string, ProjectMainIdentity>();
   private readonly projectRoutes = new Map<string, import("./protocol.js").ProjectRoute>();
   private server: Server | null = null;
   private readonly conns = new Set<Conn>();
+  private readonly nativeChildren: NativeChildren;
   private historyBackground: HistoryBackground | null = null;
+  private jobArchiveBackground: JobArchiveBackground | null = null;
+  private readonly healthMonitor = new HealthMonitor();
   private historyPendingRequests = 0;
   private purgeTimer: NodeJS.Timeout | null = null;
   private pendingJobMailRoute: Promise<void> | null = null;
   private pendingJobMailRouteAgain = false;
   private pendingJobMailRetry: NodeJS.Timeout | null = null;
+  private jobMailRerouteTimer: NodeJS.Timeout | null = null;
   private closing = false;
   private requestTurn: Promise<void> = Promise.resolve();
   private network: NetworkService | null = null;
   private remoteJobs: RemoteJobs | null = null;
   private remoteDashboard: RemoteDashboard | null = null;
+  private decisionSync: DecisionSync | null = null;
   private readonly remoteProgress = new Map<string, string>();
   private networkChange: Promise<unknown> = Promise.resolve();
   private readonly handlers: { [O in Op]: Handler<O> };
@@ -144,6 +216,7 @@ export class Broker {
     private readonly networking?: { home: string; config: NetworkConfig },
   ) {
     this.groups = new ProjectGroups(jobsPath ? dirname(jobsPath) : undefined);
+    this.nativeChildren = new NativeChildren(this.store);
     this.handlers = {
       askOwner: (c,a) => {
         const peer = this.requirePeer(c);
@@ -169,6 +242,15 @@ export class Broker {
         if (c.peer && (c.peer.jobAgent || c.peer.subagent || !q?.askers.some(asker => asker.sessionId && c.peer!.sessionId ? asker.agent === c.peer!.agent && asker.sessionId === c.peer!.sessionId : asker.peerId ? asker.peerId === c.peer!.id : asker.session === c.peer!.name))) throw new BridgeError("unauthorized", "Only an asker or the owner may dismiss this question.");
         return this.ownerQuestions().store.dismiss(args.id,args.status,args.reason,args.supersededBy);
       },
+      dashboardJobSend: (c, a) => {
+        if (c.peer) {
+          this.log.warn("rejected agent dashboard job send", { from: c.peer.name });
+          throw new BridgeError("unauthorized", "Only the local owner dashboard can use dashboardJobSend.");
+        }
+        const sender = this.localPeers().find(p => p.id === a.senderId && p.agent === "other" && !p.jobAgent && !p.subagent);
+        if (!sender || a.conversationId !== DASHBOARD_JOB_CONVERSATION) throw new BridgeError("bad_request", "A local dashboard reply listener is required.");
+        return this.routeSend(c, sender, a);
+      },
       dashboardHeartbeat: (c,a) => {
         if (c.peer) throw new BridgeError("unauthorized", "Only the local dashboard reports presence.");
         const args = z.object({ tab:z.string().regex(/^[\w-]{1,80}$/), visible:z.boolean() }).strict().parse(a);
@@ -178,12 +260,29 @@ export class Broker {
         const args = z.object({ to: z.string().min(1) }).strict().parse(a);
         return this.switchProjectMain(c.peer, this.connByName(args.to)?.peer ?? undefined);
       },
-      projectJobs: (c) => {
+      projectJobs: async (c) => {
         const peer = this.requirePeer(c);
+        if (this.jobsPath && this.historyBackground) {
+          try { await this.historyBackground.reconcileAsks(); }
+          catch (error) { this.log.debug("ask reconciliation deferred; records retained", { error: String(error) }); }
+        }
         // Surviving runners may exist only in retained snapshots after an old server overwrote the registry.
         const known = new Set(this.storedJobs().map((job) => job.name));
-        for (const runner of this.conns) if (runner.peer?.jobAgent && !known.has(runner.peer.name)) this.jobForControl(peer, runner.peer.name);
-        return this.storedJobs().filter((j) => this.groups.canControl(peer, j, this.localPeers()));
+        for (const runner of this.conns) if (runner.peer?.jobAgent && !known.has(runner.peer.name)) await this.jobForControl(peer, runner.peer.name);
+        this.jobsForDispatch = null;
+        let activeIds = new Set<unknown>();
+        try {
+          const data = readJsonSnapshot(this.jobsPath!).value;
+          const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : undefined;
+          if (!rows) return [];
+          activeIds = new Set(rows.filter(isRecord).map(record => record.id));
+        }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return []; }
+        const stored = this.storedJobs();
+        const jobs = this.jobsPath && !this.historyBackground ? await projectAskCompletions(this.jobsPath, stored) : stored;
+        const retained = this.jobsPath ? selectHistoryJobs(dirname(this.jobsPath), new Set(jobs.filter(job => !activeIds.has(job.id)).map(job => String(job.name)))) : new Map();
+        return jobs.map(job => activeIds.has(job.id) ? job : { ...job, ...retained.get(String(job.name)) })
+          .filter(job => this.groups.canControl(peer, job, this.localPeers()));
       },
       coordinatorAvailability: (c, a) => {
         const args = z.object({ name: z.string().optional(), unavailable: z.boolean() }).strict().parse(a);
@@ -193,36 +292,58 @@ export class Broker {
         if (c.peer && target !== c) throw new BridgeError("unauthorized", "A session can only change its own availability.");
         return this.onUpdatePeer(target, { unavailable: args.unavailable });
       },
-      handoffSubagents: (c, a) => {
+      handoffSubagents: async (c, a) => {
         const parsed = handoffSchema.safeParse(a);
         if (!parsed.success) throw new BridgeError("bad_request", "Invalid handoff arguments.");
         const source = this.requirePeer(c);
         if (parsed.data.to.includes("/")) throw new BridgeError("bad_request", "Paired-PC handoff is not supported; choose an exact live local session name.");
-        const target = this.connByName(parsed.data.to)?.peer;
-        if (!target) throw new BridgeError("unknown_target", "The target must be an exact live local session name.");
+        const targetConn = this.connByName(parsed.data.to), target = targetConn?.peer;
+        if (!target || !targetConn) throw new BridgeError("unknown_target", "The target must be an exact live local session name.");
         if (!this.jobsPath) throw new BridgeError("bad_request", "The job registry is unavailable.");
-        if (parsed.data.switch_project_main && ((parsed.data.jobs !== "all") || !this.projectPeer(source).projectGroup || this.projectPeer(source).projectGroup !== this.projectPeer(target).projectGroup)) {
-          throw new BridgeError("unauthorized", "Switching the project main requires all jobs and a target in the same project group.");
+        const registration = (peer: PeerInfo) => ({ id: peer.id, name: peer.name, sessionId: peer.sessionId, cwd: peer.cwd });
+        const sourceRegistration = registration(source), targetRegistration = registration(target);
+        // Authentication alone does not prime this broker's foreign-PID cache.
+        // No metadata lock is held while the asynchronous OS probe is pending.
+        await this.awaitHandoffReaders(c, targetConn);
+        let receipt: HandoffReceipt;
+        for (const deadline = Date.now() + HANDOFF_LOCK_WAIT_MS; ; await delay(HANDOFF_LOCK_RETRY_MS)) {
+          this.assertHandoffRegistration(c, source, sourceRegistration);
+          this.assertHandoffRegistration(targetConn, target, targetRegistration);
+          // Project roles/grants and registry authority may have changed while
+          // waiting. Recompute them immediately before the synchronous commit.
+          this.jobsForDispatch = null;
+          if (parsed.data.switch_project_main && ((parsed.data.jobs !== "all") || !this.projectPeer(source).projectGroup || this.projectPeer(source).projectGroup !== this.projectPeer(target).projectGroup)) {
+            throw new BridgeError("unauthorized", "Switching the project main requires all jobs and a target in the same project group.");
+          }
+          try {
+            receipt = commitHandoff(this.jobsPath, source, target, parsed.data, { canControl: (job) => this.groups.canControl(source, job as unknown as Record<string, unknown>, this.localPeers()) });
+            break;
+          } catch (error) {
+            // The commit takes the registry lease without waiting, so the broker thread never blocks. Another holder
+            // keeps it only for one short read-merge-write: this broker's own history worker reconciling ask
+            // completions (same PID, so never "stale"), or a session's job manager. Retry off the thread instead
+            // of failing the handoff; nothing was written by the refused attempt.
+            if ((error as NodeJS.ErrnoException).code !== "EJOBLOCKED" || Date.now() >= deadline) throw error;
+          }
         }
-        const receipt = commitHandoff(this.jobsPath, source, target, parsed.data, { canControl: (job) => this.groups.canControl(source, job as unknown as Record<string, unknown>, this.localPeers()) });
         if (parsed.data.switch_project_main) this.switchProjectMain(source, target);
         this.jobsSnapshot = null; this.jobsForDispatch = null;
         this.applyHandoffs();
         for (const conn of this.conns) if (conn.peer) this.emit(conn, "jobs_changed", { withdrawn: conn.peer.name === source.name ? receipt.jobs.map((j) => j.id) : [] });
         return receipt;
       },
-      jobAuthority: (c, a) => {
-        const peer = this.requirePeer(c), job = this.jobForControl(peer, a.job);
+      jobAuthority: async (c, a) => {
+        const peer = this.requirePeer(c), job = this.currentJobAuthority(await this.jobForControl(peer, a.job));
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) return null;
         return job as unknown as import("../mcp/jobs.js").Job;
       },
-      jobRecipient: (c, a) => {
-        const peer = this.requirePeer(c), job = this.jobForControl(peer, a.job);
+      jobRecipient: async (c, a) => {
+        const peer = this.requirePeer(c), job = this.currentJobAuthority(await this.jobForControl(peer, a.job));
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) throw new BridgeError("unauthorized", "Only a master can inspect the job recipient.");
         return this.jobRecipient(job);
       },
       inlineJobControl: async (c, a) => {
-        const peer = this.requirePeer(c), job = this.jobForControl(peer, a.job);
+        const peer = this.requirePeer(c), job = this.currentJobAuthority(await this.jobForControl(peer, a.job));
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) throw new BridgeError("unauthorized", "Only the current supervisor can control this job.");
         if (!a.control || !["message", "title", "settings", "effort", "cancel"].includes(a.control.type)) throw new BridgeError("bad_request", "Invalid inline control.");
         if (job.host && job.status === "running") {
@@ -243,16 +364,21 @@ export class Broker {
       },
       inlineJobReport: async (c, m) => {
         const peer = this.requirePeer(c);
+        let fallback = false;
         await this.store.retryWrite(() => {
           const job = this.storedJobs().find((j) => `job:${j.id}` === m.from?.id);
           if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
           const recipient = this.jobRecipient(job);
-          const message = { ...m, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) };
+          fallback = recipient !== primaryFor(job);
+          const message = { ...m, jobControlAuthorized: undefined, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) };
           if (this.store.insertJobDelivery(message)) {
             const target = this.connByName(recipient);
             if (target && !target.peer?.unavailable) this.emit(target, "message", message);
           }
         });
+        // A report parked with a previous owner (the new primary was not live yet, e.g. mid-handoff) moves on by itself
+        // once the primary is live, instead of waiting for an unrelated session to connect.
+        if (fallback) this.scheduleJobMailReroute();
         return { saved: true };
       },
       auth: (c, a) => {
@@ -260,7 +386,7 @@ export class Broker {
         c.authed = true;
         return { brokerPid: process.pid };
       },
-      hello: async (c, a) => { const result = this.onHello(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id); if (job?.ownershipHistory) this.refreshJobPeer(job); void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) })); this.store.history.rememberPeer(c.peer!); return result; },
+      hello: async (c, a) => { const result = await this.onHello(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id); if (job?.ownershipHistory) this.refreshJobPeer(job); void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) })); this.store.history.rememberPeer(c.peer!); return result; },
       send: (c, a) => this.onSend(c, { ...a, messageId: undefined }),
       trackedSend: (c, a) => this.onTrackedSend(c, a),
       sendState: (c, a) => this.sendState(c, z.uuid().parse(a.id).toLowerCase()),
@@ -271,7 +397,10 @@ export class Broker {
         if (!parsed.success) throw new BridgeError("bad_request", "Invalid history query or filters.");
         return this.store.history.search(parsed.data);
       },
-      getConversation: (_, a) => readConversation(this.store.history.database, conversationPageSchema.parse(a)),
+      getConversation: (_, a) => {
+        const page = readConversation(this.store.history.database, conversationPageSchema.parse(a)), migration = this.store.history.legacyReadNotice;
+        return migration ? { ...page, migration } : page;
+      },
       reindexHistory: (_, a) => {
         const args = z.object({ reset: z.boolean().optional() }).strict().parse(a);
         if (this.historyBackground) return this.historyBackground.tick(args.reset);
@@ -285,17 +414,41 @@ export class Broker {
       dashboardRead: (_, a) => this.remoteDashboard?.request(a.host, a.request) ?? dashboardError("remote_offline", "Networking is unavailable."),
       siblings: (c) => this.siblingPeers(c),
       sendSibling: (c, a) => this.onSendSibling(c, a),
+      nativeChildren: (c) => this.nativeChildren.list(this.requirePeer(c)),
+      nativeChildrenEnd: async (c) => { await this.nativeChildren.endParent(this.requirePeer(c)); return { ended: true }; },
+      nativeChild: async (c, a) => {
+        const peer = this.requirePeer(c);
+        if (a.action === "start") return this.nativeChildren.start(peer, a.agentId, a.maxHops);
+        if (a.action === "grant") return this.nativeChildren.grant(peer, a.agentId, a.sendTo ?? []);
+        if (a.action !== "end") throw new BridgeError("bad_request", "Unknown native child action.");
+        await this.nativeChildren.end(peer, a.agentId);
+        this.replayMail(c, peer);
+        return null;
+      },
+      nativeChildPending: (c, a) => this.pendingMail(this.nativeChildren.own(this.requirePeer(c), a.agentId).address, HOOK_MAX_MESSAGES),
+      nativeChildAck: async (c, a) => {
+        const peer = this.requirePeer(c);
+        return { acked: await this.store.retryWrite(() => this.store.markRead(this.nativeChildren.own(peer, a.agentId).address, a.ids, this.now())) };
+      },
+      nativeChildSend: (c, a) => {
+        const child = this.nativeChildren.own(this.requirePeer(c), a.agentId);
+        return this.routeNativeSend(c, a, child.address);
+      },
       guardedSend: (c, a) => {
         if (!a.ifNoNewerThan) throw new BridgeError("bad_request", "guardedSend requires if_no_newer_than");
         return this.onSend(c, a);
       },
       messageReceipt: (c, a) => this.messageReceipt(c, a.id),
       ack: async (c, a) => ({ acked: await this.store.retryWrite(() => this.store.markRead(this.requirePeer(c).name, a.ids ?? [], this.now())) }),
-      pending: (c, a) =>
-        this.pendingMail(this.requirePeer(c).name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)),
-      updatePeer: (c, a) => { const peer = this.onUpdatePeer(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === peer.id); if (job?.ownershipHistory) this.refreshJobPeer(job); this.store.history.rememberPeer(peer); return peer; },
+      pending: (c, a) => {
+        const peer = this.requirePeer(c);
+        return this.queueReady(c, peer) ? this.pendingMail(peer.name, Math.min(Math.max(1, a.limit ?? PENDING_DEFAULT_LIMIT), PENDING_MAX_LIMIT)) : [];
+      },
+      updatePeer: async (c, a) => { const peer = await this.onUpdatePeer(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === peer.id); if (job?.ownershipHistory) this.refreshJobPeer(job); this.store.history.rememberPeer(peer); return peer; },
       claimMail: (c, a) => this.onClaimMail(c, a),
-      ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION, brokerVersion: APP_VERSION }),
+      health: () => this.healthMonitor.snapshot(APP_VERSION, this.historyBackground?.status() ?? null, this.store.backupStatus()),
+      ping: () => ({ brokerPid: process.pid, protocol: PROTOCOL_VERSION, brokerVersion: APP_VERSION,
+        health: this.healthMonitor.snapshot(APP_VERSION, this.historyBackground?.status() ?? null, this.store.backupStatus()) }),
       networkStatus: () => this.network?.status() ?? { enabled: false, config: this.networking?.config, discovered: [], paired: [] },
       remoteJob: async (c, a) => {
         const peer = this.requirePeer(c);
@@ -356,23 +509,80 @@ export class Broker {
     return new Promise((resolve, reject) => {
       const server = createServer((socket) => this.accept(socket));
       const onError = (err: Error) => {
-        server.removeListener("listening", onListening);
+        server.removeListener("listening", listening);
         reject(err);
+      };
+      /** Optional services: a failure is logged and the broker keeps serving without them (AB-223, AB-239). */
+      const optional = (what: string, step: () => void) => {
+        try { step(); } catch (err) { this.log.warn(`broker startup: ${what} failed; continuing without it`, { err: String(err) }); }
       };
       const onListening = async () => {
         server.removeListener("error", onError);
         server.on("error", (err) => this.log.error("broker server error", { err }));
         this.server = server;
-        this.applyHandoffs();
+        try {
+          await this.startServices(optional);
+          resolve();
+        } catch (err) {
+          // Never leave a bound, half-started broker behind or an unhandled rejection: release the endpoint and let
+          // election retry. The caller owns (and closes) the store.
+          this.log.error("broker startup failed; releasing the endpoint", { err: String(err) });
+          await this.abortStartup().catch((closeErr) => this.log.warn("broker startup cleanup failed", { err: String(closeErr) }));
+          reject(err);
+        }
+      };
+      const listening = () => { void onListening(); };
+      server.once("error", onError);
+      server.once("listening", listening);
+      ensurePrivateSocketDirectory(this.pipePath);
+      server.listen(this.pipePath);
+    });
+  }
+
+  /** Undo a failed listen(): background services, timers and the bound server; the store stays open for its owner. */
+  private async abortStartup(): Promise<void> {
+    this.healthMonitor.close();
+    if (this.purgeTimer) clearInterval(this.purgeTimer);
+    this.purgeTimer = null;
+    if (this.mobileResources) await this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed"));
+    this.questions?.close(); this.questions = null;
+    await this.historyBackground?.close().catch(() => {});
+    this.historyBackground = null;
+    await this.jobArchiveBackground?.close().catch(() => {});
+    this.jobArchiveBackground = null;
+    await this.store.closeBackups().catch(() => {});
+    this.remoteDashboard?.close(); this.remoteDashboard = null;
+    this.remoteJobs?.close(); this.remoteJobs = null;
+    this.decisionSync?.close(); this.decisionSync = null;
+    await this.network?.close().catch(() => {});
+    this.network = null;
+    for (const c of this.conns) c.socket.destroy();
+    this.conns.clear();
+    const server = this.server;
+    this.server = null;
+    if (server) await new Promise<void>((r) => server.close(() => r()));
+  }
+
+  private async startServices(optional: (what: string, step: () => void) => void): Promise<void> {
+        await this.nativeChildren.recover();
+        if (this.jobsPath && this.store.file !== ":memory:") optional("job archive worker", () => { this.jobArchiveBackground = new JobArchiveBackground(this.jobsPath!, this.log); });
+        optional("backups", () => this.store.startBackups());
+        this.healthMonitor.start();
+        optional("handoff replay", () => this.applyHandoffs());
         this.purgeTimer = setInterval(() => this.purge(), PURGE_INTERVAL_MS);
         this.purgeTimer.unref();
-        if (this.store.file !== ":memory:" && loadConfig(dirname(this.store.file), "other", this.log).history.ingest) {
-          this.historyBackground = new HistoryBackground(this.store.file, this.log);
+        // Config toggles pause the monitor and later resume its durable cursors.
+        // The environment kill switch intentionally disables even the worker.
+        if (this.store.file !== ":memory:" && !["false", "0"].includes(process.env.AGENT_BRIDGE_HISTORY_INGEST ?? "")) optional("history worker", () => {
+          const history = new HistoryBackground(this.store.file, this.log);
+          this.historyBackground = history;
           this.store.historyPeerSink = (peer) => this.historyBackground?.rememberPeer(peer);
-        }
+          this.store.historyMessageSink = () => this.historyBackground?.messageArrived();
+          void history.reconcileAsks().catch(error => this.log.debug("startup ask reconciliation deferred", { error: String(error) }));
+        });
         this.purge();
         this.log.info("broker listening", { pipe: this.pipePath });
-        if (this.store.file !== ":memory:" && existsSync(join(dirname(this.store.file),QUESTIONS_FILE))) this.ownerQuestions();
+        if (this.store.file !== ":memory:" && existsSync(join(dirname(this.store.file),QUESTIONS_FILE))) optional("owner questions", () => { this.ownerQuestions(); });
         // Another broker may have enabled or changed pairing since this session started.
         if (this.networking) this.networking.config = readNetworkConfig(this.networking.home, this.networking.config);
         if (this.networking?.config.enabled) {
@@ -390,33 +600,37 @@ export class Broker {
             this.remoteDashboard = null;
             this.remoteJobs?.close();
             this.remoteJobs = null;
+            this.decisionSync?.close();
+            this.decisionSync = null;
             await this.network?.close();
             this.network = null;
             this.log.warn("networking could not start; local broker remains available", { message: (err as Error).message });
           }
         }
-        resolve();
-      };
-      server.once("error", onError);
-      server.once("listening", onListening);
-      server.listen(this.pipePath);
-    });
   }
 
   async close(): Promise<void> {
+    this.healthMonitor.close();
     this.closing = true;
+    if (this.mobileResources) await this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed"));
     this.questions?.close(); this.questions = null;
     this.store.stopWrites();
     if (this.pendingJobMailRetry) clearTimeout(this.pendingJobMailRetry);
+    if (this.jobMailRerouteTimer) { clearTimeout(this.jobMailRerouteTimer); this.jobMailRerouteTimer = null; }
     this.pendingJobMailRetry = null;
     await this.historyBackground?.close();
+    await this.jobArchiveBackground?.close();
+    this.jobArchiveBackground = null;
     this.historyBackground = null;
+    await this.store.closeBackups();
     if (this.purgeTimer) clearInterval(this.purgeTimer);
     await this.networkChange;
     this.remoteDashboard?.close();
     this.remoteDashboard = null;
     this.remoteJobs?.close();
     this.remoteJobs = null;
+    this.decisionSync?.close();
+    this.decisionSync = null;
     await this.network?.close();
     this.network = null;
     for (const c of this.conns) c.socket.destroy();
@@ -437,6 +651,8 @@ export class Broker {
     this.remoteDashboard = null;
     this.remoteJobs?.close();
     this.remoteJobs = null;
+    this.decisionSync?.close();
+    this.decisionSync = null;
     await this.network?.close();
     this.network = null;
     this.networking.config = config;
@@ -456,6 +672,12 @@ export class Broker {
 
   private installRemoteJobs(service: NetworkService): void {
     this.remoteDashboard = new RemoteDashboard(service, { home: this.networking!.home, log: this.log, peers: () => this.dashboardPeers() });
+    this.decisionSync = new DecisionSync(service, {
+      globalDecisions: () => this.store.decisions.list({ scope: "all", history: true })
+        .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1)),
+      importDecision: (decision) => this.store.decisions.importSync(decision),
+      notifyDecision: (decision) => { this.notifyDecision(decision); },
+    }, this.log);
     this.remoteJobs = new RemoteJobs(service, this.networking!.home, this.log, async (record, control) => {
       this.receiveRemote({ id: randomUUID(), from: { id: record.owner, name: record.owner, agent: "other" },
         to: record.name, recipient: record.name, conversationId: `${CONTROL_CONVERSATION_PREFIX}${record.id}`,
@@ -464,16 +686,17 @@ export class Broker {
   }
 
   private purge(): void {
+    this.jobArchiveBackground?.repack();
     try {
       const ttl = retentionLimit("AGENT_BRIDGE_MESSAGE_TTL_MS", MESSAGE_TTL_MS);
-      if (ttl) this.store.purgeOlderThan(this.now() - ttl);
+      if (ttl) this.store.schedulePurgeOlderThan(this.now() - ttl);
     } catch (err) {
       this.log.warn("purge failed", { err });
     }
   }
 
   private accept(socket: Socket): void {
-    const conn: Conn = { socket, peer: null, authed: false, inFlight: 0 };
+    const conn: Conn = { socket, peer: null, authed: false, inFlight: 0, mailGeneration: 0 };
     this.conns.add(conn);
     socket.setEncoding("utf8");
     const decoder = new FrameDecoder(MAX_FRAME_BYTES);
@@ -511,6 +734,7 @@ export class Broker {
     socket.on("close", () => {
       this.conns.delete(conn);
       if (conn.peer) {
+        void this.nativeChildren.endParent(conn.peer).catch(err => this.log.warn("native child fallback deferred", { err: String(err) }));
         if (!this.closing && !conn.peer.jobAgent && !conn.peer.subagent) {
           const name = conn.peer.name, at = this.now();
           void this.store.retryWrite(() => {
@@ -525,9 +749,12 @@ export class Broker {
   }
 
   private async dispatch(conn: Conn, frame: RequestFrame): Promise<void> {
-    const countsPressure = frame.op !== "reindexHistory";
+    this.healthMonitor.start();
+    // In-memory probes must not pause background work just to observe its status.
+    const countsPressure = !["reindexHistory", "health", "ping"].includes(frame.op);
     if (countsPressure) this.historyPendingRequests++;
     this.historyBackground?.pressure(this.historyPendingRequests > 0);
+    this.store.backupPressure(this.historyPendingRequests > 0);
     const handler = this.handlers[frame.op] as Handler<Op> | undefined;
     try {
       if (!handler) throw new BridgeError("bad_request", `unknown op: ${String(frame.op)}`);
@@ -542,14 +769,19 @@ export class Broker {
       const result = await handler(conn, (frame.args ?? {}) as never);
       this.write(conn, { t: "res", id: frame.id, ok: true, result });
     } catch (err) {
-      if (isSqliteBusy(err)) this.historyBackground?.pressure(true, true);
+      if (isSqliteBusy(err)) {
+        this.historyBackground?.pressure(true, true);
+        this.store.backupPressure(true, true);
+      }
       const be = err instanceof BridgeError ? err : new BridgeError("internal", String((err as Error)?.message ?? err));
+      if (be.code === "internal" || isSqliteBusy(err)) this.healthMonitor.error(frame.op, isSqliteBusy(err) ? "store_busy" : be.code);
       if (be.code === "internal") this.log.error("request failed", { op: frame.op, err });
       else this.log.debug("request rejected", { op: frame.op, code: be.code, message: be.message });
       this.write(conn, { t: "res", id: frame.id, ok: false, error: be.toPayload() });
     } finally {
       if (countsPressure) this.historyPendingRequests--;
       this.historyBackground?.pressure(this.historyPendingRequests > 0);
+      this.store.backupPressure(this.historyPendingRequests > 0);
     }
   }
 
@@ -574,14 +806,17 @@ export class Broker {
    * Honour stream backpressure so a large retained inbox is not repeatedly disconnected on replay.
    */
   private replayMail(conn: Conn, peer: PeerInfo, before?: () => void): void {
+    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: conn.mailGeneration };
+    const current = () => this.queueReady(conn, peer) && conn.mailGeneration === registration.generation && !conn.socket.destroyed && conn.peer === peer && peer.id === registration.id &&
+      peer.name === registration.name && peer.sessionId === registration.sessionId && this.connByName(registration.name) === conn;
     setImmediate(() => {
-      if (conn.socket.destroyed || conn.peer !== peer) return;
+      if (!current()) return;
       try {
         before?.();
         const mail = this.unreadMail(peer.name, PENDING_MAX_LIMIT);
         let at = 0;
         const pump = () => {
-          if (conn.socket.destroyed || conn.peer !== peer) return;
+          if (!current()) return;
           while (at < mail.length) {
             const m = mail[at++]!;
             // Availability may change after hello scheduled this replay, or while a
@@ -599,7 +834,8 @@ export class Broker {
   }
 
   private emit<E extends EventName>(conn: Conn, ev: E, data: EventMap[E]): void {
-    const frame: EventFrame<E> = { t: "evt", ev, data };
+    const publicData = ev === "peer_joined" || ev === "peer_left" ? this.publicPeer(data as PeerInfo) as EventMap[E] : data;
+    const frame: EventFrame<E> = { t: "evt", ev, data: publicData };
     this.write(conn, frame as EventFrame);
   }
 
@@ -614,7 +850,15 @@ export class Broker {
 
   /** Local sessions and paired remote peers; local job runners stay hidden (see job-host.ts). */
   private livePeers(): PeerInfo[] {
-    return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []).filter((p) => !isPluginCacheCwd(p.cwd));
+    return this.localPeers().filter((p) => !p.jobAgent).map((p) => this.projectPeer(p)).concat(this.network?.peers() ?? []).filter((p) => !isPluginCacheCwd(p.cwd)).map(peer => this.publicPeer(peer));
+  }
+
+  /** The node's own registration is authoritative. Legacy observers must not
+   * concurrently republish foreign explicit records without creation identity.
+   */
+  private publicPeer(peer: PeerInfo): PeerInfo {
+    const { storeCapabilities: _privateCapabilities, ...publicPeer } = peer;
+    return publicPeer;
   }
 
   private localPeers(): PeerInfo[] { return [...this.conns].flatMap((c) => c.peer ? [c.peer] : []); }
@@ -624,25 +868,36 @@ export class Broker {
     if (!key || peer.jobAgent || peer.subagent) return decorated;
     const members = this.localPeers().filter((p) => !p.jobAgent && !p.subagent && this.groups.decorate(p).projectGroup === key)
       .sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name));
-    let main = this.projectMains.get(key);
-    if (!members.some((p) => p.name === main)) { main = members[0]?.name; if (main) this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, main); }
-    return { ...decorated, projectMain: main === peer.name, projectAddress: `project:${basename(decorated.projectRoot!)}`, projectRoute: this.projectRoutes.get(key) };
+    let main = members.find(p => this.projectMains.has(key) && ownsProjectMain(this.projectMains.get(key)!, p));
+    if (!main) { main = members[0]; if (main) this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, main); }
+    return { ...decorated, projectMain: main?.id === peer.id, projectAddress: `project:${basename(decorated.projectRoot!)}`, projectRoute: this.projectRoutes.get(key) };
   }
 
   private switchProjectMain(source: PeerInfo | null | undefined, target: PeerInfo | undefined): PeerInfo {
     if (!target || target.jobAgent || target.subagent || target.host) throw new BridgeError("bad_request", "Choose a live local project master.");
     const peer = this.projectPeer(target);
     if (!peer.projectGroup || source && (source.jobAgent || this.projectPeer(source).projectGroup !== peer.projectGroup)) throw new BridgeError("unauthorized", "Only a master of this project may switch its main session.");
-    this.recordProjectMain(peer.projectGroup, peer.projectAddress!, peer.name);
+    this.recordProjectMain(peer.projectGroup, peer.projectAddress!, target);
     return this.projectPeer(target);
   }
 
-  private recordProjectMain(key: string, address: string, main: string): void {
-    const previous = this.projectMains.get(key);
-    if (previous === main) return;
+  private recordProjectMain(key: string, address: string, peer: PeerInfo): void {
+    const old = this.projectMains.get(key);
+    if (old && ownsProjectMain(old, peer)) { this.transferProjectMain(old, peer); return; }
+    const previous = old?.name, main = peer.name;
     const route = { address, main, since: this.now(), previous };
-    this.projectMains.set(key, main); this.projectRoutes.set(key, route);
+    this.projectMains.set(key, { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name }); this.projectRoutes.set(key, route);
     if (previous) void this.notifyProjectMainChange(route).catch((err) => this.log.warn("project main notice deferred", { err: String(err) }));
+  }
+
+  /** Only an owning live connection (or an exact reconnect) may carry its role across resume/rename. */
+  private transferProjectMain(old: ProjectMainIdentity, peer: PeerInfo): void {
+    for (const [key, main] of this.projectMains) {
+      if (main.agent !== old.agent || (main.sessionId ? main.sessionId !== old.sessionId : main.id !== old.id)) continue;
+      this.projectMains.set(key, { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name });
+      const route = this.projectRoutes.get(key);
+      if (route) this.projectRoutes.set(key, { ...route, main: peer.name });
+    }
   }
 
   private async notifyProjectMainChange(route: import("./protocol.js").ProjectRoute): Promise<void> {
@@ -714,6 +969,18 @@ export class Broker {
     void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
   }
 
+  /** Rerun job mail routing a few times (250 ms up to 10 s) after a report went to a fallback recipient. */
+  private scheduleJobMailReroute(delays: readonly number[] = [250, 1_000, 3_000, 10_000]): void {
+    if (this.closing || this.jobMailRerouteTimer || !delays.length) return;
+    this.jobMailRerouteTimer = setTimeout(() => {
+      this.jobMailRerouteTimer = null;
+      if (this.closing) return;
+      void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }))
+        .finally(() => this.scheduleJobMailReroute(delays.slice(1)));
+    }, delays[0]);
+    this.jobMailRerouteTimer.unref();
+  }
+
   routePendingJobMail(): Promise<void> {
     if (this.closing) return Promise.resolve();
     this.pendingJobMailRouteAgain = true;
@@ -775,9 +1042,17 @@ export class Broker {
     } while (this.pendingJobMailRouteAgain && !this.closing);
   }
 
-  private jobRecipient(job: Record<string, unknown>): string {
+  private jobRecipient(job: Record<string, unknown>, question = false): string {
     if (typeof job.parentJob === "string" && this.connByName(job.parentJob)?.peer?.jobAgent) return job.parentJob;
-    return chooseJobRecipient(job, this.localPeers(), this.groups.members(job, this.localPeers()));
+    const local = this.localPeers(), members = this.groups.members(job, local);
+    const chosen = chooseJobRecipient(job, local, members);
+    // AB-249: a job's question to a parent that is not connected goes to the project's current main session.
+    const parent = question ? this.connByName(primaryFor(job))?.peer : undefined;
+    if (question && (!parent || parent.unavailable)) {
+      const main = members.map((p) => this.projectPeer(p)).find((p) => p.projectMain && !p.unavailable);
+      if (main) return main.name;
+    }
+    return chosen;
   }
 
   private jobConversation(job: Record<string, unknown>, recipient: string, conversationId: string): string {
@@ -802,16 +1077,67 @@ export class Broker {
     return [...this.conns].filter((c) => c !== conn && c.peer?.jobAgent && (!target || c.peer.name === target) && (this.sameJobFamily(peer, c.peer, jobs) || this.sharedJobs(peer, c.peer, jobs) || peer.jobSendTo?.includes(c.peer.name)));
   }
 
-  private jobForControl(peer: PeerInfo, ref: string): Record<string, unknown> | undefined {
-    const known = this.storedJobs().find((j) => j.name === ref || j.id === ref);
-    if (known?.remote || (isRecord(known?.host) && Date.now() - Number(known.host.startedAt) < 30_000)) return known;
+  private async jobForControl(peer: PeerInfo, ref: string): Promise<Record<string, unknown> | undefined> {
+    let known = this.storedJobs().find((j) => j.name === ref || j.id === ref);
+    let active = false;
+    if (known && this.jobsPath) {
+      try {
+        if (indexedJobProjectionCurrent(this.jobsPath)) {
+          const selected = readIndexedJobs(this.jobsPath, { ids: new Set([String(known.id)]), active: true }).jobs[0];
+          active = Boolean(selected);
+          if (selected) known = selected;
+        } else {
+        const data = readJsonSnapshot(this.jobsPath).value;
+        const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : [];
+        active = rows.some(record => isRecord(record) && record.id === known!.id);
+        }
+      } catch { /* Unknown registry reads cannot authorize a stale archive fast path. */ }
+    }
+    if (active && (known?.remote || (isRecord(known?.host) && Date.now() - Number(known.host.startedAt) < 30_000))) return known;
     // A connected inline executor is the only source of its runtime controller.
-    if (known?.status === "running" && !known.host && this.connByName(String(known.executionOwner ?? known.owner))) return known;
-    const recovered = this.jobsPath ? recoverJobRecord(dirname(this.jobsPath), ref) : undefined;
-    if (!recovered || !this.groups.canControl(peer, recovered as unknown as Record<string, unknown>, this.localPeers())) return known;
+    if (active && known?.status === "running" && !known.host && this.connByName(String(known.executionOwner ?? known.owner))) return known;
+    const recovered = this.jobsPath ? await recoverJobRecordAsync(dirname(this.jobsPath), ref) : undefined;
+    const current = this.storedJobs().find((j) => j.name === ref || j.id === ref);
+    if (!recovered) return typeof current?.prompt === "string" && typeof current.owner === "string" ? current : undefined;
+    if (!this.groups.canControl(peer, recovered as unknown as Record<string, unknown>, this.localPeers())) return current;
     this.recoveredJobs.set(recovered.id, recovered as unknown as Record<string, unknown>);
     this.jobsSnapshot = null; this.jobsForDispatch = null;
     return recovered as unknown as Record<string, unknown>;
+  }
+
+  /** Synchronous authorization fence after the handler's final await. Never use
+   * an earlier generation or stale grants for a control/routing side effect. */
+  private currentJobAuthority(job: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+    if (!job || typeof job.id !== "string" || !this.jobsPath) return undefined;
+    let active: Record<string, unknown> | undefined;
+    try {
+      if (indexedJobProjectionCurrent(this.jobsPath)) {
+        active = readIndexedJobs(this.jobsPath, { ids: new Set([job.id]), active: true }).jobs[0];
+      } else {
+      const data = readJsonSnapshot(this.jobsPath).value;
+      const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : undefined;
+      if (!rows) return undefined;
+      active = rows.filter(isRecord).findLast(record => record.id === job.id);
+      }
+    }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined; }
+    this.jobsForDispatch = null;
+    const current = active ?? findHistoryJob(dirname(this.jobsPath), String(job.name), job.id) ?? this.storedJobs().find(record => record.id === job.id);
+    if (!current) return undefined;
+    for (const key of ["id", "name", "agent", "startedAt", "sessionId", "threadId"]) {
+      if (current[key] !== undefined && current[key] !== null && current[key] !== job[key]) return undefined;
+    }
+    const latest = { ...job };
+    for (const key of ["owner", "supervisor", "executionOwner", "rootName", "rootSession", "parentJob", "masters", "ownershipHistory", "remote", "projectRoot", "args"]) {
+      // A retained label-only record can have its owner recovered from the exact header.
+      if ((key === "owner" || key === "args") && current[key] === undefined) continue;
+      // An archive may predate context/grant fields recovered from its run/spec.
+      // Active rows are authoritative about grants removed by a newer handoff.
+      if (!active && !(key in current)) continue;
+      latest[key] = current[key];
+    }
+    if (typeof current.prompt === "string") latest.prompt = current.prompt;
+    return latest;
   }
 
   private storedJobs(): Record<string, unknown>[] {
@@ -820,7 +1146,15 @@ export class Broker {
     // Share that snapshot until the next microtask, without a timer-based stale window.
     if (this.jobsForDispatch) return this.jobsForDispatch;
     try {
-      const active = readJsonSnapshot(this.jobsPath), archive = readArchivedJobSnapshot(this.jobsPath);
+      const archive = readArchivedJobSnapshot(this.jobsPath, { metadata: true });
+      if (indexedJobProjectionCurrent(this.jobsPath, archive.signature)) {
+        // A recovered record only stands in for a job the store does not list. Once the store lists it, the
+        // stored record wins: a recovery cached before a handoff must not keep routing to the previous owner.
+        const stored = new Set(archive.jobs.map((job) => job.id).filter((id): id is string => typeof id === "string"));
+        for (const id of stored) this.recoveredJobs.delete(id);
+        return [...this.recoveredJobs.values(), ...archive.jobs];
+      }
+      const active = readJsonSnapshot(this.jobsPath);
       if (this.jobsSnapshot?.active === active && this.jobsSnapshot.archive === archive.signature) {
         this.jobsForDispatch = this.jobsSnapshot.records;
         queueMicrotask(() => { this.jobsForDispatch = null; });
@@ -875,10 +1209,17 @@ export class Broker {
       peers.set(p.name, { name: p.name, title: p.jobTitle ?? "", agent: p.jobAgent!, status: previous?.status ?? "running",
         ...(previous?.finishedAt !== undefined ? { finishedAt: previous.finishedAt } : {}) });
     }
+    const caller = this.requirePeer(conn);
+    for (const parent of this.conns) if (parent.peer) {
+      for (const child of this.nativeChildren.list(parent.peer)) {
+        if (this.nativeAllowed(this.nativeChildren.target(child.address), caller.name)) peers.set(child.address, { name: child.address, title: "Native Claude child", agent: "claude", status: "running" });
+      }
+    }
     return [...peers.values()];
   }
 
   private async onSendSibling(conn: Conn, args: RequestMap["sendSibling"][0]): Promise<RequestMap["sendSibling"][1]> {
+    if (isNativeChildAddress(args.to)) return this.routeNativeSend(conn, args);
     const sender = this.requirePeer(conn);
     const dedupeKey = args.dedupeKey ? `${SIBLING_CONVERSATION_PREFIX}${args.dedupeKey}` : undefined;
     const key = dedupeKey ? `${sender.id}:${dedupeKey}` : null;
@@ -969,12 +1310,8 @@ export class Broker {
     if (!parsed.success) throw new BridgeError("bad_request", "Invalid decision topic, text or scope.");
     if (parsed.data.sourceMessageId && !this.store.byId(parsed.data.sourceMessageId)) throw new BridgeError("bad_request", "Source message does not exist.");
     const decision = this.store.decisions.record({ ...parsed.data, scope: parsed.data.scope ?? { project: peer.cwd } }, { id: peer.id, name: peer.name, agent: peer.agent }, this.now());
-    const deliveredTo: string[] = [];
-    for (const c of this.conns) {
-      if (!c.peer || c.peer.jobAgent || !decisionApplies(decision, c.peer)) continue;
-      const message = this.queueDecision(decision, c.peer);
-      if (message) { this.emit(c, "message", message); deliveredTo.push(c.peer.name); }
-    }
+    const deliveredTo = this.notifyDecision(decision);
+    this.decisionSync?.announce(decision);
     return { decision, deliveredTo };
   }
 
@@ -992,7 +1329,18 @@ export class Broker {
     return `${peer.agent}:${peer.sessionId ?? peer.id}`;
   }
 
-  private queueDecision(decision: OwnerDecision, peer: PeerInfo): BridgeMessage | null {
+  /** Deliver one decision notification per local session; receipts make redelivery a no-op. */
+  private notifyDecision(decision: Omit<OwnerDecision, "current">): string[] {
+    const deliveredTo: string[] = [];
+    for (const c of this.conns) {
+      if (!c.peer || c.peer.jobAgent || !decisionApplies(decision, c.peer)) continue;
+      const message = this.queueDecision(decision, c.peer);
+      if (message) { this.emit(c, "message", message); deliveredTo.push(c.peer.name); }
+    }
+    return deliveredTo;
+  }
+
+  private queueDecision(decision: Omit<OwnerDecision, "current">, peer: PeerInfo): BridgeMessage | null {
     const message: BridgeMessage = {
       id: randomUUID(), from: decision.author, to: peer.name, recipient: peer.name,
       conversationId: `decision-${decision.id}`, replyTo: decision.sourceMessageId, hop: DECISION_MESSAGE_HOP,
@@ -1024,7 +1372,7 @@ export class Broker {
     }
   }
 
-  private onHello(conn: Conn, args: RequestMap["hello"][0]): RequestMap["hello"][1] {
+  private async onHello(conn: Conn, args: RequestMap["hello"][0]): Promise<RequestMap["hello"][1]> {
     this.checkAuth(args.protocol, args.token);
     conn.authed = true;
     const p = args.peer;
@@ -1033,10 +1381,10 @@ export class Broker {
     }
     if (conn.peer) throw new BridgeError("bad_request", "already registered");
     if (isPluginCacheCwd(String(p.cwd ?? ""))) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
-    const name = this.uniqueName(p.name);
+    if (p.subagent && !p.jobAgent) throw new BridgeError("bad_request", "Native subagents cannot register as top-level bridge sessions.");
     const peer: PeerInfo = {
       id: String(p.id),
-      name,
+      name: p.name,
       agent: p.agent,
       cwd: String(p.cwd ?? ""),
       pid: Number(p.pid),
@@ -1064,19 +1412,35 @@ export class Broker {
       } : {}),
     };
     if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
+    // Recover the identity before allocating a name. Arrival order cannot swap an
+    // established suffixed session with another session's base name on reconnect.
+    const identity = registrationIdentity(peer);
+    const liveOwner = this.localPeers().find(old => old.agent === peer.agent && (peer.sessionId ? old.sessionId === peer.sessionId :
+      (old.pid !== peer.pid || old.id === peer.id) && identity && identity === registrationIdentity(old)));
+    const remembered = this.store.namesFor(peer).find(name => name.replace(/-\d+$/, "") === p.name.replace(/-\d+$/, "") && !this.connByName(name));
+    peer.name = liveOwner?.name ?? this.uniqueName(remembered ?? p.name);
     this.store.rememberSession(peer, this.now());
     conn.peer = peer;
-    if (this.jobsPath) recordStorePeer(dirname(this.jobsPath), peer);
-    this.replaceStale(conn, peer);
-    this.restoreNames(conn, peer, { reclaim: true, replay: false });
-    this.expireStaleQueue(peer.name);
+    const aliases = this.replaceStale(conn, peer);
+    aliases.push(...this.restoreNames(peer, true));
+    if (this.jobsPath) recordStorePeer(dirname(this.jobsPath), peer, { authoritative: true });
+    const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: ++conn.mailGeneration };
+    conn.mailReady = undefined;
+    await this.expireStaleQueue(peer.name);
+    this.assertQueueRegistration(conn, peer, registration);
+    await this.claimQueueAliases(conn, peer, registration, aliases);
     // A job runner is no session of its agent kind: it never takes mail waiting for "any <agent>".
     let claimed = 0;
     if (!peer.jobAgent) {
-      this.expireStaleQueue(agentQueueKey(peer.agent));
-      claimed = this.store.claim(agentQueueKey(peer.agent), peer.name);
+      await this.expireStaleQueue(agentQueueKey(peer.agent));
+      claimed = await this.store.retryWrite(() => {
+        this.assertQueueRegistration(conn, peer, registration);
+        return this.store.claim(agentQueueKey(peer.agent), peer.name);
+      });
     }
-    this.log.info("peer joined", { name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
+    this.assertQueueRegistration(conn, peer, registration);
+    conn.mailReady = registration;
+    this.log.info("peer joined", { name: peer.name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
     this.replayMail(conn, peer, () => { this.queueCurrentDecisions(peer); });
@@ -1087,15 +1451,22 @@ export class Broker {
    * Mail sent to a "-N" stand-in of this peer's name (a reload ran the session under it briefly) moves to the
    * peer. Only names of that form, and only while no one holds them: another session's mail stays its own.
    */
-  private onClaimMail(conn: Conn, args: RequestMap["claimMail"][0]): { moved: number } {
+  private async onClaimMail(conn: Conn, args: RequestMap["claimMail"][0]): Promise<{ moved: number }> {
     const peer = this.requirePeer(conn);
+    const registration = conn.mailReady;
+    if (!registration || !this.queueReady(conn, peer)) throw new BridgeError("unauthorized", "Queued mail registration is not ready; retry after registration completes.");
     const base = peer.name.replace(/-\d+$/, "");
     let moved = 0;
     for (const name of new Set(args.names ?? [])) {
       const standIn = name !== peer.name && (name === base || (name.startsWith(`${base}-`) && /^\d+$/.test(name.slice(base.length + 1))));
       if (!standIn || this.connByName(name)) continue;
-      moved += this.store.claim(name, peer.name);
+      await this.expireStaleQueue(name);
+      moved += await this.store.retryWrite(() => {
+        this.assertQueueRegistration(conn, peer, registration);
+        return this.connByName(name) ? 0 : this.store.claim(name, registration.name);
+      });
     }
+    this.assertQueueRegistration(conn, peer, registration);
     if (moved) {
       this.log.info("mail of a stand-in name moved to its session", { to: peer.name, moved });
       this.replayMail(conn, peer);
@@ -1103,14 +1474,18 @@ export class Broker {
     return { moved };
   }
 
-  private onUpdatePeer(conn: Conn, args: RequestMap["updatePeer"][0]): PeerInfo {
+  private async onUpdatePeer(conn: Conn, args: RequestMap["updatePeer"][0]): Promise<PeerInfo> {
     if (typeof args.cwd === "string" && isPluginCacheCwd(args.cwd)) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     const peer = this.requirePeer(conn);
+    const previousIdentity = { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name };
+    const previousName = peer.name;
+    if (args.sessionId !== undefined && args.sessionId !== peer.sessionId || args.name !== undefined && args.name !== peer.name) await this.nativeChildren.endParent(peer);
+    const aliases: string[] = [];
+    let replay = args.unavailable === false;
     if (args.unavailable !== undefined) {
       if (peer.jobAgent || typeof args.unavailable !== "boolean") throw new BridgeError("bad_request", "Only masters can change availability.");
       peer.unavailable = args.unavailable;
       void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) }));
-      if (!peer.unavailable) this.replayMail(conn, peer);
     }
     if (peer.jobOwner) {
       if (typeof args.jobParent === "string") peer.jobParent = args.jobParent;
@@ -1119,8 +1494,9 @@ export class Broker {
     if (args.sessionId !== undefined) {
       const previousKey = this.decisionSessionKey(peer);
       peer.sessionId = args.sessionId;
+      this.transferProjectMain(previousIdentity, peer);
       this.store.decisions.linkSession(previousKey, this.decisionSessionKey(peer));
-      if (peer.sessionId) this.replaceStale(conn, peer);
+      if (peer.sessionId) aliases.push(...this.replaceStale(conn, peer));
     }
     if (args.autoWake !== undefined) peer.autoWake = Boolean(args.autoWake);
     if (args.wakeOnDirect !== undefined) peer.wakeOnDirect = Boolean(args.wakeOnDirect);
@@ -1134,16 +1510,24 @@ export class Broker {
       this.store.rememberName(peer, this.now());
       peer.name = this.uniqueName(args.name);
       this.log.info("peer renamed", { from: old, to: peer.name });
-      this.expireStaleQueue(peer.name);
-      // Mail that was waiting under the new name is now ours.
-      setImmediate(() => {
-        for (const m of this.unreadMail(peer.name, PENDING_MAX_LIMIT)) this.emit(conn, "message", m);
-      });
+      replay = true;
     }
     this.log.debug("peer updated", { name: peer.name, sessionId: peer.sessionId, autoWake: peer.autoWake, cwd: peer.cwd });
     this.store.rememberSession(peer, this.now());
     this.store.rememberName(peer, this.now());
-    this.restoreNames(conn, peer, { reclaim: args.sessionId !== undefined, replay: true });
+    aliases.push(...this.restoreNames(peer, args.sessionId !== undefined));
+    this.transferProjectMain({ ...previousIdentity, sessionId: peer.sessionId }, peer);
+    replay ||= previousName !== peer.name || aliases.length > 0;
+    if (replay || args.sessionId !== undefined) {
+      const registration = { id: peer.id, name: peer.name, sessionId: peer.sessionId, generation: ++conn.mailGeneration };
+      conn.mailReady = undefined;
+      await this.expireStaleQueue(peer.name);
+      this.assertQueueRegistration(conn, peer, registration);
+      await this.claimQueueAliases(conn, peer, registration, aliases);
+      this.assertQueueRegistration(conn, peer, registration);
+      conn.mailReady = registration;
+    }
+    if (replay) this.replayMail(conn, peer);
     for (const message of this.queueCurrentDecisions(peer)) this.emit(conn, "message", message);
     return peer;
   }
@@ -1154,7 +1538,8 @@ export class Broker {
    * mail the session no longer sees. So the newest server of a session wins: the old connection is told it was
    * replaced (it stops instead of reconnecting) and the new one takes over its name and waiting mail.
    */
-  private replaceStale(conn: Conn, peer: PeerInfo): void {
+  private replaceStale(conn: Conn, peer: PeerInfo): string[] {
+    const aliases: string[] = [];
     for (const c of [...this.conns]) {
       const old = c.peer;
       if (c === conn || !old || old.agent !== peer.agent) continue;
@@ -1164,9 +1549,11 @@ export class Broker {
       const sameProcess = (old.pid !== peer.pid || old.id === peer.id) && identity && identity === registrationIdentity(old) &&
         (!old.sessionId || !peer.sessionId || old.sessionId === peer.sessionId);
       if (!sameSession && !sameProcess) continue;
+      const previousIdentity = { id: old.id, agent: old.agent, sessionId: old.sessionId, name: old.name };
       this.store.rememberName(old, this.now());
       this.log.info("session connected again from a new server; replacing the old connection", { name: old.name, by: peer.name, sessionId: peer.sessionId });
       this.emit(c, "replaced", { by: peer.name });
+      void this.nativeChildren.endParent(old).catch(err => this.log.warn("replaced native child fallback deferred", { err: String(err) }));
       this.conns.delete(c);
       c.peer = null;
       this.broadcastEvent("peer_left", old, c);
@@ -1177,26 +1564,33 @@ export class Broker {
         const oldName = old.name;
         if (peer.name.startsWith(`${oldName}-`) && /^\d+$/.test(peer.name.slice(oldName.length + 1))) peer.name = oldName;
         // Either way, mail that waited under the old name is the session's.
-        this.replayMail(conn, peer, () => { this.store.claim(oldName, peer.name); });
+        aliases.push(oldName);
       }
+      this.transferProjectMain(previousIdentity, peer);
     }
+    return aliases;
   }
 
-  private restoreNames(conn: Conn, peer: PeerInfo, options: { reclaim: boolean; replay: boolean }): void {
+  private restoreNames(peer: PeerInfo, reclaim: boolean): string[] {
     const names = this.store.namesFor(peer);
-    const previous = peer.name;
-    if (options.reclaim) {
+    if (reclaim) {
       const base = peer.name.replace(/-\d+$/, "");
       const original = names.find((name) => name.replace(/-\d+$/, "") === base && (name === peer.name || !this.connByName(name)));
       if (original) peer.name = original;
     }
-    let moved = 0;
-    for (const name of names) {
-      if (name === peer.name || this.connByName(name)) continue;
-      moved += this.store.claim(name, peer.name);
-    }
     this.store.rememberName(peer, this.now());
-    if (options.replay && (moved || previous !== peer.name)) this.replayMail(conn, peer);
+    return names.filter(name => name !== peer.name && !this.connByName(name));
+  }
+
+  private async claimQueueAliases(conn: Conn, peer: PeerInfo, registration: QueueRegistration, aliases: string[]): Promise<void> {
+    for (const alias of new Set(aliases)) {
+      if (alias === registration.name || this.connByName(alias)) continue;
+      await this.expireStaleQueue(alias);
+      await this.store.retryWrite(() => {
+        this.assertQueueRegistration(conn, peer, registration);
+        if (!this.connByName(alias)) this.store.claim(alias, registration.name);
+      });
+    }
   }
 
   /** Exact registrations win; an unoccupied retained alias must identify one live session. */
@@ -1213,12 +1607,53 @@ export class Broker {
    * waited longer than QUEUED_MAIL_MAX_AGE_MS most likely belongs to a session that is gone; recent mail
    * still reaches a session that restarted or reconnected after a broker hand-over.
    */
-  private expireStaleQueue(key: string): void {
+  private async expireStaleQueue(key: string): Promise<void> {
     try {
       const maxAge = retentionLimit("AGENT_BRIDGE_QUEUED_MAIL_MAX_AGE_MS", QUEUED_MAIL_MAX_AGE_MS);
-      if (maxAge) this.store.expireQueued(key, this.now() - maxAge);
+      if (maxAge) await this.store.expireQueuedAsync(key, this.now() - maxAge);
     } catch (err) {
       this.log.warn("expiring queued mail failed", { key, err });
+      throw err;
+    }
+  }
+
+  /** An expiry retry must not grant queued mail to a changed or replaced session. */
+  private assertQueueRegistration(conn: Conn, peer: PeerInfo, registration: QueueRegistration): void {
+    if (conn.socket.destroyed || conn.peer !== peer || peer.id !== registration.id || peer.name !== registration.name ||
+      peer.sessionId !== registration.sessionId || conn.mailGeneration !== registration.generation || this.connByName(registration.name) !== conn) {
+      throw new BridgeError("unauthorized", "Session changed while queued mail was archived; reconnect to claim retained mail.");
+    }
+  }
+
+  private queueReady(conn: Conn, peer: PeerInfo): boolean {
+    const ready = conn.mailReady;
+    return Boolean(ready && conn.peer === peer && ready.generation === conn.mailGeneration && ready.id === peer.id &&
+      ready.name === peer.name && ready.sessionId === peer.sessionId && this.connByName(peer.name) === conn);
+  }
+
+  private async awaitHandoffReaders(source: Conn, target: Conn): Promise<void> {
+    const controller = new AbortController();
+    const closed = () => controller.abort(new BridgeError("unauthorized", "A handoff session disconnected during store reader verification; no job ownership was changed."));
+    const timer = setTimeout(() => controller.abort(new BridgeError("timeout", "Store reader verification timed out before handoff; no job ownership was changed.")), HANDOFF_STORE_READY_MS);
+    source.socket.once("close", closed); target.socket.once("close", closed);
+    let aborted!: () => void;
+    const interrupted = new Promise<never>((_, reject) => {
+      aborted = () => reject(controller.signal.reason);
+      controller.signal.addEventListener("abort", aborted, { once: true });
+    });
+    try { await Promise.race([refreshStorePeerIdentities(dirname(this.jobsPath!), controller.signal), interrupted]); }
+    finally {
+      clearTimeout(timer);
+      source.socket.off("close", closed); target.socket.off("close", closed);
+      controller.signal.removeEventListener("abort", aborted);
+    }
+  }
+
+  private assertHandoffRegistration(conn: Conn, peer: PeerInfo, registration: Pick<PeerInfo, "id" | "name" | "sessionId" | "cwd">): void {
+    if (this.closing || !conn.authed || !this.conns.has(conn) || conn.socket.destroyed || conn.peer !== peer ||
+      peer.id !== registration.id || peer.name !== registration.name || peer.sessionId !== registration.sessionId || peer.cwd !== registration.cwd ||
+      this.connByName(registration.name) !== conn) {
+      throw new BridgeError("unauthorized", "Session identity or project changed while store readers were verified; retry from the current sessions. No job ownership was changed.");
     }
   }
 
@@ -1244,7 +1679,7 @@ export class Broker {
     if (to === BROADCAST) {
       if (sender.jobAgent) throw new BridgeError("unauthorized", "job runners cannot broadcast to independent sessions");
       const ownNames = new Set([sender.name, ...this.store.namesFor(sender)]);
-      const masters = new Set([...this.projectMains.values(), ...this.storedJobs().filter((job) => !job.parentJob && job.status === "running").map(primaryFor)].filter((name) => PEER_NAME_PATTERN.test(name)));
+      const masters = new Set([...this.projectMains.values()].map(peer => peer.name).concat(this.storedJobs().filter((job) => !job.parentJob && job.status === "running").map(primaryFor)).filter((name) => PEER_NAME_PATTERN.test(name)));
       const eligible = this.store.broadcastRecipients(this.now(), masters);
       const offline = (name: string) => !ownNames.has(name) && !this.recipientConn(name);
       const queued = eligible.queued.filter(offline), skipped = eligible.skipped.filter(offline);
@@ -1298,7 +1733,8 @@ export class Broker {
           !(sender.jobAgent && message.conversationId === args.conversationId.trim() + ":fallback")) {
         throw new BridgeError("bad_request", "Message id already stored with different content; use a new id for a new message.");
       }
-      return { messages: this.store.messagesById(id), deliveredTo: [], queuedFor: [], storage: { id, state: "stored", recovered: true, receipts: state.receipts } };
+      const receipts = message.recipient.includes("/") && !isNativeChildAddress(message.recipient) ? await this.messageReceipt(conn, id).catch(() => state.receipts) : state.receipts;
+      return { messages: this.store.messagesById(id), deliveredTo: [], queuedFor: [], storage: { id, state: "stored", recovered: true, receipts } };
     }
     const fingerprint = JSON.stringify([args.to, args.body, args.replyTo, args.conversationId, args.ifNoNewerThan]);
     const pending = this.trackedSending.get(id);
@@ -1307,14 +1743,14 @@ export class Broker {
       return pending.result;
     }
     const result = this.routeSend(conn, sender, { ...args, messageId: id }).then(sent => ({ ...sent,
-      storage: { id, state: this.store.byId(id) ? "stored" as const : "not_stored" as const, receipts: this.store.receipts(id) } }));
+      storage: { ...sent.storage, id, state: this.store.byId(id) ? "stored" as const : "not_stored" as const, receipts: sent.storage?.receipts ?? this.store.receipts(id) } }));
     this.trackedSending.set(id, { sender: sender.name, fingerprint, result });
     try {
       return await result;
     } catch (error) {
-      const state = this.store.byId(id) ? "stored" : "not_stored";
+      const state = this.store.byId(id) ? "stored" : "unknown";
       throw new BridgeError(error instanceof BridgeError ? error.code : "internal",
-        `Message ${id} is ${state} in this broker; routing failed: ${(error as Error).message}`,
+        `Message ${id} storage state is ${state}; routing failed: ${(error as Error).message}. Query send_status or retry with the same message_id; remote storage may precede its acknowledgement.`,
         { ...(error instanceof BridgeError ? error.details : {}), messageId: id, state });
     } finally { this.trackedSending.delete(id); }
   }
@@ -1342,6 +1778,69 @@ export class Broker {
     return result;
   }
 
+  /** Native queues admit only their parent, directly owned jobs and exact grants. */
+  private nativeAllowed(child: ReturnType<NativeChildren["target"]>, name: string): boolean {
+    if (name === child.parent || child.sendTo.includes(name)) return true;
+    const job = this.storedJobs().find(j => j.name === name);
+    if (job) return job.owner === child.parent && job.supervisor === child.session;
+    const peer = this.connByName(name)?.peer;
+    return Boolean(peer?.jobAgent && peer.jobParent === child.parent && peer.jobOwner === child.session);
+  }
+
+  /** Virtual sender selection is internal to this opcode, never a hello or connection mutation. */
+  private async routeNativeSend(conn: Conn, args: RequestMap["send"][0], fromChild?: string): Promise<RequestMap["send"][1]> {
+    const peer = this.requirePeer(conn), to = String(args.to ?? "").trim();
+    const child = this.nativeChildren.target(fromChild ?? to);
+    const senderName = fromChild ?? peer.name;
+    const check = () => {
+      if (fromChild) this.nativeChildren.own(peer, child.agentId);
+      else this.nativeChildren.target(to);
+      const owner = this.connByName(child.parent)?.peer;
+      if (!owner || owner.id !== child.owner || owner.sessionId !== child.session ||
+          !this.nativeAllowed(child, fromChild ? to : senderName)) throw new BridgeError("unauthorized", "Native child mail requires its parent, the parent's bridge job, or an exact send_to grant.");
+    };
+    check();
+    if (!args.body?.trim() || args.body.length > MAX_BODY_CHARS) throw new BridgeError("bad_request", "Invalid native child message body.");
+    if (fromChild && (to === senderName || isNativeChildAddress(to))) throw new BridgeError("unauthorized", "Use an exact granted session or bridge job target.");
+    const sender = { id: fromChild ? `native:${child.owner}:${child.agentId}` : peer.id, name: senderName, agent: fromChild ? "claude" as const : peer.jobAgent ?? peer.agent };
+    const anchor = args.replyTo ? this.store.byId(args.replyTo) : null;
+    if (args.replyTo && (!anchor || !((anchor.from.name === to && this.store.receipts(anchor.id).some(r => r.recipient === senderName)) ||
+        (anchor.from.name === senderName && anchor.recipient === to)))) throw new BridgeError("bad_request", "reply_to must identify mail exchanged with this recipient.");
+    const hop = anchor ? anchor.hop + 1 : 0;
+    if (hop >= child.maxHops) throw new BridgeError("bad_request", `Native child conversation reached its ${child.maxHops}-message hop limit; message was not delivered.`);
+    if (args.conversationId && !args.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX)) throw new BridgeError("bad_request", "Native child conversation_id must be a sibling thread returned by a previous send.");
+    const conversationId = anchor?.conversationId ?? args.conversationId ?? `${SIBLING_CONVERSATION_PREFIX}${randomUUID()}`;
+    const guard = args.ifNoNewerThan ? this.store.byId(args.ifNoNewerThan) : null;
+    if (args.ifNoNewerThan && (!guard || guard.from.name !== senderName && !this.store.receipts(guard.id).some(r => r.recipient === senderName))) throw new BridgeError("bad_request", "Invalid native child reply guard.");
+    const id = args.messageId ? z.uuid().parse(args.messageId).toLowerCase() : args.dedupeKey ? completionMessageId(`native:${sender.id}:${to}`, args.dedupeKey) : randomUUID();
+    const recovered = (): RequestMap["send"][1] | null => {
+      const existing = this.store.byId(id);
+      if (!existing) return null;
+      if (existing.from.name !== senderName || existing.to !== to || existing.body !== args.body || existing.replyTo !== (args.replyTo ?? null)) throw new BridgeError("bad_request", "Message id already belongs to different content or sender.");
+      return { messages: this.store.messagesById(id), deliveredTo: [], queuedFor: [], storage: { id, state: "stored", recovered: true, receipts: this.store.receipts(id) } };
+    };
+    const existing = recovered();
+    if (existing) return existing;
+    const message: BridgeMessage = { id, from: sender, to, recipient: to, conversationId, replyTo: args.replyTo ?? null, hop, replyLimit: child.maxHops, body: args.body, createdAt: this.now(), readAt: null };
+    const copies = to === child.parent ? [] : [{ ...message, id: randomUUID(), recipient: child.parent, conversationId: `${conversationId}${SIBLING_NOTE_SUFFIX}`, body: `Native child message to ${to}:\n\n${args.body}` }];
+    const previous = await this.store.retryWrite(() => {
+      check();
+      const previous = recovered();
+      if (previous) return previous;
+      this.store.insertBatch([message, ...copies], () => {
+        if (guard && this.store.replyConflicts(senderName, [to], conversationId, guard).length) throw new BridgeError("bad_request", "Stale reply refused: newer unread mail exists.");
+      });
+      return null;
+    });
+    if (previous) return previous;
+    // Child queues are pulled at that child's hook/tool boundary. Never emit them as parent work.
+    const recipient = fromChild ? this.connByName(to) : null;
+    if (recipient) this.emit(recipient, "message", message);
+    const supervisor = this.connByName(child.parent);
+    for (const copy of copies) if (supervisor) this.emit(supervisor, "message", copy);
+    return { messages: [message], deliveredTo: recipient ? [to] : [], queuedFor: recipient ? [] : [to], storage: { id, state: "stored", receipts: this.store.receipts(id) } };
+  }
+
   /** Reverse permissions use the current durable record, not stale runner registration. */
   private replyRestriction(sender: PeerInfo, name: string): { name: string; supervisor: string } | null {
     const jobs = this.storedJobs(), peer = this.connByName(name)?.peer;
@@ -1358,6 +1857,7 @@ export class Broker {
   }
 
   private async routeSend(conn: Conn, sender: PeerInfo, args: RequestMap["send"][0]): Promise<RequestMap["send"][1]> {
+    if (isNativeChildAddress(args.to)) return this.routeNativeSend(conn, args);
     const body = typeof args.body === "string" ? args.body : "";
     if (!body.trim()) throw new BridgeError("bad_request", "message body is empty");
     if (body.length > MAX_BODY_CHARS) throw new BridgeError("too_large", `message body exceeds ${MAX_BODY_CHARS} characters`);
@@ -1367,12 +1867,19 @@ export class Broker {
     // Durable ownership wins over the old name cached in a still-running parent link.
     const own = sender.jobAgent ? this.storedJobs().find((j) => `job:${j.id}` === sender.id) : undefined;
     const supervisorMail = Boolean(own && (to === sender.jobParent || mastersFor(own).includes(to)));
+    const question = isJobQuestion({ conversationId: args.conversationId ?? "" });
     if (own) {
-      if (to === sender.jobParent || mastersFor(own).includes(to)) to = this.jobRecipient(own);
+      if (to === sender.jobParent || mastersFor(own).includes(to)) to = this.jobRecipient(own, question);
       else if (Array.isArray(own.ownershipHistory) && own.ownershipHistory.some((h) => isRecord(h) && h.fromRootName === to)) to = String(own.rootName);
       this.refreshJobPeer(own);
     }
     const controlled = this.storedJobs().find((j) => j.name === to);
+    if ((controlled || this.connByName(to)?.peer?.jobAgent) &&
+        !args.conversationId?.startsWith(CONTROL_CONVERSATION_PREFIX) &&
+        !args.conversationId?.startsWith(SIBLING_CONVERSATION_PREFIX)) {
+      throw new BridgeError("bad_request", "Ordinary direct mail to a job is not supported. Ask its supervisor to use message_subagent, or use the granted sibling channel. No message was stored.",
+        { state: "not_stored", recipient: to });
+    }
     if (args.conversationId?.startsWith(CONTROL_CONVERSATION_PREFIX) && controlled && !this.groups.canControl(sender, controlled, this.localPeers())) {
       throw new BridgeError("unauthorized", "Only the current supervisor can control this job runner.");
     }
@@ -1394,6 +1901,38 @@ export class Broker {
       throw new BridgeError("bad_request", "if_no_newer_than must identify a message exchanged by this session.");
     }
     conversationId ||= anchor?.conversationId || args.messageId || randomUUID();
+    let jobControlAuthorized = false;
+    if (conversationId === DASHBOARD_JOB_CONVERSATION) {
+      let command: unknown;
+      try { command = JSON.parse(body); } catch { /* Fail closed for malformed control messages. */ }
+      const reject = () => {
+        this.log.warn("rejected unauthorized dashboard job command", { from: sender.name, to });
+        throw new BridgeError("unauthorized", "Only the owner dashboard or a controlling job master can send this command.");
+      };
+      if (!isRecord(command)) reject();
+      const control = command as Record<string, unknown>;
+      if (control.type === "result") {
+        const parent = replyTo ? this.store.byId(replyTo) : null;
+        let request: unknown;
+        try { request = parent && JSON.parse(parent.body); } catch { /* Invalid reply anchor. */ }
+        if (!parent || parent.conversationId !== DASHBOARD_JOB_CONVERSATION || parent.recipient !== sender.name ||
+            parent.from.name !== to || !isRecord(request) || request.type === "result" || request.requestId !== control.requestId) reject();
+      } else {
+        if (!["message", "settings", "handoff"].includes(String(control.type)) || typeof control.requestId !== "string" || typeof control.job !== "string") reject();
+        const target = this.connByName(to)?.peer;
+        if (!target || target.jobAgent || target.subagent) reject();
+        if (conn.peer) {
+          const records = this.storedJobs();
+          // Handoff can move a tree or all jobs, so authorize every selected root, not the display job.
+          const selected = control.type === "handoff" ? records.filter(j => !j.parentJob &&
+            this.groups.canControl(target!, j, this.localPeers()) && (control.jobs === undefined || control.jobs === "all" ||
+              Array.isArray(control.jobs) && (control.jobs.includes(j.name) || control.jobs.includes(j.id)))) :
+            records.filter(j => j.name === control.job || j.id === control.job);
+          if (!selected.length || selected.some(j => !this.groups.canControl(sender, j, this.localPeers()))) reject();
+        }
+        jobControlAuthorized = true;
+      }
+    }
     if (own && (to === own.rootName || to === own.owner || this.groups.members(own, this.localPeers()).some((p) => p.name === to) || mastersFor(own).includes(to))) conversationId = this.jobConversation(own, to, conversationId);
 
     const id = args.messageId ?? (sender.jobAgent && args.dedupeKey?.startsWith(COMPLETION_DEDUPE_PREFIX)
@@ -1410,12 +1949,21 @@ export class Broker {
       body,
       createdAt,
       readAt: null,
+      ...(jobControlAuthorized ? { jobControlAuthorized: true } : {}),
     };
-    if (to.includes("/")) {
+    let remoteAddress = to.includes("/") ? to : undefined;
+    if (to.startsWith("project:")) {
+      const local = this.localPeers().filter((p) => !p.jobAgent && !p.subagent).map((p) => this.projectPeer(p)).filter((p) => p.projectAddress === to);
+      const remote = this.network?.projectPeers(to) ?? [];
+      const groups = new Set([...local.map((p) => `local/${p.projectGroup}`), ...remote.map((p) => `${p.host}/${p.projectGroup}`)]);
+      if (groups.size > 1) throw new BridgeError("ambiguous_target", "Several projects use this address; use an exact session or host/project address.");
+      if (!local.length && remote.length) remoteAddress = this.requireNetwork().projectTarget(to);
+    }
+    if (remoteAddress) {
       if (anchor && this.store.replyConflicts(sender.name, [to], conversationId, anchor).length) {
         throw new BridgeError("bad_request", "Stale reply refused: newer unread mail exists. Read inbox before replying.");
       }
-      const result = await this.requireNetwork().send({ ...base, recipient: to });
+      const result = await this.requireNetwork().send({ ...base, recipient: remoteAddress });
       for (const message of result.messages) await this.store.retryWrite(() => this.store.insert(message));
       return result;
     }
@@ -1430,7 +1978,7 @@ export class Broker {
     };
     checkReply();
     // With no available master, retain job reports under the primary without waking it.
-    if (own && to === this.jobRecipient(own)) {
+    if (own && to === this.jobRecipient(own, question)) {
       for (let i = live.length - 1; i >= 0; i--) {
         if (live[i]!.peer?.unavailable) queued.push(live.splice(i, 1)[0]!.peer!.name);
       }
@@ -1458,7 +2006,7 @@ export class Broker {
         const current = this.storedJobs().find((job) => `job:${job.id}` === sender.id);
         if (!current) throw new BridgeError("unauthorized", "Job ownership is unavailable.");
         this.refreshJobPeer(current);
-        to = this.jobRecipient(current);
+        to = this.jobRecipient(current, question);
         ({ live, queued } = this.resolveTargets(to, sender));
         for (let i = live.length - 1; i >= 0; i--) {
           if (live[i]!.peer?.unavailable) queued.push(live.splice(i, 1)[0]!.peer!.name);
@@ -1548,7 +2096,10 @@ export class Broker {
 
   private remoteReceipt(id: string, sender: string, recipient?: string): number | null {
     const message = this.store.byId(id);
-    if (!message || message.from.id !== sender) throw new BridgeError("unauthorized", "receipt is only available to the sender");
+    const current = this.network?.peers().find((p) => p.id === sender);
+    const sameSender = message && (message.from.id === sender || sender.includes("/") &&
+      message.from.id.split("/")[0] === sender.split("/")[0] && current?.name === message.from.name && current.agent === message.from.agent);
+    if (!message || !sameSender) throw new BridgeError("unauthorized", "receipt is only available to the sender");
     const receipts = this.store.receipts(id);
     const receipt = recipient ? receipts.find((r) => r.recipient === recipient) : receipts[0];
     // A queued direct envelope may have moved from a retained alias to the reclaimed name.
@@ -1561,7 +2112,7 @@ export class Broker {
     const message = this.store.byId(z.uuid().parse(id));
     if (!message || message.from.name !== sender.name) throw new BridgeError("unauthorized", "receipt is only available to the sender");
     const receipts = this.store.receipts(id);
-    return Promise.all(receipts.map(async (r) => r.recipient.includes("/")
+    return Promise.all(receipts.map(async (r) => r.recipient.includes("/") && !isNativeChildAddress(r.recipient)
       ? { ...r, readAt: await this.requireNetwork().receipt(r.recipient, id, message.from.id,
         receipts.filter((other) => other.recipient.startsWith(`${r.recipient.split("/")[0]}/`)).length > 1) }
       : r));
@@ -1587,17 +2138,26 @@ export class Broker {
     return result;
   }
 
-  private receiveRemote(message: BridgeMessage): { delivered: boolean; recipient: string } {
+  private receiveRemote(message: BridgeMessage): { delivered: boolean; recipient: string; stored: boolean; recovered?: boolean; readAt: number | null } {
+    if (isNativeChildAddress(message.recipient) || isNativeChildAddress(message.to) || isNativeChildAddress(message.from.name)) throw new BridgeError("unauthorized", "Native child addresses are local scoped queues; paired-PC delivery is not authorized.");
+    message = { ...message, jobControlAuthorized: undefined };
     const target = this.recipientConn(message.recipient);
     if (target?.peer) message = { ...message, recipient: target.peer.name };
     const existing = this.store.byId(message.id);
     if (existing) {
       const broadcastCopy = existing.to === BROADCAST && message.to === BROADCAST;
-      if (existing.from.id !== message.from.id || (!broadcastCopy && existing.recipient !== message.recipient) || existing.to !== message.to || existing.body !== message.body || existing.conversationId !== message.conversationId || existing.replyTo !== message.replyTo || existing.hop !== message.hop) throw new BridgeError("bad_request", "message id already used");
-      if (this.store.receipts(message.id).some((r) => r.recipient === message.recipient)) return { delivered: Boolean(target), recipient: message.recipient };
+      // A reloaded sending session has a new process id, but retains its authenticated paired
+      // origin and stable name. Those identities and the full content must still match.
+      const sameSender = existing.from.id === message.from.id || message.from.id.includes("/") &&
+        existing.from.id.split("/")[0] === message.from.id.split("/")[0] && existing.from.name === message.from.name;
+      const projectRetry = message.to.startsWith("project:") || /^[^/]+\/project:/.test(message.to);
+      const sameRecipient = existing.recipient === message.recipient || projectRetry || !broadcastCopy && target?.peer && this.recipientConn(existing.recipient) === target;
+      if (!sameSender || existing.from.name !== message.from.name || existing.from.agent !== message.from.agent || (!broadcastCopy && !sameRecipient) || existing.to !== message.to || existing.body !== message.body || existing.conversationId !== message.conversationId || existing.replyTo !== message.replyTo || existing.hop !== message.hop) throw new BridgeError("bad_request", "Message id already stored with different content; use a new id for a new message.");
+      const receipt = this.store.receipts(message.id).find((r) => (!broadcastCopy && r.recipient === existing.recipient) || r.recipient === message.recipient);
+      if (receipt) return { delivered: Boolean(this.recipientConn(receipt.recipient)), recipient: receipt.recipient, stored: true, recovered: true, readAt: receipt.readAt };
     }
     this.store.insert(message);
     if (target) this.emit(target, "message", message);
-    return { delivered: Boolean(target), recipient: message.recipient };
+    return { delivered: Boolean(target), recipient: message.recipient, stored: true, readAt: null };
   }
 }

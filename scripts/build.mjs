@@ -1,7 +1,8 @@
 // Bundles the MCP server and CLI into each plugin folder so installed plugins need no npm install,
 // and keeps every manifest's version in sync with package.json.
 import { build } from "esbuild";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,9 +14,12 @@ const MANIFESTS = [
   "plugins/opencode/package.json",
   "plugins/antigravity/package.json",
   "plugins/muse/.muse-plugin/plugin.json",
+  "plugins/antigravity/plugin.json",
   ".claude-plugin/marketplace.json",
 ];
-const ENTRIES = { server: "src/mcp/launcher.ts", worker: "src/mcp/main.ts", cli: "src/cli/main.ts", "history-worker": "src/core/history-worker.ts" };
+const ENTRIES = { server: "src/mcp/launcher.ts", worker: "src/mcp/main.ts", cli: "src/cli/main.ts", "history-worker": "src/core/history-worker.ts", "backup-worker": "src/core/backup-worker.ts" };
+ENTRIES["outcome-worker"] = "src/core/outcome-worker.ts";
+ENTRIES["job-archive-worker"] = "src/core/job-archive-worker.ts";
 const NODE_TARGET = "node22";
 const SHEBANG = "#!/usr/bin/env node\n";
 const REQUIRE_SHIM = "import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);";
@@ -36,13 +40,24 @@ for (const rel of MANIFESTS) {
 }
 
 for (const dir of PLUGIN_DIRS) {
-  for (const [name, entry] of Object.entries(ENTRIES)) {
+  // Retain prior chunks, including hashes no longer referenced by the new entrypoints.
+  // Build only mutates generated output in this checkout; no installed runtime is touched.
+  const chunks = join(ROOT, dir, "dist", "chunks");
+  if (existsSync(chunks)) {
+    const archive = join(ROOT, ".agent-bridge-test", "bundle-archive", randomUUID());
+    mkdirSync(archive, { recursive: true });
+    renameSync(chunks, join(archive, "chunks"));
+  }
+  {
     await build({
       absWorkingDir: ROOT,
       // Shared read-only dependencies must have the same logical paths as CI's local cache.
       preserveSymlinks: true,
-      entryPoints: [join(ROOT, entry)],
-      outfile: join(ROOT, dir, "dist", `${name}.mjs`),
+      entryPoints: Object.fromEntries(Object.entries(ENTRIES).map(([name, entry]) => [name, join(ROOT, entry)])),
+      outdir: join(ROOT, dir, "dist"),
+      outExtension: { ".js": ".mjs" },
+      chunkNames: "chunks/[name]-[hash]",
+      splitting: true,
       bundle: true,
       platform: "node",
       format: "esm",
@@ -52,9 +67,11 @@ for (const dir of PLUGIN_DIRS) {
       logLevel: "warning",
       // Some bundled CommonJS dependencies call require(); give them one in ESM output.
       // The CLI also gets a shebang so it works as the package's bin (npx github:...).
-      banner: { js: (name === "cli" ? SHEBANG : "") + REQUIRE_SHIM },
+      banner: { js: REQUIRE_SHIM },
     });
   }
+  const cli = join(ROOT, dir, "dist", "cli.mjs");
+  writeFileSync(cli, SHEBANG + readFileSync(cli, "utf8"));
   console.log(`built ${dir}/dist (v${version})`);
 }
 

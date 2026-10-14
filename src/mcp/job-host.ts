@@ -3,13 +3,23 @@ import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { BridgeConfig } from "../core/config.js";
 import { killPid, pidAlive } from "../core/delegate.js";
+import { identityStartedAfter, processIdentity } from "../core/process-identity.js";
+import { ownerGone, writtenBeforeBoot } from "../core/boot-time.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
 import type { AgentKind, CodingAgent } from "../core/protocol.js";
 import type { DelegateArgs } from "./delegate-run.js";
 import type { Job, JobHost, JobHostInfo, RunnerControl, RunnerState } from "./jobs.js";
-import { archiveFile, assertWritableStore, isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "../core/json-store.js";
+import { archiveFile, assertWritableStore, readJsonStore, retentionLimit } from "../core/json-store.js";
+import { existingMetadataDb } from "../core/metadata-db.js";
+import { legacyRunnerPeers, publishRunnerSpec, readRunnerStateRecord, runnerFilesImported, runnerSpecPath, runnerStatePath as storeStatePath, writeRunnerStateRecord } from "../core/runner-store.js";
 import { RemoteJobHost } from "./remote-job-host.js";
+import { jobEnvironment } from "../core/job-environment.js";
+import { setTimeout as delay } from "node:timers/promises";
+import { assertStoreUpgrade, refreshStorePeerIdentities } from "../core/store-compatibility.js";
+import { JSON_STORE_VERSION } from "../core/json-store.js";
+import { cloneJson, fileSignature } from "../core/file-cache.js";
+import type { HostedAdmission } from "./jobs.js";
 
 /**
  * Job runners: a background subagent runs in a detached process of its own (`agent-bridge job-runner`), not
@@ -52,27 +62,49 @@ export interface RunnerSpec {
 }
 
 export function runnerStatePath(home: string, id: string): string {
-  return join(home, RUNNERS_DIR_NAME, `${id}.json`);
+  return storeStatePath(home, id);
 }
 
 function specPath(home: string, id: string): string {
-  return join(home, RUNNERS_DIR_NAME, `${id}.spec.json`);
+  return runnerSpecPath(home, id);
 }
 
+/** Rows in bridge.db (AB-208); the per-job file only while older processes or unimported files remain. */
 export function readRunnerState(home: string, id: string): RunnerState | null {
+  const path = runnerStatePath(home, id);
   try {
-    const s = readJsonStore(runnerStatePath(home, id), undefined, (value) => isRecord(value) && typeof value.pid === "number" && typeof value.status === "string") as RunnerState | null;
+    const s = readRunnerStateRecord(home, id, { preserveCorrupt: true }) as RunnerState | null;
     return s && typeof s.pid === "number" && typeof s.status === "string" ? s : null;
   } catch {
     return null;
   }
 }
 
-/** Atomic, so the server never reads half a file. */
+/** Atomic (one SQLite transaction), so the server never reads half a state. */
 export function writeRunnerState(home: string, id: string, state: RunnerState): void {
-  const path = runnerStatePath(home, id);
-  const previous = readJsonStore(path);
-  writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...state }), previous);
+  // The runner's own creation identity: its PID alone may be reused once it is gone (AB-236).
+  const identity = state.identity ?? (state.pid === process.pid ? processIdentity(process.pid) : undefined);
+  writeRunnerStateRecord(home, id, { ...state, ...(identity ? { identity } : {}) });
+}
+
+/** How long a probed identity of a live runner PID is reused by the frequent liveness checks. */
+const IDENTITY_CACHE_MS = 30_000;
+const probed = new Map<number, { identity: string | undefined; at: number }>();
+
+/**
+ * Whether the process a runner state names is still that runner: no PID reuse (AB-236). With a recorded identity
+ * it must match; older states without one need a process that started before the runner's last heartbeat.
+ * Unknown answers keep the conservative "alive" (takeover); `fresh` probes again (kill decisions).
+ */
+export function runnerProcessAlive(state: Pick<RunnerState, "pid" | "identity" | "updatedAt">, fresh = false): boolean {
+  if (!pidAlive(state.pid)) return false;
+  let entry = probed.get(state.pid);
+  if (fresh || !entry || Date.now() - entry.at >= IDENTITY_CACHE_MS) probed.set(state.pid, entry = { identity: processIdentity(state.pid), at: Date.now() });
+  // Unreadable start time (EPERM, a protected process that reused the PID, a zombie): a runner whose last heartbeat
+  // predates the current boot is gone, since no process survives a reboot; a recent one stays "alive" (AB-256).
+  if (entry.identity === undefined) return !fresh && !ownerGone({ alive: undefined, recordedAt: state.updatedAt });
+  if (state.identity) return entry.identity === state.identity;
+  return !Number.isFinite(state.updatedAt) || !identityStartedAfter(entry.identity, state.updatedAt + 1_000);
 }
 
 /** The session's side: starts runners and talks to them. */
@@ -90,12 +122,14 @@ export class JobRunners implements JobHost {
       const dir = join(home, RUNNERS_DIR_NAME);
       const keepMs = retentionLimit("AGENT_BRIDGE_RUNNER_KEEP_MS", KEEP_FILES_MS);
       if (!keepMs) return;
+      // Imported runner files live in rows and cold storage; only older processes still write files here.
+      if (existingMetadataDb(home) && runnerFilesImported(home) && !legacyRunnerPeers(home)) return;
       for (const f of readdirSync(dir)) {
         const path = join(dir, f);
         if (!f.endsWith(".json") || f.endsWith(".spec.json") || Date.now() - statSync(path).mtimeMs <= keepMs) continue;
         const id = f.replace(/\.json$/, "");
         const state = readRunnerState(home, id);
-        if (state?.status === "done" || state?.status === "failed") {
+        if (state?.status === "done" || state?.status === "failed" || state?.status === "cancelled") {
           archiveFile(path);
           archiveFile(specPath(home, id));
         }
@@ -106,6 +140,24 @@ export class JobRunners implements JobHost {
   }
 
   /** Start a turn of this job in a new runner; null when that is not possible (the turn then runs in the server). */
+  async startAsync(job: Job, spec: Omit<RunnerSpec, "home" | "job">, admission?: HostedAdmission): Promise<JobHostInfo | null> {
+    const signal = admission?.signal ?? job.controller.signal;
+    let attempts = 0;
+    for (;;) {
+      signal.throwIfAborted();
+      await refreshStorePeerIdentities(this.home, signal);
+      signal.throwIfAborted();
+      if (admission && !admission.isCurrent()) throw new Error("Detached job startup lost its supervisor authority before launch");
+      try { return this.start(job, spec); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "STORE_UPGRADE_DEFERRED") throw error;
+        job.progress = `queued: ${(error as Error).message}`;
+        if (attempts++ % 30 === 0) this.log.info("job runner start waits for retained store readers", { job: job.name, reason: String(error) });
+        await delay(Math.min(1_000, attempts * 100), undefined, { signal });
+      }
+    }
+  }
+
   start(job: Job, spec: Omit<RunnerSpec, "home" | "job">): JobHostInfo | null {
     if (spec.args.host) return this.remote.start(job, spec.args.host, spec.target, spec.args);
     try {
@@ -115,7 +167,9 @@ export class JobRunners implements JobHost {
       const file = specPath(this.home, job.id);
       assertWritableStore(readJsonStore(statePath, this.log));
       assertWritableStore(readJsonStore(file, this.log));
-      archiveFile(statePath);
+      // Check before archiving a previous turn. Unknown readers wait in the
+      // asynchronous admission path, leaving every existing file in place.
+      assertStoreUpgrade(this.home, "json", 0, JSON_STORE_VERSION);
       const full: RunnerSpec = {
         ...spec,
         home: this.home,
@@ -139,19 +193,18 @@ export class JobRunners implements JobHost {
           allowedServers: [...(job.allowedServers ?? [])],
         },
       };
-      archiveFile(file);
-      writeJsonStore(file, { ...full }, null);
-      const args = [this.cli, "job-runner", file];
+      // Archives the previous turn's state and spec (rows, and files of older processes), then publishes this one.
+      const args = [this.cli, "job-runner", publishRunnerSpec(this.home, job.id, { ...full })];
       const info: JobHostInfo = { pid: null, peer: job.name, startedAt: Date.now() };
       let pid: number | null = null;
       if (process.platform === "win32") {
-        const launcher = spawn(process.execPath, ["-e", DETACH_LAUNCHER, ...args], { stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
+        const launcher = spawn(process.execPath, ["-e", DETACH_LAUNCHER, ...args], { env: jobEnvironment(), stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
         let output = "";
         launcher.stdout!.on("data", chunk => { output += chunk; });
         launcher.on("close", () => { const reported = Number(output); if (Number.isSafeInteger(reported) && reported > 0) info.pid = reported; });
         launcher.on("error", (err) => this.log.warn("could not start a job runner", { job: job.name, err: err.message }));
       } else {
-        const child = spawn(process.execPath, args, { detached: true, stdio: "ignore" });
+        const child = spawn(process.execPath, args, { env: jobEnvironment(), detached: true, stdio: "ignore" });
         child.on("error", (err) => this.log.warn("could not start a job runner", { job: job.name, err: err.message }));
         child.unref();
         pid = child.pid ?? null;
@@ -160,6 +213,7 @@ export class JobRunners implements JobHost {
       info.pid = pid;
       return info;
     } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "STORE_UPGRADE_DEFERRED") throw err;
       this.log.warn("job runner unavailable; the subagent runs inside this server", { job: job.name, err: (err as Error).message });
       return null;
     }
@@ -175,9 +229,10 @@ export class JobRunners implements JobHost {
     if (!state) {
       // Not reported in yet: still starting, for a while.
       const host = job.host;
-      return Boolean(host) && (host!.pid !== null ? pidAlive(host!.pid) : Date.now() - host!.startedAt < START_GRACE_MS);
+      // A launch from before the current boot never reported in: its PID now belongs to another process.
+      return Boolean(host) && !writtenBeforeBoot(host!.startedAt) && (host!.pid !== null ? pidAlive(host!.pid) : Date.now() - host!.startedAt < START_GRACE_MS);
     }
-    return pidAlive(state.pid);
+    return runnerProcessAlive(state);
   }
 
   send(job: Job, control: RunnerControl): void {
@@ -191,7 +246,13 @@ export class JobRunners implements JobHost {
 
   kill(job: Job): void {
     if (job.remote) return this.remote.send(job, { type: "cancel" });
-    const pid = this.state(job)?.pid ?? job.host?.pid;
-    if (pid) killPid(pid, this.log);
+    const state = this.state(job);
+    if (state) {
+      // Never `taskkill /T /F` a process that merely reuses the runner's PID: verify it freshly first.
+      if (runnerProcessAlive(state, true)) killPid(state.pid, this.log);
+      else this.log.warn("job runner PID no longer belongs to the runner; not killing it", { job: job.name, pid: state.pid });
+      return;
+    }
+    if (job.host?.pid) killPid(job.host.pid, this.log);
   }
 }

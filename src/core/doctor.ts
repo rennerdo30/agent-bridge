@@ -21,6 +21,7 @@ export interface DoctorFinding {
   fixable: boolean;
 }
 export interface DoctorReport {
+  brokerHealth?: import("./health.js").BrokerHealth | null;
   checkedAt: number;
   ok: boolean;
   schema: { path: string; actual: number | null; expected: number }[];
@@ -59,6 +60,10 @@ export function doctor(home: string, now = Date.now()): DoctorReport {
         db = new DatabaseSync(path, { readOnly: true, timeout: 50 });
         actual = Number(db.prepare("PRAGMA user_version").get()!.user_version);
         for (const detail of checkDatabase(db)) finding("error", "sqlite-integrity", path, detail);
+        if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='message_archive_conflicts'").get()) {
+          const count = Number(db.prepare("SELECT COUNT(*) AS n FROM message_archive_conflicts").get()!.n);
+          if (count) finding("warning", "archive-conflicts", path, `${count} quarantined archive conflicts; originals and evidence retained in message_archive_conflicts; manual review required`);
+        }
         if (actual !== expected) finding(actual > expected ? "error" : "warning", "schema-version", path, `Schema ${actual}; code expects ${expected}`);
       } catch (err) { finding("error", "sqlite-unreadable", path, String(err)); }
       finally { db?.close(); }
@@ -138,7 +143,7 @@ export function archiveHome(home: string, confirmed: boolean, now = Date.now()):
         const previous: unknown = JSON.parse(readFileSync(path, "utf8"));
         if (!Array.isArray(previous) && !(isRecord(previous) && Array.isArray(previous.jobs))) throw new Error("invalid jobs store");
         const entries: unknown[] = Array.isArray(previous) ? previous : (previous as Record<string, unknown>).jobs as unknown[];
-        const old = entries.filter((j) => isRecord(j) && (j.status === "done" || j.status === "failed") && typeof j.finishedAt === "number" && j.finishedAt < now - age);
+        const old = entries.filter((j) => isRecord(j) && ["done", "failed", "cancelled"].includes(String(j.status)) && typeof j.finishedAt === "number" && j.finishedAt < now - age);
         if (old.length) {
           archiveJobs(path, old);
           writeJsonStore(path, { ...(isRecord(previous) ? previous : {}), jobs: entries.filter((j) => !old.includes(j)) }, previous);

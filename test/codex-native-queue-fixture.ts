@@ -8,7 +8,7 @@ import { join } from "node:path";
 import type { AddressInfo, Socket } from "node:net";
 import { expect } from "vitest";
 import { resolveBinary } from "../src/core/delegate.js";
-import { makeEnv, until } from "./helpers.js";
+import { codexRollout, makeEnv, until } from "./helpers.js";
 
 // Optional installed-CLI acceptance probe. CI still runs the hermetic idle-host regression.
 const bin = resolveBinary(process.env.AB_NATIVE_CODEX_BIN ?? "codex");
@@ -21,7 +21,7 @@ export async function verifyNativeCodexIdleQueue(role: "main" | "secondary"): Pr
   const threadId = "019a0000-0000-7000-8000-000000000001";
   const project = join(env.home, "project"); mkdirSync(project);
   execFileSync("git", ["init", project], { windowsHide: true, stdio: "ignore" });
-  const codexHome = join(env.home, "codex"); mkdirSync(codexHome);
+  const codexHome = codexRollout(env.home, threadId);
   let attached = false, idle = true, accept = true;
   const pending: unknown[] = [];
   const runTui = async () => {

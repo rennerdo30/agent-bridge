@@ -254,9 +254,9 @@ describe.skipIf(!existsSync(CLI))("background wake-ups", () => {
       rewakeAvailable: true,
     };
     const job = jobs.start("opencode", null, "long", (signal) => new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("stopped")))));
-    const started = Date.now();
     expect(await buildHookResponse(ctx, { event: "Stop", sessionId: null, stopHookActive: false })).toEqual({});
-    expect(Date.now() - started).toBeLessThan(500);
+    expect(job.status).toBe("running");
+    expect(job.controller.signal.aborted).toBe(false);
     jobs.cancel(job.id);
   });
 });

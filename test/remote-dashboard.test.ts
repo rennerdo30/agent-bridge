@@ -24,7 +24,15 @@ describe("paired dashboard read protocol", () => {
   it("serves identical local run, log, transcript, native child and outcome shapes", async () => {
     const { remote, context } = await links();
     for (const path of ["/api/state", "/api/runs", `/api/runs/${RUN}`, `/api/runs/${RUN}/chat`, "/api/sessions/session/chat", "/api/sessions/session/subagents", `/api/sessions/session/subagents/${CODEX_CHILD}`, `/api/jobs/${JOB}/subagents`, `/api/jobs/${JOB}/subagents/${CODEX_CHILD}`, "/api/job-outcomes"]) {
-      const local = await readDashboard(context, { path });
+      let local = await readDashboard(context, { path });
+      if (path === '/api/job-outcomes') {
+        const deadline = Date.now() + 10_000;
+        while (Object.values((local.body as any).runs).some((o: any) => o.observation.state !== 'ready') || Object.values((local.body as any).jobs).some((o: any) => o.outcome.observation.state !== 'ready')) {
+          if (Date.now() > deadline) throw new Error('Paired outcome inspection did not finish');
+          await new Promise(resolve => setTimeout(resolve, 20));
+          local = await readDashboard(context, { path });
+        }
+      }
       const result = await remote.request("beta", { path });
       expect(result.status, path).toBe(200);
       const normalize = (value: unknown) => JSON.parse(JSON.stringify(value), (key, field) => key === "checkedAt" ? 0 : field);

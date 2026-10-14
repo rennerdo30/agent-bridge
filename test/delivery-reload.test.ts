@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { readdirSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
@@ -53,8 +53,8 @@ describe("delivery and reload recovery", () => {
 
   it("keeps earlier and new reads when a prior journal append was interrupted", () => {
     const journal = new ReadJournal(env.home);
-    journal.append("name:recipient", ["first"]);
-    const path = join(env.home, "read-state", readdirSync(join(env.home, "read-state"))[0]!);
+    mkdirSync(join(env.home,"read-state"));
+    const path = join(env.home,"read-state",`${createHash("sha256").update("name:recipient").digest("hex")}.jsonl`);
     writeFileSync(path, '["first"]\n["interrupted"');
     journal.append("name:recipient", ["latest"]);
     expect(journal.read("name:recipient")).toEqual(["first", "latest"]);

@@ -34,6 +34,12 @@ export const ACK_CONVERSATION_SUFFIX = ":ack";
 /** Transfer updates stay available on demand, without becoming new session work. */
 export const TRANSFER_PROGRESS_PREFIX = "files-progress-";
 
+/** A delegated job's question to its parent (send with message_kind="question"). */
+export const QUESTION_CONVERSATION_SUFFIX = ":question";
+export function isJobQuestion(m: Pick<BridgeMessage, "conversationId">): boolean {
+  return /^job-[^:]+:question(?::fallback)?$/.test(m.conversationId);
+}
+
 export function isSiblingNote(m: Pick<BridgeMessage, "conversationId">): boolean {
   return m.conversationId.startsWith(SIBLING_CONVERSATION_PREFIX) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX);
 }
@@ -46,7 +52,7 @@ export interface SiblingPeer {
   name: string;
   title: string;
   agent: AgentKind;
-  status: "running" | "done" | "failed" | "interrupted";
+  status: "running" | "done" | "failed" | "interrupted" | "cancelled";
   finishedAt?: number;
 }
 
@@ -85,7 +91,7 @@ export interface PeerInfo {
   /** agent-bridge version of this peer. */
   version?: string;
   /** Maximum readable shared formats. Optional for retained legacy peers. */
-  storeCapabilities?: { json: number; sqlite: number };
+  storeCapabilities?: { json: number; sqlite: number; jobArchive?: number };
   /** Set for a job runner (it hosts a background subagent of a session): that subagent's agent. Hidden from peer lists. */
   jobAgent?: AgentKind;
   /** Stable supervisor session identity, shared only by its jobs. */
@@ -111,6 +117,8 @@ export interface MessageAddress {
 }
 
 export interface BridgeMessage {
+  /** Local broker's live authorization; omitted from retained mail so replay fails closed. */
+  jobControlAuthorized?: boolean;
   id: string;
   from: MessageAddress;
   /** Target as given by the sender: a peer name, peer id, agent kind or "*". */
@@ -218,6 +226,16 @@ export interface AuthArgs {
 }
 
 export interface RequestMap {
+  /** Virtual addresses are controlled only by the registered parent connection. */
+  nativeChild: [{ agentId: string; action: "start" | "end" | "grant"; sendTo?: string[]; maxHops?: number }, NativeChildAddress | null];
+  nativeChildren: [Record<string, never>, NativeChildAddress[]];
+  nativeChildrenEnd: [Record<string, never>, { ended: boolean }];
+  nativeChildPending: [{ agentId: string }, BridgeMessage[]];
+  nativeChildAck: [{ agentId: string; ids: string[] }, { acked: number }];
+  nativeChildSend: [SendArgs & { agentId: string }, SendResult];
+  /** Authenticated owner connection only; senderId selects the dashboard's reply listener. */
+  dashboardJobSend: [SendArgs & { senderId: string }, SendResult];
+  health: [Record<string, never>, import("./health.js").BrokerHealth];
   /** Older brokers must refuse this opcode rather than discard the durable identity. */
   trackedSend: [SendArgs & { messageId: string }, SendResult];
   sendState: [{ id: string }, { id: string; state: "stored" | "pending" | "not_stored"; checkedAt: number; message: BridgeMessage | null; receipts: MessageReceipt[] }];
@@ -254,7 +272,7 @@ export interface RequestMap {
   updatePeer: [UpdatePeerArgs, PeerInfo];
   /** Take over the unread mail of "-N" stand-in names of this peer that no one holds (after a reload). */
   claimMail: [{ names: string[] }, { moved: number }];
-  ping: [Record<string, never>, { brokerPid: number; protocol: number; brokerVersion?: string }];
+  ping: [Record<string, never>, { brokerPid: number; protocol: number; brokerVersion?: string; health?: import("./health.js").BrokerHealth }];
   dashboardRead: [{ host: string; request: DashboardReadRequest }, DashboardReadResult];
   dashboardPeers: [Record<string, never>, PeerInfo[]];
   networkStatus: [Record<string, never>, NetworkStatus];
@@ -268,6 +286,13 @@ export interface RequestMap {
   fetchFiles: [{ from: string; paths: string[] }, TransferStarted];
   transfers: [Record<string, never>, { transfers: TransferProgress[] }];
   cancelTransfer: [{ id: string }, { id: string; cancelled: boolean }];
+}
+export interface NativeChildAddress {
+  address: string;
+  agentId: string;
+  parent: string;
+  sendTo: string[];
+  maxHops: number;
 }
 export type Op = keyof RequestMap;
 

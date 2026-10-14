@@ -1,9 +1,11 @@
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve, toNamespacedPath } from "node:path";
+import { loadConfig } from "./config.js";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { basename, isAbsolute, join, relative, resolve, toNamespacedPath } from "node:path";
 import { DelegateError, runProcess } from "./delegate.js";
-import type { Logger } from "./logger.js";
+import { nullLogger, type Logger } from "./logger.js";
 import { resolveWorktreeRemovalPath, unlinkLinks } from "./worktree-links.js";
+import { displayPathText } from "./display-paths.js";
 
 /**
  * Git worktrees for editing subagents: each one works on its own branch in its own checkout, so
@@ -50,7 +52,7 @@ export async function git(args: string[], cwd: string, log: Logger, timeoutMs = 
   return res.stdout.trimEnd();
 }
 
-export async function createWorktree(opts: { cwd: string; home: string; jobId: string; log: Logger }): Promise<Worktree> {
+export async function createWorktree(opts: { cwd: string; home: string; jobId: string; log: Logger; worktreeRoot?: string | null }): Promise<Worktree> {
   let repoRoot: string;
   try {
     repoRoot = await git(["rev-parse", "--show-toplevel"], opts.cwd, opts.log);
@@ -60,29 +62,29 @@ export async function createWorktree(opts: { cwd: string; home: string; jobId: s
   const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = (await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "")) || null;
   let branch = `${BRANCH_PREFIX}${opts.jobId}`;
-  const dir = join(opts.home, "worktrees");
-  mkdirSync(dir, { recursive: true });
+  const dir = opts.worktreeRoot ?? join(opts.home, "worktrees");
   let path = join(dir, `${basename(repoRoot)}-${opts.jobId}`);
+  if (await worktreeLocationExists(repoRoot, branch, path, opts.log)) {
+    throw new Error(`could not create a worktree for the subagent; existing branch or path retained: ${branch}, ${path}`);
+  }
+  mkdirSync(dir, { recursive: true });
   // This runs in the MCP server (as the user), never inside the sandboxed agent, so the worktree is the user's.
   try {
     await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
   } catch (err) {
-    // A failed add leaves a worktree locked "initializing": remove it, so nothing piles up.
+    // The branch/path may predate this call or contain partial work. A failed add
+    // grants no authority to remove, unlock, prune, or overwrite either of them.
     if (!(err instanceof DelegateError && err.kind === "timeout")) {
-      await removeWorktree(repoRoot, path, branch, opts.log);
-      throw new Error(`could not create a worktree for the subagent: ${(err as Error).message}`);
+      throw new Error(`could not create a worktree for the subagent; retained branch ${branch} and path ${path}: ${(err as Error).message}`);
     }
-    // A slow disk under load: clean up the half-made checkout and try once more.
-    opts.log.warn("git worktree add timed out; retrying once", { path });
-    await removeWorktree(repoRoot, path, branch, opts.log);
-    // Under a fresh name: the slow first attempt may still hold its branch and folder.
-    branch = `${branch}-r2`;
-    path = `${path}-r2`;
+    opts.log.warn("git worktree add timed out; retaining first attempt and retrying once", { branch, path });
+    // Check fresh names without changing the first attempt. Git's non-forcing add
+    // also rejects a collision that occurs after these checks.
+    [branch, path] = await unusedRetryLocation(repoRoot, branch, path, opts.log);
     try {
       await git(["worktree", "add", "-b", branch, path, base], repoRoot, opts.log, WORKTREE_ADD_TIMEOUT_MS);
     } catch (again) {
-      await removeWorktree(repoRoot, path, branch, opts.log);
-      throw new Error(`could not create a worktree for the subagent (tried twice): ${(again as Error).message}`);
+      throw new Error(`could not create a worktree for the subagent (tried twice); retained both attempts, including branch ${branch} and path ${path}: ${(again as Error).message}`);
     }
   }
   // `worktree add` holds an "initializing" lock while it works; make sure none is left behind.
@@ -99,21 +101,23 @@ async function unlockWorktree(repoRoot: string, path: string, log: Logger): Prom
   await git([...trustArgs(path), "worktree", "unlock", path], repoRoot, log).catch(() => "");
 }
 
-/** Best effort: remove a worktree and its branch (a failed or half-made checkout). */
-async function removeWorktree(repoRoot: string, path: string, branch: string, log: Logger): Promise<void> {
-  // Refuse removal if links cannot be detached; never let Git reach a shared cache.
-  if (existsSync(toNamespacedPath(path))) {
-    try { path = resolveWorktreeRemovalPath(path, dirname(path)); unlinkLinks(path); }
-    catch (err) { log.warn("worktree cleanup refused; preserving checkout and branch", { path, err: (err as Error).message }); return; }
+async function worktreeLocationExists(repoRoot: string, branch: string, path: string, log: Logger): Promise<boolean> {
+  const refs = await git(["for-each-ref", "--format=%(refname)", `refs/heads/${branch}`], repoRoot, log);
+  if (refs.split(/\r?\n/).includes(`refs/heads/${branch}`)) return true;
+  try { lstatSync(toNamespacedPath(path)); return true; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
   }
-  await git([...trustArgs(path), "worktree", "remove", "--force", "--force", path], repoRoot, log).catch(() => {});
-  try {
-    removeWorktreeDirectory(path);
-  } catch {
-    // files still locked: prune below forgets it anyway
+}
+
+async function unusedRetryLocation(repoRoot: string, branch: string, path: string, log: Logger): Promise<[string, string]> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const suffix = `-r2-${randomUUID()}`;
+    const retryBranch = branch + suffix, retryPath = path + suffix;
+    if (!await worktreeLocationExists(repoRoot, retryBranch, retryPath, log)) return [retryBranch, retryPath];
   }
-  await git(["worktree", "prune"], repoRoot, log).catch(() => {});
-  await git(["branch", "-D", branch], repoRoot, log).catch(() => {});
+  throw new Error(`could not select an unused worktree retry location; retained branch ${branch} and path ${path}`);
 }
 
 /** Node's namespaced Windows paths also cover deep ignored folders that Git could not remove. */
@@ -124,7 +128,7 @@ export function removeWorktreeDirectory(path: string, managedRoot = path): void 
   rmSync(toNamespacedPath(resolve(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
 }
 
-type SkippedFile = { path: string; reason: "whitespace only" | "generated noise" };
+type SkippedFile = { path: string; reason: "whitespace only" | "generated noise" | "untracked; not explicitly staged" };
 
 export interface WorktreeOutcome {
   changed: boolean;
@@ -234,6 +238,7 @@ async function autoCommitFiles(wt: Worktree, log: Logger): Promise<SkippedFile[]
     const literal = `:(literal)${file}`;
     let reason: SkippedFile["reason"] | undefined;
     if (generatedNoise(wt.path, file)) reason = "generated noise";
+    else if (entry.startsWith("??")) reason = "untracked; not explicitly staged";
     else if (entry.startsWith("??") || await git([...trust, "diff", "--ignore-all-space", "--ignore-cr-at-eol", "--no-ext-diff", "--no-textconv", "--no-renames", "HEAD", "--", literal], wt.path, log)) {
       // An already staged deletion has no path left in the index for `git add` to match.
       if (!entry.startsWith("D ")) included.push(literal);
@@ -331,14 +336,15 @@ export function worktreeReport(wt: Worktree, outcome: WorktreeOutcome): string {
   const branch = outcome.branch ?? wt.branch;
   const skipped = outcome.skippedFiles ?? [];
   const rule = skipped.length
-    ? `Auto-commit skipped whitespace/line-ending-only changes and known generated noise; left on disk: ${skipped.map((f) => `${f.path} (${f.reason})`).join(", ")}.`
+    ? `Auto-commit skipped whitespace/line-ending-only changes, generated noise and unstaged untracked files; left on disk: ${skipped.map((f) => `${f.path} (${f.reason})`).join(", ")}.`
     : "";
   const remove = "git -c core.longpaths=true worktree remove";
   // Only a worktree without any work of its own may be removed.
-  if (!outcome.changed) return [
-    `Worktree ${wt.path} (branch ${branch}) has ${skipped.length ? "no real changes" : "no changes"}; remove it with: ${remove}${skipped.length ? " --force" : ""} "${wt.path}" && git branch -D ${branch}`,
+  if (!outcome.changed) return displayPathText([
+    skipped.length ? `Worktree ${wt.path} (branch ${branch}) has no real changes committed; excluded files remain on disk. Keep this worktree for review.`
+      : `Worktree ${wt.path} (branch ${branch}) has no changes; remove it with: ${remove} "${wt.path}" && git branch -D ${branch}`,
     rule,
-  ].filter(Boolean).join("\n");
+  ].filter(Boolean).join("\n"));
   const others = outcome.otherBranches ?? [];
   const lines = [
     `Changes are committed on branch ${branch} (worktree ${wt.path}), not in your working copy` +
@@ -354,8 +360,9 @@ export function worktreeReport(wt: Worktree, outcome: WorktreeOutcome): string {
     lines.push(`Review: git diff ${outcome.reviewBase.slice(0, 12)}..${branch}`);
     lines.push(`Take them: git merge ${branch}   (or git cherry-pick ${branch})`);
   }
-  lines.push(`Discard: ${remove} --force "${wt.path}" && git branch -D ${[branch, ...others.map((o) => o.name)].join(" ")}`);
-  return lines.join("\n");
+  lines.push(skipped.length ? "Excluded files remain on disk. Keep this worktree until they have been reviewed and preserved."
+    : `Discard: ${remove} --force "${wt.path}" && git branch -D ${[branch, ...others.map((o) => o.name)].join(" ")}`);
+  return displayPathText(lines.join("\n"));
 }
 
 /** Files that changed in a plain (non-worktree) run: `git status` lines that are new after the run. */
@@ -405,4 +412,13 @@ export function changedFiles(before: Map<string, string>, after: Map<string, str
   for (const [f, fp] of after) if (before.get(f) !== fp) out.add(f);
   for (const f of before.keys()) if (!after.has(f)) out.add(f);
   return [...out].sort();
+}
+
+/** Every root that can hold bridge-managed worktrees: the default and the configured worktreeRoot (AB-177).
+ * Detection, cleanup and the dashboard use all of them, so trees under a custom root are not missed. */
+export function worktreeRoots(home: string): string[] {
+  const roots = [join(home, "worktrees")];
+  const configured = loadConfig(home, "other", nullLogger).worktreeRoot;
+  if (configured && resolve(configured).toLowerCase() !== resolve(roots[0]!).toLowerCase()) roots.push(configured);
+  return roots;
 }

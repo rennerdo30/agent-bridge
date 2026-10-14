@@ -78,11 +78,24 @@ export function cmdlineIsPrintMode(cmdline: string): boolean {
   return cmdline.split(/\s+/).some((t) => /^["']?(-p|--print)(=.*)?["']?$/.test(t));
 }
 
+/** Recognize the executable/entrypoint, not a prompt or an MCP plugin path mentioning Claude. */
+export function cmdlineIsClaude(cmdline: string): boolean {
+  const tokens = cmdline.match(/"[^"]*"|'[^']*'|\S+/g)?.map(token => token.replace(/^["']|["']$/g, "")) ?? [];
+  const executable = tokens[0]?.replace(/\\/g, "/").split("/").at(-1) ?? "";
+  if (/^claude(?:\.exe|\.cmd)?$/i.test(executable)) return true;
+  if (!/^node(?:\.exe)?$/i.test(executable)) return false;
+  // npm's normal shim uses the script as the first argument. Unknown Node launch
+  // arrangements stay ineligible rather than treating a later prompt as an entrypoint.
+  return /(?:^|\/)node_modules\/@anthropic-ai\/claude-code\/cli\.js$/i.test((tokens[1] ?? "").replace(/\\/g, "/"));
+}
+
 export interface ClaudeLaunch {
   /** Its command line enables our channel. */
   channel: boolean;
   /** A headless print-mode run. */
   print: boolean;
+  /** A positively identified Claude ancestor in interactive mode; unknown launches stay ineligible. */
+  interactive: boolean;
 }
 
 /**
@@ -97,10 +110,11 @@ export async function inspectClaudeLaunch(pluginName: string, log: Logger): Prom
     if (!info) break;
     log.debug("inspected ancestor process", { pid, cmdline: info.cmdline.slice(0, 300) });
     if (cmdlineEnablesChannel(info.cmdline, pluginName)) channel = true;
-    if (/\bclaude(\.exe)?\b/i.test(info.cmdline) && !/node_modules|agent-bridge/i.test(info.cmdline)) {
-      return { channel, print: cmdlineIsPrintMode(info.cmdline) };
+    if (cmdlineIsClaude(info.cmdline)) {
+      const print = cmdlineIsPrintMode(info.cmdline);
+      return { channel, print, interactive: !print };
     }
     pid = info.ppid;
   }
-  return { channel, print: false };
+  return { channel, print: false, interactive: false };
 }

@@ -10,6 +10,12 @@ Inherited author/committer environment overrides are excluded from these checkpo
 
 ## Windows file ownership
 
+Every delegate CLI, detached runner and inherited native child defaults to
+`DOTNET_ADD_GLOBAL_TOOLS_TO_PATH=0` and `DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1`.
+This prevents .NET first-run setup from adding each per-worktree tools directory
+to the persistent user PATH. Explicit user values take precedence, including
+empty values; the bridge never changes PATH or an existing CLI home.
+
 Delegated sandboxed runs use `codexWindowsSandbox: "unelevated"` by default. This backend
 uses a restricted token derived from the bridge user, so new files retain that user's
 ownership instead of belonging to the dedicated elevated-sandbox account. It still
@@ -31,15 +37,31 @@ agent-bridge repair-permissions <folder> --yes
 ```
 
 The first command only lists scope. The second saves original SDDL descriptors under
-`<bridge-home>/permission-repairs/` before enabling inheritance, restoring the current
-user as owner, and granting that user full control. It resets explicit permissions
+`<bridge-home>/permission-repairs/` before enabling inheritance and granting the current
+user full control. Existing ownership is preserved. It resets explicit permissions
 only within the selected physical tree. No file is deleted or truncated. No elevation
 or account switch is attempted. Unreadable descriptors are kept unchanged and reported
 as failures; this command cannot grant rights the invoking account lacks.
 Every path component is checked. Linked roots/ancestors are refused and descendant
 links (including internal links and junctions) are skipped without touching targets.
 
+## Failed creation
+
+An existing branch or checkout path is retained when creation fails. A timed-out
+Git add may have published either one, so retries use a verified-unused branch
+and directory without cleaning the first attempt. Error reports identify retained
+locations. Creation failure never force-removes a worktree, deletes a branch,
+prunes shared Git metadata, or removes partial files.
+
 ## Close policy
+
+Finished and continuable jobs keep ignored cache links, including Unity `Library`
+and `node_modules`, for follow-up checks. Completing a turn never unlinks them.
+The optional 24-hour close sweep also retains any worktree containing a link,
+even after that continuation window. Job results list the link paths and targets.
+Only an explicit supervisor-approved cleanup may detach those link entries;
+cleanup never removes or modifies their targets. Cache links permit reads only:
+run imports and package installation against a separate writable cache.
 
 `jobCloseCleanup` defaults to `false`. Opt in through bridge configuration:
 

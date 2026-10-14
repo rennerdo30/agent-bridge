@@ -1,0 +1,57 @@
+Dict {
+    UIApplicationSupportsMultipleScenes = false
+    UISceneConfigurations = Dict {
+        UIWindowSceneSessionRoleApplication = Array {
+            Dict {
+                UISceneDelegateClassName = EXExpoAppSceneDelegate
+                UISceneConfigurationName = Default Configuration
+            }
+        }
+    }
+}
+dev.rennerdo30.agentbridge: 131
+2026-10-11T16:14:30Z
+  131 00:01 /Users/rennerdo30/Library/Developer/CoreSimulator/Devices/EF0E61A5-DB90-42A8-957F-2515A4E47DE0/data/Containers/Bundle/Application/A963B8C4-3327-4C09-8348-5C73B7B94CAD/agentbridge.app/agentbridge
+2026-10-11T16:14:31Z
+  131 00:02 /Users/rennerdo30/Library/Developer/CoreSimulator/Devices/EF0E61A5-DB90-42A8-957F-2515A4E47DE0/data/Containers/Bundle/Application/A963B8C4-3327-4C09-8348-5C73B7B94CAD/agentbridge.app/agentbridge
+2026-10-11T16:14:32Z
+  131 00:03 /Users/rennerdo30/Library/Developer/CoreSimulator/Devices/EF0E61A5-DB90-42A8-957F-2515A4E47DE0/data/Containers/Bundle/Application/A963B8C4-3327-4C09-8348-5C73B7B94CAD/agentbridge.app/agentbridge
+2026-10-11T16:14:33Z
+  131 00:04 /Users/rennerdo30/Library/Developer/CoreSimulator/Devices/EF0E61A5-DB90-42A8-957F-2515A4E47DE0/data/Containers/Bundle/Application/A963B8C4-3327-4C09-8348-5C73B7B94CAD/agentbridge.app/agentbridge
+2026-10-11T16:14:34Z
+  131 00:05 /Users/rennerdo30/Library/Developer/CoreSimulator/Devices/EF0E61A5-DB90-42A8-957F-2515A4E47DE0/data/Containers/Bundle/Application/A963B8C4-3327-4C09-8348-5C73B7B94CAD/agentbridge.app/agentbridge
+2026-10-11T16:14:35Z
+  131 00:06 /Users/rennerdo30/Library/Developer/CoreSimulator/Devices/EF0E61A5-DB90-42A8-957F-2515A4E47DE0/data/Containers/Bundle/Application/A963B8C4-3327-4C09-8348-5C73B7B94CAD/agentbridge.app/agentbridge
+2026-10-11T16:14:36Z
+  131 00:07 /Users/rennerdo30/Library/Developer/CoreSimulator/Devices/EF0E61A5-DB90-42A8-957F-2515A4E47DE0/data/Containers/Bundle/Application/A963B8C4-3327-4C09-8348-5C73B7B94CAD/agentbridge.app/agentbridge
+2026-10-11T16:14:37Z
+  131 00:08 /Users/rennerdo30/Library/Developer/CoreSimulator/Devices/EF0E61A5-DB90-42A8-957F-2515A4E47DE0/data/Containers/Bundle/Application/A963B8C4-3327-4C09-8348-5C73B7B94CAD/agentbridge.app/agentbridge
+2026-10-11T16:14:38Z
+  131 00:09 /Users/rennerdo30/Library/Developer/CoreSimulator/Devices/EF0E61A5-DB90-42A8-957F-2515A4E47DE0/data/Containers/Bundle/Application/A963B8C4-3327-4C09-8348-5C73B7B94CAD/agentbridge.app/agentbridge
+2026-10-11T16:14:39Z
+  131 00:10 /Users/rennerdo30/Library/Developer/CoreSimulator/Devices/EF0E61A5-DB90-42A8-957F-2515A4E47DE0/data/Containers/Bundle/Application/A963B8C4-3327-4C09-8348-5C73B7B94CAD/agentbridge.app/agentbridge
+2026-10-11T16:14:40Z
+  131 00:11 /Users/rennerdo30/Library/Developer/CoreSimulator/Devices/EF0E61A5-DB90-42A8-957F-2515A4E47DE0/data/Containers/Bundle/Application/A963B8C4-3327-4C09-8348-5C73B7B94CAD/agentbridge.app/agentbridge
+2026-10-11T16:14:41Z
+  131 00:12 /Users/rennerdo30/Library/Developer/CoreSimulator/Devices/EF0E61A5-DB90-42A8-957F-2515A4E47DE0/data/Containers/Bundle/Application/A963B8C4-3327-4C09-8348-5C73B7B94CAD/agentbridge.app/agentbridge
+2026-10-11T16:14:42Z
+  131 00:13 /Users/rennerdo30/Library/Developer/CoreSimulator/Devices/EF0E61A5-DB90-42A8-957F-2515A4E47DE0/data/Containers/Bundle/Application/A963B8C4-3327-4C09-8348-5C73B7B94CAD/agentbridge.app/agentbridge
+2026-10-11T16:14:43Z
+  131 00:14 /Users/rennerdo30/Library/Developer/CoreSimulator/Devices/EF0E61A5-DB90-42A8-957F-2515A4E47DE0/data/Containers/Bundle/Application/A963B8C4-3327-4C09-8348-5C73B7B94CAD/agentbridge.app/agentbridge
+2026-10-11T16:14:44Z
+  131 00:15 /Users/rennerdo30/Library/Developer/CoreSimulator/Devices/EF0E61A5-DB90-42A8-957F-2515A4E47DE0/data/Containers/Bundle/Application/A963B8C4-3327-4C09-8348-5C73B7B94CAD/agentbridge.app/agentbridge
+2026-10-11T16:14:45Z
+  131 00:16 /Users/rennerdo30/Library/Developer/CoreSimulator/Devices/EF0E61A5-DB90-42A8-957F-2515A4E47DE0/data/Containers/Bundle/Application/A963B8C4-3327-4C09-8348-5C73B7B94CAD/agentbridge.app/agentbridge
+== Devices ==
+-- iOS 18.3 --
+-- iOS 27.0 --
+    AB271-20261012-0113 (EF0E61A5-DB90-42A8-957F-2515A4E47DE0) (Booted)
+-- tvOS 27.0 --
+-- watchOS 11.2 --
+-- watchOS 27.0 --
+Detected file type from extension: PNG
+Note: No display specified. Defaulting to display: BC16C132-F81B-451F-A6EB-17672BFF1925 (screenID: 1, name: LCD)
+Wrote screenshot to: /Users/rennerdo30/dkbuild/ab271-20261012-0113/evidence/ab271-ios27-scene.png
+8f83093d75826126135832910f86af6cedfe7cd7ae0b36264d828c332b42424a  evidence/ab271-ios27-scene.png
+0ea8e593ee27cf04d29694341c896c51bf4c4bde80658fbe27408565089faf6d  DerivedData/Build/Products/Release-iphonesimulator/agentbridge.app/agentbridge
+e2cc008f5898a701e8cfaafeea2aaa5b09d4e9364dd00a7d89e63414414d3bff  DerivedData/Build/Products/Release-iphonesimulator/agentbridge.app/main.jsbundle

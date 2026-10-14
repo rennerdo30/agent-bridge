@@ -1,3 +1,4 @@
+import { worktreeRoots } from "../core/worktree.js";
 import { randomUUID } from "node:crypto";
 import { appendContextEvent } from "../core/context-journal.js";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -9,17 +10,18 @@ import { acquireStartup } from "../core/startup-admission.js";
 import { defaultEffort } from "../core/effort.js";
 import { t } from "../core/i18n.js";
 import type { Logger } from "../core/logger.js";
-import { ParentLink } from "../core/parent-link.js";
+import { ParentLink, type ParentRoute } from "../core/parent-link.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolvePipePath } from "../core/paths.js";
 import { loadOrCreateToken } from "../core/token.js";
 import type { AgentKind, CodingAgent } from "../core/protocol.js";
-import { PermissionRelay, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
+import { PermissionRelay, unreviewable, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObservation } from "../core/codex-trust.js";
-import { startRunFeed } from "../core/runfeed.js";
+import { startRunFeed, startRunFeedReady } from "../core/runfeed.js";
 import { ResourceSlots, resourceSlotHint, SLOT_OWNER_ENV, SLOT_PID_ENV, SLOT_RENEW_MS } from "../core/resource-slots.js";
 import { approvalHint, DESK_READ_PATTERNS, isAutoApproved, isHandoffToolCall, isOwnServerCall } from "../core/tool-allow.js";
 import { codexDriveMappings, codexPathReport } from "../core/codex-paths.js";
+import { displayPath, displayPathText } from "../core/display-paths.js";
 import { scanWorktreeLinks, WORKTREE_LINK_HINT, worktreeLinkWarning } from "../core/worktree-links.js";
 import { changedFiles, createWorktree, finishWorktree, git, trustArgs, gitChangeSnapshot, gitDirsOutside, handoffWarning, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
 import { formatSiblingMessages, formatUsage } from "./format.js";
@@ -28,7 +30,7 @@ import { denyPendingApprovals, waitForApproval, type Job, type RunResult } from 
 import { DELEGATION_TARGETS, supportsAsk, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
 import { JOB_SETTING_KEYS } from "./job-settings.js";
 import { prepareWorktreeContinuation, recordWorktreeOrigin } from "../core/job-close.js";
-import { invalidateWorktreePathProof, worktreeLease } from "../core/worktree-state.js";
+import { invalidateWorktreePathProofWithRetry, worktreeLease } from "../core/worktree-state.js";
 import { assertPhysicalPath } from "../core/permission-repair.js";
 
 /** Added to a subagent's task when it can report progress. */
@@ -58,8 +60,9 @@ export interface JobSink {
   persist?: () => void;
   escalateApproval?: (job: Job, body: string) => Promise<void>;
   askParent(job: Job, question: string, timeoutMs: number, request?: PermissionRequest): Promise<{ allow: boolean; reason: string }>;
-  /** isAnswer: its answer to a live message (wakes the session); else a note unless it replies to something. */
-  fromSubagent(job: Job, body: string, replyTo: string | null, isAnswer?: boolean, forceNote?: boolean): void;
+  /** isAnswer: its answer to a live message (wakes the session); else a note unless it replies to something.
+   * question: send with message_kind="question"; a sink may report where it was routed (AB-249). */
+  fromSubagent(job: Job, body: string, replyTo: string | null, isAnswer?: boolean, forceNote?: boolean, question?: boolean): void | Promise<ParentRoute | undefined>;
   note(job: Job, facts: { sessionId?: string | null; workdir?: string | null; worktree?: Worktree | null }): void;
 }
 
@@ -86,13 +89,19 @@ export interface RunContext {
 
 /** A folder inside ~/.agent-bridge/worktrees (a subagent worktree, possibly from an earlier job). */
 export function isBridgeWorktree(dir: string, home: string): boolean {
-  return isInside(dir, join(home, "worktrees")) && resolve(dir) !== resolve(join(home, "worktrees"));
+  return bridgeWorktreeRoot(dir, home) !== null;
 }
 
 /** A caller may resume from a nested project directory; inspect the whole managed worktree. */
 function bridgeWorktreeRoot(dir: string, home: string): string | null {
-  if (!isBridgeWorktree(dir, home)) return null;
-  return join(home, "worktrees", relative(join(home, "worktrees"), resolve(dir)).split(/[\\/]/)[0]!);
+  for (const [index, root] of worktreeRoots(home).entries()) {
+    if (!isInside(dir, root) || resolve(dir) === resolve(root)) continue;
+    const name = relative(root, resolve(dir)).split(/[\\/]/)[0]!;
+    // A configured worktreeRoot may hold other folders; only job-named trees (<repo>-<job id>) count there.
+    if (index > 0 && !/-[0-9a-f]{8}$/.test(name)) continue;
+    return join(root, name);
+  }
+  return null;
 }
 
 export function isInside(child: string, parent: string): boolean {
@@ -111,11 +120,11 @@ export function resumeArgs(a: DelegateArgs, job: string, message: string, sessio
 }
 
 /** Plain jobs stay read-only; worktree edit jobs honor their separate default and exact overrides. */
-export function worktreeArgs(target: CodingAgent, a: DelegateArgs, cfg: BridgeConfig, cwd: string, home: string): DelegateArgs {
+export function worktreeArgs(target: CodingAgent, a: DelegateArgs, cfg: BridgeConfig, cwd: string, home: string, platform = process.platform): DelegateArgs {
   const worktree = Boolean(a.worktree || a._worktree || isBridgeWorktree(cwd, home));
   const access = worktree ? (a.access ?? "edit") : a.access;
   const sandbox = target === "codex" && worktree && access === "edit" && a.sandbox === undefined
-    ? cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? "workspace-write" : cfg.codexSandbox)
+    ? cfg.codexWorktreeSandbox ?? (cfg.codexSandbox === "read-only" ? platform === "win32" ? "danger-full-access" : "workspace-write" : cfg.codexSandbox)
     : a.sandbox;
   return { ...a, access, ...(sandbox !== undefined ? { sandbox } : {}) };
 }
@@ -126,7 +135,7 @@ export async function runDelegate(
   onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job,
 ): Promise<RunResult> {
   checkDepth(rc.cfg.maxDelegateDepth);
-  if (!job?.rootSession) return runWithStartup(rc, target, a, signal, onProgress, background, job);
+  if (!job?.rootSession) return runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
   const budget = new RootConcurrency(rc.home, job.rootSession);
   const owner = { id: `${job.name}-${randomUUID()}`, pid: process.pid };
   let timer: NodeJS.Timeout | undefined;
@@ -136,32 +145,27 @@ export async function runDelegate(
     await budget.acquireWhenAvailable(owner, signal);
     timer = setInterval(() => { try { budget.renew(owner); } catch (err) { rc.log.warn("could not renew root concurrency lease", { err: String(err) }); } }, SLOT_RENEW_MS);
     timer.unref();
-    return await runWithStartup(rc, target, a, signal, onProgress, background, job);
+    return await runWithWorktreeLease(rc, target, a, signal, onProgress, background, job);
   } finally { clearInterval(timer); try { budget.release(owner); } finally { budget.close(); } }
 }
 
-async function runWithStartup(rc: RunContext, target: CodingAgent, a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job): Promise<RunResult> {
-  onProgress?.("queued: waiting for machine startup admission");
-  const release = await acquireStartup(rc.home, signal);
-  try {
-    signal.throwIfAborted();
-    onProgress?.("starting native CLI");
-    return await runWithWorktreeLease({ ...rc, startupReady: release }, target, a, signal, onProgress, background, job);
-  } finally { release(); }
-}
-
 async function runWithWorktreeLease(rc: RunContext, target: CodingAgent, a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job): Promise<RunResult> {
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, jobId: randomUUID().slice(0, 8), log: rc.log }) : null);
+  signal.throwIfAborted();
+  onProgress?.("preparing run context");
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, worktreeRoot: rc.cfg.worktreeRoot, jobId: randomUUID().slice(0, 8), log: rc.log }) : null);
   const root = wt?.path ?? bridgeWorktreeRoot(a.cwd || rc.cwd(), rc.home);
   if (!root) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
-  const release = worktreeLease(rc.home, { path: root });
+  const release = worktreeLease(rc.home, { path: root }, job?.id);
   try {
+    // A reader that is just exiting must not fail the turn at once (AB-260): these state writes wait
+    // for a fresh identity scan with backoff, then fail with the same blocker message as before.
+    const retry = { signal, log: rc.log, onWait: (message: string) => onProgress?.(`queued: ${message}`) };
     if (wt) {
-      if (!a._worktree) await recordWorktreeOrigin(rc.home, wt, rc.log);
-      else await prepareWorktreeContinuation(rc.home, wt, rc.log);
+      if (!a._worktree) await recordWorktreeOrigin(rc.home, wt, rc.log, retry);
+      else await prepareWorktreeContinuation(rc.home, wt, rc.log, retry);
     } else {
       assertPhysicalPath(root);
-      invalidateWorktreePathProof(rc.home, root);
+      await invalidateWorktreePathProofWithRetry(rc.home, root, retry);
     }
     return await runDelegateInner(rc, target, wt ? { ...a, _worktree: wt } : a, signal, onProgress, background, job);
   } finally { release(); }
@@ -185,7 +189,7 @@ async function runDelegateInner(
   a = worktreeArgs(target, a, cfg, cwd, rc.home);
   const access: Access | undefined = a.access;
   // A follow-up to a worktree job keeps working (and committing) in that worktree.
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, jobId: randomUUID().slice(0, 8), log: dlog }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, worktreeRoot: cfg.worktreeRoot, jobId: randomUUID().slice(0, 8), log: dlog }) : null);
   const workdir = wt?.cwd ?? cwd;
   const linkRoot = wt?.path ?? bridgeWorktreeRoot(workdir, rc.home);
   // Codex in "ask" mode can only change files through an approval: watching the folder tells us whether
@@ -249,6 +253,12 @@ async function runDelegateInner(
       return { allow: false, message: HANDOFF_DECLINED };
     }
     if (!r.automaticReview && r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
+    // Never decide (or pattern-match) a cut text: the owner must see everything they allow (AB-241).
+    const refused = isOwnServerCall(r) ? null : unreviewable(r);
+    if (refused) {
+      asked.push(`denied (too long to review): ${r.tool} ${r.detail.slice(0, 80)}`);
+      return refused;
+    }
     // Its own agent-bridge tools (answering the parent, report_progress) never need a question.
     if (!r.automaticReview && (isOwnServerCall(r) || isAutoApproved(r, autoApprove))) return { allow: true };
     let d: PermissionDecision;
@@ -271,10 +281,10 @@ async function runDelegateInner(
   });
   let feed: ReturnType<typeof startRunFeed>;
   try {
-    feed = startRunFeed({
+    feed = await startRunFeedReady({
       home: rc.home,
       name: `${target}-${randomUUID().slice(0, 8)}`,
-      header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${workdir}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}\n${a.prompt}\n---`,
+      header: `${target}${a.model ? ` (${a.model}${a.effort ? `, effort ${a.effort}` : ""})` : a.effort ? ` (effort ${a.effort})` : ""} in ${displayPath(workdir)}, access ${access ?? "default"}, by ${me}${a.session_id ? `, continues ${a.session_id}` : ""}\n${displayPathText(a.prompt)}\n---`,
       forward: onProgress,
       meta: {
         metadataVersion: DELEGATION_METADATA_VERSION,
@@ -296,7 +306,7 @@ async function runDelegateInner(
         jobStartedAt: job?.startedAt,
         continues: a.session_id ?? null,
       },
-    });
+    }, signal);
   } catch (err) {
     await relay?.stop();
     throw err;
@@ -323,7 +333,7 @@ async function runDelegateInner(
       me,
       (body, replyTo, kind) => {
         feed.report(`answer to ${me}: ${body.split("\n")[0]!.slice(0, 120)}`, `answer to ${me}: ${body}`);
-        jobs.fromSubagent(job, body, replyTo, kind === "question", kind === "note");
+        return jobs.fromSubagent(job, body, replyTo, kind === "question", kind === "note", kind === "question");
       },
       dlog,
       (percent, note, eta) => {
@@ -403,7 +413,8 @@ async function runDelegateInner(
         signal,
         onProgress: feed.report,
         extraEnv: { ...link?.childEnv(), [ENV.home]: rc.home, [ENV.maxDelegateDepth]: String(cfg.maxDelegateDepth),
-          ...(job ? { [PARENT_JOB_ENV]: job.name, [ROOT_SESSION_ENV]: job.rootSession ?? job.supervisor ?? me, [ROOT_NAME_ENV]: job.rootName ?? me } : {}),
+          // AGENT_BRIDGE_JOB_ID: the stable job name for tools in the job's processes that prove "same job" ownership.
+          ...(job ? { [PARENT_JOB_ENV]: job.name, AGENT_BRIDGE_JOB_ID: job.name, [ROOT_SESSION_ENV]: job.rootSession ?? job.supervisor ?? me, [ROOT_NAME_ENV]: job.rootName ?? me } : {}),
           ...(slots ? { [SLOT_OWNER_ENV]: slotOwner.id, [SLOT_PID_ENV]: String(slotOwner.pid) } : {}) },
         writableRoots,
         onSession: (id) => {
@@ -431,10 +442,20 @@ async function runDelegateInner(
             }
           : undefined,
       },
-      (req) => profile.run(cfg, req, { ...a, access, relay: wiring }),
+      async (req) => {
+        // Context/reader checks precede native admission. Each retry owns its
+        // own permit, including callbacks that arrive after an earlier attempt.
+        onProgress?.("queued: waiting for machine startup admission");
+        const release = await acquireStartup(rc.home, signal);
+        try {
+          signal.throwIfAborted();
+          onProgress?.("starting native CLI");
+          return await profile.run(cfg, { ...req, onSession: (id) => { release(); req.onSession?.(id); } }, { ...a, access, relay: wiring });
+        } finally { release(); }
+      },
     );
     feed.meta({ session: res.sessionId });
-    feed.end(res.isError ? "failed" : "done", res.text);
+    feed.end(signal.aborted ? "cancelled" : res.isError ? "failed" : "done", displayPathText(res.text));
     if (!res.isError && res.text.trim()) link?.reportCompleted();
   } catch (err) {
     if (err instanceof DelegateError && err.sessionId) feed.meta({ session: err.sessionId });
@@ -443,13 +464,14 @@ async function runDelegateInner(
       const branchHead = await git([...trustArgs(wt.path), "rev-parse", "HEAD"], wt.path, dlog).catch(() => undefined);
       feed.meta({ branch: branch || wt.branch, branchHead });
     }
-    feed.end(`failed: ${(err as Error)?.message ?? err}`);
+    feed.end(signal.aborted ? "cancelled" : displayPathText(`failed: ${(err as Error)?.message ?? err}`));
     // The worktree keeps whatever the subagent did before failing: say where it is.
     if (wt && err instanceof Error) err.message += `\n\nIts worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
     if (linkRoot && err instanceof Error) {
       try { const warning = worktreeLinkWarning(scanWorktreeLinks(linkRoot)); if (warning) err.message += `\n\n${warning}`; }
       catch (scanError) { err.message += `\nWARNING: worktree link inspection failed: ${(scanError as Error).message}`; }
     }
+    if (err instanceof Error) err.message = displayPathText(err.message);
     throw err;
   } finally {
     if (job) denyPendingApprovals(job);
@@ -528,5 +550,5 @@ async function runDelegateInner(
     const warning = handoffWarning(changed);
     if (warning) notes.push(warning);
   }
-  return { ...res, workdir, worktree: wt ?? undefined, text: notes.length ? `${res.text}\n\n---\n${notes.join("\n\n")}` : res.text };
+  return { ...res, workdir, worktree: wt ?? undefined, text: displayPathText(notes.length ? `${res.text}\n\n---\n${notes.join("\n\n")}` : res.text) };
 }

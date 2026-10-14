@@ -1,9 +1,11 @@
+import { worktreeRoots } from "./worktree.js";
 import { existsSync, lstatSync, realpathSync, readdirSync } from "node:fs";
 import { dirname, join, resolve, toNamespacedPath } from "node:path";
 import { JOBS_FILE } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { BRANCH_PREFIX, git, removeWorktreeDirectory, trustArgs, type Worktree } from "./worktree.js";
 import { readStore } from "../mcp/jobs.js";
+import { worktreeLease } from "./worktree-state.js";
 import { resolveWorktreeRemovalPath, unlinkLinks, scanWorktreeLinks, worktreeLinkWarning, type WorktreeLinkScan } from "./worktree-links.js";
 
 /**
@@ -67,7 +69,7 @@ async function mergedInto(branch: string, targets: string[], cwd: string, trust:
   return null;
 }
 
-async function inspect(path: string, jobs: StoredJob[], apply: boolean, log: Logger): Promise<CleanupEntry> {
+async function inspect(path: string, jobs: StoredJob[], apply: boolean, log: Logger, home: string): Promise<CleanupEntry> {
   const removalPath = resolveWorktreeRemovalPath(path, dirname(path));
   const scan = scanWorktreeLinks(path);
   const warning = worktreeLinkWarning(scan);
@@ -123,23 +125,40 @@ async function inspect(path: string, jobs: StoredJob[], apply: boolean, log: Log
   if (!into) return entry(branch, "kept", base && locals.includes(base) ? `has commits not merged into ${base}` : "has commits not merged into any local branch");
   const why = `merged into ${into}, clean`;
   if (!apply) return entry(branch, "would remove", why);
+  // Runs and closes share this lease: a continuation or close in progress keeps the tree (AB-222).
+  let release: (() => void) | null = null;
+  try { release = worktreeLease(existsSync(home) ? realpathSync.native(home) : home, { path }); }
+  catch (err) { return entry(branch, "kept", (err as Error).message.split("\n")[0]!); }
   try {
     const links = unlinkLinks(removalPath);
     // A lock (e.g. "initializing" left by an interrupted `worktree add`) blocks removal.
     await git([...trust, "worktree", "unlock", removalPath], mainPath, log).catch(() => "");
+    let refused: string | null = null;
     await git([...trust, "worktree", "remove", removalPath], mainPath, log).catch(async (err) => {
-      // Git could not delete it all (files of another account, open handles): delete what is left ourselves.
       if (!existsSync(toNamespacedPath(path))) return;
-      log.warn("git worktree remove failed; deleting the folder", { path, err: (err as Error).message });
+      const message = (err as Error).message;
+      // Git's refusal (new modified/untracked files, submodules, ...) is the safety signal: keep the folder. Only
+      // permission or open-handle failures (files of another account, AB-119) may be finished here, and only
+      // when a fresh look still finds nothing uncommitted.
+      if (!PERMISSION_FAILURE.test(message)) { refused = message.split("\n")[0]!; return; }
+      if (existsSync(toNamespacedPath(join(path, ".git")))) {
+        const again = await git([...trust, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"], path, log).catch(() => null);
+        if (again !== "") { refused = again === null ? "git status failed after a partial removal" : "new uncommitted changes appeared"; return; }
+      }
+      log.warn("git worktree remove hit a permission error; deleting the rest of the folder", { path, err: message });
       removeWorktreeDirectory(removalPath);
       await git(["worktree", "prune"], mainPath, log);
     });
+    if (refused) return entry(branch, "kept", `git refused to remove it, so it is kept: ${refused}`);
     await git(["branch", "-D", branch], mainPath, log);
     return entry(branch, "removed", links ? `${why}; unlinked ${links} link(s) inside first` : why);
   } catch (err) {
     return entry(branch, "failed", (err as Error).message.split("\n")[0]!);
-  }
+  } finally { release?.(); }
 }
+
+/** Failures of `git worktree remove` that come from permissions or open handles, not from git's safety checks. */
+const PERMISSION_FAILURE = /Permission denied|Access is denied|\bEPERM\b|\bEACCES\b|\bEBUSY\b|used by another process|resource busy/i;
 
 export interface CleanupScope {
   all: boolean;
@@ -160,13 +179,16 @@ export async function cleanupWorktrees(opts: {
 }): Promise<CleanupEntry[]> {
   if (opts.all && opts.repo) throw new Error("Use either --all or --repo, not both.");
   const repository = opts.all ? null : await repositoryCommonDir(opts.repo ?? opts.cwd ?? process.cwd(), opts.log);
-  const dir = join(opts.home, "worktrees");
-  if (existsSync(dir)) resolveWorktreeRemovalPath(dir);
   const jobs = readJobs(opts.home);
   const candidates: { path: string; repository: string | null }[] = [];
+  const roots = worktreeRoots(opts.home);
+  for (const [index, dir] of roots.entries()) {
+  if (existsSync(dir)) resolveWorktreeRemovalPath(dir);
   for (const d of existsSync(dir) ? readdirSync(dir, { withFileTypes: true }) : []) {
     const path = join(dir, d.name);
     if (!d.isDirectory() || lstatSync(path).isSymbolicLink()) continue;
+    // A configured worktreeRoot may be shared with other folders: only trees a job created there qualify.
+    if (index > 0 && !jobs.some((j) => j.worktree && samePath(j.worktree.path, path)) && !/-[0-9a-f]{8}$/.test(d.name)) continue;
     let common = existsSync(join(path, ".git")) ? await repositoryCommonDir(path, opts.log).catch(() => null) : null;
     // A removed worktree may still have a durable job record. Never guess by folder/branch name.
     if (!common && !existsSync(join(path, ".git"))) {
@@ -174,6 +196,7 @@ export async function cleanupWorktrees(opts: {
       if (job?.worktree) common = await repositoryCommonDir(job.worktree.repoRoot, opts.log).catch(() => null);
     }
     if (opts.all || (common && repository && samePath(common, repository))) candidates.push({ path, repository: common });
+  }
   }
   const projects: CleanupScope["projects"] = [];
   for (const candidate of candidates) {
@@ -191,7 +214,7 @@ export async function cleanupWorktrees(opts: {
       out.push({ ...candidate, branch: null, action: "kept", reason: "repository changed after scope selection" });
       continue;
     }
-    const entry = await inspect(candidate.path, jobs, opts.apply, opts.log).catch((err): CleanupEntry => ({ path: candidate.path, branch: null, action: "kept", reason: `cannot read it: ${(err as Error).message.split("\n")[0]}` }));
+    const entry = await inspect(candidate.path, jobs, opts.apply, opts.log, opts.home).catch((err): CleanupEntry => ({ path: candidate.path, branch: null, action: "kept", reason: `cannot read it: ${(err as Error).message.split("\n")[0]}` }));
     out.push({ ...entry, repository: candidate.repository });
   }
   return out;

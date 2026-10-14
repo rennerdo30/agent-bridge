@@ -2,6 +2,7 @@ import { APP_VERSION, DEFAULT_MAX_HOPS } from "../core/constants.js";
 import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage, type PeerInfo, type SendResult } from "../core/protocol.js";
 import type { LinkMessage } from "../core/parent-link.js";
 import { DEFAULT_SIBLING_MAX_HOPS } from "../core/job-messaging.js";
+import { displayPath } from "../core/display-paths.js";
 
 /**
  * Text shown to the model. It is model-facing protocol text rather than UI copy, so it stays in English
@@ -107,7 +108,7 @@ export function formatPeer(p: PeerInfo, selfId?: string, now: number = Date.now(
     .filter(Boolean)
     .join(", ");
   const session = p.sessionId ? ` session=${p.sessionId}` : "";
-  return `- ${p.name} (${flags}) cwd=${p.cwd}${session}`;
+  return `- ${p.name} (${flags}) cwd=${displayPath(p.cwd)}${session}`;
 }
 
 export function formatVersionSkew(peers: Pick<PeerInfo, "name" | "version">[], version = APP_VERSION): string[] {

@@ -7,6 +7,8 @@ import { historyDbPath, historyReady } from "../src/core/history-store.js";
 import { Broker } from "../src/core/broker.js";
 import { BridgeClient } from "../src/core/client.js";
 import { MessageStore } from "../src/core/store.js";
+import { writeFileSync } from "node:fs";
+import { HistoryBackground } from "../src/core/history-background.js";
 import { nullLogger } from "../src/core/logger.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { makeEnv, until } from "./helpers.js";
@@ -59,4 +61,22 @@ it("does not start a background worker when the environment kill switch disables
   const store = new MessageStore(env.db,nullLogger), broker = new Broker(env.pipe,store,nullLogger,"fixture-token");
   try { await broker.listen(); expect((broker as unknown as { historyBackground: unknown }).historyBackground).toBeNull(); }
   finally { await broker.close(); await env.cleanup(); vi.unstubAllEnvs(); }
+});
+
+it("monitors a config-disabled migration and resumes it when ingestion is enabled", async () => {
+  const env = makeEnv(); writeFileSync(join(env.home,"config.json"),JSON.stringify({history:{ingest:false}}));
+  const store = new MessageStore(env.db,nullLogger), broker = new Broker(env.pipe,store,nullLogger,"fixture-token");
+  let history: DatabaseSync | undefined;
+  try {
+    await broker.listen();
+    const worker = (broker as unknown as {historyBackground: HistoryBackground}).historyBackground;
+    expect(worker).not.toBeNull();
+    history = new DatabaseSync(historyDbPath(env.db),{timeout:100});
+    await until(() => worker.status().paused,5000);
+    expect(history.prepare("SELECT * FROM history_migration").get()).toBeUndefined();
+    writeFileSync(join(env.home,"config.json"),JSON.stringify({history:{ingest:true}}));
+    await until(() => historyReady(history!),10000);
+    await until(() => worker.status().phase === "verified",5000);
+    expect(worker.status()).toMatchObject({percent:100,paused:false,etaSeconds:0});
+  } finally { history?.close(); await broker.close(); await env.cleanup(); }
 });

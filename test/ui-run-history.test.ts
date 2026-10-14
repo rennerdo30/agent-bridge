@@ -1,3 +1,4 @@
+import { indexFixtureFile } from "./archive-fixture.js";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -20,6 +21,7 @@ const job = (name: string, agent = "codex", sessionId: string | null = CODEX_SES
 function archiveJobs(filename: string, jobs: unknown[], legacy = false): void {
   const dir = join(env.home, "archive"); mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, filename), JSON.stringify(legacy ? jobs : { version: 1, jobs }));
+  indexFixtureFile(join(dir, filename));
 }
 function archivedRun(name: string, meta: Record<string, unknown> = {}, legacy = true): void {
   const dir = join(env.home, "runs", "archive"); mkdirSync(dir, { recursive: true });
