@@ -32,6 +32,30 @@ function register() {
 }
 
 describe("Muse private host context", () => {
+  it.skipIf(process.platform !== "win32")("probes the sanitized Windows runtime without environment values", async () => {
+    const root = process.env.SystemRoot || process.env.SYSTEMROOT || "C:\\Windows";
+    const profile = process.env.USERPROFILE || "";
+    const bare = { HOME: env.home, PATH: process.env.PATH, SystemRoot: root, USERPROFILE: profile, TEMP: env.home, TMP: env.home };
+    const extra = {
+      windir: { windir: root },
+      modules: { PSModulePath: join(root, "System32", "WindowsPowerShell", "v1.0", "Modules") },
+      shell: { ComSpec: join(root, "System32", "cmd.exe"), SystemDrive: root.slice(0, 2) },
+      profile: { APPDATA: join(profile, "AppData", "Roaming"), LOCALAPPDATA: join(profile, "AppData", "Local") },
+    };
+    const variants = { bare: {}, ...extra, all: Object.assign({}, ...Object.values(extra)) };
+    const results = [];
+    for (const [variant, added] of Object.entries(variants)) {
+      const started = Date.now();
+      try {
+        const result = await exec(join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+          ["-NoProfile", "-NonInteractive", "-Command", `[Console]::Write('ready'); (Get-Process -Id ${process.pid} -ErrorAction Stop).Id`],
+          { env: { ...bare, ...added }, timeout: 5_000, windowsHide: true });
+        results.push({ variant, ok: result.stdout.includes("ready"), elapsedMs: Date.now() - started });
+      } catch (error) { results.push({ variant, ok: false, code: (error as NodeJS.ErrnoException).code, elapsedMs: Date.now() - started }); }
+    }
+    console.warn("Muse Windows runtime diagnostics " + JSON.stringify(results));
+    expect(results.find(result => result.variant === "all")?.ok).toBe(true);
+  });
   it("authenticates the bound parent before querying an unavailable CIM service", async () => {
     releases.push(registerMuseContext(process.ppid, { AGENT_BRIDGE_INTERNAL: "1", CODEX_HOME: "owned-storage" }));
     const query = vi.spyOn(procinfo, "lookup").mockResolvedValue(null);
