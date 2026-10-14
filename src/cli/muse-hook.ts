@@ -16,6 +16,21 @@ export function museHookOutput(event: string, output: HookOutput): Record<string
   if ("hookSpecificOutput" in output && output.hookSpecificOutput) return { hookSpecificOutput: { hookEventName: event, additionalContext: output.hookSpecificOutput.additionalContext } };
   return {};
 }
+/**
+ * The PreToolUse gate is a local decision: it needs no bridge endpoint. Inside a
+ * `muse serve` host the MCP child's hook endpoint may never register (the child
+ * can start before its session id exists), so deciding here keeps ask-mode jobs
+ * fail-safe instead of failing closed: read still denies mutations, ask still
+ * prompts natively (the MSP approval then reaches the supervisor), and native
+ * children still cannot consume the root's bridge tools.
+ */
+export function musePreToolUseGate(input: Record<string, any>, access: string | undefined, childBridgeCall: boolean): Record<string, unknown> | null {
+  if (childBridgeCall) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "Muse native children share the root MCP connection; ask the parent to use Bridge tools." } };
+  if (access === "read" && !museReadingTool(input)) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "agent-bridge read access forbids this tool" } };
+  if (access === "ask" && !museReadingTool(input)) return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask" } };
+  return null;
+}
+
 export async function runMuseHook(event: string): Promise<number> {
   let childBridgeCall = false;
   try {
@@ -25,6 +40,10 @@ export async function runMuseHook(event: string): Promise<number> {
     const input = object(JSON.parse(raw || "{}"));
     const session = process.env.MUSE_SESSION_ID, thread = process.env.MUSE_THREAD_ID;
     childBridgeCall = event === "PreToolUse" && !!thread && thread !== session && museBridgeTool(input);
+    if (event === "PreToolUse") {
+      const gate = musePreToolUseGate(input, process.env[MUSE_ACCESS_ENV], childBridgeCall);
+      if (gate) { process.stdout.write(JSON.stringify(gate)); return 0; }
+    }
     if (!session) throw new Error("Muse session identity unavailable");
     if (event !== "PreToolUse" && ((thread && thread !== session) || (typeof input.session_id === "string" && input.session_id !== session))) { process.stdout.write("{}"); return 0; }
     const host = await museHostPid();
