@@ -6,7 +6,8 @@ import { createServer } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeNode } from "../src/core/node.js";
 import { Broker } from "../src/core/broker.js";
-import { BridgeClient } from "../src/core/client.js";
+import { BridgeClient, CLIENT_TRANSPORT_DIAGNOSTIC_COUNT_LIMIT, CLIENT_TRANSPORT_DIAGNOSTIC_RECORD_LIMIT,
+  type ClientConnectionClosedDiagnostic } from "../src/core/client.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
@@ -109,16 +110,42 @@ function observeUiSender() {
 }
 async function cliCreationEvidence(child: ChildProcess, identity: string | null) {
   const events: Array<{ kind: string; stage?: string; code?: number; count: number }> = [];
-  if (!child.pid || !identity || await readProcessIdentity(child.pid) !== identity) return { verifiedOwner: false, events };
+  const transport: Array<ClientConnectionClosedDiagnostic & { count: number; overflow: boolean }> = [];
+  let transportOverflow = false;
+  const unavailable = () => ({ verifiedOwner: false, events: [], transport: [], transportSource: "unavailable", transportOverflow: false });
+  if (!child.pid || !identity || await readProcessIdentity(child.pid) !== identity) return unavailable();
   // Only this test's exact isolated home; no logs are exported or printed.
   const file = join(env.home, "logs", "agent-bridge.log");
   try {
-    for (const path of [env.home, join(env.home, "logs"), file]) if (lstatSync(path).isSymbolicLink()) return { verifiedOwner: false, events };
+    for (const path of [env.home, join(env.home, "logs"), file]) if (lstatSync(path).isSymbolicLink()) return unavailable();
     const stat = lstatSync(file);
-    if (!stat.isFile() || stat.size > 1024 * 1024) return { verifiedOwner: false, events };
+    if (!stat.isFile() || stat.size > 1024 * 1024) return unavailable();
     const bytes = readFileSync(file);
-    if (bytes.length > 1024 * 1024) return { verifiedOwner: false, events };
+    if (bytes.length > 1024 * 1024) return unavailable();
     for (const line of bytes.toString("utf8").split("\n")) {
+      const closed = line.match(/^\d{4}-\d\d-\d\dT[^ ]+ INFO +\[cli:node(?::client)?\] pid=(\d+) client connection closure observation (\{.*\})$/);
+      if (closed && Number(closed[1]) === child.pid) {
+        let data: Record<string, unknown>;
+        try { data = JSON.parse(closed[2]!); } catch { continue; }
+        if (!data || typeof data !== "object" || Array.isArray(data) || Object.keys(data).length !== 7 ||
+          !Object.keys(data).every(key => ["phase", "operation", "frame_encoded", "write_call_boundary", "write_returned", "count", "overflow"].includes(key)) ||
+          !["prewrite_closed", "pending_close"].includes(String(data.phase)) ||
+          !["tracked_send", "legacy_send", "auth_hello", "ack", "status_read", "other"].includes(String(data.operation)) ||
+          typeof data.frame_encoded !== "boolean" || typeof data.write_returned !== "boolean" || typeof data.overflow !== "boolean" ||
+          !["not_reached", "reached"].includes(String(data.write_call_boundary)) ||
+          !Number.isSafeInteger(data.count) || Number(data.count) < 1 || Number(data.count) > CLIENT_TRANSPORT_DIAGNOSTIC_COUNT_LIMIT) continue;
+        if ((data.write_returned && (!data.frame_encoded || data.write_call_boundary !== "reached")) ||
+          (data.write_call_boundary === "reached" && !data.frame_encoded) ||
+          (data.phase === "prewrite_closed" && (data.frame_encoded || data.write_returned || data.write_call_boundary !== "not_reached"))) continue;
+        const record = data as unknown as ClientConnectionClosedDiagnostic & { count: number; overflow: boolean };
+        const existing = transport.find(value => value.phase === record.phase && value.operation === record.operation &&
+          value.frame_encoded === record.frame_encoded && value.write_call_boundary === record.write_call_boundary && value.write_returned === record.write_returned);
+        if (existing) { existing.count = Math.max(existing.count, record.count); existing.overflow ||= record.overflow; }
+        else if (transport.length < CLIENT_TRANSPORT_DIAGNOSTIC_RECORD_LIMIT) transport.push({ ...record });
+        else transportOverflow = true;
+        transportOverflow ||= record.overflow;
+        continue;
+      }
       const match = line.match(/^\d{4}-\d\d-\d\dT[^ ]+ INFO +\[cli:node\] pid=(\d+) daemon creation observation; authenticated readiness still required (\{.*\})$/);
       if (!match || Number(match[1]) !== child.pid) continue;
       let data: Record<string, unknown>;
@@ -130,8 +157,9 @@ async function cliCreationEvidence(child: ChildProcess, identity: string | null)
       if (existing) existing.count++;
       else if (events.length < 16) events.push({ kind, ...(stage ? { stage } : {}), ...(code === undefined ? {} : { code }), count: 1 });
     }
-    return { verifiedOwner: true, events };
-  } catch { return { verifiedOwner: false, events }; }
+    if (await readProcessIdentity(child.pid) !== identity) return unavailable();
+    return { verifiedOwner: true, events, transport, transportSource: transport.length ? "observed" : "unavailable", transportOverflow };
+  } catch { return unavailable(); }
 }
 async function httpFailureCategory(response: Response): Promise<string> {
   if (response.ok) return "none";
