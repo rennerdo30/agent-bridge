@@ -83,3 +83,15 @@ export function codexCallIdentity(meta?: Record<string, unknown>, hook?: CodexCa
   const given = (value: unknown) => typeof value === "string" && value && !value.startsWith("${") ? value : null;
   return { threadId: given(meta?.threadId) ?? hook?.threadId, agentId: hook?.agentId ?? given(meta?.agent_id), transcript: hook?.transcript ?? given(meta?.transcript_path) };
 }
+
+/**
+ * Admits only main Codex threads. Codex hook events omit agent_id on root threads and share
+ * session_id with descendants, so the calling thread comes from the threadId Codex attaches
+ * to every MCP call (hooks included) and its rollout lineage decides.
+ */
+export function codexMainThreadAdmission(lineage = new CodexLineageLookup()): (meta?: Record<string, unknown>, hook?: CodexCallIdentity) => boolean {
+  return (meta, hook) => {
+    const call = codexCallIdentity(meta, hook);
+    return !call.agentId && Boolean(call.threadId && lineage.classify(call.threadId, call.transcript) === "main");
+  };
+}

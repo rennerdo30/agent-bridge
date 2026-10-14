@@ -1,0 +1,48 @@
+name: AB320 diagnostic artifact
+
+on:
+  pull_request:
+    paths:
+      - src/mcp/jobs.ts
+      - src/mcp/server.ts
+      - test/job-follow-up-gate.test.ts
+      - .github/workflows/ab320-diagnostic.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # Official actions/checkout v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # Official actions/setup-node v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Synthetic real-gate regression
+        run: npx vitest run test/job-follow-up-gate.test.ts
+      - name: Stage only generated plugins and SHA256 manifest
+        shell: bash
+        run: |
+          mkdir ab320-artifact
+          for plugin in claude codex opencode antigravity; do
+            mkdir -p "ab320-artifact/plugins/$plugin"
+            cp -R "plugins/$plugin/dist" "ab320-artifact/plugins/$plugin/dist"
+          done
+          git rev-parse HEAD > ab320-artifact/SOURCE_HEAD
+          cd ab320-artifact
+          find plugins -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # Official actions/upload-artifact v4.6.2
+        with:
+          name: ab320-plugins-${{ github.event.pull_request.head.sha }}
+          path: ab320-artifact/
+          if-no-files-found: error
+          retention-days: 7
