@@ -42,6 +42,10 @@ if ($FreshVolume) {
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'ci-windows-ownership.ps1')
+# Compile while this process still uses its incoming temporary directory. Lazy
+# Add-Type during cleanup would put compiler inputs in the fixture being removed.
+# A compilation failure aborts before any fixture or ownership root is created.
+Initialize-CiCleanupApi
 $owner = New-CiOwnership ([IO.Path]::GetTempPath())
 $token = $owner.Token
 $root = $owner.Root

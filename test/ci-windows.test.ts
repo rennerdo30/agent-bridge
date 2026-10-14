@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -64,6 +64,65 @@ it.runIf(process.platform === "win32").each(["wrapper", "powershell", "powershel
   expect(stderr).toContain("owned-handle mechanism");
   expect(readdirSync(parent).sort()).toEqual(before);
   expect(readFileSync(evidence, "utf8")).toBe('{"retained":true}\n');
+});
+
+it.runIf(process.platform === "win32")("compiles the real cleanup helper in a fresh process before fixture temp redirection", () => {
+  const parent = mkdtempSync(join(tmpdir(), "ci-compiler-placement-"));
+  const powershell = join(process.env.SystemRoot ?? "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
+  const launcher = fileURLToPath(new URL("../scripts/test-ci-windows.ps1", import.meta.url));
+  // This observer delegates to the real compiler. Created filesystem entries,
+  // loaded native type and actual launcher cleanup are required, not a mocked result.
+  const input = `
+$ErrorActionPreference = 'Stop'
+function Add-Type {
+  param([string]$Path)
+  $actualTemp = [IO.Path]::GetTempPath().TrimEnd('\\')
+  $watcher = New-Object IO.FileSystemWatcher $env:TEMP
+  $watcher.IncludeSubdirectories = $true
+  $source = 'ci-real-compiler-' + [guid]::NewGuid().ToString('N')
+  $null = Register-ObjectEvent -InputObject $watcher -EventName Created -SourceIdentifier $source
+  $watcher.EnableRaisingEvents = $true
+  try {
+    Microsoft.PowerShell.Utility\\Add-Type -Path $Path
+    $deadline = [DateTime]::UtcNow.AddSeconds(2)
+    while (@(Get-Event -SourceIdentifier $source -ErrorAction SilentlyContinue).Count -eq 0 -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 20 }
+    $created = @(Get-Event -SourceIdentifier $source -ErrorAction SilentlyContinue | ForEach-Object { $_.SourceEventArgs.FullPath })
+    $proof = [pscustomobject]@{ temp=$actualTemp; tmp=$env:TMP; tmpdir=$env:TMPDIR;
+      created=$created; loaded=($null -ne ('CiWindowsCleanup' -as [type]));
+      fixtureRoots=@(Get-ChildItem -LiteralPath $env:TEMP -Directory -Filter 'abci-*' | ForEach-Object { $_.FullName }) }
+    Write-Output ('CI_COMPILE_PROOF=' + ($proof | ConvertTo-Json -Depth 4 -Compress))
+  } finally {
+    $watcher.Dispose()
+    Unregister-Event -SourceIdentifier $source
+    Get-Event -SourceIdentifier $source -ErrorAction SilentlyContinue | Remove-Event
+  }
+}
+# Run the actual public folder launcher. Help avoids recursive test execution;
+# it still creates the guarded fixture and uses the real native cleanup.
+& $env:CI_PLACEMENT_LAUNCHER -Lane fast -NodePath $env:CI_PLACEMENT_NODE --help
+`;
+  const env = { ...process.env, TEMP: parent, TMP: parent, TMPDIR: parent,
+    CI_PLACEMENT_LAUNCHER: launcher, CI_PLACEMENT_NODE: process.execPath };
+  delete env.PSModulePath;
+  const result = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
+    Buffer.from(input, "utf16le").toString("base64")], { env, encoding: "utf8", windowsHide: true });
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(0);
+  const lines = result.stdout.split(/\r?\n/);
+  const proofs = lines.filter(line => line.startsWith("CI_COMPILE_PROOF="));
+  expect(proofs).toHaveLength(1);
+  const proof = JSON.parse(proofs[0]!.slice("CI_COMPILE_PROOF=".length));
+  expect(proof.loaded).toBe(true);
+  expect(proof.temp).toBe(parent);
+  expect(proof.tmp).toBe(parent);
+  expect(proof.tmpdir).toBe(parent);
+  expect(proof.fixtureRoots).toEqual([]);
+  expect(proof.created.length).toBeGreaterThan(0);
+  expect(proof.created.every((path: string) => path.startsWith(parent + "\\") && !path.includes("\\abci-"))).toBe(true);
+  const fixture = lines.find(line => line.startsWith("CI-like Windows fixtures: "))!.slice("CI-like Windows fixtures: ".length);
+  expect(fixture.startsWith(parent + "\\abci-")).toBe(true);
+  expect(existsSync(fixture)).toBe(false);
+  expect(result.stdout).toContain("Cleanup: removed only the verified marked root created by this invocation.");
 });
 
 it("discriminates actual Vitest project caches from wrong lane and outside derived caches", () => {

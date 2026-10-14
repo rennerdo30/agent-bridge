@@ -30,6 +30,12 @@ Only a directory junction to a physical directory in the same marked root can be
 unlinked, by its own handle, with no traversal. Each unlink logs its path, target
 and reason; symlinks and volume mount points are refused.
 
+The launcher compiles its native cleanup helper before creating that root or
+redirecting TEMP/TMP/TMPDIR, so cleanup does not compile into the fixture it is
+removing. Compilation failures abort before fixture creation; cleanup refusals
+still fail the job and retain evidence. This removes a source coupling without
+identifying the owner of any historical sharing lock.
+
 ```powershell
 npm run test:ci-windows -- -Throttle
 npm run test:ci-windows -- -FreshVolume
