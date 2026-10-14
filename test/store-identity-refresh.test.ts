@@ -67,6 +67,27 @@ it("keeps verified readers known when a later identity query fails, but not read
   expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).not.toThrow();
 });
 
+// AB-362 (2026-10-15): a dead job's PID reused by a protected process froze every job start until reboot.
+it("verifies readers recorded without an identity instead of blocking on them forever", () => {
+  metadataDb(env.home); importMetadataDomain(env.home, "storage-capabilities");
+  const observedAt = Date.now() - 3_600_000;
+  saveMetadataValue(env.home, "storage-capabilities", String(pid), { schemaVersion: 1, json: 3, sqlite: 9, pid, name: "old-reader", version: "0.30.0", explicit: true, observedAt });
+  const direct = vi.spyOn(identity, "readProcessIdentitiesSync");
+  // An unreadable start time with insufficient recorded capabilities keeps blocking...
+  direct.mockReturnValue(new Map([[pid, ""]]));
+  expect(() => assertStoreUpgrade(env.home, "json", 3, 4)).toThrow(/Waiting to upgrade json store 3→4/);
+  // ...a readable process started before the observation may still be that reader...
+  const startedBefore = observedAt - 60_000;
+  const stamp = (at: number) => process.platform === "win32" ? String(BigInt(at) * 10000n + 621355968000000000n) : new Date(at).toISOString().replace("T", " ").replace(/\.\d+Z$/, "");
+  direct.mockReturnValue(new Map([[pid, stamp(startedBefore)]]));
+  expect(() => assertStoreUpgrade(env.home, "json", 3, 4)).toThrow(/Waiting to upgrade json store 3→4/);
+  // ...while a process started after it reused the PID: the recorded reader is gone.
+  if (process.platform !== "linux") {
+    direct.mockReturnValue(new Map([[pid, stamp(Date.now())]]));
+    expect(() => assertStoreUpgrade(env.home, "json", 3, 4)).not.toThrow();
+  }
+});
+
 it.runIf(process.platform === "win32")("reports a failed batch query instead of an empty result", async () => {
   // An invalid executable path makes the PowerShell launch itself fail.
   vi.stubEnv("SystemRoot", "Z:\\nonexistent");

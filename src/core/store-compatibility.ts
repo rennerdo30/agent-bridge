@@ -258,11 +258,15 @@ function exitedBehindHandle(pid: number): boolean {
   catch (error) { return ["EPERM", "ESRCH"].includes(String((error as NodeJS.ErrnoException).code)); }
 }
 
-/** The stored presence record of pid, from the metadata rows or the legacy file. */
-function storedPresence(home: string, pid: number): Presence | undefined {
+/** The stored presence record of pid and when it was observed, from the metadata rows or the legacy file. */
+function storedPresence(home: string, pid: number): { record: Presence; at: number } | undefined {
   const stored = databasePresence(home);
-  if (stored) return stored.find(entry => entry.record.pid === pid)?.record;
-  try { return JSON.parse(readFileSync(join(home, "storage-capabilities", `${pid}.json`), "utf8")) as Presence; } catch { return undefined; }
+  if (stored) {
+    const entry = stored.find(candidate => candidate.record.pid === pid);
+    return entry && { record: entry.record, at: typeof entry.record.observedAt === "number" ? entry.record.observedAt : entry.at };
+  }
+  const path = join(home, "storage-capabilities", `${pid}.json`);
+  try { return { record: JSON.parse(readFileSync(path, "utf8")) as Presence, at: statSync(path).mtimeMs }; } catch { return undefined; }
 }
 
 /**
@@ -271,27 +275,30 @@ function storedPresence(home: string, pid: number): Presence | undefined {
  * - the live process matches: it is that reader, and it no longer blocks if its recorded capabilities suffice;
  * - a successful query shows another process under that PID, or no running process at all (an exited process
  *   whose PID a lingering handle keeps answering): the recorded reader is gone.
- * A failed query or a record without an identity keeps the reader blocking. A listed process whose start time cannot
- * be read (elevated or protected) blocks only when the recorded capabilities are insufficient: it is either that reader,
- * whose capabilities then suffice, or a protected process that reused a dead reader's PID (AB-362: svchost under an
- * exited job's PID otherwise blocked every upgrade until reboot).
+ * - a record without an identity (an older peer's hello or an imported legacy file) is gone when the live process
+ *   started after the record was observed, the same rule liveStorePeers applies to cached identities.
+ * A failed query keeps the reader blocking. A listed process whose start time cannot be read (elevated or protected)
+ * blocks only when the recorded capabilities are insufficient: it is either that reader, whose capabilities then
+ * suffice, or a protected process that reused a dead reader's PID (AB-362: svchost under an exited job's PID otherwise
+ * blocked every upgrade, and with it every job start, until reboot).
  */
 function verifiedNow(home: string, peers: Presence[], format: keyof StoreCapabilities, target: number): Set<number> {
   const candidates = peers.flatMap(peer => {
-    const record = storedPresence(home, peer.pid);
-    return record?.processIdentity ? [{ pid: peer.pid, record, identity: record.processIdentity }] : [];
+    const stored = storedPresence(home, peer.pid);
+    return stored ? [{ pid: peer.pid, ...stored }] : [];
   });
   if (!candidates.length) return new Set();
   const live = readProcessIdentitiesSync(candidates.map(candidate => candidate.pid));
   if (!live) return new Set();
-  return new Set(candidates.filter(({ pid, record, identity }) => {
+  return new Set(candidates.filter(({ pid, record, at }) => {
     const now = live.get(pid);
     // Not listed: gone only with the exited-process signature (the PID answers EPERM, e.g. a lingering handle keeps
     // it). A PID that still answers a signal normally but is missing from the list is a race; it keeps blocking.
     if (now === undefined) return exitedBehindHandle(pid);
     const sufficient = validStoreCapabilities(record) && (record[format] ?? 0) >= target;
     if (now === "") return sufficient;
-    return now !== identity || sufficient;
+    if (record.processIdentity) return now !== record.processIdentity || sufficient;
+    return legacyPidReused(now, at) || sufficient;
   }).map(candidate => candidate.pid));
 }
 
