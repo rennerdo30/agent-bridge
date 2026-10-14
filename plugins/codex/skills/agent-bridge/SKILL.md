@@ -60,14 +60,14 @@ unknown to the bridge; inspect native `/usage`.
 
 Before starting or resuming work, after a handoff or restart, and whenever someone refers to an earlier decision, job, branch or message, call `search_history` instead of guessing or reading log files. It searches bridge mail, owner decisions and questions, job runs and reports, and native CLI transcripts locally, without model calls.
 
-- Query with words, a quoted phrase or an exact id (job name, issue key, commit hash).
-- Narrow with `filters`: `kind` (message, run, decision, transcript, approval, progress, report, question), `project` (your cwd), `job`, `session`, `agent`, `since`/`until` (epoch ms or ISO 8601 with offset).
+- The query is split into words that must all appear, in any order; quotes and operators are ignored. Put ids that scope the search (job, session, project) into `filters`, not only into the query.
+- Narrow with `filters`: `kind` (message, run, decision, transcript, approval, progress, report = job reports and snapshots, question), `project` (your cwd), `job`, `session`, `agent`, `since`/`until` (epoch ms or ISO 8601 with offset).
 - Read a whole thread by passing a hit's `conversation` to `get_conversation`; page with `next` as `after`.
 
 Examples:
 
 - Owner rule on a topic: `search_history({ query: "branch limit", filters: { kind: "decision" } })`
-- A job's final result: `search_history({ query: "codex-job-1a2b3c4d", filters: { kind: "report" } })`
+- A job's reports: `search_history({ query: "result", filters: { job: "codex-job-1a2b3c4d", kind: "report" } })`. A report can be a snapshot of a still-running job, so check its status before treating it as final.
 - Recent work in this project: `search_history({ query: "release", filters: { project: "<your cwd>", since: "<ISO time>" } })`
 
 ## Questions to the owner

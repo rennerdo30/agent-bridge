@@ -13,7 +13,7 @@ export const historyFiltersSchema = z.object({
     .describe("Delegated job name, e.g. \"codex-job-1a2b3c4d\"; includes its runs and native transcript"),
   agent: z.enum(["claude", "codex", "opencode", "antigravity", "other"]).optional().describe("Only records of this agent kind"),
   kind: z.enum(["message", "run", "decision", "transcript", "approval", "progress", "report", "question"]).optional()
-    .describe("message: bridge mail; run: delegated run logs; decision: pinned owner decisions (all revisions); transcript: native CLI chats; approval: permission requests; progress: job progress notes; report: final job reports; question: owner questions and answers"),
+    .describe("message: bridge mail; run: delegated run logs; decision: pinned owner decisions (all revisions); transcript: native CLI chats; approval: permission requests; progress: job progress notes; report: job reports and retained job snapshots, including still-running jobs (check the job status before treating a hit as final); question: owner questions and answers"),
   since: dateFilter.optional().describe("Not before: epoch milliseconds or ISO 8601 with offset, e.g. \"2026-10-14T00:00:00+09:00\""),
   until: dateFilter.optional().describe("Not after; same formats as since"),
 }).strict();
