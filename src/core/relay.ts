@@ -160,7 +160,7 @@ export async function askRelay(req: PermissionRequest, env: NodeJS.ProcessEnv = 
 const APPROVALS_DIR = "approvals";
 const APPROVAL_ID = /^[0-9a-f-]{36}$/;
 const ANSWER_PATH = "/answer";
-const ANSWER_TIMEOUT_MS = 30_000;
+const ANSWER_TIMEOUT_MS = 5_000;
 const MAX_PORT = 65_535;
 export const MAX_APPROVAL_REASON_CHARS = 4_000;
 

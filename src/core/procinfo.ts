@@ -12,15 +12,16 @@ interface ProcInfo {
   cmdline: string;
 }
 
-function exec(file: string, args: string[]): Promise<string> {
+function exec(file: string, args: string[], signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(file, args, { timeout: LOOKUP_TIMEOUT_MS, windowsHide: true, maxBuffer: 1024 * 1024 }, (err, stdout) =>
+    execFile(file, args, { timeout: LOOKUP_TIMEOUT_MS, signal, windowsHide: true, maxBuffer: 1024 * 1024 }, (err, stdout) =>
       err ? reject(err) : resolve(stdout),
     );
   });
 }
 
-export async function lookup(pid: number): Promise<ProcInfo | null> {
+export async function lookup(pid: number, signal?: AbortSignal): Promise<ProcInfo | null> {
+  if (signal?.aborted) return null;
   try {
     if (process.platform === "linux") {
       const [cmd, stat] = await Promise.all([readFile(`/proc/${pid}/cmdline`, "utf8"), readFile(`/proc/${pid}/stat`, "utf8")]);
@@ -29,12 +30,12 @@ export async function lookup(pid: number): Promise<ProcInfo | null> {
     }
     if (process.platform === "win32") {
       const script = `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; if ($p) { "$($p.ParentProcessId)"; $p.CommandLine }`;
-      const out = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+      const out = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], signal);
       const [ppidLine, ...rest] = out.split(/\r?\n/);
       if (!ppidLine?.trim()) return null;
       return { pid, ppid: Number(ppidLine.trim()), cmdline: rest.join(" ").trim() };
     }
-    const out = await exec("ps", ["-o", "ppid=,args=", "-p", String(pid)]);
+    const out = await exec("ps", ["-o", "ppid=,args=", "-p", String(pid)], signal);
     const m = /^\s*(\d+)\s+(.*)$/s.exec(out.trim());
     return m ? { pid, ppid: Number(m[1]), cmdline: m[2]!.trim() } : null;
   } catch {
@@ -51,11 +52,12 @@ export function cmdlineIsAntigravity(cmdline: string): boolean {
     /(?:--app_data_dir|--override_ide_name)(?:=|\s+)["']?antigravity(?:-cli|-ide)?(?:["']|\s|$)/i.test(cmdline);
 }
 
-export async function antigravityAncestor(start = process.ppid): Promise<number | null> {
+export async function antigravityAncestor(start = process.ppid, signal?: AbortSignal): Promise<number | null> {
   let pid = start;
   for (let i = 0; i < 6 && pid > 1; i++) {
-    const info = await lookup(pid);
-    if (!info) return null;
+    if (signal?.aborted) return null;
+    const info = await lookup(pid, signal);
+    if (!info || signal?.aborted) return null;
     if (cmdlineIsAntigravity(info.cmdline)) return pid;
     pid = info.ppid;
   }

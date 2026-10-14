@@ -163,24 +163,36 @@ describe("Antigravity hooks", () => {
     expect(antigravityHookOutput("Stop", "mail")).toEqual({ decision: "continue", reason: "mail" });
   });
   it("relays non-workspace, symlink-escaped or shell actions in edit mode with auto_approve while delegating workspace files to native policy", async () => {
-    const root = temp(), outside = temp(), linkedDir = join(root, "escape-dir");
+    const root = temp(), outside = temp(), aliasHost = temp();
+    const linkedDir = join(root, "escape-dir"), danglingDir = join(root, "dangling-dir"), gitAlias = join(root, "git-alias"), linkedRoot = join(aliasHost, "linked-root");
+    mkdirSync(join(root, ".git"), { recursive: true });
     writeFileSync(join(outside, "existing.ts"), "outside");
     symlinkSync(outside, linkedDir, "junction");
+    symlinkSync(join(outside, "missing-target"), danglingDir, "junction");
+    symlinkSync(join(root, ".git"), gitAlias, "junction");
+    symlinkSync(root, linkedRoot, "junction");
     mocks.ask
       .mockResolvedValueOnce({ allow: true })
       .mockResolvedValueOnce({ allow: false, message: "denied command" })
       .mockResolvedValueOnce({ allow: false, message: "denied symlink existing" })
       .mockResolvedValueOnce({ allow: false, message: "denied symlink new" })
+      .mockResolvedValueOnce({ allow: false, message: "denied dangling link" })
+      .mockResolvedValueOnce({ allow: false, message: "denied git alias" })
+      .mockResolvedValueOnce({ allow: false, message: "denied uppercase git" })
       .mockResolvedValueOnce({ allow: false, message: "denied missing root" });
     expect(await antigravityPermission({ toolCall: { name: "view_file", args: { AbsolutePath: join(root, "a.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "allow" });
     expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(root, "src", "a.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "allow" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(linkedRoot, "src", "alias.ts") } }, workspacePaths: [linkedRoot] }, "edit", true)).toEqual({ decision: "allow" });
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(root, ".git", "config") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "auto_approve", permissionOverrides: [`write_file(${join(root, ".git", "config")})`] });
     expect(await antigravityPermission({ toolCall: { name: "run_command", args: { CommandLine: "npm test" } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied command" });
     expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(linkedDir, "existing.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied symlink existing" });
     expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(linkedDir, "sub", "new.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied symlink new" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(danglingDir, "sub", "new.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied dangling link" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(gitAlias, "config") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied git alias" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(root, ".GIT", "config") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied uppercase git" });
     expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(root, "missing-root", "a.ts") } }, workspacePaths: [join(root, "missing-root")] }, "edit", true)).toEqual({ decision: "deny", reason: "denied missing root" });
-    expect(mocks.ask).toHaveBeenCalledTimes(5);
+    expect(mocks.ask).toHaveBeenCalledTimes(8);
   });
   it("normalizes MCP approvals for shared allow rules and declines handoff writes", async () => {
     mocks.ask.mockResolvedValue({ allow: true });

@@ -29,24 +29,31 @@ function allowed(input: Record<string, any>, decision: "allow" | "auto_approve" 
   return { decision, ...(resources.length ? { permissionOverrides: resources } : {}) };
 }
 
+function hasGitSegment(path: string): boolean {
+  return path.split(/[\\/]+/).some((part) => part.toLowerCase() === ".git");
+}
+
 function canonicalTargetPath(targetPath: string): string | null {
   const lexical = resolve(targetPath);
-  if (lexical.split(/[\\/]+/).includes(".git")) return null;
+  if (hasGitSegment(lexical)) return null;
   let cur = lexical;
   const tail: string[] = [];
   while (true) {
     try {
       lstatSync(cur);
-      const realCur = realpathSync.native(cur);
-      const canonical = tail.length ? join(realCur, ...tail) : realCur;
-      return canonical.split(/[\\/]+/).includes(".git") ? null : canonical;
     } catch (err) {
       if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") return null;
       const parent = dirname(cur);
       if (parent === cur) return null;
       tail.unshift(basename(cur));
       cur = parent;
+      continue;
     }
+    try {
+      const realCur = realpathSync.native(cur);
+      const canonical = tail.length ? join(realCur, ...tail) : realCur;
+      return hasGitSegment(canonical) ? null : canonical;
+    } catch { return null; }
   }
 }
 
@@ -128,12 +135,13 @@ export function needsInteractivePreToolPost(input: Record<string, any>, home = r
   } catch { return true; }
 }
 
-async function postAntigravityHook(event: string, input: Record<string, any>, timeoutMs = 20_000): Promise<Record<string, unknown>> {
-  const pid = await antigravityAncestor();
-  if (!pid) return {};
-  const reg = JSON.parse(readFileSync(join(resolveHome(), "antigravity-hooks", `${pid}.json`), "utf8"));
+export async function postAntigravityHook(event: string, input: Record<string, any>, timeoutMs = 20_000, home = resolveHome()): Promise<Record<string, unknown>> {
+  const signal = AbortSignal.timeout(timeoutMs);
+  const pid = await antigravityAncestor(process.ppid, signal);
+  if (!pid || signal.aborted) return {};
+  const reg = JSON.parse(readFileSync(join(home, "antigravity-hooks", `${pid}.json`), "utf8"));
   if (!Number.isInteger(reg.port) || typeof reg.secret !== "string") throw new Error("invalid hook registration");
-  const res = await fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${reg.secret}`, "content-type": "application/json" }, body: JSON.stringify({ event, input }), signal: AbortSignal.timeout(timeoutMs) });
+  const res = await fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${reg.secret}`, "content-type": "application/json" }, body: JSON.stringify({ event, input }), signal });
   if (!res.ok) throw new Error("hook endpoint unavailable");
   return object(await res.json());
 }

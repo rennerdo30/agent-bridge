@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AntigravityHooks } from "../src/mcp/antigravity-hooks.js";
-import { needsInteractivePreToolPost } from "../src/cli/antigravity-hook.js";
+import { needsInteractivePreToolPost, postAntigravityHook } from "../src/cli/antigravity-hook.js";
 import { antigravityAncestor } from "../src/core/procinfo.js";
 import { buildHookResponse, confirmAntigravityStopDelivery } from "../src/mcp/hooks.js";
 import { antigravityHookCommand, requireAntigravityPlugin } from "../src/core/antigravity-plugin.js";
@@ -109,6 +109,16 @@ describe("Antigravity native hook routing", () => {
       node.emit("reclaimed"); vi.mocked(buildHookResponse).mockResolvedValue({});
       expect(JSON.parse(readFileSync(join(env.home, "antigravity-hooks", "12345.json"), "utf8"))).toEqual({ ...reg, conversationId: "parent", cwd: env.home, stopPending: false });
       expect((await call("Stop")).status).toBe(200);
+      vi.mocked(buildHookResponse).mockResolvedValueOnce({ decision: "block", reason: "held mail" });
+      expect(await (await call("Stop", "parent", reg.secret, { executionNum: 3, terminationReason: "NO_TOOL_CALL" })).json()).toEqual({ decision: "continue", reason: "held mail" });
+      expect(needsInteractivePreToolPost({ conversationId: "parent", workspacePaths: [env.home] }, env.home)).toBe(true);
+      vi.mocked(antigravityAncestor).mockImplementationOnce((_start, signal) => new Promise((resolve) => {
+        signal?.addEventListener("abort", () => resolve(null), { once: true });
+      }));
+      expect(await postAntigravityHook("PreToolUse", { conversationId: "parent", workspacePaths: [env.home] }, 50, env.home)).toEqual({});
+      expect(needsInteractivePreToolPost({ conversationId: "parent", workspacePaths: [env.home] }, env.home)).toBe(true);
+      expect(await postAntigravityHook("PreToolUse", { conversationId: "parent", workspacePaths: [env.home] }, 1_500, env.home)).toEqual({});
+      expect(needsInteractivePreToolPost({ conversationId: "parent", workspacePaths: [env.home] }, env.home)).toBe(false);
     } finally { await hooks.stop(); await env.cleanup(); }
   });
   it("rejects missing or disabled native permission gates before a CLI can run", async () => {
