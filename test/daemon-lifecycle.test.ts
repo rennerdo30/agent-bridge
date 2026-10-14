@@ -108,34 +108,26 @@ function observeUiSender() {
   const listen = vi.spyOn(Broker.prototype, "listen");
   return { starts, metadataAtStart, listen, close: () => { start.mockRestore(); listen.mockRestore(); } };
 }
-async function cliCreationEvidence(child: ChildProcess, identity: string | null) {
+// Parser-only fixtures use synthetic lines below. This helper provides no
+// ownership authority; the actual reader brackets it with creation checks.
+function parseCliCreationEvidence(text: string, ownedPid: number) {
   const events: Array<{ kind: string; stage?: string; code?: number; count: number }> = [];
   const transport: Array<ClientConnectionClosedDiagnostic & { count: number; overflow: boolean }> = [];
   let transportOverflow = false;
-  const unavailable = () => ({ verifiedOwner: false, events: [], transport: [], transportSource: "unavailable", transportOverflow: false });
-  if (!child.pid || !identity || await readProcessIdentity(child.pid) !== identity) return unavailable();
-  // Only this test's exact isolated home; no logs are exported or printed.
-  const file = join(env.home, "logs", "agent-bridge.log");
-  try {
-    for (const path of [env.home, join(env.home, "logs"), file]) if (lstatSync(path).isSymbolicLink()) return unavailable();
-    const stat = lstatSync(file);
-    if (!stat.isFile() || stat.size > 1024 * 1024) return unavailable();
-    const bytes = readFileSync(file);
-    if (bytes.length > 1024 * 1024) return unavailable();
-    for (const line of bytes.toString("utf8").split("\n")) {
+    for (const line of text.split("\n")) {
       const closed = line.match(/^\d{4}-\d\d-\d\dT[^ ]+ INFO +\[cli:node(?::client)?\] pid=(\d+) client connection closure observation (\{.*\})$/);
-      if (closed && Number(closed[1]) === child.pid) {
+      if (closed && Number(closed[1]) === ownedPid) {
         let data: Record<string, unknown>;
         try { data = JSON.parse(closed[2]!); } catch { continue; }
         if (!data || typeof data !== "object" || Array.isArray(data) || Object.keys(data).length !== 7 ||
           !Object.keys(data).every(key => ["phase", "operation", "frame_encoded", "write_call_boundary", "write_returned", "count", "overflow"].includes(key)) ||
-          !["prewrite_closed", "pending_close"].includes(String(data.phase)) ||
-          !["tracked_send", "legacy_send", "auth_hello", "ack", "status_read", "other"].includes(String(data.operation)) ||
+          typeof data.phase !== "string" || !["prewrite_closed", "pending_close"].includes(data.phase) ||
+          typeof data.operation !== "string" || !["tracked_send", "legacy_send", "auth_hello", "ack", "status_read", "other"].includes(data.operation) ||
           typeof data.frame_encoded !== "boolean" || typeof data.write_returned !== "boolean" || typeof data.overflow !== "boolean" ||
-          !["not_reached", "reached"].includes(String(data.write_call_boundary)) ||
+          typeof data.write_call_boundary !== "string" || !["not_reached", "reached"].includes(data.write_call_boundary) ||
           !Number.isSafeInteger(data.count) || Number(data.count) < 1 || Number(data.count) > CLIENT_TRANSPORT_DIAGNOSTIC_COUNT_LIMIT) continue;
         if ((data.write_returned && (!data.frame_encoded || data.write_call_boundary !== "reached")) ||
-          (data.write_call_boundary === "reached" && !data.frame_encoded) ||
+          (data.frame_encoded !== (data.write_call_boundary === "reached")) ||
           (data.phase === "prewrite_closed" && (data.frame_encoded || data.write_returned || data.write_call_boundary !== "not_reached"))) continue;
         const record = data as unknown as ClientConnectionClosedDiagnostic & { count: number; overflow: boolean };
         const existing = transport.find(value => value.phase === record.phase && value.operation === record.operation &&
@@ -147,18 +139,34 @@ async function cliCreationEvidence(child: ChildProcess, identity: string | null)
         continue;
       }
       const match = line.match(/^\d{4}-\d\d-\d\dT[^ ]+ INFO +\[cli:node\] pid=(\d+) daemon creation observation; authenticated readiness still required (\{.*\})$/);
-      if (!match || Number(match[1]) !== child.pid) continue;
+      if (!match || Number(match[1]) !== ownedPid) continue;
       let data: Record<string, unknown>;
       try { data = JSON.parse(match[2]!); } catch { continue; }
-      if (!["created", "unknown", "unavailable"].includes(String(data.kind))) continue;
-      const kind = String(data.kind), stage = ["read", "startup", "create"].includes(String(data.stage)) ? String(data.stage) : undefined;
+      if (!data || typeof data !== "object" || Array.isArray(data) || typeof data.kind !== "string" ||
+        !["created", "unknown", "unavailable"].includes(data.kind) ||
+        (data.stage !== undefined && (typeof data.stage !== "string" || !["read", "startup", "create"].includes(data.stage)))) continue;
+      const kind = data.kind, stage = data.stage as string | undefined;
       const code = Number.isSafeInteger(data.errorCode) ? Number(data.errorCode) : undefined;
       const existing = events.find(event => event.kind === kind && event.stage === stage && event.code === code);
-      if (existing) existing.count++;
-      else if (events.length < 16) events.push({ kind, ...(stage ? { stage } : {}), ...(code === undefined ? {} : { code }), count: 1 });
+      if (existing) existing.count = Math.min(existing.count + 1, CLIENT_TRANSPORT_DIAGNOSTIC_COUNT_LIMIT);
+      else if (events.length < CLIENT_TRANSPORT_DIAGNOSTIC_RECORD_LIMIT) events.push({ kind, ...(stage ? { stage } : {}), ...(code === undefined ? {} : { code }), count: 1 });
     }
+    return { events, transport, transportSource: transport.length ? "observed" as const : "unavailable" as const, transportOverflow };
+}
+async function cliCreationEvidence(child: ChildProcess, identity: string | null) {
+  const unavailable = () => ({ verifiedOwner: false, events: [], transport: [], transportSource: "unavailable" as const, transportOverflow: false });
+  if (!child.pid || !identity || await readProcessIdentity(child.pid) !== identity) return unavailable();
+  // Only this test's exact isolated home; no logs are exported or printed.
+  const file = join(env.home, "logs", "agent-bridge.log");
+  try {
+    for (const path of [env.home, join(env.home, "logs"), file]) if (lstatSync(path).isSymbolicLink()) return unavailable();
+    const stat = lstatSync(file);
+    if (!stat.isFile() || stat.size > 1024 * 1024) return unavailable();
+    const bytes = readFileSync(file);
+    if (bytes.length > 1024 * 1024) return unavailable();
+    const evidence = parseCliCreationEvidence(bytes.toString("utf8"), child.pid);
     if (await readProcessIdentity(child.pid) !== identity) return unavailable();
-    return { verifiedOwner: true, events, transport, transportSource: transport.length ? "observed" : "unavailable", transportOverflow };
+    return { verifiedOwner: true, ...evidence };
   } catch { return unavailable(); }
 }
 async function httpFailureCategory(response: Response): Promise<string> {
@@ -186,6 +194,62 @@ function copyFixtureRuntime(source: string, target: string): void {
     }
   }
 }
+
+describe("SIMULATED fixed log parser inputs (no process ownership authority)", () => {
+  const pid = 1234;
+  const transportLine = (data: unknown, sourcePid = pid) => `2026-10-14T00:00:00.000Z INFO  [cli:node:client] pid=${sourcePid} client connection closure observation ${JSON.stringify(data)}`;
+  const creationLine = (data: unknown) => `2026-10-14T00:00:00.000Z INFO  [cli:node] pid=${pid} daemon creation observation; authenticated readiness still required ${JSON.stringify(data)}`;
+  const prewrite = { phase: "prewrite_closed", operation: "tracked_send", frame_encoded: false, write_call_boundary: "not_reached", write_returned: false, count: 1, overflow: false };
+  it("rejects coerced enum/boolean fields and impossible phase/write combinations without exporting evidence", () => {
+    const malformed: unknown[] = [null, [], 1];
+    for (const field of ["phase", "operation", "write_call_boundary"] as const) {
+      for (const value of [[prewrite[field]], { value: prewrite[field] }, 1, null]) malformed.push({ ...prewrite, [field]: value });
+    }
+    for (const field of ["frame_encoded", "write_returned", "overflow"] as const) {
+      for (const value of [[], {}, "false", 0, null]) malformed.push({ ...prewrite, [field]: value });
+    }
+    malformed.push(
+      { ...prewrite, phase: ["prewrite_closed"], frame_encoded: true, write_call_boundary: "reached", write_returned: true },
+      { ...prewrite, frame_encoded: true, write_call_boundary: "reached", write_returned: true },
+      { ...prewrite, phase: "pending_close", frame_encoded: true },
+      { ...prewrite, phase: "pending_close", write_call_boundary: "reached" },
+      { ...prewrite, phase: "pending_close", write_returned: true },
+      { ...prewrite, count: "1" }, { ...prewrite, count: 0 }, { ...prewrite, extra: "unsupported" },
+    );
+    for (const data of malformed) expect(parseCliCreationEvidence(transportLine(data), pid)).toMatchObject({ transport: [], transportSource: "unavailable" });
+    expect(parseCliCreationEvidence(transportLine(prewrite), pid).transport).toEqual([prewrite]);
+    const pending = { ...prewrite, phase: "pending_close", frame_encoded: true, write_call_boundary: "reached", write_returned: true };
+    expect(parseCliCreationEvidence(transportLine(pending), pid).transport).toEqual([pending]);
+  });
+  it("rejects coerced creation kind/stage while preserving valid optional stages", () => {
+    for (const data of [null, [], { kind: ["created"] }, { kind: { value: "created" } }, { kind: 1 }, { kind: null },
+      ...[["create"], { value: "create" }, 1, null].map(stage => ({ kind: "created", stage }))]) {
+      expect(parseCliCreationEvidence(creationLine(data), pid).events).toEqual([]);
+    }
+    expect(parseCliCreationEvidence([creationLine({ kind: "created" }), creationLine({ kind: "created", stage: "create" })].join("\n"), pid).events)
+      .toEqual([{ kind: "created", count: 1 }, { kind: "created", stage: "create", count: 1 }]);
+  });
+  it("caps distinct reader records at sixteen, aggregates bounded counts and ignores another source PID", () => {
+    const lines: string[] = [];
+    for (const operation of ["tracked_send", "legacy_send", "auth_hello", "ack", "status_read", "other"]) {
+      for (const disposition of [
+        { frame_encoded: false, write_call_boundary: "not_reached", write_returned: false },
+        { frame_encoded: true, write_call_boundary: "reached", write_returned: false },
+        { frame_encoded: true, write_call_boundary: "reached", write_returned: true },
+      ]) lines.push(transportLine({ ...prewrite, phase: "pending_close", operation, ...disposition }));
+    }
+    const first = { ...prewrite, phase: "pending_close" };
+    lines.push(transportLine({ ...first, count: CLIENT_TRANSPORT_DIAGNOSTIC_COUNT_LIMIT, overflow: true }));
+    lines.push(transportLine({ ...first, count: CLIENT_TRANSPORT_DIAGNOSTIC_COUNT_LIMIT + 1 }));
+    lines.push(transportLine(prewrite, pid + 1));
+    const evidence = parseCliCreationEvidence(lines.join("\n"), pid);
+    expect(evidence.transport).toHaveLength(CLIENT_TRANSPORT_DIAGNOSTIC_RECORD_LIMIT);
+    expect(evidence.transport[0]).toEqual({ ...first, count: CLIENT_TRANSPORT_DIAGNOSTIC_COUNT_LIMIT, overflow: true });
+    expect(evidence.transportOverflow).toBe(true);
+    expect(evidence.transportSource).toBe("observed");
+    expect(evidence.transport.some(record => record.phase === "prewrite_closed")).toBe(false);
+  });
+});
 
 describe("standalone demand-start broker", () => {
   it.each([false, true])("actual CLI ui authorized sends use a daemon before/after crash (mobile-configured=%s)", async mobile => {
