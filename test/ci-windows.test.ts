@@ -101,7 +101,7 @@ function Add-Type {
 # it still creates the guarded fixture and uses the real native cleanup.
 & $env:CI_PLACEMENT_LAUNCHER -Lane fast -NodePath $env:CI_PLACEMENT_NODE --help
 `;
-  const env = { ...process.env, TEMP: parent, TMP: parent, TMPDIR: parent,
+  const env: NodeJS.ProcessEnv = { ...process.env, TEMP: parent, TMP: parent, TMPDIR: parent,
     CI_PLACEMENT_LAUNCHER: launcher, CI_PLACEMENT_NODE: process.execPath };
   delete env.PSModulePath;
   const result = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
