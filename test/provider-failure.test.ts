@@ -95,6 +95,30 @@ describe("per-CLI provider failure evidence", () => {
     expect(classifyProviderFailure({ agent: "codex", model: "m", message: "Model is at capacity. Model is not at capacity" })).toMatchObject({ kind: "unknown", retryable: false });
   });
 
+  it.each([
+    ["Usage limit reached, reset time unknown", "usage_limit"],
+    ["Usage limit reached, model attribution unknown", "usage_limit"],
+    ["Weekly limit reached, details unclear", "usage_limit"],
+    ["Your credit balance is too low, billing instructions unknown", "no_credits"],
+    ["No credits, reset date unknown", "no_credits"],
+    ["Billing required, payment instructions unknown", "billing_required"],
+  ] as const)("keeps definite terminal proof despite uncertain details: %s", (message, kind) => {
+    for (const agent of agents) {
+      const result = classifyProviderFailure({ agent, model: null, message });
+      expect(result).toMatchObject({ kind, retryable: false, model: null });
+      expect(result).not.toHaveProperty("resetAt");
+      expect(result).not.toHaveProperty("retryAfterMs");
+    }
+  });
+
+  it.each(["Usage limit not reached, reset time unknown", "Usage limit reached, actually not reached",
+    "Usage limit reached, actually false", "Usage limit reached, quota status unknown", "No credits, credits status unknown",
+    "Your credit balance is not too low, billing instructions unknown", "Billing is not required, details unknown",
+    "Usage limit reached, reset time unknown and usage limit not reached", "Usage limit reached. Usage limit not reached",
+    "No credits. Credit balance is not too low"])("keeps actual exhaustion denials/contradictions unknown: %s", message => {
+    for (const agent of agents) expect(classifyProviderFailure({ agent, model: null, message })).toMatchObject({ kind: "unknown", retryable: false });
+  });
+
   it.each(agents)("%s rate-limit retry-after boundaries require actual positive short facts", agent => {
     for (const reportedRetryAfterMs of [1, 60_000]) expect(classifyProviderFailure({ agent, model: "m", message: "Rate limit exceeded", reportedRetryAfterMs })).toMatchObject({ kind: "capacity", retryAfterMs: reportedRetryAfterMs });
     for (const reportedRetryAfterMs of [undefined, 0, -1, 60_001, Infinity, NaN, 0.5]) expect(classifyProviderFailure({ agent, model: "m", message: "Rate limit exceeded", reportedRetryAfterMs })).toMatchObject({ kind: "unknown", retryable: false });

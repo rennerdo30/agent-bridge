@@ -52,6 +52,9 @@ const BILLING_MESSAGE = /\bbilling(?: is)? required\b|\bpayment(?: is)? required
 const RATE_LIMIT_MESSAGE = /\brate[ _-]?limit (?:exceeded|reached)\b|\brate[ _-]?limited\b|\brate_limit_error\b|\btoo many requests\b/i;
 // These are observations/questions/denials, not positive failure facts. Fail closed on ambiguity.
 const NON_ASSERTION = /\b(?:not|never|false|unknown|unclear|unconfirmed|maybe|possibly|might|whether|if|could|example|quoted)\b|\bno (?:evidence|indication|usage limit|weekly limit|plan limit|rate limit|overload)\b|\?/i;
+// Uncertainty about attribution/reset/instructions does not deny an exhaustion predicate.
+const DETAIL_QUALIFIER = /^(?:the )?(?:reset(?: time| date)?|model(?: attribution)?|details|billing instructions|payment instructions)\b/i;
+const EXHAUSTION_TOPIC = /\b(?:quota|credits?|balance|usage|limit|reached|exceeded|exhausted|required)\b|\btoo low\b/i;
 // Vague quota/credit/billing reports never establish transient capacity, even alongside overload.
 const AMBIGUOUS_QUOTA_MESSAGE = /\b(?:quota|credits?|balance|billing)\b|\b(?:usage|weekly|plan) limit\b/i;
 
@@ -70,9 +73,22 @@ export function classifyProviderFailure(input: ProviderFailureInput): ProviderFa
   const messages = [input.message, ...(input.additionalMessages ?? [])];
   const codes = (input.codes ?? []).map(code => code.trim().toLowerCase());
   const matches = (pattern: RegExp) => messages.some(message => pattern.test(message));
-  // Keep proved independent sentences/fragments: a later denial cannot hide a prior terminal fact.
+  // Separate independent sentences/fragments before checking each exhaustion subject.
   const assertions = messages.flatMap(message => message.split(/[.;]\s+|\r?\n/));
   const asserts = (pattern: RegExp) => assertions.some(message => pattern.test(message) && !NON_ASSERTION.test(message));
+  const assertsTerminal = (pattern: RegExp, subject: RegExp) => {
+    const detailOnly = (clause: string) => DETAIL_QUALIFIER.test(clause) && !EXHAUSTION_TOPIC.test(clause);
+    // A separate denial of the same exhaustion subject is a contradiction, not metadata.
+    if (assertions.some(message => message.split(/,\s*/).some(clause => subject.test(clause)
+      && NON_ASSERTION.test(clause) && !detailOnly(clause)))) return false;
+    return assertions.some(message => {
+      const clauses = message.split(/,\s*/);
+      const positive = clauses.some(clause => pattern.test(clause) && !NON_ASSERTION.test(clause));
+      // An explicit denial/uncertain quota clause vetoes this statement, including anaphoric
+      // "actually false/not reached". Only narrowly named non-quota details may stay unknown.
+      return positive && clauses.every(clause => !NON_ASSERTION.test(clause) || detailOnly(clause));
+    });
+  };
   const hasCode = (...expected: string[]) => codes.some(code => expected.includes(code));
   const retryAfterMs = reportedTime(input.reportedRetryAfterMs, true);
   const resetAt = reportedTime(input.reportedResetAt, false);
@@ -80,9 +96,9 @@ export function classifyProviderFailure(input: ProviderFailureInput): ProviderFa
 
   // Scan ALL evidence before bounding the stored message. Any terminal fact beats capacity.
   // Stable tie break for multiple terminal facts: billing, credits, usage.
-  if (hasCode("billing_required", "payment_required") || asserts(BILLING_MESSAGE)) kind = "billing_required";
-  else if (hasCode("no_credits", "insufficient_credits", "insufficient_balance") || asserts(CREDIT_MESSAGE)) kind = "no_credits";
-  else if (hasCode("usage_limit", "usage_limit_reached", "insufficient_quota") || asserts(USAGE_MESSAGES[input.agent])) kind = "usage_limit";
+  if (hasCode("billing_required", "payment_required") || assertsTerminal(BILLING_MESSAGE, /\b(?:billing|payment)\b/i)) kind = "billing_required";
+  else if (hasCode("no_credits", "insufficient_credits", "insufficient_balance") || assertsTerminal(CREDIT_MESSAGE, /\b(?:credits?|balance)\b/i)) kind = "no_credits";
+  else if (hasCode("usage_limit", "usage_limit_reached", "insufficient_quota") || assertsTerminal(USAGE_MESSAGES[input.agent], /\b(?:usage|weekly|plan) limit\b|\bquota\b/i)) kind = "usage_limit";
   else if (!matches(AMBIGUOUS_QUOTA_MESSAGE) && !messages.some(message => NON_ASSERTION.test(message))) {
     const rateLimited = asserts(RATE_LIMIT_MESSAGE) || hasCode("rate_limit_error", "rate_limit_exceeded");
     // A rate-limit report needs an explicit short delay. A bare status429 is insufficient.

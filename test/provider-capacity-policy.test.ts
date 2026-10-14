@@ -155,7 +155,8 @@ describe("pure bounded capacity wait proposals", () => {
   it("stops terminal failures without requiring model/session attribution or a valid capacity episode", () => {
     const unresolved = { ...pins, sessionId: null, resolvedModel: "" };
     const invalidEpisode = { ...start(), pins: unresolved };
-    for (const message of ["usage limit reached", "no credits", "billing required"]) {
+    for (const message of ["usage limit reached", "no credits", "billing required", "Usage limit reached, reset time unknown",
+      "Your credit balance is too low, billing instructions unknown"]) {
       const failure = classifyProviderFailure({ agent: "codex", model: null, message });
       expect(planProviderCapacityRetry(invalidEpisode, failure, unresolved, { now: () => 1_000, jitter: () => 0.5 })).toEqual({ type: "stop", reason: "nonretryable" });
     }
