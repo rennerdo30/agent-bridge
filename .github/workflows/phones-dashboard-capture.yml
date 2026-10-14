@@ -1,0 +1,50 @@
+name: Phones dashboard capture
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/phones-dashboard-capture.yml'
+      - 'scripts/capture-phones-dashboard.mjs'
+      - 'src/cli/ui-page.ts'
+      - 'src/cli/markdown.ts'
+      - 'src/cli/logo.ts'
+      - 'src/mobile/**'
+      - 'apps/mobile/src/client.ts'
+      - 'test/mobile-*.test.ts'
+      - 'test/fixtures/mobile-*.json'
+      - 'package.json'
+      - 'package-lock.json'
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Scoped mobile regressions and unchanged source pins
+        run: npm run test:integration -- test/mobile-grant-scopes.test.ts test/mobile-adapter.test.ts test/mobile-wiring.test.ts test/mobile-pinning.test.ts test/mobile-owner-startup.test.ts test/mobile-retention.test.ts
+      - name: Existing Phones script event regressions
+        run: npm test -- test/mobile-phones-dashboard.test.ts
+      - name: Install pinned Chromium on hosted Ubuntu
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Capture actual frozen source with isolated fixtures
+        run: node scripts/capture-phones-dashboard.mjs
+        env:
+          PHONES_SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: phones-dashboard-${{ github.event.pull_request.head.sha }}
+          path: .agent-bridge-test/phones-dashboard-capture/
+          if-no-files-found: error
+          retention-days: 30
