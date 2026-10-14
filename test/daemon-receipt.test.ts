@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { spawn } from "node:child_process";
@@ -20,6 +20,92 @@ function timingBucket(value: number): TimingBucket {
   if (value <= 0) return "expired";
   return value <= 25 ? "0_25" : value <= 100 ? "26_100" : value <= 500 ? "101_500" : value <= 1000 ? "501_1000" : "1001_plus";
 }
+const RECEIPT_DIAGNOSTIC_RECORD_LIMIT = 16, RECEIPT_DIAGNOSTIC_COUNT_LIMIT = 65535;
+const mismatchCases = ["id", "revision", "digest", "home", "sql_digest", "matching_digest"] as const;
+type MismatchCase = typeof mismatchCases[number];
+type ObservedOperation = "verifier" | "begin" | "commit" | "rollback";
+type CallDisposition = "entered" | "returned" | "threw" | "resolved" | "rejected";
+type AdmissionReason = "budget" | "writer_unknown" | "lineage_unknown" | "publication_unproved" |
+  "unsafe_path" | "unsafe_acl" | "unsupported_fs" | "unavailable" | "other";
+type CallObservation = { operation: ObservedOperation; disposition: CallDisposition;
+  entry: TimingBucket; resolution: TimingBucket; wall: TimingBucket };
+type InitialAdmissionTrace = { mismatch: MismatchCase; writer?: DatabaseSync; end?: number;
+  outcome: "unavailable" | "resolved" | "rejected"; reason: AdmissionReason;
+  count: number; overflow: boolean; records: CallObservation[] };
+let initialAdmissionTrace: InitialAdmissionTrace | undefined;
+type OperationSummary = "unavailable" | "not_entered" | CallDisposition;
+type PublishedAdmissionTrace = Omit<InitialAdmissionTrace, "writer" | "end"> & {
+  begin: OperationSummary; commit: OperationSummary; rollback: OperationSummary; verifier: OperationSummary };
+const completedAdmissionTraces: PublishedAdmissionTrace[] = [];
+// These are JS call observations only. In particular COMMIT returning does not
+// prove autocommit, durability, an accepted receipt, or lifecycle permission.
+function observeCall(trace: InitialAdmissionTrace, operation: ObservedOperation): CallObservation | undefined {
+  try {
+    trace.count = Math.min(RECEIPT_DIAGNOSTIC_COUNT_LIMIT, trace.count + 1);
+    if (trace.records.length >= RECEIPT_DIAGNOSTIC_RECORD_LIMIT) { trace.overflow = true; return; }
+    const record: CallObservation = { operation, disposition: "entered", entry: timingBucket(trace.end! - diagnosticNow()),
+      resolution: "unavailable", wall: "unavailable" };
+    trace.records.push(record); return record;
+  } catch { trace.overflow = true; return; } // Lost diagnostic evidence never proves no entry.
+}
+function diagnosticNow(): number { try { return performance.now(); } catch { return NaN; } }
+function completeCall(trace: InitialAdmissionTrace, record: CallObservation | undefined, started: number, disposition: CallDisposition): void {
+  if (!record) return;
+  try {
+    const now = diagnosticNow(); record.disposition = disposition;
+    record.resolution = timingBucket(trace.end! - now); record.wall = timingBucket(now - started);
+  } catch { /* Diagnostic completion never replaces the native value/error. */ }
+}
+function diagnosticReason(error: unknown): AdmissionReason {
+  try {
+    if (!(error instanceof LifecycleUnavailable) && !(error instanceof WindowsLifecyclePathUnavailable)) return "unavailable";
+    const reason: unknown = error.reason;
+    return typeof reason === "string" && ["budget", "writer_unknown", "lineage_unknown", "publication_unproved",
+      "unsafe_path", "unsafe_acl", "unsupported_fs"].includes(reason) ? reason as AdmissionReason : "other";
+  } catch { return "unavailable"; }
+}
+function publishInitialAdmissionTrace(): void {
+  const trace = initialAdmissionTrace; initialAdmissionTrace = undefined;
+  if (!trace) return;
+  // Publication follows the original owned teardown, never the timed admission.
+  // Missing opt-in metadata/directory or any diagnostic failure changes nothing.
+  try {
+    const sourceHead = process.env.SOURCE_HEAD, runId = process.env.GITHUB_RUN_ID, runAttempt = process.env.GITHUB_RUN_ATTEMPT;
+    if (process.env.GITHUB_ACTIONS !== "true" || typeof sourceHead !== "string" || !/^[a-f0-9]{40}$/.test(sourceHead) ||
+      typeof runId !== "string" || !/^\d{1,20}$/.test(runId) || typeof runAttempt !== "string" || !/^\d{1,6}$/.test(runAttempt)) return;
+    const buckets = ["expired", "0_25", "26_100", "101_500", "501_1000", "1001_plus", "unavailable"];
+    if (typeof trace.mismatch !== "string" || !mismatchCases.includes(trace.mismatch) ||
+      typeof trace.outcome !== "string" || !["unavailable", "resolved", "rejected"].includes(trace.outcome) ||
+      typeof trace.reason !== "string" || !["budget", "writer_unknown", "lineage_unknown", "publication_unproved",
+        "unsafe_path", "unsafe_acl", "unsupported_fs", "unavailable", "other"].includes(trace.reason) ||
+      typeof trace.overflow !== "boolean" || typeof trace.count !== "number" || !Number.isSafeInteger(trace.count) ||
+      trace.count < 0 || trace.count > RECEIPT_DIAGNOSTIC_COUNT_LIMIT || !Array.isArray(trace.records) || trace.records.length > RECEIPT_DIAGNOSTIC_RECORD_LIMIT) return;
+    const records = trace.records.map(record => {
+      if (typeof record.operation !== "string" || !["verifier", "begin", "commit", "rollback"].includes(record.operation) ||
+        typeof record.disposition !== "string" || !["entered", "returned", "threw", "resolved", "rejected"].includes(record.disposition) ||
+        typeof record.entry !== "string" || !buckets.includes(record.entry) || typeof record.resolution !== "string" || !buckets.includes(record.resolution) ||
+        typeof record.wall !== "string" || !buckets.includes(record.wall)) throw new Error("Unavailable fixture diagnostic");
+      if (record.operation === "verifier" ? ["returned"].includes(record.disposition) : ["resolved", "rejected"].includes(record.disposition))
+        throw new Error("Unavailable fixture diagnostic");
+      return { operation: record.operation, disposition: record.disposition, entry: record.entry, resolution: record.resolution, wall: record.wall };
+    });
+    if (completedAdmissionTraces.length >= RECEIPT_DIAGNOSTIC_RECORD_LIMIT) return;
+    const disposition = (operation: ObservedOperation): OperationSummary => records.findLast(record => record.operation === operation)?.disposition ??
+      (trace.overflow || trace.end === undefined || (operation === "verifier" ? portable : !trace.writer) ? "unavailable" : "not_entered");
+    completedAdmissionTraces.push({ mismatch: trace.mismatch, outcome: trace.outcome, reason: trace.reason,
+      count: trace.count, overflow: trace.overflow, records,
+      begin: disposition("begin"), commit: disposition("commit"), rollback: disposition("rollback"), verifier: disposition("verifier") });
+    const out = join(process.cwd(), ".agent-bridge-test", "ab325-artifact"), directory = lstatSync(out);
+    if (!directory.isDirectory() || directory.isSymbolicLink()) return;
+    const destination = join(out, "receipt-admission-diagnostics.json");
+    if (existsSync(destination)) {
+      const previous = lstatSync(destination); if (!previous.isFile() || previous.isSymbolicLink() || previous.nlink !== 1) return;
+    }
+    writeFileSync(destination, JSON.stringify({ schema: 1, sourceHead, runId, runAttempt,
+      fixture: "receipt_initial_envelope_admission", recordLimit: RECEIPT_DIAGNOSTIC_RECORD_LIMIT,
+      countLimit: RECEIPT_DIAGNOSTIC_COUNT_LIMIT, observations: completedAdmissionTraces }) + "\n");
+  } catch { /* Only passive diagnostic output failures are swallowed. */ }
+}
 const verificationFixture = vi.hoisted(() => ({
   before: undefined as ((home: string, phase: string, scope: string) => void) | undefined,
   rejected: undefined as ((error: unknown) => void) | undefined,
@@ -32,13 +118,20 @@ vi.mock("../src/core/lifecycle-windows.js", async importOriginal => {
     const diagnostic = args[2] === "admission" && args[3] === "established" && verificationFixture.diagnostic?.result === "not_entered"
       ? verificationFixture.diagnostic : undefined;
     const started = performance.now();
+    const trace = initialAdmissionTrace;
+    const observed = trace && args[0] === journalHome && args[2] === "admission" && args[3] === "established" && args[4] === trace.end
+      ? observeCall(trace, "verifier") : undefined;
     if (diagnostic) { diagnostic.entry = timingBucket(args[4] - started); diagnostic.result = "rejected"; }
     const completed = (result: "resolved" | "rejected") => {
+      if (trace && observed) completeCall(trace, observed, started, result);
       if (diagnostic) { const now = performance.now(); diagnostic.resolution = timingBucket(args[4] - now); diagnostic.wall = timingBucket(now - started); diagnostic.result = result; }
     };
     // Every proof is still produced/refused by the ORIGINAL native observer with
     // every original capability/deadline argument; no fixture-created permission.
-    return native.verifyWindowsLifecyclePaths(...args).then(value => { completed("resolved"); return value; },
+    let invocation: ReturnType<typeof native.verifyWindowsLifecyclePaths>;
+    try { invocation = native.verifyWindowsLifecyclePaths(...args); }
+    catch (error) { if (trace && observed) completeCall(trace, observed, started, "threw"); throw error; }
+    return invocation.then(value => { completed("resolved"); return value; },
       error => { completed("rejected"); verificationFixture.rejected?.(error); throw error; });
   } };
 });
@@ -48,6 +141,7 @@ let journalHome: string, servingFixture: Awaited<ReturnType<typeof createServing
 const sqliteExec = DatabaseSync.prototype.exec;
 const sqlitePrepare = DatabaseSync.prototype.prepare;
 beforeEach(async () => {
+  initialAdmissionTrace = undefined;
   verificationFixture.before = undefined; verificationFixture.rejected = undefined; verificationFixture.diagnostic = undefined;
   env = makeEnv(); journal = undefined; captured = undefined; servingFixture = undefined; journalHome = env.home;
   const creationIdentity = await readProcessIdentity(process.pid); expect(creationIdentity).toBeTruthy();
@@ -67,6 +161,7 @@ afterEach(async () => {
   }
   await servingFixture?.close(); servingFixture = undefined;
   await until(() => pendingWindowsLifecycleVerifications() === 0); await env.cleanup();
+  publishInitialAdmissionTrace();
 });
 const file = () => join(journalHome, ".core-lifecycle", "receipts.sqlite");
 const deadline = () => performance.now() + LIFECYCLE_ADMISSION_MS;
@@ -80,6 +175,31 @@ async function bootstrap() {
 const portable = process.platform !== "win32";
 async function admit(j: LifecycleJournal, input: LifecycleRequest, end = deadline()) {
   return portable ? j.admit(input, end) : j.admitServing(servingFixture!.broker.lifecycleServingCapability("admission", end), input, end);
+}
+async function observeInitialAdmission(mismatch: MismatchCase) {
+  const trace: InitialAdmissionTrace = { mismatch, outcome: "unavailable", reason: "unavailable", count: 0, overflow: false, records: [] };
+  initialAdmissionTrace = trace;
+  const exec = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+    // Same existing source-owned bootstrap receiver capture used elsewhere in
+    // this fixture. No writer getter, SQL/read probe, or supplied ownership flag.
+    if (sql.includes("PRAGMA journal_mode=PERSIST") && trace.end === undefined) trace.writer = this;
+    const operation = sql === "BEGIN IMMEDIATE" ? "begin" : sql === "COMMIT" ? "commit" : sql === "ROLLBACK" ? "rollback" : undefined;
+    const record = this === trace.writer && trace.end !== undefined && operation ? observeCall(trace, operation) : undefined;
+    const started = record ? diagnosticNow() : 0;
+    try {
+      const value = sqliteExec.call(this, sql);
+      if (record) completeCall(trace, record, started, "returned");
+      return value;
+    } catch (error) { if (record) completeCall(trace, record, started, "threw"); throw error; }
+  });
+  try {
+    const j = await bootstrap(), input = request(), end = deadline();
+    trace.end = end; // The original deadline is evaluated exactly once, here.
+    try {
+      const accepted = await admit(j, input, end); trace.outcome = "resolved";
+      return { j, input, accepted };
+    } catch (error) { trace.outcome = "rejected"; trace.reason = diagnosticReason(error); throw error; }
+  } finally { exec.mockRestore(); }
 }
 async function advance(j: LifecycleJournal, id: string, revision: number, state: Parameters<LifecycleJournal["advance"]>[2],
   fields: Parameters<LifecycleJournal["advance"]>[3], end = deadline()) {
@@ -194,7 +314,7 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     expect((await selected(j))?.state).toBe("prepared");
   });
   it.each(["id", "revision", "digest", "home", "sql_digest", "matching_digest"] as const)("retained %s envelope mismatch refuses lookup/selection/prepared read/advance without repair or BEGIN", async mismatch => {
-    const j = await bootstrap(), input = request(), accepted = await admit(j, input, deadline());
+    const { j, input, accepted } = await observeInitialAdmission(mismatch);
     expect(await lookup(j, input.restartId)).toEqual(accepted); expect(await selected(j)).toEqual(accepted);
     const reader = await preparedReader(j, input.restartId), fixture = new DatabaseSync(file());
     try {
