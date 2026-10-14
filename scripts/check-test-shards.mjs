@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { createVitest } from "vitest/node";
 import { caseIdentity, censusDigest, censusMetadata, collectionCacheProof, moduleCensus } from "./ci-reporter.mjs";
+import { testFixtureRoot } from "./test-fixture-root.mjs";
 
 // Use Vitest's configured sequencer, not a second implementation of its hash.
 // `vitest list --filesOnly` does not apply --shard in Vitest 5.
@@ -10,9 +11,15 @@ const count = Number(process.argv[2] ?? 4);
 assert(Number.isInteger(count) && count >= 1, "Expected a positive shard count");
 const output = resolve(process.argv[3] ?? ".agent-bridge-test/ci/shards.json");
 const collect = process.argv[4] === "--collect";
+let fixtureRoot;
 if (collect) {
-  assert(process.platform === "win32" && process.env.AGENT_BRIDGE_CI_WINDOWS === "1" &&
-    process.env.AGENT_BRIDGE_TEST_ROOT, "Collect through the guarded Windows fixture launcher");
+  assert(process.platform === "win32" && process.env.GITHUB_ACTIONS === "true", "Collect in hosted Windows CI");
+  fixtureRoot = testFixtureRoot();
+  const temporary = join(fixtureRoot, "temp");
+  mkdirSync(temporary, { recursive: true });
+  Object.assign(process.env, { TEMP: temporary, TMP: temporary, TMPDIR: temporary,
+    AGENT_BRIDGE_HOME: join(fixtureRoot, "default-home"), GIT_CEILING_DIRECTORIES: fixtureRoot });
+  delete process.env.AGENT_BRIDGE_PIPE;
 }
 const inventory = { count, metadata: censusMetadata(), complete: false, lanes: {}, unsharded: {} };
 function save() {
@@ -24,12 +31,12 @@ const repository = realpathSync.native(process.cwd());
 const normalize = specs => specs.map(spec => relative(repository, realpathSync.native(spec.moduleId)).replaceAll("\\", "/")).sort();
 async function specifications(lane, visit) {
   process.env.AGENT_BRIDGE_TEST_LANE = lane;
-  const cache = collect ? resolve(process.env.AGENT_BRIDGE_TEST_ROOT, "collection-cache", lane) : undefined;
+  const cache = collect ? resolve(fixtureRoot, "collection-cache", lane) : undefined;
   // Pinned createVitest(options, viteOverrides): cacheDir belongs to Vite.
   const ctx = await createVitest({ watch: false, reporters: [] }, cache ? { cacheDir: cache } : {});
   try {
     if (collect) {
-      (inventory.collectionCaches ??= {})[lane] = collectionCacheProof(ctx, process.env.AGENT_BRIDGE_TEST_ROOT, lane);
+      (inventory.collectionCaches ??= {})[lane] = collectionCacheProof(ctx, fixtureRoot, lane);
       save();
     }
     await ctx.standalone();

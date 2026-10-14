@@ -2,16 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main, 'fix/**', 'feat/**', 'ci/**', 'docs/**']
+    branches: [main, 'ci/ab283-windows-pretest']
   pull_request:
-  workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 jobs:
   test:
@@ -23,6 +18,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       AGENT_BRIDGE_CI_RESULTS_DIR: .agent-bridge-test/ci
+      AGENT_BRIDGE_CI_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,10 +31,13 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - name: Fast tests
-        run: npm test
+        run: npm test -- --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/fast-results.json
+      # Each file creates native processes and durable SQLite fixtures. Avoid
+      # competing filesystem backfills on the shared Windows runner; retain
+      # the same assertions and default deadlines for every test.
       - name: Integration tests
         if: success() || failure()
-        run: npm run test:integration
+        run: npm run test:integration -- --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/integration-results.json
       - name: Bundles are committed and up to date
         if: matrix.os == 'ubuntu-latest' && matrix.node == 24
         run: git diff --exit-code -- plugins
@@ -60,6 +59,7 @@ jobs:
     runs-on: windows-latest
     env:
       AGENT_BRIDGE_CI_RESULTS_DIR: .agent-bridge-test/ci
+      AGENT_BRIDGE_CI_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -72,18 +72,21 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - name: Collect unsharded cases and prove complete disjoint coverage
-        run: npm run test:ci-windows -- -CollectOnly
-      # Preserve the fast/integration deadlines and serial integration worker.
-      # Each lane is partitioned by Vitest; no filters, retries or excluded tests.
-      - name: CI-like Windows tests
-        run: npm run test:ci-windows -- --shard=${{ matrix.shard }}/4
-      - name: Verify the collected and executed cases match this shard
+        id: collect
+        run: node scripts/check-test-shards.mjs 4 .agent-bridge-test/ci/shards.json --collect
+      # The released runner retains lane filters, deadlines and worker limits.
+      - name: Fast tests
+        run: npm test -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/fast-results.json
+      - name: Integration tests
+        if: ${{ !cancelled() && steps.collect.outcome == 'success' }}
+        run: npm run test:integration -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/integration-results.json
+      - name: Verify exact collected and executed shard membership
         if: always()
         run: node scripts/check-shard-results.mjs .agent-bridge-test/ci ${{ matrix.shard }}
-      - name: Test results, shard inventory and flaky diagnostics
+      - name: Retain shard inventory, results and failure diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tests-windows-node-${{ matrix.node }}-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: .agent-bridge-test/ci/
-          if-no-files-found: warn
+          if-no-files-found: error
