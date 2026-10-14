@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 15
     env:
       PHONES_SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
-      PHONES_REVIEWED_HEAD: 283f70e345548c826fc16b5dafea7611acc72926
+      PHONES_REVIEWED_HEAD: 2319f8dc09b39b56e6144eccfe1f8ca75850aab9
       PHONES_RELEASED_BASE: 0761d56fe4c36e505550f9b889841fdf8e82c80a
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
