@@ -50,16 +50,19 @@ function coverageFixture() {
     event: process.env.GITHUB_EVENT_NAME ?? null,
   };
   const unsharded = {
-    fast: [{ file: "test/fast.test.ts", errors: [], tests: [
+    fast: [{ file: "test/fast.test.ts", project: "", id: "fast", errors: [], tests: [
       { id: "fast_0", name: "same name", state: "pending" },
       { id: "fast_1", name: "same name", state: "skipped" },
     ] }],
-    integration: [{ file: "test/integration.test.ts", errors: [], tests: [
+    integration: [{ file: "test/integration.test.ts", project: "", id: "integration", errors: [], tests: [
       { id: "integration_0", name: "runs", state: "pending" },
     ] }],
   };
   const censusSha256 = createHash("sha256").update(JSON.stringify(Object.entries(unsharded).map(([lane, files]) =>
-    [lane, files.map(file => [file.file, file.tests.map(test => [test.id, test.name, test.state])])]))).digest("hex");
+    [lane, files.map(file => {
+      const identity = JSON.stringify([file.file, file.project, file.id]);
+      return [identity, file.tests.map(test => [JSON.stringify([identity, test.id]), test.state])];
+    })]))).digest("hex");
   const inventory = { count: 4, metadata, complete: true, unsharded, censusSha256, totalFiles: 2,
     lanes: { fast: [["test/fast.test.ts"], [], [], []], integration: [["test/integration.test.ts"], [], [], []] } };
   const reports = {
@@ -92,16 +95,36 @@ it("keeps failed and skipped cases in a known exact shard census", () => {
   expect(proof.lanes.fast).toMatchObject({ totalFiles: 1, totalCases: 2, passed: 0, failed: 1, skipped: 1 });
 });
 
-it.each(["duplicate", "omitted", "pending", "skip-changed", "partial", "source-drift", "duplicate-file"])(
+it("matches a source-bound case ID while retaining PID-varying display names", () => {
+  const fixture = coverageFixture();
+  fixture.inventory.unsharded.fast[0]!.tests[0]!.name = "recovers identity for PID 9852";
+  fixture.reports.fast.files[0]!.tests[0]!.name = "recovers identity for PID 2768";
+  // Names are informational: neither identity nor the inventory digest changes.
+  fixture.save();
+  fixture.check();
+  const proof = JSON.parse(readFileSync(join(fixture.root, "shard-coverage.json"), "utf8"));
+  expect(proof.coverage).toBe("known");
+  expect(proof.lanes.fast.collectionNames[0].tests[0].name).toBe("recovers identity for PID 9852");
+  expect(proof.lanes.fast.files[0].tests[0].name).toBe("recovers identity for PID 2768");
+});
+
+it.each(["duplicate", "duplicate-id-different-name", "changed-id", "omitted", "pending", "skip-changed", "invalid-disposition",
+  "partial", "source-drift", "runtime-drift", "project-drift", "module-id-drift", "duplicate-file"])(
   "refuses %s census evidence and publishes the coverage gap", scenario => {
     const fixture = coverageFixture();
     const tests = fixture.reports.fast.files[0]!.tests;
     if (scenario === "duplicate") tests[1] = { ...tests[0]! }; // Equal totals hide an omitted skipped case.
+    if (scenario === "duplicate-id-different-name") tests[1]!.id = tests[0]!.id;
+    if (scenario === "changed-id") tests[0]!.id = "fast_999";
     if (scenario === "omitted") tests.pop();
     if (scenario === "pending") tests[0]!.state = "pending";
     if (scenario === "skip-changed") tests[1]!.state = "passed";
+    if (scenario === "invalid-disposition") tests[0]!.state = "unknown";
     if (scenario === "partial") fixture.reports.fast.complete = false;
     if (scenario === "source-drift") fixture.reports.fast.metadata = { ...fixture.reports.fast.metadata, revision: "other-head" };
+    if (scenario === "runtime-drift") fixture.reports.fast.metadata = { ...fixture.reports.fast.metadata, node: "other-node" };
+    if (scenario === "project-drift") fixture.reports.fast.files[0]!.project = "other-project";
+    if (scenario === "module-id-drift") fixture.reports.fast.files[0]!.id = "other-module";
     if (scenario === "duplicate-file") fixture.inventory.lanes.integration[0] = ["test/fast.test.ts"];
     fixture.save();
     expect(() => fixture.check()).toThrow();

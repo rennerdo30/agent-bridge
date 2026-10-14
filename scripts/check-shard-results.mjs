@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { caseIdentity, censusDigest, censusMetadata } from "./ci-reporter.mjs";
+import { caseIdentity, censusDigest, censusMetadata, fileIdentity } from "./ci-reporter.mjs";
 
 export function checkShardResults(root, shard, metadata) {
   mkdirSync(root, { recursive: true });
@@ -26,7 +26,7 @@ export function checkShardResults(root, shard, metadata) {
         assert.equal(inventory.lanes[lane].length, inventory.count, `${lane}: missing shard inventory`);
         assert.deepEqual(inventory.lanes[lane].flat().sort(), unsharded.map(file => file.file).sort(),
           `${lane}: shard union differs from unsharded files`);
-        const allCases = unsharded.flatMap(file => file.tests.map(test => caseIdentity(file.file, test)));
+        const allCases = unsharded.flatMap(file => file.tests.map(test => caseIdentity(file, test)));
         assert.equal(new Set(allCases).size, allCases.length, `${lane}: duplicate unsharded cases`);
         assert(unsharded.every(file => file.errors.length === 0 && file.tests.every(test => ["pending", "skipped"].includes(test.state))),
           `${lane}: invalid unsharded collection`);
@@ -42,19 +42,23 @@ export function checkShardResults(root, shard, metadata) {
         assert.equal(results.unhandledErrors.length, 0, `${lane}: unhandled errors; coverage unknown`);
         assert.deepEqual(results.files.map(file => file.file).sort(), expected.map(file => file.file).sort(),
           `${lane}: executed files differ from the shard inventory`);
+        assert.deepEqual(results.files.map(fileIdentity).sort(), expected.map(fileIdentity).sort(),
+          `${lane}: executed project/module scope differs from collection`);
         for (const file of results.files) {
           const baseline = expected.find(item => item.file === file.file);
           assert.equal(file.errors.length, 0, `${lane}: ${file.file}: module/hook error`);
-          assert.deepEqual(file.tests.map(test => caseIdentity(file.file, test)).sort(),
-            baseline.tests.map(test => caseIdentity(file.file, test)).sort(), `${lane}: ${file.file}: missing or repeated cases`);
+          assert.deepEqual(file.tests.map(test => caseIdentity(file, test)).sort(),
+            baseline.tests.map(test => caseIdentity(baseline, test)).sort(), `${lane}: ${file.file}: missing or repeated cases`);
           for (const test of file.tests) {
             assert(["passed", "failed", "skipped"].includes(test.state), `${lane}: ${test.name}: execution pending`);
-            const collected = baseline.tests.find(item => item.id === test.id && item.name === test.name);
+            const collected = baseline.tests.find(item => item.id === test.id);
             if (collected.state === "skipped") assert.equal(test.state, "skipped", `${lane}: collection skip changed`);
           }
         }
         const tests = results.files.flatMap(file => file.tests);
         proof.lanes[lane] = { coverage: "known", files: results.files, totalFiles: results.files.length,
+          collectionNames: expected.map(file => ({ file: file.file, project: file.project, id: file.id,
+            tests: file.tests.map(test => ({ id: test.id, name: test.name })) })),
           totalCases: tests.length, passed: tests.filter(test => test.state === "passed").length,
           failed: tests.filter(test => test.state === "failed").length, skipped: tests.filter(test => test.state === "skipped").length };
       } catch (error) { proof.problems.push(error.message); }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { createVitest } from "vitest/node";
-import { censusDigest, censusMetadata, moduleCensus } from "./ci-reporter.mjs";
+import { caseIdentity, censusDigest, censusMetadata, moduleCensus } from "./ci-reporter.mjs";
 
 // Use Vitest's configured sequencer, not a second implementation of its hash.
 // `vitest list --filesOnly` does not apply --shard in Vitest 5.
@@ -59,10 +59,10 @@ for (const lane of ["fast", "integration"]) {
       assert(inventory.unsharded[lane].every(file => file.tests.every(test => ["pending", "skipped"].includes(test.state))),
         `${lane}: collect-only unexpectedly executed a case`);
       assert.deepEqual(inventory.unsharded[lane].map(file => file.file).sort(), normalize(specs), `${lane}: incomplete collection`);
-      const cases = inventory.unsharded[lane].flatMap(file => file.tests.map(test => JSON.stringify([file.file, test.id, test.name])));
+      const cases = inventory.unsharded[lane].flatMap(file => file.tests.map(test => caseIdentity(file, test)));
       assert.equal(new Set(cases).size, cases.length, `${lane}: duplicate case identities`);
       const partition = shards.flatMap(files => inventory.unsharded[lane].filter(file => files.includes(file.file)));
-      assert.deepEqual(partition.flatMap(file => file.tests.map(test => JSON.stringify([file.file, test.id, test.name]))).sort(),
+      assert.deepEqual(partition.flatMap(file => file.tests.map(test => caseIdentity(file, test))).sort(),
         cases.slice().sort(), `${lane}: missing or repeated cases`);
     }
     save();

@@ -2,11 +2,24 @@ import { appendFileSync, mkdirSync, readFileSync, realpathSync, writeFileSync } 
 import { join, relative } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import assert from "node:assert/strict";
 
-export const caseIdentity = (file, test) => JSON.stringify([file, test.id, test.name]);
+// Vitest 5 IDs bind the project-relative module and nested registration order.
+// Names can contain runtime parameters (including worker PIDs); keep them as data.
+export function fileIdentity(file) {
+  assert(typeof file.file === "string" && file.file.length > 0, "Missing file path");
+  assert(typeof file.project === "string", "Missing project scope");
+  assert(typeof file.id === "string" && file.id.length > 0, "Missing module ID");
+  return JSON.stringify([file.file, file.project, file.id]);
+}
+export function caseIdentity(file, test) {
+  assert(typeof test.id === "string" && test.id.length > 0, "Missing case ID");
+  return JSON.stringify([fileIdentity(file), test.id]);
+}
 export function censusDigest(unsharded) {
-  return createHash("sha256").update(JSON.stringify(Object.entries(unsharded).map(([lane, files]) => [lane,
-    files.map(file => [file.file, file.tests.map(test => [test.id, test.name, test.state])]).sort((a, b) => a[0].localeCompare(b[0])),
+  return createHash("sha256").update(JSON.stringify(Object.entries(unsharded).sort(([a], [b]) => a.localeCompare(b)).map(([lane, files]) => [lane,
+    files.map(file => [fileIdentity(file), file.tests.map(test => [caseIdentity(file, test), test.state])
+      .sort(([a], [b]) => a.localeCompare(b))]).sort(([a], [b]) => a.localeCompare(b)),
   ]))).digest("hex");
 }
 
@@ -23,6 +36,7 @@ export function censusMetadata() {
 export function moduleCensus(module) {
   return {
     file: relative(realpathSync.native(process.cwd()), realpathSync.native(module.moduleId)).replaceAll("\\", "/"),
+    project: module.project.name, id: module.id,
     state: module.state(), diagnostic: module.diagnostic(), errors: module.errors(),
     tests: [...module.children.allTests()].map(test => ({
       id: test.id, name: test.fullName, state: test.result().state,

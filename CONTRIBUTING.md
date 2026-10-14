@@ -57,7 +57,13 @@ configured worker isolation and uses a separate temporary cache.
 
 The four shard file sets must be disjoint and cover every unfiltered file.
 Each shard's final cases must exactly match its portion of the unsharded census
-by file, Vitest ID and full name, including collection skips. Artifacts record
+by project, file, deterministic Vitest module ID and case ID, including collection
+skips. Pinned Vitest IDs bind the project-relative file and nested registration
+order; exact checkout/runtime metadata binds that structure to the source.
+Full names remain informational, including runtime-dependent parameter values
+such as worker PIDs. Structural membership does not prove those runtime values
+are identical across collection and execution. Missing, duplicate or changed
+IDs still fail; repeated names with distinct IDs remain separate cases. Artifacts record
 the actual passed/failed/skipped disposition, checkout revision, Node/Vitest
 versions, event, run ID and attempt, plus a deterministic census digest to compare
 across all four jobs separately for each Node version. Failed tests still fail
