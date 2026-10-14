@@ -49,10 +49,13 @@ it("keeps verified readers known when a later identity query fails, but not read
   expire();
   await refreshStorePeerIdentities(env.home);
   expect(versionOf()).toBe("unknown");
-  // The upgrade check verifies it directly: a listed process whose start time cannot be read (elevated or
-  // protected) keeps blocking...
+  // The upgrade check verifies it directly. A listed process whose start time cannot be read (elevated or
+  // protected) is either that reader or a protected process that reused its PID (AB-362: svchost): it keeps
+  // blocking an upgrade beyond its recorded capabilities...
   const direct = vi.spyOn(identity, "readProcessIdentitiesSync").mockReturnValue(new Map([[pid, ""]]));
-  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);
+  expect(() => assertStoreUpgrade(env.home, "json", 4, 5)).toThrow(/Waiting to upgrade json store 4→5/);
+  // ...but not one its recorded capabilities already read.
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).not.toThrow();
   // ...a failed direct query keeps blocking...
   direct.mockReturnValue(undefined);
   expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);

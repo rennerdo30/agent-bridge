@@ -271,8 +271,10 @@ function storedPresence(home: string, pid: number): Presence | undefined {
  * - the live process matches: it is that reader, and it no longer blocks if its recorded capabilities suffice;
  * - a successful query shows another process under that PID, or no running process at all (an exited process
  *   whose PID a lingering handle keeps answering): the recorded reader is gone.
- * A failed query, a listed process whose start time cannot be read (elevated or protected), or a record without
- * an identity keeps the reader blocking.
+ * A failed query or a record without an identity keeps the reader blocking. A listed process whose start time cannot
+ * be read (elevated or protected) blocks only when the recorded capabilities are insufficient: it is either that reader,
+ * whose capabilities then suffice, or a protected process that reused a dead reader's PID (AB-362: svchost under an
+ * exited job's PID otherwise blocked every upgrade until reboot).
  */
 function verifiedNow(home: string, peers: Presence[], format: keyof StoreCapabilities, target: number): Set<number> {
   const candidates = peers.flatMap(peer => {
@@ -287,8 +289,9 @@ function verifiedNow(home: string, peers: Presence[], format: keyof StoreCapabil
     // Not listed: gone only with the exited-process signature (the PID answers EPERM, e.g. a lingering handle keeps
     // it). A PID that still answers a signal normally but is missing from the list is a race; it keeps blocking.
     if (now === undefined) return exitedBehindHandle(pid);
-    if (now === "") return false;
-    return now !== identity || validStoreCapabilities(record) && (record[format] ?? 0) >= target;
+    const sufficient = validStoreCapabilities(record) && (record[format] ?? 0) >= target;
+    if (now === "") return sufficient;
+    return now !== identity || sufficient;
   }).map(candidate => candidate.pid));
 }
 
