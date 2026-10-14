@@ -38,17 +38,19 @@ npm run test:ci-windows -- --shard=1/4
 ```
 
 `-Throttle` lowers priority and restricts children to one allowed CPU.
-`-FreshVolume` creates, formats and mounts a new disposable NTFS VHDX for fixtures,
-then detaches it in `finally` only after checking its recorded creation path and
-actual VHD GUID (checked again on the native detach handle). It requires administrator rights and Windows
-Storage cmdlets; otherwise it prints a skip message and uses the fresh folder.
-It never selects an existing volume. A forcibly terminated shell can leave its
-marked fixtures or VHDX behind; inspect those before any manual cleanup.
+`-FreshVolume` is unavailable, including with administrator rights. Both public
+entries refuse it with a nonzero exit before fixture creation or any disk,
+partition, mount, format or access-path mutation. There is no fresh-volume
+fallback. Support requires a separately reviewed mechanism binding the owned
+image/root/disk/partition handles across every mutating operation. The retained
+creation/GUID ownership helpers and same-handle native detach checks do not
+establish that missing lifecycle proof. The existing guarded folder mode remains
+available; interrupted folder cleanup can leave marked evidence for inspection.
 
 This approximates runner ACLs and CPU contention. It cannot reproduce the hosted
 Windows Server image, token/default owner, NTFS file-ID magnitude, antivirus,
-installed tools, disk/network latency or other tenants. A fresh VHDX does not
-guarantee large file IDs. See the PowerShell script header for the limits.
+installed tools, disk/network latency or other tenants. Administrator/VHD
+acceptance is unsupported. See the PowerShell script header for the limits.
 The runner uses short folder names to leave room for SQLite snapshots. If your
 TEMP/TMP path is unusually long, set them to a shorter writable folder first.
 

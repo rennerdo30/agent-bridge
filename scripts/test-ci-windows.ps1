@@ -5,8 +5,11 @@ Run the existing fast and integration lanes in a fresh Windows CI-like fixture r
 Uses CI=1 and an inheritance-protected ACL with explicit, inheritable FullControl
 entries for the current user, SYSTEM and Administrators. TEMP/TMP and the bridge
 test home point inside this root. -Throttle uses BelowNormal priority and one
-currently allowed CPU. -FreshVolume creates a new 4 GiB dynamic VHDX, formats ONLY
-that newly attached disk as NTFS, and mounts it for fixtures; requires admin.
+currently allowed CPU. The former experimental FreshVolume implementation is
+retained below for separate review. FreshVolume is currently refused at entry:
+administrator/VHD support is
+unavailable pending a separately reviewed owned-handle lifecycle mechanism.
+No disk/partition/mount/format/access-path command can run through this entry.
 
 Cannot reproduce the hosted runner's Windows Server image, token/default object
 owner, NTFS file-ID magnitude/reuse, antivirus, disk/network latency, installed
@@ -32,6 +35,10 @@ param(
     [string]$NodePath = 'node',
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$TestArgs
 )
+if ($FreshVolume) {
+    Write-Error -ErrorAction Continue 'FreshVolume unavailable: administrator/VHD support requires a separately reviewed owned-handle mechanism. No volume or fixture mutation was attempted.'
+    exit 1
+}
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'ci-windows-ownership.ps1')

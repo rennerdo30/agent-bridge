@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
-if (process.platform !== "win32") {
+if (process.argv.slice(2).some(arg => /^-freshvolume(?::|$)/i.test(arg))) {
+  console.error("FreshVolume unavailable: administrator/VHD support requires a separately reviewed owned-handle mechanism. No volume or fixture mutation was attempted.");
+  process.exitCode = 1;
+} else if (process.platform !== "win32") {
   console.error("test:ci-windows requires Windows. Use npm test / npm run test:integration on this OS.");
   process.exitCode = 1;
 } else {
