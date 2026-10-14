@@ -578,6 +578,19 @@ describe("source-owned History directory bookkeeping (no resource-absence or ret
     index.sealLifecycleConsumer(); index.resumeLifecycleConsumer();
     expect(index.lifecycleConsumerObservation().directoryCaptures).toBe(1);
   });
+  it("SIMULATED read failure followed by an actual successful source close records that return without erasing uncertainty", () => {
+    const { index } = consumer(), path = join(env.home, "owned-read-fault-directory"); mkdirSync(path); directoryFault.path = path;
+    const dir = open(index, path), failure = new Error("SIMULATED directory read failure");
+    const next = vi.spyOn(Dir.prototype, "readSync").mockImplementation(function(this: Dir) {
+      if (this === dir) throw failure;
+      return null;
+    });
+    expect(() => read(index, dir)).toThrow(failure); next.mockRestore();
+    const closed = trackClose(); close(index, dir); expect(closed).toHaveBeenCalledTimes(1);
+    expect(directoryFault.owned.get(dir)!.closed).toBe(true);
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ directoryAttempts: 1, directoryCaptures: 1, unknownDirectoryAttempts: 1,
+      directoryCloseReturns: 1, unknown: true, directoryNoResource: "unsupported", settled: false, ownershipReleased: false });
+  });
   for (const when of ["before", "after"] as const) it(`SIMULATED close failure ${when} actual native disposal retains exact unacknowledged capture`, () => {
     const { index } = consumer(), path = join(env.home, `owned-close-${when}-directory`); mkdirSync(path); directoryFault.path = path;
     const dir = open(index, path), failure = new Error("SIMULATED directory close outcome error");

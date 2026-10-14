@@ -63,7 +63,7 @@ const retainedHistoryReadAttempts = new Set<HistoryReadCapture>();
 type HistoryDirectoryCapture = {
   readonly identity: symbol; readonly ownerIdentity: symbol; readonly acceptedGeneration: number; readonly entry: WalkRoot;
   open: "attempted_unconfirmed" | "returned" | "unknown"; dir?: Dir;
-  close: "not_attempted" | "attempted" | "returned" | "unknown"; uncertain: boolean;
+  close: "not_attempted" | "attempted" | "returned" | "unknown"; closeWasUncertain: boolean; uncertain: boolean;
 };
 const retainedHistoryDirectoryAttempts = new Set<HistoryDirectoryCapture>();
 
@@ -165,7 +165,7 @@ export class HistoryIndex {
   private openSourceDirectory(entry: WalkRoot): Dir {
     this.assertDirectoryAdmission();
     const capture: HistoryDirectoryCapture = { identity: Symbol("actual History directory attempt"), ownerIdentity: this.#directoryOwnerIdentity,
-      acceptedGeneration: this.lifecycleRevision, entry, open: "attempted_unconfirmed", close: "not_attempted", uncertain: false };
+      acceptedGeneration: this.lifecycleRevision, entry, open: "attempted_unconfirmed", close: "not_attempted", closeWasUncertain: false, uncertain: false };
     this.#directoryAttempts.add(capture); retainedHistoryDirectoryAttempts.add(capture); this.lifecycleChanged();
     try {
       const dir = opendirSync(entry.path);
@@ -187,22 +187,22 @@ export class HistoryIndex {
   }
   private closeSourceDirectory(dir: Dir): void {
     this.assertDirectoryAdmission();
-    const capture = this.#directoryHandles.get(dir), previouslyUncertain = capture?.uncertain;
+    const capture = this.#directoryHandles.get(dir);
     if (capture) capture.close = "attempted"; else this.lifecycleUnknown = true;
     this.lifecycleChanged();
     try {
       // One original close per original caller action, no retry/cleanup loop.
-      // A previously uncertain record cannot be acknowledged by a later call.
+      // Record this exact return, while retaining any earlier uncertainty.
       dir.closeSync(); this.#directoryCloseReturns++; this.lifecycleChanged();
       if (capture) {
-        capture.close = previouslyUncertain ? "unknown" : "returned";
+        capture.close = "returned";
         if (!capture.uncertain) {
           this.#directoryHandles.delete(dir); this.#directoryAttempts.delete(capture);
           retainedHistoryDirectoryAttempts.delete(capture); this.#directoryCaptures--;
         }
       }
     } catch (error) {
-      if (capture) { capture.close = "unknown"; this.uncertainDirectory(capture); }
+      if (capture) { capture.close = "unknown"; capture.closeWasUncertain = true; this.uncertainDirectory(capture); }
       else { this.lifecycleUnknown = true; this.lifecycleChanged(); }
       throw error;
     }
