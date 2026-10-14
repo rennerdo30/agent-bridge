@@ -365,6 +365,9 @@ export class JobManager {
   private readonly running = new Map<string, Job>();
   private readonly foreground = new Map<string, Job>();
   private readonly history = new Map<string, Job>();
+  /** Only assignments made here to an absent legacy field; never durable control authority.
+   * Entries live no longer than their exact retained history job. */
+  private readonly legacySupervisors = new Map<string, { job: Job; controller: AbortController; supervisor: string; authority: unknown[] }>();
   /** Finished jobs whose continuation waits for a free slot, in arrival order; the messages are in job.queue. */
   private readonly waitingJobs = new Map<string, Job>();
   private readonly pendingRuns = new Map<string, Run>();
@@ -667,16 +670,17 @@ export class JobManager {
       const s = saved.status === "running" && !saved.host && this.deadExecutorTurns.get(saved.id) === inlineTurn(saved) ? { ...saved, status: "interrupted" as const } : saved;
       if (!this.own.has(s.id) && !this.canRestoreSaved(s)) continue;
       const directlyOwned = this.lineage ? s.parentJob === this.lineage.parentJob : this.isMine(s.owner) && !s.parentJob;
-      if (!s.ownershipHistory?.length && (!directlyOwned || this.running.has(s.id) || this.foreground.has(s.id) || s.status === "running" && !s.host)) continue;
       let job = this.history.get(s.id);
+      const legacySupervisor = this.retainedLegacySupervisor(job, s, directlyOwned);
+      if (!s.ownershipHistory?.length && (!directlyOwned || this.running.has(s.id) || this.foreground.has(s.id) || s.status === "running" && !s.host)) continue;
       const mine = directlyOwned;
       if (job && (s.executionOwner === this.node.name || mine)) {
         const executing = (this.running.get(s.id) === job || this.foreground.get(s.id) === job) &&
           (!job.executionOwner || job.executionOwner === this.node.name) || this.pendingHosts.get(s.id) === job.controller;
-        Object.assign(job, { owner: s.owner, supervisor: s.supervisor, parentJob: s.parentJob, rootSession: s.rootSession, rootName: s.rootName,
+        Object.assign(job, { owner: s.owner, supervisor: legacySupervisor === undefined ? s.supervisor : legacySupervisor, parentJob: s.parentJob, rootSession: s.rootSession, rootName: s.rootName,
           ownershipHistory: s.ownershipHistory, executionOwner: s.executionOwner, masters: s.masters });
         if (!executing && !job.host) {
-          Object.assign(job, s);
+          Object.assign(job, s, legacySupervisor === undefined ? {} : { supervisor: legacySupervisor });
           if (s.status !== "running" && !job.queue.length) job.queue = [...(s.queuedMessages ?? [])];
         }
         const retained = this.retainedInline.get(s.id);
@@ -687,6 +691,7 @@ export class JobManager {
         if (this.pendingInlineCancels.has(s.id) && (s.status !== "running" || inlineTurn(s) !== this.pendingInlineCancels.get(s.id))) this.pendingInlineCancels.delete(s.id);
       } else if (job && !mine) {
         this.running.delete(s.id); this.waitingJobs.delete(s.id); this.foreground.delete(s.id); this.own.delete(s.id); this.history.delete(s.id);
+        this.legacySupervisors.delete(s.id);
         continue;
       }
       if (!mine) continue;
@@ -1174,6 +1179,7 @@ export class JobManager {
       const oldest = [...this.history.values()].find((entry) => entry.status !== "running" && !this.waitingJobs.has(entry.id));
       if (!oldest) break; // Active jobs are retained even when they outnumber the finished-history limit.
       this.history.delete(oldest.id);
+      this.legacySupervisors.delete(oldest.id);
     }
     this.persist();
   }
@@ -1220,10 +1226,34 @@ export class JobManager {
     const supervisor = this.supervisorIdentity();
     for (const job of this.history.values()) {
       if (!job.supervisor && this.isMine(job.owner)) {
+        // A present malformed value still follows the old assignment policy, but
+        // cannot become a witness for an absent durable field.
+        if (!Object.hasOwn(job, "supervisor") && !job.ownershipHistory?.length) {
+          this.legacySupervisors.set(job.id, { job, controller: job.controller, supervisor,
+            authority: cloneJson(this.legacySupervisorAuthority(job)) });
+        } else this.legacySupervisors.delete(job.id);
         job.supervisor = supervisor;
         this.own.add(job.id);
       }
     }
+  }
+
+  private legacySupervisorAuthority(job: StoredJob): unknown[] {
+    return [job.id, job.name, job.agent, job.owner, job.startedAt, job.executionOwner, job.executionPid, job.parentJob,
+      job.rootSession, job.rootName, job.masters, job.ownershipHistory, job.host, job.metadataVersion, job.projectRoot, job.remote];
+  }
+
+  private retainedLegacySupervisor(job: Job | undefined, saved: StoredJob, directlyOwned: boolean): string | undefined {
+    const witness = this.legacySupervisors.get(saved.id);
+    if (!witness) return undefined;
+    if (job !== undefined && job === witness.job && job.controller === witness.controller && job.supervisor === witness.supervisor &&
+        directlyOwned && !saved.ownershipHistory?.length && !Object.hasOwn(saved, "supervisor") &&
+        isDeepStrictEqual(witness.authority, this.legacySupervisorAuthority(job)) &&
+        isDeepStrictEqual(witness.authority, this.legacySupervisorAuthority(saved))) return witness.supervisor;
+    // A different job, controller, turn, or durable authority permanently ends
+    // this assignment's exception, even if an old missing-field row reappears.
+    this.legacySupervisors.delete(saved.id);
+    return undefined;
   }
 
   /**

@@ -1,12 +1,14 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { join } from "node:path";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { z } from "zod";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
 import { DELEGATE_DEPTH_ENV } from "../src/core/delegate.js";
-import { JOBS_FILE } from "../src/core/constants.js";
+import { DELEGATION_METADATA_VERSION, JOBS_FILE } from "../src/core/constants.js";
+import * as jsonStore from "../src/core/json-store.js";
+import * as fileCache from "../src/core/file-cache.js";
 import { DEFAULT_SIBLING_MAX_HOPS, isJobSendTarget } from "../src/core/job-messaging.js";
 import { formatSiblingMessages } from "../src/mcp/format.js";
 import { readStore } from "../src/mcp/jobs.js";
@@ -17,6 +19,7 @@ import { loadOrCreateToken } from "../src/core/token.js";
 import { startUi } from "../src/cli/ui.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import { JobManager, type Job } from "../src/mcp/jobs.js";
+import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 import { SiblingLink } from "../src/mcp/siblings.js";
 import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
@@ -224,6 +227,211 @@ describe("sibling job messaging", () => {
     expect(sent.deliveredTo).toEqual([later.job.name]);
     restored.cancelAll();
     jobs.cancelAll();
+  });
+
+  describe("source-witnessed legacy supervisor assignment", () => {
+    // Passive fixture access only: no production observer or manufactured witness.
+    function state(jobs: JobManager) {
+      return jobs as unknown as { history: Map<string, Job>; legacySupervisors: Map<string, unknown>;
+        receipts: { value: { job: Record<string, unknown> } }[] };
+    }
+
+    function deferred(code: "STORE_UPGRADE_DEFERRED" | "EJOBLOCKED" = "STORE_UPGRADE_DEFERRED") {
+      const path = join(env.home, JOBS_FILE), now = Date.now();
+      const first = { id: "earlier", name: "codex-job-earlier", agent: "codex", model: null, owner: supervisor.name,
+        supervisor: supervisor.id, rootSession: supervisor.id, rootName: supervisor.name, metadataVersion: DELEGATION_METADATA_VERSION,
+        startedAt: now - 10, finishedAt: now, status: "done", sessionId: "original-native-context", workdir: null, worktree: null,
+        prompt: "original accepted task", args: { title: "original title", future: { accepted: ["context"] } },
+        masters: [supervisor.name], ownershipHistory: [], host: null, queuedMessages: [],
+        future: { accepted: { payload: ["unknown retained bytes", { nested: true }] } } };
+      const { supervisor: omitted, ...prior } = { ...first, id: "legacy", name: "codex-job-legacy" };
+      const original = JSON.stringify({ version: 1, futureDocument: { keep: true }, jobs: [first, prior] });
+      writeFileSync(path, original);
+      let failures = 0, caught = 0, published = 0, assigned: Job | undefined;
+      let controller: AbortController | undefined;
+      const jobs = new JobManager(supervisor, { ...nullLogger, warn(message) {
+        if (message === "could not save subagent jobs") caught++;
+      } }, path);
+      const originalWrite = jsonStore.writeJsonStore;
+      const writer = vi.spyOn(jsonStore, "writeJsonStore").mockImplementation((target, value, previous) => {
+        if (target === path && failures === 0) {
+          failures++;
+          assigned = state(jobs).history.get("legacy");
+          controller = assigned?.controller;
+          // SIMULATED write refusal. All other calls execute the original writer;
+          // restore, retention, the catch and its normal retry remain source code.
+          throw Object.assign(new Error(`SIMULATED ${code}`), { code });
+        }
+        originalWrite(target, value, previous);
+        if (target === path) published++;
+      });
+      try {
+        jobs.restore(() => () => () => new Promise<never>(() => {}));
+        expect(failures).toBe(1);
+        expect(caught).toBe(code === "EJOBLOCKED" ? 0 : 1);
+        expect(published).toBe(0);
+        expect(assigned).toBe(state(jobs).history.get("legacy"));
+        expect(assigned!.supervisor).toBe(first.supervisor);
+        expect(assigned!.controller).toBe(controller);
+        expect(readFileSync(path, "utf8")).toBe(original);
+        const retained = state(jobs).receipts.find(receipt => receipt.value.job.id === "legacy");
+        expect(retained).toBeDefined();
+        expect(retained!.value.job).toMatchObject({ ...prior, supervisor: first.supervisor });
+      } catch (error) {
+        writer.mockRestore(); jobs.setDormant(true); jobs.cancelAll(); throw error;
+      }
+      return { jobs, path, original, first, prior, legacy: assigned!, controller: controller!, writer,
+        save(change: Record<string, unknown> = {}) {
+          writeFileSync(path, JSON.stringify({ version: 1, futureDocument: { keep: true }, jobs: [first, { ...prior, ...change }] }));
+        },
+        close() { writer.mockRestore(); jobs.setDormant(true); jobs.cancelAll(); } };
+    }
+
+    it.each(["STORE_UPGRADE_DEFERRED", "EJOBLOCKED"] as const)("retains the exact assigned job immediately after one SIMULATED %s write refusal", async code => {
+      await supervisor.setSessionId("learned-session");
+      const fixture = deferred(code);
+      try {
+        // No yield, retry, polling or extra persistence before this lookup.
+        const legacy = fixture.jobs.find("codex-job-legacy")!;
+        expect(legacy).toBe(fixture.legacy);
+        expect(legacy.controller).toBe(fixture.controller);
+        expect(legacy.supervisor).toBe(fixture.first.supervisor);
+        expect(legacy).toMatchObject(fixture.prior);
+        expect(legacy.recoveredRecord).toEqual(fixture.prior);
+        expect(readFileSync(fixture.path, "utf8")).toBe(fixture.original);
+        expect(fixture.jobs.find(legacy.name)).toBe(legacy);
+        expect(legacy.supervisor).toBe(fixture.first.supervisor);
+        fixture.writer.mockRestore();
+        // Only AFTER the immediate assertions, allow the ordinary source retry
+        // to publish. This is eventual-publication coverage, not an assertion fix.
+        await until(() => JSON.parse(readFileSync(fixture.path, "utf8")).version === jsonStore.JSON_STORE_VERSION);
+        const saved = readStore(fixture.path).find(job => job.id === "legacy")!;
+        expect(saved).toMatchObject({ ...fixture.prior, supervisor: fixture.first.supervisor });
+        expect(JSON.parse(readFileSync(fixture.path, "utf8")).futureDocument).toEqual({ keep: true });
+        expect(fixture.jobs.find(legacy.name)).toBe(legacy);
+        expect(legacy.controller).toBe(fixture.controller);
+        expect(state(fixture.jobs).legacySupervisors.has("legacy")).toBe(false);
+      } finally { fixture.close(); }
+    });
+
+    it.each([
+      ["supervisor", { supervisor: "explicit-durable-group" }],
+      ["null", { supervisor: null }],
+      ["number", { supervisor: 0 }],
+      ["false", { supervisor: false }],
+      ["empty string", { supervisor: "" }],
+      ["array", { supervisor: [] }],
+      ["object", { supervisor: { malformed: true } }],
+    ] as const)("honors a present durable %s and never resurrects the old witness", (_label, change) => {
+      const fixture = deferred();
+      try {
+        fixture.save(change);
+        expect(fixture.jobs.find(fixture.legacy.name)!.supervisor).toEqual(change.supervisor);
+        expect(state(fixture.jobs).legacySupervisors.has("legacy")).toBe(false);
+        fixture.save();
+        expect(fixture.jobs.find(fixture.legacy.name)!.supervisor).toBeUndefined();
+      } finally { fixture.close(); }
+    });
+
+    it("honors a SIMULATED undefined-present loaded row without altering its cached source", () => {
+      const fixture = deferred(), originalClone = fileCache.cloneJson;
+      const cloning = vi.spyOn(fileCache, "cloneJson").mockImplementation(<T,>(value: T): T => {
+        const copy = originalClone(value);
+        if (copy && typeof copy === "object" && "id" in copy && copy.id === "legacy") {
+          // JSON cannot encode undefined: simulate only the selected, detached
+          // loaded record after the original clone, never mutate a cached DTO.
+          Object.defineProperty(copy, "supervisor", { value: undefined, enumerable: true, writable: true, configurable: true });
+        }
+        return copy;
+      });
+      try {
+        expect(fixture.jobs.find(fixture.legacy.name)!.supervisor).toBeUndefined();
+        expect(state(fixture.jobs).legacySupervisors.has("legacy")).toBe(false);
+        expect(readFileSync(fixture.path, "utf8")).toBe(fixture.original);
+        cloning.mockRestore();
+        expect(fixture.jobs.find(fixture.legacy.name)!.supervisor).toBeUndefined();
+      } finally { cloning.mockRestore(); fixture.close(); }
+    });
+
+    it.each([
+      ["owner", { owner: "foreign-owner" }],
+      ["executor", { executionOwner: "different-executor" }],
+      ["executor PID", { executionPid: 123 }],
+      ["parent", { parentJob: "codex-job-parent" }],
+      ["root session", { rootSession: "different-root" }],
+      ["root name", { rootName: "different-owner" }],
+      ["masters", { masters: ["different-master"] }],
+      ["history", { ownershipHistory: [{ id: "handoff", at: 1, from: "former", to: "current", reason: "explicit-handoff" }] }],
+      ["metadata", { metadataVersion: 99 }],
+      ["remote", { remote: { host: "different-host" } }],
+    ] as const)("invalidates the assignment on a durable %s change before any skipped import", (_label, change) => {
+      const fixture = deferred();
+      try {
+        fixture.save(change);
+        fixture.jobs.refreshOwnership();
+        expect(state(fixture.jobs).legacySupervisors.has("legacy")).toBe(false);
+        // Returning to the old row cannot revive this source assignment.
+        fixture.save();
+        expect(fixture.jobs.find(fixture.legacy.name)!.supervisor).toBeUndefined();
+      } finally { fixture.close(); }
+    });
+
+    it("imports a new durable turn without retaining the prior assignment or resetting its controller on passive refresh", () => {
+      const fixture = deferred();
+      try {
+        fixture.save({ startedAt: fixture.prior.startedAt + 1 });
+        const current = fixture.jobs.find(fixture.legacy.name)!;
+        expect(current).toBe(fixture.legacy);
+        expect(current.startedAt).toBe(fixture.prior.startedAt + 1);
+        expect(current.supervisor).toBeUndefined();
+        expect(current.controller).toBe(fixture.controller);
+        expect(state(fixture.jobs).legacySupervisors.has("legacy")).toBe(false);
+        fixture.save();
+        expect(fixture.jobs.find(current.name)!.supervisor).toBeUndefined();
+      } finally { fixture.close(); }
+    });
+
+    it("honors handoff ownership and its existing historical grants without authorizing an unrelated manager", () => {
+      const fixture = deferred();
+      const foreign = new JobManager(new LocalCoordinator("foreign-owner", "foreign-session"), nullLogger, fixture.path);
+      try {
+        foreign.restore(() => undefined);
+        expect(foreign.find(fixture.legacy.name, false)).toBeUndefined();
+        expect(state(foreign).legacySupervisors.size).toBe(0);
+        expect(readFileSync(fixture.path, "utf8")).toBe(fixture.original);
+        fixture.save({ owner: "foreign-owner", supervisor: "foreign-group", rootName: "foreign-owner", rootSession: "foreign-session",
+          masters: ["foreign-owner"],
+          ownershipHistory: [{ id: "handoff", at: Date.now(), from: supervisor.name, to: "foreign-owner", reason: "explicit-handoff" }] });
+        fixture.jobs.refreshOwnership();
+        expect(state(fixture.jobs).history.has("legacy")).toBe(false);
+        expect(state(fixture.jobs).legacySupervisors.has("legacy")).toBe(false);
+        // Existing controls retain the former owner's historical grant. The
+        // lookup may expose a fresh foreign record, never the old assignment.
+        const granted = fixture.jobs.find(fixture.legacy.name, false)!;
+        expect(granted.owner).toBe("foreign-owner");
+        expect(granted.supervisor).toBe("foreign-group");
+        expect(granted).not.toBe(fixture.legacy);
+        expect(granted.controller).not.toBe(fixture.controller);
+        expect(state(fixture.jobs).legacySupervisors.has("legacy")).toBe(false);
+      } finally { foreign.setDormant(true); foreign.cancelAll(); fixture.close(); }
+    });
+
+    it.each(["object", "controller", "local authority"] as const)("invalidates a changed %s even when the durable row is unchanged", kind => {
+      const fixture = deferred();
+      try {
+        if (kind === "object") state(fixture.jobs).history.set("legacy", { ...fixture.legacy });
+        else if (kind === "controller") fixture.legacy.controller = new AbortController();
+        else fixture.legacy.masters!.push("local mutation");
+        const current = fixture.jobs.find(fixture.legacy.name)!;
+        expect(current.supervisor).toBeUndefined();
+        expect(state(fixture.jobs).legacySupervisors.has("legacy")).toBe(false);
+        if (kind === "object") {
+          expect(current).not.toBe(fixture.legacy);
+          state(fixture.jobs).history.set("legacy", fixture.legacy);
+        } else if (kind === "controller") fixture.legacy.controller = fixture.controller;
+        expect(fixture.jobs.find(fixture.legacy.name)!.supervisor).toBeUndefined();
+      } finally { fixture.close(); }
+    });
   });
 
   it("allows only explicit named session grants and preserves the supervisor's reply thread", async () => {
