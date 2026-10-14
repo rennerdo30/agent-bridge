@@ -48,7 +48,23 @@ Superseded runs for the same branch or PR are cancelled. Windows uses four
 parallel shards of each lane, retaining one integration worker per shard.
 `npm run test:shards -- 4` lists the files using Vitest's configured sequencer and
 proves every file is covered exactly once. CI also checks the files actually run
-against that inventory. Per-job artifacts retain JSON results, shard lists,
+against that inventory. Before running a shard, CI uses
+`npm run test:ci-windows -- -CollectOnly` in a separate fresh marked root to
+collect the unsharded cases for both lanes. This imports setup files and test
+modules and evaluates collection code, including parameterized and conditional
+tests; it does not execute test callbacks or hooks. Collection retains the
+configured worker isolation and uses a separate temporary cache.
+
+The four shard file sets must be disjoint and cover every unfiltered file.
+Each shard's final cases must exactly match its portion of the unsharded census
+by file, Vitest ID and full name, including collection skips. Artifacts record
+the actual passed/failed/skipped disposition, checkout revision, Node/Vitest
+versions, event, run ID and attempt, plus a deterministic census digest to compare
+across all four jobs separately for each Node version. Failed tests still fail
+CI even when their membership is known. A partial collection, missing report,
+unhandled error or pending case produces `coverage: unknown`, retains available
+census evidence and fails the coverage check. Collect-only is not a test pass.
+No unsharded test bodies run. Per-job artifacts retain JSON results, shard lists,
 failures and retry/flaky diagnostics; retries are not added or hidden.
 Artifact names include the workflow attempt so a manual rerun preserves the
 original failure evidence and can upload fresh results without a name collision.

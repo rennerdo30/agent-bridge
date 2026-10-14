@@ -27,6 +27,7 @@ npm run test:ci-windows -- -Lane integration test/mobile-identity.test.ts
 param(
     [switch]$FreshVolume,
     [switch]$Throttle,
+    [switch]$CollectOnly,
     [ValidateSet('all', 'fast', 'integration')][string]$Lane = 'all',
     [string]$NodePath = 'node',
     [Parameter(ValueFromRemainingArguments = $true)][string[]]$TestArgs
@@ -119,10 +120,17 @@ try {
     Push-Location $repository
     try {
         $exitCode = 0
-        $lanes = if ($Lane -eq 'all') { @('fast', 'integration') } else { @($Lane) }
-        foreach ($testLane in $lanes) {
-            & $NodePath (Join-Path $PSScriptRoot 'test.mjs') $testLane @TestArgs
-            if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
+        if ($CollectOnly) {
+            if ($Lane -ne 'all' -or $TestArgs.Count -ne 0) { throw 'CollectOnly requires both unfiltered lanes' }
+            $results = if ($env:AGENT_BRIDGE_CI_RESULTS_DIR) { $env:AGENT_BRIDGE_CI_RESULTS_DIR } else { '.agent-bridge-test/ci' }
+            & $NodePath (Join-Path $PSScriptRoot 'check-test-shards.mjs') 4 (Join-Path $results 'shards.json') --collect
+            $exitCode = $LASTEXITCODE
+        } else {
+            $lanes = if ($Lane -eq 'all') { @('fast', 'integration') } else { @($Lane) }
+            foreach ($testLane in $lanes) {
+                & $NodePath (Join-Path $PSScriptRoot 'test.mjs') $testLane @TestArgs
+                if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
+            }
         }
     } finally { Pop-Location }
 } catch {

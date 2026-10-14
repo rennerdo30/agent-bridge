@@ -71,13 +71,13 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
-      - name: List every shard and prove complete disjoint coverage
-        run: npm run test:shards -- 4
+      - name: Collect unsharded cases and prove complete disjoint coverage
+        run: npm run test:ci-windows -- -CollectOnly
       # Preserve the fast/integration deadlines and serial integration worker.
       # Each lane is partitioned by Vitest; no filters, retries or excluded tests.
       - name: CI-like Windows tests
         run: npm run test:ci-windows -- --shard=${{ matrix.shard }}/4
-      - name: Verify the executed files match this shard
+      - name: Verify the collected and executed cases match this shard
         if: always()
         run: node scripts/check-shard-results.mjs .agent-bridge-test/ci ${{ matrix.shard }}
       - name: Test results, shard inventory and flaky diagnostics

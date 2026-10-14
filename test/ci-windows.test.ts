@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { loadMobileIdentity } from "../src/mobile/identity.js";
 
@@ -37,3 +39,74 @@ it.runIf(process.platform === "win32" && process.env.AGENT_BRIDGE_CI_WINDOWS ===
   expect(tmpdir()).toBe(join(root, "temp"));
   expect(process.env.CI).toBe("true");
 });
+
+function coverageFixture() {
+  const root = mkdtempSync(join(tmpdir(), "ci-census-"));
+  const metadata = {
+    revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", windowsHide: true }).trim(),
+    node: process.version, platform: process.platform,
+    vitest: JSON.parse(readFileSync(new URL("../node_modules/vitest/package.json", import.meta.url), "utf8")).version,
+    runId: process.env.GITHUB_RUN_ID ?? null, attempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
+    event: process.env.GITHUB_EVENT_NAME ?? null,
+  };
+  const unsharded = {
+    fast: [{ file: "test/fast.test.ts", errors: [], tests: [
+      { id: "fast_0", name: "same name", state: "pending" },
+      { id: "fast_1", name: "same name", state: "skipped" },
+    ] }],
+    integration: [{ file: "test/integration.test.ts", errors: [], tests: [
+      { id: "integration_0", name: "runs", state: "pending" },
+    ] }],
+  };
+  const censusSha256 = createHash("sha256").update(JSON.stringify(Object.entries(unsharded).map(([lane, files]) =>
+    [lane, files.map(file => [file.file, file.tests.map(test => [test.id, test.name, test.state])])]))).digest("hex");
+  const inventory = { count: 4, metadata, complete: true, unsharded, censusSha256, totalFiles: 2,
+    lanes: { fast: [["test/fast.test.ts"], [], [], []], integration: [["test/integration.test.ts"], [], [], []] } };
+  const reports = {
+    fast: { metadata, complete: true, unhandledErrors: [], files: structuredClone(unsharded.fast) },
+    integration: { metadata, complete: true, unhandledErrors: [], files: structuredClone(unsharded.integration) },
+  };
+  reports.fast.files[0]!.tests[0]!.state = "failed";
+  reports.integration.files[0]!.tests[0]!.state = "passed";
+  function save() {
+    writeFileSync(join(root, "shards.json"), JSON.stringify(inventory));
+    for (const lane of ["fast", "integration"] as const) {
+      writeFileSync(join(root, `${lane}-diagnostics.json`), JSON.stringify(reports[lane]));
+      writeFileSync(join(root, `${lane}-census.json`), JSON.stringify({ metadata: reports[lane].metadata,
+        complete: reports[lane].complete, files: reports[lane].files }));
+    }
+  }
+  function check() {
+    return execFileSync(process.execPath, [fileURLToPath(new URL("../scripts/check-shard-results.mjs", import.meta.url)), root, "1"],
+      { encoding: "utf8", windowsHide: true });
+  }
+  return { root, inventory, reports, save, check };
+}
+
+it("keeps failed and skipped cases in a known exact shard census", () => {
+  const fixture = coverageFixture();
+  fixture.save();
+  fixture.check();
+  const proof = JSON.parse(readFileSync(join(fixture.root, "shard-coverage.json"), "utf8"));
+  expect(proof.coverage).toBe("known");
+  expect(proof.lanes.fast).toMatchObject({ totalFiles: 1, totalCases: 2, passed: 0, failed: 1, skipped: 1 });
+});
+
+it.each(["duplicate", "omitted", "pending", "skip-changed", "partial", "source-drift", "duplicate-file"])(
+  "refuses %s census evidence and publishes the coverage gap", scenario => {
+    const fixture = coverageFixture();
+    const tests = fixture.reports.fast.files[0]!.tests;
+    if (scenario === "duplicate") tests[1] = { ...tests[0]! }; // Equal totals hide an omitted skipped case.
+    if (scenario === "omitted") tests.pop();
+    if (scenario === "pending") tests[0]!.state = "pending";
+    if (scenario === "skip-changed") tests[1]!.state = "passed";
+    if (scenario === "partial") fixture.reports.fast.complete = false;
+    if (scenario === "source-drift") fixture.reports.fast.metadata = { ...fixture.reports.fast.metadata, revision: "other-head" };
+    if (scenario === "duplicate-file") fixture.inventory.lanes.integration[0] = ["test/fast.test.ts"];
+    fixture.save();
+    expect(() => fixture.check()).toThrow();
+    const proof = JSON.parse(readFileSync(join(fixture.root, "shard-coverage.json"), "utf8"));
+    expect(proof.coverage).toBe("unknown");
+    expect(proof.problems.length).toBeGreaterThan(0);
+  },
+);
