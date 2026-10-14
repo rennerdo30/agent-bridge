@@ -48,7 +48,7 @@ import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, isUnsupportedOpe
 import { formatInboxMessages, formatProjectRoute, formatReplyRestrictions, formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer, formatVersionSkew } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { reportModActivity } from "./hook-ownership.js";
-import { CodexLineageLookup, codexCallIdentity, type CodexCallIdentity } from "./codex-lineage.js";
+import { codexCallIdentity, codexMainThreadAdmission, type CodexCallIdentity } from "./codex-lineage.js";
 import { buildHookResponse, confirmNativeChildDelivery, discardFinishedNotes, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, type Access } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
@@ -61,7 +61,7 @@ import type { DashboardInfo } from "../cli/dashboard.js";
 import { openBrowser } from "../cli/open.js";
 import { MessageWaitStore, matchesNotificationWait, matchesWait, resumeWaitHint, singleWaitTimeoutMs, SINGLE_WAIT_SEC, waitForReadReceipt, type WaitFilters } from "./message-wait.js";
 import { RewakeEndpoint, shouldWakeClaudeMessage } from "./rewake.js";
-import { DEFAULT_FOLLOW_UP, JobManager, type Job, type Resume, type Run, type RunResult } from "./jobs.js";
+import { DEFAULT_FOLLOW_UP, FOLLOW_UP_GATE_REASONS, JobManager, type Job, type Resume, type Run, type RunResult } from "./jobs.js";
 import { isBridgeWorktree, isInside, resumeArgs, runDelegate, type DelegateArgs, type RunContext } from "./delegate-run.js";
 import { JobRunners } from "./job-host.js";
 import { JOB_SETTING_KEYS, PERMISSION_KEY_AGENT, type JobSettings } from "./job-settings.js";
@@ -330,11 +330,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     };
   }
   if (agent === "codex" && node) {
-    const lineage = new CodexLineageLookup();
-    ctx.admitCodex = (meta, hook) => {
-      const call = codexCallIdentity(meta, hook);
-      return !call.agentId && Boolean(call.threadId && lineage.classify(call.threadId, call.transcript) === "main");
-    };
+    ctx.admitCodex = codexMainThreadAdmission();
     const waker = new CodexWaker(node, cfg, log.child("wake"));
     ctx.activity = (s) => {
       node.setActivity(s);
@@ -1539,7 +1535,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         }
       }
       if (Object.keys(settings).length) jobs.setSettings(a.job, settings);
-      const { outcome, job, approvalPending } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
+      const { outcome, job, approvalPending, gate } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
       const pending = listPendingApprovals(ctx.home).filter(entry => entry.job === (job?.name ?? a.job));
       const approvalNote = pending.length
@@ -1548,8 +1544,18 @@ ${res.text || t("delegate.empty")}`, res.isError);
       const settingsNote = job && Object.keys(settings).length
         ? `\nSaved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value}`).join(", ")}.${wasRunning ? " Applies from its next turn; the turn running now keeps its settings." : " Applies to this continuation and later turns."}`
         : "";
+      // Explicit projection: never serialize the Job, or future additions to the gate contract.
+      const gateNote = gate ? "\nLocal follow-up gate observation (local turn; durable current turn unknown; executor identity unknown): " + JSON.stringify({
+        reason: FOLLOW_UP_GATE_REASONS.includes(gate.reason) ? gate.reason : null,
+        jobId: typeof gate.jobId === "string" ? gate.jobId : null,
+        observedLocalStartedAt: typeof gate.observedLocalStartedAt === "number" && Number.isFinite(gate.observedLocalStartedAt) ? gate.observedLocalStartedAt : null,
+        durableTurn: "unknown", observedAt: typeof gate.observedAt === "number" && Number.isFinite(gate.observedAt) ? gate.observedAt : null,
+        executorIdentity: "unknown", controllerAborted: typeof gate.controllerAborted === "boolean" ? gate.controllerAborted : null,
+        hasResume: typeof gate.hasResume === "boolean" ? gate.hasResume : null,
+        hasSession: typeof gate.hasSession === "boolean" ? gate.hasSession : null,
+      }) : "";
       return text(
-        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote + approvalNote,
+        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote + approvalNote + gateNote,
         outcome === "unknown" || outcome === "no-session" || outcome === "stopping" || outcome === "cancelled-before-start",
       );
     }),
@@ -1599,18 +1605,19 @@ ${res.text || t("delegate.empty")}`, res.isError);
       title: "agent-bridge hook (internal)",
       description: "Internal endpoint for agent-bridge's own hooks. Do not call this tool.",
       inputSchema: {
+        // Whole-value placeholders keep the host's JSON type: Codex sends null for an absent transcript_path.
         event: z.string(),
-        session_id: z.string().optional(),
-        stop_hook_active: z.union([z.boolean(), z.string()]).optional(),
-        cwd: z.string().optional(),
-        agent_id: z.string().optional(),
-        prompt: z.string().optional(),
-        prompt_id: z.string().optional(),
-        transcript_path: z.string().optional(),
+        session_id: z.string().nullish(),
+        stop_hook_active: z.union([z.boolean(), z.string()]).nullish(),
+        cwd: z.string().nullish(),
+        agent_id: z.string().nullish(),
+        prompt: z.string().nullish(),
+        prompt_id: z.string().nullish(),
+        transcript_path: z.string().nullish(),
       },
     },
-    async (a: { event: string; session_id?: string; stop_hook_active?: boolean | string; cwd?: string; agent_id?: string; prompt?: string; prompt_id?: string; transcript_path?: string }, extra: ToolExtra) => {
-      // An unsubstituted "${...}" template means the host had no value for that field.
+    async (a: { event: string; session_id?: string | null; stop_hook_active?: boolean | string | null; cwd?: string | null; agent_id?: string | null; prompt?: string | null; prompt_id?: string | null; transcript_path?: string | null }, extra: ToolExtra) => {
+      // An unsubstituted "${...}" template (Claude Code) or null (Codex) means the host had no value for that field.
       const given = (v: unknown) => (typeof v === "string" && v && !v.startsWith("${") ? v : null);
       try {
         const nativeId = given(a.agent_id) ?? given(extra._meta?.agent_id) ?? given(extra._meta?.agentId);

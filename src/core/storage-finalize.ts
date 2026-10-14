@@ -1,19 +1,19 @@
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, lstatSync, openSync, readSync, readdirSync, rmSync, rmdirSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, openSync, readSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { DB_FILE_NAME } from "./constants.js";
 import { extractBundle, readBundleManifest } from "./archive-bundle.js";
-import { historyDbPath, historyReady, legacyTailConflicts, openHistoryReader, openHistoryStore, HISTORY_STORE_VERSION } from "./history-store.js";
+import { historyDbPath, historyReady, legacyTailConflicts, openHistoryStore, HISTORY_STORE_VERSION } from "./history-store.js";
 import { HISTORY_V1_PREFIX } from "./history-migration.js";
 import { jobArchivePath, openJobArchive } from "./job-archive-index.js";
 import { maintenanceLock } from "./storage-lock.js";
 import { ARCHIVE_DB_NAME } from "./sqlite-maintenance.js";
 import { alignedTarget, derivedTables, estimateRows, logicalTable, proofProgress, proveFile, proveTable, sidecars, tableProof, type LiveDb, type ProofContext, type ProofProgress, type ReferenceSnapshot } from "./finalize-proof.js";
+import { openPreservedReader, preservedReadProblems } from "./storage-preservation.js";
 
-/** Owner decision 2026-10-09: superseded data is removed only after the new format is migrated, verified
- * (counts + hashes) and healthy, and only by this explicit, confirmed command. Every item is proven redundant row by
- * row (finalize-proof.ts) immediately before its removal; anything that cannot be proven is kept and reported.
+/** Conservative retention: finalize keeps every original, including candidates proven redundant.
+ * Existing row/byte proofs remain diagnostic checks and never authorize deletion or compaction.
  * The plan without --yes only lists candidates and runs cheap checks (seconds); the proof runs with --yes, or with
  * --check, which proves everything and removes nothing. */
 export interface FinalizeItem { kind: "table" | "file" | "directory"; path: string; bytes: number; reason: string }
@@ -39,12 +39,12 @@ function size(path: string): number {
   return readdirSync(path).reduce((n, name) => n + size(join(path, name)), 0);
 }
 
-/* Table sizes are not measured: dbstat walks every page of a table (minutes on a 20 GB store). The space a run
- * frees shows in the database file sizes after its compaction. */
+/* Table sizes are not measured: dbstat walks every page of a table (minutes on a 20 GB store).
+ * Finalize frees no space: every candidate is retained. */
 
 function jobArchiveComplete(home: string): boolean {
   if (!existsSync(jobArchivePath(join(home, "jobs.json")))) return false;
-  const db = openJobArchive(join(home, "jobs.json"));
+  const db = openJobArchive(join(home, "jobs.json"), false, { preserveInputs: true });
   try { return db?.prepare("SELECT state FROM archive_migrations WHERE version=1").get()?.state === "complete"; }
   catch { return false; }
   finally { db?.close(); }
@@ -53,7 +53,7 @@ function jobArchiveComplete(home: string): boolean {
 export function historyIsVerified(home: string): boolean {
   const history = historyDbPath(join(home, DB_FILE_NAME));
   if (!existsSync(history)) return false;
-  const db = new DatabaseSync(history, { readOnly: true, timeout: 1000 });
+  const db = openPreservedReader(history, 1000);
   try { return historyReady(db); } finally { db.close(); }
 }
 
@@ -68,15 +68,17 @@ export function referenceSnapshot(history: DatabaseSync): ReferenceSnapshot | un
   } catch { return undefined; }
 }
 
-/** The live databases a proof may rely on. Legacy bridge.db history tables never count: finalize removes them. */
+/** The live databases a proof may rely on. Legacy bridge.db history tables never count as proof targets, even though finalize retains them. */
 export function openLive(home: string): { live: LiveDb[]; history?: DatabaseSync; close: () => void } {
+  const unavailable = commandReadProblems(home, false);
+  if (unavailable.length) throw new Error(unavailable.join("; "));
   const live: LiveDb[] = [];
   const bridge = join(home, DB_FILE_NAME), archive = join(home, ARCHIVE_DB_NAME), history = historyDbPath(bridge);
   let historyDb: DatabaseSync | undefined;
   try {
-    if (existsSync(bridge)) live.push({ label: "bridge.db", db: new DatabaseSync(bridge, { readOnly: true, timeout: 5000 }), exclude: new Set(LEGACY_BRIDGE_TABLES) });
-    if (existsSync(archive)) live.push({ label: "archive.db", db: new DatabaseSync(archive, { readOnly: true, timeout: 5000 }) });
-    if (existsSync(history)) { historyDb = openHistoryReader(history, 5000); live.push({ label: "history.db", db: historyDb }); }
+    if (existsSync(bridge)) live.push({ label: "bridge.db", db: openPreservedReader(bridge, 5000), exclude: new Set(LEGACY_BRIDGE_TABLES) });
+    if (existsSync(archive)) live.push({ label: "archive.db", db: openPreservedReader(archive, 5000) });
+    if (existsSync(history)) { historyDb = openPreservedReader(history, 5000); live.push({ label: "history.db", db: historyDb }); }
   } catch (err) { for (const l of live) l.db.close(); throw err; }
   return { live, history: historyDb, close: () => { for (const l of live) l.db.close(); } };
 }
@@ -174,15 +176,23 @@ function bundledOriginals(home: string, verify: boolean): { dir: string; files: 
 }
 
 interface Candidates { blockers: string[]; bridgeTables: FinalizeItem[]; history: boolean; files: { item: FinalizeItem; copies: string[] }[] }
+/** Complete live-input inventory; candidates and reopens use the same constructor policy. */
+export function commandReadProblems(home: string, includeJobArchive = true): string[] {
+  const bridge = join(home, DB_FILE_NAME);
+  const optional = [join(home, ARCHIVE_DB_NAME),
+    ...(includeJobArchive ? [jobArchivePath(join(home, "jobs.json"))] : [])];
+  return preservedReadProblems([bridge, historyDbPath(bridge), ...optional], optional);
+}
 function candidates(home: string): Candidates {
-  const blockers: string[] = [];
+  const blockers = commandReadProblems(home);
+  if (blockers.length) return { blockers, bridgeTables: [], history: false, files: [] };
   const historyVerified = historyIsVerified(home);
   if (!historyVerified) blockers.push("History store v2 is not verified yet; nothing in the old format may be removed.");
   if (!jobArchiveComplete(home)) blockers.push("Job archive import is not complete yet; job copies stay.");
   const bridgeTables: FinalizeItem[] = [];
   const bridge = join(home, DB_FILE_NAME);
   if (historyVerified && existsSync(bridge)) {
-    const db = new DatabaseSync(bridge, { readOnly: true, timeout: 1000 });
+    const db = openPreservedReader(bridge, 1000);
     try {
       for (const name of LEGACY_BRIDGE_TABLES) if (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name))
         bridgeTables.push({ kind: "table", path: `bridge.db:${name}`, bytes: 0, reason: "legacy history, copied into history.db and verified" });
@@ -202,24 +212,24 @@ const samePath = (a: string, b: string) => process.platform === "win32" ? resolv
 export function planFinalize(home: string, options: { prove?: boolean; report?: (line: string) => void } = {}): FinalizePlan {
   if (options.prove) return runFinalize(home, options.report ?? (() => {}), { dryRun: true });
   const found = candidates(home);
-  const items: FinalizeItem[] = found.bridgeTables.map(i => ({ ...i, reason: `${i.reason}; proven against history.db v2 at removal` })), kept: FinalizeItem[] = [];
+  const items: FinalizeItem[] = found.bridgeTables.map(i => ({ ...i, reason: `${i.reason}; checked against history.db v2; retained even when proof passes` })), kept: FinalizeItem[] = [];
   if (found.history) {
-    const db = openHistoryReader(historyDbPath(join(home, DB_FILE_NAME)), 1000);
+    const db = openPreservedReader(historyDbPath(join(home, DB_FILE_NAME)), 1000);
     let reference: ReferenceSnapshot | undefined;
     try {
       reference = referenceSnapshot(db);
       for (const { name } of historyCandidates(db))
-        items.push({ kind: "table", path: `history.db:${name}`, bytes: 0, reason: "earlier history format or failed attempt; proven against the v2 tables row by row at removal" });
+        items.push({ kind: "table", path: `history.db:${name}`, bytes: 0, reason: "earlier history format or failed attempt; checked against the v2 tables row by row; retained even when proof passes" });
     } finally { db.close(); }
     for (const { item } of found.files) {
       const isReference = reference && samePath(reference.path, item.path);
       items.push({ ...item, reason: isReference
-        ? "source snapshot of the verified history migration; its history tables are proven by the migration manifest, every other row against the live databases at removal"
-        : `${item.reason}; proven row by row at removal` });
+        ? "source snapshot of the verified history migration; its history tables are proven by the migration manifest, every other row against the live databases; retained even when proof passes"
+        : `${item.reason}; checked row by row; retained even when proof passes` });
     }
   }
   if (!found.blockers.length) for (const group of bundledOriginals(home, false)) {
-    if (group.files.length) items.push({ kind: "directory", path: group.dir, bytes: group.bytes, reason: `${group.files.length} job copy originals listed in bundle manifests; their bytes are verified against the bundles at removal` });
+    if (group.files.length) items.push({ kind: "directory", path: group.dir, bytes: group.bytes, reason: `${group.files.length} job copy originals listed in bundle manifests; their bytes are verified against the bundles; retained even when proof passes` });
     if (group.unlisted.length || group.failures.length) kept.push({ kind: "directory", path: group.dir, bytes: size(group.dir) - group.bytes, reason: summarize([...group.failures, ...group.unlisted.map(name => `${name} is in no bundle manifest`)]) });
   }
   return plan(found.blockers, items, kept, false);
@@ -256,13 +266,13 @@ function verifyLegacyBridge(bridge: DatabaseSync, history: DatabaseSync, report:
   return blockers;
 }
 
-/** Independent checks before anything is removed: v2 is verified and complete, and no
- * legacy tail conflict is open. The legacy bridge.db history is proven inside the transaction that drops it. */
+/** Independent checks before finalize diagnostics: v2 is verified and complete, and no
+ * legacy tail conflict is open. The legacy bridge.db history is proven inside a read-only transaction. */
 export function verifyBeforeFinalize(home: string, report: (line: string) => void = () => {}): string[] {
   const blockers: string[] = [];
   const bridgeFile = join(home, DB_FILE_NAME), historyFile = historyDbPath(bridgeFile);
   if (!existsSync(historyFile)) return ["history.db does not exist."];
-  const history = openHistoryReader(historyFile, 5000);
+  const history = openPreservedReader(historyFile, 5000);
   try {
     if (!historyReady(history)) return ["History store v2 is not verified."];
     // No whole-file quick_check (5 minutes on a 10 GB store): every page a proof relies on is read and checked by
@@ -281,22 +291,21 @@ function proofWork(home: string, found: Candidates): number {
   const add = (db: DatabaseSync, tables: string[]) => { for (const t of tables) { try { rows += Number(db.prepare(`SELECT coalesce(max(rowid),0) n FROM "${t.replaceAll('"', '""')}"`).get()!.n); } catch { /* none */ } } };
   const bridge = join(home, DB_FILE_NAME);
   if (found.bridgeTables.length) {
-    const db = new DatabaseSync(bridge, { readOnly: true, timeout: 5000 });
+    const db = openPreservedReader(bridge, 5000);
     try { add(db, found.bridgeTables.map(i => i.path.slice("bridge.db:".length)).filter(t => t !== "history_fts")); } finally { db.close(); }
   }
-  const history = new DatabaseSync(historyDbPath(bridge), { readOnly: true, timeout: 5000 });
+  const history = openPreservedReader(historyDbPath(bridge), 5000);
   try { add(history, historyCandidates(history).filter(c => !c.derived).map(c => c.name)); } finally { history.close(); }
-  for (const { item } of found.files) for (const file of item.kind === "directory" ? [] : [item.path]) rows += estimateRows(file);
+  for (const { item } of found.files) for (const file of item.kind === "directory" ? [] : [item.path]) rows += estimateRows(file, true);
   return rows;
 }
 
-/** Removes only what is proven redundant at the moment of removal, under the maintenance lock, then compacts.
- * - bridge.db: the legacy proof and every DROP run in one write transaction, so no writer can slip in between;
- * - history.db: each v1_* and retained_* table is proven against v2 inside the transaction that drops it;
- * - files: each is proven row by row (or byte by byte) right before it is removed; the verified migration's source
- *   snapshot is proven by its manifest and removed last, after every other copy.
- * With `dryRun` everything is proven exactly the same way and nothing is removed or locked. */
+/** Checks the existing proofs under maintenance admission, retaining every candidate.
+ * Database reads use read-only transactions; no writer/upgrade helper or compaction runs.
+ * With `dryRun` the same diagnostics run without taking the maintenance lock. */
 export function runFinalize(home: string, report: (line: string) => void, options: FinalizeOptions = {}): FinalizePlan {
+  const unavailable = commandReadProblems(home);
+  if (unavailable.length) return plan(unavailable, [], [], true);
   const dry = options.dryRun === true;
   const release = dry ? () => {} : maintenanceLock(home);
   try {
@@ -307,69 +316,63 @@ export function runFinalize(home: string, report: (line: string) => void, option
     if (verification.length) return plan(verification, [], [], true);
     const started = Date.now();
     const progress = proofProgress(proofWork(home, found), report);
-    report(dry ? "verification passed; proving every listed item (nothing is removed)…" : "verification passed; removing the old-format data that is proven redundant…");
-    const removed: FinalizeItem[] = [], kept: FinalizeItem[] = [];
+    report("verification passed; proving every listed item (all originals are retained)…");
+    const kept: FinalizeItem[] = [];
+    const retain = (item: FinalizeItem) => {
+      const retained = { ...item, reason: `${item.reason}; retained by policy even when proof passes` };
+      kept.push(retained); report(`kept ${item.path}: ${retained.reason}`);
+    };
     if (found.bridgeTables.length) {
-      const db = new DatabaseSync(join(home, DB_FILE_NAME), { timeout: 30_000, readOnly: dry });
+      const db = openPreservedReader(join(home, DB_FILE_NAME), 30_000);
       try {
-        if (!dry) db.exec("BEGIN IMMEDIATE");
+        db.exec("BEGIN");
         try {
-          const history = openHistoryReader(historyDbPath(join(home, DB_FILE_NAME)), 5000);
+          const history = openPreservedReader(historyDbPath(join(home, DB_FILE_NAME)), 5000);
           let blockers: string[];
           try { blockers = verifyLegacyBridge(db, history, report, progress); } finally { history.close(); }
-          if (blockers.length) { if (!dry) db.exec("ROLLBACK"); return plan(blockers, [], [], true); }
+          if (blockers.length) { db.exec("ROLLBACK"); return plan(blockers, [], [], true); }
           for (const item of found.bridgeTables) {
-            const name = item.path.slice("bridge.db:".length);
-            const sized = { ...item, bytes: 0 };
-            if (!dry) { db.exec(`DROP TABLE IF EXISTS "${name.replaceAll('"', '""')}"`); report(`removed ${item.path}`); }
-            removed.push(sized);
+            retain({ ...item, bytes: 0 });
           }
-          if (!dry) db.exec("COMMIT");
+          db.exec("COMMIT");
         } catch (err) { if (db.isTransaction) db.exec("ROLLBACK"); throw err; }
-        if (!dry) { report("compacting bridge.db (only the remaining core data is rewritten)…"); db.exec("VACUUM"); }
       } finally { db.close(); }
     }
     {
       const file = historyDbPath(join(home, DB_FILE_NAME));
-      const db = dry ? openHistoryReader(file, 5000) : openHistoryStore(file);
+      const db = openPreservedReader(file, 5000);
       try {
-        let dropped = 0;
-        if (!dry) db.exec("BEGIN IMMEDIATE");
+        db.exec("BEGIN");
         try {
           for (const { name, reason } of proveHistoryTables(db, progress)) {
             const item: FinalizeItem = { kind: "table", path: `history.db:${name}`, bytes: 0, reason: "earlier history format or failed attempt; every row exists in the verified v2 tables" };
             if (reason !== null) { kept.push({ ...item, reason }); report(`kept ${item.path}: ${reason}`); continue; }
-            if (!dry) { db.exec(`DROP TABLE IF EXISTS "${name.replaceAll('"', '""')}"`); report(`removed ${item.path}`); dropped++; }
-            removed.push(item);
+            retain(item);
           }
-          if (!dry) db.exec("COMMIT");
+          db.exec("COMMIT");
         } catch (err) { if (db.isTransaction) db.exec("ROLLBACK"); throw err; }
-        if (dropped) db.exec("VACUUM");
       } finally { db.close(); }
     }
     const { live, history, close } = openLive(home);
     try {
       const reference = history ? referenceSnapshot(history) : undefined;
-      const ctx: ProofContext = { live, history, reference, progress };
+      const ctx: ProofContext = { live, history, reference, progress, preserveCandidates: true };
       // Other copies may be compared with the reference snapshot's rows indirectly (through v2); it goes last anyway.
       const files = [...found.files].sort((a, b) => Number(!!reference && samePath(reference.path, a.item.path)) - Number(!!reference && samePath(reference.path, b.item.path)));
       for (const { item, copies } of files) {
         report(`checking ${item.path}…`);
         const reasons = proveFile(item.path, ctx, copies);
         if (reasons.length) { const reason = withAbsorbHint(summarize(reasons)); kept.push({ ...item, reason }); report(`kept ${item.path}: ${reason}`); continue; }
-        if (!dry) { for (const path of [...sidecars(item.path), item.path]) rmSync(path, { recursive: true, force: true }); report(`removed ${item.path}`); }
-        removed.push(item);
+        retain(item);
       }
     } finally { close(); }
     for (const group of jobArchiveOnly ? [] : bundledOriginals(home, true)) {
-      // Each original is checked against a verified bundle again right here; anything else in the folder stays.
-      if (!dry) for (const path of group.files) rmSync(path, { force: true });
-      if (group.files.length) { removed.push({ kind: "directory", path: group.dir, bytes: group.bytes, reason: `${group.files.length} job copy originals that a verified bundle restores byte-exact` }); if (!dry) report(`removed ${group.files.length} bundled originals from ${group.dir}`); }
+      // Bundle verification remains diagnostic; matching originals stay at their original paths.
+      if (group.files.length) retain({ kind: "directory", path: group.dir, bytes: group.bytes, reason: `${group.files.length} job copy originals that a verified bundle restores byte-exact` });
       if (group.unlisted.length || group.failures.length) kept.push({ kind: "directory", path: group.dir, bytes: size(group.dir), reason: summarize([...group.failures, ...group.unlisted.map(name => `${name} is in no verified bundle`)]) });
-      else if (!dry) try { rmdirSync(group.dir); } catch { /* not empty: something appeared meanwhile; it stays */ }
     }
     report(`proof finished in ${Math.round((Date.now() - started) / 1000)} s (${progress.done().toLocaleString("en")} rows read)`);
-    return plan([], removed, kept, true);
+    return plan([], [], kept, true);
   } finally { release(); }
 }
 
