@@ -419,8 +419,11 @@ export const OPENCODE_READ_ONLY_TOOLS = {
 export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   // The parent's project dir would point a delegated Claude (it may work in a worktree) at the wrong folder.
   // Each host selects its own plugin runtime; inheriting a native selector would hide other clients' updates.
+  // Permission-relay credentials belong only to the immediate child run that started that relay.
   const { CLAUDE_PROJECT_DIR: _parentProject, AGENT_BRIDGE_PLUGIN_RUNTIME_HOME: _parentRuntime,
-    AGENT_BRIDGE_LAUNCH_PLUGIN_ROOT: _parentPlugin, ...env } = process.env;
+    AGENT_BRIDGE_LAUNCH_PLUGIN_ROOT: _parentPlugin, AGENT_BRIDGE_RELAY_URL: _parentRelayUrl,
+    AGENT_BRIDGE_RELAY_TOKEN: _parentRelayToken, AGENT_BRIDGE_ANTIGRAVITY_ACCESS: _parentAntigravityAccess,
+    AGENT_BRIDGE_ANTIGRAVITY_EDIT_RELAY: _parentAntigravityEditRelay, ...env } = process.env;
   return jobEnvironment({ ...env, ...extra, [ENV.internal]: "1", [DELEGATE_DEPTH_ENV]: String(currentDelegateDepth() + 1) });
 }
 
