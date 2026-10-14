@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, writeFileSync, readdirSync, linkSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { beforeEach, afterEach, expect, it } from "vitest";
+import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { bytesDigest, ShadowJobsLedger } from "../src/core/state-jobs.js";
 import { SHADOW_IMPORT_SCHEMA, importSyntheticColdSource, productionLegacyImport, verifySyntheticColdSource, type VerifiedSyntheticColdSource } from "../src/core/state-import.js";
 import { captureSynthetic, legacyJob, legacySqliteBytes } from "./fixtures/state-legacy.js";
@@ -117,6 +117,50 @@ it("checks an admitted source again and refuses later raw changes without losing
   writeFileSync(spec.sourcePath, "changed retained original");
   expect(() => importSyntheticColdSource(db, token)).toThrow("changed_source_generation_or_digest");
   expect(readFileSync(spec.sourcePath, "utf8")).toBe("changed retained original"); expect(count("retained_sources")).toBe(0);
+});
+it.each(["stable", "raw", "manifest", "sidecar"] as const)("revalidates %s replay source after capture during real candidate parsing", change => {
+  const raw = Buffer.from(JSON.stringify(legacyJob("0.30.15")));
+  const spec = captureSynthetic(root, "replay-window", raw, "json", "1", "replay-source");
+  const token = verifySyntheticColdSource(spec), first = importSyntheticColdSource(db, token);
+  const prior = captureSynthetic(root, "other-generation", Buffer.from(JSON.stringify(legacyJob("0.30.14", { status: "done" }))), "json", "2", "replay-source");
+  importSyntheticColdSource(db, verifySyntheticColdSource(prior));
+  const retainedRows = () => ({
+    sources: db.prepare("SELECT * FROM retained_sources ORDER BY source_id,generation,digest").all(),
+    occurrences: db.prepare("SELECT * FROM retained_occurrences ORDER BY source_id,generation,digest,occurrence").all(),
+    conflicts: db.prepare("SELECT * FROM retained_conflicts ORDER BY job_key,left_source,left_generation,left_digest,left_occurrence,right_source,right_generation,right_digest,right_occurrence").all(),
+  });
+  const before = retainedRows(), priorRaw = readFileSync(prior.sourcePath), manifestRaw = readFileSync(spec.manifestPath);
+  const changedRaw = Buffer.from("synthetic source changed during replay parsing");
+  let parsedCandidates = 0, changedManifest = manifestRaw;
+  const originalParse = JSON.parse;
+  // Test-local passthrough, not a mocked importer/guard/result or public seam.
+  // safeSource parses the distinct manifest first. Matching original job JSON
+  // is parsed only by occurrences(w), AFTER initial capture and before BEGIN.
+  // Always return the actual parser result; mutate only fabricated fixture files.
+  const parser = vi.spyOn(JSON, "parse").mockImplementation((text, reviver) => {
+    const result: unknown = originalParse(text, reviver);
+    if (text === raw.toString("utf8") && parsedCandidates === 0) {
+      parsedCandidates++;
+      if (change === "raw") writeFileSync(spec.sourcePath, changedRaw);
+      else if (change === "manifest") {
+        changedManifest = Buffer.from(JSON.stringify({ ...originalParse(manifestRaw.toString("utf8")), generation: "3" }));
+        writeFileSync(spec.manifestPath, changedManifest);
+      } else if (change === "sidecar") writeFileSync(spec.sourcePath + "-journal", "synthetic replay sidecar");
+    }
+    return result;
+  });
+  try {
+    if (change === "stable") expect(importSyntheticColdSource(db, token)).toEqual({ ...first, status: "already_retained" });
+    else expect(() => importSyntheticColdSource(db, token)).toThrow(change === "raw"
+      ? "changed_source_generation_or_digest" : change === "manifest" ? "changed_source_manifest" : "hot_or_unknown_source");
+  } finally { parser.mockRestore(); }
+  expect(parsedCandidates).toBe(1); expect(db.isTransaction).toBe(false);
+  expect(retainedRows()).toEqual(before); expect(count("retained_sources")).toBe(2);
+  expect(Buffer.from(before.sources.find(s => s.generation === "1")!.raw as Uint8Array)).toEqual(raw);
+  expect(readFileSync(spec.sourcePath)).toEqual(change === "raw" ? changedRaw : raw);
+  expect(readFileSync(spec.manifestPath)).toEqual(changedManifest);
+  expect(readFileSync(prior.sourcePath)).toEqual(priorRaw); expect(count("shadow_jobs")).toBe(0);
+  if (change === "sidecar") expect(readFileSync(spec.sourcePath + "-journal", "utf8")).toBe("synthetic replay sidecar");
 });
 it("refuses hard-linked source/copy ambiguity before SQLite opens", () => {
   const spec = captureSynthetic(root, "linked", Buffer.from("[]"), "json"); linkSync(spec.sourcePath, join(root, "source-alias"));

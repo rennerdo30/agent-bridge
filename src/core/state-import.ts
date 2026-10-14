@@ -232,6 +232,13 @@ export function importSyntheticColdSource(target: DatabaseSync, token: VerifiedS
       target.prepare("PRAGMA foreign_keys").get()?.foreign_keys !== 1) throw new Error("shadow_target_unavailable");
   const w = safeSource(recorded.spec);
   if (!w.raw.equals(recorded.raw) || !w.manifestBytes.equals(recorded.manifestBytes)) throw new Error("changed_source_witness");
+  // Both new imports and retained replays must check the same applicable
+  // physical identity, manifest/generation/digest, header and sidecars again
+  // AFTER candidate parsing and writer admission, immediately before commit.
+  const verifyFinalSource = (): void => {
+    const final = safeSource(recorded.spec);
+    if (!final.raw.equals(w.raw) || !final.manifestBytes.equals(w.manifestBytes)) throw new Error("changed_source_witness");
+  };
   const candidates = occurrences(w); // outside the target write transaction
   const m = w.manifest, key = [m.sourceId, m.generation, m.digest];
   target.exec("BEGIN IMMEDIATE");
@@ -241,6 +248,7 @@ export function importSyntheticColdSource(target: DatabaseSync, token: VerifiedS
       if (!Buffer.from(previous.raw as Uint8Array).equals(w.raw) ||
           !Buffer.from(previous.manifest as Uint8Array).equals(w.manifestBytes)) throw new Error("retained_identity_conflict");
       const count = target.prepare("SELECT count(*) AS n FROM retained_occurrences WHERE source_id=? AND generation=? AND digest=?").get(...key)!;
+      verifyFinalSource();
       target.exec("COMMIT");
       return { status: "already_retained", sourceId: m.sourceId, generation: m.generation, digest: m.digest, occurrences: Number(count.n) };
     }
@@ -261,8 +269,7 @@ export function importSyntheticColdSource(target: DatabaseSync, token: VerifiedS
     });
     // Verify source AGAIN before committing. Failed/changed witness rolls back
     // all target rows; detached copy and every original remain untouched.
-    const final = safeSource(recorded.spec);
-    if (!final.raw.equals(w.raw) || !final.manifestBytes.equals(w.manifestBytes)) throw new Error("changed_source_witness");
+    verifyFinalSource();
     target.exec("COMMIT");
     return { status: "retained", sourceId: m.sourceId, generation: m.generation, digest: m.digest, occurrences: candidates.rows.length };
   } catch (error) { if (target.isTransaction) target.exec("ROLLBACK"); throw error; }
