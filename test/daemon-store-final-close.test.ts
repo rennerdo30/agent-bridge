@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { Dir, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -56,6 +56,7 @@ const nativeExec = DatabaseSync.prototype.exec, nativeClose = DatabaseSync.proto
 const nativeFunction = DatabaseSync.prototype.function, nativePrepare = DatabaseSync.prototype.prepare;
 const owned = new Map<DatabaseSync, { actuallyClosed: boolean }>();
 const ownedStores = new Set<MessageStore>();
+const ownedIndexes = new Set<HistoryIndex>();
 let env: TestEnv;
 beforeEach(() => { leaseFault.path = ""; leaseFault.mode = "none"; acquisitionFault.directory = ""; acquisitionFault.stage = "none"; env = makeEnv(); });
 afterEach(async () => {
@@ -66,6 +67,7 @@ afterEach(async () => {
     if (!capture.closed) { acquisitionFault.actualClose!(capture.fd); capture.closed = true; acquisitionFault.active.delete(capture.fd); }
     acquisitionFault.descriptors.delete(capture);
   }
+  for (const index of ownedIndexes) { index.resumeLifecycleConsumer(); index.close(); ownedIndexes.delete(index); }
   for (const store of ownedStores) { store.close(); ownedStores.delete(store); }
   for (const [db, outcome] of owned) {
     if (!outcome.actuallyClosed) { nativeClose.call(db); outcome.actuallyClosed = true; }
@@ -566,5 +568,57 @@ describe("lease acquisition native fault coverage (historical records only)", ()
     }
     anchor();
     expect(storageLeaseObservation(anchor)).toMatchObject({ overflow: true, ownerBound: false, ownershipReleased: false });
+  });
+});
+
+describe("retained overlay DTO and actual unknown history obligations", () => {
+  it("populated migration fallback stays equivalent with actual retained store_compatibility attachment and original rows/bytes", () => {
+    const store = new MessageStore(env.db, nullLogger); ownedStores.add(store);
+    const main = Reflect.get(store, "db") as DatabaseSync, history = Reflect.get(store, "historyDb") as DatabaseSync;
+    attachStoreCompatibility(main, env.db, nullLogger, true);
+    main.prepare("INSERT INTO store_compatibility.peer_names VALUES(?,?,?,?,?)").run("overlay-owned-id", "Exact retained overlay registration", "overlay-owned-session", "other", 1);
+    main.prepare("INSERT INTO conversations(id,agent,session,project) VALUES(?,?,?,?)").run("other:overlay-session", "other", "overlay-session", "owned-project");
+    main.prepare("INSERT INTO conversation_records(id,source,generation,offset,conversation,at,raw,body) VALUES(?,?,?,?,?,?,?,?)")
+      .run(1, "owned-overlay-source", 1, 0, "other:overlay-session", 1, Buffer.from("Exact retained overlay DTO bytes\n"), "Exact retained overlay DTO body");
+    const bytes = readFileSync(join(env.home, "store-compatibility.db")), input = { id: "other:overlay-session" }, migration = legacyReadNotice(history);
+    expect(store.history.conversationPage(input)).toEqual({ ...readConversation(main, input), migration });
+    expect(store.history.lifecycleConsumerObservation()).toMatchObject({ rawBorrower: false, durableObligations: "unverified", settled: false, ownershipReleased: false });
+    expect(main.prepare("SELECT name FROM store_compatibility.peer_names WHERE identity=?").get("overlay-owned-id")!.name).toBe("Exact retained overlay registration");
+    expect(readFileSync(join(env.home, "store-compatibility.db"))).toEqual(bytes);
+  });
+  it("real pending rows and actual active/partial discovery cannot become preparation from zero callback counters", () => {
+    const store = new MessageStore(env.db, nullLogger); ownedStores.add(store);
+    const main = Reflect.get(store, "db") as DatabaseSync, history = Reflect.get(store, "historyDb") as DatabaseSync;
+    const paths = { claude: join(env.home, "owned-claude"), codex: join(env.home, "owned-codex"), opencode: join(env.home, "owned-opencode") };
+    const projects = join(paths.claude, "projects"); mkdirSync(projects, { recursive: true });
+    for (let n = 0; n < 100; n++) mkdirSync(join(projects, `owned-discovery-${n}`));
+    const index = new HistoryIndex(history, env.home, paths, main); ownedIndexes.add(index);
+    history.prepare("INSERT INTO history_pending VALUES(?,?,?,?,?,?,?,?)").run("owned-pending-row", "Exact accepted pending history bytes", "other", "owned-sender", "owned-id", "owned-recipient", "owned-recipient", 1);
+    index.sealLifecycleConsumer(); const before = history.prepare("SELECT * FROM history_pending").all();
+    const prepare = vi.spyOn(DatabaseSync.prototype, "prepare"), exec = vi.spyOn(DatabaseSync.prototype, "exec");
+    expect(index.lifecycleConsumerObservation()).toMatchObject({ sealed: true, pendingOperations: 0, durableObligations: "unverified", settled: false });
+    expect(() => index.tick()).toThrow(expect.objectContaining({ code: "OWNER_QUIESCED" }));
+    expect(prepare).not.toHaveBeenCalled(); expect(exec).not.toHaveBeenCalled(); vi.restoreAllMocks();
+    expect(history.prepare("SELECT * FROM history_pending").all()).toEqual(before);
+    index.resumeLifecycleConsumer(); let actualActiveDirectoryObserved = false;
+    const read = Dir.prototype.readSync;
+    vi.spyOn(Dir.prototype, "readSync").mockImplementation(function(this: Dir) {
+      const result = read.call(this);
+      if (!actualActiveDirectoryObserved) {
+        actualActiveDirectoryObserved = true;
+        expect(index.lifecycleConsumerObservation()).toMatchObject({ pendingOperations: 1, activeDirectories: 1, durableObligations: "unverified", settled: false });
+      }
+      return result;
+    });
+    index.tick(); expect(actualActiveDirectoryObserved).toBe(true); vi.restoreAllMocks();
+    const observation = index.sealLifecycleConsumer();
+    expect(observation.pendingOperations).toBe(0); expect(observation.queuedDiscovery + observation.activeDirectories).toBeGreaterThan(0);
+    expect(observation).toMatchObject({ durableObligations: "unverified", settled: false, ownerBound: false, ownershipReleased: false });
+    const cursors = history.prepare("SELECT * FROM history_cursors ORDER BY source").all(), remaining = history.prepare("SELECT * FROM history_pending").all();
+    expect(() => index.tick()).toThrow(expect.objectContaining({ code: "OWNER_QUIESCED" }));
+    expect(history.prepare("SELECT * FROM history_cursors ORDER BY source").all()).toEqual(cursors);
+    expect(history.prepare("SELECT * FROM history_pending").all()).toEqual(remaining);
+    // Normal accepted tick indexed its work; no pending flags/rows/cursors were
+    // cleared to manufacture a complete cold/worker/owner witness.
   });
 });
