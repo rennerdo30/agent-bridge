@@ -135,7 +135,10 @@ async function race(requests: Buffer[]): Promise<ShadowResult[]> {
         else if (message.error) { const error = new Error(message.error); failReady(error); reject(error); }
         else resolve(message.result);
       });
-      worker.on("error", error => { failReady(error); reject(error); });
+      worker.on("error", failure => {
+        const error = failure instanceof Error ? failure : new Error(String(failure), { cause: failure });
+        failReady(error); reject(error);
+      });
     }));
     exits.push(new Promise<void>((resolve, reject) => { worker.on("exit", code => code === 0 ? resolve() : reject(new Error(`writer exit ${code}`))); worker.on("error", reject); }));
   }
