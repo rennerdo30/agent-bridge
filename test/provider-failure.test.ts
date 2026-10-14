@@ -73,6 +73,28 @@ describe("per-CLI provider failure evidence", () => {
     expect(classifyProviderFailure({ agent: "claude", model: "m", message: "", codes: [" OVERLOADED_ERROR "] }).kind).toBe("capacity");
   });
 
+  it.each(["Model is not at capacity", "It is not true that model is at capacity", "Model is at capacity: false",
+    "Model capacity exhausted? unknown", "Service is not overloaded", "No overload detected", "Overloaded: false",
+    "Possibly overloaded", "Unknown whether model is overloaded", "No usage limit reached", "Usage limit status unknown",
+    "Usage limit reached: false", "Weekly limit not reached", "Billing is not required", "Billing required? unknown",
+    "Credit balance is not too low", "Insufficient credits: false", "No credits issue detected", "No evidence of rate limit exceeded",
+    "Rate limit exceeded: false", "Too many requests? unknown"])("does not turn a denial/ambiguous report into positive evidence: %s", message => {
+    for (const agent of agents) expect(classifyProviderFailure({ agent, model: null, message, reportedRetryAfterMs: 1 })).toMatchObject({ kind: "unknown", retryable: false });
+  });
+
+  it("retains proved terminal facts independently of a later negated overload or unknown model", () => {
+    expect(classifyProviderFailure({ agent: "codex", model: null, message: "Usage limit reached. Model is not at capacity" })).toMatchObject({ kind: "usage_limit", retryable: false });
+    expect(classifyProviderFailure({ agent: "opencode", model: null, message: "Overloaded: false", additionalMessages: ["no credits"] })).toMatchObject({ kind: "no_credits", retryable: false });
+    expect(classifyProviderFailure({ agent: "claude", model: null, message: "Unknown model", codes: ["billing_required"] })).toMatchObject({ kind: "billing_required", retryable: false });
+  });
+
+  it("does not retry contradictory transient codes or a vague usage-limit mention", () => {
+    expect(classifyProviderFailure({ agent: "claude", model: "m", message: "Overloaded: false", codes: ["overloaded_error"] })).toMatchObject({ kind: "unknown", retryable: false });
+    expect(classifyProviderFailure({ agent: "codex", model: "m", message: "Selected model is at capacity; usage limit status unknown" })).toMatchObject({ kind: "unknown", retryable: false });
+    expect(classifyProviderFailure({ agent: "codex", model: null, message: "usage limit" })).toMatchObject({ kind: "unknown", retryable: false });
+    expect(classifyProviderFailure({ agent: "codex", model: "m", message: "Model is at capacity. Model is not at capacity" })).toMatchObject({ kind: "unknown", retryable: false });
+  });
+
   it.each(agents)("%s rate-limit retry-after boundaries require actual positive short facts", agent => {
     for (const reportedRetryAfterMs of [1, 60_000]) expect(classifyProviderFailure({ agent, model: "m", message: "Rate limit exceeded", reportedRetryAfterMs })).toMatchObject({ kind: "capacity", retryAfterMs: reportedRetryAfterMs });
     for (const reportedRetryAfterMs of [undefined, 0, -1, 60_001, Infinity, NaN, 0.5]) expect(classifyProviderFailure({ agent, model: "m", message: "Rate limit exceeded", reportedRetryAfterMs })).toMatchObject({ kind: "unknown", retryable: false });

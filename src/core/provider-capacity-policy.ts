@@ -27,14 +27,20 @@ export interface ProviderCapacityEpisode {
   retryCount: number;
   /** Persist before arming; never reroll this value during recovery. */
   retryAt: number | null;
+  /** Observe expiry only; mutually exclusive with retryAt and never native retry admission. */
+  terminalObservationAt: number | null;
 }
 
+export type ProviderCapacityExpiryReason = "capacity" | "timeout";
 export type ProviderCapacityStopReason = "nonretryable" | "capacity" | "timeout" | "disabled" | "pin_mismatch" | "invalid_state" | "retry_after_exceeds_cap";
 export type ProviderCapacityDecision =
   | { type: "stop"; reason: ProviderCapacityStopReason }
+  | { type: "observe_deadline"; observeAt: number; reasonAtDeadline: ProviderCapacityExpiryReason;
+      nativeRetryAllowed: false; episode: ProviderCapacityEpisode }
   | { type: "wait"; retryAt: number; delayMs: number; nominalDelayMs: number; episode: ProviderCapacityEpisode };
 export type ProviderCapacityWaitDecision =
   | { type: "stop"; reason: ProviderCapacityStopReason }
+  | { type: "observing_deadline"; observeAt: number; reasonAtDeadline: ProviderCapacityExpiryReason; nativeRetryAllowed: false }
   | { type: "waiting"; retryAt: number }
   | { type: "due"; retryAt: number };
 
@@ -56,21 +62,24 @@ export function createProviderCapacityEpisode(input: {
   if (!timestamp(firstWaitAt) || !timestamp(input.taskDeadlineAt) || !timestamp(retryWindowMs)
     || !timestamp(firstWaitAt + retryWindowMs) || !validPins(input.pins)) throw new RangeError("invalid provider capacity episode");
   return { pins: { ...input.pins }, firstWaitAt, retryWindowMs, deadlineAt: firstWaitAt + retryWindowMs,
-    taskDeadlineAt: input.taskDeadlineAt, retryCount: 0, retryAt: null };
+    taskDeadlineAt: input.taskDeadlineAt, retryCount: 0, retryAt: null, terminalObservationAt: null };
 }
+
+const expiryAt = (episode: ProviderCapacityEpisode) => Math.min(episode.taskDeadlineAt, episode.deadlineAt);
+const expiryReason = (episode: ProviderCapacityEpisode): ProviderCapacityExpiryReason => episode.taskDeadlineAt <= episode.deadlineAt ? "timeout" : "capacity";
 
 function stopReason(episode: ProviderCapacityEpisode, pins: ProviderCapacityPins, now: number): ProviderCapacityStopReason | null {
   if (episode == null || typeof episode !== "object" || !timestamp(now) || !timestamp(episode.firstWaitAt) || now < episode.firstWaitAt || !timestamp(episode.retryWindowMs)
     || !timestamp(episode.deadlineAt) || episode.deadlineAt !== episode.firstWaitAt + episode.retryWindowMs
     || !timestamp(episode.taskDeadlineAt) || !timestamp(episode.retryCount) || episode.retryCount === Number.MAX_SAFE_INTEGER
     || !validPins(episode.pins) || !validPins(pins)
+    || (episode.terminalObservationAt !== null && (!timestamp(episode.terminalObservationAt)
+      || episode.terminalObservationAt !== expiryAt(episode) || episode.retryAt !== null))
     || (episode.retryAt !== null && (episode.retryCount < 1 || !timestamp(episode.retryAt) || episode.retryAt <= episode.firstWaitAt
-      || episode.retryAt >= Math.min(episode.deadlineAt, episode.taskDeadlineAt)))) return "invalid_state";
+      || episode.retryAt >= expiryAt(episode)))) return "invalid_state";
   if (!samePins(episode.pins, pins)) return "pin_mismatch";
   if (episode.retryWindowMs === 0) return "disabled";
-  if (now >= Math.min(episode.taskDeadlineAt, episode.deadlineAt)) {
-    return episode.taskDeadlineAt <= episode.deadlineAt ? "timeout" : "capacity";
-  }
+  if (now >= expiryAt(episode)) return expiryReason(episode);
   return null;
 }
 
@@ -83,7 +92,7 @@ export function planProviderCapacityRetry(episode: ProviderCapacityEpisode, fail
   if (reason) return { type: "stop", reason };
   if (failure.agent !== episode.pins.agent || failure.model !== episode.pins.resolvedModel) return { type: "stop", reason: "pin_mismatch" };
   // An existing persisted wait is inspected, not rescheduled. Clear it only after fenced admission.
-  if (episode.retryAt !== null) return { type: "stop", reason: "invalid_state" };
+  if (episode.retryAt !== null || episode.terminalObservationAt !== null) return { type: "stop", reason: "invalid_state" };
   const retryAfterMs = failure.retryAfterMs ?? 0;
   if (!timestamp(retryAfterMs)) return { type: "stop", reason: "invalid_state" };
   if (retryAfterMs > PROVIDER_CAPACITY_RETRY_MAX_DELAY_MS) return { type: "stop", reason: "retry_after_exceeds_cap" };
@@ -93,10 +102,14 @@ export function planProviderCapacityRetry(episode: ProviderCapacityEpisode, fail
   const jittered = Math.round(nominalDelayMs * (1 + (2 * sample - 1) * PROVIDER_CAPACITY_RETRY_JITTER_RATIO));
   const delayMs = Math.max(retryAfterMs, Math.min(PROVIDER_CAPACITY_RETRY_MAX_DELAY_MS, jittered));
   const retryAt = now + delayMs;
-  if (!timestamp(retryAt)) return { type: "stop", reason: "invalid_state" };
-  if (retryAt >= Math.min(episode.taskDeadlineAt, episode.deadlineAt)) {
-    return { type: "stop", reason: episode.taskDeadlineAt <= episode.deadlineAt ? "timeout" : "capacity" };
+  // A delay that does not fit is not an expired deadline. Preserve the full window/timeout.
+  // This observation cannot become "due" or increase the count of native retry proposals.
+  if (retryAt >= expiryAt(episode)) {
+    const observeAt = expiryAt(episode);
+    return { type: "observe_deadline", observeAt, reasonAtDeadline: expiryReason(episode), nativeRetryAllowed: false,
+      episode: { ...episode, pins: { ...episode.pins }, terminalObservationAt: observeAt } };
   }
+  if (!timestamp(retryAt)) return { type: "stop", reason: "invalid_state" };
   return { type: "wait", retryAt, delayMs, nominalDelayMs,
     episode: { ...episode, pins: { ...episode.pins }, retryCount: episode.retryCount + 1, retryAt } };
 }
@@ -107,6 +120,8 @@ export function inspectProviderCapacityWait(episode: ProviderCapacityEpisode, cu
   const now = clock();
   const reason = stopReason(episode, currentPins, now);
   if (reason) return { type: "stop", reason };
+  if (episode.terminalObservationAt !== null) return { type: "observing_deadline", observeAt: episode.terminalObservationAt,
+    reasonAtDeadline: expiryReason(episode), nativeRetryAllowed: false };
   if (episode.retryAt === null) return { type: "stop", reason: "invalid_state" };
   return { type: now >= episode.retryAt ? "due" : "waiting", retryAt: episode.retryAt };
 }

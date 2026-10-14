@@ -12,6 +12,11 @@ const wait = (decision: ProviderCapacityDecision) => {
   if (decision.type !== "wait") throw new Error("expected wait proposal");
   return decision;
 };
+const observation = (decision: ProviderCapacityDecision) => {
+  expect(decision.type).toBe("observe_deadline");
+  if (decision.type !== "observe_deadline") throw new Error("expected terminal-only observation");
+  return decision;
+};
 
 describe("pure bounded capacity wait proposals", () => {
   it("uses the exact nominal schedule, saturating at ten minutes without extending either deadline", () => {
@@ -49,12 +54,49 @@ describe("pure bounded capacity wait proposals", () => {
     expect(planProviderCapacityRetry(start(), { ...capacity, resetAt: 8_000_000 }, pins, { now: () => 1_000, jitter: () => 0.5 })).toMatchObject({ retryAt: 31_000 });
   });
 
-  it("rejects an exact window/deadline boundary and admits one millisecond before it", () => {
-    expect(planProviderCapacityRetry(start(30_000), capacity, pins, { now: () => 1_000, jitter: () => 0.5 })).toEqual({ type: "stop", reason: "capacity" });
+  it("observes an exact future boundary and admits a retry one millisecond before it", () => {
+    expect(observation(planProviderCapacityRetry(start(30_000), capacity, pins, { now: () => 1_000, jitter: () => 0.5 }))).toMatchObject({ observeAt: 31_000, reasonAtDeadline: "capacity", nativeRetryAllowed: false });
     expect(planProviderCapacityRetry(start(30_001), capacity, pins, { now: () => 1_000, jitter: () => 0.5 }).type).toBe("wait");
-    expect(planProviderCapacityRetry(start(undefined, 31_000), capacity, pins, { now: () => 1_000, jitter: () => 0.5 })).toEqual({ type: "stop", reason: "timeout" });
+    expect(observation(planProviderCapacityRetry(start(undefined, 31_000), capacity, pins, { now: () => 1_000, jitter: () => 0.5 }))).toMatchObject({ observeAt: 31_000, reasonAtDeadline: "timeout", nativeRetryAllowed: false });
     expect(planProviderCapacityRetry(start(undefined, 31_001), capacity, pins, { now: () => 1_000, jitter: () => 0.5 }).type).toBe("wait");
     expect(planProviderCapacityRetry(start(30_000, 31_000), capacity, pins, { now: () => 31_000, jitter: () => 0.5 })).toEqual({ type: "stop", reason: "timeout" });
+  });
+
+  it.each(["capacity", "timeout", "tie"] as const)("preserves the last15s instead of ending early: %s", earlier => {
+    const episode = start(earlier === "timeout" ? undefined : 15_000, earlier === "capacity" ? 10_000_000 : 16_000);
+    const jitter = vi.fn(() => 0.5);
+    const decision = observation(planProviderCapacityRetry(episode, capacity, pins, { now: () => 1_000, jitter }));
+    const reason = earlier === "capacity" ? "capacity" : "timeout";
+    expect(decision).toMatchObject({ observeAt: 16_000, reasonAtDeadline: reason, nativeRetryAllowed: false });
+    expect(decision).not.toHaveProperty("retryAt");
+    expect(decision.episode).toEqual({ ...episode, terminalObservationAt: 16_000 });
+    expect(decision.episode.retryCount).toBe(0);
+    const recovered = JSON.parse(JSON.stringify(decision.episode)) as ProviderCapacityEpisode;
+    expect(inspectProviderCapacityWait(recovered, pins, () => 15_999)).toEqual({ type: "observing_deadline", observeAt: 16_000, reasonAtDeadline: reason, nativeRetryAllowed: false });
+    expect(inspectProviderCapacityWait(recovered, pins, () => 16_000)).toEqual({ type: "stop", reason });
+    expect(inspectProviderCapacityWait(recovered, pins, () => 20_000)).toEqual({ type: "stop", reason });
+    expect(planProviderCapacityRetry(recovered, capacity, pins, { now: () => 2_000, jitter })).toEqual({ type: "stop", reason: "invalid_state" });
+    expect(jitter).toHaveBeenCalledTimes(1);
+    expect(episode.terminalObservationAt).toBeNull();
+  });
+
+  it.each(["capacity", "timeout"] as const)("observes original expiry when a late ten-minute retry cannot fit: %s", earlier => {
+    const episode = { ...start(undefined, earlier === "timeout" ? 3_501_000 : 10_000_000), retryCount: 4 };
+    const decision = observation(planProviderCapacityRetry(episode, capacity, pins, { now: () => 3_301_000, jitter: () => 1 }));
+    const deadline = earlier === "timeout" ? 3_501_000 : 3_601_000;
+    expect(decision).toMatchObject({ observeAt: deadline, reasonAtDeadline: earlier, nativeRetryAllowed: false });
+    expect(decision.episode).toEqual({ ...episode, terminalObservationAt: deadline });
+    expect(decision.episode.retryCount).toBe(4);
+    expect(decision.episode.retryAt).toBeNull();
+    expect(inspectProviderCapacityWait(decision.episode, pins, () => deadline - 1)).toMatchObject({ type: "observing_deadline", nativeRetryAllowed: false });
+    expect(inspectProviderCapacityWait(decision.episode, pins, () => deadline)).toEqual({ type: "stop", reason: earlier });
+  });
+
+  it("honors retry-after even when only deadline observation fits, without retry admission at expiry", () => {
+    const episode = start(undefined, 61_000);
+    const decision = observation(planProviderCapacityRetry(episode, { ...capacity, retryAfterMs: 60_000 }, pins, { now: () => 1_000, jitter: () => 0 }));
+    expect(decision).toMatchObject({ observeAt: 61_000, reasonAtDeadline: "timeout", nativeRetryAllowed: false });
+    expect(inspectProviderCapacityWait(decision.episode, pins, () => 61_000)).toEqual({ type: "stop", reason: "timeout" });
   });
 
   it("keeps the earlier original task timeout even after both deadlines have expired", () => {
@@ -126,7 +168,8 @@ describe("pure bounded capacity wait proposals", () => {
 
   it("holds corrupt recovered state and backward/invalid clocks without execution proposals", () => {
     for (const episode of [{ ...start(), retryCount: -1 }, { ...start(), retryCount: 0.5 }, { ...start(), deadlineAt: 9_000_000 },
-      { ...start(), retryAt: 3_601_000 }, { ...start(), retryAt: 0 }, { ...start(), taskDeadlineAt: Infinity }]) {
+      { ...start(), retryAt: 3_601_000 }, { ...start(), retryAt: 0 }, { ...start(), taskDeadlineAt: Infinity },
+      { ...start(), terminalObservationAt: 3_600_999 }, { ...start(), terminalObservationAt: 3_601_000, retryAt: 31_000, retryCount: 1 }]) {
       expect(planProviderCapacityRetry(episode, capacity, pins, { now: () => 1_000, jitter: () => 0.5 })).toEqual({ type: "stop", reason: "invalid_state" });
     }
     for (const time of [999, NaN, Infinity]) expect(planProviderCapacityRetry(start(), capacity, pins, { now: () => time, jitter: () => 0.5 })).toEqual({ type: "stop", reason: "invalid_state" });
