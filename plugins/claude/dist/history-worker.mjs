@@ -5,7 +5,7 @@ import {
 import {
   HISTORY_TICK_MS,
   HistoryIndex
-} from "./chunks/chunk-J6HXVXTK.mjs";
+} from "./chunks/chunk-P7XEMW2I.mjs";
 import {
   ConversationIngestor,
   ownsProjectMirrors,
@@ -22,7 +22,7 @@ import {
 } from "./chunks/chunk-6P65RSGE.mjs";
 import "./chunks/chunk-27TG33K6.mjs";
 import "./chunks/chunk-ABTE2HH2.mjs";
-import "./chunks/chunk-YES4373V.mjs";
+import "./chunks/chunk-HL77AKKV.mjs";
 import "./chunks/chunk-6X5RM53J.mjs";
 import {
   reconcileAskCompletions

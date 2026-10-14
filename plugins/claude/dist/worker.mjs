@@ -59,7 +59,7 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-UX2G2U6Q.mjs";
+} from "./chunks/chunk-VBKAHWNN.mjs";
 import {
   JobRunners,
   closeJobWorktree
@@ -86,7 +86,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-EYJYTSRI.mjs";
+} from "./chunks/chunk-KJ76IOTY.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -109,10 +109,9 @@ import {
 import "./chunks/chunk-ASAE72VD.mjs";
 import "./chunks/chunk-RQUYBZWF.mjs";
 import {
-  HISTORY_MAX_LIMIT,
-  HISTORY_MAX_QUERY_CHARS,
-  historyFiltersSchema
-} from "./chunks/chunk-YES4373V.mjs";
+  HISTORY_SEARCH_TOOL_DESCRIPTION,
+  historySearchToolInput
+} from "./chunks/chunk-HL77AKKV.mjs";
 import {
   conversationPageSchema
 } from "./chunks/chunk-6X5RM53J.mjs";
@@ -3028,7 +3027,7 @@ async function startServer(argv = process.argv.slice(2)) {
       }
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-KE4WGAYK.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-7CLYMQX4.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3040,9 +3039,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-IQVVBQDC.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-XH7Z2Y5T.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-IQVVBQDC.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-XH7Z2Y5T.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3225,18 +3224,13 @@ ${JSON.stringify(result)}`);
     "search_history",
     {
       title: "Search bridge and CLI history",
-      description: "Search local bridge messages (including archives), decisions, delegated run logs and CLI transcripts. Returns bounded snippets with stable source ids and links. Ordinary search makes no model calls. answer=true explicitly spends model tokens on a configured cheap model chosen by availability and usage_limits. Indexing is incremental; use agent-bridge reindex to rebuild.",
-      inputSchema: {
-        query: external_exports.string().trim().min(1).max(HISTORY_MAX_QUERY_CHARS),
-        filters: historyFiltersSchema.optional(),
-        limit: external_exports.number().int().min(1).max(HISTORY_MAX_LIMIT).optional(),
-        answer: external_exports.boolean().optional()
-      },
+      description: HISTORY_SEARCH_TOOL_DESCRIPTION,
+      inputSchema: historySearchToolInput,
       annotations: { readOnlyHint: true }
     },
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-FMGYISRC.mjs")).readHistory(resolveDbPath(ctx.home), args);
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-M3V5UYHG.mjs")).readHistory(resolveDbPath(ctx.home), args);
       return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-G5UYKHKE.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
