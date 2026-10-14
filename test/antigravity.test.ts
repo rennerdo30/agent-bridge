@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -162,15 +162,25 @@ describe("Antigravity hooks", () => {
     expect(antigravityHookOutput("PreInvocation", "mail")).toEqual({ injectSteps: [{ ephemeralMessage: "mail" }] });
     expect(antigravityHookOutput("Stop", "mail")).toEqual({ decision: "continue", reason: "mail" });
   });
-  it("relays non-workspace or shell actions in edit mode with auto_approve while delegating workspace files to native policy", async () => {
-    const root = temp();
-    mocks.ask.mockResolvedValueOnce({ allow: true }).mockResolvedValueOnce({ allow: false, message: "denied command" });
+  it("relays non-workspace, symlink-escaped or shell actions in edit mode with auto_approve while delegating workspace files to native policy", async () => {
+    const root = temp(), outside = temp(), linkedDir = join(root, "escape-dir");
+    writeFileSync(join(outside, "existing.ts"), "outside");
+    symlinkSync(outside, linkedDir, "junction");
+    mocks.ask
+      .mockResolvedValueOnce({ allow: true })
+      .mockResolvedValueOnce({ allow: false, message: "denied command" })
+      .mockResolvedValueOnce({ allow: false, message: "denied symlink existing" })
+      .mockResolvedValueOnce({ allow: false, message: "denied symlink new" })
+      .mockResolvedValueOnce({ allow: false, message: "denied missing root" });
     expect(await antigravityPermission({ toolCall: { name: "view_file", args: { AbsolutePath: join(root, "a.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "allow" });
     expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(root, "src", "a.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "allow" });
     expect(mocks.ask).not.toHaveBeenCalled();
     expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(root, ".git", "config") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "auto_approve", permissionOverrides: [`write_file(${join(root, ".git", "config")})`] });
     expect(await antigravityPermission({ toolCall: { name: "run_command", args: { CommandLine: "npm test" } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied command" });
-    expect(mocks.ask).toHaveBeenCalledTimes(2);
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(linkedDir, "existing.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied symlink existing" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(linkedDir, "sub", "new.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied symlink new" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(root, "missing-root", "a.ts") } }, workspacePaths: [join(root, "missing-root")] }, "edit", true)).toEqual({ decision: "deny", reason: "denied missing root" });
+    expect(mocks.ask).toHaveBeenCalledTimes(5);
   });
   it("normalizes MCP approvals for shared allow rules and declines handoff writes", async () => {
     mocks.ask.mockResolvedValue({ allow: true });

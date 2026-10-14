@@ -1,6 +1,7 @@
-import { readFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ANTIGRAVITY_ACCESS_ENV, ANTIGRAVITY_EDIT_RELAY_ENV } from "../core/antigravity.js";
+import { pidAlive } from "../core/delegate.js";
 import { antigravityAncestor } from "../core/procinfo.js";
 import { resolveHome } from "../core/paths.js";
 import { askRelay, boundedDetail, RELAY_TOKEN_ENV, RELAY_URL_ENV } from "../core/relay.js";
@@ -28,15 +29,38 @@ function allowed(input: Record<string, any>, decision: "allow" | "auto_approve" 
   return { decision, ...(resources.length ? { permissionOverrides: resources } : {}) };
 }
 
+function canonicalTargetPath(targetPath: string): string | null {
+  const lexical = resolve(targetPath);
+  if (lexical.split(/[\\/]+/).includes(".git")) return null;
+  let cur = lexical;
+  const tail: string[] = [];
+  while (true) {
+    try {
+      lstatSync(cur);
+      const realCur = realpathSync.native(cur);
+      const canonical = tail.length ? join(realCur, ...tail) : realCur;
+      return canonical.split(/[\\/]+/).includes(".git") ? null : canonical;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") return null;
+      const parent = dirname(cur);
+      if (parent === cur) return null;
+      tail.unshift(basename(cur));
+      cur = parent;
+    }
+  }
+}
+
 function insideWorkspace(targetPath: unknown, workspacePaths: unknown): boolean {
   if (typeof targetPath !== "string" || !isAbsolute(targetPath) || !Array.isArray(workspacePaths)) return false;
-  const resolvedTarget = resolve(targetPath);
-  const parts = resolvedTarget.split(/[\\/]+/);
-  if (parts.includes(".git")) return false;
+  const canonicalTarget = canonicalTargetPath(targetPath);
+  if (!canonicalTarget) return false;
   return workspacePaths.some((root) => {
     if (typeof root !== "string" || !isAbsolute(root)) return false;
-    const rel = relative(resolve(root), resolvedTarget);
-    return Boolean(!rel || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)));
+    try {
+      const canonicalRoot = realpathSync.native(root);
+      const rel = relative(canonicalRoot, canonicalTarget);
+      return Boolean(!rel || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)));
+    } catch { return false; }
   });
 }
 
@@ -86,6 +110,24 @@ export function antigravityHookOutput(event: string, text: string): Record<strin
   return event === "Stop" ? { decision: "continue", reason: text } : { injectSteps: [{ ephemeralMessage: text }] };
 }
 
+export function needsInteractivePreToolPost(input: Record<string, any>, home = resolveHome()): boolean {
+  const id = typeof input.conversationId === "string" && input.conversationId.trim() ? input.conversationId : null;
+  const cwd = Array.isArray(input.workspacePaths) && typeof input.workspacePaths[0] === "string" && input.workspacePaths[0].trim() ? input.workspacePaths[0] : null;
+  if (!id && !cwd) return false;
+  try {
+    const dir = join(home, "antigravity-hooks");
+    const regs = readdirSync(dir).flatMap((file) => {
+      if (!file.endsWith(".json")) return [];
+      try {
+        const reg = object(JSON.parse(readFileSync(join(dir, file), "utf8")));
+        return Number.isInteger(reg.port) && typeof reg.secret === "string" && Number.isInteger(reg.pid) && pidAlive(reg.pid) ? [reg] : [];
+      } catch { return []; }
+    });
+    if (id) return !regs.some((reg) => reg.conversationId === id && reg.stopPending === false && (!cwd || reg.cwd === cwd));
+    return !(regs.length === 1 && regs[0]!.conversationId === null && regs[0]!.stopPending === false && regs[0]!.cwd === cwd);
+  } catch { return true; }
+}
+
 async function postAntigravityHook(event: string, input: Record<string, any>, timeoutMs = 20_000): Promise<Record<string, unknown>> {
   const pid = await antigravityAncestor();
   if (!pid) return {};
@@ -103,7 +145,7 @@ export async function runAntigravityHook(event: string): Promise<number> {
     const input = object(JSON.parse(raw || "{}"));
     if (event === "PreToolUse") {
       const decision = await antigravityPermission(input), call = object(input.toolCall), args = object(call.args);
-      if (!process.env[ANTIGRAVITY_ACCESS_ENV] && (typeof input.conversationId === "string" || Array.isArray(input.workspacePaths))) {
+      if (!process.env[ANTIGRAVITY_ACCESS_ENV] && needsInteractivePreToolPost(input)) {
         await postAntigravityHook("PreToolUse", input, 1_500).catch(() => {});
       }
       try {

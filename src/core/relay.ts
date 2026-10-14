@@ -160,7 +160,7 @@ export async function askRelay(req: PermissionRequest, env: NodeJS.ProcessEnv = 
 const APPROVALS_DIR = "approvals";
 const APPROVAL_ID = /^[0-9a-f-]{36}$/;
 const ANSWER_PATH = "/answer";
-const ANSWER_TIMEOUT_MS = 5_000;
+const ANSWER_TIMEOUT_MS = 30_000;
 const MAX_PORT = 65_535;
 export const MAX_APPROVAL_REASON_CHARS = 4_000;
 
@@ -211,11 +211,27 @@ export async function publishApproval(home: string, approval: PendingApproval, a
       const body = JSON.parse(raw) as ApprovalAnswer;
       if (!body || (body.decision !== "allow" && body.decision !== "deny") || (body.reason !== undefined && (typeof body.reason !== "string" || body.reason.length > MAX_APPROVAL_REASON_CHARS))) return reply(400, { error: "invalid answer" });
       if (body.source !== undefined && body.source !== "dashboard" && body.source !== "MCP decide") return reply(400, { error: "invalid source" });
-      const accepted = Date.now() < approval.deadline && await answer(`${body.decision}${body.reason ? `: ${body.reason}` : ""}`, body.source ?? "dashboard");
-      await appendContextEvent(home,{kind:"approval",agent:approval.agent,job:approval.job,payload:{event:"answered",approval:approval.id,...body,accepted}});
-      reply(accepted ? 200 : 409, { outcome: accepted ? "answered" : "expired" });
+      answering++;
+      try {
+        const accepted = Date.now() < approval.deadline && await answer(`${body.decision}${body.reason ? `: ${body.reason}` : ""}`, body.source ?? "dashboard");
+        if (accepted) closeRequested = true;
+        await appendContextEvent(home,{kind:"approval",agent:approval.agent,job:approval.job,payload:{event:"answered",approval:approval.id,...body,accepted}});
+        reply(accepted ? 200 : 409, { outcome: accepted ? "answered" : "expired" });
+      } finally {
+        answering--;
+        if (closeRequested && answering === 0) doClose();
+      }
     })().catch(() => reply(400, { error: "invalid answer" }));
   });
+  let answering = 0;
+  let closeRequested = false;
+  let closed = false;
+  const doClose = () => {
+    if (closed) return;
+    closed = true;
+    try { archiveFile(file); }
+    finally { server.close(); }
+  };
   server.requestTimeout = ANSWER_TIMEOUT_MS;
   server.headersTimeout = ANSWER_TIMEOUT_MS;
   await new Promise<void>((resolve, reject) => {
@@ -231,8 +247,8 @@ export async function publishApproval(home: string, approval: PendingApproval, a
     throw err;
   }
   return () => {
-    try { archiveFile(file); }
-    finally { server.close(); }
+    closeRequested = true;
+    if (answering === 0) doClose();
   };
 }
 
