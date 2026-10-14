@@ -9,6 +9,7 @@ import { Broker } from "../src/core/broker.js";
 import { BridgeClient, CLIENT_TRANSPORT_DIAGNOSTIC_COUNT_LIMIT, CLIENT_TRANSPORT_DIAGNOSTIC_RECORD_LIMIT,
   type ClientConnectionClosedDiagnostic } from "../src/core/client.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
+import type { Op, RequestMap } from "../src/core/protocol.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { readProcessIdentity } from "../src/core/process-identity.js";
@@ -22,7 +23,137 @@ const cli = join(import.meta.dirname, "../plugins/codex/dist/cli.mjs");
 let env: TestEnv, nodes: BridgeNode[], children: ChildProcess[], owned: Map<number, string>;
 let startupEvidence: Array<Array<{ phase: string; code?: string | number; stage?: string; elapsedMs: number; count: number }>>;
 let dashboards: Array<() => Promise<void>>;
+const CLIENT_COUNT_CAPTURE_LIMIT = 129;
+type ClientCount = number | "unavailable";
+type ClientCountSnapshot = {
+  stage: "original_core_status_reply"; parent_capture: "partial"; server_connection_origin: "unattributed";
+  server_authenticated_count: ClientCount; returned_known_clients: ClientCount;
+  auth_returned: ClientCount; hello_returned: ClientCount; close_requested_not_observed: ClientCount;
+  close_observed: ClientCount; connect_attempt_unconfirmed: ClientCount; overflow: boolean;
+};
+type KnownClientObservation = { auth: boolean; hello: boolean; closeRequested: boolean; closeObserved: boolean; closed: () => void };
+type ClientCountFixture = { pipe: string; active: boolean; incomplete: boolean; overflow: boolean;
+  attempts: Array<{ returned: boolean }>; clients: Map<BridgeClient, KnownClientObservation>;
+  restore: Array<() => void>; snapshot?: ClientCountSnapshot };
+let clientCountFixture: ClientCountFixture | undefined;
+function observeClientCount(fixture: ClientCountFixture, observation: () => void): void {
+  if (!fixture.active) return;
+  try { observation(); } catch { fixture.incomplete = true; fixture.overflow = true; }
+}
+function boundedClientCount(fixture: ClientCountFixture, value: unknown): ClientCount {
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isSafeInteger(value) || value < 0) return "unavailable";
+  if (value > CLIENT_COUNT_CAPTURE_LIMIT) fixture.overflow = true;
+  return Math.min(value, CLIENT_COUNT_CAPTURE_LIMIT);
+}
+function cacheClientCountReply(fixture: ClientCountFixture, response: unknown): void {
+  if (fixture.snapshot) return; // One original response; never sample again during teardown.
+  // Cache only the original response's own primitive count, without invoking a
+  // getter or retaining any response identity, PID, name or accepted content.
+  const count = response !== null && typeof response === "object"
+    ? Object.getOwnPropertyDescriptor(response, "connectedClients")?.value : undefined;
+  const serverCount = boundedClientCount(fixture, count), known = [...fixture.clients.values()];
+  const capturedCount = (value: number): ClientCount => fixture.incomplete ? "unavailable" : boundedClientCount(fixture, value);
+  fixture.snapshot = { stage: "original_core_status_reply", parent_capture: "partial", server_connection_origin: "unattributed",
+    server_authenticated_count: serverCount, returned_known_clients: capturedCount(known.length),
+    auth_returned: capturedCount(known.filter(value => value.auth).length), hello_returned: capturedCount(known.filter(value => value.hello).length),
+    close_requested_not_observed: capturedCount(known.filter(value => value.closeRequested && !value.closeObserved).length),
+    close_observed: capturedCount(known.filter(value => value.closeObserved).length),
+    connect_attempt_unconfirmed: capturedCount(fixture.attempts.filter(value => !value.returned).length), overflow: fixture.overflow };
+}
+function restoreClientCountObservation(): void {
+  const fixture = clientCountFixture;
+  if (!fixture) return;
+  fixture.active = false; // Late original settlements cannot attach new listeners.
+  for (const restore of [...fixture.restore].reverse()) { try { restore(); } catch { /* Private adapter restoration only. */ } }
+  fixture.restore.length = 0;
+  for (const [client, observation] of fixture.clients) {
+    try { client.removeListener("close", observation.closed); } catch { /* Remove only our own listener, never close a client. */ }
+  }
+}
+function observeConcurrentClientCount(): void {
+  const fixture: ClientCountFixture = { pipe: env.pipe, active: true, incomplete: false, overflow: false,
+    attempts: [], clients: new Map(), restore: [] };
+  clientCountFixture = fixture;
+  const connect = BridgeClient.connect, request = BridgeClient.prototype.request, close = BridgeClient.prototype.close;
+  try {
+    // Private forwarders keep no mock call/argument history. Restore only these
+    // exact fixture adapters; all unrelated clients retain native pass-through.
+    fixture.restore.push(() => { BridgeClient.connect = connect; });
+    BridgeClient.connect = function(this: typeof BridgeClient, ...args: Parameters<typeof connect>) {
+      let attempt: { returned: boolean } | undefined;
+      observeClientCount(fixture, () => {
+        if (args[0] !== fixture.pipe) return;
+        if (fixture.attempts.length >= CLIENT_COUNT_CAPTURE_LIMIT) { fixture.overflow = true; return; }
+        attempt = { returned: false }; fixture.attempts.push(attempt);
+      });
+      const originalPromise = connect.apply(this, args);
+      if (attempt) observeClientCount(fixture, () => {
+        // Observe settlement without replacing the ORIGINAL promise or error.
+        void originalPromise.then(client => observeClientCount(fixture, () => {
+          attempt!.returned = true;
+          if (fixture.clients.has(client)) return;
+          if (fixture.clients.size >= CLIENT_COUNT_CAPTURE_LIMIT) { fixture.overflow = true; return; }
+          const observation: KnownClientObservation = { auth: false, hello: false, closeRequested: false, closeObserved: false,
+            closed: () => observeClientCount(fixture, () => { observation.closeObserved = true; }) };
+          fixture.clients.set(client, observation);
+          client.on("close", observation.closed); // Actual source client close event only; no isClosed/socket probe.
+        }), () => { /* No returned client: keep the attempt unconfirmed; original rejection is untouched. */ });
+      });
+      return originalPromise;
+    };
+    fixture.restore.push(() => { BridgeClient.prototype.request = request; });
+    BridgeClient.prototype.request = function<O extends Op>(this: BridgeClient,
+      ...args: [op: O, args: RequestMap[O][0], timeoutMs?: number]): Promise<RequestMap[O][1]> {
+      const originalPromise = request.apply(this, args) as Promise<RequestMap[O][1]>;
+      observeClientCount(fixture, () => {
+        const observation = fixture.clients.get(this);
+        if (!observation || (args[0] !== "auth" && args[0] !== "hello" && args[0] !== "coreStatus")) return;
+        void originalPromise.then(response => observeClientCount(fixture, () => {
+          if (args[0] === "auth") observation.auth = true;
+          else if (args[0] === "hello") observation.hello = true;
+          else cacheClientCountReply(fixture, response);
+        }), () => { /* Observation of rejected auth/hello/status grants no success or resource state. */ });
+      });
+      return originalPromise;
+    };
+    fixture.restore.push(() => { BridgeClient.prototype.close = close; });
+    BridgeClient.prototype.close = function(this: BridgeClient, ...args: Parameters<typeof close>) {
+      observeClientCount(fixture, () => { const observation = fixture.clients.get(this); if (observation) observation.closeRequested = true; });
+      return close.apply(this, args);
+    };
+  } catch {
+    // An unavailable observer never prevents the original case or grants cleanup.
+    fixture.incomplete = true; fixture.overflow = true; restoreClientCountObservation();
+  }
+}
+function publishClientCountObservation(): void {
+  const snapshot = clientCountFixture?.snapshot; clientCountFixture = undefined;
+  if (!snapshot) return;
+  try {
+    const sourceHead = process.env.SOURCE_HEAD, runId = process.env.GITHUB_RUN_ID, runAttempt = process.env.GITHUB_RUN_ATTEMPT;
+    if (process.env.GITHUB_ACTIONS !== "true" || typeof sourceHead !== "string" || !/^[a-f0-9]{40}$/.test(sourceHead) ||
+      typeof runId !== "string" || !/^\d{1,20}$/.test(runId) || typeof runAttempt !== "string" || !/^\d{1,6}$/.test(runAttempt)) return;
+    if (typeof snapshot.stage !== "string" || snapshot.stage !== "original_core_status_reply" ||
+      typeof snapshot.parent_capture !== "string" || snapshot.parent_capture !== "partial" ||
+      typeof snapshot.server_connection_origin !== "string" || snapshot.server_connection_origin !== "unattributed" || typeof snapshot.overflow !== "boolean") return;
+    const fields = ["server_authenticated_count", "returned_known_clients", "auth_returned", "hello_returned",
+      "close_requested_not_observed", "close_observed", "connect_attempt_unconfirmed"] as const;
+    for (const field of fields) {
+      const value = snapshot[field];
+      if (value !== "unavailable" && (typeof value !== "number" || !Number.isFinite(value) || !Number.isSafeInteger(value) || value < 0 || value > CLIENT_COUNT_CAPTURE_LIMIT)) return;
+    }
+    const directory = join(process.cwd(), ".agent-bridge-test", "ab325-artifact"), stat = lstatSync(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return;
+    const destination = join(directory, "client-count-diagnostics.json");
+    if (existsSync(destination)) { const previous = lstatSync(destination); if (!previous.isFile() || previous.isSymbolicLink() || previous.nlink !== 1) return; }
+    // Original coreStatus count is not a parent census. In particular, remote
+    // child/startup connections outside this map remain unattributed, not probes.
+    writeFileSync(destination, JSON.stringify({ schema: 1, sourceHead, runId, runAttempt,
+      fixture: "concurrent_start_client_count", countLimit: CLIENT_COUNT_CAPTURE_LIMIT, observations: [snapshot] }) + "\n");
+  } catch { /* Only post-teardown diagnostic output failure is swallowed. */ }
+}
 beforeEach(() => {
+  restoreClientCountObservation(); clientCountFixture = undefined;
   env = makeEnv(); nodes = []; children = []; owned = new Map();
   startupEvidence = [];
   dashboards = [];
@@ -47,14 +178,17 @@ async function stopOwned(pid: number) {
   owned.delete(pid);
 }
 afterEach(async () => {
-  // Fixture-only fixed categories. No raw stderr, commands, peer names, paths,
-  // authentication material or request/accepted content enters this evidence.
-  if (startupEvidence.length) process.stderr.write("AB325 fixture startup evidence " + JSON.stringify(startupEvidence) + "\n");
-  for (const close of dashboards) await close();
-  await Promise.all(nodes.map(node => node.stop()));
-  for (const child of children) { if (child.exitCode === null && child.signalCode === null) { const closed = once(child, "close"); child.kill(); await closed; } }
-  for (const pid of owned.keys()) await stopOwned(pid);
-  await env.cleanup();
+  try {
+    // Fixture-only fixed categories. No raw stderr, commands, peer names, paths,
+    // authentication material or request/accepted content enters this evidence.
+    if (startupEvidence.length) process.stderr.write("AB325 fixture startup evidence " + JSON.stringify(startupEvidence) + "\n");
+    for (const close of dashboards) await close();
+    await Promise.all(nodes.map(node => node.stop()));
+    for (const child of children) { if (child.exitCode === null && child.signalCode === null) { const closed = once(child, "close"); child.kill(); await closed; } }
+    for (const pid of owned.keys()) await stopOwned(pid);
+    await env.cleanup();
+  } finally { restoreClientCountObservation(); }
+  publishClientCountObservation(); // Only after the original owned teardown succeeds.
 });
 function fixtureStartupLogger(): typeof nullLogger {
   const evidence: typeof startupEvidence[number] = []; startupEvidence.push(evidence);
@@ -346,6 +480,7 @@ describe("standalone demand-start broker", () => {
     } finally { renameSync(retainedToken, token); }
   });
   it("ten concurrent starts share one broker, keep accepted mail and reject wrong credentials", async () => {
+    observeConcurrentClientCount();
     const peers = Array.from({ length: 10 }, (_, i) => node(`daemon-${i}`));
     await Promise.all(peers.map(peer => peer.start()));
     // Inspect through an existing authenticated peer: a throwaway connection's
