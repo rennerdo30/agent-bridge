@@ -59,24 +59,24 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-52GIWNCW.mjs";
+} from "./chunks/chunk-ISOKZXON.mjs";
 import {
   codexAppServerCall,
   describeModels,
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-6LAC27HA.mjs";
+} from "./chunks/chunk-JCQEEQLZ.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-26LJ4PBT.mjs";
+} from "./chunks/chunk-HRUB2FCC.mjs";
 import {
   readWorktreeState
 } from "./chunks/chunk-LAVRHWUK.mjs";
-import "./chunks/chunk-OJZBADBD.mjs";
+import "./chunks/chunk-2L44IQ5X.mjs";
 import {
   openBrowser
 } from "./chunks/chunk-LWVK3CB7.mjs";
@@ -86,7 +86,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-E2T3JTTP.mjs";
+} from "./chunks/chunk-WQVGQIQ3.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -121,14 +121,14 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-UQCF2T6P.mjs";
-import "./chunks/chunk-DDHPDO67.mjs";
+} from "./chunks/chunk-BXFATF3Z.mjs";
+import "./chunks/chunk-6D5B7SEO.mjs";
 import "./chunks/chunk-SH5NFUCE.mjs";
 import {
   antigravityAncestor,
   antigravityHookOutput,
   inspectClaudeLaunch
-} from "./chunks/chunk-WQ4BNM3I.mjs";
+} from "./chunks/chunk-7AXVCMTX.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   ACCESS_LEVELS,
@@ -156,7 +156,7 @@ import {
   resolveBinary,
   runProcess,
   verifiedGoneJobOwners
-} from "./chunks/chunk-HN6DLZAW.mjs";
+} from "./chunks/chunk-2QWZB5I5.mjs";
 import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   ResourceSlots,
@@ -2233,10 +2233,8 @@ var AntigravityHooks = class {
   }
   ctx;
   server = null;
-  registerFn = null;
   retired = false;
   conversationId = null;
-  learnedCwd = null;
   stopPending = false;
   lastStopExecutionNum = null;
   lastInvocationNum = null;
@@ -2246,27 +2244,6 @@ var AntigravityHooks = class {
     const pid = await antigravityAncestor();
     if (!pid) return;
     const secret = randomBytes(24).toString("hex");
-    mkdirSync2(join2(this.ctx.home, "antigravity-hooks"), { recursive: true });
-    const register = () => {
-      if (!this.server?.listening) return;
-      const rawCwd = this.learnedCwd ?? (typeof this.ctx.cwd === "function" ? this.ctx.cwd() : this.ctx.cwd ?? null);
-      writeFileSync(
-        join2(this.ctx.home, "antigravity-hooks", `${pid}.json`),
-        JSON.stringify({
-          port: this.server.address().port,
-          secret,
-          pid: process.pid,
-          ancestorPid: pid,
-          retired: this.retired,
-          connected: Boolean(this.ctx.node ? this.ctx.node.isConnected !== false : this.ctx.parent),
-          conversationId: this.conversationId ?? this.ctx.node?.currentSessionId ?? null,
-          cwd: typeof rawCwd === "string" && rawCwd.trim() ? rawCwd : null,
-          stopPending: this.stopPending
-        }),
-        { mode: 384 }
-      );
-    };
-    this.registerFn = register;
     this.server = createServer((req, res) => {
       if (req.method !== "POST" || req.url !== "/hook" || !tokensEqual(String(req.headers.authorization ?? ""), `Bearer ${secret}`) || this.retired) {
         res.writeHead(403).end();
@@ -2287,7 +2264,6 @@ var AntigravityHooks = class {
           res.writeHead(200, { "content-type": "application/json" }).end("{}");
           return;
         }
-        if (cwd) this.learnedCwd = cwd;
         if (body.event === "PreToolUse") {
           this.stopPending = false;
           this.lastStopExecutionNum = null;
@@ -2304,7 +2280,6 @@ var AntigravityHooks = class {
             });
             confirmAntigravityStopDelivery(this.ctx);
           }
-          register();
           res.writeHead(200, { "content-type": "application/json" }).end("{}");
           return;
         }
@@ -2316,7 +2291,6 @@ var AntigravityHooks = class {
           this.lastStopExecutionNum = null;
           this.lastStopInvocationNum = null;
           const output2 = await buildHookResponse(this.ctx, { event: "UserPromptSubmit", sessionId: id, cwd, stopHookActive: continued2 });
-          register();
           const text3 = "reason" in output2 ? String(output2.reason) : "hookSpecificOutput" in output2 ? output2.hookSpecificOutput.additionalContext : "";
           res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(antigravityHookOutput(body.event, text3)));
           return;
@@ -2332,7 +2306,6 @@ var AntigravityHooks = class {
         this.lastStopInvocationNum = null;
         if (!canContinue) {
           await buildHookResponse(this.ctx, { event: "StopFailure", sessionId: id, cwd, stopHookActive: false });
-          register();
           res.writeHead(200, { "content-type": "application/json" }).end("{}");
           return;
         }
@@ -2343,7 +2316,6 @@ var AntigravityHooks = class {
           this.lastStopExecutionNum = executionNum;
           this.lastStopInvocationNum = this.lastInvocationNum;
         }
-        register();
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(antigravityHookOutput(body.event, text2)));
       })().catch(() => {
         if (!res.writableEnded) res.writeHead(500).end("{}");
@@ -2353,15 +2325,18 @@ var AntigravityHooks = class {
       this.server.once("error", reject);
       this.server.listen(0, "127.0.0.1", resolve2);
     });
+    mkdirSync2(join2(this.ctx.home, "antigravity-hooks"), { recursive: true });
+    const register = () => {
+      if (!this.server?.listening) return;
+      writeFileSync(join2(this.ctx.home, "antigravity-hooks", `${pid}.json`), JSON.stringify({ port: this.server.address().port, secret, pid: process.pid }), { mode: 384 });
+    };
     register();
-    this.ctx.node?.on("connected", () => register());
     this.ctx.node?.on("replaced", () => {
       this.retired = true;
       this.stopPending = false;
       this.lastStopExecutionNum = null;
       this.lastInvocationNum = null;
       this.lastStopInvocationNum = null;
-      register();
     });
     this.ctx.node?.on("reclaimed", () => {
       this.retired = false;
@@ -2370,17 +2345,12 @@ var AntigravityHooks = class {
   }
   async stop() {
     const server = this.server;
+    this.server = null;
     this.retired = true;
     this.stopPending = false;
     this.lastStopExecutionNum = null;
-    this.lastStopInvocationNum = null;
     this.lastInvocationNum = null;
-    try {
-      this.registerFn?.();
-    } catch {
-    }
-    this.registerFn = null;
-    this.server = null;
+    this.lastStopInvocationNum = null;
     if (server) await new Promise((resolve2) => server.close(() => resolve2()));
   }
 };
@@ -3139,7 +3109,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-KKQANEP7.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-EXU6BV6V.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3151,9 +3121,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-GY7PGL4U.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-2QRWERKQ.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-GY7PGL4U.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-2QRWERKQ.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3355,7 +3325,7 @@ ${JSON.stringify(result)}`);
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
       const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-EPBWOKSL.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-BOSGMIWS.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-IHARPXO4.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
