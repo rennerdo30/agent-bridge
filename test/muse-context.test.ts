@@ -41,17 +41,21 @@ describe("Muse private host context", () => {
       modules: { PSModulePath: join(root, "System32", "WindowsPowerShell", "v1.0", "Modules") },
       shell: { ComSpec: join(root, "System32", "cmd.exe"), SystemDrive: root.slice(0, 2) },
       profile: { APPDATA: join(profile, "AppData", "Roaming"), LOCALAPPDATA: join(profile, "AppData", "Local") },
+      machine: { ProgramData: join(root.slice(0, 3), "ProgramData"), ProgramFiles: join(root.slice(0, 3), "Program Files"), "ProgramFiles(x86)": join(root.slice(0, 3), "Program Files (x86)"), ProgramW6432: join(root.slice(0, 3), "Program Files") },
+      extensions: { PATHEXT: ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC" },
     };
     const variants = { bare: {}, ...extra, all: Object.assign({}, ...Object.values(extra)) };
     const results = [];
     for (const [variant, added] of Object.entries(variants)) {
       const started = Date.now();
       try {
-        const result = await exec(join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+        const pending = exec(join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
           ["-NoProfile", "-NonInteractive", "-Command", `[Console]::Write('ready'); (Get-Process -Id ${process.pid} -ErrorAction Stop).Id`],
           { env: { ...bare, ...added }, timeout: 5_000, windowsHide: true });
-        results.push({ variant, ok: result.stdout.includes("ready"), elapsedMs: Date.now() - started });
-      } catch (error) { results.push({ variant, ok: false, code: (error as NodeJS.ErrnoException).code, elapsedMs: Date.now() - started }); }
+        pending.child.stdin?.end();
+        const result = await pending;
+        results.push({ variant, ok: result.stdout.trim() === "ready" + process.pid, elapsedMs: Date.now() - started });
+      } catch (error) { const failure = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string }; results.push({ variant, ok: false, code: failure.code, readyWritten: !!failure.stdout?.includes("ready"), hasStderr: !!failure.stderr, elapsedMs: Date.now() - started }); }
     }
     console.warn("Muse Windows runtime diagnostics " + JSON.stringify(results));
     expect(results.find(result => result.variant === "all")?.ok).toBe(true);
