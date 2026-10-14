@@ -1,42 +1,42 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { resolveHome } from "../core/paths.js";
+import { MUSE_ACCESS_ENV, museHookFile, museHostPid, readMusePrivateJson, restoreMuseContext } from "../core/muse-context.js";
+import { processIdentity } from "../core/process-identity.js";
 import { object } from "../core/transcripts/common.js";
 import type { HookOutput } from "../mcp/hooks.js";
 
-/** The registration file a muse-hosted MCP server publishes for its session's hooks. */
-export function museHookRegistration(home: string, sessionId: string): string {
-  return join(home, "muse-hooks", `${sessionId.replace(/[^\w-]/g, "_")}.json`);
+const READ_TOOLS = new Set(["read", "read_file", "view_file", "glob", "grep", "grep_search", "find_by_name", "list_dir", "ls", "web_search", "websearch", "web_fetch", "webfetch", "fetch", "search", "list_resources", "read_resource"]);
+export function museBridgeTool(input: Record<string, any>): boolean {
+  return /^mcp__(?:plugin_agent_bridge_bridge|agent_bridge)__[a-zA-Z0-9_]+$/.test(String(input.tool_name ?? ""));
 }
-
-/** Map the bridge's Claude-shaped hook output onto Muse's hook output for one event. */
+export function museReadingTool(input: Record<string, any>): boolean {
+  const tool = String(input.tool_name ?? "");
+  return READ_TOOLS.has(tool.toLowerCase()) || museBridgeTool(input);
+}
 export function museHookOutput(event: string, output: HookOutput): Record<string, unknown> {
-  const text = "reason" in output ? String(output.reason) : "hookSpecificOutput" in output ? output.hookSpecificOutput.additionalContext : "";
-  if (!text) return {};
-  if (event === "Stop") return { decision: "block", reason: text };
-  return { hookSpecificOutput: { hookEventName: event, additionalContext: text } };
+  if ("decision" in output && output.decision === "block") return { decision: "block", reason: output.reason };
+  if ("hookSpecificOutput" in output && output.hookSpecificOutput) return { hookSpecificOutput: { hookEventName: event, additionalContext: output.hookSpecificOutput.additionalContext } };
+  return {};
 }
-
-/**
- * Command hook declared by the Muse plugin: forwards one lifecycle event to the
- * bridge MCP server of this session (which registered its endpoint by session id)
- * and prints its JSON answer. Any failure stays silent: a hook must never break a turn.
- */
-export async function runMuseHook(eventArg?: string): Promise<number> {
+export async function runMuseHook(event: string): Promise<number> {
+  let childBridgeCall = false;
   try {
+    await restoreMuseContext();
     let raw = "";
     for await (const part of process.stdin) { raw += part; if (raw.length > 256 * 1024) throw new Error("hook input too large"); }
     const input = object(JSON.parse(raw || "{}"));
-    const event = typeof input.hook_event_name === "string" ? input.hook_event_name : eventArg ?? "";
-    const sessionId = typeof input.session_id === "string" ? input.session_id : process.env.MUSE_SESSION_ID ?? "";
-    if (!event || !sessionId) { process.stdout.write("{}"); return 0; }
-    const reg = JSON.parse(readFileSync(museHookRegistration(resolveHome(), sessionId), "utf8"));
-    if (!Number.isInteger(reg.port) || typeof reg.secret !== "string") throw new Error("invalid hook registration");
-    const res = await fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${reg.secret}`, "content-type": "application/json" }, body: JSON.stringify({ event, input }), signal: AbortSignal.timeout(20_000) });
-    if (!res.ok) throw new Error("hook endpoint unavailable");
-    process.stdout.write(JSON.stringify(await res.json()));
+    const session = process.env.MUSE_SESSION_ID, thread = process.env.MUSE_THREAD_ID;
+    childBridgeCall = event === "PreToolUse" && !!thread && thread !== session && museBridgeTool(input);
+    if (!session) throw new Error("Muse session identity unavailable");
+    if (event !== "PreToolUse" && ((thread && thread !== session) || (typeof input.session_id === "string" && input.session_id !== session))) { process.stdout.write("{}"); return 0; }
+    const host = await museHostPid();
+    if (!host) throw new Error("Muse host unavailable");
+    const reg = readMusePrivateJson(museHookFile(host, session));
+    if (reg.session !== session || reg.hostIdentity !== processIdentity(host) || reg.identity !== processIdentity(reg.pid) || !Number.isInteger(reg.port) || reg.port < 1 || reg.port > 65535 || typeof reg.secret !== "string") throw new Error("Invalid Muse hook binding");
+    const response = await fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${reg.secret}`, "content-type": "application/json" }, body: JSON.stringify({ event, input, session, thread }), signal: AbortSignal.timeout(20_000) });
+    if (!response.ok) throw new Error("Muse hook unavailable");
+    process.stdout.write(JSON.stringify(await response.json()));
   } catch {
-    process.stdout.write("{}");
+    const access = process.env[MUSE_ACCESS_ENV];
+    process.stdout.write(JSON.stringify(event === "PreToolUse" && (childBridgeCall || access === "read" || access === "ask" || process.env.AGENT_BRIDGE_INTERNAL === "1") ? { hookSpecificOutput: { hookEventName: event, permissionDecision: "deny", permissionDecisionReason: "agent-bridge permission gate unavailable" } } : {}));
   }
   return 0;
 }

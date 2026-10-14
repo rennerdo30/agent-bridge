@@ -35,6 +35,7 @@ transcript bytes after reads. No automated test uses the owner's actual data roo
 | `core/notifications.ts` | Empty notification lock directory. |
 | `core/node.ts` | Abandoned Unix-domain socket path. |
 | `mcp/rewake.ts` | Socket endpoint registrations containing only port, secret and PID. No conversations or prompts. |
+| `core/muse-context.ts`, `core/antigravity-plugin.ts`, `mcp/muse-hooks.ts`, `mcp/antigravity-hooks.ts` | Private process-bound control records and exclusively created unpublished staging files. They contain derived session/parent identifiers, Bridge environment settings and endpoint capabilities, never prompts, transcripts or messages. Active cleanup requires the publisher's exact generation/nonce or secret; a successor's record is preserved. |
 | `core/resource-slots.ts` | Expired/released process concurrency leases in `slots`, not messages. |
 | `network/files.ts` | Unpublished `.partial-*` transfer staging directory after a failed receive. The sender's original is retained. |
 | `cli/smoke.ts`, `cli/reliability.ts`, `cli/reliability-live.ts` | Explicitly created temporary test homes/repositories only. |

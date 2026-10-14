@@ -1,14 +1,31 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ANTIGRAVITY_ACCESS_ENV } from "../core/antigravity.js";
 import { antigravityAncestor } from "../core/procinfo.js";
 import { resolveHome } from "../core/paths.js";
 import { askRelay, boundedDetail } from "../core/relay.js";
-import { object } from "../core/transcripts/common.js";
+import { object, TRANSCRIPT_ID } from "../core/transcripts/common.js";
 import { isHandoffToolCall } from "../core/tool-allow.js";
 import { createLogger } from "../core/logger.js";
+import { antigravityRootSession, readAntigravityPrivateJson } from "../core/antigravity-plugin.js";
+import { processIdentity } from "../core/process-identity.js";
 
 const OWN_SERVERS = ["agent-bridge", "agent-bridge_agent-bridge"];
+
+/** Native children share the MCP connection, so their host-provided conversation
+ * must match independently proven root evidence before any Bridge tool runs. */
+export async function antigravityBridgeCaller(input: Record<string, any>): Promise<boolean> {
+  const id = input.conversationId;
+  if (typeof id !== "string" || !TRANSCRIPT_ID.test(id)) return false;
+  try {
+    const pid = await antigravityAncestor(), home = resolveHome();
+    const hostIdentity = pid ? processIdentity(pid) : undefined;
+    if (!pid || !hostIdentity) return false;
+    const root = antigravityRootSession(home, pid, hostIdentity);
+    if (root) return id === root;
+    const reg = readAntigravityPrivateJson(join(home, "antigravity-hooks", `${pid}.json`));
+    return reg.hostIdentity === hostIdentity && Boolean(reg.identity) && reg.identity === processIdentity(reg.pid) && reg.conversationId === id;
+  } catch { return false; }
+}
 function allowed(input: Record<string, any>): Record<string, unknown> {
   const call = object(input.toolCall), args = object(call.args), resources: string[] = [];
   const server = args.ServerName ?? args.server_name ?? args.serverName;
@@ -41,6 +58,7 @@ export async function antigravityPermission(input: Record<string, any>, access =
   const call = object(input.toolCall), args = object(call.args);
   const server = args.ServerName ?? args.server_name ?? args.serverName;
   const tool = args.ToolName ?? args.tool_name ?? args.toolName;
+  if (call.name === "call_mcp_tool" && OWN_SERVERS.includes(server) && !await antigravityBridgeCaller(input)) return { decision: "deny", reason: "Native child or unverified conversation: use the root session's bridge or Bridge delegation" };
   const request = { agent: "antigravity", tool: call.name === "call_mcp_tool" ? `mcp:${server ?? "unknown"}` : String(call.name ?? "unknown"), ...boundedDetail((call.name === "call_mcp_tool" ? `${tool ?? "unknown"}: ` : "") + JSON.stringify(args)), cwd: Array.isArray(input.workspacePaths) ? input.workspacePaths[0] : undefined };
   if (access && isHandoffToolCall(request)) return { decision: "deny", reason: "Delegated jobs report to their supervisor; handoff writes are declined" };
   if ((!access || access === "edit") && call.name === "call_mcp_tool" && OWN_SERVERS.includes(server)) return allowed(input);
@@ -70,8 +88,8 @@ export async function runAntigravityHook(event: string): Promise<number> {
     }
     const pid = await antigravityAncestor();
     if (!pid) { process.stdout.write("{}"); return 0; }
-    const reg = JSON.parse(readFileSync(join(resolveHome(), "antigravity-hooks", `${pid}.json`), "utf8"));
-    if (!Number.isInteger(reg.port) || typeof reg.secret !== "string") throw new Error("invalid hook registration");
+    const reg = readAntigravityPrivateJson(join(resolveHome(), "antigravity-hooks", `${pid}.json`));
+    if (!reg.hostIdentity || reg.hostIdentity !== processIdentity(pid) || !reg.identity || reg.identity !== processIdentity(reg.pid) || !Number.isInteger(reg.port) || reg.port < 1 || reg.port > 65535 || typeof reg.secret !== "string" || !reg.secret) throw new Error("invalid hook registration");
     const res = await fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${reg.secret}`, "content-type": "application/json" }, body: JSON.stringify({ event, input }), signal: AbortSignal.timeout(20_000) });
     if (!res.ok) throw new Error("hook endpoint unavailable");
     process.stdout.write(JSON.stringify(await res.json()));

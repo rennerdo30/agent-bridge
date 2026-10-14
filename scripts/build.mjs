@@ -13,8 +13,8 @@ const MANIFESTS = [
   "plugins/codex/.codex-plugin/plugin.json",
   "plugins/opencode/package.json",
   "plugins/antigravity/package.json",
-  "plugins/muse/.muse-plugin/plugin.json",
   "plugins/antigravity/plugin.json",
+  "plugins/muse/.muse-plugin/plugin.json",
   ".claude-plugin/marketplace.json",
 ];
 const ENTRIES = { server: "src/mcp/launcher.ts", worker: "src/mcp/main.ts", cli: "src/cli/main.ts", "history-worker": "src/core/history-worker.ts", "backup-worker": "src/core/backup-worker.ts" };

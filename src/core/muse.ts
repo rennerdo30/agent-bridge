@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DelegateError, checkDepth, childEnv, runProcess, withResumeHint, type DelegateRequest, type DelegateResult } from "./delegate.js";
+import { delegateToMuseMsp } from "./muse-msp.js";
+import { MUSE_ACCESS_ENV, registerMuseContext } from "./muse-context.js";
 import { progressEventHandler } from "./progress.js";
 import { object, parse } from "./transcripts/common.js";
 
@@ -74,6 +76,8 @@ export async function delegateToMuse(req: DelegateRequest & { bin: string; acces
   if (req.access === "read") args.push("--disable-write", "--disable-shell", ...(req.permissionProfile ? [] : ["--approval-mode", "never"]));
   else if (!req.permissionProfile) args.push("--disable-approval");
   const progress = progressEventHandler("muse", req.onProgress);
+  const env = childEnv({ ...req.extraEnv, CLAUDE_PROJECT_DIR: req.cwd, [MUSE_ACCESS_ENV]: req.access });
+  let releaseContext: (() => void) | undefined;
   let sessionId = req.sessionId ?? null;
   let sessionReported = false;
   try {
@@ -83,7 +87,8 @@ export async function delegateToMuse(req: DelegateRequest & { bin: string; acces
       stdin: "",
       cwd: req.cwd,
       timeoutMs: req.timeoutSec * 1000,
-      env: childEnv(req.extraEnv),
+      env,
+      onSpawn: pid => { releaseContext = registerMuseContext(pid, env); },
       log: req.log,
       signal: req.signal,
       onLine: (line) => {
@@ -113,6 +118,20 @@ export async function delegateToMuse(req: DelegateRequest & { bin: string; acces
     if (err instanceof DelegateError && !err.sessionId) err.sessionId = sessionId;
     throw err;
   } finally {
+    releaseContext?.();
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/** Explicit compatibility mode; never replay a possibly started MSP turn through exec. */
+export const MUSE_EXEC_ENV = "AGENT_BRIDGE_MUSE_EXEC";
+export async function runMuse(req: DelegateRequest & { bin: string; access: "read" | "ask" | "edit"; permissionProfile?: string | null }): Promise<DelegateResult> {
+  if (req.effort && !(MUSE_EFFORTS as readonly string[]).includes(req.effort)) throw new DelegateError(`Muse effort must be one of ${MUSE_EFFORTS.join(", ")}`, "failed");
+  if (process.env[MUSE_EXEC_ENV] === "1") return delegateToMuse({ ...req, access: req.access === "edit" ? "edit" : "read" });
+  const extraEnv = { ...req.extraEnv, CLAUDE_PROJECT_DIR: req.cwd, [MUSE_ACCESS_ENV]: req.access };
+  const env = childEnv(extraEnv);
+  let releaseContext: (() => void) | undefined;
+  try {
+    return await delegateToMuseMsp({ ...req, extraEnv, permissionProfile: req.permissionProfile ?? undefined, requirePermissionHooks: true, onSpawn: pid => { releaseContext = registerMuseContext(pid, env); } });
+  } finally { releaseContext?.(); }
 }

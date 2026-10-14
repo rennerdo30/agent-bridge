@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "name": "agent-bridge",
   "displayName": "agent-bridge",
-  "version": "0.30.15",
+  "version": "0.30.16",
   "description": "Peer messaging, delegation and conversation history across coding agents.",
   "compat": {
     "source": "native",
@@ -45,40 +45,76 @@
     ],
     "hooks": [
       {
-        "id": "muse-session-start",
+        "id": "bridge-sessionstart",
         "event": "SessionStart",
         "command": [
           "node",
           "hooks/session-start.mjs"
         ],
-        "timeoutMs": 10000
+        "timeoutMs": 25000
       },
       {
-        "id": "muse-user-prompt",
+        "id": "bridge-userpromptsubmit",
         "event": "UserPromptSubmit",
         "command": [
           "node",
           "hooks/user-prompt.mjs"
         ],
-        "timeoutMs": 10000
+        "timeoutMs": 25000
       },
       {
-        "id": "muse-post-tool",
+        "id": "bridge-pretooluse",
+        "event": "PreToolUse",
+        "command": [
+          "node",
+          "hooks/pre-tool.mjs"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-posttooluse",
         "event": "PostToolUse",
         "command": [
           "node",
           "hooks/post-tool.mjs"
         ],
-        "timeoutMs": 10000
+        "timeoutMs": 25000
       },
       {
-        "id": "muse-stop",
+        "id": "bridge-prellmcall",
+        "event": "PreLLMCall",
+        "command": [
+          "node",
+          "hooks/pre-llm.mjs"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-stop",
         "event": "Stop",
         "command": [
           "node",
           "hooks/stop.mjs"
         ],
-        "timeoutMs": 15000
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-stopfailure",
+        "event": "StopFailure",
+        "command": [
+          "node",
+          "hooks/stop-failure.mjs"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-sessionend",
+        "event": "SessionEnd",
+        "command": [
+          "node",
+          "hooks/session-end.mjs"
+        ],
+        "timeoutMs": 25000
       }
     ],
     "mcpServers": [

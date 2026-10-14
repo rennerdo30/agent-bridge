@@ -9,25 +9,17 @@ import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
 import { DELEGATION_TARGETS, supportsAsk } from "../src/mcp/targets.js";
 import { delegationTargets } from "../src/mcp/server.js";
 import { parseJobSettings } from "../src/mcp/job-settings.js";
+import { museMspQuery } from "../src/core/muse-msp.js";
 import { describeModels } from "../src/core/models.js";
-import { museModelIds } from "../src/core/muse-msp.js";
 import { museItems } from "../src/core/transcripts/muse.js";
 import { listNativeSubagents, readTranscript } from "../src/core/transcripts/index.js";
 import { planFor, describeStep } from "../src/cli/installer.js";
 import { musePluginArgs } from "../src/cli/muse-install.js";
-import { HistoryIndex, historyFiltersSchema } from "../src/core/history.js";
-import { museEnvSessionId } from "../src/core/muse.js";
-import { OPENCODE_READ_ONLY_TOOLS } from "../src/core/delegate.js";
-import { resumeArgs } from "../src/mcp/delegate-run.js";
-import { remoteSpawnArgsSchema } from "../src/network/remote-job-protocol.js";
-import { museHookOutput } from "../src/cli/muse-hook.js";
-import { describeMuseEvent } from "../src/core/progress.js";
-import { MessageStore } from "../src/core/store.js";
-import { migrateHistoryStore } from "../src/core/history-store.js";
-import { DatabaseSync } from "node:sqlite";
+import { historyFiltersSchema } from "../src/core/history.js";
 
 const mocks = vi.hoisted(() => ({ run: vi.fn() }));
 vi.mock("../src/core/delegate.js", async (original) => ({ ...await original<typeof import("../src/core/delegate.js")>(), runProcess: mocks.run }));
+vi.mock("../src/core/muse-msp.js", () => ({ museMspQuery: vi.fn(), delegateToMuseMsp: vi.fn() }));
 const temporary: string[] = [];
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), "ab-muse-")); temporary.push(dir); return dir; };
 afterEach(() => { vi.clearAllMocks(); for (const dir of temporary.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -113,12 +105,12 @@ describe("Muse delegation", () => {
     expect(mocks.run).not.toHaveBeenCalled();
   });
 
-  it("registers Muse as a shared target with ask behaving as read", () => {
+  it("registers Muse as a shared target with native approval relay support", () => {
     expect(delegationTargets("claude")).toContain("muse");
     expect(delegationTargets("muse")).toEqual(["claude", "codex", "opencode", "antigravity", "muse"]);
     expect(DELEGATION_TARGETS.muse.defaultModel(DEFAULT_CONFIG)).toBeNull();
     expect(DELEGATION_TARGETS.muse.permission(DEFAULT_CONFIG, {})).toBe("read");
-    expect(DELEGATION_TARGETS.muse.permission(DEFAULT_CONFIG, { access: "edit" })).toBe("edit (no approval prompts)");
+    expect(DELEGATION_TARGETS.muse.permission(DEFAULT_CONFIG, { access: "edit" })).toBe("edit");
     expect(supportsAsk("muse", undefined)).toBe(false);
     expect(parseJobSettings({ permission_profile: "dev" }, "muse")).toEqual({ permission_profile: "dev" });
     expect(parseJobSettings({ permission_profile: "dev" }, "codex")).toContain("only to muse");
@@ -138,7 +130,7 @@ describe("Muse delegation", () => {
     expect(planFor("muse", "install")).toEqual([{ kind: "muse", action: "install" }]);
     expect(describeStep({ kind: "muse", action: "install" })).toContain("approve");
     expect(musePluginArgs("install", "/src/muse")).toEqual([["plugins", "install", "/src/muse"], ["plugins", "approve", "agent-bridge"]]);
-    expect(musePluginArgs("update", "/src/muse")).toEqual([["plugins", "update", "agent-bridge"]]);
+    expect(musePluginArgs("update", "/src/muse")).toEqual([["plugins", "update", "agent-bridge"], ["plugins", "approve", "agent-bridge"]]);
     expect(musePluginArgs("uninstall", "/src/muse")).toEqual([["plugins", "remove", "agent-bridge"]]);
     expect(historyFiltersSchema.parse({ agent: "muse" }).agent).toBe("muse");
   });
@@ -167,53 +159,10 @@ describe("Muse delegation", () => {
     expect(museItems({ type: "unknown" })).toEqual([]);
   });
 
-  it("keeps permission_profile through continuation and the remote protocol", () => {
-    const resumed = resumeArgs(
-      { title: "t", prompt: "follow", permission_profile: "new-profile", access: "read" },
-      "muse-job-1", "follow", "sess-1", "/tmp/work", null,
-      { permission_profile: "saved-profile", access: "read" },
-    );
-    expect(resumed.permission_profile).toBe("saved-profile");
-    expect(remoteSpawnArgsSchema.parse({ prompt: "p", cwd: "/tmp", title: "t", permission_profile: "remote-profile" }).permission_profile).toBe("remote-profile");
-    expect(() => remoteSpawnArgsSchema.parse({ prompt: "p", cwd: "/tmp", title: "t", unknown_key: 1 })).toThrow();
-    expect(OPENCODE_READ_ONLY_TOOLS.bridge_ask_muse).toBe(true);
-    expect(OPENCODE_READ_ONLY_TOOLS.bridge_spawn_muse).toBe(true);
-  });
-
-  it("binds the Muse session identity from the environment and maps hook output", () => {
-    expect(museEnvSessionId({ MUSE_SESSION_ID: " sess-9 " } as NodeJS.ProcessEnv)).toBe("sess-9");
-    expect(museEnvSessionId({ MUSE_THREAD_ID: "thread-9" } as NodeJS.ProcessEnv)).toBe("thread-9");
-    expect(museEnvSessionId({} as NodeJS.ProcessEnv)).toBeNull();
-    expect(museHookOutput("UserPromptSubmit", { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "mail" } }))
-      .toEqual({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "mail" } });
-    expect(museHookOutput("Stop", { decision: "block", reason: "mail" })).toEqual({ decision: "block", reason: "mail" });
-    expect(museHookOutput("Stop", {})).toEqual({});
-    expect(describeMuseEvent({ payload_type: "tool_batch.effect.started", payload: { record: { tool_name: "read_file", effect_id: "e1" } } }))
-      .toMatchObject({ kind: "tool", text: "tool read_file" });
-  });
-
-  it("history discovery records the session folder, not the day, as the Muse session id", async () => {
-    const home = temp(), museRoot = temp(), dbPath = join(home, "bridge.db");
-    const sessionId = "11111111-2222-3333-4444-555555555555";
-    const file = join(museRoot, "sessions", "2026", "10", "13", sessionId, "session.jsonl");
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, record(1, "turn.input.user", { kind: "turn_input_user", prompt: "walnut muse needle" }, sessionId) + "\n");
-    const store = new MessageStore(dbPath, nullLogger);
-    await migrateHistoryStore(dbPath, store.history.storageDatabase);
-    const db = new DatabaseSync(dbPath), input = new DatabaseSync(dbPath, { readOnly: true });
-    const index = new HistoryIndex(db, home, { claude: home, codex: home, opencode: home, muse: museRoot }, input);
-    for (let n = 0; n < 100; n++) { const r = index.tick(); if (!r.work && !r.discovering) break; }
-    const hits = index.search({ query: "walnut muse needle", filters: { agent: "muse" } }).hits;
-    expect(hits.length).toBeGreaterThan(0);
-    expect(hits[0]!.session).toBe(sessionId);
-    index.close(); input.close(); db.close(); store.close();
-  });
-
-  it("describes Muse models as pass-through with its effort levels", async () => {
-    const lines = await describeModels("muse", { ...DEFAULT_CONFIG, museBin: "muse-does-not-exist" }, temp(), nullLogger);
-    expect(lines[0]).toContain("did not return a model catalog");
+  it("describes Muse models from the no-turn native catalog", async () => {
+    vi.mocked(museMspQuery).mockResolvedValue({ source: "providerCatalog", models: [{ modelId: "muse-test", displayLabel: "Muse test", variants: ["low", "ultra"] }] });
+    const lines = await describeModels("muse", DEFAULT_CONFIG, temp(), nullLogger);
+    expect(lines[0]).toContain("Muse models (1; source providerCatalog)");
     expect(lines.join("\n")).toContain("ultra");
-    expect(museModelIds({ models: [{ modelId: "muse-spark-1.3" }, { modelId: 42 }, {}] })).toEqual(["muse-spark-1.3"]);
-    expect(museModelIds(null)).toEqual([]);
   });
 });

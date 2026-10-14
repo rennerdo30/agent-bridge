@@ -34,7 +34,6 @@ async function main(argv: string[]): Promise<number> {
 
   switch (command) {
     case "antigravity-hook": return (await import("./antigravity-hook.js")).runAntigravityHook(rest[0] ?? "PreInvocation");
-    case "muse-hook": return (await import("./muse-hook.js")).runMuseHook(rest[0]);
     case "job-state":
     case "job-close":
     case "close-idle-jobs":
@@ -185,6 +184,8 @@ async function main(argv: string[]): Promise<number> {
     }
     case "rewake-hook":
       return (await import("./rewake-hook.js")).runRewakeHook(rest.includes("--standby"));
+    case "muse-hook":
+      return (await import("./muse-hook.js")).runMuseHook(rest[0] ?? "");
     case "session-start-hook":
       return (await import("./session-start-hook.js")).runSessionStartHook(log);
     case "permission-hook":

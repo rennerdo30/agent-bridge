@@ -44,15 +44,15 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
   let claude: Client;
   let codex: Client;
   let antigravity: Client;
-  let muse: Client;
   let opencode: Client;
+  let muse: Client;
 
   beforeAll(async () => {
     claude = await spawnAgent("claude", "claude-e2e");
     codex = await spawnAgent("codex", "codex-e2e");
     antigravity = await spawnAgent("antigravity", "antigravity-e2e");
-    muse = await spawnAgent("muse", "muse-e2e");
     opencode = await spawnAgent("opencode", "opencode-e2e");
+    muse = await spawnAgent("muse", "muse-e2e");
     await waitFor(async () => textOf(await claude.callTool({ name: "peers", arguments: {} })).includes("codex-e2e"));
   }, 30_000);
 
@@ -60,8 +60,8 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     await claude?.close();
     await codex?.close();
     await antigravity?.close();
-    await muse?.close();
     await opencode?.close();
+    await muse?.close();
     // Let pending child-process shutdown callbacks release Windows directory handles.
     await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
@@ -71,11 +71,10 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     const x = (await codex.listTools()).tools.map((t) => t.name).sort();
     const g = (await antigravity.listTools()).tools.map((t) => t.name).sort();
     const o = (await opencode.listTools()).tools.map((t) => t.name).sort();
-    const m = (await muse.listTools()).tools.map((t) => t.name).sort();
     expect(c).toEqual([...x, "native_child_grant"].sort());
     expect(g).toEqual(x);
     expect(o).toEqual(x);
-    expect(m).toEqual(x);
+    expect((await muse.listTools()).tools.map(t => t.name).sort()).toEqual(x);
     for (const client of [claude, codex, opencode, antigravity, muse]) {
       expect(client.getInstructions()).toContain("Any CLI can delegate to any CLI, including its own kind.");
       for (const agent of ["claude", "codex", "opencode", "antigravity", "muse"]) expect(client.getInstructions()).toContain(`ask_${agent}`);

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_MUSE_BIN, DEFAULT_OPENCODE_BIN } from "../core/constants.js";
 import { delegateToClaude, delegateToCodex, delegateToOpencode, resolveBinary, runProcess, type DelegateResult } from "../core/delegate.js";
-import { delegateToMuse } from "../core/muse.js";
+import { runMuse } from "../core/muse.js";
 import { t } from "../core/i18n.js";
 import type { Logger } from "../core/logger.js";
 import type { CodingAgent } from "../core/protocol.js";
@@ -54,7 +54,7 @@ export async function runSmoke(opts: { agents: CodingAgent[]; out: (s: string) =
       const run = (prompt: string, sessionId: string | null): Promise<DelegateResult> => {
         const base = { prompt, cwd: dir, sessionId, timeoutSec: SMOKE_TIMEOUT_SEC, log: opts.log };
         if (agent === "antigravity") return delegateToAntigravity({ ...base, bin, access: "read" });
-        if (agent === "muse") return delegateToMuse({ ...base, bin, access: "read" });
+        if (agent === "muse") return runMuse({ ...base, bin, access: "read" });
         if (agent === "codex") return delegateToCodex({ ...base, bin, sandbox: "read-only" });
         if (agent === "claude") return delegateToClaude({ ...base, bin, permissionMode: "plan" });
         return delegateToOpencode({ ...base, bin, autoApprove: false });

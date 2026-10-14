@@ -253,6 +253,8 @@ export function runProcess(opts: {
   signal?: AbortSignal;
   /** Called with every complete stdout line as it arrives (for progress reporting). */
   onLine?: (line: string) => void;
+  /** Bind sanitized native plugin children to the owned CLI before it reads input. */
+  onSpawn?: (pid: number) => void;
   /** What runs, for the timeout message (e.g. "git worktree add"); default: a delegated agent run. */
   what?: string;
 }): Promise<RunResult> {
@@ -334,6 +336,10 @@ export function runProcess(opts: {
     child.stdin.on("error", () => {
       // The child may exit before reading stdin; the close handler reports the outcome.
     });
+    try { if (child.pid) opts.onSpawn?.(child.pid); } catch (error) {
+      finish(() => { void kill("delegate bootstrap failed").then(() => reject(error), () => reject(error)); });
+      return;
+    }
     child.stdin.end(opts.stdin);
   });
 }
@@ -408,7 +414,7 @@ export const CODEX_ASK_HINT =
 // "ask" rather than "deny": the tools stay listed (some providers reject a reduced tool set), and headless
 // `opencode run` rejects every ask without --auto, so nothing is changed.
 export const OPENCODE_READ_ONLY_PERMISSIONS = { edit: "ask", bash: "ask" } as const;
-/** MCP tools (named <server>_<tool>) can change things too: read-only runs keep only agent-bridge's send (to answer the parent). */
+/** MCP tools (named <server>_<tool>) can change things too: read-only runs allow only the permitted bridge routes. */
 export const OPENCODE_READ_ONLY_TOOLS = {
   "*_*": false, bridge_send: true, bridge_report_progress: true, bridge_peers: true, bridge_health: true, bridge_search_history: true, bridge_get_conversation: true,
   bridge_spawn_codex: true, bridge_spawn_claude: true, bridge_ask_codex: true, bridge_ask_claude: true,

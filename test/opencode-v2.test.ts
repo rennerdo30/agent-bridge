@@ -85,6 +85,11 @@ it.each([1, 2])("uses process cwd and resumes with portable flags on OpenCode %i
   expect(runs[1].args).toEqual(expect.arrayContaining(["-s", "same-session"]));
   expect(runs[1].args).not.toContain("--auto");
   expect(JSON.parse(runs[1].config).permission.bash).toBe("ask");
+  const readOnly = JSON.parse(runs[1].config);
+  expect(readOnly.permission).toEqual({ edit: "ask", bash: "ask" });
+  expect(readOnly.tools).toMatchObject({ "*_*": false, bridge_ask_muse: true, bridge_spawn_muse: true,
+    bridge_ask_codex: true, bridge_spawn_claude: true, bridge_send: true });
+  expect(readOnly.tools.unrelated_write).toBeUndefined();
   expect(runs[0].args.includes("--standalone")).toBe(major === 2);
   expect(runs[0].args.includes("--variant")).toBe(major === 1);
 });

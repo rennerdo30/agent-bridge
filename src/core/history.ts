@@ -362,7 +362,7 @@ export class HistoryIndex {
     for (const row of rows) {
       const file = typeof row.file === "string" ? row.file : "";
       if (!RUN_FILE.test(file) || !safeFile(cold, file)) continue;
-      this.register({ path: file, kind: "run", agent: /-(claude|codex|opencode|antigravity)-/.exec(String(row.key))?.[1] ?? "other", session: null, cwd: "", child: null });
+      this.register({ path: file, kind: "run", agent: /-(claude|codex|opencode|antigravity|muse)-/.exec(String(row.key))?.[1] ?? "other", session: null, cwd: "", child: null });
     }
     this.advance("packed-run-discovery", rows.length ? String(rows.at(-1)!.key) : "0");
     if (!rows.length) this.packedComplete = true;

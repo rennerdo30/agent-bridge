@@ -4,17 +4,22 @@ import { directory, fileStat, MAX_NATIVE_SUBAGENTS, MAX_TEXT_CHARS, MAX_TITLE_CH
 /** Muse timestamps are microseconds since the epoch; bridge items use milliseconds. */
 function museTime(row: JsonObject): number {
   const at = typeof row.recorded_at === "number" ? row.recorded_at : 0;
-  return at > 1e13 ? Math.floor(at / 1000) : at;
+  return Number.isFinite(at) ? at > 1e13 ? Math.floor(at / 1000) : at : 0;
+}
+
+function sessionFileAt(root: string, dir: string): string | null {
+  const file = safeFile(root, join(dir, "session.jsonl"));
+  return file && fileStat(file)?.isFile() ? file : null;
 }
 
 export function museSessionFile(session: TranscriptSession, paths: TranscriptPaths): string | null {
   if (!paths.muse || !session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return null;
   const root = join(paths.muse, "sessions");
   for (const year of directory(root)) for (const month of directory(join(root, year))) for (const day of directory(join(root, year, month))) {
-    const file = safeFile(paths.muse, join(root, year, month, day, session.sessionId, "session.jsonl"));
+    const file = sessionFileAt(paths.muse, join(root, year, month, day, session.sessionId));
     if (file) return file;
   }
-  return safeFile(paths.muse, join(root, session.sessionId, "session.jsonl"));
+  return sessionFileAt(paths.muse, join(root, session.sessionId));
 }
 
 function recordItems(ev: JsonObject): TranscriptItem[] {
@@ -56,7 +61,7 @@ export function listMuseSubagents(session: TranscriptSession, paths: TranscriptP
   const children = new Map<string, NativeSubagent>();
   for (const { value } of scanJsonl(file)) for (const item of museItems(value)) {
     const child = item.subagent;
-    if (!child || children.size >= MAX_NATIVE_SUBAGENTS) continue;
+    if (!child || children.has(child.id) || children.size >= MAX_NATIVE_SUBAGENTS) continue;
     const nested = museSessionFile({ ...session, sessionId: child.id }, paths), stat = nested ? fileStat(nested) : null;
     children.set(child.id, { id: child.id, title: child.title, status: "unknown", startedAt: item.at, updatedAt: stat?.mtimeMs ?? item.at });
   }
@@ -73,9 +78,10 @@ export function readMuseChat(session: TranscriptSession, paths: TranscriptPaths,
 
 export function museSessionIds(paths: TranscriptPaths): string[] {
   if (!paths.muse) return [];
-  const root = join(paths.muse, "sessions"), ids: string[] = [];
+  const root = join(paths.muse, "sessions"), ids = new Set<string>();
+  for (const id of directory(root)) if (TRANSCRIPT_ID.test(id) && sessionFileAt(paths.muse, join(root, id))) ids.add(id);
   for (const year of directory(root)) for (const month of directory(join(root, year))) for (const day of directory(join(root, year, month))) {
-    for (const id of directory(join(root, year, month, day))) if (TRANSCRIPT_ID.test(id)) ids.push(id);
+    for (const id of directory(join(root, year, month, day))) if (TRANSCRIPT_ID.test(id) && sessionFileAt(paths.muse, join(root, year, month, day, id))) ids.add(id);
   }
-  return ids;
+  return [...ids];
 }

@@ -1,18 +1,19 @@
 import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AntigravityHooks } from "../src/mcp/antigravity-hooks.js";
-import { antigravityAncestor } from "../src/core/procinfo.js";
+import { antigravityAncestor, lookup } from "../src/core/procinfo.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
-import { antigravityHookCommand, requireAntigravityPlugin } from "../src/core/antigravity-plugin.js";
+import { antigravityHookCommand, antigravityRootSession, registerAntigravityRoot, requireAntigravityPlugin } from "../src/core/antigravity-plugin.js";
 import { grantAntigravityBridgeMcp, installAntigravity } from "../src/cli/antigravity-install.js";
 import { execFileSync } from "node:child_process";
 import { makeEnv } from "./helpers.js";
 import type { ServerContext } from "../src/mcp/server.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 
-vi.mock("../src/core/procinfo.js", () => ({ antigravityAncestor: vi.fn(async () => 12345) }));
+vi.mock("../src/core/procinfo.js", () => ({ antigravityAncestor: vi.fn(async () => 12345), lookup: vi.fn(async () => ({ pid: 12345, ppid: 1, cmdline: "agy" })) }));
+vi.mock("../src/core/process-identity.js", () => ({ processIdentity: (pid: number) => pid === 12345 ? "native-generation" : "bridge-generation" }));
 vi.mock("../src/mcp/hooks.js", () => ({ buildHookResponse: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
 
@@ -76,6 +77,97 @@ describe("Antigravity native hook routing", () => {
       node.emit("reclaimed"); vi.mocked(buildHookResponse).mockResolvedValue({});
       expect(JSON.parse(readFileSync(join(env.home, "antigravity-hooks", "12345.json"), "utf8"))).toEqual(reg);
       expect((await call("Stop")).status).toBe(200);
+    } finally { await hooks.stop(); await env.cleanup(); }
+  });
+  it("defers child-first and missing-ID hooks until the adapter proves the root, then retains its binding across reload", async () => {
+    const env = makeEnv(), node = Object.assign(new EventEmitter(), { currentSessionId: null });
+    const ctx = { home: env.home, node } as unknown as ServerContext;
+    const hooks = new AntigravityHooks(ctx), next = new AntigravityHooks(ctx);
+    let release: (() => void) | undefined;
+    const file = join(env.home, "antigravity-hooks", "12345.json");
+    const call = async (id?: string) => {
+      const reg = JSON.parse(readFileSync(file, "utf8"));
+      return fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${reg.secret}` }, body: JSON.stringify({ event: "PreInvocation", input: { conversationId: id } }) });
+    };
+    try {
+      vi.mocked(buildHookResponse).mockResolvedValue({});
+      await hooks.start();
+      expect(await (await call("child")).json()).toEqual({});
+      expect(await (await call("parent")).json()).toEqual({});
+      expect(buildHookResponse).not.toHaveBeenCalled();
+      expect(node.currentSessionId).toBeNull();
+      release = registerAntigravityRoot(env.home, 12345, "parent");
+      expect(await (await call()).json()).toEqual({});
+      expect(await (await call("child")).json()).toEqual({});
+      expect(await (await call("parent")).json()).toEqual({});
+      expect(buildHookResponse).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(readFileSync(file, "utf8")).conversationId).toBe("parent");
+      release(); release = undefined;
+      // A new generation restores from the exact native process's private predecessor record.
+      await next.start();
+      const newBytes = readFileSync(file, "utf8");
+      await hooks.stop();
+      expect(readFileSync(file, "utf8")).toBe(newBytes);
+      expect(node.listenerCount("reclaimed")).toBe(1);
+      expect(await (await call("child")).json()).toEqual({});
+      expect(await (await call("parent")).json()).toEqual({});
+      expect(buildHookResponse).toHaveBeenCalledTimes(2);
+      await next.stop();
+      expect(existsSync(file)).toBe(false);
+      expect(node.listenerCount("reclaimed")).toBe(0);
+      node.emit("reclaimed");
+      expect(existsSync(file)).toBe(false);
+    } finally { release?.(); await next.stop(); await hooks.stop(); await env.cleanup(); }
+  });
+  it("uses inspected resume arguments and ignores stale process generations", async () => {
+    const env = makeEnv(), node = Object.assign(new EventEmitter(), { currentSessionId: null });
+    const hooks = new AntigravityHooks({ home: env.home, node } as unknown as ServerContext);
+    try {
+      mkdirSync(join(env.home, "antigravity-hooks"));
+      writeFileSync(join(env.home, "antigravity-hooks", "12345.json"), JSON.stringify({ conversationId: "wrong", hostIdentity: "previous-generation" }), { mode: 0o600 });
+      vi.mocked(lookup).mockResolvedValueOnce({ pid: 12345, ppid: 1, cmdline: '"/owner path/agy" --model example --conversation "parent"' });
+      vi.mocked(buildHookResponse).mockResolvedValue({});
+      await hooks.start();
+      const reg = JSON.parse(readFileSync(join(env.home, "antigravity-hooks", "12345.json"), "utf8"));
+      const call = (conversationId: string) => fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${reg.secret}` }, body: JSON.stringify({ event: "Stop", input: { conversationId } }) });
+      expect(reg.conversationId).toBe("parent");
+      expect(await (await call("wrong")).json()).toEqual({});
+      expect(await (await call("parent")).json()).toEqual({});
+      expect(buildHookResponse).toHaveBeenCalledTimes(1);
+    } finally { await hooks.stop(); await env.cleanup(); }
+  });
+  it("replaces a crashed adapter's reused PID binding but preserves a different current generation on cleanup", async () => {
+    const env = makeEnv(), file = join(env.home, "antigravity-hooks", "12345.session.json");
+    let release: (() => void) | undefined;
+    try {
+      mkdirSync(join(env.home, "antigravity-hooks"));
+      writeFileSync(file, JSON.stringify({ hostPid: 12345, hostIdentity: "dead-generation", conversationId: "old" }), { mode: 0o600 });
+      expect(antigravityRootSession(env.home, 12345, "native-generation")).toBeNull();
+      release = registerAntigravityRoot(env.home, 12345, "parent");
+      expect(antigravityRootSession(env.home, 12345, "native-generation")).toBe("parent");
+      expect(() => registerAntigravityRoot(env.home, 12345, "child")).toThrow();
+      const replacement = { hostPid: 12345, hostIdentity: "native-generation", conversationId: "parent", generation: "replacement" };
+      writeFileSync(file, JSON.stringify(replacement));
+      release(); release = undefined;
+      expect(JSON.parse(readFileSync(file, "utf8"))).toEqual(replacement);
+    } finally { release?.(); await env.cleanup(); }
+  });
+  it("aborts admitted requests when a peer is replaced and suppresses stale output", async () => {
+    const env = makeEnv(), node = Object.assign(new EventEmitter(), { currentSessionId: "parent" });
+    const hooks = new AntigravityHooks({ home: env.home, node } as unknown as ServerContext);
+    let entered!: () => void;
+    const admission = new Promise<void>(resolve => { entered = resolve; });
+    try {
+      vi.mocked(buildHookResponse).mockImplementationOnce(async (_ctx, input) => {
+        entered();
+        await new Promise<void>(resolve => input.signal!.addEventListener("abort", () => resolve(), { once: true }));
+        return { decision: "block", reason: "stale mail" };
+      });
+      await hooks.start();
+      const reg = JSON.parse(readFileSync(join(env.home, "antigravity-hooks", "12345.json"), "utf8"));
+      const pending = fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${reg.secret}` }, body: JSON.stringify({ event: "Stop", input: { conversationId: "parent" } }) });
+      await admission; node.emit("replaced");
+      expect(await (await pending).json()).toEqual({});
     } finally { await hooks.stop(); await env.cleanup(); }
   });
   it("rejects missing or disabled native permission gates before a CLI can run", async () => {

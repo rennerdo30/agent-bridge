@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.30.16
+
+- Add Muse as a fifth coding agent, including native plugin installation, authenticated mail hooks, stable MSP delegation, live steering, approvals, model discovery, session history and remote jobs. Preserve named permission profiles across job reloads and continuations; verify the served profile before submitting a turn.
+- Keep native Muse and Antigravity children from claiming or consuming their root session's mail. Bind hook registrations to process creation identity and preserve successor registrations during cleanup.
+- Complete Antigravity remote sandbox and exact permission options, require an available supervisor for ask approvals, and retain the root session identity when child stream records arrive.
+
 ## 0.30.15
 
 - Storage finalize and absorb keep backups, migration snapshots, `retained_*` tables and old archives without deleting or rewriting retained data. Linked, uncertain or WAL-mode candidates are refused before they are opened (AB-215/AB-228, #18).

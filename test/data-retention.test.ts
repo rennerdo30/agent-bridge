@@ -49,6 +49,12 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   "core/history-answer.ts": ["rmSync(cwd, { recursive: true, force: true })"],
   // Bridge-owned scratch folder (mkdtempSync) holding only the prompt file of one Muse run.
   "core/muse.ts": ["rmSync(dir, { recursive: true, force: true })"],
+  // Private per-process control capabilities only. Active records require exact
+  // generation/nonce ownership; temporary files are exclusively created staging.
+  "core/muse-context.ts": ["unlinkSync(path)"],
+  "core/antigravity-plugin.ts": ["unlinkSync(temporary)", "unlinkSync(file)"],
+  "mcp/muse-hooks.ts": ["unlinkSync(temporary)", "unlinkSync(this.file)"],
+  "mcp/antigravity-hooks.ts": ["unlinkSync(temporary)", "unlinkSync(this.file)"],
   // Derived search index only (pending queue, full rebuild by reindex); source messages, logs and transcripts are read-only.
   "core/history.ts": ['"DELETE FROM history_pending WHERE id=? AND recipient=?"', '"DELETE FROM history_tags; DELETE FROM history_cursors WHERE source<>\'legacy-record-tail\'; DELETE FROM history_files;"'],
   // Temporary duplicates after whole-file SHA-256 verification and exclusive publication of the final file; truncation trims

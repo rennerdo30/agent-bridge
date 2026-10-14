@@ -640,7 +640,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         }
       }
       if (!local) return send(res, 409, { error: "This local session is not connected. Reopen it before sending." });
-      if (!["claude", "codex", "opencode", "antigravity"].includes(local.agent)) return send(res, 409, { state: "not-supported", transport: "bridge", text: "Owner chat is not supported for this CLI." });
+      if (!["claude", "codex", "opencode", "antigravity", "muse"].includes(local.agent)) return send(res, 409, { state: "not-supported", transport: "bridge", text: "Owner chat is not supported for this CLI." });
       const result = await deliverDashboardChat(local, body.body.trim(), { child, parent: body.target === "parent", queue: queueChat,
         send: async (text) => (await getSender()).send({ to: local.name, body: text }) });
       if (result.receipt) {
