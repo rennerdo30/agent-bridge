@@ -49,7 +49,7 @@ import { formatInboxMessages, formatProjectRoute, formatReplyRestrictions, forma
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { reportModActivity } from "./hook-ownership.js";
 import { codexCallIdentity, codexMainThreadAdmission, type CodexCallIdentity } from "./codex-lineage.js";
-import { buildHookResponse, confirmNativeChildDelivery, discardFinishedNotes, type HookEvent } from "./hooks.js";
+import { buildHookResponse, confirmAntigravityStopDelivery, confirmNativeChildDelivery, discardFinishedNotes, releaseAntigravityStopDelivery, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, type Access } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
 import { answerPendingApproval, listPendingApprovals, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
@@ -628,6 +628,13 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       // Replaced by another server of this session, yet called: this is the one the session uses (see reclaim).
       if (name !== "health" && ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: (err as Error).message }));
       await ctx.observeMeta?.(extra._meta);
+      if (ctx.agent === "antigravity" && name !== "health" && name !== "hook_event") {
+        if (name === "inbox") {
+          if (a.mark_read !== false) releaseAntigravityStopDelivery(ctx);
+        } else {
+          confirmAntigravityStopDelivery(ctx);
+        }
+      }
       try {
         return await fn(args, extra);
       } catch (err) {
@@ -1367,8 +1374,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job) => ({ ...a, _job: job.name }), a), resumeFor(a), keep(a));
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
-        // Exact target options (sandbox, permission_mode, auto_approve) say it themselves.
-        const exact = a.sandbox !== undefined || a.permission_mode !== undefined || a.auto_approve !== undefined;
+        // Exact target options (sandbox, permission_mode, auto_approve, bypass_permissions) say it themselves.
+        const exact = a.sandbox !== undefined || a.permission_mode !== undefined || a.auto_approve !== undefined || a.bypass_permissions !== undefined;
         const note = exact ? "" : `\n${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
         return text(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${derivedTitle ? `\nTitle derived from prompt: "${a.title}".` : ""}`);
       }),

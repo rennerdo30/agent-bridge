@@ -43,8 +43,26 @@ export interface UsageReport {
   maxUsedPercent: number | null;
 }
 
+export interface CaptureOptions {
+  timeoutMs?: number;
+  maxBytes?: number;
+  requireZeroExit?: boolean;
+}
+
+const DEFAULT_MAX_CAPTURE_BYTES = 1024 * 1024;
+const ANTIGRAVITY_VERSION_TIMEOUT_MS = 10_000;
+const ANTIGRAVITY_USAGE_TIMEOUT_MS = 15_000;
+const ANTIGRAVITY_MAX_USAGE_BYTES = 256 * 1024;
+
 /** Run a CLI briefly and return its stdout (or throw). */
-function capture(bin: string, args: string[], cwd: string, log: Logger, stdin?: (write: (s: string) => void, out: () => string, done: () => void) => void): Promise<string> {
+function capture(
+  bin: string,
+  args: string[],
+  cwd: string,
+  log: Logger,
+  stdin?: (write: (s: string) => void, out: () => string, done: () => void) => void,
+  options?: CaptureOptions,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const env = childEnv();
     let cmd: ReturnType<typeof resolveCommand>;
@@ -53,9 +71,12 @@ function capture(bin: string, args: string[], cwd: string, log: Logger, stdin?: 
     } catch (err) {
       return reject(err);
     }
+    const timeoutMs = options?.timeoutMs ?? USAGE_TIMEOUT_MS;
+    const maxBytes = options?.maxBytes ?? DEFAULT_MAX_CAPTURE_BYTES;
     const child = spawn(cmd.resolved, cmd.args, { cwd, env, shell: cmd.needsShell, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
     let out = "";
     let err = "";
+    let totalBytes = 0;
     let settled = false;
     const finish = (fn: () => void) => {
       if (settled) return;
@@ -64,11 +85,26 @@ function capture(bin: string, args: string[], cwd: string, log: Logger, stdin?: 
       void killTree(child);
       fn();
     };
-    const timer = setTimeout(() => finish(() => reject(new Error(`${bin} did not answer within ${USAGE_TIMEOUT_MS / 1000}s`))), USAGE_TIMEOUT_MS);
-    child.stdout.setEncoding("utf8").on("data", (d: string) => (out += d));
-    child.stderr.setEncoding("utf8").on("data", (d: string) => (err += d));
+    const timer = setTimeout(() => finish(() => reject(new Error(`${bin} did not answer within ${timeoutMs / 1000}s`))), timeoutMs);
+    const append = (chunk: string, target: "out" | "err") => {
+      totalBytes += Buffer.byteLength(chunk, "utf8");
+      if (totalBytes > maxBytes) {
+        finish(() => reject(new Error(`${bin} output exceeded ${maxBytes} bytes`)));
+        return;
+      }
+      if (target === "out") out += chunk;
+      else err += chunk;
+    };
+    child.stdout.setEncoding("utf8").on("data", (d: string) => append(d, "out"));
+    child.stderr.setEncoding("utf8").on("data", (d: string) => append(d, "err"));
     child.on("error", (e) => finish(() => reject(e)));
-    child.on("close", (code) => finish(() => (code === 0 || out ? resolve(out) : reject(new Error(err.trim().slice(-300) || `exit code ${code}`)))));
+    child.on("close", (code) => finish(() => {
+      if (code === 0 || (!options?.requireZeroExit && out)) return resolve(out);
+      const detail = options?.requireZeroExit
+        ? err.trim().slice(-300) || `exit code ${code}`
+        : err.trim().slice(-300) || out.trim().slice(-300) || `exit code ${code}`;
+      return reject(new Error(detail));
+    }));
     if (stdin) stdin((s) => child.stdin.write(s), () => out, () => finish(() => resolve(out)));
     else child.stdin.end();
   });
@@ -252,6 +288,183 @@ export function captureOutput(bin: string, args: string[], cwd: string, log: Log
   return capture(bin, args, cwd, log);
 }
 
+function antigravityWindowName(window: unknown, fallbackName: unknown): string {
+  const w = typeof window === "string" ? window.trim() : "";
+  if (w === "5h") return "5-hour window";
+  if (w === "weekly") return "weekly";
+  if (w === "daily") return "1-day window";
+  if (w) return w;
+  const name = typeof fallbackName === "string" ? fallbackName.trim().replace(/\s+limit\s+remaining$/i, "").replace(/\s+remaining$/i, "") : "";
+  return name ? name.toLowerCase() : "window";
+}
+
+/** Standalone `-p /usage --output-format json` without a model turn was introduced in agy 1.1.11. */
+export function supportsAntigravityUsage(versionText: string): boolean {
+  const m = /\b(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?\b/.exec(versionText);
+  if (!m || m[4]) return false;
+  const major = Number(m[1]), minor = Number(m[2]), patch = Number(m[3]);
+  return major > 1 || (major === 1 && (minor > 1 || (minor === 1 && patch >= 11)));
+}
+
+/** Parse structured output from `agy -p /usage --output-format json` (and/or `/quota`, `/credits`). */
+export function parseAntigravityUsage(text: string): UsageReport {
+  const unknown = (reason: string): UsageReport => ({
+    agent: "antigravity",
+    lines: [`Account limit availability is unknown: ${reason}`],
+    limits: [],
+    maxUsedPercent: null,
+  });
+  const records: any[] = [];
+  const trimmed = text.trim();
+  if (!trimmed) return unknown("Antigravity did not return structured JSON usage output.");
+  try {
+    records.push(JSON.parse(trimmed));
+  } catch {
+    for (const line of trimmed.split(/\r?\n/)) {
+      const s = line.trim();
+      if (!s) continue;
+      try {
+        records.push(JSON.parse(s));
+      } catch {
+        return unknown("Antigravity did not return structured JSON usage output.");
+      }
+    }
+  }
+  if (!records.length) return unknown("Antigravity did not return structured JSON usage output.");
+  const groups: any[] = [];
+  let creditSource: any = null;
+  for (const parsed of records) {
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return unknown("Antigravity did not return a JSON object.");
+    if (parsed.status !== undefined && parsed.status !== "SUCCESS") {
+      const detail = typeof parsed.error === "string" && parsed.error.trim() ? parsed.error.trim() : `status ${String(parsed.status)}`;
+      return unknown(`Antigravity usage report failed (${detail}).`);
+    }
+    if ((typeof parsed.num_turns === "number" && parsed.num_turns > 0) || (typeof parsed.conversation_id === "string" && parsed.conversation_id.trim().length > 0)) {
+      return unknown("Antigravity returned a conversation turn instead of a standalone usage report.");
+    }
+    const cmd = parsed.command;
+    if (!cmd || typeof cmd !== "object" || Array.isArray(cmd) || !["usage", "quota", "credits"].includes(cmd.name) || !cmd.data || typeof cmd.data !== "object" || Array.isArray(cmd.data)) {
+      return unknown("Antigravity usage report has an unrecognized schema.");
+    }
+    const data = cmd.data;
+    if (Array.isArray(data.groups)) groups.push(...data.groups);
+    if (data.credits && typeof data.credits === "object" && !Array.isArray(data.credits)) {
+      creditSource = data.credits;
+    } else if (data.remaining_credits !== undefined) {
+      creditSource = { balance: data.remaining_credits };
+    }
+  }
+  const validGroups = groups.filter((g) => g && typeof g === "object" && !Array.isArray(g) && typeof g.name === "string" && g.name.trim() && Array.isArray(g.buckets));
+  const lines: string[] = [];
+  const limits: UsageLimit[] = [];
+  let max: number | null = null;
+  let hasUsableGroup = false;
+  for (const group of validGroups) {
+    const groupName = group.name.trim();
+    const parts: string[] = [];
+    let groupNumericBuckets = 0;
+    let groupAllWindowsUsable = group.buckets.length > 0;
+    for (const b of group.buckets) {
+      if (!b || typeof b !== "object" || Array.isArray(b)) {
+        groupAllWindowsUsable = false;
+        continue;
+      }
+      const windowLabel = antigravityWindowName(b.window, b.name);
+      if (b.disabled === true || b.enabled === false) {
+        groupAllWindowsUsable = false;
+        parts.push(`${windowLabel} disabled`);
+        continue;
+      }
+      let usedPercent: number | null = null;
+      const clampUsed = (rawUsedPercent: number, exhausted: boolean): number => {
+        if (exhausted) return FULL_USAGE_PERCENT;
+        return Math.min(FULL_USAGE_PERCENT - 1, Math.max(0, Math.round(rawUsedPercent)));
+      };
+      if (typeof b.remaining_fraction === "number" && Number.isFinite(b.remaining_fraction) && b.remaining_fraction >= 0 && b.remaining_fraction <= 1) {
+        usedPercent = clampUsed((1 - b.remaining_fraction) * FULL_USAGE_PERCENT, b.remaining_fraction === 0);
+      } else if (typeof b.used_fraction === "number" && Number.isFinite(b.used_fraction) && b.used_fraction >= 0 && b.used_fraction <= 1) {
+        usedPercent = clampUsed(b.used_fraction * FULL_USAGE_PERCENT, b.used_fraction === 1);
+      } else if (typeof b.used_percent === "number" && Number.isFinite(b.used_percent) && b.used_percent >= 0 && b.used_percent <= FULL_USAGE_PERCENT) {
+        usedPercent = clampUsed(b.used_percent, b.used_percent === FULL_USAGE_PERCENT);
+      } else if (typeof b.remaining_percent === "number" && Number.isFinite(b.remaining_percent) && b.remaining_percent >= 0 && b.remaining_percent <= FULL_USAGE_PERCENT) {
+        usedPercent = clampUsed(FULL_USAGE_PERCENT - b.remaining_percent, b.remaining_percent === 0);
+      }
+      if (usedPercent === null) {
+        groupAllWindowsUsable = false;
+        continue;
+      }
+      groupNumericBuckets++;
+      if (usedPercent >= FULL_USAGE_PERCENT) groupAllWindowsUsable = false;
+      const resetEpoch = typeof b.reset_time === "string" && /(?:Z|[+-]\d{2}:?\d{2})$/i.test(b.reset_time.trim()) ? Date.parse(b.reset_time) : NaN;
+      const resets = Number.isFinite(resetEpoch) ? resetTime(resetEpoch) : null;
+      max = Math.max(max ?? 0, usedPercent);
+      parts.push(`${windowLabel} ${usedPercent}% used${resets ? ` (resets ${resets})` : ""}`);
+      limits.push({ name: validGroups.length > 1 ? `${groupName}: ${windowLabel}` : windowLabel, usedPercent, resets });
+    }
+    if (groupAllWindowsUsable && groupNumericBuckets > 0) hasUsableGroup = true;
+    if (parts.length) lines.push(`${groupName}: ${parts.join(", ")}`);
+  }
+  let credits: UsageReport["credits"] = undefined;
+  if (creditSource) {
+    const rawBalance = creditSource.balance ?? creditSource.remaining_credits;
+    const explicitInUse = creditSource.in_use === true || creditSource.inUse === true;
+    if (creditSource.unlimited === true) {
+      credits = { balance: "unlimited", unlimited: true, inUse: explicitInUse };
+      lines.push(explicitInUse ? "Credits: usable, running on credits (unlimited left)" : "Credits: unlimited available");
+    } else if ((typeof rawBalance === "number" || (typeof rawBalance === "string" && rawBalance.trim() !== "")) && Number.isFinite(Number(rawBalance))) {
+      const n = Number(rawBalance);
+      if (n > 0) {
+        const balance = formatCredits(String(n));
+        credits = { balance, unlimited: false, inUse: explicitInUse };
+        lines.push(explicitInUse ? `Credits: usable, running on credits (${balance} left)` : `Credits: ${balance} available`);
+      } else if (n === 0) {
+        credits = null;
+        lines.push(hasUsableGroup ? "Credits: 0 available (plan quota remains usable)" : "Credits: 0 available");
+      }
+    }
+  }
+  if (!lines.length) return unknown("Antigravity usage report contained no recognized quota buckets.");
+  return { agent: "antigravity", lines, limits, ...(credits !== undefined ? { credits } : {}), maxUsedPercent: max };
+}
+
+export async function antigravityUsage(bin: string, cwd: string, log: Logger, prefixArgs: string[] = []): Promise<UsageReport> {
+  let versionOut = "";
+  try {
+    versionOut = await capture(bin, [...prefixArgs, "--version"], cwd, log, undefined, { timeoutMs: ANTIGRAVITY_VERSION_TIMEOUT_MS, maxBytes: 16 * 1024, requireZeroExit: true });
+  } catch (err) {
+    return {
+      agent: "antigravity",
+      lines: [`Account limit availability is unknown: could not verify agy version (${(err as Error).message}).`],
+      limits: [],
+      maxUsedPercent: null,
+    };
+  }
+  if (!supportsAntigravityUsage(versionOut)) {
+    return {
+      agent: "antigravity",
+      lines: ["Account limit availability is unknown: installed agy version does not support standalone structured /usage reports (requires agy 1.1.11+)."],
+      limits: [],
+      maxUsedPercent: null,
+    };
+  }
+  try {
+    const [usageOut, creditsOut] = await Promise.all([
+      capture(bin, [...prefixArgs, "-p", "/usage", "--output-format", "json"], cwd, log, undefined, { timeoutMs: ANTIGRAVITY_USAGE_TIMEOUT_MS, maxBytes: ANTIGRAVITY_MAX_USAGE_BYTES, requireZeroExit: true }),
+      capture(bin, [...prefixArgs, "-p", "/credits", "--output-format", "json"], cwd, log, undefined, { timeoutMs: ANTIGRAVITY_USAGE_TIMEOUT_MS, maxBytes: ANTIGRAVITY_MAX_USAGE_BYTES, requireZeroExit: true }).catch(() => ""),
+    ]);
+    const combined = creditsOut.trim() ? `${usageOut.trim()}\n${creditsOut.trim()}` : usageOut;
+    const parsed = parseAntigravityUsage(combined);
+    return parsed.maxUsedPercent !== null || !creditsOut.trim() ? parsed : parseAntigravityUsage(usageOut);
+  } catch (err) {
+    return {
+      agent: "antigravity",
+      lines: [`Account limit availability is unknown: ${(err as Error).message}`],
+      limits: [],
+      maxUsedPercent: null,
+    };
+  }
+}
+
 async function codexUsage(bin: string, cwd: string, log: Logger): Promise<UsageReport> {
   return formatCodexLimits(await codexAppServerCall(bin, cwd, log, "account/rateLimits/read", null));
 }
@@ -259,7 +472,7 @@ async function codexUsage(bin: string, cwd: string, log: Logger): Promise<UsageR
 /** `model`: the model the caller would use (opencode: shows whether it is free). */
 export async function readUsage(agent: CodingAgent, bin: string, cwd: string, log: Logger, model: string | null = null): Promise<UsageReport> {
   try {
-    if (agent === "antigravity") return { agent, lines: ["Account limit availability is unknown: agy exposes quotas in interactive /usage (or /quota), without a documented machine-readable quota command. Delegated results include token usage."], limits: [], maxUsedPercent: null };
+    if (agent === "antigravity") return await antigravityUsage(bin, cwd, log);
     if (agent === "codex") return await codexUsage(bin, cwd, log);
     if (agent === "claude") return parseClaudeUsage(await capture(bin, ["-p", "/usage"], cwd, log));
     const v2 = await opencodeV2(bin, cwd, log);
