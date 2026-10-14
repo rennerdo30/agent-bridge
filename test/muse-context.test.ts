@@ -5,7 +5,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { museContextDirectory, museHostCommand, readMusePrivateJson, registerMuseContext, writeMusePrivateJson } from "../src/core/muse-context.js";
+import { museContextDirectory, museHostCommand, museHostPid, readMusePrivateJson, registerMuseContext, restoreMuseContext, writeMusePrivateJson } from "../src/core/muse-context.js";
+import * as procinfo from "../src/core/procinfo.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 const exec = promisify(execFile);
@@ -28,6 +29,24 @@ function register() {
 }
 
 describe("Muse private host context", () => {
+  it("authenticates the bound parent before querying an unavailable CIM service", async () => {
+    releases.push(registerMuseContext(process.ppid, { AGENT_BRIDGE_INTERNAL: "1", CODEX_HOME: "owned-storage" }));
+    const query = vi.spyOn(procinfo, "lookup").mockResolvedValue(null);
+    const restored = { MUSE_SESSION_ID: "native-session", AGENT_BRIDGE_PARENT_TOKEN: "ambient-token" };
+    expect(await restoreMuseContext(restored)).toBe(true);
+    expect(restored).toEqual({ MUSE_SESSION_ID: "native-session", AGENT_BRIDGE_INTERNAL: "1", CODEX_HOME: "owned-storage" });
+    expect(await museHostPid()).toBe(process.ppid);
+    expect(query).not.toHaveBeenCalled();
+  });
+  it("rechecks an authenticated handoff published during an unavailable CIM query", async () => {
+    vi.spyOn(procinfo, "lookup").mockImplementation(async pid => {
+      releases.push(registerMuseContext(pid, { AGENT_BRIDGE_INTERNAL: "1" }));
+      return null;
+    });
+    const restored = { MUSE_SESSION_ID: "native-session" };
+    expect(await restoreMuseContext(restored)).toBe(true);
+    expect(restored).toEqual({ MUSE_SESSION_ID: "native-session", AGENT_BRIDGE_INTERNAL: "1" });
+  });
   it("refuses unknown sanitized ancestry even when a session ID is supplied", async () => {
     expect(await restore()).toEqual({ restored: false, env: { MUSE_SESSION_ID: "native-session", AGENT_BRIDGE_INTERNAL: "1" } });
   });

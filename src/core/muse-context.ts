@@ -83,13 +83,14 @@ export function museHostCommand(command: string): boolean {
 
 export async function museHostPid(start = process.ppid): Promise<number | null> {
   let pid = start;
+  const owned = (host: number): boolean => {
+    const record = readMusePrivateJson(join(museContextDirectory(), `host-${host}.json`));
+    return record.version === 1 && record.pid === host && record.identity === processIdentity(host) && typeof record.nonce === "string" && !!record.nonce;
+  };
   for (let i = 0; i < 8 && pid > 1; i++) {
+    try { if (owned(pid)) return pid; } catch { /* An unknown ancestor needs an OS lookup. */ }
     const info = await lookup(pid);
-    if (!info) break;
-    try {
-      const record = readMusePrivateJson(join(museContextDirectory(), `host-${pid}.json`));
-      if (record.version === 1 && record.pid === pid && record.identity === processIdentity(pid)) return pid;
-    } catch { /* A custom/SDK host must have an owned registration. */ }
+    if (!info) { try { if (owned(pid)) return pid; } catch { /* No authenticated late handoff. */ } break; }
     if (museHostCommand(info.cmdline)) return pid;
     pid = info.ppid;
   }
@@ -125,8 +126,6 @@ export async function restoreMuseContext(env: NodeJS.ProcessEnv = process.env): 
     return true;
   };
   for (let i = 0; i < 8 && pid > 1; i++) {
-    const info = await lookup(pid);
-    if (!info) break;
     try {
       return restore(pid);
     } catch (error) {
@@ -135,6 +134,14 @@ export async function restoreMuseContext(env: NodeJS.ProcessEnv = process.env): 
         return refuse();
       }
       pending.push(pid);
+    }
+    // The private handoff and creation identity authenticate an observed parent
+    // without a command-line query. CIM is only needed to discover ancestors.
+    const info = await lookup(pid);
+    if (!info) {
+      // Registration may have completed while the bounded OS lookup was pending.
+      try { return restore(pid); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return refuse(); }
+      break;
     }
     // Only positively identified interactive native hosts may start a main peer
     // without an adapter-owned handoff. SDK/shim/exec/serve ancestry is untrusted.
