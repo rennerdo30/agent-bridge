@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.30.16
+
+- New and continued jobs no longer stay queued forever behind a finished job whose process ID Windows reused for a protected system process (svchost, WmiPrvSE, SearchFilterHost). Such a reader now counts as gone only when Windows reports a known OS service host under that ID; renamed runtimes, unknown names and failed queries still block the store upgrade (AB-362, #36).
+- On Windows, plugin installs and updates retry briefly when the new version folder cannot be moved into place yet. A failure now names both folders and says what was kept, and a missing plugin build prints the `npx` command to use instead (AB-360, #34).
+- The dashboard yields while reading large job archives, so it stays responsive (AB-294, #37).
+- `search_history` explains its query grammar and filters to agents (AB-336, #30).
+- Windows CI runs in four parallel shards with complete coverage checks, and two intermittent test failures are fixed (#8, #33, #35).
+
 ## 0.30.15
 
 - Storage finalize and absorb keep backups, migration snapshots, `retained_*` tables and old archives without deleting or rewriting retained data. Linked, uncertain or WAL-mode candidates are refused before they are opened (AB-215/AB-228, #18).
