@@ -89,6 +89,13 @@ across all four jobs separately for each Node version. Failed tests still fail
 CI even when their membership is known. A partial collection, missing report,
 unhandled error or pending case produces `coverage: unknown`, retains available
 census evidence and fails the coverage check. Collect-only is not a test pass.
+Per-case beforeEach/afterEach evidence uses pinned5.0.2 serialized
+`TaskResult.hooks` via the documented experimental state API, bound back to the
+same reported case. Genuine `pass` state and balanced started/ended groups are
+required; an end event alone is not success evidence. Failed/incomplete groups,
+missing state or unknown scope produce UNKNOWN without matching error text.
+Only scope/IDs/status/counts are captured for hook provenance. Ordinary assertion
+failures with successful hooks remain known failed cases and fail the test job.
 No unsharded test bodies run. Per-job artifacts retain JSON results, shard lists,
 failures and retry/flaky diagnostics; retries are not added or hidden.
 Artifact names include the workflow attempt so a manual rerun preserves the

@@ -60,7 +60,12 @@ export function collectionCacheProof(ctx, fixtureRoot, lane) {
   return proof;
 }
 
-export function moduleCensus(module) {
+function moduleScope(module) {
+  return { file: relative(realpathSync.native(process.cwd()), realpathSync.native(module.moduleId)).replaceAll("\\", "/"),
+    project: module.project.name, id: module.id };
+}
+
+export function moduleCensus(module, hookEvidence) {
   // Suite hook errors do not necessarily appear on the module or on a case.
   // Retain deterministic scope/count only, never arbitrary hook message/stack.
   const suiteErrors = [];
@@ -72,14 +77,21 @@ export function moduleCensus(module) {
   for (const suite of module.children.suites()) visit(suite);
   const moduleErrors = module.errors().length;
   return {
-    file: relative(realpathSync.native(process.cwd()), realpathSync.native(module.moduleId)).replaceAll("\\", "/"),
-    project: module.project.name, id: module.id,
+    ...moduleScope(module),
     state: module.state(), diagnostic: module.diagnostic(),
     errors: moduleErrors > 0 ? [{ id: module.id, count: moduleErrors }] : [], suiteErrors,
-    tests: [...module.children.allTests()].map(test => ({
-      id: test.id, name: test.fullName, state: test.result().state,
-      note: test.result().note, errors: test.result().errors, ...test.diagnostic(),
-    })),
+    tests: [...module.children.allTests()].map(test => {
+      const hooks = hookEvidence ? hookEvidence(test) : {
+        id: caseIdentity(moduleScope(module), test), status: "not-executed", entries: [],
+      };
+      const result = test.result();
+      return { id: test.id, name: test.fullName, state: result.state, note: result.note, hooks,
+        // An uncertain hook case can carry hook secrets in the ordinary error array.
+        // Keep count here; the original Vitest job/results still retain the failure.
+        errorCount: result.errors?.length ?? 0,
+        errors: ["unknown", "incomplete"].includes(hooks.status) ? undefined : result.errors,
+        ...test.diagnostic() };
+    }),
   };
 }
 
@@ -87,6 +99,53 @@ export function moduleCensus(module) {
 export default class CiReporter {
   collected = new Map();
   metadata = censusMetadata();
+  hookEvents = new Map();
+  ctx;
+
+  onInit(ctx) { this.ctx = ctx; }
+
+  recordHook(hook, field) {
+    if (hook.entity.type !== "test" || !["beforeEach", "afterEach"].includes(hook.name)) return;
+    const id = caseIdentity(moduleScope(hook.entity.module), hook.entity);
+    let evidence = this.hookEvents.get(id);
+    if (!evidence) this.hookEvents.set(id, evidence = {});
+    const counts = evidence[hook.name] ??= { starts: 0, ends: 0 };
+    counts[field]++;
+  }
+
+  onHookStart(hook) { this.recordHook(hook, "starts"); }
+  onHookEnd(hook) { this.recordHook(hook, "ends"); }
+
+  caseHooks(test) {
+    const id = caseIdentity(moduleScope(test.module), test);
+    const proof = { id, status: "unknown", entries: [] };
+    if (this.metadata.vitest !== "5.0.2") return proof;
+    // Documented experimental state API, pinned to the declared TaskResult.hooks
+    // reporting contract. Do not read @internal TestCase.task or error text.
+    const state = this.ctx?.state;
+    if (typeof state?.idMap?.get !== "function" || typeof state?.getReportedEntity !== "function") return proof;
+    const raw = state.idMap.get(test.id);
+    if (!raw || raw.type !== "test" || raw.file?.id !== test.module.id || state.getReportedEntity(raw) !== test) return proof;
+    if ((!raw.result && test.result().state !== "skipped") ||
+      (raw.result && !["pass", "fail", "skip", "todo"].includes(raw.result.state))) return proof;
+    const hooks = raw.result?.hooks === undefined ? {} : raw.result.hooks;
+    if (typeof hooks !== "object" || hooks === null || Array.isArray(hooks) ||
+      Object.keys(hooks).some(name => !["beforeEach", "afterEach"].includes(name))) return proof;
+    const events = this.hookEvents.get(id) ?? {};
+    for (const name of ["beforeEach", "afterEach"]) {
+      const { starts = 0, ends = 0 } = events[name] ?? {};
+      const actual = hooks[name];
+      if (actual === undefined && starts === 0 && ends === 0) continue;
+      // run survives an interrupted/failed awaited hook. pass is genuine serialized
+      // runner state, not an inference from onHookEnd or from the overall case.
+      const complete = actual === "pass" && starts > 0 && ends === starts;
+      const reportedState = ["run", "pass"].includes(actual) ? actual : "unknown";
+      proof.entries.push({ name, reportedState, status: complete ? "passed" : "incomplete", starts, ends });
+    }
+    proof.status = proof.entries.some(entry => entry.status !== "passed") ? "incomplete"
+      : test.result().state === "skipped" && proof.entries.length === 0 ? "not-executed" : "complete";
+    return proof;
+  }
 
   onTestModuleCollected(module) {
     const file = moduleCensus(module);
@@ -103,7 +162,7 @@ export default class CiReporter {
     const root = process.env.AGENT_BRIDGE_CI_RESULTS_DIR;
     if (!root) return;
     const lane = process.env.AGENT_BRIDGE_TEST_LANE ?? "all";
-    const files = modules.map(moduleCensus);
+    const files = modules.map(module => moduleCensus(module, test => this.caseHooks(test)));
     const flaky = files.flatMap(file => file.tests.filter(test => test.flaky || test.retryCount > 0).map(test => ({ file: file.file, ...test })));
     mkdirSync(root, { recursive: true });
     const metadata = this.metadata;

@@ -53,6 +53,13 @@ export function checkShardResults(root, shard, metadata) {
             baseline.tests.map(test => caseIdentity(baseline, test)).sort(), `${lane}: ${file.file}: missing or repeated cases`);
           for (const test of file.tests) {
             assert(["passed", "failed", "skipped"].includes(test.state), `${lane}: ${test.name}: execution pending`);
+            assert.equal(test.hooks?.id, caseIdentity(file, test), `${lane}: per-case hook scope is missing/changed`);
+            assert(test.hooks.status === "complete" || (test.state === "skipped" && test.hooks.status === "not-executed"),
+              `${lane}: per-case hook failure/incomplete/unknown execution`);
+            assert(Array.isArray(test.hooks.entries) && test.hooks.entries.every(entry =>
+              ["beforeEach", "afterEach"].includes(entry.name) && entry.reportedState === "pass" && entry.status === "passed" &&
+              Number.isInteger(entry.starts) && entry.starts > 0 && entry.ends === entry.starts),
+            `${lane}: per-case hook groups did not all pass`);
             const collected = baseline.tests.find(item => item.id === test.id);
             if (collected.state === "skipped") assert.equal(test.state, "skipped", `${lane}: collection skip changed`);
           }

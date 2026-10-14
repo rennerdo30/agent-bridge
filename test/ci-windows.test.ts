@@ -133,6 +133,14 @@ function coverageFixture(fastFile = "test/fast.test.ts") {
   };
   reports.fast.files[0]!.tests[0]!.state = "failed";
   reports.integration.files[0]!.tests[0]!.state = "passed";
+  for (const report of Object.values(reports)) {
+    for (const file of report.files) {
+      for (const test of file.tests) {
+        Object.assign(test, { hooks: { id: JSON.stringify([JSON.stringify([file.file, file.project, file.id]), test.id]),
+          status: test.state === "skipped" ? "not-executed" : "complete", entries: [] } });
+      }
+    }
+  }
   function save() {
     writeFileSync(join(root, "shards.json"), JSON.stringify(inventory));
     for (const lane of ["fast", "integration"] as const) {
@@ -204,6 +212,89 @@ console.log(JSON.stringify(moduleCensus({ moduleId: ${JSON.stringify(moduleId)},
   expect(proof.coverage).toBe("unknown");
   expect(proof.problems.join("\n")).toContain("nested suite/hook error");
   expect(proof.lanes.fast.files[0].tests[0].errors[0].message).toBe("original test failure");
+});
+
+it("distinguishes real beforeEach/afterEach failures from a failed assertion with passed hooks", () => {
+  const root = mkdtempSync(join(tmpdir(), "ci-case-hooks-"));
+  const api = new URL("../node_modules/vitest/dist/node.js", import.meta.url).href;
+  const entry = fileURLToPath(new URL("../node_modules/vitest/dist/index.js", import.meta.url));
+  const reporter = new URL("../scripts/ci-reporter.mjs", import.meta.url).href;
+  const checker = new URL("../scripts/check-shard-results.mjs", import.meta.url).href;
+  const input = `
+import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { createVitest } from ${JSON.stringify(api)};
+import CiReporter, { moduleCensus, censusDigest } from ${JSON.stringify(reporter)};
+import { checkShardResults } from ${JSON.stringify(checker)};
+const root = ${JSON.stringify(root)};
+const rows = [];
+for (const mode of ['beforeEach', 'afterEach', 'assertion']) {
+  const directory = join(root, mode), results = join(directory, 'results'), marker = join(directory, 'callback-ran');
+  mkdirSync(results, { recursive: true });
+  const source = 'import { it, expect, beforeEach, afterEach } from "vitest";\\n'
+    + 'import { writeFileSync } from "node:fs";\\n'
+    + 'beforeEach(() => { if (' + JSON.stringify(mode) + ' === "beforeEach") throw new Error("private fixture hook failure"); });\\n'
+    + 'afterEach(() => { if (' + JSON.stringify(mode) + ' === "afterEach") throw new Error("private fixture hook failure"); });\\n'
+    + 'it("actual hook probe", () => { writeFileSync(' + JSON.stringify(marker) + ', "callback ran"); expect(' + JSON.stringify(mode) + ' !== "assertion").toBe(true); });\\n';
+  writeFileSync(join(directory, 'probe.test.ts'), source);
+  process.env.AGENT_BRIDGE_CI_RESULTS_DIR = results;
+  process.env.AGENT_BRIDGE_TEST_LANE = 'fast';
+  const report = new CiReporter();
+  const ctx = await createVitest({ watch: false, reporters: [report] }, { root: directory, configFile: false,
+    cacheDir: join(directory, 'cache'), resolve: { alias: { vitest: ${JSON.stringify(entry)} } },
+    test: { name: 'ci-case-hook-discriminator', include: ['probe.test.ts'], setupFiles: [], maxWorkers: 1 } });
+  try {
+    await ctx.standalone();
+    const specs = await ctx.globTestSpecifications();
+    assert.equal(specs.length, 1);
+    const collected = await ctx.collectTests(specs);
+    assert.equal(collected.unhandledErrors.length, 0);
+    const files = collected.testModules.map(module => moduleCensus(module));
+    assert.equal(files.length, 1);
+    assert.equal(files[0].tests.length, 1);
+    const inventory = { count: 1, complete: true, metadata: report.metadata, totalFiles: 1,
+      lanes: { fast: [[files[0].file]], integration: [[]] }, unsharded: { fast: files, integration: [] } };
+    inventory.censusSha256 = censusDigest(inventory.unsharded);
+    writeFileSync(join(results, 'shards.json'), JSON.stringify(inventory));
+    await ctx.runTestSpecifications(specs);
+    const diagnostics = JSON.parse(readFileSync(join(results, 'fast-diagnostics.json'), 'utf8'));
+    const empty = { metadata: report.metadata, complete: true, files: [], unhandledErrors: [] };
+    writeFileSync(join(results, 'integration-diagnostics.json'), JSON.stringify(empty));
+    writeFileSync(join(results, 'integration-census.json'), JSON.stringify(empty));
+    let refused = false;
+    try { checkShardResults(results, 1, report.metadata); } catch { refused = true; }
+    const proof = JSON.parse(readFileSync(join(results, 'shard-coverage.json'), 'utf8'));
+    rows.push({ mode, callbackRan: existsSync(marker), reason: diagnostics.reason,
+      state: diagnostics.files[0].tests[0].state, hooks: diagnostics.files[0].tests[0].hooks,
+      errorCount: diagnostics.files[0].tests[0].errorCount, coverage: proof.coverage, refused });
+  } finally { await ctx.close(); }
+}
+console.log('R2_PROBE=' + JSON.stringify(rows));
+// Vitest's genuine failed-run exit code remains 1; never turn it into a pass.
+`;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-"], { input, encoding: "utf8", windowsHide: true });
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(1);
+  const line = result.stdout.split(/\r?\n/).find(value => value.startsWith("R2_PROBE="));
+  expect(line).toBeDefined();
+  const rows = JSON.parse(line!.slice("R2_PROBE=".length));
+  expect(rows.map((row: { mode: string }) => row.mode)).toEqual(["beforeEach", "afterEach", "assertion"]);
+  expect(rows.map((row: { callbackRan: boolean }) => row.callbackRan)).toEqual([false, true, true]);
+  expect(rows.map((row: { coverage: string }) => row.coverage)).toEqual(["unknown", "unknown", "known"]);
+  expect(rows.map((row: { refused: boolean }) => row.refused)).toEqual([true, true, false]);
+  for (const row of rows) {
+    expect(row.reason).toBe("failed");
+    expect(row.state).toBe("failed");
+    expect(row.errorCount).toBeGreaterThan(0);
+  }
+  expect(rows[0].hooks.entries).toContainEqual({ name: "beforeEach", reportedState: "run", status: "incomplete", starts: 1, ends: 0 });
+  expect(rows[1].hooks.entries).toContainEqual({ name: "afterEach", reportedState: "run", status: "incomplete", starts: 1, ends: 0 });
+  expect(rows[2].hooks.status).toBe("complete");
+  expect(rows[2].hooks.entries).toEqual([
+    { name: "beforeEach", reportedState: "pass", status: "passed", starts: 1, ends: 1 },
+    { name: "afterEach", reportedState: "pass", status: "passed", starts: 1, ends: 1 },
+  ]);
 });
 
 it.each(["duplicate", "duplicate-id-different-name", "changed-id", "omitted", "pending", "skip-changed", "invalid-disposition",

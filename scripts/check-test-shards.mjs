@@ -55,7 +55,7 @@ for (const lane of ["fast", "integration"]) {
       // Runtime collection imports setup/module code and evaluates describe/each/runIf.
       // It does not execute test callbacks or hooks. Keep the configured isolation.
       const result = await ctx.collectTests(specs);
-      inventory.unsharded[lane] = result.testModules.map(moduleCensus).sort((a, b) => a.file.localeCompare(b.file));
+      inventory.unsharded[lane] = result.testModules.map(module => moduleCensus(module)).sort((a, b) => a.file.localeCompare(b.file));
       inventory.collectionErrors = result.unhandledErrors;
       save();
       assert.equal(result.unhandledErrors.length, 0, `${lane}: collection errors; coverage unknown`);
