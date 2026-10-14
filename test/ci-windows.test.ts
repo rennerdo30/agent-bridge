@@ -40,7 +40,7 @@ it.runIf(process.platform === "win32" && process.env.AGENT_BRIDGE_CI_WINDOWS ===
   expect(process.env.CI).toBe("true");
 });
 
-it.runIf(process.platform === "win32").each(["wrapper", "powershell"])("refuses FreshVolume before any fixture or volume mutation (%s entry)", entry => {
+it.runIf(process.platform === "win32").each(["wrapper", "powershell", "powershell-abbreviation"])("refuses FreshVolume before any fixture or volume mutation (%s entry)", entry => {
   const parent = mkdtempSync(join(tmpdir(), "ci-vhd-refusal-"));
   const evidence = join(parent, "retained-evidence.json");
   writeFileSync(evidence, '{"retained":true}\n');
@@ -54,7 +54,8 @@ it.runIf(process.platform === "win32").each(["wrapper", "powershell"])("refuses 
   const script = fileURLToPath(new URL(`../scripts/test-ci-windows.${entry === "wrapper" ? "mjs" : "ps1"}`, import.meta.url));
   const result = entry === "wrapper"
     ? spawnSync(process.execPath, [script, "-FreshVolume"], { env, encoding: "utf8", windowsHide: true })
-    : spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-FreshVolume"],
+    : spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script,
+      entry === "powershell-abbreviation" ? "-Fresh" : "-FreshVolume"],
       { env, encoding: "utf8", windowsHide: true });
   expect(result.error).toBeUndefined();
   expect(result.status).toBe(1);
