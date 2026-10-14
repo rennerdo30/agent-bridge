@@ -5,6 +5,7 @@ import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlit
 import { decodeBytes, decodeText } from "./history-codec.js";
 import { chainRows } from "./history-migration.js";
 import { HISTORY_V2_COPY_TABLES } from "./history-schema-v2.js";
+import { openPreservedReader } from "./storage-preservation.js";
 
 /** Row-level proof that old data is redundant (owner rule: storage finalize may delete something only when every
  * row in it still exists in the live databases, checked at deletion time). Anything unproven is kept and reported.
@@ -34,6 +35,8 @@ export interface ProofContext {
   history?: DatabaseSync;
   reference?: ReferenceSnapshot;
   progress?: ProofProgress;
+  /** Finalize/absorb retain candidates without opening unsafe WAL/sidecar/path states. */
+  preserveCandidates?: boolean;
 }
 
 /** Natural keys and immutable content for tables whose ids differ between copies or whose rows must match byte for byte. */
@@ -439,7 +442,7 @@ const samePath = (a: string, b: string) => process.platform === "win32" ? resolv
 /** Every row of every table (search indexes excepted, they are derived) in a SQLite file exists in a live database. */
 export function proveDatabase(path: string, ctx: ProofContext): string[] {
   let db: DatabaseSync;
-  try { db = new DatabaseSync(path, { readOnly: true, timeout: 1000 }); }
+  try { db = ctx.preserveCandidates ? openPreservedReader(path, 1000) : new DatabaseSync(path, { readOnly: true, timeout: 1000 }); }
   catch (err) { return [`cannot be opened (${(err as Error).message})`]; }
   try {
     const reasons: string[] = [];
@@ -462,10 +465,10 @@ export function proveDatabase(path: string, ctx: ProofContext): string[] {
 }
 
 /** Rows a proof will read (row-count estimate from max(rowid), no scan), for progress and ETA. */
-export function estimateRows(path: string): number {
+export function estimateRows(path: string, preserveCandidates = false): number {
   if (!existsSync(path) || !lstatSync(path).isFile() || !isSqlite(path)) return 0;
   let db: DatabaseSync;
-  try { db = new DatabaseSync(path, { readOnly: true, timeout: 1000 }); } catch { return 0; }
+  try { db = preserveCandidates ? openPreservedReader(path, 1000) : new DatabaseSync(path, { readOnly: true, timeout: 1000 }); } catch { return 0; }
   try {
     let n = 0;
     for (const table of provableTables(db)) { try { n += Number(db.prepare(`SELECT coalesce(max(rowid),0) n FROM ${q(table)}`).get()!.n); } catch { /* WITHOUT ROWID */ } }
