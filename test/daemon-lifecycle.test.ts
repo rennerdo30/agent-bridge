@@ -25,11 +25,16 @@ let startupEvidence: Array<Array<{ phase: string; code?: string | number; stage?
 let dashboards: Array<() => Promise<void>>;
 const CLIENT_COUNT_CAPTURE_LIMIT = 129;
 type ClientCount = number | "unavailable";
+type ClientObservationFlag = boolean | "unavailable";
 type ClientCountSnapshot = {
   stage: "original_core_status_reply"; parent_capture: "partial"; server_connection_origin: "unattributed";
   server_authenticated_count: ClientCount; returned_known_clients: ClientCount;
   auth_returned: ClientCount; hello_returned: ClientCount; close_requested_not_observed: ClientCount;
   close_observed: ClientCount; connect_attempt_unconfirmed: ClientCount; overflow: boolean;
+  known_auth_hello_no_close_observed: ClientCount; known_auth_no_hello_no_close_observed: ClientCount;
+  known_auth_close_observed: ClientCount; known_no_auth_close_observed: ClientCount; known_no_auth_no_close_observed: ClientCount;
+  requester_auth_returned: ClientObservationFlag; requester_hello_returned: ClientObservationFlag;
+  requester_close_requested: ClientObservationFlag; requester_close_observed: ClientObservationFlag;
 };
 type KnownClientObservation = { auth: boolean; hello: boolean; closeRequested: boolean; closeObserved: boolean; closed: () => void };
 type ClientCountFixture = { pipe: string; active: boolean; incomplete: boolean; overflow: boolean;
@@ -45,7 +50,7 @@ function boundedClientCount(fixture: ClientCountFixture, value: unknown): Client
   if (value > CLIENT_COUNT_CAPTURE_LIMIT) fixture.overflow = true;
   return Math.min(value, CLIENT_COUNT_CAPTURE_LIMIT);
 }
-function cacheClientCountReply(fixture: ClientCountFixture, response: unknown): void {
+function cacheClientCountReply(fixture: ClientCountFixture, response: unknown, requester: BridgeClient): void {
   if (fixture.snapshot) return; // One original response; never sample again during teardown.
   // Cache only the original response's own primitive count, without invoking a
   // getter or retaining any response identity, PID, name or accepted content.
@@ -53,12 +58,24 @@ function cacheClientCountReply(fixture: ClientCountFixture, response: unknown): 
     ? Object.getOwnPropertyDescriptor(response, "connectedClients")?.value : undefined;
   const serverCount = boundedClientCount(fixture, count), known = [...fixture.clients.values()];
   const capturedCount = (value: number): ClientCount => fixture.incomplete ? "unavailable" : boundedClientCount(fixture, value);
+  // Cross-tabs of ORIGINAL auth/hello settlements and parent client close events
+  // only. An observed parent close never proves server removal or retirement.
+  const requesting = fixture.clients.get(requester);
+  const capturedFlag = (value: boolean | undefined): ClientObservationFlag => fixture.incomplete || value === undefined ? "unavailable" : value;
   fixture.snapshot = { stage: "original_core_status_reply", parent_capture: "partial", server_connection_origin: "unattributed",
     server_authenticated_count: serverCount, returned_known_clients: capturedCount(known.length),
     auth_returned: capturedCount(known.filter(value => value.auth).length), hello_returned: capturedCount(known.filter(value => value.hello).length),
     close_requested_not_observed: capturedCount(known.filter(value => value.closeRequested && !value.closeObserved).length),
     close_observed: capturedCount(known.filter(value => value.closeObserved).length),
-    connect_attempt_unconfirmed: capturedCount(fixture.attempts.filter(value => !value.returned).length), overflow: fixture.overflow };
+    connect_attempt_unconfirmed: capturedCount(fixture.attempts.filter(value => !value.returned).length),
+    known_auth_hello_no_close_observed: capturedCount(known.filter(value => value.auth && value.hello && !value.closeObserved).length),
+    known_auth_no_hello_no_close_observed: capturedCount(known.filter(value => value.auth && !value.hello && !value.closeObserved).length),
+    known_auth_close_observed: capturedCount(known.filter(value => value.auth && value.closeObserved).length),
+    known_no_auth_close_observed: capturedCount(known.filter(value => !value.auth && value.closeObserved).length),
+    known_no_auth_no_close_observed: capturedCount(known.filter(value => !value.auth && !value.closeObserved).length),
+    requester_auth_returned: capturedFlag(requesting?.auth), requester_hello_returned: capturedFlag(requesting?.hello),
+    requester_close_requested: capturedFlag(requesting?.closeRequested), requester_close_observed: capturedFlag(requesting?.closeObserved),
+    overflow: fixture.overflow };
 }
 function restoreClientCountObservation(): void {
   const fixture = clientCountFixture;
@@ -111,7 +128,7 @@ function observeConcurrentClientCount(): void {
         void originalPromise.then(response => observeClientCount(fixture, () => {
           if (args[0] === "auth") observation.auth = true;
           else if (args[0] === "hello") observation.hello = true;
-          else cacheClientCountReply(fixture, response);
+          else cacheClientCountReply(fixture, response, this);
         }), () => { /* Observation of rejected auth/hello/status grants no success or resource state. */ });
       });
       return originalPromise;
@@ -137,10 +154,16 @@ function publishClientCountObservation(): void {
       typeof snapshot.parent_capture !== "string" || snapshot.parent_capture !== "partial" ||
       typeof snapshot.server_connection_origin !== "string" || snapshot.server_connection_origin !== "unattributed" || typeof snapshot.overflow !== "boolean") return;
     const fields = ["server_authenticated_count", "returned_known_clients", "auth_returned", "hello_returned",
-      "close_requested_not_observed", "close_observed", "connect_attempt_unconfirmed"] as const;
+      "close_requested_not_observed", "close_observed", "connect_attempt_unconfirmed", "known_auth_hello_no_close_observed",
+      "known_auth_no_hello_no_close_observed", "known_auth_close_observed", "known_no_auth_close_observed", "known_no_auth_no_close_observed"] as const;
     for (const field of fields) {
       const value = snapshot[field];
       if (value !== "unavailable" && (typeof value !== "number" || !Number.isFinite(value) || !Number.isSafeInteger(value) || value < 0 || value > CLIENT_COUNT_CAPTURE_LIMIT)) return;
+    }
+    const flags = ["requester_auth_returned", "requester_hello_returned", "requester_close_requested", "requester_close_observed"] as const;
+    for (const field of flags) {
+      const value = snapshot[field];
+      if (value !== "unavailable" && typeof value !== "boolean") return;
     }
     const directory = join(process.cwd(), ".agent-bridge-test", "ab325-artifact"), stat = lstatSync(directory);
     if (!stat.isDirectory() || stat.isSymbolicLink()) return;
@@ -148,7 +171,7 @@ function publishClientCountObservation(): void {
     if (existsSync(destination)) { const previous = lstatSync(destination); if (!previous.isFile() || previous.isSymbolicLink() || previous.nlink !== 1) return; }
     // Original coreStatus count is not a parent census. In particular, remote
     // child/startup connections outside this map remain unattributed, not probes.
-    writeFileSync(destination, JSON.stringify({ schema: 1, sourceHead, runId, runAttempt,
+    writeFileSync(destination, JSON.stringify({ schema: 2, sourceHead, runId, runAttempt,
       fixture: "concurrent_start_client_count", countLimit: CLIENT_COUNT_CAPTURE_LIMIT, observations: [snapshot] }) + "\n");
   } catch { /* Only post-teardown diagnostic output failure is swallowed. */ }
 }
