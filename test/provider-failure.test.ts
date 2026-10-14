@@ -73,6 +73,20 @@ describe("per-CLI provider failure evidence", () => {
     expect(classifyProviderFailure({ agent: "claude", model: "m", message: "", codes: [" OVERLOADED_ERROR "] }).kind).toBe("capacity");
   });
 
+  it.each([
+    ["claude", "Service is overloaded", "Service is no longer overloaded"],
+    ["opencode", "Service is overloaded", "Service is no longer overloaded"],
+    ["codex", "Selected model is at capacity", "Selected model is no longer at capacity"],
+    ["antigravity", "Model is overloaded", "Model is no longer overloaded"],
+  ] as const)("%s preserves positive capacity but refuses no-longer negation", (agent, positive, negative) => {
+    expect(classifyProviderFailure({ agent, model: "m", message: positive })).toMatchObject({ kind: "capacity", retryable: true });
+    expect(classifyProviderFailure({ agent, model: "m", message: negative })).toMatchObject({ kind: "unknown", retryable: false });
+  });
+
+  it.each(["Service is no longer overloaded", "Service is no-longer overloaded", "Selected model is no longer at capacity"])("no-longer text remains nonretryable even beside a transient code: %s", message => {
+    for (const agent of agents) expect(classifyProviderFailure({ agent, model: null, message, codes: ["overloaded_error", "model_at_capacity"] })).toMatchObject({ kind: "unknown", retryable: false });
+  });
+
   it.each(["Model is not at capacity", "It is not true that model is at capacity", "Model is at capacity: false",
     "Model capacity exhausted? unknown", "Service is not overloaded", "No overload detected", "Overloaded: false",
     "Possibly overloaded", "Unknown whether model is overloaded", "No usage limit reached", "Usage limit status unknown",
@@ -109,6 +123,33 @@ describe("per-CLI provider failure evidence", () => {
       expect(result).not.toHaveProperty("resetAt");
       expect(result).not.toHaveProperty("retryAfterMs");
     }
+  });
+
+  it.each([
+    ["Usage limit reached (reset time unknown)", "usage_limit"],
+    ["Usage limit reached (details unknown)", "usage_limit"],
+    ["Usage limit reached (model attribution unknown)", "usage_limit"],
+    ["Weekly limit reached (the reset date unknown)", "usage_limit"],
+    ["Your credit balance is too low (billing instructions unknown)", "no_credits"],
+    ["No credits (reset date unknown)", "no_credits"],
+    ["Billing required (payment instructions unknown)", "billing_required"],
+  ] as const)("preserves terminal proof with a parenthesized named detail: %s", (message, kind) => {
+    for (const agent of agents) {
+      const result = classifyProviderFailure({ agent, model: null, message });
+      expect(result).toMatchObject({ kind, retryable: false, model: null, message });
+      expect(result).not.toHaveProperty("resetAt");
+      expect(result).not.toHaveProperty("retryAfterMs");
+    }
+  });
+
+  it.each(["Usage limit not reached (reset time unknown)", "Usage limit reached (quota status unknown)",
+    "Usage limit reached (actually false)", "Usage limit reached (usage limit not reached)",
+    "Usage limit reached (reset time unknown and usage limit not reached)",
+    "Usage limit reached (details unknown and credits status unknown)",
+    "Usage limit reached (details unknown) (quota status unknown)",
+    "Usage limit reached (reset time unknown), actually not reached",
+    "Usage limit reached (reset time unknown (quota status unknown))"])("does not strip arbitrary/contradictory parentheses into terminal proof: %s", message => {
+    for (const agent of agents) expect(classifyProviderFailure({ agent, model: null, message })).toMatchObject({ kind: "unknown", retryable: false });
   });
 
   it.each(["Usage limit not reached, reset time unknown", "Usage limit reached, actually not reached",

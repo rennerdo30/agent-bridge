@@ -51,7 +51,7 @@ const CREDIT_MESSAGE = /\bno credits(?: available| remaining| left)?(?:[.!,:;]|$
 const BILLING_MESSAGE = /\bbilling(?: is)? required\b|\bpayment(?: is)? required\b/i;
 const RATE_LIMIT_MESSAGE = /\brate[ _-]?limit (?:exceeded|reached)\b|\brate[ _-]?limited\b|\brate_limit_error\b|\btoo many requests\b/i;
 // These are observations/questions/denials, not positive failure facts. Fail closed on ambiguity.
-const NON_ASSERTION = /\b(?:not|never|false|unknown|unclear|unconfirmed|maybe|possibly|might|whether|if|could|example|quoted)\b|\bno (?:evidence|indication|usage limit|weekly limit|plan limit|rate limit|overload)\b|\?/i;
+const NON_ASSERTION = /\b(?:not|never|false|unknown|unclear|unconfirmed|maybe|possibly|might|whether|if|could|example|quoted)\b|\bno[ -]longer\b|\bno (?:evidence|indication|usage limit|weekly limit|plan limit|rate limit|overload)\b|\?/i;
 // Uncertainty about attribution/reset/instructions does not deny an exhaustion predicate.
 const DETAIL_QUALIFIER = /^(?:the )?(?:reset(?: time| date)?|model(?: attribution)?|details|billing instructions|payment instructions)\b/i;
 const EXHAUSTION_TOPIC = /\b(?:quota|credits?|balance|usage|limit|reached|exceeded|exhausted|required)\b|\btoo low\b/i;
@@ -76,13 +76,18 @@ export function classifyProviderFailure(input: ProviderFailureInput): ProviderFa
   // Separate independent sentences/fragments before checking each exhaustion subject.
   const assertions = messages.flatMap(message => message.split(/[.;]\s+|\r?\n/));
   const asserts = (pattern: RegExp) => assertions.some(message => pattern.test(message) && !NON_ASSERTION.test(message));
+  // Separate only named non-quota metadata parentheses, preserving their text as clauses.
+  // Unknown quota or contradictory exhaustion parentheses are never exempted.
+  const terminalStatements = assertions.map(message => message.replace(/\(([^()]*)\)/g, (whole, detail: string) => {
+    const qualifier = detail.trim();
+    return DETAIL_QUALIFIER.test(qualifier) && !EXHAUSTION_TOPIC.test(qualifier) ? `, ${qualifier}, ` : whole;
+  }).split(/,\s*/).map(clause => clause.trim()).filter(Boolean));
   const assertsTerminal = (pattern: RegExp, subject: RegExp) => {
     const detailOnly = (clause: string) => DETAIL_QUALIFIER.test(clause) && !EXHAUSTION_TOPIC.test(clause);
     // A separate denial of the same exhaustion subject is a contradiction, not metadata.
-    if (assertions.some(message => message.split(/,\s*/).some(clause => subject.test(clause)
+    if (terminalStatements.some(clauses => clauses.some(clause => subject.test(clause)
       && NON_ASSERTION.test(clause) && !detailOnly(clause)))) return false;
-    return assertions.some(message => {
-      const clauses = message.split(/,\s*/);
+    return terminalStatements.some(clauses => {
       const positive = clauses.some(clause => pattern.test(clause) && !NON_ASSERTION.test(clause));
       // An explicit denial/uncertain quota clause vetoes this statement, including anaphoric
       // "actually false/not reached". Only narrowly named non-quota details may stay unknown.
