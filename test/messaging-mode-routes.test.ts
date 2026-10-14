@@ -76,7 +76,7 @@ it.each(["idle", "busy"] as const)("all 25 sender/receiver pairs at %s use real 
       expect(result.isError).not.toBe(true);
       expect(modeFrom(result)).toMatchObject({ requested: "auto", effective: "mailbox", stage: "stored",
         capabilities: { receiverRole: "session", activeSteering: false, interruptRestart: false, queue: false } });
-      expect(result.structuredContent?.mode).toEqual(modeFrom(result));
+      expect((result.structuredContent as { mode?: unknown } | undefined)?.mode).toEqual(modeFrom(result));
       await until(() => nodes.get(receiver)!.unread().some(m => m.body === `${sender}->${receiver}:${activity}`));
       expect(nodes.get(receiver)!.unread().filter(m => m.body === "unsupported mode")).toHaveLength(0);
     }
