@@ -9,6 +9,7 @@ import { BridgeClient, clientConnectionClosedDiagnostic, CLIENT_TRANSPORT_DIAGNO
 import { nullLogger } from "../src/core/logger.js";
 import type { Logger } from "../src/core/logger.js";
 import type { RequestMap } from "../src/core/protocol.js";
+import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
@@ -99,7 +100,7 @@ describe("real transport send admission boundaries (no production recovery chang
     const host = env.node("unencoded-host"); await host.start();
     const observations: Array<Record<string, unknown>> = [];
     const log: Logger = { ...nullLogger, info: (event, data) => { if (event === CLIENT_TRANSPORT_DIAGNOSTIC_EVENT && data) observations.push(data); }, child: () => log };
-    const client = await BridgeClient.connect(env.pipe, log); await client.request("auth", { token: loadOrCreateToken(env.home) });
+    const client = await BridgeClient.connect(env.pipe, log); await client.request("auth", { token: loadOrCreateToken(env.home), protocol: PROTOCOL_VERSION });
     const socket = Reflect.get(client, "socket") as Socket, originalWrite = socket.write, originalDescriptor = Object.getOwnPropertyDescriptor(socket, "write");
     const order: string[] = [], failure = new Error("SIMULATED argument encoding failure"), id = randomUUID(); let actualWrites = 0;
     Object.defineProperty(socket, "write", { configurable: true, get: () => {
@@ -132,7 +133,7 @@ describe("real transport send admission boundaries (no production recovery chang
     const log: Logger = { ...nullLogger, info: (event, data) => {
       if (event === CLIENT_TRANSPORT_DIAGNOSTIC_EVENT && data) { observations.push(data); throw loggerFailure; }
     }, child: () => log };
-    const client = await BridgeClient.connect(env.pipe, log); await client.request("auth", { token: loadOrCreateToken(env.home) });
+    const client = await BridgeClient.connect(env.pipe, log); await client.request("auth", { token: loadOrCreateToken(env.home), protocol: PROTOCOL_VERSION });
     const socket = Reflect.get(client, "socket") as Socket, closed = once(client, "close"); client.close(); await closed;
     const writes = vi.spyOn(socket, "write"), id = randomUUID();
     const requests = Array.from({ length: CLIENT_TRANSPORT_DIAGNOSTIC_RECORD_LIMIT + 4 }, () => client.request("trackedSend", { messageId: id, to: "offline-capped", body: "Unwritten capped bytes" }));
