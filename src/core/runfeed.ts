@@ -1,11 +1,12 @@
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "./json-store.js";
 import { archiveOldRuns, archiveRun, finishedRunLine } from "./run-archive.js";
 import { storageLease } from "./storage-lock.js";
 import { refreshStorePeerIdentities } from "./store-compatibility.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { displayPathText } from "./display-paths.js";
+import { readRunnerStateRecord, writeRunnerStateRecord } from "./runner-store.js";
 
 /**
  * Live feed of one delegated run: every progress line goes to ~/.agent-bridge/runs/<name>.log (so the
@@ -159,6 +160,18 @@ export function startRunFeed(opts: RunFeedOptions): RunFeed {
   try { mkdirSync(dir, { recursive: true }); writeMeta(opts.requireMetadata); }
   catch (error) { release(); throw error; }
   write(opts.header);
+  // Only this runner can name its current feed. Keep the generation on the
+  // witness: a previous turn's path must never suppress legacy discovery.
+  const job = opts.meta?.job, jobStartedAt = opts.meta?.jobStartedAt;
+  if (typeof job === "string" && typeof jobStartedAt === "number" && Number.isFinite(jobStartedAt)) {
+    const id = job.replace(/^.*-(?:job|ask)-/, "");
+    try {
+      const state = readRunnerStateRecord(opts.home, id);
+      if (state?.pid === process.pid && state.peer === job && state.status === "running" && Number(state.updatedAt) >= jobStartedAt) {
+        writeRunnerStateRecord(opts.home, id, { ...state, currentRun: { id, startedAt: jobStartedAt, log: basename(logPath) } });
+      }
+    } catch { /* Optional witness unavailable: recovery keeps its full discovery fallback. */ }
+  }
   pruneOldLogs(dir);
 
   const started = now();

@@ -14,6 +14,8 @@ import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 import { recoverJobRecord, recoverJobRecordAsync } from "../src/core/job-recovery.js";
+import { startRunFeed } from "../src/core/runfeed.js";
+import { readRunnerStateRecord, writeRunnerStateRecord } from "../src/core/runner-store.js";
 const ioMocks=vi.hoisted(()=>({open:vi.fn(),original:undefined as typeof import("node:fs/promises").open|undefined}));
 vi.mock("node:fs/promises",async(importOriginal)=>{const actual=await importOriginal<typeof import("node:fs/promises")>();ioMocks.original=actual.open;return {...actual,open:ioMocks.open};});
 let env: TestEnv;
@@ -26,6 +28,52 @@ function fixture(prompt:string, owner:string, id="asynclegacy") {
   writeFileSync(`${run}.log`,text); writeFileSync(`${run}.json`,JSON.stringify({job:name,session:"retained-native",workdir:env.home,byCwd:env.home}));
   return {name,file:`${run}.log`,text};
 }
+it("publishes and directly recovers the current hosted feed without catalog discovery",async()=>{
+  const id="witnessed",name=`codex-job-${id}`,startedAt=Date.now()-60_000;
+  const job={id,name,agent:"codex",owner:"owner",status:"running",startedAt,sessionId:"current-native",prompt:"exact task",host:{pid:process.pid,peer:name,startedAt},args:{future:{keep:true}}};
+  writeFileSync(join(env.home,"jobs.json"),JSON.stringify({version:4,jobs:[job]}));
+  writeRunnerStateRecord(env.home,id,{pid:process.pid,peer:name,status:"running",updatedAt:Date.now(),sessionId:"current-native"});
+  const feed=startRunFeed({home:env.home,name:"codex-independent-run-id",header:"header by owner\nexact task\n---",meta:{job:name,jobStartedAt:startedAt,by:"owner",session:"current-native",effort:"high"}});
+  try{
+    expect(readRunnerStateRecord(env.home,id)?.currentRun).toEqual({id,startedAt,log:feed.logPath.split(/[\\/]/).at(-1)});
+    const discovery=vi.spyOn(history,"readRunLogsResponsive");
+    const recovered=await recoverJobRecordAsync(env.home,name);
+    expect(discovery).not.toHaveBeenCalled();
+    expect(recovered).toEqual(recoverJobRecord(env.home,name));
+    expect(recovered).toMatchObject({status:"running",sessionId:"current-native",prompt:"exact task",args:{effort:"high",future:{keep:true}}});
+  }finally{feed.end("done");}
+});
+it("keeps newer metadata-only misnamed runs ahead of matching suffixes without a witness",async()=>{
+  const id="misnamed",name=`codex-job-${id}`,root=join(env.home,"runs");mkdirSync(root);
+  for(const [run,at,session]of [[`2026-10-08-01-02-03-codex-${id}`,1,"old-native"],["2026-10-08-02-03-04-opencode-unrelated",2,"new-native"]]as const){
+    writeFileSync(join(root,run+".json"),JSON.stringify({job:name,jobStartedAt:at,by:"owner",session,effort:"high"}));
+    writeFileSync(join(root,run+".log"),`header by owner\n         task ${at}\n         ---\n`);
+  }
+  const recovered=await recoverJobRecordAsync(env.home,name);
+  expect(recovered).toEqual(recoverJobRecord(env.home,name));
+  expect(recovered).toMatchObject({sessionId:"new-native",prompt:"task 2",startedAt:2});
+});
+it.each(["old-turn","wrong-id","missing","wrong-metadata","unreadable"])("falls back when the current-run witness is %s",async(mode)=>{
+  const id="badwitness",name=`codex-job-${id}`,startedAt=Date.now()-60_000,root=join(env.home,"runs");mkdirSync(root);
+  const run="2026-10-08-01-02-03-codex-witness";
+  writeFileSync(join(root,run+".json"),JSON.stringify({job:mode==="wrong-metadata"?"codex-job-foreign":name,jobStartedAt:startedAt,by:"owner",session:"current-native"}));
+  writeFileSync(join(root,run+".log"),"header by owner\n         full task\n         ---\n");
+  const job={id,name,agent:"codex",owner:"owner",status:"running",startedAt,sessionId:"current-native",prompt:"exact task",host:{pid:process.pid,peer:name,startedAt},args:{}};
+  writeFileSync(join(env.home,"jobs.json"),JSON.stringify({version:4,jobs:[job]}));
+  writeRunnerStateRecord(env.home,id,{pid:process.pid,peer:name,status:"running",updatedAt:Date.now(),currentRun:{id:mode==="wrong-id"?"foreign":id,startedAt:mode==="old-turn"?startedAt-1:startedAt,log:mode==="missing"?"absent.log":run+".log"}});
+  if(mode==="unreadable"){
+    const readSnapshot=cache.readJsonSnapshot;let inaccessible=true;
+    vi.spyOn(cache,"readJsonSnapshot").mockImplementation((...args)=>{
+      if(inaccessible&&args[0]===join(root,run+".json")){inaccessible=false;throw Object.assign(new Error("inaccessible"),{code:"EACCES"});}
+      return readSnapshot(...args);
+    });
+  }
+  const discovery=vi.spyOn(history,"readRunLogsResponsive");
+  const recovered=await recoverJobRecordAsync(env.home,name);
+  expect(discovery).toHaveBeenCalled();
+  expect(recovered).toEqual(recoverJobRecord(env.home,name));
+  expect(recovered).toMatchObject({owner:"owner",prompt:"exact task",sessionId:"current-native"});
+});
 it("yields throughout a cold archive/run catalog, matches offline recovery and clones only selected jobs",async()=>{
   mkdirSync(join(env.home,"archive"));mkdirSync(join(env.home,"runs"));mkdirSync(join(env.home,"jobs"));
   const id="responsivecold",name=`codex-job-${id}`, selected={id,name,agent:"codex",owner:"current-owner",rootName:"current-owner",status:"interrupted",startedAt:5,sessionId:"retained-native",prompt:"Exact cold retained context",args:{title:"Retained title",future:{keep:true}},future:{context:["keep"]}};
