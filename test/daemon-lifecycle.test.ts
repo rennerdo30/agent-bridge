@@ -335,7 +335,7 @@ describe("standalone demand-start broker", () => {
     expect(existsSync(join(env.home, "token"))).toBe(false);
     expect(existsSync(join(env.home, "logs"))).toBe(false);
     const a = node("status-main"); await a.start(); const pid = await remember();
-    expect(inspect()).toMatchObject({ mode: "daemon", pid, version: "0.30.14", runningJobsEvidence: "legacy_registry_labels_not_execution" });
+    expect(inspect()).toMatchObject({ mode: "daemon", pid, version: "0.30.15", runningJobsEvidence: "legacy_registry_labels_not_execution" });
     expect((await a.peers()).map(peer => peer.name)).toEqual(["status-main"]);
     const token = join(env.home, "token"), retainedToken = join(env.home, "fixture-retained-token");
     renameSync(token, retainedToken);
@@ -354,7 +354,7 @@ describe("standalone demand-start broker", () => {
     const identity = await readProcessIdentity(pid);
     expect(identity).toBeTruthy(); owned.set(pid, identity!); expect(pid).not.toBe(process.pid);
     const statusClient = await client();
-    try { expect(await statusClient.request("coreStatus", {})).toMatchObject({ mode: "daemon", pid, version: "0.30.14", connectedClients: 11, runningJobsEvidence: "legacy_registry_labels_not_execution" }); }
+    try { expect(await statusClient.request("coreStatus", {})).toMatchObject({ mode: "daemon", pid, version: "0.30.15", connectedClients: 11, runningJobsEvidence: "legacy_registry_labels_not_execution" }); }
     finally { statusClient.close(); }
     expect(peers.every(peer => !peer.isBroker)).toBe(true);
     expect(await peers[0]!.peers()).toHaveLength(10);
