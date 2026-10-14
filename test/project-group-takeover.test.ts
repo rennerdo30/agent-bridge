@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import { codexHost } from "./helpers.js";
-import { readRunnerState } from "../src/mcp/job-host.js";
+import { readRunnerState, writeRunnerState } from "../src/mcp/job-host.js";
 import { readStore } from "../src/mcp/jobs.js";
 import { parentFromEnv } from "../src/core/parent-link.js";
 import { listPendingApprovals } from "../src/core/relay.js";
@@ -16,6 +16,10 @@ import { LOG_DIR_NAME, LOG_FILE_NAME } from "../src/core/constants.js";
 import { STARTUP_CAPACITY } from "../src/core/startup-admission.js";
 import { completionMessageId } from "../src/core/completion.js";
 import { resolveDbPath } from "../src/core/paths.js";
+import { unquarantined } from "../src/core/sqlite-maintenance.js";
+import { MessageStore } from "../src/core/store.js";
+import { nullLogger } from "../src/core/logger.js";
+import { ReadJournal } from "../src/core/read-journal.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 function linkReady(path: string): boolean {
@@ -127,7 +131,7 @@ function finalReportsReady(home: string, jobs: readonly TakeoverJob[]): boolean 
   try {
     db = new DatabaseSync(resolveDbPath(home), { readOnly: true });
     db.exec("PRAGMA busy_timeout=0");
-    const stored = db.prepare("SELECT 1 FROM deliverable_messages WHERE id=? AND from_id=? LIMIT 1");
+    const stored = db.prepare(`SELECT 1 FROM messages WHERE id=? AND from_id=? AND ${unquarantined("messages")} LIMIT 1`);
     return states.every((state, index) => state?.delivered === true || Boolean(diagnosticUuid(state?.reportId) &&
       stored.get(completionMessageId(`job:${jobs[index]!.id}`, state!.reportId!), `job:${jobs[index]!.id}`)));
   } catch { return false; }
@@ -154,7 +158,7 @@ function finalReportDiagnostics(home: string, jobs: readonly TakeoverJob[], prim
       let state: ReturnType<typeof readRunnerState> = null, stateError: string | undefined;
       try { state = readRunnerState(home, job.id); } catch (error) { stateError = safeError(error); }
       const reportId = diagnosticUuid(state?.reportId), messageId = reportId ? completionMessageId(`job:${job.id}`, reportId) : undefined;
-      const envelopes = messageId ? select("SELECT recipient,read_at FROM deliverable_messages WHERE id=? LIMIT 4", messageId) : undefined;
+      const envelopes = messageId ? select(`SELECT recipient,read_at FROM messages WHERE id=? AND ${unquarantined("messages")} LIMIT 4`, messageId) : undefined;
       const routes = messageId ? select("SELECT recipient,consumed_at FROM job_delivery_routes WHERE id=? LIMIT 4", messageId) : undefined;
       const reads = messageId ? select("SELECT identity,read_at FROM bridge_read_receipts WHERE message_id=? LIMIT 4", messageId) : undefined;
       const identities = [primary, "codex-master"].map(name => ({ label: name, hash: createHash("sha256").update(`name:${name}`).digest("hex") }));
@@ -244,6 +248,32 @@ function readinessEvents(home: string, names: ReadonlySet<string>, runnerPids: R
   } catch { return []; }
   finally { try { if (fd !== undefined) closeSync(fd); } catch { /* Keep the original readiness failure. */ } }
 }
+
+it("observes a stored final and consumption receipts on a separate read-only connection before delivery confirmation", () => {
+  const job = { id: "00ab0292", name: "codex-job-00ab0292" }, reportId = "11111111-1111-4111-8111-111111111111";
+  const report = "Subagent codex-job-00ab0292 (codex) done after 0s.\n\nREPORT_BODY_EXCLUDED_FROM_DIAGNOSTICS";
+  const store = new MessageStore(env.db, nullLogger);
+  try {
+    writeRunnerState(env.home, job.id, { pid: process.pid, peer: job.name, status: "done", updatedAt: Date.now(), report, reportId, delivered: false });
+    expect(finalReportsReady(env.home, [job])).toBe(false);
+    const id = completionMessageId(`job:${job.id}`, reportId);
+    store.insertJobDelivery({ id, from: { id: `job:${job.id}`, name: job.name, agent: "codex" }, to: "codex-master", recipient: "codex-master",
+      conversationId: `job-${job.id}:fallback`, replyTo: null, hop: 0, body: report, createdAt: Date.now(), readAt: null });
+    expect(readRunnerState(env.home, job.id)?.delivered).toBe(false);
+    expect(finalReportsReady(env.home, [job])).toBe(true);
+    const pending = finalReportDiagnostics(env.home, [job], "opencode-master", "opencode", 0, "");
+    expect(pending.jobs[0]?.envelopes).toEqual({ rows: [{ recipient: "codex-master", readAt: null }] });
+    expect(pending.jobs[0]?.routes).toEqual({ rows: [{ recipient: "codex-master", consumedAt: null }] });
+    const at = Date.now();
+    store.markRead("codex-master", [id], at);
+    new ReadJournal(env.home).append("name:codex-master", [id]);
+    const consumed = finalReportDiagnostics(env.home, [job], "opencode-master", "opencode", 1, "");
+    expect(consumed.jobs[0]?.envelopes).toEqual({ rows: [{ recipient: "codex-master", readAt: at }] });
+    expect(consumed.jobs[0]?.routes).toEqual({ rows: [{ recipient: "codex-master", consumedAt: at }] });
+    expect(consumed.jobs[0]?.consumption).toMatchObject({ rows: [{ identity: "codex-master", readAt: expect.any(Number) }] });
+    expect(JSON.stringify(consumed)).not.toContain("REPORT_BODY_EXCLUDED_FROM_DIAGNOSTICS");
+  } finally { store.close(); }
+});
 
 it("routes a blocking ask to an available group master without returning its result to the limited caller", async () => {
   await env.node("broker", "other").start();
