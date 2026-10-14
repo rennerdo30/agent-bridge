@@ -14,17 +14,17 @@ export function parentProcessIdentity(): Promise<string | null> {
   return parentIdentity ??= readProcessIdentity(process.ppid);
 }
 
-export async function readProcessIdentity(pid: number): Promise<string | null> {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+export async function readProcessIdentity(pid: number, signal?: AbortSignal): Promise<string | null> {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || signal?.aborted) return null;
   try {
     if (process.platform === "linux") {
-      const [stat, boot] = await Promise.all([readFile(`/proc/${pid}/stat`, "utf8"), readFile("/proc/sys/kernel/random/boot_id", "utf8")]);
+      const [stat, boot] = await Promise.all([readFile(`/proc/${pid}/stat`, { encoding: "utf8", signal }), readFile("/proc/sys/kernel/random/boot_id", { encoding: "utf8", signal })]);
       const start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
       return start ? `${boot.trim()}:${start}` : null;
     }
     const { stdout } = process.platform === "win32"
-      ? await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windowsIdentityCommand(pid)], { windowsHide: true, timeout: 5_000 })
-      : await exec("ps", ["-p", String(pid), "-o", "lstart="], { timeout: 5_000, env: { ...process.env, LC_ALL: "C" } });
+      ? await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windowsIdentityCommand(pid)], { windowsHide: true, timeout: 5_000, signal })
+      : await exec("ps", ["-p", String(pid), "-o", "lstart="], { timeout: 5_000, env: { ...process.env, LC_ALL: "C" }, signal });
     return stdout.trim() || null;
   } catch { return null; }
 }

@@ -1,9 +1,8 @@
 import { DelegateError, checkDepth, childEnv, runProcess, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { object, parse } from "./transcripts/common.js";
 import { PermissionRelay, RELAY_URL_ENV, RELAY_TOKEN_ENV, type PermissionDecision, type PermissionRequest } from "./relay.js";
-import { registerAntigravityRoot, requireAntigravityPlugin } from "./antigravity-plugin.js";
+import { requireAntigravityPlugin } from "./antigravity-plugin.js";
 import { progressEventHandler } from "./progress.js";
-import { resolveHome } from "./paths.js";
 
 export const ANTIGRAVITY_ACCESS_ENV = "AGENT_BRIDGE_ANTIGRAVITY_ACCESS";
 export const ANTIGRAVITY_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -11,17 +10,12 @@ export const ANTIGRAVITY_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as 
 /** agy stream-json has envelopes, unlike Gemini CLI's events. */
 export function parseAntigravityJsonl(stdout: string): DelegateResult {
   let sessionId: string | null = null;
-  let rootId: string | null = null;
   let result: Record<string, any> | null = null;
   for (const line of stdout.split(/\r?\n/)) {
     const ev = parse(line);
-    if (ev.event === "init" && typeof ev.conversation_id === "string" && ev.conversation_id) rootId ??= ev.conversation_id;
-    const id = ev.result?.conversation_id;
-    if (ev.event === "result" && (!rootId || !id || id === rootId)) {
-      result = object(ev.result);
-      if (typeof id === "string" && id) sessionId = id;
-    }
-    sessionId = rootId ?? sessionId;
+    const id = ev.conversation_id ?? ev.step_update?.conversation_id ?? ev.result?.conversation_id;
+    if (typeof id === "string" && id) sessionId = id;
+    if (ev.event === "result") result = object(ev.result);
   }
   const denied = Array.isArray(result?.denied_actions) ? result.denied_actions : [];
   const isError = !result || result.status !== "SUCCESS" || (denied.length > 0 && !result.response);
@@ -56,18 +50,12 @@ export async function delegateToAntigravity(req: DelegateRequest & { bin: string
     finally { approvals.signal.removeEventListener("abort", stop); }
   };
   const relay = req.access === "ask" && req.canApprove && req.approve ? new PermissionRelay(approve, req.log) : null;
-  let hostPid: number | null = null, releaseRoot: (() => void) | undefined;
   try {
     await relay?.start();
     const res = await runProcess({ bin: req.bin, args, cwd: req.cwd, stdin: JSON.stringify({ event: "user", message: { content: req.prompt } }) + "\n", timeoutMs: req.timeoutSec * 1000, signal: req.signal, env: childEnv({ ...req.extraEnv, [RELAY_URL_ENV]: "", [RELAY_TOKEN_ENV]: "", ...relay?.childEnv(), [ANTIGRAVITY_ACCESS_ENV]: req.access }), log: req.log,
-      onSpawn: (pid) => { hostPid = pid; },
       onLine: (line) => {
-        const ev = parse(line);
-        if (!releaseRoot && hostPid && ev.event === "init" && typeof ev.conversation_id === "string" && ev.conversation_id) {
-          try { releaseRoot = registerAntigravityRoot(resolveHome({ ...process.env, ...req.extraEnv }), hostPid, ev.conversation_id); }
-          catch (error) { req.log.warn("Antigravity root hook binding unavailable", { err: String(error) }); }
-        }
-        if (!sessionId && ev.event === "init" && typeof ev.conversation_id === "string" && ev.conversation_id) { sessionId = ev.conversation_id; req.onSession?.(sessionId); }
+        const ev = parse(line), id = ev.conversation_id ?? ev.step_update?.conversation_id ?? ev.result?.conversation_id;
+        if (!sessionId && typeof id === "string" && id) { sessionId = id; req.onSession?.(id); }
         if (ev.event === "init") req.onInfo?.({ model: ev.init?.model ?? req.model, effort: req.effort, permission: req.access === "edit" && req.autoApprove !== undefined ? req.autoApprove ? "bypass" : "native" : req.access });
         progress?.(ev);
       } });
@@ -81,7 +69,6 @@ export async function delegateToAntigravity(req: DelegateRequest & { bin: string
     throw err;
   } finally {
     approvals.abort();
-    releaseRoot?.();
     await relay?.stop();
   }
 }

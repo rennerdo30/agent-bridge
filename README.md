@@ -26,8 +26,8 @@ This table describes the current **agent-bridge 0.30.16 source implementation**.
 
 | Feature | Claude Code | Codex | opencode | Antigravity | Muse |
 | --- | --- | --- | --- | --- | --- |
-| Session connection, peers, send/receive | ✅ | ✅ | ✅ | ⚠️[^antigravity-root] | ✅ |
-| Messages while busy (hooks / next tool or model step) | ✅ | ✅ | ✅ | ⚠️[^antigravity-root] | ✅ |
+| Session connection, peers, send/receive | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Messages while busy (hooks / next tool or model step) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Idle message delivery / auto-wake | ⚠️[^claude-wake] | ⚠️[^codex-wake] | ✅ | ⚠️[^antigravity-wake] | ⚠️[^muse-wake] |
 | Delegate **to** (`ask_*` / `spawn_*` target) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Delegate **from** (all five targets, including itself) | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -57,8 +57,7 @@ Nested bridge delegation defaults to depth **2**, configurable up to **3**; dept
 
 [^claude-wake]: Idle delivery uses a channel when enabled, the wake module on Claude Code 2.1.287+, or the host's `asyncRewake` Stop hooks. It depends on an available wake transport and the session's wake settings; otherwise mail stays queued for a later prompt or inbox.
 [^codex-wake]: Requires a known main-thread ID, native `codex queue` support and a TUI consuming that queue. Queue acceptance does not confirm a started turn or read mail. Trust the bridge hooks in `/hooks` for automatic injection.
-[^antigravity-root]: Native hooks and Bridge tool calls require independently proven root identity: delegated stream `init`, inspected `--conversation`, or an exact-host restored binding. A fresh unbound interactive session must establish that evidence before using Bridge tools; the first child hook cannot claim its root.
-[^antigravity-wake]: Once root identity is proven, active `PreInvocation` / Stop hooks deliver mail, but an already idle TUI cannot be woken. Queued mail arrives on the next turn or through inbox.
+[^antigravity-wake]: Active `PreInvocation` / Stop hooks deliver mail, but an already idle TUI cannot be woken. Queued mail arrives on the next turn or through inbox.
 [^claude-models]: Returns native help's model aliases and effort levels, with alias fallbacks; Claude Code has no full model-catalog query here.
 [^opencode-models]: The catalog is a non-exhaustive provider/model list and can be empty; explicit IDs still resolve at startup. Effort is a provider-specific variant. OpenCode 2 requires an explicit model when selecting effort.
 [^claude-permissions]: `ask` stays read-only, like `read`: allowed native edits cannot reliably be intercepted. In editable modes, actual native permission prompts can be relayed through a PermissionRequest hook (Claude Code 2.1.268+, bundled hook and a launch without a shell); native allow/deny rules run first.
@@ -67,7 +66,7 @@ Nested bridge delegation defaults to depth **2**, configurable up to **3**; dept
 [^antigravity-permissions]: `ask` relays non-reading tools through the installed PreToolUse gate. `edit` retains native policy, whose headless prompts may be denied rather than relayed. `bypass_permissions` explicitly overrides the read/ask access policy; `terminal_sandbox` is separate.
 [^nested-opencode]: Read-only opencode jobs' tool allowlist enables delegation to the other four CLIs, including Muse, but omits opencode self-delegation, `list_models` and `decide`. Top-level opencode sessions expose all five targets.
 [^native-addresses]: Claude only: a live native child gets `<parent>/sub:<agent_id>` on its registered parent's connection. It may use only `peers`, `inbox` and `send`, with explicit child identity, ownership and hop limits; recipients are its parent, the parent's owned jobs and exact local recipient grants. No independent registration, delegation, broadcast or remote address; remaining mail returns to the parent when the child ends.
-[^native-isolation]: Antigravity ignores child delivery hooks and its PreToolUse gate denies Bridge tools unless the native conversation matches independently proven root identity. Separate native child-server registration and scoped child Bridge addresses remain unverified.
+[^native-isolation]: Antigravity ignores hooks for a child conversation on the parent's shared server. It has no equivalent MCP caller-lineage admission check, so separate child-server registration is not established by this implementation.
 [^usage]: opencode reports today's spend/tokens and free-model information, not remaining provider quotas. Antigravity reports quota availability as unknown; inspect native `/usage` or `/quota` (delegated results can include token usage).
 [^remote-antigravity]: Paired jobs accept `terminal_sandbox` and `bypass_permissions`, preserve explicit false settings on continuation, and reject these options for other agents before launch.
 [^mobile]: With the mobile gateway enabled and a phone paired, each enrolled PC exposes local registered sessions and retained jobs, with chats/steps where available. Paired-PC peer projections are excluded and native child hierarchy is not projected.

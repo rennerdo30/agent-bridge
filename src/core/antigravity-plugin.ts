@@ -1,52 +1,11 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DelegateError } from "./delegate.js";
 import { assertUnlinked, selectedWorker } from "./plugin-runtime.js";
-import { processIdentity } from "./process-identity.js";
-import { TRANSCRIPT_ID } from "./transcripts/common.js";
 
 export const antigravityPluginDir = (home = homedir()) => join(home, ".gemini", "config", "plugins", "agent-bridge");
 export const antigravityRuntimeHome = (dir = antigravityPluginDir()) => join(dirname(dir), ".agent-bridge-runtime");
-
-/** Hook capabilities and root identity may be read only from private regular files. */
-export function readAntigravityPrivateJson(path: string): Record<string, any> {
-  const stat = lstatSync(path);
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 64 * 1024 || (process.getuid && (stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0))) throw new Error("Unsafe Antigravity hook file");
-  const value = JSON.parse(readFileSync(path, "utf8"));
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid Antigravity hook file");
-  return value;
-}
-
-export function antigravityRootSession(home: string, pid: number, hostIdentity: string): string | null {
-  try {
-    const record = readAntigravityPrivateJson(join(home, "antigravity-hooks", `${pid}.session.json`));
-    return record.hostIdentity === hostIdentity && record.hostPid === pid && typeof record.conversationId === "string" && TRANSCRIPT_ID.test(record.conversationId) ? record.conversationId : null;
-  } catch { return null; }
-}
-
-/** Only the adapter's top-level init can identify a newly created delegated root. */
-export function registerAntigravityRoot(home: string, pid: number, conversationId: string): () => void {
-  const hostIdentity = processIdentity(pid);
-  if (!hostIdentity || !TRANSCRIPT_ID.test(conversationId)) throw new Error("Antigravity root identity unavailable");
-  const directory = join(home, "antigravity-hooks");
-  assertUnlinked(directory); mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const file = join(directory, `${pid}.session.json`), generation = randomBytes(24).toString("hex");
-  const value = JSON.stringify({ hostPid: pid, hostIdentity, conversationId, generation });
-  try { writeFileSync(file, value, { mode: 0o600, flag: "wx" }); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    const previous = readAntigravityPrivateJson(file);
-    // A crashed adapter can leave a file whose PID is later reused. It is safe
-    // to replace that dead host binding, never another publisher for this host.
-    if (previous.hostPid !== pid || typeof previous.hostIdentity !== "string" || previous.hostIdentity === hostIdentity) throw error;
-    const temporary = `${file}.${generation}.tmp`;
-    try { writeFileSync(temporary, value, { mode: 0o600, flag: "wx" }); renameSync(temporary, file); }
-    finally { try { unlinkSync(temporary); } catch { /* Renamed or removed. */ } }
-  }
-  return () => { try { if (readAntigravityPrivateJson(file).generation === generation) unlinkSync(file); } catch { /* Preserve unknown replacements. */ } };
-}
 
 /** Runtime storage is separate from both the native plugin descriptor and shared broker data. */
 export function antigravityRuntimeDir(dir = antigravityPluginDir()): string {

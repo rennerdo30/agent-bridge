@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { lstatSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { lstat, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -23,13 +24,30 @@ const allowed = (key: string) => CONTEXT_KEYS.has(key);
  * Plaintext goes over stdin only. Other accounts cannot forge or read a handoff
  * even if a temp directory has inherited broad ACLs. PID creation identity still
  * refuses replay; an unknown or damaged protected record fails closed. */
-function windowsProtect(value: string, decrypt: boolean): string {
+function windowsProtectionCommand(decrypt: boolean): string {
   const operation = decrypt ? "Unprotect" : "Protect";
   // Reflection avoids Add-Type's Utility module autoload, which can stall in
   // Muse's stripped Windows environment. DPAPI scope and ciphertext stay identical.
-  const script = `$null=[Reflection.Assembly]::LoadWithPartialName('System.Security'); [Console]::InputEncoding=[Text.UTF8Encoding]::new($false); [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $s=[Console]::In.ReadToEnd(); $b=${decrypt ? "[Convert]::FromBase64String($s)" : "[Text.Encoding]::UTF8.GetBytes($s)"}; $r=[Security.Cryptography.ProtectedData]::${operation}($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Write(${decrypt ? "[Text.Encoding]::UTF8.GetString($r)" : "[Convert]::ToBase64String($r)"}); exit 0`;
-  return execFileSync(join(process.env.SystemRoot || process.env.SYSTEMROOT || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-    ["-NoProfile", "-NonInteractive", "-Command", script], { input: value, encoding: "utf8", timeout: 15_000, windowsHide: true, maxBuffer: 128 * 1024, stdio: ["pipe", "pipe", "ignore"] });
+  return `$null=[Reflection.Assembly]::LoadWithPartialName('System.Security'); [Console]::InputEncoding=[Text.UTF8Encoding]::new($false); [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $s=[Console]::In.ReadToEnd(); $b=${decrypt ? "[Convert]::FromBase64String($s)" : "[Text.Encoding]::UTF8.GetBytes($s)"}; $r=[Security.Cryptography.ProtectedData]::${operation}($b,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Write(${decrypt ? "[Text.Encoding]::UTF8.GetString($r)" : "[Convert]::ToBase64String($r)"}); exit 0`;
+}
+
+const windowsPowerShell = () => join(process.env.SystemRoot || process.env.SYSTEMROOT || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+
+function windowsProtect(value: string, decrypt: boolean): string {
+  return execFileSync(windowsPowerShell(),
+    ["-NoProfile", "-NonInteractive", "-Command", windowsProtectionCommand(decrypt)], { input: value, encoding: "utf8", timeout: 15_000, windowsHide: true, maxBuffer: 128 * 1024, stdio: ["pipe", "pipe", "ignore"] });
+}
+
+/** Connection fallback must never run synchronous DPAPI on the shared event loop. */
+function windowsUnprotectAsync(value: string, signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(windowsPowerShell(), ["-NoProfile", "-NonInteractive", "-Command", windowsProtectionCommand(true)],
+      { encoding: "utf8", timeout: 15_000, windowsHide: true, maxBuffer: 128 * 1024, signal },
+      (error, stdout) => error ? reject(new Error("Protected Muse context unavailable")) : resolve(stdout));
+    // Ciphertext goes over stdin, never argv; helper output/errors are not logged.
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(value);
+  });
 }
 
 export function writeMusePrivateJson(path: string, value: Record<string, unknown>, flag = "wx"): void {
@@ -56,6 +74,18 @@ export function readMusePrivateJson(path: string): Record<string, any> {
   if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 64 * 1024 || (process.getuid && (stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0))) throw new Error("Unsafe Muse context file");
   const raw = JSON.parse(readFileSync(path, "utf8"));
   const value = process.platform === "win32" ? JSON.parse(windowsProtect(raw.protected, true)) : raw;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid Muse context");
+  return value;
+}
+
+/** Same private-file and DPAPI authentication checks, cancellable without blocking callbacks. */
+export async function readMusePrivateJsonAsync(path: string, signal?: AbortSignal): Promise<Record<string, any>> {
+  signal?.throwIfAborted();
+  const stat = await lstat(path);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 64 * 1024 || (process.getuid && (stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0))) throw new Error("Unsafe Muse context file");
+  const raw = JSON.parse(await readFile(path, { encoding: "utf8", signal }));
+  const value = process.platform === "win32" ? JSON.parse(await windowsUnprotectAsync(raw.protected, signal)) : raw;
+  signal?.throwIfAborted();
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid Muse context");
   return value;
 }

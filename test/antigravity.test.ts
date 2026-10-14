@@ -14,13 +14,11 @@ import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { DELEGATION_TARGETS, supportsAsk } from "../src/mcp/targets.js";
 import { isAutoApproved, isHandoffToolCall } from "../src/core/tool-allow.js";
 import { delegationTargets } from "../src/mcp/server.js";
-import { registerAntigravityRoot } from "../src/core/antigravity-plugin.js";
 
 const mocks = vi.hoisted(() => ({ run: vi.fn(), ask: vi.fn() }));
 vi.mock("../src/core/delegate.js", async (original) => ({ ...await original<typeof import("../src/core/delegate.js")>(), runProcess: mocks.run }));
 vi.mock("../src/core/relay.js", async (original) => ({ ...await original<typeof import("../src/core/relay.js")>(), askRelay: mocks.ask }));
 vi.mock("../src/core/antigravity-plugin.js", async (original) => ({ ...await original<typeof import("../src/core/antigravity-plugin.js")>(), requireAntigravityPlugin: vi.fn() }));
-vi.mock("../src/core/procinfo.js", async original => ({ ...await original<typeof import("../src/core/procinfo.js")>(), antigravityAncestor: async () => process.pid }));
 const temporary: string[] = [];
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), "ab-agy-")); temporary.push(dir); return dir; };
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); for (const dir of temporary.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -36,14 +34,7 @@ describe("Antigravity delegation", () => {
     expect(parseAntigravityJsonl(stream("ERROR")).isError).toBe(true);
     expect(parseAntigravityJsonl(JSON.stringify({ event: "result", result: { conversation_id: "saved", status: "SUCCESS", response: "", denied_actions: [{ action: "mcp" }] } }))).toMatchObject({ isError: true, text: "Antigravity denied permissions: mcp" });
     expect(parseAntigravityJsonl('noise\n{"event":"init","conversation_id":"saved"}\n{')).toMatchObject({ sessionId: "saved", isError: true });
-    const children = [
-      { event: "step_update", step_update: { conversation_id: "child" } },
-      { event: "init", conversation_id: "root" },
-      { event: "step_update", step_update: { conversation_id: "child" } },
-      { event: "result", result: { conversation_id: "root", status: "SUCCESS", response: "root answer" } },
-      { event: "result", result: { conversation_id: "child", status: "SUCCESS", response: "child answer" } },
-    ].map(row => JSON.stringify(row)).join("\n");
-    expect(parseAntigravityJsonl(children)).toMatchObject({ sessionId: "root", text: "root answer", isError: false });
+
   });
   it("passes model, effort, sandbox and resume without shell interpolation", async () => {
     mocks.run.mockImplementation(async (opts) => { for (const line of stream().split("\n")) opts.onLine(line); return { code: 0, stdout: stream(), stderr: "" }; });
@@ -59,16 +50,6 @@ describe("Antigravity delegation", () => {
   it("keeps early conversation ids after cancellation or timeout", async () => {
     mocks.run.mockImplementation(async (opts) => { opts.onLine('{"event":"init","conversation_id":"early"}'); throw new DelegateError("aborted", "aborted"); });
     await expect(delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "read", timeoutSec: 20, log: nullLogger })).rejects.toMatchObject({ kind: "aborted", sessionId: "early" });
-  });
-  it("never announces a native child's step as the delegated root session", async () => {
-    const onSession = vi.fn();
-    mocks.run.mockImplementation(async opts => {
-      opts.onLine('{"event":"step_update","step_update":{"conversation_id":"child"}}');
-      opts.onLine('{"event":"init","conversation_id":"root"}');
-      throw new DelegateError("aborted", "aborted");
-    });
-    await expect(delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "read", timeoutSec: 20, log: nullLogger, onSession })).rejects.toMatchObject({ kind: "aborted", sessionId: "root" });
-    expect(onSession).toHaveBeenCalledExactlyOnceWith("root");
   });
   it("rejects unsupported effort before starting a process", async () => {
     await expect(delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "read", effort: "ultra", timeoutSec: 20, log: nullLogger })).rejects.toThrow("low, medium, high, xhigh or max");
@@ -134,14 +115,11 @@ describe("Antigravity delegation", () => {
 
 describe("Antigravity hooks", () => {
   it("denies writes and unknown tools in read mode while retaining bridge messaging", async () => {
-    vi.stubEnv("AGENT_BRIDGE_HOME", temp());
-    const release = registerAntigravityRoot(process.env.AGENT_BRIDGE_HOME!, process.pid, "root");
     expect(await antigravityPermission({ toolCall: { name: "view_file" } }, "read")).toEqual({ decision: "allow" });
     for (const name of ["write_to_file", "run_command", "new_unknown_tool"]) expect(await antigravityPermission({ toolCall: { name } }, "read")).toMatchObject({ decision: "deny" });
-    expect(await antigravityPermission({ conversationId: "root", toolCall: { name: "call_mcp_tool", args: { ServerName: "agent-bridge_agent-bridge", ToolName: "send" } } }, "read")).toEqual({ decision: "allow", permissionOverrides: ["mcp(agent-bridge_agent-bridge/send)"] });
+    expect(await antigravityPermission({ toolCall: { name: "call_mcp_tool", args: { ServerName: "agent-bridge_agent-bridge", ToolName: "send" } } }, "read")).toEqual({ decision: "allow", permissionOverrides: ["mcp(agent-bridge_agent-bridge/send)"] });
     expect(await antigravityPermission({ toolCall: { name: "call_mcp_tool", args: { ServerName: "other", ToolName: "send" } } }, "read")).toMatchObject({ decision: "deny" });
-    expect(await antigravityPermission({ conversationId: "root", toolCall: { name: "call_mcp_tool", args: { ServerName: "agent-bridge_agent-bridge", ToolName: "decide" } } }, "read")).toMatchObject({ decision: "allow" });
-    release();
+    expect(await antigravityPermission({ toolCall: { name: "call_mcp_tool", args: { ServerName: "agent-bridge_agent-bridge", ToolName: "decide" } } }, "read")).toMatchObject({ decision: "allow" });
   });
   it("relays explicit approval and denial without expanding native edit policy", async () => {
     mocks.ask.mockResolvedValueOnce({ allow: true }).mockResolvedValueOnce({ allow: false, message: "owner denied" });

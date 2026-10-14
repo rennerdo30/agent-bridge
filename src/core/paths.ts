@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { readMusePrivateJson } from "./muse-context.js";
-import { processIdentity } from "./process-identity.js";
+import { readMusePrivateJson, readMusePrivateJsonAsync } from "./muse-context.js";
+import { processIdentity, readProcessIdentity } from "./process-identity.js";
 import { chmodSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join, posix, resolve } from "node:path";
 import { DB_FILE_NAME, DEFAULT_HOME, ENV, SOCKET_FILE_NAME, WINDOWS_PIPE_PREFIX, APP_NAME, PROTOCOL_VERSION } from "./constants.js";
@@ -91,6 +91,17 @@ export function brokerTcpPort(home: string, pipePath = resolvePipePath(home)): n
   } catch {
     return null;
   }
+}
+
+/** Authenticated discovery for connection callers, sharing their abort/deadline. */
+export async function brokerTcpPortAsync(home: string, pipePath: string, signal: AbortSignal): Promise<number | null> {
+  try {
+    const value = await readMusePrivateJsonAsync(join(home, BROKER_TCP_FILE), signal);
+    if (!isEphemeralBrokerTcpRecord(value) || value.pipePath !== pipePath || value.protocol !== PROTOCOL_VERSION || !Number.isSafeInteger(value.pid) ||
+      typeof value.identity !== "string" || typeof value.nonce !== "string" || !value.nonce || signal.aborted) return null;
+    const identity = await readProcessIdentity(value.pid, signal);
+    return !signal.aborted && value.identity === identity ? value.port : null;
+  } catch { return null; }
 }
 
 export function resolveDbPath(home: string): string {

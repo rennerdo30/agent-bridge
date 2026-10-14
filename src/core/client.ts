@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { connect, type Socket } from "node:net";
 import { APP_VERSION, CONNECT_TIMEOUT_MS, MAX_FRAME_BYTES, REQUEST_TIMEOUT_MS } from "./constants.js";
 import type { Logger } from "./logger.js";
-import { brokerTcpPort, ensurePrivateSocketDirectory, resolveHome, resolvePipePath } from "./paths.js";
+import { brokerTcpPortAsync, ensurePrivateSocketDirectory, resolveHome, resolvePipePath } from "./paths.js";
 import {
   BridgeError,
   encodeFrame,
@@ -71,36 +71,50 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
 
   /** Connect to an existing broker. Rejects with the socket error (ENOENT/ECONNREFUSED if nobody listens). */
   static connect(pipePath: string, log: Logger, timeoutMs: number = CONNECT_TIMEOUT_MS): Promise<BridgeClient> {
-    // Never hand the token to an endpoint in a short-socket directory another user controls.
-    ensurePrivateSocketDirectory(pipePath);
-    return BridgeClient.connectSocket(() => connect(pipePath), log, timeoutMs).catch(async (err) => {
-      // Sandboxed children (Muse on Windows runs plugin processes under a restricted
-      // token) may be unable to open the named pipe at all. The broker also serves the
-      // same token-authenticated protocol on loopback; fall back to it.
-      const home = resolveHome();
-      // An ambient home must never redirect a caller's unrelated endpoint.
-      const port = process.platform === "win32" && pipePath === resolvePipePath(home) ? brokerTcpPort(home, pipePath) : null;
-      if (!port) throw err;
-      log.debug("broker pipe unreachable; trying the loopback fallback", { err: (err as Error).message, port });
-      return BridgeClient.connectSocket(() => connect(port, "127.0.0.1"), log, timeoutMs);
-    });
-  }
-
-  private static connectSocket(open: () => Socket, log: Logger, timeoutMs: number): Promise<BridgeClient> {
     return new Promise((resolve, reject) => {
-      const socket = open();
+      // Keep main's direct promise/socket completion on a working named pipe.
+      ensurePrivateSocketDirectory(pipePath);
+      let socket = connect(pipePath);
+      let discovery: AbortController | undefined;
+      let settled = false;
       const timer = setTimeout(() => {
+        settled = true;
+        discovery?.abort();
         socket.destroy();
         reject(Object.assign(new Error("timed out connecting to broker"), { code: "ETIMEDOUT" }));
       }, timeoutMs);
-      socket.once("connect", () => {
+      const connected = () => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         socket.removeAllListeners("error");
         resolve(new BridgeClient(socket, log));
-      });
-      socket.once("error", (err) => {
+      };
+      const failed = (err: Error) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         reject(err);
+      };
+      socket.once("connect", connected);
+      socket.once("error", (err) => {
+        if (settled) return;
+        // A restricted Windows host may need loopback. Discovery and the second
+        // socket share the ORIGINAL timer; failure cannot buy another timeout.
+        if (process.platform !== "win32") { failed(err); return; }
+        const home = resolveHome();
+        if (pipePath !== resolvePipePath(home)) { failed(err); return; }
+        socket.removeListener("connect", connected);
+        socket.destroy();
+        const controller = discovery = new AbortController();
+        void brokerTcpPortAsync(home, pipePath, controller.signal).then(port => {
+          if (settled || controller.signal.aborted) return;
+          if (!port) { failed(err); return; }
+          log.debug("broker pipe unreachable; trying the loopback fallback", { err: err.message, port });
+          socket = connect(port, "127.0.0.1");
+          socket.once("connect", connected);
+          socket.once("error", failed);
+        }).catch(() => failed(err));
       });
     });
   }
