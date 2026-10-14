@@ -581,9 +581,10 @@ describe("source-owned History directory bookkeeping (no resource-absence or ret
   it("SIMULATED read failure followed by an actual successful source close records that return without erasing uncertainty", () => {
     const { index } = consumer(), path = join(env.home, "owned-read-fault-directory"); mkdirSync(path); directoryFault.path = path;
     const dir = open(index, path), failure = new Error("SIMULATED directory read failure");
+    const originalRead = Dir.prototype.readSync;
     const next = vi.spyOn(Dir.prototype, "readSync").mockImplementation(function(this: Dir) {
       if (this === dir) throw failure;
-      return null;
+      return originalRead.call(this);
     });
     expect(() => read(index, dir)).toThrow(failure); next.mockRestore();
     const closed = trackClose(); close(index, dir); expect(closed).toHaveBeenCalledTimes(1);
