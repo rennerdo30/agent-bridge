@@ -1,5 +1,5 @@
 import { appendFileSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
@@ -31,6 +31,33 @@ export function censusMetadata() {
     runId: process.env.GITHUB_RUN_ID ?? null, attempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
     event: process.env.GITHUB_EVENT_NAME ?? null,
   };
+}
+
+export function collectionCacheProof(ctx, fixtureRoot, lane) {
+  assert(["all", "fast", "integration"].includes(lane), "Invalid collection cache lane");
+  const base = resolve(fixtureRoot, "collection-cache", lane);
+  const physicalRoot = realpathSync.native(fixtureRoot);
+  const projects = [...new Set([ctx.getRootProject(), ...ctx.projects])];
+  const proof = { base, root: physicalRoot, projects: [] };
+  for (const project of projects) {
+    const name = project.name;
+    assert.equal(typeof name, "string", "Unknown collection project name");
+    // Pinned5.0.2 resolveTestCacheDir / VitestCache.resolveCacheDir contract.
+    const hash = createHash("sha1").update(name || "").digest("hex");
+    const configRoot = resolve(project.config.root);
+    const expected = resolve(configRoot, base, "vitest", hash);
+    const actual = resolve(project.viteConfig.cacheDir);
+    assert.equal(actual, expected, `${lane}: derived project collection cache differs`);
+    const executionCache = resolve(configRoot, ".agent-bridge-test/vite", "vitest", hash);
+    assert.notEqual(actual, executionCache, `${lane}: collection reused the execution cache`);
+    mkdirSync(actual, { recursive: true });
+    const physical = realpathSync.native(actual);
+    const expectedPhysical = resolve(physicalRoot, "collection-cache", lane, "vitest", hash);
+    assert.equal(physical, expectedPhysical, `${lane}: project collection cache escaped the exact marked-root path`);
+    proof.projects.push({ name, hash, configRoot, expected, resolved: actual, physical, expectedPhysical, executionCache });
+  }
+  assert(proof.projects.length > 0, "No collection project cache proof");
+  return proof;
 }
 
 export function moduleCensus(module) {

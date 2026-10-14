@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { createVitest } from "vitest/node";
-import { caseIdentity, censusDigest, censusMetadata, moduleCensus } from "./ci-reporter.mjs";
+import { caseIdentity, censusDigest, censusMetadata, collectionCacheProof, moduleCensus } from "./ci-reporter.mjs";
 
 // Use Vitest's configured sequencer, not a second implementation of its hash.
 // `vitest list --filesOnly` does not apply --shard in Vitest 5.
@@ -29,14 +29,7 @@ async function specifications(lane, visit) {
   const ctx = await createVitest({ watch: false, reporters: [] }, cache ? { cacheDir: cache } : {});
   try {
     if (collect) {
-      const actual = resolve(ctx.viteConfig.cacheDir);
-      assert.equal(actual, cache, `${lane}: Vite collection cache override was not applied`);
-      mkdirSync(actual, { recursive: true });
-      const physicalRoot = realpathSync.native(process.env.AGENT_BRIDGE_TEST_ROOT);
-      const physicalCache = realpathSync.native(actual);
-      const expectedCache = resolve(physicalRoot, "collection-cache", lane);
-      assert.equal(physicalCache, expectedCache, `${lane}: collection cache escaped the marked physical root`);
-      (inventory.collectionCaches ??= {})[lane] = { resolved: actual, physical: physicalCache, root: physicalRoot };
+      (inventory.collectionCaches ??= {})[lane] = collectionCacheProof(ctx, process.env.AGENT_BRIDGE_TEST_ROOT, lane);
       save();
     }
     await ctx.standalone();

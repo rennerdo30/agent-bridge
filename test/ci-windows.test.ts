@@ -66,6 +66,42 @@ it.runIf(process.platform === "win32").each(["wrapper", "powershell", "powershel
   expect(readFileSync(evidence, "utf8")).toBe('{"retained":true}\n');
 });
 
+it("discriminates actual Vitest project caches from wrong lane and outside derived caches", () => {
+  const root = mkdtempSync(join(tmpdir(), "ci-cache-contract-"));
+  const api = new URL("../node_modules/vitest/dist/node.js", import.meta.url).href;
+  const reporter = new URL("../scripts/ci-reporter.mjs", import.meta.url).href;
+  const input = `
+import { createVitest } from ${JSON.stringify(api)};
+import { collectionCacheProof } from ${JSON.stringify(reporter)};
+import { resolve } from 'node:path';
+const root = ${JSON.stringify(root)};
+const rows = [];
+for (const [name, lane, override, admitted] of [
+  ['', 'all', resolve(root, 'collection-cache', 'all'), true],
+  ['ci-cache-named', 'fast', resolve(root, 'collection-cache', 'fast'), true],
+  ['ci-cache-named', 'fast', resolve(root, 'collection-cache', 'integration'), false],
+  ['ci-cache-named', 'fast', resolve(root, 'outside-cache'), false],
+]) {
+  const ctx = await createVitest({ watch: false, reporters: [] }, { root, configFile: false, cacheDir: override, test: { name, include: [] } });
+  try {
+    let proof, refused = false;
+    try { proof = collectionCacheProof(ctx, root, lane); } catch { refused = true; }
+    rows.push({ name, lane, admitted, refused, resolved: ctx.viteConfig.cacheDir, proof });
+  } finally { await ctx.close(); }
+}
+console.log(JSON.stringify(rows));
+`;
+  const output = execFileSync(process.execPath, ["--input-type=module", "-"], { input, encoding: "utf8", windowsHide: true });
+  const rows = JSON.parse(output.trim().split(/\r?\n/).at(-1)!);
+  expect(rows.map((row: { refused: boolean }) => row.refused)).toEqual([false, false, true, true]);
+  expect(rows[0].proof.projects[0].hash).toBe("da39a3ee5e6b4b0d3255bfef95601890afd80709");
+  for (const row of rows.slice(0, 2)) {
+    expect(row.proof.projects[0].resolved).toBe(row.proof.projects[0].expected);
+    expect(row.proof.projects[0].physical).toBe(row.proof.projects[0].expectedPhysical);
+    expect(row.proof.projects[0].resolved).not.toBe(row.proof.projects[0].executionCache);
+  }
+});
+
 function coverageFixture(fastFile = "test/fast.test.ts") {
   const root = mkdtempSync(join(tmpdir(), "ci-census-"));
   const metadata = {

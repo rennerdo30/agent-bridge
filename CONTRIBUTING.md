@@ -68,6 +68,11 @@ collect the unsharded cases for both lanes. This imports setup files and test
 modules and evaluates collection code, including parameterized and conditional
 tests; it does not execute test callbacks or hooks. Collection retains the
 configured worker isolation and uses a separate temporary cache.
+Pinned Vitest5.0.2 derives each actual project cache as
+`<collection-base>/<lane>/vitest/SHA1(project name or empty string)`. CI requires
+that exact resolved path and its exact physical counterpart under the fresh
+marked root, recording project name/hash/config root/cache proof. Other lanes,
+arbitrary descendants/outside paths and execution-cache reuse are rejected.
 
 The four shard file sets must be disjoint and cover every unfiltered file.
 Each shard's final cases must exactly match its portion of the unsharded census
