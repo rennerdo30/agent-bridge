@@ -33,9 +33,9 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Scoped mobile regressions and unchanged source pins
-        run: npm run test:integration -- test/mobile-grant-scopes.test.ts test/mobile-adapter.test.ts test/mobile-wiring.test.ts test/mobile-pinning.test.ts test/mobile-owner-startup.test.ts test/mobile-retention.test.ts
-      - name: Existing Phones script event regressions
-        run: npm test -- test/mobile-phones-dashboard.test.ts
+        run: npm run test:integration -- test/mobile-grant-scopes.test.ts test/mobile-adapter.test.ts test/mobile-wiring.test.ts test/mobile-owner-startup.test.ts test/mobile-retention.test.ts
+      - name: Existing Phones script events and pinned TLS regressions
+        run: npm test -- test/mobile-phones-dashboard.test.ts test/mobile-pinning.test.ts
       - name: Install pinned Chromium on hosted Ubuntu
         run: npx --no-install playwright install --with-deps chromium
       - name: Capture actual frozen source with isolated fixtures
@@ -43,6 +43,7 @@ jobs:
         env:
           PHONES_SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
       - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        if: always()
         with:
           name: phones-dashboard-${{ github.event.pull_request.head.sha }}
           path: .agent-bridge-test/phones-dashboard-capture/

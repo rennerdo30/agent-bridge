@@ -36,7 +36,7 @@ const phones = { csrfToken: "synthetic-csrf", pending: [], devices: [
 const network = { enabled: true, identity: { id: "fixture-pc", name: "fixture-pc" }, config: { name: "fixture-pc", bind: "0.0.0.0", port: 48149, discovery: true }, port: 48149, addresses: ["192.168.1.2"], paired: [
   { id: "paired-fixture", name: "fixture-laptop", connected: true, fingerprint: "abcdef0123456789", health: { lastVerifiedAt: at - 60_000, roundTripMs: 8 } },
 ], discovered: [] };
-const state = { brokerPid: 1, version: "0.30.15", peers: sessions.map((session, index) => ({ id: session.id, name: session.name, agent: session.agent, pid: index + 10, cwd: projects[index === 2 ? 1 : 0].folder, sessionId: null, activity: "idle", startedAt: at - 3_600_000, version: "0.30.15" })), runs: [] };
+const state = { brokerPid: 1, version: "0.30.15", peers: sessions.map((session, index) => ({ id: session.id, name: session.name, agent: session.agent, pid: index + 10, cwd: projects[index === 2 ? 1 : 0].folder, sessionId: null, activity: "idle", startedAt: at - 3_600_000, version: "0.30.15" })), runs: [], messages: [] };
 const qrPayload = { v: 2, pcId: "fixture-pc", origin: phones.gatewayOrigins[0], origins: phones.gatewayOrigins, invitationId: "synthetic-invitation", nonce: "synthetic-nonce", pins: ["A".repeat(43)], expiresAt: at + 120_000 };
 const qr = qrcode(0, "M"); qr.addData(JSON.stringify(qrPayload)); qr.make();
 const invitation = { qr: qrPayload, qrPayload: JSON.stringify(qrPayload), qrSvg: qr.createSvgTag({ cellSize: 4, margin: 16, scalable: true }) };
@@ -146,4 +146,10 @@ try {
     limits: "Synthetic intercepted presentation only; no broker/app server, backend authorization, real devices, secure storage, native TLS, owner runtime or provider acceptance." };
   writeFileSync(output + "/manifest.json", JSON.stringify(manifest, null, 2) + "\n");
   console.log("Captured " + captures.length + " actual-source synthetic PNGs at " + head);
+} catch (error) {
+  const pages = await Promise.all(browser.contexts().flatMap(context => context.pages()).map(async page => ({ url: page.url(), status: await page.locator("#status").textContent().catch(() => null) })));
+  const diagnostic = { result: "failed", sourceHead: head, checkoutTree: tree, error: String(error), failures, requests, pages, partialCaptures: captures, limits: "Failed capture; no positive screenshot acceptance." };
+  writeFileSync(output + "/failure.json", JSON.stringify(diagnostic, null, 2) + "\n");
+  console.error(JSON.stringify(diagnostic));
+  throw error;
 } finally { await browser.close(); }
