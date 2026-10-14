@@ -257,7 +257,8 @@ export async function verifyWindowsLifecyclePaths(home: string, ownerInstance: s
             return refuse(["unsafe_path", "unsupported_fs"].includes(String(r.status)) ? r.status as Reason : "unavailable");
           }
           if (keys.length !== 4 || keys.some(key => !["schema", "nonce", "status", "filesystem"].includes(key))) return refuse("unavailable");
-          if (!["NTFS", "ReFS"].includes(String(r.filesystem)) || !same(before, snapshot(home, scope))) return refuse("unsafe_path");
+          if (typeof r.filesystem !== "string") return refuse("unavailable");
+          if (!["NTFS", "ReFS"].includes(r.filesystem) || !same(before, snapshot(home, scope))) return refuse("unsafe_path");
           const proof = Object.freeze({ nonce, ownerInstance, phase, scope });
           proofs.set(proof, { paths: before, deadline: expires, pid: process.pid, authority, generation });
           settled = true; clearTimeout(timer); resolve(proof);
@@ -290,6 +291,9 @@ export function assertWindowsLifecyclePathProof(proof: WindowsLifecyclePathProof
 export interface WindowsLifecycleCreation { readonly __creation?: never }
 const creations = new WeakMap<WindowsLifecycleCreation, { capability: LifecycleServingCapability; proof: WindowsLifecyclePathProof;
   home: string; owner: string; generation: number; paths: Snapshot }>();
+// Historical failed attempts remain strongly associated with the exact owner,
+// directory and native child. An actual child close is not initialization proof.
+const retainedCreationAttempts = new Set<object>();
 
 // Only an exclusively source-created directory is protected. Files are created with
 // .NET CreateNew (wx semantics) and their restrictive DACL at the actual creation.
@@ -328,9 +332,10 @@ export async function createWindowsLifecycleObjects(capability: LifecycleServing
   try {
   const initial = assertLifecycleServingCapability(capability, "prepare");
   const expires = Math.min(deadline, performance.now() + PHASE_MS.prepare);
-  const current = () => {
+  const current = (ownRegistration?: object) => {
     const actual = assertLifecycleServingCapability(capability, "prepare");
-    if (process.platform !== "win32" || pending.size || !Number.isFinite(expires) || performance.now() >= expires ||
+    const ownPending = ownRegistration !== undefined && pending.has(ownRegistration) ? 1 : 0;
+    if (process.platform !== "win32" || pending.size !== ownPending || !Number.isFinite(expires) || performance.now() >= expires ||
       actual.home !== initial.home || actual.ownerInstance !== initial.ownerInstance || actual.generation !== initial.generation)
       throw new WindowsLifecyclePathUnavailable("unavailable");
     return actual;
@@ -346,16 +351,24 @@ export async function createWindowsLifecycleObjects(capability: LifecycleServing
   const directoryIdentity = `${created.dev}:${created.ino}:${created.birthtimeNs}`;
   current(); assertWindowsLifecyclePathProof(homeProof, initial.home, initial.ownerInstance, "prepare", "home");
   const nonce = randomUUID(), bin = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  let creationAttempt: object | undefined;
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(CREATE_NEW, "utf16le").toString("base64")],
-      { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
-    const registration = {}; pending.add(registration); let settled = false, output = "";
+    const registration = { capability, owner: initial.ownerInstance, generation: initial.generation, nonce, home: initial.home, directoryIdentity,
+      child: undefined as ReturnType<typeof spawn> | undefined,
+      state: "not_attempted" as "not_attempted" | "attempted_unconfirmed" | "child_known" | "closed" };
+    creationAttempt = registration; retainedCreationAttempts.add(registration);
+    pending.add(registration); let settled = false, output = "";
     const refuse = () => { if (!settled) { settled = true; clearTimeout(timer); reject(new WindowsLifecyclePathUnavailable("unavailable")); } };
     const timer = setTimeout(refuse, Math.max(0, expires - performance.now()));
-    child.on("error", refuse); child.stdin!.on("error", refuse); child.stdout!.setEncoding("utf8");
-    child.stdout!.on("data", (chunk: string) => { if (!settled) { output += chunk; if (Buffer.byteLength(output) > 512) refuse(); } });
+    try {
+    current(registration);
+    registration.state = "attempted_unconfirmed"; // BEFORE native entry, including an unreturned/throwing spawn.
+    const child = registration.child = spawn(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(CREATE_NEW, "utf16le").toString("base64")],
+      { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
+    registration.state = "child_known"; // Exact returned child retained BEFORE initialization or exposure.
     child.once("close", code => {
-      pending.delete(registration); if (settled) return;
+      if (registration.child !== child || registration.state !== "child_known") return refuse();
+      registration.state = "closed"; pending.delete(registration); if (settled) return;
       try {
         current(); const response: unknown = JSON.parse(output);
         if (!response || typeof response !== "object") return refuse();
@@ -365,8 +378,18 @@ export async function createWindowsLifecycleObjects(capability: LifecycleServing
         settled = true; clearTimeout(timer); resolve();
       } catch { refuse(); }
     });
+    child.on("error", refuse); child.stdin!.on("error", refuse); child.stdout!.setEncoding("utf8");
+    child.stdout!.on("data", (chunk: string) => { if (!settled) { output += chunk; if (Buffer.byteLength(output) > 512) refuse(); } });
     child.stdin!.end(JSON.stringify({ schema: 1, nonce, home: initial.home, creationTicks: String(created.birthtimeNs / 100n + 621355968000000000n) }));
     child.unref();
+    } catch (error) {
+      // Only a source-proven pre-entry refusal retires this exact attempt.
+      // Unreturned attempts and child initialization/disposal uncertainty remain
+      // retained; neither catch nor observer expiry is an actual close receipt.
+      if (registration.state === "not_attempted" && registration.capability === capability && registration.owner === initial.ownerInstance &&
+        registration.generation === initial.generation && registration.nonce === nonce) pending.delete(registration);
+      if (!settled) { settled = true; clearTimeout(timer); reject(error); }
+    }
   });
   current();
   const after = lstatSync(dir, { bigint: true });
@@ -377,6 +400,9 @@ export async function createWindowsLifecycleObjects(capability: LifecycleServing
   if (!same(identities, snapshot(initial.home, "established"))) throw new WindowsLifecyclePathUnavailable("unsafe_path");
   const result = Object.freeze({});
   creations.set(result, { capability, proof, home: initial.home, owner: initial.ownerInstance, generation: initial.generation, paths: identities });
+  // Only successful complete source verification transfers this attempt to the
+  // opaque creation record. No catch/finally drops failed or unknown attempts.
+  if (creationAttempt) retainedCreationAttempts.delete(creationAttempt);
   return result;
   } catch (error) {
     if (error instanceof WindowsLifecyclePathUnavailable) throw error;

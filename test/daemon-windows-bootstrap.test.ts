@@ -123,6 +123,89 @@ const directory = () => join(home, ".core-lifecycle");
 const file = () => join(directory(), "receipts.sqlite");
 
 describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving bootstrap Boundary1 (not admission/restart acceptance)", () => {
+  it.each([
+    { kind: "array", filesystem: ["NTFS"] }, { kind: "object", filesystem: { value: "NTFS" } },
+    { kind: "null", filesystem: null }, { kind: "number", filesystem: 1 },
+  ])("SIMULATED malformed filesystem $kind in an actual helper response cannot produce source proof", async ({ filesystem }) => {
+    const b = await serving(), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end);
+    const owner = assertLifecycleServingCapability(cap, "prepare").ownerInstance, realSpawn = originals.spawn!;
+    const before = lstatSync(home, { bigint: true }); let verifiedResponses = 0, actualCloses = 0;
+    vi.spyOn(processes, "spawn").mockImplementation((...args: Parameters<typeof processes.spawn>) => {
+      const child = Reflect.apply(realSpawn, processes, args) as ReturnType<typeof processes.spawn>;
+      const outputEmit = child.stdout!.emit.bind(child.stdout!), childEmit = child.emit.bind(child); let output = "";
+      vi.spyOn(child.stdout!, "emit").mockImplementation((event: string | symbol, ...values: any[]) => {
+        if (event !== "data") return Reflect.apply(outputEmit, child.stdout!, [event, ...values]);
+        output += String(values[0]); return true;
+      });
+      vi.spyOn(child, "emit").mockImplementation((event: string | symbol, ...values: any[]) => {
+        if (event !== "close") return Reflect.apply(childEmit, child, [event, ...values]);
+        actualCloses++;
+        let delivered = output;
+        try {
+          const response = JSON.parse(output) as Record<string, unknown>;
+          if (response.status === "verified" && typeof response.filesystem === "string" && ["NTFS", "ReFS"].includes(response.filesystem)) {
+            verifiedResponses++; delivered = JSON.stringify({ ...response, filesystem });
+          }
+        } catch { /* Original unavailable response remains unavailable, never fabricated verification. */ }
+        // Rewrite ONLY the explicitly simulated field of the actual response,
+        // before forwarding this exact native close. Nonce/ACL/path proof is real.
+        Reflect.apply(outputEmit, child.stdout!, ["data", delivered]);
+        return Reflect.apply(childEmit, child, [event, ...values]);
+      });
+      return child;
+    });
+    await expect(windowsLifecycle.verifyWindowsLifecyclePaths(home, owner, "prepare", "home", end, cap))
+      .rejects.toMatchObject({ reason: "unavailable" });
+    expect(verifiedResponses).toBe(1); expect(actualCloses).toBe(1); expect(pendingWindowsLifecycleVerifications()).toBe(0);
+    const after = lstatSync(home, { bigint: true });
+    expect([after.dev, after.ino, after.birthtimeNs]).toEqual([before.dev, before.ino, before.birthtimeNs]);
+    expect(existsSync(directory())).toBe(false);
+  });
+  it("SIMULATED CREATE_NEW pre-entry deadline crossing retires only the proven not-attempted record", async () => {
+    const b = await serving(), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end);
+    const realSpawn = originals.spawn!, realNow = performance.now.bind(performance); let nativeEntries = 0, homeClosed = false;
+    vi.spyOn(processes, "spawn").mockImplementation((...args: Parameters<typeof processes.spawn>) => {
+      nativeEntries++;
+      const child = Reflect.apply(realSpawn, processes, args) as ReturnType<typeof processes.spawn>;
+      child.once("close", () => { homeClosed = true; }); return child;
+    });
+    // The actual HOME helper must finish first. Only the subsequent source-owned
+    // CREATE_NEW registration crosses the original phase deadline; no FS probe.
+    vi.spyOn(performance, "now").mockImplementation(() => homeClosed && pendingWindowsLifecycleVerifications() > 0 ? end + 1 : realNow());
+    await expect(windowsLifecycle.createWindowsLifecycleObjects(cap, end)).rejects.toMatchObject({ reason: "unavailable" });
+    expect(homeClosed).toBe(true); expect(nativeEntries).toBe(1); expect(pendingWindowsLifecycleVerifications()).toBe(0);
+    expect(existsSync(directory())).toBe(true); expect(existsSync(file())).toBe(false); expect(existsSync(file() + "-journal")).toBe(false);
+  });
+  it("SIMULATED initialization throw after actual CREATE_NEW native entry retains the exact helper until real close", async () => {
+    const b = await serving(), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end), realSpawn = originals.spawn!;
+    let nativeEntries = 0, createChild: ReturnType<typeof processes.spawn> | undefined, closeObserved = false, actualCode: number | null = null;
+    let closed!: () => void; const actualClose = new Promise<void>(resolve => { closed = resolve; });
+    vi.spyOn(processes, "spawn").mockImplementation((...args: Parameters<typeof processes.spawn>) => {
+      expect(pendingWindowsLifecycleVerifications()).toBe(1); nativeEntries++;
+      const child = Reflect.apply(realSpawn, processes, args) as ReturnType<typeof processes.spawn>;
+      if (nativeEntries === 2) {
+        createChild = child;
+        child.once("close", code => { actualCode = code; closeObserved = true; closed(); });
+        const originalEnd = child.stdin!.end;
+        vi.spyOn(child.stdin!, "end").mockImplementation(function(this: typeof child.stdin, ...values: any[]) {
+          Reflect.apply(originalEnd, this, values);
+          // Actual input was delivered; throwing is a simulated wrapper fault,
+          // not an OS/VFS failure and not proof the helper never ran.
+          throw new Error("SIMULATED initialization throw after real CREATE_NEW stdin end");
+        });
+      }
+      return child;
+    });
+    try {
+      await expect(windowsLifecycle.createWindowsLifecycleObjects(cap, end)).rejects.toMatchObject({ reason: "unavailable" });
+      expect(nativeEntries).toBe(2); expect(createChild).toBeTruthy(); expect(closeObserved).toBe(false);
+      expect(pendingWindowsLifecycleVerifications()).toBe(1);
+      expect(() => windowsLifecycle.assertWindowsLifecycleCreation({}, cap)).toThrow("unavailable");
+    } finally { if (createChild) await actualClose; }
+    expect(closeObserved).toBe(true); expect(actualCode).toBe(0); expect(pendingWindowsLifecycleVerifications()).toBe(0);
+    expect(existsSync(file())).toBe(true); expect(existsSync(file() + "-journal")).toBe(true);
+    expect(() => windowsLifecycle.assertWindowsLifecycleCreation({}, cap)).toThrow("unavailable");
+  });
   it("actual serving issuer publishes real committed lineage with protected new objects and a strict independent reader", async () => {
     const b = await serving(), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end);
     const before = lstatSync(home, { bigint: true });
