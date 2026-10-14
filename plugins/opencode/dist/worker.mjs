@@ -50,27 +50,27 @@ import {
   RewakeEndpoint,
   WAKE_HEADER,
   shouldWakeClaudeMessage
-} from "./chunks/chunk-R5AGA32N.mjs";
+} from "./chunks/chunk-XO2RXGN6.mjs";
 import {
   antigravityHookOutput
-} from "./chunks/chunk-K73LT3AH.mjs";
+} from "./chunks/chunk-GI3GL3PP.mjs";
 import {
   MAX_STREAM_ENTRIES
-} from "./chunks/chunk-OAFZLXTM.mjs";
+} from "./chunks/chunk-PO5MNVE3.mjs";
 import {
   isBridgeWorktree,
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-RUANQ6ER.mjs";
+} from "./chunks/chunk-AN74XGCC.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-NHN456JG.mjs";
+} from "./chunks/chunk-WMK7VKAW.mjs";
 import {
   readWorktreeState
-} from "./chunks/chunk-MM4PC6NN.mjs";
-import "./chunks/chunk-3BLJYLHJ.mjs";
+} from "./chunks/chunk-ULMVWNI6.mjs";
+import "./chunks/chunk-CWBQ6ZI6.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   codexAppServerCall,
@@ -78,7 +78,7 @@ import {
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-NTGHIKJP.mjs";
+} from "./chunks/chunk-64GL3ETN.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
@@ -90,7 +90,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-2IAKUTDX.mjs";
+} from "./chunks/chunk-NXMMLQYZ.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -105,12 +105,12 @@ import {
 import {
   REMOTE_JOB_POLL_MS,
   remoteSpawnArgsSchema
-} from "./chunks/chunk-VEBEXJDA.mjs";
+} from "./chunks/chunk-3GC3LD6E.mjs";
 import {
   formatHealth,
   probeBrokerHealth
-} from "./chunks/chunk-5WQDYOMO.mjs";
-import "./chunks/chunk-IXIWOPMO.mjs";
+} from "./chunks/chunk-7M2VTPSG.mjs";
+import "./chunks/chunk-UQ75CONU.mjs";
 import "./chunks/chunk-RQUYBZWF.mjs";
 import {
   conversationPageSchema
@@ -124,8 +124,8 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-DLOPDLUT.mjs";
-import "./chunks/chunk-QTTTNP4F.mjs";
+} from "./chunks/chunk-EFSUK5KH.mjs";
+import "./chunks/chunk-BN7AECWI.mjs";
 import {
   ACCESS_LEVELS,
   DEFAULT_FOLLOW_UP,
@@ -139,7 +139,6 @@ import {
   ROOT_NAME_ENV,
   ROOT_SESSION_ENV,
   answerPendingApproval,
-  antigravityRootSession,
   appendContextEvent,
   bundledCli,
   currentDelegateDepth,
@@ -151,21 +150,25 @@ import {
   nativeSubagentsSchema,
   parentFromEnv,
   parseJobSettings,
-  readAntigravityPrivateJson,
   resolveBinary,
   runProcess,
   verifiedGoneJobOwners
-} from "./chunks/chunk-RQVG3DTE.mjs";
+} from "./chunks/chunk-JYFBW3UG.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
   formatResourceSlots
-} from "./chunks/chunk-YXP3D4N7.mjs";
+} from "./chunks/chunk-DCMBMNAV.mjs";
 import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   bundleDirectory
 } from "./chunks/chunk-D5ZW6VFT.mjs";
-import "./chunks/chunk-N2ARIAHD.mjs";
+import "./chunks/chunk-ZA34DLMU.mjs";
+import {
+  resolveDbPath,
+  resolveHome,
+  resolvePipePath
+} from "./chunks/chunk-MC6YEO5C.mjs";
 import "./chunks/chunk-JTZGNEMM.mjs";
 import {
   MAX_JOB_SEND_TARGETS,
@@ -174,12 +177,9 @@ import {
 } from "./chunks/chunk-CHGUU5ZH.mjs";
 import {
   loadOrCreateToken,
-  resolveDbPath,
-  resolveHome,
-  resolvePipePath,
   tokensEqual
-} from "./chunks/chunk-QE5Y5JCD.mjs";
-import "./chunks/chunk-2UCPNPKV.mjs";
+} from "./chunks/chunk-V4WDBMEN.mjs";
+import "./chunks/chunk-MQBGXD3O.mjs";
 import {
   CLAUDE_PERMISSION_MODES,
   CODEX_APPROVALS_REVIEWERS,
@@ -191,7 +191,7 @@ import {
   parseAgentKind,
   saveConfigValue,
   watchConfig
-} from "./chunks/chunk-BEZD7FHM.mjs";
+} from "./chunks/chunk-3R4P2MBS.mjs";
 import {
   AGENT_KINDS,
   BROADCAST,
@@ -208,7 +208,7 @@ import {
   askOwnerSchema,
   decisionScopeSchema,
   formatDecisionSummary
-} from "./chunks/chunk-GT6BLZHK.mjs";
+} from "./chunks/chunk-5323FPDZ.mjs";
 import {
   ZodOptional,
   canonicalProjectRoot,
@@ -216,8 +216,8 @@ import {
   isInternalBridgeProcess,
   isPluginCacheCwd
 } from "./chunks/chunk-IMOU3QNL.mjs";
-import "./chunks/chunk-VXKZ7TFV.mjs";
-import "./chunks/chunk-4S5VWBNU.mjs";
+import "./chunks/chunk-4WTMKOBZ.mjs";
+import "./chunks/chunk-YSCMJJ2K.mjs";
 import "./chunks/chunk-HYOPFLLN.mjs";
 import {
   archiveFile,
@@ -225,10 +225,8 @@ import {
   isRecord,
   readJsonStore,
   writeJsonStore
-} from "./chunks/chunk-SCPRRSA3.mjs";
-import {
-  assertUnlinked
-} from "./chunks/chunk-GGCBZOQR.mjs";
+} from "./chunks/chunk-5EUD3K7R.mjs";
+import "./chunks/chunk-BGNDIPFW.mjs";
 import {
   APP_NAME,
   APP_VERSION,
@@ -247,18 +245,17 @@ import {
   museBridgeTool,
   museHookOutput,
   museReadingTool
-} from "./chunks/chunk-QFMFBTOH.mjs";
+} from "./chunks/chunk-4BSGVJWH.mjs";
 import {
   MUSE_ACCESS_ENV,
   antigravityAncestor,
   inspectClaudeLaunch,
-  lookup,
   museHookFile,
   museHostPid,
   readMusePrivateJson,
   restoreMuseContext,
   writeMusePrivateJson
-} from "./chunks/chunk-VWILPC5Y.mjs";
+} from "./chunks/chunk-LU5OH4AB.mjs";
 import {
   TRANSCRIPT_ID,
   directory,
@@ -269,7 +266,7 @@ import {
 } from "./chunks/chunk-NVDPULGI.mjs";
 import {
   processIdentity
-} from "./chunks/chunk-FG32ZSGV.mjs";
+} from "./chunks/chunk-4O6KB7UQ.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/mcp/server.ts
@@ -2349,7 +2346,7 @@ var MuseHooks = class {
 
 // src/mcp/antigravity-hooks.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
-import { mkdirSync as mkdirSync2, renameSync as renameSync2, unlinkSync as unlinkSync2, writeFileSync } from "node:fs";
+import { mkdirSync as mkdirSync2, writeFileSync } from "node:fs";
 import { createServer as createServer2 } from "node:http";
 import { join as join2 } from "node:path";
 var AntigravityHooks = class {
@@ -2360,52 +2357,16 @@ var AntigravityHooks = class {
   server = null;
   retired = false;
   conversationId = null;
-  file = null;
-  secret = randomBytes2(24).toString("hex");
-  requests = /* @__PURE__ */ new Set();
-  register = null;
-  replaced = () => {
-    this.retired = true;
-    for (const request of this.requests) request.abort();
-  };
-  reclaimed = () => {
-    if (!this.server?.listening) return;
-    this.retired = false;
-    this.register?.();
-  };
   async start() {
-    if (this.server) return;
     if (!this.ctx.node && !this.ctx.parent) return;
     const pid = await antigravityAncestor();
     if (!pid) return;
-    const hostIdentity = processIdentity(pid), identity = processIdentity(process.pid);
-    if (!hostIdentity || !identity) return;
-    const tokens = (await lookup(pid))?.cmdline.match(/"[^"]*"|'[^']*'|\S+/g)?.map((token) => token.replace(/^["']|["']$/g, "")) ?? [];
-    const conversations = tokens.flatMap((token, index) => token === "--conversation" ? [tokens[index + 1] ?? ""] : token.startsWith("--conversation=") ? [token.slice("--conversation=".length)] : []);
-    const resumed = conversations.length === 1 && TRANSCRIPT_ID.test(conversations[0]) ? conversations[0] : null;
-    this.file = join2(this.ctx.home, "antigravity-hooks", `${pid}.json`);
-    assertUnlinked(join2(this.ctx.home, "antigravity-hooks"));
-    mkdirSync2(join2(this.ctx.home, "antigravity-hooks"), { recursive: true, mode: 448 });
-    assertUnlinked(this.file);
-    let restored = null;
-    try {
-      const previous = readAntigravityPrivateJson(this.file);
-      if (previous.hostIdentity === hostIdentity && typeof previous.conversationId === "string" && TRANSCRIPT_ID.test(previous.conversationId)) restored = previous.conversationId;
-    } catch {
-    }
-    this.conversationId = resumed ?? antigravityRootSession(this.ctx.home, pid, hostIdentity) ?? restored ?? this.ctx.node?.currentSessionId ?? null;
-    this.retired = false;
-    const secret = this.secret;
+    const secret = randomBytes2(24).toString("hex");
     this.server = createServer2((req, res) => {
       if (req.method !== "POST" || req.url !== "/hook" || !tokensEqual(String(req.headers.authorization ?? ""), `Bearer ${secret}`) || this.retired) {
         res.writeHead(403).end();
         return;
       }
-      const controller = new AbortController();
-      this.requests.add(controller);
-      const abort = () => controller.abort();
-      req.once("aborted", abort);
-      res.once("close", abort);
       void (async () => {
         let raw = "";
         for await (const part of req) {
@@ -2414,71 +2375,42 @@ var AntigravityHooks = class {
         }
         const body = object(JSON.parse(raw)), input = object(body.input);
         if (!["PreInvocation", "Stop"].includes(body.event)) throw new Error("unknown event");
-        const id = typeof input.conversationId === "string" && TRANSCRIPT_ID.test(input.conversationId) ? input.conversationId : null;
-        if (!this.conversationId) {
-          this.conversationId = antigravityRootSession(this.ctx.home, pid, hostIdentity) ?? this.ctx.node?.currentSessionId ?? null;
-          if (this.conversationId) this.register?.();
-        }
-        if (!id || !this.conversationId || id !== this.conversationId || this.retired || controller.signal.aborted) {
+        const id = typeof input.conversationId === "string" ? input.conversationId : null;
+        this.conversationId ??= this.ctx.node?.currentSessionId ?? id;
+        if (id && this.conversationId && id !== this.conversationId) {
           res.writeHead(200, { "content-type": "application/json" }).end("{}");
           return;
         }
-        const output = await buildHookResponse(this.ctx, { event: body.event === "Stop" ? "Stop" : "UserPromptSubmit", sessionId: id, cwd: Array.isArray(input.workspacePaths) && typeof input.workspacePaths[0] === "string" ? input.workspacePaths[0] : null, stopHookActive: false, signal: controller.signal });
+        const output = await buildHookResponse(this.ctx, { event: body.event === "Stop" ? "Stop" : "UserPromptSubmit", sessionId: typeof input.conversationId === "string" ? input.conversationId : null, cwd: Array.isArray(input.workspacePaths) && typeof input.workspacePaths[0] === "string" ? input.workspacePaths[0] : null, stopHookActive: false });
         const text2 = "reason" in output ? String(output.reason) : "hookSpecificOutput" in output ? output.hookSpecificOutput.additionalContext : "";
-        if (!res.destroyed) res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(controller.signal.aborted || this.retired ? {} : antigravityHookOutput(body.event, text2)));
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(antigravityHookOutput(body.event, text2)));
       })().catch(() => {
-        if (!res.writableEnded && !res.destroyed) res.writeHead(500).end("{}");
-      }).finally(() => {
-        this.requests.delete(controller);
-        req.removeListener("aborted", abort);
-        res.removeListener("close", abort);
+        if (!res.writableEnded) res.writeHead(500).end("{}");
       });
     });
     await new Promise((resolve2, reject) => {
       this.server.once("error", reject);
       this.server.listen(0, "127.0.0.1", resolve2);
     });
-    this.register = () => {
+    mkdirSync2(join2(this.ctx.home, "antigravity-hooks"), { recursive: true });
+    const register = () => {
       if (!this.server?.listening) return;
-      const temporary = `${this.file}.${process.pid}.${randomBytes2(8).toString("hex")}.tmp`;
-      try {
-        writeFileSync(temporary, JSON.stringify({ port: this.server.address().port, secret, pid: process.pid, identity, hostIdentity, conversationId: this.conversationId }), { mode: 384, flag: "wx" });
-        renameSync2(temporary, this.file);
-      } finally {
-        try {
-          unlinkSync2(temporary);
-        } catch {
-        }
-      }
+      writeFileSync(join2(this.ctx.home, "antigravity-hooks", `${pid}.json`), JSON.stringify({ port: this.server.address().port, secret, pid: process.pid }), { mode: 384 });
     };
-    try {
-      this.register();
-    } catch (error) {
-      await this.stop();
-      throw error;
-    }
-    this.ctx.node?.on("replaced", this.replaced);
-    this.ctx.node?.on("reclaimed", this.reclaimed);
+    register();
+    this.ctx.node?.on("replaced", () => {
+      this.retired = true;
+    });
+    this.ctx.node?.on("reclaimed", () => {
+      this.retired = false;
+      register();
+    });
   }
   async stop() {
     const server = this.server;
     this.server = null;
-    this.replaced();
-    this.register = null;
-    this.ctx.node?.removeListener("replaced", this.replaced);
-    this.ctx.node?.removeListener("reclaimed", this.reclaimed);
-    if (this.file) {
-      try {
-        const reg = readAntigravityPrivateJson(this.file);
-        if (reg.secret === this.secret && reg.pid === process.pid) unlinkSync2(this.file);
-      } catch {
-      }
-      this.file = null;
-    }
-    if (server) {
-      server.closeAllConnections();
-      await new Promise((resolve2) => server.close(() => resolve2()));
-    }
+    this.retired = true;
+    if (server) await new Promise((resolve2) => server.close(() => resolve2()));
   }
 };
 
@@ -3241,7 +3173,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-KEVR2LFU.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-LEN5F5DN.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3253,9 +3185,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-S6ACZHN6.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-5YNJGL6C.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-S6ACZHN6.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-5YNJGL6C.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3448,8 +3380,8 @@ ${JSON.stringify(result)}`);
     },
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-R3ITZRCL.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-VGFR7HUE.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-NG4VMI74.mjs")).readHistory(resolveDbPath(ctx.home), args);
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-2Q2YL5ZY.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
@@ -3457,7 +3389,7 @@ ${JSON.stringify(result)}`);
     description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
     inputSchema: conversationPageSchema.shape,
     annotations: { readOnlyHint: true }
-  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-G2VN6ZZF.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
+  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-EHKPP6VV.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
   register(
     "decide",
     {
@@ -4297,7 +4229,7 @@ Saved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value
       }
     },
     async (a, extra) => {
-      if (ctx.agent === "muse" || ctx.agent === "antigravity") return text("{}");
+      if (ctx.agent === "muse") return text("{}");
       const given = (v) => typeof v === "string" && v && !v.startsWith("${") ? v : null;
       try {
         const nativeId = given(a.agent_id) ?? given(extra._meta?.agent_id) ?? given(extra._meta?.agentId);
