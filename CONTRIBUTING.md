@@ -100,8 +100,14 @@ Per-case beforeEach/afterEach evidence uses pinned5.0.2 serialized
 same reported case. Genuine `pass` state and balanced started/ended groups are
 required; an end event alone is not success evidence. Failed/incomplete groups,
 missing state or unknown scope produce UNKNOWN without matching error text.
-Only scope/IDs/status/counts are captured for hook provenance. Ordinary assertion
-failures with successful hooks remain known failed cases and fail the test job.
+These observed group IDs/status/counts do not classify every failure cause.
+Returned beforeEach cleanup and extended fixture teardown can fail after those
+groups pass, exposed only through the failed case result. Failed cases retain raw
+diagnostics labelled `unclassified (cleanup/teardown or assertion)`; no message or
+stack matching infers cause. Raw case diagnostics are not a secret-redaction
+guarantee. Known membership/disposition proves which cases were collected and
+failed/passed/skipped, not identical runtime values or universal failure cause.
+Such failures and ordinary assertion failures remain failed tests and failed jobs.
 No unsharded test bodies run. Per-job artifacts retain JSON results, shard lists,
 failures and retry/flaky diagnostics; retries are not added or hidden.
 Artifact names include the workflow attempt so a manual rerun preserves the

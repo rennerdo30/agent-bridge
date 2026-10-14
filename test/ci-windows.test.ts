@@ -273,7 +273,7 @@ console.log(JSON.stringify(moduleCensus({ moduleId: ${JSON.stringify(moduleId)},
   expect(proof.lanes.fast.files[0].tests[0].errors[0].message).toBe("original test failure");
 });
 
-it("distinguishes real beforeEach/afterEach failures from a failed assertion with passed hooks", () => {
+it("retains real hook, returned-cleanup, fixture-teardown and assertion failures without guessing cause", () => {
   const root = mkdtempSync(join(tmpdir(), "ci-case-hooks-"));
   const api = new URL("../node_modules/vitest/dist/node.js", import.meta.url).href;
   const entry = fileURLToPath(new URL("../node_modules/vitest/dist/index.js", import.meta.url));
@@ -288,14 +288,18 @@ import CiReporter, { moduleCensus, censusDigest } from ${JSON.stringify(reporter
 import { checkShardResults } from ${JSON.stringify(checker)};
 const root = ${JSON.stringify(root)};
 const rows = [];
-for (const mode of ['beforeEach', 'afterEach', 'assertion']) {
+for (const mode of ['beforeEach', 'afterEach', 'assertion', 'returnedCleanup', 'fixtureTeardown']) {
   const directory = join(root, mode), results = join(directory, 'results'), marker = join(directory, 'callback-ran');
   mkdirSync(results, { recursive: true });
   const source = 'import { it, expect, beforeEach, afterEach } from "vitest";\\n'
     + 'import { writeFileSync } from "node:fs";\\n'
-    + 'beforeEach(() => { if (' + JSON.stringify(mode) + ' === "beforeEach") throw new Error("private fixture hook failure"); });\\n'
+    + 'beforeEach(() => { if (' + JSON.stringify(mode) + ' === "beforeEach") throw new Error("private fixture hook failure"); if (' + JSON.stringify(mode) + ' === "returnedCleanup") return () => { throw new Error("private returned cleanup failure"); }; });\\n'
     + 'afterEach(() => { if (' + JSON.stringify(mode) + ' === "afterEach") throw new Error("private fixture hook failure"); });\\n'
-    + 'it("actual hook probe", () => { writeFileSync(' + JSON.stringify(marker) + ', "callback ran"); expect(' + JSON.stringify(mode) + ' !== "assertion").toBe(true); });\\n';
+    + (mode === 'fixtureTeardown'
+      ? 'it.extend({ resource: async ({}, use) => { await use(true); throw new Error("private extended fixture teardown failure"); } })("actual hook probe", ({ resource }) => { expect(resource).toBe(true); writeFileSync(' + JSON.stringify(marker) + ', "callback passed"); });\\n'
+      : mode === 'returnedCleanup'
+      ? 'it("actual hook probe", () => { expect(true).toBe(true); writeFileSync(' + JSON.stringify(marker) + ', "callback passed"); });\\n'
+      : 'it("actual hook probe", () => { writeFileSync(' + JSON.stringify(marker) + ', "callback ran"); expect(' + JSON.stringify(mode) + ' !== "assertion").toBe(true); });\\n');
   writeFileSync(join(directory, 'probe.test.ts'), source);
   process.env.AGENT_BRIDGE_CI_RESULTS_DIR = results;
   process.env.AGENT_BRIDGE_TEST_LANE = 'fast';
@@ -326,7 +330,9 @@ for (const mode of ['beforeEach', 'afterEach', 'assertion']) {
     const proof = JSON.parse(readFileSync(join(results, 'shard-coverage.json'), 'utf8'));
     rows.push({ mode, callbackRan: existsSync(marker), reason: diagnostics.reason,
       state: diagnostics.files[0].tests[0].state, hooks: diagnostics.files[0].tests[0].hooks,
-      errorCount: diagnostics.files[0].tests[0].errorCount, coverage: proof.coverage, refused });
+      errorCount: diagnostics.files[0].tests[0].errorCount, errors: diagnostics.files[0].tests[0].errors,
+      failureClassification: diagnostics.files[0].tests[0].failureClassification,
+      coverage: proof.coverage, refused });
   } finally { await ctx.close(); }
 }
 console.log('R2_PROBE=' + JSON.stringify(rows));
@@ -338,14 +344,16 @@ console.log('R2_PROBE=' + JSON.stringify(rows));
   const line = result.stdout.split(/\r?\n/).find(value => value.startsWith("R2_PROBE="));
   expect(line).toBeDefined();
   const rows = JSON.parse(line!.slice("R2_PROBE=".length));
-  expect(rows.map((row: { mode: string }) => row.mode)).toEqual(["beforeEach", "afterEach", "assertion"]);
-  expect(rows.map((row: { callbackRan: boolean }) => row.callbackRan)).toEqual([false, true, true]);
-  expect(rows.map((row: { coverage: string }) => row.coverage)).toEqual(["unknown", "unknown", "known"]);
-  expect(rows.map((row: { refused: boolean }) => row.refused)).toEqual([true, true, false]);
+  expect(rows.map((row: { mode: string }) => row.mode)).toEqual(["beforeEach", "afterEach", "assertion", "returnedCleanup", "fixtureTeardown"]);
+  expect(rows.map((row: { callbackRan: boolean }) => row.callbackRan)).toEqual([false, true, true, true, true]);
+  expect(rows.map((row: { coverage: string }) => row.coverage)).toEqual(["unknown", "unknown", "known", "known", "known"]);
+  expect(rows.map((row: { refused: boolean }) => row.refused)).toEqual([true, true, false, false, false]);
   for (const row of rows) {
     expect(row.reason).toBe("failed");
     expect(row.state).toBe("failed");
     expect(row.errorCount).toBeGreaterThan(0);
+    expect(row.errors).toHaveLength(row.errorCount);
+    expect(row.failureClassification).toBe("unclassified (cleanup/teardown or assertion)");
   }
   expect(rows[0].hooks.entries).toContainEqual({ name: "beforeEach", reportedState: "run", status: "incomplete", starts: 1, ends: 0 });
   expect(rows[1].hooks.entries).toContainEqual({ name: "afterEach", reportedState: "run", status: "incomplete", starts: 1, ends: 0 });
@@ -354,6 +362,10 @@ console.log('R2_PROBE=' + JSON.stringify(rows));
     { name: "beforeEach", reportedState: "pass", status: "passed", starts: 1, ends: 1 },
     { name: "afterEach", reportedState: "pass", status: "passed", starts: 1, ends: 1 },
   ]);
+  for (const row of rows.slice(3)) {
+    expect(row.hooks.status).toBe("complete");
+    expect(row.hooks.entries).toEqual(rows[2].hooks.entries);
+  }
 });
 
 it.each(["duplicate", "duplicate-id-different-name", "changed-id", "omitted", "pending", "skip-changed", "invalid-disposition",

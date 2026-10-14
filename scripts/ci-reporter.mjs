@@ -86,10 +86,12 @@ export function moduleCensus(module, hookEvidence) {
       };
       const result = test.result();
       return { id: test.id, name: test.fullName, state: result.state, note: result.note, hooks,
-        // An uncertain hook case can carry hook secrets in the ordinary error array.
-        // Keep count here; the original Vitest job/results still retain the failure.
+        // Case-result errors have no universal cause provenance in pinned5.0.2.
+        // Returned hook cleanups / extended fixture teardown may fail after the
+        // observed hook groups pass. Membership is not failure-cause proof.
+        failureClassification: result.state === "failed" ? "unclassified (cleanup/teardown or assertion)" : undefined,
         errorCount: result.errors?.length ?? 0,
-        errors: ["unknown", "incomplete"].includes(hooks.status) ? undefined : result.errors,
+        errors: result.errors,
         ...test.diagnostic() };
     }),
   };
@@ -120,6 +122,7 @@ export default class CiReporter {
     const id = caseIdentity(moduleScope(test.module), test);
     const proof = { id, status: "unknown", entries: [] };
     if (this.metadata.vitest !== "5.0.2") return proof;
+    // Ancillary observed group evidence, not universal cleanup/failure provenance.
     // Documented experimental state API, pinned to the declared TaskResult.hooks
     // reporting contract. Do not read @internal TestCase.task or error text.
     const state = this.ctx?.state;
