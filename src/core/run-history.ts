@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { lstatSync, readdirSync, realpathSync, statSync, type BigIntStats } from "node:fs";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { JOBS_FILE } from "./constants.js";
-import { indexedJobProjectionCurrent, readIndexedJobs, type ArchiveSelection } from "./job-archive-index.js";
+import { indexedJobProjectionCurrent, readIndexedJobSteps, type ArchiveSelection } from "./job-archive-index.js";
 import { isRecord } from "./json-store.js";
 import { RUNS_DIR_NAME, type RunMeta } from "./runfeed.js";
 import { safeFile } from "./transcripts/common.js";
@@ -345,7 +345,8 @@ export function* historyJobsSteps(home: string, responsive = false, selection: A
   let canonicalHome: string;
   try { canonicalHome = realpathSync.native(home); } catch { return out; }
   const indexed = join(canonicalHome, JOBS_FILE);
-  for (const job of readIndexedJobs(indexed, { ...selection, history: true }).jobs) {
+  for (const job of (yield* readIndexedJobSteps(indexed, responsive, { ...selection, history: true })).jobs) {
+    if (responsive) yield;
     if (typeof job.name === "string" && RUN_LOG_NAME.test(job.name + ".log")) out.set(job.name, job);
   }
   if (indexedJobProjectionCurrent(indexed)) return out;
