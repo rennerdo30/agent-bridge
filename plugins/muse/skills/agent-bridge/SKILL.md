@@ -16,6 +16,20 @@ search_history for retained conversations, list_models for current target
 models and usage_limits for known account quotas. Do not loop on waits, send
 pure acknowledgements, or delete user data.
 
+## History search
+
+Before starting or resuming work, after a handoff or restart, and whenever someone refers to an earlier decision, job, branch or message, call `search_history` instead of guessing or reading log files. It searches bridge mail, owner decisions and questions, job runs and reports, and native CLI transcripts locally, without model calls.
+
+- The query is split into words that must all appear, in any order. Punctuation and quotes are dropped, and words like OR or AND are searched as ordinary words. Put ids that scope the search (job, session, project) into `filters`, not only into the query.
+- Narrow with `filters`: `kind` (message, run, decision, transcript, approval, progress, report = job reports and snapshots, question), `project` (your cwd), `job`, `session`, `agent`, `since`/`until` (epoch ms or ISO 8601 with offset).
+- Read a whole thread by passing a hit's `conversation` to `get_conversation`; page with `next` as `after`.
+
+Examples:
+
+- Owner rule on a topic: `search_history({ query: "branch limit", filters: { kind: "decision" } })`
+- A job's reports: `search_history({ query: "result", filters: { job: "codex-job-1a2b3c4d", kind: "report" } })`. A report can be a snapshot of a still-running job, so check its status before treating it as final.
+- Recent work in this project: `search_history({ query: "release", filters: { project: "<your cwd>", since: "<ISO time>" } })`
+
 ## Questions to the owner
 
 Use `ask_owner` for a missing owner-only decision in your own project. Check

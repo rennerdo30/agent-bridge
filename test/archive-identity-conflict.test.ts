@@ -32,6 +32,27 @@ async function hello(raw: BridgeClient, sessionId = "new-session") {
       pid: process.pid, agentPid: null, sessionId, startedAt: Date.now(), autoWake: false } });
 }
 
+const archiveFailures = ["marker", "remove", "archive"] as const;
+type ArchiveFailure = typeof archiveFailures[number];
+
+/** Synchronous setup owns both handles, including a failed second open or DDL. */
+function withArchiveDatabases<T>(file: string, setup: (primary: DatabaseSync, archive: DatabaseSync) => T,
+  open: (path: string) => DatabaseSync = path => new DatabaseSync(path)): T {
+  let primary: DatabaseSync | undefined, archive: DatabaseSync | undefined;
+  try {
+    primary = open(file);
+    archive = open(archiveDbPath(file));
+    return setup(primary, archive);
+  } finally {
+    try { archive?.close(); } finally { primary?.close(); }
+  }
+}
+function installArchiveFault(primary: DatabaseSync, archive: DatabaseSync, failure: ArchiveFailure): void {
+  if (failure === "marker") primary.exec("CREATE TRIGGER reject_marker BEFORE INSERT ON message_archive_conflicts WHEN NEW.id='poison-2' BEGIN SELECT RAISE(ABORT,'fixture marker failure'); END");
+  if (failure === "remove") primary.exec("CREATE TRIGGER reject_remove BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT,'fixture remove failure'); END");
+  if (failure === "archive") archive.exec("CREATE TRIGGER reject_archive BEFORE INSERT ON messages WHEN NEW.id='healthy' BEGIN SELECT RAISE(ABORT,'fixture archive failure'); END");
+}
+
 it("registers repeatedly with mixed stale/current mail and bounded durable conflict evidence", async () => {
   const host = env.node("host", "other"); await host.start();
   const store = new MessageStore(env.db, nullLogger);
@@ -106,26 +127,85 @@ it("keeps equal content idempotent while merging mutable read metadata", () => {
   } finally { primary.close(); archive.close(); store.close(); }
 });
 
-it.each(["marker", "remove", "archive"])("rolls back marker and evidence on %s failure and hello fails closed", async failure => {
-  await env.node("host", "other").start();
+it.each(archiveFailures)("rolls back marker and evidence on %s failure and hello fails closed", async failure => {
+  // This case owns a fresh home. Finish setup before creating any broker or worker.
   const store = new MessageStore(env.db, nullLogger);
   try { seedConflict(store); seedConflict(store, "poison-2"); store.insert(mail("healthy", "normal stale mail")); }
   finally { store.close(); }
-  const primary = new DatabaseSync(env.db), archive = new DatabaseSync(archiveDbPath(env.db));
-  const before = primary.prepare("SELECT * FROM messages ORDER BY id").all();
-  if (failure === "marker") primary.exec("CREATE TRIGGER reject_marker BEFORE INSERT ON message_archive_conflicts WHEN NEW.id='poison-2' BEGIN SELECT RAISE(ABORT,'fixture marker failure'); END");
-  if (failure === "remove") primary.exec("CREATE TRIGGER reject_remove BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT,'fixture remove failure'); END");
-  if (failure === "archive") archive.exec("CREATE TRIGGER reject_archive BEFORE INSERT ON messages WHEN NEW.id='healthy' BEGIN SELECT RAISE(ABORT,'fixture archive failure'); END");
-  const raw = await BridgeClient.connect(env.pipe, nullLogger), received: BridgeMessage[] = [];
-  raw.on("event", (event, message) => { if (event === "message") received.push(message as BridgeMessage); });
+  const before = withArchiveDatabases(env.db, (primary, archive) => {
+    const before = primary.prepare("SELECT * FROM messages ORDER BY id").all();
+    installArchiveFault(primary, archive, failure);
+    return before;
+  }); // Both setup handles are really closed before host startup.
+  let primary: DatabaseSync | undefined, archive: DatabaseSync | undefined, raw: BridgeClient | undefined;
   try {
+    await env.node("host", "other").start();
+    primary = new DatabaseSync(env.db, { readOnly: true });
+    archive = new DatabaseSync(archiveDbPath(env.db), { readOnly: true });
+    raw = await BridgeClient.connect(env.pipe, nullLogger);
+    const received: BridgeMessage[] = [];
+    raw.on("event", (event, message) => { if (event === "message") received.push(message as BridgeMessage); });
     await expect(hello(raw)).rejects.toMatchObject({ code: "internal", message: `fixture ${failure} failure` });
     expect(await raw.request("pending", { limit: 500 })).toEqual([]);
     expect(received).toEqual([]);
     expect(primary.prepare("SELECT * FROM messages ORDER BY id").all()).toEqual(before);
     expect(primary.prepare("SELECT COUNT(*) AS n FROM message_archive_conflicts").get()!.n).toBe(0);
     expect(archive.prepare("SELECT body FROM messages WHERE id='poison'").get()!.body).toBe("canonical archive variant");
-  } finally { raw.close(); primary.close(); archive.close(); }
+  } finally {
+    try { raw?.close(); } finally {
+      try { archive?.close(); } finally { primary?.close(); }
+    }
+  }
+});
+
+it.each(archiveFailures)("rejects forced %s setup contention, then installs only after writer close", failure => {
+  const store = new MessageStore(env.db, nullLogger);
+  try { seedConflict(store); seedConflict(store, "poison-2"); store.insert(mail("healthy", "normal stale mail")); }
+  finally { store.close(); }
+  const writer = new DatabaseSync(failure === "archive" ? archiveDbPath(env.db) : env.db);
+  let locked = false;
+  try {
+    writer.exec("BEGIN IMMEDIATE"); locked = true;
+    let contention: unknown;
+    try {
+      withArchiveDatabases(env.db, (primary, archive) => {
+        primary.prepare("SELECT * FROM messages ORDER BY id").all();
+        installArchiveFault(primary, archive, failure);
+      });
+    } catch (error) { contention = error; }
+    expect(contention).toMatchObject({ errcode: 5 });
+    expect(writer.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='trigger' AND name=?").get(`reject_${failure}`)!.n).toBe(0);
+    writer.exec("COMMIT"); locked = false;
+  } finally {
+    try { if (locked) writer.exec("ROLLBACK"); } finally { writer.close(); }
+  }
+  // No sleep, busy-timeout change, retry loop, or worker termination substitutes for close.
+  withArchiveDatabases(env.db, (primary, archive) => {
+    installArchiveFault(primary, archive, failure);
+    const target = failure === "archive" ? archive : primary;
+    expect(target.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='trigger' AND name=?").get(`reject_${failure}`)!.n).toBe(1);
+  });
+});
+
+it.each(["archive-open", "setup"] as const)("closes native setup handles on early %s failure", phase => {
+  const store = new MessageStore(env.db, nullLogger);
+  store.close();
+  const handles: DatabaseSync[] = [], injected = new Error(`fixture early ${phase} failure`);
+  const open = (path: string) => {
+    if (phase === "archive-open" && path === archiveDbPath(env.db)) throw injected;
+    const db = new DatabaseSync(path); handles.push(db); return db;
+  };
+  let thrown: unknown;
+  try { withArchiveDatabases(env.db, () => { throw injected; }, open); }
+  catch (error) { thrown = error; }
+  expect(thrown).toBe(injected);
+  expect(handles).toHaveLength(phase === "archive-open" ? 1 : 2);
+  for (const db of handles) expect(() => db.prepare("SELECT 1")).toThrow(/not open|closed/i);
+  // The same database pair remains usable; afterEach also removes this case's home on Windows.
+  withArchiveDatabases(env.db, (primary, archive) => {
+    expect(primary.prepare("SELECT COUNT(*) AS n FROM messages").get()!.n).toBe(0);
+    expect(archive.prepare("SELECT COUNT(*) AS n FROM messages").get()!.n).toBe(0);
+  });
 });
 
 it("freezes conflicts across claim, receipt, handoff, inline delivery, sync/async expiry and purge", async () => {
