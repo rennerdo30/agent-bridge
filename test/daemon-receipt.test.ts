@@ -23,13 +23,15 @@ function timingBucket(value: number): TimingBucket {
 const RECEIPT_DIAGNOSTIC_RECORD_LIMIT = 16, RECEIPT_DIAGNOSTIC_COUNT_LIMIT = 65535;
 const mismatchCases = ["id", "revision", "digest", "home", "sql_digest", "matching_digest"] as const;
 type MismatchCase = typeof mismatchCases[number];
+const initialAdmissionCases = [...mismatchCases, "missing_journal_initial"] as const;
+type InitialAdmissionCase = typeof initialAdmissionCases[number];
 type ObservedOperation = "verifier" | "begin" | "commit" | "rollback";
 type CallDisposition = "entered" | "returned" | "threw" | "resolved" | "rejected";
 type AdmissionReason = "budget" | "writer_unknown" | "lineage_unknown" | "publication_unproved" |
   "unsafe_path" | "unsafe_acl" | "unsupported_fs" | "unavailable" | "other";
 type CallObservation = { operation: ObservedOperation; disposition: CallDisposition;
   entry: TimingBucket; resolution: TimingBucket; wall: TimingBucket };
-type InitialAdmissionTrace = { mismatch: MismatchCase; writer?: DatabaseSync; end?: number;
+type InitialAdmissionTrace = { mismatch: InitialAdmissionCase; writer?: DatabaseSync; end?: number;
   outcome: "unavailable" | "resolved" | "rejected"; reason: AdmissionReason;
   count: number; overflow: boolean; records: CallObservation[] };
 let initialAdmissionTrace: InitialAdmissionTrace | undefined;
@@ -74,7 +76,7 @@ function publishInitialAdmissionTrace(): void {
     if (process.env.GITHUB_ACTIONS !== "true" || typeof sourceHead !== "string" || !/^[a-f0-9]{40}$/.test(sourceHead) ||
       typeof runId !== "string" || !/^\d{1,20}$/.test(runId) || typeof runAttempt !== "string" || !/^\d{1,6}$/.test(runAttempt)) return;
     const buckets = ["expired", "0_25", "26_100", "101_500", "501_1000", "1001_plus", "unavailable"];
-    if (typeof trace.mismatch !== "string" || !mismatchCases.includes(trace.mismatch) ||
+    if (typeof trace.mismatch !== "string" || !initialAdmissionCases.includes(trace.mismatch) ||
       typeof trace.outcome !== "string" || !["unavailable", "resolved", "rejected"].includes(trace.outcome) ||
       typeof trace.reason !== "string" || !["budget", "writer_unknown", "lineage_unknown", "publication_unproved",
         "unsafe_path", "unsafe_acl", "unsupported_fs", "unavailable", "other"].includes(trace.reason) ||
@@ -472,7 +474,17 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     expect(readFileSync(file())).toEqual(main); expect(readFileSync(file() + "-journal")).toEqual(rollback);
   });
   it("missing established journal is unknown, not repaired/recreated or treated as fresh home", async () => {
+    const trace: InitialAdmissionTrace | undefined = portable ? undefined : { mismatch: "missing_journal_initial",
+      outcome: "unavailable", reason: "unavailable", count: 0, overflow: false, records: [] };
+    if (trace) initialAdmissionTrace = trace;
+    const capture = trace ? vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+      // The ORIGINAL bootstrap initialization supplies this exact actual writer;
+      // no getter, extra SQL or supplied resource/authority proof is used.
+      if (sql.includes("PRAGMA journal_mode=PERSIST") && trace.end === undefined) trace.writer = this;
+      return sqliteExec.call(this, sql);
+    }) : undefined;
     const j = await bootstrap(), input = request();
+    capture?.mockRestore(); // Bootstrap failure still uses the unchanged afterEach mock restoration.
     if (portable) await admit(j, input, deadline());
     else {
       // One bounded record for the original initial admission. No IDs, paths,
@@ -484,13 +496,28 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
         if (sql === "PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;") diagnostic.queryOnly = true;
         if (/^PRAGMA busy_timeout=\d+$/.test(sql)) diagnostic.busyClamp = true;
         if (sql === "BEGIN IMMEDIATE") diagnostic.begin = true;
-        return sqliteExec.call(this, sql);
+        const operation = sql === "BEGIN IMMEDIATE" ? "begin" : sql === "COMMIT" ? "commit" : sql === "ROLLBACK" ? "rollback" : undefined;
+        const record = trace && this === trace.writer && trace.end !== undefined && operation ? observeCall(trace, operation) : undefined;
+        const started = record ? diagnosticNow() : 0;
+        try {
+          const value = sqliteExec.call(this, sql);
+          if (trace && record) completeCall(trace, record, started, "returned");
+          return value;
+        } catch (error) { if (trace && record) completeCall(trace, record, started, "threw"); throw error; }
       });
       const prepare = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
         if (sql === "SELECT json FROM lifecycle_lineage WHERE singleton=1") diagnostic.lineage = true;
         return sqlitePrepare.call(this, sql);
       });
-      try { await admit(j, input, deadline()); }
+      try {
+        // Windows created this private trace above. Capture the one original
+        // third argument during its original evaluation, not a fresh allowance.
+        await admit(j, input, (trace!.end = deadline()));
+        if (trace) trace.outcome = "resolved";
+      } catch (error) {
+        if (trace) { trace.outcome = "rejected"; trace.reason = diagnosticReason(error); }
+        throw error;
+      }
       finally {
         verificationFixture.diagnostic = undefined; exec.mockRestore(); prepare.mockRestore();
         console.info("receipt admission diagnostic", JSON.stringify({ phase: "admission", remaining_at_verifier_entry: diagnostic.entry,
