@@ -10,18 +10,27 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { codexHost } from "./helpers.js";
 
-/** Runs the bundled plugin server (npm run build first) for all four CLI kinds. */
+/** Runs the bundled plugin server (npm run build first) for all five CLI kinds. */
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 const home = mkdtempSync(join(tmpdir(), "agent-bridge-e2e-"));
 writeFileSync(join(home,"config.json"),JSON.stringify({questionAlerts:{sound:false,toast:false,reminderMinutes:0}}));
+// A native-shaped interactive host supplies Muse's injected root identity. A
+// direct Node MCP launch must remain untrusted rather than bypass bootstrap.
+const MUSE_HOST = join(home, "muse.mjs");
+writeFileSync(MUSE_HOST, `import { spawn } from 'node:child_process';
+const child = spawn(process.execPath, [${JSON.stringify(SERVER)}, '--agent=muse'], { cwd: process.cwd(), env: { ...process.env, MUSE_SESSION_ID: 'e2e-muse-root' }, stdio: ['pipe','pipe','inherit'] });
+process.stdin.pipe(child.stdin); child.stdout.pipe(process.stdout);
+child.on('error', () => process.exit(1)); child.on('exit', code => process.exit(code ?? 1));
+process.on('SIGTERM', () => child.kill('SIGTERM'));
+`);
 
-async function spawnAgent(agent: "claude" | "codex" | "opencode" | "antigravity" | "muse", name: string): Promise<Client> {
+async function spawnAgent(agent: "claude" | "codex" | "opencode" | "antigravity" | "muse", name: string, nativeMuse = true): Promise<Client> {
   const client = new Client({ name: `test-${agent}`, version: "0.0.0" });
   codexHost(client, home, agent, name);
   const transport = new StdioClientTransport({
     command: process.execPath,
     cwd: home,
-    args: [SERVER, `--agent=${agent}`],
+    args: agent === "muse" && nativeMuse ? [MUSE_HOST] : [SERVER, `--agent=${agent}`],
     env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home } as Record<string, string>,
     stderr: "ignore",
   });
@@ -85,6 +94,17 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
   it("declares the Claude channel capability only for Claude", () => {
     expect(claude.getServerCapabilities()?.experimental?.["claude/channel"]).toEqual({});
     expect(codex.getServerCapabilities()?.experimental?.["claude/channel"]).toBeUndefined();
+  });
+
+  it("refuses main-peer authority for a direct Muse MCP launch under an unknown host", async () => {
+    const unknown = await spawnAgent("muse", "muse-unknown-host", false);
+    try {
+      const tools = (await unknown.listTools()).tools.map(tool => tool.name);
+      for (const tool of ["ask_muse", "spawn_muse", "decide", "report_progress"]) expect(tools).not.toContain(tool);
+      expect((await unknown.callTool({ name: "peers", arguments: {} })).isError).toBe(true);
+      expect((await unknown.callTool({ name: "send", arguments: { to: "claude-e2e", message: "unauthenticated fixture message" } })).isError).toBe(true);
+      expect(textOf(await claude.callTool({ name: "peers", arguments: {} }))).not.toContain("muse-unknown-host");
+    } finally { await unknown.close(); }
   });
 
   it("files notify-mode owner questions through every bundled CLI without waiting for an answer",async () => {
