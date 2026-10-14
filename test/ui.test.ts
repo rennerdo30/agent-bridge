@@ -262,7 +262,10 @@ describe("web dashboard", () => {
     recordJob("former-owner", job);
     writeFileSync(join(env.home, JOBS_FILE), JSON.stringify([{ name: job.name, owner: peer.name }]));
     const r = await fetch(`${base()}/api/subagents/message`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ run: RUN, body: "after adoption" }) });
-    expect(r.status).toBe(200);
+    const refusalBody = r.status === 409
+      ? Buffer.from(await r.clone().text()).subarray(0, 4096).toString("utf8")
+      : undefined;
+    expect(r.status, refusalBody === undefined ? undefined : `HTTP 409 synthetic fixture response (first 4096 bytes): ${refusalBody}`).toBe(200);
     expect(received).toEqual(["after adoption"]);
   });
 
