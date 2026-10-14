@@ -142,7 +142,7 @@ export async function runInstaller(opts: InstallerOptions): Promise<number> {
         if (step.kind === "antigravity") {
           try {
             const source = antigravitySourceDir();
-            if (step.action !== "uninstall" && !source) throw new Error("Missing Antigravity plugin build");
+            if (step.action !== "uninstall" && !source) throw new Error("Missing Antigravity plugin build in this CLI package. Run: npx -y github:rennerdo30/agent-bridge install antigravity --yes");
             const res = step.action === "uninstall" ? uninstallAntigravity() : installAntigravity(source!);
             for (const file of res.files) opts.out(`  ${file}`);
             if (step.action !== "uninstall") reportPluginSessions(resolveHome(), "antigravity", APP_VERSION, opts.out);
@@ -160,7 +160,7 @@ export async function runInstaller(opts: InstallerOptions): Promise<number> {
         if (step.kind === "live-update") {
           try {
             const source = pluginSourceDir(step.tool, `${step.tool === "codex" ? ".codex-plugin" : ".claude-plugin"}/plugin.json`);
-            if (!source) throw new Error("Missing packaged plugin source");
+            if (!source) throw new Error(`Missing packaged plugin source in this CLI package. Run: npx -y github:rennerdo30/agent-bridge install ${step.tool} --yes`);
             const root = step.tool === "codex" ? updateCodex(source) : updateClaude(source);
             activatePluginRuntime(source, step.tool, resolveHome());
             opts.out(`  + ${root}`);
