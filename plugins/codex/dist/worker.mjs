@@ -59,24 +59,24 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-SGVZSS6J.mjs";
+} from "./chunks/chunk-TTOXI5RM.mjs";
 import {
   codexAppServerCall,
   describeModels,
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-463NBETJ.mjs";
+} from "./chunks/chunk-6L5WSVFC.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-PVCPBGMC.mjs";
+} from "./chunks/chunk-YBYTDSPC.mjs";
 import {
   readWorktreeState
 } from "./chunks/chunk-LAVRHWUK.mjs";
-import "./chunks/chunk-EGHDRT22.mjs";
+import "./chunks/chunk-MOHBBYOU.mjs";
 import {
   openBrowser
 } from "./chunks/chunk-LWVK3CB7.mjs";
@@ -86,7 +86,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-ZA4MLEPK.mjs";
+} from "./chunks/chunk-WV4GS3BC.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -121,14 +121,14 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-64X7NB6W.mjs";
-import "./chunks/chunk-W3XYACJY.mjs";
+} from "./chunks/chunk-VABJNI4D.mjs";
+import "./chunks/chunk-VP6RXVU5.mjs";
 import "./chunks/chunk-SH5NFUCE.mjs";
 import {
   antigravityAncestor,
   antigravityHookOutput,
   inspectClaudeLaunch
-} from "./chunks/chunk-3IWV7QJJ.mjs";
+} from "./chunks/chunk-2U3LB7F4.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   ACCESS_LEVELS,
@@ -156,7 +156,7 @@ import {
   resolveBinary,
   runProcess,
   verifiedGoneJobOwners
-} from "./chunks/chunk-2KN4Q3ZV.mjs";
+} from "./chunks/chunk-X7L3AXU2.mjs";
 import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   ResourceSlots,
@@ -2237,6 +2237,8 @@ var AntigravityHooks = class {
   conversationId = null;
   stopPending = false;
   lastStopExecutionNum = null;
+  lastInvocationNum = null;
+  lastStopInvocationNum = null;
   async start() {
     if (!this.ctx.node && !this.ctx.parent) return;
     const pid = await antigravityAncestor();
@@ -2265,14 +2267,29 @@ var AntigravityHooks = class {
         if (body.event === "PreToolUse") {
           this.stopPending = false;
           this.lastStopExecutionNum = null;
-          await buildHookResponse(this.ctx, { event: "PostToolUse", sessionId: id, cwd, stopHookActive: true });
+          this.lastStopInvocationNum = null;
+          await (this.ctx.launchKnown ?? Promise.resolve());
+          if (!this.ctx.headless && this.ctx.node) {
+            if (id) {
+              await this.ctx.node.setSessionId(id).catch(() => {
+              });
+              this.ctx.onSessionId?.(id);
+            }
+            if (cwd && this.ctx.learnCwd) await this.ctx.learnCwd(cwd);
+            await this.ctx.node.ensureConnected().catch(() => {
+            });
+            confirmAntigravityStopDelivery(this.ctx);
+          }
           res.writeHead(200, { "content-type": "application/json" }).end("{}");
           return;
         }
         if (body.event === "PreInvocation") {
-          const continued2 = this.stopPending && typeof input.invocationNum === "number" && input.invocationNum > 1;
+          const invocationNum = typeof input.invocationNum === "number" && Number.isFinite(input.invocationNum) ? input.invocationNum : null;
+          const continued2 = this.stopPending && invocationNum !== null && (this.lastStopInvocationNum !== null ? invocationNum > this.lastStopInvocationNum : invocationNum > 0);
+          this.lastInvocationNum = invocationNum;
           this.stopPending = false;
           this.lastStopExecutionNum = null;
+          this.lastStopInvocationNum = null;
           const output2 = await buildHookResponse(this.ctx, { event: "UserPromptSubmit", sessionId: id, cwd, stopHookActive: continued2 });
           const text3 = "reason" in output2 ? String(output2.reason) : "hookSpecificOutput" in output2 ? output2.hookSpecificOutput.additionalContext : "";
           res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(antigravityHookOutput(body.event, text3)));
@@ -2286,6 +2303,7 @@ var AntigravityHooks = class {
         const continued = this.stopPending && executionNum !== null && this.lastStopExecutionNum !== null && executionNum > this.lastStopExecutionNum;
         this.stopPending = false;
         this.lastStopExecutionNum = null;
+        this.lastStopInvocationNum = null;
         if (!canContinue) {
           await buildHookResponse(this.ctx, { event: "StopFailure", sessionId: id, cwd, stopHookActive: false });
           res.writeHead(200, { "content-type": "application/json" }).end("{}");
@@ -2296,6 +2314,7 @@ var AntigravityHooks = class {
         if (text2) {
           this.stopPending = true;
           this.lastStopExecutionNum = executionNum;
+          this.lastStopInvocationNum = this.lastInvocationNum;
         }
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(antigravityHookOutput(body.event, text2)));
       })().catch(() => {
@@ -2316,6 +2335,8 @@ var AntigravityHooks = class {
       this.retired = true;
       this.stopPending = false;
       this.lastStopExecutionNum = null;
+      this.lastInvocationNum = null;
+      this.lastStopInvocationNum = null;
     });
     this.ctx.node?.on("reclaimed", () => {
       this.retired = false;
@@ -2328,6 +2349,8 @@ var AntigravityHooks = class {
     this.retired = true;
     this.stopPending = false;
     this.lastStopExecutionNum = null;
+    this.lastInvocationNum = null;
+    this.lastStopInvocationNum = null;
     if (server) await new Promise((resolve2) => server.close(() => resolve2()));
   }
 };
@@ -3086,7 +3109,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-5NTQCFFD.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-4E4LVOWN.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3098,9 +3121,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-5RSIAWK5.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-EYP7U4DQ.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-5RSIAWK5.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-EYP7U4DQ.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3257,8 +3280,11 @@ ${JSON.stringify(result)}`);
     if (name !== "health" && ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: err.message }));
     await ctx.observeMeta?.(extra._meta);
     if (ctx.agent === "antigravity" && name !== "health" && name !== "hook_event") {
-      if (name === "inbox") releaseAntigravityStopDelivery(ctx);
-      else confirmAntigravityStopDelivery(ctx);
+      if (name === "inbox") {
+        if (a.mark_read !== false) releaseAntigravityStopDelivery(ctx);
+      } else {
+        confirmAntigravityStopDelivery(ctx);
+      }
     }
     try {
       return await fn(args, extra);
@@ -3299,7 +3325,7 @@ ${JSON.stringify(result)}`);
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
       const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-EPBWOKSL.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-55QZ4FUZ.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-ISMGHRWT.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
