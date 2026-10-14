@@ -50,10 +50,10 @@ import {
   RewakeEndpoint,
   WAKE_HEADER,
   shouldWakeClaudeMessage
-} from "./chunks/chunk-3HUZV7U5.mjs";
+} from "./chunks/chunk-ABR5CXAW.mjs";
 import {
   antigravityHookOutput
-} from "./chunks/chunk-4DBQQLJA.mjs";
+} from "./chunks/chunk-IFEFE56S.mjs";
 import {
   MAX_STREAM_ENTRIES
 } from "./chunks/chunk-7G5MEQQK.mjs";
@@ -62,15 +62,15 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-75USRIFH.mjs";
+} from "./chunks/chunk-FUL5GKNL.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-4MSUI22J.mjs";
+} from "./chunks/chunk-7YXJD5GV.mjs";
 import {
   readWorktreeState
 } from "./chunks/chunk-OX7SZC2E.mjs";
-import "./chunks/chunk-OUVU7NH7.mjs";
+import "./chunks/chunk-MN2MUKND.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   codexAppServerCall,
@@ -78,7 +78,7 @@ import {
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-2HYWSH3P.mjs";
+} from "./chunks/chunk-CD5SERBA.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
@@ -90,7 +90,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-NCKTJILN.mjs";
+} from "./chunks/chunk-QOI6YT7B.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -109,8 +109,8 @@ import {
 import {
   formatHealth,
   probeBrokerHealth
-} from "./chunks/chunk-5EXZPVQS.mjs";
-import "./chunks/chunk-YEOZZZ3G.mjs";
+} from "./chunks/chunk-J3JDDDRI.mjs";
+import "./chunks/chunk-TRWBGIX4.mjs";
 import "./chunks/chunk-RQUYBZWF.mjs";
 import {
   conversationPageSchema
@@ -125,8 +125,8 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-ZRUHIB2F.mjs";
-import "./chunks/chunk-WJOKWUSG.mjs";
+} from "./chunks/chunk-PYFJB7CK.mjs";
+import "./chunks/chunk-FEN7QI42.mjs";
 import {
   ACCESS_LEVELS,
   DEFAULT_FOLLOW_UP,
@@ -156,7 +156,7 @@ import {
   resolveBinary,
   runProcess,
   verifiedGoneJobOwners
-} from "./chunks/chunk-E3QU75ZG.mjs";
+} from "./chunks/chunk-JRSBGHLM.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
@@ -179,7 +179,7 @@ import {
   resolveHome,
   resolvePipePath,
   tokensEqual
-} from "./chunks/chunk-44AAGVAS.mjs";
+} from "./chunks/chunk-3OPK7HJV.mjs";
 import "./chunks/chunk-PFE27QT3.mjs";
 import {
   CLAUDE_PERMISSION_MODES,
@@ -248,7 +248,7 @@ import {
   museBridgeTool,
   museHookOutput,
   museReadingTool
-} from "./chunks/chunk-6S6BR754.mjs";
+} from "./chunks/chunk-ARTK4K7L.mjs";
 import {
   MUSE_ACCESS_ENV,
   antigravityAncestor,
@@ -257,8 +257,9 @@ import {
   museHookFile,
   museHostPid,
   readMusePrivateJson,
-  restoreMuseContext
-} from "./chunks/chunk-FWUDSZDW.mjs";
+  restoreMuseContext,
+  writeMusePrivateJson
+} from "./chunks/chunk-7CFZWA3V.mjs";
 import {
   TRANSCRIPT_ID,
   directory,
@@ -1781,7 +1782,7 @@ var EMPTY_COMPLETION_RESULT = {
 
 // src/mcp/muse-hooks.ts
 import { randomBytes } from "node:crypto";
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { renameSync, unlinkSync } from "node:fs";
 import { createServer } from "node:http";
 
 // src/mcp/message-wait.ts
@@ -2245,7 +2246,7 @@ var MuseHooks = class {
   };
   async start() {
     if (this.server) return;
-    if (!this.session || !this.ctx.node && !this.ctx.parent) return;
+    if (!this.ctx.node && !this.ctx.parent || this.session && !TRANSCRIPT_ID.test(this.session)) return;
     const host = await museHostPid(), hostIdentity = host ? processIdentity(host) : void 0;
     if (!host || !hostIdentity) return;
     this.retired = false;
@@ -2267,7 +2268,13 @@ var MuseHooks = class {
           if (raw.length > 256 * 1024) throw new Error("hook input too large");
         }
         const body = object(JSON.parse(raw)), input = object(body.input);
-        if (body.session !== this.session) return {};
+        if (typeof body.session !== "string" || !TRANSCRIPT_ID.test(body.session)) throw new Error("Invalid Muse session identity");
+        if (!this.session) {
+          if (body.thread && body.thread !== body.session) throw new Error("Native child cannot bind root identity");
+          this.session = body.session;
+          await this.ctx.node?.setSessionId(this.session);
+        }
+        if (body.session !== this.session) throw new Error("Foreign Muse session");
         const event = String(body.event ?? "");
         if (event === "PreToolUse") {
           if (body.thread && body.thread !== this.session && museBridgeTool(input)) return { hookSpecificOutput: { hookEventName: event, permissionDecision: "deny", permissionDecisionReason: "Muse native children share the root MCP connection; ask the parent to use Bridge tools." } };
@@ -2294,15 +2301,17 @@ var MuseHooks = class {
       this.server.once("error", reject);
       this.server.listen(0, "127.0.0.1", resolve2);
     });
-    this.file = museHookFile(host, this.session);
+    this.file = museHookFile(host, this.session || "bootstrap");
     this.register = () => {
       if (!this.server?.listening || !this.file) return;
       const temporary = `${this.file}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
+      let staged = false;
       try {
-        writeFileSync(temporary, JSON.stringify({ port: this.server.address().port, secret, hostIdentity, pid: process.pid, identity: processIdentity(process.pid), session: this.session }), { mode: 384, flag: "wx" });
+        writeMusePrivateJson(temporary, { port: this.server.address().port, secret, hostIdentity, pid: process.pid, identity: processIdentity(process.pid), session: this.session || null });
+        staged = true;
         renameSync(temporary, this.file);
       } finally {
-        try {
+        if (staged) try {
           unlinkSync(temporary);
         } catch {
         }
@@ -2341,7 +2350,7 @@ var MuseHooks = class {
 
 // src/mcp/antigravity-hooks.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
-import { mkdirSync as mkdirSync2, renameSync as renameSync2, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { mkdirSync as mkdirSync2, renameSync as renameSync2, unlinkSync as unlinkSync2, writeFileSync } from "node:fs";
 import { createServer as createServer2 } from "node:http";
 import { join as join2 } from "node:path";
 var AntigravityHooks = class {
@@ -2434,7 +2443,7 @@ var AntigravityHooks = class {
       if (!this.server?.listening) return;
       const temporary = `${this.file}.${process.pid}.${randomBytes2(8).toString("hex")}.tmp`;
       try {
-        writeFileSync2(temporary, JSON.stringify({ port: this.server.address().port, secret, pid: process.pid, identity, hostIdentity, conversationId: this.conversationId }), { mode: 384, flag: "wx" });
+        writeFileSync(temporary, JSON.stringify({ port: this.server.address().port, secret, pid: process.pid, identity, hostIdentity, conversationId: this.conversationId }), { mode: 384, flag: "wx" });
         renameSync2(temporary, this.file);
       } finally {
         try {
@@ -3100,7 +3109,10 @@ async function startServer(argv = process.argv.slice(2)) {
     });
   }
   if (node) {
-    if (agent === "muse" && process.env.MUSE_SESSION_ID) await node.setSessionId(process.env.MUSE_SESSION_ID);
+    if (agent === "muse") {
+      const id = museEnvSessionId();
+      if (id) await node.setSessionId(id);
+    }
     ctx.jobs = new JobManager(node, log.child("jobs"), join5(home, JOBS_FILE), cfg.maxJobs, void 0, {
       canRestore: () => node.isConnected && (agent !== "claude" || ctx.restoreEligible === true),
       canReceiveHandoff: () => node.isConnected
@@ -3128,11 +3140,6 @@ async function startServer(argv = process.argv.slice(2)) {
       await node.relocate(projectDir, name).catch((err) => log.warn("relocate failed", { err: err.message }));
       applyConfig(loadConfig(home, agent, log, process.env, projectConfigRoot(node.cwd)));
     };
-  }
-  if (agent === "muse" && node) {
-    const id = museEnvSessionId();
-    if (id) void node.setSessionId(id).catch(() => {
-    });
   }
   if (agent === "codex" && node) {
     ctx.admitCodex = codexMainThreadAdmission();
@@ -3235,7 +3242,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-DIWS4L3B.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-J4RFU7QA.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3247,9 +3254,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-55SJAITM.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-IRX3ESCQ.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-55SJAITM.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-IRX3ESCQ.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3322,7 +3329,6 @@ async function startServer(argv = process.argv.slice(2)) {
   }
   if (agent === "claude" && node) await node.setWakePolicy(cfg.wakeOnDirect, Boolean(ctx.rewakeAvailable || channel), cfg.maxHops);
   launchInspected();
-  await museHooks?.start().catch((err) => log.warn("Muse hooks unavailable", { err: String(err) }));
   await antigravityHooks?.start().catch((err) => log.warn("Antigravity hooks unavailable", { err: String(err) }));
   await museHooks?.start().catch((err) => log.warn("Muse hooks unavailable", { err: String(err) }));
   if (node) {
@@ -3449,7 +3455,7 @@ ${JSON.stringify(result)}`);
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
       const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-APGXVYWW.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-FMITWNWO.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-QY7U3FE6.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
