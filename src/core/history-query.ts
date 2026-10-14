@@ -5,11 +5,17 @@ export const HISTORY_MAX_LIMIT = 50;
 const HISTORY_FILTER_ID_CHARS = 256;
 const dateFilter = z.union([z.number().int().nonnegative(), z.iso.datetime({ offset: true })]).transform((v) => typeof v === "number" ? v : Date.parse(v));
 export const historyFiltersSchema = z.object({
-  project: z.string().min(1).max(4096).transform(conversationProject).optional(),
-  session: z.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(), job: z.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional(),
-  agent: z.enum(["claude", "codex", "opencode", "antigravity", "other"]).optional(),
-  kind: z.enum(["message", "run", "decision", "transcript", "approval", "progress", "report", "question"]).optional(),
-  since: dateFilter.optional(), until: dateFilter.optional(),
+  project: z.string().min(1).max(4096).transform(conversationProject).optional()
+    .describe("Project folder (absolute path, e.g. your cwd); drive aliases of the same folder match"),
+  session: z.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional()
+    .describe("Session peer name or CLI session id, e.g. \"codex-myrepo\""),
+  job: z.string().min(1).max(HISTORY_FILTER_ID_CHARS).optional()
+    .describe("Delegated job name, e.g. \"codex-job-1a2b3c4d\"; includes its runs and native transcript"),
+  agent: z.enum(["claude", "codex", "opencode", "antigravity", "other"]).optional().describe("Only records of this agent kind"),
+  kind: z.enum(["message", "run", "decision", "transcript", "approval", "progress", "report", "question"]).optional()
+    .describe("message: bridge mail; run: delegated run logs; decision: pinned owner decisions (all revisions); transcript: native CLI chats; approval: permission requests; progress: job progress notes; report: final job reports; question: owner questions and answers"),
+  since: dateFilter.optional().describe("Not before: epoch milliseconds or ISO 8601 with offset, e.g. \"2026-10-14T00:00:00+09:00\""),
+  until: dateFilter.optional().describe("Not after; same formats as since"),
 }).strict();
 export const historySearchSchema = z.object({
   query: z.string().trim().min(1).max(HISTORY_MAX_QUERY_CHARS),

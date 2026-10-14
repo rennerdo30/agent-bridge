@@ -658,12 +658,16 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     "search_history",
     {
       title: "Search bridge and CLI history",
-      description: "Search local bridge messages (including archives), decisions, delegated run logs and CLI transcripts. Returns bounded snippets with stable source ids and links. Ordinary search makes no model calls. answer=true explicitly spends model tokens on a configured cheap model chosen by availability and usage_limits. Indexing is incremental; use agent-bridge reindex to rebuild.",
+      description: "Search local bridge messages (including archives), owner decisions and questions, delegated run logs and job reports, and native Claude, Codex, opencode and Antigravity transcripts. " +
+        "Use it before starting or resuming work, after a handoff or restart, and whenever someone refers to an earlier decision, job, branch or message: search instead of guessing or reading log files. " +
+        "Queries are full-text words or phrases; exact ids such as job names, issue keys or commit hashes work as terms. Narrow results with filters (kind, project, job, since). " +
+        "Returns bounded snippets with stable source ids and links; pass a hit's conversation to get_conversation to read the whole thread. " +
+        "Ordinary search makes no model calls. answer=true explicitly spends model tokens on a configured cheap model chosen by availability and usage_limits. Indexing is incremental; use agent-bridge reindex to rebuild.",
       inputSchema: {
-        query: z.string().trim().min(1).max(HISTORY_MAX_QUERY_CHARS),
+        query: z.string().trim().min(1).max(HISTORY_MAX_QUERY_CHARS).describe("Words, a quoted phrase or an exact id, e.g. \"branch limit\" or codex-job-1a2b3c4d"),
         filters: historyFiltersSchema.optional(),
-        limit: z.number().int().min(1).max(HISTORY_MAX_LIMIT).optional(),
-        answer: z.boolean().optional(),
+        limit: z.number().int().min(1).max(HISTORY_MAX_LIMIT).optional().describe(`Maximum hits (1-${HISTORY_MAX_LIMIT}); raise it for broad questions`),
+        answer: z.boolean().optional().describe("Also summarize the hits with a cheap model (spends tokens); default false"),
       },
       annotations: { readOnlyHint: true },
     },
