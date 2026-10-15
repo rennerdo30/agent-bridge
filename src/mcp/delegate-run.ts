@@ -456,11 +456,12 @@ async function runDelegateInner(
           const usage = await checkUsagePreflight(usageProbeFor(target, cfg, { home: rc.home, cwd: workdir, log: dlog }, req.model ?? undefined), previous?.warningReported || a._usageWarningReported || Boolean(usageWarning));
           signal.throwIfAborted();
           if (job) {
-            job.providerUsage = { turnStartedAt: job.startedAt, decision: usage, warningReported: previous?.warningReported === true || usage.type === "warn" || Boolean(usageWarning) };
+            job.providerUsage = { runId: job.usageRunId, turnStartedAt: job.startedAt, decision: usage, warningReported: previous?.warningReported === true || usage.type === "warn" || Boolean(usageWarning) };
             rc.jobs?.persist?.();
           }
           if (usage.type === "block") { usageWarning = ""; throw new Error(usageAdmissionText(usage)); }
           if (usage.type === "warn") usageWarning = usageAdmissionText(usage);
+          if (job) { job.usagePendingControls = undefined; rc.jobs?.persist?.(); }
           onProgress?.("starting native CLI");
           return await profile.run(cfg, { ...req, onSession: (id) => { release(); req.onSession?.(id); } }, { ...a, access, relay: wiring });
         } finally { release(); }
@@ -505,6 +506,7 @@ async function runDelegateInner(
       // Messages it never got to see go out as a follow-up right after this turn.
       const pending = await link.closeMessages();
       job.queue.unshift(...pending.map(message => message.body));
+      if (job.usageQueuedControls) job.usageQueuedControls.unshift(...pending.map(message => ({ cid: message.controlId ?? randomUUID(), body: message.body })));
       if (usageRefused(job)) job.providerUsage!.retainedControls = pending.flatMap(message => message.controlId
         ? [{ cid: message.controlId, body: message.body }] : []);
     }

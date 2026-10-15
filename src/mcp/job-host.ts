@@ -51,7 +51,7 @@ export interface RunnerSpec {
   /** This turn's arguments, and the job's original ones (follow-ups within the runner continue from them). */
   args: DelegateArgs;
   base: DelegateArgs;
-  job: Pick<Job, "providerUsage" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "args" | "sessionId" | "workdir" | "worktree" | "owner" | "supervisor" | "metadataVersion" | "parentJob" | "rootSession" | "rootName"> & { allowedServers: string[] };
+  job: Pick<Job, "usageRunId" | "usagePendingControls" | "providerUsage" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "args" | "sessionId" | "workdir" | "worktree" | "owner" | "supervisor" | "metadataVersion" | "parentJob" | "rootSession" | "rootName"> & { allowedServers: string[] };
   /** Peer name of the session (it may change; the session's control messages carry the current one). */
   owner: string;
   byAgent: AgentKind;
@@ -183,6 +183,8 @@ export class JobRunners implements JobHost {
           args: job.args,
           sessionId: job.sessionId,
           providerUsage: job.providerUsage,
+          usageRunId: job.usageRunId,
+          usagePendingControls: job.usagePendingControls,
           workdir: job.workdir,
           worktree: job.worktree,
           owner: job.owner,

@@ -22,7 +22,7 @@ export class RemoteJobHost {
   }
   private save(job: Job, snapshot: RemoteJobSnapshot): void {
     if (snapshot.state?.providerUsage) snapshot = { ...snapshot, state: { ...snapshot.state,
-      providerUsage: snapshot.usageTurn === `${job.id}:${job.startedAt}` ? { ...snapshot.state.providerUsage, turnStartedAt: job.startedAt } : undefined } };
+      providerUsage: snapshot.usageTurn === `${job.id}:${job.startedAt}` ? { ...snapshot.state.providerUsage, runId: job.usageRunId, turnStartedAt: job.startedAt } : undefined } };
     const data = { fetchedAt: Date.now(), snapshot };
     this.cache.set(job.id, data);
     writeJsonStore(this.path(job), data, readJsonStore(this.path(job)));

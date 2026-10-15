@@ -20,7 +20,10 @@ import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 import { JobManager, readStore, type Run, type RunnerControl, type RunnerState } from "../src/mcp/jobs.js";
 import { ParentLink } from "../src/core/parent-link.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
-import { JobRunners } from "../src/mcp/job-host.js";
+import { CONTROL_CONVERSATION_PREFIX, JobRunners, type RunnerSpec } from "../src/mcp/job-host.js";
+import * as jobHost from "../src/mcp/job-host.js";
+import { runOwnedJobRunner } from "../src/mcp/job-runner.js";
+import { BridgeNode } from "../src/core/node.js";
 import { RemoteJobs } from "../src/network/remote-jobs.js";
 import { remoteJobSnapshotSchema, remoteSpawnArgsSchema, REMOTE_JOB_USAGE_CAPABILITY } from "../src/network/remote-job-protocol.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
@@ -114,6 +117,32 @@ it("deduplicates reads and warnings, expires at TTL equality, and fails open on 
   expect(read).toHaveBeenCalledTimes(3);
   const changed = usage.createUsagePreflight({ now: () => 10_000, key: () => key, read: async () => { key = "changed-during-read"; return produced(100); } });
   expect(await changed(probe())).toEqual({ type: "allow", reason: "scope_mismatch" });
+});
+
+it("shares one deadline across cache reauthentication and a replacement quota probe", async () => {
+  vi.useFakeTimers(); vi.setSystemTime(10_000);
+  const deadlines: number[] = [];
+  const read = vi.fn(async (_probe: usage.UsageProbe, _observed: number, deadline: number) => {
+    deadlines.push(deadline);
+    if (deadlines.length > 1) await new Promise(resolve => setTimeout(resolve, 200));
+    return produced(100);
+  });
+  const authenticate = vi.fn(async (_probe, _cached, deadline: number) => {
+    deadlines.push(deadline);
+    await new Promise(resolve => setTimeout(resolve, 2_900)); return false;
+  });
+  const check = usage.createUsagePreflight({ now: Date.now, key: () => "stable-local-config", read, authenticate });
+  expect(await check(probe())).toMatchObject(block);
+  let finished = false;
+  const result = check(probe()); void result.then(() => { finished = true; });
+  await vi.advanceTimersByTimeAsync(2_900);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(deadlines).toEqual([13_000, 13_000, 13_000]);
+  await vi.advanceTimersByTimeAsync(99); expect(finished).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(await result).toEqual({ type: "allow", reason: "read_failed" });
+  await vi.advanceTimersByTimeAsync(100); // A late exhausted result cannot replace the fail-open decision.
+  expect(await result).toEqual({ type: "allow", reason: "read_failed" });
 });
 
 function handlers() {
@@ -231,6 +260,80 @@ it("restores ACKed hosted steering by control ID, preserving identical bodies on
   expect(resume.mock.calls[0]![0]).toBe("identical steering\n\nidentical steering\n\nunseen steering\n\nexplicit continuation");
   const legacy = new ParentLink("owner", () => {}, nullLogger); legacy.post("legacy body");
   expect(await legacy.close()).toEqual(["legacy body"]);
+});
+
+it("retains a runner's submitted continuation through late refusal and an explicitly refused retry", async () => {
+  let runnerNode!: BridgeNode;
+  vi.spyOn(BridgeNode.prototype, "start").mockImplementation(async function (this: BridgeNode) { runnerNode = this; });
+  vi.spyOn(BridgeNode.prototype, "stop").mockResolvedValue();
+  vi.spyOn(BridgeNode.prototype, "updateJob").mockResolvedValue();
+  vi.spyOn(BridgeNode.prototype, "markRead").mockImplementation(() => {});
+  vi.spyOn(BridgeNode.prototype, "send").mockResolvedValue({ deliveredTo: ["owner"], queuedFor: [] } as any);
+  vi.spyOn(startup, "acquireStartup").mockResolvedValue(() => {});
+  vi.spyOn(worktree, "gitDirsOutside").mockResolvedValue([]);
+  const check = vi.spyOn(usage, "checkUsagePreflight").mockResolvedValue(block);
+  const native = vi.spyOn(DELEGATION_TARGETS.codex, "run").mockResolvedValue(answer);
+  const path = join(home, "jobs.json"), jobs = new JobManager(new LocalCoordinator("owner", "owner-session"), nullLogger, path, 2);
+  managers.push(jobs);
+  let alive = true;
+  let state: RunnerState = { pid: process.pid, peer: "fixture-runner", updatedAt: Date.now(), status: "running" };
+  vi.spyOn(jobHost, "writeRunnerState").mockImplementation((_home, _id, value) => { state = structuredClone(value); });
+  const send = vi.fn((_job: unknown, _control: RunnerControl) => {});
+  jobs.runners = { state: () => state, alive: () => alive, send, kill: () => {} };
+  const originalDelegate = delegation.runDelegate;
+  const args = { cwd: home, prompt: "task", title: "Fixture", access: "read" as const, model: "selected-model" };
+  const resume = vi.fn((message: string) => async (signal: AbortSignal, progress: any, current: any) => originalDelegate(
+    { agent: "claude", cfg: DEFAULT_CONFIG, home, log: nullLogger, me: () => "owner", cwd: () => home, jobs }, "codex", { ...args, prompt: message, session_id: "same-session" }, signal, progress, true, current));
+  const run: Run = Object.assign(async () => answer, { hosted: () => ({ pid: process.pid, peer: "fixture-runner", startedAt: Date.now() }) });
+  const job = jobs.start("codex", "selected-model", "task", run, resume);
+  jobs.followUp(job.name, "accepted continuation");
+  const control = send.mock.calls[0]![1];
+  let turns = 0;
+  vi.spyOn(delegation, "runDelegate").mockImplementation(async (...call) => {
+    if (++turns !== 1) return originalDelegate(...call);
+    runnerNode.emit("message", { id: "fixture-control", from: { id: "owner-session", name: "owner", agent: "claude" }, to: job.name, recipient: job.name,
+      conversationId: `${CONTROL_CONVERSATION_PREFIX}${job.id}`, replyTo: null, hop: 0, readAt: null, body: JSON.stringify(control), createdAt: Date.now() });
+    await until(() => call[6]!.queue.length === 1);
+    return answer;
+  });
+  const spec: RunnerSpec = { home, target: "codex", args, base: args, job: { ...job, allowedServers: [] }, owner: "owner", byAgent: "claude", cwd: home, cfg: DEFAULT_CONFIG };
+  expect(await runOwnedJobRunner(spec, nullLogger, null)).toBe(0);
+  expect(turns).toBe(2); expect(native).not.toHaveBeenCalled();
+  expect(state.providerUsage?.retainedControls).toContainEqual({ cid: (control as any).cid, body: "accepted continuation" });
+  alive = false; (jobs as any).checkHosted(job);
+  expect(job.queue).toEqual(["accepted continuation"]); expect(resume).not.toHaveBeenCalled();
+  jobs.followUp(job.name, "explicit retry");
+  await until(() => job.status === "failed");
+  expect(job.queue).toEqual(["accepted continuation", "explicit retry"]);
+  expect(readStore(path).find(saved => saved.id === job.id)?.queuedMessages).toEqual(job.queue);
+  check.mockResolvedValue({ type: "allow", reason: "allowance_available" });
+  jobs.followUp(job.name, "allowance restored");
+  await until(() => job.status === "done");
+  expect(native).toHaveBeenCalledTimes(1); expect(job.queue).toEqual([]);
+  expect(resume.mock.calls.map(([message]) => message)).toEqual(["accepted continuation\n\nexplicit retry", "accepted continuation\n\nexplicit retry\n\nallowance restored"]);
+});
+
+it("correlates a later hosted usage refusal by run identity while excluding another generation", () => {
+  const jobs = new JobManager(new LocalCoordinator("owner", "owner-session"), nullLogger, join(home, "jobs.json"), 2); managers.push(jobs);
+  let alive = true;
+  let state: RunnerState = { pid: 123, peer: "fixture-runner", updatedAt: Date.now(), status: "running", sessionId: "same-session" };
+  const send = vi.fn((_job: unknown, _control: RunnerControl) => {});
+  jobs.runners = { state: () => state, alive: () => alive, send, kill: () => {} };
+  const resume = vi.fn((..._args: any[]) => async () => answer);
+  const run: Run = Object.assign(async () => answer, { hosted: () => ({ pid: 123, peer: "fixture-runner", startedAt: Date.now() }) });
+  const job = jobs.start("codex", null, "task", run, resume);
+  state.providerUsage = { runId: "another-run", turnStartedAt: job.startedAt, decision: block, warningReported: false };
+  (jobs as any).checkHosted(job); expect(job.providerUsage).toBeUndefined();
+  jobs.followUp(job.name, "ACKed on later turn"); jobs.followUp(job.name, "unseen on later turn");
+  const control = send.mock.calls[0]![1] as Extract<RunnerControl, { type: "message" }>;
+  // The supervisor's submitted batch was consumed during an earlier internal turn.
+  job.usagePendingControls = [{ cid: "consumed-on-first-turn", body: "already executed" }];
+  const submitted = { cid: "submitted-before-late-control", body: "pending continuation batch" };
+  state = { ...state, status: "failed", delivered: true, seen: [control.cid], providerUsage: { runId: job.usageRunId,
+    turnStartedAt: job.startedAt + 10_000, decision: block, warningReported: false, retainedControls: [submitted, control] } };
+  alive = false; (jobs as any).checkHosted(job);
+  expect(usage.usageRefused(job)).toBe(true); expect(job.status).toBe("failed");
+  expect(job.queue).toEqual(["pending continuation batch", "ACKed on later turn", "unseen on later turn"]); expect(resume).not.toHaveBeenCalled();
 });
 
 it.each(CODING_AGENTS)("remote %s preflight uses executor context and persists typed refusal without a runner", async target => {

@@ -123,7 +123,7 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
   }
 }
 
-async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJobScope | null): Promise<number> {
+export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJobScope | null): Promise<number> {
   const { home, target } = spec;
   const job: Job = {
     ...spec.job,
@@ -131,6 +131,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     progress: null,
     status: "running",
     queue: [],
+    usageQueuedControls: [],
     allowedServers: new Set(spec.job.allowedServers),
   };
   let owner = spec.owner;
@@ -142,7 +143,6 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       ownershipHistory: saved.ownershipHistory, masters: saved.masters, args: { ...job.args, send_to: saved.args?.send_to } });
   };
   const seen: string[] = [];
-  const queuedControls = new Map<string, string>();
   /** The final report is decided: messages arriving now are left to the session (it continues the job). */
   let closing = false;
 
@@ -296,7 +296,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
           job.awaitingAnswer = true;
           job.live.post(c.body, undefined, c.cid);
         }
-        else { job.queue.push(c.body); queuedControls.set(c.cid, c.body); }
+        else { job.queue.push(c.body); job.usageQueuedControls!.push({ cid: c.cid, body: c.body }); }
         seen.push(c.cid);
       }
       save();
@@ -412,7 +412,8 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     // Follow-ups that arrived meanwhile go out right away, into the same session, from this runner.
     if (job.queue.length && job.sessionId && !job.controller.signal.aborted && !usageRefused(job)) {
       const queued = job.queue.splice(0).join("\n\n");
-      queuedControls.clear();
+      job.usagePendingControls = job.usageQueuedControls;
+      job.usageQueuedControls = [];
       void post(`${report}\n\n${QUEUED_FOLLOW_UP_NOTE}`);
       args = resumeArgs(spec.base, job.name, queued, job.sessionId, job.workdir, job.worktree, job.args);
       if (args.model !== undefined) job.model = args.model;
@@ -426,7 +427,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     // The state first: once the report arrives, the session must find the job finished.
     const reportId = randomUUID();
     if (usageRefused(job)) {
-      const retained = new Map(queuedControls);
+      const retained = new Map([...(job.usagePendingControls ?? []), ...(job.usageQueuedControls ?? [])].map(control => [control.cid, control.body]));
       for (const control of job.providerUsage!.retainedControls ?? []) retained.set(control.cid, control.body);
       job.providerUsage!.retainedControls = [...retained].map(([cid, body]) => ({ cid, body }));
     }

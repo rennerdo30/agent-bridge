@@ -1,6 +1,6 @@
 import { canonicalProjectRoot, migrateProjectJobs } from "../core/project-identity.js";
 import { canControlJob } from "../core/job-ownership.js";
-import { usageRefused } from "../core/usage.js";
+import { currentUsage, usageRefused } from "../core/usage.js";
 import { createHash, randomUUID } from "node:crypto";
 import { worktreeProcesses, worktreeProcessReport } from "../core/worktree-processes.js";
 import { setTimeout as delay } from "node:timers/promises";
@@ -63,6 +63,12 @@ export type Resume = (message: string, sessionId: string, workdir: string | null
 
 export interface Job {
   providerUsage?: import("../core/usage.js").ProviderUsageState;
+  /** Usage correlation only; never controller or ownership authority. */
+  usageRunId?: string;
+  /** Submitted steering remains pending until native admission succeeds. */
+  usagePendingControls?: { cid: string; body: string }[];
+  /** Runner-local provenance for its next queued continuation. */
+  usageQueuedControls?: { cid: string; body: string }[];
   /** Cancellation intent belongs to this exact turn and survives supervisor changes. */
   cancellingTurn?: number;
   /** Initial spawn accepted but not yet admitted; preserved across server reloads. */
@@ -1197,6 +1203,7 @@ export class JobManager {
       model,
       prompt,
       startedAt: Date.now(),
+      usageRunId: randomUUID(),
       controller: new AbortController(),
       progress: null,
       status: "running",
@@ -1595,6 +1602,8 @@ export class JobManager {
   private claimTurn(job: Job): boolean {
     const initial = job.waitingForStart || job.status === "running" && !this.running.has(job.id);
     const reset = () => {
+      job.usagePendingControls = initial ? undefined : job.queue.map(body => ({ cid: randomUUID(), body }));
+      job.usageRunId = randomUUID();
       job.status = "running";
       job.executionOwner = this.node.name;
       job.executionPid = process.pid;
@@ -1829,7 +1838,7 @@ export class JobManager {
     const runners = this.runners!;
     const state = runners.state(job);
     if (state) {
-      if (state.providerUsage?.turnStartedAt === job.startedAt) job.providerUsage = state.providerUsage;
+      if (currentUsage(job, state.providerUsage)) job.providerUsage = state.providerUsage;
       job.host!.pid = state.pid;
       if (state.model !== undefined) job.model = state.model;
       job.progress = state.progress ?? job.progress;
@@ -1858,13 +1867,18 @@ export class JobManager {
   private settleHosted(job: Job, final: RunnerState | null): void {
     // Messages forwarded to the runner that it never took become a follow-up.
     const seen = new Set(final?.seen ?? this.runners?.state(job)?.seen ?? []);
-    const retained = final?.providerUsage?.turnStartedAt === job.startedAt && usageRefused(job)
-      ? final.providerUsage.retainedControls ?? [] : [];
+    const retained = currentUsage(job, final?.providerUsage) && usageRefused(job)
+      ? final?.providerUsage?.retainedControls ?? [] : [];
     const retainedIds = new Set(retained.map(control => control.cid));
     const recovered = new Map<string, string>();
+    const forwarded = new Map((job.forwarded ?? []).map(control => [control.cid, control.body]));
+    // Submitted batches precede controls received while admission was pending.
+    for (const control of retained) recovered.set(control.cid, forwarded.get(control.cid) ?? control.body);
     for (const control of job.forwarded ?? []) if (!seen.has(control.cid) || retainedIds.has(control.cid)) recovered.set(control.cid, control.body);
-    for (const control of retained) if (!recovered.has(control.cid)) recovered.set(control.cid, control.body);
     job.queue.push(...recovered.values());
+    // A submitted batch may have run in an earlier internal runner turn.
+    // Only the final runner's retained CIDs are still awaiting native admission.
+    job.usagePendingControls = undefined;
     job.forwarded = [];
     const pid = job.host?.pid;
     job.host = null;
@@ -2100,6 +2114,8 @@ export class JobManager {
 
   /** `report`: null when the runner already delivered it, a text to post as it is, or undefined to compose it here. */
   private finish(job: Job, status: "done" | "failed" | "cancelled", text: string, sessionId: string | null, cause: string | null = null, report?: string | null, messageId?: string): void {
+    if (usageRefused(job)) job.queue.unshift(...(job.usagePendingControls ?? []).map(control => control.body));
+    job.usagePendingControls = undefined;
     if (job.controller.signal.aborted) status = "cancelled";
     denyPendingApprovals(job);
     this.running.delete(job.id);
@@ -2206,7 +2222,7 @@ function executorOffline(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === "unknown_target";
 }
 
-type StoredJob = Pick<Job, "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+type StoredJob = Pick<Job, "usageRunId" | "usagePendingControls" | "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
 
 /** Unknown fields survive upgrades; known next-turn settings also honor deletion. */
 function mergeJobFields(previous: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
@@ -2220,6 +2236,8 @@ function mergeJobFields(previous: Record<string, unknown>, next: Record<string, 
 function toStored(j: Job): StoredJob {
   return {
     providerUsage: j.providerUsage,
+    usageRunId: j.usageRunId,
+    usagePendingControls: j.usagePendingControls,
     id: j.id,
     name: j.name,
     agent: j.agent,

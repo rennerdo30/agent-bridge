@@ -505,14 +505,19 @@ export interface UsageProbe {
 export interface UsageAdmission extends ProviderUsageDecision { resetAt?: number }
 /** Persist decisions, not cached account readings. A later accepted turn has its own warning. */
 export interface ProviderUsageState {
+  /** Stable admitted execution; detached internal turns share this identity. */
+  runId?: string;
   turnStartedAt: number;
   decision: UsageAdmission;
   warningReported: boolean;
   /** Pending accepted controls; receipt ACKs are not evidence of native consumption. */
   retainedControls?: { cid: string; body: string }[];
 }
-export function usageRefused(job: { startedAt: number; providerUsage?: ProviderUsageState }): boolean {
-  return job.providerUsage?.turnStartedAt === job.startedAt && job.providerUsage?.decision?.type === "block";
+export function currentUsage(job: { startedAt: number; usageRunId?: string }, state: ProviderUsageState | undefined): boolean {
+  return Boolean(state && (state.runId ? state.runId === job.usageRunId : state.turnStartedAt === job.startedAt));
+}
+export function usageRefused(job: { startedAt: number; usageRunId?: string; providerUsage?: ProviderUsageState }): boolean {
+  return currentUsage(job, job.providerUsage) && job.providerUsage?.decision?.type === "block";
 }
 export function usageAdmissionText(result: UsageAdmission): string {
   const reset = result.resetAt === undefined ? "" : ` Resets ${new Date(result.resetAt).toISOString()}.`;
@@ -560,8 +565,10 @@ export function codexAdmissionFacts(input: { accountBefore: unknown; accountAfte
 }
 
 /** One initialized local app-server context; never starts a model turn. */
-async function produceAdmissionUsage(probe: UsageProbe, observedAt: number, readLimits = true): Promise<ProducedUsage> {
+async function produceAdmissionUsage(probe: UsageProbe, observedAt: number, readLimits = true, deadline = observedAt + PROVIDER_USAGE_PROBE_TIMEOUT_MS): Promise<ProducedUsage> {
   if (probe.agent !== "codex") return null; // Other adapters currently lack authenticated account/model quota facts.
+  const timeoutMs = deadline - Date.now();
+  if (timeoutMs <= 0) throw new Error("Usage admission deadline elapsed");
   const methods = ["initialize", "account/read", "model/list", "config/read", ...(readLimits ? ["account/rateLimits/read"] : []), "account/read"];
   const results: any[] = [];
   let protocolError: Error | undefined;
@@ -584,7 +591,7 @@ async function produceAdmissionUsage(probe: UsageProbe, observedAt: number, read
       } catch { protocolError = new Error("Invalid usage response"); clearInterval(poll); done(); }
     }, 10);
     return () => clearInterval(poll);
-  }, { timeoutMs: PROVIDER_USAGE_PROBE_TIMEOUT_MS, maxBytes: DEFAULT_MAX_CAPTURE_BYTES, requireZeroExit: true });
+  }, { timeoutMs, maxBytes: DEFAULT_MAX_CAPTURE_BYTES, requireZeroExit: true });
   void out;
   if (protocolError || results.length !== methods.length) throw protocolError ?? new Error("Incomplete usage probe");
   if (results[2]?.nextCursor) return null; // Incomplete model catalog cannot resolve an alias/default.
@@ -604,31 +611,44 @@ function admissionCacheKey(probe: UsageProbe): string {
 }
 
 export function createUsagePreflight(deps: { now: () => number; key: (probe: UsageProbe) => string;
-  read: (probe: UsageProbe, observedAt: number) => Promise<ProducedUsage>;
-  authenticate?: (probe: UsageProbe, value: NonNullable<ProducedUsage>) => Promise<boolean> }) {
+  read: (probe: UsageProbe, observedAt: number, deadline: number) => Promise<ProducedUsage>;
+  authenticate?: (probe: UsageProbe, value: NonNullable<ProducedUsage>, deadline: number) => Promise<boolean> }) {
   const cache = new Map<string, { observedAt: number; value: ProducedUsage }>();
   const pending = new Map<string, Promise<ProducedUsage>>();
   return async (probe: UsageProbe, warningAlreadyReported = false): Promise<UsageAdmission> => {
+    const deadline = deps.now() + PROVIDER_USAGE_PROBE_TIMEOUT_MS;
+    const bounded = async <T>(operation: () => Promise<T>): Promise<T> => {
+      const remaining = deadline - deps.now();
+      if (remaining <= 0) throw new Error("Usage admission deadline elapsed");
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const value = await Promise.race([operation(), new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error("Usage admission deadline elapsed")), remaining);
+        })]);
+        if (deps.now() >= deadline) throw new Error("Usage admission deadline elapsed");
+        return value;
+      } finally { clearTimeout(timer); }
+    };
     let key: string;
     let value: ProducedUsage;
     try {
       key = deps.key(probe);
       const now = deps.now(), hit = cache.get(key);
       if (hit && now >= hit.observedAt && now - hit.observedAt < PROVIDER_USAGE_TTL_MS
-        && hit.value && (!deps.authenticate || await deps.authenticate(probe, hit.value))) value = hit.value;
+        && hit.value && (!deps.authenticate || await bounded(() => deps.authenticate!(probe, hit.value!, deadline)))) value = hit.value;
       else {
         let read = pending.get(key);
         if (!read) {
           if (pending.size >= PROVIDER_USAGE_CACHE_LIMIT) return { type: "allow", reason: "read_failed" };
-          read = Promise.resolve().then(() => deps.read(probe, now));
+          read = Promise.resolve().then(() => deps.read(probe, now, deadline));
           pending.set(key, read);
           try {
-            value = await read;
+            value = await bounded(() => read!);
             if (deps.key(probe) !== key) return { type: "allow", reason: "scope_mismatch" };
             // Unknowns/failures do not hide a later valid reading.
             if (value) { if (cache.size >= PROVIDER_USAGE_CACHE_LIMIT) cache.delete(cache.keys().next().value!); cache.set(key, { observedAt: now, value }); }
           } finally { pending.delete(key); }
-        } else value = await read;
+        } else value = await bounded(() => read!);
       }
       if (deps.key(probe) !== key) return { type: "allow", reason: "scope_mismatch" };
       if (!value) return { type: "allow", reason: "unknown" };
@@ -643,8 +663,9 @@ export function createUsagePreflight(deps: { now: () => number; key: (probe: Usa
     } catch { return { type: "allow", reason: "read_failed" }; }
   };
 }
-export const checkUsagePreflight = createUsagePreflight({ now: Date.now, key: admissionCacheKey, read: produceAdmissionUsage,
-  authenticate: async (probe, cached) => {
-    const current = await produceAdmissionUsage(probe, Date.now(), false);
+export const checkUsagePreflight = createUsagePreflight({ now: () => Date.now(), key: admissionCacheKey,
+  read: (probe, observedAt, deadline) => produceAdmissionUsage(probe, observedAt, true, deadline),
+  authenticate: async (probe, cached, deadline) => {
+    const current = await produceAdmissionUsage(probe, Date.now(), false, deadline);
     return current !== null && JSON.stringify(current.scope) === JSON.stringify(cached.scope);
   } });

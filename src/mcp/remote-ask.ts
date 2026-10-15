@@ -25,7 +25,7 @@ export async function runRemoteAsk(node: BridgeNode, target: CodingAgent, args: 
     for (;;) {
       combined.throwIfAborted();
       const state = snapshot.state;
-      if (state?.providerUsage && snapshot.usageTurn === `${job.id}:${job.startedAt}`) job.providerUsage = { ...state.providerUsage, turnStartedAt: job.startedAt };
+      if (state?.providerUsage && snapshot.usageTurn === `${job.id}:${job.startedAt}`) job.providerUsage = { ...state.providerUsage, runId: job.usageRunId, turnStartedAt: job.startedAt };
       if (state?.progress) onProgress(state.progress);
       if (state) { job.sessionId = state.sessionId ?? job.sessionId; job.workdir = state.workdir ?? job.workdir; job.worktree = state.worktree ?? job.worktree; }
       if (state && state.status !== "running" && !snapshot.alive) return { text: state.report ?? "Remote job ended without a report.", sessionId: state.sessionId ?? null, isError: state.status !== "done", status: state.status, details: {}, workdir: state.workdir ?? undefined, worktree: state.worktree ?? undefined };
