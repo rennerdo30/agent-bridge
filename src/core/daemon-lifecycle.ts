@@ -518,29 +518,40 @@ export class LifecycleJournal {
     const guard = this.readerGuard(), reader = readConnection(this.file, guard, this.readerDeadline(), this.ownedReadonlyConnections, () => { this.quarantined = true; });
     try {
       guard?.();
-      const row = reader.prepare("SELECT json FROM lifecycle_lineage WHERE singleton=1").get();
+      const statement = reader.prepare("SELECT json FROM lifecycle_lineage WHERE singleton=1"); guard?.();
+      const row = statement.get();
       guard?.();
       if (!row || String(row.json) !== JSON.stringify(this.lineage) || !same(this.lineage.directory, identity(dirname(this.file))) ||
           !same(this.lineage.file, identity(this.file)) || !same(this.lineage.journal, identity(this.file + "-journal"))) fail("lineage_unknown");
     } finally { closeReadConnection(reader); }
   }
   private read(id?: string): LifecycleReceipt | null {
-    const guard = this.readerGuard(), reader = readConnection(this.file, guard, this.readerDeadline(), this.ownedReadonlyConnections, () => { this.quarantined = true; });
+    const sourceGuard = this.readerGuard();
+    let guardFailure: { error: unknown } | undefined;
+    const guard = () => {
+      try { sourceGuard?.(); }
+      catch (error) { guardFailure = { error }; throw error; }
+    };
+    const reader = readConnection(this.file, sourceGuard, this.readerDeadline(), this.ownedReadonlyConnections, () => { this.quarantined = true; });
     try {
-      guard?.();
-      const row = id ? reader.prepare(`SELECT r.json,l.json AS lineage,
+      guard();
+      const statement = id ? reader.prepare(`SELECT r.json,l.json AS lineage,
         r.restart_id AS receipt_id,r.revision AS receipt_revision,r.request_digest AS receipt_digest FROM lifecycle_lineage l LEFT JOIN receipt_revisions r
-        ON r.restart_id=? AND r.revision=(SELECT max(revision) FROM receipt_revisions WHERE restart_id=?) WHERE l.singleton=1`).get(id, id)
+        ON r.restart_id=? AND r.revision=(SELECT max(revision) FROM receipt_revisions WHERE restart_id=?) WHERE l.singleton=1`)
         : reader.prepare(`SELECT r.json,l.json AS lineage,
           r.restart_id AS receipt_id,r.revision AS receipt_revision,r.request_digest AS receipt_digest,
           s.restart_id AS selected_id,s.revision AS selected_revision FROM lifecycle_lineage l LEFT JOIN selected_receipt s ON s.singleton=l.singleton
-          LEFT JOIN receipt_revisions r ON r.restart_id=s.restart_id AND r.revision=s.revision WHERE l.singleton=1`).get();
-      guard?.();
+          LEFT JOIN receipt_revisions r ON r.restart_id=s.restart_id AND r.revision=s.revision WHERE l.singleton=1`);
+      guard(); const row = id ? statement.get(id, id) : statement.get();
+      guard();
       if (!row || (String(row.lineage) !== JSON.stringify(this.lineage) || !same(this.lineage.directory, identity(dirname(this.file))) ||
           !same(this.lineage.file, identity(this.file)) || !same(this.lineage.journal, identity(this.file + "-journal")))) fail("lineage_unknown");
       if (id === undefined && !hasSelectedReceipt(row)) return null;
       return row.json === null ? null : receiptEnvelope(row, this.lineage.homeIdentity, id);
-    } catch { fail("lineage_unknown"); }
+    } catch (error) {
+      if (guardFailure && Object.is(error, guardFailure.error)) throw error;
+      fail("lineage_unknown");
+    }
     finally { closeReadConnection(reader); }
   }
   lookup(id: string): LifecycleReceipt | null { this.requireKnownWriter(); z.string().uuid().parse(id); this.verifyLineage(); return this.read(id); }
@@ -601,7 +612,10 @@ export class LifecycleJournal {
           return requestDigest;
         }, value => {
           const guard = this.readerGuard(), reader = readConnection(this.file, guard, this.readerDeadline(), this.ownedReadonlyConnections, () => { this.quarantined = true; });
-          try { guard?.(); const found = !!reader.prepare("SELECT 1 FROM receipt_conflicts WHERE restart_id=? AND observed_digest=? AND json=?").get(parsed.restartId, value, json); guard?.(); return found; }
+          try {
+            guard?.(); const statement = reader.prepare("SELECT 1 FROM receipt_conflicts WHERE restart_id=? AND observed_digest=? AND json=?"); guard?.();
+            const found = !!statement.get(parsed.restartId, value, json); guard?.(); return found;
+          }
           finally { closeReadConnection(reader); }
         }, { effect: "conflict", restartId: parsed.restartId, revision: existing.revision, requestDigest });
         // This is the deliberate refusal AFTER verified conflict evidence, not

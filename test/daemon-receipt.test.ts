@@ -254,14 +254,20 @@ async function captureRefusal(action: () => unknown | Promise<unknown>): Promise
 }
 type OutcomeFault = "late_commit" | "before_commit" | "reader" | "reader_expiry" | "reader_close" |
   "reader_preflight" | "reader_init" | "reader_prepare" | "reader_native_expiry" | "reader_init_close" |
-  "wrapper_throw" | "conflict_throw" | "last_guard";
-function outcomeFault(writer: DatabaseSync, end: number, fault: OutcomeFault, finalClockRead = 1) {
+  "wrapper_throw" | "conflict_throw" | "last_guard" | "reader_chain";
+type VerificationQuery = "lineage" | "receipt_id" | "receipt_selected" | "conflict";
+type VerificationBoundary = "prepare_expiry" | "get_expiry" | "get_native_expiry" | "get_close_expiry";
+function outcomeFault(writer: DatabaseSync, end: number, fault: OutcomeFault, finalClockRead = 1,
+  verification?: { query: VerificationQuery; boundary: VerificationBoundary }) {
   const realNow = performance.now.bind(performance), originalClose = DatabaseSync.prototype.close;
   let expired = false, committed = false, lastReader: DatabaseSync | undefined, arm = false, clockReads = 0;
   let retainedReadonly: DatabaseSync | undefined;
   const counts = { begins: 0, commits: 0, returnedCommits: 0, lateSql: 0 };
   const readerCalls = { initialized: 0, closed: 0, queryOnlyPrepared: 0, queryOnlyGets: 0, gets: 0, lateGets: 0 };
   const readers = new Set<DatabaseSync>();
+  const queryCalls = { lineage: { prepared: 0, gets: 0, returned: 0 }, receipt_id: { prepared: 0, gets: 0, returned: 0 },
+    receipt_selected: { prepared: 0, gets: 0, returned: 0 }, conflict: { prepared: 0, gets: 0, returned: 0 } };
+  let targetReader: DatabaseSync | undefined;
   let postCommitClockReads = 0;
   const expire = () => { expired = true; };
   const clock = vi.spyOn(performance, "now").mockImplementation(() => {
@@ -299,15 +305,28 @@ function outcomeFault(writer: DatabaseSync, end: number, fault: OutcomeFault, fi
       throw new Error("SIMULATED independent reader error after ORIGINAL prepare");
     }
     if (committed && this !== writer) {
+      const query: VerificationQuery | undefined = sql === "SELECT json FROM lifecycle_lineage WHERE singleton=1" ? "lineage"
+        : sql.startsWith("SELECT r.json,l.json AS lineage,") ? (sql.includes("s.restart_id AS selected_id") ? "receipt_selected" : "receipt_id")
+        : sql === "SELECT 1 FROM receipt_conflicts WHERE restart_id=? AND observed_digest=? AND json=?" ? "conflict" : undefined;
+      if (query) queryCalls[query].prepared++;
+      const target = query !== undefined && verification?.query === query;
+      if (target) targetReader = this; // Actual returned statement's native DB receiver only.
       const get = statement.get;
       const pending = vi.spyOn(statement, "get").mockImplementation(function(this: typeof statement, ...args: unknown[]) {
         readerCalls.gets++; if (sql === "PRAGMA query_only") readerCalls.queryOnlyGets++;
+        if (query) queryCalls[query].gets++;
         if (expired) { counts.lateSql++; readerCalls.lateGets++; }
         const value = Reflect.apply(get, this, args);
+        if (query) queryCalls[query].returned++;
+        if (target && verification!.boundary !== "prepare_expiry") {
+          expire(); // Only AFTER ORIGINAL receipt/lineage/conflict SELECT.get returned.
+          if (verification!.boundary === "get_native_expiry") throw new LifecycleUnavailable("budget"); // SIMULATED native-boundary error, not guard provenance.
+        }
         if (fault === "reader_expiry" && sql === "SELECT json FROM lifecycle_lineage WHERE singleton=1") expire();
         return value;
       });
       runs.push(() => pending.mockRestore());
+      if (target && verification!.boundary === "prepare_expiry") expire(); // Only AFTER ORIGINAL prepare returned.
       if (sql === "PRAGMA query_only") {
         readerCalls.queryOnlyPrepared++;
         if (fault === "reader_prepare") expire(); // Only AFTER ORIGINAL prepare returned.
@@ -324,7 +343,8 @@ function outcomeFault(writer: DatabaseSync, end: number, fault: OutcomeFault, fi
     return statement;
   });
   const close = vi.spyOn(DatabaseSync.prototype, "close").mockImplementation(function(this: DatabaseSync) {
-    if (committed && this !== writer && ["reader_close", "reader_init_close"].includes(fault) && !retainedReadonly) {
+    if (committed && this !== writer && (["reader_close", "reader_init_close"].includes(fault) ||
+        (this === targetReader && verification?.boundary === "get_close_expiry")) && !retainedReadonly) {
       retainedReadonly = this; // Exact actual source readonly receiver, before the SIMULATED close error.
       throw new Error("SIMULATED unconfirmed readonly disposal after ORIGINAL COMMIT");
     }
@@ -334,7 +354,7 @@ function outcomeFault(writer: DatabaseSync, end: number, fault: OutcomeFault, fi
     if (this === lastReader && fault === "last_guard") arm = true;
     return value;
   });
-  return { counts, readerCalls, get retainedReadonly() { return retainedReadonly !== undefined; },
+  return { counts, readerCalls, queryCalls, get retainedReadonly() { return retainedReadonly !== undefined; },
     disposeReadonlyFixture() {
       if (!retainedReadonly) return;
       // Fixture-owned exact receiver only. Clear only after the actual native close
@@ -342,6 +362,21 @@ function outcomeFault(writer: DatabaseSync, end: number, fault: OutcomeFault, fi
       originalClose.call(retainedReadonly); retainedReadonly = undefined;
     },
     restore() { for (const restore of runs) restore(); close.mockRestore(); prepare.mockRestore(); exec.mockRestore(); clock.mockRestore(); } };
+}
+async function verificationRefusal(query: VerificationQuery, boundary: VerificationBoundary) {
+  const j = await capturedOutcomeJournal(), input = request();
+  if (query === "conflict") await admit(j, input, deadline()); // Separate original accepted operation, before fault capture.
+  const end = deadline(), fault = outcomeFault(captured!, end, "reader_chain", 1, { query, boundary });
+  let error: unknown, unexpected: unknown, retained = false;
+  try { error = await captureRefusal(() => admit(j, query === "conflict" ? { ...input, operation: "stop" } : input, end)); }
+  catch (failure) { unexpected = failure; }
+  finally {
+    retained = fault.retainedReadonly; fault.restore(); // Before any oracle/fixture disposal.
+    try { fault.disposeReadonlyFixture(); }
+    catch (cleanup) { if (unexpected) throw new AggregateError([unexpected, cleanup], "Fixture operation and exact readonly disposal failed"); throw cleanup; }
+  }
+  if (unexpected) throw unexpected;
+  return { j, input, error, retained, fault };
 }
 
 describe("lifecycle-only committed receipt storage (not restart acceptance)", () => {
@@ -778,6 +813,37 @@ describe("source-associated publication UNKNOWN (not controller or durability au
       const rows = committedFixtureRows(); expect(rows).toHaveLength(1);
       expect(JSON.parse(String(rows[0]!.json))).toMatchObject({ restartId: input.restartId, revision: 1, requestDigest: acceptedRequestDigest(input) });
     });
+
+  const verificationCases = (["lineage", "receipt_id", "receipt_selected", "conflict"] as const)
+    .flatMap(query => (["prepare_expiry", "get_expiry"] as const).map(boundary => ({ query, boundary })));
+  it.each(verificationCases)("ORIGINAL $query SELECT $boundary stays inside its original verification budget", async ({ query, boundary }) => {
+    const { j, input, error, retained, fault } = await verificationRefusal(query, boundary);
+    expect(error).toMatchObject({ reason: "writer_unknown" });
+    expect(observeLifecycleWriteOutcome(error)).toEqual({ acknowledgement: "unknown", commit: "call_returned",
+      observation: "not_completed", stoppedAt: "committed_read", cause: "deadline", followUp: "held" });
+    expect(fault.counts).toEqual({ begins: 1, commits: 1, returnedCommits: 1, lateSql: 0 });
+    expect(fault.queryCalls[query]).toEqual({ prepared: 1, gets: boundary === "get_expiry" ? 1 : 0,
+      returned: boundary === "get_expiry" ? 1 : 0 });
+    expect(fault.readerCalls.lateGets).toBe(0); expect(fault.readerCalls.closed).toBe(fault.readerCalls.initialized);
+    expect(retained).toBe(false); expect(j.isQuarantined).toBe(true); publicQuarantineRefuses(j, input.restartId);
+    // Fixture oracle after clock/observers restore; retained bytes are not reconciliation authority.
+    const rows = committedFixtureRows(); expect(rows).toHaveLength(1);
+    expect(JSON.parse(String(rows[0]!.json))).toMatchObject({ restartId: input.restartId, revision: 1, requestDigest: acceptedRequestDigest(input) });
+  });
+
+  const receiptFailureCases = (["receipt_id", "receipt_selected"] as const)
+    .flatMap(query => (["get_native_expiry", "get_close_expiry"] as const).map(boundary => ({ query, boundary })));
+  it.each(receiptFailureCases)("SIMULATED $query $boundary preserves native normalization or exact close uncertainty", async ({ query, boundary }) => {
+    const { j, input, error, retained, fault } = await verificationRefusal(query, boundary);
+    expect(error).toMatchObject({ reason: "writer_unknown" });
+    expect(observeLifecycleWriteOutcome(error)).toMatchObject({ commit: "call_returned", observation: "not_completed",
+      stoppedAt: "committed_read", cause: "observation", followUp: "held" });
+    expect(fault.counts).toEqual({ begins: 1, commits: 1, returnedCommits: 1, lateSql: 0 });
+    expect(fault.queryCalls[query]).toEqual({ prepared: 1, gets: 1, returned: 1 });
+    expect(fault.readerCalls.lateGets).toBe(0); expect(retained).toBe(boundary === "get_close_expiry");
+    expect(fault.readerCalls.closed).toBe(fault.readerCalls.initialized - (retained ? 1 : 0));
+    expect(j.isQuarantined).toBe(true); publicQuarantineRefuses(j, input.restartId); expect(committedFixtureRows()).toHaveLength(1);
+  });
 
   it.each(portable ? ["final_deadline"] as const : ["final_deadline", "phase_return"] as const)(
     "SIMULATED %s expiry after the actual strict selected snapshot/disposal remains UNKNOWN", async stage => {
