@@ -293,6 +293,7 @@ describe("messaging", () => {
     await b.start();
     // This checks the wait's predicate/deadline, independently of cold send setup.
     // Leave sockets and immediates real; control only the deadline under test.
+    // Cold first-send latency is not bounded here; it is tracked separately (AB-391).
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       let resolved = false;
@@ -307,10 +308,8 @@ describe("messaging", () => {
       expect(resolved).toBe(false);
       await a.send({ to: "b", body: "second" });
       expect((await waiting)?.body).toBe("second");
-      const timeout = b.waitForMessage(100, (m) => m.body === "never");
-      await vi.advanceTimersByTimeAsync(100);
-      expect(await timeout).toBeNull();
     } finally { vi.useRealTimers(); }
+    expect(await b.waitForMessage(100, (m) => m.body === "never")).toBeNull();
   });
 });
 
