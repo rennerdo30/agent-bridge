@@ -1,9 +1,11 @@
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AntigravityHooks } from "../src/mcp/antigravity-hooks.js";
-import { postAntigravityHook } from "../src/cli/antigravity-hook.js";
+import { antigravityPermission, postAntigravityHook } from "../src/cli/antigravity-hook.js";
+import { askRelay } from "../src/core/relay.js";
 import { antigravityAncestor } from "../src/core/procinfo.js";
 import { buildHookResponse, confirmAntigravityStopDelivery } from "../src/mcp/hooks.js";
 import { antigravityHookCommand, requireAntigravityPlugin } from "../src/core/antigravity-plugin.js";
@@ -15,7 +17,56 @@ import { mkdirSync, writeFileSync } from "node:fs";
 
 vi.mock("../src/core/procinfo.js", () => ({ antigravityAncestor: vi.fn(async () => 12345) }));
 vi.mock("../src/mcp/hooks.js", () => ({ buildHookResponse: vi.fn(), confirmAntigravityStopDelivery: vi.fn() }));
+vi.mock("../src/core/relay.js", async (original) => ({ ...await original<typeof import("../src/core/relay.js")>(), askRelay: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
+
+describe("Antigravity edit-mode read policy", () => {
+  it.each([
+    ["skills", "example", "SKILL.md"],
+    ["schemas", "report_progress.json"],
+    ["schemas", "peers.json"],
+    ["schemas", "send.json"],
+    ["schemas", "list_issues.json"],
+  ])("defers view_file of ~/.gemini/%s to native policy without relaying", async (...parts) => {
+    const env = makeEnv();
+    try {
+      const input = { toolCall: { name: "view_file", args: { AbsolutePath: join(homedir(), ".gemini", ...parts) } }, workspacePaths: [env.home] };
+      expect(await antigravityPermission(input, "edit", true)).toEqual({ decision: "allow" });
+      expect(askRelay).not.toHaveBeenCalled();
+      // Read access retains its existing explicit resource permission override.
+      expect(await antigravityPermission(input, "read", true)).toEqual({ decision: "allow", permissionOverrides: [`read_file(${input.toolCall.args.AbsolutePath})`] });
+      expect(askRelay).not.toHaveBeenCalled();
+    } finally { await env.cleanup(); }
+  });
+
+  it.each([
+    ["list_dir", "DirectoryPath"],
+    ["grep_search", "SearchPath"],
+    ["find_by_name", "SearchDirectory"],
+  ])("defers out-of-workspace %s reads to native policy without relaying", async (name, pathKey) => {
+    const env = makeEnv();
+    try {
+      expect(await antigravityPermission({ toolCall: { name, args: { [pathKey]: join(homedir(), ".gemini") } }, workspacePaths: [env.home] }, "edit", true)).toEqual({ decision: "allow" });
+      expect(askRelay).not.toHaveBeenCalled();
+    } finally { await env.cleanup(); }
+  });
+
+  it.each(["write_to_file", "run_command", "call_mcp_tool", "new_unknown_tool"])("still relays %s in edit mode and denies it in read mode", async (name) => {
+    const env = makeEnv();
+    try {
+      const args = name === "write_to_file" ? { TargetFile: join(homedir(), ".gemini", "settings.json") }
+        : name === "run_command" ? { CommandLine: "npm test" }
+        : name === "call_mcp_tool" ? { ServerName: "external-service", ToolName: "read_data" }
+        : { AbsolutePath: join(env.home, "unknown.ts") };
+      const input = { toolCall: { name, args }, workspacePaths: [env.home] };
+      vi.mocked(askRelay).mockResolvedValueOnce({ allow: false, message: "supervisor denied" });
+      expect(await antigravityPermission(input, "edit", true)).toEqual({ decision: "deny", reason: "supervisor denied" });
+      expect(askRelay).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ agent: "antigravity", tool: name === "call_mcp_tool" ? "mcp:external-service" : name, cwd: env.home }));
+      expect(await antigravityPermission(input, "read", true)).toEqual({ decision: "deny", reason: "agent-bridge read access forbids this tool" });
+      expect(askRelay).toHaveBeenCalledTimes(1);
+    } finally { await env.cleanup(); }
+  });
+});
 
 describe("Antigravity native hook routing", () => {
   it("skips native process inspection for an internal server without an inbox", async () => {
