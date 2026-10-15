@@ -52,7 +52,7 @@ async function stallUntilStartupDeadline(f: ReturnType<typeof fixture>) {
   // reaches the requested stall. The filesystem signal stays real; Date/UUIDs stay real.
   const marker = created(stalled);
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-  const run = delegateToMuseMsp({ ...f.req, signal: controller.signal });
+  const run = delegateToMuseMsp({ ...f.req, signal: AbortSignal.any([f.req.signal!, controller.signal]) });
   let settled = false;
   void run.then(() => { settled = true; }, () => { settled = true; });
   try {
