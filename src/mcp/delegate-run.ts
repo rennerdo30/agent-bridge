@@ -1,4 +1,4 @@
-import { worktreeRoots } from "../core/worktree.js";
+import { worktreeBaseReport, worktreeRoots } from "../core/worktree.js";
 import { randomUUID } from "node:crypto";
 import { appendContextEvent } from "../core/context-journal.js";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -52,7 +52,7 @@ const HANDOFF_DECLINED =
 export const PARENT_APPROVAL_TIMEOUT_MS = 10 * 60_000;
 
 /** _worktree: internal, a follow-up continuing in an existing worktree. _job: the job's name. */
-export type DelegateArgs = { prompt: string; host?: string; model?: string; effort?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; send_to?: string[]; notes?: "none" | "milestones" | "blockers"; title: string; _worktree?: Worktree; _job?: string } & TargetArgs;
+export type DelegateArgs = { prompt: string; host?: string; model?: string; effort?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; base?: string; allow_tools?: string[]; send_to?: string[]; notes?: "none" | "milestones" | "blockers"; title: string; _worktree?: Worktree; _job?: string } & TargetArgs;
 
 /** Where a background job's approval questions, answers and facts go: this session's JobManager, or a job runner's link to it. */
 export interface JobSink {
@@ -152,7 +152,7 @@ export async function runDelegate(
 async function runWithWorktreeLease(rc: RunContext, target: CodingAgent, a: DelegateArgs, signal: AbortSignal, onProgress: ((message: string) => void) | undefined, background: boolean, job?: Job): Promise<RunResult> {
   signal.throwIfAborted();
   onProgress?.("preparing run context");
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, worktreeRoot: rc.cfg.worktreeRoot, jobId: randomUUID().slice(0, 8), log: rc.log }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd: a.cwd || rc.cwd(), home: rc.home, worktreeRoot: rc.cfg.worktreeRoot, base: a.base, jobId: randomUUID().slice(0, 8), log: rc.log }) : null);
   const root = wt?.path ?? bridgeWorktreeRoot(a.cwd || rc.cwd(), rc.home);
   if (!root) return runDelegateInner(rc, target, a, signal, onProgress, background, job);
   const release = worktreeLease(rc.home, { path: root }, job?.id);
@@ -189,7 +189,8 @@ async function runDelegateInner(
   a = worktreeArgs(target, a, cfg, cwd, rc.home);
   const access: Access | undefined = a.access;
   // A follow-up to a worktree job keeps working (and committing) in that worktree.
-  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, worktreeRoot: cfg.worktreeRoot, jobId: randomUUID().slice(0, 8), log: dlog }) : null);
+  const wt = a._worktree ?? (a.worktree ? await createWorktree({ cwd, home: rc.home, worktreeRoot: cfg.worktreeRoot, base: a.base, jobId: randomUUID().slice(0, 8), log: dlog }) : null);
+  if (wt) onProgress?.(worktreeBaseReport(wt));
   const workdir = wt?.cwd ?? cwd;
   const linkRoot = wt?.path ?? bridgeWorktreeRoot(workdir, rc.home);
   // Codex in "ask" mode can only change files through an approval: watching the folder tells us whether
@@ -397,7 +398,7 @@ async function runDelegateInner(
       {
         // With a live link the subagent can report how far it is (report_progress; shown in the dashboard).
         // A new session learns once that it reports back and leaves the handoff alone.
-        prompt: [a.prompt, a.session_id ? null : DELEGATED_JOB_NOTE,
+        prompt: [a.prompt, wt ? worktreeBaseReport(wt) : null, a.session_id ? null : DELEGATED_JOB_NOTE,
           `(agent-bridge reporting: ${a.notes === "milestones" ? 'Send only milestone notes, using send(message_kind="note").' : a.notes === "blockers" ? 'Send only blockers requiring attention, using send(message_kind="question").' : 'No unsolicited progress notes. Final report only.'} Use report_progress for dashboard progress. Questions requiring a supervisor decision use send(message_kind="question"); replies to a live request and final reports still reach the supervisor.)`,
           linkRoot ? WORKTREE_LINK_HINT : null, link ? PROGRESS_HINT : null, link ? SIBLING_HINT : null, resourceSlotHint(cfg.resourceSlots, bundledCli())].filter(Boolean).join("\n\n"),
         title: (typeof job?.args?.title === "string" && job.args.title) || a.title,
@@ -466,7 +467,7 @@ async function runDelegateInner(
     }
     feed.end(signal.aborted ? "cancelled" : displayPathText(`failed: ${(err as Error)?.message ?? err}`));
     // The worktree keeps whatever the subagent did before failing: say where it is.
-    if (wt && err instanceof Error) err.message += `\n\nIts worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
+    if (wt && err instanceof Error) err.message += `\n\n${worktreeBaseReport(wt)}\nIts worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
     if (linkRoot && err instanceof Error) {
       try { const warning = worktreeLinkWarning(scanWorktreeLinks(linkRoot)); if (warning) err.message += `\n\n${warning}`; }
       catch (scanError) { err.message += `\nWARNING: worktree link inspection failed: ${(scanError as Error).message}`; }
@@ -550,5 +551,6 @@ async function runDelegateInner(
     const warning = handoffWarning(changed);
     if (warning) notes.push(warning);
   }
+  if (wt) notes.unshift(worktreeBaseReport(wt));
   return { ...res, workdir, worktree: wt ?? undefined, text: displayPathText(notes.length ? `${res.text}\n\n---\n${notes.join("\n\n")}` : res.text) };
 }

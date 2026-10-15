@@ -99,6 +99,9 @@ export class RemoteJobs {
     } catch (err) {
       const p = this.pending.get(rid);
       if (p) { clearTimeout(p.timer); this.pending.delete(rid); p.reject(err as Error); }
+      if (request.op === "spawn" && request.args.base !== undefined) {
+        throw new Error(`Remote spawn with explicit base ${request.args.base} failed; an older peer may not support the base option. Check the paired PC before retrying: ${(err as Error).message}`);
+      }
       throw err;
     }
   }
@@ -172,7 +175,7 @@ export class RemoteJobs {
         const repo = allowedRemoteDirectory(await git(["rev-parse", "--show-toplevel"], cwd, this.log), policy.allowRoots);
         if (existsSync(join(repo, "worktrees"))) allowedRemoteDirectory(join(repo, "worktrees"), policy.allowRoots);
         // Managed checkouts remain under an allowed root, including their git metadata.
-        worktree = await createWorktree({ cwd, home: repo, worktreeRoot: cfg.worktreeRoot, jobId: request.job, log: this.log });
+        worktree = await createWorktree({ cwd, home: repo, worktreeRoot: cfg.worktreeRoot, base: args.base, jobId: request.job, log: this.log });
         cwd = allowedRemoteDirectory(worktree.cwd, policy.allowRoots);
         args = { ...args, cwd, worktree: false, _worktree: worktree };
       }

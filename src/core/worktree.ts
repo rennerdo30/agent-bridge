@@ -18,6 +18,8 @@ const REMOVE_RETRIES = 3;
 const GIT_TIMEOUT_MS = 180_000;
 /** `git worktree add` checks out the whole tree: on a large repository under load that takes minutes. */
 const WORKTREE_ADD_TIMEOUT_MS = 600_000;
+/** Network discovery and fetch each have a short, independent bound. */
+export const WORKTREE_FETCH_TIMEOUT_MS = 10_000;
 export const BRANCH_PREFIX = "agent-bridge/";
 const MAX_DIFFSTAT_CHARS = 4_000;
 
@@ -29,6 +31,9 @@ export interface Worktree {
   branch: string;
   /** Commit the branch started from. */
   base: string;
+  /** Selected ref and selection facts (optional for older saved worktrees). */
+  baseRef?: string;
+  baseNotes?: string[];
   /** Branch checked out where the worktree was created (null: detached HEAD, or a job saved by an older version). */
   baseBranch?: string | null;
   /** Last finished tip, retained when its branch is removed. */
@@ -52,14 +57,70 @@ export async function git(args: string[], cwd: string, log: Logger, timeoutMs = 
   return res.stdout.trimEnd();
 }
 
-export async function createWorktree(opts: { cwd: string; home: string; jobId: string; log: Logger; worktreeRoot?: string | null }): Promise<Worktree> {
+export function worktreeBaseReport(wt: Pick<Worktree, "base" | "baseRef" | "baseNotes">): string {
+  return [`Base: ${wt.baseRef ?? "saved fork point"} ${wt.base}`, ...(wt.baseNotes ?? [])].join("\n");
+}
+
+async function selectWorktreeBase(repo: string, log: Logger, explicit?: string): Promise<Pick<Worktree, "base" | "baseRef" | "baseNotes">> {
+  const run = (args: string[]) => git(args, repo, log);
+  const head = await run(["rev-parse", "HEAD"]);
+  const remotes = (await run(["remote"])).split(/\r?\n/).filter(Boolean);
+  const baseNotes: string[] = [];
+  let defaultRef: string | undefined;
+  if (remotes.length) {
+    const upstream = await run(["config", "--get", "branch." + (await run(["branch", "--show-current"])) + ".remote"]).catch(() => "");
+    const remote = remotes.includes(upstream) ? upstream : remotes.includes("origin") ? "origin" : remotes[0]!;
+    let defaultBranch = (await run(["symbolic-ref", "-q", `refs/remotes/${remote}/HEAD`]).catch(() => "")).replace(`refs/remotes/${remote}/`, "");
+    const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never" };
+    let discoveryFailed = false;
+    try {
+      const advertised = await git(["ls-remote", "--symref", "--", remote, "HEAD"], repo, log, WORKTREE_FETCH_TIMEOUT_MS, env);
+      defaultBranch = /^ref: refs\/heads\/(.+)\tHEAD\r?$/m.exec(advertised)?.[1] ?? defaultBranch;
+    } catch { discoveryFailed = true; }
+    let fetchedAll = false;
+    let fetchFailed = false;
+    if (!defaultBranch) {
+      fetchedAll = true;
+      await git(["fetch", "--no-tags", "--", remote, `refs/heads/*:refs/remotes/${remote}/*`], repo, log, WORKTREE_FETCH_TIMEOUT_MS, env).catch(() => {
+        fetchFailed = true;
+        baseNotes.push(`WARNING: fetch failed or offline for remote ${remote}.`);
+      });
+      // A single cached branch is unambiguous even when remote HEAD was never recorded.
+      const cached = (await run(["for-each-ref", "--format=%(refname)", `refs/remotes/${remote}/`])).split(/\r?\n/).filter(ref => ref && !ref.endsWith("/HEAD"));
+      if (cached.length === 1) defaultBranch = cached[0]!.slice(`refs/remotes/${remote}/`.length);
+    }
+    if (defaultBranch) {
+      defaultRef = `refs/remotes/${remote}/${defaultBranch}`;
+      try {
+        // Refresh only remote-tracking refs. Never prune or change local branches.
+        if (!fetchedAll) await git(["fetch", "--no-tags", "--", remote, `refs/heads/${defaultBranch}:${defaultRef}`], repo, log, WORKTREE_FETCH_TIMEOUT_MS, env);
+        if (discoveryFailed && !fetchFailed) baseNotes.push(`WARNING: remote default discovery failed; fetched cached default ${remote}/${defaultBranch}.`);
+      } catch {
+        fetchFailed = true;
+      }
+      if (fetchFailed) baseNotes.push(`WARNING: fetch failed or offline; using last fetched remote ref ${remote}/${defaultBranch} if available.`);
+      if (!await run(["rev-parse", "--verify", `${defaultRef}^{commit}`]).catch(() => "")) defaultRef = undefined;
+    }
+    if (!defaultRef && !explicit) baseNotes.push("WARNING: no remote default tracking ref available; falling back to local HEAD.");
+  } else baseNotes.push("Repository has no remote.");
+  const baseRef = explicit ?? defaultRef ?? "local HEAD";
+  const base = explicit ? await run(["rev-parse", "--verify", "--end-of-options", `${explicit}^{commit}`])
+    : defaultRef ? await run(["rev-parse", "--verify", `${defaultRef}^{commit}`]) : head;
+  const upstreamRef = await run(["rev-parse", "--symbolic-full-name", "@{upstream}"]).catch(() => "");
+  for (const ref of new Set([defaultRef, upstreamRef].filter((ref): ref is string => Boolean(ref)))) {
+    const count = Number(await run(["rev-list", "--count", `${head}..${ref}`]).catch(() => "0"));
+    if (count > 0) baseNotes.push(`WARNING: cwd HEAD ${head} is behind ${ref} by ${count} commit(s).`);
+  }
+  return { base, baseRef, baseNotes };
+}
+
+export async function createWorktree(opts: { cwd: string; home: string; jobId: string; log: Logger; worktreeRoot?: string | null; base?: string }): Promise<Worktree> {
   let repoRoot: string;
   try {
     repoRoot = await git(["rev-parse", "--show-toplevel"], opts.cwd, opts.log);
   } catch {
     throw new Error(`worktree isolation needs a git repository, but ${opts.cwd} is not inside one`);
   }
-  const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = (await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "")) || null;
   let branch = `${BRANCH_PREFIX}${opts.jobId}`;
   const dir = opts.worktreeRoot ?? join(opts.home, "worktrees");
@@ -67,6 +128,8 @@ export async function createWorktree(opts: { cwd: string; home: string; jobId: s
   if (await worktreeLocationExists(repoRoot, branch, path, opts.log)) {
     throw new Error(`could not create a worktree for the subagent; existing branch or path retained: ${branch}, ${path}`);
   }
+  const selection = await selectWorktreeBase(repoRoot, opts.log, opts.base);
+  const { base } = selection;
   mkdirSync(dir, { recursive: true });
   // This runs in the MCP server (as the user), never inside the sandboxed agent, so the worktree is the user's.
   try {
@@ -93,7 +156,7 @@ export async function createWorktree(opts: { cwd: string; home: string; jobId: s
   // Different spellings of the same folder (drive mappings, junctions) make rel absolute or "..": use the root.
   const cwd = rel && !rel.startsWith("..") && !isAbsolute(rel) ? join(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
-  return { repoRoot, path, cwd, branch, base, baseBranch };
+  return { repoRoot, path, cwd, branch, ...selection, baseBranch };
 }
 
 /** Release a lock on a worktree (best effort: usually there is none). */
