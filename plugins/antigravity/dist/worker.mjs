@@ -127,7 +127,7 @@ import {
   antigravityAncestor,
   antigravityHookOutput,
   inspectClaudeLaunch
-} from "./chunks/chunk-WDDFIR75.mjs";
+} from "./chunks/chunk-7ALQSBR6.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   ACCESS_LEVELS,
