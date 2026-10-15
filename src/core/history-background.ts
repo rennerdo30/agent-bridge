@@ -50,6 +50,8 @@ export class HistoryBackground {
         "savepoint.ts",
         "store-compatibility.ts",
         "metadata-db.ts",
+        "history-sources.ts",
+        "byte-source.ts",
       ];
       if (
         !existsSync(path) ||

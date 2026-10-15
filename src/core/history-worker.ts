@@ -120,7 +120,11 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
         migrationFailure = null;
       } catch (err) { migrationFailure = historyMigrationFailure(db); throw err; }
       index ??= new HistoryIndex(db, workerData.home, paths, source);
-      if (!ingest) { ingest = new ConversationIngestor(db, workerData.home, paths, source); ingest.onChange = onTranscriptChange; }
+      if (!ingest) {
+        ingest = new ConversationIngestor(db, workerData.home, paths, source); ingest.onChange = onTranscriptChange;
+        const registering = index;
+        ingest.onUnknownPaths = (changed) => { registering.registerChanged(changed); };
+      }
       ready = true;
     }
     if (!index || !ingest) return { work: 0, discovering: true };
@@ -159,12 +163,17 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
     throw error;
   } finally { running = false; }
 }
-let dueAt = 0, transcriptsChanged = false, wakeAfterTick = false;
-/** A watched transcript change brings a backed-off worker forward to the normal cadence; it never postpones a tick. */
+let dueAt = 0, transcriptsChanged = false, wakeAfterTick = false, liveAfterTick = false, lastTickAt = 0;
+/** Watched transcript and run-log changes are retained at once (AB-383): a tick within LIVE_WAKE_MS, at most one
+ * per LIVE_GAP_MS while a file keeps changing. It never postpones a tick that is due sooner. */
+const LIVE_WAKE_MS = 15, LIVE_GAP_MS = 100;
 function wakeSoon(): void {
-  if (stopped || !timer || dueAt - Date.now() <= HISTORY_TICK_MS) return;
+  if (stopped) return;
   idle.reset();
-  schedule(HISTORY_TICK_MS);
+  if (running) { liveAfterTick = true; return; }
+  const delay = Math.max(LIVE_WAKE_MS, lastTickAt + LIVE_GAP_MS - Date.now());
+  if (timer && dueAt - Date.now() <= delay) return;
+  schedule(delay);
 }
 // The ingestor is created once the store is ready; it reports watched transcript changes through this hook.
 const onTranscriptChange = () => { transcriptsChanged = true; wakeSoon(); };
@@ -187,7 +196,9 @@ function schedule(delay = HISTORY_TICK_MS): void {
       if ((err as { code?: string }).code !== "HISTORY_SNAPSHOT_PAUSED" && !stopped) parentPort?.postMessage({ error: String(err) });
       pauseUntil = Date.now() + 5000;
     }
-    // Backfill gets seconds-scale cadence, never a hot loop. A message wake during the tick runs one more now.
+    lastTickAt = Date.now();
+    // Backfill gets seconds-scale cadence, never a hot loop. A message or live-file wake during the tick runs one more soon.
+    if (liveAfterTick) { liveAfterTick = false; next = Math.min(next, LIVE_GAP_MS); }
     if (wakeAfterTick) { wakeAfterTick = false; next = 0; }
     schedule(next);
   }, delay);
