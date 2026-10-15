@@ -3,8 +3,8 @@ import { runAbsorb } from "../core/storage-absorb.js";
 
 const USAGE = "Usage: agent-bridge storage finalize [--check | --yes] [--json] | storage absorb [--yes] [--json] | storage rollback-history\n" +
   "finalize lists the old-format data that the verified new storage replaces (quick: nothing is read row by row); --check proves every item\n" +
-  "and removes nothing; --yes proves again and removes exactly the proven items, then compacts bridge.db.\n" +
-  "absorb lists rows and files that exist only in old backups and snapshots; with --yes it imports them losslessly into archive.db.";
+  "and retains everything; --yes runs the same checks under maintenance admission and retains all originals without compaction.\n" +
+  "absorb copies into archive.db with --yes, retaining all originals; an existing archive requiring migration is refused.";
 
 const gib = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
 
@@ -18,9 +18,10 @@ export function runStorage(rest: string[], home: string, out: (text: string) => 
     let result;
     try { result = runAbsorb(home, { apply: args.has("--yes"), report: line => { if (!json) out(line); } }); }
     catch (err) { out(String((err as Error).message)); return 1; }
-    if (json) { out(JSON.stringify(result, null, 2)); return result.blockers.length ? 1 : 0; }
+    if (json) { out(JSON.stringify({ ...result, removed: false, removedItems: 0, freedBytes: 0 }, null, 2)); return result.blockers.length ? 1 : 0; }
     if (result.blockers.length) { out("Not ready; nothing was imported:"); for (const blocker of result.blockers) out(`  - ${blocker}`); return 1; }
     out(`${result.rows} rows and ${result.files} files ${result.applied ? "imported into archive.db" : "exist only in old copies"}; ${result.conflicts} conflicting rows (their copies stay).`);
+    out("Removed 0 items, 0.00 GiB; all originals retained.");
     if (!result.applied) out("Run again with --yes to import them (stop all bridge processes first), then agent-bridge storage finalize.");
     return 0;
   }
@@ -29,7 +30,7 @@ export function runStorage(rest: string[], home: string, out: (text: string) => 
   const json = args.has("--json"), check = args.has("--check"), apply = args.has("--yes");
   const report = (line: string) => { if (!json) out(line); };
   const plan = apply ? runFinalize(home, report) : check ? runFinalize(home, report, { dryRun: true }) : planFinalize(home);
-  if (json) { out(JSON.stringify({ ...plan, removed: apply && plan.ready }, null, 2)); return plan.ready ? 0 : 1; }
+  if (json) { out(JSON.stringify({ ...plan, removed: false, removedItems: 0, freedBytes: 0 }, null, 2)); return plan.ready ? 0 : 1; }
   if (!plan.ready) {
     out("Not ready; nothing was removed:");
     for (const blocker of plan.blockers) out(`  - ${blocker}`);
@@ -39,18 +40,18 @@ export function runStorage(rest: string[], home: string, out: (text: string) => 
   const shown = (item: { kind: string; bytes: number }) => item.kind === "table" ? "-".padStart(10) : gib(item.bytes).padStart(10);
   const kept = () => {
     if (!plan.kept.length) return;
-    out("Kept, because they are not proven redundant row by row:");
+    out("Retained originals (including candidates whose proof passes):");
     for (const item of plan.kept) out(`  ${shown(item)}  ${item.path}  (${item.reason})`);
   };
   if (!apply) {
     for (const item of plan.items) out(`  ${shown(item)}  ${item.path}  (${item.reason})`);
     kept();
     out(check
-      ? `${plan.items.length} items, ${gib(plan.bytes)}, proven redundant; nothing was removed. Run with --yes to remove them (they are proven again then).`
-      : `${plan.items.length} candidates, ${gib(plan.bytes)} in files. Nothing was read row by row yet: --check proves them without removing anything, --yes proves and removes.`);
+      ? `${plan.kept.length} items retained after checks. Removed 0 items, 0.00 GiB.`
+      : `${plan.items.length} candidates, ${gib(plan.bytes)} in files. --check and --yes check proofs and retain all originals; neither frees space.`);
     return 0;
   }
   kept();
-  out(`Removed ${plan.items.length} items, ${gib(plan.bytes)}.`);
+  out(`Removed 0 items, 0.00 GiB; ${plan.kept.length} items retained.`);
   return 0;
 }

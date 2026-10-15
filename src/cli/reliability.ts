@@ -2,8 +2,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_OPENCODE_BIN } from "../core/constants.js";
+import { DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_MUSE_BIN, DEFAULT_OPENCODE_BIN } from "../core/constants.js";
 import { delegateToClaude, delegateToCodex, delegateToOpencode, resolveBinary, type DelegateResult } from "../core/delegate.js";
+import { delegateToMuse } from "../core/muse.js";
 import type { Logger } from "../core/logger.js";
 import type { CodingAgent } from "../core/protocol.js";
 import { delegateToAntigravity } from "../core/antigravity.js";
@@ -24,7 +25,7 @@ const RUN_TIMEOUT_SEC = 300;
 const REPEATS = 3;
 const CANCEL_AFTER_MS = 8_000;
 const CANCEL_GRACE_MS = 10_000;
-const BINS: Record<CodingAgent, string> = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN, antigravity: "agy" };
+const BINS: Record<CodingAgent, string> = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN, antigravity: "agy", muse: DEFAULT_MUSE_BIN };
 
 type Access = "read" | "edit";
 export type ReliabilitySection = "core" | "live";
@@ -37,6 +38,7 @@ function run(agent: CodingAgent, prompt: string, cwd: string, access: Access, lo
   if (agent === "antigravity") return delegateToAntigravity({ ...base, bin: BINS.antigravity, access });
   if (agent === "codex") return delegateToCodex({ ...base, bin: BINS.codex, sandbox: access === "edit" ? "workspace-write" : "read-only" });
   if (agent === "claude") return delegateToClaude({ ...base, bin: BINS.claude, permissionMode: access === "edit" ? "acceptEdits" : "default" });
+  if (agent === "muse") return delegateToMuse({ ...base, bin: BINS.muse, access });
   return delegateToOpencode({ ...base, bin: BINS.opencode, autoApprove: access === "edit" });
 }
 

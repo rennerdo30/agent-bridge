@@ -1,0 +1,66 @@
+{
+  "branch": "feat/ab271-pinned-tls",
+  "base": "00cbe6ef",
+  "implementationAndBundles": "403f148b",
+  "nativeEvidence": "d435cd78",
+  "fullSuite": {
+    "command": "npm run test:all",
+    "invocations": 1,
+    "exitCode": 1,
+    "durationSeconds": 2522.64,
+    "files": {
+      "passed": 296,
+      "failed": 3,
+      "total": 299
+    },
+    "tests": {
+      "passed": 2252,
+      "failed": 17,
+      "skipped": 3,
+      "total": 2272
+    },
+    "knownAliasFailures": {
+      "file": "test/release-rehearsal-backup.test.ts",
+      "count": 15,
+      "attribution": "Supervisor-confirmed pre-existing E-drive alias containment defect; base reproduction 40fbf0a4; separate approved fix 8514df88 is release-owner work"
+    },
+    "otherFailures": [
+      {
+        "file": "test/split-bundles.test.ts",
+        "test": "indexes new messages through the compiled split-bundle background worker",
+        "durationMilliseconds": 11448
+      },
+      {
+        "file": "test/send-state-lock.test.ts",
+        "test": "tracks pending storage under a real writer lock and concurrent retries queue once",
+        "durationMilliseconds": 7747
+      }
+    ],
+    "assertionCaptureLimitation": "PowerShell CLIXML interpretation replaced original stderr assertion payloads with XML-parser errors; failure names, counts, durations and summary remain",
+    "capturedLogSha256": "8ecfe5d3f02c5124ce720dd5207752bd7dea94c9a8a425bee7769b9b4975ff4c"
+  },
+  "focusedIntegrationRerun": {
+    "command": "node scripts/test.mjs all test/split-bundles.test.ts test/send-state-lock.test.ts",
+    "exitCode": 0,
+    "passedTests": 3,
+    "passedFiles": 2,
+    "durationSeconds": 12.67,
+    "sourceOrAssertionChanges": false,
+    "logSha256": "fbb228de54df0e1b5ed744082c09a2b7525ef22773ac4e43731eece39be81f24"
+  },
+  "otherChecks": {
+    "identityConfigActivationPinningTests": 49,
+    "clientPinningRetentionTests": 32,
+    "appTests": 14,
+    "nativeWrapperTests": 31,
+    "androidRealJvmTlsTests": 8,
+    "swiftTruncatedCertificateCases": 416,
+    "rootTypecheck": "passed",
+    "appTypecheck": "passed",
+    "expoCompatibility": "passed",
+    "androidIosExport": "passed",
+    "pluginBuild": "passed",
+    "retentionGuardChanged": false
+  },
+  "nativeSecureStore": "unsigned entitlement failure retained; simulator memory seam approved only in build copy; signed physical iPhone gate remains with owner"
+}

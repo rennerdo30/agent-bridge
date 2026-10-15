@@ -6,6 +6,8 @@ const lane = process.env.AGENT_BRIDGE_TEST_LANE ?? "all";
 const TEST_TIMEOUT_MS = lane === "fast" ? 30_000 : 120_000;
 
 export default defineConfig({
+  // Root tests import the portable mobile client without installing the Expo app.
+  tsconfig: "./tsconfig.json",
   // Keep writable test caches in this checkout when dependencies are shared read-only.
   cacheDir: ".agent-bridge-test/vite",
   test: {

@@ -16,6 +16,7 @@ import { loadOrCreateToken } from "../src/core/token.js";
 import { SiblingLink } from "../src/mcp/siblings.js";
 import type { Job } from "../src/mcp/jobs.js";
 import { makeEnv, seedInbox, until, type TestEnv } from "./helpers.js";
+import { codexHost } from "./helpers.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 let env: TestEnv;
@@ -29,8 +30,9 @@ const textOf = (r: any) => r.content.map((c: any) => c.text).join("\n");
 const call = async (c: Client, name: string, args = {}) => textOf(await c.callTool({ name, arguments: args }));
 async function connect(agent: string, name: string, extra = {}) {
   const c = new Client({ name: "context-scenario", version: "1" });
+  const codexHome = codexHost(c, env.home, agent, name);
   const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`], cwd: env.home,
-    env: { ...process.env, AGENT_BRIDGE_HOME: env.home, CLAUDE_PROJECT_DIR: env.home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks",
+    env: { ...process.env, CODEX_HOME: codexHome, AGENT_BRIDGE_HOME: env.home, CLAUDE_PROJECT_DIR: env.home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks",
       AGENT_BRIDGE_WAKE_ON_DIRECT: "off", AGENT_BRIDGE_AUTO_WAKE: "off", AGENT_BRIDGE_DASHBOARD: "off",
       AGENT_BRIDGE_LINGER_SEC: "0", AGENT_BRIDGE_DELEGATE_DEPTH: "0", ...extra } as Record<string, string>, stderr: "ignore" });
   cleanups.push(async () => { const pid = transport.pid; await c.close(); if (pid) await until(() => !pidAlive(pid)); });
@@ -62,6 +64,17 @@ it.each(["claude", "codex", "opencode", "antigravity"])("delivers the last real 
   // Send acknowledgement precedes delivery to the supervisor's local hook queue.
   await expect.poll(() => call(sup, "hook_event", { event: "Stop" }),
     { timeout: 5_000 }).toContain("REAL_COMPLETION");
+  if (agent === "antigravity") {
+    // Antigravity holds Stop mail unread until a continuation step is confirmed (AB-315).
+    await expect.poll(() => call(sup, "inbox", { mark_read: false }),
+      { timeout: 5_000 }).toContain("REAL_COMPLETION");
+    await call(sup, "hook_event", { event: "StopFailure" });
+    await expect.poll(() => call(sup, "inbox", { mark_read: false }),
+      { timeout: 5_000 }).toContain("REAL_COMPLETION");
+    await expect.poll(() => call(sup, "hook_event", { event: "Stop" }),
+      { timeout: 5_000 }).toContain("REAL_COMPLETION");
+    expect(await call(sup, "hook_event", { event: "UserPromptSubmit", stop_hook_active: true })).not.toContain("REAL_COMPLETION");
+  }
   await expect.poll(() => call(sup, "inbox", { mark_read: false }),
     { timeout: 5_000 }).not.toContain("REAL_COMPLETION");
 });

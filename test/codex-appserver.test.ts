@@ -1,10 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { codexTurnSandbox, CODEX_FULL_ACCESS_APPROVAL_POLICY, delegateToCodexAppServer, innerCommand, type Steering } from "../src/core/codex-appserver.js";
 import { nullLogger } from "../src/core/logger.js";
 import { delegateToCodex } from "../src/core/delegate.js";
+import * as codexPaths from "../src/core/codex-paths.js";
+import { preferredDriveFixture } from "./preferred-drive-fixture.js";
 
 const TIMEOUT_SEC = 10;
 const FAKE_REPLY_DELAY_MS = 20;
@@ -60,6 +62,26 @@ describe("innerCommand", () => {
     expect(innerCommand(`cmd /c dir`)).toBe("dir");
     expect(innerCommand("git status")).toBe("git status");
   });
+});
+
+it.each(["danger-full-access", "read-only"] as const)("keeps preferred prompts and physical execution distinct for %s", async (sandbox) => {
+  const dir = mkdtempSync(join(tmpdir(), "ab-path-policy-"));
+  const requests = join(dir, "requests.jsonl");
+  writeFileSync(join(dir, "app-server"), FAKE_CODEX_APPSERVER);
+  writeFileSync(join(dir, "exec"), 'const fs=require("node:fs");let text="";process.stdin.on("data",d=>text+=d);process.stdin.on("end",()=>{fs.writeFileSync("prompt.txt",text);fs.writeFileSync("cwd.txt",process.cwd());console.log(JSON.stringify({type:"item.completed",item:{type:"agent_message",text:"done"}}));});');
+  const restore = await preferredDriveFixture();
+  const mappings = vi.spyOn(codexPaths, "resolveCodexDriveMappings").mockResolvedValue([{ alias: "X:\\", real: "Q:\\" }]);
+  try {
+    const prompt = "Write X:/future.md and read Q:/existing.md";
+    await delegateToCodex({ bin: process.execPath, cwd: dir, prompt, sandbox, timeoutSec: 10, log: nullLogger });
+    const expected = sandbox === "danger-full-access" ? "Write X:/future.md and read X:/existing.md" : "Write Q:\\future.md and read Q:/existing.md";
+    expect(readFileSync(join(dir, "prompt.txt"), "utf8")).toContain(expected);
+    expect(realpathSync.native(readFileSync(join(dir, "cwd.txt"), "utf8"))).toBe(realpathSync.native(dir));
+    await delegateToCodexAppServer({ bin: process.execPath, cwd: dir, prompt, sandbox, timeoutSec: 10, log: nullLogger, extraEnv: { AB_TEST_REQUESTS: requests } });
+    const calls = readFileSync(requests, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(calls.find((call) => call.method === "thread/start").params.cwd).toBe(realpathSync.native(dir));
+    expect(calls.find((call) => call.method === "turn/start").params.input[0].text).toContain(expected);
+  } finally { mappings.mockRestore(); restore(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 it("records native command failures even when the Codex turn recovers successfully", async () => {

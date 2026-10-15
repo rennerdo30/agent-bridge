@@ -1,10 +1,5 @@
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 import {
-  RewakeEndpoint,
-  WAKE_HEADER,
-  shouldWakeClaudeMessage
-} from "./chunks/chunk-KA4IO762.mjs";
-import {
   guardServerErrors
 } from "./chunks/chunk-Q4TGWKCP.mjs";
 import {
@@ -50,43 +45,52 @@ import {
   safeParseAsync,
   serializeMessage,
   toJsonSchemaCompat
-} from "./chunks/chunk-DDASK4CX.mjs";
+} from "./chunks/chunk-YG46UCNQ.mjs";
+import {
+  RewakeEndpoint,
+  WAKE_HEADER,
+  shouldWakeClaudeMessage
+} from "./chunks/chunk-5JNZZOTY.mjs";
+import {
+  antigravityHookOutput
+} from "./chunks/chunk-E5Z34EE4.mjs";
 import {
   MAX_STREAM_ENTRIES
-} from "./chunks/chunk-6M2YFLWI.mjs";
+} from "./chunks/chunk-LTB6AEVD.mjs";
 import {
   isBridgeWorktree,
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-BSNEOFH4.mjs";
+} from "./chunks/chunk-YW5Y662Y.mjs";
+import {
+  JobRunners,
+  closeJobWorktree
+} from "./chunks/chunk-Y3I43FG2.mjs";
+import {
+  readWorktreeState
+} from "./chunks/chunk-UITU7AO6.mjs";
+import "./chunks/chunk-YDZB5SQF.mjs";
+import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   codexAppServerCall,
   describeModels,
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-KCP332IA.mjs";
+} from "./chunks/chunk-O2BX4ET6.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
-import {
-  JobRunners,
-  closeJobWorktree
-} from "./chunks/chunk-5H7DTLZ6.mjs";
-import {
-  readWorktreeState
-} from "./chunks/chunk-TWKMHNQI.mjs";
-import "./chunks/chunk-Z5RZM4QR.mjs";
 import {
   openBrowser
 } from "./chunks/chunk-LWVK3CB7.mjs";
 import {
   t
-} from "./chunks/chunk-BG6KJS4H.mjs";
+} from "./chunks/chunk-CE5EGKJK.mjs";
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-YBVLEETP.mjs";
+} from "./chunks/chunk-SLHRCY34.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -97,44 +101,37 @@ import {
   formatProjectRoute,
   formatReplyRestrictions,
   formatVersionSkew
-} from "./chunks/chunk-7YHHJGIH.mjs";
-import {
-  formatHealth,
-  probeBrokerHealth
-} from "./chunks/chunk-DI3URMK4.mjs";
-import "./chunks/chunk-V5B57RQV.mjs";
-import "./chunks/chunk-RQUYBZWF.mjs";
+} from "./chunks/chunk-UVN2E6JG.mjs";
 import {
   REMOTE_JOB_POLL_MS,
   remoteSpawnArgsSchema
-} from "./chunks/chunk-WZO37EX7.mjs";
+} from "./chunks/chunk-WYUQKQZW.mjs";
+import {
+  formatHealth,
+  probeBrokerHealth
+} from "./chunks/chunk-CJG6ZK2T.mjs";
+import "./chunks/chunk-P2ZEQFG2.mjs";
+import "./chunks/chunk-RQUYBZWF.mjs";
 import {
   conversationPageSchema
-} from "./chunks/chunk-3CXCL26P.mjs";
+} from "./chunks/chunk-S2RHYYYW.mjs";
 import {
-  HISTORY_MAX_LIMIT,
-  HISTORY_MAX_QUERY_CHARS,
-  historyFiltersSchema
-} from "./chunks/chunk-PU7YL7FX.mjs";
+  HISTORY_SEARCH_TOOL_DESCRIPTION,
+  historySearchToolInput
+} from "./chunks/chunk-72Q5FPN3.mjs";
 import {
   MAX_HOLD_REASON_CHARS,
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-YV5LUFLQ.mjs";
-import "./chunks/chunk-JXFL6GBN.mjs";
-import "./chunks/chunk-HUTJ7I5V.mjs";
-import {
-  antigravityAncestor,
-  antigravityHookOutput,
-  inspectClaudeLaunch
-} from "./chunks/chunk-M4BR4X4Z.mjs";
-import "./chunks/chunk-HFRXC4WN.mjs";
+} from "./chunks/chunk-MJBS34H7.mjs";
+import "./chunks/chunk-GXPNUSZS.mjs";
 import {
   ACCESS_LEVELS,
   DEFAULT_FOLLOW_UP,
   DELEGATION_TARGETS,
   DelegateError,
+  FOLLOW_UP_GATE_REASONS,
   JOB_SETTING_KEYS,
   JobManager,
   PARENT_JOB_ENV,
@@ -149,40 +146,40 @@ import {
   formatParentRoute,
   killAllDelegates,
   listPendingApprovals,
+  museEnvSessionId,
   nativeSubagentsSchema,
   parentFromEnv,
   parseJobSettings,
   resolveBinary,
   runProcess,
   verifiedGoneJobOwners
-} from "./chunks/chunk-BG2VFCFY.mjs";
-import "./chunks/chunk-6KTEQAZ2.mjs";
+} from "./chunks/chunk-Y4TN3QZI.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
   formatResourceSlots
-} from "./chunks/chunk-6M5QFIJT.mjs";
+} from "./chunks/chunk-PAWMCZMY.mjs";
+import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   bundleDirectory
 } from "./chunks/chunk-D5ZW6VFT.mjs";
+import "./chunks/chunk-PWU2RVYN.mjs";
 import {
   resolveDbPath,
   resolveHome,
   resolvePipePath
-} from "./chunks/chunk-I67W3K75.mjs";
+} from "./chunks/chunk-HHONKHZV.mjs";
 import "./chunks/chunk-JTZGNEMM.mjs";
 import {
   MAX_JOB_SEND_TARGETS,
-  isJobSendTarget
-} from "./chunks/chunk-M26SH6VN.mjs";
+  isJobSendTarget,
+  siblingMaxHops
+} from "./chunks/chunk-CHGUU5ZH.mjs";
 import {
   loadOrCreateToken,
   tokensEqual
 } from "./chunks/chunk-V4WDBMEN.mjs";
-import "./chunks/chunk-DXCLAQK6.mjs";
-import {
-  canonicalProjectRoot
-} from "./chunks/chunk-CTSH2EZS.mjs";
+import "./chunks/chunk-6GI5TYFU.mjs";
 import {
   CLAUDE_PERMISSION_MODES,
   CODEX_APPROVALS_REVIEWERS,
@@ -194,7 +191,7 @@ import {
   parseAgentKind,
   saveConfigValue,
   watchConfig
-} from "./chunks/chunk-AV6ILNRJ.mjs";
+} from "./chunks/chunk-2SPOVJXZ.mjs";
 import {
   AGENT_KINDS,
   BROADCAST,
@@ -204,35 +201,32 @@ import {
   TRANSFER_PROGRESS_PREFIX,
   isQuietMessage,
   isUnsupportedOperation
-} from "./chunks/chunk-4QXHCXBU.mjs";
+} from "./chunks/chunk-JF4RUO76.mjs";
 import {
   MAX_DECISION_TEXT_CHARS,
   MAX_DECISION_TOPIC_CHARS,
   askOwnerSchema,
   decisionScopeSchema,
   formatDecisionSummary
-} from "./chunks/chunk-TNPFNBCX.mjs";
-import {
-  isInternalBridgeProcess,
-  isPluginCacheCwd
-} from "./chunks/chunk-TATKDRRP.mjs";
+} from "./chunks/chunk-GL6IJSDF.mjs";
 import {
   ZodOptional,
-  external_exports
-} from "./chunks/chunk-FDMEMG4Z.mjs";
-import "./chunks/chunk-HE2O64TJ.mjs";
-import "./chunks/chunk-EVRDPTEO.mjs";
-import {
-  object
-} from "./chunks/chunk-WM3QOXKL.mjs";
+  canonicalProjectRoot,
+  external_exports,
+  isInternalBridgeProcess,
+  isPluginCacheCwd
+} from "./chunks/chunk-HSWS2IB3.mjs";
+import "./chunks/chunk-6JM5HPIU.mjs";
+import "./chunks/chunk-KVMQG3JT.mjs";
+import "./chunks/chunk-HYOPFLLN.mjs";
 import {
   archiveFile,
   createLogger,
   isRecord,
   readJsonStore,
   writeJsonStore
-} from "./chunks/chunk-6FHPLQBA.mjs";
-import "./chunks/chunk-XV6S3Y4N.mjs";
+} from "./chunks/chunk-AOZSUOHQ.mjs";
+import "./chunks/chunk-NDM3RFHM.mjs";
 import {
   APP_NAME,
   APP_VERSION,
@@ -246,11 +240,37 @@ import {
   MAX_JOBS_LIMIT,
   MAX_JOB_TIMEOUT_SEC,
   MAX_WAIT_SEC
-} from "./chunks/chunk-LORCHEZR.mjs";
-import "./chunks/chunk-HHAVWD7J.mjs";
+} from "./chunks/chunk-NUIEIIWS.mjs";
+import {
+  museBridgeTool,
+  museHookOutput,
+  museReadingTool
+} from "./chunks/chunk-LVDZCAYS.mjs";
+import {
+  MUSE_ACCESS_ENV,
+  antigravityAncestor,
+  inspectClaudeLaunch,
+  museHookFile,
+  museHostPid,
+  readMusePrivateJson,
+  restoreMuseContext,
+  writeMusePrivateJson
+} from "./chunks/chunk-VNQ4UNAO.mjs";
+import {
+  TRANSCRIPT_ID,
+  directory,
+  object,
+  readJsonl,
+  safeFile,
+  transcriptPaths
+} from "./chunks/chunk-NVDPULGI.mjs";
+import {
+  processIdentity
+} from "./chunks/chunk-DEWCC5JJ.mjs";
+import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/mcp/server.ts
-import { isAbsolute, join as join4, resolve } from "node:path";
+import { isAbsolute, join as join5, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/experimental/tasks/server.js
@@ -925,6 +945,42 @@ var ExperimentalMcpServerTasks = class {
 };
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js
+function toolInputElementCount(value, max) {
+  let count = 0;
+  const stack = [value];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node === null || typeof node !== "object")
+      continue;
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        if (++count > max)
+          return count;
+        if (child !== null && typeof child === "object")
+          stack.push(child);
+      }
+    } else {
+      for (const key in node) {
+        if (!Object.prototype.hasOwnProperty.call(node, key))
+          continue;
+        if (++count > max)
+          return count;
+        const child = node[key];
+        if (child !== null && typeof child === "object")
+          stack.push(child);
+      }
+    }
+  }
+  return count;
+}
+function resolveMaxToolInputElements(value) {
+  if (value === void 0 || value === Infinity)
+    return void 0;
+  if (typeof value !== "number" || Number.isNaN(value) || value < 1) {
+    throw new RangeError(`maxToolInputElements must be a number of at least 1, or Infinity, got ${String(value)}`);
+  }
+  return value;
+}
 var McpServer = class {
   constructor(serverInfo, options) {
     this._registeredResources = {};
@@ -936,6 +992,7 @@ var McpServer = class {
     this._resourceHandlersInitialized = false;
     this._promptHandlersInitialized = false;
     this.server = new Server(serverInfo, options);
+    this._maxToolInputElements = resolveMaxToolInputElements(options?.maxToolInputElements);
   }
   /**
    * Access experimental features.
@@ -1066,12 +1123,15 @@ var McpServer = class {
    * Validates tool input arguments against the tool's input schema.
    */
   async validateToolInput(tool, args, toolName) {
+    if (this._maxToolInputElements !== void 0 && toolInputElementCount(args, this._maxToolInputElements) > this._maxToolInputElements) {
+      throw new McpError(ErrorCode.InvalidParams, `Invalid arguments for tool ${toolName}: arguments contain more than the maximum of ${this._maxToolInputElements} elements`);
+    }
     if (!tool.inputSchema) {
       return void 0;
     }
     const inputObj = normalizeObjectSchema(tool.inputSchema);
     const schemaToParse = inputObj ?? tool.inputSchema;
-    const parseResult = await safeParseAsync(schemaToParse, args);
+    const parseResult = await safeParseAsync(schemaToParse, args ?? {});
     if (!parseResult.success) {
       const error = "error" in parseResult ? parseResult.error : "Unknown error";
       const errorMessage = getParseErrorMessage(error);
@@ -1309,7 +1369,7 @@ var McpServer = class {
       }
       if (prompt.argsSchema) {
         const argsObj = normalizeObjectSchema(prompt.argsSchema);
-        const parseResult = await safeParseAsync(argsObj, request.params.arguments);
+        const parseResult = await safeParseAsync(argsObj, request.params.arguments ?? {});
         if (!parseResult.success) {
           const error = "error" in parseResult ? parseResult.error : "Unknown error";
           const errorMessage = getParseErrorMessage(error);
@@ -1716,11 +1776,10 @@ var EMPTY_COMPLETION_RESULT = {
   }
 };
 
-// src/mcp/antigravity-hooks.ts
+// src/mcp/muse-hooks.ts
 import { randomBytes } from "node:crypto";
-import { mkdirSync as mkdirSync2, writeFileSync } from "node:fs";
+import { renameSync, unlinkSync } from "node:fs";
 import { createServer } from "node:http";
-import { join as join2 } from "node:path";
 
 // src/mcp/message-wait.ts
 import { randomUUID } from "node:crypto";
@@ -1849,6 +1908,71 @@ async function waitForReadReceipt(node, id, timeoutMs, signal) {
   return null;
 }
 
+// src/mcp/hook-ownership.ts
+var owners = /* @__PURE__ */ new WeakMap();
+function owner(ctx) {
+  let state = owners.get(ctx);
+  if (!state) {
+    state = { epoch: 0, prompt: null, closed: /* @__PURE__ */ new Set(), modSequence: -1, modInstance: "", retiredMods: /* @__PURE__ */ new Set(), modCompleted: false };
+    owners.set(ctx, state);
+  }
+  return state;
+}
+var promptKey = (input) => input.promptId ? JSON.stringify([input.sessionId, input.promptId]) : null;
+function reserveHook(ctx, input) {
+  const state = owner(ctx), key = promptKey(input), node = ctx.node;
+  if (state.modCompleted && input.event === "PostToolUse") return null;
+  if (key && (state.closed.has(key) || input.event !== "UserPromptSubmit" && state.prompt && state.prompt !== key)) return null;
+  if (input.event === "UserPromptSubmit" && key) {
+    if (state.modTurn && state.modPrompt && state.modPrompt !== key) state.modTurn = void 0;
+    state.prompt = key;
+    if (state.modTurn && !state.modPrompt) state.modPrompt = key;
+  }
+  if (input.event === "UserPromptSubmit" || input.event === "SessionStart") state.modCompleted = false;
+  const epoch = ++state.epoch;
+  return () => ctx.node === node && !ctx.headless && state.epoch === epoch;
+}
+function finishHookTurn(ctx, input) {
+  const state = owner(ctx), key = input ? promptKey(input) ?? state.prompt : state.prompt;
+  if (key) {
+    state.closed.add(key);
+    if (state.closed.size > 128) state.closed.delete(state.closed.values().next().value);
+  }
+  ctx.wakeDelivery?.idle?.();
+  ctx.activity?.("idle");
+}
+function reportModActivity(ctx, event) {
+  if (!ctx.node || ctx.headless || ctx.node.currentSessionId !== event.sessionId) return false;
+  const state = owner(ctx);
+  if (!Number.isSafeInteger(event.sequence) || event.sequence < 0 || !event.turnId) return false;
+  const instance = event.instance ?? "";
+  if (instance.length > 128 || state.retiredMods.has(instance)) return false;
+  if (instance !== state.modInstance) {
+    if (!event.busy) return false;
+    state.retiredMods.add(state.modInstance);
+    state.modInstance = instance;
+    state.modSequence = -1;
+  }
+  if (event.sequence <= state.modSequence) return false;
+  if (!event.busy && (state.modTurn !== event.turnId || state.modPrompt && state.modPrompt !== state.prompt)) return false;
+  state.modSequence = event.sequence;
+  if (event.busy) {
+    state.modCompleted = false;
+    state.modTurn = event.turnId;
+    state.modPrompt = state.prompt && !state.closed.has(state.prompt) ? state.prompt : null;
+    ++state.epoch;
+    ctx.wakeDelivery?.confirm();
+    ctx.wakeDelivery?.active();
+    ctx.activity?.("busy");
+  } else {
+    state.modCompleted = true;
+    state.modTurn = void 0;
+    ++state.epoch;
+    finishHookTurn(ctx);
+  }
+  return true;
+}
+
 // src/mcp/hooks.ts
 var STOP_REASON_FOOTER = 'Handle these peer messages now: do what is reasonable, answer with the agent-bridge "send" tool (reply_to=<id>), then end your turn.';
 function context(event, additionalContext) {
@@ -1868,17 +1992,73 @@ function discardFinishedNotes(ctx) {
   });
   node.markRead(obsolete.map((m) => m.id));
 }
-function take(ctx, wakeOnly, notesOnly = false) {
+var antigravityStopPending = /* @__PURE__ */ new WeakMap();
+function holdOrMarkRead(ctx, ids, hold) {
+  if (!ids.length) return;
+  if (hold) {
+    let pending = antigravityStopPending.get(ctx);
+    if (!pending) {
+      pending = /* @__PURE__ */ new Set();
+      antigravityStopPending.set(ctx, pending);
+    }
+    for (const id of ids) pending.add(id);
+    return;
+  }
+  ctx.node?.markRead(ids);
+}
+function confirmAntigravityStopDelivery(ctx) {
+  const pending = antigravityStopPending.get(ctx);
+  if (!pending?.size) return;
+  antigravityStopPending.delete(ctx);
+  ctx.node?.markRead([...pending]);
+}
+function releaseAntigravityStopDelivery(ctx) {
+  antigravityStopPending.delete(ctx);
+}
+function take(ctx, wakeOnly, notesOnly = false, hold = false) {
   const node = ctx.node;
   discardFinishedNotes(ctx);
   const msgs = node.unread().filter((m) => !isQuietMessage(m)).filter((m) => !notesOnly || ctx.jobs?.isNote(m) || !shouldWakeClaudeMessage(node, ctx.cfg, m)).filter((m) => !wakeOnly || m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m)).slice(0, HOOK_MAX_MESSAGES);
-  node.markRead(msgs.map((m) => m.id));
+  holdOrMarkRead(ctx, msgs.map((m) => m.id), hold);
   return msgs;
 }
 var parentReads = /* @__PURE__ */ new WeakMap();
+var nativeDeliveries = /* @__PURE__ */ new WeakMap();
+async function confirmNativeChildDelivery(ctx, agentId) {
+  const deliveries = nativeDeliveries.get(ctx), ids = deliveries?.get(agentId);
+  if (!ids?.length || !ctx.node) return;
+  await ctx.node.nativeChildAck(agentId, ids);
+  if (deliveries?.get(agentId) === ids) deliveries.delete(agentId);
+}
 async function subagentHook(ctx, input) {
+  if (input.subagent && ctx.agent === "claude" && ctx.node && input.agentId) {
+    const node = ctx.node;
+    if (node.wasReplaced || !input.sessionId || input.sessionId !== node.currentSessionId || input.event === "StopFailure") return {};
+    if (input.event === "SubagentStop") {
+      await withinHook(node.nativeChild({ agentId: input.agentId, action: "end" }), input.signal);
+      nativeDeliveries.get(ctx)?.delete(input.agentId);
+      return {};
+    }
+    const child = await withinHook(node.nativeChild({ agentId: input.agentId, action: "start", maxHops: Math.min(32, siblingMaxHops(ctx.cfg.maxHops)) }), input.signal);
+    if (!child || input.signal?.aborted) return {};
+    await withinHook(confirmNativeChildDelivery(ctx, input.agentId), input.signal);
+    const identity = `[agent-bridge] Your scoped native child address is "${child.address}". Use native_child="${child.agentId}" on peers, inbox and send. Your parent is ${child.parent}; bridge jobs owned by it and exact send_to grants may reach you. Never act as the parent session.`;
+    const messages = (await withinHook(node.nativeChildPending(input.agentId), input.signal)).filter((m) => !isQuietMessage(m) && (input.event !== "Stop" || m.hop < child.maxHops));
+    if (messages.length) {
+      let deliveries = nativeDeliveries.get(ctx);
+      if (!deliveries) {
+        deliveries = /* @__PURE__ */ new Map();
+        nativeDeliveries.set(ctx, deliveries);
+      }
+      deliveries.set(input.agentId, messages.map((m) => m.id));
+    }
+    const delivery = [identity, messages.length ? formatMessages(messages) : ""].filter(Boolean).join("\n\n");
+    if (input.event === "Stop") return messages.length ? { decision: "block", reason: delivery } : {};
+    if (input.event === "PostToolUse" && messages.length) return { decision: "block", reason: delivery, hookSpecificOutput: { hookEventName: input.event, additionalContext: delivery } };
+    return context(input.event, delivery);
+  }
   const parent = ctx.parent;
-  if (!parent || input.event === "SessionStart") return {};
+  if (!parent || input.event === "SessionStart" || input.event === "StopFailure") return {};
   let pending = parentReads.get(ctx);
   if (!pending) {
     pending = parent.inbox().catch((err) => {
@@ -1918,14 +2098,12 @@ function withinHook(work, signal) {
     if (signal.aborted) abort();
   });
 }
-var mainHookEpochs = /* @__PURE__ */ new WeakMap();
 async function buildHookResponse(ctx, input) {
-  if (input.subagent) return {};
+  if (input.signal?.aborted || input.subagent && (ctx.agent !== "claude" || !ctx.node || !input.agentId)) return {};
   const node = ctx.node;
-  const main = ctx.agent === "codex" && node !== null && !ctx.headless;
-  const epoch = main ? (mainHookEpochs.get(ctx) ?? 0) + 1 : 0;
-  if (main) mainHookEpochs.set(ctx, epoch);
-  const current = () => !main || ctx.node === node && mainHookEpochs.get(ctx) === epoch;
+  const main = !input.subagent && input.event !== "SessionEnd" && (ctx.agent === "codex" || ctx.agent === "claude") && node !== null && !ctx.headless;
+  const current = main ? reserveHook(ctx, input) : () => true;
+  if (!current) return {};
   const owningSession = input.sessionId ?? node?.currentSessionId;
   const busyAtIngress = main && !input.signal?.aborted && (input.event === "UserPromptSubmit" || input.event === "PostToolUse");
   if (busyAtIngress) ctx.activity?.("busy");
@@ -1939,10 +2117,15 @@ async function buildHookResponse(ctx, input) {
   input.signal?.addEventListener("abort", abort, { once: true });
   if (input.signal?.aborted) abort();
   try {
+    if (input.subagent) return await subagentHook(ctx, { ...input, signal: controller.signal });
+    if (input.event === "SessionEnd") {
+      if (ctx.agent === "claude" && node && !node.wasReplaced && node.currentSessionId === input.sessionId) await withinHook(node.nativeChildrenEnd(), controller.signal);
+      return {};
+    }
     return await runHook(ctx, { ...input, signal: controller.signal }, current, busyAtIngress);
   } catch (err) {
     if (!controller.signal.aborted) throw err;
-    if (deadlineExpired && main && input.event === "Stop" && current() && node?.currentSessionId === owningSession) ctx.activity?.("idle");
+    if (deadlineExpired && main && (input.event === "Stop" || input.event === "StopFailure") && current() && node?.currentSessionId === owningSession) finishHookTurn(ctx, input);
     ctx.log.debug("hook deferred slow work", { event: input.event });
     return {};
   } finally {
@@ -1951,7 +2134,7 @@ async function buildHookResponse(ctx, input) {
   }
 }
 async function runHook(ctx, input, current, busyAtIngress) {
-  if (input.prepare) await withinHook(input.prepare(), input.signal);
+  if (input.prepare) await withinHook(input.prepare(() => current() && !input.signal?.aborted), input.signal);
   if (!current()) return {};
   const node = ctx.node;
   if (!node) return subagentHook(ctx, input);
@@ -1968,6 +2151,15 @@ async function runHook(ctx, input, current, busyAtIngress) {
   if (!current()) return {};
   await withinHook(node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: err.message })), input.signal);
   if (!current()) return {};
+  if (input.event === "StopFailure") {
+    releaseAntigravityStopDelivery(ctx);
+    finishHookTurn(ctx, input);
+    return {};
+  }
+  if (ctx.agent === "antigravity") {
+    if (input.event === "PostToolUse" || input.event === "UserPromptSubmit" && input.stopHookActive || input.event === "Stop" && input.stopHookActive) confirmAntigravityStopDelivery(ctx);
+    else releaseAntigravityStopDelivery(ctx);
+  }
   const stopJobsRunning = input.event === "Stop" ? ctx.jobs?.runningCount() ?? 0 : 0;
   const replay = node.refreshPending().catch((err) => ctx.log.warn("pending mail refresh failed; retained for retry", { err: String(err) }));
   const stopReady = input.event === "Stop" && (stopJobsRunning > 0 || node.unread().some((m) => !isQuietMessage(m)));
@@ -1978,6 +2170,7 @@ async function runHook(ctx, input, current, busyAtIngress) {
   else ctx.wakeDelivery?.release();
   if (input.event === "PostToolUse" || input.event === "UserPromptSubmit") ctx.wakeDelivery?.active();
   const channel = ctx.channelActive();
+  const holdStop = ctx.agent === "antigravity";
   switch (input.event) {
     case "SessionStart": {
       ctx.activity?.("idle");
@@ -2005,12 +2198,12 @@ ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online rig
     }
     case "Stop": {
       if (channel) {
-        ctx.activity?.("idle");
+        finishHookTurn(ctx, input);
         return {};
       }
       ctx.wakeDelivery?.idle?.();
       if (ctx.wakeDelivery?.modActive?.()) {
-        ctx.activity?.("idle");
+        finishHookTurn(ctx, input);
         return {};
       }
       const now = Date.now();
@@ -2018,23 +2211,23 @@ ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online rig
       const jobsRunning = stopJobsRunning;
       const inConversation = lingerRemaining > 0 || jobsRunning > 0;
       if (!node.autoWakeEnabled && !inConversation) {
-        const awaited = node.unread().filter((m) => (node.isNotificationAwaited(m) || m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node, ctx.cfg, m) || ctx.agent === "opencode" && m.to !== BROADCAST && !AGENT_KINDS.includes(m.to) && shouldWakeClaudeMessage(node, ctx.cfg, m)) && m.hop < ctx.cfg.maxHops && !isQuietMessage(m) && !m.conversationId.endsWith(":note")).slice(0, HOOK_MAX_MESSAGES);
+        const awaited = node.unread().filter((m) => (node.isNotificationAwaited(m) || m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node, ctx.cfg, m) || (ctx.agent === "opencode" || ctx.agent === "antigravity") && m.to !== BROADCAST && !AGENT_KINDS.includes(m.to) && shouldWakeClaudeMessage(node, ctx.cfg, m)) && m.hop < ctx.cfg.maxHops && !isQuietMessage(m) && !m.conversationId.endsWith(":note")).slice(0, HOOK_MAX_MESSAGES);
         if (awaited.length) {
-          node.markRead(awaited.map((m) => m.id));
+          holdOrMarkRead(ctx, awaited.map((m) => m.id), holdStop);
           ctx.activity?.("busy");
           return { decision: "block", reason: formatMessages(awaited, { replyHint: false }) };
         }
-        ctx.activity?.("idle");
+        finishHookTurn(ctx, input);
         return {};
       }
-      const msgs = take(ctx, true);
+      const msgs = take(ctx, true, false, holdStop);
       if (!msgs.length && jobsRunning > 0) {
         const waits = new MessageWaitStore(ctx.home);
         waits.save(node, {}, "notify");
         waits.attach(node);
       }
       if (msgs.length === 0) {
-        ctx.activity?.("idle");
+        finishHookTurn(ctx, input);
         return {};
       }
       ctx.activity?.("busy");
@@ -2048,7 +2241,143 @@ ${STOP_REASON_FOOTER}` };
   }
 }
 
+// src/mcp/muse-hooks.ts
+var MuseHooks = class {
+  constructor(ctx, session = process.env.MUSE_SESSION_ID ?? "") {
+    this.ctx = ctx;
+    this.session = session;
+  }
+  ctx;
+  session;
+  server = null;
+  file = null;
+  retired = false;
+  secret = randomBytes(24).toString("hex");
+  requests = /* @__PURE__ */ new Set();
+  register = null;
+  onReplaced = () => {
+    this.retired = true;
+    for (const request of this.requests) request.abort();
+  };
+  onReclaimed = () => {
+    if (!this.server?.listening) return;
+    try {
+      this.register?.();
+      this.retired = false;
+    } catch (error) {
+      this.retired = true;
+      this.ctx.log?.warn("Muse hook registration unavailable", { error: String(error) });
+    }
+  };
+  async start() {
+    if (this.server) return;
+    if (!this.ctx.node && !this.ctx.parent || this.session && !TRANSCRIPT_ID.test(this.session)) return;
+    const host = await museHostPid(), hostIdentity = host ? processIdentity(host) : void 0;
+    if (!host || !hostIdentity) return;
+    this.retired = false;
+    const secret = this.secret;
+    this.server = createServer((req, res) => {
+      if (req.method !== "POST" || req.url !== "/hook" || !tokensEqual(String(req.headers.authorization ?? ""), `Bearer ${secret}`) || this.retired) {
+        res.writeHead(403).end();
+        return;
+      }
+      const controller = new AbortController();
+      this.requests.add(controller);
+      const abort = () => controller.abort();
+      req.once("aborted", abort);
+      res.once("close", abort);
+      void (async () => {
+        let raw = "";
+        for await (const part of req) {
+          raw += part;
+          if (raw.length > 256 * 1024) throw new Error("hook input too large");
+        }
+        const body = object(JSON.parse(raw)), input = object(body.input);
+        if (typeof body.session !== "string" || !TRANSCRIPT_ID.test(body.session)) throw new Error("Invalid Muse session identity");
+        if (!this.session) {
+          if (body.thread && body.thread !== body.session) throw new Error("Native child cannot bind root identity");
+          this.session = body.session;
+          await this.ctx.node?.setSessionId(this.session);
+        }
+        if (body.session !== this.session) throw new Error("Foreign Muse session");
+        const event = String(body.event ?? "");
+        if (event === "PreToolUse") {
+          if (body.thread && body.thread !== this.session && museBridgeTool(input)) return { hookSpecificOutput: { hookEventName: event, permissionDecision: "deny", permissionDecisionReason: "Muse native children share the root MCP connection; ask the parent to use Bridge tools." } };
+          const access = process.env[MUSE_ACCESS_ENV];
+          if (access === "read" && !museReadingTool(input)) return { hookSpecificOutput: { hookEventName: event, permissionDecision: "deny", permissionDecisionReason: "agent-bridge read access forbids this tool" } };
+          if (access === "ask" && !museReadingTool(input)) return { hookSpecificOutput: { hookEventName: event, permissionDecision: "ask" } };
+        }
+        if (body.thread && body.thread !== this.session) return {};
+        const mapped = event === "PreLLMCall" || event === "PreToolUse" ? "PostToolUse" : event;
+        if (!["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "StopFailure", "SessionEnd"].includes(mapped)) return {};
+        const output = await buildHookResponse(this.ctx, { event: mapped, sessionId: this.session, cwd: typeof input.cwd === "string" ? input.cwd : null, stopHookActive: input.stop_hook_active === true, prompt: typeof input.prompt === "string" ? input.prompt : null, promptId: typeof input.turn_id === "string" ? input.turn_id : null, signal: controller.signal });
+        return controller.signal.aborted || this.retired ? {} : museHookOutput(event, output);
+      })().then((output) => {
+        if (!res.destroyed) res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(output));
+      }, () => {
+        if (!res.writableEnded && !res.destroyed) res.writeHead(500).end("{}");
+      }).finally(() => {
+        this.requests.delete(controller);
+        req.removeListener("aborted", abort);
+        res.removeListener("close", abort);
+      });
+    });
+    await new Promise((resolve2, reject) => {
+      this.server.once("error", reject);
+      this.server.listen(0, "127.0.0.1", resolve2);
+    });
+    this.file = museHookFile(host, this.session || "bootstrap");
+    this.register = () => {
+      if (!this.server?.listening || !this.file) return;
+      const temporary = `${this.file}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
+      let staged = false;
+      try {
+        writeMusePrivateJson(temporary, { port: this.server.address().port, secret, hostIdentity, pid: process.pid, identity: processIdentity(process.pid), session: this.session || null });
+        staged = true;
+        renameSync(temporary, this.file);
+      } finally {
+        if (staged) try {
+          unlinkSync(temporary);
+        } catch {
+        }
+      }
+    };
+    try {
+      this.register();
+    } catch (error) {
+      await this.stop();
+      throw error;
+    }
+    this.ctx.node?.on("replaced", this.onReplaced);
+    this.ctx.node?.on("reclaimed", this.onReclaimed);
+  }
+  async stop() {
+    const server = this.server;
+    this.server = null;
+    this.onReplaced();
+    this.register = null;
+    this.ctx.node?.off("replaced", this.onReplaced);
+    this.ctx.node?.off("reclaimed", this.onReclaimed);
+    if (this.file) {
+      try {
+        const reg = readMusePrivateJson(this.file);
+        if (reg.pid === process.pid && reg.secret === this.secret) unlinkSync(this.file);
+      } catch {
+      }
+      this.file = null;
+    }
+    if (server) {
+      server.closeAllConnections();
+      await new Promise((resolve2) => server.close(() => resolve2()));
+    }
+  }
+};
+
 // src/mcp/antigravity-hooks.ts
+import { randomBytes as randomBytes2 } from "node:crypto";
+import { mkdirSync as mkdirSync2, writeFileSync } from "node:fs";
+import { createServer as createServer2 } from "node:http";
+import { join as join2 } from "node:path";
 var AntigravityHooks = class {
   constructor(ctx) {
     this.ctx = ctx;
@@ -2057,12 +2386,16 @@ var AntigravityHooks = class {
   server = null;
   retired = false;
   conversationId = null;
+  stopPending = false;
+  lastStopExecutionNum = null;
+  lastInvocationNum = null;
+  lastStopInvocationNum = null;
   async start() {
     if (!this.ctx.node && !this.ctx.parent) return;
     const pid = await antigravityAncestor();
     if (!pid) return;
-    const secret = randomBytes(24).toString("hex");
-    this.server = createServer((req, res) => {
+    const secret = randomBytes2(24).toString("hex");
+    this.server = createServer2((req, res) => {
       if (req.method !== "POST" || req.url !== "/hook" || !tokensEqual(String(req.headers.authorization ?? ""), `Bearer ${secret}`) || this.retired) {
         res.writeHead(403).end();
         return;
@@ -2074,15 +2407,66 @@ var AntigravityHooks = class {
           if (raw.length > 256 * 1024) throw new Error("hook input too large");
         }
         const body = object(JSON.parse(raw)), input = object(body.input);
-        if (!["PreInvocation", "Stop"].includes(body.event)) throw new Error("unknown event");
+        if (!["PreInvocation", "PreToolUse", "Stop"].includes(body.event)) throw new Error("unknown event");
         const id = typeof input.conversationId === "string" ? input.conversationId : null;
+        const cwd = Array.isArray(input.workspacePaths) && typeof input.workspacePaths[0] === "string" ? input.workspacePaths[0] : null;
         this.conversationId ??= this.ctx.node?.currentSessionId ?? id;
         if (id && this.conversationId && id !== this.conversationId) {
           res.writeHead(200, { "content-type": "application/json" }).end("{}");
           return;
         }
-        const output = await buildHookResponse(this.ctx, { event: body.event === "Stop" ? "Stop" : "UserPromptSubmit", sessionId: typeof input.conversationId === "string" ? input.conversationId : null, cwd: Array.isArray(input.workspacePaths) && typeof input.workspacePaths[0] === "string" ? input.workspacePaths[0] : null, stopHookActive: false });
+        if (body.event === "PreToolUse") {
+          this.stopPending = false;
+          this.lastStopExecutionNum = null;
+          this.lastStopInvocationNum = null;
+          await (this.ctx.launchKnown ?? Promise.resolve());
+          if (!this.ctx.headless && this.ctx.node) {
+            if (id) {
+              await this.ctx.node.setSessionId(id).catch(() => {
+              });
+              this.ctx.onSessionId?.(id);
+            }
+            if (cwd && this.ctx.learnCwd) await this.ctx.learnCwd(cwd);
+            await this.ctx.node.ensureConnected().catch(() => {
+            });
+            confirmAntigravityStopDelivery(this.ctx);
+          }
+          res.writeHead(200, { "content-type": "application/json" }).end("{}");
+          return;
+        }
+        if (body.event === "PreInvocation") {
+          const invocationNum = typeof input.invocationNum === "number" && Number.isFinite(input.invocationNum) ? input.invocationNum : null;
+          const continued2 = this.stopPending && invocationNum !== null && (this.lastStopInvocationNum !== null ? invocationNum > this.lastStopInvocationNum : invocationNum > 0);
+          this.lastInvocationNum = invocationNum;
+          this.stopPending = false;
+          this.lastStopExecutionNum = null;
+          this.lastStopInvocationNum = null;
+          const output2 = await buildHookResponse(this.ctx, { event: "UserPromptSubmit", sessionId: id, cwd, stopHookActive: continued2 });
+          const text3 = "reason" in output2 ? String(output2.reason) : "hookSpecificOutput" in output2 ? output2.hookSpecificOutput.additionalContext : "";
+          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(antigravityHookOutput(body.event, text3)));
+          return;
+        }
+        const reason = typeof input.terminationReason === "string" ? input.terminationReason.trim() : "";
+        const hasError = typeof input.error === "string" && input.error.trim().length > 0;
+        const executionNum = typeof input.executionNum === "number" && Number.isFinite(input.executionNum) ? input.executionNum : null;
+        const capReached = this.stopPending && executionNum !== null && this.lastStopExecutionNum !== null && executionNum <= this.lastStopExecutionNum;
+        const canContinue = !hasError && (!reason || ["model_stop", "NO_TOOL_CALL", "STOP"].includes(reason)) && !capReached;
+        const continued = this.stopPending && executionNum !== null && this.lastStopExecutionNum !== null && executionNum > this.lastStopExecutionNum;
+        this.stopPending = false;
+        this.lastStopExecutionNum = null;
+        this.lastStopInvocationNum = null;
+        if (!canContinue) {
+          await buildHookResponse(this.ctx, { event: "StopFailure", sessionId: id, cwd, stopHookActive: false });
+          res.writeHead(200, { "content-type": "application/json" }).end("{}");
+          return;
+        }
+        const output = await buildHookResponse(this.ctx, { event: "Stop", sessionId: id, cwd, stopHookActive: continued });
         const text2 = "reason" in output ? String(output.reason) : "hookSpecificOutput" in output ? output.hookSpecificOutput.additionalContext : "";
+        if (text2) {
+          this.stopPending = true;
+          this.lastStopExecutionNum = executionNum;
+          this.lastStopInvocationNum = this.lastInvocationNum;
+        }
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(antigravityHookOutput(body.event, text2)));
       })().catch(() => {
         if (!res.writableEnded) res.writeHead(500).end("{}");
@@ -2100,6 +2484,10 @@ var AntigravityHooks = class {
     register();
     this.ctx.node?.on("replaced", () => {
       this.retired = true;
+      this.stopPending = false;
+      this.lastStopExecutionNum = null;
+      this.lastInvocationNum = null;
+      this.lastStopInvocationNum = null;
     });
     this.ctx.node?.on("reclaimed", () => {
       this.retired = false;
@@ -2110,6 +2498,10 @@ var AntigravityHooks = class {
     const server = this.server;
     this.server = null;
     this.retired = true;
+    this.stopPending = false;
+    this.lastStopExecutionNum = null;
+    this.lastInvocationNum = null;
+    this.lastStopInvocationNum = null;
     if (server) await new Promise((resolve2) => server.close(() => resolve2()));
   }
 };
@@ -2339,6 +2731,91 @@ var CodexWaker = class {
   }
 };
 
+// src/mcp/codex-lineage.ts
+import { join as join3 } from "node:path";
+var CodexLineageLookup = class {
+  constructor(root = join3(transcriptPaths().codex, "sessions")) {
+    this.root = root;
+  }
+  root;
+  known = /* @__PURE__ */ new Map();
+  retryAfter = /* @__PURE__ */ new Map();
+  classify(id, transcript) {
+    if (!TRANSCRIPT_ID.test(id)) return "unknown";
+    const cached = this.known.get(id);
+    if (cached) return cached;
+    if (Date.now() < (this.retryAfter.get(id) ?? 0)) return "unknown";
+    const inspect = (path) => {
+      const file = safeFile(this.root, path);
+      if (!file) return "unknown";
+      const row = readJsonl(file, "0", 512 * 1024).entries.find(({ value }) => value.type === "session_meta" && object(value.payload).id === id);
+      if (!row) return "unknown";
+      const meta = object(row.value.payload), source = object(meta.source);
+      if (meta.thread_source === "subagent" || source.subagent !== void 0 || typeof meta.parent_thread_id === "string" && meta.parent_thread_id.length > 0) return "child";
+      return ["cli", "vscode", "exec", "mcp"].includes(meta.source) || ["cli", "vscode", "exec", "mcp"].includes(meta.thread_source) ? "main" : "unknown";
+    };
+    let result = transcript ? inspect(transcript) : "unknown";
+    let directories = 0, entries = 0;
+    const visited = /* @__PURE__ */ new Set();
+    const scan = (path) => {
+      if (visited.has(path) || directories >= 2e3 || entries >= 2e4) return "unknown";
+      visited.add(path);
+      const dir = safeFile(this.root, path);
+      if (!dir) return "unknown";
+      directories++;
+      for (const name of directory(dir)) {
+        if (++entries > 2e4) break;
+        if (!name.startsWith("rollout-") || !name.endsWith(`-${id}.jsonl`)) continue;
+        const found = inspect(join3(dir, name));
+        if (found !== "unknown") return found;
+      }
+      return "unknown";
+    };
+    if (result === "unknown" && /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+      const created = parseInt(id.slice(0, 8) + id.slice(9, 13), 16);
+      for (const offset of [0, -1, 1]) {
+        const day = new Date(created + offset * 864e5).toISOString();
+        if (!/^\d{4}-/.test(day)) continue;
+        result = scan(join3(this.root, ...day.slice(0, 10).split("-")));
+        if (result !== "unknown") break;
+      }
+    }
+    if (result === "unknown") outer: for (const year of directory(this.root).filter((s) => /^\d{4}$/.test(s)).sort().reverse()) {
+      const yearDir = safeFile(this.root, join3(this.root, year));
+      if (!yearDir) continue;
+      for (const month of directory(yearDir).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+        const monthDir = safeFile(this.root, join3(yearDir, month));
+        if (!monthDir) continue;
+        for (const day of directory(monthDir).filter((s) => /^\d{2}$/.test(s)).sort().reverse()) {
+          if (directories >= 2e3 || entries >= 2e4) break outer;
+          result = scan(join3(monthDir, day));
+          if (result !== "unknown") break outer;
+        }
+      }
+    }
+    if (result !== "unknown") {
+      this.retryAfter.delete(id);
+      this.known.set(id, result);
+      if (this.known.size > 512) this.known.delete(this.known.keys().next().value);
+    } else {
+      this.retryAfter.delete(id);
+      this.retryAfter.set(id, Date.now() + 1e4);
+      if (this.retryAfter.size > 2048) this.retryAfter.delete(this.retryAfter.keys().next().value);
+    }
+    return result;
+  }
+};
+function codexCallIdentity(meta, hook) {
+  const given = (value) => typeof value === "string" && value && !value.startsWith("${") ? value : null;
+  return { threadId: given(meta?.threadId) ?? hook?.threadId, agentId: hook?.agentId ?? given(meta?.agent_id), transcript: hook?.transcript ?? given(meta?.transcript_path) };
+}
+function codexMainThreadAdmission(lineage = new CodexLineageLookup()) {
+  return (meta, hook) => {
+    const call = codexCallIdentity(meta, hook);
+    return !call.agentId && Boolean(call.threadId && lineage.classify(call.threadId, call.transcript) === "main");
+  };
+}
+
 // src/mcp/permissions.ts
 var DECISION_SCHEMA = {
   type: "object",
@@ -2427,11 +2904,11 @@ var LocalCoordinator = class extends EventEmitter {
 };
 
 // src/core/auto-wake-pref.ts
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 var FILE = "auto-wake.json";
 function read(home) {
   try {
-    return readJsonStore(join3(home, FILE)) ?? {};
+    return readJsonStore(join4(home, FILE)) ?? {};
   } catch {
     return {};
   }
@@ -2443,7 +2920,7 @@ function savedAutoWake(home, name) {
 }
 function saveAutoWake(home, name, enabled) {
   try {
-    const file = join3(home, FILE);
+    const file = join4(home, FILE);
     const previous = readJsonStore(file);
     const data = isRecord(previous) ? previous : {};
     const peers = isRecord(data.peers) ? data.peers : data;
@@ -2467,6 +2944,11 @@ function attachDashboardJobControl(node, jobs, log) {
       return;
     }
     if (!command || typeof command.requestId !== "string" || typeof command.job !== "string") return;
+    if (command.type === "result") return;
+    if (m.jobControlAuthorized !== true) {
+      log.warn("rejected unauthorized dashboard job command", { from: m.from.name, job: command.job, type: command.type });
+      return;
+    }
     let result;
     if (command.type === "handoff") {
       try {
@@ -2497,7 +2979,7 @@ function followUp(node, jobs, ref, body) {
   return {
     outcome,
     text: t(`followUp.${outcome}`, { name: job?.name ?? ref, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }),
-    isError: outcome === "unknown" || outcome === "no-session"
+    isError: outcome === "unknown" || outcome === "no-session" || outcome === "stopping" || outcome === "cancelled-before-start"
   };
 }
 function changeSettings(node, jobs, ref, input, log) {
@@ -2529,7 +3011,7 @@ var CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 var MAX_TITLE_CHARS = 80;
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["health", "peers", "send", "report_progress", "hook_event", "search_history", "get_conversation"]);
 var STAND_IN_RECHECK_MS = 3e4;
-var KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title", "notes"];
+var KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "permission_profile", "allow_tools", "send_to", "title", "notes"];
 var PLUGIN_ROOT = resolve(bundleDirectory(import.meta.url), "..");
 function pathFromUriOrPath(v) {
   if (typeof v !== "string" || !v) return null;
@@ -2545,7 +3027,42 @@ function pathFromUriOrPath(v) {
 function text(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
 }
+function modeReport(requested, reason) {
+  return {
+    requested,
+    effective: reason ? "refused" : "legacyunconfirmed",
+    stage: "requested",
+    protocolSupport: "legacy",
+    sharedIdempotentDelivery: false,
+    ...reason ? { reason } : {},
+    capabilities: {
+      route: "legacyunconfirmed",
+      receiverRole: "unknown",
+      ownedSession: false,
+      generationKnown: false,
+      activeSteering: false,
+      interruptRestart: false,
+      queue: false,
+      idleWake: false
+    }
+  };
+}
+function formatModeReport(report) {
+  return `Mode report: ${JSON.stringify(report)}`;
+}
+function modeText(report, body) {
+  return { ...text(`${formatModeReport(report)}
+${body}`), structuredContent: { mode: report } };
+}
+function refuseMode(mode, reason) {
+  throw new BridgeError("bad_request", `Requested ${mode} refused: ${reason}. No mode operation applied.`, { modeReport: modeReport(mode, reason) });
+}
 function describeError(err) {
+  if (err instanceof BridgeError && err.details?.modeReport) {
+    const { modeReport: report, ...details } = err.details;
+    return `${formatModeReport(report)}
+${describeError(new BridgeError(err.code, err.message, details))}`;
+  }
   if (err instanceof BridgeError) {
     switch (err.code) {
       case "ambiguous_target":
@@ -2597,6 +3114,7 @@ function instructionsFor(agent, targets) {
 async function startServer(argv = process.argv.slice(2)) {
   const agentArg = argv.find((a) => a.startsWith("--agent="))?.slice("--agent=".length);
   const agent = parseAgentKind(agentArg ?? process.env[ENV.agent]);
+  if (agent === "muse") await restoreMuseContext();
   const targets = delegationTargets(agent);
   const home = resolveHome();
   const log = createLogger({ home, component: `mcp-${agent}` });
@@ -2612,6 +3130,8 @@ async function startServer(argv = process.argv.slice(2)) {
     return configRoot;
   };
   const cfg = loadConfig(home, agent, log, process.env, cwdKnown ? projectConfigRoot(cwd) : void 0);
+  const mobileAtStartup = cfg.mobile;
+  const mobilePortAtStartup = cfg.dashboardPort;
   const delegated = currentDelegateDepth() > 0;
   const internal = isInternalBridgeProcess();
   log.info("starting MCP server", { agent, cwd, cwdKnown, delegated, internal, version: APP_VERSION, node: process.version });
@@ -2638,7 +3158,7 @@ async function startServer(argv = process.argv.slice(2)) {
     const parentJob = process.env[PARENT_JOB_ENV];
     const rootSession = process.env[ROOT_SESSION_ENV];
     const coordinator = ctx.childInbox = new LocalCoordinator(parentJob, rootSession);
-    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join4(home, JOBS_FILE), cfg.maxJobs, {
+    ctx.jobs = new JobManager(coordinator, log.child("jobs"), join5(home, JOBS_FILE), cfg.maxJobs, {
       parentJob,
       rootSession,
       rootName: process.env[ROOT_NAME_ENV] || ctx.parent.name,
@@ -2647,7 +3167,11 @@ async function startServer(argv = process.argv.slice(2)) {
     });
   }
   if (node) {
-    ctx.jobs = new JobManager(node, log.child("jobs"), join4(home, JOBS_FILE), cfg.maxJobs, void 0, {
+    if (agent === "muse") {
+      const id = museEnvSessionId();
+      if (id) await node.setSessionId(id);
+    }
+    ctx.jobs = new JobManager(node, log.child("jobs"), join5(home, JOBS_FILE), cfg.maxJobs, void 0, {
       canRestore: () => node.isConnected && (agent !== "claude" || ctx.restoreEligible === true),
       canReceiveHandoff: () => node.isConnected
     });
@@ -2676,13 +3200,14 @@ async function startServer(argv = process.argv.slice(2)) {
     };
   }
   if (agent === "codex" && node) {
+    ctx.admitCodex = codexMainThreadAdmission();
     const waker = new CodexWaker(node, cfg, log.child("wake"));
     ctx.activity = (s) => {
       node.setActivity(s);
       waker.setActivity(s);
     };
     ctx.observeMeta = async (meta) => {
-      const id = meta?.threadId ?? meta?.sessionId;
+      const id = meta?.threadId;
       if (typeof id === "string" && id) {
         waker.setThreadId(id);
         await node.setSessionId(id).catch(() => {
@@ -2753,7 +3278,7 @@ async function startServer(argv = process.argv.slice(2)) {
   if (agent === "claude" && node) {
     const shouldWake = (m) => !ctx.channelActive() && m.hop < cfg.maxHops && // Running-job notes remain in explicit inbox reads and history (see JobManager.fromSubagent).
     !ctx.jobs?.isNote(m) && shouldWakeClaudeMessage(node, cfg, m);
-    rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"));
+    rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"), (event) => reportModActivity(ctx, event));
     try {
       await rewake.start();
       ctx.rewakeAvailable = true;
@@ -2768,11 +3293,28 @@ async function startServer(argv = process.argv.slice(2)) {
     }
   }
   let dashboard = null;
+  let mobileDashboard = null;
+  let mobileUnavailable;
   const ensureDashboard = async (force) => {
     try {
       if (!force && !cfg.dashboard) return null;
-      dashboard ??= import("./chunks/dashboard-GY7NSZXI.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard") }));
-      return await (await dashboard).ensure();
+      if (mobileAtStartup && node) {
+        try {
+          mobileDashboard ??= import("./chunks/activation-SQEVUWCA.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+            node,
+            mobileAtStartup,
+            { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
+          ));
+          const mobile = await mobileDashboard, info2 = await mobile?.start();
+          if (info2 && mobile?.status() === "ready") return info2;
+          mobileUnavailable = mobile?.status ?? (() => "source_unavailable");
+        } catch {
+          mobileUnavailable = () => "restart_required";
+        }
+      }
+      dashboard ??= import("./chunks/dashboard-BDC26OAV.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      const info = await (await dashboard).ensure();
+      return mobileUnavailable ? (await import("./chunks/dashboard-BDC26OAV.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -2785,6 +3327,7 @@ async function startServer(argv = process.argv.slice(2)) {
   };
   const transport = new StdioServerTransport();
   const antigravityHooks = agent === "antigravity" ? new AntigravityHooks(ctx) : null;
+  const museHooks = agent === "muse" ? new MuseHooks(ctx) : null;
   let shuttingDown = false;
   let closeSweepBusy = false;
   const closeSweep = setInterval(() => {
@@ -2815,9 +3358,13 @@ async function startServer(argv = process.argv.slice(2)) {
     });
     await dashboard?.then((controller) => controller.close()).catch(() => {
     });
+    await mobileDashboard?.then((controller) => controller?.close()).catch(() => {
+    });
     await rewake?.stop().catch(() => {
     });
     await antigravityHooks?.stop().catch(() => {
+    });
+    await museHooks?.stop().catch(() => {
     });
     await node?.stop().catch(() => {
     });
@@ -2841,6 +3388,7 @@ async function startServer(argv = process.argv.slice(2)) {
   if (agent === "claude" && node) await node.setWakePolicy(cfg.wakeOnDirect, Boolean(ctx.rewakeAvailable || channel), cfg.maxHops);
   launchInspected();
   await antigravityHooks?.start().catch((err) => log.warn("Antigravity hooks unavailable", { err: String(err) }));
+  await museHooks?.start().catch((err) => log.warn("Muse hooks unavailable", { err: String(err) }));
   if (node) {
     node.on("connected", ({ isBroker }) => {
       if (node.currentSessionId) ctx.onSessionId?.(node.currentSessionId);
@@ -2850,18 +3398,18 @@ async function startServer(argv = process.argv.slice(2)) {
         const online = new Set(peers.map((p) => p.name));
         const candidates = ctx.jobs?.standInOwners(online) ?? [];
         const gone = await verifiedGoneJobOwners(home, candidates);
-        const owners = ctx.jobs?.adoptStandIns(online, gone) ?? [];
-        if (owners.length) await node.claimMail(owners);
+        const owners2 = ctx.jobs?.adoptStandIns(online, gone) ?? [];
+        if (owners2.length) await node.claimMail(owners2);
       }).catch(() => {
       });
       adopt();
       setTimeout(adopt, STAND_IN_RECHECK_MS).unref();
     });
-    const join5 = () => node.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
+    const join6 = () => node.start().catch((err) => log.error("could not join the bridge", { err: err.message }));
     if (ctx.headless) {
       log.info("headless claude -p run: not joining the bridge unless a bridge tool is used");
-    } else if (cwdKnown) {
-      void join5();
+    } else if (cwdKnown && agent !== "codex") {
+      void join6();
     } else {
       log.info("project directory unknown yet; waiting for host metadata before bridge join");
     }
@@ -2883,12 +3431,78 @@ function registerTools(mcp, ctx, targets) {
     discardFinishedNotes(ctx);
     return node;
   };
+  const nativeChildSummary = async (n) => {
+    if (ctx.agent !== "claude") return [];
+    const children = await n.nativeChildren().catch((err) => {
+      if (isUnsupportedOperation(err, "nativeChildren")) return [];
+      throw err;
+    });
+    return children.length ? ["Live native child addresses:", ...children.map((c) => `- ${c.address} (Claude native child; send_to: ${c.sendTo.join(", ") || "none"})`)] : [];
+  };
   const guarded = (name, fn) => async (args, extra) => {
     log.debug("tool call", { tool: name, args });
+    if (ctx.admitCodex && !ctx.admitCodex(extra._meta)) return text("Native Codex child or unverified thread: use the parent session's bridge. Missing main-thread lineage may be retried once its rollout header is available.", true);
+    const a = args;
+    const metaChildId = extra._meta?.agent_id ?? extra._meta?.agentId;
+    const childId = metaChildId ?? a.native_child;
+    if (childId !== void 0) {
+      try {
+        if (metaChildId !== void 0 && a.native_child !== void 0 && metaChildId !== a.native_child) throw new BridgeError("unauthorized", "native_child conflicts with host-provided agent identity.");
+        if (ctx.agent !== "claude" || !node || node.wasReplaced || typeof childId !== "string" || !["peers", "inbox", "send"].includes(name)) throw new BridgeError("unauthorized", "Scoped native children may use peers, inbox and send only on their current Claude parent connection.");
+        const children = await node.nativeChildren(), child = children.find((c) => c.agentId === childId);
+        if (!child) throw new BridgeError("unauthorized", "No live scoped native child; wait for its SubagentStart hook.");
+        if (name === "send" && a.mode !== void 0) {
+          if (a.mode === "auto") await confirmNativeChildDelivery(ctx, childId);
+          const result2 = await node.sendWithMode({
+            mode: a.mode,
+            nativeChild: childId,
+            to: String(a.to),
+            body: String(a.message),
+            replyTo: a.reply_to,
+            conversationId: a.conversation_id,
+            ifNoNewerThan: a.if_no_newer_than,
+            messageId: a.message_id
+          });
+          return modeText(result2.mode, JSON.stringify(result2.send));
+        }
+        await confirmNativeChildDelivery(ctx, childId);
+        const identity = `Your native child bridge address is ${child.address}. Parent: ${child.parent}.`;
+        if (name === "peers") {
+          const jobs = (await node.projectJobs()).filter((j) => j.owner === child.parent && j.supervisor === node.currentSessionId);
+          return text([identity, ...jobs.map((j) => `${j.name} (${j.agent}, ${j.status})`), `Explicit send_to grants: ${child.sendTo.join(", ") || "none"}`].join("\n"));
+        }
+        if (name === "inbox") {
+          const messages = (await node.nativeChildPending(childId)).filter((m) => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, typeof a.limit === "number" ? a.limit : HOOK_MAX_MESSAGES);
+          if (a.mark_read !== false && messages.length) await node.nativeChildAck(childId, messages.map((m) => m.id));
+          return text(`${identity}
+
+${messages.length ? formatMessages(messages) : "No unread native child mail."}`);
+        }
+        const result = await node.nativeChildSend(childId, { to: String(a.to), body: String(a.message), replyTo: a.reply_to, conversationId: a.conversation_id, ifNoNewerThan: a.if_no_newer_than, messageId: a.message_id });
+        return text(`${identity}
+Message ${result.messages[0]?.id} stored. The parent received a quiet copy.
+${JSON.stringify(result)}`);
+      } catch (err) {
+        return text(describeError(err), true);
+      }
+    }
     if (name !== "health" && ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: err.message }));
     await ctx.observeMeta?.(extra._meta);
+    if (ctx.agent === "antigravity" && name !== "health" && name !== "hook_event") {
+      if (name === "inbox") {
+        if (a.mark_read !== false) releaseAntigravityStopDelivery(ctx);
+      } else {
+        confirmAntigravityStopDelivery(ctx);
+      }
+    }
     try {
-      return await fn(args, extra);
+      const result = await fn(args, extra);
+      if ((name === "send" || name === "message_subagent") && a.mode === "auto" && !result.structuredContent?.mode) {
+        const report = modeReport("auto");
+        result.content.unshift({ type: "text", text: formatModeReport(report) });
+        result.structuredContent = { ...result.structuredContent, mode: report };
+      }
+      return result;
     } catch (err) {
       log.warn("tool failed", { tool: name, err: err.message });
       return text(describeError(err), true);
@@ -2914,19 +3528,14 @@ function registerTools(mcp, ctx, targets) {
     "search_history",
     {
       title: "Search bridge and CLI history",
-      description: "Search local bridge messages (including archives), decisions, delegated run logs and CLI transcripts. Returns bounded snippets with stable source ids and links. Ordinary search makes no model calls. answer=true explicitly spends model tokens on a configured cheap model chosen by availability and usage_limits. Indexing is incremental; use agent-bridge reindex to rebuild.",
-      inputSchema: {
-        query: external_exports.string().trim().min(1).max(HISTORY_MAX_QUERY_CHARS),
-        filters: historyFiltersSchema.optional(),
-        limit: external_exports.number().int().min(1).max(HISTORY_MAX_LIMIT).optional(),
-        answer: external_exports.boolean().optional()
-      },
+      description: HISTORY_SEARCH_TOOL_DESCRIPTION,
+      inputSchema: historySearchToolInput,
       annotations: { readOnlyHint: true }
     },
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-QHQ62267.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-DFQTSPP6.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-63PJT2NK.mjs")).readHistory(resolveDbPath(ctx.home), args);
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-PXK4VJDI.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
@@ -2934,7 +3543,7 @@ function registerTools(mcp, ctx, targets) {
     description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
     inputSchema: conversationPageSchema.shape,
     annotations: { readOnlyHint: true }
-  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-Q75KUWK5.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
+  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-W5W5AMKM.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
   register(
     "decide",
     {
@@ -3015,8 +3624,8 @@ function registerTools(mcp, ctx, targets) {
     "peers",
     {
       title: "List peers",
-      description: "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity): name, agent type, busy/idle, uptime, working directory and session id. Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
-      inputSchema: {},
+      description: "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity, Muse): name, agent type, busy/idle, uptime, working directory and session id. Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
+      inputSchema: { native_child: external_exports.string().optional().describe("Native Claude agent_id issued by its start hook; scopes this call to the child") },
       annotations: { readOnlyHint: true }
     },
     guarded("peers", async () => {
@@ -3057,6 +3666,7 @@ function registerTools(mcp, ctx, targets) {
         others.length ? t("peers.header", { count: others.length }) : t("peers.none"),
         ...others.map((p) => formatPeer(p))
       ];
+      lines.push(...await nativeChildSummary(n));
       const quietCount = n.unread().filter(isQuietMessage).length;
       if (health) lines.push(formatHealth(health));
       if (quietCount) lines.push(`${quietCount} retained quiet message(s), available with inbox(include_quiet=true) or history; excluded from actionable unread mail.`);
@@ -3114,15 +3724,30 @@ function registerTools(mcp, ctx, targets) {
       description: `Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "${BROADCAST}" for everyone. Delivery means queued in the recipient inbox, not read. Project addresses include available live secondaries. Broadcasts wake every live session according to its settings and include recently seen offline local sessions or known project masters, connected paired-PC sessions and your running jobs; jobs:* targets only your running jobs through existing links, even when authority RPCs are unavailable. Per-recipient results report queueing, not consumption. Direct messages wake idle Claude, Codex and opencode sessions according to wakeOnDirect and available CLI transport; other recipients may read them on their next turn. Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. A job that is blocked, unsure or about to take a consequential step asks its parent with message_kind="question" (question, options, recommendation, what it does meanwhile). Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing.`,
       inputSchema: {
         to: external_exports.string().min(1).describe('Peer name, project address, agent kind, "*" (sessions and your running jobs), or "jobs:*" (only your running jobs)'),
+        native_child: external_exports.string().optional().describe("Your scoped native Claude agent_id from SubagentStart; send as that child"),
         message: external_exports.string().min(1).max(MAX_BODY_CHARS).describe("Message text (Markdown is fine)"),
         reply_to: external_exports.string().optional().describe("Id of the message you are answering"),
         conversation_id: external_exports.string().optional().describe("Continue an existing conversation"),
         if_no_newer_than: external_exports.string().optional().describe("Refuse this reply if newer unread conversation or recipient mail exists after this message id"),
         message_kind: external_exports.enum(["note", "question"]).optional().describe("note retains FYI/status in history without waking or injecting context; question requests supervisor attention (a job asking its parent when blocked or before a risky step)"),
-        message_id: external_exports.uuid().optional().describe("Stable UUID for an idempotent send or recovery retry. Reuse this id only with the same content; requires an updated broker.")
+        message_id: external_exports.uuid().optional().describe("Stable UUID for an idempotent send or recovery retry. Reuse this id only with the same content; requires an updated broker."),
+        mode: external_exports.enum(["auto", "queue", "steer", "restart"]).optional().describe("Omitted/auto retains existing delivery. Queue is one-shot only to a current authenticated Claude native child, rejects message_id and proves stored mail only. Session/job queue, steer and restart refuse; unknown outcomes never retry or fall back.")
       }
     },
     guarded("send", async (a) => {
+      if (a.mode && a.mode !== "auto") {
+        if (!node || a.message_kind) refuseMode(a.mode, "parent/job links and message_kind have no explicit-mode boundary");
+        const result = await node.sendWithMode({
+          mode: a.mode,
+          to: a.to,
+          body: a.message,
+          replyTo: a.reply_to,
+          conversationId: a.conversation_id,
+          ifNoNewerThan: a.if_no_newer_than,
+          messageId: a.message_id
+        });
+        return modeText(result.mode, JSON.stringify(result.send));
+      }
       if (!node && ctx.parent) {
         if (a.message_id) throw new BridgeError("bad_request", "Durable message IDs require a session broker connection; parent links do not support idempotent retries.");
         if (a.if_no_newer_than) throw new BridgeError("bad_request", "Guarded sends require a session broker connection; read the parent/sibling inbox before replying.");
@@ -3175,21 +3800,29 @@ Pending approvals require an explicit decide; this message does not approve or c
         return text(`${a.to} is a running subagent: message_subagent outcome ${outcome}. Use message_subagent for subagents.`);
       }
       if (a.reply_to) n.markRead([a.reply_to]);
-      const res = await n.send({
+      const sendArgs = {
         to: a.to,
         body: a.message,
         replyTo: a.reply_to,
         conversationId: a.message_kind === "note" ? `${a.conversation_id ?? `note-${a.message_id ?? Date.now()}`}:note` : a.conversation_id,
         ifNoNewerThan: a.if_no_newer_than,
         messageId: a.message_id
-      }).catch((err) => {
+      };
+      let actualMode;
+      const res = await (a.mode === "auto" ? n.sendWithMode({ ...sendArgs, mode: "auto" }).then((result) => {
+        actualMode = result.mode;
+        return result.send;
+      }) : n.send(sendArgs)).catch((err) => {
         if (!jobLines.length) throw err;
         throw new Error(`Session broadcast failed: ${err.message}
 Running-job broadcast already attempted:
 ${jobLines.join("\n")}. Do not resend to these jobs without checking consumption.`);
       });
       const first = res.messages[0];
-      if (!first) return text(["No session recipients were eligible for this broadcast.", ...formatDelivery(res, cfg.maxHops), ...jobLines].join("\n"));
+      if (!first) {
+        const body = ["No session recipients were eligible for this broadcast.", ...formatDelivery(res, cfg.maxHops), ...jobLines].join("\n");
+        return actualMode ? modeText(actualMode, body) : text(body);
+      }
       const lines = [res.storage?.recovered ? `Message ${first.id} sent previously and stored in the broker (conversation ${first.conversationId}). Recovered by id; no additional message sent. Delivery and consumption are separate.` : `Message ${first.id} sent and stored in the broker (conversation ${first.conversationId}).`];
       if (res.storage?.receipts.length) lines.push(`Stored recipient copies: ${res.storage.receipts.map((r) => `${r.recipient} (${r.readAt === null ? "unread" : "read"})`).join(", ")}.`);
       lines.push(...formatDelivery(res, cfg.maxHops));
@@ -3199,7 +3832,7 @@ ${jobLines.join("\n")}`);
       if (res.queuedFor.length) lines.push(t("send.queued", { names: res.queuedFor.join(", ") }));
       if (!res.replyRestrictions?.length) lines.push(t("send.waitHint"));
       lines.push(`For a consumption receipt, call wait_for_message(read_receipt_of="${first.id}").`);
-      return text(lines.join("\n"));
+      return actualMode ? modeText(actualMode, lines.join("\n")) : text(lines.join("\n"));
     })
   );
   register(
@@ -3212,6 +3845,11 @@ ${jobLines.join("\n")}`);
     },
     guarded("send_status", async (a) => text(JSON.stringify(await requireNode().sendState(a.message_id), null, 2)))
   );
+  if (node && ctx.agent === "claude") register("native_child_grant", {
+    title: "Grant native child message access",
+    description: "Parent only: replace exact send_to grants for a live native Claude child. Your bridge jobs already have access. Empty send_to revokes external grants. This never registers a peer or assigns a main role.",
+    inputSchema: { agent_id: external_exports.string(), send_to: external_exports.array(external_exports.string()).max(20) }
+  }, guarded("native_child_grant", async (a) => text(JSON.stringify(await requireNode().nativeChild({ action: "grant", agentId: a.agent_id, sendTo: a.send_to })))));
   register(
     "network_status",
     {
@@ -3279,6 +3917,7 @@ ${jobLines.join("\n")}`);
       description: "Read unread messages from other agents, with quiet transfer progress, sibling copies and acknowledgements excluded by default. Use include_quiet=true (or a read-only mark_read=false peek) to inspect retained copies. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt.",
       inputSchema: {
         include_quiet: external_exports.boolean().optional().describe("Include historical quiet coordination copies (default false)"),
+        native_child: external_exports.string().optional().describe("Your scoped native Claude agent_id; read only that child's inbox"),
         mark_read: external_exports.boolean().optional().describe("Mark returned messages as read (default true); false also permits inspecting retained quiet copies"),
         limit: external_exports.number().int().min(1).max(100).optional()
       }
@@ -3291,9 +3930,10 @@ ${jobLines.join("\n")}`);
       }
       const n = requireNode();
       const msgs = n.unread().filter((m) => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
-      if (msgs.length === 0) return text(t("inbox.empty"));
+      const children = await nativeChildSummary(n);
+      if (msgs.length === 0) return text([t("inbox.empty"), ...children].join("\n"));
       if (a.mark_read !== false) n.markRead(msgs.map((m) => m.id));
-      return text(formatInboxMessages(msgs));
+      return text([formatInboxMessages(msgs), ...children].join("\n"));
     })
   );
   register(
@@ -3546,7 +4186,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job2) => ({ ...a, _job: job2.name }), a), resumeFor(a), keep(a));
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
-        const exact = a.sandbox !== void 0 || a.permission_mode !== void 0 || a.auto_approve !== void 0;
+        const exact = a.sandbox !== void 0 || a.permission_mode !== void 0 || a.auto_approve !== void 0 || a.bypass_permissions !== void 0;
         const note = exact ? "" : `
 ${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
         return text(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${derivedTitle ? `
@@ -3577,7 +4217,7 @@ Title derived from prompt: "${a.title}".` : ""}`);
       annotations: { readOnlyHint: true }
     },
     guarded("usage_limits", async (a) => {
-      const bins = { codex: cfg.codexBin, claude: cfg.claudeBin, opencode: cfg.opencodeBin, antigravity: cfg.antigravityBin };
+      const bins = { codex: cfg.codexBin, claude: cfg.claudeBin, opencode: cfg.opencodeBin, antigravity: cfg.antigravityBin, muse: cfg.museBin };
       const agents = (a.agent ? [a.agent] : [...CODING_AGENTS]).filter((x) => resolveBinary(bins[x]));
       if (!agents.length) return text(t("usage.none"), true);
       const reports = await Promise.all(agents.map((x) => readUsage(x, bins[x], ctx.cwd(), log, x === "opencode" ? cfg.opencodeModel : null)));
@@ -3634,7 +4274,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
     "handoff_subagents",
     {
       title: "Hand off subagents",
-      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex, opencode or Antigravity session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
+      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex, opencode, Antigravity or Muse session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
       inputSchema: {
         to: external_exports.string().min(1).max(64).describe("Exact live local session name from peers"),
         jobs: external_exports.union([external_exports.literal("all"), external_exports.array(external_exports.string().min(1).max(80)).min(1).max(1e3)]).optional().describe("Exact job names, or all (default)"),
@@ -3657,6 +4297,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       description: "Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. Use it to answer a subagent's question promptly. It continues in its own session with its full context, in the same folder or worktree. While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. The answer arrives as a message from the job. Plain messages never answer pending approvals; use decide or the dashboard. Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent. If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it).",
       inputSchema: {
         job: external_exports.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),
+        mode: external_exports.enum(["auto", "queue", "steer", "restart"]).optional().describe("Omitted/auto preserves existing continuation behavior. Explicit queue/steer/restart refuse before title, settings or continuation; job emission cannot prove durable acceptance."),
         message: external_exports.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task."),
         title: external_exports.string().min(1).max(MAX_TITLE_CHARS).optional().describe("Give the job a (new) short title, 3-7 words; use it for jobs listed without a title."),
         effort: external_exports.string().regex(/^[A-Za-z0-9_-]{1,20}$/).optional().describe("Thinking level for this continuation and the job's later turns (e.g. low, medium, high, xhigh). A turn already running keeps its level: to apply it now, cancel_subagent and continue it with message_subagent."),
@@ -3668,10 +4309,12 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
         native_subagents: nativeSubagentsSchema,
         approvals_reviewer: external_exports.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Codex reviewer for the next turn: auto_review or user. A running turn keeps its reviewer."),
         permission_mode: external_exports.enum(CLAUDE_PERMISSION_MODES).optional().describe("Claude permission mode for the next turn."),
-        auto_approve: external_exports.boolean().optional().describe("opencode auto-approval for the next turn.")
+        auto_approve: external_exports.boolean().optional().describe("opencode auto-approval for the next turn."),
+        permission_profile: external_exports.string().trim().min(1).max(80).optional().describe("Named Muse permission profile for the next turn. Replaces earlier access.")
       }
     },
     guarded("message_subagent", async (a) => {
+      if (a.mode && a.mode !== "auto") refuseMode(a.mode, "job queue/steer/restart requires a reviewed receiver transaction and effect boundary");
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       const existing = await jobs.share(a.job);
@@ -3690,15 +4333,26 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
         }
       }
       if (Object.keys(settings).length) jobs.setSettings(a.job, settings);
-      const { outcome, job, approvalPending } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
+      const { outcome, job, approvalPending, gate } = jobs.followUp(a.job, a.message?.trim() || DEFAULT_FOLLOW_UP);
       const position = job ? jobs.waiting().indexOf(job) + 1 : 0;
       const pending = listPendingApprovals(ctx.home).filter((entry) => entry.job === (job?.name ?? a.job));
       const approvalNote = pending.length ? "\nAn approval is still pending. This message did not answer it; use " + pending.map((entry) => `decide(approval_id="${entry.id}", decision="allow" or "deny")`).join(" or ") + " or the dashboard." : approvalPending ? "\nAn approval is still pending. This message did not answer it; use decide with the approval id from its question or the dashboard." : "";
       const settingsNote = job && Object.keys(settings).length ? `
 Saved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value}`).join(", ")}.${wasRunning ? " Applies from its next turn; the turn running now keeps its settings." : " Applies to this continuation and later turns."}` : "";
+      const gateNote = gate ? "\nLocal follow-up gate observation (local turn; durable current turn unknown; executor identity unknown): " + JSON.stringify({
+        reason: FOLLOW_UP_GATE_REASONS.includes(gate.reason) ? gate.reason : null,
+        jobId: typeof gate.jobId === "string" ? gate.jobId : null,
+        observedLocalStartedAt: typeof gate.observedLocalStartedAt === "number" && Number.isFinite(gate.observedLocalStartedAt) ? gate.observedLocalStartedAt : null,
+        durableTurn: "unknown",
+        observedAt: typeof gate.observedAt === "number" && Number.isFinite(gate.observedAt) ? gate.observedAt : null,
+        executorIdentity: "unknown",
+        controllerAborted: typeof gate.controllerAborted === "boolean" ? gate.controllerAborted : null,
+        hasResume: typeof gate.hasResume === "boolean" ? gate.hasResume : null,
+        hasSession: typeof gate.hasSession === "boolean" ? gate.hasSession : null
+      }) : "";
       return text(
-        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote + approvalNote,
-        outcome === "unknown" || outcome === "no-session"
+        t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote + approvalNote + gateNote,
+        outcome === "unknown" || outcome === "no-session" || outcome === "stopping" || outcome === "cancelled-before-start"
       );
     })
   );
@@ -3741,28 +4395,38 @@ Saved settings: ${Object.entries(settings).map(([key, value]) => `${key}=${value
       title: "agent-bridge hook (internal)",
       description: "Internal endpoint for agent-bridge's own hooks. Do not call this tool.",
       inputSchema: {
+        // Whole-value placeholders keep the host's JSON type: Codex sends null for an absent transcript_path.
         event: external_exports.string(),
-        session_id: external_exports.string().optional(),
-        stop_hook_active: external_exports.union([external_exports.boolean(), external_exports.string()]).optional(),
-        cwd: external_exports.string().optional(),
-        agent_id: external_exports.string().optional(),
-        prompt: external_exports.string().optional()
+        session_id: external_exports.string().nullish(),
+        stop_hook_active: external_exports.union([external_exports.boolean(), external_exports.string()]).nullish(),
+        cwd: external_exports.string().nullish(),
+        agent_id: external_exports.string().nullish(),
+        prompt: external_exports.string().nullish(),
+        prompt_id: external_exports.string().nullish(),
+        transcript_path: external_exports.string().nullish()
       }
     },
     async (a, extra) => {
-      const given = (v) => v && !v.startsWith("${") ? v : null;
+      if (ctx.agent === "muse") return text("{}");
+      const given = (v) => typeof v === "string" && v && !v.startsWith("${") ? v : null;
       try {
+        const nativeId = given(a.agent_id) ?? given(extra._meta?.agent_id) ?? given(extra._meta?.agentId);
+        if ((a.event === "SubagentStart" || a.event === "SubagentStop") && !nativeId) return text("{}");
+        const identity = codexCallIdentity(extra._meta, { threadId: given(a.session_id), agentId: nativeId, transcript: given(a.transcript_path) });
+        if (ctx.agent !== "claude" && nativeId || ctx.admitCodex && !ctx.admitCodex(extra._meta, identity)) return text("{}");
         const out = await buildHookResponse(ctx, {
           event: a.event,
-          sessionId: given(a.session_id),
+          sessionId: ctx.agent === "codex" ? identity.threadId ?? null : given(a.session_id),
           stopHookActive: a.stop_hook_active === true || a.stop_hook_active === "true",
           cwd: given(a.cwd),
-          subagent: Boolean(given(a.agent_id)),
+          subagent: Boolean(nativeId),
+          agentId: nativeId,
           prompt: given(a.prompt),
+          promptId: given(a.prompt_id),
           signal: extra.signal,
-          prepare: async () => {
+          prepare: async (current) => {
             if (ctx.node?.wasReplaced) await ctx.node.reclaim();
-            await ctx.observeMeta?.(extra._meta);
+            if (current()) await ctx.observeMeta?.(ctx.agent === "codex" ? { ...extra._meta, threadId: identity.threadId } : extra._meta);
           }
         });
         return text(JSON.stringify(out));

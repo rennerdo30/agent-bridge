@@ -120,18 +120,18 @@ describe("read-only performance caches", () => {
 
   it("rejects a stale scanner identity before reading a replacement and retries fresh", () => {
     const file = join(env.home, 'scanned.json'), replacement = `${file}.next`;
-    store(file, { retained: 'old' }); const previous = statSync(file);
+    store(file, { retained: 'old' }); const previous = statSync(file, { bigint: true });
     store(replacement, { retained: 'new' }); renameSync(replacement, file);
     expect(() => readJsonSnapshot(file, { file, stat: previous })).toThrow('identity changed');
-    expect(readJsonSnapshot(file, { file, stat: statSync(file) }).value).toEqual({ retained: 'new' });
-    expect(() => readJsonSnapshot(file, { file: replacement, stat: statSync(file) })).toThrow('another file');
+    expect(readJsonSnapshot(file, { file, stat: statSync(file, { bigint: true }) }).value).toEqual({ retained: 'new' });
+    expect(() => readJsonSnapshot(file, { file: replacement, stat: statSync(file, { bigint: true }) })).toThrow('another file');
   });
 
   it("does not publish bytes changed during a scanned read", () => {
     const file = join(env.home, 'changing.json'); store(file, { retained: 'original' });
     reads.changeDuringRead = file;
-    expect(() => readJsonSnapshot(file, { file, stat: statSync(file) })).toThrow('identity changed during read');
-    expect(readJsonSnapshot(file, { file, stat: statSync(file) }).value).toEqual({ retained: 'original' });
+    expect(() => readJsonSnapshot(file, { file, stat: statSync(file, { bigint: true }) })).toThrow('identity changed during read');
+    expect(readJsonSnapshot(file, { file, stat: statSync(file, { bigint: true }) }).value).toEqual({ retained: 'original' });
     expect(readFileSync(file, 'utf8')).toMatch(/ $/);
   });
 

@@ -1,0 +1,206 @@
+import React, { useEffect, useRef, useState } from "react";
+import { FlatList, ScrollView, View } from "react-native";
+import type { ChatItem } from "../client";
+import { chatGroups, markdownBlocks, type ChatGroup } from "../view-model";
+import { useTheme } from "../theme";
+import { AppText, Button, Empty } from "./primitives";
+import { Sheet } from "./layout";
+import { strings as copyStrings } from "../strings";
+export function Markdown({ text }: { text: string }) {
+  const { colors } = useTheme();
+  return (
+    <View style={{ gap: 6 }}>
+      {markdownBlocks(text).map((b, i) =>
+        b.kind === "code" ? (
+          <ScrollView
+            key={i}
+            horizontal
+            style={{ backgroundColor: colors.codeBg, borderRadius: 8 }}
+            contentContainerStyle={{ padding: 12 }}
+          >
+            <AppText selectable variant="mono">
+              {b.text}
+            </AppText>
+          </ScrollView>
+        ) : (
+          <AppText key={i} selectable variant={b.kind === "heading" ? "headline" : "chat"}>
+            {b.text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).map((p, j) => (
+              <AppText
+                key={j}
+                variant={p.startsWith("`") ? "monoSmall" : "chat"}
+                style={p.startsWith("**") ? { fontWeight: "600" } : undefined}
+              >
+                {p.startsWith("**") ? p.slice(2, -2) : p.startsWith("`") ? p.slice(1, -1) : p}
+              </AppText>
+            ))}
+          </AppText>
+        )
+      )}
+    </View>
+  );
+}
+function Bubble({ item }: { item: ChatItem }) {
+  const { colors, tokens } = useTheme(),
+    [expanded, setExpanded] = useState(false),
+    right = item.kind === "user",
+    text = item.text ?? item.summary ?? item.tool ?? "";
+  return (
+    <View style={{ alignSelf: right ? "flex-end" : "flex-start", maxWidth: "88%", gap: 4 }}>
+      <AppText variant="time" tone="textFaint">
+        {right ? "User" : item.kind === "subagent" ? "Subagent · link unavailable" : "Assistant"}
+        {copyStrings.copy.message}
+        {new Date(item.at).toLocaleTimeString()}
+      </AppText>
+      <View
+        style={{
+          paddingHorizontal: 14,
+          paddingVertical: 10,
+          backgroundColor: right ? colors.accentSoft : colors.panel2,
+          borderRadius: tokens.radius.bubble,
+          borderBottomRightRadius: right ? 4 : 14,
+          borderBottomLeftRadius: right ? 14 : 4,
+          borderWidth: right ? 0 : 1,
+          borderColor: colors.line,
+          gap: 8,
+        }}
+      >
+        <View style={!expanded && right && text.length > 600 ? { maxHeight: 220, overflow: "hidden" } : undefined}>
+          <Markdown text={text} />
+        </View>
+        {right && text.length > 600 && (
+          <Button label={expanded ? "Show less ▴" : "Show all ▾"} onPress={() => setExpanded((v) => !v)} />
+        )}
+        {item.truncated && (
+          <AppText variant="caption" tone="warn">
+            {copyStrings.copy.truncatedSourcePreview}
+          </AppText>
+        )}
+      </View>
+    </View>
+  );
+}
+function Steps({
+  group,
+}: {
+  group: Extract<
+    ChatGroup,
+    {
+      kind: "steps";
+    }
+  >;
+}) {
+  const { colors } = useTheme(),
+    [expanded, setExpanded] = useState(false),
+    [full, setFull] = useState<ChatItem | null>(null),
+    last = group.items[group.items.length - 1];
+  return (
+    <View style={{ marginLeft: 12, paddingLeft: 16, borderLeftWidth: 1, borderLeftColor: colors.line, gap: 6 }}>
+      {group.items.length > 3 && (
+        <Button
+          label={`${expanded ? "▾" : "▸"} ${group.items.length} steps · last: ${(last?.summary ?? last?.tool ?? "step").slice(0, 70)}`}
+          onPress={() => setExpanded((v) => !v)}
+        />
+      )}
+      {(expanded || group.items.length <= 3) &&
+        group.items.map((i) => (
+          <Button
+            key={i.id}
+            label={`${new Date(i.at).toLocaleTimeString()} · ${i.tool ?? "tool"} · ${(i.summary ?? i.text ?? "").slice(0, 70)}`}
+            onPress={() => setFull(i)}
+          />
+        ))}
+      <Sheet title={full?.tool ?? "Step"} visible={!!full} onClose={() => setFull(null)}>
+        <AppText variant="mono" selectable>
+          {full?.summary ?? full?.text ?? ""}
+        </AppText>
+      </Sheet>
+    </View>
+  );
+}
+export function ChatList({
+  items,
+  loading,
+  next,
+  onNext,
+  disabled,
+}: {
+  items: ChatItem[];
+  loading: boolean;
+  next: boolean;
+  onNext: () => void;
+  disabled: boolean;
+}) {
+  const { reduced } = useTheme(),
+    ref = useRef<FlatList<ChatGroup>>(null),
+    pinned = useRef(true),
+    [newCount, setNewCount] = useState(0),
+    previous = useRef(new Set<string>()),
+    groups = chatGroups(items);
+  useEffect(() => {
+    const added = items.filter((i) => !previous.current.has(i.id)).length;
+    previous.current = new Set(items.map((i) => i.id));
+    if (pinned.current) {
+      ref.current?.scrollToEnd({ animated: !reduced });
+      setNewCount(0);
+    } else setNewCount((c) => c + added);
+  }, [items]);
+  return (
+    <View style={{ flex: 1 }}>
+      <FlatList
+        ref={ref}
+        data={groups}
+        keyExtractor={(g) => g.id}
+        contentContainerStyle={{ padding: 12, gap: 12, paddingBottom: 24 }}
+        onContentSizeChange={() => {
+          if (pinned.current) ref.current?.scrollToEnd({ animated: false });
+        }}
+        onScroll={(e) => {
+          const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+          pinned.current = contentSize.height - contentOffset.y - layoutMeasurement.height < 40;
+          if (pinned.current) setNewCount(0);
+        }}
+        scrollEventThrottle={100}
+        ListEmptyComponent={<Empty title={loading ? "Loading conversation…" : "No messages in this page"} />}
+        renderItem={({ item, index }) => {
+          const at = item.kind === "message" ? item.item.at : (item.items[0]?.at ?? 0),
+            p = groups[index - 1],
+            before = p?.kind === "message" ? p.item.at : (p?.items[0]?.at ?? 0);
+          return (
+            <View style={{ gap: 12 }}>
+              {(index === 0 ||
+                at - before > 1800000 ||
+                new Date(at).toDateString() !== new Date(before).toDateString()) && (
+                <AppText variant="caption" tone="textFaint" style={{ textAlign: "center" }}>
+                  {new Date(at).toLocaleString()}
+                </AppText>
+              )}
+              {item.kind === "steps" ? <Steps group={item} /> : <Bubble item={item.item} />}
+            </View>
+          );
+        }}
+        ListFooterComponent={
+          <View style={{ gap: 12 }}>
+            {next && (
+              <Button label={copyStrings.copy.loadNextChatPage} busy={loading} disabled={disabled} onPress={onNext} />
+            )}
+            <AppText variant="caption" tone="textFaint">
+              {copyStrings.copy.forwardPagesOnlyOlderHistoryNavigationIsUnsupported}
+            </AppText>
+          </View>
+        }
+      />
+      {newCount > 0 && (
+        <View style={{ position: "absolute", right: 16, bottom: 16 }}>
+          <Button
+            label={`↓ ${newCount} · Jump to latest`}
+            onPress={() => {
+              pinned.current = true;
+              ref.current?.scrollToEnd({ animated: !reduced });
+              setNewCount(0);
+            }}
+          />
+        </View>
+      )}
+    </View>
+  );
+}

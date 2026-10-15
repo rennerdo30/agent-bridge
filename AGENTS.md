@@ -10,6 +10,10 @@ Each package needs one clear goal, its branch and files, applicable rules, compl
 
 Push WIP with explicit refs: `git push origin HEAD:refs/heads/<branch>`. Do not use `-u` or write Git configuration. Use the approved identity `rennerdo30 <9086097+rennerdo30@users.noreply.github.com>` through per-command environment variables; omit coauthor trailers.
 
+**Branch limit per repo:** up to 10 active branches is normal, with no justification needed. 11–20 require a proper reason recorded in the branch's Pair Desk issue or the handoff (for example, a subagent actively working on it, or many parallel subagents with one branch each). 20 is the hard maximum: never exceed it; merge or finish first. Count active, unmerged work branches, local plus remote. Clean up merged branches per the worktree rules; never delete unmerged or unpushed work.
+
+**Canonical drive paths:** `E:\` and `D:\` are the same drive: the whole drive is a subst, `E:\ = D:\`, so `E:\Development = D:\Development` and `E:\AgentData = D:\AgentData`. Always use `E:` paths in commands, configs, docs, messages, Pair Desk issues and job prompts; do not write new `D:\...` paths. When a tool reports a `D:` path, refer to it by its `E:` spelling. Comparisons and identity checks must treat both as the same location.
+
 ## Roles and evidence
 
 The Claude session is the project main, decides, reviews milestones on Pair Desk and the diff, and talks to the owner with minimal usage. Codex sessions do implementation, Bridge packages and release work. Record a one-line Pair Desk note at each milestone. Reviews belong on the desk and the diff, rather than in chat. Distinguish source/test evidence from live session acceptance.

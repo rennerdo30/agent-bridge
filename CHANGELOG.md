@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.30.19
+
+- Add Muse as a fifth coding agent, including native plugin installation, authenticated mail hooks, stable MSP delegation, live steering, approvals, model discovery, session history and remote jobs. Preserve named permission profiles across job reloads and continuations; verify the served profile before submitting a turn (AB-330, #20).
+- Antigravity jobs in `ask` mode deny approval requests again when no supervisor is allowed to approve them, instead of relaying them. This regressed in 0.30.17 (#20).
+
+## 0.30.18
+
+- Antigravity jobs in `edit` mode no longer ask the supervisor to approve read-only tools such as `view_file`, `list_dir` and searches outside the workspace, including Antigravity's own skills and tool schemas under `~/.gemini`. Reads defer to Antigravity's own permission policy again; shell commands, external MCP tools, writes outside the workspace and unknown tools are still forwarded for approval (AB-367, #43).
+- Phones can be paired from the dashboard (AB-271, #10).
+- Messaging reports how each send was delivered, and Claude native children get a one-shot scoped queue (AB-345, #32).
+
+## 0.30.17
+
+- Antigravity sessions can use their built-in tools and other MCP servers again. On agy 1.3.5 the bridge's `PreToolUse` hook answered `{}`, which Antigravity treats as "deny", so every non-bridge tool was refused with an empty reason. It now defers to Antigravity's own permission policy, and in `edit` mode forwards shell commands, external MCP tools and writes outside the workspace for approval (AB-331, AB-305, #28).
+- Mail delivered when an Antigravity turn stops is kept unread until the continuation is confirmed, so it is not lost when Antigravity reaches its continuation limit (AB-315, #28).
+- `usage_limits` reports Antigravity quotas and credits from `agy /usage` (agy 1.1.11 and later) without using a model turn (AB-303, #28).
+- Antigravity jobs on paired PCs keep `terminal_sandbox` and `bypass_permissions`, and remote approvals settle reliably (AB-308, #28).
+- Antigravity Desktop and IDE sessions and transcripts are recognized (#28).
+
+## 0.30.16
+
+- New and continued jobs no longer stay queued forever behind a finished job whose process ID Windows reused for a protected system process (svchost, WmiPrvSE, SearchFilterHost). Such a reader now counts as gone only when Windows reports a known OS service host under that ID; renamed runtimes, unknown names and failed queries still block the store upgrade (AB-362, #36).
+- On Windows, plugin installs and updates retry briefly when the new version folder cannot be moved into place yet. A failure now names both folders and says what was kept, and a missing plugin build prints the `npx` command to use instead (AB-360, #34).
+- The dashboard yields while reading large job archives, so it stays responsive (AB-294, #37).
+- `search_history` explains its query grammar and filters to agents (AB-336, #30).
+- Windows CI runs in four parallel shards with complete coverage checks, and two intermittent test failures are fixed (#8, #33, #35).
+
+## 0.30.15
+
+- Storage finalize and absorb keep backups, migration snapshots, `retained_*` tables and old archives without deleting or rewriting retained data. Linked, uncertain or WAL-mode candidates are refused before they are opened (AB-215/AB-228, #18).
+- Unchanged finished jobs are no longer archived again on every save (AB-319, #13).
+- Jobs that refuse a follow-up now return a typed reason explaining why (AB-320, #15).
+- Codex plugin hooks no longer fail with "hook input placeholder `${agent_id}` was not found" on Codex 0.162 and later (AB-299, #12).
+
+## 0.30.14
+
+- Phone pairing over a plain home-network IP now works with `"tls": "pinned"`, with no CA or certificate setup. Scan the QR code to pin the PC key; the native phone transport checks that key before sending requests (AB-271).
+- Project paths and full-access prompts prefer verified drive aliases, and project decisions match across drive aliases. You can turn the display preference off with `pathDisplay.preferAlias`. Release rehearsals also recognize aliases when checking fixture containment (AB-272).
+- Native Claude children have their own scoped bridge addresses and mail queues, with explicit recipient grants and recovery of unread mail when a child ends (AB-280).
+- opencode jobs in served/edit mode keep their private server's input open, preventing early shutdown and "fetch failed" errors in worktrees (AB-264).
+- Cancelling and resuming jobs wait briefly for another session's state write, avoiding unnecessary retry errors and delayed starts. A lock that stays busy still blocks the operation safely (AB-278).
+- Ordinary mail to jobs stays blocked while background indexing catches up; use the supervisor or an authorized sibling channel.
+- Windows scans keep complete file IDs, so replacing a JSON file cannot be mistaken for unchanged cached data.
+- opencode retries deferred initial peer context and records it only after session storage succeeds.
+
+## 0.30.13
+
+- Dashboard job controls now check who sent the request before allowing it, preventing unauthorized sessions from controlling jobs.
+- Claude activity hooks track each turn so delayed hooks cannot change a newer turn. Native Codex children join under their parent without taking its mail, and project main sessions keep the correct identity (AB-268/269).
+- Cancelling and resuming the same job now happen one at a time, preventing overlapping runners and lost continuation messages. The original executor can still stop handed-off inline work, and job results stay recoverable while store upgrades wait (AB-278).
+- Support opencode 2.x session discovery, project matching and launches while keeping compatibility with earlier versions (AB-264).
+- Add the mobile gateway and the first Expo companion app for pairing, conversations, jobs, owner questions and push notifications. The gateway is opt-in through config. Push registrations are archived when replaced or revoked; the app includes iOS 27 scene support and its launcher icon. Update the MCP SDK to 1.32.1 and source-map-js to 1.2.2 (AB-271).
+
+## 0.30.12
+
+- New background jobs no longer fail at startup when the PC is busy. Before its first state write, a job runner checks the identities of running store readers; on Windows that check is a PowerShell query that takes many seconds with dozens of agent processes running. A slow or failed check used to end the job after 15 s ("job runner ended without reporting a result"). The runner now retries the check and waits up to 5 minutes for store admission, still writing nothing before identities are ready (AB-278).
+
 ## 0.30.11
 
 - Every CLI can now use `ask_*` and `spawn_*` with Claude, Codex, opencode and Antigravity, including its own kind. Existing delegation limits still apply.

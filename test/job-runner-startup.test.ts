@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { closeMetadataDbs } from "../src/core/metadata-db.js";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
-import { runJobRunner } from "../src/mcp/job-runner.js";
+import { INITIAL_STATE_DEADLINE_MS, runJobRunner } from "../src/mcp/job-runner.js";
 import { runnerStatePath, type RunnerSpec } from "../src/mcp/job-host.js";
 
 const mocks = vi.hoisted(() => ({ refresh: vi.fn(), delegate: vi.fn(), writes: vi.fn(), order: [] as string[] }));
@@ -50,11 +50,17 @@ it("awaits cold retained-reader identity readiness before any runner state write
   expect(mocks.order.slice(0, 3)).toEqual(["identities", "state", "node"]);
   expect(mocks.delegate).toHaveBeenCalledOnce();
 });
-it("keeps state/schema writes deferred if cold identity resolution fails", async () => {
+it("keeps state/schema writes deferred while cold identity resolution fails, retrying until cancelled (AB-278)", async () => {
   const { spec, file } = fixture();
   const rejectionListeners = process.listeners("unhandledRejection"), exceptionListeners = process.listeners("uncaughtException");
-  mocks.refresh.mockRejectedValue(new Error("reader identity unavailable"));
-  await expect(runJobRunner(file)).rejects.toThrow("reader identity unavailable");
+  const beforeTerm = process.listeners("SIGTERM");
+  let attempts = 0, retried!: () => void;
+  const retry = new Promise<void>(resolve => { retried = resolve; });
+  mocks.refresh.mockImplementation(async () => { if (++attempts === 3) retried(); throw new Error("reader identity unavailable"); });
+  const failed = expect(runJobRunner(file)).rejects.toThrow();
+  await retry;
+  process.listeners("SIGTERM").find(listener => !beforeTerm.includes(listener))!("SIGTERM");
+  await failed;
   expect(mocks.writes).not.toHaveBeenCalled();
   expect(mocks.delegate).not.toHaveBeenCalled();
   expect(existsSync(runnerStatePath(home!, spec.job.id))).toBe(false);
@@ -121,7 +127,7 @@ it("bounds repeated initial admission deferral and removes its timers and listen
   // Promise-based backoff uses Node's real timers; the separately owned deadline
   // is controlled here only after observing an actual second admission attempt.
   await retry;
-  await vi.advanceTimersByTimeAsync(15_000); await failed;
+  await vi.advanceTimersByTimeAsync(INITIAL_STATE_DEADLINE_MS); await failed;
   expect(mocks.writes.mock.calls.length).toBeGreaterThan(1);
   expect(mocks.delegate).not.toHaveBeenCalled();
   expect(existsSync(runnerStatePath(home!, spec.job.id))).toBe(false);

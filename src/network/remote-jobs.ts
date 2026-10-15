@@ -12,11 +12,11 @@ import { startRunFeedReady, type RunFeed, type RunFeedOptions } from "../core/ru
 import { createWorktree, git, gitDirsOutside, type Worktree } from "../core/worktree.js";
 import { isInside, resumeArgs, type DelegateArgs } from "../mcp/delegate-run.js";
 import { JobRunners, readRunnerState } from "../mcp/job-host.js";
-import { JOB_SETTING_KEYS, parseJobSettings } from "../mcp/job-settings.js";
+import { changedJobArgs, JOB_SETTING_KEYS, parseJobSettings, type JobSettings } from "../mcp/job-settings.js";
 import type { Job, RunnerControl, RunnerState } from "../mcp/jobs.js";
 import type { NetworkService } from "./link.js";
 import type { NetworkPair } from "./pairing.js";
-import { MAX_REMOTE_JOBS, REMOTE_JOB_CAPABILITY, REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_FRAME, REMOTE_JOB_RATE_LIMIT, REMOTE_JOB_RATE_WINDOW_MS, REMOTE_JOB_REQUEST_TIMEOUT_MS, REMOTE_JOB_SPAWN_LIMIT, remoteJobRequestSchema, remoteJobWireSchema, remoteJobSnapshotSchema, remoteSnapshotForPeer, type RemoteJobRequest } from "./remote-job-protocol.js";
+import { MAX_REMOTE_JOBS, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY, REMOTE_JOB_CAPABILITY, REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_FRAME, REMOTE_JOB_RATE_LIMIT, REMOTE_JOB_RATE_WINDOW_MS, REMOTE_JOB_REQUEST_TIMEOUT_MS, REMOTE_JOB_SPAWN_LIMIT, remoteJobRequestSchema, remoteJobWireSchema, remoteJobSnapshotSchema, remoteSnapshotForPeer, type RemoteJobRequest } from "./remote-job-protocol.js";
 
 export interface RemoteJobSnapshot { state: RunnerState | null; alive: boolean; approvals: PendingApproval[] }
 interface RemoteRecord { pair: string; peer: string; owner: string; job: Job; args: DelegateArgs }
@@ -62,13 +62,23 @@ export class RemoteJobs {
       if (typeof r.pair !== "string" || typeof r.peer !== "string" || !r.job?.id || !r.args) continue;
       this.records.set(r.job.id, { ...r, job: { ...r.job, controller: new AbortController(), queue: [] } });
     }
-    network.registerExtension(REMOTE_JOB_FRAME, REMOTE_JOB_CAPABILITY, (payload, pair) => this.receive(payload, pair), [REMOTE_JOB_CANCELLED_CAPABILITY]);
+    network.registerExtension(REMOTE_JOB_FRAME, REMOTE_JOB_CAPABILITY, (payload, pair) => this.receive(payload, pair), [REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY]);
   }
 
   async request(host: string, peer: Pick<PeerInfo, "id" | "name">, raw: RemoteJobRequest, supervisor = peer.id, localJobName?: string): Promise<RemoteJobSnapshot> {
     const request = remoteJobRequestSchema.parse(raw);
+    if (request.op === "spawn") {
+      const settings = Object.fromEntries(JOB_SETTING_KEYS.filter((key) => key in request.args).map((key) => [key, (request.args as Record<string, unknown>)[key]]));
+      if (Object.keys(settings).length) {
+        const parsed = parseJobSettings(settings, request.target);
+        if (typeof parsed === "string") throw new Error(parsed);
+      }
+    }
     const mirrorKey = `${host}/${request.job}`, mirrorTurn = this.mirrorTurns.get(mirrorKey);
     if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: install remote-jobs-v1 support and restart its hosting sessions.");
+    if (request.op === "spawn" && (request.args.terminal_sandbox !== undefined || request.args.bypass_permissions !== undefined) && !this.network.peerSupports(host, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY)) {
+      throw new Error("Remote broker update needed: paired PC does not support Antigravity terminal_sandbox or bypass_permissions options.");
+    }
     if (this.pending.size >= REMOTE_JOB_RATE_LIMIT) throw new Error("Too many pending remote job requests.");
     const rid = randomUUID();
     const response = new Promise<RemoteJobSnapshot>((resolve, reject) => {
@@ -144,17 +154,20 @@ export class RemoteJobs {
       if (!record && this.records.size >= MAX_REMOTE_JOBS) throw new Error("Remote job registry is full.");
       if (!record && request.args.session_id) throw new Error("Remote session continuation requires a job owned by this supervisor.");
       const settings = Object.fromEntries(JOB_SETTING_KEYS.filter((key) => key in request.args).map((key) => [key, (request.args as Record<string, unknown>)[key]]));
-      if (Object.keys(settings).length) { const parsed = parseJobSettings(settings, request.target); if (typeof parsed === "string") throw new Error(parsed); }
+      let parsedSettings: JobSettings = {};
+      if (Object.keys(settings).length) { const parsed = parseJobSettings(settings, request.target); if (typeof parsed === "string") throw new Error(parsed); parsedSettings = parsed; }
       let args: DelegateArgs = { ...request.args, ...(request.target === "codex" ? { native_subagents: request.args.native_subagents ?? cfg.codexSubagents } : {}) };
       let cwd = allowedRemoteDirectory(args.cwd!, policy.allowRoots);
       for (const directory of await gitDirsOutside(cwd, this.log) ?? []) allowedRemoteDirectory(directory, policy.allowRoots);
       let worktree: Worktree | null = null;
       if (record) {
         const state = this.snapshot(record).state;
-        if (!state?.sessionId) throw new Error("Remote job has no session to continue.");
+        if (!state?.sessionId) throw new Error(state?.status === "cancelled"
+          ? "Remote job was cancelled before its session started; start a new job."
+          : "Remote job did not start a native session; start a new job.");
         cwd = allowedRemoteDirectory(state.workdir ?? cwd, policy.allowRoots);
         worktree = state.worktree ?? null;
-        args = resumeArgs(args, record.job.name, args.prompt, state.sessionId, cwd, worktree, { ...args });
+        args = resumeArgs(args, record.job.name, args.prompt, state.sessionId, cwd, worktree, changedJobArgs({ ...record.args }, parsedSettings));
       } else if (args.worktree) {
         const repo = allowedRemoteDirectory(await git(["rev-parse", "--show-toplevel"], cwd, this.log), policy.allowRoots);
         if (existsSync(join(repo, "worktrees"))) allowedRemoteDirectory(join(repo, "worktrees"), policy.allowRoots);
@@ -211,11 +224,18 @@ export class RemoteJobs {
           pending.controller.abort(new Error("Remote job not_started: cancelled before detached runner startup"));
           return { state: null, alive: true, approvals: [] }; // admission/cancellation has not settled yet
         }
+        let parsedSettings: JobSettings | undefined;
         if (request.control.type === "settings") {
           const settings = parseJobSettings(request.control.settings, record.job.agent);
           if (typeof settings === "string") throw new Error(settings);
+          parsedSettings = settings;
         }
         await this.control({ owner: record.owner, name: record.job.name, id: record.job.id }, request.control as RunnerControl);
+        if (parsedSettings) {
+          record.args = { ...changedJobArgs({ ...record.args }, parsedSettings), prompt: record.args.prompt, title: record.args.title };
+          record.job.args = changedJobArgs(record.job.args, parsedSettings);
+          this.persist();
+        }
         this.log.info("remote job control", { job: record.job.name, control: request.control.type, host: pair.name });
       } else if (request.op === "approval") {
         if (!listPendingApprovals(this.home).some((a) => a.id === request.id && a.job === record!.job.name && a.owner === record!.owner)) throw new Error("Remote approval expired or belongs to another job.");

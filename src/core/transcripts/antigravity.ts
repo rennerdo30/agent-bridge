@@ -1,8 +1,22 @@
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { directory, fileStat, MAX_NATIVE_SUBAGENTS, MAX_TEXT_CHARS, MAX_TITLE_CHARS, object, preview, readJsonl, safeFile, scanJsonl, time, TRANSCRIPT_ID, type JsonObject, type NativeSubagent, type TranscriptItem, type TranscriptPage, type TranscriptPaths, type TranscriptSession } from "./common.js";
 
+function antigravityHomes(paths: TranscriptPaths): string[] {
+  if (!paths.antigravity) return [];
+  const gemini = dirname(paths.antigravity);
+  if (basename(paths.antigravity) === "antigravity-cli" && basename(gemini) === ".gemini") {
+    return [paths.antigravity, join(gemini, "antigravity"), join(gemini, "antigravity-ide")];
+  }
+  return [paths.antigravity];
+}
+
 export function antigravitySessionFile(session: TranscriptSession, paths: TranscriptPaths): string | null {
-  return paths.antigravity && session.sessionId && TRANSCRIPT_ID.test(session.sessionId) ? safeFile(paths.antigravity, join(paths.antigravity, "brain", session.sessionId, ".system_generated", "logs", "transcript.jsonl")) : null;
+  if (!session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return null;
+  for (const root of antigravityHomes(paths)) {
+    const file = safeFile(root, join(root, "brain", session.sessionId, ".system_generated", "logs", "transcript.jsonl"));
+    if (file) return file;
+  }
+  return null;
 }
 
 export function antigravityItems(row: JsonObject): TranscriptItem[] {
@@ -45,5 +59,5 @@ export function readAntigravityChat(session: TranscriptSession, paths: Transcrip
 }
 
 export function antigravitySessionIds(paths: TranscriptPaths): string[] {
-  return paths.antigravity ? directory(join(paths.antigravity, "brain")).filter((id) => TRANSCRIPT_ID.test(id)) : [];
+  return [...new Set(antigravityHomes(paths).flatMap((root) => directory(join(root, "brain")).filter((id) => TRANSCRIPT_ID.test(id))))];
 }

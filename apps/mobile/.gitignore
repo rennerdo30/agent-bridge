@@ -1,0 +1,10 @@
+node_modules/
+.expo/
+dist/
+web-build/
+android/
+ios/
+*.tsbuildinfo
+.npm-cache/
+.test-cache/
+.visual-review/
