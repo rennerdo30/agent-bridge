@@ -2,10 +2,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { codexHost } from "./helpers.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { appendFileSync, chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeClient } from "../src/core/client.js";
@@ -20,8 +20,9 @@ import { parentFromEnv } from "../src/core/parent-link.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { listRuns, startUi } from "../src/cli/ui.js";
 import { readRunnerState } from "../src/mcp/job-host.js";
-import { runnerStateIds } from "../src/core/runner-store.js";
+import { RUNNER_DIR } from "../src/core/runner-store.js";
 import { closeMetadataDbs } from "../src/core/metadata-db.js";
+import { readMetadataLeaseOwner } from "../src/core/metadata-file-lease.js";
 import { readStore } from "../src/mcp/jobs.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { NetworkService } from "../src/network/link.js";
@@ -96,43 +97,67 @@ afterEach(async context => {
     try { diagnosticSnapshot("before-cleanup"); }
     catch (error) { cleanupError = error; }
   }
-  try {
-  // Runner states are rows (AB-208); files only from older runners.
-  for (const id of runnerStateIds(remoteHome)) {
-    const state = readRunnerState(remoteHome, id);
-    if (state?.pid) pids.add(state.pid);
-  }
-  // Only this freshly created fixture's published process generation authorizes a kill.
-  const generations = await readProcessIdentities([...pids]);
-  for (const pid of pids) if (fixtureProcessExists(pid, `Unable to verify fixture runner ${pid}; retained at ${root}`)) {
-    const recorded = storePresence(remoteHome, pid);
-    const refusal = `Fixture runner ${pid} has no matching owned process identity; retained at ${root}`;
-    if (!recorded?.processIdentity) throw new Error(refusal);
-    if (!await fixtureProcessGeneration(pid, recorded.processIdentity, refusal, {
-      identities: async () => generations, exists: pid => { process.kill(pid, 0); },
-    })) continue;
-    await stopFixtureRunner(pid, recorded.processIdentity);
-  }
-  await waitFor(() => [...pids].every((pid) => !fixtureProcessExists(pid, `Unable to verify fixture runner exit ${pid}; retained at ${root}`)));
-  pids.clear();
-  } catch (error) { failed = true; cleanupError ??= error; }
+  try { await stopFixtureRunners(); }
+  catch (error) { failed = true; cleanupError ??= error; }
   finally {
     // Closing owned transports must still happen when an identity check refuses a PID signal.
     for (const close of cleanup.reverse()) {
       try { await close(); }
       catch (error) { failed = true; cleanupError ??= error; }
     }
+    // A broker can launch a runner after the first inventory, or a runner can publish its state row only now:
+    // inventory again once every broker has exited, with the same PID-plus-creation-identity check.
+    try { await stopFixtureRunners(); }
+    catch (error) { failed = true; cleanupError ??= error; }
     vi.useRealTimers();
     closeMetadataDbs();
+    // Every fixture process has exited now: a lease that still names a live owner means something outside the
+    // recorded set still writes here, so nothing is deleted.
+    let leases: { path: string; pid: number }[] = [];
+    if (!failed) try { await waitFor(async () => (leases = await liveFixtureLeases(root)).length === 0); }
+    catch (error) {
+      failed = true;
+      cleanupError ??= new Error(`Fixture metadata leases still have live owners: ${JSON.stringify(leases)}; retained at ${root}`, { cause: error });
+    }
     if (failed) {
       try { diagnosticSnapshot("after-cleanup"); }
       catch (error) { cleanupError ??= error; }
       console.error(`Retained failed remote-job fixture: ${root}`);
+      // CI keeps only the job log, not the retained fixture: print the broker/runner timeline of both PCs.
+      for (const home of [localHome, remoteHome]) {
+        const log = join(home, "logs", "agent-bridge.log");
+        try { if (existsSync(log)) console.error(`--- ${log} (last 120 lines)\n${readFileSync(log, "utf8").split("\n").slice(-120).join("\n")}`); }
+        catch (error) { cleanupError ??= error; }
+      }
     }
     else rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
   if (cleanupError) throw cleanupError;
 });
+/** Stop every runner of this fixture (recorded PIDs plus a fresh read-only inventory) and wait for each to exit. */
+async function stopFixtureRunners(): Promise<void> {
+  // Read-only inventory. runnerStateIds would create bridge.db and take its migration lease in a home no fixture
+  // process ever opened, which needs this worker's own creation identity (a PowerShell probe on Windows).
+  const stateIdentities = fixtureRunnerIdentities(remoteHome);
+  for (const pid of stateIdentities.keys()) pids.add(pid);
+  // Only this freshly created fixture's published process generation authorizes a kill. A runner still in startup
+  // (store admission, Windows job ownership) has published only its state row, which carries its own creation identity.
+  const generations = await readProcessIdentities([...pids]);
+  for (const pid of [...pids]) if (fixtureProcessExists(pid, `Unable to verify fixture runner ${pid}; retained at ${root}`)) {
+    const recorded = storePresence(remoteHome, pid)?.processIdentity ?? stateIdentities.get(pid);
+    const refusal = `Fixture runner ${pid} has no matching owned process identity; retained at ${root}`;
+    if (!recorded) throw new Error(refusal);
+    // A different creation identity proves the recorded runner exited and its PID was reused: never ours to stop or await.
+    const current = generations.get(pid);
+    if (current !== undefined && current !== recorded) { pids.delete(pid); continue; }
+    if (!await fixtureProcessGeneration(pid, recorded, refusal, {
+      identities: async () => generations, exists: pid => { process.kill(pid, 0); },
+    })) continue;
+    await stopFixtureRunner(pid, recorded);
+  }
+  await waitFor(() => [...pids].every((pid) => !fixtureProcessExists(pid, `Unable to verify fixture runner exit ${pid}; retained at ${root}`)));
+  pids.clear();
+}
 /** AB-208: a process's presence is a bridge.db metadata row; the file remains only while the store is deferred. */
 function storePresence(home: string, pid: number): Record<string, any> | null {
   const path = resolveDbPath(home);
@@ -147,6 +172,61 @@ function storePresence(home: string, pid: number): Record<string, any> | null {
   }
   const file = join(home, "storage-capabilities", `${pid}.json`);
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
+}
+/**
+ * Runner PIDs with the creation identity each runner wrote into its own state, from job-state rows (AB-208) and
+ * older runners' files. Read only: no store is created or migrated.
+ */
+function fixtureRunnerIdentities(home: string): Map<number, string | undefined> {
+  const values: string[] = [];
+  const path = resolveDbPath(home);
+  if (existsSync(path)) {
+    const db = new DatabaseSync(path, { readOnly: true, timeout: 5_000 });
+    try {
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridge_metadata'").get()) {
+        for (const row of db.prepare("SELECT value FROM bridge_metadata WHERE domain='job-state'").all()) values.push(String(row.value));
+      }
+    } finally { db.close(); }
+  }
+  const dir = join(home, RUNNER_DIR);
+  if (existsSync(dir)) for (const file of readdirSync(dir)) {
+    if (file.endsWith(".json") && !file.endsWith(".spec.json")) values.push(readFileSync(join(dir, file), "utf8"));
+  }
+  const runners = new Map<number, string | undefined>();
+  for (const value of values) {
+    const { pid, identity } = JSON.parse(value) as { pid?: unknown; identity?: unknown };
+    if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0) continue;
+    runners.set(pid, typeof identity === "string" && identity ? identity : runners.get(pid));
+  }
+  return runners;
+}
+/**
+ * Canonical metadata leases under the fixture whose recorded owner generation is still running. ESRCH or a different
+ * creation identity (PID reuse) proves an owner gone; a failed identity query proves nothing and keeps the lease live.
+ */
+async function liveFixtureLeases(directory: string): Promise<{ path: string; pid: number }[]> {
+  const owners: { path: string; pid: number; identity: string }[] = [];
+  for (const entry of readdirSync(directory, { recursive: true }) as string[]) {
+    if (basename(entry) !== ".metadata-leases") continue;
+    const parent = dirname(join(directory, entry));
+    const registries = new Set(readdirSync(join(directory, entry)));
+    for (const name of readdirSync(parent)) {
+      const path = join(parent, name);
+      if (!registries.has(createHash("sha256").update(name).digest("hex")) || !lstatSync(path).isFile()) continue;
+      const owner = readMetadataLeaseOwner(path);
+      if (owner && fixtureProcessExists(owner.pid, `Unable to verify lease owner ${owner.pid} of ${path}; retained at ${root}`)) owners.push({ path, ...owner });
+    }
+  }
+  if (!owners.length) return [];
+  let identities: Map<number, string> | undefined;
+  try { identities = await readProcessIdentities(owners.map(owner => owner.pid)); } catch { /* unknown: every owner stays live */ }
+  return owners.filter(owner => {
+    if (!identities) return true;
+    const current = identities.get(owner.pid);
+    // Unlisted: exited after the existence check, unless the PID still answers (identity unreadable).
+    if (current === undefined) return fixtureProcessExists(owner.pid, `Unable to verify lease owner ${owner.pid}; retained at ${root}`);
+    return current === owner.identity;
+  }).map(({ path, pid }) => ({ path, pid }));
 }
 async function stopFixtureRunner(pid: number, identity: string): Promise<void> {
   const refusal = `Refusing to signal changed fixture runner ${pid}; retained at ${root}`;
@@ -194,11 +274,23 @@ async function session(home: string, name: string, agent = "codex"): Promise<Cli
     try { appendFileSync(stderrPath, data); }
     catch (error) { stderrError ??= error; }
   });
+  // The child's own close event (exit plus closed stdio) is the exit barrier for this session and the broker it may host;
+  // Protocol.connect chains this handler. The SDK's close returns right after a forced kill without awaiting it.
+  const exited = new Promise<void>(resolve => { transport.onclose = resolve; });
   cleanup.push(async () => {
     const pid = transport.pid;
     try { await client.close(); }
     finally { await transport.close(); }
-    if (pid) await waitFor(() => !pidAlive(pid));
+    // A grandchild that inherited the stdio pipes can hold close back: bound the wait so the rest of teardown
+    // (runner inventory, lease barrier, retained message and log tails) still runs.
+    if (pid) {
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([exited, new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`session ${pid} did not close; retained at ${root}`)), 30_000);
+        })]);
+      } finally { clearTimeout(timer); }
+    }
     if (stderrError) throw stderrError;
   });
   await client.connect(transport);
