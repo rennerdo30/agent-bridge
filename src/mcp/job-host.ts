@@ -3,7 +3,7 @@ import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { BridgeConfig } from "../core/config.js";
 import { killPid, pidAlive } from "../core/delegate.js";
-import { identityStartedAfter, processIdentity } from "../core/process-identity.js";
+import { identityStartedAfter, processIdentity, readProcessIdentitiesSync } from "../core/process-identity.js";
 import { ownerGone, writtenBeforeBoot } from "../core/boot-time.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
@@ -91,13 +91,28 @@ export function writeRunnerState(home: string, id: string, state: RunnerState): 
 const IDENTITY_CACHE_MS = 30_000;
 const probed = new Map<number, { identity: string | undefined; at: number }>();
 
+/** Prewarm the same liveness cache once per host poll, rather than spawning once per expired runner. */
+export function primeRunnerProcessIdentities(pids: number[]): void {
+  const due = [...new Set(pids)].filter(pid => {
+    if (!pidAlive(pid)) { probed.delete(pid); return false; }
+    const entry = probed.get(pid);
+    return !entry || Date.now() - entry.at >= IDENTITY_CACHE_MS;
+  });
+  if (!due.length) return;
+  const identities = readProcessIdentitiesSync(due);
+  const at = Date.now();
+  // Missing, unreadable and failed queries all stay unknown here. In particular, a failed batch
+  // must not cause N single-PID retries in this poll or authorize a kill/recovery decision.
+  for (const pid of due) probed.set(pid, { identity: identities?.get(pid) || undefined, at });
+}
+
 /**
  * Whether the process a runner state names is still that runner: no PID reuse (AB-236). With a recorded identity
  * it must match; older states without one need a process that started before the runner's last heartbeat.
  * Unknown answers keep the conservative "alive" (takeover); `fresh` probes again (kill decisions).
  */
 export function runnerProcessAlive(state: Pick<RunnerState, "pid" | "identity" | "updatedAt">, fresh = false): boolean {
-  if (!pidAlive(state.pid)) return false;
+  if (!pidAlive(state.pid)) { probed.delete(state.pid); return false; }
   let entry = probed.get(state.pid);
   if (fresh || !entry || Date.now() - entry.at >= IDENTITY_CACHE_MS) probed.set(state.pid, entry = { identity: processIdentity(state.pid), at: Date.now() });
   // Unreadable start time (EPERM, a protected process that reused the PID, a zombie): a runner whose last heartbeat
