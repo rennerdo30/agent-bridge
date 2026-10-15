@@ -7,7 +7,7 @@ import { readProcessIdentity } from "./process-identity.js";
 import { assertLifecycleServingCapability, type LifecycleServingCapability, type LifecycleServingPhase } from "./broker.js";
 import { createWindowsLifecycleObjects, assertWindowsLifecycleCreation, readOwnWindowsLifecycleIdentity, WindowsLifecyclePathUnavailable,
   verifyWindowsLifecyclePaths, assertWindowsLifecyclePathProof, cachedWindowsLifecyclePathProof, hasVerifiedWindowsLifecyclePaths,
-  prepareWindowsLifecycleBootstrap, preparedWindowsLifecycleIdentity, type WindowsLifecyclePreparation } from "./lifecycle-windows.js";
+  prepareWindowsLifecycleBootstrap, consumeWindowsLifecyclePreparation, type WindowsLifecyclePreparation } from "./lifecycle-windows.js";
 import { lifecycleInstanceSchema as instanceSchema, lifecycleActorSchema, LIFECYCLE_STATES, LIFECYCLE_NEXT,
   LIFECYCLE_PROOF_REQUIRED, sameLifecycleInstance } from "./daemon-lifecycle-role.js";
 
@@ -431,8 +431,8 @@ export class LifecycleJournal {
       if (performance.now() >= deadline || actual.ownerInstance !== initial.ownerInstance || actual.generation !== initial.generation || actual.home !== initial.home) fail("writer_unknown");
     };
     current();
-    const creationIdentity = preparation !== undefined ? preparedWindowsLifecycleIdentity(preparation, capability)
-      : await readOwnWindowsLifecycleIdentity(capability, deadline);
+    const prepared = preparation !== undefined ? consumeWindowsLifecyclePreparation(preparation, capability) : undefined;
+    const creationIdentity = prepared ? prepared.creationIdentity : await readOwnWindowsLifecycleIdentity(capability, deadline);
     current();
     if (!creationIdentity) fail("writer_unknown");
     const owner = { nonce: initial.ownerInstance, pid: process.pid, creationIdentity };
@@ -443,7 +443,7 @@ export class LifecycleJournal {
     catch (error) { if ((error as NodeJS.ErrnoException)?.code === "ENOENT") absent = true; else fail("publication_unproved"); }
     if (!absent) fail("publication_unproved");
     current(); // Original cap/deadline still applies before atomic exclusive creation.
-    const created = await createWindowsLifecycleObjects(capability, deadline, preparation); current();
+    const created = await createWindowsLifecycleObjects(capability, deadline, prepared?.preparedHome); current();
     const guard = () => { current(); assertWindowsLifecycleCreation(created, capability); };
     const dir = join(initial.home, DIRECTORY), file = join(dir, FILE);
     guard();

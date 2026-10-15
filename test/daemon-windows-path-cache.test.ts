@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import * as processes from "node:child_process";
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import * as files from "node:fs";
+import { existsSync, linkSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +24,29 @@ vi.mock("node:child_process", async importOriginal => {
   const spawn = vi.fn(native.spawn);
   return { ...native, spawn, default: { ...(Reflect.get(native, "default") ?? native), spawn } };
 });
+
+// Pass-through lstat adapter: the ORIGINAL native call unless a test SIMULATES a
+// swapped object (Windows refuses renaming a HOME whose store is open).
+const fsOriginals = vi.hoisted(() => ({ lstatSync: undefined as typeof import("node:fs").lstatSync | undefined }));
+vi.mock("node:fs", async importOriginal => {
+  const native = await importOriginal<typeof import("node:fs")>(); fsOriginals.lstatSync = native.lstatSync;
+  const lstatSync = vi.fn(native.lstatSync);
+  return { ...native, lstatSync, default: { ...(Reflect.get(native, "default") ?? native), lstatSync } };
+});
+function simulateSwapped(path: string) {
+  vi.mocked(files.lstatSync).mockImplementation(((target: string, options?: object) => {
+    const stat = Reflect.apply(fsOriginals.lstatSync!, files, [target, options]) as files.BigIntStats;
+    if (target !== path) return stat;
+    return Object.assign(Object.create(Object.getPrototypeOf(stat)), stat, { ino: stat.ino + 1n });
+  }) as typeof files.lstatSync);
+}
+async function serving(at = home) {
+  const pipe = resolvePipePath(at, {}), ownReservation = await EndpointReservation.bind(pipe);
+  const owned = new Broker(pipe, new MessageStore(resolveDbPath(at), nullLogger), nullLogger, "fixture-token"); owned.setHostingMode("daemon");
+  await owned.listen(ownReservation);
+  return { owned, ownReservation };
+}
+const fresh = (b: Broker) => { const end = performance.now() + 5000; return { end, cap: b.lifecycleServingCapability("prepare", end) }; };
 
 type Helper = "inspect" | "identity" | "create";
 let env: TestEnv, home: string, broker: Broker | undefined, reservation: EndpointReservation | undefined, journal: LifecycleJournal | undefined;
@@ -55,6 +79,7 @@ function fakeHelper(helper: Helper) {
 }
 beforeEach(() => {
   spawned = []; inspectVerdict = "verified";
+  vi.mocked(files.lstatSync).mockReset().mockImplementation(fsOriginals.lstatSync!);
   vi.mocked(processes.spawn).mockReset().mockImplementation(((command: string, args?: readonly string[], options?: object) => {
     const helper = helperOf(args);
     if (!helper) return Reflect.apply(originals.spawn!, processes, [command, args, options]);
@@ -64,6 +89,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   vi.mocked(processes.spawn).mockReset().mockImplementation(originals.spawn!);
+  vi.mocked(files.lstatSync).mockReset().mockImplementation(fsOriginals.lstatSync!);
   vi.restoreAllMocks();
   if (journal) { journal.close(); journal = undefined; }
   await broker?.close(); await reservation?.close(); broker = undefined; reservation = undefined;
@@ -181,5 +207,65 @@ describe.skipIf(process.platform !== "win32")("Windows lifecycle verified-path c
     renameSync(home, join(env.home, "retained-home")); mkdirSync(home);
     expect(() => cachedWindowsLifecyclePathProof(home, owner, "prepare", "home", performance.now() + 5000)).toThrow("unsafe_path");
     expect(hasVerifiedWindowsLifecyclePaths(home, owner, "home")).toBe(false); expect(spawned).toEqual(["inspect"]);
+  });
+  it("a journal hardlinked from outside the lifecycle directory is refused by the cached check", async () => {
+    establishedObjects(); const owner = randomUUID();
+    await verifyWindowsLifecyclePaths(home, owner, "prepare", "established", performance.now() + 5000);
+    cachedWindowsLifecyclePathProof(home, owner, "admission", "established", performance.now() + 1000);
+    linkSync(join(directory(), "receipts.sqlite-journal"), join(env.home, "outside-journal-link"));
+    expect(() => cachedWindowsLifecyclePathProof(home, owner, "admission", "established", performance.now() + 1000)).toThrow("unsafe_path");
+    expect(hasVerifiedWindowsLifecyclePaths(home, owner, "established")).toBe(false);
+    await expect(verifyWindowsLifecyclePaths(home, owner, "prepare", "established", performance.now() + 5000)).rejects.toMatchObject({ reason: "unsafe_path" });
+    expect(spawned).toEqual(["inspect"]);
+  });
+  it("a HOME swapped between preparation and bootstrap refuses before creating objects", async () => {
+    ({ owned: broker, ownReservation: reservation } = await serving());
+    const setup = fresh(broker), preparation = await LifecycleJournal.prepareServingBootstrap(setup.cap, setup.end);
+    const run = fresh(broker); // Minted before the swap; the serving binding also re-checks HOME identity.
+    simulateSwapped(assertLifecycleServingCapability(setup.cap, "prepare").home);
+    await expect(LifecycleJournal.bootstrapServing(run.cap, run.end, preparation)).rejects.toThrow("unavailable");
+    expect(existsSync(directory())).toBe(false); expect(spawned).toEqual(["identity", "inspect"]);
+  });
+  it("a preparation is single-use: reuse after a bootstrap attempt is refused", async () => {
+    ({ owned: broker, ownReservation: reservation } = await serving());
+    const setup = fresh(broker), preparation = await LifecycleJournal.prepareServingBootstrap(setup.cap, setup.end);
+    mkdirSync(directory()); // The first attempt consumes the preparation, then refuses the existing directory.
+    const first = fresh(broker);
+    await expect(LifecycleJournal.bootstrapServing(first.cap, first.end, preparation)).rejects.toMatchObject({ reason: "publication_unproved" });
+    rmSync(directory(), { recursive: true });
+    const again = fresh(broker);
+    await expect(LifecycleJournal.bootstrapServing(again.cap, again.end, preparation)).rejects.toThrow("unavailable");
+    expect(existsSync(directory())).toBe(false); expect(spawned).toEqual(["identity", "inspect"]);
+  });
+  it("a preparation is refused for another broker, after expiry, after revocation and after a new owner generation", async () => {
+    ({ owned: broker, ownReservation: reservation } = await serving());
+    const forOther = await (async () => { const setup = fresh(broker!); return LifecycleJournal.prepareServingBootstrap(setup.cap, setup.end); })();
+    const forExpiry = await (async () => { const setup = fresh(broker!); return LifecycleJournal.prepareServingBootstrap(setup.cap, setup.end); })();
+    const forRevoked = await (async () => { const setup = fresh(broker!); return LifecycleJournal.prepareServingBootstrap(setup.cap, setup.end); })();
+    // Another broker (other owner and HOME).
+    const otherHome = join(env.home, "other-home"); mkdirSync(otherHome);
+    const other = await serving(otherHome);
+    try {
+      const run = fresh(other.owned);
+      await expect(LifecycleJournal.bootstrapServing(run.cap, run.end, forOther)).rejects.toThrow("unavailable");
+      expect(existsSync(join(otherHome, ".core-lifecycle"))).toBe(false);
+    } finally { await other.owned.close(); await other.ownReservation.close(); }
+    // Expired: SIMULATED clock past the setup deadline plus one bootstrap budget.
+    const realNow = performance.now.bind(performance), offset = 10_001;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => realNow() + offset);
+    try {
+      const late = fresh(broker);
+      await expect(LifecycleJournal.bootstrapServing(late.cap, late.end, forExpiry)).rejects.toThrow("unavailable");
+    } finally { clock.mockRestore(); }
+    // Revoked: the serving binding closes; a pre-revocation capability is dead.
+    const before = fresh(broker);
+    await broker.close(); await reservation!.close(); broker = undefined; reservation = undefined;
+    await expect(LifecycleJournal.bootstrapServing(before.cap, before.end, forRevoked)).rejects.toThrow("unavailable");
+    // A new broker on the same HOME is a new owner generation; the old preparation stays refused.
+    ({ owned: broker, ownReservation: reservation } = await serving());
+    const replay = fresh(broker);
+    await expect(LifecycleJournal.bootstrapServing(replay.cap, replay.end, forRevoked)).rejects.toThrow("unavailable");
+    expect(existsSync(directory())).toBe(false);
+    expect(spawned).toEqual(["identity", "inspect", "identity", "inspect", "identity", "inspect"]);
   });
 });

@@ -123,8 +123,9 @@ function snapshot(home: string, scope: Scope, observed?: { stamps: string }): Sn
     check(path, true); if (path === dirname(path)) break;
   }
   if (scope === "established") {
-    const dir = join(home, DIRECTORY), directory = check(dir, true); check(join(dir, FILE), false);
-    if (observed) observed.stamps = `${directory.mtimeNs}:${directory.ctimeNs}`; // Same lstat, no extra syscall. check(join(dir, FILE + "-journal"), false);
+    const dir = join(home, DIRECTORY), directory = check(dir, true); check(join(dir, FILE), false); check(join(dir, FILE + "-journal"), false);
+    // The directory times come from the same lstat as its identity: no extra syscall.
+    if (observed) observed.stamps = `${directory.mtimeNs}:${directory.ctimeNs}`;
   }
   return paths;
 }
@@ -402,7 +403,17 @@ try {
 /** Boundary1 only: actual serving capability -> exclusive new objects -> fresh ACL
  * evidence. Neither this opaque result nor file existence grants admission/promotion. */
 export interface WindowsLifecyclePreparation { readonly __preparation?: never }
-const preparations = new WeakMap<WindowsLifecyclePreparation, { owner: string; generation: number; home: string; pid: number; creationIdentity: string }>();
+type PreparationRecord = { owner: string; generation: number; home: string; pid: number; creationIdentity: string; expires: number };
+const preparations = new WeakMap<WindowsLifecyclePreparation, PreparationRecord>();
+/** Single-use HOME permission handed from a consumed preparation to object creation. */
+export interface WindowsLifecyclePreparedHome { readonly __preparedHome?: never }
+const preparedHomes = new WeakMap<WindowsLifecyclePreparedHome, PreparationRecord>();
+function preparationMatches(record: PreparationRecord | undefined, capability: LifecycleServingCapability): PreparationRecord {
+  const actual = assertLifecycleServingCapability(capability, "prepare");
+  if (!record || record.pid !== process.pid || record.owner !== actual.ownerInstance || record.generation !== actual.generation ||
+    record.home !== actual.home || !(performance.now() < record.expires)) throw new WindowsLifecyclePathUnavailable("unavailable");
+  return record;
+}
 
 /** Setup step BEFORE the timed bootstrap phase: the own-process identity helper and
  * the HOME-scope ACL helper run here, each inside this call's own prepare budget.
@@ -414,22 +425,27 @@ export async function prepareWindowsLifecycleBootstrap(capability: LifecycleServ
   const creationIdentity = await readOwnWindowsLifecycleIdentity(capability, deadline);
   await verifyWindowsLifecyclePaths(initial.home, initial.ownerInstance, "prepare", "home", deadline);
   const actual = assertLifecycleServingCapability(capability, "prepare");
-  if (actual.ownerInstance !== initial.ownerInstance || actual.generation !== initial.generation || actual.home !== initial.home)
+  if (actual.ownerInstance !== initial.ownerInstance || actual.generation !== initial.generation || actual.home !== initial.home || !Number.isFinite(deadline))
     throw new WindowsLifecyclePathUnavailable("unavailable");
   const preparation: WindowsLifecyclePreparation = Object.freeze({});
-  preparations.set(preparation, { owner: initial.ownerInstance, generation: initial.generation, home: initial.home, pid: process.pid, creationIdentity });
+  // Valid only until this setup's deadline plus ONE bootstrap budget.
+  preparations.set(preparation, { owner: initial.ownerInstance, generation: initial.generation, home: initial.home, pid: process.pid,
+    creationIdentity, expires: deadline + PHASE_MS.prepare });
   return preparation;
 }
-/** The prepared own-process identity, only for the SAME serving owner/generation/home/process. */
-export function preparedWindowsLifecycleIdentity(preparation: WindowsLifecyclePreparation, capability: LifecycleServingCapability): string {
-  const record = preparations.get(preparation), actual = assertLifecycleServingCapability(capability, "prepare");
-  if (!record || record.pid !== process.pid || record.owner !== actual.ownerInstance || record.generation !== actual.generation || record.home !== actual.home)
-    throw new WindowsLifecyclePathUnavailable("unavailable");
-  return record.creationIdentity;
+/** Consumes a preparation (any attempt, valid or not, retires it) and returns the
+ * prepared own-process identity plus a single-use HOME permission, only for the SAME
+ * live serving owner/generation/home/process before the preparation's expiry. */
+export function consumeWindowsLifecyclePreparation(preparation: WindowsLifecyclePreparation, capability: LifecycleServingCapability):
+  { creationIdentity: string; preparedHome: WindowsLifecyclePreparedHome } {
+  const record = preparations.get(preparation); preparations.delete(preparation);
+  const valid = preparationMatches(record, capability), preparedHome: WindowsLifecyclePreparedHome = Object.freeze({});
+  preparedHomes.set(preparedHome, valid);
+  return { creationIdentity: valid.creationIdentity, preparedHome };
 }
 
 export async function createWindowsLifecycleObjects(capability: LifecycleServingCapability, deadline: number,
-  preparation?: WindowsLifecyclePreparation): Promise<WindowsLifecycleCreation> {
+  preparedHome?: WindowsLifecyclePreparedHome): Promise<WindowsLifecycleCreation> {
   try {
   const initial = assertLifecycleServingCapability(capability, "prepare");
   const expires = Math.min(deadline, performance.now() + PHASE_MS.prepare);
@@ -444,8 +460,11 @@ export async function createWindowsLifecycleObjects(capability: LifecycleServing
   current();
   // A valid preparation supplies the HOME verdict without a helper (identity recheck,
   // fail closed on change); otherwise the unchanged fresh HOME observation runs here.
-  if (preparation !== undefined) preparedWindowsLifecycleIdentity(preparation, capability);
-  const homeProof = preparation !== undefined
+  if (preparedHome !== undefined) {
+    const record = preparedHomes.get(preparedHome); preparedHomes.delete(preparedHome);
+    preparationMatches(record, capability);
+  }
+  const homeProof = preparedHome !== undefined
     ? cachedWindowsLifecyclePathProof(initial.home, initial.ownerInstance, "prepare", "home", expires)
     : await verifyWindowsLifecyclePaths(initial.home, initial.ownerInstance, "prepare", "home", expires);
   current(); assertWindowsLifecyclePathProof(homeProof, initial.home, initial.ownerInstance, "prepare", "home");
