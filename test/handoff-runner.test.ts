@@ -39,6 +39,17 @@ function created(path: string) {
   if (existsSync(path)) ready.resolve();
   return ready.promise;
 }
+type StoredJob = ReturnType<typeof readStore>[number];
+function admittedJob(matches: (job: StoredJob) => boolean): Promise<StoredJob> {
+  const ready = deferred<StoredJob>();
+  const check = () => {
+    const job = readStore(join(env.home, "jobs.json")).find(job => matches(job) && job.sessionId);
+    if (job) ready.resolve(job);
+  };
+  const watcher = watch(env.home, (_event, filename) => { if (String(filename) === "jobs.json") check(); });
+  watchers.push(watcher); check();
+  return ready.promise;
+}
 let responses: { at: number; name: string; args: Record<string, unknown>; text?: string; error?: unknown }[];
 let captureErrors: unknown[];
 const exec = promisify(execFile);
@@ -220,8 +231,7 @@ it("hands off a blocking ask without returning results or notes to the old calle
   // Cleanup closes that transport; keep its rejection observed until we await it.
   void pending.catch(() => {});
   await Promise.race([ready, pending.then(reply => { throw new Error(`Delegate ended before parent-link readiness: ${reply.text}`); })]);
-  await until(() => readStore(join(env.home, "jobs.json")).some(j => j.name.startsWith("claude-ask-")));
-  const job = readStore(join(env.home, "jobs.json")).find((j) => j.name.startsWith("claude-ask-"))!;
+  const job = await Promise.race([admittedJob(j => j.name.startsWith("claude-ask-")), pending.then(reply => { throw new Error(`Delegate ended before admission: ${reply.text}`); })]);
   expect(job).toBeDefined();
   expect((await call(source, "handoff_subagents", { to: "claude-target" })).error).toBeFalsy();
   await call(source, "inbox");
@@ -255,6 +265,10 @@ it.each([
   // A detached Windows runner first establishes its private job object (a PowerShell guardian) before the delegate
   // starts; on a loaded runner that alone takes 8-11 s. Admission and turn deadlines below allow for it.
   await ready;
+  // The fake CLI writes its link immediately after emitting init. The executor
+  // can still be persisting that init under jobs.json.lock; handing off before
+  // that write completes races the broker's two-second metadata lease budget.
+  await admittedJob(job => job.name === name);
   const child = parentFromEnv(JSON.parse(readFileSync(linkFile, "utf8")))!;
   expect((await call(source, "handoff_subagents", { to: "claude-target", note: "Finish and review" })).error).toBeFalsy();
   expect((await call(source, "message_subagent", { job: name, message: "Former master instruction" })).error).toBeFalsy();
