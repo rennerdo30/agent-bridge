@@ -58,23 +58,42 @@ execution, including calls nested in Code Mode.
 - Editable creation and session tools keep working. Interactive sessions receive
   no injected plugin or configuration. V1 and 2.0.26 keep their existing path.
 
-## Fail-closed follow-up (review P1s)
+## Fail-closed follow-up (review P1s and P2s)
 
 - Version output is parsed as exactly one SemVer line, prerelease and build
-  metadata included. Any suffixed 2.x build (for example `2.0.29-dev+abc123`)
-  takes the native-gate path. Unparsable output, several versions, or a major
-  version above 2 is unknown: every delegated opencode mode is refused before
+  metadata included. Terminal color codes, banner lines and repeated identical
+  version lines are tolerated. Unparsable output and several different
+  versions are unknown. Every delegated opencode mode is refused before
   opencode starts. V2 is never selected without the enforcing plugin.
-- The gate classifies tool identities. Anything that looks native but is not on
-  the known list is denied in read mode and needs a per-call approval in ask
-  mode. Removal-like worktree tools are denied in every delegated mode.
+- **Accepted limit (supervisor decision):** the native gate is only proven for
+  2.0.27 and later 2.0.x releases. Its hooks were observed firing on 2.0.29,
+  including suffixed builds such as `2.0.29-dev+abc123`. Everything else that
+  may carry native tools is unknown: 2.1 and later, 3.x and later, suffixed
+  builds below 2.0.27, and 2.0.27 prereleases. Delegated jobs for those versions
+  are refused with a message that agent-bridge needs an update for that opencode
+  version. There is no runtime canary. Supporting a new range means repeating
+  the native probes below and widening the range in `parseOpencodeVersion`.
+- The gate classifies tool identities. Read-only natives from the proven
+  inventory pass. These are `opencode_worktree_list`, `opencode_models`,
+  `opencode_list_mcp_resources` and `opencode_read_mcp_resource`. Any other id
+  that mentions a worktree, whatever its prefix or separators, is treated as
+  removal and denied in every delegated mode, including edit. Examples are
+  `opencode_worktree_rm`, `_discard`, `_drop`, `remove_worktree`,
+  `WorktreeRemove`, and `opencode worktree remove`. Other unknown native-looking
+  ids are denied in read mode and need a per-call approval in ask mode.
   Execute hooks without a string tool identity are refused in every mode. An ask
   call without a session ID or with unserializable input is refused too.
 - Plugin setup fails without the permission/tool hook API, or without
-  `permission.assert` in ask mode. The plugin writes a contract report: contract
-  version, access, registered hooks and native inventory. Before prompting,
-  Bridge requires that report. In read/ask mode the inventory must contain all
-  four proven identities; otherwise the native API is treated as unknown.
+  `permission.assert` in ask mode. The generated `index.js` embeds a random
+  per-job nonce. The plugin writes a contract report: contract version, access,
+  registered hooks, native inventory and that nonce. Before prompting, Bridge
+  requires a report with the matching nonce. In every mode, edit included, the
+  inventory must contain all four proven identities. Otherwise the native API is
+  treated as unknown. The report proves the hooks were registered. That they
+  fire is proven only by the native probes for the accepted range above.
+- `src/core/history-answer.ts` runs opencode without this gate. It relies on
+  `permission: { "*": "deny" }` and `tools: { "*": false }`, so no tool,
+  native or otherwise, is available to it.
 
 ## Validation and limits
 
@@ -94,7 +113,9 @@ The ask cases each request four approvals (including two renames), even over a
 configured native allow. Read and ask-denied create nothing. Ask-approved and edit
 can create/move/rename. Every mode rejects forced removal of a separate, dirty,
 unpushed generated Git worktree, preserving its file and registration. Started
-CLI PIDs are recorded and checked stopped. Native fixtures and `evidence.json`
+CLI PIDs are recorded and checked stopped. A fifth opt-in native case runs a
+read-mode job under the gate. Its top-level `read`, `grep` and `glob` calls all
+return the fixture file's content. Native fixtures and `evidence.json`
 are retained under the test fixture root; the test never manually reaps them.
 
 Not verified: native macOS/Linux, actual V1/2.0.26 executables, other native 2.x

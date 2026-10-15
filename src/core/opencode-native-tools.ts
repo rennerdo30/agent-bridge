@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,12 +19,15 @@ export interface OpencodeNativeGateReport {
   access: string;
   hooks: string[];
   inventory: string[] | null;
+  /** Random per-job value from the generated entry; proves the report belongs to this run. */
+  nonce?: string;
 }
 
 /**
  * Serialized into the plugin too. Keep it free of module closures/imports. Anything that looks like an OpenCode
  * native tool but is not on the known list is "unknown-native": the gate never lets it through unchecked in
- * read or ask mode.
+ * read or ask mode. Any other id mentioning a worktree, whatever its prefix, counts as removal: a renamed
+ * removal tool (rm, discard, drop, purge, ...) must never reach force-deleting unpushed worktrees, even in edit.
  */
 export function classifyOpencodeNativeTool(id: unknown): OpencodeNativeToolKind {
   if (typeof id !== "string" || !id) return "unknown-native";
@@ -33,13 +37,16 @@ export function classifyOpencodeNativeTool(id: unknown): OpencodeNativeToolKind 
     opencode_session_move: "mutation",
     opencode_session_rename: "mutation",
     opencode_worktree_list: "safe",
+    // Read-only natives in the proven 2.0.29 inventory.
+    opencode_models: "safe",
+    opencode_list_mcp_resources: "safe",
+    opencode_read_mcp_resource: "safe",
   };
   if (Object.prototype.hasOwnProperty.call(known, id)) return known[id]!;
-  const native = /^opencode[_.:/-]/i.test(id) || /^(?:worktree|session)s?(?:[_.:/-]|$)/i.test(id);
-  if (!native) return "other";
-  // A renamed or new removal tool is still removal: unavailable in every delegated mode.
-  if (/worktree/i.test(id) && /remove|delete|prune|destroy|clean|reset/i.test(id)) return "remove";
-  return "unknown-native";
+  // Checked on every id, whatever its prefix or separators ("remove_worktree", "WorktreeRemove", spaces).
+  if (/worktree/i.test(id)) return "remove";
+  const native = /^opencode[_.:/\s-]/i.test(id) || /^sessions?(?:[_.:/\s-]|$)/i.test(id);
+  return native ? "unknown-native" : "other";
 }
 
 /** Serialized into a private, per-run plugin. Keep this function free of module closures/imports. */
@@ -108,13 +115,14 @@ export async function installOpencodeNativeToolGate(
 }
 
 /** Why a gate report does not prove enforcement for this access, or null when it does. */
-export function opencodeNativeGateReportError(report: unknown, access: OpencodeNativeAccess): string | null {
+export function opencodeNativeGateReportError(report: unknown, access: OpencodeNativeAccess, nonce?: string): string | null {
   if (!report || typeof report !== "object") return "reported no enforcement contract";
   const r = report as Partial<OpencodeNativeGateReport>;
+  if (nonce !== undefined && r.nonce !== nonce) return "wrote a report that does not belong to this job";
   if (r.contract !== OPENCODE_NATIVE_GATE_CONTRACT) return `reported unsupported contract ${JSON.stringify(r.contract)}`;
   if (r.access !== access) return `was installed for ${JSON.stringify(r.access)} instead of ${JSON.stringify(access)}`;
   if (!Array.isArray(r.hooks) || OPENCODE_NATIVE_GATE_HOOKS.some(h => !r.hooks!.includes(h))) return "did not register its enforcement hooks";
-  if (access === "edit") return null;
+  // Every mode, edit included: removal protection is only proven against this inventory.
   if (!Array.isArray(r.inventory) || !r.inventory.every(id => typeof id === "string")) return "could not read the native tool inventory";
   const missing = OPENCODE_NATIVE_GATED_TOOLS.filter(id => !r.inventory!.includes(id));
   if (missing.length) return `found a native tool inventory without ${missing.join(", ")}; the native tool API is unknown`;
@@ -122,7 +130,8 @@ export function opencodeNativeGateReportError(report: unknown, access: OpencodeN
 }
 
 /** OpenCode accepts local plugin directories. No dependency install or interactive config mutation. */
-export function createOpencodeNativeToolPlugin(access: OpencodeNativeAccess): { directory: string; report(): unknown; dispose(): void } {
+export function createOpencodeNativeToolPlugin(access: OpencodeNativeAccess): { directory: string; nonce: string; report(): unknown; dispose(): void } {
+  const nonce = randomBytes(16).toString("hex");
   const directory = mkdtempSync(join(tmpdir(), "agent-bridge-opencode-gate-"));
   const manifest = join(directory, "package.json");
   const entry = join(directory, "index.js");
@@ -131,10 +140,10 @@ export function createOpencodeNativeToolPlugin(access: OpencodeNativeAccess): { 
   writeFileSync(entry, `import { writeFileSync } from "node:fs";
 export default { id: ${JSON.stringify(OPENCODE_NATIVE_GATE_ID)}, setup: async ctx => {
   const report = await (${installOpencodeNativeToolGate.toString()})(ctx, ${JSON.stringify(access)}, (${classifyOpencodeNativeTool.toString()}));
-  writeFileSync(new URL(${JSON.stringify(`./${GATE_REPORT_FILE}`)}, import.meta.url), JSON.stringify(report));
+  writeFileSync(new URL(${JSON.stringify(`./${GATE_REPORT_FILE}`)}, import.meta.url), JSON.stringify({ ...report, nonce: ${JSON.stringify(nonce)} }));
 } };
 `);
-  return { directory, report() {
+  return { directory, nonce, report() {
     try { return JSON.parse(readFileSync(reportFile, "utf8")); } catch { return null; }
   }, dispose() {
     // Only our generated files, never recursive cleanup of a plugin path or its target.
@@ -150,11 +159,15 @@ const VERSION_LINE_RE = /^\s*(?:opencode\s+)?v?(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z-]
 
 /**
  * Exactly one SemVer line (prerelease and build metadata included) is a known version; anything else is unknown.
- * A suffixed 2.x build may contain native tools before its release number says so: it gets the native gate.
+ * The native gate is only proven for 2.0.27 and later 2.0.x releases (hooks observed firing on 2.0.29). Every
+ * other 2.x that may carry native tools (2.1+, suffixed builds below 2.0.27, 2.0.27 prereleases) is unknown:
+ * delegated jobs are refused until Bridge is updated for it. This is an accepted, documented limit.
  */
 export function parseOpencodeVersion(output: string): { api: OpencodeApi; version: string | null } {
   const found = new Map<string, RegExpExecArray>();
-  for (const line of output.split(/\r?\n/)) {
+  // Terminal color codes are presentation, not part of the version.
+  // eslint-disable-next-line no-control-regex
+  for (const line of output.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "").split(/\r?\n/)) {
     const match = VERSION_LINE_RE.exec(line);
     if (match) found.set(match.slice(1, 6).join("|"), match);
   }
@@ -164,8 +177,10 @@ export function parseOpencodeVersion(output: string): { api: OpencodeApi; versio
   const version = `${major}.${minor}.${patch}${match[4] ?? ""}${match[5] ?? ""}`;
   if (![major, minor, patch].every(Number.isSafeInteger)) return { api: "unknown", version: null };
   if (major < 2) return { api: "v1", version };
-  if (major > 2) return { api: "unknown", version };
-  return { api: minor > 0 || patch >= 27 || match[4] || match[5] ? "v2-native" : "v2", version };
+  if (major > 2 || minor > 0) return { api: "unknown", version };
+  if (patch < 27) return { api: match[4] || match[5] ? "unknown" : "v2", version };
+  if (patch === 27 && match[4]) return { api: "unknown", version };
+  return { api: "v2-native", version };
 }
 
 export function hasOpencodeNativeTools(version: string): boolean {
@@ -173,6 +188,10 @@ export function hasOpencodeNativeTools(version: string): boolean {
 }
 
 export function unknownOpencodeVersionMessage(output: string): string {
+  const { version } = parseOpencodeVersion(output);
+  if (version) {
+    return `opencode ${version} is outside the range agent-bridge's native tool gate is proven for (2.0.27 and later 2.0.x releases); refusing the delegated opencode job. Update agent-bridge for this opencode version.`;
+  }
   const shown = output.trim().replace(/\s+/g, " ").slice(0, 120) || "(empty)";
   return `Unrecognized opencode version output "${shown}"; refusing the delegated opencode job because its native worktree/session tools cannot be proven gated. Use a released opencode version.`;
 }

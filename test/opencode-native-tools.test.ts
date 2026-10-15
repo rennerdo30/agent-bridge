@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { expect, it, vi } from "vitest";
 import { delegateToOpencode, OPENCODE_READ_ONLY_TOOLS, pidAlive } from "../src/core/delegate.js";
 import { delegateToOpencodeServed, opencodePermissionRequest } from "../src/core/opencode-served.js";
-import { classifyOpencodeNativeTool, createOpencodeNativeToolPlugin, hasOpencodeNativeTools, installOpencodeNativeToolGate, opencodeNativeGateReportError, parseOpencodeVersion, type OpencodeNativeAccess } from "../src/core/opencode-native-tools.js";
+import { classifyOpencodeNativeTool, createOpencodeNativeToolPlugin, hasOpencodeNativeTools, installOpencodeNativeToolGate, opencodeNativeGateReportError, parseOpencodeVersion, unknownOpencodeVersionMessage, type OpencodeNativeAccess } from "../src/core/opencode-native-tools.js";
 import { nullLogger } from "../src/core/logger.js";
 
 const mutations = ["opencode_worktree_create", "opencode_session_move", "opencode_session_rename"];
@@ -73,7 +73,9 @@ it("preserves editable creation and session tools, and serializes a standalone p
 });
 
 it.each(["opencode v1.18.35", "2.0.26", "opencode v2.0.27", "opencode v2.0.29", "v2.1.0"])("selects the native boundary for %s", version => {
-  expect(hasOpencodeNativeTools(version)).toBe(!/1\.18|2\.0\.26/.test(version));
+  // 2.1+ is outside the proven native range (accepted limit): unknown, not gated, so delegated jobs are refused.
+  expect(hasOpencodeNativeTools(version)).toBe(/2\.0\.2[79]/.test(version));
+  if (version === "v2.1.0") expect(parseOpencodeVersion(version)).toEqual({ api: "unknown", version: "2.1.0" });
 });
 
 it.each([1, 2])("keeps the V%i pre-native run flags and read restrictions unchanged", async major => {
@@ -143,10 +145,34 @@ createServer((req,res)=>{appendFileSync(new URL('paths',import.meta.url),req.url
 
 it.each([
   ["opencode v2.0.29-dev+abc123", "2.0.29-dev+abc123"], ["2.0.29+build.5", "2.0.29+build.5"],
-  ["opencode v2.0.27-rc.1", "2.0.27-rc.1"], ["v2.0.26-dev", "2.0.26-dev"], ["opencode v2.1.0-beta.2+sha.f00", "2.1.0-beta.2+sha.f00"],
-])("parses suffixed version %s and always requires the native gate", (output, version) => {
+  ["opencode v2.0.28-rc.1", "2.0.28-rc.1"], ["2.0.27+sha.1", "2.0.27+sha.1"],
+  // Banner lines, a repeated version line, CRLF and terminal colors do not change the version.
+  ["Welcome to opencode\nopencode v2.0.29", "2.0.29"], ["opencode v2.0.29\nopencode v2.0.29", "2.0.29"],
+  ["\u001b[32mopencode v2.0.29\u001b[0m", "2.0.29"], ["\u001b[1m\u001b[36mopencode\u001b[0m v2.0.29\r\n", "2.0.29"],
+])("parses version output %j inside the proven range and requires the native gate", (output, version) => {
   expect(parseOpencodeVersion(output)).toEqual({ api: "v2-native", version });
   expect(hasOpencodeNativeTools(output)).toBe(true);
+});
+
+it.each([
+  ["v2.0.26-dev", "2.0.26-dev"], ["2.0.26+build.7", "2.0.26+build.7"], ["opencode v2.0.27-rc.1", "2.0.27-rc.1"],
+  ["v2.1.0", "2.1.0"], ["opencode v2.1.0-beta.2+sha.f00", "2.1.0-beta.2+sha.f00"], ["opencode v2.4.3", "2.4.3"],
+])("treats %s outside the proven native range as unknown", (output, version) => {
+  expect(parseOpencodeVersion(output)).toEqual({ api: "unknown", version });
+  expect(hasOpencodeNativeTools(output)).toBe(false);
+  expect(unknownOpencodeVersionMessage(output)).toMatch(/outside the range .* Update agent-bridge for this opencode version/);
+});
+
+it("refuses delegated jobs for an opencode 2.x outside the proven range before starting it", async () => {
+  const fake = fakeServedOpencode("out-of-range", "opencode v2.1.0", "active");
+  const base = { bin: fake.bin, cwd: fake.cwd, prompt: "must not execute", timeoutSec: 10, log: nullLogger };
+  for (const autoApprove of [false, true]) {
+    await expect(delegateToOpencode({ ...base, autoApprove })).rejects.toThrow("opencode 2.1.0 is outside the range");
+  }
+  const onPermission = vi.fn(async () => ({ allow: true as const }));
+  await expect(delegateToOpencodeServed({ ...base, onPermission })).rejects.toThrow("Update agent-bridge for this opencode version");
+  await expect(delegateToOpencodeServed({ ...base, onPermission, permissions: null })).rejects.toThrow("Update agent-bridge for this opencode version");
+  expect(fake.calls()).toEqual([]);
 });
 
 it("never runs a dev/build-suffixed 2.x without the enforcing plugin", async () => {
@@ -183,12 +209,19 @@ it("refuses every delegated mode before starting opencode when the version outpu
 });
 
 it("gates unknown native tool identities: denied in read, approval in ask, removal-like denied everywhere", async () => {
-  const unknown = ["opencode_session_delete", "opencode.session.fork", "worktree_checkout", "session.share", "OPENCODE_SESSION_MOVE"];
-  const removalLike = ["opencode_worktree_delete", "opencode_worktree_prune", "worktree.remove", "OPENCODE_WORKTREE_REMOVE"];
+  const unknown = ["opencode_session_delete", "opencode.session.fork", "session.share", "OPENCODE_SESSION_MOVE", "opencode session archive"];
+  // Every id mentioning a worktree other than the known create/list, whatever prefix, counts as removal.
+  const removalLike = ["opencode_worktree_delete", "opencode_worktree_prune", "worktree.remove", "OPENCODE_WORKTREE_REMOVE",
+    "opencode_worktree_rm", "opencode_worktree_discard", "opencode_worktree_drop", "opencode_worktree_purge", "worktree_checkout",
+    "opencode worktree remove", "remove_worktree", "WorktreeRemove", "git_worktree_switch", "opencode_worktree_create_v2"];
   for (const tool of unknown) expect(classifyOpencodeNativeTool(tool)).toBe("unknown-native");
   for (const tool of removalLike) expect(classifyOpencodeNativeTool(tool)).toBe("remove");
   expect(classifyOpencodeNativeTool("bridge_get_conversation")).toBe("other");
   const read = await gate("read");
+  // Read-only natives from the proven inventory keep working.
+  for (const tool of ["opencode_worktree_list", "opencode_models", "opencode_list_mcp_resources", "opencode_read_mcp_resource", "read", "grep", "glob"]) {
+    await read.before(event(tool));
+  }
   for (const tool of unknown) await expect(read.before(event(tool))).rejects.toThrow("denied in read mode");
   expect(read.assert).not.toHaveBeenCalled();
   const ask = await gate("ask");
@@ -212,6 +245,10 @@ it("gates unknown native tool identities: denied in read, approval in ask, remov
   expect(report([...mutations], "ask")).toMatch("without opencode_worktree_remove");
   expect(report(null)).toMatch("could not read the native tool inventory");
   expect(report(null, "ask")).toMatch("could not read the native tool inventory");
+  // Edit mode needs the inventory too: removal protection is only proven against it.
+  expect(report([...mutations, "opencode_worktree_remove"], "edit")).toBeNull();
+  expect(report(null, "edit")).toMatch("could not read the native tool inventory");
+  expect(report([...mutations, "opencode_worktree_rm"], "edit")).toMatch("without opencode_worktree_remove");
   expect(report([...mutations, "opencode_worktree_remove", 7])).toMatch("could not read the native tool inventory");
 });
 
@@ -245,6 +282,25 @@ it("fails closed on unexpected hook and plugin API shapes", async () => {
   expect(opencodeNativeGateReportError({ contract: 2, access: "read", hooks: ["permission.evaluate", "tool.execute.before"], inventory }, "read")).toMatch("unsupported contract");
   expect(opencodeNativeGateReportError({ contract: 1, access: "edit", hooks: ["permission.evaluate", "tool.execute.before"], inventory }, "read")).toMatch("instead of");
   expect(opencodeNativeGateReportError({ contract: 1, access: "ask", hooks: ["tool.execute.before"], inventory }, "ask")).toMatch("enforcement hooks");
+});
+
+it("binds the gate report to a per-job nonce embedded in the generated plugin", async () => {
+  const first = createOpencodeNativeToolPlugin("edit"), second = createOpencodeNativeToolPlugin("edit");
+  try {
+    expect(first.nonce).toMatch(/^[0-9a-f]{32}$/);
+    expect(second.nonce).not.toBe(first.nonce);
+    expect(readFileSync(join(first.directory, "index.js"), "utf8")).toContain(first.nonce);
+    expect(first.report()).toBeNull();
+    const exported = (await import(/* @vite-ignore */ pathToFileURL(join(first.directory, "index.js")).href)).default;
+    const hook = async () => {};
+    await exported.setup({ permission: { hook }, tool: { hook, list: async () => [...mutations, "opencode_worktree_remove", "read"].map(id => ({ id })) } });
+    const report = first.report() as any;
+    expect(report).toMatchObject({ contract: 1, access: "edit", hooks: ["permission.evaluate", "tool.execute.before"], nonce: first.nonce });
+    expect(opencodeNativeGateReportError(report, "edit", first.nonce)).toBeNull();
+    expect(opencodeNativeGateReportError(report, "edit", second.nonce)).toMatch("does not belong to this job");
+    expect(opencodeNativeGateReportError({ ...report, nonce: undefined }, "edit", first.nonce)).toMatch("does not belong to this job");
+  } finally { first.dispose(); second.dispose(); }
+  expect(existsSync(first.directory)).toBe(false);
 });
 
 it("refuses before prompting when the gate is active but proves no enforcement contract", async () => {
@@ -331,6 +387,49 @@ it.skipIf(!nativeBin).each(["read", "ask-deny", "ask-allow", "edit"] as const)("
     }
     writeFileSync(join(root, "evidence.json"), JSON.stringify({ mode, result, approvals, results, pids }, null, 2));
     console.log(`AB-316 native evidence: ${root}; PIDs ${pids.join(", ")}`);
+  } finally {
+    provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve()));
+    for (const pid of pids) expect(pidAlive(pid)).toBe(false);
+  }
+}, 60_000);
+
+it.skipIf(!nativeBin)("native read mode keeps read, grep and glob working under the gate", async () => {
+  const root = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "ab316-readtools-"));
+  const cwd = join(root, "repo"); mkdirSync(cwd);
+  writeFileSync(join(cwd, "seed.txt"), "ab316 needle\n");
+  const requests: any[] = [];
+  const provider = createServer(async (req, res) => {
+    let raw = ""; for await (const chunk of req) raw += chunk;
+    const body = JSON.parse(raw); requests.push(body);
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    const send = (delta: any, finish_reason: string | null = null) => res.write("data: " + JSON.stringify({ id: "chatcmpl-fixture", object: "chat.completion.chunk", created: 1, model: "probe", choices: [{ index: 0, delta, finish_reason }] }) + "\n\n");
+    // Top-level built-ins, exactly as a model calls them; no Code Mode wrapper.
+    const call = body.tools?.length && !body.messages.some((m: any) => m.role === "tool");
+    send({ role: "assistant" });
+    if (call) send({ tool_calls: [["read", { path: "seed.txt" }], ["grep", { pattern: "ab316 needle" }], ["glob", { pattern: "*.txt" }]]
+      .map(([name, args], index) => ({ index, id: `call_${name}`, type: "function", function: { name, arguments: JSON.stringify(args) } })) });
+    else send({ content: "probe complete" });
+    send({}, call ? "tool_calls" : "stop"); res.end("data: [DONE]\n\n");
+  });
+  await new Promise<void>(resolve => provider.listen(0, "127.0.0.1", resolve));
+  const port = (provider.address() as { port: number }).port;
+  const configDir = join(root, "config", "opencode"); mkdirSync(configDir, { recursive: true });
+  writeFileSync(join(configDir, "opencode.json"), JSON.stringify({ model: "probe/probe",
+    providers: { probe: { package: "@opencode/ai/providers/openai-compatible", settings: { baseURL: `http://127.0.0.1:${port}/v1` }, models: { probe: { capabilities: { tools: true }, limit: { context: 128000, output: 4096 } } } } } }));
+  const extraEnv = { HOME: root, USERPROFILE: root, XDG_CONFIG_HOME: join(root, "config"), XDG_DATA_HOME: join(root, "data"),
+    XDG_CACHE_HOME: join(root, "cache"), XDG_STATE_HOME: join(root, "state") };
+  const pids: number[] = [];
+  const log = { ...nullLogger, info: (_: string, data?: any) => { if (data?.pid) pids.push(data.pid); } };
+  try {
+    const result = await delegateToOpencode({ bin: nativeBin!, cwd, extraEnv, model: "probe/probe", prompt: "Run the read probe", timeoutSec: 45, log, autoApprove: false });
+    expect(result).toMatchObject({ text: "probe complete", isError: false });
+    const toolMessages = requests.flatMap(b => b.messages ?? []).filter((m: any) => m.role === "tool");
+    const output = (id: string) => JSON.stringify(toolMessages.find((m: any) => m.tool_call_id === id)?.content ?? null);
+    writeFileSync(join(root, "evidence.json"), JSON.stringify({ result, toolMessages, pids }, null, 2));
+    for (const id of ["call_read", "call_grep", "call_glob"]) {
+      expect(output(id)).toContain(id === "call_glob" ? "seed.txt" : "ab316 needle");
+      expect(output(id)).not.toMatch(/agent-bridge|denied|unknown tool/i);
+    }
   } finally {
     provider.closeAllConnections(); await new Promise<void>(resolve => provider.close(() => resolve()));
     for (const pid of pids) expect(pidAlive(pid)).toBe(false);

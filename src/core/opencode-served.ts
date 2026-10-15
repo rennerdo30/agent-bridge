@@ -204,7 +204,7 @@ export async function delegateToOpencodeServed(
           const loaded = Array.isArray(plugins) && plugins.find((p: Json) => p.id === OPENCODE_NATIVE_GATE_ID);
           if (loaded?.state?.status === "active") {
             // Active alone proves nothing: the plugin must report the enforcement contract and the inventory.
-            const problem = opencodeNativeGateReportError(gate.report(), nativeAccess);
+            const problem = opencodeNativeGateReportError(gate.report(), nativeAccess, gate.nonce);
             if (problem) throw new DelegateError(`OpenCode native tool gate ${problem}; refusing delegated execution`, "failed");
             break;
           }
