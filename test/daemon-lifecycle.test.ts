@@ -1,5 +1,6 @@
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { setTimeout as delay } from "node:timers/promises";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer } from "node:net";
@@ -514,8 +515,17 @@ describe("standalone demand-start broker", () => {
     const identity = await readProcessIdentity(pid);
     expect(identity).toBeTruthy(); owned.set(pid, identity!); expect(pid).not.toBe(process.pid);
     const statusClient = await client();
-    try { expect(await statusClient.request("coreStatus", {})).toMatchObject({ mode: "daemon", pid, version: APP_VERSION, connectedClients: 11, runningJobsEvidence: "legacy_registry_labels_not_execution" }); }
-    finally { statusClient.close(); }
+    try {
+      // Every node that saw ENOENT spawned its own demand-start process; each loser that
+      // finds the winner authenticates once and exits (src/cli/broker-daemon.ts). That
+      // probe is briefly authenticated, so only a count ABOVE our ten peers plus this
+      // client may settle. A missing client is never awaited, and exactly 11 must be seen.
+      let status = await statusClient.request("coreStatus", {});
+      for (const end = performance.now() + 5_000; status.connectedClients > 11 && performance.now() < end;) {
+        await delay(20); status = await statusClient.request("coreStatus", {});
+      }
+      expect(status).toMatchObject({ mode: "daemon", pid, version: APP_VERSION, connectedClients: 11, runningJobsEvidence: "legacy_registry_labels_not_execution" });
+    } finally { statusClient.close(); }
     expect(peers.every(peer => !peer.isBroker)).toBe(true);
     expect(await peers[0]!.peers()).toHaveLength(10);
     const ids = await Promise.all(peers.map(peer => peer.health().then(health => health.brokerPid)));
