@@ -45,32 +45,32 @@ import {
   safeParseAsync,
   serializeMessage,
   toJsonSchemaCompat
-} from "./chunks/chunk-IA5PGORH.mjs";
+} from "./chunks/chunk-JT7DUQYI.mjs";
 import {
   RewakeEndpoint,
   WAKE_HEADER,
   shouldWakeClaudeMessage
-} from "./chunks/chunk-XO2RXGN6.mjs";
+} from "./chunks/chunk-KOC23KSU.mjs";
 import {
   antigravityHookOutput
-} from "./chunks/chunk-M7MTSC23.mjs";
+} from "./chunks/chunk-B24AH72Q.mjs";
 import {
   MAX_STREAM_ENTRIES
-} from "./chunks/chunk-MXDCGGXM.mjs";
+} from "./chunks/chunk-7HB3YSL7.mjs";
 import {
   isBridgeWorktree,
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-3FQIF23N.mjs";
+} from "./chunks/chunk-4DOVYJLT.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-H2YMR5WA.mjs";
+} from "./chunks/chunk-FG6PPH3M.mjs";
 import {
   readWorktreeState
-} from "./chunks/chunk-RD5SOAEN.mjs";
-import "./chunks/chunk-M4TGTZAM.mjs";
+} from "./chunks/chunk-XXHFES3H.mjs";
+import "./chunks/chunk-W5PMEMTX.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   codexAppServerCall,
@@ -78,7 +78,7 @@ import {
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-WPRJAY23.mjs";
+} from "./chunks/chunk-7K4YRIOE.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
@@ -90,7 +90,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-CZ6XMBRO.mjs";
+} from "./chunks/chunk-7GA5YYTX.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -101,31 +101,31 @@ import {
   formatProjectRoute,
   formatReplyRestrictions,
   formatVersionSkew
-} from "./chunks/chunk-IJ23GQO3.mjs";
+} from "./chunks/chunk-RF2XS2PV.mjs";
 import {
   REMOTE_JOB_POLL_MS,
   remoteSpawnArgsSchema
-} from "./chunks/chunk-CESOGP7W.mjs";
+} from "./chunks/chunk-WW4WTPIJ.mjs";
 import {
   formatHealth,
   probeBrokerHealth
-} from "./chunks/chunk-7M2VTPSG.mjs";
-import "./chunks/chunk-UQ75CONU.mjs";
+} from "./chunks/chunk-3C2U56KV.mjs";
+import "./chunks/chunk-YJRV7YSY.mjs";
 import "./chunks/chunk-RQUYBZWF.mjs";
 import {
   conversationPageSchema
-} from "./chunks/chunk-4PRKEOTA.mjs";
+} from "./chunks/chunk-3TVKKIUX.mjs";
 import {
   HISTORY_SEARCH_TOOL_DESCRIPTION,
   historySearchToolInput
-} from "./chunks/chunk-HAJENJ6M.mjs";
+} from "./chunks/chunk-PU6HDVUK.mjs";
 import {
   MAX_HOLD_REASON_CHARS,
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-LS3ZZXVW.mjs";
-import "./chunks/chunk-TMOINIIB.mjs";
+} from "./chunks/chunk-RBYHFF2W.mjs";
+import "./chunks/chunk-XVSSBTM3.mjs";
 import {
   ACCESS_LEVELS,
   DEFAULT_FOLLOW_UP,
@@ -153,22 +153,22 @@ import {
   resolveBinary,
   runProcess,
   verifiedGoneJobOwners
-} from "./chunks/chunk-Z65S3WI4.mjs";
+} from "./chunks/chunk-5TFUOXTE.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
   formatResourceSlots
-} from "./chunks/chunk-EL2JUENV.mjs";
+} from "./chunks/chunk-KCP53S7V.mjs";
 import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   bundleDirectory
 } from "./chunks/chunk-D5ZW6VFT.mjs";
-import "./chunks/chunk-G2UHCHUI.mjs";
+import "./chunks/chunk-Z43J3RV2.mjs";
 import {
   resolveDbPath,
   resolveHome,
   resolvePipePath
-} from "./chunks/chunk-MC6YEO5C.mjs";
+} from "./chunks/chunk-OOEJYTVW.mjs";
 import "./chunks/chunk-JTZGNEMM.mjs";
 import {
   MAX_JOB_SEND_TARGETS,
@@ -179,7 +179,7 @@ import {
   loadOrCreateToken,
   tokensEqual
 } from "./chunks/chunk-V4WDBMEN.mjs";
-import "./chunks/chunk-NE6GQ2GI.mjs";
+import "./chunks/chunk-T4RPWEWO.mjs";
 import {
   CLAUDE_PERMISSION_MODES,
   CODEX_APPROVALS_REVIEWERS,
@@ -191,7 +191,7 @@ import {
   parseAgentKind,
   saveConfigValue,
   watchConfig
-} from "./chunks/chunk-PC26HO4O.mjs";
+} from "./chunks/chunk-VXTK3ET2.mjs";
 import {
   AGENT_KINDS,
   BROADCAST,
@@ -208,16 +208,16 @@ import {
   askOwnerSchema,
   decisionScopeSchema,
   formatDecisionSummary
-} from "./chunks/chunk-7NH7XSAT.mjs";
+} from "./chunks/chunk-ICQDYRDK.mjs";
 import {
   ZodOptional,
   canonicalProjectRoot,
   external_exports,
   isInternalBridgeProcess,
   isPluginCacheCwd
-} from "./chunks/chunk-IMOU3QNL.mjs";
-import "./chunks/chunk-6WACHX2M.mjs";
-import "./chunks/chunk-CWCDN2JJ.mjs";
+} from "./chunks/chunk-VNTDCO27.mjs";
+import "./chunks/chunk-FHFZNR3S.mjs";
+import "./chunks/chunk-OPKUVLUC.mjs";
 import "./chunks/chunk-HYOPFLLN.mjs";
 import {
   archiveFile,
@@ -225,8 +225,8 @@ import {
   isRecord,
   readJsonStore,
   writeJsonStore
-} from "./chunks/chunk-5US2OQUB.mjs";
-import "./chunks/chunk-NU7S2DHP.mjs";
+} from "./chunks/chunk-LBRIK5DV.mjs";
+import "./chunks/chunk-GQHWYCBW.mjs";
 import {
   APP_NAME,
   APP_VERSION,
@@ -240,12 +240,12 @@ import {
   MAX_JOBS_LIMIT,
   MAX_JOB_TIMEOUT_SEC,
   MAX_WAIT_SEC
-} from "./chunks/chunk-G5PLFO4A.mjs";
+} from "./chunks/chunk-ZRE5UIJC.mjs";
 import {
   museBridgeTool,
   museHookOutput,
   museReadingTool
-} from "./chunks/chunk-4BSGVJWH.mjs";
+} from "./chunks/chunk-LVDZCAYS.mjs";
 import {
   MUSE_ACCESS_ENV,
   antigravityAncestor,
@@ -255,7 +255,7 @@ import {
   readMusePrivateJson,
   restoreMuseContext,
   writeMusePrivateJson
-} from "./chunks/chunk-LU5OH4AB.mjs";
+} from "./chunks/chunk-VNQ4UNAO.mjs";
 import {
   TRANSCRIPT_ID,
   directory,
@@ -266,7 +266,7 @@ import {
 } from "./chunks/chunk-NVDPULGI.mjs";
 import {
   processIdentity
-} from "./chunks/chunk-4O6KB7UQ.mjs";
+} from "./chunks/chunk-DEWCC5JJ.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/mcp/server.ts
@@ -1992,11 +1992,34 @@ function discardFinishedNotes(ctx) {
   });
   node.markRead(obsolete.map((m) => m.id));
 }
-function take(ctx, wakeOnly, notesOnly = false) {
+var antigravityStopPending = /* @__PURE__ */ new WeakMap();
+function holdOrMarkRead(ctx, ids, hold) {
+  if (!ids.length) return;
+  if (hold) {
+    let pending = antigravityStopPending.get(ctx);
+    if (!pending) {
+      pending = /* @__PURE__ */ new Set();
+      antigravityStopPending.set(ctx, pending);
+    }
+    for (const id of ids) pending.add(id);
+    return;
+  }
+  ctx.node?.markRead(ids);
+}
+function confirmAntigravityStopDelivery(ctx) {
+  const pending = antigravityStopPending.get(ctx);
+  if (!pending?.size) return;
+  antigravityStopPending.delete(ctx);
+  ctx.node?.markRead([...pending]);
+}
+function releaseAntigravityStopDelivery(ctx) {
+  antigravityStopPending.delete(ctx);
+}
+function take(ctx, wakeOnly, notesOnly = false, hold = false) {
   const node = ctx.node;
   discardFinishedNotes(ctx);
   const msgs = node.unread().filter((m) => !isQuietMessage(m)).filter((m) => !notesOnly || ctx.jobs?.isNote(m) || !shouldWakeClaudeMessage(node, ctx.cfg, m)).filter((m) => !wakeOnly || m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m)).slice(0, HOOK_MAX_MESSAGES);
-  node.markRead(msgs.map((m) => m.id));
+  holdOrMarkRead(ctx, msgs.map((m) => m.id), hold);
   return msgs;
 }
 var parentReads = /* @__PURE__ */ new WeakMap();
@@ -2129,8 +2152,13 @@ async function runHook(ctx, input, current, busyAtIngress) {
   await withinHook(node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: err.message })), input.signal);
   if (!current()) return {};
   if (input.event === "StopFailure") {
+    releaseAntigravityStopDelivery(ctx);
     finishHookTurn(ctx, input);
     return {};
+  }
+  if (ctx.agent === "antigravity") {
+    if (input.event === "PostToolUse" || input.event === "UserPromptSubmit" && input.stopHookActive || input.event === "Stop" && input.stopHookActive) confirmAntigravityStopDelivery(ctx);
+    else releaseAntigravityStopDelivery(ctx);
   }
   const stopJobsRunning = input.event === "Stop" ? ctx.jobs?.runningCount() ?? 0 : 0;
   const replay = node.refreshPending().catch((err) => ctx.log.warn("pending mail refresh failed; retained for retry", { err: String(err) }));
@@ -2142,6 +2170,7 @@ async function runHook(ctx, input, current, busyAtIngress) {
   else ctx.wakeDelivery?.release();
   if (input.event === "PostToolUse" || input.event === "UserPromptSubmit") ctx.wakeDelivery?.active();
   const channel = ctx.channelActive();
+  const holdStop = ctx.agent === "antigravity";
   switch (input.event) {
     case "SessionStart": {
       ctx.activity?.("idle");
@@ -2182,16 +2211,16 @@ ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online rig
       const jobsRunning = stopJobsRunning;
       const inConversation = lingerRemaining > 0 || jobsRunning > 0;
       if (!node.autoWakeEnabled && !inConversation) {
-        const awaited = node.unread().filter((m) => (node.isNotificationAwaited(m) || m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node, ctx.cfg, m) || ctx.agent === "opencode" && m.to !== BROADCAST && !AGENT_KINDS.includes(m.to) && shouldWakeClaudeMessage(node, ctx.cfg, m)) && m.hop < ctx.cfg.maxHops && !isQuietMessage(m) && !m.conversationId.endsWith(":note")).slice(0, HOOK_MAX_MESSAGES);
+        const awaited = node.unread().filter((m) => (node.isNotificationAwaited(m) || m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node, ctx.cfg, m) || (ctx.agent === "opencode" || ctx.agent === "antigravity") && m.to !== BROADCAST && !AGENT_KINDS.includes(m.to) && shouldWakeClaudeMessage(node, ctx.cfg, m)) && m.hop < ctx.cfg.maxHops && !isQuietMessage(m) && !m.conversationId.endsWith(":note")).slice(0, HOOK_MAX_MESSAGES);
         if (awaited.length) {
-          node.markRead(awaited.map((m) => m.id));
+          holdOrMarkRead(ctx, awaited.map((m) => m.id), holdStop);
           ctx.activity?.("busy");
           return { decision: "block", reason: formatMessages(awaited, { replyHint: false }) };
         }
         finishHookTurn(ctx, input);
         return {};
       }
-      const msgs = take(ctx, true);
+      const msgs = take(ctx, true, false, holdStop);
       if (!msgs.length && jobsRunning > 0) {
         const waits = new MessageWaitStore(ctx.home);
         waits.save(node, {}, "notify");
@@ -2357,6 +2386,10 @@ var AntigravityHooks = class {
   server = null;
   retired = false;
   conversationId = null;
+  stopPending = false;
+  lastStopExecutionNum = null;
+  lastInvocationNum = null;
+  lastStopInvocationNum = null;
   async start() {
     if (!this.ctx.node && !this.ctx.parent) return;
     const pid = await antigravityAncestor();
@@ -2374,15 +2407,66 @@ var AntigravityHooks = class {
           if (raw.length > 256 * 1024) throw new Error("hook input too large");
         }
         const body = object(JSON.parse(raw)), input = object(body.input);
-        if (!["PreInvocation", "Stop"].includes(body.event)) throw new Error("unknown event");
+        if (!["PreInvocation", "PreToolUse", "Stop"].includes(body.event)) throw new Error("unknown event");
         const id = typeof input.conversationId === "string" ? input.conversationId : null;
+        const cwd = Array.isArray(input.workspacePaths) && typeof input.workspacePaths[0] === "string" ? input.workspacePaths[0] : null;
         this.conversationId ??= this.ctx.node?.currentSessionId ?? id;
         if (id && this.conversationId && id !== this.conversationId) {
           res.writeHead(200, { "content-type": "application/json" }).end("{}");
           return;
         }
-        const output = await buildHookResponse(this.ctx, { event: body.event === "Stop" ? "Stop" : "UserPromptSubmit", sessionId: typeof input.conversationId === "string" ? input.conversationId : null, cwd: Array.isArray(input.workspacePaths) && typeof input.workspacePaths[0] === "string" ? input.workspacePaths[0] : null, stopHookActive: false });
+        if (body.event === "PreToolUse") {
+          this.stopPending = false;
+          this.lastStopExecutionNum = null;
+          this.lastStopInvocationNum = null;
+          await (this.ctx.launchKnown ?? Promise.resolve());
+          if (!this.ctx.headless && this.ctx.node) {
+            if (id) {
+              await this.ctx.node.setSessionId(id).catch(() => {
+              });
+              this.ctx.onSessionId?.(id);
+            }
+            if (cwd && this.ctx.learnCwd) await this.ctx.learnCwd(cwd);
+            await this.ctx.node.ensureConnected().catch(() => {
+            });
+            confirmAntigravityStopDelivery(this.ctx);
+          }
+          res.writeHead(200, { "content-type": "application/json" }).end("{}");
+          return;
+        }
+        if (body.event === "PreInvocation") {
+          const invocationNum = typeof input.invocationNum === "number" && Number.isFinite(input.invocationNum) ? input.invocationNum : null;
+          const continued2 = this.stopPending && invocationNum !== null && (this.lastStopInvocationNum !== null ? invocationNum > this.lastStopInvocationNum : invocationNum > 0);
+          this.lastInvocationNum = invocationNum;
+          this.stopPending = false;
+          this.lastStopExecutionNum = null;
+          this.lastStopInvocationNum = null;
+          const output2 = await buildHookResponse(this.ctx, { event: "UserPromptSubmit", sessionId: id, cwd, stopHookActive: continued2 });
+          const text3 = "reason" in output2 ? String(output2.reason) : "hookSpecificOutput" in output2 ? output2.hookSpecificOutput.additionalContext : "";
+          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(antigravityHookOutput(body.event, text3)));
+          return;
+        }
+        const reason = typeof input.terminationReason === "string" ? input.terminationReason.trim() : "";
+        const hasError = typeof input.error === "string" && input.error.trim().length > 0;
+        const executionNum = typeof input.executionNum === "number" && Number.isFinite(input.executionNum) ? input.executionNum : null;
+        const capReached = this.stopPending && executionNum !== null && this.lastStopExecutionNum !== null && executionNum <= this.lastStopExecutionNum;
+        const canContinue = !hasError && (!reason || ["model_stop", "NO_TOOL_CALL", "STOP"].includes(reason)) && !capReached;
+        const continued = this.stopPending && executionNum !== null && this.lastStopExecutionNum !== null && executionNum > this.lastStopExecutionNum;
+        this.stopPending = false;
+        this.lastStopExecutionNum = null;
+        this.lastStopInvocationNum = null;
+        if (!canContinue) {
+          await buildHookResponse(this.ctx, { event: "StopFailure", sessionId: id, cwd, stopHookActive: false });
+          res.writeHead(200, { "content-type": "application/json" }).end("{}");
+          return;
+        }
+        const output = await buildHookResponse(this.ctx, { event: "Stop", sessionId: id, cwd, stopHookActive: continued });
         const text2 = "reason" in output ? String(output.reason) : "hookSpecificOutput" in output ? output.hookSpecificOutput.additionalContext : "";
+        if (text2) {
+          this.stopPending = true;
+          this.lastStopExecutionNum = executionNum;
+          this.lastStopInvocationNum = this.lastInvocationNum;
+        }
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(antigravityHookOutput(body.event, text2)));
       })().catch(() => {
         if (!res.writableEnded) res.writeHead(500).end("{}");
@@ -2400,6 +2484,10 @@ var AntigravityHooks = class {
     register();
     this.ctx.node?.on("replaced", () => {
       this.retired = true;
+      this.stopPending = false;
+      this.lastStopExecutionNum = null;
+      this.lastInvocationNum = null;
+      this.lastStopInvocationNum = null;
     });
     this.ctx.node?.on("reclaimed", () => {
       this.retired = false;
@@ -2410,6 +2498,10 @@ var AntigravityHooks = class {
     const server = this.server;
     this.server = null;
     this.retired = true;
+    this.stopPending = false;
+    this.lastStopExecutionNum = null;
+    this.lastInvocationNum = null;
+    this.lastStopInvocationNum = null;
     if (server) await new Promise((resolve2) => server.close(() => resolve2()));
   }
 };
@@ -2935,7 +3027,42 @@ function pathFromUriOrPath(v) {
 function text(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
 }
+function modeReport(requested, reason) {
+  return {
+    requested,
+    effective: reason ? "refused" : "legacyunconfirmed",
+    stage: "requested",
+    protocolSupport: "legacy",
+    sharedIdempotentDelivery: false,
+    ...reason ? { reason } : {},
+    capabilities: {
+      route: "legacyunconfirmed",
+      receiverRole: "unknown",
+      ownedSession: false,
+      generationKnown: false,
+      activeSteering: false,
+      interruptRestart: false,
+      queue: false,
+      idleWake: false
+    }
+  };
+}
+function formatModeReport(report) {
+  return `Mode report: ${JSON.stringify(report)}`;
+}
+function modeText(report, body) {
+  return { ...text(`${formatModeReport(report)}
+${body}`), structuredContent: { mode: report } };
+}
+function refuseMode(mode, reason) {
+  throw new BridgeError("bad_request", `Requested ${mode} refused: ${reason}. No mode operation applied.`, { modeReport: modeReport(mode, reason) });
+}
 function describeError(err) {
+  if (err instanceof BridgeError && err.details?.modeReport) {
+    const { modeReport: report, ...details } = err.details;
+    return `${formatModeReport(report)}
+${describeError(new BridgeError(err.code, err.message, details))}`;
+  }
   if (err instanceof BridgeError) {
     switch (err.code) {
       case "ambiguous_target":
@@ -3173,7 +3300,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-5GPNF2VB.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-YQLRK3CG.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3185,9 +3312,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-5OIQUQK7.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-VKKZF6MM.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-5OIQUQK7.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-VKKZF6MM.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3324,6 +3451,20 @@ function registerTools(mcp, ctx, targets) {
         if (ctx.agent !== "claude" || !node || node.wasReplaced || typeof childId !== "string" || !["peers", "inbox", "send"].includes(name)) throw new BridgeError("unauthorized", "Scoped native children may use peers, inbox and send only on their current Claude parent connection.");
         const children = await node.nativeChildren(), child = children.find((c) => c.agentId === childId);
         if (!child) throw new BridgeError("unauthorized", "No live scoped native child; wait for its SubagentStart hook.");
+        if (name === "send" && a.mode !== void 0) {
+          if (a.mode === "auto") await confirmNativeChildDelivery(ctx, childId);
+          const result2 = await node.sendWithMode({
+            mode: a.mode,
+            nativeChild: childId,
+            to: String(a.to),
+            body: String(a.message),
+            replyTo: a.reply_to,
+            conversationId: a.conversation_id,
+            ifNoNewerThan: a.if_no_newer_than,
+            messageId: a.message_id
+          });
+          return modeText(result2.mode, JSON.stringify(result2.send));
+        }
         await confirmNativeChildDelivery(ctx, childId);
         const identity = `Your native child bridge address is ${child.address}. Parent: ${child.parent}.`;
         if (name === "peers") {
@@ -3347,8 +3488,21 @@ ${JSON.stringify(result)}`);
     }
     if (name !== "health" && ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: err.message }));
     await ctx.observeMeta?.(extra._meta);
+    if (ctx.agent === "antigravity" && name !== "health" && name !== "hook_event") {
+      if (name === "inbox") {
+        if (a.mark_read !== false) releaseAntigravityStopDelivery(ctx);
+      } else {
+        confirmAntigravityStopDelivery(ctx);
+      }
+    }
     try {
-      return await fn(args, extra);
+      const result = await fn(args, extra);
+      if ((name === "send" || name === "message_subagent") && a.mode === "auto" && !result.structuredContent?.mode) {
+        const report = modeReport("auto");
+        result.content.unshift({ type: "text", text: formatModeReport(report) });
+        result.structuredContent = { ...result.structuredContent, mode: report };
+      }
+      return result;
     } catch (err) {
       log.warn("tool failed", { tool: name, err: err.message });
       return text(describeError(err), true);
@@ -3380,8 +3534,8 @@ ${JSON.stringify(result)}`);
     },
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-REEIUQ64.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-UUQUQGU2.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-5PTBWYOS.mjs")).readHistory(resolveDbPath(ctx.home), args);
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-PZCXGYEH.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
@@ -3389,7 +3543,7 @@ ${JSON.stringify(result)}`);
     description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
     inputSchema: conversationPageSchema.shape,
     annotations: { readOnlyHint: true }
-  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-PROKAEHD.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
+  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-TD7ZJT6D.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
   register(
     "decide",
     {
@@ -3576,10 +3730,24 @@ ${JSON.stringify(result)}`);
         conversation_id: external_exports.string().optional().describe("Continue an existing conversation"),
         if_no_newer_than: external_exports.string().optional().describe("Refuse this reply if newer unread conversation or recipient mail exists after this message id"),
         message_kind: external_exports.enum(["note", "question"]).optional().describe("note retains FYI/status in history without waking or injecting context; question requests supervisor attention (a job asking its parent when blocked or before a risky step)"),
-        message_id: external_exports.uuid().optional().describe("Stable UUID for an idempotent send or recovery retry. Reuse this id only with the same content; requires an updated broker.")
+        message_id: external_exports.uuid().optional().describe("Stable UUID for an idempotent send or recovery retry. Reuse this id only with the same content; requires an updated broker."),
+        mode: external_exports.enum(["auto", "queue", "steer", "restart"]).optional().describe("Omitted/auto retains existing delivery. Queue is one-shot only to a current authenticated Claude native child, rejects message_id and proves stored mail only. Session/job queue, steer and restart refuse; unknown outcomes never retry or fall back.")
       }
     },
     guarded("send", async (a) => {
+      if (a.mode && a.mode !== "auto") {
+        if (!node || a.message_kind) refuseMode(a.mode, "parent/job links and message_kind have no explicit-mode boundary");
+        const result = await node.sendWithMode({
+          mode: a.mode,
+          to: a.to,
+          body: a.message,
+          replyTo: a.reply_to,
+          conversationId: a.conversation_id,
+          ifNoNewerThan: a.if_no_newer_than,
+          messageId: a.message_id
+        });
+        return modeText(result.mode, JSON.stringify(result.send));
+      }
       if (!node && ctx.parent) {
         if (a.message_id) throw new BridgeError("bad_request", "Durable message IDs require a session broker connection; parent links do not support idempotent retries.");
         if (a.if_no_newer_than) throw new BridgeError("bad_request", "Guarded sends require a session broker connection; read the parent/sibling inbox before replying.");
@@ -3632,21 +3800,29 @@ Pending approvals require an explicit decide; this message does not approve or c
         return text(`${a.to} is a running subagent: message_subagent outcome ${outcome}. Use message_subagent for subagents.`);
       }
       if (a.reply_to) n.markRead([a.reply_to]);
-      const res = await n.send({
+      const sendArgs = {
         to: a.to,
         body: a.message,
         replyTo: a.reply_to,
         conversationId: a.message_kind === "note" ? `${a.conversation_id ?? `note-${a.message_id ?? Date.now()}`}:note` : a.conversation_id,
         ifNoNewerThan: a.if_no_newer_than,
         messageId: a.message_id
-      }).catch((err) => {
+      };
+      let actualMode;
+      const res = await (a.mode === "auto" ? n.sendWithMode({ ...sendArgs, mode: "auto" }).then((result) => {
+        actualMode = result.mode;
+        return result.send;
+      }) : n.send(sendArgs)).catch((err) => {
         if (!jobLines.length) throw err;
         throw new Error(`Session broadcast failed: ${err.message}
 Running-job broadcast already attempted:
 ${jobLines.join("\n")}. Do not resend to these jobs without checking consumption.`);
       });
       const first = res.messages[0];
-      if (!first) return text(["No session recipients were eligible for this broadcast.", ...formatDelivery(res, cfg.maxHops), ...jobLines].join("\n"));
+      if (!first) {
+        const body = ["No session recipients were eligible for this broadcast.", ...formatDelivery(res, cfg.maxHops), ...jobLines].join("\n");
+        return actualMode ? modeText(actualMode, body) : text(body);
+      }
       const lines = [res.storage?.recovered ? `Message ${first.id} sent previously and stored in the broker (conversation ${first.conversationId}). Recovered by id; no additional message sent. Delivery and consumption are separate.` : `Message ${first.id} sent and stored in the broker (conversation ${first.conversationId}).`];
       if (res.storage?.receipts.length) lines.push(`Stored recipient copies: ${res.storage.receipts.map((r) => `${r.recipient} (${r.readAt === null ? "unread" : "read"})`).join(", ")}.`);
       lines.push(...formatDelivery(res, cfg.maxHops));
@@ -3656,7 +3832,7 @@ ${jobLines.join("\n")}`);
       if (res.queuedFor.length) lines.push(t("send.queued", { names: res.queuedFor.join(", ") }));
       if (!res.replyRestrictions?.length) lines.push(t("send.waitHint"));
       lines.push(`For a consumption receipt, call wait_for_message(read_receipt_of="${first.id}").`);
-      return text(lines.join("\n"));
+      return actualMode ? modeText(actualMode, lines.join("\n")) : text(lines.join("\n"));
     })
   );
   register(
@@ -4010,7 +4186,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job2) => ({ ...a, _job: job2.name }), a), resumeFor(a), keep(a));
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
-        const exact = a.sandbox !== void 0 || a.permission_mode !== void 0 || a.auto_approve !== void 0;
+        const exact = a.sandbox !== void 0 || a.permission_mode !== void 0 || a.auto_approve !== void 0 || a.bypass_permissions !== void 0;
         const note = exact ? "" : `
 ${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
         return text(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${derivedTitle ? `
@@ -4121,6 +4297,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       description: "Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. Use it to answer a subagent's question promptly. It continues in its own session with its full context, in the same folder or worktree. While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. The answer arrives as a message from the job. Plain messages never answer pending approvals; use decide or the dashboard. Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent. If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it).",
       inputSchema: {
         job: external_exports.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),
+        mode: external_exports.enum(["auto", "queue", "steer", "restart"]).optional().describe("Omitted/auto preserves existing continuation behavior. Explicit queue/steer/restart refuse before title, settings or continuation; job emission cannot prove durable acceptance."),
         message: external_exports.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task."),
         title: external_exports.string().min(1).max(MAX_TITLE_CHARS).optional().describe("Give the job a (new) short title, 3-7 words; use it for jobs listed without a title."),
         effort: external_exports.string().regex(/^[A-Za-z0-9_-]{1,20}$/).optional().describe("Thinking level for this continuation and the job's later turns (e.g. low, medium, high, xhigh). A turn already running keeps its level: to apply it now, cancel_subagent and continue it with message_subagent."),
@@ -4137,6 +4314,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       }
     },
     guarded("message_subagent", async (a) => {
+      if (a.mode && a.mode !== "auto") refuseMode(a.mode, "job queue/steer/restart requires a reviewed receiver transaction and effect boundary");
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       const existing = await jobs.share(a.job);
