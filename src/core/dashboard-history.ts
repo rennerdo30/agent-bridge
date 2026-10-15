@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { withByteSources, type ByteSourceResolver } from "./byte-source.js";
@@ -24,18 +24,16 @@ function openStore(home: string): DatabaseSync | null {
 
 /**
  * Without a usable store every existing source is read from its file, so the answer is importing exactly when the
- * reader opened one. A request that touches no existing file (a job whose transcript is gone) has nothing to import,
- * matching HistorySourceResolver, which does not flag a missing file either.
+ * reader asked for a file that exists. A request that touches no existing file (a job whose transcript is gone) has
+ * nothing to import, matching HistorySourceResolver, which does not flag a missing file either. The check runs only
+ * when a caller reads the flag, so a run listing that ignores it costs no extra file-system call per log.
  */
 function readFiles<T>(read: () => T): HistoryRead<T> {
-  let importing = false;
-  const files: ByteSourceResolver = {
-    open(file) {
-      try { statSync(file); importing = true; } catch { /* Missing: openFileSource reports it as before. */ }
-      return null;
-    },
-  };
-  return { value: withByteSources(files, read), importing };
+  const requested = new Set<string>();
+  const files: ByteSourceResolver = { open(file) { requested.add(file); return null; } };
+  const value = withByteSources(files, read);
+  let importing: boolean | undefined;
+  return { value, get importing() { return importing ??= [...requested].some((file) => existsSync(file)); } };
 }
 
 export interface HistoryRead<T> {
