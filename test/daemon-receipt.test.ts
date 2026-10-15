@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { spawn } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { LifecycleJournal, LifecycleUnavailable, LIFECYCLE_ADMISSION_MS, LIFECYCLE_PRE_RELEASE_MS,
+import { LifecycleJournal, LifecycleUnavailable, observeLifecycleWriteOutcome, LIFECYCLE_ADMISSION_MS, LIFECYCLE_PRE_RELEASE_MS,
   LIFECYCLE_PREPARE_MS, LIFECYCLE_DISPATCH_DRAIN_MS, LIFECYCLE_WRITE_CHECKPOINT_MS, LIFECYCLE_BIND_OBSERVE_MS,
   type LifecycleInstance, type LifecycleRequest } from "../src/core/daemon-lifecycle.js";
 import { readProcessIdentity } from "../src/core/process-identity.js";
@@ -237,6 +237,146 @@ function committedFixtureRows() {
   const observer = new DatabaseSync(file(), { readOnly: true });
   try { observer.exec("PRAGMA query_only=ON"); return observer.prepare("SELECT json FROM receipt_revisions ORDER BY revision").all(); }
   finally { observer.close(); }
+}
+
+// Supplemental Package1 fixtures: real SQLite calls, SIMULATED clock/fault
+// boundaries only. These observers cannot grant publication or reconciliation.
+async function capturedOutcomeJournal() {
+  const capture = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+    if (sql.includes("PRAGMA journal_mode=PERSIST")) captured = this;
+    return sqliteExec.call(this, sql);
+  });
+  try { return await bootstrap(); } finally { capture.mockRestore(); }
+}
+async function captureRefusal(action: () => unknown | Promise<unknown>): Promise<unknown> {
+  try { await action(); } catch (error) { return error; }
+  throw new Error("Expected the original operation to refuse");
+}
+type OutcomeFault = "late_commit" | "before_commit" | "reader" | "reader_expiry" | "reader_close" |
+  "reader_preflight" | "reader_init" | "reader_prepare" | "reader_native_expiry" | "reader_init_close" |
+  "wrapper_throw" | "conflict_throw" | "last_guard" | "reader_chain";
+type VerificationQuery = "lineage" | "receipt_id" | "receipt_selected" | "conflict";
+type VerificationBoundary = "prepare_expiry" | "get_expiry" | "get_native_expiry" | "get_close_expiry";
+function outcomeFault(writer: DatabaseSync, end: number, fault: OutcomeFault, finalClockRead = 1,
+  verification?: { query: VerificationQuery; boundary: VerificationBoundary }) {
+  const realNow = performance.now.bind(performance), originalClose = DatabaseSync.prototype.close;
+  let expired = false, committed = false, lastReader: DatabaseSync | undefined, arm = false, clockReads = 0;
+  let retainedReadonly: DatabaseSync | undefined;
+  const counts = { begins: 0, commits: 0, returnedCommits: 0, lateSql: 0 };
+  const readerCalls = { initialized: 0, closed: 0, queryOnlyPrepared: 0, queryOnlyGets: 0, gets: 0, lateGets: 0 };
+  const readers = new Set<DatabaseSync>();
+  const queryCalls = { lineage: { prepared: 0, gets: 0, returned: 0 }, receipt_id: { prepared: 0, gets: 0, returned: 0 },
+    receipt_selected: { prepared: 0, gets: 0, returned: 0 }, conflict: { prepared: 0, gets: 0, returned: 0 } };
+  let targetReader: DatabaseSync | undefined;
+  let postCommitClockReads = 0;
+  const expire = () => { expired = true; };
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => {
+    if (arm && ++clockReads >= finalClockRead) expire();
+    // Pinned source ordering after ORIGINAL COMMIT: Windows' post-write guard
+    // has four clock reads, then both platforms have two autocommit checks.
+    // Expire at the first reader guard, not a prior transaction/phase guard.
+    if (committed && fault === "reader_preflight" && ++postCommitClockReads >= (portable ? 3 : 7)) expire();
+    return expired ? Math.max(realNow(), end + 1) : realNow();
+  });
+  const runs: Array<() => void> = [];
+  const exec = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+    if (expired) counts.lateSql++;
+    if (this === writer && sql === "BEGIN IMMEDIATE") counts.begins++;
+    if (this === writer && sql === "COMMIT") counts.commits++;
+    const value = sqliteExec.call(this, sql);
+    if (this === writer && sql === "COMMIT") {
+      committed = true; counts.returnedCommits++;
+      if (fault === "late_commit") expire();
+      if (fault === "wrapper_throw") throw new Error("SIMULATED wrapper error after ORIGINAL COMMIT");
+      if (fault === "conflict_throw") throw new LifecycleUnavailable("revision_conflict");
+    }
+    if (committed && this !== writer && sql === "PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;") {
+      readers.add(this); readerCalls.initialized++;
+      if (["reader_init", "reader_native_expiry", "reader_init_close"].includes(fault)) expire();
+      // SIMULATED budget-shaped native-boundary exception, not thrown by guard.
+      if (fault === "reader_native_expiry") throw new LifecycleUnavailable("budget");
+    }
+    return value;
+  });
+  const prepare = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+    if (expired) counts.lateSql++;
+    const statement = sqlitePrepare.call(this, sql);
+    if (committed && this !== writer && fault === "reader" && sql === "SELECT json FROM lifecycle_lineage WHERE singleton=1") {
+      throw new Error("SIMULATED independent reader error after ORIGINAL prepare");
+    }
+    if (committed && this !== writer) {
+      const query: VerificationQuery | undefined = sql === "SELECT json FROM lifecycle_lineage WHERE singleton=1" ? "lineage"
+        : sql.startsWith("SELECT r.json,l.json AS lineage,") ? (sql.includes("s.restart_id AS selected_id") ? "receipt_selected" : "receipt_id")
+        : sql === "SELECT 1 FROM receipt_conflicts WHERE restart_id=? AND observed_digest=? AND json=?" ? "conflict" : undefined;
+      if (query) queryCalls[query].prepared++;
+      const target = query !== undefined && verification?.query === query;
+      if (target) targetReader = this; // Actual returned statement's native DB receiver only.
+      const get = statement.get;
+      const pending = vi.spyOn(statement, "get").mockImplementation(function(this: typeof statement, ...args: unknown[]) {
+        readerCalls.gets++; if (sql === "PRAGMA query_only") readerCalls.queryOnlyGets++;
+        if (query) queryCalls[query].gets++;
+        if (expired) { counts.lateSql++; readerCalls.lateGets++; }
+        const value = Reflect.apply(get, this, args);
+        if (query) queryCalls[query].returned++;
+        if (target && verification!.boundary !== "prepare_expiry") {
+          expire(); // Only AFTER ORIGINAL receipt/lineage/conflict SELECT.get returned.
+          if (verification!.boundary === "get_native_expiry") throw new LifecycleUnavailable("budget"); // SIMULATED native-boundary error, not guard provenance.
+        }
+        if (fault === "reader_expiry" && sql === "SELECT json FROM lifecycle_lineage WHERE singleton=1") expire();
+        return value;
+      });
+      runs.push(() => pending.mockRestore());
+      if (target && verification!.boundary === "prepare_expiry") expire(); // Only AFTER ORIGINAL prepare returned.
+      if (sql === "PRAGMA query_only") {
+        readerCalls.queryOnlyPrepared++;
+        if (fault === "reader_prepare") expire(); // Only AFTER ORIGINAL prepare returned.
+      }
+    }
+    if (committed && this !== writer && sql.includes("s.restart_id AS selected_id")) lastReader = this;
+    if (this === writer && fault === "before_commit" && sql.startsWith("INSERT INTO selected_receipt")) {
+      const run = statement.run;
+      const pending = vi.spyOn(statement, "run").mockImplementation(function(this: typeof statement, ...args: unknown[]) {
+        const value = Reflect.apply(run, this, args); expire(); return value;
+      });
+      runs.push(() => pending.mockRestore());
+    }
+    return statement;
+  });
+  const close = vi.spyOn(DatabaseSync.prototype, "close").mockImplementation(function(this: DatabaseSync) {
+    if (committed && this !== writer && (["reader_close", "reader_init_close"].includes(fault) ||
+        (this === targetReader && verification?.boundary === "get_close_expiry")) && !retainedReadonly) {
+      retainedReadonly = this; // Exact actual source readonly receiver, before the SIMULATED close error.
+      throw new Error("SIMULATED unconfirmed readonly disposal after ORIGINAL COMMIT");
+    }
+    const value = originalClose.call(this);
+    if (readers.has(this)) readerCalls.closed++;
+    // The real selected snapshot and real readonly disposal precede this switch.
+    if (this === lastReader && fault === "last_guard") arm = true;
+    return value;
+  });
+  return { counts, readerCalls, queryCalls, get retainedReadonly() { return retainedReadonly !== undefined; },
+    disposeReadonlyFixture() {
+      if (!retainedReadonly) return;
+      // Fixture-owned exact receiver only. Clear only after the actual native close
+      // returns; this does not acknowledge the product's unknown disposal record.
+      originalClose.call(retainedReadonly); retainedReadonly = undefined;
+    },
+    restore() { for (const restore of runs) restore(); close.mockRestore(); prepare.mockRestore(); exec.mockRestore(); clock.mockRestore(); } };
+}
+async function verificationRefusal(query: VerificationQuery, boundary: VerificationBoundary) {
+  const j = await capturedOutcomeJournal(), input = request();
+  if (query === "conflict") await admit(j, input, deadline()); // Separate original accepted operation, before fault capture.
+  const end = deadline(), fault = outcomeFault(captured!, end, "reader_chain", 1, { query, boundary });
+  let error: unknown, unexpected: unknown, retained = false;
+  try { error = await captureRefusal(() => admit(j, query === "conflict" ? { ...input, operation: "stop" } : input, end)); }
+  catch (failure) { unexpected = failure; }
+  finally {
+    retained = fault.retainedReadonly; fault.restore(); // Before any oracle/fixture disposal.
+    try { fault.disposeReadonlyFixture(); }
+    catch (cleanup) { if (unexpected) throw new AggregateError([unexpected, cleanup], "Fixture operation and exact readonly disposal failed"); throw cleanup; }
+  }
+  if (unexpected) throw unexpected;
+  return { j, input, error, retained, fault };
 }
 
 describe("lifecycle-only committed receipt storage (not restart acceptance)", () => {
@@ -571,5 +711,217 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     expect(committedFixtureRows()).toEqual(beforeRows); expect(readFileSync(file() + "-fixture-retained-journal")).toEqual(beforeJournal);
     renameSync(file() + "-fixture-retained-journal", file() + "-journal");
     expect((await lookup(j, input.restartId))?.state).toBe("accepted");
+  });
+});
+
+describe("source-associated publication UNKNOWN (not controller or durability authority)", () => {
+  it("keeps an expired pre-BEGIN admission as the original budget refusal", async () => {
+    const j = await capturedOutcomeJournal(), input = request(), end = deadline();
+    const cap = portable ? undefined : servingFixture!.broker.lifecycleServingCapability("admission", end);
+    const exec = vi.spyOn(DatabaseSync.prototype, "exec"), expired = performance.now() - 1;
+    const error = await captureRefusal(() => portable ? j.admit(input, expired) : j.admitServing(cap!, input, expired));
+    expect(error).toMatchObject({ reason: "budget" }); expect(observeLifecycleWriteOutcome(error)).toBeNull();
+    expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE" || sql === "COMMIT")).toBe(false);
+    expect(j.isQuarantined).toBe(false);
+  });
+
+  it("SIMULATED expiry after real transaction work never enters COMMIT or late settlement SQL", async () => {
+    const j = await capturedOutcomeJournal(), input = request(), end = deadline(), fault = outcomeFault(captured!, end, "before_commit");
+    let error: unknown;
+    try { error = await captureRefusal(() => admit(j, input, end)); } finally { fault.restore(); }
+    expect(error).toMatchObject({ reason: "budget" }); expect(observeLifecycleWriteOutcome(error)).toBeNull();
+    expect(fault.counts).toMatchObject({ begins: 1, commits: 0, returnedCommits: 0, lateSql: 0 });
+    expect(j.isQuarantined).toBe(true); publicQuarantineRefuses(j, input.restartId);
+    expect(committedFixtureRows()).toHaveLength(0);
+  });
+
+  it("ORIGINAL COMMIT then SIMULATED elapsed time yields Held with no duplicate, not a safe budget retry", async () => {
+    const j = await capturedOutcomeJournal(), input = request(), end = deadline(), fault = outcomeFault(captured!, end, "late_commit");
+    let held = false, calls = 0, error: unknown;
+    // Fixture caller contract only; this is not a product job/status adapter.
+    const invokeOriginal = async () => {
+      if (held) return "held";
+      calls++;
+      try { await admit(j, input, end); return "unexpected_acknowledgement"; }
+      catch (failure) {
+        if (!(failure instanceof LifecycleUnavailable) || failure.reason !== "writer_unknown") throw failure;
+        error = failure; held = true; return "held";
+      }
+    };
+    try { expect(await invokeOriginal()).toBe("held"); } finally { fault.restore(); }
+    expect(await invokeOriginal()).toBe("held"); expect(calls).toBe(1);
+    expect(error).toBeInstanceOf(LifecycleUnavailable); expect(error).toMatchObject({ reason: "writer_unknown" });
+    const outcome = observeLifecycleWriteOutcome(error);
+    expect(outcome).toEqual({ acknowledgement: "unknown", commit: "call_returned", observation: "not_completed",
+      stoppedAt: portable ? "autocommit" : "post_commit_guard", cause: "deadline", followUp: "held" });
+    expect(Object.isFrozen(outcome)).toBe(true);
+    expect(observeLifecycleWriteOutcome({ ...Object(error) })).toBeNull();
+    expect(observeLifecycleWriteOutcome(JSON.parse(JSON.stringify(error)))).toBeNull();
+    expect(observeLifecycleWriteOutcome(new LifecycleUnavailable("writer_unknown"))).toBeNull();
+    let accessed = false;
+    const proxy = new Proxy(Object(error), { get() { accessed = true; throw new Error("Untrusted error property access"); } });
+    expect(observeLifecycleWriteOutcome(proxy)).toBeNull(); expect(accessed).toBe(false);
+    expect(observeLifecycleWriteOutcome(null)).toBeNull(); expect(observeLifecycleWriteOutcome("writer_unknown")).toBeNull();
+    expect(fault.counts).toEqual({ begins: 1, commits: 1, returnedCommits: 1, lateSql: 0 });
+    // A current legitimate read opportunity still refuses this quarantined owner.
+    const heldRead = await captureRefusal(() => lookup(j, input.restartId));
+    expect(heldRead).toMatchObject({ reason: "writer_unknown" }); expect(observeLifecycleWriteOutcome(heldRead)).toBeNull();
+    expect(await invokeOriginal()).toBe("held"); expect(calls).toBe(1); publicQuarantineRefuses(j, input.restartId);
+    // Actual fixture-owned readonly oracle, NOT a product reconciliation permit.
+    const rows = committedFixtureRows(); expect(rows).toHaveLength(1);
+    expect(JSON.parse(String(rows[0]!.json))).toMatchObject({ restartId: input.restartId, revision: 1, requestDigest: acceptedRequestDigest(input) });
+    expect(j.isQuarantined).toBe(true); expect(j.close()).toBe(false);
+  });
+
+  it.each(["reader", "reader_expiry", "reader_close", "reader_native_expiry", "reader_init_close"] as const)("SIMULATED %s failure after ORIGINAL COMMIT cannot acknowledge its tentative return value", async mode => {
+    const j = await capturedOutcomeJournal(), input = request(), end = deadline(), fault = outcomeFault(captured!, end, mode);
+    let error: unknown, unexpected: unknown, retained = false;
+    try { error = await captureRefusal(() => admit(j, input, end)); }
+    catch (failure) { unexpected = failure; }
+    finally {
+      retained = fault.retainedReadonly; fault.restore();
+      try { fault.disposeReadonlyFixture(); }
+      catch (cleanup) { if (unexpected) throw new AggregateError([unexpected, cleanup], "Fixture operation and actual readonly disposal failed"); throw cleanup; }
+    }
+    if (unexpected) throw unexpected;
+    expect(retained).toBe(mode === "reader_close" || mode === "reader_init_close");
+    expect(error).toMatchObject({ reason: "writer_unknown" });
+    expect(observeLifecycleWriteOutcome(error)).toMatchObject({ commit: "call_returned", observation: "not_completed",
+      stoppedAt: "committed_read", cause: mode === "reader_expiry" ? "deadline" : "observation", followUp: "held" });
+    expect(fault.counts.commits).toBe(1); expect(fault.counts.lateSql).toBe(0); expect(committedFixtureRows()).toHaveLength(1);
+    if (mode === "reader_native_expiry" || mode === "reader_init_close") {
+      expect(fault.readerCalls).toEqual({ initialized: 1, closed: mode === "reader_init_close" ? 0 : 1,
+        queryOnlyPrepared: 0, queryOnlyGets: 0, gets: 0, lateGets: 0 });
+    }
+    publicQuarantineRefuses(j, input.restartId);
+  });
+
+  it.each(["reader_preflight", "reader_init", "reader_prepare"] as const)(
+    "ORIGINAL COMMIT then SIMULATED %s expiry preserves the exact guard reason and prevents later Statement.get", async mode => {
+      const j = await capturedOutcomeJournal(), input = request(), end = deadline(), fault = outcomeFault(captured!, end, mode);
+      let error: unknown;
+      try { error = await captureRefusal(() => admit(j, input, end)); } finally { fault.restore(); }
+      expect(error).toMatchObject({ reason: "writer_unknown" });
+      expect(observeLifecycleWriteOutcome(error)).toEqual({ acknowledgement: "unknown", commit: "call_returned",
+        observation: "not_completed", stoppedAt: "committed_read", cause: "deadline", followUp: "held" });
+      expect(fault.counts).toEqual({ begins: 1, commits: 1, returnedCommits: 1, lateSql: 0 });
+      expect(fault.readerCalls).toEqual({ initialized: mode === "reader_preflight" ? 0 : 1,
+        closed: mode === "reader_preflight" ? 0 : 1, queryOnlyPrepared: mode === "reader_prepare" ? 1 : 0,
+        queryOnlyGets: 0, gets: 0, lateGets: 0 });
+      expect(fault.retainedReadonly).toBe(false); expect(j.isQuarantined).toBe(true); expect(j.close()).toBe(false);
+      publicQuarantineRefuses(j, input.restartId);
+      const rows = committedFixtureRows(); expect(rows).toHaveLength(1);
+      expect(JSON.parse(String(rows[0]!.json))).toMatchObject({ restartId: input.restartId, revision: 1, requestDigest: acceptedRequestDigest(input) });
+    });
+
+  const verificationCases = (["lineage", "receipt_id", "receipt_selected", "conflict"] as const)
+    .flatMap(query => (["prepare_expiry", "get_expiry"] as const).map(boundary => ({ query, boundary })));
+  it.each(verificationCases)("ORIGINAL $query SELECT $boundary stays inside its original verification budget", async ({ query, boundary }) => {
+    const { j, input, error, retained, fault } = await verificationRefusal(query, boundary);
+    expect(error).toMatchObject({ reason: "writer_unknown" });
+    expect(observeLifecycleWriteOutcome(error)).toEqual({ acknowledgement: "unknown", commit: "call_returned",
+      observation: "not_completed", stoppedAt: "committed_read", cause: "deadline", followUp: "held" });
+    expect(fault.counts).toEqual({ begins: 1, commits: 1, returnedCommits: 1, lateSql: 0 });
+    expect(fault.queryCalls[query]).toEqual({ prepared: 1, gets: boundary === "get_expiry" ? 1 : 0,
+      returned: boundary === "get_expiry" ? 1 : 0 });
+    expect(fault.readerCalls.lateGets).toBe(0); expect(fault.readerCalls.closed).toBe(fault.readerCalls.initialized);
+    expect(retained).toBe(false); expect(j.isQuarantined).toBe(true); publicQuarantineRefuses(j, input.restartId);
+    // Fixture oracle after clock/observers restore; retained bytes are not reconciliation authority.
+    const rows = committedFixtureRows(); expect(rows).toHaveLength(1);
+    expect(JSON.parse(String(rows[0]!.json))).toMatchObject({ restartId: input.restartId, revision: 1, requestDigest: acceptedRequestDigest(input) });
+  });
+
+  const receiptFailureCases = (["receipt_id", "receipt_selected"] as const)
+    .flatMap(query => (["get_native_expiry", "get_close_expiry"] as const).map(boundary => ({ query, boundary })));
+  it.each(receiptFailureCases)("SIMULATED $query $boundary preserves native normalization or exact close uncertainty", async ({ query, boundary }) => {
+    const { j, input, error, retained, fault } = await verificationRefusal(query, boundary);
+    expect(error).toMatchObject({ reason: "writer_unknown" });
+    expect(observeLifecycleWriteOutcome(error)).toMatchObject({ commit: "call_returned", observation: "not_completed",
+      stoppedAt: "committed_read", cause: "observation", followUp: "held" });
+    expect(fault.counts).toEqual({ begins: 1, commits: 1, returnedCommits: 1, lateSql: 0 });
+    expect(fault.queryCalls[query]).toEqual({ prepared: 1, gets: 1, returned: 1 });
+    expect(fault.readerCalls.lateGets).toBe(0); expect(retained).toBe(boundary === "get_close_expiry");
+    expect(fault.readerCalls.closed).toBe(fault.readerCalls.initialized - (retained ? 1 : 0));
+    expect(j.isQuarantined).toBe(true); publicQuarantineRefuses(j, input.restartId); expect(committedFixtureRows()).toHaveLength(1);
+  });
+
+  it.each(portable ? ["final_deadline"] as const : ["final_deadline", "phase_return"] as const)(
+    "SIMULATED %s expiry after the actual strict selected snapshot/disposal remains UNKNOWN", async stage => {
+      const j = await capturedOutcomeJournal(), input = request(), end = deadline();
+      const fault = outcomeFault(captured!, end, "last_guard", stage === "phase_return" ? 2 : 1);
+      let error: unknown;
+      try { error = await captureRefusal(() => admit(j, input, end)); } finally { fault.restore(); }
+      expect(error).toMatchObject({ reason: "writer_unknown" });
+      expect(observeLifecycleWriteOutcome(error)).toMatchObject({ commit: "call_returned", observation: "expected_snapshot_observed",
+        stoppedAt: stage, cause: "deadline", followUp: "held" });
+      expect(fault.counts).toEqual({ begins: 1, commits: 1, returnedCommits: 1, lateSql: 0 });
+      expect(committedFixtureRows()).toHaveLength(1); publicQuarantineRefuses(j, input.restartId);
+    });
+
+  it("an actual native BUSY COMMIT exposes source-associated thrown uncertainty without replay", async () => {
+    const j = await capturedOutcomeJournal(), input = request(), blocker = new DatabaseSync(file(), { readOnly: true });
+    let commits = 0;
+    blocker.exec("BEGIN"); blocker.prepare("SELECT json FROM lifecycle_lineage").get();
+    const exec = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+      if (this === captured && sql === "COMMIT") commits++;
+      return sqliteExec.call(this, sql);
+    });
+    try {
+      const error = await captureRefusal(() => admit(j, input, deadline()));
+      expect(error).toMatchObject({ reason: "writer_unknown" });
+      expect(observeLifecycleWriteOutcome(error)).toMatchObject({ commit: "call_threw_or_unreturned", observation: "not_completed",
+        stoppedAt: "commit", cause: "commit_exception", followUp: "held" });
+      expect(commits).toBe(1); expect(j.isQuarantined).toBe(true); publicQuarantineRefuses(j, input.restartId);
+    } finally { exec.mockRestore(); blocker.exec("ROLLBACK"); blocker.close(); }
+  });
+
+  it.each(["wrapper_throw", "conflict_throw"] as const)("SIMULATED %s after real COMMIT never becomes success or pre-COMMIT conflict settlement", async mode => {
+    const j = await capturedOutcomeJournal(), input = request(), end = deadline(), fault = outcomeFault(captured!, end, mode);
+    let error: unknown;
+    try { error = await captureRefusal(() => admit(j, input, end)); } finally { fault.restore(); }
+    expect(error).toMatchObject({ reason: "writer_unknown" });
+    expect(observeLifecycleWriteOutcome(error)).toMatchObject({ commit: "call_threw_or_unreturned", observation: "not_completed",
+      stoppedAt: "commit", cause: "commit_exception", followUp: "held" });
+    expect(fault.counts.commits).toBe(1); expect(fault.counts.returnedCommits).toBe(1);
+    expect(committedFixtureRows()).toHaveLength(1); publicQuarantineRefuses(j, input.restartId);
+  });
+
+  it.each(["advance", "conflict"] as const)("late ORIGINAL %s COMMIT cannot replay its CAS/evidence publication", async mode => {
+    const j = await capturedOutcomeJournal(), input = request(), accepted = await admit(j, input, deadline());
+    const end = deadline(), fault = outcomeFault(captured!, end, "late_commit");
+    let error: unknown;
+    try {
+      error = await captureRefusal(() => mode === "advance" ? advance(j, input.restartId, accepted.revision, "preparing", {}, end)
+        : admit(j, { ...input, operation: "stop" }, end));
+    } finally { fault.restore(); }
+    expect(error).toMatchObject({ reason: "writer_unknown" });
+    expect(observeLifecycleWriteOutcome(error)).toMatchObject({ commit: "call_returned", observation: "not_completed", followUp: "held" });
+    expect(fault.counts).toEqual({ begins: 1, commits: 1, returnedCommits: 1, lateSql: 0 });
+    publicQuarantineRefuses(j, input.restartId);
+    const rows = committedFixtureRows(); expect(rows).toHaveLength(mode === "advance" ? 2 : 1);
+    expect(JSON.parse(String(rows[0]!.json))).toEqual(accepted);
+    const oracle = new DatabaseSync(file(), { readOnly: true });
+    try {
+      oracle.exec("PRAGMA query_only=ON");
+      expect(oracle.prepare("SELECT count(*) AS n FROM receipt_conflicts").get()?.n).toBe(mode === "conflict" ? 1 : 0);
+      expect(oracle.prepare("SELECT revision FROM selected_receipt WHERE singleton=1").get()?.revision).toBe(mode === "advance" ? 2 : 1);
+    } finally { oracle.close(); }
+    expect(j.isQuarantined).toBe(true);
+  });
+
+  it("a verified intentional conflict remains receipt_conflict and a later read never inherits an old write scope", async () => {
+    const j = await capturedOutcomeJournal(), input = request(), accepted = await admit(j, input, deadline());
+    const conflict = await captureRefusal(() => admit(j, { ...input, operation: "stop" }, deadline()));
+    expect(conflict).toMatchObject({ reason: "receipt_conflict" }); expect(observeLifecycleWriteOutcome(conflict)).toBeNull();
+    expect(j.isQuarantined).toBe(false); expect(await admit(j, input, deadline())).toEqual(accepted);
+    const prepare = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+      const value = sqlitePrepare.call(this, sql);
+      if (sql === "SELECT json FROM lifecycle_lineage WHERE singleton=1") throw new Error("SIMULATED later independent-read failure");
+      return value;
+    });
+    let later: unknown;
+    try { later = await captureRefusal(() => lookup(j, input.restartId)); } finally { prepare.mockRestore(); }
+    expect(observeLifecycleWriteOutcome(later)).toBeNull(); expect(later).not.toMatchObject({ reason: "writer_unknown" });
+    expect(j.isQuarantined).toBe(false);
   });
 });

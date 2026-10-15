@@ -8,12 +8,15 @@ import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { codexHost } from "./helpers.js";
+import { codexHost, until } from "./helpers.js";
+import { captureFixtureBroker } from "./fixture-teardown.js";
+import { fixtureProcessExists } from "./fixture-process-generation.js";
 
 /** Runs the bundled plugin server (npm run build first) for all four CLI kinds. */
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 const home = mkdtempSync(join(tmpdir(), "agent-bridge-e2e-"));
 writeFileSync(join(home,"config.json"),JSON.stringify({questionAlerts:{sound:false,toast:false,reminderMinutes:0}}));
+const servers: Array<{ client: Client; transport: StdioClientTransport }> = [];
 
 async function spawnAgent(agent: "claude" | "codex" | "opencode" | "antigravity", name: string): Promise<Client> {
   const client = new Client({ name: `test-${agent}`, version: "0.0.0" });
@@ -22,9 +25,11 @@ async function spawnAgent(agent: "claude" | "codex" | "opencode" | "antigravity"
     command: process.execPath,
     cwd: home,
     args: [SERVER, `--agent=${agent}`],
-    env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home } as Record<string, string>,
+    env: { ...process.env, AGENT_BRIDGE_DAEMON: "1", AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_LOG_LEVEL: "debug", CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home } as Record<string, string>,
     stderr: "ignore",
   });
+  // Register before connect so a failed startup still closes its owned transport.
+  servers.push({ client, transport });
   await client.connect(transport);
   if (agent === "codex") await client.callTool({ name: "peers", arguments: {} });
   return client;
@@ -55,11 +60,22 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
   }, 30_000);
 
   afterAll(async () => {
-    await claude?.close();
-    await codex?.close();
-    await antigravity?.close();
-    await opencode?.close();
-    // Let pending child-process shutdown callbacks release Windows directory handles.
+    const errors: unknown[] = [];
+    const attempt = async (action: () => Promise<unknown>) => {
+      try { await action(); } catch (error) { errors.push(error); }
+    };
+    const pids = servers.flatMap(({ transport }) => transport.pid ? [transport.pid] : []);
+    let stopBroker: (() => Promise<void>) | undefined;
+    await attempt(async () => { stopBroker = await captureFixtureBroker(home, pids); });
+    for (const { client, transport } of servers) {
+      await attempt(() => client.close());
+      await attempt(() => transport.close());
+    }
+    await attempt(() => until(() => pids.every(pid => !fixtureProcessExists(pid, "Fixture MCP server exit is unavailable"))));
+    // A failed producer close must not race a signal with demand-start.
+    if (!errors.length) await attempt(async () => { await stopBroker?.(); });
+    // Keep the original failures and fixture when ownership/exit is uncertain.
+    if (errors.length) throw new AggregateError(errors, `e2e fixture teardown failed; retained ${home}`);
     await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
@@ -129,10 +145,12 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     const cli = join(import.meta.dirname, "..", "plugins", "claude", "dist", "cli.mjs");
     await claude.callTool({ name: "decide", arguments: { topic: "Maintenance", text: "Keep source data", scope: "all" } });
     const source = new DatabaseSync(join(home, "bridge.db"), { readOnly: true });
-    const before = source.prepare("SELECT id,recipient,body,read_at FROM messages ORDER BY id,recipient").all();
-    const result = await promisify(execFile)(process.execPath, [cli, "reindex"], { cwd: home, env: { ...process.env, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_DASHBOARD: "off", CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home }, timeout: 30_000 });
-    expect(result.stdout).toContain("History index rebuilt");
-    expect(source.prepare("SELECT id,recipient,body,read_at FROM messages ORDER BY id,recipient").all()).toEqual(before); source.close();
+    try {
+      const before = source.prepare("SELECT id,recipient,body,read_at FROM messages ORDER BY id,recipient").all();
+      const result = await promisify(execFile)(process.execPath, [cli, "reindex"], { cwd: home, env: { ...process.env, AGENT_BRIDGE_DAEMON: "1", AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_DASHBOARD: "off", CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home }, timeout: 30_000 });
+      expect(result.stdout).toContain("History index rebuilt");
+      expect(source.prepare("SELECT id,recipient,body,read_at FROM messages ORDER BY id,recipient").all()).toEqual(before);
+    } finally { source.close(); }
     const found = JSON.parse(textOf(await codex.callTool({ name: "search_history", arguments: { query: "walnut bundled", filters: { kind: "message", agent: "claude" }, limit: 1 } })));
     expect(found.hits).toMatchObject([{ message: id, snippet: "walnut bundled history" }]);
     expect(found.hits[0].sourceLink).toBe(`/api/history/${encodeURIComponent(found.hits[0].id)}`);
