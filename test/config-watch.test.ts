@@ -1,13 +1,55 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, statSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { type BridgeConfig, loadConfig, saveConfigValue, watchConfig } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
 import { until } from "./helpers.js";
 import { configurePathDisplay, pathDisplayPrefersAlias } from "../src/core/display-paths.js";
 
 describe("config file", () => {
+  it("reloads project edits and project switches, and stops polling on disposal", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ab-cfg-project-"));
+    const first = join(home, "first"), second = join(home, "second");
+    for (const project of [first, second]) mkdirSync(join(project, ".agent-bridge"), { recursive: true });
+    const firstConfig = join(first, ".agent-bridge", "config.json");
+    writeFileSync(firstConfig, '{"name":"first"}');
+    writeFileSync(join(second, ".agent-bridge", "config.json"), '{"name":"second"}');
+    let project = first;
+    vi.useFakeTimers();
+    const changed = vi.fn();
+    const stop = watchConfig(home, "codex", nullLogger, changed, () => project);
+    try {
+      writeFileSync(firstConfig, '{"name":"edited"}');
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ name: "edited" }));
+      project = second;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ name: "second" }));
+      stop();
+      project = first;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(changed).toHaveBeenCalledTimes(2);
+    } finally { stop(); vi.useRealTimers(); rmSync(home, { recursive: true, force: true }); }
+  });
+  it("detects a replacement before the first poll even with the same mtime and size", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ab-cfg-poll-"));
+    vi.useFakeTimers();
+    let stop: (() => void) | undefined;
+    try {
+      const path = join(home, "config.json");
+      writeFileSync(path, '{"maxJobs":10}');
+      const initial = statSync(path);
+      const changed = vi.fn();
+      stop = watchConfig(home, "codex", nullLogger, changed);
+      writeFileSync(path, '{"maxJobs":12}');
+      utimesSync(path, initial.atime, initial.mtime);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(changed).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ maxJobs: 12 }));
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(changed).toHaveBeenCalledTimes(1);
+    } finally { stop?.(); vi.useRealTimers(); rmSync(home, { recursive: true, force: true }); }
+  });
   it("updates alias display preference when the home config is reloaded", async () => {
     const home = mkdtempSync(join(tmpdir(), "ab-cfg-paths-"));
     let stop: (() => void) | undefined;

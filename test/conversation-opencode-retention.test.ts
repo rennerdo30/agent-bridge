@@ -1,7 +1,8 @@
 
 
 import { DatabaseSync } from "node:sqlite";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { HISTORY_BATCH_MS } from "../src/core/history-store.js";
 import { CONVERSATION_BYTES } from "../src/core/conversations.js";
 import { conversationProject } from "../src/core/project-store.js";
 import { fixture } from "./conversation-test-fixture.js";
@@ -9,13 +10,19 @@ import { fixture } from "./conversation-test-fixture.js";
 it("retains OpenCode messages, huge parts, native grandchildren and observed revisions", () => {
   const f = fixture('opencode'),
     cli = new DatabaseSync(f.files.sqlite);
+  // Retention semantics, independent of the wall-time slices exercised in the
+  // scheduler tests. Keep all original byte/chunk bounds and convergence checks.
+  const tick = () => {
+    const phase = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+    try { f.tick(); } finally { phase.mockRestore(); }
+  };
   const data = JSON.stringify({
     type: "text",
     text: "q".repeat(CONVERSATION_BYTES * 3) + " opencode_full_tail",
   });
   cli.prepare("UPDATE part SET data=? WHERE id='prt_0'").run(data);
   cli.close();
-  f.tick();
+  tick();
   expect(
     f.index.search({
       query: "opencode_full_tail",
@@ -39,7 +46,17 @@ it("retains OpenCode messages, huge parts, native grandchildren and observed rev
     )
     .run(JSON.stringify({ type: "text", text: "later_opencode_revision" }));
   updated.close();
-  f.tick();
+  // SIMULATED slow metadata work: consume the source slice before its first
+  // read, without sleeping or adding load. Search can see the native revision
+  // before ConversationIngestor retains it, so the row assertions below matter.
+  let now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  const prepare = DatabaseSync.prototype.prepare;
+  const slow = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+    if (sql === "SELECT * FROM conversation_sources ORDER BY checked,id LIMIT 2") now += HISTORY_BATCH_MS;
+    return prepare.call(this, sql);
+  });
+  try { tick(); } finally { slow.mockRestore(); clock.mockRestore(); }
   expect(
     f.index.search({
       query: "opencode_full_tail",
