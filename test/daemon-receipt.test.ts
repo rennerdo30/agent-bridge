@@ -252,15 +252,24 @@ async function captureRefusal(action: () => unknown | Promise<unknown>): Promise
   try { await action(); } catch (error) { return error; }
   throw new Error("Expected the original operation to refuse");
 }
-type OutcomeFault = "late_commit" | "before_commit" | "reader" | "reader_expiry" | "reader_close" | "wrapper_throw" | "conflict_throw" | "last_guard";
+type OutcomeFault = "late_commit" | "before_commit" | "reader" | "reader_expiry" | "reader_close" |
+  "reader_preflight" | "reader_init" | "reader_prepare" | "reader_native_expiry" | "reader_init_close" |
+  "wrapper_throw" | "conflict_throw" | "last_guard";
 function outcomeFault(writer: DatabaseSync, end: number, fault: OutcomeFault, finalClockRead = 1) {
   const realNow = performance.now.bind(performance), originalClose = DatabaseSync.prototype.close;
   let expired = false, committed = false, lastReader: DatabaseSync | undefined, arm = false, clockReads = 0;
   let retainedReadonly: DatabaseSync | undefined;
   const counts = { begins: 0, commits: 0, returnedCommits: 0, lateSql: 0 };
+  const readerCalls = { initialized: 0, closed: 0, queryOnlyPrepared: 0, queryOnlyGets: 0, gets: 0, lateGets: 0 };
+  const readers = new Set<DatabaseSync>();
+  let postCommitClockReads = 0;
   const expire = () => { expired = true; };
   const clock = vi.spyOn(performance, "now").mockImplementation(() => {
     if (arm && ++clockReads >= finalClockRead) expire();
+    // Pinned source ordering after ORIGINAL COMMIT: Windows' post-write guard
+    // has four clock reads, then both platforms have two autocommit checks.
+    // Expire at the first reader guard, not a prior transaction/phase guard.
+    if (committed && fault === "reader_preflight" && ++postCommitClockReads >= (portable ? 3 : 7)) expire();
     return expired ? Math.max(realNow(), end + 1) : realNow();
   });
   const runs: Array<() => void> = [];
@@ -275,6 +284,12 @@ function outcomeFault(writer: DatabaseSync, end: number, fault: OutcomeFault, fi
       if (fault === "wrapper_throw") throw new Error("SIMULATED wrapper error after ORIGINAL COMMIT");
       if (fault === "conflict_throw") throw new LifecycleUnavailable("revision_conflict");
     }
+    if (committed && this !== writer && sql === "PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;") {
+      readers.add(this); readerCalls.initialized++;
+      if (["reader_init", "reader_native_expiry", "reader_init_close"].includes(fault)) expire();
+      // SIMULATED budget-shaped native-boundary exception, not thrown by guard.
+      if (fault === "reader_native_expiry") throw new LifecycleUnavailable("budget");
+    }
     return value;
   });
   const prepare = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
@@ -283,12 +298,20 @@ function outcomeFault(writer: DatabaseSync, end: number, fault: OutcomeFault, fi
     if (committed && this !== writer && fault === "reader" && sql === "SELECT json FROM lifecycle_lineage WHERE singleton=1") {
       throw new Error("SIMULATED independent reader error after ORIGINAL prepare");
     }
-    if (committed && this !== writer && fault === "reader_expiry" && sql === "SELECT json FROM lifecycle_lineage WHERE singleton=1") {
+    if (committed && this !== writer) {
       const get = statement.get;
       const pending = vi.spyOn(statement, "get").mockImplementation(function(this: typeof statement, ...args: unknown[]) {
-        const value = Reflect.apply(get, this, args); expire(); return value;
+        readerCalls.gets++; if (sql === "PRAGMA query_only") readerCalls.queryOnlyGets++;
+        if (expired) { counts.lateSql++; readerCalls.lateGets++; }
+        const value = Reflect.apply(get, this, args);
+        if (fault === "reader_expiry" && sql === "SELECT json FROM lifecycle_lineage WHERE singleton=1") expire();
+        return value;
       });
       runs.push(() => pending.mockRestore());
+      if (sql === "PRAGMA query_only") {
+        readerCalls.queryOnlyPrepared++;
+        if (fault === "reader_prepare") expire(); // Only AFTER ORIGINAL prepare returned.
+      }
     }
     if (committed && this !== writer && sql.includes("s.restart_id AS selected_id")) lastReader = this;
     if (this === writer && fault === "before_commit" && sql.startsWith("INSERT INTO selected_receipt")) {
@@ -301,16 +324,17 @@ function outcomeFault(writer: DatabaseSync, end: number, fault: OutcomeFault, fi
     return statement;
   });
   const close = vi.spyOn(DatabaseSync.prototype, "close").mockImplementation(function(this: DatabaseSync) {
-    if (committed && this !== writer && fault === "reader_close" && !retainedReadonly) {
+    if (committed && this !== writer && ["reader_close", "reader_init_close"].includes(fault) && !retainedReadonly) {
       retainedReadonly = this; // Exact actual source readonly receiver, before the SIMULATED close error.
       throw new Error("SIMULATED unconfirmed readonly disposal after ORIGINAL COMMIT");
     }
     const value = originalClose.call(this);
+    if (readers.has(this)) readerCalls.closed++;
     // The real selected snapshot and real readonly disposal precede this switch.
     if (this === lastReader && fault === "last_guard") arm = true;
     return value;
   });
-  return { counts, get retainedReadonly() { return retainedReadonly !== undefined; },
+  return { counts, readerCalls, get retainedReadonly() { return retainedReadonly !== undefined; },
     disposeReadonlyFixture() {
       if (!retainedReadonly) return;
       // Fixture-owned exact receiver only. Clear only after the actual native close
@@ -714,7 +738,7 @@ describe("source-associated publication UNKNOWN (not controller or durability au
     expect(j.isQuarantined).toBe(true); expect(j.close()).toBe(false);
   });
 
-  it.each(["reader", "reader_expiry", "reader_close"] as const)("SIMULATED %s failure after ORIGINAL COMMIT cannot acknowledge its tentative return value", async mode => {
+  it.each(["reader", "reader_expiry", "reader_close", "reader_native_expiry", "reader_init_close"] as const)("SIMULATED %s failure after ORIGINAL COMMIT cannot acknowledge its tentative return value", async mode => {
     const j = await capturedOutcomeJournal(), input = request(), end = deadline(), fault = outcomeFault(captured!, end, mode);
     let error: unknown, unexpected: unknown, retained = false;
     try { error = await captureRefusal(() => admit(j, input, end)); }
@@ -725,13 +749,35 @@ describe("source-associated publication UNKNOWN (not controller or durability au
       catch (cleanup) { if (unexpected) throw new AggregateError([unexpected, cleanup], "Fixture operation and actual readonly disposal failed"); throw cleanup; }
     }
     if (unexpected) throw unexpected;
-    expect(retained).toBe(mode === "reader_close");
+    expect(retained).toBe(mode === "reader_close" || mode === "reader_init_close");
     expect(error).toMatchObject({ reason: "writer_unknown" });
     expect(observeLifecycleWriteOutcome(error)).toMatchObject({ commit: "call_returned", observation: "not_completed",
       stoppedAt: "committed_read", cause: mode === "reader_expiry" ? "deadline" : "observation", followUp: "held" });
     expect(fault.counts.commits).toBe(1); expect(fault.counts.lateSql).toBe(0); expect(committedFixtureRows()).toHaveLength(1);
+    if (mode === "reader_native_expiry" || mode === "reader_init_close") {
+      expect(fault.readerCalls).toEqual({ initialized: 1, closed: mode === "reader_init_close" ? 0 : 1,
+        queryOnlyPrepared: 0, queryOnlyGets: 0, gets: 0, lateGets: 0 });
+    }
     publicQuarantineRefuses(j, input.restartId);
   });
+
+  it.each(["reader_preflight", "reader_init", "reader_prepare"] as const)(
+    "ORIGINAL COMMIT then SIMULATED %s expiry preserves the exact guard reason and prevents later Statement.get", async mode => {
+      const j = await capturedOutcomeJournal(), input = request(), end = deadline(), fault = outcomeFault(captured!, end, mode);
+      let error: unknown;
+      try { error = await captureRefusal(() => admit(j, input, end)); } finally { fault.restore(); }
+      expect(error).toMatchObject({ reason: "writer_unknown" });
+      expect(observeLifecycleWriteOutcome(error)).toEqual({ acknowledgement: "unknown", commit: "call_returned",
+        observation: "not_completed", stoppedAt: "committed_read", cause: "deadline", followUp: "held" });
+      expect(fault.counts).toEqual({ begins: 1, commits: 1, returnedCommits: 1, lateSql: 0 });
+      expect(fault.readerCalls).toEqual({ initialized: mode === "reader_preflight" ? 0 : 1,
+        closed: mode === "reader_preflight" ? 0 : 1, queryOnlyPrepared: mode === "reader_prepare" ? 1 : 0,
+        queryOnlyGets: 0, gets: 0, lateGets: 0 });
+      expect(fault.retainedReadonly).toBe(false); expect(j.isQuarantined).toBe(true); expect(j.close()).toBe(false);
+      publicQuarantineRefuses(j, input.restartId);
+      const rows = committedFixtureRows(); expect(rows).toHaveLength(1);
+      expect(JSON.parse(String(rows[0]!.json))).toMatchObject({ restartId: input.restartId, revision: 1, requestDigest: acceptedRequestDigest(input) });
+    });
 
   it.each(portable ? ["final_deadline"] as const : ["final_deadline", "phase_return"] as const)(
     "SIMULATED %s expiry after the actual strict selected snapshot/disposal remains UNKNOWN", async stage => {

@@ -202,27 +202,39 @@ function closeReadConnection(db: DatabaseSync): void {
 }
 function readConnection(file: string, exclusivelyNewGuard?: () => void, deadline?: number,
   owner?: Set<ReadConnectionRecord>, unknown?: () => void): DatabaseSync {
+  // Preserve only the exact supplied guard failure, never a later clock sample
+  // or a native/path error that happens to carry a similar reason.
+  let guardFailure: { error: unknown } | undefined;
+  const guard = () => {
+    try { exclusivelyNewGuard?.(); }
+    catch (error) { guardFailure = { error }; throw error; }
+  };
+  const unavailable = (error: unknown): never => {
+    if (guardFailure && Object.is(error, guardFailure.error)) throw error;
+    fail("lineage_unknown");
+  };
   try {
-    exclusivelyNewGuard?.();
+    guard();
     // A portable deadline guard is not Windows path/ACL proof. Preserve the
     // original portable private-path checks before every native reader open.
     if (!exclusivelyNewGuard || process.platform !== "win32") { privatePath(dirname(file), true); privatePath(file, false); privatePath(file + "-journal", false); }
   }
-  catch { fail("lineage_unknown"); }
+  catch (error) { return unavailable(error); }
   const before = identity(file);
   let db: DatabaseSync;
-  try { exclusivelyNewGuard?.(); db = new DatabaseSync(file, { readOnly: true,
+  try { guard(); db = new DatabaseSync(file, { readOnly: true,
     timeout: deadline === undefined ? BUSY_MS : Math.max(0, Math.min(BUSY_MS, Math.floor(deadline - performance.now()))) }); }
-  catch { fail("lineage_unknown"); } // Hot recovery requiring writes is not a prepared-reader exception.
+  catch (error) { return unavailable(error); } // Hot recovery requiring writes is not a prepared-reader exception.
   // Capture the exact native connection before any initialization/guard can fail.
   // Unknown disposal retains both this record and its source-owned journal owner.
   const record: ReadConnectionRecord = { db, file, state: "initializing", owner, unknown };
   readConnectionRecords.set(db, record); owner?.add(record);
   try {
-    exclusivelyNewGuard?.(); db.exec("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;"); exclusivelyNewGuard?.();
-    if (db.prepare("PRAGMA query_only").get()?.query_only !== 1 || !same(before, identity(file))) fail("lineage_unknown");
+    guard(); db.exec("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;"); guard();
+    const queryOnly = db.prepare("PRAGMA query_only"); guard();
+    if (queryOnly.get()?.query_only !== 1 || !same(before, identity(file))) fail("lineage_unknown");
     record.state = "ready"; return db;
-  } catch { closeReadConnection(db); fail("lineage_unknown"); }
+  } catch (error) { closeReadConnection(db); return unavailable(error); }
 }
 const SCHEMA = `
 CREATE TABLE lifecycle_lineage (singleton INTEGER PRIMARY KEY CHECK(singleton=1), json TEXT NOT NULL);
