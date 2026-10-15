@@ -82,8 +82,11 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     // The native-shaped Muse host owns a second MCP process. Register both
     // before capture, and again after closing producers in case startup raced.
     const captureMuseChildren = () => {
-      if (!existsSync(MUSE_CHILD_PIDS)) return;
-      for (const line of readFileSync(MUSE_CHILD_PIDS, "utf8").trim().split("\n").filter(Boolean)) {
+      // Missing evidence cannot prove that the host failed before spawning.
+      if (!existsSync(MUSE_CHILD_PIDS)) throw new Error("Fixture Muse child PID record is missing; child exit is unproved");
+      const records = readFileSync(MUSE_CHILD_PIDS, "utf8").trim().split("\n").filter(Boolean);
+      if (!records.length) throw new Error("Fixture Muse child PID record is empty; child exit is unproved");
+      for (const line of records) {
         const pid: unknown = JSON.parse(line);
         if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid) throw new Error("Fixture Muse child PID is invalid");
         if (!pids.includes(pid)) pids.push(pid);
