@@ -1977,6 +1977,11 @@ var STOP_REASON_FOOTER = 'Handle these peer messages now: do what is reasonable,
 function context(event, additionalContext) {
   return { hookSpecificOutput: { hookEventName: event, additionalContext } };
 }
+function stopMail(ctx, text2) {
+  return { decision: "block", reason: ctx.agent === "codex" ? `agent-bridge: new mail
+
+${text2}` : text2 };
+}
 function discardFinishedNotes(ctx) {
   const node = ctx.node;
   if (!node) return;
@@ -2075,7 +2080,7 @@ async function subagentHook(ctx, input) {
   }
   ctx.log.info("delivering parent messages to the subagent", { count: msgs.length, event: input.event });
   const text2 = [msgs.length ? formatParentMessages(parent.name, msgs) : "", children.length ? formatMessages(children) : ""].filter(Boolean).join("\n\n");
-  if (input.event === "Stop") return { decision: "block", reason: text2 };
+  if (input.event === "Stop") return stopMail(ctx, text2);
   if (input.event === "PostToolUse") return { decision: "block", reason: text2, hookSpecificOutput: { hookEventName: input.event, additionalContext: text2 } };
   return context(input.event, text2);
 }
@@ -2214,7 +2219,7 @@ ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online rig
         if (awaited.length) {
           holdOrMarkRead(ctx, awaited.map((m) => m.id), holdStop);
           ctx.activity?.("busy");
-          return { decision: "block", reason: formatMessages(awaited, { replyHint: false }) };
+          return stopMail(ctx, formatMessages(awaited, { replyHint: false }));
         }
         finishHookTurn(ctx, input);
         return {};
@@ -2231,9 +2236,9 @@ ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online rig
       }
       ctx.activity?.("busy");
       ctx.log.info("continuing turn for peer messages", { count: msgs.length, autoWake: node.autoWakeEnabled });
-      return { decision: "block", reason: `${formatMessages(msgs, { replyHint: false })}
+      return stopMail(ctx, `${formatMessages(msgs, { replyHint: false })}
 
-${STOP_REASON_FOOTER}` };
+${STOP_REASON_FOOTER}`);
     }
     default:
       return {};
