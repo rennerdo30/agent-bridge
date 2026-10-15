@@ -7,13 +7,19 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import { codexHost } from "./helpers.js";
-import { readRunnerState } from "../src/mcp/job-host.js";
+import { readRunnerState, writeRunnerState } from "../src/mcp/job-host.js";
 import { readStore } from "../src/mcp/jobs.js";
 import { parentFromEnv } from "../src/core/parent-link.js";
 import { listPendingApprovals } from "../src/core/relay.js";
 import { pidAlive, killPid } from "../src/core/delegate.js";
 import { LOG_DIR_NAME, LOG_FILE_NAME } from "../src/core/constants.js";
 import { STARTUP_CAPACITY } from "../src/core/startup-admission.js";
+import { completionMessageId } from "../src/core/completion.js";
+import { resolveDbPath } from "../src/core/paths.js";
+import { unquarantined } from "../src/core/sqlite-maintenance.js";
+import { MessageStore } from "../src/core/store.js";
+import { nullLogger } from "../src/core/logger.js";
+import { ReadJournal } from "../src/core/read-journal.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 function linkReady(path: string): boolean {
@@ -113,6 +119,70 @@ function diagnosticNumber(value: unknown, min: number, max: number): number | un
 }
 const diagnosticPid = (value: unknown) => diagnosticNumber(value, 1, 0xffff_ffff);
 const diagnosticTime = (value: unknown) => diagnosticNumber(value, 0, 4_102_444_800_000);
+const diagnosticUuid = (value: unknown) => typeof value === "string" && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(value) ? value : undefined;
+type TakeoverJob = { name: string; id: string };
+
+/** A terminal state precedes the runner's final send; wait for its durable envelope, too. */
+function finalReportsReady(home: string, jobs: readonly TakeoverJob[]): boolean {
+  const states = jobs.map(job => readRunnerState(home, job.id));
+  if (!states.every(state => state?.status === "done")) return false;
+  if (states.every(state => state?.delivered === true)) return true;
+  let db: DatabaseSync | undefined;
+  try {
+    db = new DatabaseSync(resolveDbPath(home), { readOnly: true });
+    db.exec("PRAGMA busy_timeout=0");
+    const stored = db.prepare(`SELECT 1 FROM messages WHERE id=? AND from_id=? AND ${unquarantined("messages")} LIMIT 1`);
+    return states.every((state, index) => state?.delivered === true || Boolean(diagnosticUuid(state?.reportId) &&
+      stored.get(completionMessageId(`job:${jobs[index]!.id}`, state!.reportId!), `job:${jobs[index]!.id}`)));
+  } catch { return false; }
+  finally { try { db?.close(); } catch { /* Readiness must not retain a fixture database handle. */ } }
+}
+
+/** Failure-only receipt evidence: ten jobs, at most four rows per receipt, no bodies or specs. */
+function finalReportDiagnostics(home: string, jobs: readonly TakeoverJob[], primary: string, mode: string, inboxReads: number, delivered: string) {
+  let db: DatabaseSync | undefined;
+  const safeError = (error: unknown) => {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    return ["ERR_SQLITE_ERROR", "ERR_SQLITE_BUSY", "SQLITE_BUSY", "SQLITE_LOCKED", "ENOENT", "EACCES", "EPERM"].includes(code ?? "") ? code : "UNAVAILABLE";
+  };
+  const recipient = (value: unknown) => value === primary || value === "codex-master" ? value : "other-recipient";
+  let databaseError: string | undefined;
+  try { db = new DatabaseSync(resolveDbPath(home), { readOnly: true }); db.exec("PRAGMA busy_timeout=0"); }
+  catch (error) { databaseError = safeError(error); }
+  const select = (sql: string, id: string) => {
+    try { return db ? { rows: db.prepare(sql).all(id) } : { errorCode: databaseError ?? "UNAVAILABLE" }; }
+    catch (error) { return { errorCode: safeError(error) }; }
+  };
+  try {
+    const rows = jobs.slice(0, 10).map(job => {
+      let state: ReturnType<typeof readRunnerState> = null, stateError: string | undefined;
+      try { state = readRunnerState(home, job.id); } catch (error) { stateError = safeError(error); }
+      const reportId = diagnosticUuid(state?.reportId), messageId = reportId ? completionMessageId(`job:${job.id}`, reportId) : undefined;
+      const envelopes = messageId ? select(`SELECT recipient,read_at FROM messages WHERE id=? AND ${unquarantined("messages")} LIMIT 4`, messageId) : undefined;
+      const routes = messageId ? select("SELECT recipient,consumed_at FROM job_delivery_routes WHERE id=? LIMIT 4", messageId) : undefined;
+      const reads = messageId ? select("SELECT identity,read_at FROM bridge_read_receipts WHERE message_id=? LIMIT 4", messageId) : undefined;
+      const identities = [primary, "codex-master"].map(name => ({ label: name, hash: createHash("sha256").update(`name:${name}`).digest("hex") }));
+      identities.push({ label: "fixture-thread", hash: createHash("sha256").update("session:takeover-thread").digest("hex") });
+      return { name: job.name, state: {
+        status: state && ["running", "done", "failed", "cancelled", "interrupted"].includes(state.status) ? state.status : "unknown",
+        pid: diagnosticPid(state?.pid), alive: state?.pid ? pidAlive(state.pid) : false,
+        updatedAt: diagnosticTime(state?.updatedAt), finishedAt: diagnosticTime(state?.finishedAt),
+        delivered: typeof state?.delivered === "boolean" ? state.delivered : undefined,
+        reportPresent: typeof state?.report === "string" && state.report.length > 0, reportId, messageId, errorCode: stateError,
+      },
+        envelopes: envelopes && ("rows" in envelopes ? { rows: envelopes.rows!.map(row => ({ recipient: recipient(row.recipient), readAt: row.read_at === null ? null : diagnosticTime(row.read_at) })) } : envelopes),
+        routes: routes && ("rows" in routes ? { rows: routes.rows!.map(row => ({ recipient: recipient(row.recipient), consumedAt: row.consumed_at === null ? null : diagnosticTime(row.consumed_at) })) } : routes),
+        consumption: reads && ("rows" in reads ? { rows: reads.rows!.map(row => ({ identity: identities.find(identity => identity.hash === row.identity)?.label ?? "other-identity", readAt: row.read_at === null ? null : diagnosticTime(row.read_at) })) } : reads),
+      };
+    });
+    return { version: 1, mode, observedAt: Date.now(), inboxReads, finalCount: (delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length, jobs: rows };
+  } finally { try { db?.close(); } catch { /* Diagnostics must not mask the original failure. */ } }
+}
+
+function printFinalReportDiagnostics(home: string, jobs: readonly TakeoverJob[], primary: string, mode: string, inboxReads: number, delivered: string): void {
+  try { console.error(`Native takeover final-report diagnostics: ${JSON.stringify(finalReportDiagnostics(home, jobs, primary, mode, inboxReads, delivered)).slice(0, 16_384)}`); }
+  catch { console.error("Native takeover final-report diagnostics unavailable"); }
+}
 function diagnosticProgress(value: unknown): string {
   switch (value) {
     case "queued: runner startup admission": return "initial-state-published";
@@ -178,6 +248,32 @@ function readinessEvents(home: string, names: ReadonlySet<string>, runnerPids: R
   } catch { return []; }
   finally { try { if (fd !== undefined) closeSync(fd); } catch { /* Keep the original readiness failure. */ } }
 }
+
+it("observes a stored final and consumption receipts on a separate read-only connection before delivery confirmation", () => {
+  const job = { id: "00ab0292", name: "codex-job-00ab0292" }, reportId = "11111111-1111-4111-8111-111111111111";
+  const report = "Subagent codex-job-00ab0292 (codex) done after 0s.\n\nREPORT_BODY_EXCLUDED_FROM_DIAGNOSTICS";
+  const store = new MessageStore(env.db, nullLogger);
+  try {
+    writeRunnerState(env.home, job.id, { pid: process.pid, peer: job.name, status: "done", updatedAt: Date.now(), report, reportId, delivered: false });
+    expect(finalReportsReady(env.home, [job])).toBe(false);
+    const id = completionMessageId(`job:${job.id}`, reportId);
+    store.insertJobDelivery({ id, from: { id: `job:${job.id}`, name: job.name, agent: "codex" }, to: "codex-master", recipient: "codex-master",
+      conversationId: `job-${job.id}:fallback`, replyTo: null, hop: 0, body: report, createdAt: Date.now(), readAt: null });
+    expect(readRunnerState(env.home, job.id)?.delivered).toBe(false);
+    expect(finalReportsReady(env.home, [job])).toBe(true);
+    const pending = finalReportDiagnostics(env.home, [job], "opencode-master", "opencode", 0, "");
+    expect(pending.jobs[0]?.envelopes).toEqual({ rows: [{ recipient: "codex-master", readAt: null }] });
+    expect(pending.jobs[0]?.routes).toEqual({ rows: [{ recipient: "codex-master", consumedAt: null }] });
+    const at = Date.now();
+    store.markRead("codex-master", [id], at);
+    new ReadJournal(env.home).append("name:codex-master", [id]);
+    const consumed = finalReportDiagnostics(env.home, [job], "opencode-master", "opencode", 1, "");
+    expect(consumed.jobs[0]?.envelopes).toEqual({ rows: [{ recipient: "codex-master", readAt: at }] });
+    expect(consumed.jobs[0]?.routes).toEqual({ rows: [{ recipient: "codex-master", consumedAt: at }] });
+    expect(consumed.jobs[0]?.consumption).toMatchObject({ rows: [{ identity: "codex-master", readAt: expect.any(Number) }] });
+    expect(JSON.stringify(consumed)).not.toContain("REPORT_BODY_EXCLUDED_FROM_DIAGNOSTICS");
+  } finally { store.close(); }
+});
 
 it("routes a blocking ask to an available group master without returning its result to the limited caller", async () => {
   await env.node("broker", "other").start();
@@ -272,19 +368,24 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   await until(() => existsSync(jobs[2]!.release + ".approved") && readFileSync(jobs[2]!.release + ".approved", "utf8") === "true", 5_000);
   expect(readFileSync(jobs[2]!.release + ".approved", "utf8")).toBe("true");
   for (const job of jobs) writeFileSync(job.release, "");
-  await until(() => jobs.every((j) => readRunnerState(env.home, j.id)?.status === "done"), 10_000);
+  try { await until(() => finalReportsReady(env.home, jobs), 10_000); }
+  catch (error) { printFinalReportDiagnostics(env.home, jobs, primaryName, mode, 0, ""); throw error; }
   await until(() => existsSync(join(env.home, "wake-calls")), 5_000);
   let delivered = "";
+  let inboxReads = 0;
   const deadline = Date.now() + 5_000;
   while ((delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length < 10 && Date.now() < deadline) {
     delivered += (await call(target, "inbox")).text;
+    inboxReads++;
     if ((delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length < 10) await new Promise((r) => setTimeout(r, 20));
   }
-  expect((delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length, delivered).toBe(10);
-  // A live answer to steering is separate from the final report. Each stable final envelope arrives once.
-  const envelopes = [...delivered.matchAll(/<agent-bridge-message id="([^"]+)"[^>]*>([\s\S]*?)<\/agent-bridge-message>/g)];
-  expect(new Set(envelopes.map((m) => m[1])).size).toBe(envelopes.length);
-  for (const job of jobs) expect(envelopes.filter((m) => m[2]!.includes(`Subagent ${job.name} (codex) done after`))).toHaveLength(1);
+  try {
+    expect((delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length, delivered).toBe(10);
+    // A live answer to steering is separate from the final report. Each stable final envelope arrives once.
+    const envelopes = [...delivered.matchAll(/<agent-bridge-message id="([^"]+)"[^>]*>([\s\S]*?)<\/agent-bridge-message>/g)];
+    expect(new Set(envelopes.map((m) => m[1])).size).toBe(envelopes.length);
+    for (const job of jobs) expect(envelopes.filter((m) => m[2]!.includes(`Subagent ${job.name} (codex) done after`))).toHaveLength(1);
+  } catch (error) { printFinalReportDiagnostics(env.home, jobs, primaryName, mode, inboxReads, delivered); throw error; }
   expect(delivered).toContain("Takeover approval request");
   // Quiet supervision copies remain retained and explicitly discoverable after failover.
   const retainedNotes = (await call(target, "inbox", { include_quiet: true, limit: 100 })).text;

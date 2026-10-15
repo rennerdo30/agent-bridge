@@ -64,6 +64,17 @@ it.each(["claude", "codex", "opencode", "antigravity"])("delivers the last real 
   // Send acknowledgement precedes delivery to the supervisor's local hook queue.
   await expect.poll(() => call(sup, "hook_event", { event: "Stop" }),
     { timeout: 5_000 }).toContain("REAL_COMPLETION");
+  if (agent === "antigravity") {
+    // Antigravity holds Stop mail unread until a continuation step is confirmed (AB-315).
+    await expect.poll(() => call(sup, "inbox", { mark_read: false }),
+      { timeout: 5_000 }).toContain("REAL_COMPLETION");
+    await call(sup, "hook_event", { event: "StopFailure" });
+    await expect.poll(() => call(sup, "inbox", { mark_read: false }),
+      { timeout: 5_000 }).toContain("REAL_COMPLETION");
+    await expect.poll(() => call(sup, "hook_event", { event: "Stop" }),
+      { timeout: 5_000 }).toContain("REAL_COMPLETION");
+    expect(await call(sup, "hook_event", { event: "UserPromptSubmit", stop_hook_active: true })).not.toContain("REAL_COMPLETION");
+  }
   await expect.poll(() => call(sup, "inbox", { mark_read: false }),
     { timeout: 5_000 }).not.toContain("REAL_COMPLETION");
 });

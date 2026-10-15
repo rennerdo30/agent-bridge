@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "name": "agent-bridge",
+  "displayName": "agent-bridge",
+  "version": "0.30.20",
+  "description": "Peer messaging, delegation and conversation history across coding agents.",
+  "compat": {
+    "source": "native",
+    "manifestDir": ".muse-plugin"
+  },
+  "capabilities": {
+    "skills": [
+      {
+        "id": "agent-bridge",
+        "path": "skills/agent-bridge/SKILL.md",
+        "enabledDefault": true
+      }
+    ],
+    "commands": [
+      {
+        "id": "peers",
+        "path": "commands/peers.md",
+        "enabledDefault": true
+      },
+      {
+        "id": "send",
+        "path": "commands/send.md",
+        "enabledDefault": true
+      },
+      {
+        "id": "inbox",
+        "path": "commands/inbox.md",
+        "enabledDefault": true
+      },
+      {
+        "id": "dashboard",
+        "path": "commands/dashboard.md",
+        "enabledDefault": true
+      },
+      {
+        "id": "delegate",
+        "path": "commands/delegate.md",
+        "enabledDefault": true
+      }
+    ],
+    "hooks": [
+      {
+        "id": "bridge-sessionstart",
+        "event": "SessionStart",
+        "command": [
+          "node",
+          "hooks/session-start.mjs"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-userpromptsubmit",
+        "event": "UserPromptSubmit",
+        "command": [
+          "node",
+          "hooks/user-prompt.mjs"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-pretooluse",
+        "event": "PreToolUse",
+        "command": [
+          "node",
+          "hooks/pre-tool.mjs"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-posttooluse",
+        "event": "PostToolUse",
+        "command": [
+          "node",
+          "hooks/post-tool.mjs"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-prellmcall",
+        "event": "PreLLMCall",
+        "command": [
+          "node",
+          "hooks/pre-llm.mjs"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-stop",
+        "event": "Stop",
+        "command": [
+          "node",
+          "hooks/stop.mjs"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-stopfailure",
+        "event": "StopFailure",
+        "command": [
+          "node",
+          "hooks/stop-failure.mjs"
+        ],
+        "timeoutMs": 25000
+      },
+      {
+        "id": "bridge-sessionend",
+        "event": "SessionEnd",
+        "command": [
+          "node",
+          "hooks/session-end.mjs"
+        ],
+        "timeoutMs": 25000
+      }
+    ],
+    "mcpServers": [
+      {
+        "id": "bridge",
+        "transport": "stdio",
+        "command": [
+          "node",
+          "dist/server.mjs",
+          "--agent=muse"
+        ]
+      }
+    ],
+    "reminders": []
+  }
+}

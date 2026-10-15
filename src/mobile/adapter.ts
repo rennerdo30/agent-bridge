@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { listRunsResponsive, readDashboard, type DashboardReadContext } from "../core/dashboard-read.js";
 import { normalizeProject } from "../core/decisions.js";
 import { ownerQuestionVersion, type OwnerQuestion, type OwnerQuestionStore } from "../core/owner-questions.js";
@@ -14,6 +15,8 @@ export interface MobileSource {
   chat(id: string, cursor: string | undefined, limit: number): Promise<ContentPage<ChatItem>>;
   steps(id: string, cursor: string | undefined, limit: number): Promise<ContentPage<{ id: string; text: string; at: number | null }>>;
   answer(id: string, body: { expectedVersion: string; option?: string; text?: string }, deviceId: string, key: string): Promise<Question>;
+  /** Local folder of each opaque project id from the latest snapshot, for the desktop owner only; never part of a snapshot. */
+  projectFolders?(): ReadonlyMap<string, string>;
 }
 export const opaqueId = (kind: string, parts: unknown[]): string => createHash("sha256").update(JSON.stringify([kind, ...parts])).digest("base64url");
 const version = (value: unknown): string => opaqueId("version", [value]);
@@ -31,6 +34,7 @@ interface Binding { kind: "session" | "job"; nativeName: string; generation: str
 /** Fixed local adapter. No caller-controlled upstream path/host/broker opcode. */
 export class LocalMobileSource implements MobileSource {
   private bindings = new Map<string, Binding>();
+  private folders: ReadonlyMap<string, string> = new Map();
   constructor(private readonly ctx: DashboardReadContext, private readonly questions: MobileQuestionStore,
     readonly pcId: string, private readonly ready: () => boolean, private readonly completeAnswer?: (q: OwnerQuestion) => void,
     private readonly listQuestions: () => OwnerQuestion[] = () => questions.list()) {}
@@ -40,11 +44,12 @@ export class LocalMobileSource implements MobileSource {
     const peers = (await this.ctx.peers()).filter(p => !p.name.includes("/"));
     const runs = await listRunsResponsive(this.ctx.home);
     if (!this.ready()) throw new MobileFault(503, "source_unavailable");
-    const bindings = new Map<string, Binding>();
+    const bindings = new Map<string, Binding>(), folders = new Map<string, string>();
+    const project = (folder: string): string => { const id = opaqueId("project", [this.pcId, normalizeProject(folder)]); if (!folders.has(id)) folders.set(id, folder); return id; };
     const sessions = peers.slice(0, 10_000).map((p: PeerInfo): Session => {
       const generation = opaqueId("generation", [p.id, p.sessionId ?? null]), id = opaqueId("session", [this.pcId, p.id, generation]), chatId = opaqueId("chat", [id]);
       if (p.sessionId) bindings.set(chatId, { kind: "session", nativeName: p.name, generation });
-      const state = { id, pcId: this.pcId, generation, name: p.name.slice(0, 160), agent: p.agent, projectId: opaqueId("project", [this.pcId, normalizeProject(p.projectRoot ?? p.cwd)]), activity: p.activity === "busy" || p.activity === "idle" ? p.activity : "unknown" as const,
+      const state = { id, pcId: this.pcId, generation, name: p.name.slice(0, 160), agent: p.agent, projectId: project(p.projectRoot ?? p.cwd), activity: p.activity === "busy" || p.activity === "idle" ? p.activity : "unknown" as const,
         connection: p.unavailable ? "unavailable" as const : "connected" as const, parentId: null, chatId: p.sessionId ? chatId : null, sendSupported: false as const };
       return { ...state, sampledAt, version: version(state) };
     });
@@ -52,14 +57,19 @@ export class LocalMobileSource implements MobileSource {
       const id = opaqueId("job", [this.pcId, r.name, r.startedAt]), generation = opaqueId("run", [r.name, r.startedAt]), chatId = opaqueId("chat", [id]);
       bindings.set(id, { kind: "job", nativeName: r.name, generation });
       bindings.set(chatId, { kind: "job", nativeName: r.name, generation });
-      const state = { id, pcId: this.pcId, projectId: r.workdir ? opaqueId("project", [this.pcId, normalizeProject(r.workdir)]) : null, parentId: null, title: (r.title ?? r.job ?? r.name).slice(0, 160), status: r.status,
+      // A removed worktree no longer resolves to its checkout; its retained repository root keeps the job in that project.
+      const folder = r.workdir && (!r.repoRoot || existsSync(r.workdir)) ? r.workdir : r.repoRoot ?? r.workdir;
+      const state = { id, pcId: this.pcId, projectId: folder ? project(folder) : null, parentId: null, title: (r.title ?? r.job ?? r.name).slice(0, 160), status: r.status,
         progress: { percent: typeof r.percent === "number" ? r.percent : null, note: r.progressNote?.slice(0, 500) ?? null, at: r.updatedAt ?? null, etaAt: r.etaAt ?? null, etaReportedAt: r.etaReportedAt ?? null },
         chatId, hasSteps: r.hasLog !== false, archived: r.archived ?? false, recovered: r.recovered ?? false };
       return { ...state, sampledAt, version: version(state) };
     });
     this.bindings = bindings;
-    return { sessions, jobs, questions: this.listQuestions().slice(0, 10_000).map(q => projectQuestion(q, this.pcId)), sampledAt, sourceState: "ready" };
+    const questions = this.listQuestions().slice(0, 10_000).map(q => { const projected = projectQuestion(q, this.pcId); if (!folders.has(projected.projectId)) folders.set(projected.projectId, q.project); return projected; });
+    this.folders = folders;
+    return { sessions, jobs, questions, sampledAt, sourceState: "ready" };
   }
+  projectFolders(): ReadonlyMap<string, string> { return this.folders; }
   private async read(binding: Binding, suffix: string, cursor?: string): Promise<unknown> {
     if (!this.ready()) throw new MobileFault(503, "source_unavailable");
     let context = this.ctx;

@@ -2,18 +2,19 @@ import { createRequire as __abCreateRequire } from 'node:module'; const require 
 import {
   recordRuntimeSession,
   selectedWorker
-} from "./chunks/chunk-2JCQIMR7.mjs";
+} from "./chunks/chunk-LG5QXURA.mjs";
 import {
   DEFAULT_HOME,
   ENV
-} from "./chunks/chunk-EZXQJRQM.mjs";
+} from "./chunks/chunk-NT6Y2SKY.mjs";
+import "./chunks/chunk-DEWCC5JJ.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/mcp/launcher.ts
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 var clientArg = process.argv.find((arg) => arg.startsWith("--agent="))?.slice(8) ?? process.env[ENV.agent] ?? "codex";
-var client = ["claude", "codex", "opencode", "antigravity"].includes(clientArg) ? clientArg : "codex";
+var client = ["claude", "codex", "opencode", "antigravity", "muse"].includes(clientArg) ? clientArg : "codex";
 var home = process.env[ENV.home]?.trim() || DEFAULT_HOME;
 var runtimeHome = process.env.AGENT_BRIDGE_PLUGIN_RUNTIME_HOME?.trim() || home;
 var selected = selectedWorker(runtimeHome, client, join(dirname(fileURLToPath(import.meta.url)), "worker.mjs"));

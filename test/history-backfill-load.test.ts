@@ -3,7 +3,7 @@ import { performance } from "node:perf_hooks";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { backfillBytes, primeLargeHistoryBackfill, seedLargeHistoryBackfill } from "../scripts/history-backfill-fixture.js";
-import { historyDbPath, historyReady } from "../src/core/history-store.js";
+import { historyDbPath, historyReady, migrateHistoryStore } from "../src/core/history-store.js";
 import { Broker } from "../src/core/broker.js";
 import { BridgeClient } from "../src/core/client.js";
 import { MessageStore } from "../src/core/store.js";
@@ -12,24 +12,36 @@ import { HistoryBackground } from "../src/core/history-background.js";
 import { nullLogger } from "../src/core/logger.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { makeEnv, until } from "./helpers.js";
+import { HISTORY_TICK_MS } from "../src/core/history.js";
 
 it("keeps sends and ack below 1s p95 with zero lock failures during large CLI backfill", async () => {
   const env = makeEnv(), fixture = seedLargeHistoryBackfill(env.home);
   vi.stubEnv("CODEX_HOME",fixture.paths.codex); vi.stubEnv("CLAUDE_CONFIG_DIR",fixture.paths.claude);
   vi.stubEnv("XDG_DATA_HOME",join(env.home,"xdg-fixture")); vi.stubEnv("ANTIGRAVITY_CLI_HOME",fixture.paths.antigravity!);
   vi.stubEnv("AGENT_BRIDGE_BACKUP_INTERVAL_MS","0");
+  writeFileSync(join(env.home,"config.json"),JSON.stringify({history:{ingest:false}}));
   const errors: string[] = [], log = { ...nullLogger, warn: (text: string, meta?: unknown) => { errors.push(`${text}: ${JSON.stringify(meta)}`); }, error: (text: string, meta?: unknown) => { errors.push(`${text}: ${JSON.stringify(meta)}`); } };
   const store = new MessageStore(env.db,log), broker = new Broker(env.pipe,store,log,"fixture-token"), clients: BridgeClient[] = [];
   let history: DatabaseSync | undefined;
   try {
     await broker.listen();
+    const worker = (broker as unknown as {historyBackground: HistoryBackground}).historyBackground;
+    await until(() => worker.status().paused,2*HISTORY_TICK_MS);
+    // Build only the synthetic empty store while its worker is config-paused.
+    // This forces schema readiness to precede all durable transcript ingestion.
+    await migrateHistoryStore(env.db,store.history.storageDatabase);
     history = new DatabaseSync(historyDbPath(env.db),{timeout:3000});
     await until(() => historyReady(history!),20_000);
+    expect(backfillBytes(history,fixture)).toBe(0);
     primeLargeHistoryBackfill(history,env.home,fixture);
     // Schema readiness precedes discovery and the first durable transcript batch.
     // Start the traffic window once ingestion is observable, then require further
     // progress during that same window rather than counting startup as progress.
-    await until(() => backfillBytes(history!,fixture)>0,5000);
+    // Direct fixture SQL cannot wake the worker. Enable ingestion and await
+    // an actual batch before starting the traffic clock.
+    writeFileSync(join(env.home,"config.json"),JSON.stringify({history:{ingest:true}}));
+    await worker.tick();
+    await until(() => backfillBytes(history!,fixture)>0,HISTORY_TICK_MS);
     for (const name of ["sender","receiver"]) {
       const client = await BridgeClient.connect(env.pipe,log); clients.push(client);
       await client.request("hello",{protocol:PROTOCOL_VERSION,token:"fixture-token",peer:{id:name,name,agent:"codex",cwd:env.home,pid:process.pid,agentPid:null,sessionId:name,startedAt:Date.now(),autoWake:false}});
