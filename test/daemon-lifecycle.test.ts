@@ -8,7 +8,7 @@ import { BridgeNode } from "../src/core/node.js";
 import { Broker } from "../src/core/broker.js";
 import { BridgeClient, CLIENT_TRANSPORT_DIAGNOSTIC_COUNT_LIMIT, CLIENT_TRANSPORT_DIAGNOSTIC_RECORD_LIMIT,
   type ClientConnectionClosedDiagnostic } from "../src/core/client.js";
-import { PROTOCOL_VERSION } from "../src/core/constants.js";
+import { APP_VERSION, PROTOCOL_VERSION } from "../src/core/constants.js";
 import type { Op, RequestMap } from "../src/core/protocol.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
@@ -494,7 +494,7 @@ describe("standalone demand-start broker", () => {
     expect(existsSync(join(env.home, "token"))).toBe(false);
     expect(existsSync(join(env.home, "logs"))).toBe(false);
     const a = node("status-main"); await a.start(); const pid = await remember();
-    expect(inspect()).toMatchObject({ mode: "daemon", pid, version: "0.30.15", runningJobsEvidence: "legacy_registry_labels_not_execution" });
+    expect(inspect()).toMatchObject({ mode: "daemon", pid, version: APP_VERSION, runningJobsEvidence: "legacy_registry_labels_not_execution" });
     expect((await a.peers()).map(peer => peer.name)).toEqual(["status-main"]);
     const token = join(env.home, "token"), retainedToken = join(env.home, "fixture-retained-token");
     renameSync(token, retainedToken);
@@ -514,7 +514,7 @@ describe("standalone demand-start broker", () => {
     const identity = await readProcessIdentity(pid);
     expect(identity).toBeTruthy(); owned.set(pid, identity!); expect(pid).not.toBe(process.pid);
     const statusClient = await client();
-    try { expect(await statusClient.request("coreStatus", {})).toMatchObject({ mode: "daemon", pid, version: "0.30.15", connectedClients: 11, runningJobsEvidence: "legacy_registry_labels_not_execution" }); }
+    try { expect(await statusClient.request("coreStatus", {})).toMatchObject({ mode: "daemon", pid, version: APP_VERSION, connectedClients: 11, runningJobsEvidence: "legacy_registry_labels_not_execution" }); }
     finally { statusClient.close(); }
     expect(peers.every(peer => !peer.isBroker)).toBe(true);
     expect(await peers[0]!.peers()).toHaveLength(10);
