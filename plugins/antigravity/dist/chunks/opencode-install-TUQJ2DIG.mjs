@@ -1,0 +1,22 @@
+import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
+import {
+  INSTALL_MARKER,
+  installOpencode,
+  opencodeConfigDir,
+  opencodeSourceDir,
+  pluginSourceDir,
+  uninstallOpencode
+} from "./chunk-L67NXVY4.mjs";
+import "./chunk-IATQBAM4.mjs";
+import "./chunk-AR4BZM3F.mjs";
+import "./chunk-HIVVJXLN.mjs";
+import "./chunk-DEWCC5JJ.mjs";
+import "./chunk-6RNADTH4.mjs";
+export {
+  INSTALL_MARKER,
+  installOpencode,
+  opencodeConfigDir,
+  opencodeSourceDir,
+  pluginSourceDir,
+  uninstallOpencode
+};
