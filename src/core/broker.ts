@@ -1012,10 +1012,9 @@ export class Broker {
 
   /** Project local runner lineage from durable jobs; do not alter broker routing identities. */
   private dashboardPeers(): PeerInfo[] {
-    const jobs = this.storedJobs();
-    return [...this.conns].flatMap((c) => {
-      const peer = c.peer;
-      if (!peer) return [];
+    const peers = [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
+    const jobs = this.peerJobs(peers);
+    return peers.flatMap((peer) => {
       const job = jobs.find((j) => j.name === peer.name || `job:${j.id}` === peer.id);
       const field = (key: string): string | undefined => typeof job?.[key] === "string" ? job[key] as string : undefined;
       return [{ ...this.projectPeer(peer), agent: peer.jobAgent ?? peer.agent, parentJob: field("parentJob") ?? peer.parentJob, rootSession: field("rootSession") ?? peer.rootSession ?? peer.jobOwner,
@@ -1240,6 +1239,23 @@ export class Broker {
       return this.storedJobs(false).find(matches);
     } catch { /* Fall back to the full registry read, which handles its own failures. */ }
     return this.storedJobs().find(matches);
+  }
+
+  /** The stored jobs of these connected peers through indexed probes, as in storedJob (AB-382): every dashboard
+   * refresh decoded the full registry to project a few peers, which blocked broker requests while a tab was open. */
+  private peerJobs(peers: readonly PeerInfo[]): Record<string, unknown>[] {
+    if (!this.jobsPath || this.jobsForDispatch) return this.storedJobs();
+    try {
+      if (indexedJobProjectionCurrent(this.jobsPath)) {
+        const ids = new Set(peers.flatMap((peer) => peer.id.startsWith("job:") ? [peer.id.slice(4)] : []));
+        const stored = readIndexedJobs(this.jobsPath, { metadata: true, ids, names: new Set(peers.map((peer) => peer.name)) }).jobs;
+        // As in storedJobs: a recovered record only stands in for a job the store does not list.
+        for (const job of stored) if (typeof job.id === "string") this.recoveredJobs.delete(job.id);
+        return [...this.recoveredJobs.values(), ...stored];
+      }
+      return this.storedJobs(false);
+    } catch { /* Fall back to the full registry read, which handles its own failures. */ }
+    return this.storedJobs();
   }
 
   private storedJobs(projectionCurrent?: false): Record<string, unknown>[] {

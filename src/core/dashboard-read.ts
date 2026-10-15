@@ -12,7 +12,7 @@ import { readRunLogPreview } from "./run-log-preview.js";
 import { DEFAULT_RUN_PAGE_SIZE, MAX_RUN_PAGE_SIZE, pageRuns, readHistoryJobs, readHistoryJson, readRunLogsSteps, historyJobsSteps, selectHistoryJobs, selectHistoryJobsResponsive, unchangedContainedFile } from "./run-history.js";
 import { drainScan, drainScanResponsive } from "./responsive-scan.js";
 import type { Worktree } from "./worktree.js";
-import { listNativeSubagents, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "./transcripts/index.js";
+import { listNativeSubagentsShared, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "./transcripts/index.js";
 import { JOB_OUTCOME_CONTRACT_VERSION, type JobOutcome, type OutcomeJob } from "./job-outcomes.js";
 import { cachedOutcomes, type OutcomeInput } from "./outcome-background.js";
 import { JOB_SETTING_KEYS } from "../mcp/job-settings.js";
@@ -385,7 +385,7 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       if (!peer) return reply(404, { error: "no such local session" });
       if (!peer.sessionId) return reply(409, { error: "This session has no sessionId yet." });
       if (!TRANSCRIPT_ID.test(peer.sessionId) || !CODING_AGENTS.includes(peer.agent as typeof CODING_AGENTS[number])) return reply(404, { error: "no transcript for this session" });
-      if (sessionMatch[2] === "subagents" && child === undefined) return reply(200, { subagents: listNativeSubagents(peer, ctx.transcripts) });
+      if (sessionMatch[2] === "subagents" && child === undefined) return reply(200, { subagents: await listNativeSubagentsShared(peer, ctx.transcripts) });
       const from = url.searchParams.get("from") ?? "0";
       if (!validTranscriptCursor(from)) return reply(400, { error: "invalid transcript cursor" });
       const page = readTranscript(peer, from, child, ctx.transcripts);
@@ -413,7 +413,7 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       if (!sessionId) return reply(409, { error: "This job has no sessionId yet." });
       if (!TRANSCRIPT_ID.test(sessionId) || !CODING_AGENTS.includes(agent as typeof CODING_AGENTS[number])) return reply(404, { error: "no transcript for this job" });
       const session = { agent: agent as PeerInfo["agent"], sessionId, cwd: typeof job?.workdir === "string" ? job.workdir : run?.workdir ?? "" };
-      if (child === undefined) return reply(200, { subagents: listNativeSubagents(session, ctx.transcripts) });
+      if (child === undefined) return reply(200, { subagents: await listNativeSubagentsShared(session, ctx.transcripts) });
       const from = url.searchParams.get("from") ?? "0";
       if (!validTranscriptCursor(from)) return reply(400, { error: "invalid transcript cursor" });
       const page = readTranscript(session, from, child, ctx.transcripts);
