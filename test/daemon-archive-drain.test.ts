@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { JobArchiveBackground } from "../src/core/job-archive-background.js";
 import { openJobArchive } from "../src/core/job-archive-index.js";
 import { nullLogger } from "../src/core/logger.js";
+import { ownProcessIdentity } from "../src/core/process-identity.js";
+import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
 let env: TestEnv, archive: JobArchiveBackground | undefined, lock: DatabaseSync | undefined;
@@ -21,9 +23,16 @@ async function normalIdle() {
   await until(() => archive!.lifecycleOwnerManifest().pendingOperations === 0);
   expect(archive!.lifecycleOwnerManifest().unknown).toBe(false);
 }
+async function warmArchive() {
+  // Cold schema migration and OS identity acquisition are setup, outside the
+  // lifecycle observation. The blocked-migration test below retains the cold path.
+  expect(await ownProcessIdentity()).toBeTruthy();
+  await migrateJobArchives(jobs());
+}
 
 describe("archive reversible producer seal (not store release/durability)", () => {
   it("actual idle ACK is bound to the same worker, and serialization/resume/close invalidate the witness", async () => {
+    await warmArchive();
     archive = new JobArchiveBackground(jobs(), nullLogger); await normalIdle();
     const worker = Reflect.get(archive, "worker"), terminate = vi.spyOn(worker, "terminate"), post = vi.spyOn(worker, "postMessage");
     archive.quiesceLifecycleMaintenance();
@@ -58,6 +67,7 @@ describe("archive reversible producer seal (not store release/durability)", () =
     archive.resumeLifecycleMaintenance(); expect(Reflect.get(archive, "worker")).toBe(worker);
   });
   it("repack while sealed is retained and blocks the witness, then resume delivers it exactly once to the same worker", async () => {
+    await warmArchive();
     archive = new JobArchiveBackground(jobs(), nullLogger); await normalIdle();
     const worker = Reflect.get(archive, "worker"); archive.quiesceLifecycleMaintenance();
     const witness = await archive.settleLifecycleMaintenance(deadline()); expect(witness.settled).toBe(true);
@@ -69,6 +79,7 @@ describe("archive reversible producer seal (not store release/durability)", () =
     expect(Reflect.get(archive, "worker")).toBe(worker); expect(archive.lifecycleOwnerManifest().queuedRepack).toBe(false);
   });
   it("SIMULATED late owned worker error latches unknown and invalidates a full witness", async () => {
+    await warmArchive();
     archive = new JobArchiveBackground(jobs(), nullLogger); await normalIdle(); archive.quiesceLifecycleMaintenance();
     const witness = await archive.settleLifecycleMaintenance(deadline()); expect(witness.settled).toBe(true);
     Reflect.get(archive, "worker").emit("error", new Error("SIMULATED owned worker error"));

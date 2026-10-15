@@ -11,6 +11,7 @@ let env: TestEnv;
 const jobs: BridgeNode[] = [];
 beforeEach(() => { env = makeEnv(); });
 afterEach(async () => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   for (const job of jobs.splice(0)) await job.stop();
   await env.cleanup();
@@ -126,7 +127,14 @@ it("does not retry a closed-connection send a second time when the re-elected co
 
 // Shared fixture: the first connection closes under trackedSend; the re-elected
 // connection's trackedSend answers with `second` (pass-through for other ops).
-function closeThenReconnect(sender: BridgeNode, second: (op: string) => Error) {
+async function closeThenReconnect(sender: BridgeNode, second: (op: string) => Error, lookup: () => Promise<void> = async () => {}) {
+  // Reconnect arms the same 100 ms inbox recovery as start(). Keep that unrelated
+  // producer off, including any already admitted refresh, before observing sends.
+  const pending = sender as unknown as { pendingRefreshTimer: NodeJS.Timeout | null; refreshingPending: Promise<void> | null; schedulePendingRefresh(): void };
+  vi.spyOn(pending, "schedulePendingRefresh").mockImplementation(() => {});
+  if (pending.pendingRefreshTimer) clearTimeout(pending.pendingRefreshTimer);
+  pending.pendingRefreshTimer = null;
+  await pending.refreshingPending;
   const first = (sender as unknown as { client: BridgeClient }).client, firstRequest = first.request.bind(first);
   vi.spyOn(first, "request").mockImplementation(async (op, args: any) => {
     if (op !== "trackedSend") return firstRequest(op, args);
@@ -144,6 +152,7 @@ function closeThenReconnect(sender: BridgeNode, second: (op: string) => Error) {
     vi.spyOn(current, "request").mockImplementation(async (op, args: any) => {
       ops.push(op);
       if (op === "trackedSend") throw second(op);
+      if (op === "sendState") await lookup();
       return request(op, args);
     });
   });
@@ -152,7 +161,7 @@ function closeThenReconnect(sender: BridgeNode, second: (op: string) => Error) {
 
 it("never falls back to a fresh-id legacy send when the re-elected broker rejects trackedSend", async () => {
   const sender = env.node("sender"); await sender.start();
-  const ops = closeThenReconnect(sender, op => new Error(`unknown op: ${op}`));
+  const ops = await closeThenReconnect(sender, op => new Error(`unknown op: ${op}`));
   const error = await sender.send({ to: "offline", body: "no-legacy-after-reconnect" }).catch(failure => failure);
   expect(error).toBeInstanceOf(Error); expect(String(error.message)).toContain("Storage cannot be confirmed for message");
   expect(error.details).toMatchObject({ state: "unknown" }); expect(error.details.messageId).toMatch(/^[0-9a-f-]{36}$/);
@@ -161,8 +170,25 @@ it("never falls back to a fresh-id legacy send when the re-elected broker reject
 
 it("after the reconnect retry a transient error takes only the read-only lookup, never a third trackedSend", async () => {
   const sender = env.node("sender"); await sender.start();
-  const ops = closeThenReconnect(sender, op => new Error(`broker request timed out: ${op}`));
-  await expect(sender.send({ to: "offline", body: "lookup-only" })).rejects.toThrow("storage state is unknown");
+  let release!: () => void, entered!: () => void;
+  const lookup = new Promise<void>(resolve => { release = resolve; });
+  const reachedLookup = new Promise<void>(resolve => { entered = resolve; });
+  const ops = await closeThenReconnect(sender, op => new Error(`broker request timed out: ${op}`), () => { entered(); return lookup; });
+  // Re-arm only the reconnect producer under the controlled clock, so even a
+  // pre-existing real timer cannot make this regression depend on wall time.
+  const startTimer = Reflect.get(sender, "pendingRefreshTimer") as NodeJS.Timeout | null;
+  if (startTimer) clearTimeout(startTimer);
+  Reflect.set(sender, "pendingRefreshTimer", null);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const send = sender.send({ to: "offline", body: "lookup-only" }).catch(error => error);
+  try {
+    await reachedLookup;
+    // Deterministically cross reconnect's 100 ms background-poll boundary while
+    // the send-state response is held. Every send operation remains asserted.
+    await vi.advanceTimersByTimeAsync(101);
+    expect(ops).toEqual(["connected", "trackedSend", "sendState"]);
+  } finally { release(); vi.useRealTimers(); }
+  expect(await send).toMatchObject({ message: expect.stringContaining("storage state is unknown") });
   expect(ops).toEqual(["connected", "trackedSend", "sendState"]);
 });
 

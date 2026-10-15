@@ -7,6 +7,7 @@ import type { Logger } from "./logger.js";
 import { bundleDirectory } from "./bundle-directory.js";
 import { atomicPluginWrite } from "./plugin-runtime.js";
 import { randomUUID } from "node:crypto";
+import { processIdentity } from "./process-identity.js";
 
 export interface ArchiveLifecycleObservation {
   ownerInstance: string; generation: number; quiesced: boolean; pendingWorkers: number;
@@ -42,7 +43,7 @@ export class JobArchiveBackground {
       const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
       const output = join(root, ".agent-bridge-test", "job-archive-worker.mjs");
       const inputs = ["job-archive-worker.ts", "job-archive-index.ts", "job-archive-migration.ts", "archive-bundle.ts", "store-compatibility.ts", "sqlite-migrations.ts",
-        "finished-run-bundles.ts", "metadata-import.ts", "metadata-db.ts", "run-archive.ts", "run-log-preview.ts", "runner-store.ts", "json-store.ts", "job-run-index.ts", "run-history.ts"];
+        "finished-run-bundles.ts", "metadata-import.ts", "metadata-db.ts", "run-archive.ts", "run-log-preview.ts", "runner-store.ts", "json-store.ts", "process-identity.ts", "job-run-index.ts", "run-history.ts"];
       if (!existsSync(output) || inputs.some(name => statSync(join(root, "src/core", name)).mtimeMs > statSync(output).mtimeMs)) {
         mkdirSync(dirname(output), { recursive: true });
         const built = createRequire(import.meta.url)("esbuild").buildSync({ entryPoints: [join(root, "src/core/job-archive-worker.ts")], outfile: output,
@@ -57,7 +58,9 @@ export class JobArchiveBackground {
     [this.worker, this.finished] = this.start(false);
   }
   private start(packOnly: boolean): [Worker, Promise<void>] {
-    const worker = new Worker(this.entry, { workerData: { path: this.path, packOnly, lifecycleOwner: this.lifecycleOwner }, execArgv: [] });
+    const identity = processIdentity(process.pid);
+    const worker = new Worker(this.entry, { workerData: { path: this.path, packOnly, lifecycleOwner: this.lifecycleOwner,
+      ...(identity ? { ownProcessIdentity: { pid: process.pid, identity } } : {}) }, execArgv: [] });
     this.running = true;
     this.lifecyclePending = 1; this.lifecycleRevision = 0; this.lifecycleAck = false; this.lifecycleExitedClean = false; this.changeLifecycleGeneration();
     const finished = new Promise<void>(resolve => {

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import * as delegate from "../src/core/delegate.js";
+import * as museContext from "../src/core/muse-context.js";
 import { readJsonStore } from "../src/core/json-store.js";
 import { nullLogger } from "../src/core/logger.js";
 import type { BridgeNode } from "../src/core/node.js";
@@ -26,7 +27,15 @@ let bin: string;
 const managers: JobManager[] = [];
 const connections: { client: Client; server: McpServer }[] = [];
 const remotes: RemoteJobs[] = [];
+const steps: string[] = [];
+const fixtureLog = { ...nullLogger,
+  debug: (message: string) => { steps.push(message); },
+  info: (message: string) => { steps.push(message); },
+  warn: (message: string) => { steps.push(message); },
+  child: () => fixtureLog,
+};
 beforeEach(() => {
+  steps.length = 0;
   vi.stubEnv("AGENT_BRIDGE_MUSE_EXEC", "1");
   env = makeEnv();
   const script = join(env.home, "muse.cjs");
@@ -53,10 +62,10 @@ function calls(): { args: string[]; session: string; prompt: string; cwd: string
   return readFileSync(join(env.home, "calls.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
 }
 async function session(node: BridgeNode) {
-  const jobs = new JobManager(node, nullLogger, join(env.home, "jobs.json"));
+  const jobs = new JobManager(node, fixtureLog, join(env.home, "jobs.json"));
   managers.push(jobs);
   const server = new McpServer({ name: "muse-jobs", version: "1" });
-  registerTools(server, { agent: "claude", cfg: { ...DEFAULT_CONFIG, museBin: bin }, log: nullLogger, node,
+  registerTools(server, { agent: "claude", cfg: { ...DEFAULT_CONFIG, museBin: bin }, log: fixtureLog, node,
     home: env.home, cwd: () => env.home, channelActive: () => false, jobs }, ["muse"]);
   const client = new Client({ name: "muse-jobs-client", version: "1" });
   const [a, b] = InMemoryTransport.createLinkedPair();
@@ -70,6 +79,29 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
 }
 
 describe("Muse legacy exec profile persistence", () => {
+  // These contracts exercise the real CLI argv and durable job transitions.
+  // Windows identity/DPAPI setup is covered by muse-context.test.ts; its cold
+  // helper processes must not consume this contract's job-completion budget.
+  beforeEach(() => { vi.spyOn(museContext, "registerMuseContextAsync").mockResolvedValue(() => {}); });
+  it("shows that slow context admission consumes the completion wait before the profile CLI can finish", async () => {
+    const node = env.node("claude-slow-context"); await node.start();
+    const { client, jobs } = await session(node);
+    let release!: (cleanup: () => void) => void;
+    const entered = vi.mocked(museContext.registerMuseContextAsync).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const spawned = await call(client, "spawn_muse", { prompt: "initial", title: "Slow context", permission_profile: "initial-profile" });
+    expect(spawned.error).toBeFalsy();
+    const name = /muse-job-[0-9a-f]{8}/.exec(spawned.text)![0];
+    await until(() => entered.mock.calls.length === 1);
+    try {
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      const completion = until(() => jobs.find(name)?.status === "done").catch(error => error);
+      await vi.advanceTimersByTimeAsync(5_020);
+      expect(await completion).toMatchObject({ message: "condition not met in time" });
+      expect(jobs.find(name)?.status).toBe("running");
+    } finally { vi.useRealTimers(); release(() => {}); }
+    await until(() => jobs.find(name)?.status === "done");
+    expect(calls()[0]!.args).toEqual(expect.arrayContaining(["--permission-profile", "initial-profile"]));
+  });
   it("keeps the initial profile through continuation and reload, and replaces exact profiles with access", async () => {
     const node = env.node("claude-muse-jobs"); await node.start();
     let { client, jobs } = await session(node);
@@ -101,8 +133,15 @@ describe("Muse legacy exec profile persistence", () => {
     ({ client, jobs } = await session(node));
     expect(jobs.find(name)?.args).toMatchObject({ access: "edit" });
     expect(jobs.find(name)?.args?.permission_profile).toBeUndefined();
-    await call(client, "message_subagent", { job: name, message: "exact replaces edit", permission_profile: "safe-profile" });
-    await until(() => jobs.find(name)?.status === "done" && calls().length === 6);
+    const finalTurn = await call(client, "message_subagent", { job: name, message: "exact replaces edit", permission_profile: "safe-profile" });
+    expect(finalTurn.error, finalTurn.text).toBeFalsy();
+    try { await until(() => jobs.find(name)?.status === "done" && calls().length === 6); }
+    catch (error) {
+      const job = jobs.find(name);
+      console.info("Muse final profile continuation", { receipt: finalTurn.text, status: job?.status, progress: job?.progress,
+        args: job?.args, calls: calls().length, steps });
+      throw error;
+    }
     expect(jobs.find(name)?.args?.access).toBeUndefined();
     expect(calls()[5]!.args).toEqual(expect.arrayContaining(["--permission-profile", "safe-profile", "--disable-write", "--disable-shell"]));
     const before = calls().length;

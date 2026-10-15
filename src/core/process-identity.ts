@@ -2,6 +2,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
+import { isMainThread, workerData } from "node:worker_threads";
 
 const exec = promisify(execFile);
 let parentIdentity: Promise<string | null> | undefined;
@@ -102,7 +103,13 @@ export function readProcessNamesSync(pids: number[]): Map<number, string> | unde
   } catch { return undefined; }
 }
 
-let ownIdentity: string | undefined;
+// Only a constructor-owned same-process worker handoff may avoid the cold OS
+// query. Unknown/malformed handoffs retain the ordinary probe and cooldown path.
+const ownSeed = !isMainThread ? workerData?.ownProcessIdentity : undefined;
+const validSeedIdentity = (identity: unknown): identity is string => typeof identity === "string" && identity.length > 0 && identity === identity.trim() &&
+  (process.platform === "win32" ? /^\d+$/.test(identity) : process.platform === "linux" ? /^[0-9a-f-]{36}:\d+$/i.test(identity) : Number.isFinite(Date.parse(identity + " UTC")));
+let ownIdentity: string | undefined = ownSeed?.pid === process.pid && validSeedIdentity(ownSeed.identity)
+  ? ownSeed.identity : undefined;
 const OWN_IDENTITY_COOLDOWN_MS = 1_000;
 let ownProbeFailed = false;
 let ownRetryAt = 0;
