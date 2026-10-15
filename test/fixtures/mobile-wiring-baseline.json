@@ -1,11 +1,11 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "324d5e738b1245c857f3356af324328c38653bbefba3819de514039aa265d5ea",
+    "src/core/broker.ts:constructor": "a0c87adcecd93ba68139a2cb6ad21e823e1aae36cc64d9d6209631d3e7399314",
     "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
     "src/core/broker.ts:startServices": "c99740e533c7b6fd293656682c88daa5cbbc491459f21304268f284219cd3777",
     "src/core/broker.ts:abortStartup": "312021e61034aab8fafee80b154d728fb48427a17709a96c936a21a5cb7e2abb",
-    "src/core/broker.ts:close": "9ed775327e43196fafe017689287aba3c43d1c4f4c454e85da501d7c0fa48d7b",
+    "src/core/broker.ts:close": "0704403b2947f54c4608da704533800a20db7cbb72f906a6eff948789f24658f",
     "src/core/node.ts:constructor": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
     "src/core/node.ts:start": "c2444cc1c41903a2489d3142952a79d2d562b37cea8bf617ae4db5a2b2e10299",
     "src/core/node.ts:stop": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
@@ -15,7 +15,7 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "e441658365497275d9bd8f3492bc58f7d522f63778c742c7c09d2cc81be1e29a",
+  "uiSha256": "7e9b9401070d1af8ee7cffe08328c671094a3b8fd0d1e71865844afec8403676",
   "updates": {
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
@@ -224,6 +224,25 @@
       "uiSha256": "e441658365497275d9bd8f3492bc58f7d522f63778c742c7c09d2cc81be1e29a",
       "reason": "PR #79 (reviewed): startUi passes `history: () => historyFeed.connection` to the two readDashboard calls (dashboard read route and chat child lookup) so reads borrow the feed held history connection. No other startUi change; method pins, normalizer and assertions are unchanged.",
       "commit": "03afbdd9e0d122268c0eb66d301d144fd5dbc1cc"
+    },
+    "fix-daemon-handover": {
+      "base": "fe8cd90151b1eb9a4994a78c2bac37481fcd95da",
+      "changes": [
+        {
+          "method": "src/core/broker.ts:constructor",
+          "previous": "324d5e738b1245c857f3356af324328c38653bbefba3819de514039aa265d5ea",
+          "current": "a0c87adcecd93ba68139a2cb6ad21e823e1aae36cc64d9d6209631d3e7399314"
+        },
+        {
+          "method": "src/core/broker.ts:close",
+          "previous": "9ed775327e43196fafe017689287aba3c43d1c4f4c454e85da501d7c0fa48d7b",
+          "current": "0704403b2947f54c4608da704533800a20db7cbb72f906a6eff948789f24658f"
+        }
+      ],
+      "previousUiSha256": "e441658365497275d9bd8f3492bc58f7d522f63778c742c7c09d2cc81be1e29a",
+      "uiSha256": "7e9b9401070d1af8ee7cffe08328c671094a3b8fd0d1e71865844afec8403676",
+      "reason": "fix/daemon-handover (owner-ordered, built on reviewed PR #80): Broker constructor auth handler passes a.canHost to checkAuth; Broker.close() adds only the idle-exit timer clear; startUi imports ConnectionActivity, returns `activity`, and tracks the HTTP server so open browser connections keep an idle daemon up. No other control-flow change; node.ts pins, normalizer and assertions are unchanged.",
+      "commit": "da1ae2dc"
     }
   },
   "revertedUpdates": {
