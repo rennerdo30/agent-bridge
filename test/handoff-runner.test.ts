@@ -216,6 +216,9 @@ it("hands off a blocking ask without returning results or notes to the old calle
   const release = join(env.home, "release"), linkFile = join(env.home, "link.json"); releases.push(release);
   const ready = created(linkFile);
   const pending = call(source, "ask_claude", { prompt: `release=${release} link=${linkFile} blocking work`, title: "Blocking inherited job" });
+  // A later assertion can fail while the ask still owns its native delegate.
+  // Cleanup closes that transport; keep its rejection observed until we await it.
+  void pending.catch(() => {});
   await Promise.race([ready, pending.then(reply => { throw new Error(`Delegate ended before parent-link readiness: ${reply.text}`); })]);
   await until(() => readStore(join(env.home, "jobs.json")).some(j => j.name.startsWith("claude-ask-")));
   const job = readStore(join(env.home, "jobs.json")).find((j) => j.name.startsWith("claude-ask-"))!;
