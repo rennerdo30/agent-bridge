@@ -25,7 +25,9 @@ function files(dir: string): string[] {
   try { return readdirSync(dir); } catch { return []; }
 }
 
-export interface RunLogRecord { name: string; file: string; updatedAt: number; size: number; signature: string; archived: boolean; meta: RunMeta; metadataFile?: string }
+export interface RunLogRecord { name: string; file: string; updatedAt: number; size: number; signature: string; archived: boolean; meta: RunMeta; metadataFile?: string;
+  /** Routing scans only: the metadata file's mtime from the scan's own lstat, so callers need no extra stat. */
+  metadataUpdatedAt?: number }
 const runLogSnapshots = new Map<string, { signature: string; records: RunLogRecord[] }>();
 const historyJobSnapshots = new Map<string, { signature: string; jobs: Map<string, Record<string, unknown>> }>();
 
@@ -103,7 +105,7 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
   }
   for (const { archived, files } of directories) {
     const metadata = new Map<string, RunMeta>();
-    const metadataFiles = new Map<string, string>();
+    const metadataFiles = new Map<string, string>(), metadataTimes = new Map<string, number>();
     for (const { original, file, st } of files) {
       yield;
       if (!original.endsWith(".json")) continue;
@@ -112,7 +114,7 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
           // Backfill discovers paths, then reobserves each exact pair before its
           // transaction. Progress-only replacements cannot invalidate discovery.
           if (safeFile(root, file, canonicalRoot) !== file) { complete = false; continue; }
-          metadataFiles.set(original, file);
+          metadataFiles.set(original, file); metadataTimes.set(original, fileTimeMs(st.mtimeMs, st.mtimeNs));
           continue;
         }
         if (responsive && !unchangedContainedFile(root, file, st, canonicalRoot)) { complete = false; continue; }
@@ -127,7 +129,8 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
       try {
         if (!st.isFile()) continue;
         const key = original.slice(0, -".log".length);
-        const record = { name: key, file, updatedAt: fileTimeMs(st.mtimeMs, st.mtimeNs), size: Number(st.size), signature: fileSignature(st), archived, meta: metadata.get(`${key}.json`) ?? {}, metadataFile: metadataFiles.get(`${key}.json`) };
+        const record = { name: key, file, updatedAt: fileTimeMs(st.mtimeMs, st.mtimeNs), size: Number(st.size), signature: fileSignature(st), archived, meta: metadata.get(`${key}.json`) ?? {}, metadataFile: metadataFiles.get(`${key}.json`),
+          ...(metadataTimes.has(`${key}.json`) ? { metadataUpdatedAt: metadataTimes.get(`${key}.json`) } : {}) };
         const recordKey = routingOnly ? file : key, previous = records.get(recordKey);
         if (!previous || !archived || record.updatedAt >= previous.updatedAt) records.set(recordKey, record);
       } catch { /* A concurrent archiver may have moved the file; retry on the next read. */ }

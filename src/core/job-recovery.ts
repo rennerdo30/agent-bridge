@@ -80,7 +80,7 @@ async function prepareRecoveryAsync(home: string, ref: string, deadline: number)
   const currentRun = witnessedRun(home, id, history);
   if (currentRun) return selectRecovery(ref, id, history, spec, launch, [currentRun]);
   const key = typeof history?.name === "string" ? history.name : ref;
-  await waitForJobRunIndex(home, deadline, key);
+  await waitForJobRunIndex(home, deadline, key, typeof history?.startedAt === "number" ? history.startedAt : undefined);
   if (legacyJobRunAmbiguous(home, key)) {
     // Legacy ambiguity requires discovery, sharing the original cold deadline.
     const stop = new AbortController(), remaining = deadline - performance.now();

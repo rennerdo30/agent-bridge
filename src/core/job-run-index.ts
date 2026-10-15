@@ -17,7 +17,7 @@ const HEAD = "job-run-head-v1", HISTORY = "job-run-history-v1", STATE = "job-run
 const SCHEMA = 3;
 type IndexedRun = RunLogRecord & { indexRoot: "runs" | "home"; legacyCandidates?: { name: string; file: string }[] };
 type Completion = { version: number; failures: string; writer?: string; observedFrom?: number; completedAt?: number };
-type Reobservation = { keys: Set<string>; open: boolean; work: Promise<void>; stop: AbortController };
+type Reobservation = { keys: Map<string, { ref: string; startedAt?: number }>; open: boolean; work: Promise<void>; stop: AbortController };
 const pending = new Map<string, { work: Promise<void>; stop: AbortController }>();
 const retries = new Map<string, { timer: NodeJS.Timeout; attempt: number }>();
 const invalid = new Set<string>();
@@ -286,60 +286,76 @@ function rememberMiss(root: string, ref: string, entry: { generation: string; at
   if (byKey.size > MISS_LIMIT) byKey.delete(byKey.keys().next().value!);
   misses.set(root, byKey);
 }
-function metadataTime(run: RunLogRecord): number {
-  if (!run.metadataFile) return 0;
-  try { return statSync(run.metadataFile).mtimeMs; } catch { return Infinity; }
+const REOBSERVE_CHUNK = 256;
+function missKey(ref: string, startedAt?: number): string { return Number.isFinite(startedAt) ? `${ref}\u0000${startedAt}` : ref; }
+/** A head answers a request when it exists and does not name another known generation. */
+function headAnswers(home: string, ref: string, startedAt?: number): boolean {
+  const head = value(home, HEAD, ref) as IndexedRun | undefined;
+  if (!head) return false;
+  const known = isRecord(head.meta) ? head.meta.jobStartedAt : undefined;
+  return !Number.isFinite(startedAt) || known === undefined || known === startedAt;
 }
-/** A ready index re-observes one unseen key without clearing global readiness: runs whose legacy
- * filename names the key, plus runs changed since the last complete observation. */
-function startReobservation(home: string, root: string, ref: string): Reobservation {
+/** A ready index re-observes one unseen key (or a key whose head names another generation) without
+ * clearing global readiness: runs whose legacy filename names the key, plus loose runs changed since
+ * the last complete observation. Packed runs are skipped: the packer indexes them in its own
+ * transaction. Filtering uses the scan's own timestamps and yields between chunks. */
+function startReobservation(home: string, root: string, request: { ref: string; startedAt?: number }): Reobservation {
   const stop = new AbortController();
-  const pass: Reobservation = { keys: new Set([ref]), open: true, stop, work: Promise.resolve() };
+  const pass: Reobservation = { keys: new Map([[missKey(request.ref, request.startedAt), request]]), open: true, stop, work: Promise.resolve() };
   pass.work = (async () => {
     await yieldTurn(); // Coalesce misses that arrive in the same turn.
     pass.open = false;
     const complete = completion(home), current = complete && JSON.stringify(complete);
     if (!complete || !current) return;
     const from = Math.max(watermarks.get(root) ?? -Infinity, (complete.observedFrom ?? 0) - MTIME_SLACK_MS), began = Date.now();
-    const suffixes = [...pass.keys].flatMap(key => {
+    const suffixes = [...pass.keys.values()].flatMap(({ ref: key }) => {
       const legacy = /^(claude|codex|opencode|antigravity|muse)-(?:job|ask)-([\w-]+)$/.exec(key);
       return legacy ? [`-${legacy[1]}-${legacy[2]}`] : [];
     });
     let observed = false;
     const runs = await readRunLogsResponsive(home, undefined, value => { observed = value; }, stop.signal, true);
-    await indexObserved(home, root, runs.filter(run => suffixes.some(suffix => run.name.endsWith(suffix)) ||
-      run.updatedAt >= from || metadataTime(run) >= from), stop.signal);
+    const changed: RunLogRecord[] = [];
+    for (let at = 0; at < runs.length; at += REOBSERVE_CHUNK) {
+      stop.signal.throwIfAborted();
+      for (const run of runs.slice(at, at + REOBSERVE_CHUNK)) {
+        if (relative(root, run.file).split(sep)[0] !== "runs") continue;
+        if (suffixes.some(suffix => run.name.endsWith(suffix)) || run.updatedAt >= from || (run.metadataUpdatedAt ?? -Infinity) >= from) changed.push(run);
+      }
+      await yieldTurn();
+    }
+    await indexObserved(home, root, changed, stop.signal);
     if (!observed || generation(home) !== current) return;
     watermarks.set(root, Math.max(from, began - MTIME_SLACK_MS));
     const at = performance.now();
-    for (const key of pass.keys) if (!value(home, HEAD, key)) rememberMiss(root, key, { generation: current, at });
+    for (const [key, { ref, startedAt }] of pass.keys) if (!headAnswers(home, ref, startedAt)) rememberMiss(root, key, { generation: current, at });
   })();
   reobservations.set(root, pass);
   const done = () => { if (reobservations.get(root) === pass) reobservations.delete(root); };
   void pass.work.then(done, done);
   return pass;
 }
-async function reobserveKey(home: string, ref: string, deadline: number): Promise<void> {
-  const root = rootKey(home);
+async function reobserveKey(home: string, ref: string, deadline: number, startedAt?: number): Promise<void> {
+  const root = rootKey(home), key = missKey(ref, startedAt);
   for (;;) {
-    if (value(home, HEAD, ref) || knownMiss(home, root, ref)) return;
+    if (headAnswers(home, ref, startedAt) || knownMiss(home, root, key)) return;
     let pass = reobservations.get(root);
-    if (pass?.open) pass.keys.add(ref);
-    else if (!pass) pass = startReobservation(home, root, ref);
+    if (pass?.open) pass.keys.set(key, { ref, startedAt });
+    else if (!pass) pass = startReobservation(home, root, { ref, startedAt });
     // A pass that began listing before this miss cannot cover it; wait, then start a fresh one.
-    const covered = pass.keys.has(ref);
+    const covered = pass.keys.has(key);
     await bounded(pass.work, deadline, "reobservation running");
     if (covered) return;
   }
 }
 
 /** Waiting never cancels the shared backfill or buys a new request budget. */
-export async function waitForJobRunIndex(home: string, deadline: number, ref?: string): Promise<void> {
+export async function waitForJobRunIndex(home: string, deadline: number, ref?: string, startedAt?: number): Promise<void> {
   try {
     if (ready(home)) {
-      // Older writers and imported fixtures may introduce a previously unseen key
-      // after completion. A miss re-observes that key only; readiness stays.
-      if (ref) await reobserveKey(home, ref, deadline);
+      // Older writers and imported fixtures may introduce a previously unseen key, or a
+      // newer turn of a known key, after completion. Such a miss re-observes that key
+      // only; readiness stays.
+      if (ref) await reobserveKey(home, ref, deadline, startedAt);
       return;
     }
     await bounded(startJobRunBackfill(home), deadline, "backfill running");

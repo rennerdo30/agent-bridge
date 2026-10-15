@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { basename, join } from "node:path";
 import { Worker } from "node:worker_threads";
@@ -402,4 +402,31 @@ it("releases a bridge.db handle that a feed or archive route write opened itself
   archiveRun(feed.logPath);
   expect(metadataDbOpen(env.home)).toBe(false);
   expect(indexedJobRun(env.home, "codex-job-handle")[0]!.archived).toBe(true);
+});
+it("yields to the broker event loop while filtering a large reobservation catalog without extra stats", async () => {
+  fixture(); await startBrokerJobRunIndex(env.home);
+  const runs = join(realpathSync.native(env.home), "runs"), seen: number[] = [];
+  let ticks = 0, spinning = true;
+  const spin = () => { ticks++; if (spinning) setImmediate(spin); };
+  const records = Array.from({ length: 2_000 }, (_, i) => ({
+    name: `retained-${i}`, file: join(runs, `retained-${i}.log`), size: 1, signature: `s${i}`, archived: false, meta: {},
+    metadataFile: join(runs, `retained-${i}.json`), metadataUpdatedAt: 0,
+    get updatedAt() { seen.push(ticks); return 0; },
+  })) as history.RunLogRecord[];
+  vi.spyOn(history, "readRunLogsResponsive").mockResolvedValueOnce(records);
+  setImmediate(spin);
+  try { await waitForJobRunIndex(env.home, performance.now() + JOB_INDEX_WAIT_MS, "codex-job-unseen"); }
+  finally { spinning = false; }
+  expect(seen).toHaveLength(2_000);
+  expect(new Set(seen).size).toBeGreaterThan(1); // The event loop ran between filter chunks.
+  expect(jobRunIndexReady(env.home)).toBe(true);
+});
+it("re-observes a known key when an older writer adds a newer turn after completion", async () => {
+  const f = fixture(); await startBrokerJobRunIndex(env.home);
+  // An older writer creates the next turn without index rows.
+  const next = fixture("legacy", "older-writer-next-turn", 2);
+  writeFileSync(next.metadata, JSON.stringify({ job: f.name, jobStartedAt: 2, session: "next-native", by: "owner", access: "read" }));
+  writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: [{ id: "legacy", name: f.name, agent: "codex", owner: "owner", startedAt: 2, status: "done" }] }));
+  expect(await recoverJobRecordAsync(env.home, f.name)).toMatchObject({ prompt: f.prompt, sessionId: "next-native", startedAt: 2 });
+  expect(jobRunIndexReady(env.home)).toBe(true); expect(existsSync(join(env.home, "job-run-index.dirty"))).toBe(false);
 });

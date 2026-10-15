@@ -28,12 +28,17 @@ Its bytes stay where they are; the run is recorded as an observation with no
 usable metadata and no routing key (neither its job field nor its filename can
 prove a key). Sharing and IO errors stay retryable.
 
-A miss on a ready index never clears readiness. The request re-observes that key
-only: runs whose legacy filename names it, plus runs whose log or metadata changed
-since the last complete observation. Concurrent misses share one pass inside the
-request budget; if it cannot finish, the request returns `job_index_preparing`.
-A completed miss is remembered for that completion generation for 30 seconds, so
-repeated or mistyped refs cause no rescans and no invalidation receipts.
+A miss on a ready index never clears readiness. A miss is an unseen key, or a key
+whose head names a different `jobStartedAt` than the history row (for example a
+newer turn written by an older process). The request re-observes that key only:
+loose runs whose legacy filename names it, plus loose runs whose log or metadata
+changed since the last complete observation. Packed runs are skipped because the
+packer indexes them in its own transaction. The filter uses the routing scan's own
+timestamps (no extra stat per run) and yields to the event loop between chunks of
+256 runs. Concurrent misses share one pass inside the request budget; if it cannot
+finish, the request returns `job_index_preparing`. A completed miss is remembered
+per key and generation for that completion for 30 seconds, so repeated or mistyped
+refs cause no rescans and no invalidation receipts.
 
 Feed creation and routing metadata changes publish exact routes. Progress,
 session and other context-only patches write no index rows; exact lookups read
@@ -77,8 +82,10 @@ Broker startup invalidates the index once when the record has an older schema or
 was written by an older version, then rebuilds it. Processes started from an
 older version that are still running after the upgrade (an MCP server or runner
 that predates the index) may create or move runs without index rows. Such runs
-are found by the per-key re-observation above (new or changed files, or a legacy
-filename) or by the next broker start; a moved route clears readiness. Archiving
+are found by the per-key re-observation above when their files changed after the
+last complete observation or carry the key's legacy filename. That includes a
+newer turn on a key that already has a head. Anything else is found by the next
+broker start; a moved route clears readiness. Archiving
 records a failed route update and keeps archiving the remaining runs.
 
 Focused coverage is in `test/job-run-index.test.ts`,
