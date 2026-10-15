@@ -9,6 +9,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { resolvePipePath } from "../src/core/paths.js";
 import { pidAlive } from "../src/core/delegate.js";
 import { codexHost } from "./helpers.js";
+import { captureFixtureBroker } from "./fixture-teardown.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 const TEST_TIMEOUT_MS = 60_000;
@@ -57,6 +58,7 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
   let ui: Awaited<ReturnType<typeof startUi>> | undefined;
   let responses: unknown[];
   beforeEach(async () => {
+    ui = undefined;
     responses = [];
     home = mkdtempSync(join(tmpdir(), "ab-mcp-chat-"));
     writeFileSync(join(home, "app-server"), FAKE_CODEX);
@@ -66,7 +68,7 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
     const codexHome = codexHost(client, home, parent, OWNER);
     transport = new StdioClientTransport({
       command: process.execPath, args: [SERVER, `--agent=${parent}`], cwd: home,
-      env: { ...process.env, CODEX_HOME: codexHome, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_PIPE: resolvePipePath(home, {}), AGENT_BRIDGE_NAME: OWNER, AGENT_BRIDGE_CODEX_BIN: process.execPath, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_JOB_RUNNER: "0", AGENT_BRIDGE_DELEGATE_DEPTH: "0", CLAUDE_PROJECT_DIR: home, AGENT_BRIDGE_PARENT_URL: "", AGENT_BRIDGE_PARENT_TOKEN: "" } as Record<string, string>, stderr: "ignore",
+      env: { ...process.env, AGENT_BRIDGE_DAEMON: "1", CODEX_HOME: codexHome, AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_PIPE: resolvePipePath(home, {}), AGENT_BRIDGE_NAME: OWNER, AGENT_BRIDGE_CODEX_BIN: process.execPath, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_JOB_RUNNER: "0", AGENT_BRIDGE_DELEGATE_DEPTH: "0", CLAUDE_PROJECT_DIR: home, AGENT_BRIDGE_PARENT_URL: "", AGENT_BRIDGE_PARENT_TOKEN: "" } as Record<string, string>, stderr: "ignore",
     });
     await client.connect(transport);
     await call("peers");
@@ -79,6 +81,8 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
       catch (error) { errors.push(new Error(`${phase} failed`, { cause: error })); }
     };
     const pid = transport?.pid;
+    let stopBroker: (() => Promise<void>) | undefined;
+    await attempt("capture fixture broker", async () => { stopBroker = await captureFixtureBroker(home, pid ? [pid] : []); });
     let capturedRequests: any[] = [];
     await attempt("capture owned children", () => {
       const file = join(home, "requests.jsonl");
@@ -93,8 +97,18 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
     await attempt("close fixture UI", () => ui?.close());
     ui = undefined;
     await attempt("close fixture client", () => client?.close());
+    await attempt("close fixture transport", () => transport?.close());
     await attempt("verify fixture server exited", async () => { if (pid) await waitFor(() => !pidAlive(pid)); });
+    // The server can finish starting a fixture child during client.close().
+    // With that producer exited, include its final app-server request records.
+    await attempt("capture final owned children", () => {
+      const file = join(home, "requests.jsonl");
+      if (existsSync(file)) {
+        for (const line of readFileSync(file, "utf8").trim().split("\n").filter(Boolean)) children.add(JSON.parse(line).pid);
+      }
+    });
     await attempt("verify fixture children exited", () => waitFor(() => [...children].every(child => !pidAlive(child))));
+    await attempt("stop fixture broker and verify exit", () => stopBroker?.());
     if (failed || errors.length) {
       console.error(`MCP chat fixture retained: ${home}`);
       if (errors.length) throw new AggregateError([...(context.task.result?.errors ?? []), ...errors], "Fixture capture/teardown failed; original failure and fixture retained");
