@@ -23,7 +23,7 @@ import { join } from "node:path";
 import { BridgeClient } from "../core/client.js";
 import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, APP_VERSION, MAX_BODY_CHARS, PROTOCOL_VERSION } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
-import { BridgeNode } from "../core/node.js";
+import { BridgeNode, type BridgeNodeOptions } from "../core/node.js";
 import { resolveDbPath } from "../core/paths.js";
 import { BridgeError, CODING_AGENTS, isUnsupportedOperation, type PeerInfo } from "../core/protocol.js";
 import { brokerFailureState } from "../core/health.js";
@@ -186,6 +186,10 @@ export interface UiOptions {
   /** Inert opt-in: owner-provisioned mobile registry and exact loopback origin only. */
   mobileAdmin?: MobileDesktopAdmin;
   mobileStatus?: () => string;
+  /** Trusted host wiring only; never accepted from an HTTP/configuration payload. */
+  brokerDaemon?: BridgeNodeOptions["daemon"];
+  /** @deprecated Embedded hosting is the default whenever brokerDaemon is omitted. */
+  embeddedCompatibility?: boolean;
 }
 
 /** The paired PCs' runs in /api/state are re-fetched in the background at most this often. */
@@ -216,16 +220,19 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
   const queueChat = opts.chatQueue ?? codexQueue(loadConfig(opts.home, "other", opts.log).codexBin, opts.log);
   /** The lazily started "you" peer; one shared start, so concurrent sends never start two. */
   let sender: Promise<BridgeNode> | null = null;
+  let senderNode: BridgeNode | null = null;
   const getSender = (): Promise<BridgeNode> => {
+    senderNode ??= new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log,
+      daemon: opts.brokerDaemon,
+      network: { home: opts.home, config: loadConfig(opts.home, "other", opts.log).network } });
     sender ??= (async () => {
-      const node = new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log, network: { home: opts.home, config: loadConfig(opts.home, "other", opts.log).network } });
       try {
-        await node.start();
-        return node;
+        await senderNode!.start();
+        return senderNode!;
       } catch (err) {
-        // Let the next send start afresh instead of keeping a half-started node (and its retries).
+        // A later send retries discovery through the SAME node/unknown-launch
+        // latch. It never creates a second node or competing daemon attempt.
         sender = null;
-        await node.stop();
         throw err;
       }
     })();
@@ -721,7 +728,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     url: `http://${UI_HOST}:${port}/?t=${secret}`,
     port,
     close: async () => {
-      await (await sender?.catch(() => null))?.stop();
+      await sender?.catch(() => null);
+      await senderNode?.stop();
       await new Promise<void>((r) => server.close(() => r()));
     },
   };

@@ -47,18 +47,59 @@ export interface HistoryReadStatus {
   /** Present only while readers are served from the legacy store because the history store is not verified yet. */
   migration?: { ready: false; readsFrom: "legacy"; phase: string; percent: number; error: string | null; notice: string };
 }
+type HistoryReaderCapture = { readonly identity: symbol; readonly requestedFile: string; readonly kind: "status" | "reader";
+  db?: DatabaseSync; open: "attempted" | "returned" | "unknown"; initialize: "not_attempted" | "attempted" | "returned" | "unknown";
+  close: "not_attempted" | "attempted" | "returned" | "unknown" };
+const historyReaderCaptures = new WeakMap<DatabaseSync, HistoryReaderCapture>();
+const retainedHistoryReaderCaptures = new Set<HistoryReaderCapture>();
+let unknownHistoryReaderOpens = 0;
+function capturedHistoryReader(file: string, kind: HistoryReaderCapture["kind"], timeout: number): HistoryReaderCapture & { db: DatabaseSync } {
+  const record: HistoryReaderCapture = { identity: Symbol("actual readonly history open"), requestedFile: file, kind,
+    open: "attempted", initialize: "not_attempted", close: "not_attempted" };
+  retainedHistoryReaderCaptures.add(record);
+  try {
+    const db = new DatabaseSync(file, { readOnly: true, timeout }); record.db = db; record.open = "returned";
+    historyReaderCaptures.set(db, record); return record as HistoryReaderCapture & { db: DatabaseSync };
+  } catch (error) { record.open = "unknown"; unknownHistoryReaderOpens = Math.min(129, unknownHistoryReaderOpens + 1); throw error; }
+}
+function closeCapturedHistoryReader(record: HistoryReaderCapture & { db: DatabaseSync }): void {
+  record.close = "attempted";
+  try {
+    record.db.close(); record.close = "returned";
+    if (record.open === "returned" && record.initialize === "returned") retainedHistoryReaderCaptures.delete(record);
+  } catch (error) { record.close = "unknown"; throw error; }
+}
+/** Pure source bookkeeping. Requested path is not physical/native-handle
+ * identity proof. A returned raw reader is still an unenrolled caller resource;
+ * external close/return cannot acknowledge this source's disposal or ownership.
+ */
+export function historyReaderObservation(db: DatabaseSync) {
+  const record = historyReaderCaptures.get(db);
+  return Object.freeze({ captured: record !== undefined, kind: record?.kind ?? "unavailable", open: record?.open ?? "unavailable",
+    initialize: record?.initialize ?? "not_attempted", close: record?.close ?? "not_attempted",
+    retained: record !== undefined && retainedHistoryReaderCaptures.has(record),
+    unknownOpens: unknownHistoryReaderOpens,
+    overflow: retainedHistoryReaderCaptures.size > 128, physicalIdentity: "unproved" as const, consumer: "unenrolled" as const,
+    ownerBound: false as const, settled: false as const, ownershipReleased: false as const });
+}
 /** Readers stay on preserved legacy rows until the complete copy has been verified; never on a partial copy. */
 export function historyReadPath(file: string): string { return historyReadStatus(file).path; }
 export function historyReadStatus(file: string): HistoryReadStatus {
   if (basename(file) !== "bridge.db") return { path: file };
   const path = historyDbPath(file);
   if (!existsSync(path)) return { path: file };
-  const db = new DatabaseSync(path, { readOnly: true, timeout: 100 });
+  const capture = capturedHistoryReader(path, "status", 100), db = capture.db;
+  capture.initialize = "attempted";
   try {
+    // Status reads own and dispose this exact connection. Mark success only
+    // after the actual page-reading branch has returned its normal result.
+    const status = (() => {
     if (historyReady(db) || historyV1Readable(db)) return { path };
     const migration = legacyReadNotice(db);
     return migration ? { path: file, migration } : { path: file };
-  } finally { db.close(); }
+    })(); capture.initialize = "returned"; return status;
+  } catch (error) { capture.initialize = "unknown"; throw error; }
+  finally { closeCapturedHistoryReader(capture); }
 }
 /** A verified v1 store whose in-place upgrade is deferred (AB-225) still holds the current history under its own names. */
 export function historyV1Readable(db: DatabaseSync): boolean {
@@ -90,8 +131,10 @@ export function legacyReadNotice(db: DatabaseSync): HistoryReadStatus["migration
 }
 /** Read-only connection for history readers: v2 text is decoded by ab_text() inside SQL (FTS snippets, views). */
 export function openHistoryReader(file: string, timeout = 100): DatabaseSync {
-  const db = new DatabaseSync(file, { readOnly: true, timeout });
-  try { registerHistoryFunctions(db); return db; } catch (err) { db.close(); throw err; }
+  const capture = capturedHistoryReader(file, "reader", timeout), db = capture.db;
+  capture.initialize = "attempted";
+  try { registerHistoryFunctions(db); capture.initialize = "returned"; retainedHistoryReaderCaptures.delete(capture); return db; }
+  catch (err) { capture.initialize = "unknown"; closeCapturedHistoryReader(capture); throw err; }
 }
 
 /** 0.30.0–0.30.3 keep history.db v1 open for writing; renaming its tables under them would send their inserts
@@ -107,19 +150,42 @@ function deferUpgrade(writers: string[]): never {
 /** Independent version sequence. No broker tables, triggers, or attached writable databases.
  * v1 → v2 keeps every v1 table inside the file, renamed v1_*, and copies from it (or from bridge.db) verified.
  * The in-place v1 rename waits while a v1 writer is alive; the store then stays v1 until upgradeHistoryStore. */
+type HistoryInitialization = { readonly identity: symbol; readonly db: DatabaseSync; readonly file: string;
+  state: "initializing" | "returned" | "failed"; close: "not_attempted" | "attempted" | "returned" | "unknown" };
+const historyInitializations = new WeakMap<DatabaseSync, HistoryInitialization>();
+const retainedHistoryInitializations = new Set<HistoryInitialization>();
+/** Internal historical native-open observation only; no SQLite page SQL, raw
+ * resource export, parent-owner certification or close/retirement permission. */
+export function historyInitializationObservation(db: DatabaseSync): Readonly<{
+  captured: boolean; initialization: HistoryInitialization["state"] | "unavailable";
+  close: HistoryInitialization["close"]; retained: boolean; overflow: boolean;
+  ownerBound: false; ownershipReleased: false;
+}> {
+  const record = historyInitializations.get(db);
+  return Object.freeze({ captured: !!record, initialization: record?.state ?? "unavailable", close: record?.close ?? "not_attempted",
+    retained: !!record && retainedHistoryInitializations.has(record), overflow: retainedHistoryInitializations.size > 128,
+    ownerBound: false, ownershipReleased: false });
+}
 export function openHistoryStore(file: string): DatabaseSync {
   const db = new DatabaseSync(file, { timeout: 3000 });
+  const record: HistoryInitialization = { identity: Symbol(), db, file, state: "initializing", close: "not_attempted" };
+  historyInitializations.set(db, record); // Capture before configuration or migration can fail.
   try {
     db.exec("PRAGMA busy_timeout=3000");
     registerHistoryFunctions(db);
     const version = Number(db.prepare("PRAGMA user_version").get()!.user_version);
     if (version > HISTORY_STORE_VERSION) throw new Error(`unsupported history store version: ${version}`);
     configureSqlite(db);
-    if (version === HISTORY_STORE_VERSION) { refreshHistoryViews(db); return db; }
-    if (version === 1 && file !== ":memory:" && liveHistoryV1Writers(dirname(file)).length) return db;
+    if (version === HISTORY_STORE_VERSION) { refreshHistoryViews(db); record.state = "returned"; return db; }
+    if (version === 1 && file !== ":memory:" && liveHistoryV1Writers(dirname(file)).length) { record.state = "returned"; return db; }
     upgradeHistoryStore(db, file);
-    return db;
-  } catch (err) { db.close(); throw err; }
+    record.state = "returned"; return db;
+  } catch (err) {
+    record.state = "failed"; retainedHistoryInitializations.add(record); record.close = "attempted";
+    try { db.close(); record.close = "returned"; }
+    catch (closeError) { record.close = "unknown"; throw closeError; }
+    throw err;
+  }
 }
 
 /** Views are derived; a store created by an earlier build gets the current definition. Best effort: a busy store

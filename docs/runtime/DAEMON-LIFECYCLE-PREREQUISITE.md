@@ -1,0 +1,849 @@
+# AB325 1a-i lifecycle prerequisite proposal
+
+Status: **successor design only; implementation and release blocked pending independent
+recheck, Claude assessment and coordinator approval of this exact note**. The owner now requires
+core status/restart/stop before 1a-i release. 1a-ii update integration and dashboard
+controls remain separate and have not started. This is the narrow lifecycle subset
+of 1b approved for design, not permission for a general epoch/state-core/jobs rewrite.
+
+Source inventory: base `7adb4817ea2800e56bd26737a81dbe28d7f17219`, published initial
+candidate `107444c7c705ba723cb69621d87dbbc60a733154`, draft PR17. Original design is
+`a7d87f8fa30bae99a0fdd577c5e7c587a4142759`. Initial hosted run `38373145537`
+failed its unchanged-source checksum gate after the approved dashboard lifecycle
+handler addition. New daemon fixtures passed, including Linux parent-group death
+and Windows prohibiting Job Object/current-user checks. That is initial extraction
+evidence only, not restart/stop or full owner acceptance.
+
+This successor addresses independent review AB325 comment 32318: P2 freezes the
+budget and source-pinned adapter/checkpoint obligations below; P3 separates a normal
+release witness from crash exit proof. The reviewed predecessor remains immutable
+at `354b132171e4e2e8b85c7f18b1aad052cd25e732`. Adapter inventory is pinned to source
+`44730015299fb7ad51fd5fd6c4da711348d8f071`; it is a proposed implementation contract,
+not certification that current shutdown/capability paths satisfy it. Claude ratified
+the initial numeric defaults through the coordinator; hosted phase measurements
+remain absent and must be disclosed per OS in the eventual implementation PR.
+
+Receipt-mechanism successor: the coordinator/Claude approved proposing a lifecycle-only
+SQLite journal using the already-supported `node:sqlite` dependency. This document
+changes publication from a JSON temp/rename/selected-pointer scheme to one fixed
+restricted-home journal. **Journal code remains held for independent recheck and
+Claude assessment of this exact mechanism revision.** Source baseline for this
+mechanism inventory is `35227bed0cfabf3e47d9418b8dd5114c9eed08d4`; owner/drain
+anchors remain pinned to source447 above. No general state-core/job migration.
+
+## Source obligations and gaps
+
+| Existing owner | Actual behavior and missing lifecycle proof |
+| --- | --- |
+| `core/broker.ts` dispatch/requestTurn/Conn.inFlight | Tracks each connection, schedules handler starts, and accepts new mutating requests while others await SQLite/network. No reversible global admission gate or complete operation-settlement counter. Socket acceptance, handler start and durable mutation are different boundaries. |
+| `core/store.ts` retryWrite/stopWrites/close | retryWrite can wait indefinitely on asynchronous SQLite retries; stopWrites aborts them. Broker.close currently calls stopWrites before all dispatched handlers settle. Abort/close is not proof an accepted operation persisted. |
+| Broker pendingJobMailRoute/retry/timers/nativeChildren/networkChange | Background delivery/routing, disconnect callbacks, native-child retained routes and network reconfiguration can mutate stores outside a tool handler. Every producer and outstanding mutation must participate, including work triggered by connection loss. |
+| `core/history-background.ts`, job-archive-background, backup-background | Current close paths stop/terminate workers or reject pending requests. They do not expose a verified persisted checkpoint for every admitted candidate. Worker exit alone is insufficient durability evidence. |
+| `network/link.ts`, transfers, remote jobs/dashboard/decision sync | Pending link requests, extension frames and transfer/replay work have separate queues. Closing the service can reject an unconfirmed accepted remote effect. Active unresolved work must settle or block restart; original UUID/bytes remain retained. |
+| `core/owner-question-service.ts`, mobile activation/host/gateway | Timers, answer/outbox/mirror work and active gateway handlers have independent settlement. Optional mobile disposal has a bounded timeout, which cannot be treated as successful lifecycle drain. Persist accepted answers/replay state before release. |
+| `mcp/server.ts` shutdown | Cancels inline jobs and calls killAllDelegates. Core commands must never call this path, terminate an MCP, cancel jobs, change grants or kill native children. |
+| `mcp/jobs.ts`, runners/hosts/feeds/spec/state/relays and old binaries | Independent writers remain legacy. A daemon drain cannot silently fence them. Execution can continue; capable clients must acknowledge only their election/reattachment barrier. Unknown clients/writers capable of conflicting election or unsupported delivery/control block lifecycle handoff. |
+| BridgeNode election, paths and plugin-runtime | Endpoint identity is protocol-versioned, creation can be ambiguous, and active runtime selectors are per plugin. No canonical restart barrier, durable lifecycle receipt or selected replacement ownership currently exists. New/retained clients can otherwise win election during a release/bind gap. |
+
+Candidate read-only status may expose version, actual broker PID/process uptime,
+daemon/embedded/degraded mode, authenticated connection counts, connected runner
+count and explicitly labeled legacy running-row count. Labels/PIDs are not proof
+of execution. Status must not create/start a daemon or mutate jobs/ownership.
+
+## Minimal additional boundary
+
+### P2: pinned owner/adapters and checkpoint manifest
+
+All anchors in this table refer to source `44730015299fb7ad51fd5fd6c4da711348d8f071`.
+Each row requires a reversible producer gate, tracked admitted work, settlement
+without cancellation and a verified durable checkpoint. Adapter names describe
+required responsibilities, not existing APIs. No row currently has certified
+lifecycle closure. A disabled owner must prove it was never instantiated and has
+no pending work; an unsupported active owner returns a fixed `owner_unsupported`
+blocker before release. Any newly discovered producer adds a review requirement,
+never an implicit exemption or expansion into a general state domain.
+
+| Owner and exact source anchor | Required adapter and checkpoint proof |
+| --- | --- |
+| Broker `broker.ts:714-801`, `627-657` | `dispatchAdmission`: gate before handler acceptance, track scheduled requestTurn and handler continuations independently of socket presence; settle every admitted handler, excluding only lifecycle control/lookup itself. Record accepted/settled work counts, zero unfinished operations and the complete read-only/mutating operation classification. `closing`/Conn.inFlight alone is insufficient. |
+| Disconnect/native routes `broker.ts:749-762`, `1497`, `1571`; `native-children.ts:20,67,72` | `disconnectRoutes`: register endParent/recover/replacement callbacks and their write promises; close-time disconnect must neither end surviving children nor reroute their accepted mail as a side effect of restart. Preserve exact route/mail bytes, settle already admitted fallback work; inhibit teardown producers before transport release. Missing continuity proof blocks active-child restart. |
+| Mail delivery/reroute `broker.ts:990-1057,1778-1780,1841,2019-2066` | `mailSettlement`: gate timers/new sends, settle pendingJobMailRoute/Again/retry, sendingByKey, remote response continuations and all writes they enqueue. Checkpoint original UUID/body/recipient/read-receipt bytes and unresolved delivery obligations; timeout/lost reply is not absence and cannot authorize resend. |
+| MessageStore `store.ts:347-354,521,580,660-673` | `writeSettlement`: register retryWrite before scheduling, drain only after dispatch/producers settle, include archive timer and transaction/history sinks. Verify commits plus existing message/history/archive/decision/config stores and WAL recovery identity. Infinity retry remains live if budget expires; stopWrites/close must not abort it. Directory/file durability and any untracked direct mutation are explicit blockers. |
+| History `history-background.ts:147-187`; `history-worker.ts:99-160,195-220` | `historyCheckpoint`: inhibit wake/peer/pressure/reconcile/restart producers, settle pending/reconcilingAsks/current tick and any ingestion/index work, preserve raw originals and resumable checkpoint/candidate bytes. Return an authenticated restart-bound checkpoint manifest after flush. Rejecting pending or terminating at two seconds is not proof; derive-only work may resume only from a proven persisted original/checkpoint. |
+| Archive `job-archive-background.ts:58-71`; `job-archive-worker.ts:11-74` | `archiveCheckpoint`: gate repack/import requests, settle current migration/packing/import batch, retain originals/conflicting payloads, prove published archive/index and next-work checkpoint plus released migration/storage leases. AbortController stop and worker exit alone are insufficient; no deletion/finalization/migration is authorized by the lifecycle adapter. |
+| Backup `backup-background.ts:47-93`; `backup-worker.ts:5-34` | `backupCheckpoint`: inhibit timer/restart, settle admitted capture/verification and acknowledge flushed complete or retained partial snapshot with manifest, original store remains readable. Current stop throws during capture; do not call it to pass drain or silently discard an admitted backup. Unprovable partial continuation blocks release. |
+| Networking `broker.ts:487-488,642-649`; `network/link.ts:103-124,246-280,633-644`; `network/transfers.ts:146,252-288,535-647,660-664` | `networkCheckpoint`: gate networkChange/inbound extensions/bulk producers, settle pending requests and queued socket writes; persist exact transfer parts/journals/offsets/checksums and unresolved remote UUID/outcome obligations. Closing/rejecting pending, pausing states or ignoring drain is not success. Unknown remote effect remains retained/unconfirmed; if existing protocol cannot reattach it, refuse rather than replay or invent delivery authority. |
+| Remote services `network/remote-jobs.ts:41-51,178-202,237,248-337`; `remote-dashboard.ts:13-72`; `decision-sync.ts:54-86` | `remoteCheckpoint`: include pendingStarts/starting, pending replies, mirrorIntents/Turns/States, feeds, approval publication and decision receives. Settle/persist existing remote records and accepted control/approval/result bytes without aborting a spawn, closing approvals or changing native execution. Dashboard reads must settle before resource retirement; unsupported unresolved activity blocks release. |
+| Owner questions `owner-question-service.ts:16-26,99-143`; `owner-questions.ts:79-101,153-167` | `questionCheckpoint`: inhibit maintenance/default-answer timers, await mirrors and admitted answer/delivery/decision completion, retain original question revision/answer/outbox/mirror state durably. A mirror POST with lost response remains unknown and must not be replayed to claim settlement. Closing its SQLite store is not producer settlement. |
+| Mobile/dashboard `mobile/activation.ts:52-138`; `mobile/bootstrap.ts:35-48`; `mobile/gateway.ts:22-53,164`; `mobile/store.ts:48-51`; `cli/ui.ts:289,722-726`; `cli/broker-daemon.ts:52-87` | `hostCheckpoint`: gate ensureDashboard/HTTP mutations/push/hint polls, settle all admitted handlers and dashboard sender work; flush unchanged registry/answer/grant bytes, retain selected origin/port/TLS/config/owner context. Five-second close/disposal races and late-response discard do not prove settlement. Listener teardown only after settlement; no security registry migration or UI feature is authorized. |
+| MCP/runner independent owners `mcp/server.ts` shutdown; `mcp/jobs.ts`; `mcp/job-runner.ts`; `mcp/delegate-run.ts` | `clientElectionBarrier`: require exact instance/receipt capability acknowledgement and safe delivery/backpressure/reattach proof; do not drain or mutate session job queues, cancel/kill children or call MCP shutdown. Unknown election-capable retained binaries or unprovable accepted work block restart; process-name enumeration is not a complete writer census. |
+| Receipt/storage ownership `json-store.ts:107-137`; `storage-lock.ts:17-57,91-105`; `node.ts` election | `receiptPublication`: verify restricted canonical physical home, nonce/process creation identity, atomic flushed receipt/revisions/gate/checkpoint manifest and selected-pointer durability on every OS; prove all eligible election paths consult it. Existing file fsync/lease logic is evidence to audit, not certified directory durability/canonical authority. |
+
+The private checkpoint manifest is restart-bound:
+`{schema,restartId,oldInstance,sourceManifestDigest,revision,owners:[{ownerId,
+adapterVersion,sourceAnchors,producerGate,acceptedCount,settledCount,pendingCount,
+checkpointRevision,artifacts:[{relativePath,bytes,sha256}],durabilityEvidence,
+ownershipReleaseEvidence}],closureDigest}`. It contains no tokens/content in
+public status/logs; private entries reference preserved existing bytes, never newly
+invented job/domain state. acceptedCount must equal settledCount OR every retained
+pending obligation has a verified durable original/checkpoint and an existing safe
+resume contract; absent such a contract, pendingCount must be zero. Counts alone
+are not durability proof. Replacement validates each digest/checkpoint before done.
+
+Before intent, that durable bounded manifest MUST contain complete managed writer
+membership (max128 descriptors within the existing64KiB envelope): processes carry
+`{kind,ownerInstance,instanceNonce,pid,creationIdentity,bootIdentity,registryGeneration,
+checkpointRevision,leaseIdentities,exitEvidence}`. Each thread carries
+`{kind,parentInstanceNonce,parentPid,parentCreationIdentity,parentBootIdentity,
+workerInstance,captureIdentity,registryGeneration,checkpointRevision,leaseIdentities,
+actualExitEvidence}`. Thread identity is the exact source-owned Worker/capture,
+not an invented separate process PID. Unavailable boot/creation evidence or an
+incomplete registry remains unknown; installed cache enumeration is not membership.
+Reconcile the complete membership/generations again BEFORE final released and at
+successor exit/checkpoint reconciliation. Every actual owned child writer must be
+accounted for; absence, changed membership, missing checkpoints or mismatched leases
+blocks release. A reboot cannot revive a dead selected successor nonce, establish
+continuity from absent PIDs or silently mint a new target. Unproved boot/exit/current
+selected identity remains UNKNOWN, with no new bootstrap/election/second launch.
+
+Receipt publication, durable checkpoint and writer-census proof remain implementation
+entry gates. This table freezes the obligations/file boundary; it does not authorize
+rewriting unsupported services to fit the boundary. An adapter needing a new domain,
+remote replay protocol or complete global census must return to the coordinator.
+
+### P2: ratified numeric budget and pending command semantics
+
+Named initial constants (milliseconds) are `LIFECYCLE_PRE_RELEASE_MS=10000`,
+`LIFECYCLE_ADMISSION_MS=1000`, `LIFECYCLE_PREPARE_MS=5000`,
+`LIFECYCLE_DISPATCH_DRAIN_MS=2000`, `LIFECYCLE_WRITE_CHECKPOINT_MS=2000`,
+`LIFECYCLE_BIND_OBSERVE_MS=2000`. Measure with one monotonic clock from command
+admission. Each phase deadline is min(t0+10s, phaseStart+its named cap); the maximum
+cumulative boundaries are t0+1/6/8/10s. Early completion does not donate time or
+reset/extend another phase's cap. No nested hidden retry
+or generic deadline inflation. Freeze these constants in hosted tests; record each
+phase and total per OS/runtime, adjust only through review of new measured evidence.
+
+Admission/census/durable pending acknowledgement must finish within the first second.
+An accepted restart RPC returns PENDING with the durable restartId/receipt revision,
+never a completed outcome, because ten-second RPC cannot cover ten plus two seconds.
+Receipt lookup is read-only: CLI performs at most 24 lookups at a minimum 500ms
+interval within a 12-second monotonic observation envelope; each lookup uses only
+the remaining envelope (and at most existing RPC10s). No overlapping polls, busy
+loop, mutation replay or recreated ID. Envelope expiry prints pending/unknown and
+the same receipt ID truthfully; a later explicit lookup can observe completion.
+
+Prepare includes WMI/create, exact successor authentication and ready-to-bind within
+five seconds; the creation timeout is not an extra allowance. Any pre-release phase
+overrun may reopen old admission and retain serving endpoints ONLY before ANY
+irreversible handle close or permission retirement, with original ownership and
+producers intact AND committed-only nonuncertain intent/abort outcome proved. Then it publishes
+`aborted:<phase>budget` as the failed_serving outcome and prohibits release. Do not
+kill a possibly created replacement: it remains bound to the original receipt and
+cannot bind without release_intent. Unknown WMI creation stays latched, no second
+launch. Already accepted store/worker work continues settling while old serves.
+If any of those predicates or durable abort publication is unprovable, retain seals,
+the complete ledger and unknown receipt/election
+gate and report it; do not claim a durably clean abort or a completed command.
+
+Post-release two seconds is observation only, starting at verified endpoint release.
+Bind/outcome timeout retains unknown plus same-receipt discovery; it never proves
+death, grants takeover, replays work or permits rollback. A bind may eventually
+complete beyond the observer envelope without another launch. Stop uses the same
+admission/dispatch/write caps and total bound, skips replacement preparation, and
+still cannot treat elapsed time as job safety or authorize automatic relaunch.
+
+### P3: exact exit and new successor durability point (review required)
+
+This DOC-only successor records coordinator-relayed Claude decision6652d1e6 and
+independent assessment32823, superseding db416c30's released-plus-lock variant and
+737485e7's live-old post-close ACK alternative. Source pin for this contract is
+`b6e30e7606a1142b76281c5226e87cbd76665754`; earlier owner anchors remain unchanged.
+Ledger/controller/role-transfer code is HELD until independent review and Claude
+short final of this exact note. Existing adapters are checkpoint/producer observers,
+not proof of final closure. Unsupported history/project/other closure blocks release.
+
+There is ONE successor activation path below. The prior intent-only exit fallback
+is REMOVED: old death plus release_intent, a lost ACK, time, an absent endpoint,
+or acquiring a journal lock does not authorize promotion. A still-live old daemon
+cannot be replaced under a normal post-close ACK. The exact old daemon AND EVERY
+manifest-owned child writer must exit before successor journal writer acquisition.
+This applies to successful graceful retirement and crash reconciliation alike.
+Unrelated MCP sessions, detached job executors and native children remain untouched;
+unknown or unsupported independent writers block rather than being killed to pass.
+
+#### Seals, irreversible retirement and per-handle accounting
+
+Gate new mutating admission and seal every accepted dispatch, raw/cached SQL,
+retry/continuation, opener, timer, worker, maintenance, teardown/disconnect, route,
+lease renewal and election producer. Drain dispatch THEN writes; preserve admitted
+bytes and queues without cancellation. Revalidate the complete owner/generation
+manifest under the seals. Every supported owner supplies actual checkpoint and
+handle/lease retirement evidence. Native routes use the reviewed committed zero
+proof, not endParent/recoverOrphans to manufacture zero. Any pending/unknown route
+or newly observed writer refuses before irreversible release; unsupported network,
+mobile/question continuity refuses rather than silently discarding work.
+
+Before any irreversible resource close, a proven reversible phase-budget refusal
+may reopen admission only before any irreversible close/permission retirement,
+with original ownership/producers intact AND committed-only nonuncertain intent/
+abort outcome proved. Once retirement begins, no partial-close rollback or
+old-serving resume is claimed. This is an availability gap, not a force close.
+Keep all attempted/unattempted resources accounted for if failure interrupts it.
+The endpoint reservation does not own accepted Broker connections: inventory exact
+listener, sockets, scheduled handlers and disconnect side effects separately.
+Seal teardown writes BEFORE releasing sockets/listener; release only owned transport.
+No old callback may mutate routes/mail merely because a core close disconnects it.
+
+Retain per-handle ledger `{ownerInstance,ownerNonce,generation,handleId,fileIdentity,
+schemaIdentities,checkpointRevision,status}` with status `unattempted`, `attempted`,
+`closed`, `failed` or `unknown`. Register ALL handles before the first attempt,
+including aliases as separate connections and each worker's handles/leases. Count
+closed only after actual successful return plus source-owned statement/cache
+invalidation. Never clear failed entries or release leases in finally to fake it.
+Actual worker exit alone is not accepted-byte durability; verify checkpoint/lease
+retirement as well. No termination/cancellation, close-based rollback, SQLite repair,
+migration, new initializer or queued-effect replay is part of this ledger.
+
+All substantive managed writers/handles/leases and endpoint/ordinary connections
+must retire BEFORE the final released transaction. The lifecycle journal is the
+explicit LAST logically retired CONTROL tail. Set a permanent source-owned old
+write-authority retirement latch BEFORE attempting that transaction; consume its
+single-use final-transaction permission BEFORE issuance. All other old write APIs,
+raw handles, cached statements, queued callbacks, openers/renewals and election paths
+remain irrevocably denied, even if COMMIT throws or returns late. No startup may
+revive this retired generation. A public boolean/role flag is not this proof.
+The final transaction alone may append `released` (or terminal stop intent) and its
+exact checkpoint/selection revision; no subsequent old SQL effect may follow.
+
+`release_intent` is preparation INTENT, never promotion permission. The final
+`released` record is likewise necessary but INSUFFICIENT by itself. Its current
+revision binds exact old nonce/PID/creation identity, journal lineage, owner/gate
+generations, manifest/ledger digest, restartId/request digest, selected successor
+nonce/PID/creation identity and immutable target/version/manifest. Logical retirement
+is not a claim the last physical journal connection closed. Attempt that close and
+release the exact control-role lease; failure remains failed/unknown in the ledger.
+Do not write a receipt after closing the last journal, reopen it, or disguise close
+as rollback/durability proof. Normal old exit occurs only after supported retirement;
+verify every owned writer process/thread exited through its actual creation identity.
+Use the durable process/thread membership above: a thread's actual exit is tied to
+its exact parent creation/boot identity and owned Worker capture, not a fictitious PID.
+A parent exit does not prove its workers/children or accepted queues settled.
+
+#### Budget and uncertain final COMMIT
+
+Keep ratified 1/5/2/2 phases and aggregate10s. Final write/checkpoint/close attempts
+share the original write2s/remaining-total envelope. Do not issue final COMMIT after
+that deadline. This final-COMMIT gate governs ISSUANCE, not its uncancellable durable
+completion: successful COMMIT/autocommit/independent observation after the deadline
+is explicitly `released(late)`, NEVER timely success. Record actual phase/return
+measurements. No other phase cap, RPC10s or observer envelope is enlarged.
+A started synchronous COMMIT/close may finish late or throw; a pre-call clock check
+cannot guarantee no released row exists after expiry. Retain seals, ownership/ledger
+and unknown outcome, never resume old serving or launch a second successor.
+
+Post-endpoint2s is bounded observation, including exits, selected bind and outcome;
+expiry reports pending/unknown with the SAME receipt, without takeover or hidden
+retry. No new observation-owned acquisition/effect is issued after its deadline.
+Later explicit same-receipt reconciliation may use a fresh bounded observation
+for the SAME selected successor; it does not rewrite late timing as timely acceptance.
+Pending RPC/CLI lookup semantics above remain unchanged, with no replay of controls.
+
+[SQLite's pager source](https://github.com/sqlite/sqlite/blob/master/src/pager.c)
+`zeroJournalHdr` writes PERSIST header invalidation before its final sync, and
+transaction finalization may attempt unlock after an error. A visible released row,
+nonhot-looking header, autocommit or acquired lock alone therefore does not establish
+that an earlier failing sync was durable. Pin the actual hosted SQLite/VFS version;
+source inspection and process-crash fixtures are not physical power-loss proof.
+Distinguish controlled wrapper-throw AFTER a successful actual COMMIT from an actual
+VFS final-sync IOERR: the former has a known successful underlying operation; the
+latter remains uncertain even if the row is readable. Neither may bypass quarantine.
+
+#### Successor guard: read-only, all writer exits, then new durable CAS
+
+The designated successor follows this order, without an alternative fallback:
+
+1. FIRST open only the established lifecycle journal using actual readOnly flags
+   and query_only=ON; validate private paths/file identities/lineage and read the
+   matching committed receipt/checkpoint/selected current revision. Missing,
+   partial, corrupt, hot or unsupported read remains UNKNOWN. No writable reopen,
+   sidecar creation, hot recovery, repair or malformed-receipt reconstruction.
+2. SECOND verify exact old daemon nonce/PID/process-creation EXIT AND every
+   manifest-owned child writer's exact creation-bound exit, plus all original
+   checkpoint/accepted-byte/lease reconciliation. Unknown process identity or a
+   missing child ledger refuses. No kill/eviction or parent-absence shortcut.
+3. Win exclusive canonical endpoint bind as TENTATIVE before journal acquisition.
+   Bind loser exits readonly, without store/worker/cleanup/unlink or journal writes.
+   The active receipt forbids ordinary client/embedded/other daemon election.
+   No tentative auth/ready/mutation authority until the remaining guard completes.
+4. ONLY THEN acquire the narrowly scoped established writable journal connection,
+   with fresh instance/phase/file/lineage proof and bounded BEGIN IMMEDIATE. This is
+   a control-journal acquisition exception, NOT substantive store promotion. Under
+   that SAME held transaction re-read CURRENT revision and CAS exact selected
+   successor/lineage/nonce/generation/target/checkpoint digest. No cached snapshot,
+   probe-and-release lock or lock-age takeover. No CREATE/recovery on missing/hot
+   journal: [SQLite locking behavior](https://www.sqlite.org/lockingv3.html) can
+   recover a hot journal on writable access BEFORE BEGIN; BEGIN is not a no-hot test.
+   Prepared reader/writer guards and controlled-file-change checks must prevent
+   this path, otherwise remain unavailable without attempting writable recovery.
+5. The CAS writes a NEW successor authorization revision. Require actual successful
+   CAS/change count, successful COMMIT, strict autocommit and independent actual
+   committed-only read matching that new revision, with FULL/PERSIST/VFS assumptions,
+   BEFORE ANY substantive writable store/lease/worker/recovery initializer. This
+   establishes a NEW independently verified durability point; it does NOT certify
+   retroactive old COMMIT/flush success. A readable old released revision or BEGIN
+   alone cannot transport an old in-memory quarantine or establish this point.
+   Failed/uncertain successor COMMIT/observation latches quarantine and stays UNKNOWN,
+   even if a row is visible: no retry/replay, public close/reopen/fallback, ownership
+   promotion or second launch. Retain original bytes and committed history.
+
+An earlier uncertain old COMMIT is not declared successful by step1 or step4.
+Only the complete exit/checkpoint reconciliation and independently successful NEW
+step5 may establish a new current authorization, preserving the old unknown outcome.
+If original accepted receipt/checkpoint bytes or selected identity are unprovable,
+there is no safe CAS and no automatic recovery. Physical arbitrary-power-loss
+assurance still depends on disclosed VFS/filesystem/flush assumptions. Internal
+COMMIT/bootstrap/hot/partial failures are NOT the external deletion fault exclusion.
+
+Stop has no prepared successor and must persist demand-start inhibition. Its final
+stop intent remains pending/unknown until actual old/all-owned-writer exits and
+checkpoint/lease evidence are proven; no row alone is fully stopped proof. Updated
+clients honor stopped indefinitely; unknown cannot elect or bootstrap. No child
+kill/cancel, automatic restart, lost-reply replay or unreviewed resume command.
+
+Required hosted Windows/Linux/macOS cases: partial close ledger at every position;
+retired old raw/cached/queued/open/election refusal after COMMIT uncertainty; actual
+last-close failure/late return; old daemon exit with live owned child refuses;
+actual readonly hot-journal refusal BEFORE any writable acquisition; wrapper-throw
+AFTER successful COMMIT distinct from injected VFS-style uncertainty; competing
+selected/ordinary bind; stale revision/current CAS under one held transaction;
+successor successful NEW commit/independent read before store initializer; failed
+successor commit even with readable row remains unknown; accepted mail/reports,
+active detached jobs and connected dashboard preserved. Controlled SQL/IO fault
+injection must be labeled simulation, not native VFS/power-loss proof. Every owner
+must support the contract before full restart/stop acceptance can be claimed.
+
+Proposed files: new `core/daemon-lifecycle.ts` for a **restricted lifecycle receipt**
+and its election gate; launcher/daemon/node wiring; narrow broker/protocol/CLI lifecycle
+handlers; minimal store/background-service drain adapters and isolated fixture tests.
+Before implementation, enumerate exact extra worker/service files needing adapters.
+Any service without a bounded, reversible durable checkpoint blocks release rather
+than being dropped, force-closed or rewritten into a new domain.
+
+No state-core.db, general command ledger, job state machine, snapshot cursor,
+receiver permits, executor launch or ownership migration is introduced. The receipt
+is lifecycle coordination only. It cannot claim to fence arbitrary same-user software
+or unknown legacy writers that ignore it.
+
+## Restricted receipt and current-instance binding
+
+Use one protocol-independent lifecycle directory under the canonical physical Bridge
+home, mapped identically across supported aliases. Reject unsafe ownership/linked
+publication paths using existing containment/private-material rules. Bind the same
+user/home, current authenticated endpoint, broker-generated random instance nonce,
+PID **and verified process creation identity**. PID/time alone never establishes
+authority. Home/installation mismatch or unknown process inspection is unavailable.
+
+One retained receipt per command:
+
+`{schema,restartId,operation,homeIdentity,oldInstance:{nonce,pid,creationIdentity},
+target:{immutableRuntimePath,version,protocol,fileManifestDigest},replacementInstance?,
+state,revision,requestDigest,acceptedAt,checkpointManifest?,outcome?,failureCode?}`.
+
+The proposed schema has ONE canonical actor/transition table below. Current portable
+source still uses the older release_committed enum and does NOT implement this new
+state/actor contract; schema/wiring alignment is a code-entry requirement, not an
+implicit migration or permission to accept prose-only states. Retain all revisions,
+conflicting bytes and historical outcome uncertainty independently of current actor.
+
+| State / transition | Only authorized actor and evidence | Authority meaning |
+| --- | --- | --- |
+| accepted -> preparing -> draining -> prepared | Exact old instance, durable admission/selection, complete bounded writer membership, actual producer/drain/checkpoints | Old owns serving; no successor writer. Stop skips preparing. |
+| prepared -> release_intent | Exact old writer, committed intent and selected target/checkpoints | INTENT only; no promotion or old-retirement proof. |
+| release_intent -> released | Old single-use FINAL transaction, all substantive handles/leases retired, complete closed ledger and permanently retired old write permission | Last CONTROL tail is explicitly logically retired, not falsely physically closed. Readable row alone is insufficient. |
+| released -> binding | Exact designated successor ONLY after strict RO/nonhot + old/all-child exits + checkpoints + tentative bind + SAME-held-transaction current-revision CAS | NEW authorization requires actual successful CAS/COMMIT/autocommit/independent read BEFORE substantive writers. A binding row without those source-owned observations is not permission. |
+| binding -> done | Current proven successor writer, initialization/checkpoints/serving verified | Completed same receipt; preserve historical old UNKNOWN/late outcome separately. |
+| reversible prefinal -> failed_serving | Old only while no irreversible close/retirement, original ownership/producers intact and committed-only nonuncertain intent/abort proved | May resume serving under ALL predicates; no uncertain final-tail abort. |
+| any unproved outcome -> unknown; post-release unavailable | Committed observation reports actual proven actor/revision; unknown cannot mint a writer or persist its own guessed authority | Historical old unknown never becomes old COMMIT success through successor reconciliation. |
+| prepared -> stop_intent -> stop_committed | Exact old, same single-use final retirement rules, complete retained ledger | Intent/inhibition pending; no stopped proof or demand-start. No successor is launched. |
+| stop_committed + observedOutcome=stopped (no new durable transition) | Readonly exact old/all-child exit + checkpoints/leases; terminal durable intent already exists | Proven stopped may be reported without reopening old journal to write after close. Otherwise observedOutcome=pending/unknown. |
+
+Each receipt revision binds currentActor/actorGeneration and selected successor,
+while historicalOldOutcome retains old commit unknown or released(late). The last
+control-handle/lease status is explicit and cannot be counted closed before actual
+return/exit. Existing schema rejects unknown fields; reviewed implementation must
+define/validate these exact bounded fields before enabling transitions. No new
+receipt ID, overwrite, time expiry or reconstructed guessed completion is allowed.
+The canonical persisted state enum is exactly accepted/preparing/draining/prepared/
+release_intent/released/binding/done/failed_serving/unavailable/unknown/stop_intent/
+stop_committed; status observedOutcome is a separately validated bounded enum
+pending/unknown/done/stopped, not a fabricated stopped journal revision by a reader.
+
+Publication must be all-or-none and durable before acknowledgement or endpoint
+release through the lifecycle-only journal contract below. Existing json-store.ts:107-137
+fsyncs a temp file and renames it without established durable directory publication;
+it is not the receipt backend. Existing storage leases still require audit: no
+timeout-only steal or process-identity-unknown recovery is allowed.
+
+The serialized lifecycle coordinator verifies the current receipt revision and exact
+bound instance before each transition. After a conflicting/paused holder, only proven
+old-instance exit plus receipt reconciliation permits a successor; no lease-age takeover.
+This is a narrow lifecycle generation/instance guard, not a general domain epoch claim.
+
+### Lifecycle-only SQLite publication proposal
+
+Canonical location is the fixed physical-home path `.core-lifecycle/receipts.sqlite`;
+there is **no external selected-pointer file**, version-dependent endpoint path or
+selector that could discover a different journal. Every updated election path checks
+this location before create/takeover/degraded embedding. Canonical physical home,
+user identity and an immutable journal lineage UUID are committed during bootstrap,
+before accepting a lifecycle command. Receipt revisions and the selected active
+receipt/revision/old-instance/designated-successor projection commit in ONE transaction.
+The projection is disposable only by verified reconciliation, not guessed absence.
+
+Initial bootstrap is performed by the authenticated current daemon owner, never by
+a prepared replacement or ordinary discovering client. The successor role/absence
+contract below refines this to the already-bound normally serving singleton; absence
+alone does not authorize bootstrap. Verify all ancestors and
+the database/journal are regular, nonlinked, correctly owned private paths; retain
+the physical-directory/file identities in lineage evidence. Create the new directory
+0700 and files0600 on Unix, flush initial schema/lineage and validate reopen through
+a separate strict reader before acknowledgement. Require durable directory-entry
+proof for initial database/journal creation (Unix directory sync/VFS evidence;
+Windows documented VFS/FlushFileBuffers and local-filesystem creation assumptions).
+If initial lineage/publication proof cannot be established, refuse lifecycle admission
+while the old daemon serves; SQLite does not make that missing proof disappear.
+After bootstrap, absent/replaced/corrupt/mismatched journal is unknown, never permission
+to re-bootstrap or elect. A participant that has observed lineage must retain that
+identity for its lifetime; release must not occur while a new participant can mistake
+a missing journal for a never-initialized home. Prove this discovery boundary in
+fixtures, including interrupted first creation; unknown lineage blocks election.
+
+#### Successor: serving bootstrap, established journal and tentative endpoint
+
+This section records the coordinator-relayed Claude choice after the independent
+Windows establishment assessment. It is a DOC-only revision requiring independent
+recheck and Claude short final BEFORE its new startup/bootstrap behavior is coded.
+Portable receipt API/fault work under de420 is separate. Source anchors for this
+mechanism correction are `02b1fe6d5860e4f509ec879544b784c50b526d85` (UI diagnostic
+successor), `35227bed`/source447 for the earlier inventory, and the unchanged source
+sections referenced below. It is not certification of current release safety.
+
+There is no user provisioning command and no extra durable discovery anchor.
+Only the controlled daemon instance that already exclusively owns the canonical
+endpoint and is **SERVING normally** may perform first journal bootstrap. Clients,
+prepared/designated successors, tentative listeners and a process in a handoff gap
+must never bootstrap. A virgin home first obtains the existing transport singleton,
+initializes its normal broker and serves; that owner then establishes the lifecycle
+journal. Missing/unestablished journal makes restart/stop return the fixed
+`journal_not_established` reason while that normal owner keeps serving. It is not a
+receipt acknowledgement or lifecycle effect. Bootstrap failures retain their bytes;
+no implicit repair/recreation of an interrupted or ambiguous existing directory.
+
+Establishment requires a real committed bootstrap write that creates/uses the DB
+and physical PERSIST journal, verified independent committed lineage and retained
+DB/journal/directory identities, restrictive ownership/ACL and a later independent
+strict readonly reopen. Initial file flush and reopened lineage are **operational
+evidence**, not proof of directory-entry durability after arbitrary power loss.
+Record actual SQLite version/compile options/default VFS, local filesystem/runtime,
+flush results and Windows creation assumptions. Without the reviewed publication/
+establishment evidence, remain lifecycle unavailable; never promote file existence
+or a self-recorded marker to a universal durability claim. Hosted process-crash
+fixtures do not certify physical power-cut behavior. ACL creation/protection is
+bootstrap-only and only for exclusively created receipt paths; each restart still
+validates ownership, permissions, nonlinks and identity without repair or ACL changes.
+
+Every writable lifecycle connection verifies PERSIST/FULL, journal_size_limit=-1,
+trusted_schema=OFF, foreign_keys=ON, 25ms busy cap and macOS fullfsync. Established
+DB AND PERSIST file must already exist with the verified lineage/identities before
+receipt writes. Missing/replaced files or hot-journal recovery ambiguity during an
+active or designated handoff remain UNKNOWN. Never open/create a new empty journal,
+recover writable from a prepared reader, change modes, ATTACH, VACUUM or prune history.
+SQLite's pager can open its journal READWRITE|CREATE; preflight alone cannot atomically
+prevent recreation under external removal. The supported controlled workload and
+path protections must be explicit, with check/write-race detection and quarantine;
+do not promise fencing of arbitrary same-user removers. Unknown proof blocks effects.
+
+**Ordering for ALL controlled broker-owner startup paths** (designated successor,
+ordinary daemon and explicit embedded compatibility): validate the canonical gate
+and exact home; bind the exclusive canonical endpoint FIRST, THEN acquire/initialize
+any writable broker-owner store, lease, lifecycle journal or side worker. A designated
+successor additionally satisfies the exact-exit/new-durable-CAS guard above BEFORE
+the first substantive writable acquisition; it must also have won bind. Neither
+release_intent, designation nor an exit observation alone bypasses endpoint exclusivity. Unknown remains
+readonly/unavailable. Prepared replacement opens no other stores even readonly.
+
+The endpoint is initially **TENTATIVE**, distinct from SERVING. Before initialization
+and all applicable guards finish, it cannot acknowledge authenticated authority/ready,
+admit a mutation or create an unbounded request queue. Use a typed fixed not-ready
+response or strictly bounded frame/connection buffering with existing frame bounds;
+preserve supported transport/auth semantics and disclose compatibility behavior.
+Failure after bind but before initialization never advertises ready/done; report a
+retained same-receipt unknown/unavailable outcome through the original authorized
+journal writer/committed reader, release only the exact owned tentative endpoint,
+and never start another successor automatically. A bind loser stays readonly, exits
+without broker/store/journal initialization, cleanup, auth replacement or endpoint
+unlink. It cannot write an UNKNOWN receipt on its own; the authorized old coordinator
+or proven successor writer owns that publication, otherwise committed lookup says
+unknown. Done follows initialization/checkpoint validation and serving readiness.
+
+Fresh clients that have never observed lineage cannot distinguish a lost journal
+from a virgin home without an extra anchor. Claude's explicit bounded fault choice
+excludes wholesale EXTERNAL deletion of an ESTABLISHED lifecycle DB AND PERSIST
+journal from stop/restart guarantees; there is no extra anchor or provisioning flow.
+Deleting Bridge lifecycle/state files outside the Bridge can lose persisted stop/
+handover intent, and ordinary demand-start may start again. Bind-first does not
+restore lost history, checkpoints or intentional-stop evidence. This exclusion is
+ONLY wholesale external deletion, NOT SQLite COMMIT/flush errors, failed or interrupted
+bootstrap, Bridge-owned cleanup, partial absence, corrupt/hot journal or an unknown
+publication result. Those remain retained unknown/fail-closed cases, never permission
+to recreate a missing journal beside an existing DB or during an active handoff.
+
+The owner also excludes EXTERNAL same-user or privileged processes replacing or
+renaming Bridge store files DURING restart. Native fstat/atomic binding of SQLite's
+live handles is outside 1a-i. Existing regular-file identities observed immediately
+before/after open and freshly before/after checkpoint are observational hardening,
+not an atomic handle-binding guarantee. Detected change, absent-before-open or
+unprovable identity remains unknown/abort; a post-create stat is not open-time proof.
+This exclusion never covers Bridge's OWN managed workers, migrations or accepted
+writers: their seals, registry/generation checks, dispatch-then-write drains,
+retained bytes and checkpoints remain mandatory. It does not weaken the partial,
+hot, corrupt, internal COMMIT/flush/bootstrap failure or unknown receipt guards.
+Checkpoint-only metadata observation retains every connection; each has its own
+transaction/FULL/admission preflight. A bounded main-only database-list inventory
+rejects ATTACH/temp/untracked aliases before any schema-qualified main checkpoint.
+The SQLite -1/-1 no-WAL acknowledgement is not a completed WAL checkpoint. Path
+alias grouping uses physical identities only after all per-handle checks; no
+native-open, external-writer closure or ownership-release claim follows.
+
+If in-memory lineage or already-available verified installation bootstrap metadata
+shows a prior journal, status/health/logs use the fixed sanitized category
+`lifecycle_journal_missing` (display text: "lifecycle journal missing (external deletion?)").
+Restart/stop are unavailable while a normally SERVING holder establishes a new lineage;
+it must make that NEW lineage explicit, with no silent continuity/history-restoration
+claim. An old active/unknown lifecycle coordinator or designated successor must not
+bootstrap or promote based on absence; an unresolved receipt remains unknown. A normal
+serving role must independently prove its ownership/admission state before any new
+establishment. No new main-store anchor write is authorized: use existing metadata
+evidence only if already present/verified, never fabricate past establishment. A fresh
+process with no such evidence cannot claim whether a new lineage is the home's first.
+
+The compatibility choice lets journal absence use existing 0.30.14 election ONLY
+within that disclosed whole-external-loss fault exclusion; it does NOT override remembered
+lineage, malformed/hot/partial journal, designated-successor or active-receipt guards.
+Therefore a fresh competing controlled daemon must win tentative bind before any
+broker-owner writable acquisition, including while a successor waits. If it wins,
+the designated successor remains readonly and the original handoff is UNKNOWN;
+no false graceful-continuity or job-ownership rollback claim. Unknown legacy election
+clients must have blocked restart before release; no forced eviction. Completeness
+of the live writer/capability barrier and lost-journal gap behavior remain mandatory
+source/race proof. Successful bind or reopened lineage alone does not classify a
+publication failure as external deletion. Endpoint exclusivity proves only ONE controlled BROKER-OWNER;
+legacy MCP/job/runner domain writers still exist and no full AB325 authority claim
+follows. If this bounded compatibility choice cannot preserve accepted bytes or
+prevent competing broker-owner writes, report the exact blocker for review.
+
+HISTORICAL source447/352 needs an explicit listener/store split: broker-daemon.ts constructs
+MessageStore before Broker.listen; node.ts tryBecomeBroker does likewise. Separately,
+node.ts constructor records store presence and restores ReadJournal metadata BEFORE
+election. Those are existing CLIENT metadata writes, not broker initialization;
+inventory and barrier their actual owners, never silently assert all writes occur
+after bind. This contract requires startup wiring review; it does not authorize a
+domain rewrite or certify client queues. Current b6 source implements reservation
+before broker-owner MessageStore construction in broker-daemon.ts:25-40 and
+node.ts:356-369; that source change does not certify lifecycle receipts/closure or
+client-metadata write barriers. Proposed narrow files: broker listener
+reservation/adoption, daemon/node controlled startup, receipt path/reader guards,
+and fixture acceptance. Any additional owner adapter returns to the coordinator.
+
+Hosted acceptance additions: interrupted first bootstrap; actual committed bootstrap
+write/reopen; lost DB/lineage marker versus virgin home from a fresh client; missing/
+replaced PERSIST journal and check/write race; hot journal strict readonly refusal;
+every writer reopen's mode/flush/size-limit settings; no per-restart ACL mutations or
+new journal entry; fresh client versus designated successor tentative-bind race;
+bind loser zero broker-owner writes/unlinks; failure after bind before initialization;
+bounded tentative readiness/connection buffers; no job launch/ownership rollback;
+explicit NEW-lineage/missing status on remembered whole external deletion, disclosure
+that stop intent may be lost in that excluded case, and refusal for internal/partial/
+hot/unknown failures; existing COMMIT/flush/quarantine/stop/revision/crash gates remain unchanged. Preserve
+unavailable/unknown outcomes and all existing ratified budgets.
+
+Windows must verify current SID ownership and a restrictive directory/file ACL
+equivalent to the existing private authentication-material scope, using built-in
+OS/.NET facilities only. New private receipt paths may receive a restrictive ACL;
+do not alter existing home/job/store ACLs or widen grants. Failure/unknown ACL or
+filesystem inspection blocks lifecycle, not a broad permission repair. No tokens,
+auth material, arbitrary command line or content payload is persisted in receipts.
+Target fields are attested existing immutable runtime path/version/protocol/complete
+manifest digest, resolved in current authenticated local scope; never caller-supplied
+executable/argv or an update selector. Revalidate before launch and writable activation.
+
+Use a dedicated database only for receipt history, its active selection and lineage;
+no jobs/commands/domain state, state-core.db, archive/delete/eviction, lease-age expiry,
+schema migration of existing stores or new dependency. Configure and VERIFY
+`journal_mode=PERSIST`, `synchronous=FULL`, macOS `fullfsync=ON`, `foreign_keys=ON`,
+`trusted_schema=OFF`, and a25ms busy timeout. PERSIST is rollback journaling, not WAL;
+commit retains the journal file and invalidates its header, avoiding per-commit
+directory deletion. Durable history means COMMITTED receipt/revision/conflict table
+rows. The physical PERSIST rollback file is reusable, not an append-only archive
+of failed/uncommitted SQL or acknowledged receipt history. Do not archive/delete an
+active/hot journal as a retention action. A failed/unacknowledged transaction may
+have no durable failure row; disclose unknown rather than claiming its bytes were
+retained. Separately committed failure evidence is retained when safely provable.
+Never truncate/prune committed lifecycle history to meet a size envelope.
+Legacy code must not be offered this database as a compatible domain store.
+
+The sole writer before release is the OLD daemon. Prepared replacement opens with
+actual `DatabaseSync(...,{readOnly:true})` plus verified `PRAGMA query_only=ON`; it
+reads ONLY its own selected receipt/revision/lineage and target/checkpoint descriptors.
+It opens no other store even read-only unless a separately reviewed exact verification
+read is listed. Its prepared acknowledgement is sent through the authenticated old
+control channel; the old writer validates instance/restartId/expected revision/target
+digest and records it with a CAS transaction. Stale/concurrent ACK or reused ID with
+different bytes cannot advance selection. There is no prepared writer-registration
+or journal-write exception. Hosted attempted UPDATE/INSERT from this actual reader
+MUST fail, and an ACK cannot make it writable.
+
+The designated successor uses ONLY the exact ordered guard above: actual committed
+readonly observation, exact old AND manifest child-writer exits/checkpoints, tentative
+exclusive bind, bounded control-journal BEGIN/current-revision CAS, independently
+verified successful NEW durable revision, THEN substantive store/worker acquisition.
+No live-old witness or intent-only exit fallback remains. Hot/missing/corrupt/unknown
+reader outcome never permits writable recovery. release_intent, readable released
+or a lock alone does not prove earlier flush success or permit store initialization.
+
+Small transactions use indexed current receipt/ID lookups, BEGIN IMMEDIATE and
+expected revision/old-instance/selected-successor CAS; append revision and selection
+atomically, no transaction across asynchronous preparation/dispatch/drain. Maximum
+serialized receipt/checkpoint metadata is64KiB per revision, with at most128 owner
+descriptor entries; oversized closure evidence blocks release, never drops entries.
+The25ms lock wait is within each ratified phase cap, not an extra budget. Busy/error/
+unconfirmed COMMIT returns pending/unknown or pre-release serving failure; no hidden
+transaction retry, inferred rollback, repeated launch or ordinary request replay.
+Durable disk flush can stall despite a small transaction: disclose measurements and
+storage assumptions, do not claim a universal hard OS I/O deadline or raise10s RPC.
+No synchronous bulk scan/checkpoint/hash operation is added to the control path.
+
+#### Failed COMMIT settlement and committed-only observation
+
+[SQLite transaction semantics](https://www.sqlite.org/lang_transaction.html) distinguish
+a BUSY COMMIT, which can leave the transaction active, from automatic rollback on
+some errors; an exception alone proves neither rollback nor persistence. Use
+Node22.16's `database.isTransaction` (SQLite autocommit state) to inspect this LOCAL
+receipt transaction. Never publish, prepare, release, promote ownership or report
+done from a SELECT on the writer connection: it can see tentative uncommitted rows.
+
+Every externally observed transition is checked through a separate verified strict
+readOnly/query_only connection and fully settled indexed SELECT, with matching
+lineage/restartId/revision/old instance/request digest. It sees only a committed
+snapshot; do not retain a reader transaction/iterator that obstructs COMMIT. Success
+requires returned COMMIT success, writer autocommit true, expected committed revision
+from that reader AND the configured VFS/durability assumptions. A readable tentative
+or even newly visible row after an I/O error is not proof that earlier flush succeeded.
+Only the separately reviewed exact-exit/new-successor-durable-CAS path above may
+establish a NEW authorization; it never retroactively validates the failing commit.
+
+On failed BEGIN/COMMIT or I/O/FULL/unknown transaction error, latch lifecycle writes
+and effect advancement BEFORE another observer/control request can use tentative
+state. ONLY during reversible PREFINAL settlement, before irreversible handle
+close/permission retirement or consumed final permit, within the remaining phase
+budget, if isTransaction is true attempt ONE
+explicit ROLLBACK of ONLY this known local UNCOMMITTED receipt transaction, then
+require isTransaction false and independent committed-snapshot verification. This
+is transaction settlement, not rollback of accepted work, stores, jobs, a committed
+lifecycle effect, replacement creation or public endpoint release. Never retry COMMIT,
+replay a CAS/effect, begin a nested transaction or infer absence from an exception.
+Once the final single-use permit is consumed, NO explicit further old SQL is allowed,
+including ROLLBACK, failure-row writes, retry, renewal or a renewed permit. Retain
+quarantine/seals and exit under the complete owner ledger. SQLite internal behavior
+on physical connection/process exit is not a granted old SQL capability or proof
+of accepted-byte settlement; hot/unknown observation remains fail closed.
+
+If settlement/autocommit/committed observation/durability is unprovable or the phase
+budget is exhausted, quarantine that writer/connection and keep the command unknown.
+Do not use its tentative revision; do not automatically reacquire another writer,
+repair a hot journal, launch another replacement or report a durable failed outcome.
+Release an owned connection only through proven local settlement; failure to release
+its lock remains an explicit blocker. Committed prior rows and any hot artifacts
+remain preserved. Receipt queries use the strict reader and disclose unknown when
+blocked; no writer-state fallback. A separately persisted failure revision, if one
+can be safely committed PREFINAL under the intact reversible predicates without
+retrying the effect, is distinct from the failed CAS. No final-retired-tail failure write.
+
+Before public release, the old daemon may continue/reopen serving admission ONLY
+after proving NO irreversible handle close or permission retirement occurred,
+original ownership/producers stayed intact, committed-only nonuncertain intent/abort
+outcome is proved, no release/successor writable acquisition occurred, and reversible
+producer/admission state is safe.
+Otherwise retain a truthful blocked/unknown state; do not manufacture failed_serving.
+After release, no old-serving/rollback claim follows from a journal exception.
+Required hosted faults: BUSY COMMIT with active transaction, I/O/FULL auto-rollback
+versus active state, ROLLBACK failure/budget exhaustion, writer tentative selection
+invisible to strict receipt reads, success-but-reader-failure quarantine, no prepared
+write/ownership advancement, preserved committed history and reusable PERSIST-file
+semantics. These are code-entry/acceptance obligations, not existing runtime proof.
+
+Primary basis: [SQLite atomic commit](https://www.sqlite.org/atomiccommit.html),
+[locking/VFS flush behavior](https://www.sqlite.org/lockingv3.html),
+[rollback journal modes](https://www.sqlite.org/tempfiles.html),
+[Node22.16 SQLite API](https://nodejs.org/download/release/v22.16.0/docs/api/sqlite.html).
+SQLite's guarantees depend on correct VFS locking/sync, a supported local filesystem
+and storage honoring flush/barrier semantics. Filesystems/controllers that lie,
+unsupported network mounts or unverified initial creation/ACL are blockers/unknown;
+FULL/PERSIST do not eliminate hardware/power-loss risk or bounded-history storage cost.
+Hosted Node22/24 on every OS must record actual SQLite/VFS/OS/filesystem/runtime and
+phase durations, strict readonly flags/pragma, initial creation/reopen lineage, crash
+at every revision/selection/ACK/commit boundary, busy/fault injection, stale CAS,
+lost reply and same-ID conflict, exact accepted bytes and no second launch. Process
+crash/fault fixtures are not physical power-cut or arbitrary-device durability proof.
+Any missing release/durability/live-writer proof keeps lifecycle acceptance blocked.
+
+## Writer/election barrier and replacement preparation
+
+1. Authenticate the local lifecycle command. No remote host/arbitrary executable
+   argument. Resolve an immutable installed runtime using existing publication/selector
+   containment and complete hashes. 1a-i initially restarts the same approved runtime;
+   N-to-N+1 selector/update behavior is 1a-ii. Refuse mixed incompatible protocols.
+2. Establish a capable-client barrier. All connected eligible MCP/CLI clients and
+   actual live runtime/writer registrations must advertise/acknowledge lifecycle
+   support bound to this exact instance/receipt revision. Discover relevant detached
+   writers using existing capability/process evidence; unavailable inspection, old
+   unacknowledged clients or unknown writers **blocks restart** with nonsecret reason
+   codes and an explicit process/version list. Names are explanatory, not identities.
+   No forced exit, eviction, cancellation or invented complete census.
+   Count only actual running processes/connected clients/live writer registrations;
+   installed inactive cache versions on disk never constitute a barrier. Source352
+   plugin-runtime.ts:156 silently filters failed liveness inspection, so that helper
+   alone cannot prove absence. storage-lock.ts:71 registers writers but its legacy
+   record lacks exact process creation identity/capability; a live unknown holder
+   blocks until proven compatible. Read registrations without retiring/deleting them.
+3. Persist accepted receipt and active canonical election gate **before** spawning a
+   replacement. Updated launchers consult it before any daemon or degraded embedded
+   election, including new clients never connected to the old broker. Active/pending
+   receipts mean wait/discover/status, never another launcher. Unknown receipt/capability
+   or authentication failure means unavailable, not absence. This closes the bind gap
+   only if all capable election paths participate; unknown legacy elections block it.
+4. Start the replacement once, with the original restartId and exact target identity.
+   It validates the private receipt/runtime and connects to a scoped authenticated
+   preparation channel. It creates **no writable stores/public listener** while old
+   serves. Prepared acknowledges exact replacement instance/process creation identity,
+   compatible runtime, readable verified receipt and ability to attempt the endpoint.
+   This is readiness to bind, not a claim that an unattempted OS bind cannot fail.
+5. Failure/timeout/invalid creation receipt remains unconfirmed. No second launch.
+   The old broker keeps serving while preparation is unresolved ONLY with original
+   ownership/producers intact, no irreversible close/retirement and committed-only
+   nonuncertain intent/abort outcome proved; otherwise retain seals/ledger/UNKNOWN.
+   A prepared replacement
+   watches durable receipt state; it never elects independently or treats time as release.
+
+Capability closure/census and restricted atomic receipt are prerequisites, not facts
+established by PR17. A globally unknown legacy writer makes an unconditional restart
+guarantee impossible; return a concrete blocker instead of widening authority.
+
+## Admission, drain and endpoint release
+
+The lifecycle operation enters an in-memory reversible `draining` state only after
+durable admission/preparation. Gate mutations at dispatch **before acceptance**, plus
+background/timer/network/mobile producers. Read-only status/health, authenticated
+receipt lookup and reconnect discovery remain available. Previously accepted handler
+work is tracked to settlement; the initiating control/receipt-read request is excluded
+from its own wait, never allowed to make the barrier trivially pass.
+
+Drain **dispatch first, then writes**, including work handlers enqueue after awaiting.
+Then checkpoint each owned worker/store/outbox/transfer/mobile queue and verify the
+retained bytes/checkpoints. Independent MCP/runner execution continues unchanged;
+do not replay mutations merely because a connection disappears. Child heartbeat,
+report and approval delivery need explicit capable settlement/backpressure semantics;
+if current legacy adapters cannot preserve them through the bounded gap, refuse.
+
+Use the exact monotonic budget and durable pending-receipt semantics below; do not
+increase generic RPC deadlines. A pre-release overrun may abort/reopen ONLY before
+ANY irreversible handle close/permission retirement, with original ownership/producers
+intact AND committed-only nonuncertain intent/abort outcome proved. Otherwise retain
+seals, ledger and UNKNOWN without reopening admission/election/writes. Never cancel
+accepted writes or terminate workers to manufacture successful drain/checkpoint.
+
+After prepared replacement + verified drain/checkpoints, persist `release_intent`
+and its exact designated successor before releasing the public endpoint. Only that
+replacement, after the exact-exit/new-durable-CAS guard above is verified, may acquire
+substantive writable stores/leases/workers or run initializers, verify checkpoints, advertise its
+instance and persist `done`. Clients reconnect and fully refetch through existing APIs;
+no new snapshot/event cursor or automatic mutating request replay is claimed.
+
+There is a bounded public-endpoint gap between release and successful bind. Do not
+promise zero unavailability. Replacement bind/readiness/durability failure after release
+is explicit unavailable/unknown. No automatic old-executable rollback or duplicate
+replacement launch is authorized by elapsed time. A reviewed reconciliation may prove
+old/replacement exited and grant a new explicit recovery intent under a new receipt;
+it cannot erase pending accepted bytes or pretend the original command never applied.
+
+## Idempotency, stop and crash cases
+
+Same restartId + identical immutable request returns its retained pending/done/failed/
+unknown receipt. Different bytes/target conflict. Receipt lookup is read-only after
+reconnect and scoped to the authenticated local lifecycle principal. Lost reply never
+authorizes a fresh ID, second launch or rollback. Corrupt/missing/unflushed receipt after
+acceptance stays unknown; it cannot be repaired by replaying the effect.
+
+Stop must also gate future automatic launches. Persist `stop_intent/stop_committed` as
+an intentional availability state that updated clients honor indefinitely, until an
+explicit authenticated user lifecycle resume/restart intent is reviewed. No time-based
+autostart. Stop refuses while active/unknown jobs, live native children, pending accepted
+delivery, approvals/waits, unsupported writers or uncheckpointed work would be stranded.
+Do not infer safety from a zero historical badge. Minimal safe stop can conservatively
+refuse any unresolved execution or election-capable client. It does not kill children
+or call MCP shutdown; ordinary future demand cannot override the stop receipt.
+
+| Crash/race | Required retained result and recovery |
+| --- | --- |
+| Old dies before accepted receipt is durable | No success receipt; ambiguous accepted work remains unknown. Reconcile exact original stores/instances, never blindly repeat. |
+| Old dies after acceptance but before successor preparation/release | Active gate blocks ordinary election. Existing designated replacement waits; recovery verifies old exit and checkpoints. Without proof, unavailable/unknown, no takeover. |
+| Replacement dies before ready | Old may keep serving ONLY under the complete reversible/intact/nonuncertain predicates above; otherwise seals+ledger+UNKNOWN. No timeout-driven second launch. |
+| Replacement dies after prepared but before release | Old must revalidate live authenticated exact successor before release. If unprovable, failed_serving ONLY under all reversible/intact/nonuncertain predicates; otherwise seals+ledger+UNKNOWN. |
+| Old dies during drain | Receipt/checkpoints survive; successor cannot infer drain success. Reconcile all admitted queues or block. |
+| Receipt write/fsync/selection fails | Resume serving ONLY before ANY irreversible close/permission retirement, with original ownership/producers intact and committed-only nonuncertain intent/abort proved; otherwise seals+ledger+UNKNOWN, no reopen/election/write revival. |
+| Old dies after release commit before actual endpoint close | Successor waits for exact old-instance exit and safe endpoint availability. No unlink/kill of a live unknown holder. |
+| Replacement dies after ready/release or before done flush | Preserve release/designated successor/checkpoints; unavailable or unknown until exact outcome is proved. No automatic duplicate/old-runtime rollback. |
+| Both unavailable or discovery auth/token/protocol failure | Keep receipt and bytes; explicit unavailable/unknown. PID absence, connection timeout or name reuse never authorizes new election. |
+| New capable client arrives during bind gap | Reads canonical gate and waits/discovers original receipt; does not launch embedded/daemon. |
+| Legacy election/client appears during prepare | Abort/resume ONLY before any irreversible close/retirement, with original ownership/producers intact and committed-only nonuncertain intent/abort proved; otherwise seals+ledger+UNKNOWN. Arrival after closure requires writer/deployment proof; no eviction. |
+| Lost command reply after release/done | Query same receipt. Existing reconnect/full-refetch may observe new host; never replay accepted lifecycle/mutating work. |
+| Stop with active native/runner/inline work | Refuse, endpoint remains serving, no child/cancel/ownership effect. |
+
+## Review and hosted acceptance
+
+Mandatory fixtures on Windows/Linux/macOS with Node 22/24: same-home alias/new-client
+restart race, active MCP and detached runner continuity, exact accepted
+mail/report/approval bytes, dashboard reconnect, forced parent job containment, receipt
+write/flush faults, deferred SQLite and worker checkpoints, drain-timeout-stays-serving,
+lost reply/same-ID conflict, legacy/unknown writer refusal, all crash rows above and
+replacement bind/version/identity failure. Fixture-only processes/stores, no model calls
+or owner-PC workloads. Preserve raw outcomes, checkpoint hashes, source/target/runtime
+manifests and any unavailable/unknown result; no skipped race, timeout inflation or
+assertion weakening. A green initial launch test cannot satisfy these gates.
+
+1a-i live native-child routes conservatively REFUSE restart/unsafe stop under the
+reviewed frozen-admission + settled accepted route-write + memory/committed-route
+guard. Pending/mismatched/unverified routes also refuse. The all-OS fixture must
+preserve mail/routes/processes and reopen ordinary admission after pre-abort; zero
+routes is not evidence native execution ended. Grant/route checkpoint continuity
+is deferred, with no active-native restart acceptance or permission expansion.
+
+The explicit release-owner9702e9bb gate requires ALL11 receipt/journal/hot cases in
+daemon-receipt.test.ts to EXECUTE on hosted Windows22 AND24: committed revisions/
+same-ID conflict, actual prepared readonly writes, stale prepared ACK CAS, actual
+COMMIT_BUSY, injected active IOERR, injected FULL auto-rollback, failed ROLLBACK,
+simulated unavailable transaction API, wrapper throw after actual successful COMMIT,
+actual child-crash hot journal, and missing established PERSIST journal. The current
+Windows publication_unproved primitive skips are NOT RC acceptance. An unsupported
+Windows path must exercise actual truthful restart refusal, never skip; refusal-only
+coverage does not satisfy the owner's functional Windows restart requirement.
+Actual and simulated faults must be identified separately, with per-case outcomes
+and exact source/runtime/OS/run/job packets. No Unix proof transfer to Windows.
+
+Independent reviewer must identify whether complete source closure, durability and
+canonical election gating are achievable within the named narrow subset. If not,
+document the exact unmet prerequisite and return to the coordinator/Claude; do not
+silently implement general 1b or claim safe restart from plain process spawn/close.
+Only after reviewed-note approval may restart/stop code begin. No 1a-i release without
+status and accepted safe restart; owner next step after eventual 1a release is AB319
+remeasurement, not later-stage jobs/state/UI work.
