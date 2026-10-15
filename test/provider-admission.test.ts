@@ -351,7 +351,7 @@ it("keeps submitted remote CIDs pending across refusal and restore until executo
     // This runner protocol ACK models the same admission boundary exercised by the real-loop fixture.
     usage.confirmUsageAdmission(current, (current.usagePendingControls ?? []).map(control => control.cid));
     executorState = { pid: 0, peer: current.name, updatedAt: Date.now(), status: "done", delivered: true,
-      sessionId: "remote-session", workdir: home, providerUsage: structuredClone(current.providerUsage) };
+      sessionId: "remote-session", workdir: home, providerUsage: structuredClone(current.providerUsage), usageSubmission: usage.usageSubmissionReceipt(current) };
     return { pid: 0, peer: current.name, startedAt: Date.now() };
   });
   const executor = new RemoteJobs({ registerExtension() {} } as any, executorHome, nullLogger, async () => {}); remotes.push(executor);
@@ -398,6 +398,89 @@ it("keeps submitted remote CIDs pending across refusal and restore until executo
   expect(restored.status).toBe("done"); expect(restored.queue).toEqual([]); expect(restored.usagePendingControls).toBeUndefined();
   expect(start).toHaveBeenCalledTimes(2);
   expect(resume.mock.calls.map(([message]) => message)).toEqual(["remote steering", "remote steering\n\nstill exhausted", "remote steering\n\nstill exhausted\n\nallowance restored"]);
+});
+
+it("retains an internal batch when preparation throws before any admission or usage decision", async () => {
+  let runnerNode!: BridgeNode;
+  vi.spyOn(BridgeNode.prototype, "start").mockImplementation(async function (this: BridgeNode) { runnerNode = this; });
+  vi.spyOn(BridgeNode.prototype, "stop").mockResolvedValue();
+  vi.spyOn(BridgeNode.prototype, "updateJob").mockResolvedValue();
+  vi.spyOn(BridgeNode.prototype, "markRead").mockImplementation(() => {});
+  vi.spyOn(BridgeNode.prototype, "send").mockResolvedValue({ deliveredTo: ["owner"], queuedFor: [] } as any);
+  const check = vi.spyOn(usage, "checkUsagePreflight");
+  const native = vi.spyOn(DELEGATION_TARGETS.codex, "run");
+  let state: RunnerState = { pid: process.pid, peer: "fixture-runner", updatedAt: Date.now(), status: "running" };
+  vi.spyOn(jobHost, "writeRunnerState").mockImplementation((_home, _id, value) => { state = structuredClone(value); });
+  const jobs = new JobManager(new LocalCoordinator("owner", "owner-session"), nullLogger, join(home, "jobs.json"), 2); managers.push(jobs);
+  let alive = true;
+  const send = vi.fn((_job: unknown, _control: RunnerControl) => {});
+  jobs.runners = { state: () => state, alive: () => alive, send, kill() {} };
+  const resume = vi.fn((..._args: any[]) => async () => answer);
+  const run: Run = Object.assign(async () => answer, { hosted: () => ({ pid: process.pid, peer: "fixture-runner", startedAt: Date.now() }) });
+  const job = jobs.start("codex", null, "task", run, resume);
+  jobs.followUp(job.name, "prepared but never admitted");
+  const control = send.mock.calls[0]![1] as Extract<RunnerControl, { type: "message" }>;
+  let turns = 0;
+  vi.spyOn(delegation, "runDelegate").mockImplementation(async (...call) => {
+    if (++turns > 1) throw new Error("preparation failed before admission");
+    runnerNode.emit("message", { id: "preparation-control", from: { id: "owner-session", name: "owner", agent: "claude" }, to: job.name, recipient: job.name,
+      conversationId: `${CONTROL_CONVERSATION_PREFIX}${job.id}`, replyTo: null, hop: 0, readAt: null, body: JSON.stringify(control), createdAt: Date.now() });
+    await until(() => call[6]!.queue.length === 1);
+    return answer;
+  });
+  const args = { cwd: home, prompt: "task", title: "Preparation fixture", access: "read" as const };
+  const spec: RunnerSpec = { home, target: "codex", args, base: args, job: { ...job, allowedServers: [] }, owner: "owner", byAgent: "claude", cwd: home, cfg: DEFAULT_CONFIG };
+  expect(await runOwnedJobRunner(spec, nullLogger, null)).toBe(0);
+  expect(turns).toBe(2); expect(check).not.toHaveBeenCalled(); expect(native).not.toHaveBeenCalled();
+  expect(state.providerUsage).toBeUndefined(); expect(state.seen).toContain(control.cid);
+  expect(state.usageSubmission?.pending).toEqual([{ cid: control.cid, body: control.body }]);
+  alive = false; (jobs as any).checkHosted(job);
+  expect(job.status).toBe("failed"); expect(job.queue).toEqual([control.body]);
+  expect(job.usagePendingControls).toEqual([{ cid: control.cid, body: control.body }]); expect(resume).not.toHaveBeenCalled();
+});
+
+it.each(["exception", "cancellation", "crash"] as const)("retries only unacknowledged CIDs once after a partial ACK and %s", async exit => {
+  const path = join(home, "jobs.json"), node = new LocalCoordinator("owner", "owner-session");
+  let jobs = new JobManager(node, nullLogger, path, 2); managers.push(jobs);
+  let state: RunnerState | null = null;
+  jobs.runners = { state: () => state, alive: () => false, send() {}, kill() {} };
+  let submitted: { cid: string; body: string }[] = [], retry: { cid: string; body: string }[] = [];
+  let hostedAttempts = 0;
+  const inlineRetry = vi.fn(async (_signal: AbortSignal, _progress: unknown, current: any) => { retry = structuredClone(current.usagePendingControls ?? []); return answer; });
+  const resume = vi.fn((message: string): Run => {
+    return Object.assign(inlineRetry, { hosted: (current: any) => {
+      if (hostedAttempts) return null;
+      hostedAttempts++;
+      submitted = structuredClone(current.usagePendingControls);
+      state = remoteJobSnapshotSchema.parse({ alive: false, approvals: [], state: { pid: 0, peer: "fixture-runner", updatedAt: Date.now(),
+        status: exit === "crash" ? "running" : exit === "cancellation" ? "cancelled" : "failed", sessionId: "same-session", delivered: true,
+        usageSubmission: { runId: current.usageRunId, turnStartedAt: current.startedAt + 1, pending: [submitted[1]], queued: [], admitted: [submitted[0]!.cid] } } }).state;
+      return { pid: 0, peer: "fixture-runner", startedAt: Date.now() };
+    } });
+  });
+  let finishInitial!: () => void;
+  const initial = new Promise<void>(resolve => { finishInitial = resolve; });
+  const job = jobs.start("codex", null, "task", async (_signal, _progress, current) => { current.sessionId = "same-session"; await initial; return answer; }, resume);
+  await until(() => job.sessionId === "same-session");
+  jobs.followUp(job.name, "ACKed steering"); jobs.followUp(job.name, "unACKed steering");
+  expect(job.queue).toEqual(["ACKed steering", "unACKed steering"]);
+  finishInitial(); await until(() => hostedAttempts === 1);
+  expect(job.status).toBe("running"); expect(job.host?.peer).toBe("fixture-runner"); expect(inlineRetry).not.toHaveBeenCalled();
+  expect(submitted.map(control => control.body)).toEqual(["ACKed steering", "unACKed steering"]);
+  (jobs as any).checkHosted(job);
+  expect(job.queue).toEqual(["unACKed steering"]); expect(job.usagePendingControls).toEqual([submitted[1]]);
+  expect(resume).toHaveBeenCalledTimes(1);
+  jobs.setDormant(true);
+  jobs = new JobManager(node, nullLogger, path, 2); managers.push(jobs); jobs.restore(() => resume);
+  const restored = jobs.find(job.name, false)!;
+  expect(restored.queue).toEqual(["unACKed steering"]);
+  jobs.followUp(restored.name, "explicit retry");
+  await until(() => restored.status === "done");
+  expect(retry.filter(control => submitted.some(original => original.cid === control.cid))).toEqual([submitted[1]]);
+  expect(retry.map(control => control.body)).toEqual(["unACKed steering", "explicit retry"]);
+  expect(inlineRetry).toHaveBeenCalledTimes(1);
+  expect(resume.mock.calls[1]![0]).toBe("unACKed steering\n\nexplicit retry");
+  expect(restored.queue).toEqual([]); expect(restored.usagePendingControls).toBeUndefined();
 });
 
 it.each(CODING_AGENTS)("remote %s preflight uses executor context and persists typed refusal without a runner", async target => {

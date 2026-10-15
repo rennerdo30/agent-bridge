@@ -515,10 +515,20 @@ export interface ProviderUsageState {
   /** Cumulative CIDs whose submitted prompts reached native admission in this run. */
   admittedControls?: string[];
 }
-type UsageSubmission = { providerUsage?: ProviderUsageState; usagePendingControls?: { cid: string; body: string }[]; usagePendingHeld?: boolean; queue: string[] };
+type UsageControl = { cid: string; body: string };
+export interface UsageSubmissionReceipt {
+  runId?: string;
+  turnStartedAt: number;
+  pending: UsageControl[];
+  queued: UsageControl[];
+  admitted: string[];
+}
+type UsageSubmission = { startedAt: number; usageRunId?: string; providerUsage?: ProviderUsageState; usagePendingControls?: UsageControl[];
+  usageQueuedControls?: UsageControl[]; usageAdmittedControls?: string[]; usagePendingHeld?: boolean; queue: string[] };
 /** The only consumption boundary for a submitted batch, shared by local and remote executors. */
 export function confirmUsageAdmission(job: UsageSubmission, admitted: readonly string[]): void {
   const ids = new Set(admitted);
+  job.usageAdmittedControls = [...new Set([...(job.usageAdmittedControls ?? []), ...ids])];
   if (job.providerUsage) job.providerUsage.admittedControls = [...new Set([...(job.providerUsage.admittedControls ?? []), ...ids])];
   if (job.usagePendingHeld) {
     const count = job.usagePendingControls?.length ?? 0;
@@ -526,6 +536,17 @@ export function confirmUsageAdmission(job: UsageSubmission, admitted: readonly s
   }
   job.usagePendingControls = job.usagePendingControls?.filter(control => !ids.has(control.cid));
   if (!job.usagePendingControls?.length) { job.usagePendingControls = undefined; job.usagePendingHeld = undefined; }
+}
+/** Every checkpoint carries unacknowledged data, even before a usage decision exists. */
+export function usageSubmissionReceipt(job: UsageSubmission): UsageSubmissionReceipt {
+  return { runId: job.usageRunId, turnStartedAt: job.startedAt, pending: [...job.usagePendingControls ?? []],
+    queued: [...job.usageQueuedControls ?? []], admitted: [...job.usageAdmittedControls ?? []] };
+}
+/** One attempt settlement: success/explicit ACK may consume; every other exit preserves. */
+export function settleUsageAttempt(job: UsageSubmission, completed: boolean): void {
+  if (completed) confirmUsageAdmission(job, (job.usagePendingControls ?? []).map(control => control.cid));
+  const receipt = usageSubmissionReceipt(job);
+  if (job.providerUsage) job.providerUsage.retainedControls = [...receipt.pending, ...receipt.queued];
 }
 /** Holding a refused batch changes its queue representation, never its submitted provenance. */
 export function holdUsageSubmission(job: UsageSubmission): void {
@@ -539,7 +560,7 @@ export function usageContinuationMessage(job: UsageSubmission): string {
   holdUsageSubmission(job);
   return job.queue.join("\n\n");
 }
-export function currentUsage(job: { startedAt: number; usageRunId?: string }, state: ProviderUsageState | undefined): boolean {
+export function currentUsage(job: { startedAt: number; usageRunId?: string }, state: Pick<ProviderUsageState, "runId" | "turnStartedAt"> | undefined): boolean {
   return Boolean(state && (state.runId ? state.runId === job.usageRunId : state.turnStartedAt === job.startedAt));
 }
 export function usageRefused(job: { startedAt: number; usageRunId?: string; providerUsage?: ProviderUsageState }): boolean {

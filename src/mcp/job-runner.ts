@@ -6,7 +6,7 @@ import { JOBS_FILE } from "../core/constants.js";
 import { readStore } from "./jobs.js";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { usageRefused } from "../core/usage.js";
+import { settleUsageAttempt, usageRefused, usageSubmissionReceipt } from "../core/usage.js";
 import { COMPLETION_DEDUPE_PREFIX } from "../core/completion.js";
 import { takeRunnerSpec } from "../core/runner-store.js";
 import { failureCause } from "../core/delegate.js";
@@ -160,6 +160,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
         model: job.model,
         sessionId: job.sessionId,
         providerUsage: job.providerUsage,
+        usageSubmission: usageSubmissionReceipt(job),
         workdir: job.workdir,
         worktree: job.worktree,
         progress: job.progress,
@@ -355,7 +356,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
 
   let args = spec.args;
   for (;;) {
-    let status: "done" | "failed" | "cancelled";
+    let status: "done" | "failed" | "cancelled" = "failed";
     let text = "";
     let cause: string | null = null;
     let processesStopped = false;
@@ -371,6 +372,9 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       job.sessionId = sessionOfError(err) ?? job.sessionId;
       status = "failed";
       cause = failureCause({ error: err });
+    } finally {
+      settleUsageAttempt(job, status === "done");
+      save();
     }
     if (scope) {
       try {
@@ -426,11 +430,6 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     if (saveTimer) clearTimeout(saveTimer);
     // The state first: once the report arrives, the session must find the job finished.
     const reportId = randomUUID();
-    if (usageRefused(job)) {
-      const retained = new Map([...(job.usagePendingControls ?? []), ...(job.usageQueuedControls ?? [])].map(control => [control.cid, control.body]));
-      for (const control of job.providerUsage!.retainedControls ?? []) retained.set(control.cid, control.body);
-      job.providerUsage!.retainedControls = [...retained].map(([cid, body]) => ({ cid, body }));
-    }
     save({ status, report, reportId, delivered: false, finishedAt: Date.now() });
     const delivered = await post(report, null, false, `${COMPLETION_DEDUPE_PREFIX}${reportId}`);
     save({ delivered });

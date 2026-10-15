@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { loadConfig } from "../core/config.js";
-import { checkUsagePreflight, usageAdmissionText } from "../core/usage.js";
+import { checkUsagePreflight, usageAdmissionText, usageSubmissionReceipt } from "../core/usage.js";
 import { usageProbeFor } from "../mcp/targets.js";
 import { REMOTE_JOB_USAGE_CAPABILITY } from "./remote-job-protocol.js";
 import { bundledCli } from "../core/delegate.js";
@@ -203,7 +203,7 @@ export class RemoteJobs {
       if (usage.type === "block") {
         job.status = "failed";
         record.usageRefusal = { pid: 0, peer: job.name, status: "failed", updatedAt: Date.now(),
-          sessionId: job.sessionId, providerUsage: job.providerUsage, report: usageAdmissionText(usage), delivered: false, finishedAt: Date.now() };
+          sessionId: job.sessionId, providerUsage: job.providerUsage, usageSubmission: usageSubmissionReceipt(job), report: usageAdmissionText(usage), delivered: false, finishedAt: Date.now() };
         this.persist();
         return this.snapshot(record);
       }
