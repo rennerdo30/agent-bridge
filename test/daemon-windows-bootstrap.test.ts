@@ -1,10 +1,9 @@
-import { spawn } from "node:child_process";
 import * as processes from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import * as files from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Broker, assertLifecycleServingCapability } from "../src/core/broker.js";
 import { EndpointReservation } from "../src/core/endpoint-reservation.js";
 import { LifecycleJournal, LifecycleUnavailable } from "../src/core/daemon-lifecycle.js";
@@ -15,6 +14,7 @@ import { MessageStore } from "../src/core/store.js";
 import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
 import { nullLogger } from "../src/core/logger.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { createOwnedHome, settledOwnedHomes, startOwnedHomeHelper, stopOwnedHomeHelper } from "./fixtures/owned-home.js";
 
 const originals = vi.hoisted(() => ({ spawn: undefined as typeof import("node:child_process").spawn | undefined,
   openSync: undefined as typeof import("node:fs").openSync | undefined,
@@ -36,26 +36,11 @@ vi.mock("node:fs", async importOriginal => {
     default: { ...(Reflect.get(native, "default") ?? native), openSync, fsyncSync, closeSync } };
 });
 
-// Exact fixture-owned NEW HOME only. No real profile/ancestor ACL mutation.
-const HOME = String.raw`
-$ErrorActionPreference='Stop'
-try {
-  $r=[Console]::In.ReadToEnd() | ConvertFrom-Json
-  if([IO.Directory]::Exists([string]$r.path)) { throw 'exists' }
-  $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
-  $acl=New-Object Security.AccessControl.DirectorySecurity
-  $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false)
-  $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','None','None','Allow')))
-  [void][IO.Directory]::CreateDirectory([string]$r.path,$acl)
-  [Console]::WriteLine('fixture_ready')
-} catch { [Console]::WriteLine('fixture_unknown'); exit 1 }
-`;
 let env: TestEnv, home: string, broker: Broker | undefined, reservation: EndpointReservation | undefined;
 let journal: LifecycleJournal | undefined, captured: DatabaseSync | undefined;
 const sqliteExec = DatabaseSync.prototype.exec;
 const sqliteClose = DatabaseSync.prototype.close;
 const fixtureReadonlyConnections = new Set<DatabaseSync>();
-const setupCloses = new Set<Promise<void>>();
 const fixtureFlushDescriptors = new Set<number>();
 function resetNativeAdapters() {
   // restoreAllMocks does not restore module-lived vi.fn implementations/history.
@@ -72,24 +57,15 @@ function verifyNativeAdapters() {
     expect(adapter).not.toHaveBeenCalled();
   }
 }
+// The owned-home helper's powershell.exe cold start is setup before the tests, not per-test fixture time.
+beforeAll(async () => { if (process.platform === "win32") await startOwnedHomeHelper(); });
+afterAll(async () => { if (process.platform === "win32") await stopOwnedHomeHelper(); });
 beforeEach(async () => {
   resetNativeAdapters();
   verifyNativeAdapters();
   env = makeEnv(); home = join(env.home, "home"); captured = undefined;
   if (process.platform !== "win32") return;
-  const bin = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const child = spawn(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(HOME, "utf16le").toString("base64")],
-    { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
-  const actualClose = new Promise<void>(resolve => child.once("close", () => resolve()));
-  setupCloses.add(actualClose); void actualClose.then(() => setupCloses.delete(actualClose));
-  let output = "";
-  child.stdout.on("data", bytes => { output += String(bytes); });
-  child.stdin.end(JSON.stringify({ path: home }));
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Owned bootstrap fixture unavailable")), 5000);
-    child.once("error", () => { clearTimeout(timer); reject(new Error("Owned bootstrap fixture unavailable")); });
-    child.once("close", code => { clearTimeout(timer); code === 0 && output.trim() === "fixture_ready" ? resolve() : reject(new Error("Owned bootstrap fixture unavailable")); });
-  });
+  await createOwnedHome(home, "Owned bootstrap fixture unavailable");
 });
 afterEach(async () => {
   resetNativeAdapters();
@@ -97,8 +73,8 @@ afterEach(async () => {
   try { verifyNativeAdapters(); } catch (error) { failures.push(error); }
   try {
     vi.restoreAllMocks();
-    // A setup observer timeout is not process exit or permission to remove its home.
-    await Promise.all([...setupCloses]);
+    // A setup observer timeout is not the helper's answer or permission to remove its home.
+    await settledOwnedHomes();
     // Dispose ONLY exact native descriptors this isolated fixture captured; this is
     // neither production retry/cleanup nor proof the failed close had succeeded.
     for (const fd of fixtureFlushDescriptors) { originals.closeSync!(fd); fixtureFlushDescriptors.delete(fd); }
