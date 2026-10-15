@@ -62,11 +62,11 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-2JT5JJI6.mjs";
+} from "./chunks/chunk-QQLOBZCM.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-O2UKBP6R.mjs";
+} from "./chunks/chunk-TEPJHXJQ.mjs";
 import {
   readWorktreeState
 } from "./chunks/chunk-NOVJUMH7.mjs";
@@ -90,7 +90,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-ZY33BBDY.mjs";
+} from "./chunks/chunk-UYA5O7JF.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -124,8 +124,8 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-V4OKKHJ4.mjs";
-import "./chunks/chunk-RKZYNSBW.mjs";
+} from "./chunks/chunk-4NNOI72X.mjs";
+import "./chunks/chunk-N5OBLQAY.mjs";
 import {
   ACCESS_LEVELS,
   DEFAULT_FOLLOW_UP,
@@ -3299,7 +3299,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-OBMGJTJK.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-TTWQYSVC.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3311,9 +3311,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-2YVKZMSU.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-GCV6YCUM.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-2YVKZMSU.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-GCV6YCUM.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -4076,7 +4076,7 @@ ${jobLines.join("\n")}`);
       worktree: external_exports.boolean().optional().describe(
         "Run in a separate git worktree on its own branch (implies access=edit). Your working copy stays untouched; the result explains how to review, merge or discard the changes."
       ),
-      base: external_exports.string().min(1).max(4096).optional().describe("Explicit worktree base ref or commit. Default: fetched remote default branch; selected at job start and reported with its SHA in the first status and preamble. Offline uses cached remote ref, or local HEAD with a warning; local-only repositories use HEAD."),
+      base: external_exports.string().min(1).max(4096).optional().describe("Explicit worktree base ref or commit. Otherwise compare HEAD to its fetched upstream, or the remote default without an upstream: advance only when purely behind; keep HEAD when equal, ahead or diverged. Offline uses the cached reference, or HEAD with a warning; local-only repos use HEAD. Exact selection is reported at job start."),
       title: external_exports.string().min(1).max(MAX_TITLE_CHARS).describe('A short title for this subagent, 3-7 words, like a chat title (e.g. "Fix castle gate alignment"). Required. Shown in peers and the dashboard.'),
       allow_tools: external_exports.array(external_exports.string().min(1).max(200)).max(50).optional().describe(
         'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (reads only), "pair-desk:worker" (reads, comments, progress, plans, issue edits and review locations; excludes status, builds and handoff writes), or "server" for all of its tools. Add "pair-desk.set_build" separately to allow build publication.'
@@ -4190,7 +4190,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const note = exact ? "" : `
 ${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
         return text(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${a.worktree ? `
-Base selected at job start: ${a.base ?? "fetched <remote>/<default> (offline/local fallback reported in first status)"}.` : ""}${derivedTitle ? `
+Base selected at job start: ${a.base ?? "HEAD unless purely behind fetched upstream/default (offline/local fallback reported in first status)"}.` : ""}${derivedTitle ? `
 Title derived from prompt: "${a.title}".` : ""}`);
       })
     );
