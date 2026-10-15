@@ -65,8 +65,24 @@ describe("chunked paired-PC file transfers", () => {
     });
     const transport = (a.transfers as unknown as { transport: { window(remote: string): number } }).transport;
     const window = vi.spyOn(transport, "window");
+    const sendChunk = a.sendExtension.bind(a), receiveAck = a.receiveExtension.bind(a);
+    let stream: { start: number; end: number; requests: Set<string>; acknowledgements: number };
+    vi.spyOn(a, "sendExtension").mockImplementation((remote, type, payload) => {
+      if (payload.op === "chunk") {
+        if (!stream.requests.size) stream.start = performance.now();
+        stream.requests.add(String(payload.rid));
+      }
+      return sendChunk(remote, type, payload);
+    });
+    vi.spyOn(a, "receiveExtension").mockImplementation((type, payload, remote) => {
+      if (payload.kind === "response" && stream.requests.has(String(payload.rid))) {
+        if (++stream.acknowledgements === bytes / TRANSFER_CHUNK_BYTES) stream.end = performance.now();
+      }
+      return receiveAck(type, payload, remote);
+    });
     const measure = async (width: number) => {
       window.mockReturnValue(width);
+      stream = { start: 0, end: 0, requests: new Set(), acknowledgements: 0 };
       const began = performance.now(), latencies: number[] = [];
       const transfer = a.startFiles("mac/receiver", [source], home, sender);
       while (a.transfers.list().find(t => t.id === transfer.id)?.status !== "completed") {
@@ -78,7 +94,11 @@ describe("chunked paired-PC file transfers", () => {
         await realDelay(30);
       }
       expect(await hash(join(home, "mac", "inbox", transfer.id, "fairness.bin"))).toBe(expected);
-      return { ms: performance.now() - began, maxMessageMs: Math.max(...latencies), messages: latencies.length };
+      // Compare the chunk/ACK window. Offer preparation, final verification and
+      // the assertion's own disk read do not measure negotiated pipelining.
+      expect(stream.acknowledgements).toBe(bytes / TRANSFER_CHUNK_BYTES);
+      expect(stream.end).toBeGreaterThan(stream.start);
+      return { ms: stream.end - stream.start, maxMessageMs: Math.max(...latencies), messages: latencies.length };
     };
     const serial = await measure(1), pipelined = await measure(TRANSFER_WINDOW_CHUNKS);
     console.info("AB-183 controlled 60ms ACK RTT", JSON.stringify({ bytes, serial, pipelined }));

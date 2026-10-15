@@ -26,6 +26,8 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   "core/oversize.ts": ["unlinkSync(tmp)"],
   "core/json-store.ts": ["rmSync(tmp, { force: true })"],
   "core/node.ts": ["unlinkSync(this.opts.pipePath)"],
+  // AB-316: own mkdtemp plugin files, non-recursive; reviewed by Claude main 2026-10-16
+  "core/opencode-native-tools.ts": ["unlinkSync(reportFile)", "unlinkSync(entry)", "unlinkSync(manifest)", "rmdirSync(directory)"],
   // Lock/lease files hold only PID, start time and nonce. A stale lock is moved aside first and its moved copy removed
   // only when its nonce still matches; a lease is removed only when its owner process is gone.
   "core/storage-lock.ts": ["rmSync(moved, { force: true })", "rmSync(moved, { force: true })", "rmSync(path)", "rmSync(path, { force: true })", "rmSync(path, { force: true })", "rmSync(lease, { force: true })"],
@@ -63,7 +65,8 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   // Recreated ephemeral endpoint descriptor only: no durable records,
   // registrations or history. Exact current generation and field shape required;
   // unknown content and successor generations stay intact, as asserted below.
-  "core/broker.ts": ["unlinkSync(temporary)", "unlinkSync(file)"],
+  // Handover repeat marker: exclusively created (wx) unpublished staging file; reviewed by Claude main 2026-10-16
+  "core/broker.ts": ["unlinkSync(temporary)", "unlinkSync(file)", "unlinkSync(temporary)"],
   "core/antigravity-plugin.ts": ["unlinkSync(temporary)", "unlinkSync(file)"],
   "mcp/muse-hooks.ts": ["unlinkSync(temporary)", "unlinkSync(this.file)"],
   "mcp/antigravity-hooks.ts": ["unlinkSync(temporary)", "unlinkSync(this.file)"],

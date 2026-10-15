@@ -24,7 +24,7 @@ describe("supervisor outcome MCP tool", () => {
       !entry[0].startsWith("AGENT_BRIDGE_") && typeof entry[1] === "string"));
     childEnv.CODEX_HOME = codexHost(client, env.home, "codex", "supervisor");
     const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, "--agent=codex"], cwd: env.home,
-      env: { ...childEnv, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_NAME: "supervisor", AGENT_BRIDGE_DASHBOARD: "off" }, stderr: "ignore" });
+      env: { ...childEnv, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_NAME: "supervisor", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_DAEMON: "0" }, stderr: "ignore" });
     try {
       await client.connect(transport);
       await client.callTool({ name: "peers", arguments: {} });

@@ -8,6 +8,13 @@ import { listOpencodeModels, resolveOpencodeModel } from "../core/opencode-model
 import { delegateToOpencodeServed } from "../core/opencode-served.js";
 import { delegateToCodexAppServer } from "../core/codex-appserver.js";
 import { codexEnvironmentNote } from "../core/codex-env.js";
+import type { UsageProbe } from "../core/usage.js";
+
+/** Use precisely the executable and requested/default model used by this target. */
+export function usageProbeFor(target: CodingAgent, cfg: BridgeConfig, context: Pick<UsageProbe, "cwd" | "home" | "log">, model?: string): UsageProbe {
+  const bins: Record<CodingAgent, string> = { codex: cfg.codexBin, claude: cfg.claudeBin, opencode: cfg.opencodeBin, antigravity: cfg.antigravityBin, muse: cfg.museBin };
+  return { ...context, agent: target, bin: bins[target], model: model ?? DELEGATION_TARGETS[target].defaultModel(cfg) };
+}
 
 export const nativeSubagentsSchema = z.number().int().min(0).max(MAX_CODEX_SUBAGENTS).optional().describe(`Maximum concurrent native Codex child threads per job (0 disables). Default: config codexSubagents (${DEFAULT_CODEX_SUBAGENTS}). Separate from bridge maxJobs/depth. Changes apply from the next turn.`);
 

@@ -3,6 +3,7 @@ import { request } from "node:http";
 import { join } from "node:path";
 import type { Logger } from "../core/logger.js";
 import { startUi, type UiOptions } from "./ui.js";
+import type { ConnectionActivity } from "../core/connection-activity.js";
 import { loadDashboardKey } from "./dashboard-key.js";
 import { protect } from "../network/pairing.js";
 import type { MobileDesktopAdmin } from "../mobile/desktop.js";
@@ -86,6 +87,7 @@ export async function findRunningDashboard(home: string): Promise<DashboardInfo 
 export interface HostedDashboard {
   info: DashboardInfo;
   close: () => Promise<void>;
+  activity?: ConnectionActivity;
 }
 
 /** Share startup attempts inside a session and recover a winner in another session's race. */
@@ -99,6 +101,8 @@ export class DashboardController {
   }
 
   get isHosting(): boolean { return this.hosted !== null; }
+  /** Connections of the dashboard this controller hosts in this process (none when another process hosts it). */
+  get activity(): ConnectionActivity | undefined { return this.hosted?.activity; }
 
   private async open(): Promise<DashboardInfo> {
     if (this.hosted) return { ...this.hosted.info, url: dashboardUrl(this.hosted.info.port, dashboardKey(this.opts.home)) };
@@ -169,6 +173,7 @@ export async function hostDashboard(opts: DashboardHostOptions & { preferSavedPo
   opts.log.info("dashboard started", { port: ui.port });
   return {
     info,
+    activity: ui.activity,
     close: async () => {
       await ui.close();
     },

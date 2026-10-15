@@ -6,6 +6,7 @@ import { JOBS_FILE } from "../core/constants.js";
 import { readStore } from "./jobs.js";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { settleUsageAttempt, usageRefused, usageSubmissionReceipt } from "../core/usage.js";
 import { COMPLETION_DEDUPE_PREFIX } from "../core/completion.js";
 import { takeRunnerSpec } from "../core/runner-store.js";
 import { failureCause } from "../core/delegate.js";
@@ -123,7 +124,7 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
   }
 }
 
-async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJobScope | null): Promise<number> {
+export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJobScope | null): Promise<number> {
   const { home, target } = spec;
   const job: Job = {
     ...spec.job,
@@ -131,6 +132,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     progress: null,
     status: "running",
     queue: [],
+    usageQueuedControls: [],
     allowedServers: new Set(spec.job.allowedServers),
   };
   let owner = spec.owner;
@@ -158,6 +160,8 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
         updatedAt: Date.now(),
         model: job.model,
         sessionId: job.sessionId,
+        providerUsage: job.providerUsage,
+        usageSubmission: usageSubmissionReceipt(job),
         workdir: job.workdir,
         worktree: job.worktree,
         progress: job.progress,
@@ -288,9 +292,9 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       if (!seen.includes(c.cid)) {
         if (job.live) {
           job.awaitingAnswer = true;
-          job.live.post(c.body);
+          job.live.post(c.body, undefined, c.cid);
         }
-        else job.queue.push(c.body);
+        else { job.queue.push(c.body); job.usageQueuedControls!.push({ cid: c.cid, body: c.body }); }
         seen.push(c.cid);
       }
       save();
@@ -349,7 +353,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
 
   let args = spec.args;
   for (;;) {
-    let status: "done" | "failed" | "cancelled";
+    let status: "done" | "failed" | "cancelled" = "failed";
     let text = "";
     let cause: string | null = null;
     let processesStopped = false;
@@ -365,6 +369,9 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       job.sessionId = sessionOfError(err) ?? job.sessionId;
       status = "failed";
       cause = failureCause({ error: err });
+    } finally {
+      settleUsageAttempt(job, status === "done");
+      save();
     }
     if (scope) {
       try {
@@ -404,8 +411,10 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     // The supervisor's JobManager emits the finish/fail notification when it settles this
     // result. A detached notifier here would remain inside this runner's owned job scope.
     // Follow-ups that arrived meanwhile go out right away, into the same session, from this runner.
-    if (job.queue.length && job.sessionId && !job.controller.signal.aborted) {
+    if (job.queue.length && job.sessionId && !job.controller.signal.aborted && !usageRefused(job) && !job.usagePendingControls?.length) {
       const queued = job.queue.splice(0).join("\n\n");
+      job.usagePendingControls = job.usageQueuedControls;
+      job.usageQueuedControls = [];
       void post(`${report}\n\n${QUEUED_FOLLOW_UP_NOTE}`);
       args = resumeArgs(spec.base, job.name, queued, job.sessionId, job.workdir, job.worktree, job.args);
       if (args.model !== undefined) job.model = args.model;

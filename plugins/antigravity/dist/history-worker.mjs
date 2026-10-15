@@ -5,14 +5,14 @@ import {
 import {
   HISTORY_TICK_MS,
   HistoryIndex
-} from "./chunks/chunk-3WG4KJ4A.mjs";
-import "./chunks/chunk-3CKVIQIW.mjs";
+} from "./chunks/chunk-7BODFNSS.mjs";
+import "./chunks/chunk-KLBF34ZL.mjs";
 import {
   ConversationIngestor,
   ownsProjectMirrors,
   projectDatabasePath
-} from "./chunks/chunk-TTRPTYLF.mjs";
-import "./chunks/chunk-OVLKPORL.mjs";
+} from "./chunks/chunk-7EG4UVAA.mjs";
+import "./chunks/chunk-VZXYRPA6.mjs";
 import {
   HISTORY_IO_BYTES_PER_SECOND,
   copyLegacyConversationTail,
@@ -21,21 +21,24 @@ import {
   migrateHistoryStore,
   openHistoryStore,
   readHistoryMigrationProgress
-} from "./chunks/chunk-SOSAKSVH.mjs";
-import "./chunks/chunk-V4VFK2LZ.mjs";
-import "./chunks/chunk-PZ6QYUCT.mjs";
+} from "./chunks/chunk-WXC7FWGX.mjs";
+import "./chunks/chunk-DODQKEUH.mjs";
+import "./chunks/chunk-HT3JXK2O.mjs";
 import {
   reconcileAskCompletions
-} from "./chunks/chunk-5ULR62DP.mjs";
+} from "./chunks/chunk-ZQ2B63AL.mjs";
 import {
   loadConfig
-} from "./chunks/chunk-GUU5SJ6T.mjs";
-import "./chunks/chunk-BOKHWZQ3.mjs";
-import "./chunks/chunk-RE3I7AXX.mjs";
+} from "./chunks/chunk-H3KBN2YN.mjs";
+import "./chunks/chunk-DXHVZRHI.mjs";
+import "./chunks/chunk-UTSHXRSC.mjs";
 import "./chunks/chunk-IYJ5P7ML.mjs";
 import {
   readHistoryJson
-} from "./chunks/chunk-WEZZ2PWR.mjs";
+} from "./chunks/chunk-DS664YOK.mjs";
+import {
+  transcriptPaths
+} from "./chunks/chunk-OX5J3NNH.mjs";
 import "./chunks/chunk-HYOPFLLN.mjs";
 import {
   checkpointOwnedMetadataConnections,
@@ -44,15 +47,12 @@ import {
   isRecord,
   nullLogger,
   writeJsonStore
-} from "./chunks/chunk-JJ6UMMYX.mjs";
-import "./chunks/chunk-AR4BZM3F.mjs";
+} from "./chunks/chunk-BPL7GJLM.mjs";
+import "./chunks/chunk-ICCAXDVG.mjs";
 import {
   CONFIG_FILE_NAME
-} from "./chunks/chunk-HIVVJXLN.mjs";
-import {
-  transcriptPaths
-} from "./chunks/chunk-OX5J3NNH.mjs";
-import "./chunks/chunk-DEWCC5JJ.mjs";
+} from "./chunks/chunk-O26G5HFG.mjs";
+import "./chunks/chunk-HYVC3VSW.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/core/history-worker.ts

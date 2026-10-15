@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createServer } from "node:net";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BridgeNode } from "../src/core/node.js";
+import { launchDaemon, type LateDaemonLaunch } from "../src/core/daemon-launcher.js";
 import { Broker } from "../src/core/broker.js";
 import { BridgeClient, CLIENT_TRANSPORT_DIAGNOSTIC_COUNT_LIMIT, CLIENT_TRANSPORT_DIAGNOSTIC_RECORD_LIMIT,
   type ClientConnectionClosedDiagnostic } from "../src/core/client.js";
@@ -579,7 +580,7 @@ describe("standalone demand-start broker", () => {
     expect(launch).toHaveBeenCalledOnce(); expect(b.isBroker).toBe(false);
     await b.send({ to: a.name, body: "legacy behavior preserved" }); await until(() => a.unread().length === 1);
   });
-  it("ambiguous creation stays latched across reconnect attempts without embedded fallback", async () => {
+  it("ambiguous creation stays latched until an authenticated registration settles it, without embedded fallback", async () => {
     const launch = vi.fn(async () => ({ kind: "unknown" as const })), a = node("unconfirmed", launch);
     await expect(a.start()).rejects.toThrow("could not connect");
     await expect(a.ensureConnected()).rejects.toThrow("could not connect");
@@ -587,6 +588,89 @@ describe("standalone demand-start broker", () => {
     expect(existsSync(join(env.home, "state-core.db"))).toBe(false);
     const host = env.node("real-host"); await host.start(); await a.ensureConnected();
     expect(a.isBroker).toBe(false); expect(launch).toHaveBeenCalledOnce();
+    // The registration settled the attempt: losing that broker permits demand start again.
+    await host.stop();
+    await until(() => launch.mock.calls.length === 2, 10_000);
+    expect(a.isBroker).toBe(false);
+  });
+  it("late definite failures un-latch an unknown attempt only after a doubling backoff", async () => {
+    // Only the clock is fake: elections, sockets and timers run for real.
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(1_000_000);
+    try {
+      const reports: LateDaemonLaunch[] = [];
+      const daemonHost = env.node("late-host");
+      const launch = vi.fn<NonNullable<NonNullable<ConstructorParameters<typeof BridgeNode>[0]["daemon"]>["launch"]>>()
+        .mockImplementationOnce(async (_options, report) => { reports.push(report!); return { kind: "unknown" }; })
+        .mockImplementationOnce(async (_options, report) => { reports.push(report!); return { kind: "unknown" }; })
+        .mockImplementationOnce(async () => { await daemonHost.start(); return { kind: "created" }; });
+      const a = node("late-failure", launch);
+      await expect(a.start()).rejects.toThrow("could not connect");
+      expect(launch).toHaveBeenCalledOnce();
+      const first = Date.now();
+      reports[0]!({ kind: "unavailable", reason: "windows_wmi_create_rejected" });
+      vi.setSystemTime(first + 4_999);
+      await expect(a.ensureConnected()).rejects.toThrow("could not connect");
+      expect(launch).toHaveBeenCalledOnce(); // Un-latched, but still inside the 5 s backoff.
+      vi.setSystemTime(first + 5_000);
+      await expect(a.ensureConnected()).rejects.toThrow("could not connect");
+      expect(launch).toHaveBeenCalledTimes(2);
+      const second = Date.now();
+      reports[1]!({ kind: "unavailable", reason: "windows_wmi_create_rejected" });
+      vi.setSystemTime(second + 9_999);
+      await expect(a.ensureConnected()).rejects.toThrow("could not connect");
+      expect(launch).toHaveBeenCalledTimes(2); // The second backoff doubled to 10 s.
+      vi.setSystemTime(second + 10_000);
+      await a.ensureConnected();
+      expect(launch).toHaveBeenCalledTimes(3); expect(a.isBroker).toBe(false);
+    } finally { vi.useRealTimers(); }
+  });
+  it("an unknown creation that did start a daemon is relaunched after that daemon crashes", async () => {
+    // The real creation runs, but its receipt is reported after the decision budget ("unknown").
+    const launch = vi.fn<NonNullable<NonNullable<ConstructorParameters<typeof BridgeNode>[0]["daemon"]>["launch"]>>(async (options, late) => {
+      await launchDaemon(options, late); return { kind: "unknown" };
+    });
+    const a = node("unknown-crash", launch); await a.start(); const first = await remember();
+    expect(launch).toHaveBeenCalledOnce();
+    expect(await fixtureProcessGeneration(first, owned.get(first)!, "wrong crash fixture")).toBe(true);
+    const disconnected = once(a, "disconnected");
+    process.kill(first, "SIGKILL");
+    await disconnected;
+    await until(() => !fixtureProcessExists(first, "crash visibility unknown")); owned.delete(first);
+    await until(() => a.isConnected, 15_000); const next = await remember(); expect(next).not.toBe(first);
+    expect(launch).toHaveBeenCalledTimes(2);
+  });
+  it("hands over to a newer release's client: drains, releases the endpoint, keeps accepted mail", async () => {
+    const launch = vi.fn(launchDaemon);
+    const a = node("handover-old", launch); await a.start(); const first = await remember();
+    const accepted = await a.send({ to: "after-handover", body: "kept across the handover" });
+    const newer = await client();
+    try {
+      await expect(newer.request("hello", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(env.home), canHost: true, peer: { id: "fixture-newer", name: "newer-release",
+        agent: "codex", cwd: env.home, pid: 424242, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false, version: "999.0.0" } }))
+        .rejects.toMatchObject({ code: "protocol_mismatch", details: { handover: true } });
+    } finally { newer.close(); }
+    await until(() => !fixtureProcessExists(first, "handover visibility unknown"), 15_000); owned.delete(first);
+    // The newer release demand-starts after the old daemon is gone. The old-release client
+    // received the handover event and leaves demand start to it, but reconnects to its daemon.
+    const successor = node("newer-release-host"); await successor.start(); const next = await remember();
+    expect(next).not.toBe(first);
+    await until(() => a.isConnected, 15_000);
+    expect((await a.health()).brokerPid).toBe(next);
+    expect(launch).toHaveBeenCalledOnce();
+    const recipient = node("after-handover"); await recipient.start();
+    await until(() => recipient.unread().some(message => message.id === accepted.messages[0]!.id));
+    expect(recipient.unread()[0]!.body).toBe("kept across the handover");
+  });
+  it("exits after its idle period once no client is connected", async () => {
+    vi.stubEnv("AGENT_BRIDGE_DAEMON_IDLE_EXIT_MS", "1000");
+    try {
+      const a = node("idle-client"); await a.start(); const pid = await remember();
+      await new Promise(resolve => setTimeout(resolve, 2_000));
+      expect(fixtureProcessExists(pid, "idle visibility unknown")).toBe(true); // A connected client keeps it.
+      await a.stop();
+      await until(() => !fixtureProcessExists(pid, "idle visibility unknown"), 15_000); owned.delete(pid);
+      await expect(client()).rejects.toMatchObject({ code: expect.stringMatching(/^(ENOENT|ECONNREFUSED)$/) });
+    } finally { vi.unstubAllEnvs(); }
   });
   it("an authenticated discovery rejection never invokes creation or fallback", async () => {
     const host = env.node("existing"); await host.start();

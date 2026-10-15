@@ -33,7 +33,7 @@ import {
 } from "../core/constants.js";
 import { runRemoteAsk } from "./remote-ask.js";
 import { bundledCli, currentDelegateDepth, DelegateError, failureCause, killAllDelegates, PARENT_JOB_ENV, ROOT_NAME_ENV, ROOT_SESSION_ENV, resolveBinary } from "../core/delegate.js";
-import { readUsage, codexAppServerCall } from "../core/usage.js";
+import { readUsage, codexAppServerCall, checkUsagePreflight, usageAdmissionText, type UsageAdmission } from "../core/usage.js";
 import { t } from "../core/i18n.js";
 import { createLogger, type Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
@@ -53,7 +53,7 @@ import { CodexWaker, type Activity } from "./codex-wake.js";
 import { reportModActivity } from "./hook-ownership.js";
 import { codexCallIdentity, codexMainThreadAdmission, type CodexCallIdentity } from "./codex-lineage.js";
 import { buildHookResponse, confirmAntigravityStopDelivery, confirmNativeChildDelivery, discardFinishedNotes, releaseAntigravityStopDelivery, type HookEvent } from "./hooks.js";
-import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, type Access } from "./targets.js";
+import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, usageProbeFor, type Access } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
 import { answerPendingApproval, listPendingApprovals, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { LocalCoordinator } from "./local-coordinator.js";
@@ -78,6 +78,8 @@ import { HISTORY_SEARCH_TOOL_DESCRIPTION, historySearchToolInput, type HistorySe
 import { decisionScopeSchema, MAX_DECISION_TOPIC_CHARS, MAX_DECISION_TEXT_CHARS, type DecideArgs, type DecisionsArgs } from "../core/decisions.js";
 import { askOwnerSchema, type AskOwnerArgs } from "../core/owner-questions.js";
 import { guardServerErrors } from "./job-runner-errors.js";
+import { NODE_STOP_MS, runShutdownSteps, SHUTDOWN_DEADLINE_MS, shouldYieldTo, watchParent, type ShutdownStep } from "./server-lifecycle.js";
+import { parentProcessIdentity } from "../core/process-identity.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
 
@@ -93,7 +95,7 @@ const SUBAGENT_TOOLS = new Set(["health", "peers", "send", "report_progress", "h
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 /** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
 const STAND_IN_RECHECK_MS = 30_000;
-const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "permission_profile", "allow_tools", "send_to", "title", "notes"] as const;
+const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "base", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "permission_profile", "allow_tools", "send_to", "title", "notes"] as const;
 /** Plugin root: dist/server.mjs lives one level below it. */
 const PLUGIN_ROOT = resolve(bundleDirectory(import.meta.url), "..");
 
@@ -517,29 +519,61 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     })().catch((err) => log.warn("idle close sweep kept worktrees", { err: String(err) })).finally(() => { closeSweepBusy = false; });
   }, 15 * 60_000);
   closeSweep.unref();
-  const shutdown = async (reason: string) => {
+  let stopParentWatch: () => void = () => {};
+  /** `yielded`: a newer server of this host took the session over (AB-385). */
+  const shutdown = async (reason: string, yielded = false) => {
     // stdin end, transport close and signals can all fire; shut down once.
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(closeSweep);
+    stopParentWatch();
     log.info("shutting down", { reason });
-    // Runner-hosted subagents keep going for the next server of this session (see job-host.ts).
+    // AB-385: every step is bounded (runShutdownSteps); this backstop also covers one that blocks synchronously.
+    let step = "start";
+    setTimeout(() => { log.warn("shutdown did not finish in time; exiting", { reason, step, deadlineMs: SHUTDOWN_DEADLINE_MS }); process.exit(0); }, SHUTDOWN_DEADLINE_MS).unref();
+    // Runner-hosted subagents keep going for the next server of this session (see job-host.ts). After a yield the
+    // job manager is dormant: it no longer writes the job store, and the session's new server settles the turns
+    // this process ran inline as interrupted (resumable), as for any executor that exited.
+    if (yielded) ctx.jobs?.yieldInline();
     ctx.jobs?.cancelAll();
-    // Stop every delegated CLI this process runs itself, with its whole process tree; nothing may keep working unobserved.
-    await killAllDelegates();
-    await mcp.close().catch(() => {});
-    await dashboard?.then(controller => controller.close()).catch(() => {});
-    await mobileDashboard?.then(controller => controller?.close()).catch(() => {});
-    await rewake?.stop().catch(() => {});
-    await antigravityHooks?.stop().catch(() => {});
-    await museHooks?.stop().catch(() => {});
-    await node?.stop().catch(() => {});
+    const nodeStop: ShutdownStep = { name: "bridge node", run: () => node?.stop(), budgetMs: NODE_STOP_MS };
+    const steps: ShutdownStep[] = [
+      // Stop every delegated CLI this process runs itself, with its whole process tree; nothing may keep working unobserved.
+      { name: "delegates", run: () => killAllDelegates() },
+      { name: "mcp transport", run: () => mcp.close() },
+      { name: "local endpoints", run: () => Promise.allSettled([
+        dashboard?.then(controller => controller.close()),
+        mobileDashboard?.then(controller => controller?.close()),
+        rewake?.stop(),
+        antigravityHooks?.stop(),
+        museHooks?.stop(),
+      ]) },
+    ];
+    // A yielded server is not used by anyone: release a hosted broker (its store and locks) first, with its own budget.
+    await runShutdownSteps(yielded ? [nodeStop, ...steps] : [...steps, nodeStop], {
+      onStep: (name) => { step = name; },
+      onTimeout: (name, budgetMs) => log.warn("shutdown step did not finish in time; continuing", { reason, step: name, budgetMs }),
+    });
     process.exit(0);
   };
   transport.onclose = () => void shutdown("transport closed");
   process.stdin.on("end", () => void shutdown("stdin ended"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
+  // AB-385: /reload-plugins and plugin updates start a new server without closing this one's stdin. When the broker
+  // reports that a newer agent-bridge version took this session over, the host will never call this server again:
+  // exit (closing a hosted broker, so the remaining servers re-elect) instead of lingering as a stale peer or broker.
+  // Only a replacement started by this very host process (same parent PID and creation identity) counts: another
+  // terminal resuming the same session must never make a live server exit.
+  node?.on("replaced", () => {
+    const by = node.replacement;
+    void parentProcessIdentity().then((parentIdentity) => {
+      if (!node.wasReplaced || !shouldYieldTo(by, { version: APP_VERSION, ppid: process.ppid, parentIdentity })) return;
+      void shutdown(`replaced by newer server v${by!.version} of the same host`, true);
+    }).catch(() => {});
+  });
+  // Backstop: a host that ends without closing our stdin. The parent is identified by PID and creation time.
+  stopParentWatch = watchParent({ ppid: process.ppid, identity: parentProcessIdentity(), onGone: (reason) => void shutdown(reason) });
   await mcp.connect(transport);
   log.info("MCP transport connected");
 
@@ -1252,6 +1286,11 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     jobs: ctx.jobs,
   };
   const keep = (a: DelegateArgs): Record<string, unknown> => Object.fromEntries(KEPT_ARGS.filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
+  const seedUsage = (job: Job, usage: UsageAdmission | undefined) => {
+    if (usage && job.providerUsage?.turnStartedAt !== job.startedAt) {
+      job.providerUsage = { turnStartedAt: job.startedAt, decision: usage, warningReported: usage.type === "warn" };
+    }
+  };
   const resumers: Partial<Record<CodingAgent, (a: DelegateArgs) => Resume>> = {};
   for (const target of CODING_AGENTS) {
     const profile = DELEGATION_TARGETS[target];
@@ -1293,6 +1332,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         .describe(
           "Run in a separate git worktree on its own branch (implies access=edit). Your working copy stays untouched; the result explains how to review, merge or discard the changes.",
         ),
+      base: z.string().min(1).max(4096).optional().describe("Explicit worktree base ref or commit. Otherwise compare HEAD to its fetched upstream, or the remote default without an upstream: advance only when purely behind; keep HEAD when equal, ahead or diverged. Offline uses the cached reference, or HEAD with a warning; local-only repos use HEAD. Exact selection is reported at job start."),
       title: z
         .string()
         .min(1)
@@ -1363,8 +1403,11 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           if (!ctx.jobs) throw new BridgeError("bad_request", "Remote asks require a supervisor session.");
         }
         if (ctx.jobs && !ctx.jobs.canStart()) return text(t("jobs.limit", { max: ctx.jobs.limit }), true);
+        const usage = a.host || a.worktree ? undefined : await checkUsagePreflight(usageProbeFor(target, cfg, { home: ctx.home, cwd: a.cwd || ctx.cwd(), log }, a.model));
+        if (usage?.type === "block") return text(usageAdmissionText(usage), true);
         // Visible in peers while it runs (the caller is blocked, but its coordinator may ask).
         const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a), keep(a));
+        if (tracked) { seedUsage(tracked.job, usage); ctx.jobs?.persist(); }
         if (a.host && tracked) {
           tracked.job.remote = { host: a.host, name: `${target}-job-${tracked.job.id}` };
           ctx.jobs!.persist();
@@ -1389,8 +1432,9 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           // cancel_subagent can stop it too (e.g. from its coordinator), not only the caller.
           res = a.host && tracked
             ? await runRemoteAsk(requireNode(), target, a, tracked.job, extra.signal, onProgress)
-            : await run({ ...a, _job: tracked?.job.name }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false, tracked?.job);
+            : await run({ ...a, _job: tracked?.job.name, _usageWarningReported: usage?.type === "warn" }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false, tracked?.job);
         } catch (err) {
+          if (usage?.type === "warn" && err instanceof Error) err.message = `${usageAdmissionText(usage)}\n\n${err.message}`;
           await contact();
           tracked?.end({ error: err });
           log.warn("ask failed", { job: tracked?.job.name, err: (err as Error).message });
@@ -1398,6 +1442,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           const identity = tracked ? `Job: ${tracked.job.name}\n${target} session_id: ${tracked.job.sessionId ?? "-"}\n\n` : "";
           return text(`${identity}${describeError(err)}`, true);
         }
+        if (usage?.type === "warn") res = { ...res, text: `${usageAdmissionText(usage)}\n\n${res.text}` };
         await contact();
         tracked?.end({ result: res });
         if (redirected()) return confirmation();
@@ -1433,13 +1478,17 @@ ${res.text || t("delegate.empty")}`, res.isError);
         if (a.host && !ctx.runners) throw new BridgeError("bad_request", "Remote jobs require the bundled runner. Update and reload this session.");
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
-        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job) => ({ ...a, _job: job.name }), a), resumeFor(a), keep(a));
+        const usage = a.host || a.worktree ? undefined : await checkUsagePreflight(usageProbeFor(target, cfg, { home: ctx.home, cwd: a.cwd || ctx.cwd(), log }, a.model));
+        if (usage?.type === "block") return text(usageAdmissionText(usage), true);
+        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job) => { seedUsage(job, usage); return { ...a, _job: job.name }; }, a), resumeFor(a), keep(a));
+        seedUsage(job, usage);
+        jobs.persist();
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
         // Exact target options (sandbox, permission_mode, auto_approve, bypass_permissions) say it themselves.
         const exact = a.sandbox !== undefined || a.permission_mode !== undefined || a.auto_approve !== undefined || a.bypass_permissions !== undefined;
         const note = exact ? "" : `\n${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
-        return text(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${derivedTitle ? `\nTitle derived from prompt: "${a.title}".` : ""}`);
+        return text(`${usage?.type === "warn" ? usageAdmissionText(usage) + "\n\n" : ""}${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${a.worktree ? `\nBase selected at job start: ${a.base ?? "HEAD unless purely behind fetched upstream/default (offline/local fallback reported in first status)"}.` : ""}${derivedTitle ? `\nTitle derived from prompt: "${a.title}".` : ""}`);
       }),
     );
   }

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as realDelay } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -84,7 +85,7 @@ describe("Claude plugin hooks", () => {
 describe("hook_event with Codex-expanded manifest arguments", () => {
   let env: TestEnv;
   beforeEach(() => { env = makeEnv(); });
-  afterEach(async () => { vi.restoreAllMocks(); await env.cleanup(); });
+  afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); await env.cleanup(); });
 
   it.each(["SessionStart", "Stop"] as const)("a child %s without agent_id cannot register a ghost main or supersede the parent's Stop", async (event) => {
     const codexHome = codexRollout(env.home, ROOT_THREAD); codexRollout(env.home, CHILD_THREAD, ROOT_THREAD);
@@ -95,11 +96,12 @@ describe("hook_event with Codex-expanded manifest arguments", () => {
     const wakeDelivery = { confirm: vi.fn(), release: vi.fn(), active: vi.fn(), idle: vi.fn() };
     const setSessionId = vi.spyOn(node, "setSessionId"), ensureConnected = vi.spyOn(node, "ensureConnected");
     const nativeChild = vi.spyOn(node, "nativeChild"), markRead = vi.spyOn(node, "markRead");
-    let holdStop = false;
+    let holdStop = false, coldMeta = true;
     let releaseStop!: () => void, stopEntered!: () => void;
     const heldStop = new Promise<void>(resolve => { releaseStop = resolve; });
     const enteredStop = new Promise<void>(resolve => { stopEntered = resolve; });
     const observeMeta = vi.fn(async (meta?: Record<string, unknown>) => {
+      if (coldMeta && meta?.threadId === ROOT_THREAD) { coldMeta = false; await realDelay(1_600); }
       if (holdStop && meta?.threadId === ROOT_THREAD) { stopEntered(); await heldStop; }
     });
     const server = new McpServer({ name: "test", version: "1" });
@@ -137,7 +139,13 @@ describe("hook_event with Codex-expanded manifest arguments", () => {
       expect(await client.callTool({ name: "peers", arguments: {}, _meta: { threadId: CHILD_THREAD, sessionId: ROOT_THREAD } })).toHaveProperty("isError", true);
       expectNoEffects();
 
-      expect(JSON.stringify(await fire("SessionStart", rootEvent("SessionStart"), ROOT_THREAD))).toContain("You are connected to agent-bridge");
+      // Authority and epoch test: a cold metadata observer can outlast the
+      // separate hook latency budget. Keep sockets/admission real and control
+      // only that deadline while establishing the owning main hook.
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        expect(JSON.stringify(await fire("SessionStart", rootEvent("SessionStart"), ROOT_THREAD))).toContain("You are connected to agent-bridge");
+      } finally { vi.useRealTimers(); }
       expect(node.currentSessionId).toBe(ROOT_THREAD);
       expect(node.isConnected).toBe(true);
       await fire("UserPromptSubmit", rootEvent("UserPromptSubmit"), ROOT_THREAD);

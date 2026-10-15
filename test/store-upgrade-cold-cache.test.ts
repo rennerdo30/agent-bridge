@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { processIdentity } from "../src/core/process-identity.js";
@@ -45,6 +45,17 @@ it("keeps blocking an unverified reader whose record carries no identity", async
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${reader.pid}.json`), JSON.stringify({ schemaVersion: 1, json: 0, sqlite: 8, pid: reader.pid, name: "legacy-reader", version: "0.29.17", explicit: true }));
   expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow("Waiting to upgrade json store 0→4");
+});
+
+it("treats an identityless record written before the live process under its PID started as gone (AB-390)", async () => {
+  await until(() => Boolean(processIdentity(reader.pid!)), 15_000);
+  const dir = join(env.home, "storage-capabilities"), path = join(dir, `${reader.pid}.json`);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path, JSON.stringify({ schemaVersion: 1, json: 0, sqlite: 8, pid: reader.pid, name: "exited-reader", version: "0.29.17", explicit: true }));
+  // The record predates the live process by five minutes: that process reused the PID of an exited reader.
+  const recordedAt = new Date(Date.now() - 5 * 60_000);
+  utimesSync(path, recordedAt, recordedAt);
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).not.toThrow();
 });
 
 it("keeps blocking a verified reader that cannot read the target format", async () => {

@@ -21,6 +21,7 @@ import type { AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { BridgeClient } from "../core/client.js";
+import { ConnectionActivity } from "../core/connection-activity.js";
 import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, APP_VERSION, MAX_BODY_CHARS, PROTOCOL_VERSION } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
 import { BridgeNode, type BridgeNodeOptions } from "../core/node.js";
@@ -213,7 +214,7 @@ function readAllUsage(home: string, log: Logger): Promise<UsageReport[]> {
   ]);
 }
 
-export async function startUi(opts: UiOptions): Promise<{ url: string; port: number; close: () => Promise<void> }> {
+export async function startUi(opts: UiOptions): Promise<{ url: string; port: number; close: () => Promise<void>; activity: ConnectionActivity }> {
   const secret = opts.secret ?? loadDashboardKey(opts.home);
   const token = loadOrCreateToken(opts.home);
   const dbPath = resolveDbPath(opts.home);
@@ -612,7 +613,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (req.method === "GET" && isDashboardReadPath(url.pathname)) {
       const read = dashboardRequestSchema.safeParse({ path: url.pathname, query: Object.fromEntries(url.searchParams) });
       if (!read.success) return send(res, 400, { error: "invalid dashboard read request" });
-      const result = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, peers: async () => (await brokerPeers(opts.pipe, token, opts.log)).peers }, read.data);
+      const result = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, history: () => historyFeed.connection, peers: async () => (await brokerPeers(opts.pipe, token, opts.log)).peers }, read.data);
       return send(res, result.status, result.body);
     }
     const chatSend = /^\/api\/(sessions|jobs)\/([^/]+)\/message$/.exec(url.pathname);
@@ -632,7 +633,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const local = peers.find((p) => p.name === name && !p.host && !p.name.includes("/") && !p.jobAgent && !p.unavailable);
       let child: { id: string; title: string } | undefined;
       if (body.child) {
-        const result = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, peers: async () => peers }, { path: `/api/${job ? "jobs" : "sessions"}/${encodeURIComponent(name)}/subagents` });
+        const result = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, history: () => historyFeed.connection, peers: async () => peers }, { path: `/api/${job ? "jobs" : "sessions"}/${encodeURIComponent(name)}/subagents` });
         child = (result.body as { subagents?: { id: string; title: string }[] }).subagents?.find((s) => s.id === body.child);
         if (!child) return send(res, 404, { error: "no such native child of this session" });
       }
@@ -723,6 +724,9 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (!res.headersSent) send(res, 500, { error: String((err as Error).message) });
     });
   });
+  // Open browser connections (event streams included) keep a broker daemon from exiting idle.
+  const activity = new ConnectionActivity();
+  activity.track(server);
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(opts.port, UI_HOST, () => resolve());
@@ -731,6 +735,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
   return {
     url: `http://${UI_HOST}:${port}/?t=${secret}`,
     port,
+    activity,
     close: async () => {
       // End only the event streams; every other connection closes as before.
       historyFeed.close();

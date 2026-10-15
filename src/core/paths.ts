@@ -88,12 +88,23 @@ export function isEphemeralBrokerTcpRecord(value: Record<string, any>): boolean 
     typeof value.port === "number" && Number.isInteger(value.port) && value.port > 0 && value.port <= 65535;
 }
 
+/**
+ * A recorded broker PID that no longer exists cannot serve the recorded port. A broker that was terminated
+ * (its session closed, its process killed) leaves its descriptor behind; checking existence first keeps that
+ * stale descriptor from costing a process identity query (PowerShell on Windows, seconds under load) on every
+ * election attempt. Only ESRCH proves exit: EPERM and other answers keep the authenticated identity check.
+ */
+function recordedBrokerExited(pid: number): boolean {
+  try { process.kill(pid, 0); return false; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
+}
+
 /** The loopback port recorded by the running broker, or null when it serves no fallback. */
 export function brokerTcpPort(home: string, pipePath = resolvePipePath(home)): number | null {
   try {
     const value = readMusePrivateJson(join(home, BROKER_TCP_FILE));
     if (!isEphemeralBrokerTcpRecord(value) || value.pipePath !== pipePath || value.protocol !== PROTOCOL_VERSION || !Number.isSafeInteger(value.pid) ||
-      typeof value.identity !== "string" || value.identity !== processIdentity(value.pid) || typeof value.nonce !== "string" || !value.nonce) return null;
+      typeof value.identity !== "string" || recordedBrokerExited(value.pid) || value.identity !== processIdentity(value.pid) || typeof value.nonce !== "string" || !value.nonce) return null;
     return typeof value.port === "number" && Number.isInteger(value.port) && value.port > 0 && value.port <= 65535 ? value.port : null;
   } catch {
     return null;
@@ -106,6 +117,10 @@ export async function brokerTcpPortAsync(home: string, pipePath: string, signal:
     const value = await readMusePrivateJsonAsync(join(home, BROKER_TCP_FILE), signal);
     if (!isEphemeralBrokerTcpRecord(value) || value.pipePath !== pipePath || value.protocol !== PROTOCOL_VERSION || !Number.isSafeInteger(value.pid) ||
       typeof value.identity !== "string" || typeof value.nonce !== "string" || !value.nonce || signal.aborted) return null;
+    // A broker that exited cannot answer on its recorded port. Without this, an election after the broker
+    // was killed waited on the identity query past the connect deadline and reported ETIMEDOUT, which elect()
+    // treats as a live but slow broker: the surviving session retried connecting instead of taking over.
+    if (recordedBrokerExited(value.pid)) return null;
     const identity = await readProcessIdentity(value.pid, signal);
     return !signal.aborted && value.identity === identity ? value.port : null;
   } catch { return null; }

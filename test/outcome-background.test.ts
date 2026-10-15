@@ -1,19 +1,43 @@
 import * as sqlite from "node:sqlite";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as inspection from "../src/core/job-outcomes.js";
 import * as worktree from "../src/core/worktree.js";
-import { cachedOutcomes, pendingOutcome, type OutcomeInput } from "../src/core/outcome-background.js";
+import { cachedOutcomes, drainOutcomeInspections, outcomeSignature, pendingOutcome, type OutcomeInput } from "../src/core/outcome-background.js";
+import * as metadata from "../src/core/metadata-db.js";
 import { readDashboard } from "../src/core/dashboard-read.js";
 import { nullLogger } from "../src/core/logger.js";
 import { MessageStore } from "../src/core/store.js";
 import { RECHECK_MS } from "../src/core/finished-run-bundles.js";
+import { setTimeout as realDelay } from "node:timers/promises";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 vi.mock("node:sqlite", async original => {
   const actual = await original<typeof import("node:sqlite")>();
   return { ...actual, DatabaseSync: vi.fn(function (...args: unknown[]) { return Reflect.construct(actual.DatabaseSync, args); }) };
+});
+
+// Worker harness: a fake parentPort lets this thread run the outcome worker module directly,
+// and the real outcome worker's replies can be held to keep an inspection pending.
+const harness = vi.hoisted(() => ({ events: [] as string[], hold: false, held: [] as (() => void)[], port: undefined as any }));
+vi.mock("node:worker_threads", async original => {
+  const actual = await original<typeof import("node:worker_threads")>();
+  const { EventEmitter } = await import("node:events");
+  harness.port = Object.assign(new EventEmitter(), { postMessage: vi.fn((_: unknown) => { harness.events.push("reply"); }) });
+  class GatedWorker extends actual.Worker {
+    private readonly outcome: boolean;
+    constructor(...args: ConstructorParameters<typeof actual.Worker>) { super(...args); this.outcome = String(args[0]).includes("outcome-worker"); }
+    override on(event: string | symbol, listener: (...args: any[]) => void): this {
+      if (event !== "message" || !this.outcome) return super.on(event, listener);
+      return super.on(event, (...args: any[]) => { if (harness.hold) harness.held.push(() => listener(...args)); else listener(...args); });
+    }
+  }
+  return { ...actual, Worker: GatedWorker, parentPort: harness.port };
+});
+vi.mock("../src/core/metadata-db.js", async original => {
+  const actual = await original<typeof import("../src/core/metadata-db.js")>();
+  return { ...actual, closeMetadataDb: vi.fn((home: string) => { harness.events.push("close"); actual.closeMetadataDb(home); }) };
 });
 
 let env: TestEnv;
@@ -97,4 +121,52 @@ it("returns safe unknown evidence for unavailable storage and retries after repa
       body: "Subagent codex-job-cache (codex) done after 1s.", createdAt: 200, readAt: null });
     expect((await ready(() => cachedOutcomes(env.home, [i], nullLogger), value => value[i.key].delivery.status === "delivered"))[i.key].delivery.messageId).toBe("repaired-result");
   } finally { store.close(); }
+});
+
+it("drain() resolves only after pending outcome inspections complete", async () => {
+  const i = input();
+  harness.hold = true;
+  try {
+    // The read gives up waiting after its display budget; the held reply keeps the inspection pending.
+    expect((await cachedOutcomes(env.home, [i], nullLogger))[i.key]?.observation?.state).toBe("pending");
+    const end = Date.now() + 10_000;
+    while (!harness.held.length) { if (Date.now() > end) throw new Error("Outcome worker did not reply"); await realDelay(10); }
+    const order: string[] = [];
+    const draining = drainOutcomeInspections().then(() => { order.push("drained"); });
+    await realDelay(50);
+    expect(order).toEqual([]);
+    harness.hold = false;
+    order.push("reply delivered");
+    for (const deliver of harness.held.splice(0)) deliver();
+    await draining;
+    expect(order).toEqual(["reply delivered", "drained"]);
+  } finally { harness.hold = false; for (const deliver of harness.held.splice(0)) deliver(); }
+});
+
+describe("outcome worker replies", () => {
+  const close = vi.mocked(metadata.closeMetadataDb);
+  async function inspect(id: number) {
+    const i = input(), signature = await outcomeSignature(env.home, [i]);
+    const replied = new Promise<any>(resolve => harness.port.postMessage.mockImplementationOnce((reply: unknown) => { harness.events.push("reply"); resolve(reply); }));
+    harness.port.emit("message", { id, home: env.home, inputs: [i], signature, gitPaths: [] });
+    return replied;
+  }
+  beforeEach(async () => { await import("../src/core/outcome-worker.js"); harness.events.length = 0; close.mockClear(); });
+
+  it("posts the reply only after the metadata handle is closed", async () => {
+    const reply = await inspect(1);
+    expect(reply).toMatchObject({ id: 1, result: { "codex-job-cache": expect.any(Object) } });
+    expect(close).toHaveBeenCalledWith(env.home);
+    expect(harness.events).toEqual(["close", "reply"]);
+  });
+
+  it("still replies when closing the metadata handle throws, and keeps serving", async () => {
+    const actual = await vi.importActual<typeof metadata>("../src/core/metadata-db.js");
+    close.mockImplementationOnce((home: string) => { harness.events.push("close"); actual.closeMetadataDb(home); throw new Error("synthetic close failure"); });
+    expect(await inspect(2)).toMatchObject({ id: 2, result: { "codex-job-cache": expect.any(Object) } });
+    expect(harness.events).toEqual(["close", "reply"]);
+    harness.events.length = 0;
+    expect(await inspect(3)).toMatchObject({ id: 3, result: { "codex-job-cache": expect.any(Object) } });
+    expect(harness.events).toEqual(["close", "reply"]);
+  });
 });

@@ -199,7 +199,7 @@ async function session(name: string, agent: CodingAgent, inline = false) {
   const client = new Client({ name: "handoff-test", version: "1" }); clients.push(client);
   const codexHome = codexHost(client, env.home, agent, name);
   const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`], cwd: env.home, env: {
-    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("AGENT_BRIDGE_"))), CODEX_HOME: codexHome, AGENT_BRIDGE_HOME: env.home, CLAUDE_PROJECT_DIR: env.home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_CLAUDE_BIN: bin, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_JOB_RUNNER: inline ? "0" : "1",
+    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("AGENT_BRIDGE_"))), CODEX_HOME: codexHome, AGENT_BRIDGE_HOME: env.home, CLAUDE_PROJECT_DIR: env.home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_CLAUDE_BIN: bin, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_DAEMON: "0", AGENT_BRIDGE_JOB_RUNNER: inline ? "0" : "1",
   } as Record<string, string>, stderr: "pipe" });
   transports.push(transport);
   const stderrPath = join(env.home, `session-${name}-${agent}.stderr.log`);
