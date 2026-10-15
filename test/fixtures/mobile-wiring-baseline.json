@@ -15,7 +15,7 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "de79dfca55109c3f807e5608ff8bb83a5ade39e37a562263b2dd0c05e0a17845",
+  "uiSha256": "80bd43de8b477a3675aad3ae9506b6257830edff21de0ccc294a43c8d3c9b797",
   "updates": {
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
@@ -43,6 +43,11 @@
       ],
       "commit": "3f75b534",
       "reason": "AB-380: 3f75b534 changes the inlineJobReport handler registered in the constructor to quarantine an oversized report body (same-id stub, full text kept in a file) instead of rejecting it, so an older sender cannot loop on retries. Only the constructor hash changes; the other twelve method hashes, UI hash and behavioral assertions remain unchanged."
+    },
+    "AB-383": {
+      "base": "9d604d1eb571b432f4d0b47563dcb72d20a5790c",
+      "methods": [],
+      "reason": "AB-383: startUi adds GET /api/events (Server-Sent Events from the history change feed) and closes that feed and open streams on close. The thirteen method hashes and behavioral assertions remain unchanged; only the UI hash changes."
     }
   },
   "revertedUpdates": {

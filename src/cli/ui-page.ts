@@ -1462,6 +1462,8 @@ function buildModel(s) {
 
 function render() {
   if (!state) return;
+  // What is on screen now; showNative/showGroup fill these in for push events.
+  shownChat = null; shownRuns.clear();
   model = buildModel(state);
   for (const x of model.sessions) if (hasNativeChat(x)) void loadNativeList(x);
   renderSide();
@@ -1518,6 +1520,9 @@ const chatDrafts = new Map(), chatResults = new Map(), chatSending = new Set();
 let chatComposer = null;
 /** "<session>|<key>" -> { items, byId, next, loading, error }. */
 const chats = new Map();
+/** What a push event may refresh: the shown native chat ({ session, child }) and the shown runs (AB-383). */
+let shownChat = null, pushPending = false;
+const shownRuns = new Set(), groupsAgain = new Set();
 
 /** Only sessions of this PC with a known CLI session have a transcript to read. */
 const hasNativeChat = (x) => Boolean(x.live && x.peer && x.peer.sessionId && !pcOf(x.name));
@@ -1581,7 +1586,7 @@ function pullChat(x, key) {
 async function pullChatFrom(id, url) {
   let c = chats.get(id);
   if (!c) chats.set(id, (c = { items: [], byId: new Map(), next: null, loading: false, error: "" }));
-  if (c.loading) return c;
+  if (c.loading) { if (pushPending) c.again = true; return c; }
   c.loading = true;
   try {
     for (let i = 0; i < LOG_PAGES; i++) {
@@ -1610,6 +1615,8 @@ async function pullChatFrom(id, url) {
   } finally {
     c.loading = false;
   }
+  // A push arrived while this read ran: render again, which reads the lines it announced.
+  if (c.again) { c.again = false; setTimeout(render, 0); }
   return c;
 }
 
@@ -1691,6 +1698,7 @@ function chatHtml(items, agent, session) {
 async function showNative(x, key) {
   const p = x.peer || {};
   const jc = key.startsWith(JOB_CHILD_PREFIX) ? key.slice(JOB_CHILD_PREFIX.length).split("|") : null;
+  shownChat = { session: p.sessionId || null, child: jc ? jc[1] : key.startsWith(NATIVE_PREFIX) ? key.slice(NATIVE_PREFIX.length) : null };
   const native = key.startsWith(NATIVE_PREFIX) ? ((nativeLists.get(x.name) || {}).list || []).find((s) => NATIVE_PREFIX + s.id === key)
     : jc ? ((jobChildren.get(jc[0]) || {}).list || []).find((s) => s.id === jc[1]) : null;
   $("cAvatar").innerHTML = av(p.agent || "other");
@@ -2113,7 +2121,8 @@ const isShown = (g) => !(route.group && route.group !== g.key && model.groups.ha
 async function showGroup(g) {
   // Switching: show this subagent at once (header plus what is already loaded, or a loading note), never the old chat.
   if ($("chat").dataset.key !== g.key) renderConversation(g);
-  if (pullingGroups.has(g.key)) return;
+  for (const r of g.turns) shownRuns.add(r.name);
+  if (pullingGroups.has(g.key)) { if (pushPending) groupsAgain.add(g.key); return; }
   pullingGroups.add(g.key);
   try {
     if (g.job) void loadJobChildren(g.job);
@@ -2146,6 +2155,8 @@ async function showGroup(g) {
     pullingGroups.delete(g.key);
   }
   if (isShown(g)) renderConversation(g);
+  // A push arrived while this load ran: read once more for the lines it announced.
+  if (groupsAgain.delete(g.key) && isShown(g)) void showGroup(g);
 }
 
 /** A turn's log: the task (header line, prompt, "---"), then the steps. */
@@ -3544,6 +3555,20 @@ setInterval(() => loadUsage(false), 5 * 60 * 1000);
 $("usageRefresh").addEventListener("click", () => loadUsage(true));
 $("ovModels").parentElement.addEventListener("toggle", (e) => { if (e.target.open) void loadModels(); });
 setInterval(poll, POLL_MS);
+
+/* ---- Push (GET /api/events, AB-383): the history store names conversations that just moved; read the shown one at once.
+   Events carry no content. The interval poll above stays as the safety net when the stream is down. ---- */
+function pushed(changes) {
+  const hit = changes.some((c) => c.kind === "run" ? shownRuns.has(c.run)
+    : shownChat && [c.session, c.child].some((id) => id && (id === shownChat.session || id === shownChat.child)));
+  if (!hit) return;
+  pushPending = true;
+  setTimeout(() => { render(); pushPending = false; }, 0);
+}
+if (typeof EventSource === "function") {
+  const events = new EventSource("/api/events");
+  events.onmessage = (e) => { try { pushed(JSON.parse(e.data)); } catch { /* malformed: the poll catches up */ } };
+}
 </script>
 </body>
 </html>

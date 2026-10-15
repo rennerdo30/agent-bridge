@@ -1,11 +1,15 @@
 {
   "base": "0fed680017e823197b1fb3344598632f5cd219ed",
   "uiSha256": "876fbc073c419e55a05c806b75c4993d254510c444cbd81d70098efbd22fb98c",
-  "pageSha256": "fd0a5764965d200e071b9648859a2cff71129b1d0c60401fbad7d504864003aa",
+  "pageSha256": "14a8180bde72ae95b4176aa45d533edc32a61996de7f81652624d33197f79df6",
   "updates": {
     "PR-20": {
       "base": "0761d56fe4c36e505550f9b889841fdf8e82c80a",
       "reason": "Add Muse colors, filters, names, handoff, read/ask/edit job controls and owner chat composer. The optional mobile page and default mobile activation behavior are unchanged."
+    },
+    "AB-383": {
+      "base": "9d604d1eb571b432f4d0b47563dcb72d20a5790c",
+      "reason": "AB-383: the dashboard subscribes to GET /api/events and reads the shown chat or run at once when the history store reports new lines; interval polling stays as the safety net. The optional mobile page and default mobile activation behavior are unchanged."
     }
   }
 }
