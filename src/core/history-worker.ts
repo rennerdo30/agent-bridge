@@ -11,7 +11,7 @@ import { nullLogger } from "./logger.js";
 import type { PeerInfo } from "./protocol.js";
 import { setTimeout as yieldTurn } from "node:timers/promises";
 import { readHistoryMigrationProgress } from "./history-migration.js";
-import { historyBudget } from "./history-budget.js";
+import { historyBudget, HistoryBudgetAdmission, type HistoryBudget } from "./history-budget.js";
 import { projectDatabasePath, ownsProjectMirrors } from "./project-store.js";
 import { dirname } from "node:path";
 import { reconcileAskCompletions } from "./ask-completion.js";
@@ -116,25 +116,30 @@ function reportPaused(paused: boolean): void {
 }
 reportPaused(!enabled() || Boolean(importState.error));
 const paused = () => pending || Date.now() < pauseUntil || !enabled() || storageBudgetPaused;
-async function checkStorageBudget(): Promise<boolean> {
-  const config = currentConfig();
-  const mirrors = ownsProjectMirrors(workerData.home)
-    ? db.prepare("SELECT DISTINCT project FROM conversations WHERE project != ''").all().map(row => dirname(projectDatabasePath(String(row.project), workerData.home))) : [];
-  const budget = await historyBudget(workerData.home, config.history.budgetBytes, mirrors);
+function applyStorageBudget(budget: HistoryBudget): void {
   storageBudgetPaused = budget.paused;
   if (budget.paused) {
     migrationProgress = { ...migrationProgress, paused: true, error: `History storage budget reached (${budget.bytes}/${budget.budgetBytes} bytes); import paused, sources, cursors and all archives retained. Raise history.budgetBytes to resume; never prune user data.` };
     parentPort?.postMessage({ migrationProgress });
   } else if (migrationProgress.error?.startsWith("History storage budget reached")) migrationProgress = { ...migrationProgress, error: null };
-  return budget.paused;
 }
+const budgetAdmission = new HistoryBudgetAdmission(async () => {
+  const started = performance.now();
+  const config = currentConfig();
+  const mirrors = ownsProjectMirrors(workerData.home)
+    ? db.prepare("SELECT DISTINCT project FROM conversations WHERE project != ''").all().map(row => dirname(projectDatabasePath(String(row.project), workerData.home))) : [];
+  const budget = await historyBudget(workerData.home, config.history.budgetBytes, mirrors);
+  parentPort?.postMessage({ historyTiming: { budgetScanMs: performance.now() - started } });
+  applyStorageBudget(budget);
+  return budget;
+});
 // Migration yields between paced chunks. Recheck admission while it is in progress.
 let checkingBudget = false;
 function budgetTick(): void {
-  if (!running || checkingBudget || stopped || lifecycleQuiesced) return;
+  if (checkingBudget || stopped || lifecycleQuiesced) return;
   const finish = acceptOperation();
   checkingBudget = true;
-  void checkStorageBudget().catch(error => { storageBudgetPaused = true; parentPort?.postMessage({ error: String(error) }); })
+  void budgetAdmission.refresh().catch(error => { storageBudgetPaused = true; parentPort?.postMessage({ error: String(error) }); })
     .finally(() => { checkingBudget = false; finish(); });
 }
 let budgetTimer: NodeJS.Timeout | null = setInterval(budgetTick, 1000);
@@ -151,8 +156,12 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
   if (running || stopped) return { work: 0, discovering: !ready };
   if (pending || Date.now() < pauseUntil || !enabled()) { reportPaused(true); return { work: 0, discovering: !ready }; }
   running = true;
+  const started = performance.now();
+  let budgetMs = 0, ingestMs = 0, indexMs = 0;
   try {
-    if (await checkStorageBudget()) return { work: 0, discovering: !ready };
+    const admitted = await budgetAdmission.admit(currentConfig().history.budgetBytes);
+    budgetMs = performance.now() - started;
+    if (!admitted) return { work: 0, discovering: !ready };
     reset = requestedReset;
     requestedReset = false;
     activeReset = reset;
@@ -198,12 +207,16 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
     if (reset) { index.reset(); activeReset = false; unappliedReset = false; requestedReset = false; }
     // Preserve raw bytes before spending the next idle gap on derived indexing.
     // Otherwise a full index batch can consume every gap in sustained traffic.
+    const ingestStarted = performance.now();
     const rawWork = ingest.tick();
+    ingestMs = performance.now() - ingestStarted;
     if (transcriptsChanged) { transcriptsChanged = false; index.wake(); }
     await yieldTurn(10);
     await waitForPressureGap();
     if (stopped || paused()) return { work: legacyWork + rawWork, discovering: true };
+    const indexStarted = performance.now();
     const result = index.tick(true);
+    indexMs = performance.now() - indexStarted;
     return { work: legacyWork + rawWork + result.work, discovering: result.discovering || ingest.discovering };
   } catch (error) {
     if ((error as { code?: string }).code === "HISTORY_IMPORT_VERIFICATION_FAILED") {
@@ -216,6 +229,8 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
     if (activeReset) { unappliedReset = true; if (lifecycleQuiesced) requestedReset = true; }
     activeReset = false;
     running = false;
+    budgetAdmission.complete();
+    parentPort?.postMessage({ historyTiming: { budgetMs, ingestMs, indexMs, totalMs: performance.now() - started } });
   }
 }
 let dueAt = 0, transcriptsChanged = false, wakeAfterTick = false, liveAfterTick = false, lastTickAt = 0;
@@ -332,7 +347,7 @@ parentPort?.on("message", async (message) => {
       stopped = true;
       releasePressure();
       if (timer) clearTimeout(timer);
-      while (running) await yieldTurn(10);
+      while (running || checkingBudget) await yieldTurn(10);
       close(); return;
     }
     try {

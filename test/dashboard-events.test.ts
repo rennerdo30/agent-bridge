@@ -55,7 +55,8 @@ describe("history change feed (AB-383)", () => {
     mkdirSync(dirname(main), { recursive: true });
     writeFileSync(main, Array.from({ length: 20 }, (_, n) => say(`before ${n}`)).join(""));
 
-    const worker = new HistoryBackground(env.db, nullLogger);
+    const timings: Record<string, unknown>[] = [];
+    const worker = new HistoryBackground(env.db, { ...nullLogger, debug: (_message, data) => { if (data) timings.push(data); } });
     cleanup.push(() => worker.close());
     const peer = { id: "p1", name: "claude-x", agent: "claude", cwd, pid: 1, agentPid: null, sessionId: SESSION, startedAt: 0, autoWake: false } as unknown as PeerInfo;
     // The dashboard's event feed; as in startUi, dashboard reads borrow its held history.db connection (AB-397).
@@ -115,6 +116,7 @@ describe("history change feed (AB-383)", () => {
       samples.push(elapsed);
     }
     console.info(`AB-383 line on disk -> pushed event -> indexed read: ${samples.map(ms => ms.toFixed(0)).join(", ")} ms (event at ${pushed.map(ms => ms.toFixed(0)).join(", ")} ms)`);
+    console.info("AB-383 worker phases (ms):", JSON.stringify(timings.slice(-12)));
     expect(Math.max(...samples)).toBeLessThan(PUSH_BUDGET_MS);
   });
 

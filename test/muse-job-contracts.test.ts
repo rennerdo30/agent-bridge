@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import * as delegate from "../src/core/delegate.js";
+import * as museContext from "../src/core/muse-context.js";
 import { readJsonStore } from "../src/core/json-store.js";
 import { nullLogger } from "../src/core/logger.js";
 import type { BridgeNode } from "../src/core/node.js";
@@ -70,6 +71,29 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
 }
 
 describe("Muse legacy exec profile persistence", () => {
+  // These contracts exercise the real CLI argv and durable job transitions.
+  // Windows identity/DPAPI setup is covered by muse-context.test.ts; its cold
+  // helper processes must not consume this contract's job-completion budget.
+  beforeEach(() => { vi.spyOn(museContext, "registerMuseContextAsync").mockResolvedValue(() => {}); });
+  it("shows that slow context admission consumes the completion wait before the profile CLI can finish", async () => {
+    const node = env.node("claude-slow-context"); await node.start();
+    const { client, jobs } = await session(node);
+    let release!: (cleanup: () => void) => void;
+    const entered = vi.mocked(museContext.registerMuseContextAsync).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    const spawned = await call(client, "spawn_muse", { prompt: "initial", title: "Slow context", permission_profile: "initial-profile" });
+    expect(spawned.error).toBeFalsy();
+    const name = /muse-job-[0-9a-f]{8}/.exec(spawned.text)![0];
+    await until(() => entered.mock.calls.length === 1);
+    try {
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+      const completion = until(() => jobs.find(name)?.status === "done").catch(error => error);
+      await vi.advanceTimersByTimeAsync(5_020);
+      expect(await completion).toMatchObject({ message: "condition not met in time" });
+      expect(jobs.find(name)?.status).toBe("running");
+    } finally { vi.useRealTimers(); release(() => {}); }
+    await until(() => jobs.find(name)?.status === "done");
+    expect(calls()[0]!.args).toEqual(expect.arrayContaining(["--permission-profile", "initial-profile"]));
+  });
   it("keeps the initial profile through continuation and reload, and replaces exact profiles with access", async () => {
     const node = env.node("claude-muse-jobs"); await node.start();
     let { client, jobs } = await session(node);

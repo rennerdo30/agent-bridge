@@ -105,6 +105,7 @@ export class HistoryBackground {
         "project-store.ts",
         "ask-completion.ts",
         "history-budget.ts",
+        "process-identity.ts",
         "savepoint.ts",
         "store-compatibility.ts",
         "metadata-db.ts",
@@ -147,6 +148,7 @@ export class HistoryBackground {
       this.lifecycleCapture = capture;
       worker.on("message", (message) => {
         if (this.lifecycleCapture !== capture || this.worker !== worker) { this.lifecycleUnknown = true; this.lifecycleWaiter?.finish("unknown"); return; }
+        if (message.historyTiming) { log.debug("history worker phase timings", message.historyTiming); return; }
         if (message.historyCheckpoint) {
           capture.revision++;
           this.acceptLifecycleCheckpoint(capture, message.historyCheckpoint);
