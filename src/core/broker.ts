@@ -8,8 +8,8 @@ import { ReadJournal } from "./read-journal.js";
 import { recordStorePeer, refreshStorePeerIdentities, validStoreCapabilities } from "./store-compatibility.js";
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, realpathSync, renameSync, unlinkSync } from "node:fs";
-import { readMusePrivateJson, writeMusePrivateJson } from "./muse-context.js";
-import { processIdentity } from "./process-identity.js";
+import { readMusePrivateJson, readMusePrivateJsonAsync, writeMusePrivateJsonAsync } from "./muse-context.js";
+import { ownProcessIdentity, processIdentity } from "./process-identity.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { createServer, type Server, type Socket } from "node:net";
 import {
@@ -719,8 +719,12 @@ export class Broker {
    */
   private async startTcpFallback(): Promise<void> {
     if (process.platform !== "win32" || this.store.file === ":memory:") return;
-    const home = dirname(this.store.file);
-    const identity = processIdentity(process.pid);
+    const home = dirname(this.store.file), file = join(home, BROKER_TCP_FILE);
+    // The pipe is already serving: every PowerShell helper here (own creation identity, DPAPI
+    // unprotect of a previous record, DPAPI protect of the new one) runs off the event loop.
+    // Run synchronously they blocked authentication of waiting clients for seconds on Windows.
+    const [identity, previous] = await Promise.all([ownProcessIdentity(),
+      existsSync(file) ? Promise.resolve().then(() => readMusePrivateJsonAsync(file)).then(record => ({ record }), (error: unknown) => ({ error })) : undefined]);
     if (!identity || this.closing) return;
     const nonce = this.tcpNonce = randomUUID();
     const server = createServer((socket) => this.accept(socket));
@@ -728,25 +732,26 @@ export class Broker {
     server.on("error", (err) => this.log.warn("broker TCP fallback error", { err: String(err) }));
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => {
       server.removeListener("error", reject);
-      const address = server.address();
-      if (!address || typeof address === "string" || this.closing) { resolve(); return; }
-      this.tcpPort = address.port;
-      const temporary = join(home, `${BROKER_TCP_FILE}.${nonce}.tmp`);
-      let staged = false;
-      try {
-        const file = join(home, BROKER_TCP_FILE);
-        // This recreated descriptor is ephemeral. Unknown content may be durable
-        // user state: neither publication nor shutdown may overwrite/remove it.
-        if (existsSync(file) && !isEphemeralBrokerTcpRecord(readMusePrivateJson(file))) throw new Error("Retaining unknown TCP discovery state");
-        writeMusePrivateJson(temporary, { port: address.port, pid: process.pid, identity, nonce, protocol: PROTOCOL_VERSION, pipePath: this.pipePath });
-        staged = true;
-        renameSync(temporary, file);
-      }
-      catch (err) { this.log.warn("broker TCP fallback port could not be recorded", { err: String(err) }); }
-      finally { if (staged) try { unlinkSync(temporary); } catch { /* Exclusively owned unpublished staging only. */ } }
-      this.log.info("broker loopback fallback listening", { port: address.port });
       resolve();
     }); });
+    const address = server.address();
+    if (!address || typeof address === "string" || this.closing) return;
+    this.tcpPort = address.port;
+    const temporary = join(home, `${BROKER_TCP_FILE}.${nonce}.tmp`);
+    let staged = false;
+    try {
+      // This recreated descriptor is ephemeral. Unknown content may be durable
+      // user state: neither publication nor shutdown may overwrite/remove it.
+      if (previous && ("error" in previous ? true : !isEphemeralBrokerTcpRecord(previous.record))) {
+        throw "error" in previous ? previous.error : new Error("Retaining unknown TCP discovery state");
+      }
+      await writeMusePrivateJsonAsync(temporary, { port: address.port, pid: process.pid, identity, nonce, protocol: PROTOCOL_VERSION, pipePath: this.pipePath });
+      staged = true;
+      renameSync(temporary, file);
+    }
+    catch (err) { this.log.warn("broker TCP fallback port could not be recorded", { err: String(err) }); }
+    finally { if (staged) try { unlinkSync(temporary); } catch { /* Exclusively owned unpublished staging only. */ } }
+    this.log.info("broker loopback fallback listening", { port: address.port });
   }
 
   private async stopTcpFallback(): Promise<void> {

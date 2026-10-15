@@ -22,7 +22,18 @@ PowerShell/WMI `Win32_Process.Create`, hidden startup and explicit environment,
 without a new dependency or compiler. Values enter PowerShell through structured
 stdin; the static script and executable arguments contain no token. Session parent,
 job and control credentials and NODE_OPTIONS are excluded. Creation has a 5-second
-budget; existing election and RPC deadlines are unchanged.
+decision budget; a later receipt is classified unknown and never permits fallback.
+The helper is not killed at that point, because a slow but applied Create is then
+found by discovery; it is bounded by a separate 30-second limit. Existing election and
+RPC deadlines are unchanged.
+
+**Default (owner, 2026-10-16):** the daemon is on by default (`daemon.enabled` defaults
+to `true`); `AGENT_BRIDGE_DAEMON=0` or `"daemon": { "enabled": false }` opt out to the
+embedded broker. Startup keeps PowerShell helpers off the broker's event loop: the
+daemon reads its own creation identity asynchronously in parallel with binding, and
+the Windows TCP fallback reads and writes its DPAPI record asynchronously, so clients
+already admitted by the activated pipe are not blocked for seconds. Clients start
+their host CLI identity query when they start, overlapping daemon creation.
 
 Microsoft documents that [WMI creation avoids the caller's job membership](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
 The [Create method](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/create-method-in-class-win32-process)

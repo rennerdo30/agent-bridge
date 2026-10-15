@@ -27,24 +27,28 @@ title: "Configuration"
 `spawn_codex`, `ask_codex` or `message_subagent`. This is separate from bridge job
 concurrency and delegation depth. See [native subagent settings and dashboard APIs](../codex-subagents/).
 
-The standalone broker daemon is **off by default**. MCP servers, the CLI and the CLI
-dashboard retain the embedded broker behavior, including dashboard hosting when
-no broker is running. To opt in, set `"daemon": { "enabled": true }` in the home
-config (or its per-agent section), or set `AGENT_BRIDGE_DAEMON=1` in the host's environment.
+The standalone broker daemon is **on by default**. When no broker is running, the
+first MCP server, CLI command or CLI dashboard starts one background broker process
+(which also hosts the dashboard) instead of hosting the broker inside the session, so
+the broker survives that session's exit. To opt out and keep the embedded broker
+behavior, set `"daemon": { "enabled": false }` in the home config (or its per-agent
+section), or set `AGENT_BRIDGE_DAEMON=0` in the host's environment.
 The precedence is exact: **`AGENT_BRIDGE_DAEMON=1` / `0` > `daemon.enabled`
-(`true` / `false`) > off**. Environment `0` overrides config `true`; environment
+(`true` / `false`) > on**. Environment `0` overrides config `true`; environment
 `1` overrides config `false`. Other environment values and non-boolean config
 values are ignored. Project config cannot change daemon activation. Restart the
 hosting session or CLI to apply a change.
 
-This opt-in preserves the staged standalone path. Enabling and releasing it remain
-gated on status/restart/stop controls, native acceptance and the AB-366 visibility
-gates; this setting does not add those controls or APIs.
+An already running broker of an older release keeps serving after an update: new
+sessions connect to it and never start a second broker. The daemon takes over the
+same `~/.agent-bridge` store, with its queued mail, once that broker exits.
+`agent-bridge core status` shows which mode is serving; safe restart/stop commands
+are not available yet.
 
 | Env var | Meaning |
 |---|---|
 | `AGENT_BRIDGE_HOME` | Data directory (default `~/.agent-bridge`) |
-| `AGENT_BRIDGE_DAEMON` | Standalone broker opt-in: exact `1` enables, exact `0` disables; overrides `daemon.enabled`; default off |
+| `AGENT_BRIDGE_DAEMON` | Standalone broker daemon: exact `1` enables, exact `0` disables (opt-out); overrides `daemon.enabled`; default on |
 | `AGENT_BRIDGE_NAME` | Peer name |
 | `AGENT_BRIDGE_AUTO_WAKE` | `on` / `off` |
 | `AGENT_BRIDGE_WAKE_ON_DIRECT` | Wake idle Claude, Codex and opencode for messages addressed to their session name when supported (default `on`); `wakeOnDirect` in config |

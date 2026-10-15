@@ -38,7 +38,7 @@ export interface HistoryAnswerConfig {
 const DEFAULT_HISTORY_ANSWER: HistoryAnswerConfig = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
 
 export interface BridgeConfig {
-  /** Restart-applied daemon opt-in: AGENT_BRIDGE_DAEMON=1/0 > daemon.enabled > false. */
+  /** Restart-applied standalone broker daemon, on by default: AGENT_BRIDGE_DAEMON=1/0 > daemon.enabled > true. */
   daemon: { enabled: boolean };
   /** Restart-applied, home top-level only; never projected in effective-config diagnostics. */
   mobile?: MobileConfig;
@@ -113,7 +113,7 @@ export interface BridgeConfig {
 }
 
 export const DEFAULT_CONFIG: BridgeConfig = {
-  daemon: { enabled: false },
+  daemon: { enabled: true },
   pathDisplay: { preferAlias: true },
   history: { ingest: true, budgetBytes: 32 * 1024 ** 3 },
   questionAlerts: DEFAULT_QUESTION_ALERTS,

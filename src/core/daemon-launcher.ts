@@ -7,6 +7,8 @@ import type { BridgeConfig } from "./config.js";
 export type DaemonLaunch = { kind: "created" } | { kind: "unavailable"; reason: "windows_wmi_unavailable" | "windows_wmi_create_rejected" } | { kind: "unknown"; stage?: "read" | "startup" | "create"; errorCode?: number };
 export interface DaemonOptions { cli: string; home: string; pipe: string; cwd: string; dashboard?: boolean; config?: Pick<BridgeConfig, "network" | "mobile" | "dashboardPort"> }
 const CREATE_TIMEOUT_MS = 5_000;
+/** Hard bound for the creation helper process after the decision budget has passed. */
+const HELPER_LIMIT_MS = 30_000;
 const CREATE_FAILURES = new Set([2, 3, 8, 9, 21, 22, 0xffffffff]);
 export function classifyWindowsCreate(exitCode: number | null, output: string): DaemonLaunch {
   try {
@@ -75,7 +77,12 @@ export async function launchDaemon(options: DaemonOptions): Promise<DaemonLaunch
     let output = "", settled = false;
     const child = spawn(powershell, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(WINDOWS_CREATE, "utf16le").toString("base64")], { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
     const finish = (result: DaemonLaunch) => { if (!settled) { settled = true; clearTimeout(timer); resolve(result); } };
-    const timer = setTimeout(() => { finish({ kind: "unknown" }); child.kill(); }, CREATE_TIMEOUT_MS);
+    // The decision budget stays 5 s: a later receipt is "unknown" and never permits fallback. The helper itself
+    // is not killed then. On a loaded PC PowerShell startup alone can exceed the budget, and killing it turned a
+    // slow but successful creation into a guaranteed outage. Discovery finds the daemon if Create is applied.
+    const timer = setTimeout(() => finish({ kind: "unknown" }), CREATE_TIMEOUT_MS);
+    const limit = setTimeout(() => child.kill(), HELPER_LIMIT_MS);
+    child.once("close", () => clearTimeout(limit));
     child.once("error", () => finish({ kind: "unknown" }));
     child.stdin!.on("error", () => finish({ kind: "unknown" }));
     child.stdout!.setEncoding("utf8").on("data", (chunk: string) => {

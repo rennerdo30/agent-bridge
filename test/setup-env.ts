@@ -40,6 +40,12 @@ const INHERITED_LINK_ENV = ["AGENT_BRIDGE_PARENT_URL", "AGENT_BRIDGE_PARENT_TOKE
 
 for (const name of [...INHERITED_LINK_ENV, "AGENT_BRIDGE_INTERNAL"]) delete process.env[name];
 
+// The standalone daemon is on by default and deliberately outlives the sessions that start it. Fixtures
+// that spawn MCP servers or CLI commands test embedded hosting unless they opt in, so the suite opts out
+// explicitly; child processes inherit it. Daemon tests set AGENT_BRIDGE_DAEMON=1 or pass daemon options,
+// and daemon-activation.test.ts clears it to cover the real default.
+process.env.AGENT_BRIDGE_DAEMON = "0";
+
 // Background indexing in tests must never inspect or mirror the owner's real CLI stores.
 const transcriptRoot=join(fixtureRoot,"empty-cli-stores");
 process.env.CLAUDE_CONFIG_DIR=join(transcriptRoot,"claude");

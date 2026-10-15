@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The standalone broker daemon is now on by default (AB-325, #17). When no broker is running, the first session, CLI command or CLI dashboard starts one background broker that also hosts the dashboard and keeps running when that session exits. Set `AGENT_BRIDGE_DAEMON=0` or `"daemon": { "enabled": false }` to keep the embedded broker. On upgrade, an already running broker of an older release keeps serving and no second broker starts; the daemon takes over the same store and its queued mail once that broker exits.
+- Windows: a demand-started broker answers its first clients seconds sooner. Its own process identity is read in parallel with binding, and the loopback fallback's protected record is read and written without blocking the event loop; before, up to three synchronous PowerShell calls held up authentication of waiting clients. Clients also start their host CLI identity query while the daemon is being created. A slow WMI creation helper is no longer killed at the 5-second decision point, so a creation that is applied late is still found instead of leaving no broker.
+
 ## 0.30.21
 
 - A message larger than the 4 MiB frame limit no longer puts sessions into an endless reconnect loop. Senders now check the encoded size first: an oversized request fails with a non-retryable `too_large` error, and the broker skips an oversized event instead of dropping the connection. Oversized job reports and stored messages are sent as a short stub with the same id; the full text is kept in `quarantine/` under the bridge home, and the stored original is never rewritten. Worktree reports list at most 50 skipped files. `doctor` reports oversized and unsendable stored messages (AB-380, #59).
