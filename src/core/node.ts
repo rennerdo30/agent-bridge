@@ -20,7 +20,7 @@ import {
 } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { launchDaemon, type DaemonLaunch } from "./daemon-launcher.js";
-import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
+import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer, type ModeSendArgs, type ModeSendResult } from "./protocol.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
 import { ReadJournal } from "./read-journal.js";
 import { existingMetadataDb, retainMetadataReader } from "./metadata-db.js";
@@ -636,6 +636,42 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         `This send attempt was not submitted; message ${messageId} storage state is unknown: ${(error as Error).message}. Query send_status or retry send with message_id="${messageId}".`,
         { ...(error instanceof BridgeError ? error.details : {}), messageId, state: "unknown", submitted: false });
     });
+  }
+
+  /** One opcode attempt; never use the read-reconnect or send-retry paths. */
+  async sendWithMode(args: ModeSendArgs): Promise<ModeSendResult> {
+    const report: ModeSendResult["mode"] = { requested: args.mode, effective: "legacyunconfirmed", stage: "unknown",
+      protocolSupport: "unknown", sharedIdempotentDelivery: false,
+      capabilities: { route: "legacyunconfirmed", receiverRole: "unknown", ownedSession: false,
+        generationKnown: false, activeSteering: false, interruptRestart: false, queue: false, idleWake: false } };
+    let unsupported = false;
+    const result = await this.withClient(async client => {
+      try { return await client.request("modeSend", args); }
+      catch (error) {
+        // Only the authenticated typed response for THIS opcode proves no effect.
+        if (args.mode === "auto" && error instanceof BridgeError && error.code === "protocol_mismatch" &&
+            error.details?.operation === "modeSend") { unsupported = true; return undefined; }
+        if (error instanceof BridgeError && !["internal", "timeout"].includes(error.code)) {
+          throw new BridgeError(error.code, error.message, { ...error.details, modeReport: error.details?.modeReport ??
+            { ...report, effective: "refused", stage: "requested", reason: error.message } });
+        }
+        throw new BridgeError("timeout", "modeSend outcome unknown; no retry or legacy fallback was attempted.", { modeReport: report, cause: String(error) });
+      }
+    }).catch(error => {
+      if (error instanceof BridgeError && error.details?.modeReport) throw error;
+      throw new BridgeError(error instanceof BridgeError ? error.code : "timeout",
+        `modeSend unavailable or outcome unknown; no retry/fallback: ${String(error)}`, { modeReport: report });
+    });
+    if (result) {
+      this.lastSent = Date.now();
+      if (!args.replyTo) for (const message of result.send.messages) this.asked.add(message.id);
+      if (this.asked.size > QUESTION_ID_MEMORY) this.asked.delete(this.asked.values().next().value!);
+      return result;
+    }
+    if (!unsupported) throw new BridgeError("internal", "modeSend returned no result; outcome unknown.", { modeReport: report });
+    const { mode: _mode, nativeChild, ...legacy } = args;
+    const send = nativeChild ? await this.nativeChildSend(nativeChild, legacy) : await this.send(legacy);
+    return { send, mode: { ...report, protocolSupport: "legacy", stage: "requested", reason: "old broker explicitly refused modeSend; legacy auto applied" } };
   }
 
   sendState(id: string): Promise<RequestMap["sendState"][1]> {

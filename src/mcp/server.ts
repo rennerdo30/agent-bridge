@@ -7,7 +7,10 @@ import { readOutcomeDecision } from "../core/job-outcomes.js";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { MuseHooks } from "./muse-hooks.js";
+import { restoreMuseContext } from "../core/muse-context.js";
 import { AntigravityHooks } from "./antigravity-hooks.js";
+import { museEnvSessionId } from "../core/muse.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -44,12 +47,12 @@ import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { inspectClaudeLaunch } from "../core/procinfo.js";
 import { verifiedGoneJobOwners } from "../core/job-restoration.js";
 import { loadOrCreateToken } from "../core/token.js";
-import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, isUnsupportedOperation, SIBLING_CONVERSATION_PREFIX, TRANSFER_PROGRESS_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent } from "../core/protocol.js";
+import { BridgeError, BROADCAST, CODING_AGENTS, isQuietMessage, isUnsupportedOperation, SIBLING_CONVERSATION_PREFIX, TRANSFER_PROGRESS_PREFIX, type AgentKind, type BridgeMessage, type CodingAgent, type SendMode, type SendModeReport } from "../core/protocol.js";
 import { formatInboxMessages, formatProjectRoute, formatReplyRestrictions, formatDelivery, formatDuration, formatMessage, formatMessages, formatPeer, formatVersionSkew } from "./format.js";
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { reportModActivity } from "./hook-ownership.js";
 import { codexCallIdentity, codexMainThreadAdmission, type CodexCallIdentity } from "./codex-lineage.js";
-import { buildHookResponse, confirmNativeChildDelivery, discardFinishedNotes, type HookEvent } from "./hooks.js";
+import { buildHookResponse, confirmAntigravityStopDelivery, confirmNativeChildDelivery, discardFinishedNotes, releaseAntigravityStopDelivery, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, type Access } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
 import { answerPendingApproval, listPendingApprovals, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
@@ -90,7 +93,7 @@ const SUBAGENT_TOOLS = new Set(["health", "peers", "send", "report_progress", "h
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 /** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
 const STAND_IN_RECHECK_MS = 30_000;
-const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title", "notes"] as const;
+const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "permission_profile", "allow_tools", "send_to", "title", "notes"] as const;
 /** Plugin root: dist/server.mjs lives one level below it. */
 const PLUGIN_ROOT = resolve(bundleDirectory(import.meta.url), "..");
 
@@ -111,7 +114,24 @@ function text(s: string, isError = false): CallToolResult {
   return { content: [{ type: "text", text: s }], ...(isError ? { isError: true } : {}) };
 }
 
+function modeReport(requested: SendMode, reason?: string): SendModeReport {
+  return { requested, effective: reason ? "refused" : "legacyunconfirmed", stage: "requested",
+    protocolSupport: "legacy", sharedIdempotentDelivery: false, ...(reason ? { reason } : {}),
+    capabilities: { route: "legacyunconfirmed", receiverRole: "unknown", ownedSession: false,
+      generationKnown: false, activeSteering: false, interruptRestart: false, queue: false, idleWake: false } };
+}
+function formatModeReport(report: SendModeReport): string { return `Mode report: ${JSON.stringify(report)}`; }
+function modeText(report: SendModeReport, body: string): CallToolResult {
+  return { ...text(`${formatModeReport(report)}\n${body}`), structuredContent: { mode: report } };
+}
+function refuseMode(mode: SendMode, reason: string): never {
+  throw new BridgeError("bad_request", `Requested ${mode} refused: ${reason}. No mode operation applied.`, { modeReport: modeReport(mode, reason) });
+}
 function describeError(err: unknown): string {
+  if (err instanceof BridgeError && err.details?.modeReport) {
+    const { modeReport: report, ...details } = err.details;
+    return `${formatModeReport(report as SendModeReport)}\n${describeError(new BridgeError(err.code, err.message, details))}`;
+  }
   if (err instanceof BridgeError) {
     switch (err.code) {
       case "ambiguous_target":
@@ -245,6 +265,7 @@ function instructionsFor(agent: AgentKind, targets: CodingAgent[]): string {
 export async function startServer(argv: string[] = process.argv.slice(2)): Promise<void> {
   const agentArg = argv.find((a) => a.startsWith("--agent="))?.slice("--agent=".length);
   const agent = parseAgentKind(agentArg ?? process.env[ENV.agent]);
+  if (agent === "muse") await restoreMuseContext();
   const targets = delegationTargets(agent);
   const home = resolveHome();
   const log = createLogger({ home, component: `mcp-${agent}` });
@@ -298,6 +319,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     });
   }
   if (node) {
+    if (agent === "muse") { const id = museEnvSessionId(); if (id) await node.setSessionId(id); }
     ctx.jobs = new JobManager(node, log.child("jobs"), join(home, JOBS_FILE), cfg.maxJobs, undefined, {
       canRestore: () => node.isConnected && (agent !== "claude" || ctx.restoreEligible === true),
       canReceiveHandoff: () => node.isConnected,
@@ -477,6 +499,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
 
   const transport = new StdioServerTransport();
   const antigravityHooks = agent === "antigravity" ? new AntigravityHooks(ctx) : null;
+  const museHooks = agent === "muse" ? new MuseHooks(ctx) : null;
   let shuttingDown = false;
   let closeSweepBusy = false;
   const closeSweep = setInterval(() => {
@@ -509,6 +532,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     await mobileDashboard?.then(controller => controller?.close()).catch(() => {});
     await rewake?.stop().catch(() => {});
     await antigravityHooks?.stop().catch(() => {});
+    await museHooks?.stop().catch(() => {});
     await node?.stop().catch(() => {});
     process.exit(0);
   };
@@ -532,6 +556,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   if (agent === "claude" && node) await node.setWakePolicy(cfg.wakeOnDirect, Boolean(ctx.rewakeAvailable || channel), cfg.maxHops);
   launchInspected();
   await antigravityHooks?.start().catch((err) => log.warn("Antigravity hooks unavailable", { err: String(err) }));
+  await museHooks?.start().catch((err) => log.warn("Muse hooks unavailable", { err: String(err) }));
   if (node) {
     node.on("connected", ({ isBroker }) => {
       if (node.currentSessionId) ctx.onSessionId?.(node.currentSessionId);
@@ -616,6 +641,14 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           if (ctx.agent !== "claude" || !node || node.wasReplaced || typeof childId !== "string" || !["peers", "inbox", "send"].includes(name)) throw new BridgeError("unauthorized", "Scoped native children may use peers, inbox and send only on their current Claude parent connection.");
           const children = await node.nativeChildren(), child = children.find(c => c.agentId === childId);
           if (!child) throw new BridgeError("unauthorized", "No live scoped native child; wait for its SubagentStart hook.");
+          if (name === "send" && a.mode !== undefined) {
+            if (a.mode === "auto") await confirmNativeChildDelivery(ctx, childId);
+            const result = await node.sendWithMode({ mode: a.mode as SendMode, nativeChild: childId,
+              to: String(a.to), body: String(a.message), replyTo: a.reply_to as string | undefined,
+              conversationId: a.conversation_id as string | undefined, ifNoNewerThan: a.if_no_newer_than as string | undefined,
+              messageId: a.message_id as string | undefined });
+            return modeText(result.mode, JSON.stringify(result.send));
+          }
           await confirmNativeChildDelivery(ctx, childId);
           const identity = `Your native child bridge address is ${child.address}. Parent: ${child.parent}.`;
           if (name === "peers") {
@@ -634,8 +667,23 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       // Replaced by another server of this session, yet called: this is the one the session uses (see reclaim).
       if (name !== "health" && ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: (err as Error).message }));
       await ctx.observeMeta?.(extra._meta);
+      if (ctx.agent === "antigravity" && name !== "health" && name !== "hook_event") {
+        if (name === "inbox") {
+          if (a.mark_read !== false) releaseAntigravityStopDelivery(ctx);
+        } else {
+          confirmAntigravityStopDelivery(ctx);
+        }
+      }
       try {
-        return await fn(args, extra);
+        const result = await fn(args, extra);
+        // Legacy parent/job paths are retained; emission is not durable acceptance.
+        if ((name === "send" || name === "message_subagent") && a.mode === "auto" &&
+            !result.structuredContent?.mode) {
+          const report = modeReport("auto");
+          result.content.unshift({ type: "text", text: formatModeReport(report) });
+          result.structuredContent = { ...result.structuredContent, mode: report };
+        }
+        return result;
       } catch (err) {
         log.warn("tool failed", { tool: name, err: (err as Error).message });
         return text(describeError(err), true);
@@ -768,7 +816,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     {
       title: "List peers",
       description:
-        "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity): name, agent type, busy/idle, uptime, working directory and session id. " +
+        "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity, Muse): name, agent type, busy/idle, uptime, working directory and session id. " +
         "Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
       inputSchema: { native_child: z.string().optional().describe("Native Claude agent_id issued by its start hook; scopes this call to the child") },
       annotations: { readOnlyHint: true },
@@ -877,9 +925,16 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         if_no_newer_than: z.string().optional().describe("Refuse this reply if newer unread conversation or recipient mail exists after this message id"),
         message_kind: z.enum(["note", "question"]).optional().describe("note retains FYI/status in history without waking or injecting context; question requests supervisor attention (a job asking its parent when blocked or before a risky step)"),
         message_id: z.uuid().optional().describe("Stable UUID for an idempotent send or recovery retry. Reuse this id only with the same content; requires an updated broker."),
+        mode: z.enum(["auto", "queue", "steer", "restart"]).optional().describe("Omitted/auto retains existing delivery. Queue is one-shot only to a current authenticated Claude native child, rejects message_id and proves stored mail only. Session/job queue, steer and restart refuse; unknown outcomes never retry or fall back."),
       },
     },
-    guarded("send", async (a: { to: string; message: string; reply_to?: string; conversation_id?: string; if_no_newer_than?: string; message_kind?: "note" | "question"; message_id?: string }) => {
+    guarded("send", async (a: { to: string; message: string; reply_to?: string; conversation_id?: string; if_no_newer_than?: string; message_kind?: "note" | "question"; message_id?: string; mode?: SendMode }) => {
+      if (a.mode && a.mode !== "auto") {
+        if (!node || a.message_kind) refuseMode(a.mode, "parent/job links and message_kind have no explicit-mode boundary");
+        const result = await node.sendWithMode({ mode: a.mode, to: a.to, body: a.message,
+          replyTo: a.reply_to, conversationId: a.conversation_id, ifNoNewerThan: a.if_no_newer_than, messageId: a.message_id });
+        return modeText(result.mode, JSON.stringify(result.send));
+      }
       if (!node && ctx.parent) {
         if (a.message_id) throw new BridgeError("bad_request", "Durable message IDs require a session broker connection; parent links do not support idempotent retries.");
         if (a.if_no_newer_than) throw new BridgeError("bad_request", "Guarded sends require a session broker connection; read the parent/sibling inbox before replying.");
@@ -929,14 +984,21 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         return text(`${a.to} is a running subagent: message_subagent outcome ${outcome}. Use message_subagent for subagents.`);
       }
       if (a.reply_to) n.markRead([a.reply_to]);
-      const res = await n.send({ to: a.to, body: a.message, replyTo: a.reply_to,
+      const sendArgs = { to: a.to, body: a.message, replyTo: a.reply_to,
         conversationId: a.message_kind === "note" ? `${a.conversation_id ?? `note-${a.message_id ?? Date.now()}`}:note` : a.conversation_id,
-        ifNoNewerThan: a.if_no_newer_than, messageId: a.message_id }).catch(err => {
+        ifNoNewerThan: a.if_no_newer_than, messageId: a.message_id };
+      let actualMode: SendModeReport | undefined;
+      const res = await (a.mode === "auto" ? n.sendWithMode({ ...sendArgs, mode: "auto" }).then(result => {
+        actualMode = result.mode; return result.send;
+      }) : n.send(sendArgs)).catch(err => {
           if (!jobLines.length) throw err;
           throw new Error(`Session broadcast failed: ${(err as Error).message}\nRunning-job broadcast already attempted:\n${jobLines.join("\n")}. Do not resend to these jobs without checking consumption.`);
         });
       const first = res.messages[0];
-      if (!first) return text(["No session recipients were eligible for this broadcast.", ...formatDelivery(res, cfg.maxHops), ...jobLines].join("\n"));
+      if (!first) {
+        const body = ["No session recipients were eligible for this broadcast.", ...formatDelivery(res, cfg.maxHops), ...jobLines].join("\n");
+        return actualMode ? modeText(actualMode, body) : text(body);
+      }
       const lines = [res.storage?.recovered
         ? `Message ${first.id} sent previously and stored in the broker (conversation ${first.conversationId}). Recovered by id; no additional message sent. Delivery and consumption are separate.`
         : `Message ${first.id} sent and stored in the broker (conversation ${first.conversationId}).`];
@@ -947,7 +1009,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       if (res.queuedFor.length) lines.push(t("send.queued", { names: res.queuedFor.join(", ") }));
       if (!res.replyRestrictions?.length) lines.push(t("send.waitHint"));
       lines.push(`For a consumption receipt, call wait_for_message(read_receipt_of="${first.id}").`);
-      return text(lines.join("\n"));
+      return actualMode ? modeText(actualMode, lines.join("\n")) : text(lines.join("\n"));
     }),
   );
 
@@ -1373,8 +1435,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job) => ({ ...a, _job: job.name }), a), resumeFor(a), keep(a));
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
-        // Exact target options (sandbox, permission_mode, auto_approve) say it themselves.
-        const exact = a.sandbox !== undefined || a.permission_mode !== undefined || a.auto_approve !== undefined;
+        // Exact target options (sandbox, permission_mode, auto_approve, bypass_permissions) say it themselves.
+        const exact = a.sandbox !== undefined || a.permission_mode !== undefined || a.auto_approve !== undefined || a.bypass_permissions !== undefined;
         const note = exact ? "" : `\n${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
         return text(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${derivedTitle ? `\nTitle derived from prompt: "${a.title}".` : ""}`);
       }),
@@ -1407,7 +1469,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       annotations: { readOnlyHint: true },
     },
     guarded("usage_limits", async (a: { agent?: string }) => {
-      const bins: Record<CodingAgent, string> = { codex: cfg.codexBin, claude: cfg.claudeBin, opencode: cfg.opencodeBin, antigravity: cfg.antigravityBin };
+      const bins: Record<CodingAgent, string> = { codex: cfg.codexBin, claude: cfg.claudeBin, opencode: cfg.opencodeBin, antigravity: cfg.antigravityBin, muse: cfg.museBin };
       const agents = (a.agent ? [a.agent as CodingAgent] : [...CODING_AGENTS]).filter((x) => resolveBinary(bins[x]));
       if (!agents.length) return text(t("usage.none"), true);
       const reports = await Promise.all(agents.map((x) => readUsage(x, bins[x], ctx.cwd(), log, x === "opencode" ? cfg.opencodeModel : null)));
@@ -1467,7 +1529,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
     "handoff_subagents",
     {
       title: "Hand off subagents",
-      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex, opencode or Antigravity session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
+      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex, opencode, Antigravity or Muse session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
       inputSchema: {
         to: z.string().min(1).max(64).describe("Exact live local session name from peers"),
         jobs: z.union([z.literal("all"), z.array(z.string().min(1).max(80)).min(1).max(1000)]).optional().describe("Exact job names, or all (default)"),
@@ -1498,6 +1560,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         "If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it).",
       inputSchema: {
         job: z.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),
+        mode: z.enum(["auto", "queue", "steer", "restart"]).optional().describe("Omitted/auto preserves existing continuation behavior. Explicit queue/steer/restart refuse before title, settings or continuation; job emission cannot prove durable acceptance."),
         message: z.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task."),
         title: z.string().min(1).max(MAX_TITLE_CHARS).optional().describe("Give the job a (new) short title, 3-7 words; use it for jobs listed without a title."),
         effort: z
@@ -1514,9 +1577,11 @@ ${res.text || t("delegate.empty")}`, res.isError);
         approvals_reviewer: z.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Codex reviewer for the next turn: auto_review or user. A running turn keeps its reviewer."),
         permission_mode: z.enum(CLAUDE_PERMISSION_MODES as [string, ...string[]]).optional().describe("Claude permission mode for the next turn."),
         auto_approve: z.boolean().optional().describe("opencode auto-approval for the next turn."),
+        permission_profile: z.string().trim().min(1).max(80).optional().describe("Named Muse permission profile for the next turn. Replaces earlier access."),
       },
     },
-    guarded("message_subagent", async (a: { job: string; message?: string; title?: string } & JobSettings) => {
+    guarded("message_subagent", async (a: { job: string; message?: string; title?: string; mode?: SendMode } & JobSettings) => {
+      if (a.mode && a.mode !== "auto") refuseMode(a.mode, "job queue/steer/restart requires a reviewed receiver transaction and effect boundary");
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       const existing = await jobs.share(a.job);
@@ -1618,6 +1683,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
       },
     },
     async (a: { event: string; session_id?: string | null; stop_hook_active?: boolean | string | null; cwd?: string | null; agent_id?: string | null; prompt?: string | null; prompt_id?: string | null; transcript_path?: string | null }, extra: ToolExtra) => {
+      // Muse uses authenticated native command hooks; model calls cannot impersonate lifecycle events.
+      if (ctx.agent === "muse") return text("{}");
       // An unsubstituted "${...}" template (Claude Code) or null (Codex) means the host had no value for that field.
       const given = (v: unknown) => (typeof v === "string" && v && !v.startsWith("${") ? v : null);
       try {

@@ -7,6 +7,7 @@ import { migrateSqlite } from "./sqlite-migrations.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
 import type { Logger } from "./logger.js";
 import { openPreservedReader } from "./storage-preservation.js";
+import { drainScan, SCAN_SLICE_MS, SCAN_STEPS_PER_SLICE } from "./responsive-scan.js";
 
 export const JOB_ARCHIVE_VERSION = 1;
 export const JOB_ARCHIVE_FILE = "job-archive.db";
@@ -169,21 +170,83 @@ export function storeJobRecords(path: string, jobs: readonly unknown[], archived
 export interface ArchiveSelection { ids?: ReadonlySet<string>; names?: ReadonlySet<string>; metadata?: boolean; active?: boolean; history?: boolean }
 export interface IndexedJobSnapshot { signature: string; jobs: Record<string, unknown>[] }
 const cache = new Map<string, IndexedJobSnapshot & { bytes: number }>();
+/** Decoded rows of the last full read per selection, keyed by id with the row's sha256. A row's metadata and
+ * history are written only together with a new sha256 (putJobRecords), so an unchanged sha256 means unchanged JSON.
+ * Any archive write changes the WAL signature; without this, every broker request re-decoded all records (AB-300). */
+type DecodedRows = Map<string, { sha: string; job: Record<string, unknown> }>;
+const decodedRows = new Map<string, { rows: DecodedRows; bytes: number }>();
+const DECODED_CACHE_KEYS = 16;
+let decodedBytes = 0;
 let cacheBytes = 0;
 const CACHE_BUDGET = 8 * 1024 * 1024;
 export const archiveIndexCounters = { reads: 0, decoded: 0 };
+/** Separate from snapshot validity: WAL changes invalidate snapshots, not unchanged decoded rows. */
+export function archiveDecodedCacheUsage(): { entries: number; bytes: number; maxEntries: number; maxBytes: number } {
+  return { entries: decodedRows.size, bytes: decodedBytes, maxEntries: DECODED_CACHE_KEYS, maxBytes: CACHE_BUDGET };
+}
+function touchDecodedRows(key: string): DecodedRows | undefined {
+  const saved = decodedRows.get(key);
+  if (saved) { decodedRows.delete(key); decodedRows.set(key, saved); }
+  return saved?.rows;
+}
+function retainDecodedRows(key: string, rows: DecodedRows): void {
+  const prior = decodedRows.get(key);
+  if (prior) { decodedBytes -= prior.bytes; decodedRows.delete(key); }
+  const bytes = estimatedJsonBytes([key, [...rows]], CACHE_BUDGET);
+  if (bytes > CACHE_BUDGET) return;
+  decodedRows.set(key, { rows, bytes }); decodedBytes += bytes;
+  while (decodedRows.size > DECODED_CACHE_KEYS || decodedBytes > CACHE_BUDGET) {
+    const first = decodedRows.keys().next().value!;
+    decodedBytes -= decodedRows.get(first)!.bytes; decodedRows.delete(first);
+  }
+}
 export function readIndexedJobs(path: string, selection: ArchiveSelection = {}): IndexedJobSnapshot {
+  return drainScan(readIndexedJobSteps(path, false, selection));
+}
+
+/** Indexed reads must yield between bounded row batches too: one decode loop can exhaust
+ * the responsive traversal's entire budget before its next suspension. */
+export function* readIndexedJobSteps(path: string, responsive = false, selection: ArchiveSelection = {}): Generator<void, IndexedJobSnapshot> {
   const file = jobArchivePath(path);
   physicalArchivePath(file); physicalArchivePath(join(dirname(path), "archive"));
   const signature = [file, `${file}-wal`].map(p => existsSync(p) ? fileSignature(statSync(p, { bigint: true })) : "missing").join("|");
   const key = `${file}:${Number(Boolean(selection.metadata))}:${Number(Boolean(selection.active))}:${Number(Boolean(selection.history))}:${JSON.stringify([selection.ids ? [...selection.ids].sort() : null, selection.names ? [...selection.names].sort() : null])}`;
+  const previousDecoded = touchDecodedRows(key);
   const saved = cache.get(key);
   if (saved?.signature === signature) { cache.delete(key); cache.set(key, saved); return saved; }
   if (saved) { cacheBytes -= saved.bytes; cache.delete(key); }
   const db = openJobArchive(path);
   if (!db) return { signature, jobs: [] };
   const jobs: Record<string, unknown>[] = [];
+  let currentDecoded: DecodedRows | undefined;
   try {
+    const home = dirname(file), archive = join(home, "archive");
+    const bound = responsive ? [home, file, archive].filter(at => existsSync(at)).map(at => {
+      const st = lstatSync(at, { bigint: true });
+      return { at, dev: st.dev, ino: st.ino };
+    }) : [];
+    const unchanged = () => {
+      if (!responsive) return;
+      if (bound.some(({ at, dev, ino }) => {
+        const st = lstatSync(at, { bigint: true });
+        return st.isSymbolicLink() || st.dev !== dev || st.ino !== ino;
+      })) throw new Error("job archive ancestor changed during traversal; data kept unchanged");
+      for (const at of [archive, `${file}-wal`, `${file}-shm`]) {
+        try { if (lstatSync(at).isSymbolicLink()) throw new Error("job archive path must be physical; data kept unchanged"); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      }
+    };
+    // Validate once per bounded batch, not once per row. Native path queries on
+    // Windows otherwise dominate the scan while the opened handles stay pinned.
+    let batchStarted = performance.now(), batchSteps = SCAN_STEPS_PER_SLICE;
+    function* beforeStep(): Generator<void> {
+      if (responsive && (batchSteps >= SCAN_STEPS_PER_SLICE || performance.now() - batchStarted >= SCAN_SLICE_MS)) {
+        yield;
+        unchanged();
+        batchSteps = 0; batchStarted = performance.now();
+      }
+      batchSteps++;
+    }
     archiveIndexCounters.reads++;
     const columns = selection.metadata ? "r.metadata" : selection.history ? "r.history_json AS payload" : "v.payload";
     const from = selection.metadata || selection.history ? "job_records r" : "job_records r JOIN job_versions v USING(id,sha256)";
@@ -197,13 +260,33 @@ export function readIndexedJobs(path: string, selection: ArchiveSelection = {}):
       for (const [field, values] of [["id", selection.ids], ["name", selection.names]] as const) {
         if (!values) continue;
         const query = db.prepare(`SELECT r.id,${columns} FROM ${from} WHERE r.${field}=?${selection.active ? " AND r.active=1" : ""}`);
-        for (const value of values) for (const row of query.all(value)) {
-          if (!seen.has(String(row.id))) { seen.add(String(row.id)); decode(row); }
+        for (const value of values) {
+          yield* beforeStep(); // Missing IDs still consume a bounded native query step.
+          for (const row of query.iterate(value)) {
+            yield* beforeStep();
+            if (!seen.has(String(row.id))) { seen.add(String(row.id)); decode(row); }
+          }
         }
       }
-    } else for (const row of db.prepare(`SELECT ${columns} FROM ${from}${selection.active ? " WHERE r.active=1" : ""} ORDER BY r.observed_at,r.id`).iterate()) decode(row);
+    } else {
+      // Only rows whose sha256 changed since the last full read of this selection are decoded again.
+      const current: DecodedRows = new Map();
+      let one: ReturnType<DatabaseSync["prepare"]> | undefined;
+      for (const row of db.prepare(`SELECT r.id,r.sha256 FROM ${from}${selection.active ? " WHERE r.active=1" : ""} ORDER BY r.observed_at,r.id`).iterate()) {
+        yield* beforeStep();
+        const id = String(row.id), sha = String(row.sha256), known = previousDecoded?.get(id);
+        if (known?.sha === sha) { jobs.push(known.job); current.set(id, known); continue; }
+        const full = (one ??= db.prepare(`SELECT ${columns} FROM ${from} WHERE r.id=? AND r.sha256=?`)).get(id, sha);
+        if (!full) continue;
+        decode(full);
+        current.set(id, { sha, job: jobs[jobs.length - 1]! });
+      }
+      currentDecoded = current;
+    }
+    unchanged();
   } catch (error) { throw archiveWriteError(error); }
   finally { db.close(); }
+  if (currentDecoded) retainDecodedRows(key, currentDecoded);
   const next = { signature, jobs, bytes: estimatedJsonBytes(jobs, CACHE_BUDGET) };
   if (next.bytes <= CACHE_BUDGET) {
     cache.set(key, next); cacheBytes += next.bytes;

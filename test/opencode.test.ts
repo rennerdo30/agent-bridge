@@ -186,9 +186,9 @@ describe("opencode plugin", () => {
     expect(names).toContain("bridge_ask_claude");
     expect(names).toContain("bridge_spawn_codex");
     expect(names).not.toContain("bridge_hook_event");
-    expect(names.filter((name) => /^bridge_(ask|spawn)_(claude|codex|opencode|antigravity)$/.test(name))).toEqual([
-      "bridge_ask_antigravity", "bridge_ask_claude", "bridge_ask_codex", "bridge_ask_opencode",
-      "bridge_spawn_antigravity", "bridge_spawn_claude", "bridge_spawn_codex", "bridge_spawn_opencode",
+    expect(names.filter((name) => /^bridge_(ask|spawn)_(claude|codex|opencode|antigravity|muse)$/.test(name))).toEqual([
+      "bridge_ask_antigravity", "bridge_ask_claude", "bridge_ask_codex", "bridge_ask_muse", "bridge_ask_opencode",
+      "bridge_spawn_antigravity", "bridge_spawn_claude", "bridge_spawn_codex", "bridge_spawn_muse", "bridge_spawn_opencode",
     ]);
   });
 

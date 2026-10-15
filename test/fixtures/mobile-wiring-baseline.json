@@ -2,10 +2,10 @@
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
     "src/core/broker.ts:constructor": "87a129e6f5c836fde080f2fc51a9e38b1fc73ae1b4e82c30a8950e307eedc404",
-    "src/core/broker.ts:listen": "d96368c44c5d53f177be9261b40b811de29dfc866a90a73b26150e52e8af6ff8",
+    "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
     "src/core/broker.ts:startServices": "c99740e533c7b6fd293656682c88daa5cbbc491459f21304268f284219cd3777",
-    "src/core/broker.ts:abortStartup": "2c7b606eb6c601f877f5d0283f0f1efcb7e4bc11c1af14857c9ca582e8ad6cb5",
-    "src/core/broker.ts:close": "61af8b1a2dd8e1c2f44fa39055e1963ae82e9887f99eed1d0499ae7e66ea91c2",
+    "src/core/broker.ts:abortStartup": "312021e61034aab8fafee80b154d728fb48427a17709a96c936a21a5cb7e2abb",
+    "src/core/broker.ts:close": "9ed775327e43196fafe017689287aba3c43d1c4f4c454e85da501d7c0fa48d7b",
     "src/core/node.ts:constructor": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
     "src/core/node.ts:start": "922dd81e0ddbe0d79b70656ef14bd97cd1e6e331aeb410b8e9a9d92afce9f402",
     "src/core/node.ts:stop": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
@@ -15,7 +15,7 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "3f013571e860db81fb38d53e848ddf72669a7cb7fbecda4f2a172d0161e6997f",
+  "uiSha256": "6361ed89434a3a21aee8d08d399f0ee9a584fd53ee4803ae67f3ae79ff898378",
   "updates": {
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
@@ -69,6 +69,119 @@
       "preservedFailureRun": "38383760743",
       "preservedOriginalWindowsJob": "115250343801",
       "preservedIndependentWindowsJob": "115252022028"
+    },
+    "AB-330": {
+      "base": "0761d56fe4c36e505550f9b889841fdf8e82c80a",
+      "methods": [
+        "src/core/broker.ts:abortStartup",
+        "src/core/broker.ts:close",
+        "src/core/broker.ts:listen"
+      ],
+      "commit": "49d494d4ef0ab11ba78380ec9d19feb4136ffd9d",
+      "reason": "AB-330: 49d494d4ef0ab11ba78380ec9d19feb4136ffd9d binds and awaits the ephemeral TCP discovery lifecycle in listen and abortStartup. The abortStartup TCP await follows synchronous mobile retirement so immediate ready=false holds. The close shutdown await was introduced by 99b918121feb08f961cd942fbba1339e80b64994 and remains required to retire the owned listener. Only these three method hashes change; the other ten method hashes, UI hash and behavioral assertions remain unchanged."
+    },
+    "AB-325-P4-current-main-integration": {
+      "status": "reviewed",
+      "pr17Commit": "7144289d60532fbaf4d044172406af31109429be",
+      "mainCommit": "c1916b50a86950c2f3a0cf781b41e851441225f3",
+      "requiredProcessIdentityCommit": "2532a2a3c53c2bc902ed998ea907bdfa751ba38a",
+      "reviewBasis": "Owner-approved P4 Phase A authored union plus Phase B instruction; additive e2e union and Muse process registration approved separately. Source approval does not imply runtime or release acceptance.",
+      "changes": [
+        {
+          "method": "src/core/broker.ts:constructor",
+          "pr17": "87a129e6f5c836fde080f2fc51a9e38b1fc73ae1b4e82c30a8950e307eedc404",
+          "main": "b46136a2548fb9582ce2274793775f68c635fe461ae6e3d3f11d1ac1ff3836f0",
+          "current": "87a129e6f5c836fde080f2fc51a9e38b1fc73ae1b4e82c30a8950e307eedc404",
+          "normalizedSourceFileSha256": "8d887d455ca31cb9301a6b5f421a3081bce2e843dc8d54dd4a7e7a158c62ff73"
+        },
+        {
+          "method": "src/core/broker.ts:listen",
+          "pr17": "d96368c44c5d53f177be9261b40b811de29dfc866a90a73b26150e52e8af6ff8",
+          "main": "7522d16cd88fcd4ca3be9ce6923fc4c64a5c75ffbb5314b43ea7748964851c59",
+          "current": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
+          "normalizedSourceFileSha256": "8d887d455ca31cb9301a6b5f421a3081bce2e843dc8d54dd4a7e7a158c62ff73"
+        },
+        {
+          "method": "src/core/broker.ts:startServices",
+          "pr17": "c99740e533c7b6fd293656682c88daa5cbbc491459f21304268f284219cd3777",
+          "main": "4d48b8bdb253d56458edfb283ed7d85b8530185391be52725961d015f5b26b85",
+          "current": "c99740e533c7b6fd293656682c88daa5cbbc491459f21304268f284219cd3777",
+          "normalizedSourceFileSha256": "8d887d455ca31cb9301a6b5f421a3081bce2e843dc8d54dd4a7e7a158c62ff73"
+        },
+        {
+          "method": "src/core/broker.ts:abortStartup",
+          "pr17": "2c7b606eb6c601f877f5d0283f0f1efcb7e4bc11c1af14857c9ca582e8ad6cb5",
+          "main": "312021e61034aab8fafee80b154d728fb48427a17709a96c936a21a5cb7e2abb",
+          "current": "312021e61034aab8fafee80b154d728fb48427a17709a96c936a21a5cb7e2abb",
+          "normalizedSourceFileSha256": "8d887d455ca31cb9301a6b5f421a3081bce2e843dc8d54dd4a7e7a158c62ff73"
+        },
+        {
+          "method": "src/core/broker.ts:close",
+          "pr17": "61af8b1a2dd8e1c2f44fa39055e1963ae82e9887f99eed1d0499ae7e66ea91c2",
+          "main": "9ed775327e43196fafe017689287aba3c43d1c4f4c454e85da501d7c0fa48d7b",
+          "current": "9ed775327e43196fafe017689287aba3c43d1c4f4c454e85da501d7c0fa48d7b",
+          "normalizedSourceFileSha256": "8d887d455ca31cb9301a6b5f421a3081bce2e843dc8d54dd4a7e7a158c62ff73"
+        },
+        {
+          "method": "src/core/node.ts:constructor",
+          "pr17": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
+          "main": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
+          "current": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
+          "normalizedSourceFileSha256": "62f4721ffe783c80240041ceb12cf09a1eb0d74b7c0153aaea59d0dbcd72837d"
+        },
+        {
+          "method": "src/core/node.ts:start",
+          "pr17": "922dd81e0ddbe0d79b70656ef14bd97cd1e6e331aeb410b8e9a9d92afce9f402",
+          "main": "922dd81e0ddbe0d79b70656ef14bd97cd1e6e331aeb410b8e9a9d92afce9f402",
+          "current": "922dd81e0ddbe0d79b70656ef14bd97cd1e6e331aeb410b8e9a9d92afce9f402",
+          "normalizedSourceFileSha256": "62f4721ffe783c80240041ceb12cf09a1eb0d74b7c0153aaea59d0dbcd72837d"
+        },
+        {
+          "method": "src/core/node.ts:stop",
+          "pr17": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
+          "main": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
+          "current": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
+          "normalizedSourceFileSha256": "62f4721ffe783c80240041ceb12cf09a1eb0d74b7c0153aaea59d0dbcd72837d"
+        },
+        {
+          "method": "src/core/node.ts:tryBecomeBroker",
+          "pr17": "4f09383911f03a965bddce8b8da04d7a5660ab5624a0d09d2f4bb1ebc17f1db9",
+          "main": "ca4a0147682e50d8748825468e6ac49565d931c6a42b5e45e4ecc2f65d1cc669",
+          "current": "4f09383911f03a965bddce8b8da04d7a5660ab5624a0d09d2f4bb1ebc17f1db9",
+          "normalizedSourceFileSha256": "62f4721ffe783c80240041ceb12cf09a1eb0d74b7c0153aaea59d0dbcd72837d"
+        },
+        {
+          "method": "src/cli/dashboard.ts:constructor",
+          "pr17": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "main": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "current": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "normalizedSourceFileSha256": "094276820c5824e674907d5d6ee6af5ad14e3401425f6813b010dfd4c7626b4f"
+        },
+        {
+          "method": "src/cli/dashboard.ts:open",
+          "pr17": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
+          "main": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
+          "current": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
+          "normalizedSourceFileSha256": "094276820c5824e674907d5d6ee6af5ad14e3401425f6813b010dfd4c7626b4f"
+        },
+        {
+          "method": "src/cli/dashboard.ts:ensure",
+          "pr17": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
+          "main": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
+          "current": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
+          "normalizedSourceFileSha256": "094276820c5824e674907d5d6ee6af5ad14e3401425f6813b010dfd4c7626b4f"
+        },
+        {
+          "method": "src/cli/dashboard.ts:close",
+          "pr17": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4",
+          "main": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4",
+          "current": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4",
+          "normalizedSourceFileSha256": "094276820c5824e674907d5d6ee6af5ad14e3401425f6813b010dfd4c7626b4f"
+        }
+      ],
+      "previousUiSha256": "3f013571e860db81fb38d53e848ddf72669a7cb7fbecda4f2a172d0161e6997f",
+      "currentUiSha256": "6361ed89434a3a21aee8d08d399f0ee9a584fd53ee4803ae67f3ae79ff898378",
+      "reason": "Recomputed every method pin and complete UI hash on the merged source with the existing mobile-wiring normalizer and assertions unchanged. Retains default-off P3 dashboard hosting, main Muse/Phones/messaging and TCP lifecycle, and PR17 reservation/capability paths. No bulk normalization or assertion change."
     }
   },
   "revertedUpdates": {

@@ -191,6 +191,25 @@ describe("CodexWaker", () => {
     expect(calls()).toBe(2);
   });
 
+  it("catches later mail that arrives before queue exit without host activity hooks", async () => {
+    const release = join(dir, "release");
+    writeFileSync(join(dir, "queue"), `const fs=require('fs');fs.appendFileSync(${JSON.stringify(join(dir, "calls"))},'x');setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)}))process.exit(0);},20);`);
+    const node = fakeNode(dir);
+    const waker = new CodexWaker(node as unknown as BridgeNode, cfg(), nullLogger, { debounceMs: 20, queueTimeoutMs: 2_000 });
+    waker.setThreadId("thread-1");
+    node.inbox.push(mail("first")); node.emit("message", node.inbox[0]);
+    await until(() => calls() === 1);
+    // The native turn consumed first mail, but its queue command has not exited yet.
+    // No hooks report activity: new arrivals must be caught when that command settles.
+    node.inbox.splice(0, 1, mail("later")); node.emit("message", node.inbox[0]);
+    expect((waker as unknown as { inFlight: boolean }).inFlight).toBe(true);
+    expect(calls()).toBe(1);
+    writeFileSync(release, "");
+    await until(() => calls() === 2);
+    await until(() => !(waker as unknown as { inFlight: boolean }).inFlight);
+    expect(node.inbox[0]!.body).toBe("later");
+  });
+
   it("queues an awaited reply with auto-wake off and leaves mail unread if queuing fails", async () => {
     fakeCodex(dir, 1, 0);
     const node = fakeNode(dir); node.autoWakeEnabled = false;

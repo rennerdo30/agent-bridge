@@ -14,7 +14,7 @@ import { ACK_CONVERSATION_SUFFIX, isQuietMessage, type AgentKind, type BridgeMes
 import { isPureAcknowledgement } from "../core/job-messaging.js";
 import type { Worktree } from "../core/worktree.js";
 import { assertWritableStore, backupPath, isRecord, JSON_STORE_VERSION, mergeStoreFields, readJsonStore, retainBackups, retentionLimit, writeJsonStore } from "../core/json-store.js";
-import { changedJobArgs, type JobSettings } from "./job-settings.js";
+import { changedJobArgs, JOB_SETTING_KEYS, type JobSettings } from "./job-settings.js";
 import { assertStoreUpgrade } from "../core/store-compatibility.js";
 import { archiveJobs, readArchivedJobs, readArchivedJobSnapshot } from "../core/job-archive.js";
 import { indexedJobProjectionCurrent, readIndexedJobs } from "../core/job-archive-index.js";
@@ -576,7 +576,7 @@ export class JobManager {
           // completed turn. Keep every conflicting accepted byte in the existing
           // immutable journal before reconciling the observer's runtime state.
           const pending = toStored(j) as unknown as Record<string, unknown>;
-          this.retainOwnedState([mergeStoreFields(old, pending)]);
+          this.retainOwnedState([mergeJobFields(old, pending)]);
           const terminal = mergePendingJob({ ...old, deliveryHistory: j.deliveryHistory },
             { ...pending, status: old.status, finishedAt: old.finishedAt, sessionId: old.sessionId, host: old.host },
             this.durableBases.get(j.id) ?? j.recoveredRecord) ?? { ...old, deliveryHistory: j.deliveryHistory };
@@ -598,7 +598,7 @@ export class JobManager {
           }
           return terminal as unknown as StoredJob;
         }
-        return mergeStoreFields(isRecord(old) ? old : {}, toStored(j)) as StoredJob;
+        return mergeJobFields(isRecord(old) ? old : {}, toStored(j)) as StoredJob;
       });
       prepared = mine as unknown as Record<string, unknown>[];
       const ids = new Set(mine.map((j) => j.id));
@@ -778,7 +778,7 @@ export class JobManager {
       const ids = new Set(prepared?.map(job => job.id as string) ?? [...this.history.keys()].filter(id => this.own.has(id)));
       const existing = new Map(readScopedStore(this.storePath, ids, new Set(), undefined, this.log).map(job => [job.id, job as unknown as Record<string, unknown>]));
       const snapshots = prepared ?? [...this.history.values()].filter(job => this.own.has(job.id)).map(job =>
-        mergeStoreFields(existing.get(job.id) ?? job.recoveredRecord ?? {}, toStored(job)));
+        mergeJobFields(existing.get(job.id) ?? job.recoveredRecord ?? {}, toStored(job)));
       for (const snapshot of snapshots) {
         if (typeof snapshot.id !== "string") continue;
         const bytes = JSON.stringify(snapshot);
@@ -858,6 +858,12 @@ export class JobManager {
           saved.startedAt > Number(current.startedAt)) current = { ...current, executionOwner: saved.executionOwner };
       const merged = mergePendingJob(current, saved, base);
       if (!merged || !isStoredJob(merged)) continue;
+      // A newer admitted receipt owns its settings, including removed overrides.
+      // Same-turn receipts keep mergePendingJob's three-way settings arbitration.
+      if (current && Number(saved.startedAt) > Number(current.startedAt)) {
+        const args = mergeJobFields(current, saved).args;
+        if (isRecord(args)) merged.args = args;
+      }
       if (index < 0) stored.push(merged); else stored[index] = merged;
       appliedReceipts.set(saved.id, receipt);
       this.own.add(saved.id); this.receipts.push(receipt);
@@ -1639,7 +1645,7 @@ export class JobManager {
       job.worktree ??= saved?.worktree ?? null;
       const before = { ...job };
       reset();
-      const record = mergeStoreFields(saved ?? {}, toStored(job));
+      const record = mergeJobFields(saved ?? {}, toStored(job));
       // Only consume the messages passed to this run. A concurrent registry writer may
       // have accepted more context before this lock; retain every unconsumed occurrence.
       const queued = [...(saved?.queuedMessages ?? [])];
@@ -2218,6 +2224,15 @@ function executorOffline(err: unknown): boolean {
 }
 
 type StoredJob = Pick<Job, "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+
+/** Unknown fields survive upgrades; known next-turn settings also honor deletion. */
+function mergeJobFields(previous: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
+  const merged = mergeStoreFields(previous, next);
+  if (isRecord(next.args) && isRecord(merged.args)) {
+    for (const key of JOB_SETTING_KEYS) if (next.args[key] === undefined) delete merged.args[key];
+  }
+  return merged;
+}
 
 function toStored(j: Job): StoredJob {
   return {

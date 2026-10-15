@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
-import { chmodSync, lstatSync, mkdirSync } from "node:fs";
+import { readMusePrivateJson, readMusePrivateJsonAsync } from "./muse-context.js";
+import { processIdentity, readProcessIdentity } from "./process-identity.js";
+import { chmodSync, lstatSync, mkdirSync, readFileSync } from "node:fs";
 import { join, posix, resolve } from "node:path";
 import { DB_FILE_NAME, DEFAULT_HOME, ENV, SOCKET_FILE_NAME, WINDOWS_PIPE_PREFIX, APP_NAME, PROTOCOL_VERSION } from "./constants.js";
 
@@ -74,6 +76,39 @@ export function ensurePrivateSocketDirectory(pipePath: string, platform: NodeJS.
   }
   // Our own directory with a loose mode (an old umask, a manual mkdir): tighten it rather than refuse.
   if ((stat.mode & 0o077) !== 0) chmodSync(dir, 0o700);
+}
+
+/** Loopback fallback endpoint a Windows broker also serves (see Broker.startTcpFallback). */
+export const BROKER_TCP_FILE = "broker-tcp.json";
+
+/** This disposable endpoint descriptor has no durable records or registrations.
+ * Extra data makes it unknown state: retain it instead of treating it as scratch. */
+export function isEphemeralBrokerTcpRecord(value: Record<string, any>): boolean {
+  return Object.keys(value).sort().join(",") === "identity,nonce,pid,pipePath,port,protocol" &&
+    typeof value.port === "number" && Number.isInteger(value.port) && value.port > 0 && value.port <= 65535;
+}
+
+/** The loopback port recorded by the running broker, or null when it serves no fallback. */
+export function brokerTcpPort(home: string, pipePath = resolvePipePath(home)): number | null {
+  try {
+    const value = readMusePrivateJson(join(home, BROKER_TCP_FILE));
+    if (!isEphemeralBrokerTcpRecord(value) || value.pipePath !== pipePath || value.protocol !== PROTOCOL_VERSION || !Number.isSafeInteger(value.pid) ||
+      typeof value.identity !== "string" || value.identity !== processIdentity(value.pid) || typeof value.nonce !== "string" || !value.nonce) return null;
+    return typeof value.port === "number" && Number.isInteger(value.port) && value.port > 0 && value.port <= 65535 ? value.port : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Authenticated discovery for connection callers, sharing their abort/deadline. */
+export async function brokerTcpPortAsync(home: string, pipePath: string, signal: AbortSignal): Promise<number | null> {
+  try {
+    const value = await readMusePrivateJsonAsync(join(home, BROKER_TCP_FILE), signal);
+    if (!isEphemeralBrokerTcpRecord(value) || value.pipePath !== pipePath || value.protocol !== PROTOCOL_VERSION || !Number.isSafeInteger(value.pid) ||
+      typeof value.identity !== "string" || typeof value.nonce !== "string" || !value.nonce || signal.aborted) return null;
+    const identity = await readProcessIdentity(value.pid, signal);
+    return !signal.aborted && value.identity === identity ? value.port : null;
+  } catch { return null; }
 }
 
 export function resolveDbPath(home: string): string {
