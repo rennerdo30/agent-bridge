@@ -9,7 +9,7 @@ import {
 } from "./chunks/chunk-CE5EGKJK.mjs";
 import {
   BridgeNode
-} from "./chunks/chunk-LF3V25ID.mjs";
+} from "./chunks/chunk-EUKCSCWH.mjs";
 import {
   formatMessage,
   formatReplyRestrictions
@@ -117,7 +117,7 @@ async function main(argv) {
     }
     case "broker-daemon":
       if (rest.length) throw new Error("broker-daemon accepts no arguments");
-      return (await import("./chunks/broker-daemon-FG6TMQM4.mjs")).runBrokerDaemon(home, pipe, log);
+      return (await import("./chunks/broker-daemon-OBV4NCQQ.mjs")).runBrokerDaemon(home, pipe, log);
     case "antigravity-hook":
       return (await import("./chunks/antigravity-hook-L6RPU3JD.mjs")).runAntigravityHook(rest[0] ?? "PreInvocation");
     case "job-state":
@@ -127,7 +127,7 @@ async function main(argv) {
     case "repair-permissions":
       return (await import("./chunks/permission-repair-5OA3WRNY.mjs")).runPermissionRepair(rest, home, log, out);
     case "doctor":
-      return (await import("./chunks/doctor-M6NRG5GA.mjs")).runDoctor(rest, home, out);
+      return (await import("./chunks/doctor-AQOPE7SP.mjs")).runDoctor(rest, home, out);
     case "db":
       return (await import("./chunks/db-V4CJBWRB.mjs")).runDb(rest, home, out);
     case "storage":
@@ -137,7 +137,7 @@ async function main(argv) {
         out("Usage: agent-bridge reindex");
         return 2;
       }
-      return (await import("./chunks/reindex-O5GZUSBH.mjs")).runReindex(home, pipe, log, out);
+      return (await import("./chunks/reindex-CYKXKVWY.mjs")).runReindex(home, pipe, log, out);
     case "history-archive":
       if (rest.length > 1) {
         out("Usage: agent-bridge history-archive [absolute-archive-root]");
@@ -226,10 +226,10 @@ async function main(argv) {
       const mobileConfig = loadConfig(home, "other", log).mobile;
       let mobileUnavailable;
       if (mobileConfig) {
-        if (rest.includes("--reset-key")) (await import("./chunks/dashboard-5GROWWEL.mjs")).dashboardKey(home, true);
-        const existing = await (await import("./chunks/dashboard-5GROWWEL.mjs")).findRunningDashboard(home);
+        if (rest.includes("--reset-key")) (await import("./chunks/dashboard-YCJCB3AJ.mjs")).dashboardKey(home, true);
+        const existing = await (await import("./chunks/dashboard-YCJCB3AJ.mjs")).findRunningDashboard(home);
         if (existing) {
-          const info2 = (await import("./chunks/dashboard-5GROWWEL.mjs")).withMobileUnavailable(existing, "invalid" in mobileConfig ? "config_invalid" : "source_unavailable");
+          const info2 = (await import("./chunks/dashboard-YCJCB3AJ.mjs")).withMobileUnavailable(existing, "invalid" in mobileConfig ? "config_invalid" : "source_unavailable");
           out(t("cli.ui.existing", { url: info2.url }));
           if (!noOpen) openBrowser(info2.url);
           return 0;
@@ -248,7 +248,7 @@ async function main(argv) {
             }
             mobileUnavailable = "source_unavailable";
           } else {
-            activation = await (await import("./chunks/activation-56S4URQ5.mjs")).configuredMobileDashboard(node, mobileConfig, { home, pipe, port: portArg2 ? Number(portArg2) : cfg.dashboardPort, log });
+            activation = await (await import("./chunks/activation-VWENJZ35.mjs")).configuredMobileDashboard(node, mobileConfig, { home, pipe, port: portArg2 ? Number(portArg2) : cfg.dashboardPort, log });
             const info2 = await activation?.start();
             if (info2 && activation?.status() === "ready") {
               out(t("cli.ui.running", { url: info2.url }));
@@ -268,9 +268,9 @@ async function main(argv) {
           });
         }
       }
-      if (rest.includes("--reset-key")) (await import("./chunks/dashboard-5GROWWEL.mjs")).dashboardKey(home, true);
-      const found = await (await import("./chunks/dashboard-5GROWWEL.mjs")).findRunningDashboard(home);
-      const running = found && mobileUnavailable ? (await import("./chunks/dashboard-5GROWWEL.mjs")).withMobileUnavailable(found, mobileUnavailable) : found;
+      if (rest.includes("--reset-key")) (await import("./chunks/dashboard-YCJCB3AJ.mjs")).dashboardKey(home, true);
+      const found = await (await import("./chunks/dashboard-YCJCB3AJ.mjs")).findRunningDashboard(home);
+      const running = found && mobileUnavailable ? (await import("./chunks/dashboard-YCJCB3AJ.mjs")).withMobileUnavailable(found, mobileUnavailable) : found;
       if (running) {
         out(t("cli.ui.existing", { url: running.url }));
         if (!noOpen) openBrowser(running.url);
@@ -278,9 +278,9 @@ async function main(argv) {
       }
       const portArg = rest.find((a) => a.startsWith("--port="))?.slice("--port=".length);
       const port = portArg ? Number(portArg) : loadConfig(home, "other", log).dashboardPort;
-      const controller = new (await import("./chunks/dashboard-5GROWWEL.mjs")).DashboardController({ home, pipe, port, log, brokerDaemon: brokerDaemon(), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable } : {} });
+      const controller = new (await import("./chunks/dashboard-YCJCB3AJ.mjs")).DashboardController({ home, pipe, port, log, brokerDaemon: brokerDaemon(), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable } : {} });
       const hosted = await controller.ensure();
-      const info = mobileUnavailable ? (await import("./chunks/dashboard-5GROWWEL.mjs")).withMobileUnavailable(hosted, mobileUnavailable) : hosted;
+      const info = mobileUnavailable ? (await import("./chunks/dashboard-YCJCB3AJ.mjs")).withMobileUnavailable(hosted, mobileUnavailable) : hosted;
       out(t("cli.ui.running", { url: info.url }));
       if (!noOpen) openBrowser(info.url);
       if (!controller.isHosting) return 0;
@@ -307,7 +307,7 @@ async function main(argv) {
     case "permission-hook":
       return (await import("./chunks/permission-hook-GWMGCCUU.mjs")).runPermissionHook(rest[0]);
     case "job-runner":
-      return (await import("./chunks/job-runner-KYXPXQJD.mjs")).runJobRunner(rest[0]);
+      return (await import("./chunks/job-runner-EEYUOVAA.mjs")).runJobRunner(rest[0]);
     case "reliability": {
       const picked = rest.filter((a) => CODING_AGENTS.includes(a));
       const only = rest.find((a) => a.startsWith("--only="))?.slice("--only=".length);
