@@ -618,6 +618,16 @@ export class HistoryIndex {
     this.put({ id, kind: "transcript", agent: doc.agent, at: item.at, body, message: null, job: null, run: null,
       session: doc.session, cursor, link: `/?session=${enc(doc.session!)}&agent=${doc.agent}&from=${enc(cursor)}${doc.child ? `&child=${enc(doc.child)}` : ""}` });
   }
+  /** Provider/file reads finish before this DB-only page. One durable commit
+   * covers its documents, tags and cursor, rather than one disk sync per item. */
+  private transcriptPage(file: FileRow, next: string, write: () => void): void {
+    this.exec(this.db, "SAVEPOINT history_transcript_page");
+    try {
+      write();
+      this.advance(file.path, next);
+      this.exec(this.db, "RELEASE history_transcript_page");
+    } catch (error) { cleanupSavepoint(this.db, "history_transcript_page", true, error); }
+  }
   private indexFile(file: FileRow): number {
     if (file.kind === "context" || file.kind === "approval" || (file.kind === "run" && /\.json(?:-.*)?$/.test(file.path))) return 0;
     if (file.agent !== "opencode") {
@@ -629,8 +639,9 @@ export class HistoryIndex {
     if (file.agent === "opencode") {
       const page = readTranscript({ agent: "opencode", sessionId: file.session, cwd: file.cwd }, from, undefined, this.paths);
       if (!page) return 0;
-      page.items.forEach((item, i) => this.transcript(file, item, from, i));
-      this.advance(file.path, page.next);
+      this.transcriptPage(file, page.next, () => {
+        page.items.forEach((item, i) => this.transcript(file, item, from, i));
+      });
       return page.items.length || (page.next !== from ? 1 : 0);
     }
     if (file.kind === "transcript") {
@@ -638,13 +649,14 @@ export class HistoryIndex {
       const head = file.agent === "codex" ? object(this.head(file.path,file.session ?? undefined).payload) : {};
       const metadata = head.id === file.session ? head : {};
       const start = metadata.subagent_history_start_ordinal;
-      for (const row of page.entries) {
-        const target = file.agent === "claude" && row.value.isSidechain === true && typeof row.value.agentId === "string" && TRANSCRIPT_ID.test(row.value.agentId) ? { ...file, child: row.value.agentId } : file;
-        if (typeof start === "number" && typeof row.value.ordinal === "number" && row.value.ordinal < start) continue;
-        const items = file.agent === "antigravity" ? antigravityItems(row.value) : file.agent === "muse" ? museItems(row.value) : file.agent === "claude" ? claudeItems(row.value) : codexItems(row.value);
-        items.forEach((item, i) => this.transcript(target, item, `j:${row.offset}:0`, i));
-      }
-      this.advance(file.path, page.next);
+      this.transcriptPage(file, page.next, () => {
+        for (const row of page.entries) {
+          const target = file.agent === "claude" && row.value.isSidechain === true && typeof row.value.agentId === "string" && TRANSCRIPT_ID.test(row.value.agentId) ? { ...file, child: row.value.agentId } : file;
+          if (typeof start === "number" && typeof row.value.ordinal === "number" && row.value.ordinal < start) continue;
+          const items = file.agent === "antigravity" ? antigravityItems(row.value) : file.agent === "muse" ? museItems(row.value) : file.agent === "claude" ? claudeItems(row.value) : codexItems(row.value);
+          items.forEach((item, i) => this.transcript(target, item, `j:${row.offset}:0`, i));
+        }
+      });
       return page.entries.length || (page.next !== from ? 1 : 0);
     }
     let fd: number | undefined;

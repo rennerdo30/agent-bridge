@@ -72,6 +72,7 @@ vi.mock("../src/core/history-store.js", () => ({
   historyMigrationFailure: () => null, copyLegacyConversationTail: () => 0, legacyTailConflicts: () => 0, migrateHistoryStore: fixture.migration,
 }));
 vi.mock("../src/core/metadata-db.js", () => ({ checkpointOwnedMetadataConnections: fixture.metadata, closeMetadataDbs: fixture.metadataClose }));
+vi.mock("../src/core/process-identity.js", () => ({ processIdentity: () => "fixture-verified-parent-identity" }));
 vi.mock("../src/core/history.js", () => ({ HISTORY_TICK_MS: 100, HistoryIndex: class {
   reset = fixture.indexReset; rememberPeer = fixture.indexPeer; tick = fixture.indexTick; wake = fixture.indexWake; close = fixture.indexClose;
 } }));
@@ -80,9 +81,9 @@ vi.mock("../src/core/conversations.js", () => ({ ConversationIngestor: class {
   constructor() { fixture.ingestors.push(this); }
 } }));
 vi.mock("../src/core/transcripts/common.js", () => ({ transcriptPaths: () => ({ claude: "/fixture/claude", codex: "/fixture/codex", opencode: "/fixture/opencode" }) }));
-vi.mock("../src/core/config.js", () => ({ loadConfig: () => ({ history: { ingest: true, budgetBytes: 1024 } }) }));
+vi.mock("../src/core/config.js", () => ({ loadConfig: () => ({ history: { ingest: true, budgetBytes: 1024 ** 3 } }) }));
 vi.mock("../src/core/history-migration.js", () => ({ readHistoryMigrationProgress: () => ({ phase: "starting", error: null }) }));
-vi.mock("../src/core/history-budget.js", () => ({ historyBudget: fixture.budget }));
+vi.mock("../src/core/history-budget.js", async original => ({ ...await original<typeof import("../src/core/history-budget.js")>(), historyBudget: fixture.budget }));
 vi.mock("../src/core/project-store.js", () => ({ ownsProjectMirrors: () => false, projectDatabasePath: () => "/fixture/mirror" }));
 vi.mock("../src/core/ask-completion.js", () => ({ reconcileAskCompletions: fixture.reconcile }));
 vi.mock("../src/core/run-history.js", () => ({ readHistoryJson: () => null }));
@@ -94,7 +95,7 @@ beforeEach(async () => {
   vi.resetModules(); vi.clearAllMocks();
   fixture.workers.length = 0; fixture.ingestors.length = 0; fixture.connected = false; fixture.nativeFixture = false; fixture.port = null;
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date", "performance"] });
-  fixture.budget.mockResolvedValue({ paused: false, bytes: 0, budgetBytes: 1024 });
+  fixture.budget.mockResolvedValue({ paused: false, bytes: 0, budgetBytes: 1024 ** 3 });
   fixture.migration.mockResolvedValue(undefined); fixture.reconcile.mockReturnValue(7);
   fixture.indexTick.mockReturnValue({ work: 0, discovering: false }); fixture.ingestTick.mockReturnValue(1);
   fixture.metadata.mockImplementation((owner: Message) => ({ ownerInstance: owner.ownerInstance, generation: owner.generation,
@@ -103,7 +104,7 @@ beforeEach(async () => {
   const { HistoryBackground } = await import("../src/core/history-background.js");
   fixture.port = (await import("node:worker_threads")).parentPort as unknown as FixturePort | null;
   fixture.port?.removeAllListeners();
-  background = new HistoryBackground("/fixture/bridge.db", { warn: vi.fn() } as unknown as Logger);
+  background = new HistoryBackground("/fixture/bridge.db", { warn: vi.fn(), debug: vi.fn() } as unknown as Logger);
   worker = fixture.workers[0]!;
 });
 afterEach(async () => {
@@ -123,7 +124,7 @@ async function connectWorker() {
 async function actualOwnedThread() {
   vi.useRealTimers(); fixture.nativeFixture = true; fixture.workers.length = 0;
   const { HistoryBackground } = await import("../src/core/history-background.js");
-  background = new HistoryBackground("/fixture/bridge.db", { warn: vi.fn() } as unknown as Logger);
+  background = new HistoryBackground("/fixture/bridge.db", { warn: vi.fn(), debug: vi.fn() } as unknown as Logger);
   worker = fixture.workers[0]!;
   await new Promise<void>(resolve => worker.once("online", resolve));
 }
@@ -145,6 +146,7 @@ function noRetirement() {
 
 describe("trusted history owner observation; unsupported store closure stays blocked", () => {
   it("keeps default tick/reconcile/peer admission and normal results before a lifecycle seal", async () => {
+    expect(fixture.workerData.ownProcessIdentity).toEqual({ pid: process.pid, identity: "fixture-verified-parent-identity" });
     background.rememberPeer(peer); const tick = background.tick(true), reconcile = background.reconcileAsks();
     expect(background.reconcileAsks()).toBe(reconcile);
     expect(worker.sent).toContainEqual({ peer });
@@ -276,6 +278,35 @@ describe("trusted history owner observation; unsupported store closure stays blo
 });
 
 describe("connected production history worker queues with controlled dependencies", () => {
+  it("attributes a held migration to its own phase and accounts for the complete tick", async () => {
+    let release!: () => void;
+    fixture.migration.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    await connectWorker();
+    const tick = background.tick();
+    await vi.advanceTimersByTimeAsync(3_500);
+    expect(fixture.ingestTick).not.toHaveBeenCalled();
+    release(); await vi.advanceTimersByTimeAsync(20); await tick;
+    const phases = fixture.port!.postMessage.mock.calls.map(([message]) => message.historyTiming)
+      .find(timing => timing?.totalMs !== undefined) as Record<string, number>;
+    expect(phases.migrationMs).toBe(3_500);
+    expect(Object.entries(phases).filter(([name]) => name !== "totalMs").reduce((sum, [, ms]) => sum + ms, 0))
+      .toBeCloseTo(phases.totalMs!, 5);
+    expect(phases).toHaveProperty("ingestPressureWaitMs");
+    expect(phases).toHaveProperty("indexPressureWaitMs");
+    expect(phases).toHaveProperty("completionMs");
+  });
+  it("captures a watched live line within 500 ms while a periodic full budget scan never resolves", async () => {
+    await connectWorker();
+    const initial = background.tick(); await vi.advanceTimersByTimeAsync(20); await initial;
+    fixture.budget.mockImplementation(() => new Promise(() => {}));
+    await vi.advanceTimersByTimeAsync(1000);
+    const before = fixture.ingestTick.mock.calls.length;
+    fixture.ingestors[0]!.onChange!();
+    await vi.advanceTimersByTimeAsync(499);
+    expect(fixture.ingestTick.mock.calls.length).toBeGreaterThan(before);
+    expect(fixture.budget).toHaveBeenCalledTimes(2); // One initial sample, one joined pending scan.
+    noRetirement();
+  });
   it("settles accepted peer/reconcile/reset/tick while admission is sealed and keeps all store handles", async () => {
     await connectWorker(); background.rememberPeer(peer);
     const tick = background.tick(true), reconcile = background.reconcileAsks();
@@ -301,7 +332,7 @@ describe("connected production history worker queues with controlled dependencie
   });
 
   it("retains a deferred accepted reset and exact peer bytes through a budget pause and resumes them on the same worker", async () => {
-    await connectWorker(); fixture.budget.mockResolvedValue({ paused: true, bytes: 1024, budgetBytes: 1024 });
+    await connectWorker(); fixture.budget.mockResolvedValue({ paused: true, bytes: 1024, budgetBytes: 1024 ** 3 });
     background.rememberPeer(peer); const tick = background.tick(true);
     expect(await tick).toEqual({ work: 0, discovering: true });
     background.quiesceLifecycleMaintenance();
@@ -309,7 +340,7 @@ describe("connected production history worker queues with controlled dependencie
     expect(observation).toMatchObject({ workSettled: false, settled: false, reason: "pending" });
     expect(observation.checkpoint).toMatchObject({ retainedReset: true, retainedPeers: 1, pendingOperations: 2 });
     expect(fixture.metadata).not.toHaveBeenCalled(); expect(fixture.indexReset).not.toHaveBeenCalled();
-    fixture.budget.mockResolvedValue({ paused: false, bytes: 0, budgetBytes: 1024 });
+    fixture.budget.mockResolvedValue({ paused: false, bytes: 0, budgetBytes: 1024 ** 3 });
     background.resumeLifecycleMaintenance(); await vi.advanceTimersByTimeAsync(20);
     expect(fixture.workers).toHaveLength(1); expect(fixture.indexPeer).toHaveBeenCalledExactlyOnceWith(peer); expect(fixture.indexReset).toHaveBeenCalledOnce();
     expect((fixture.indexPeer.mock.calls[0]![0] as Message).retainedBytes).toEqual(new Uint8Array([0, 255, 1])); noRetirement();
@@ -321,7 +352,7 @@ describe("connected production history worker queues with controlled dependencie
     const tick = background.tick(); background.quiesceLifecycleMaintenance();
     const waiting = background.settleLifecycleMaintenance(performance.now() + 20);
     await vi.advanceTimersByTimeAsync(20); expect(await waiting).toMatchObject({ reason: "budget", pendingWorkers: 1, settled: false });
-    expect(fixture.metadata).not.toHaveBeenCalled(); release({ paused: false, bytes: 0, budgetBytes: 1024 });
+    expect(fixture.metadata).not.toHaveBeenCalled(); release({ paused: false, bytes: 0, budgetBytes: 1024 ** 3 });
     await vi.advanceTimersByTimeAsync(20); await tick;
     expect(background.lifecycleOwnerManifest()).toMatchObject({ unknown: true, settled: false, checkpoint: null });
     expect(checkpoints()).toHaveLength(1); noRetirement();
@@ -330,13 +361,13 @@ describe("connected production history worker queues with controlled dependencie
   it("includes a previously admitted periodic budget check rather than treating a completed tick as the whole queue", async () => {
     await connectWorker(); let finishMigration!: () => void, finishBudget!: (value: Message) => void;
     fixture.migration.mockImplementationOnce(() => new Promise<void>(resolve => { finishMigration = resolve; }));
-    const tick = background.tick(); await Promise.resolve();
+    const tick = background.tick(); await vi.advanceTimersByTimeAsync(0);
     fixture.budget.mockImplementationOnce(() => new Promise(resolve => { finishBudget = resolve; }));
     await vi.advanceTimersByTimeAsync(1000);
     background.quiesceLifecycleMaintenance(); const waiting = background.settleLifecycleMaintenance(performance.now() + 2000);
     finishMigration(); await vi.advanceTimersByTimeAsync(20); await tick;
     expect(fixture.metadata).not.toHaveBeenCalled();
-    finishBudget({ paused: false, bytes: 0, budgetBytes: 1024 }); await Promise.resolve(); await Promise.resolve();
+    finishBudget({ paused: false, bytes: 0, budgetBytes: 1024 ** 3 }); await Promise.resolve(); await Promise.resolve();
     expect(await waiting).toMatchObject({ settled: false, workSettled: true, checkpoint: { budgetRunning: false } }); noRetirement();
   });
 
@@ -346,7 +377,7 @@ describe("connected production history worker queues with controlled dependencie
     const tick = background.tick(true); background.quiesceLifecycleMaintenance();
     const waiting = background.settleLifecycleMaintenance(performance.now() + 2000);
     background.resumeLifecycleMaintenance(); expect(await waiting).toMatchObject({ quiesced: false, settled: false });
-    release({ paused: false, bytes: 0, budgetBytes: 1024 }); await vi.advanceTimersByTimeAsync(20); await tick;
+    release({ paused: false, bytes: 0, budgetBytes: 1024 ** 3 }); await vi.advanceTimersByTimeAsync(20); await tick;
     expect(fixture.workers).toHaveLength(1); expect(fixture.indexReset).toHaveBeenCalledOnce();
     expect(fixture.ingestTick).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(100);
