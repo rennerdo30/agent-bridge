@@ -6,6 +6,7 @@ import { JOBS_FILE } from "../core/constants.js";
 import { readStore } from "./jobs.js";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import { usageRefused } from "../core/usage.js";
 import { COMPLETION_DEDUPE_PREFIX } from "../core/completion.js";
 import { takeRunnerSpec } from "../core/runner-store.js";
 import { failureCause } from "../core/delegate.js";
@@ -157,6 +158,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
         updatedAt: Date.now(),
         model: job.model,
         sessionId: job.sessionId,
+        providerUsage: job.providerUsage,
         workdir: job.workdir,
         worktree: job.worktree,
         progress: job.progress,
@@ -407,7 +409,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     // The supervisor's JobManager emits the finish/fail notification when it settles this
     // result. A detached notifier here would remain inside this runner's owned job scope.
     // Follow-ups that arrived meanwhile go out right away, into the same session, from this runner.
-    if (job.queue.length && job.sessionId && !job.controller.signal.aborted) {
+    if (job.queue.length && job.sessionId && !job.controller.signal.aborted && !usageRefused(job)) {
       const queued = job.queue.splice(0).join("\n\n");
       void post(`${report}\n\n${QUEUED_FOLLOW_UP_NOTE}`);
       args = resumeArgs(spec.base, job.name, queued, job.sessionId, job.workdir, job.worktree, job.args);

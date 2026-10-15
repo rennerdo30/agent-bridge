@@ -18,13 +18,14 @@ export async function runRemoteAsk(node: BridgeNode, target: CodingAgent, args: 
   const combined = AbortSignal.any([signal, job.controller.signal]);
   combined.addEventListener("abort", cancel, { once: true });
   try {
-    let snapshot = await node.remoteJob(host, { op: "spawn", job: job.id, target, args: remoteSpawnArgsSchema.parse(raw) });
+    let snapshot = await node.remoteJob(host, { op: "spawn", job: job.id, target, args: remoteSpawnArgsSchema.parse(raw), usageTurn: `${job.id}:${job.startedAt}` });
     if (combined.aborted) { cancel(); combined.throwIfAborted(); }
     job.remoteControl = (control) => { void node.remoteJob(host, { op: "control", job: job.id, control }).catch(() => {}); };
     job.live = { post: (body) => { void node.remoteJob(host, { op: "control", job: job.id, control: { type: "message", body, cid: randomUUID() } }).catch(() => {}); } };
     for (;;) {
       combined.throwIfAborted();
       const state = snapshot.state;
+      if (state?.providerUsage && snapshot.usageTurn === `${job.id}:${job.startedAt}`) job.providerUsage = { ...state.providerUsage, turnStartedAt: job.startedAt };
       if (state?.progress) onProgress(state.progress);
       if (state) { job.sessionId = state.sessionId ?? job.sessionId; job.workdir = state.workdir ?? job.workdir; job.worktree = state.worktree ?? job.worktree; }
       if (state && state.status !== "running" && !snapshot.alive) return { text: state.report ?? "Remote job ended without a report.", sessionId: state.sessionId ?? null, isError: state.status !== "done", status: state.status, details: {}, workdir: state.workdir ?? undefined, worktree: state.worktree ?? undefined };

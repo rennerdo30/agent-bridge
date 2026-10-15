@@ -3,6 +3,11 @@ import { APP_VERSION } from "./constants.js";
 import { childEnv, killTree, resolveCommand, opencodeV2 } from "./delegate.js";
 import type { Logger } from "./logger.js";
 import type { CodingAgent } from "./protocol.js";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { homedir, hostname } from "node:os";
+import { join, resolve } from "node:path";
+import { decideProviderUsage, PROVIDER_USAGE_TTL_MS, type ProviderUsageDecision, type ProviderUsageFact, type ProviderUsageScope } from "./provider-usage-policy.js";
 
 /**
  * How much of each agent's account limits is left, so a driving agent can decide whom to give work to
@@ -60,7 +65,7 @@ function capture(
   args: string[],
   cwd: string,
   log: Logger,
-  stdin?: (write: (s: string) => void, out: () => string, done: () => void) => void,
+  stdin?: (write: (s: string) => void, out: () => string, done: () => void) => void | (() => void),
   options?: CaptureOptions,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -78,10 +83,12 @@ function capture(
     let err = "";
     let totalBytes = 0;
     let settled = false;
+    let cleanup: (() => void) | void;
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      cleanup?.();
       void killTree(child);
       fn();
     };
@@ -105,7 +112,7 @@ function capture(
         : err.trim().slice(-300) || out.trim().slice(-300) || `exit code ${code}`;
       return reject(new Error(detail));
     }));
-    if (stdin) stdin((s) => child.stdin.write(s), () => out, () => finish(() => resolve(out)));
+    if (stdin) { cleanup = stdin((s) => child.stdin.write(s), () => out, () => finish(() => resolve(out))); if (settled) cleanup?.(); }
     else child.stdin.end();
   });
 }
@@ -488,3 +495,154 @@ export async function readUsage(agent: CodingAgent, bin: string, cwd: string, lo
     return { agent, lines: [`Could not read usage: ${(err as Error).message}`], limits: [], maxUsedPercent: null };
   }
 }
+
+/** Admission facts never come from the display DTO above. */
+export const PROVIDER_USAGE_CACHE_LIMIT = 64;
+export const PROVIDER_USAGE_PROBE_TIMEOUT_MS = 3_000;
+export interface UsageProbe {
+  agent: CodingAgent; bin: string; cwd: string; home: string; model: string | null; log: Logger;
+}
+export interface UsageAdmission extends ProviderUsageDecision { resetAt?: number }
+/** Persist decisions, not cached account readings. A later accepted turn has its own warning. */
+export interface ProviderUsageState {
+  turnStartedAt: number;
+  decision: UsageAdmission;
+  warningReported: boolean;
+}
+export function usageRefused(job: { startedAt: number; providerUsage?: ProviderUsageState }): boolean {
+  return job.providerUsage?.turnStartedAt === job.startedAt && job.providerUsage?.decision?.type === "block";
+}
+export function usageAdmissionText(result: UsageAdmission): string {
+  const reset = result.resetAt === undefined ? "" : ` Resets ${new Date(result.resetAt).toISOString()}.`;
+  return result.type === "block"
+    ? `Provider usage exhausted; no native work started (${result.reason}).${reset} Continue explicitly after allowance is available.`
+    : result.type === "warn" ? "Warning: provider allowance is low; continuing on the selected model." : "";
+}
+
+type ProducedUsage = { scope: ProviderUsageScope; facts: ProviderUsageFact[] } | null;
+/** Decode only account-wide Codex buckets. Other model-specific buckets cannot refuse this model. */
+export function codexAdmissionFacts(input: { accountBefore: unknown; accountAfter: unknown; models: unknown; limits: unknown; config: unknown },
+  probe: Pick<UsageProbe, "model">, executorId: string, observedAt: number): ProducedUsage {
+  const before = input.accountBefore as any, after = input.accountAfter as any, models = input.models as any, limits = input.limits as any;
+  const account = before?.account;
+  const routing = before?.workspaceRouting;
+  const config = (input.config as any)?.config;
+  if (account?.type !== "chatgpt" || typeof account.email !== "string" || !account.email.trim()
+    || before?.requiresOpenaiAuth !== true || config?.model_provider !== "openai" || config?.model_providers?.openai
+    || typeof routing?.chatgptAccountId !== "string" || !routing.chatgptAccountId.trim()
+    || routing.backendOrigin !== "https://chatgpt.com"
+    || JSON.stringify(before) !== JSON.stringify(after)) return null;
+  const entries = Array.isArray(models?.data) ? models.data : [];
+  const selected = probe.model ?? config.model;
+  const matches = entries.filter((m: any) => selected == null ? m?.isDefault === true : m?.id === selected || m?.model === selected);
+  if (matches.length !== 1 || typeof matches[0]?.model !== "string" || !matches[0].model.trim()) return null;
+  const scope: ProviderUsageScope = { executorId, agent: "codex", accountId: createHash("sha256").update(JSON.stringify([account, routing])).digest("hex"),
+    providerId: "openai", modelId: matches[0].model };
+  const facts: ProviderUsageFact[] = [];
+  const buckets = limits?.rateLimitsByLimitId;
+  const snapshot = buckets && typeof buckets === "object" ? buckets.codex : limits?.rateLimits;
+  if (!snapshot || snapshot.limitId && snapshot.limitId !== "codex") return { scope, facts };
+  for (const window of [snapshot.primary, snapshot.secondary]) {
+    if (typeof window?.usedPercent !== "number") continue;
+    const reset = window.resetsAt;
+    // Protocol resetsAt is epoch seconds. No string/date guessing.
+    const resetAt = typeof reset === "number" && Number.isSafeInteger(reset) && reset >= 0 && Number.isSafeInteger(reset * 1000) ? reset * 1000 : undefined;
+    facts.push({ state: "known", scope, observedAt, reading: { kind: "percent_used", value: window.usedPercent, unit: "percent" }, ...(resetAt === undefined ? {} : { resetAt }) });
+  }
+  const credit = snapshot.credits;
+  // The app-server protocol reports a decimal string; reject blank/coercible malformed data.
+  const balance = typeof credit?.balance === "number" ? credit.balance : typeof credit?.balance === "string" && /^\d+(?:\.\d+)?$/.test(credit.balance) ? Number(credit.balance) : NaN;
+  if (credit?.unlimited !== true && Number.isFinite(balance)) facts.push({ state: "known", scope, observedAt,
+    reading: { kind: "credits_remaining", value: balance, unit: "credits" } });
+  return { scope, facts };
+}
+
+/** One initialized local app-server context; never starts a model turn. */
+async function produceAdmissionUsage(probe: UsageProbe, observedAt: number, readLimits = true): Promise<ProducedUsage> {
+  if (probe.agent !== "codex") return null; // Other adapters currently lack authenticated account/model quota facts.
+  const methods = ["initialize", "account/read", "model/list", "config/read", ...(readLimits ? ["account/rateLimits/read"] : []), "account/read"];
+  const results: any[] = [];
+  let protocolError: Error | undefined;
+  const out = await capture(probe.bin, ["app-server"], probe.cwd, probe.log, (write, read, done) => {
+    let next = 0;
+    const send = () => write(`${JSON.stringify({ id: next + 1, method: methods[next], params: next === 0
+      ? { clientInfo: { name: "agent-bridge", version: APP_VERSION }, capabilities: { experimentalApi: true, explicitGatewayOauth: true } }
+      : next === 2 ? { limit: 100 } : methods[next] === "config/read" ? { includeLayers: false, cwd: probe.cwd }
+      : methods[next] === "account/read" ? { refreshToken: false } : null })}\n`);
+    send();
+    const poll = setInterval(() => {
+      try {
+        const messages = read().split("\n").flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
+        const reply = messages.find(m => m.id === next + 1);
+        if (!reply) return;
+        if (reply.error) { protocolError = new Error("Usage probe RPC failed"); clearInterval(poll); done(); return; }
+        results.push(reply.result);
+        if (next === 0) write(`${JSON.stringify({ method: "initialized", params: {} })}\n`);
+        if (++next === methods.length) { clearInterval(poll); done(); } else send();
+      } catch { protocolError = new Error("Invalid usage response"); clearInterval(poll); done(); }
+    }, 10);
+    return () => clearInterval(poll);
+  }, { timeoutMs: PROVIDER_USAGE_PROBE_TIMEOUT_MS, maxBytes: DEFAULT_MAX_CAPTURE_BYTES, requireZeroExit: true });
+  void out;
+  if (protocolError || results.length !== methods.length) throw protocolError ?? new Error("Incomplete usage probe");
+  if (results[2]?.nextCursor) return null; // Incomplete model catalog cannot resolve an alias/default.
+  return codexAdmissionFacts({ accountBefore: results[1], models: results[2], config: results[3], limits: readLimits ? results[4] : {}, accountAfter: results.at(-1) }, probe,
+    createHash("sha256").update(`${hostname()}\0${resolve(probe.home)}\0${homedir()}`).digest("hex"), observedAt);
+}
+
+/** Cache identity includes local auth/config bytes; never log or persist their hashes or contents. */
+function admissionCacheKey(probe: UsageProbe): string {
+  const root = process.env.CODEX_HOME || join(homedir(), ".codex");
+  const hash = createHash("sha256").update(JSON.stringify([probe.agent, probe.bin, resolve(probe.cwd), resolve(probe.home), probe.model,
+    root, process.env.OPENAI_API_KEY, process.env.CODEX_API_KEY, process.env.OPENAI_BASE_URL]));
+  for (const path of [join(root, "auth.json"), join(root, "config.toml"), join(probe.cwd, ".codex", "config.toml")]) {
+    try { hash.update(path).update(readFileSync(path)); } catch (err) { if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err; hash.update(`${path}:absent`); }
+  }
+  return hash.digest("hex");
+}
+
+export function createUsagePreflight(deps: { now: () => number; key: (probe: UsageProbe) => string;
+  read: (probe: UsageProbe, observedAt: number) => Promise<ProducedUsage>;
+  authenticate?: (probe: UsageProbe, value: NonNullable<ProducedUsage>) => Promise<boolean> }) {
+  const cache = new Map<string, { observedAt: number; value: ProducedUsage }>();
+  const pending = new Map<string, Promise<ProducedUsage>>();
+  return async (probe: UsageProbe, warningAlreadyReported = false): Promise<UsageAdmission> => {
+    let key: string;
+    let value: ProducedUsage;
+    try {
+      key = deps.key(probe);
+      const now = deps.now(), hit = cache.get(key);
+      if (hit && now >= hit.observedAt && now - hit.observedAt < PROVIDER_USAGE_TTL_MS
+        && hit.value && (!deps.authenticate || await deps.authenticate(probe, hit.value))) value = hit.value;
+      else {
+        let read = pending.get(key);
+        if (!read) {
+          if (pending.size >= PROVIDER_USAGE_CACHE_LIMIT) return { type: "allow", reason: "read_failed" };
+          read = Promise.resolve().then(() => deps.read(probe, now));
+          pending.set(key, read);
+          try {
+            value = await read;
+            if (deps.key(probe) !== key) return { type: "allow", reason: "scope_mismatch" };
+            // Unknowns/failures do not hide a later valid reading.
+            if (value) { if (cache.size >= PROVIDER_USAGE_CACHE_LIMIT) cache.delete(cache.keys().next().value!); cache.set(key, { observedAt: now, value }); }
+          } finally { pending.delete(key); }
+        } else value = await read;
+      }
+      if (deps.key(probe) !== key) return { type: "allow", reason: "scope_mismatch" };
+      if (!value) return { type: "allow", reason: "unknown" };
+      let warning: UsageAdmission | undefined;
+      for (const fact of value.facts) {
+        const decision = decideProviderUsage(fact, { target: value.scope, now: deps.now(), warningAlreadyReported });
+        const result = { ...decision, ...(fact.state === "known" && fact.resetAt !== undefined ? { resetAt: fact.resetAt } : {}) };
+        if (result.type === "block") return result;
+        if (result.type === "warn") warning ??= result;
+      }
+      return warning ?? { type: "allow", reason: "allowance_available" };
+    } catch { return { type: "allow", reason: "read_failed" }; }
+  };
+}
+export const checkUsagePreflight = createUsagePreflight({ now: Date.now, key: admissionCacheKey, read: produceAdmissionUsage,
+  authenticate: async (probe, cached) => {
+    const current = await produceAdmissionUsage(probe, Date.now(), false);
+    return current !== null && JSON.stringify(current.scope) === JSON.stringify(cached.scope);
+  } });

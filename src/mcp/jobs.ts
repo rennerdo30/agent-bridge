@@ -1,5 +1,6 @@
 import { canonicalProjectRoot, migrateProjectJobs } from "../core/project-identity.js";
 import { canControlJob } from "../core/job-ownership.js";
+import { usageRefused } from "../core/usage.js";
 import { createHash, randomUUID } from "node:crypto";
 import { worktreeProcesses, worktreeProcessReport } from "../core/worktree-processes.js";
 import { setTimeout as delay } from "node:timers/promises";
@@ -61,6 +62,7 @@ export type Run = ((signal: AbortSignal, onProgress: (message: string, full?: st
 export type Resume = (message: string, sessionId: string, workdir: string | null, worktree: Worktree | null) => Run;
 
 export interface Job {
+  providerUsage?: import("../core/usage.js").ProviderUsageState;
   /** Cancellation intent belongs to this exact turn and survives supervisor changes. */
   cancellingTurn?: number;
   /** Initial spawn accepted but not yet admitted; preserved across server reloads. */
@@ -148,6 +150,7 @@ export interface JobHostInfo {
 
 /** What a job runner reports about its job (its state file, written only by the runner). */
 export interface RunnerState {
+  providerUsage?: import("../core/usage.js").ProviderUsageState;
   stopping?: boolean;
   pid: number;
   peer: string;
@@ -1269,7 +1272,7 @@ export class JobManager {
           this.post(job, jobReport(job, job.status, Math.round((Date.now() - job.startedAt) / 1000), outcome?.result?.text ?? "", job.status === "failed" ? failureCause(outcome ?? {}) : null));
         }
         // Follow-ups sent while the caller waited continue the session in the background (or wait for a slot).
-        if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner)) {
+        if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner) && !usageRefused(job)) {
           if (this.canStart()) {
             let run: Run;
             try { run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree); }
@@ -1410,6 +1413,7 @@ export class JobManager {
     // A second master may have cancelled or claimed a continuation since share() yielded.
     this.refreshControlTurn(job);
     if (this.hostedRunning(job)) this.checkHosted(job);
+    if (job.status !== "running" && usageRefused(job)) job.providerUsage = undefined;
     if (job.status === "interrupted" && job.executionPid && pidAlive(job.executionPid)) return this.refusedFollowUp(job, "interrupted_executor_probe");
     const runnerState = job.host ? this.runners?.state(job) : null;
     if (runnerState?.sessionId) this.note(job, runnerState);
@@ -1511,6 +1515,7 @@ export class JobManager {
 
   /** Continue this finished job (its queued messages) once a slot frees up. */
   private waitForSlot(job: Job): void {
+    if (usageRefused(job)) return;
     if (job.continuationFailure?.turn === job.startedAt) return;
     this.waitingJobs.set(job.id, job);
     if (this.storePath && !this.rootWaitTimer) {
@@ -1529,6 +1534,7 @@ export class JobManager {
     // Failed admission may reinsert the same waiter. Visit each candidate once per pass.
     for (const job of [...this.waitingJobs.values()]) {
       this.refreshControlTurn(job);
+      if (usageRefused(job)) { this.waitingJobs.delete(job.id); continue; }
       if (job.continuationFailure?.turn === job.startedAt) { this.waitingJobs.delete(job.id); continue; }
       if (job.status === "running") continue;
       if (!this.canStart()) return;
@@ -1823,6 +1829,7 @@ export class JobManager {
     const runners = this.runners!;
     const state = runners.state(job);
     if (state) {
+      if (state.providerUsage?.turnStartedAt === job.startedAt) job.providerUsage = state.providerUsage;
       job.host!.pid = state.pid;
       if (state.model !== undefined) job.model = state.model;
       job.progress = state.progress ?? job.progress;
@@ -2102,7 +2109,7 @@ export class JobManager {
     const message = report === undefined ? jobReport(job, status, seconds, text, cause) : report;
 
     // Follow-ups that arrived meanwhile go out right away, into the same session (it keeps its slot).
-    if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner) && job.continuationFailure?.turn !== job.startedAt) {
+    if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner) && job.continuationFailure?.turn !== job.startedAt && !usageRefused(job)) {
       let run: Run;
       try { run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree); }
       catch (error) {
@@ -2193,7 +2200,7 @@ function executorOffline(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === "unknown_target";
 }
 
-type StoredJob = Pick<Job, "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+type StoredJob = Pick<Job, "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
 
 /** Unknown fields survive upgrades; known next-turn settings also honor deletion. */
 function mergeJobFields(previous: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
@@ -2206,6 +2213,7 @@ function mergeJobFields(previous: Record<string, unknown>, next: Record<string, 
 
 function toStored(j: Job): StoredJob {
   return {
+    providerUsage: j.providerUsage,
     id: j.id,
     name: j.name,
     agent: j.agent,

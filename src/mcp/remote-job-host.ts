@@ -21,6 +21,8 @@ export class RemoteJobHost {
     return this.cache.get(job.id) ?? readJsonStore(this.path(job)) as Cached | null;
   }
   private save(job: Job, snapshot: RemoteJobSnapshot): void {
+    if (snapshot.state?.providerUsage) snapshot = { ...snapshot, state: { ...snapshot.state,
+      providerUsage: snapshot.usageTurn === `${job.id}:${job.startedAt}` ? { ...snapshot.state.providerUsage, turnStartedAt: job.startedAt } : undefined } };
     const data = { fetchedAt: Date.now(), snapshot };
     this.cache.set(job.id, data);
     writeJsonStore(this.path(job), data, readJsonStore(this.path(job)));
@@ -32,7 +34,7 @@ export class RemoteJobHost {
     // Internal continuation fields belong to the remote registry; only public spawn args cross the link.
     const raw = { ...args, cwd: args.cwd ?? job.workdir } as Record<string, unknown>;
     for (const key of ["host", "_job", "_worktree", "send_to"]) delete raw[key];
-    const request = { op: "spawn", job: job.id, target, args: remoteSpawnArgsSchema.parse(raw) } as const;
+    const request = { op: "spawn", job: job.id, target, args: remoteSpawnArgsSchema.parse(raw), usageTurn: `${job.id}:${job.startedAt}` } as const;
     this.busy.add(job.id);
     void this.node.remoteJob(host, request).then((snapshot) => {
       this.save(job, snapshot);
