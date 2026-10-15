@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.30.19
 
-- Add Muse as a fifth coding agent, including native plugin installation, authenticated mail hooks, stable MSP delegation, live steering, approvals, model discovery, session history and remote jobs. Preserve named permission profiles across job reloads and continuations; verify the served profile before submitting a turn.
+- Add Muse as a fifth coding agent, including native plugin installation, authenticated mail hooks, stable MSP delegation, live steering, approvals, model discovery, session history and remote jobs. Preserve named permission profiles across job reloads and continuations; verify the served profile before submitting a turn (AB-330, #20).
+- Antigravity jobs in `ask` mode deny approval requests again when no supervisor is allowed to approve them, instead of relaying them. This regressed in 0.30.17 (#20).
 
 ## 0.30.18
 
