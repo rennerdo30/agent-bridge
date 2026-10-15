@@ -7,6 +7,7 @@ import { openHistoryStore, historyInitializationObservation, legacyReadNotice, h
 import { storageLease, storageLeaseObservation } from "../src/core/storage-lock.js";
 import { DecisionStore, DECISIONS_SCHEMA } from "../src/core/decisions.js";
 import { HistoryIndex } from "../src/core/history.js";
+import { HISTORY_BATCH_MS } from "../src/core/history-store.js";
 import { MessageStore, messageStoreHandleObservation } from "../src/core/store.js";
 import { nullLogger } from "../src/core/logger.js";
 import { attachStoreCompatibility, storeCompatibilityObservation } from "../src/core/store-compatibility-overlay.js";
@@ -1074,6 +1075,21 @@ describe("retained overlay DTO and actual unknown history obligations", () => {
       }
       return result;
     });
+    // Reproduce slow pre-discovery SQL without doing work or sleeping: the
+    // first count consumes the batch's wall-clock budget, before any readSync.
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const originalPrepare = DatabaseSync.prototype.prepare;
+    const slowCount = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+      if (this === history && sql === "SELECT count(*) AS n FROM history_files") now += HISTORY_BATCH_MS;
+      return originalPrepare.call(this, sql);
+    });
+    index.tick();
+    expect(actualActiveDirectoryObserved).toBe(false);
+    expect(index.lifecycleConsumerObservation().queuedDiscovery).toBeGreaterThan(0);
+    slowCount.mockRestore();
+    // Freeze the clock for the lifecycle assertion: it needs a real partial
+    // walk, independently of how long SQLite takes on the host.
     index.tick(); expect(actualActiveDirectoryObserved).toBe(true); vi.restoreAllMocks();
     const observation = index.sealLifecycleConsumer();
     expect(observation.pendingOperations).toBe(0); expect(observation.queuedDiscovery + observation.activeDirectories).toBeGreaterThan(0);
