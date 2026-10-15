@@ -184,6 +184,8 @@ async function main(argv: string[]): Promise<number> {
     }
     case "rewake-hook":
       return (await import("./rewake-hook.js")).runRewakeHook(rest.includes("--standby"));
+    case "muse-hook":
+      return (await import("./muse-hook.js")).runMuseHook(rest[0] ?? "");
     case "session-start-hook":
       return (await import("./session-start-hook.js")).runSessionStartHook(log);
     case "permission-hook":

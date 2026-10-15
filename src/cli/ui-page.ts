@@ -11,9 +11,403 @@ import { DEFAULT_NETWORK_PORT, NETWORK_NAME_PATTERN } from "../network/constants
 export function safeMobileStatus(value: unknown): string {
   return typeof value === "string" && ["preparing", "config_invalid", "material_unavailable", "tls_invalid", "bind_invalid", "source_unavailable", "restart_required"].includes(value) ? value : "source_unavailable";
 }
+// The Phones section: a native dashboard page (same shell, tokens and components), added only for a provisioned host.
+// It uses the local owner API in src/mobile/desktop.ts; every request keeps its origin, CSRF and idempotency checks.
+const PHONES_CSS = `
+/* Phones: pairing, claim review and paired devices */
+.ph-av { background: var(--accent-soft); color: var(--accent); }
+.ph-qr { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+.ph-qr-img { flex: none; width: 200px; padding: 10px; border-radius: 12px; background: #fff; box-shadow: 0 0 0 1px var(--line); }
+.ph-qr-img svg { display: block; width: 100%; height: auto; }
+.ph-timer { display: flex; flex-direction: column; gap: 10px; flex: 1 1 200px; min-width: 0; }
+.ph-count { font-size: 24px; font-weight: 650; letter-spacing: -.01em; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.ph-track { height: 4px; border-radius: 2px; background: var(--panel-2); overflow: hidden; }
+.ph-track i { display: block; height: 100%; border-radius: 2px; background: var(--accent); transition: width 1s linear; }
+.ph-kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 10px 16px; margin: 0; font-size: 13px; align-items: baseline; }
+.ph-kv dt { color: var(--muted); font-size: 12.5px; }
+.ph-kv dd { margin: 0; min-width: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.ph-claim { border-left-color: var(--warn); gap: 16px; padding: 18px 20px; }
+.ph-match { display: flex; align-items: center; gap: 10px 20px; flex-wrap: wrap; padding: 12px 16px; border-radius: 10px; background: var(--panel-2); }
+.ph-match output { display: block; font-family: var(--mono); font-size: 26px; font-weight: 650; letter-spacing: .14em; color: var(--text); line-height: 1.25; }
+.ph-match p { margin: 0; flex: 1 1 260px; font-size: 12.5px; color: var(--muted); }
+fieldset.ph-scope { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.ph-scope legend { padding: 0; margin-bottom: 8px; font-size: 13px; font-weight: 650; }
+.ph-opt { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); transition: border-color .12s, background .12s; }
+.ph-opt.on { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); background: color-mix(in srgb, var(--accent-soft) 60%, var(--panel)); }
+.ph-opt > label { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 2px 10px; padding: 11px 14px; cursor: pointer; align-items: start; }
+.ph-opt > label input { margin: 3px 0 0; }
+.ph-opt b { font-weight: 600; }
+.ph-opt small { display: block; color: var(--muted); font-size: 12.5px; }
+.ph-list { margin: 0 14px 12px 42px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); max-height: 264px; overflow-y: auto; }
+.ph-list label { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--panel-2); font-size: 13px; cursor: pointer; min-width: 0; }
+.ph-list label:last-child { border-bottom: 0; }
+.ph-list label:hover { background: var(--panel-2); }
+.ph-list .grow { flex: 1; min-width: 0; }
+.ph-list small { display: block; color: var(--faint); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph-list .meta { flex: none; color: var(--faint); font-size: 11.5px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ph-list .none { padding: 12px; color: var(--muted); font-size: 12.5px; }
+.ph-adv > summary { cursor: pointer; list-style: none; width: max-content; padding: 2px 0; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.ph-adv > summary::-webkit-details-marker { display: none; }
+.ph-adv > summary::before { content: "▸ "; }
+.ph-adv[open] > summary::before { content: "▾ "; }
+.ph-adv[open] > summary { margin-bottom: 8px; }
+.ph-adv > summary:hover { color: var(--text); }
+.toggle.ph-toggle { margin-left: 0; color: var(--text); }
+.ph-toggle-row small { display: block; margin: 2px 0 0 40px; color: var(--muted); font-size: 12.5px; }
+.ph-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ph-actions .ph-hint { font-size: 12.5px; color: var(--muted); }
+.ph-claim .note:empty, #phNotice:empty { display: none; }
+#phNotice { margin: 0 0 20px; padding: 10px 14px; border-radius: 10px; background: var(--panel); box-shadow: var(--shadow); font-size: 13px; color: var(--muted); }
+#phNotice.ok { color: var(--ok); } #phNotice.err { color: var(--bad); }
+.ph-archive { border-top: 1px solid var(--panel-2); }
+.ph-archive > summary { cursor: pointer; padding: 11px 18px; color: var(--muted); font-size: 13px; list-style: none; }
+.ph-archive > summary::-webkit-details-marker { display: none; }
+.ph-archive > summary::before { content: "▸ "; }
+.ph-archive[open] > summary::before { content: "▾ "; }
+.ph-archive .peer-row { opacity: .75; }
+.net-two > .net-card.ph-pc { justify-content: flex-start; }
+.ph-foot { margin: 0; max-width: 760px; font-size: 12.5px; color: var(--faint); }
+.ph-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+`;
+const PHONES_HEAD = '<div class="page-head"><div><h2>Phones</h2><p class="muted">Pair your phone with this PC to follow sessions and subagents and answer owner questions. Phones connect only over the private LAN or Tailscale addresses you set up.</p></div></div>';
+const PHONES_READY_HTML = `
+  <div id="phones" class="hidden">
+    ${PHONES_HEAD}
+    <div id="phNotice" role="status" aria-live="polite"></div>
+    <div id="phState"></div>
+    <div id="phBody" class="hidden">
+      <div class="block net-two">
+        <section class="panel net-card" aria-labelledby="phPairTitle"><div><h4 id="phPairTitle">Pair a phone</h4><p>Create a QR code and scan it with the agent-bridge app. It works once and expires after 2 minutes.</p></div><div id="phPair"></div></section>
+        <section class="panel net-card ph-pc" aria-labelledby="phPcTitle"><div><h4 id="phPcTitle">This PC</h4><p>The QR carries this PC's key, so the phone connects only to this PC.</p></div><div id="phPc"></div></section>
+      </div>
+      <section class="block" aria-labelledby="phClaimsTitle"><h3 id="phClaimsTitle">Waiting for confirmation <span class="n" id="phClaimsN"></span></h3><div id="phClaims"></div></section>
+      <section class="block" aria-labelledby="phDevicesTitle"><h3 id="phDevicesTitle">Paired phones <span class="n" id="phDevicesN"></span></h3><div class="panel" id="phDevices"></div></section>
+      <p class="ph-foot">Phones read only what you allow here, and answer owner questions only when you allow it. They cannot approve tool permissions, record decisions, change settings or write to paired PCs. Push notifications are generic hints and need separate setup.</p>
+    </div>
+  </div>
+`;
+const PHONES_REASONS: Record<string, string> = {
+  preparing: "Phone access is starting. This page updates when it is ready.",
+  config_invalid: "The mobile settings in config.json are not valid. Correct them, then restart the dashboard.",
+  material_unavailable: "The certificate or key files for phone access could not be read.",
+  tls_invalid: "The certificate does not match the configured phone address.",
+  bind_invalid: "The configured phone addresses must be private LAN or Tailscale addresses.",
+  source_unavailable: "The bridge cannot be reached from the dashboard right now.",
+  restart_required: "Phone access stopped. Restart the dashboard to turn it back on.",
+};
+function phonesUnavailableHtml(status: string): string {
+  return '<div id="phones" class="hidden">' + PHONES_HEAD + '<div class="block"><div class="panel net-card"><div class="net-head"><div class="net-title"><span class="dot off"></span><b>Phone access is unavailable</b></div></div>' +
+    "<p>" + PHONES_REASONS[status] + '</p><p class="small" id="phonesStatus" role="status">Phones unavailable: ' + status + '</p>' +
+    '<div class="net-actions"><button type="button" id="phRecheck">Check again</button></div></div></div></div>';
+}
+function phonesScript(status: string): string {
+  return `<script>
+(() => {
+const PH_HASH = "#/phones", PH_STATUS = "` + status + `", PH_READY = PH_STATUS === "ready", PH_POLL_MS = 2000;
+const PH_CAPS = ["overview.read", "chat.read", "questions.read"];
+const PH_ICON = '<span class="av ph-av" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="1.5" width="8" height="13" rx="2"/><path d="M7 12.2h2" stroke-linecap="round"/></svg></span>';
+const PH_ERRORS = {
+  desktop_csrf: "This page is out of date. Reload it, then try again.", desktop_origin: "Open the dashboard at its 127.0.0.1 address to manage phones.",
+  pairing_conflict: "That request expired or was already handled.", pairing_limit: "Too many pairing QR codes are open. Wait until they expire.",
+  unsupported_grant: "Some selected projects or sessions are no longer available. Review the choice and try again.",
+  source_unavailable: "Phone access is unavailable right now.", not_found: "That phone is no longer listed.",
+};
+const phMessage = (err) => PH_ERRORS[err.code] || "The result is unknown (" + (err.code || err.message) + "). Check the lists below before you try again.";
+let ph = null, phError = "", phBusy = false, phLoadedAt = 0, phQr = null, phRevokeAsk = null, phRevokedOpen = false, phPendingSeen = null, phStatusAt = 0;
+const phSel = new Map(), phKeys = {}, phWrites = new Set();
+const phPlatform = (p) => (p === "ios" ? "iOS" : p === "android" ? "Android" : String(p || "phone"));
+const plural = (n, word) => n + " " + word + (n === 1 ? "" : "s");
+
+const baseParse = parseRoute, baseRender = render, baseSide = renderSide;
+parseRoute = function () { return location.hash === PH_HASH ? { session: null, group: null, page: "phones" } : baseParse(); };
+render = function () { baseRender(); phApply(); };
+renderSide = function () { baseSide(); phSide(); };
+route = parseRoute();
+
+function phOn() { return route.page === "phones"; }
+function phApply() {
+  const on = phOn();
+  $("phones").classList.toggle("hidden", !on);
+  if (on) { $("overview").classList.add("hidden"); phRender(); }
+  phSide();
+}
+function phSide() {
+  const on = phOn(), tab = $("tabPhones"), n = ph && PH_READY ? ph.pending.length : 0;
+  tab.className = (on ? "on" : "") + (n ? " attn" : "");
+  if (on) tab.setAttribute("aria-current", "page"); else tab.removeAttribute("aria-current");
+  const html = '<span class="ico" aria-hidden="true">▯</span>Phones' + (n ? '<span class="count attn" title="phones waiting for confirmation">' + n + "</span>" : PH_READY ? "" : '<span class="dot off" title="unavailable"></span>');
+  if (phKeys.tab !== html) { phKeys.tab = html; tab.innerHTML = html; }
+  if (on) $("mTitle").textContent = "Phones";
+}
+function phSet(id, key, html) { if (phKeys[id] === key) return false; phKeys[id] = key; $(id).innerHTML = html; return true; }
+function phNotice(text, kind) { const el = $("phNotice"); if (!el) return; el.textContent = text; el.className = kind || ""; }
+
+async function phLoad() {
+  if (phBusy || !PH_READY) return;
+  phBusy = true;
+  try {
+    const r = await fetch("/api/mobile/phones", { credentials: "same-origin", redirect: "error", cache: "no-store" });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error("HTTP " + r.status), { code: d.code });
+    const fresh = phPendingSeen ? d.pending.filter((c) => !phPendingSeen.has(c.claimId)) : [];
+    phPendingSeen = new Set(d.pending.map((c) => c.claimId));
+    if (phQr && !phQr.claimed && phQr.before && d.pending.some((c) => !phQr.before.has(c.claimId))) phQr.claimed = true;
+    if (fresh.length) phNotice(fresh.map((c) => c.name).join(", ") + " wants to pair. Compare the matching code before you confirm.");
+    for (const id of phSel.keys()) if (!phPendingSeen.has(id)) phSel.delete(id);
+    const projects = new Set(d.catalog.projects.map((p) => p.id)), sessions = new Set(d.catalog.sessions.map((s) => s.id));
+    for (const s of phSel.values()) {
+      let removed = false;
+      for (const id of s.projects) if (!projects.has(id)) { s.projects.delete(id); removed = true; }
+      for (const id of s.sessions) if (!sessions.has(id)) { s.sessions.delete(id); removed = true; }
+      if (removed) s.note = { text: "Some selected projects or sessions are no longer available. Review the remaining choice.", err: true };
+    }
+    ph = d; phError = "";
+  } catch (err) { phError = err.code || err.message || "unavailable"; }
+  finally { phBusy = false; phLoadedAt = Date.now(); }
+  phSide();
+  if (phOn()) phRender();
+}
+async function phSend(path, method, body) {
+  const r = await fetch(path, { method, credentials: "same-origin", redirect: "error", cache: "no-store",
+    headers: { "content-type": "application/json", "x-mobile-admin-csrf": ph.csrfToken, "idempotency-key": crypto.randomUUID() }, body: JSON.stringify(body) });
+  if (r.status === 204) return null;
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error("HTTP " + r.status), { code: d.code });
+  return d;
+}
+
+function phRender() {
+  if (!PH_READY) return;
+  const ready = Boolean(ph);
+  $("phBody").classList.toggle("hidden", !ready);
+  phSet("phState", ready ? (phError ? "stale:" + phError : "") : phError ? "error:" + phError : "loading",
+    ready ? (phError ? '<div class="block"><div class="disabled-hint">Showing the last known state: ' + esc(PH_ERRORS[phError] || phError) + " Retrying…</div></div>" : "")
+      : phError ? '<div class="block"><div class="panel net-card"><div class="net-title"><span class="dot off"></span><b>Phone access is unavailable</b></div><p>' + esc(PH_ERRORS[phError] || "The phone list could not be read (" + phError + ").") + "</p><p>Retrying every few seconds.</p></div></div>"
+      : '<div class="block"><div class="panel empty small">Reading phone access…</div></div>');
+  if (!ready) return;
+  phRenderPair(); phRenderPc(); phRenderClaims(); phRenderDevices(); phTick();
+}
+function phRenderPair() {
+  const active = phQr && !phQr.claimed && phQr.expiresAt > Date.now();
+  const mode = !phQr ? "none" : phQr.claimed ? "claimed" : active ? "active" : "expired";
+  let html;
+  if (mode === "claimed") html = '<div class="big-ok">✓ A phone scanned the code</div><p class="small muted">Compare its matching code under <b>Waiting for confirmation</b>.</p><div class="ph-actions"><button type="button" class="ghost" data-ph="invite">Create another QR</button></div>';
+  else if (mode === "active") html = '<div class="ph-qr"><div class="ph-qr-img" role="img" aria-label="Pairing QR code for the agent-bridge app">' + phQr.svg + '</div><div class="ph-timer">' +
+    '<div><span class="pill running">waiting for the phone</span></div><div><div class="small muted">Expires in</div><div class="ph-count" id="phCountdown" aria-hidden="true"></div></div><div class="ph-track" aria-hidden="true"><i id="phBar"></i></div>' +
+    '<ol class="steps-list"><li>Open the agent-bridge app on your phone.</li><li>Scan this code.</li><li>Confirm here once both screens show the same matching code.</li></ol>' +
+    '<div class="ph-actions"><button type="button" class="ghost" data-ph="hide-qr">Hide QR</button></div></div></div>';
+  else html = (mode === "expired" ? '<div class="note err">That QR expired without being used.</div>' : "") + '<div class="ph-actions"><button type="button" data-ph="invite">' + (mode === "expired" ? "Create a new QR" : "Create pairing QR") + "</button></div>";
+  phSet("phPair", mode + ":" + (phQr ? phQr.id : ""), html);
+}
+function phRenderPc() {
+  const fp = ph.fingerprints || [], origins = ph.gatewayOrigins || [];
+  const html = '<dl class="ph-kv"><dt>PC key</dt><dd>' + (fp.length ? fp.map((f) => '<code class="addr" title="PC key fingerprint">' + esc(f) + "</code>").join("") : '<span class="small muted">A certificate your phone already trusts</span>') + "</dd>" +
+    "<dt>Addresses</dt><dd>" + (origins.length ? origins.map((o) => '<code class="addr">' + esc(o.replace(/^https:[/][/]/, "")) + "</code>").join("") : '<span class="small muted">None configured</span>') + "</dd></dl>";
+  phSet("phPc", html, html);
+}
+function phState(id) {
+  if (!phSel.has(id)) phSel.set(id, { mode: "all", projects: new Set(), sessions: new Set(), answers: false, adv: false, note: null, busy: false });
+  return phSel.get(id);
+}
+function phProjectName(p) { return p ? p.name || "Unnamed project" : "Other project"; }
+function phValid(s, c) { return (!c || c.expiresAt > Date.now()) && (s.mode === "all" || (s.mode === "project" ? s.projects.size > 0 : s.sessions.size > 0)); }
+function phHint(s, c) {
+  if (c && c.expiresAt <= Date.now()) return "This claim expired. Scan a new QR to pair.";
+  if (s.mode === "project" && !s.projects.size) return "Choose at least one project.";
+  if (s.mode === "sessions" && !s.sessions.size) return "Choose at least one session.";
+  return "";
+}
+function phClaimHtml(c) {
+  const s = phState(c.claimId), cat = ph.catalog, name = "ph-mode-" + c.claimId;
+  const projects = new Map(cat.projects.map((p) => [p.id, p]));
+  const opt = (mode, title, text, list) => '<div class="ph-opt' + (s.mode === mode ? " on" : "") + '"><label><input type="radio" name="' + esc(name) + '" value="' + mode + '" data-ph="mode"' + (s.mode === mode ? " checked" : "") + "><span><b>" + title + "</b><small>" + text + "</small></span></label>" + (s.mode === mode && list ? list : "") + "</div>";
+  const projectList = '<div class="ph-list" role="group" aria-label="Projects">' + (cat.projects.length ? cat.projects.map((p) => {
+    const counts = [p.sessions ? plural(p.sessions, "session") : "", p.jobs ? plural(p.jobs, "job") : "", p.questions ? plural(p.questions, "open question") : ""].filter(Boolean).join(" · ");
+    return '<label><input type="checkbox" data-ph="project" value="' + esc(p.id) + '"' + (s.projects.has(p.id) ? " checked" : "") + '><span class="grow">' + esc(phProjectName(p)) + (p.folder ? '<small title="' + esc(p.folder) + '">' + esc(p.folder) + "</small>" : "") + '</span><span class="meta">' + esc(counts) + "</span></label>";
+  }).join("") : '<div class="none">No projects yet. Start a session in a project folder first.</div>') + "</div>";
+  const sessionList = '<div class="ph-list" role="group" aria-label="Sessions">' + (cat.sessions.length ? cat.sessions.map((x) =>
+    '<label><input type="checkbox" data-ph="session" value="' + esc(x.id) + '"' + (s.sessions.has(x.id) ? " checked" : "") + '><span class="grow">' + esc(x.name) + "<small>" + esc(phProjectName(projects.get(x.projectId))) + '</small></span><span class="chip">' + esc(x.agent) + "</span></label>").join("")
+    : '<div class="none">No live sessions.</div>') + "</div>";
+  const code = String(c.comparisonCode);
+  return '<div class="ap-card ph-claim" data-claim="' + esc(c.claimId) + '" role="group" aria-label="' + esc(c.name + " wants to pair") + '">' +
+    '<div class="ap-head">' + PH_ICON + '<div class="grow"><b>' + esc(c.name) + '</b> <span class="chip">' + esc(phPlatform(c.platform)) + '</span><div class="small muted">wants to pair with this PC</div></div><span class="ap-time" data-ph-exp="' + Number(c.expiresAt) + '" title="time left to confirm"></span></div>' +
+    '<div class="ph-match"><div><div class="small muted">Matching code</div><output aria-label="Matching code ' + esc(code.split("").join(" ")) + '">' + esc(code.slice(0, 3) + " " + code.slice(3)) + "</output></div>" +
+    "<p>Pair only if your phone shows exactly this code. If it differs, deny: someone else may have scanned the QR.</p></div>" +
+    '<fieldset class="ph-scope"><legend>What this phone can see</legend>' +
+    opt("all", "This whole PC", "All sessions, jobs and owner questions, including new ones.") +
+    opt("project", "Only these projects", "Each project's current and future sessions and jobs, and its owner questions.", projectList) +
+    '<details class="ph-adv" data-ph="adv"' + (s.adv || s.mode === "sessions" ? " open" : "") + "><summary>Advanced</summary>" +
+    opt("sessions", "Only these sessions", "Exactly the chosen live sessions. A restarted session, new sessions, jobs and owner questions are not included.", sessionList) + "</details></fieldset>" +
+    '<div class="ph-toggle-row"><label class="toggle ph-toggle"><input type="checkbox" data-ph="answers"' + (s.answers && s.mode !== "sessions" ? " checked" : "") + (s.mode === "sessions" ? " disabled" : "") + '><span class="track" aria-hidden="true"></span>Let this phone answer owner questions</label>' +
+    "<small>" + (s.mode === "sessions" ? "Not available when only sessions are shared." : "Answers are recorded as yours. They never approve tool permissions.") + "</small></div>" +
+    '<div class="ph-actions"><button type="button" data-ph="confirm"' + (phValid(s, c) && !s.busy ? "" : " disabled") + ">Codes match, pair phone</button>" +
+    '<button type="button" class="ghost danger" data-ph="deny"' + (s.busy || c.expiresAt <= Date.now() ? " disabled" : "") + '>Deny</button><span class="ph-hint" data-ph-hint>' + esc(phHint(s, c)) + "</span></div>" +
+    '<div class="note' + (s.note && s.note.err ? " err" : "") + '" role="status">' + esc(s.note ? s.note.text : "") + "</div></div>";
+}
+const phPending = () => ph.pending.slice().sort((a, b) => a.expiresAt - b.expiresAt);
+function phClaimsKey(list) {
+  return list.length ? JSON.stringify([list.map((c) => { const s = phState(c.claimId); return [c.claimId, c.comparisonCode, s.mode, [...s.projects], [...s.sessions], s.answers, s.adv, s.note, s.busy]; }), ph.catalog.projects, ph.catalog.sessions]) : "none";
+}
+function phRenderClaims(force) {
+  const list = phPending();
+  $("phClaimsN").textContent = list.length || "";
+  const key = phClaimsKey(list);
+  if (force) phKeys.phClaims = null;
+  const active = document.activeElement, card = active && active.closest && active.closest("[data-claim]");
+  const focus = card ? { claim: card.dataset.claim, ph: active.dataset.ph, value: active.value } : null;
+  const changed = phSet("phClaims", key, list.length ? list.map(phClaimHtml).join("")
+    : '<div class="panel empty small">No phone is waiting. After a phone scans the QR, it appears here so you can compare codes and choose what it can see.</div>');
+  if (changed && focus) {
+    const box = [...document.querySelectorAll("#phClaims [data-claim]")].find((el) => el.dataset.claim === focus.claim);
+    const el = box && [...box.querySelectorAll("[data-ph]")].find((x) => x.dataset.ph === focus.ph && (x.value === focus.value || x.tagName !== "INPUT"));
+    if (el) el.focus();
+  }
+}
+function phAccess(a) {
+  if (!a) return "";
+  const what = a.scope === "all" ? "Whole PC" : a.scope === "project" ? (a.projects === 1 ? "1 project" : a.projects + " projects") + (a.sessions ? " + " + plural(a.sessions, "session") : "")
+    : [a.sessions ? plural(a.sessions, "session") : "", a.jobs ? plural(a.jobs, "job") : "", a.projects ? "questions of " + plural(a.projects, "project") : ""].filter(Boolean).join(", ") || "Nothing selected";
+  return what + " · " + (a.answers ? "can answer owner questions" : "read only");
+}
+function phDeviceRow(d) {
+  const acts = d.revoked ? "" : phRevokeAsk === d.id
+    ? '<span class="small">Revoke ' + esc(d.name) + '? It loses access at once. Pairing again needs a new QR.</span><button type="button" class="danger" data-ph="revoke" data-id="' + esc(d.id) + '">Revoke</button><button type="button" class="ghost" data-ph="revoke-cancel">Keep</button>'
+    : '<button type="button" class="ghost danger" data-ph="revoke-ask" data-id="' + esc(d.id) + '" aria-label="Revoke ' + esc(d.name) + '">Revoke</button>';
+  return '<div class="peer-row">' + PH_ICON + '<div class="grow"><div class="peer-name"><b>' + esc(d.name) + '</b><span class="pill ' + (d.revoked ? "interrupted" : "done") + '">' + (d.revoked ? "revoked" : "paired") + '</span><span class="chip">' + esc(phPlatform(d.platform)) + "</span></div>" +
+    '<div class="small muted">' + esc(phAccess(d.access)) + (d.pairedAt ? " · paired " + esc(ago(d.pairedAt)) : "") + '</div></div><div class="acts">' + acts + "</div></div>";
+}
+function phRenderDevices() {
+  const all = ph.devices.slice().sort((a, b) => (b.pairedAt || 0) - (a.pairedAt || 0));
+  const live = all.filter((d) => !d.revoked), revoked = all.filter((d) => d.revoked);
+  $("phDevicesN").textContent = live.length || "";
+  const html = (live.length ? live.map(phDeviceRow).join("") : '<div class="empty">No phones paired yet. Create a pairing QR to add one.</div>') +
+    (revoked.length ? '<details class="ph-archive" data-ph="revoked"' + (phRevokedOpen ? " open" : "") + "><summary>Revoked phones (" + revoked.length + ")</summary>" + revoked.map(phDeviceRow).join("") + "</details>" : "");
+  // The revoked list's open state is not part of the key: toggling it never rebuilds the rows.
+  phSet("phDevices", html.replace(' open><summary>Revoked', "><summary>Revoked"), html);
+}
+function phTick() {
+  const now = Date.now();
+  if (phQr && !phQr.claimed) {
+    const left = phQr.expiresAt - now;
+    if (left <= 0 && phKeys.phPair && phKeys.phPair.startsWith("active")) { phRenderPair(); phNotice("The pairing QR expired. Create a new one when the phone is ready."); }
+    const c = $("phCountdown"), bar = $("phBar");
+    if (c) c.textContent = mmss(left);
+    if (bar) bar.style.width = Math.max(0, Math.min(100, (left / 120000) * 100)) + "%";
+  }
+  for (const el of document.querySelectorAll("#phClaims [data-ph-exp]")) {
+    const left = Number(el.dataset.phExp) - now;
+    el.textContent = left > 0 ? mmss(left) + " left" : "expired";
+    if (left <= 0) {
+      const card = el.closest("[data-claim]");
+      for (const button of card.querySelectorAll('[data-ph="confirm"], [data-ph="deny"]')) button.disabled = true;
+      card.querySelector("[data-ph-hint]").textContent = "This claim expired. Scan a new QR to pair.";
+    }
+  }
+}
+async function phStatusCheck() {
+  try {
+    const r = await fetch("/api/mobile/status", { credentials: "same-origin", redirect: "error", cache: "no-store" });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.state === "ready") location.reload();
+  } catch {}
+}
+
+$("phones").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-ph], button#phRecheck");
+  if (!b) return;
+  if (b.id === "phRecheck") { b.disabled = true; await phStatusCheck(); b.disabled = false; return; }
+  const act = b.dataset.ph, card = b.closest("[data-claim]"), claim = card && ph && ph.pending.find((c) => c.claimId === card.dataset.claim);
+  if (act === "invite") {
+    if (phWrites.has("invite")) return;
+    phWrites.add("invite");
+    b.disabled = true; phNotice("");
+    try {
+      const d = await phSend("/api/mobile/invitations", "POST", {});
+      if (!d || !d.qrSvg) throw Object.assign(new Error("replayed"), { code: "pairing_conflict" });
+      phQr = { id: d.qr.invitationId, svg: d.qrSvg, expiresAt: d.qr.expiresAt, before: new Set((ph.pending || []).map((c) => c.claimId)), claimed: false };
+      phRenderPair(); phTick();
+      const img = document.querySelector("#phPair .ph-qr-img"); if (img) img.setAttribute("tabindex", "-1");
+      const hide = document.querySelector('#phPair [data-ph="hide-qr"]'); if (hide) hide.focus();
+    } catch (err) { phNotice("QR request: " + phMessage(err), "err"); b.disabled = false; }
+    finally { phWrites.delete("invite"); }
+    return;
+  }
+  if (act === "hide-qr") { phQr = null; phRenderPair(); const n = document.querySelector('#phPair [data-ph="invite"]'); if (n) n.focus(); return; }
+  if (act === "revoke-ask") { phRevokeAsk = b.dataset.id; phRenderDevices(); const k = document.querySelector('#phDevices [data-ph="revoke-cancel"]'); if (k) k.focus(); return; }
+  if (act === "revoke-cancel") { const id = phRevokeAsk; phRevokeAsk = null; phRenderDevices(); const r = [...document.querySelectorAll('#phDevices [data-ph="revoke-ask"]')].find((x) => x.dataset.id === id); if (r) r.focus(); return; }
+  if (act === "revoke") {
+    const write = "revoke:" + b.dataset.id;
+    if (phWrites.has(write)) return;
+    phWrites.add(write);
+    const d = ph.devices.find((x) => x.id === b.dataset.id);
+    b.disabled = true;
+    try { await phSend("/api/mobile/devices/" + encodeURIComponent(b.dataset.id), "DELETE", {}); phRevokeAsk = null; phNotice((d ? d.name : "The phone") + " is revoked and can no longer connect.", "ok"); }
+    catch (err) { phNotice("Revoke request: " + phMessage(err), "err"); b.disabled = false; }
+    finally { phWrites.delete(write); }
+    return void phLoad();
+  }
+  if (!claim) return;
+  const s = phState(claim.claimId);
+  if (act === "confirm" || act === "deny") {
+    if (s.busy || claim.expiresAt <= Date.now()) return;
+    const allow = act === "confirm";
+    if (allow && !phValid(s, claim)) return;
+    const caps = PH_CAPS.concat(s.answers && s.mode !== "sessions" ? ["questions.answer"] : []), pcId = ph.catalog.pcId;
+    const grant = s.mode === "all" ? { pcId, scope: "all", projectIds: [], sessionIds: [], jobIds: [], capabilities: caps }
+      : s.mode === "project" ? { pcId, scope: "project", projectIds: [...s.projects], sessionIds: [], jobIds: [], capabilities: caps }
+      : { pcId, projectIds: [], sessionIds: [...s.sessions], jobIds: [], capabilities: caps };
+    s.busy = true; s.note = { text: allow ? "Pairing…" : "Denying…" }; phRenderClaims();
+    try {
+      await phSend("/api/mobile/claims/" + encodeURIComponent(claim.claimId), "POST", { comparisonCode: claim.comparisonCode, allow, grants: allow ? [grant] : [] });
+      phSel.delete(claim.claimId);
+      phNotice(allow ? claim.name + " is paired. It appears under Paired phones once the app finishes." : claim.name + " was denied.", "ok");
+      if (phQr && phQr.claimed) phQr = null;
+    } catch (err) { s.busy = false; s.note = { text: (allow ? "Pair request: " : "Deny request: ") + phMessage(err), err: true }; phRenderClaims(); }
+    return void phLoad();
+  }
+});
+$("phones").addEventListener("change", (e) => {
+  const el = e.target, card = el.closest && el.closest("[data-claim]");
+  if (!card) return;
+  const s = phState(card.dataset.claim);
+  if (s.busy) return;
+  if (el.dataset.ph === "mode") { s.mode = el.value; s.note = null; return phRenderClaims(true); }
+  if (el.dataset.ph === "answers") s.answers = el.checked;
+  else if (el.dataset.ph === "project" || el.dataset.ph === "session") { const set = el.dataset.ph === "project" ? s.projects : s.sessions; if (el.checked) set.add(el.value); else set.delete(el.value); }
+  else return;
+  // The controls already show the choice: update the button and hint in place, so focus stays put.
+  const btn = card.querySelector('[data-ph="confirm"]'), hint = card.querySelector("[data-ph-hint]");
+  const claim = ph.pending.find((c) => c.claimId === card.dataset.claim);
+  if (btn) btn.disabled = !claim || !phValid(s, claim) || s.busy;
+  if (hint) hint.textContent = phHint(s, claim);
+  phKeys.phClaims = phClaimsKey(phPending());
+});
+$("phones").addEventListener("toggle", (e) => {
+  const el = e.target;
+  if (el.dataset && el.dataset.ph === "revoked") phRevokedOpen = el.open;
+  if (el.dataset && el.dataset.ph === "adv") { const card = el.closest("[data-claim]"); if (card && ph) { phState(card.dataset.claim).adv = el.open; phKeys.phClaims = phClaimsKey(phPending()); } }
+}, true);
+window.addEventListener("hashchange", () => { if (phOn()) { phApply(); if (PH_READY) void phLoad(); else void phStatusCheck(); } });
+
+setInterval(() => {
+  phTick();
+  const now = Date.now();
+  if (PH_READY) { if ((phOn() || (phQr && phQr.expiresAt > now) || (ph && ph.pending.length)) && now - phLoadedAt >= PH_POLL_MS) void phLoad(); }
+  else if (phOn() && now - phStatusAt >= 5000) { phStatusAt = now; void phStatusCheck(); }
+}, 1000);
+phApply();
+if (PH_READY) void phLoad();
+})();
+</script>
+`;
+}
 export function mobileDashboardPage(ready: boolean, unavailable?: string): string {
-  if (ready) return UI_PAGE.replace('<nav class="side-nav">', '<nav class="side-nav"><a href="/mobile/phones" id="tabPhones"><span class="ico" aria-hidden="true">▣</span>Phones</a>');
-  return unavailable === undefined ? UI_PAGE : UI_PAGE.replace('<nav class="side-nav">', '<nav class="side-nav"><p id="phonesStatus" role="status">Phones unavailable: ' + safeMobileStatus(unavailable) + '</p>');
+  if (!ready && unavailable === undefined) return UI_PAGE;
+  const status = ready ? "ready" : safeMobileStatus(unavailable);
+  return UI_PAGE.replace("</style>", () => PHONES_CSS + "</style>")
+    .replace('    <a href="#/decisions" id="tabDecisions">', () => '    <a href="#/phones" id="tabPhones"><span class="ico" aria-hidden="true">▯</span>Phones</a>\n    <a href="#/decisions" id="tabDecisions">')
+    .replace("</main>", () => (ready ? PHONES_READY_HTML : phonesUnavailableHtml(status)) + "</main>")
+    .replace("</body>", () => phonesScript(status) + "</body>");
 }
 
 /**
@@ -40,7 +434,7 @@ export const UI_PAGE = `<!doctype html>
   --accent: #4f46e5; --accent-soft: #eef0ff; --on-accent: #ffffff; --ok: #15803d; --ok-soft: #e8f6ed; --warn: #b45309; --warn-soft: #fdf3e2;
   /* One blue: "working" uses the accent, so selection, chips, badges and bubbles share a single hue. */
   --bad: #c2410c; --bad-soft: #fdeee6; --busy: var(--accent); --busy-soft: var(--accent-soft);
-  --claude: #d97757; --codex: #0f9d76; --opencode: #3b82f6; --antigravity: #a78bfa; --other: #8b93a5;
+  --claude: #d97757; --codex: #0f9d76; --opencode: #3b82f6; --antigravity: #a78bfa; --muse: #f472b6; --other: #8b93a5;
   --shadow: 0 1px 2px rgba(16, 24, 40, .05);
   --pop: 0 16px 40px rgba(16, 24, 40, .16);
   --sans: "Segoe UI Variable Text", "Segoe UI Variable", "SF Pro Text", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -137,7 +531,7 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .dot.off { background: var(--faint); }
 .av { width: 34px; height: 34px; border-radius: 9px; flex: none; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 14px; background: var(--other); }
 .av.sm { width: 26px; height: 26px; border-radius: 7px; font-size: 12px; }
-.av.claude { background: var(--claude); } .av.codex { background: var(--codex); } .av.opencode { background: var(--opencode); } .av.antigravity { background: var(--antigravity); }
+.av.claude { background: var(--claude); } .av.codex { background: var(--codex); } .av.opencode { background: var(--opencode); } .av.antigravity { background: var(--antigravity); } .av.muse { background: var(--muse); }
 .pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .pill.running { background: var(--busy-soft); color: var(--busy); }
 .pill.done { background: var(--ok-soft); color: var(--ok); }
@@ -758,7 +1152,7 @@ form#send select#to {
           <button type="button" role="radio" aria-checked="true" data-v="">Everything</button><button type="button" role="radio" aria-checked="false" data-v="message">Messages</button><button type="button" role="radio" aria-checked="false" data-v="run">Subagent runs</button><button type="button" role="radio" aria-checked="false" data-v="question">Questions</button><button type="button" role="radio" aria-checked="false" data-v="decision">Decisions</button><button type="button" role="radio" aria-checked="false" data-v="transcript">Chats</button>
         </div>
         <div class="seg" role="radiogroup" aria-label="Agent" data-seg="sAgent">
-          <button type="button" role="radio" aria-checked="true" data-v="">All agents</button><button type="button" role="radio" aria-checked="false" data-v="claude">Claude</button><button type="button" role="radio" aria-checked="false" data-v="codex">Codex</button><button type="button" role="radio" aria-checked="false" data-v="opencode">opencode</button><button type="button" role="radio" aria-checked="false" data-v="antigravity">Antigravity</button>
+          <button type="button" role="radio" aria-checked="true" data-v="">All agents</button><button type="button" role="radio" aria-checked="false" data-v="claude">Claude</button><button type="button" role="radio" aria-checked="false" data-v="codex">Codex</button><button type="button" role="radio" aria-checked="false" data-v="opencode">opencode</button><button type="button" role="radio" aria-checked="false" data-v="antigravity">Antigravity</button><button type="button" role="radio" aria-checked="false" data-v="muse">Muse</button>
         </div>
         <label class="toggle" title="A low-cost model (Haiku, Luna or a free opencode model) reads the top results and answers with sources"><input type="checkbox" id="sAnswer"><span class="track" aria-hidden="true"></span>Summarize</label>
         <input type="hidden" id="sKind" value=""><input type="hidden" id="sAgent" value="">
@@ -939,6 +1333,7 @@ const PERMISSIONS = {
   claude: { key: "permission_mode", options: [["manual", "manual · asks first"], ["plan", "plan · plans only"], ["acceptEdits", "acceptEdits · edits files"], ["auto", "auto · decides itself"], ["bypassPermissions", "bypassPermissions · anything"]] },
   opencode: { key: "auto_approve", options: [["false", "asks first"], ["true", "auto-approve · anything"]] },
   antigravity: { key: "access", options: [["read", "read · looks only"], ["ask", "ask · forwards approvals"], ["edit", "edit · native permissions"]] },
+  muse: { key: "access", options: [["read", "read · looks only"], ["ask", "ask · forwards approvals"], ["edit", "edit · native permissions"]] },
 };
 /** The permission a job's saved settings give its next turn, named like the run's own permission. */
 function nextPermission(next) {
@@ -1377,7 +1772,7 @@ function projectSidebar(items) {
 /** One session inside a shared project: the agent is the label, the main one is marked, a secondary is quieter. */
 function sideMember(x) {
   const p = x.peer || {}, cur = x.name === route.session, main = !!p.projectMain;
-  const agent = { claude: "Claude", codex: "Codex", opencode: "opencode", antigravity: "Antigravity" }[p.agent] || p.agent || "session";
+  const agent = { claude: "Claude", codex: "Codex", opencode: "opencode", antigravity: "Antigravity", muse: "Muse" }[p.agent] || p.agent || "session";
   const state = p.unavailable ? "unavailable" : p.activity || "connected";
   return '<div class="tree-sess member' + (main ? " main" : " secondary") + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
     '<a href="' + href(x.name) + '" title="' + esc(x.name + (p.cwd ? " · " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + dot(p.activity) +
@@ -1639,7 +2034,7 @@ function renderChatForm(x, key) {
   if (!next) return;
   const peer = x.peer || {}, remote = Boolean(pcOf(x.name) || peer.host), child = key !== CHAT_KEY;
   const jobChild = key.startsWith(JOB_CHILD_PREFIX);
-  const supported = Boolean(x.live && !remote && ["claude", "codex", "opencode", "antigravity"].includes(peer.agent));
+  const supported = Boolean(x.live && !remote && ["claude", "codex", "opencode", "antigravity", "muse"].includes(peer.agent));
   const direct = supported && (!child || (peer.agent === "codex" && !jobChild));
   $("chatBody").disabled = !supported;
   $("chatSendBtn").classList.toggle("hidden", child && !direct);
@@ -1652,7 +2047,7 @@ function renderChatForm(x, key) {
       : child ? direct ? "Native input when the CLI supports its live child thread. Parent delivery is also available."
         : "Not supported: direct input to this native subagent. Send to its parent with a note about it."
         : peer.agent === "codex" ? "Native user prompt, queued until idle. A labeled bridge message is the fallback."
-          : peer.agent === "antigravity" ? "Sent as you (owner) through the bridge. Idle mail waits for the next turn or inbox read."
+          : ["antigravity", "muse"].includes(peer.agent) ? "Sent as you (owner) through the bridge. Idle mail waits for the next turn or inbox read."
             : "Sent as you (owner) through the CLI's existing channel or prompt delivery. Wake preferences apply.";
   $("chatSendInfo").textContent = (chatResults.get(next) || {}).text || "";
   void refreshChatReceipt(next);
@@ -2088,7 +2483,7 @@ $("handoffToggle").addEventListener("click", () => {
   handoffSource = route.session; handoffTarget = null;
   $("handoffNote").value = ""; $("handoffSubmit").disabled = true;
   $("handoffInfo").textContent = "Choose the session that will supervise these jobs.";
-  const targets = state.peers.filter((p) => p.name !== handoffSource && !p.subagent && !p.host && !p.name.includes("/") && ["claude", "codex", "opencode", "antigravity"].includes(p.agent));
+  const targets = state.peers.filter((p) => p.name !== handoffSource && !p.subagent && !p.host && !p.name.includes("/") && ["claude", "codex", "opencode", "antigravity", "muse"].includes(p.agent));
   $("handoffTargets").innerHTML = targets.length ? targets.map((p) => '<button type="button" class="handoff-target" aria-pressed="false" data-handoff-target="' + esc(p.name) + '">' + av(p.agent) + '<span><b>' + esc(p.name) + '</b><span class="small muted"> · ' + esc(p.agent + " · " + (p.activity || "connected")) + '</span></span></button>').join("") : '<div class="empty">No other live local sessions.</div>';
   $("handoffForm").classList.remove("hidden");
   $("handoffToggle").setAttribute("aria-expanded", "true");

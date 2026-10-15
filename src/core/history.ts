@@ -9,6 +9,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { z } from "zod";
 import { claudeItems } from "./transcripts/claude.js";
 import { antigravityItems } from "./transcripts/antigravity.js";
+import { museItems } from "./transcripts/muse.js";
 import { codexItems } from "./transcripts/codex.js";
 import { readTranscript, transcriptPaths, type TranscriptPaths, type TranscriptItem } from "./transcripts/index.js";
 import { object, parse, readHead, readJsonl, safeFile, TRANSCRIPT_ID } from "./transcripts/common.js";
@@ -100,7 +101,7 @@ export class HistoryIndex {
   rememberPeer(peer: Pick<PeerInfo, "id" | "name" | "sessionId"> & Partial<Pick<PeerInfo, "cwd" | "agent">>): void {
     if (this.peerSink) { this.peerSink(peer); return; }
     if (!peer.sessionId) return;
-    const job = /^(claude|codex|opencode|antigravity)-job-/.test(peer.name) ? peer.name : null;
+    const job = /^(claude|codex|opencode|antigravity|muse)-job-/.test(peer.name) ? peer.name : null;
     for (const alias of [peer.id, peer.name, peer.sessionId]) this.rememberSession(alias, peer.sessionId, job);
     if (peer.cwd && peer.agent && this.db.prepare("SELECT name FROM sqlite_master WHERE name='conversation_bindings'").get()) {
       this.db.prepare(`INSERT INTO conversation_bindings(session,agent,cwd,job) VALUES(?,?,?,?) ON CONFLICT(session,agent) DO UPDATE SET cwd=excluded.cwd,job=coalesce(excluded.job,conversation_bindings.job),pending=1`).run(peer.sessionId,peer.agent,peer.cwd,job);
@@ -142,7 +143,7 @@ export class HistoryIndex {
   }
   private message(row: Record<string, any>): void {
     const sessions = [row.from_id, row.from_name, row.recipient, row.to_target].filter((s): s is string => typeof s === "string");
-    const jobs = sessions.filter((s) => /^(claude|codex|opencode|antigravity)-job-/.test(s));
+    const jobs = sessions.filter((s) => /^(claude|codex|opencode|antigravity|muse)-job-/.test(s));
     this.put({ id: `message:${row.id}`, kind: "message", agent: row.from_agent, at: Number(row.created_at), body: row.body,
       link: `/?message=${enc(row.id)}`, message: row.id, job: jobs[0] ?? null, run: null, session: row.from_id, cursor: null }, sessions, jobs);
   }
@@ -300,6 +301,7 @@ export class HistoryIndex {
         { path: join(this.home!, "runs"), root: join(this.home!, "runs"), kind: "run", agent: "other" },
         { path: join(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
         ...(this.paths.antigravity ? [{ path: join(this.paths.antigravity, "brain"), root: this.paths.antigravity, kind: "transcript", agent: "antigravity" }] : []),
+        ...(this.paths.muse ? [{ path: join(this.paths.muse, "sessions"), root: this.paths.muse, kind: "transcript", agent: "muse" }] : []),
         ...["sessions", "archived_sessions"].map((dir) => ({ path: join(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" })),
       ];
     }
@@ -318,13 +320,14 @@ export class HistoryIndex {
       if ((entry.kind === "context" && item.name.endsWith(".jsonl")) || (entry.kind === "approval" && /^.*\.json(?:-.*)?$/.test(item.name) && (entry.path.includes("approvals") || /^.*approval/.test(item.name)))) {
         this.register({path,kind:entry.kind,agent:"other",session:null,cwd:"",child:null});
       } else if (entry.kind === "run" && /\.(?:log|json)(?:-\d+-[\w-]+)?$/.test(item.name)) {
-        this.register({ path, kind: "run", agent: /-(claude|codex|opencode|antigravity)-/.exec(item.name)?.[1] ?? "other", session: null, cwd: "", child: null });
+        this.register({ path, kind: "run", agent: /-(claude|codex|opencode|antigravity|muse)-/.exec(item.name)?.[1] ?? "other", session: null, cwd: "", child: null });
       } else if (entry.kind === "transcript" && item.name.endsWith(".jsonl")) {
         if (entry.agent === "antigravity" && item.name !== "transcript.jsonl") continue;
+        if (entry.agent === "muse" && item.name !== "session.jsonl") continue;
         const head = this.head(path), meta = entry.agent === "codex" ? object(head.payload) : head;
         // Forked Codex files may begin with ancestor metadata; the filename owns this session.
         const rolloutId = entry.agent === "codex" ? /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(item.name)?.[1] : undefined;
-        const id = entry.agent === "antigravity" ? basename(dirname(dirname(entry.path))) : rolloutId ?? (typeof meta.id === "string" ? meta.id : typeof meta.sessionId === "string" ? meta.sessionId : basename(path, ".jsonl"));
+        const id = entry.agent === "antigravity" ? basename(dirname(dirname(entry.path))) : entry.agent === "muse" ? basename(entry.path) : rolloutId ?? (typeof meta.id === "string" ? meta.id : typeof meta.sessionId === "string" ? meta.sessionId : basename(path, ".jsonl"));
         if (!TRANSCRIPT_ID.test(id)) continue;
         const child = entry.agent === "claude" && basename(entry.path) === "subagents" ? basename(path, ".jsonl").replace(/^agent-/, "") : null;
         this.register({ path, kind: "transcript", agent: entry.agent, session: child ? basename(dirname(entry.path)) : id, cwd: typeof meta.cwd === "string" ? meta.cwd : "", child });
@@ -359,7 +362,7 @@ export class HistoryIndex {
     for (const row of rows) {
       const file = typeof row.file === "string" ? row.file : "";
       if (!RUN_FILE.test(file) || !safeFile(cold, file)) continue;
-      this.register({ path: file, kind: "run", agent: /-(claude|codex|opencode|antigravity)-/.exec(String(row.key))?.[1] ?? "other", session: null, cwd: "", child: null });
+      this.register({ path: file, kind: "run", agent: /-(claude|codex|opencode|antigravity|muse)-/.exec(String(row.key))?.[1] ?? "other", session: null, cwd: "", child: null });
     }
     this.advance("packed-run-discovery", rows.length ? String(rows.at(-1)!.key) : "0");
     if (!rows.length) this.packedComplete = true;
@@ -380,7 +383,7 @@ export class HistoryIndex {
   private indexFile(file: FileRow): number {
     if (file.kind === "context" || file.kind === "approval" || (file.kind === "run" && /\.json(?:-.*)?$/.test(file.path))) return 0;
     if (file.agent !== "opencode") {
-      const root = file.kind === "run" ? this.runRoot(file.path) : this.paths[file.agent as "claude" | "codex" | "antigravity"];
+      const root = file.kind === "run" ? this.runRoot(file.path) : this.paths[file.agent as "claude" | "codex" | "antigravity" | "muse"];
       if (!root) return 0;
       if (!safeFile(root, file.path)) return 0;
     }
@@ -400,7 +403,7 @@ export class HistoryIndex {
       for (const row of page.entries) {
         const target = file.agent === "claude" && row.value.isSidechain === true && typeof row.value.agentId === "string" && TRANSCRIPT_ID.test(row.value.agentId) ? { ...file, child: row.value.agentId } : file;
         if (typeof start === "number" && typeof row.value.ordinal === "number" && row.value.ordinal < start) continue;
-        const items = file.agent === "antigravity" ? antigravityItems(row.value) : file.agent === "claude" ? claudeItems(row.value) : codexItems(row.value);
+        const items = file.agent === "antigravity" ? antigravityItems(row.value) : file.agent === "muse" ? museItems(row.value) : file.agent === "claude" ? claudeItems(row.value) : codexItems(row.value);
         items.forEach((item, i) => this.transcript(target, item, `j:${row.offset}:0`, i));
       }
       this.advance(file.path, page.next);

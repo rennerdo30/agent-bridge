@@ -61,7 +61,7 @@ export function Avatar({ agent, small = false }: { agent: string; small?: boolea
         borderRadius: tokens.radius.avatar,
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: ["claude", "codex", "opencode", "antigravity"].includes(agent)
+        backgroundColor: ["claude", "codex", "opencode", "antigravity", "muse"].includes(agent)
           ? tokens.agent[agent as "claude"]
           : tokens.agent.other,
       }}

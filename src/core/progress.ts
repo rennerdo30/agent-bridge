@@ -135,11 +135,27 @@ export function describeAntigravityEvent(ev: any): Step | null {
   return { kind, id, ...txt(`${name}${detail ? `: ${detail}` : ""}`) };
 }
 
+/** `muse exec --json` session-log records. */
+export function describeMuseEvent(ev: any): Step | null {
+  const payload = ev?.payload ?? {};
+  if (ev?.payload_type === "tool_batch.effect.started") {
+    const rec = payload.record ?? {};
+    if (typeof rec.tool_name === "string" && rec.tool_name) return { kind: kindOfTool(rec.tool_name), ...txt(`tool ${rec.tool_name}`), id: typeof rec.effect_id === "string" ? rec.effect_id : undefined };
+  }
+  if (ev?.payload_type === "run.output.delta" && typeof payload.text === "string") return say(payload.text);
+  if (ev?.payload_type === "task.lifecycle.failed") {
+    const reason = typeof payload.event?.reason === "string" ? payload.event.reason : "task failed";
+    return { kind: "failure", ...txt(`failed: ${reason}`) };
+  }
+  return null;
+}
+
 const DESCRIBERS: Record<CodingAgent, (ev: any) => Step | null> = {
   antigravity: describeAntigravityEvent,
   codex: describeCodexEvent,
   claude: describeClaudeEvent,
   opencode: describeOpencodeEvent,
+  muse: describeMuseEvent,
 };
 
 function formatElapsed(ms: number): string {

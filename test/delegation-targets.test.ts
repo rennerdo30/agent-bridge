@@ -7,9 +7,9 @@ import { nullLogger } from "../src/core/logger.js";
 import { type CodingAgent } from "../src/core/protocol.js";
 import { delegationTargets, registerTools, type ServerContext } from "../src/mcp/server.js";
 
-const kinds: CodingAgent[] = ["claude", "codex", "opencode", "antigravity"];
-const inventory = ["ask_antigravity", "ask_claude", "ask_codex", "ask_opencode",
-  "spawn_antigravity", "spawn_claude", "spawn_codex", "spawn_opencode"];
+const kinds: CodingAgent[] = ["claude", "codex", "opencode", "antigravity", "muse"];
+const inventory = ["ask_antigravity", "ask_claude", "ask_codex", "ask_muse", "ask_opencode",
+  "spawn_antigravity", "spawn_claude", "spawn_codex", "spawn_muse", "spawn_opencode"];
 afterEach(() => vi.unstubAllEnvs());
 
 async function registeredInventory(agent: CodingAgent) {
@@ -25,7 +25,7 @@ async function registeredInventory(agent: CodingAgent) {
   try {
     await Promise.all([server.connect(a), client.connect(b)]);
     const names = (await client.listTools()).tools.map((tool) => tool.name);
-    return names.filter((name) => /^(ask|spawn)_(claude|codex|opencode|antigravity)$/.test(name)).sort();
+    return names.filter((name) => /^(ask|spawn)_(claude|codex|opencode|antigravity|muse)$/.test(name)).sort();
   } finally { await client.close(); await server.close(); }
 }
 
