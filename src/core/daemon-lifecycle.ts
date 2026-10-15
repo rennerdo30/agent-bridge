@@ -70,6 +70,55 @@ export class LifecycleUnavailable extends Error {
   }
 }
 function fail(reason: LifecycleUnavailable["reason"]): never { throw new LifecycleUnavailable(reason); }
+/** Historical call/observation facts only, never a receipt, retry or ownership permit. */
+export type LifecycleWriteOutcome = Readonly<{
+  acknowledgement: "unknown";
+  commit: "call_returned" | "call_threw_or_unreturned";
+  observation: "not_completed" | "expected_snapshot_observed";
+  stoppedAt: "commit" | "post_commit_guard" | "autocommit" | "committed_read" | "final_deadline" | "phase_return";
+  cause: "deadline" | "authority_or_lineage" | "observation" | "commit_exception";
+  followUp: "held";
+}>;
+type WriteAttempt = {
+  readonly writer: DatabaseSync;
+  readonly deadline: number;
+  readonly effect: "admission" | "advance" | "conflict";
+  readonly restartId: string;
+  readonly revision: number;
+  readonly requestDigest: string;
+  commit: "not_attempted" | LifecycleWriteOutcome["commit"];
+  stage: LifecycleWriteOutcome["stoppedAt"];
+  observed: boolean;
+  knownConflict: boolean;
+  failure?: LifecycleUnavailable;
+  failureCause?: unknown;
+};
+const writeOutcomes = new WeakMap<object, LifecycleWriteOutcome>();
+// Strongly retain the exact owner/resources after an unconfirmed publication.
+// Bounded observation must not discard unknown native connections or their owner.
+const unconfirmedPublications = new Map<WriteAttempt, LifecycleJournal>();
+export function observeLifecycleWriteOutcome(error: unknown): LifecycleWriteOutcome | null {
+  // No property access, deserialization or caller-supplied fields establish provenance.
+  // No association is absence of evidence, never permission to retry a write.
+  return typeof error === "object" && error !== null ? writeOutcomes.get(error) ?? null : null;
+}
+// Module-private association: no public constructor, method or caller DTO can mint it.
+function unconfirmedWrite(journal: LifecycleJournal, attempt: WriteAttempt, error: unknown): LifecycleUnavailable {
+  unconfirmedPublications.set(attempt, journal);
+  // Only this invocation's own wrapper can pass through the outer phase catch.
+  // A source-associated error from another invocation is not this attempt's evidence.
+  if (attempt.failure && error === attempt.failure) return attempt.failure;
+  const cause: LifecycleWriteOutcome["cause"] = attempt.stage === "commit" ? "commit_exception"
+    : error instanceof LifecycleUnavailable && error.reason === "budget" ? "deadline"
+    : attempt.stage === "autocommit" || attempt.stage === "committed_read" ? "observation" : "authority_or_lineage";
+  const unavailable = new LifecycleUnavailable("writer_unknown");
+  attempt.failureCause = error; attempt.failure = unavailable;
+  writeOutcomes.set(unavailable, Object.freeze({ acknowledgement: "unknown",
+    commit: attempt.commit === "call_returned" ? "call_returned" : "call_threw_or_unreturned",
+    observation: attempt.observed ? "expected_snapshot_observed" : "not_completed",
+    stoppedAt: attempt.stage, cause, followUp: "held" }));
+  return unavailable;
+}
 function digest(value: unknown): string {
   const canonical = (v: unknown): unknown => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object"
     ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b, "en")).map(([k, item]) => [k, canonical(item)])) : v;
@@ -153,7 +202,12 @@ function closeReadConnection(db: DatabaseSync): void {
 }
 function readConnection(file: string, exclusivelyNewGuard?: () => void, deadline?: number,
   owner?: Set<ReadConnectionRecord>, unknown?: () => void): DatabaseSync {
-  try { if (exclusivelyNewGuard) exclusivelyNewGuard(); else { privatePath(dirname(file), true); privatePath(file, false); privatePath(file + "-journal", false); } }
+  try {
+    exclusivelyNewGuard?.();
+    // A portable deadline guard is not Windows path/ACL proof. Preserve the
+    // original portable private-path checks before every native reader open.
+    if (!exclusivelyNewGuard || process.platform !== "win32") { privatePath(dirname(file), true); privatePath(file, false); privatePath(file + "-journal", false); }
+  }
   catch { fail("lineage_unknown"); }
   const before = identity(file);
   let db: DatabaseSync;
@@ -239,7 +293,8 @@ const failedBootstrapFlushDescriptors = new Set<number>();
 export class LifecycleJournal {
   private quarantined = false;
   private servingPhaseBusy = false;
-  private servingPhase?: { phase: LifecycleServingPhase; deadline: number; guard(): void };
+  private servingPhase?: { phase: LifecycleServingPhase; deadline: number; guard(): void; write?: WriteAttempt };
+  private writeAttempt?: WriteAttempt;
   private readonly servingReaderAccess = new Set<object>();
   private readonly ownedReadonlyConnections = new Set<ReadConnectionRecord>();
   private constructor(private readonly file: string, private readonly lineage: Lineage, private readonly owner: LifecycleInstance, private readonly writer: DatabaseSync) {}
@@ -280,8 +335,14 @@ export class LifecycleJournal {
         guard(); const busy = this.writer.prepare("PRAGMA busy_timeout").get()?.timeout; guard();
         if (typeof busy !== "number" || !Number.isSafeInteger(busy) || busy < 0 || busy > BUSY_MS) fail("publication_unproved");
       }
-      const result = work(guard); guard(); return result;
+      const result = work(guard);
+      if (this.servingPhase.write) this.servingPhase.write.stage = "phase_return";
+      guard(); return result;
     } catch (error) {
+      const write = this.servingPhase?.write;
+      if (write && write.commit !== "not_attempted" && !write.knownConflict) {
+        this.quarantined = true; throw unconfirmedWrite(this, write, error);
+      }
       throw error instanceof LifecycleUnavailable ? error : new LifecycleUnavailable(
         error instanceof WindowsLifecyclePathUnavailable && error.reason === "budget" ? "budget" : "lineage_unknown");
     } finally { this.servingPhase = undefined; this.servingPhaseBusy = false; }
@@ -310,7 +371,13 @@ export class LifecycleJournal {
       return record.reader = new PreparedLifecycleReader(this.file, this.lineage, id, access);
     });
   }
-  private readerGuard(): (() => void) | undefined { return process.platform === "win32" ? this.servingPhase?.guard : undefined; }
+  private readerGuard(): (() => void) | undefined {
+    if (process.platform === "win32") return this.servingPhase?.guard;
+    const attempt = this.writeAttempt;
+    // Portable post-COMMIT verification uses the same original budget too;
+    // an expired intermediate read cannot begin the next verification SQL.
+    return attempt?.commit === "call_returned" ? () => { if (performance.now() >= attempt.deadline) fail("budget"); } : undefined;
+  }
   private readerDeadline(): number | undefined { return process.platform === "win32" ? this.servingPhase?.deadline : undefined; }
   private writerGuard(): void { if (process.platform === "win32") { if (!this.servingPhase || this.servingPhase.phase === "prepare") fail("owner_unsupported"); this.servingPhase.guard(); } }
   private writerExec(sql: string): void {
@@ -319,7 +386,12 @@ export class LifecycleJournal {
       this.writer.exec(`PRAGMA busy_timeout=${Math.max(0, Math.min(BUSY_MS, Math.floor(this.servingPhase!.deadline - performance.now())))}`);
       this.writerGuard();
     }
-    this.writer.exec(sql); this.writerGuard();
+    const write = sql === "COMMIT" ? this.writeAttempt : undefined;
+    if (sql === "COMMIT" && (!write || write.writer !== this.writer)) fail("writer_unknown");
+    if (write) { write.stage = "commit"; write.commit = "call_threw_or_unreturned"; }
+    this.writer.exec(sql);
+    if (write) { write.commit = "call_returned"; write.stage = "post_commit_guard"; }
+    this.writerGuard();
   }
   private writerRun(sql: string, ...args: SQLInputValue[]) {
     this.writerGuard(); const statement = this.writer.prepare(sql); this.writerGuard(); const result = statement.run(...args); this.writerGuard(); return result;
@@ -464,32 +536,46 @@ export class LifecycleJournal {
   preparedReader(id: string): PreparedLifecycleReader { this.requireKnownWriter(); this.verifyLineage(); return new PreparedLifecycleReader(this.file, this.lineage, id); }
   get isQuarantined(): boolean { return this.quarantined; }
   private requireKnownWriter(): void { if (this.quarantined) fail("writer_unknown"); }
-  private transaction<T>(deadline: number, work: () => T, committed: (value: T) => boolean): T {
+  private transaction<T>(deadline: number, work: () => T, committed: (value: T) => boolean,
+    publication: Pick<WriteAttempt, "effect" | "restartId" | "revision" | "requestDigest">): T {
     if (this.quarantined) fail("writer_unknown");
+    if (this.writeAttempt) fail("owner_unsupported");
     try { if (transactionState(this.writer)) fail("writer_unknown"); }
     catch { this.quarantined = true; fail("writer_unknown"); }
     if (performance.now() >= deadline) fail("budget");
     this.verifyLineage();
+    const attempt: WriteAttempt = { ...publication, writer: this.writer, deadline,
+      commit: "not_attempted", stage: "commit", observed: false, knownConflict: false };
+    this.writeAttempt = attempt;
+    if (this.servingPhase) this.servingPhase.write = attempt;
     try {
       this.writerExec("BEGIN IMMEDIATE"); const value = work();
       if (performance.now() >= deadline) fail("budget");
       this.writerExec("COMMIT");
-      if (transactionState(this.writer) || performance.now() >= deadline || !committed(value)) fail("writer_unknown");
+      attempt.stage = "autocommit";
+      if (performance.now() >= deadline) fail("budget");
+      if (transactionState(this.writer)) fail("writer_unknown");
+      if (performance.now() >= deadline) fail("budget");
+      attempt.stage = "committed_read";
+      if (!committed(value)) fail("writer_unknown");
+      attempt.observed = true; attempt.stage = "final_deadline";
+      if (performance.now() >= deadline) fail("budget");
       return value;
     } catch (error) {
       // Latch before any further observer/effect. COMMIT throw does not imply rollback.
       this.quarantined = true;
       let settled = false;
       try {
-        if (performance.now() < deadline) {
+        if (attempt.commit !== "call_returned" && performance.now() < deadline) {
           if (transactionState(this.writer)) this.writerExec("ROLLBACK");
           if (!transactionState(this.writer) && performance.now() < deadline) { this.verifyLineage(); this.read(); settled = true; }
         }
       } catch { /* unresolved locks/visibility stay quarantined, without another BEGIN/COMMIT */ }
       // Only definitely local pre-COMMIT conflicts can resume. Commit/observation failures stay latched.
+      if (attempt.commit !== "not_attempted") throw unconfirmedWrite(this, attempt, error);
       if (settled && error instanceof LifecycleUnavailable && ["revision_conflict", "receipt_conflict"].includes(error.reason)) this.quarantined = false;
       throw error instanceof LifecycleUnavailable ? error : new LifecycleUnavailable("writer_unknown");
-    }
+    } finally { this.writeAttempt = undefined; }
   }
   admit(request: LifecycleRequest, deadline: number): LifecycleReceipt {
     const parsed = z.object({ restartId: z.string().uuid(), operation: z.enum(["restart", "stop"]), oldInstance: instanceSchema, target: targetSchema }).strict().parse(request);
@@ -505,7 +591,11 @@ export class LifecycleJournal {
           const guard = this.readerGuard(), reader = readConnection(this.file, guard, this.readerDeadline(), this.ownedReadonlyConnections, () => { this.quarantined = true; });
           try { guard?.(); const found = !!reader.prepare("SELECT 1 FROM receipt_conflicts WHERE restart_id=? AND observed_digest=? AND json=?").get(parsed.restartId, value, json); guard?.(); return found; }
           finally { closeReadConnection(reader); }
-        });
+        }, { effect: "conflict", restartId: parsed.restartId, revision: existing.revision, requestDigest });
+        // This is the deliberate refusal AFTER verified conflict evidence, not
+        // an uncertain COMMIT labelled as a safe pre-COMMIT conflict.
+        const conflict = this.servingPhase?.write;
+        if (conflict?.effect === "conflict" && conflict.observed) conflict.knownConflict = true;
         fail("receipt_conflict");
       }
       return existing;
@@ -519,7 +609,8 @@ export class LifecycleJournal {
       this.writerRun("INSERT INTO receipt_revisions VALUES (?,?,?,?)", receipt.restartId, 1, requestDigest, json);
       this.writerRun("INSERT INTO selected_receipt VALUES (1,?,1) ON CONFLICT(singleton) DO UPDATE SET restart_id=excluded.restart_id,revision=excluded.revision", receipt.restartId);
       return receipt;
-    }, value => this.lookup(value.restartId)?.requestDigest === requestDigest && this.selected()?.revision === 1);
+    }, value => this.lookup(value.restartId)?.requestDigest === requestDigest && this.selected()?.revision === 1,
+      { effect: "admission", restartId: receipt.restartId, revision: 1, requestDigest });
   }
   advance(id: string, expectedRevision: number, state: LifecycleReceipt["state"], fields: Pick<LifecycleReceipt, "replacementInstance" | "checkpointManifest" | "failureCode">, deadline: number): LifecycleReceipt {
     const parsedState = z.enum(LIFECYCLE_STATES).safeParse(state), parsedFields = advanceFieldsSchema.safeParse(fields);
@@ -539,7 +630,8 @@ export class LifecycleJournal {
       const changed = this.writerRun("UPDATE selected_receipt SET revision=? WHERE singleton=1 AND restart_id=? AND revision=?", next.revision, id, expectedRevision);
       if (changed.changes !== 1) fail("revision_conflict");
       return next;
-    }, value => this.lookup(id)?.revision === value.revision && digest(this.selected()) === digest(value));
+    }, value => this.lookup(id)?.revision === value.revision && digest(this.selected()) === digest(value),
+      { effect: "advance", restartId: id, revision: next.revision, requestDigest: next.requestDigest });
   }
   close(): boolean {
     if (this.quarantined) return false;
