@@ -15,7 +15,7 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "80bd43de8b477a3675aad3ae9506b6257830edff21de0ccc294a43c8d3c9b797",
+  "uiSha256": "ce73102d79dc40a929b4444b5190f65592269a297a46d71b61e40acc6a07cc22",
   "updates": {
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
@@ -47,7 +47,8 @@
     "AB-383": {
       "base": "9d604d1eb571b432f4d0b47563dcb72d20a5790c",
       "methods": [],
-      "reason": "AB-383: startUi adds GET /api/events (Server-Sent Events from the history change feed) and closes that feed and open streams on close. The thirteen method hashes and behavioral assertions remain unchanged; only the UI hash changes."
+      "reason": "AB-383: startUi adds GET /api/events (Server-Sent Events from the history change feed); on close it ends only those streams and closes idle connections. The thirteen method hashes and behavioral assertions remain unchanged; only the UI hash changes.",
+      "commit": "f41bf1ed8ee42f27df95f9536de7a63da6752aa4"
     }
   },
   "revertedUpdates": {
