@@ -4,6 +4,7 @@ import { isAbsolute, join } from "node:path";
 import { loadConfig } from "../core/config.js";
 import { checkUsagePreflight, usageAdmissionText } from "../core/usage.js";
 import { usageProbeFor } from "../mcp/targets.js";
+import { REMOTE_JOB_USAGE_CAPABILITY } from "./remote-job-protocol.js";
 import { bundledCli } from "../core/delegate.js";
 import { isRecord, readJsonStore, writeJsonStore } from "../core/json-store.js";
 import type { Logger } from "../core/logger.js";
@@ -64,7 +65,7 @@ export class RemoteJobs {
       if (typeof r.pair !== "string" || typeof r.peer !== "string" || !r.job?.id || !r.args) continue;
       this.records.set(r.job.id, { ...r, job: { ...r.job, controller: new AbortController(), queue: [] } });
     }
-    network.registerExtension(REMOTE_JOB_FRAME, REMOTE_JOB_CAPABILITY, (payload, pair) => this.receive(payload, pair), [REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY]);
+    network.registerExtension(REMOTE_JOB_FRAME, REMOTE_JOB_CAPABILITY, (payload, pair) => this.receive(payload, pair), [REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY, REMOTE_JOB_USAGE_CAPABILITY]);
   }
 
   async request(host: string, peer: Pick<PeerInfo, "id" | "name">, raw: RemoteJobRequest, supervisor = peer.id, localJobName?: string): Promise<RemoteJobSnapshot> {
@@ -89,7 +90,12 @@ export class RemoteJobs {
     });
     void response.catch(() => {});
     try {
-      await this.network.sendExtension(host, REMOTE_JOB_FRAME, { kind: "request", rid, peer: { id: peer.id, name: peer.name, supervisor }, request });
+      let wireRequest = request;
+      if (request.op === "spawn" && !this.network.peerSupports(host, REMOTE_JOB_USAGE_CAPABILITY)) {
+        const { usageTurn, ...legacy } = request;
+        wireRequest = legacy;
+      }
+      await this.network.sendExtension(host, REMOTE_JOB_FRAME, { kind: "request", rid, peer: { id: peer.id, name: peer.name, supervisor }, request: wireRequest });
       const snapshot = await response;
       // The remote result is authoritative even when this PC cannot yet retain its mirror.
       try {

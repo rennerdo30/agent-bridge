@@ -7,6 +7,7 @@ import { NETWORK_NAME_PATTERN } from "./constants.js";
 export const REMOTE_JOB_CAPABILITY = "remote-jobs-v1";
 export const REMOTE_JOB_CANCELLED_CAPABILITY = "remote-jobs-cancelled-v1";
 export const REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY = "remote-jobs-antigravity-options-v1";
+export const REMOTE_JOB_USAGE_CAPABILITY = "remote-jobs-usage-v1";
 export const REMOTE_JOB_FRAME = "remote-job";
 export const REMOTE_JOB_POLL_MS = 2_000;
 export const REMOTE_JOB_REQUEST_TIMEOUT_MS = 30_000;

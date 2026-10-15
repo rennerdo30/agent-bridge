@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { realpathSync } from "node:fs";
 import { ChildProcess, spawn } from "node:child_process";
 import { PassThrough } from "node:stream";
+import { z } from "zod";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
 import * as usage from "../src/core/usage.js";
@@ -21,7 +22,7 @@ import { ParentLink } from "../src/core/parent-link.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 import { JobRunners } from "../src/mcp/job-host.js";
 import { RemoteJobs } from "../src/network/remote-jobs.js";
-import { remoteJobSnapshotSchema } from "../src/network/remote-job-protocol.js";
+import { remoteJobSnapshotSchema, remoteSpawnArgsSchema, REMOTE_JOB_USAGE_CAPABILITY } from "../src/network/remote-job-protocol.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { until } from "./helpers.js";
 
@@ -252,4 +253,30 @@ it.each(CODING_AGENTS)("remote %s preflight uses executor context and persists t
   const restored = new RemoteJobs({ registerExtension() {} } as any, home, nullLogger, async () => {}); remotes.push(restored);
   const state = await (restored as any).handle({ id: "pair", name: "paired" }, { id: "supervisor", name: "sender", supervisor: "session" }, { op: "state", job: "12345678" });
   expect(state.state.providerUsage.decision).toEqual(block);
+});
+
+it("negotiates only usage correlation, preserving permissions for strict legacy executors", async () => {
+  vi.spyOn(delegate, "bundledCli").mockReturnValue(null);
+  const request = { op: "spawn", job: "12345678", target: "codex", usageTurn: "12345678:100",
+    args: { cwd: home, prompt: "task", title: "Fixture", model: "selected-model", access: "read", sandbox: "read-only", allow_tools: ["pair-desk.get_issue"] } } as const;
+  const legacy = z.object({ op: z.literal("spawn"), job: z.string(), target: z.literal("codex"), args: remoteSpawnArgsSchema }).strict();
+  expect(legacy.safeParse(request).success).toBe(false);
+  for (const supportsUsage of [false, true]) {
+    let receive!: (frame: any, pair: any) => Promise<void>;
+    let serialized: any;
+    const network = {
+      registerExtension: vi.fn((_frame, _capability, handler, _extra) => { receive = handler; }),
+      peerSupports: (_host: string, capability: string) => capability !== REMOTE_JOB_USAGE_CAPABILITY || supportsUsage,
+      sendExtension: async (_host: string, _frame: string, payload: any) => {
+        serialized = payload.request;
+        await receive({ kind: "response", rid: payload.rid, value: { state: null, alive: false, approvals: [] } }, { id: "pair", name: "paired" });
+      },
+    };
+    const remote = new RemoteJobs(network as any, home, nullLogger, async () => {}); remotes.push(remote);
+    await remote.request("paired", { id: "supervisor", name: "owner" }, request as any);
+    expect(network.registerExtension.mock.calls[0]![3]).toContain(REMOTE_JOB_USAGE_CAPABILITY);
+    expect(serialized.args).toEqual(request.args);
+    if (supportsUsage) expect(serialized.usageTurn).toBe(request.usageTurn);
+    else { expect(legacy.parse(serialized).args).toEqual(request.args); expect(serialized).not.toHaveProperty("usageTurn"); }
+  }
 });
