@@ -85,9 +85,92 @@ it("keeps identityless readers deferred while discovery is pending", () => {
   saveMetadataValue(env.home, "storage-capabilities", String(pid), { schemaVersion: 1, json: 4, sqlite: 9, pid, name: "reader", version: "0.30.6", explicit: true, observedAt: Date.now() });
   const direct = vi.spyOn(identity, "readProcessIdentitiesSync").mockReturnValue(new Map([[pid, "new-generation"]]));
   const names = vi.spyOn(identity, "readProcessNamesSync").mockReturnValue(new Map([[pid, "svchost"]]));
+  // AB-390: the immediate query now covers identityless rows, but an identity that proves no start time keeps blocking.
   expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);
-  expect(direct).not.toHaveBeenCalled();
+  expect(direct).toHaveBeenCalledWith([pid]);
   expect(names).not.toHaveBeenCalled();
+});
+
+// AB-390 (2026-10-15): an exited session's identityless row (observedAt only) blocked every job start while a
+// conhost started 43 minutes later held its PID. Identities in the live format of each platform:
+const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function startedAt(ms: number): string {
+  if (process.platform === "win32") return String(BigInt(ms) * 10000n + 621355968000000000n);
+  if (process.platform === "linux") {
+    const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+    const btime = Number(/^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"))![1]);
+    return `${boot}:${Math.floor((ms - btime * 1000) / 10)}`;
+  }
+  // `ps -o lstart=` with LC_ALL=C prints local time, e.g. "Thu Oct 15 22:52:51 2026".
+  const d = new Date(ms), two = (n: number) => String(n).padStart(2, "0");
+  return `${days[d.getDay()]} ${months[d.getMonth()]} ${String(d.getDate()).padStart(2)} ${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())} ${d.getFullYear()}`;
+}
+function identitylessReader(extra: Record<string, unknown> = {}) {
+  metadataDb(env.home); importMetadataDomain(env.home, "storage-capabilities");
+  vi.spyOn(identity, "readProcessIdentities").mockResolvedValue(new Map());
+  const record = { schemaVersion: 1, json: 4, sqlite: 9, jobArchive: 1, pid, name: "claude-animal-catch-game-2", version: "0.30.21", explicit: true, ...extra };
+  saveMetadataValue(env.home, "storage-capabilities", String(pid), record);
+  return metadataDb(env.home).prepare("SELECT * FROM bridge_metadata WHERE domain='storage-capabilities' AND key=?").get(String(pid));
+}
+
+it("stops blocking on an identityless reader whose PID now belongs to a process started after the observation", () => {
+  const observedAt = Date.now() - 43 * 60_000;
+  const before = identitylessReader({ observedAt });
+  const direct = vi.spyOn(identity, "readProcessIdentitiesSync").mockReturnValue(new Map([[pid, startedAt(observedAt + 43 * 60_000)]]));
+  expect(versionOf()).toBe("unknown");
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).not.toThrow();
+  expect(() => assertStoreUpgrade(env.home, "json", 4, 5)).not.toThrow();
+  expect(direct).toHaveBeenCalledWith([pid]);
+  // The row is evidence, never removed or rewritten.
+  expect(metadataDb(env.home).prepare("SELECT * FROM bridge_metadata WHERE domain='storage-capabilities' AND key=?").get(String(pid))).toEqual(before);
+});
+
+it("judges an identityless imported row without observedAt by its row time", () => {
+  identitylessReader();
+  vi.spyOn(identity, "readProcessIdentitiesSync").mockReturnValue(new Map([[pid, startedAt(Date.now() + 60_000)]]));
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).not.toThrow();
+});
+
+it("keeps blocking on an identityless reader whose PID's process started before the observation", () => {
+  const observedAt = Date.now() - 60_000;
+  identitylessReader({ observedAt });
+  const direct = vi.spyOn(identity, "readProcessIdentitiesSync").mockReturnValue(new Map([[pid, startedAt(observedAt - 10 * 60_000)]]));
+  // It may be the recorded reader: the async refresh, not the immediate check, verifies it.
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4: claude-animal-catch-game-2 \(vunknown, pid 2000011/);
+  // Within the one-second start-time slack it is not provably later either.
+  direct.mockReturnValue(new Map([[pid, startedAt(observedAt + 500)]]));
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4/);
+});
+
+it("keeps blocking on an identityless reader when the identity lookup fails, and says so", () => {
+  identitylessReader({ observedAt: Date.now() - 43 * 60_000 });
+  vi.spyOn(identity, "readProcessIdentitiesSync").mockReturnValue(undefined);
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/Waiting to upgrade json store 0→4: .*pid 2000011.*Liveness of pid 2000011 is unknown: the process identity lookup failed/);
+});
+
+it("names a failed background identity refresh in the wait and clears it after a successful one", async () => {
+  const observedAt = Date.now() - 60_000;
+  identitylessReader({ observedAt });
+  const query = vi.mocked(identity.readProcessIdentities).mockRejectedValue(Object.assign(new Error("process identity query failed: timed out"), { code: identity.IDENTITY_QUERY_FAILED }));
+  await refreshStorePeerIdentities(env.home);
+  expect(query).toHaveBeenCalledTimes(1);
+  vi.spyOn(identity, "readProcessIdentitiesSync").mockReturnValue(new Map([[pid, startedAt(observedAt - 60_000)]]));
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).toThrow(/The background process identity refresh last failed: process identity query failed: timed out/);
+  query.mockResolvedValue(new Map([[pid, startedAt(observedAt - 60_000)]]));
+  await refreshStorePeerIdentities(env.home);
+  // Verified as the observed reader with sufficient capabilities: no longer a blocker, and no stale failure text.
+  expect(() => assertStoreUpgrade(env.home, "json", 0, 4)).not.toThrow();
+  expect(() => assertStoreUpgrade(env.home, "json", 4, 5)).toThrow(/^(?!.*refresh last failed).*Waiting to upgrade json store 4→5/);
+});
+
+it("queries only PIDs that still exist in the background refresh", async () => {
+  metadataDb(env.home); importMetadataDomain(env.home, "storage-capabilities");
+  const gone = pid + 1;
+  for (const target of [pid, gone]) saveMetadataValue(env.home, "storage-capabilities", String(target), { schemaVersion: 1, json: 4, sqlite: 9, pid: target, name: `reader-${target}`, version: "0.30.6", explicit: true, observedAt: Date.now(), processIdentity: `generation-${target}` });
+  const query = vi.spyOn(identity, "readProcessIdentities").mockResolvedValue(new Map([[pid, `generation-${pid}`]]));
+  await refreshStorePeerIdentities(env.home);
+  expect(query).toHaveBeenCalledWith([pid]);
+  expect(versionOf()).toBe("0.30.6");
 });
 
 function unreadableReader() {
