@@ -1,13 +1,12 @@
-import { spawn } from "node:child_process";
 import * as processes from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import * as files from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Broker, assertLifecycleServingCapability } from "../src/core/broker.js";
 import { EndpointReservation } from "../src/core/endpoint-reservation.js";
-import { LifecycleJournal, LifecycleUnavailable } from "../src/core/daemon-lifecycle.js";
+import { LifecycleJournal, LifecycleUnavailable, observeLifecycleWriteOutcome } from "../src/core/daemon-lifecycle.js";
 import { pendingWindowsLifecycleVerifications } from "../src/core/lifecycle-windows.js";
 import * as windowsLifecycle from "../src/core/lifecycle-windows.js";
 import * as identities from "../src/core/process-identity.js";
@@ -15,6 +14,7 @@ import { MessageStore } from "../src/core/store.js";
 import { resolveDbPath, resolvePipePath } from "../src/core/paths.js";
 import { nullLogger } from "../src/core/logger.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { createOwnedHome, settledOwnedHomes, startOwnedHomeHelper, stopOwnedHomeHelper } from "./fixtures/owned-home.js";
 
 const originals = vi.hoisted(() => ({ spawn: undefined as typeof import("node:child_process").spawn | undefined,
   openSync: undefined as typeof import("node:fs").openSync | undefined,
@@ -36,26 +36,11 @@ vi.mock("node:fs", async importOriginal => {
     default: { ...(Reflect.get(native, "default") ?? native), openSync, fsyncSync, closeSync } };
 });
 
-// Exact fixture-owned NEW HOME only. No real profile/ancestor ACL mutation.
-const HOME = String.raw`
-$ErrorActionPreference='Stop'
-try {
-  $r=[Console]::In.ReadToEnd() | ConvertFrom-Json
-  if([IO.Directory]::Exists([string]$r.path)) { throw 'exists' }
-  $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
-  $acl=New-Object Security.AccessControl.DirectorySecurity
-  $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false)
-  $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','None','None','Allow')))
-  [void][IO.Directory]::CreateDirectory([string]$r.path,$acl)
-  [Console]::WriteLine('fixture_ready')
-} catch { [Console]::WriteLine('fixture_unknown'); exit 1 }
-`;
 let env: TestEnv, home: string, broker: Broker | undefined, reservation: EndpointReservation | undefined;
 let journal: LifecycleJournal | undefined, captured: DatabaseSync | undefined;
 const sqliteExec = DatabaseSync.prototype.exec;
 const sqliteClose = DatabaseSync.prototype.close;
 const fixtureReadonlyConnections = new Set<DatabaseSync>();
-const setupCloses = new Set<Promise<void>>();
 const fixtureFlushDescriptors = new Set<number>();
 function resetNativeAdapters() {
   // restoreAllMocks does not restore module-lived vi.fn implementations/history.
@@ -72,24 +57,15 @@ function verifyNativeAdapters() {
     expect(adapter).not.toHaveBeenCalled();
   }
 }
+// The owned-home helper's powershell.exe cold start is setup before the tests, not per-test fixture time.
+beforeAll(async () => { if (process.platform === "win32") await startOwnedHomeHelper(); });
+afterAll(async () => { if (process.platform === "win32") await stopOwnedHomeHelper(); });
 beforeEach(async () => {
   resetNativeAdapters();
   verifyNativeAdapters();
   env = makeEnv(); home = join(env.home, "home"); captured = undefined;
   if (process.platform !== "win32") return;
-  const bin = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const child = spawn(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(HOME, "utf16le").toString("base64")],
-    { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
-  const actualClose = new Promise<void>(resolve => child.once("close", () => resolve()));
-  setupCloses.add(actualClose); void actualClose.then(() => setupCloses.delete(actualClose));
-  let output = "";
-  child.stdout.on("data", bytes => { output += String(bytes); });
-  child.stdin.end(JSON.stringify({ path: home }));
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("Owned bootstrap fixture unavailable")), 5000);
-    child.once("error", () => { clearTimeout(timer); reject(new Error("Owned bootstrap fixture unavailable")); });
-    child.once("close", code => { clearTimeout(timer); code === 0 && output.trim() === "fixture_ready" ? resolve() : reject(new Error("Owned bootstrap fixture unavailable")); });
-  });
+  await createOwnedHome(home, "Owned bootstrap fixture unavailable");
 });
 afterEach(async () => {
   resetNativeAdapters();
@@ -97,8 +73,8 @@ afterEach(async () => {
   try { verifyNativeAdapters(); } catch (error) { failures.push(error); }
   try {
     vi.restoreAllMocks();
-    // A setup observer timeout is not process exit or permission to remove its home.
-    await Promise.all([...setupCloses]);
+    // A setup observer timeout is not the helper's answer or permission to remove its home.
+    await settledOwnedHomes();
     // Dispose ONLY exact native descriptors this isolated fixture captured; this is
     // neither production retry/cleanup nor proof the failed close had succeeded.
     for (const fd of fixtureFlushDescriptors) { originals.closeSync!(fd); fixtureFlushDescriptors.delete(fd); }
@@ -123,6 +99,20 @@ async function serving() {
 async function prepared(b: Broker) {
   const end = performance.now() + 5000;
   return LifecycleJournal.prepareServingBootstrap(b.lifecycleServingCapability("prepare", end), end);
+}
+// Real-time insulation for operations whose subject is NOT the phase budget: the clock
+// stays strictly before the ORIGINAL deadline, which every source guard, proof and
+// capability still receives. Budget refusals keep their own SIMULATED-boundary tests.
+async function beforeDeadline<T>(end: number, action: () => Promise<T>): Promise<T> {
+  const realNow = performance.now.bind(performance);
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => Math.min(realNow(), end - 1));
+  try { return await action(); } finally { clock.mockRestore(); }
+}
+// Failure diagnostic only: names the source-associated write outcome (stage/cause).
+function withWriteOutcome(error: unknown): unknown {
+  const outcome = observeLifecycleWriteOutcome(error);
+  if (outcome && error instanceof Error) error.message += ` Write outcome: ${JSON.stringify(outcome)}`;
+  return error;
 }
 const directory = () => join(home, ".core-lifecycle");
 const file = () => join(directory(), "receipts.sqlite");
@@ -373,8 +363,11 @@ describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Bound
     const input = { restartId: "00000000-0000-4000-8000-000000000004", operation: "restart" as const,
       oldInstance: { nonce: actual.ownerInstance, pid: process.pid, creationIdentity: creationIdentity! },
       target: { immutableRuntimePath: join(home, "owned-fixture-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } };
+    // Setup admission, not a budget subject: it keeps its original 1 s deadline,
+    // insulated from real fsync/scheduler stalls of the loaded runner.
     const admittedEnd = performance.now() + 1000;
-    const accepted = await j.admitServing(b.lifecycleServingCapability("admission", admittedEnd), input, admittedEnd);
+    const accepted = await beforeDeadline(admittedEnd, () => j.admitServing(b.lifecycleServingCapability("admission", admittedEnd), input, admittedEnd))
+      .catch(error => { throw withWriteOutcome(error); });
     const bytes = [readFileSync(file()), readFileSync(file() + "-journal")];
     let initializations = 0, victim: DatabaseSync | undefined;
     const exec = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
@@ -421,8 +414,11 @@ describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Bound
     const input = { restartId: "00000000-0000-4000-8000-000000000004", operation: "restart" as const,
       oldInstance: { nonce: actual.ownerInstance, pid: process.pid, creationIdentity: creationIdentity! },
       target: { immutableRuntimePath: join(home, "owned-fixture-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } };
+    // Setup admission, not a budget subject: it keeps its original 1 s deadline,
+    // insulated from real fsync/scheduler stalls of the loaded runner.
     const admittedEnd = performance.now() + 1000;
-    const accepted = await j.admitServing(b.lifecycleServingCapability("admission", admittedEnd), input, admittedEnd);
+    const accepted = await beforeDeadline(admittedEnd, () => j.admitServing(b.lifecycleServingCapability("admission", admittedEnd), input, admittedEnd))
+      .catch(error => { throw withWriteOutcome(error); });
     const bytes = [readFileSync(file()), readFileSync(file() + "-journal")], prepare = DatabaseSync.prototype.prepare;
     let attempted = false, denied: unknown;
     const exec = vi.spyOn(DatabaseSync.prototype, "exec");
@@ -457,7 +453,9 @@ describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Bound
       oldInstance: { nonce: actual.ownerInstance, pid: process.pid, creationIdentity: creationIdentity! },
       target: { immutableRuntimePath: join(home, "owned-fixture-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } };
     const admittedEnd = performance.now() + 1000, cap = b.lifecycleServingCapability("admission", admittedEnd);
-    const accepted = await journal.admitServing(cap, input, admittedEnd); expect(accepted.revision).toBe(1);
+    // Setup admission, not a budget subject (see beforeDeadline).
+    const accepted = await beforeDeadline(admittedEnd, () => journal!.admitServing(cap, input, admittedEnd)).catch(error => { throw withWriteOutcome(error); });
+    expect(accepted.revision).toBe(1);
     const exec = vi.spyOn(DatabaseSync.prototype, "exec");
     expect(() => journal!.selected()).toThrow("lineage_unknown"); expect(() => journal!.admit(input, performance.now() + 1000)).toThrow("lineage_unknown");
     const badEnd = performance.now() + 1000;
@@ -476,8 +474,11 @@ describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Bound
     const input = { restartId: "00000000-0000-4000-8000-000000000003", operation: "restart" as const,
       oldInstance: { nonce: actual.ownerInstance, pid: process.pid, creationIdentity: creationIdentity! },
       target: { immutableRuntimePath: join(home, "owned-fixture-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } };
+    // Setup admission, not a budget subject: it keeps its original 1 s deadline,
+    // insulated from real fsync/scheduler stalls of the loaded runner.
     const admittedEnd = performance.now() + 1000;
-    const accepted = await journal.admitServing(b.lifecycleServingCapability("admission", admittedEnd), input, admittedEnd);
+    const accepted = await beforeDeadline(admittedEnd, () => journal!.admitServing(b.lifecycleServingCapability("admission", admittedEnd), input, admittedEnd))
+      .catch(error => { throw withWriteOutcome(error); });
     const readEnd = performance.now() + 5000, reader = await journal.preparedReaderServing(b.lifecycleServingCapability("prepare", readEnd), input.restartId, readEnd);
     try {
       expect(reader.read()).toEqual(accepted);
