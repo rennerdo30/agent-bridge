@@ -278,6 +278,23 @@ describe("trusted history owner observation; unsupported store closure stays blo
 });
 
 describe("connected production history worker queues with controlled dependencies", () => {
+  it("attributes a held migration to its own phase and accounts for the complete tick", async () => {
+    let release!: () => void;
+    fixture.migration.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    await connectWorker();
+    const tick = background.tick();
+    await vi.advanceTimersByTimeAsync(3_500);
+    expect(fixture.ingestTick).not.toHaveBeenCalled();
+    release(); await vi.advanceTimersByTimeAsync(20); await tick;
+    const phases = fixture.port!.postMessage.mock.calls.map(([message]) => message.historyTiming)
+      .find(timing => timing?.totalMs !== undefined) as Record<string, number>;
+    expect(phases.migrationMs).toBe(3_500);
+    expect(Object.entries(phases).filter(([name]) => name !== "totalMs").reduce((sum, [, ms]) => sum + ms, 0))
+      .toBeCloseTo(phases.totalMs!, 5);
+    expect(phases).toHaveProperty("ingestPressureWaitMs");
+    expect(phases).toHaveProperty("indexPressureWaitMs");
+    expect(phases).toHaveProperty("completionMs");
+  });
   it("captures a watched live line within 500 ms while a periodic full budget scan never resolves", async () => {
     await connectWorker();
     const initial = background.tick(); await vi.advanceTimersByTimeAsync(20); await initial;
