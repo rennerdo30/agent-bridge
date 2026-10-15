@@ -59,7 +59,7 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-F4ATRXII.mjs";
+} from "./chunks/chunk-X6RLIPKM.mjs";
 import {
   codexAppServerCall,
   describeModels,
@@ -86,7 +86,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-2C6S2BRZ.mjs";
+} from "./chunks/chunk-XUTKMHJ4.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -2875,7 +2875,42 @@ function pathFromUriOrPath(v) {
 function text(s, isError = false) {
   return { content: [{ type: "text", text: s }], ...isError ? { isError: true } : {} };
 }
+function modeReport(requested, reason) {
+  return {
+    requested,
+    effective: reason ? "refused" : "legacyunconfirmed",
+    stage: "requested",
+    protocolSupport: "legacy",
+    sharedIdempotentDelivery: false,
+    ...reason ? { reason } : {},
+    capabilities: {
+      route: "legacyunconfirmed",
+      receiverRole: "unknown",
+      ownedSession: false,
+      generationKnown: false,
+      activeSteering: false,
+      interruptRestart: false,
+      queue: false,
+      idleWake: false
+    }
+  };
+}
+function formatModeReport(report) {
+  return `Mode report: ${JSON.stringify(report)}`;
+}
+function modeText(report, body) {
+  return { ...text(`${formatModeReport(report)}
+${body}`), structuredContent: { mode: report } };
+}
+function refuseMode(mode, reason) {
+  throw new BridgeError("bad_request", `Requested ${mode} refused: ${reason}. No mode operation applied.`, { modeReport: modeReport(mode, reason) });
+}
 function describeError(err) {
+  if (err instanceof BridgeError && err.details?.modeReport) {
+    const { modeReport: report, ...details } = err.details;
+    return `${formatModeReport(report)}
+${describeError(new BridgeError(err.code, err.message, details))}`;
+  }
   if (err instanceof BridgeError) {
     switch (err.code) {
       case "ambiguous_target":
@@ -3108,7 +3143,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-5IMIM4VX.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-ZZWKYA3R.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3120,9 +3155,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-MVWO2UL6.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-MFFZUQZA.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-MVWO2UL6.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-MFFZUQZA.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3255,6 +3290,20 @@ function registerTools(mcp, ctx, targets) {
         if (ctx.agent !== "claude" || !node || node.wasReplaced || typeof childId !== "string" || !["peers", "inbox", "send"].includes(name)) throw new BridgeError("unauthorized", "Scoped native children may use peers, inbox and send only on their current Claude parent connection.");
         const children = await node.nativeChildren(), child = children.find((c) => c.agentId === childId);
         if (!child) throw new BridgeError("unauthorized", "No live scoped native child; wait for its SubagentStart hook.");
+        if (name === "send" && a.mode !== void 0) {
+          if (a.mode === "auto") await confirmNativeChildDelivery(ctx, childId);
+          const result2 = await node.sendWithMode({
+            mode: a.mode,
+            nativeChild: childId,
+            to: String(a.to),
+            body: String(a.message),
+            replyTo: a.reply_to,
+            conversationId: a.conversation_id,
+            ifNoNewerThan: a.if_no_newer_than,
+            messageId: a.message_id
+          });
+          return modeText(result2.mode, JSON.stringify(result2.send));
+        }
         await confirmNativeChildDelivery(ctx, childId);
         const identity = `Your native child bridge address is ${child.address}. Parent: ${child.parent}.`;
         if (name === "peers") {
@@ -3286,7 +3335,13 @@ ${JSON.stringify(result)}`);
       }
     }
     try {
-      return await fn(args, extra);
+      const result = await fn(args, extra);
+      if ((name === "send" || name === "message_subagent") && a.mode === "auto" && !result.structuredContent?.mode) {
+        const report = modeReport("auto");
+        result.content.unshift({ type: "text", text: formatModeReport(report) });
+        result.structuredContent = { ...result.structuredContent, mode: report };
+      }
+      return result;
     } catch (err) {
       log.warn("tool failed", { tool: name, err: err.message });
       return text(describeError(err), true);
@@ -3514,10 +3569,24 @@ ${JSON.stringify(result)}`);
         conversation_id: external_exports.string().optional().describe("Continue an existing conversation"),
         if_no_newer_than: external_exports.string().optional().describe("Refuse this reply if newer unread conversation or recipient mail exists after this message id"),
         message_kind: external_exports.enum(["note", "question"]).optional().describe("note retains FYI/status in history without waking or injecting context; question requests supervisor attention (a job asking its parent when blocked or before a risky step)"),
-        message_id: external_exports.uuid().optional().describe("Stable UUID for an idempotent send or recovery retry. Reuse this id only with the same content; requires an updated broker.")
+        message_id: external_exports.uuid().optional().describe("Stable UUID for an idempotent send or recovery retry. Reuse this id only with the same content; requires an updated broker."),
+        mode: external_exports.enum(["auto", "queue", "steer", "restart"]).optional().describe("Omitted/auto retains existing delivery. Queue is one-shot only to a current authenticated Claude native child, rejects message_id and proves stored mail only. Session/job queue, steer and restart refuse; unknown outcomes never retry or fall back.")
       }
     },
     guarded("send", async (a) => {
+      if (a.mode && a.mode !== "auto") {
+        if (!node || a.message_kind) refuseMode(a.mode, "parent/job links and message_kind have no explicit-mode boundary");
+        const result = await node.sendWithMode({
+          mode: a.mode,
+          to: a.to,
+          body: a.message,
+          replyTo: a.reply_to,
+          conversationId: a.conversation_id,
+          ifNoNewerThan: a.if_no_newer_than,
+          messageId: a.message_id
+        });
+        return modeText(result.mode, JSON.stringify(result.send));
+      }
       if (!node && ctx.parent) {
         if (a.message_id) throw new BridgeError("bad_request", "Durable message IDs require a session broker connection; parent links do not support idempotent retries.");
         if (a.if_no_newer_than) throw new BridgeError("bad_request", "Guarded sends require a session broker connection; read the parent/sibling inbox before replying.");
@@ -3570,21 +3639,29 @@ Pending approvals require an explicit decide; this message does not approve or c
         return text(`${a.to} is a running subagent: message_subagent outcome ${outcome}. Use message_subagent for subagents.`);
       }
       if (a.reply_to) n.markRead([a.reply_to]);
-      const res = await n.send({
+      const sendArgs = {
         to: a.to,
         body: a.message,
         replyTo: a.reply_to,
         conversationId: a.message_kind === "note" ? `${a.conversation_id ?? `note-${a.message_id ?? Date.now()}`}:note` : a.conversation_id,
         ifNoNewerThan: a.if_no_newer_than,
         messageId: a.message_id
-      }).catch((err) => {
+      };
+      let actualMode;
+      const res = await (a.mode === "auto" ? n.sendWithMode({ ...sendArgs, mode: "auto" }).then((result) => {
+        actualMode = result.mode;
+        return result.send;
+      }) : n.send(sendArgs)).catch((err) => {
         if (!jobLines.length) throw err;
         throw new Error(`Session broadcast failed: ${err.message}
 Running-job broadcast already attempted:
 ${jobLines.join("\n")}. Do not resend to these jobs without checking consumption.`);
       });
       const first = res.messages[0];
-      if (!first) return text(["No session recipients were eligible for this broadcast.", ...formatDelivery(res, cfg.maxHops), ...jobLines].join("\n"));
+      if (!first) {
+        const body = ["No session recipients were eligible for this broadcast.", ...formatDelivery(res, cfg.maxHops), ...jobLines].join("\n");
+        return actualMode ? modeText(actualMode, body) : text(body);
+      }
       const lines = [res.storage?.recovered ? `Message ${first.id} sent previously and stored in the broker (conversation ${first.conversationId}). Recovered by id; no additional message sent. Delivery and consumption are separate.` : `Message ${first.id} sent and stored in the broker (conversation ${first.conversationId}).`];
       if (res.storage?.receipts.length) lines.push(`Stored recipient copies: ${res.storage.receipts.map((r) => `${r.recipient} (${r.readAt === null ? "unread" : "read"})`).join(", ")}.`);
       lines.push(...formatDelivery(res, cfg.maxHops));
@@ -3594,7 +3671,7 @@ ${jobLines.join("\n")}`);
       if (res.queuedFor.length) lines.push(t("send.queued", { names: res.queuedFor.join(", ") }));
       if (!res.replyRestrictions?.length) lines.push(t("send.waitHint"));
       lines.push(`For a consumption receipt, call wait_for_message(read_receipt_of="${first.id}").`);
-      return text(lines.join("\n"));
+      return actualMode ? modeText(actualMode, lines.join("\n")) : text(lines.join("\n"));
     })
   );
   register(
@@ -4059,6 +4136,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       description: "Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. Use it to answer a subagent's question promptly. It continues in its own session with its full context, in the same folder or worktree. While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. The answer arrives as a message from the job. Plain messages never answer pending approvals; use decide or the dashboard. Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent. If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it).",
       inputSchema: {
         job: external_exports.string().min(1).describe('Job name, e.g. "codex-job-1a2b3c4d" or "opencode-ask-9f8e7d6c" (see peers)'),
+        mode: external_exports.enum(["auto", "queue", "steer", "restart"]).optional().describe("Omitted/auto preserves existing continuation behavior. Explicit queue/steer/restart refuse before title, settings or continuation; job emission cannot prove durable acceptance."),
         message: external_exports.string().optional().describe("The follow-up. Default: continue where you stopped and finish the task."),
         title: external_exports.string().min(1).max(MAX_TITLE_CHARS).optional().describe("Give the job a (new) short title, 3-7 words; use it for jobs listed without a title."),
         effort: external_exports.string().regex(/^[A-Za-z0-9_-]{1,20}$/).optional().describe("Thinking level for this continuation and the job's later turns (e.g. low, medium, high, xhigh). A turn already running keeps its level: to apply it now, cancel_subagent and continue it with message_subagent."),
@@ -4074,6 +4152,7 @@ ${r.lines.map((l) => `  ${l}`).join("\n")}`).join("\n\n"));
       }
     },
     guarded("message_subagent", async (a) => {
+      if (a.mode && a.mode !== "auto") refuseMode(a.mode, "job queue/steer/restart requires a reviewed receiver transaction and effect boundary");
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       const existing = await jobs.share(a.job);
