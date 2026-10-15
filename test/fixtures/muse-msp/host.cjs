@@ -33,7 +33,10 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
   if (m.method !== 'initialize' && !initialized) throw new Error('missing initialized notification');
   if (!['initialize', 'hook/list', 'session/read', 'model/list', 'usage/read'].includes(m.method) && !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(m.params.commandId)) throw new Error('commandId is not UUIDv7');
   if (process.env.MSP_TEST_UNSUPPORTED === m.method) return write({ id: m.id, error: { code: -32601, message: 'Method not found' } });
-  if (process.env.MSP_TEST_HANG === m.method) return;
+  if (process.env.MSP_TEST_HANG === m.method) {
+    if (process.env.MSP_TEST_STALLED) fs.writeFileSync(process.env.MSP_TEST_STALLED, m.method);
+    return;
+  }
   if (m.method === 'initialize') return reply(m, { ...text[1].result, experimentalApi: m.params.capabilities.experimentalApi === true && process.env.MSP_TEST_EXPERIMENTAL === '1', serverInfo: { name: 'muse-fixture', version: '1.4.7' }, grantedCapabilities: process.env.MSP_TEST_NO_MCP ? [] : ['sessionMcp'] });
   if (m.method === 'session/start' || m.method === 'session/resume') {
     sid = m.params.sessionId || sid;
