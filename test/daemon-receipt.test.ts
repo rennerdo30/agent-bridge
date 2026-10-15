@@ -3,13 +3,14 @@ import { existsSync, lstatSync, readFileSync, renameSync, writeFileSync } from "
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { spawn } from "node:child_process";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { LifecycleJournal, LifecycleUnavailable, observeLifecycleWriteOutcome, LIFECYCLE_ADMISSION_MS, LIFECYCLE_PRE_RELEASE_MS,
   LIFECYCLE_PREPARE_MS, LIFECYCLE_DISPATCH_DRAIN_MS, LIFECYCLE_WRITE_CHECKPOINT_MS, LIFECYCLE_BIND_OBSERVE_MS,
   type LifecycleInstance, type LifecycleRequest } from "../src/core/daemon-lifecycle.js";
 import { readProcessIdentity } from "../src/core/process-identity.js";
 import { verifyWindowsLifecyclePaths, assertWindowsLifecyclePathProof, pendingWindowsLifecycleVerifications, WindowsLifecyclePathUnavailable } from "../src/core/lifecycle-windows.js";
 import { createServingJournalFixture } from "./fixtures/daemon-serving-journal.js";
+import { settledOwnedHomes, startOwnedHomeHelper, stopOwnedHomeHelper } from "./fixtures/owned-home.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
 type TimingBucket = "expired" | "0_25" | "26_100" | "101_500" | "501_1000" | "1001_plus" | "unavailable";
@@ -158,6 +159,9 @@ let env: TestEnv, owner: LifecycleInstance, journal: LifecycleJournal | undefine
 let journalHome: string, servingFixture: Awaited<ReturnType<typeof createServingJournalFixture>> | undefined;
 const sqliteExec = DatabaseSync.prototype.exec;
 const sqlitePrepare = DatabaseSync.prototype.prepare;
+// The owned-home helper's powershell.exe cold start is setup before the tests, not per-test fixture time.
+beforeAll(async () => { if (process.platform === "win32") await startOwnedHomeHelper(); });
+afterAll(async () => { if (process.platform === "win32") await stopOwnedHomeHelper(); });
 beforeEach(async () => {
   initialAdmissionTrace = undefined;
   verificationFixture.before = undefined; verificationFixture.rejected = undefined; verificationFixture.diagnostic = undefined;
@@ -178,6 +182,8 @@ afterEach(async () => {
     expect(actual).toBeInstanceOf(DatabaseSync); actual.close();
   }
   await servingFixture?.close(); servingFixture = undefined;
+  // A HOME observer timeout is not the helper's answer or permission to remove its home.
+  if (process.platform === "win32") await settledOwnedHomes();
   await until(() => pendingWindowsLifecycleVerifications() === 0); await env.cleanup();
   publishInitialAdmissionTrace();
 });
@@ -273,6 +279,22 @@ async function capturedOutcomeJournal() {
 async function captureRefusal(action: () => unknown | Promise<unknown>): Promise<unknown> {
   try { await action(); } catch (error) { return error; }
   throw new Error("Expected the original operation to refuse");
+}
+// Real-time insulation for operations whose subject is NOT the phase budget: the
+// clock stays strictly before the operation's ORIGINAL deadline, so a real SQLite
+// fsync or scheduler stall on a loaded runner cannot expire the phase. Every source
+// guard, proof and capability still receives that original deadline; budget
+// refusals keep their own SIMULATED-boundary tests (outcomeFault).
+async function beforeDeadline<T>(end: number, action: (end: number) => Promise<T>): Promise<T> {
+  const realNow = performance.now.bind(performance);
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => Math.min(realNow(), end - 1));
+  try { return await action(end); } finally { clock.mockRestore(); }
+}
+// Failure diagnostic only: names the source-associated write outcome (stage/cause).
+function withWriteOutcome(error: unknown): unknown {
+  const outcome = observeLifecycleWriteOutcome(error);
+  if (outcome && error instanceof Error) error.message += ` Write outcome: ${JSON.stringify(outcome)}`;
+  return error;
 }
 type OutcomeFault = "late_commit" | "before_commit" | "reader" | "reader_expiry" | "reader_close" |
   "reader_preflight" | "reader_init" | "reader_prepare" | "reader_native_expiry" | "reader_init_close" |
@@ -937,10 +959,13 @@ describe("source-associated publication UNKNOWN (not controller or durability au
   });
 
   it("a verified intentional conflict remains receipt_conflict and a later read never inherits an old write scope", async () => {
-    const j = await capturedOutcomeJournal(), input = request(), accepted = await admit(j, input, deadline());
-    const conflict = await captureRefusal(() => admit(j, { ...input, operation: "stop" }, deadline()));
+    // Receipt/conflict semantics, not the phase budget: each admission keeps its
+    // original 1 s deadline, insulated from real-time stalls of the loaded runner.
+    const j = await capturedOutcomeJournal(), input = request();
+    const accepted = await beforeDeadline(deadline(), end => admit(j, input, end)).catch(error => { throw withWriteOutcome(error); });
+    const conflict = await beforeDeadline(deadline(), end => captureRefusal(() => admit(j, { ...input, operation: "stop" }, end)));
     expect(conflict).toMatchObject({ reason: "receipt_conflict" }); expect(observeLifecycleWriteOutcome(conflict)).toBeNull();
-    expect(j.isQuarantined).toBe(false); expect(await admit(j, input, deadline())).toEqual(accepted);
+    expect(j.isQuarantined).toBe(false); expect(await beforeDeadline(deadline(), end => admit(j, input, end))).toEqual(accepted);
     const prepare = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
       const value = sqlitePrepare.call(this, sql);
       if (sql === "SELECT json FROM lifecycle_lineage WHERE singleton=1") throw new Error("SIMULATED later independent-read failure");

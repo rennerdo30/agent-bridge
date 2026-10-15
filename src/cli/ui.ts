@@ -51,6 +51,7 @@ import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISI
 import { answerPendingApproval, listPendingApprovals, MAX_APPROVAL_REASON_CHARS } from "../core/relay.js";
 import { questionAnswerSchema, questionAlertSettingsSchema, readOwnerQuestions } from "../core/owner-questions.js";
 import { classifyPeers, listRunsResponsive, readStoredJobsResponsive, readDashboard, readMeta } from "../core/dashboard-read.js";
+import { HistoryChangeFeed, streamHistoryChanges } from "../core/history-feed.js";
 import { openJobQuestions, type JobQuestion } from "../core/job-questions.js";
 export { classifyPeers, listRuns, readStoredJobs, summarizeRun, finishedRunOutcomes } from "../core/dashboard-read.js";
 export type { RunSummary, DashboardPeer, StoredJobView } from "../core/dashboard-read.js";
@@ -294,6 +295,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     return usage.reports;
   };
 
+  // Pushes "this conversation moved" to open dashboards as soon as the history worker retains new lines (AB-383).
+  const historyFeed = new HistoryChangeFeed(opts.home);
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
     const host = String(req.headers.host ?? "").replace(/:\d+$/, "");
     if (!ALLOWED_HOSTS.has(host)) return send(res, 403, { error: "forbidden host" });
@@ -605,6 +608,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const result = await remoteRead(host, parsed.data);
       return send(res, result.status, result.body);
     }
+    if (req.method === "GET" && url.pathname === "/api/events") return streamHistoryChanges(historyFeed, req, res);
     if (req.method === "GET" && isDashboardReadPath(url.pathname)) {
       const read = dashboardRequestSchema.safeParse({ path: url.pathname, query: Object.fromEntries(url.searchParams) });
       if (!read.success) return send(res, 400, { error: "invalid dashboard read request" });
@@ -728,6 +732,9 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     url: `http://${UI_HOST}:${port}/?t=${secret}`,
     port,
     close: async () => {
+      // End only the event streams; every other connection closes as before.
+      historyFeed.close();
+      server.closeIdleConnections();
       await sender?.catch(() => null);
       await senderNode?.stop();
       await new Promise<void>((r) => server.close(() => r()));

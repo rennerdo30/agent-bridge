@@ -73,6 +73,9 @@ describe("paired dashboard HTTP", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     expect(response!.status).toBe(200);
-    expect(await response!.json()).toMatchObject({ ...local.body as object, host: "beta" });
+    // `importing` (AB-383) says whether the history store had ingested the transcript at the time of each read; the
+    // proxied read comes later, so only the transcript itself must match.
+    const { importing: _importing, ...transcript } = local.body as { importing?: true };
+    expect(await response!.json()).toMatchObject({ ...transcript, host: "beta" });
   });
 });

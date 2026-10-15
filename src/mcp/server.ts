@@ -553,7 +553,8 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       log.info("delivery mode resolved", { delivery: channel ? "channel" : "hooks" });
     }
   }
-  if (agent === "claude" && node) await node.setWakePolicy(cfg.wakeOnDirect, Boolean(ctx.rewakeAvailable || channel), cfg.maxHops);
+  if (agent === "claude" && node) await node.setWakePolicy(cfg.wakeOnDirect, Boolean(ctx.rewakeAvailable || channel), cfg.maxHops)
+    .catch((err) => log.warn("startup wake policy update failed; retained locally for the next peer update or connection", { err: (err as Error).message }));
   launchInspected();
   await antigravityHooks?.start().catch((err) => log.warn("Antigravity hooks unavailable", { err: String(err) }));
   await museHooks?.start().catch((err) => log.warn("Muse hooks unavailable", { err: String(err) }));
