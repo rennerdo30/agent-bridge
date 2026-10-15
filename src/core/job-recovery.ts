@@ -54,6 +54,7 @@ function prepareRecovery(home: string, ref: string) {
   if (!id) return undefined;
   const history = findHistoryJob(home, ref, id);
   const { spec, launch } = recoverySpec(home, id);
+  if (completeContext(home, history, id)) return selectRecovery(ref, id, history, spec, launch, []);
   return selectRecovery(ref, id, history, spec, launch, readRunLogs(home));
 }
 async function prepareRecoveryAsync(home: string, ref: string) {
@@ -68,20 +69,43 @@ async function prepareRecoveryAsync(home: string, ref: string) {
     return undefined;
   })());
   const { spec, launch } = recoverySpec(home, id);
+  if (completeContext(home, history, id)) return selectRecovery(ref, id, history, spec, launch, []);
   const currentRun = witnessedRun(home, id, history);
   return selectRecovery(ref, id, history, spec, launch, currentRun ? [currentRun] : await readRunLogsResponsive(home));
 }
 
-/** A live runner publishes the exact feed for this job generation. Missing or
+/** Full history rows come from the selected durable payload, never the routing
+ * metadata (whose prompt is truncated). Native session identity must be known
+ * in the row or supplied by current runner state; null can mean it had not yet
+ * been learned. Other incomplete legacy fields still need spec/run enrichment. */
+function completeContext(home: string, history: Record<string, unknown> | undefined, id: string): boolean {
+  const nullableString = (value: unknown) => value === null || typeof value === "string";
+  const complete = history?.id === id && typeof history.name === "string" && AGENT_KINDS.includes(history.agent as never) &&
+    typeof history.owner === "string" && typeof history.prompt === "string" && Number.isFinite(history.startedAt) &&
+    ["running", "done", "failed", "cancelled", "interrupted"].includes(String(history.status)) &&
+    isRecord(history.args) && nullableString(history.model) && nullableString(history.sessionId) &&
+    nullableString(history.workdir) && (history.worktree === null || isRecord(history.worktree));
+  if (!complete) return false;
+  if (typeof history.sessionId === "string") return true;
+  const state = readRunnerStateRecord(home, id);
+  // Match finishRecovery's current-state gate so the session is actually overlaid.
+  return typeof state?.pid === "number" && typeof state.updatedAt === "number" &&
+    state.updatedAt >= Number(history.startedAt) && typeof state.sessionId === "string";
+}
+
+/** A runner publishes the exact feed for this job generation. Missing or
  * inconsistent evidence must preserve discovery by metadata, including runs
  * whose filenames do not contain the job id. No filename convention is proof. */
 function witnessedRun(home: string, id: string, history: Record<string, unknown> | undefined): RunLogRecord | undefined {
-  if (history?.id !== id || history.status !== "running" || !isRecord(history.host) || !Number.isFinite(history.startedAt)) return undefined;
+  if (history?.id !== id || !Number.isFinite(history.startedAt)) return undefined;
   const state = readRunnerStateRecord(home, id), witness = state?.currentRun;
-  if (state?.status !== "running" || state.pid !== history.host.pid || state.peer !== history.name ||
-      !(Number(state.updatedAt) >= Number(history.startedAt)) || writtenBeforeBoot(Number(state.updatedAt)) ||
+  const running = state?.status === "running";
+  if (!state || !["running", "done", "failed", "cancelled"].includes(String(state.status)) || state.peer !== history.name ||
+      running && (history.status !== "running" || !isRecord(history.host) || state.pid !== history.host.pid ||
+        writtenBeforeBoot(Number(state.updatedAt)) || !pidAlive(Number(state.pid))) ||
+      !(Number(state.updatedAt) >= Number(history.startedAt)) ||
       !isRecord(witness) || witness.id !== id || witness.startedAt !== history.startedAt ||
-      typeof witness.log !== "string" || basename(witness.log) !== witness.log || !/^[\w.-]+\.log$/.test(witness.log) || !pidAlive(Number(state.pid))) return undefined;
+      typeof witness.log !== "string" || basename(witness.log) !== witness.log || !/^[\w.-]+\.log$/.test(witness.log)) return undefined;
   try {
     const root = join(home, RUNS_DIR_NAME), canonical = realpathSync.native(root);
     const log = join(root, witness.log), meta = log.replace(/\.log$/, ".json");

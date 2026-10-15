@@ -53,6 +53,19 @@ it("keeps newer metadata-only misnamed runs ahead of matching suffixes without a
   expect(recovered).toEqual(recoverJobRecord(env.home,name));
   expect(recovered).toMatchObject({sessionId:"new-native",prompt:"task 2",startedAt:2});
 });
+it.each(["done","failed","cancelled","interrupted"])("recovers a %s generation from its terminal witness without probing a dead PID or the catalog",async status=>{
+  const id="terminalwitness",name=`codex-job-${id}`,startedAt=1,root=join(env.home,"runs");mkdirSync(root);
+  const run="independent-terminal-feed",prompt="full terminal prompt ".repeat(50);
+  writeFileSync(join(root,run+".json"),JSON.stringify({job:name,jobStartedAt:startedAt,session:"finished-native",by:"owner",access:"read"}));
+  writeFileSync(join(root,run+".log"),`header by owner\n         ${prompt}\n         ---\n`);
+  writeFileSync(join(env.home,"jobs.json"),JSON.stringify({version:4,jobs:[{id,name,agent:"codex",owner:"owner",status,startedAt}]}));
+  writeRunnerStateRecord(env.home,id,{pid:999999999,peer:name,status:status==="interrupted"?"failed":status,updatedAt:2,currentRun:{id,startedAt,log:run+".log"}});
+  const discovery=vi.spyOn(history,"readRunLogsResponsive");
+  const recovered=await recoverJobRecordAsync(env.home,name);
+  expect(discovery).not.toHaveBeenCalled();
+  expect(recovered).toEqual(recoverJobRecord(env.home,name));
+  expect(recovered).toMatchObject({prompt,sessionId:"finished-native",args:{access:"read"},host:null});
+});
 it.each(["old-turn","wrong-id","missing","wrong-metadata","unreadable"])("falls back when the current-run witness is %s",async(mode)=>{
   const id="badwitness",name=`codex-job-${id}`,startedAt=Date.now()-60_000,root=join(env.home,"runs");mkdirSync(root);
   const run="2026-10-08-01-02-03-codex-witness";
