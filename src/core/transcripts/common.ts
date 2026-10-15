@@ -1,4 +1,5 @@
-import { closeSync, fstatSync, openSync, readSync, readdirSync, realpathSync, statSync, type Stats } from "node:fs";
+import { readdirSync, realpathSync, statSync, type Stats } from "node:fs";
+import { activeByteSources, openByteSource, type ByteSource } from "../byte-source.js";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { PeerInfo } from "../protocol.js";
@@ -96,20 +97,20 @@ export function readJsonl(file: string, from = "0", maxBytes = MAX_TRANSCRIPT_CH
   const match = /^(?:j:)?(\d+)(?::([01]))?$/.exec(from);
   let offset = match ? Number(match[1]) : 0, discard = match?.[2] === "1";
   if (!Number.isSafeInteger(offset)) offset = 0;
-  let fd: number | undefined;
+  let src: ByteSource | undefined;
   try {
-    fd = openSync(file, "r");
-    const size = fstatSync(fd).size;
+    src = openByteSource(file);
+    const size = src.size;
     if (from === "tail") { offset = Math.max(0, size - TRANSCRIPT_TAIL_BYTES); maxBytes = Math.max(maxBytes, TRANSCRIPT_TAIL_BYTES); }
     if (offset > size) { offset = 0; discard = false; }
     // Check a manually supplied offset too: never parse the middle of a record.
     if (offset > 0 && !discard) {
       const previous = Buffer.alloc(1);
-      readSync(fd, previous, 0, 1, offset - 1);
+      src.read(previous, 0, 1, offset - 1);
       discard = previous[0] !== 10;
     }
     const buf = Buffer.alloc(Math.min(maxBytes, Math.max(0, size - offset)));
-    const length = readSync(fd, buf, 0, buf.length, offset);
+    const length = src.read(buf, 0, buf.length, offset);
     const entries: JsonlEntry[] = [];
     let start = 0;
     for (let i = 0; i < length; i++) {
@@ -124,27 +125,33 @@ export function readJsonl(file: string, from = "0", maxBytes = MAX_TRANSCRIPT_CH
     else offset += start;
     return { entries, next: `j:${offset}:${discard ? 1 : 0}` };
   } catch { return { entries: [], next: `j:${offset}:${discard ? 1 : 0}` }; }
-  finally { if (fd !== undefined) closeSync(fd); }
+  finally { src?.close(); }
 }
 
 export function readHead(file: string): JsonObject {
-  let fd: number | undefined;
+  let src: ByteSource | undefined;
   try {
-    fd = openSync(file, "r");
-    const size = fstatSync(fd).size;
+    src = openByteSource(file);
+    const size = src.size;
     for (let limit = INITIAL_HEADER_BYTES; limit <= MAX_TRANSCRIPT_CHUNK_BYTES; limit *= 2) {
       const buf = Buffer.alloc(Math.min(size, limit));
-      const length = readSync(fd, buf, 0, buf.length, 0), newline = buf.indexOf(10);
+      const length = src.read(buf, 0, buf.length, 0), newline = buf.indexOf(10);
       if (newline >= 0) return parse(buf.subarray(0, newline).toString("utf8"));
       if (length < limit) break;
     }
     return {};
   } catch { return {}; }
-  finally { if (fd !== undefined) closeSync(fd); }
+  finally { src?.close(); }
 }
 export function readTail(file: string): JsonObject[] {
-  const size = fileStat(file)?.size ?? 0;
-  return readJsonl(file, String(Math.max(0, size - MAX_TRANSCRIPT_CHUNK_BYTES))).entries.map((e) => e.value);
+  return readJsonl(file, String(Math.max(0, tailSize(file) - MAX_TRANSCRIPT_CHUNK_BYTES))).entries.map((e) => e.value);
+}
+
+/** The size the next read will see: the retained copy's when a resolver serves this file. */
+function tailSize(file: string): number {
+  const retained = activeByteSources()?.open(file);
+  if (!retained) return fileStat(file)?.size ?? 0;
+  try { return retained.size; } finally { retained.close(); }
 }
 
 /** Bounded metadata scan for legacy inline sidechains; modern children have separate files. */
