@@ -65,7 +65,8 @@ export interface BridgeNodeOptions {
   jobSendTo?: string[];
   /** false: only connect to a broker, never become one (a short-lived job runner would take the bridge down with it). */
   canHostBroker?: boolean;
-  /** Production MCP/CLI use the daemon. Omission retains library/fixture embedding. */
+  /** Explicit daemon descriptor. Production hosts supply it only when config.daemon.enabled resolves true
+   * (AGENT_BRIDGE_DAEMON=1/0 > daemon.enabled > false). Omission keeps the embedded broker path. */
   daemon?: { cli: string; dashboard?: () => boolean; config?: () => Pick<import("./config.js").BridgeConfig, "network" | "mobile" | "dashboardPort">; launch?: typeof launchDaemon };
   network?: { home: string; config: NetworkConfig };
 }
