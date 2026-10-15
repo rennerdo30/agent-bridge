@@ -62,11 +62,11 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-WWXUK4CE.mjs";
+} from "./chunks/chunk-S5SGG7OV.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-E7NOOT6R.mjs";
+} from "./chunks/chunk-ND5CXQAM.mjs";
 import {
   readWorktreeState
 } from "./chunks/chunk-NOVJUMH7.mjs";
@@ -90,7 +90,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-JZ3ZIFQJ.mjs";
+} from "./chunks/chunk-BQ3VNAXR.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -105,7 +105,7 @@ import {
 import {
   REMOTE_JOB_POLL_MS,
   remoteSpawnArgsSchema
-} from "./chunks/chunk-QCVIZHGY.mjs";
+} from "./chunks/chunk-LGZ552KS.mjs";
 import {
   formatHealth,
   probeBrokerHealth
@@ -124,8 +124,8 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-DWMSWMFQ.mjs";
-import "./chunks/chunk-K5NXQ42K.mjs";
+} from "./chunks/chunk-EACJO6OL.mjs";
+import "./chunks/chunk-2WUPX32B.mjs";
 import {
   ACCESS_LEVELS,
   DEFAULT_FOLLOW_UP,
@@ -3010,7 +3010,7 @@ var CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 var MAX_TITLE_CHARS = 80;
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["health", "peers", "send", "report_progress", "hook_event", "search_history", "get_conversation"]);
 var STAND_IN_RECHECK_MS = 3e4;
-var KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "permission_profile", "allow_tools", "send_to", "title", "notes"];
+var KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "base", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "permission_profile", "allow_tools", "send_to", "title", "notes"];
 var PLUGIN_ROOT = resolve(bundleDirectory(import.meta.url), "..");
 function pathFromUriOrPath(v) {
   if (typeof v !== "string" || !v) return null;
@@ -3299,7 +3299,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-EXAY56ET.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-D3IRVTN2.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3311,9 +3311,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-ZVFQWBP7.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-X273AVMP.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-ZVFQWBP7.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-X273AVMP.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -4076,6 +4076,7 @@ ${jobLines.join("\n")}`);
       worktree: external_exports.boolean().optional().describe(
         "Run in a separate git worktree on its own branch (implies access=edit). Your working copy stays untouched; the result explains how to review, merge or discard the changes."
       ),
+      base: external_exports.string().min(1).max(4096).optional().describe("Explicit worktree base ref or commit. Default: fetched remote default branch; selected at job start and reported with its SHA in the first status and preamble. Offline uses cached remote ref, or local HEAD with a warning; local-only repositories use HEAD."),
       title: external_exports.string().min(1).max(MAX_TITLE_CHARS).describe('A short title for this subagent, 3-7 words, like a chat title (e.g. "Fix castle gate alignment"). Required. Shown in peers and the dashboard.'),
       allow_tools: external_exports.array(external_exports.string().min(1).max(200)).max(50).optional().describe(
         'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (reads only), "pair-desk:worker" (reads, comments, progress, plans, issue edits and review locations; excludes status, builds and handoff writes), or "server" for all of its tools. Add "pair-desk.set_build" separately to allow build publication.'
@@ -4188,7 +4189,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const exact = a.sandbox !== void 0 || a.permission_mode !== void 0 || a.auto_approve !== void 0 || a.bypass_permissions !== void 0;
         const note = exact ? "" : `
 ${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
-        return text(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${derivedTitle ? `
+        return text(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${a.worktree ? `
+Base selected at job start: ${a.base ?? "fetched <remote>/<default> (offline/local fallback reported in first status)"}.` : ""}${derivedTitle ? `
 Title derived from prompt: "${a.title}".` : ""}`);
       })
     );
