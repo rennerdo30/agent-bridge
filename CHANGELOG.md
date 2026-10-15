@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.30.18
+
+- Antigravity jobs in `edit` mode no longer ask the supervisor to approve read-only tools such as `view_file`, `list_dir` and searches outside the workspace, including Antigravity's own skills and tool schemas under `~/.gemini`. Reads defer to Antigravity's own permission policy again; shell commands, external MCP tools, writes outside the workspace and unknown tools are still forwarded for approval (AB-367, #43).
+- Phones can be paired from the dashboard (AB-271, #10).
+- Messaging reports how each send was delivered, and Claude native children get a one-shot scoped queue (AB-345, #32).
+
 ## 0.30.17
 
 - Antigravity sessions can use their built-in tools and other MCP servers again. On agy 1.3.5 the bridge's `PreToolUse` hook answered `{}`, which Antigravity treats as "deny", so every non-bridge tool was refused with an empty reason. It now defers to Antigravity's own permission policy, and in `edit` mode forwards shell commands, external MCP tools and writes outside the workspace for approval (AB-331, AB-305, #28).
