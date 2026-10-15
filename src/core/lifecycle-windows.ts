@@ -109,25 +109,53 @@ try {
 }
 `;
 
-function snapshot(home: string, scope: Scope): Snapshot {
+function snapshot(home: string, scope: Scope, observed?: { stamps: string }): Snapshot {
   const paths: Snapshot = new Map();
   const check = (path: string, directory: boolean) => {
     if (paths.size >= 128 && !paths.has(path)) throw new WindowsLifecyclePathUnavailable("unsafe_path");
     const stat = lstatSync(path, { bigint: true });
     if (stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== 1n)) throw new WindowsLifecyclePathUnavailable("unsafe_path");
     paths.set(path, `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`);
+    return stat;
   };
   for (let path = home; ; path = dirname(path)) {
     if (paths.size >= 128) throw new WindowsLifecyclePathUnavailable("unsafe_path");
     check(path, true); if (path === dirname(path)) break;
   }
   if (scope === "established") {
-    const dir = join(home, DIRECTORY); check(dir, true); check(join(dir, FILE), false); check(join(dir, FILE + "-journal"), false);
+    const dir = join(home, DIRECTORY), directory = check(dir, true); check(join(dir, FILE), false); check(join(dir, FILE + "-journal"), false);
+    // The directory times come from the same lstat as its identity: no extra syscall.
+    if (observed) observed.stamps = `${directory.mtimeNs}:${directory.ctimeNs}`;
   }
   return paths;
 }
 function same(a: Snapshot, b: Snapshot): boolean { return a.size === b.size && [...a].every(([path, identity]) => b.get(path) === identity); }
 export function pendingWindowsLifecycleVerifications(): number { return pending.size; }
+
+// Verified-path cache. Only a complete, successful fresh ACL observation (the
+// unchanged INSPECT helper) records an entry; any refusal of that observation,
+// or any identity change seen by the cached check, removes it. The cached check
+// never spawns a helper: it only re-reads cheap fs.stat identities, so a never
+// verified, recreated or swapped object is refused instead of inherited.
+type VerifiedPaths = { paths: Snapshot; physicalHome: string; stamps: string };
+const verifiedPaths = new Map<string, VerifiedPaths>();
+const verifiedKey = (home: string, ownerInstance: string, scope: Scope) => `${scope}\0${ownerInstance}\0${home}`;
+// The protected lifecycle directory only contains the two pre-created objects
+// (PERSIST journal), so its mtime/ctime stay fixed under ordinary writes; NTFS
+// ChangeTime also moves on an ACL/owner change of that directory.
+// KNOWN LIMIT: an ACL/owner-only change on HOME, its ancestors, receipts.sqlite or
+// its journal is NOT detected by the cached check (their ctime also moves with
+// ordinary writes, so it cannot be part of the identity). A verdict has no TTL:
+// it lasts until an identity change, a refused fresh observation, or process
+// restart. There is deliberately no background re-verification.
+function stamps(home: string, scope: Scope): string {
+  if (scope !== "established") return "";
+  const stat = lstatSync(join(home, DIRECTORY), { bigint: true });
+  return `${stat.mtimeNs}:${stat.ctimeNs}`;
+}
+let cachedChecks = 0;
+/** Fixture observation: how many cached (no-helper) checks produced a proof. */
+export function cachedWindowsLifecyclePathChecks(): number { return cachedChecks; }
 
 const OWN_IDENTITY = String.raw`
 $ErrorActionPreference='Stop'; $nonce=''
@@ -202,8 +230,11 @@ export async function verifyWindowsLifecyclePaths(home: string, ownerInstance: s
   const started = performance.now(), expires = Math.min(deadline, started + PHASE_MS[phase]);
   if (!Number.isFinite(expires) || expires <= started) reject("budget");
   if (pending.size) reject("unavailable"); // A timed-out observer is not settled process/verification proof.
-  let physicalHome: string, before: Snapshot;
-  try { before = snapshot(home, scope); physicalHome = realpathSync.native(home); }
+  const key = verifiedKey(home, ownerInstance, scope);
+  verifiedPaths.delete(key); // A fresh observation replaces, never extends, an earlier verdict.
+  let physicalHome: string, before: Snapshot, observedStamps: string;
+  const observed = { stamps: "" };
+  try { before = snapshot(home, scope, observed); physicalHome = realpathSync.native(home); observedStamps = observed.stamps; }
   catch { reject("unsafe_path"); }
   let generation: number | undefined;
   const current = () => {
@@ -261,6 +292,9 @@ export async function verifyWindowsLifecyclePaths(home: string, ownerInstance: s
           if (!["NTFS", "ReFS"].includes(r.filesystem) || !same(before, snapshot(home, scope))) return refuse("unsafe_path");
           const proof = Object.freeze({ nonce, ownerInstance, phase, scope });
           proofs.set(proof, { paths: before, deadline: expires, pid: process.pid, authority, generation });
+          // Cache only when nothing observable moved while the helper ran.
+          try { if (stamps(home, scope) === observedStamps && realpathSync.native(home) === physicalHome) verifiedPaths.set(key, { paths: before, physicalHome, stamps: observedStamps }); }
+          catch { /* No cache entry; this fresh proof is unaffected. */ }
           settled = true; clearTimeout(timer); resolve(proof);
         } catch { refuse("unavailable"); }
       });
@@ -271,6 +305,46 @@ export async function verifyWindowsLifecyclePaths(home: string, ownerInstance: s
       refuse(error instanceof WindowsLifecyclePathUnavailable && error.reason === "budget" ? "budget" : "unavailable");
     }
   });
+}
+
+/** Whether an earlier complete fresh observation is recorded for these exact inputs.
+ * Presence is not a proof: cachedWindowsLifecyclePathProof still rechecks identity. */
+export function hasVerifiedWindowsLifecyclePaths(home: string, ownerInstance: string, scope: Scope): boolean {
+  return verifiedPaths.has(verifiedKey(home, ownerInstance, scope));
+}
+
+/** Phase-local proof from an earlier complete fresh observation of the SAME home,
+ * owner and established objects. No helper process, so it fits every phase budget.
+ * Refuses when nothing was verified, and refuses AND forgets the entry when any
+ * cheap identity changed, so only a later complete fresh observation can restore it. */
+export function cachedWindowsLifecyclePathProof(home: string, ownerInstance: string, phase: Phase, scope: Scope, deadline: number,
+  authority?: LifecycleServingCapability): WindowsLifecyclePathProof {
+  const reject = (reason: Reason): never => { throw new WindowsLifecyclePathUnavailable(reason); };
+  if (process.platform !== "win32" || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(ownerInstance) || !Object.hasOwn(PHASE_MS, phase) || !["home", "established"].includes(scope)) reject("unavailable");
+  const started = performance.now(), expires = Math.min(deadline, started + PHASE_MS[phase]);
+  if (!Number.isFinite(expires) || expires <= started) reject("budget");
+  if (pending.size) reject("unavailable");
+  const key = verifiedKey(home, ownerInstance, scope), known = verifiedPaths.get(key);
+  if (!known) reject("unavailable");
+  let current: Snapshot;
+  try {
+    const observed = { stamps: "" };
+    current = snapshot(home, scope, observed);
+    if (!same(known!.paths, current) || observed.stamps !== known!.stamps || realpathSync.native(home) !== known!.physicalHome) throw new Error("changed");
+  } catch { verifiedPaths.delete(key); reject("unsafe_path"); }
+  let generation: number | undefined;
+  if (authority !== undefined) {
+    try {
+      const serving = assertLifecycleServingCapability(authority, phase), stat = lstatSync(serving.home, { bigint: true });
+      if (serving.ownerInstance !== ownerInstance || known!.paths.get(home) !== `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`) throw new Error("changed");
+      generation = serving.generation;
+    } catch { reject("unavailable"); }
+  }
+  if (performance.now() >= expires) reject("budget");
+  const proof = Object.freeze({ nonce: randomUUID(), ownerInstance, phase, scope });
+  proofs.set(proof, { paths: known!.paths, deadline: expires, pid: process.pid, authority, generation });
+  cachedChecks++;
+  return proof;
 }
 
 /** Immediate identity recheck for the following bounded SQL phase, never a cross-restart cache.
@@ -328,7 +402,50 @@ try {
 
 /** Boundary1 only: actual serving capability -> exclusive new objects -> fresh ACL
  * evidence. Neither this opaque result nor file existence grants admission/promotion. */
-export async function createWindowsLifecycleObjects(capability: LifecycleServingCapability, deadline: number): Promise<WindowsLifecycleCreation> {
+export interface WindowsLifecyclePreparation { readonly __preparation?: never }
+type PreparationRecord = { owner: string; generation: number; home: string; pid: number; creationIdentity: string; expires: number };
+const preparations = new WeakMap<WindowsLifecyclePreparation, PreparationRecord>();
+/** Single-use HOME permission handed from a consumed preparation to object creation. */
+export interface WindowsLifecyclePreparedHome { readonly __preparedHome?: never }
+const preparedHomes = new WeakMap<WindowsLifecyclePreparedHome, PreparationRecord>();
+function preparationMatches(record: PreparationRecord | undefined, capability: LifecycleServingCapability): PreparationRecord {
+  const actual = assertLifecycleServingCapability(capability, "prepare");
+  if (!record || record.pid !== process.pid || record.owner !== actual.ownerInstance || record.generation !== actual.generation ||
+    record.home !== actual.home || !(performance.now() < record.expires)) throw new WindowsLifecyclePathUnavailable("unavailable");
+  return record;
+}
+
+/** Setup step BEFORE the timed bootstrap phase: the own-process identity helper and
+ * the HOME-scope ACL helper run here, each inside this call's own prepare budget.
+ * The result is an opaque, source-minted record bound to the exact serving owner,
+ * generation, home and process; the HOME verdict is reused later only after its
+ * cheap identity recheck (see cachedWindowsLifecyclePathProof). */
+export async function prepareWindowsLifecycleBootstrap(capability: LifecycleServingCapability, deadline: number): Promise<WindowsLifecyclePreparation> {
+  const initial = assertLifecycleServingCapability(capability, "prepare");
+  const creationIdentity = await readOwnWindowsLifecycleIdentity(capability, deadline);
+  await verifyWindowsLifecyclePaths(initial.home, initial.ownerInstance, "prepare", "home", deadline);
+  const actual = assertLifecycleServingCapability(capability, "prepare");
+  if (actual.ownerInstance !== initial.ownerInstance || actual.generation !== initial.generation || actual.home !== initial.home || !Number.isFinite(deadline))
+    throw new WindowsLifecyclePathUnavailable("unavailable");
+  const preparation: WindowsLifecyclePreparation = Object.freeze({});
+  // Valid only until this setup's deadline plus ONE bootstrap budget.
+  preparations.set(preparation, { owner: initial.ownerInstance, generation: initial.generation, home: initial.home, pid: process.pid,
+    creationIdentity, expires: deadline + PHASE_MS.prepare });
+  return preparation;
+}
+/** Consumes a preparation (any attempt, valid or not, retires it) and returns the
+ * prepared own-process identity plus a single-use HOME permission, only for the SAME
+ * live serving owner/generation/home/process before the preparation's expiry. */
+export function consumeWindowsLifecyclePreparation(preparation: WindowsLifecyclePreparation, capability: LifecycleServingCapability):
+  { creationIdentity: string; preparedHome: WindowsLifecyclePreparedHome } {
+  const record = preparations.get(preparation); preparations.delete(preparation);
+  const valid = preparationMatches(record, capability), preparedHome: WindowsLifecyclePreparedHome = Object.freeze({});
+  preparedHomes.set(preparedHome, valid);
+  return { creationIdentity: valid.creationIdentity, preparedHome };
+}
+
+export async function createWindowsLifecycleObjects(capability: LifecycleServingCapability, deadline: number,
+  preparedHome?: WindowsLifecyclePreparedHome): Promise<WindowsLifecycleCreation> {
   try {
   const initial = assertLifecycleServingCapability(capability, "prepare");
   const expires = Math.min(deadline, performance.now() + PHASE_MS.prepare);
@@ -341,7 +458,15 @@ export async function createWindowsLifecycleObjects(capability: LifecycleServing
     return actual;
   };
   current();
-  const homeProof = await verifyWindowsLifecyclePaths(initial.home, initial.ownerInstance, "prepare", "home", expires);
+  // A valid preparation supplies the HOME verdict without a helper (identity recheck,
+  // fail closed on change); otherwise the unchanged fresh HOME observation runs here.
+  if (preparedHome !== undefined) {
+    const record = preparedHomes.get(preparedHome); preparedHomes.delete(preparedHome);
+    preparationMatches(record, capability);
+  }
+  const homeProof = preparedHome !== undefined
+    ? cachedWindowsLifecyclePathProof(initial.home, initial.ownerInstance, "prepare", "home", expires)
+    : await verifyWindowsLifecyclePaths(initial.home, initial.ownerInstance, "prepare", "home", expires);
   current(); assertWindowsLifecyclePathProof(homeProof, initial.home, initial.ownerInstance, "prepare", "home");
   const dir = join(initial.home, DIRECTORY);
   // Atomic exclusive mkdir; never recursive, never an existing interrupted object.

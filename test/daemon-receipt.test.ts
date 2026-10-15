@@ -135,6 +135,22 @@ vi.mock("../src/core/lifecycle-windows.js", async importOriginal => {
     catch (error) { if (trace && observed) completeCall(trace, observed, started, "threw"); throw error; }
     return invocation.then(value => { completed("resolved"); return value; },
       error => { completed("rejected"); verificationFixture.rejected?.(error); throw error; });
+  }, cachedWindowsLifecyclePathProof: (...args: Parameters<typeof native.cachedWindowsLifecyclePathProof>) => {
+    // Same observation hooks for the cached (no-helper) phase check. The proof or
+    // refusal is still produced ONLY by the ORIGINAL source check with its arguments.
+    verificationFixture.before?.(args[0], args[2], args[3]);
+    const diagnostic = args[2] === "admission" && args[3] === "established" && verificationFixture.diagnostic?.result === "not_entered"
+      ? verificationFixture.diagnostic : undefined;
+    const started = performance.now(), trace = initialAdmissionTrace;
+    const observed = trace && args[0] === journalHome && args[2] === "admission" && args[3] === "established" && args[4] === trace.end
+      ? observeCall(trace, "verifier") : undefined;
+    if (diagnostic) { diagnostic.entry = timingBucket(args[4] - started); diagnostic.result = "rejected"; }
+    const completed = (result: "resolved" | "rejected") => {
+      if (trace && observed) completeCall(trace, observed, started, result);
+      if (diagnostic) { const now = performance.now(); diagnostic.resolution = timingBucket(args[4] - now); diagnostic.wall = timingBucket(now - started); diagnostic.result = result; }
+    };
+    try { const proof = native.cachedWindowsLifecyclePathProof(...args); completed("resolved"); return proof; }
+    catch (error) { completed("rejected"); verificationFixture.rejected?.(error); throw error; }
   } };
 });
 
@@ -171,7 +187,13 @@ const request = (): LifecycleRequest => ({ restartId: randomUUID(), operation: "
   target: { immutableRuntimePath: join(env.home, "fixture-immutable-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } });
 async function bootstrap() {
   if (portable) journal = await LifecycleJournal.bootstrap(journalHome, owner);
-  else { const end = performance.now() + LIFECYCLE_PREPARE_MS; journal = await LifecycleJournal.bootstrapServing(servingFixture!.broker.lifecycleServingCapability("prepare", end), end); }
+  else {
+    // Own-identity and HOME ACL helpers run in the setup step, outside the timed bootstrap.
+    const prepareEnd = performance.now() + LIFECYCLE_PREPARE_MS;
+    const preparation = await LifecycleJournal.prepareServingBootstrap(servingFixture!.broker.lifecycleServingCapability("prepare", prepareEnd), prepareEnd);
+    const end = performance.now() + LIFECYCLE_PREPARE_MS;
+    journal = await LifecycleJournal.bootstrapServing(servingFixture!.broker.lifecycleServingCapability("prepare", end), end, preparation);
+  }
   return journal;
 }
 const portable = process.platform !== "win32";
@@ -276,7 +298,10 @@ function outcomeFault(writer: DatabaseSync, end: number, fault: OutcomeFault, fi
     // has four clock reads, then both platforms have two autocommit checks.
     // Expire at the first reader guard, not a prior transaction/phase guard.
     if (committed && fault === "reader_preflight" && ++postCommitClockReads >= (portable ? 3 : 7)) expire();
-    return expired ? Math.max(realNow(), end + 1) : realNow();
+    // Until the SIMULATED boundary fires, the phase clock stays strictly before the
+    // original deadline: real SQLite/fsync time on a loaded runner can no longer
+    // expire the phase first, so the simulated boundary is the only reachable expiry.
+    return expired ? Math.max(realNow(), end + 1) : Math.min(realNow(), end - 1);
   });
   const runs: Array<() => void> = [];
   const exec = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
@@ -703,8 +728,10 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     if (portable) await expect(LifecycleJournal.bootstrap(journalHome, owner)).rejects.toMatchObject({ reason: "lineage_unknown" });
     else {
       await expect(LifecycleJournal.bootstrap(journalHome, owner)).rejects.toMatchObject({ reason: "publication_unproved" });
+      const prepareEnd = performance.now() + LIFECYCLE_PREPARE_MS;
+      const preparation = await LifecycleJournal.prepareServingBootstrap(servingFixture!.broker.lifecycleServingCapability("prepare", prepareEnd), prepareEnd);
       const end = performance.now() + LIFECYCLE_PREPARE_MS;
-      await expect(LifecycleJournal.bootstrapServing(servingFixture!.broker.lifecycleServingCapability("prepare", end), end))
+      await expect(LifecycleJournal.bootstrapServing(servingFixture!.broker.lifecycleServingCapability("prepare", end), end, preparation))
         .rejects.toMatchObject({ reason: "publication_unproved" });
     }
     expect(existsSync(file() + "-journal")).toBe(false); expect(readFileSync(file())).toEqual(before);

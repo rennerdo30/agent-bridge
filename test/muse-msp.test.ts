@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, existsSync, symlinkSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { delegateToMuseMsp, museMspQuery, type MuseMspRequest, type MuseSteering } from "../src/core/muse-msp.js";
 import { DELEGATE_DEPTH_ENV } from "../src/core/delegate.js";
@@ -9,7 +10,7 @@ import { nullLogger } from "../src/core/logger.js";
 
 const host = fileURLToPath(new URL("./fixtures/muse-msp/host.cjs", import.meta.url));
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 30 }); vi.unstubAllEnvs(); });
+afterEach(() => { vi.useRealTimers(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 30 }); vi.unstubAllEnvs(); });
 function fixture(overrides: Partial<MuseMspRequest> = {}, env: Record<string, string> = {}) {
   const cwd = mkdtempSync(join(tmpdir(), "ab-muse-msp-")); dirs.push(cwd);
   const logfile = join(cwd, "requests.jsonl");
@@ -19,8 +20,35 @@ function fixture(overrides: Partial<MuseMspRequest> = {}, env: Record<string, st
 }
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 async function until(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 100; i++) { if (predicate()) return; await new Promise((r) => setTimeout(r, 10)); }
+  for (let i = 0; i < 100; i++) { if (predicate()) return; await sleep(10); }
   throw new Error("fixture condition did not happen");
+}
+
+async function stallUntilStartupDeadline(f: ReturnType<typeof fixture>) {
+  const stalled = join(f.cwd, "host.stalled"), controller = new AbortController();
+  f.req.extraEnv!.MSP_TEST_STALLED = stalled;
+  // Freeze only the parent's deadlines while the real stdio host starts and
+  // reaches the requested stall. Polling uses real timers; Date/UUIDs stay real.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const run = delegateToMuseMsp({ ...f.req, signal: controller.signal });
+  let settled = false;
+  void run.then(() => { settled = true; }, () => { settled = true; });
+  try {
+    await until(() => existsSync(stalled));
+    expect(readFileSync(stalled, "utf8")).toBe(f.req.extraEnv!.MSP_TEST_HANG);
+    vi.advanceTimersByTime(f.req.startupTimeoutMs! - 1);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    // Expire the original 80/100 ms deadline, then restore real timers before
+    // rejection microtasks begin transport cleanup and its separate deadlines.
+    vi.advanceTimersByTime(1);
+    vi.useRealTimers();
+    return await run;
+  } finally {
+    vi.useRealTimers();
+    controller.abort();
+    await run.catch(() => {});
+  }
 }
 
 describe("Muse stable MSP delegation", () => {
@@ -163,13 +191,13 @@ describe("Muse stable MSP delegation", () => {
 
   it("preserves startup deadlines and does not submit a paid turn after a stalled session start", async () => {
     const f = fixture({ startupTimeoutMs: 80 }, { MSP_TEST_HANG: "session/start" });
-    await expect(delegateToMuseMsp(f.req)).rejects.toMatchObject({ startupFailed: true });
+    await expect(stallUntilStartupDeadline(f)).rejects.toMatchObject({ startupFailed: true, message: expect.stringContaining("did not answer session/start within startup timeout") });
     expect(f.calls().some((m) => m.method === "turn/start")).toBe(false);
   });
 
   it("marks an unanswered turn admission as unsafe to replay and preserves the session", async () => {
     const f = fixture({ startupTimeoutMs: 100 }, { MSP_TEST_HANG: "turn/start" });
-    await expect(delegateToMuseMsp(f.req)).rejects.toMatchObject({ startupFailed: false, sessionId: "0198f0aa-1111-7000-8000-0000000000aa" });
+    await expect(stallUntilStartupDeadline(f)).rejects.toMatchObject({ startupFailed: false, sessionId: "0198f0aa-1111-7000-8000-0000000000aa", message: expect.stringContaining("did not answer turn/start within startup timeout") });
     expect(f.calls().filter((m) => m.method === "turn/start")).toHaveLength(1);
   });
 
