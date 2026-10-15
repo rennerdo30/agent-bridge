@@ -14,6 +14,7 @@ import { SQLITE_STORE_VERSION } from "../src/core/store.js";
 import { until } from "./helpers.js";
 import { readProcessIdentity } from "../src/core/process-identity.js";
 import { fixtureProcessGeneration } from "./fixture-process-generation.js";
+import { captureFixtureBroker } from "./fixture-teardown.js";
 
 const textOf = (result: any): string => result.content.map((part: any) => part.text ?? "").join("\n");
 
@@ -27,6 +28,7 @@ it("keeps released and current MCP processes talking until the older reader exit
   expect(oldArtifact.toString("utf8")).not.toContain("storage-capabilities");
   writeFileSync(oldServer, oldArtifact);
   const clients: Client[] = [];
+  const transports: StdioClientTransport[] = [];
   const daemonIdentities = new Map<number, string>();
   const owned: { name: string; pid: number; stderr: () => string }[] = [];
   const env = { ...process.env } as Record<string, string>;
@@ -37,6 +39,7 @@ it("keeps released and current MCP processes talking until the older reader exit
     const client = new Client({ name: `test-${name}`, version: "1" });
     clients.push(client);
     const transport = new StdioClientTransport({ command: process.execPath, args: [file, `--agent=${agent}`], env: { ...env, AGENT_BRIDGE_NAME: name }, stderr: "pipe" });
+    transports.push(transport);
     let errors = "";
     transport.stderr?.on("data", (chunk) => errors += chunk);
     try { await client.connect(transport); } catch (error) { throw new Error(`${name}: ${errors}`, { cause: error }); }
@@ -164,13 +167,23 @@ it("keeps released and current MCP processes talking until the older reader exit
   } catch (error) {
     failure = error;
   } finally {
-    await Promise.all(clients.map((client) => client.close().catch(() => {})));
-    for (const pid of daemonIdentities.keys()) {
-      try { await stopFixtureDaemon(pid); }
-      catch (error) { failure = new AggregateError([failure, error].filter(Boolean), "Exact fixture daemon exit was not proven; retained."); }
+    const teardownErrors: unknown[] = [];
+    const attempt = async (action: () => Promise<unknown>) => {
+      try { await action(); } catch (error) { teardownErrors.push(error); }
+    };
+    const serverPids = [...new Set([...owned.map(child => child.pid), ...transports.flatMap(transport => transport.pid ? [transport.pid] : [])])];
+    let stopBroker: (() => Promise<void>) | undefined;
+    await attempt(async () => { stopBroker = await captureFixtureBroker(home, serverPids); });
+    for (const client of clients) await attempt(() => client.close());
+    for (const transport of transports) await attempt(() => transport.close());
+    // Confirm every producer has exited BEFORE signalling the captured daemon:
+    // transport.close() can return after SIGKILL while process exit is still pending.
+    await attempt(() => until(() => serverPids.every(pid => exited(pid)), 3_000));
+    if (!teardownErrors.length) {
+      await attempt(async () => { await stopBroker?.(); });
+      for (const pid of daemonIdentities.keys()) await attempt(() => stopFixtureDaemon(pid));
     }
-    try { await until(() => owned.every(child => exited(child.pid)), 3_000); }
-    catch (error) { failure = new AggregateError([failure, error].filter(Boolean), "Owned MCP child exit was not proven; fixture retained."); }
+    if (teardownErrors.length) failure = new AggregateError([failure, ...teardownErrors].filter(Boolean), "Fixture producer or daemon exit was not proven; retained.");
     // liveStorePeers reads the capability rows through this process's shared metadata connection.
     closeMetadataDb(home);
     if (!failure) rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
