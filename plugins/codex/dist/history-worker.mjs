@@ -5,14 +5,14 @@ import {
 import {
   HISTORY_TICK_MS,
   HistoryIndex
-} from "./chunks/chunk-AR3XNCX6.mjs";
-import "./chunks/chunk-TK3APK3O.mjs";
+} from "./chunks/chunk-TOAMRTGT.mjs";
+import "./chunks/chunk-3CKVIQIW.mjs";
 import {
   ConversationIngestor,
   ownsProjectMirrors,
   projectDatabasePath
-} from "./chunks/chunk-KRGET3XJ.mjs";
-import "./chunks/chunk-HS6DDUE5.mjs";
+} from "./chunks/chunk-UTVEQGG3.mjs";
+import "./chunks/chunk-OVLKPORL.mjs";
 import {
   HISTORY_IO_BYTES_PER_SECOND,
   copyLegacyConversationTail,
@@ -26,7 +26,7 @@ import "./chunks/chunk-V4VFK2LZ.mjs";
 import "./chunks/chunk-PZ6QYUCT.mjs";
 import {
   reconcileAskCompletions
-} from "./chunks/chunk-MIJUX2CO.mjs";
+} from "./chunks/chunk-5ULR62DP.mjs";
 import {
   loadConfig
 } from "./chunks/chunk-GUU5SJ6T.mjs";
@@ -35,7 +35,7 @@ import "./chunks/chunk-RE3I7AXX.mjs";
 import "./chunks/chunk-IYJ5P7ML.mjs";
 import {
   readHistoryJson
-} from "./chunks/chunk-5W62G7NK.mjs";
+} from "./chunks/chunk-WEZZ2PWR.mjs";
 import "./chunks/chunk-HYOPFLLN.mjs";
 import {
   checkpointOwnedMetadataConnections,
@@ -51,7 +51,7 @@ import {
 } from "./chunks/chunk-HIVVJXLN.mjs";
 import {
   transcriptPaths
-} from "./chunks/chunk-NVDPULGI.mjs";
+} from "./chunks/chunk-OX5J3NNH.mjs";
 import "./chunks/chunk-DEWCC5JJ.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
@@ -263,6 +263,10 @@ async function tick(reset = false) {
       if (!ingest) {
         ingest = new ConversationIngestor(db, workerData.home, paths, source);
         ingest.onChange = onTranscriptChange;
+        const registering = index;
+        ingest.onUnknownPaths = (changed) => {
+          registering.registerChanged(changed);
+        };
       }
       ready = true;
     }
@@ -324,11 +328,22 @@ async function tick(reset = false) {
 var dueAt = 0;
 var transcriptsChanged = false;
 var wakeAfterTick = false;
+var liveAfterTick = false;
+var lastTickAt = 0;
+var firing = 0;
+var LIVE_WAKE_MS = 15;
+var LIVE_GAP_MS = 100;
 function wakeSoon() {
   if (lifecycleQuiesced) return;
-  if (stopped || !timer || dueAt - Date.now() <= HISTORY_TICK_MS) return;
+  if (stopped) return;
   idle.reset();
-  schedule(HISTORY_TICK_MS);
+  if (running || firing) {
+    liveAfterTick = true;
+    return;
+  }
+  const delay = Math.max(LIVE_WAKE_MS, lastTickAt + LIVE_GAP_MS - Date.now());
+  if (timer && dueAt - Date.now() <= delay) return;
+  schedule(delay);
 }
 var onTranscriptChange = () => {
   transcriptsChanged = true;
@@ -347,6 +362,7 @@ function schedule(delay = HISTORY_TICK_MS) {
   timer = setTimeout(async () => {
     timer = null;
     const finish = acceptOperation();
+    firing++;
     let next = idle.next(0, false);
     try {
       await waitForPressureGap();
@@ -358,10 +374,16 @@ function schedule(delay = HISTORY_TICK_MS) {
       if (err.code !== "HISTORY_SNAPSHOT_PAUSED" && !stopped) parentPort?.postMessage({ error: String(err) });
       pauseUntil = Date.now() + 5e3;
     }
+    lastTickAt = Date.now();
+    if (liveAfterTick) {
+      liveAfterTick = false;
+      next = Math.min(next, LIVE_GAP_MS);
+    }
     if (wakeAfterTick) {
       wakeAfterTick = false;
       next = 0;
     }
+    firing--;
     schedule(next);
     finish();
   }, delay);
@@ -450,7 +472,7 @@ parentPort?.on("message", async (message) => {
     }
     if (message.wake) {
       idle.reset();
-      if (running) wakeAfterTick = true;
+      if (running || firing) wakeAfterTick = true;
       else schedule(0);
       return;
     }
