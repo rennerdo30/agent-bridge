@@ -1,7 +1,7 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { withByteSources } from "./byte-source.js";
+import { withByteSources, type ByteSourceResolver } from "./byte-source.js";
 import { DB_FILE_NAME } from "./constants.js";
 import { HistorySourceResolver } from "./history-sources.js";
 import { historyDbPath, historyReady, historyV1Readable, openHistoryReader } from "./history-store.js";
@@ -20,6 +20,22 @@ function openStore(home: string): DatabaseSync | null {
   } catch { /* A busy or unreadable store: the files answer. */ }
   db?.close();
   return null;
+}
+
+/**
+ * Without a usable store every existing source is read from its file, so the answer is importing exactly when the
+ * reader opened one. A request that touches no existing file (a job whose transcript is gone) has nothing to import,
+ * matching HistorySourceResolver, which does not flag a missing file either.
+ */
+function readFiles<T>(read: () => T): HistoryRead<T> {
+  let importing = false;
+  const files: ByteSourceResolver = {
+    open(file) {
+      try { statSync(file); importing = true; } catch { /* Missing: openFileSource reports it as before. */ }
+      return null;
+    },
+  };
+  return { value: withByteSources(files, read), importing };
 }
 
 export interface HistoryRead<T> {
@@ -44,13 +60,13 @@ export function historyReader(home: string): { read<T>(read: () => T): HistoryRe
   return {
     read<T>(read: () => T): HistoryRead<T> {
       if (db === undefined) db = openStore(home);
-      if (!db) return { value: read(), importing: true };
+      if (!db) return readFiles(read);
       try {
         const resolver = new HistorySourceResolver(db);
         const value = withByteSources(resolver, read);
         return { value, importing: resolver.fellBack };
       } catch {
-        return { value: read(), importing: true };
+        return readFiles(read);
       }
     },
     close(): void { db?.close(); db = null; },
