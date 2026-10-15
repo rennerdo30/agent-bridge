@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.30.21
+
+- A message larger than the 4 MiB frame limit no longer puts sessions into an endless reconnect loop. Senders now check the encoded size first: an oversized request fails with a non-retryable `too_large` error, and the broker skips an oversized event instead of dropping the connection. Oversized job reports and stored messages are sent as a short stub with the same id; the full text is kept in `quarantine/` under the bridge home, and the stored original is never rewritten. Worktree reports list at most 50 skipped files. `doctor` reports oversized and unsendable stored messages (AB-380, #59).
+- The job-close autosave never commits half of a regenerated plugin bundle. Changed `plugins/*/dist` files are left out as a whole and listed in the close report; the files stay on disk (AB-274, #52).
+- Packed run history is read without failing while the outcome worker holds the SQLite database (AB-290, #38).
+
 ## 0.30.20
 
 - The broker no longer stalls under load from many running jobs. Job control requests (`message_subagent`, handoffs, `jobAuthority`) used to decode the whole job archive several times per request and scan every retained run log; they now look up only the requested job, reuse already-decoded records within a bounded cache, and read a running job's current run directly. In a test home with 3,000 runs, one request dropped from about 470 ms to 5 ms and 15 concurrent requests from about 6 s to 0.16 s (AB-300, #39).
