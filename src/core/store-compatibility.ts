@@ -59,16 +59,11 @@ async function refreshIdentityCache(home: string): Promise<void> {
     if (pending) { await pending; continue; }
     const dir = join(home, "storage-capabilities");
     const stored = databasePresence(home);
-    // Only PIDs that still exist are queried. Retained rows of exited readers (thousands on a busy machine) made
-    // one batch query slow enough to time out under load, so no reader was ever verified (AB-390). A gone PID's
-    // cached identity is dropped: a later process under that PID starts unverified, never as the old generation.
     const records = stored ? stored.flatMap(({record,signature}) => {
       const path = join(dir,`${record.pid}.json`), cached = identities.get(path);
-      if (record.pid !== process.pid && !pidExists(record.pid)) { identities.delete(path); return []; }
       return !cached || cached.signature !== signature || Date.now()-cached.at >= IDENTITY_REFRESH_MS ? [{pid:record.pid,path,signature}] : [];
     }) : existsSync(dir) ? readdirSync(dir).filter(file => /^\d+\.json$/.test(file)).flatMap(file => {
-      const path = join(dir, file), signature = presenceSignature(path), cached = identities.get(path), pid = Number(file.slice(0, -5));
-      if (pid !== process.pid && !pidExists(pid)) { identities.delete(path); return []; }
+      const path = join(dir, file), signature = presenceSignature(path), cached = identities.get(path);
       return signature && (!cached || cached.signature !== signature || Date.now() - cached.at >= IDENTITY_REFRESH_MS)
         ? [{ pid: Number(file.slice(0, -5)), path, signature }] : [];
     }) : [];
@@ -76,20 +71,29 @@ async function refreshIdentityCache(home: string): Promise<void> {
     let failed = false;
     const refresh = (async () => {
       let current: Map<number, string>;
-      try { current = await readProcessIdentities(records.filter(record => record.pid !== process.pid).map(record => record.pid)); }
+      // Only PIDs that still exist go to the OS query. Retained rows of exited readers (thousands on a busy machine)
+      // made one batch query slow enough to time out under load, so no reader was ever verified (AB-390). The round
+      // itself still runs (an empty list costs nothing): awaiting callers keep one asynchronous scan as their barrier,
+      // and a gone PID is recorded below without an identity, so a later process under it starts unverified.
+      const gone = new Set(records.filter(record => record.pid !== process.pid && !pidExists(record.pid)).map(record => record.pid));
+      try { current = await readProcessIdentities(records.filter(record => record.pid !== process.pid && !gone.has(record.pid)).map(record => record.pid)); }
       catch (error) {
         refreshFailures.set(home, { at: Date.now(), error: error instanceof Error ? error.message : String(error) });
         // A failed or timed-out query (an overloaded system) observed nothing: keep each reader's last verified
         // identity for another interval instead of marking every live reader unknown, which blocked upgrades and
         // job starts. Readers never verified stay unknown until a later query succeeds.
         failed = true;
-        for (const { path } of records) { const cached = identities.get(path); if (cached) identities.set(path, { ...cached, at: Date.now() }); }
+        // A gone PID needs no query: it never keeps the old generation's identity.
+        for (const { pid, path, signature } of records) {
+          if (gone.has(pid)) { identities.set(path, { identity: null, at: Date.now(), signature }); continue; }
+          const cached = identities.get(path); if (cached) identities.set(path, { ...cached, at: Date.now() });
+        }
         return;
       }
       refreshFailures.delete(home);
       // Bind the result to the record observed before the OS query. A new PID
       // generation published during/after that query must be verified again.
-      for (const { pid, path, signature } of records) identities.set(path, { identity: pid === process.pid ? processIdentity(pid) ?? null : current.get(pid) ?? null, at: Date.now(), signature });
+      for (const { pid, path, signature } of records) identities.set(path, { identity: pid === process.pid ? processIdentity(pid) ?? null : gone.has(pid) ? null : current.get(pid) ?? null, at: Date.now(), signature });
     })();
     refreshes.set(home, refresh);
     try { await refresh; } finally { refreshes.delete(home); }
