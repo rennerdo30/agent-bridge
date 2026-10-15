@@ -21,6 +21,9 @@ const SOURCE_ROOT = join(import.meta.dirname, "..", "src");
 const REVIEWED_REMOVALS: Record<string, string[]> = {
   // Exclusively created unpublished key staging file; the active key is never removed.
   "cli/dashboard-key.ts": ["unlinkSync(temp)"],
+  // Exclusively created (wx) unpublished quarantine staging file of a write or rename that failed; the full text
+  // stays in its original store, and a published quarantine file is never removed (AB-380).
+  "core/oversize.ts": ["unlinkSync(tmp)"],
   "core/json-store.ts": ["rmSync(tmp, { force: true })"],
   "core/node.ts": ["unlinkSync(this.opts.pipePath)"],
   // Lock/lease files hold only PID, start time and nonce. A stale lock is moved aside first and its moved copy removed
