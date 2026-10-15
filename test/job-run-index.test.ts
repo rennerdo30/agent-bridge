@@ -1,16 +1,19 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { Worker } from "node:worker_threads";
 import { setImmediate as yieldTurn } from "node:timers/promises";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import * as history from "../src/core/run-history.js";
 import { recoverJobRecord, recoverJobRecordAsync } from "../src/core/job-recovery.js";
 import * as index from "../src/core/job-run-index.js";
-import { indexedJobRun, indexJobRun, jobRunIndexReady, JOB_INDEX_WAIT_MS, startJobRunBackfill, stopJobRunBackfill, waitForJobRunIndex } from "../src/core/job-run-index.js";
+import { indexedJobRun, indexJobRun, JOB_INDEX_BUSY_WAIT_MS, jobRunIndexReady, JOB_INDEX_WAIT_MS, startBrokerJobRunIndex, startJobRunBackfill, stopJobRunBackfill, waitForJobRunIndex } from "../src/core/job-run-index.js";
+import * as fileCache from "../src/core/file-cache.js";
+import { APP_VERSION } from "../src/core/constants.js";
 import { metadataFileLease } from "../src/core/metadata-file-lease.js";
 import { closeMetadataDb, metadataDb } from "../src/core/metadata-db.js";
-import { archiveRun } from "../src/core/run-archive.js";
+import { archiveOldRuns, archiveRun } from "../src/core/run-archive.js";
 import { packFinishedRuns } from "../src/core/finished-run-bundles.js";
 import { startRunFeed } from "../src/core/runfeed.js";
 
@@ -90,15 +93,39 @@ it("rolls back history and head together when an index statement fails", () => {
   expect(Number(db.prepare("SELECT count(*) n FROM bridge_metadata WHERE domain IN ('job-run-head-v1','job-run-history-v1')").get()!.n)).toBe(0);
   expect(db.isTransaction).toBe(false); expect(db.prepare("PRAGMA busy_timeout").get()!.timeout).toBe(5000);
 });
-it("uses one transaction and zero SQLite lock wait for an entire route update", () => {
+it("uses one transaction and a bounded SQLite lock wait off the broker for an entire route update", () => {
   fixture(); const record = history.readRunLogs(env.home)[0]!, db = metadataDb(env.home);
   const exec = vi.spyOn(db, "exec"); indexJobRun(env.home, record);
-  expect(exec.mock.calls.map(call => call[0])).toEqual(["PRAGMA busy_timeout=0", "BEGIN IMMEDIATE", "COMMIT", "PRAGMA busy_timeout=5000"]);
+  expect(exec.mock.calls.map(call => call[0])).toEqual([`PRAGMA busy_timeout=${JOB_INDEX_BUSY_WAIT_MS}`, "BEGIN IMMEDIATE", "COMMIT", "PRAGMA busy_timeout=5000"]);
   const other = new DatabaseSync(join(env.home, "bridge.db")); other.exec("BEGIN IMMEDIATE");
   try {
     exec.mockClear(); expect(() => indexJobRun(env.home, { ...record, file: record.file + ".moved" })).toThrow();
-    expect(exec.mock.calls.map(call => call[0])).toEqual(["PRAGMA busy_timeout=0", "BEGIN IMMEDIATE", "PRAGMA busy_timeout=5000"]);
+    expect(exec.mock.calls.map(call => call[0])).toEqual([`PRAGMA busy_timeout=${JOB_INDEX_BUSY_WAIT_MS}`, "BEGIN IMMEDIATE", "PRAGMA busy_timeout=5000"]);
   } finally { other.exec("ROLLBACK"); other.close(); }
+});
+it("keeps zero SQLite lock wait for index transactions in the broker", async () => {
+  fixture(); await startBrokerJobRunIndex(env.home);
+  const record = history.readRunLogs(env.home)[0]!, db = metadataDb(env.home), exec = vi.spyOn(db, "exec");
+  indexJobRun(env.home, { ...record, file: record.file + ".broker" });
+  expect(exec.mock.calls.map(call => call[0])).toEqual(["PRAGMA busy_timeout=0", "BEGIN IMMEDIATE", "COMMIT", "PRAGMA busy_timeout=5000"]);
+});
+it("waits briefly off the broker when an index write hits SQLITE_BUSY from another connection", async () => {
+  fixture(); await startJobRunBackfill(env.home);
+  const late = fixture("busy", "busy-native-turn", 5), flags = new Int32Array(new SharedArrayBuffer(8));
+  const holder = new Worker(`
+    const { workerData } = require("node:worker_threads"), { DatabaseSync } = require("node:sqlite");
+    const flags = new Int32Array(workerData.flags), db = new DatabaseSync(workerData.db);
+    db.exec("BEGIN IMMEDIATE"); Atomics.store(flags, 0, 1); Atomics.notify(flags, 0);
+    Atomics.wait(flags, 1, 0, 10000); Atomics.wait(flags, 1, 1, 10);
+    db.exec("ROLLBACK"); db.close();`, { eval: true, workerData: { db: join(env.home, "bridge.db"), flags: flags.buffer } });
+  const exited = new Promise(resolve => holder.once("exit", resolve));
+  try {
+    expect(Atomics.wait(flags, 0, 0, 10000)).not.toBe("timed-out");
+    Atomics.store(flags, 1, 1); Atomics.notify(flags, 1);
+    index.indexRunFile(env.home, late.file); // The other connection still holds the write lock; it ends 10 ms after the signal.
+  } finally { Atomics.store(flags, 1, 1); Atomics.notify(flags, 1); await exited; }
+  expect(jobRunIndexReady(env.home)).toBe(true); expect(existsSync(join(env.home, "job-run-index.dirty"))).toBe(false);
+  expect(indexedJobRun(env.home, late.name)).toHaveLength(1);
 });
 it("retains an invalidation receipt even when SQLite cannot commit the readiness fence", async () => {
   const f = fixture(); await startJobRunBackfill(env.home);
@@ -297,4 +324,74 @@ it("preserves packing when retained metadata is a non-object JSON value", () => 
   const retained = indexedJobRun(env.home, f.name)[0]!;
   expect(readFileSync(retained.file)).toEqual(bytes);
   expect(retained.meta).toEqual({});
+});
+it("completes backfill when loose metadata is malformed and records that run with no routing key", async () => {
+  const f = fixture(), dir = join(env.home, "runs"), originals = new Map<string, Buffer>();
+  for (const [id, bytes] of [["nullmeta", "null"], ["corruptmeta", "{not json"]] as const) {
+    const log = join(dir, `2026-10-01-00-00-00-codex-${id}.log`), meta = log.replace(/\.log$/, ".json");
+    writeFileSync(log, "header by owner\n         retained prompt\n         ---\n00:00:01 finished after 1s · done\n"); writeFileSync(meta, bytes);
+    originals.set(log, readFileSync(log)); originals.set(meta, readFileSync(meta));
+  }
+  await startJobRunBackfill(env.home);
+  expect(jobRunIndexReady(env.home)).toBe(true); expect(existsSync(join(env.home, "job-run-index.dirty"))).toBe(false);
+  expect(indexedJobRun(env.home, f.name)).toHaveLength(1);
+  // The metadata exists but proves nothing: neither its job nor the filename becomes a route.
+  expect(indexedJobRun(env.home, "codex-job-nullmeta")).toEqual([]); expect(indexedJobRun(env.home, "codex-job-corruptmeta")).toEqual([]);
+  const observed = metadataDb(env.home).prepare("SELECT value FROM bridge_metadata WHERE domain='job-run-history-v1'").all().map(row => JSON.parse(String(row.value)).name);
+  expect(observed).toEqual(expect.arrayContaining(["2026-10-01-00-00-00-codex-nullmeta", "2026-10-01-00-00-00-codex-corruptmeta"]));
+  for (const [file, bytes] of originals) expect(readFileSync(file)).toEqual(bytes);
+});
+it("keeps a ready index ready across repeated misses and serves other lookups without rescans", async () => {
+  const f = fixture(); await startBrokerJobRunIndex(env.home);
+  const db = metadataDb(env.home), complete = () => db.prepare("SELECT value FROM bridge_metadata WHERE domain='job-run-index-v1' AND key='complete'").get()!.value;
+  const before = complete(), scan = vi.spyOn(history, "readRunLogsResponsive");
+  for (let i = 0; i < 3; i++) {
+    await waitForJobRunIndex(env.home, performance.now() + JOB_INDEX_WAIT_MS, "codex-job-mistyped");
+    expect(jobRunIndexReady(env.home)).toBe(true);
+  }
+  // One bounded re-observation for the unseen key; later misses in this generation are free.
+  expect(scan).toHaveBeenCalledTimes(1);
+  expect(complete()).toBe(before); expect(existsSync(join(env.home, "job-run-index.dirty"))).toBe(false);
+  expect(await recoverJobRecordAsync(env.home, f.name)).toMatchObject({ prompt: f.prompt, sessionId: "native-legacy" });
+  expect(indexedJobRun(env.home, f.name)).toHaveLength(1); expect(scan).toHaveBeenCalledTimes(1);
+});
+it("fails only the lookup whose files change between reads and keeps the index ready", async () => {
+  const f = fixture(); await startJobRunBackfill(env.home);
+  let n = 0; const signature = vi.spyOn(fileCache, "fileSignature").mockImplementation(() => `changing-${n++}`);
+  expect(() => indexedJobRun(env.home, f.name)).toThrow(expect.objectContaining({ code: "job_index_preparing" }));
+  expect(jobRunIndexReady(env.home)).toBe(true); expect(existsSync(join(env.home, "job-run-index.dirty"))).toBe(false);
+  signature.mockRestore();
+  expect(indexedJobRun(env.home, f.name)).toHaveLength(1);
+});
+it("invalidates once at broker start after an older version wrote the index", async () => {
+  const f = fixture(); await startJobRunBackfill(env.home);
+  const db = metadataDb(env.home);
+  const state = (key: string) => JSON.parse(String(db.prepare("SELECT value FROM bridge_metadata WHERE domain='job-run-index-v1' AND key=?").get(key)?.value ?? "null"));
+  db.prepare("UPDATE bridge_metadata SET value=? WHERE domain='job-run-index-v1' AND key='complete'").run(JSON.stringify({ ...state("complete"), writer: "0.0.1" }));
+  const invalidated = Number(state("invalidated") ?? 0);
+  await startBrokerJobRunIndex(env.home);
+  expect(jobRunIndexReady(env.home)).toBe(true); expect(state("complete").writer).toBe(APP_VERSION);
+  expect(Number(state("invalidated"))).toBe(invalidated + 1);
+  await stopJobRunBackfill(env.home); await startBrokerJobRunIndex(env.home);
+  expect(Number(state("invalidated"))).toBe(invalidated + 1);
+  expect(indexedJobRun(env.home, f.name)).toHaveLength(1);
+});
+it("keeps archiving after a successful move when the route update fails", async () => {
+  const first = fixture("first", "2026-10-01-00-00-00-codex-first"), second = fixture("second", "2026-10-01-00-00-00-codex-second", 2);
+  const bytes = [readFileSync(first.file), readFileSync(second.file)];
+  await startJobRunBackfill(env.home);
+  vi.spyOn(index, "indexRunFile").mockImplementation(() => { throw new Error("synthetic archive index failure"); });
+  expect(archiveOldRuns(env.home, Date.now() + 400 * 24 * 60 * 60 * 1_000)).toBe(2);
+  [first, second].forEach((f, i) => {
+    expect(existsSync(f.file)).toBe(false);
+    expect(readFileSync(join(env.home, "runs", "archive", basename(f.file)))).toEqual(bytes[i]);
+    expect(existsSync(join(env.home, "runs", "archive", basename(f.metadata)))).toBe(true);
+  });
+  expect(jobRunIndexReady(env.home)).toBe(false);
+});
+it("appends exactly one invalidation receipt for one failed feed route update", () => {
+  vi.spyOn(index, "indexRunFile").mockImplementation(() => { throw new Error("synthetic feed index failure"); });
+  const feed = startRunFeed({ home: env.home, name: "one-receipt", header: "task", meta: { job: "codex-job-receipt", jobStartedAt: 2 } });
+  try { expect(readFileSync(join(env.home, "job-run-index.dirty"), "utf8")).toBe("\n"); }
+  finally { feed.end("done"); }
 });

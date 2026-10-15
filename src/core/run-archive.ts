@@ -29,12 +29,17 @@ export function archiveRun(log: string): void {
     if (existsSync(archivedMeta)) throw new Error(`run metadata archive already exists: ${archivedMeta}`);
     copyFileSync(meta, archivedMeta);
   }
-  try {
   renameSync(log, target);
-  if (existsSync(meta)) renameSync(meta, archivedMeta);
-  // Ordinary legacy log-only archiving must not initialize the metadata store.
-  if (existsSync(archivedMeta) || existsSync(join(home, "bridge.db"))) indexRunFile(home, target, archivedMeta);
-  } catch (error) { invalidateJobRunIndex(home); throw error; }
+  try { if (existsSync(meta)) renameSync(meta, archivedMeta); }
+  finally {
+    // The log moved: record its exact new route. Ordinary legacy log-only archiving must not
+    // initialize the metadata store. An index failure is recorded (readiness cleared, repair
+    // queued) and never aborts archiving after a successful move.
+    if (existsSync(archivedMeta) || existsSync(join(home, "bridge.db"))) {
+      try { indexRunFile(home, target, archivedMeta); }
+      catch { try { invalidateJobRunIndex(home); } catch { /* The archived bytes are already retained. */ } }
+    }
+  }
 }
 
 /** Includes archives written before AB-84, whose filenames carry a timestamp and UUID suffix. */
@@ -62,7 +67,8 @@ export function archiveOldRuns(home: string, now = Date.now()): number {
   for (const file of runLogFiles(home).filter((p) => !p.includes(`${join("runs", "archive")}`))) {
     if (statSync(file).mtimeMs < now - age && finishedRunLine(readRunLogPreview(file))) { archiveRun(file); count++; }
   }
-  // Packing archived runs (AB-208) is maintenance work for the broker's job archive worker and
-  // doctor --archive; runner processes never open bridge.db here.
+  // archiveRun records each moved route in bridge.db when it exists or the run has metadata.
+  // Packing archived runs (AB-208) stays maintenance work for the broker's job archive worker and
+  // doctor --archive.
   return count;
 }

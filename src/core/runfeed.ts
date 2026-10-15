@@ -147,6 +147,11 @@ export function startRunFeed(opts: RunFeedOptions): RunFeed {
     }
   };
   let meta: RunMeta = { ...opts.meta };
+  // indexRunFile records nothing on failure; this is the single invalidation (one receipt) per failed route.
+  const indexRoute = () => {
+    try { indexRunFile(opts.home, logPath); }
+    catch { try { invalidateJobRunIndex(opts.home); } catch { /* never break a run because of the index */ } }
+  };
   let attemptedRouting: string | undefined;
   const routing = () => JSON.stringify([meta.job ?? null, meta.jobStartedAt ?? null]);
   const writeMeta = (required = false) => {
@@ -155,11 +160,7 @@ export function startRunFeed(opts: RunFeedOptions): RunFeed {
       const previous = readJsonStore(path);
       writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...meta }), previous);
       // Metadata updates refresh the exact route as soon as the log exists.
-      if (logPublished && attemptedRouting !== routing()) {
-        attemptedRouting = routing();
-        try { indexRunFile(opts.home, logPath); }
-        catch { invalidateJobRunIndex(opts.home); }
-      }
+      if (logPublished && attemptedRouting !== routing()) { attemptedRouting = routing(); indexRoute(); }
     } catch (err) {
       if (required) throw err;
       process.stderr.write(`could not save run metadata: ${String(err)}\n`);
@@ -172,8 +173,7 @@ export function startRunFeed(opts: RunFeedOptions): RunFeed {
   write(opts.header);
   logPublished = true;
   attemptedRouting = routing();
-  try { indexRunFile(opts.home, logPath); }
-  catch { invalidateJobRunIndex(opts.home); }
+  indexRoute();
   // Only this runner can name its current feed. Keep the generation on the
   // witness: a previous turn's path must never suppress legacy discovery.
   const job = opts.meta?.job, jobStartedAt = opts.meta?.jobStartedAt;

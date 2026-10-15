@@ -75,7 +75,13 @@ const RUN_NAME = /^[\w.-]+\.log$/;
 
 /** A server may have adopted a job from an earlier stand-in name since its log was written. */
 async function jobOwner(home: string, job: string, original: string, node: BridgeNode): Promise<string> {
-  const record = recoverJobRecord(home, job);
+  let record: ReturnType<typeof recoverJobRecord>;
+  try { record = recoverJobRecord(home, job); }
+  catch (err) {
+    // A cold or changing job index is retryable; report it like an unavailable owner, never as a crash.
+    if (err instanceof BridgeError && err.code === "job_index_preparing") throw new JobControlError(err.message, "timeout");
+    throw err;
+  }
   if (!record) return original;
   const peers = await node.peers();
   return chooseJobRecipient(record as unknown as Record<string, unknown>, peers, new ProjectGroups(home).members(record as unknown as Record<string, unknown>, peers));
