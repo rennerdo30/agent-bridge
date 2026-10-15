@@ -103,11 +103,29 @@ export function readProcessNamesSync(pids: number[]): Map<number, string> | unde
 }
 
 let ownIdentity: string | undefined;
+const OWN_IDENTITY_COOLDOWN_MS = 1_000;
+let ownProbeFailed = false;
+let ownRetryAt = 0;
+let ownRefresh: Promise<void> | undefined;
+
+function refreshOwnIdentity(): void {
+  if (ownRefresh || Date.now() < ownRetryAt) return;
+  // A failed native probe must not turn every metadata lease/peer write into
+  // another synchronous process launch. Keep unknown fail-closed while one
+  // bounded asynchronous probe tries to establish the current process's birth.
+  ownRefresh = readProcessIdentity(process.pid).then(identity => {
+    if (identity) ownIdentity = identity;
+  }).finally(() => {
+    ownRetryAt = Date.now() + OWN_IDENTITY_COOLDOWN_MS;
+    ownRefresh = undefined;
+  });
+}
 
 /** Creation identity for lock acquisition/recovery, never for polling hot paths. */
 export function processIdentity(pid: number): string | undefined {
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
   if (pid === process.pid && ownIdentity) return ownIdentity;
+  if (pid === process.pid && ownProbeFailed) { refreshOwnIdentity(); return undefined; }
   try {
     let identity: string | undefined;
     if (process.platform === "linux") {
@@ -119,9 +137,15 @@ export function processIdentity(pid: number): string | undefined {
         ? execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windowsIdentityCommand(pid)], { windowsHide: true, timeout: 5_000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
         : execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { timeout: 5_000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, LC_ALL: "C" } })).trim() || undefined;
     }
-    if (pid === process.pid) ownIdentity = identity;
+    if (pid === process.pid) {
+      ownIdentity = identity;
+      if (!identity) { ownProbeFailed = true; ownRetryAt = Date.now() + OWN_IDENTITY_COOLDOWN_MS; }
+    }
     return identity;
-  } catch { return undefined; }
+  } catch {
+    if (pid === process.pid) { ownProbeFailed = true; ownRetryAt = Date.now() + OWN_IDENTITY_COOLDOWN_MS; }
+    return undefined;
+  }
 }
 
 /** Unknown access/probe failures never authorize recovery of another owner's data. */

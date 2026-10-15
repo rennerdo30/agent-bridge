@@ -123,7 +123,9 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
     const id = /Message (\S+) sent/.exec(sent)![1]!;
 
     // Codex sees it through its UserPromptSubmit hook.
-    const hook = JSON.parse(textOf(await codex.callTool({ name: "hook_event", arguments: { event: "UserPromptSubmit", session_id: "t1" } })));
+    // Keep the native host's admitted session: this is an active-turn delivery
+    // check, not a session replacement inside the hook's 1500ms budget.
+    const hook = JSON.parse(textOf(await codex.callTool({ name: "hook_event", arguments: { event: "UserPromptSubmit", session_id: "fixture-codex-e2e" } })));
     expect(hook.hookSpecificOutput.additionalContext).toContain("What is 2+2?");
 
     const waiting = claude.callTool({ name: "wait_for_message", arguments: { timeout_sec: 10, reply_to: id } });
