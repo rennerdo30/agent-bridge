@@ -29,6 +29,7 @@ import { historyReadStatus, openHistoryReader, HISTORY_BATCH_MS } from "./histor
 import { decodeBytes, encodeBytes, encodeText, registerHistoryFunctions } from "./history-codec.js";
 import { decodeHistoryRow } from "./history-migration.js";
 import { CLAUDE_CHILD_FACTS_TABLE, refreshClaudeChildFacts } from "./history-sources.js";
+import { cleanupSavepoint } from "./savepoint.js";
 
 import { CONVERSATION_BYTES, indexedConversationText } from "./conversation-text.js";
 export { CONVERSATION_BYTES, indexedConversationText } from "./conversation-text.js";
@@ -992,23 +993,31 @@ export class ConversationIngestor {
           fragmentKey,
           JSON.stringify({ ...fragment, offset: offset + bytes }),
         );
-        this.put(
-          source.id,
-          generation,
-          offset,
-          source.conversation,
-          data.subarray(0, bytes),
-          stat.mtimeMs,
-        );
       }
-      offset += bytes;
-      const tail = Buffer.alloc(Math.min(64, offset));
-      if (offset) readSync(fd, tail, 0, tail.length, offset - tail.length);
-      this.db
-        .prepare(
-          "UPDATE conversation_sources SET offset=?,generation=?,identity=?,anchor=? WHERE id=?",
-        )
-        .run(offset, generation, identity, hash(tail), source.id);
+      const end = offset + bytes;
+      const tail = Buffer.alloc(Math.min(64, end));
+      if (end) readSync(fd, tail, 0, tail.length, end - tail.length);
+      // The chunk and the offset that covers it commit together: a reader never sees one without the other (AB-383).
+      this.db.exec("SAVEPOINT conversation_chunk");
+      try {
+        if (bytes)
+          this.put(
+            source.id,
+            generation,
+            offset,
+            source.conversation,
+            data.subarray(0, bytes),
+            stat.mtimeMs,
+          );
+        this.db
+          .prepare(
+            "UPDATE conversation_sources SET offset=?,generation=?,identity=?,anchor=? WHERE id=?",
+          )
+          .run(end, generation, identity, hash(tail), source.id);
+        this.db.exec("RELEASE conversation_chunk");
+      } catch (err) {
+        cleanupSavepoint(this.db, "conversation_chunk", true, err);
+      }
       return bytes ? 1 : 0;
     } finally {
       if (fd !== undefined) closeSync(fd);

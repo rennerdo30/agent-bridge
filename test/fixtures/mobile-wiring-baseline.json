@@ -15,7 +15,7 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "6361ed89434a3a21aee8d08d399f0ee9a584fd53ee4803ae67f3ae79ff898378",
+  "uiSha256": "bbadfc88e262038f32ddea3cd4ba661143075d938cf082081c547fefb88283ff",
   "updates": {
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
@@ -191,6 +191,14 @@
       "currentUiSha256": "6361ed89434a3a21aee8d08d399f0ee9a584fd53ee4803ae67f3ae79ff898378",
       "reason": "Recomputed every method pin and complete UI hash on the merged source with the existing mobile-wiring normalizer and assertions unchanged. Retains default-off P3 dashboard hosting, main Muse/Phones/messaging and TCP lifecycle, and PR17 reservation/capability paths. No bulk normalization or assertion change.",
       "sourceCommit": "1b7ac9cb2ca6e9d534b9f9ac06ee047d8073a8be"
+    },
+    "AB-383": {
+      "base": "b38c3e3581999e1d4b584448bf792dd34eddb89c",
+      "methods": [],
+      "previousUiSha256": "6361ed89434a3a21aee8d08d399f0ee9a584fd53ee4803ae67f3ae79ff898378",
+      "uiSha256": "bbadfc88e262038f32ddea3cd4ba661143075d938cf082081c547fefb88283ff",
+      "reason": "AB-383: startUi adds GET /api/events (Server-Sent Events from the history change feed); on close it ends only those streams and closes idle connections before the existing sender and sender-node shutdown from main. Re-pinned on current main (b38c3e35) with the existing normalizer: the thirteen method hashes and behavioral assertions remain unchanged; only the UI hash changes.",
+      "commit": "f41bf1ed8ee42f27df95f9536de7a63da6752aa4"
     }
   },
   "revertedUpdates": {
