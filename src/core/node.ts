@@ -29,7 +29,7 @@ import type { MessageStore } from "./store.js";
 import { SQLITE_STORE_VERSION } from "./store-version.js";
 import { JSON_STORE_VERSION } from "./json-store.js";
 import { recordStorePeer, refreshStorePeerIdentities } from "./store-compatibility.js";
-import { parentProcessIdentity } from "./process-identity.js";
+import { ownProcessIdentity, parentProcessIdentity } from "./process-identity.js";
 import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import type { NetworkConfig } from "../network/config.js";
 import type { NetworkStatus } from "../network/link.js";
@@ -66,7 +66,7 @@ export interface BridgeNodeOptions {
   /** false: only connect to a broker, never become one (a short-lived job runner would take the bridge down with it). */
   canHostBroker?: boolean;
   /** Explicit daemon descriptor. Production hosts supply it only when config.daemon.enabled resolves true
-   * (AGENT_BRIDGE_DAEMON=1/0 > daemon.enabled > false). Omission keeps the embedded broker path. */
+   * (AGENT_BRIDGE_DAEMON=1/0 > daemon.enabled > true, so by default). Omission keeps the embedded broker path. */
   daemon?: { cli: string; dashboard?: () => boolean; config?: () => Pick<import("./config.js").BridgeConfig, "network" | "mobile" | "dashboardPort">; launch?: typeof launchDaemon };
   network?: { home: string; config: NetworkConfig };
 }
@@ -212,6 +212,9 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   async start(): Promise<void> {
     if (!this.releaseMetadata && this.opts.dbPath !== ":memory:") this.releaseMetadata = retainMetadataReader(dirname(this.opts.dbPath));
+    // Registration needs the host CLI's creation identity (a PowerShell query on Windows). Start the shared,
+    // memoized read now so it overlaps discovery and daemon creation instead of following broker readiness.
+    if (!this.opts.jobAgent) void parentProcessIdentity();
     await this.ensureConnected();
   }
 
@@ -355,6 +358,9 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private async tryBecomeBroker(): Promise<boolean> {
     if (this.broker) return true;
     if (this.stopping) return false;
+    // The store's migration lock and the TCP fallback record need this process's identity; read it without
+    // blocking the session's event loop (a synchronous PowerShell query on Windows otherwise).
+    const identity = this.opts.dbPath === ":memory:" ? undefined : ownProcessIdentity();
     const [{ Broker }, { MessageStore }] = await Promise.all([import("./broker.js"), import("./store.js")]);
     const { EndpointReservation } = await import("./endpoint-reservation.js");
     let reservation: import("./endpoint-reservation.js").EndpointReservation;
@@ -364,6 +370,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       if (!this.opts.daemon && (this.opts.platform ?? process.platform) !== "win32") await this.clearStaleSocket();
       return false;
     }
+    await identity;
     let store: MessageStore;
     try {
       // Unverified living readers conservatively defer upgrades; process

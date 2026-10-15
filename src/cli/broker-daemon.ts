@@ -11,6 +11,7 @@ import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { BridgeError } from "../core/protocol.js";
 import type { DashboardInfo } from "./dashboard.js";
 import { EndpointReservation } from "../core/endpoint-reservation.js";
+import { ownProcessIdentity } from "../core/process-identity.js";
 
 /** Existing broker and services, owned by a demand-start process rather than an MCP session. */
 export async function runBrokerDaemon(home: string, pipe: string, log: Logger): Promise<number> {
@@ -22,6 +23,10 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
   } catch (error) {
     if (!["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
   }
+  // Windows reads this process's creation identity through PowerShell (about 0.7 s idle, seconds under load).
+  // Start it now, off the event loop, so it overlaps binding and opening the store; the TCP fallback record
+  // awaits it after activation. Only a store migration still needs it synchronously (its lock record).
+  void ownProcessIdentity();
   let reservation: EndpointReservation;
   try { reservation = await EndpointReservation.bind(pipe); }
   catch (error) {

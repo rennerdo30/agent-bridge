@@ -103,6 +103,22 @@ export function readProcessNamesSync(pids: number[]): Map<number, string> | unde
 }
 
 let ownIdentity: string | undefined;
+let ownIdentityRead: Promise<string | undefined> | undefined;
+
+/**
+ * This process's creation identity without blocking the event loop. On Windows the query is a PowerShell
+ * process (about 0.7 s on an idle PC, several seconds on a loaded one), so broker hosts start it early and
+ * await it before the store's migration lock and the TCP fallback record need it. A success fills the cache
+ * that processIdentity(process.pid) returns; a failure is not cached, so the synchronous path still retries.
+ */
+export function ownProcessIdentity(): Promise<string | undefined> {
+  if (ownIdentity) return Promise.resolve(ownIdentity);
+  return ownIdentityRead ??= readProcessIdentity(process.pid).then(identity => {
+    if (identity) ownIdentity ??= identity;
+    else ownIdentityRead = undefined;
+    return ownIdentity;
+  });
+}
 
 /** Creation identity for lock acquisition/recovery, never for polling hot paths. */
 export function processIdentity(pid: number): string | undefined {

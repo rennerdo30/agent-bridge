@@ -65,24 +65,26 @@ function node(daemon?: BridgeNodeOptions["daemon"]): BridgeNode {
 
 describe("daemon activation contract", () => {
   it.each([
-    [{}, undefined, false],
+    [{}, undefined, true],
     [{ daemon: { enabled: false } }, undefined, false],
     [{ daemon: { enabled: true } }, undefined, true],
     [{}, "1", true],
+    [{}, "0", false],
     [{ daemon: { enabled: true } }, "0", false],
     [{ daemon: { enabled: false } }, "1", true],
-    [{ daemon: { enabled: "true" } }, undefined, false],
-    [{ daemon: { enabled: true } }, "false", true],
-    [{}, "true", false],
+    [{ daemon: { enabled: "false" } }, undefined, true],
+    [{ daemon: { enabled: false } }, "true", false],
+    [{}, "false", true],
     [{ daemon: { enabled: true }, codex: { daemon: { enabled: false } } }, undefined, false],
   ])("resolves config %j with env %s to %s", (config, override, enabled) => {
     configure(config);
-    expect(DEFAULT_CONFIG.daemon.enabled).toBe(false);
+    expect(DEFAULT_CONFIG.daemon.enabled).toBe(true);
     expect(loadConfig(env.home, "codex", nullLogger, { AGENT_BRIDGE_DAEMON: override }).daemon.enabled).toBe(enabled);
   });
 
-  it.each(["default", "false"])("%s activation uses the embedded broker", async mode => {
-    if (mode === "false") configure({ daemon: { enabled: false } });
+  it.each(["config", "env"])("%s opt-out uses the embedded broker", async mode => {
+    if (mode === "config") configure({ daemon: { enabled: false } });
+    else vi.stubEnv("AGENT_BRIDGE_DAEMON", "0");
     const cfg = loadConfig(env.home, "other", nullLogger);
     const launch = vi.fn<NonNullable<NonNullable<BridgeNodeOptions["daemon"]>["launch"]>>();
     const host = node(cfg.daemon.enabled ? { cli: "unused", launch } : undefined);
@@ -93,9 +95,9 @@ describe("daemon activation contract", () => {
     expect((await host.peers()).some(peer => peer.name === host.name)).toBe(true);
   });
 
-  it.each(["config", "env"])("%s opt-in enters the existing daemon launch path", async mode => {
+  it.each(["default", "config", "env"])("%s activation enters the existing daemon launch path", async mode => {
     if (mode === "config") configure({ daemon: { enabled: true } });
-    else vi.stubEnv("AGENT_BRIDGE_DAEMON", "1");
+    else if (mode === "env") { configure({ daemon: { enabled: false } }); vi.stubEnv("AGENT_BRIDGE_DAEMON", "1"); }
     // Replace only process creation: readiness still uses the real authenticated broker connection.
     const daemonHost = env.node("fixture-daemon", "other");
     const launch = vi.fn(async () => { await daemonHost.start(); return { kind: "created" as const }; });
@@ -108,7 +110,7 @@ describe("daemon activation contract", () => {
     expect(client.isConnected).toBe(true);
   });
 
-  it("the CLI UI can host by default without a daemon or compatibility flag", async () => {
+  it("startUi without daemon options (library and opt-out path) hosts an embedded broker without a compatibility flag", async () => {
     ui = await startUi({ home: env.home, pipe: env.pipe, port: 0, log: nullLogger });
     const first = await fetch(ui.url, { redirect: "manual" });
     const cookie = first.headers.get("set-cookie")!.split(";")[0]!;
@@ -127,7 +129,8 @@ describe("daemon activation contract", () => {
 
 describe("production constructors", () => {
   it.each([
-    [{}, undefined, false],
+    [{}, undefined, true],
+    [{}, "0", false],
     [{ daemon: { enabled: false } }, undefined, false],
     [{ daemon: { enabled: true } }, undefined, true],
     [{}, "1", true],
