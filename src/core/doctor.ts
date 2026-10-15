@@ -2,7 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync
 import { basename, dirname, join, relative } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { DB_FILE_NAME, JOBS_FILE } from "./constants.js";
+import { DB_FILE_NAME, JOBS_FILE, MAX_BODY_CHARS, MAX_FRAME_BYTES } from "./constants.js";
 import { jsonStoreFiles, listBackups } from "./backups.js";
 import { isRecord, JSON_STORE_VERSION, retentionLimit, writeJsonStore } from "./json-store.js";
 import { ARCHIVE_DB_NAME, ARCHIVE_STORE_VERSION, checkDatabase } from "./sqlite-maintenance.js";
@@ -12,6 +12,7 @@ import { ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS, archiveOldRuns, runLogFiles, r
 import { archiveJobs } from "./job-archive.js";
 import { nullLogger } from "./logger.js";
 import { acquireLock } from "../mcp/jobs.js";
+import { isOversizedBody, QUARANTINE_DIR } from "./oversize.js";
 
 export interface DoctorFinding {
   severity: "info" | "warning" | "error";
@@ -64,6 +65,14 @@ export function doctor(home: string, now = Date.now()): DoctorReport {
           const count = Number(db.prepare("SELECT COUNT(*) AS n FROM message_archive_conflicts").get()!.n);
           if (count) finding("warning", "archive-conflicts", path, `${count} quarantined archive conflicts; originals and evidence retained in message_archive_conflicts; manual review required`);
         }
+        if (name === DB_FILE_NAME && db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'").get()) {
+          const oversized = Number(db.prepare("SELECT COUNT(*) AS n FROM messages WHERE read_at IS NULL AND length(body) > ?").get(MAX_BODY_CHARS)!.n);
+          // Still too large for one frame after its body is stubbed: skipped by refills and replay, kept stored.
+          const unsendable = Number(db.prepare(`SELECT COUNT(*) AS n FROM messages WHERE read_at IS NULL AND length(CAST(id || recipient || from_id || from_name ||
+            from_agent || to_target || conversation_id || coalesce(reply_to, '') AS BLOB)) > ?`).get(MAX_FRAME_BYTES - 64 * 1024)!.n);
+          if (unsendable) finding("error", "unsendable-messages", path, `${unsendable} unread stored messages have headers too large for one ${MAX_FRAME_BYTES}-byte frame; they are skipped and kept for manual review`);
+          if (oversized) finding("warning", "oversized-messages", path, `${oversized} unread stored messages exceed ${MAX_BODY_CHARS} characters; they are sent as stubs and their full text is kept under ${join(home, QUARANTINE_DIR)}`);
+        }
         if (actual !== expected) finding(actual > expected ? "error" : "warning", "schema-version", path, `Schema ${actual}; code expects ${expected}`);
       } catch (err) { finding("error", "sqlite-unreadable", path, String(err)); }
       finally { db?.close(); }
@@ -89,6 +98,11 @@ export function doctor(home: string, now = Date.now()): DoctorReport {
       if (jobs ? !(Array.isArray(value) || isRecord(value) && Array.isArray(value.jobs)) : !isRecord(value)) {
         finding("error", "json-shape", path, jobs ? "Expected a jobs array or jobs envelope" : "Expected a JSON object");
         continue;
+      }
+      if (jobs) {
+        const rows = (Array.isArray(value) ? value : isRecord(value) ? value.jobs as unknown[] : []).filter(isRecord);
+        const oversized = rows.flatMap((job) => Array.isArray(job.deliveryHistory) ? job.deliveryHistory : []).filter((m) => isRecord(m) && isOversizedBody(m.body)).length;
+        if (oversized) finding("warning", "oversized-job-reports", path, `${oversized} stored job reports exceed ${MAX_BODY_CHARS} characters; they are kept here and sent as stubs with their full text under ${join(home, QUARANTINE_DIR)}`);
       }
       const version = isRecord(value) ? value.version : undefined;
       if (version === undefined || version === 0) finding("warning", "json-legacy", path, "Legacy version; next versioned write will preserve a migration backup");

@@ -1,5 +1,6 @@
 import { configDefaults, defineConfig } from "vitest/config";
 import { fastTests, integrationTests } from "./scripts/test-lanes.mjs";
+import { DurationShardSequencer } from "./scripts/test-shards.mjs";
 
 /** Tests start real named pipes / sockets and child processes; shared CI runners can be slow. */
 const lane = process.env.AGENT_BRIDGE_TEST_LANE ?? "all";
@@ -14,6 +15,8 @@ export default defineConfig({
     include: lane === "fast" ? fastTests : lane === "integration" ? integrationTests : ["test/**/*.test.ts"],
     maxWorkers: process.platform === "win32" && lane !== "fast" ? 1 : undefined,
     exclude: [...configDefaults.exclude, ".agent-bridge-test/**"],
+    // --shard=i/n packs files by measured Windows duration; execution order is unchanged.
+    sequence: { sequencer: DurationShardSequencer },
     testTimeout: TEST_TIMEOUT_MS,
     hookTimeout: TEST_TIMEOUT_MS,
     // Never inherit the parent link of a subagent that runs the suite.

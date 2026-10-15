@@ -2,13 +2,14 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { join } from "node:path";
 import type { Logger } from "../core/logger.js";
-import { startUi } from "./ui.js";
+import { startUi, type UiOptions } from "./ui.js";
 import { loadDashboardKey } from "./dashboard-key.js";
 import { protect } from "../network/pairing.js";
 import type { MobileDesktopAdmin } from "../mobile/desktop.js";
 import { safeMobileStatus } from "./ui-page.js";
 
-export interface DashboardHostOptions { home: string; pipe: string; port: number; log: Logger; mobileAdmin?: MobileDesktopAdmin; mobileStatus?: () => string }
+export interface DashboardHostOptions { home: string; pipe: string; port: number; log: Logger; mobileAdmin?: MobileDesktopAdmin; mobileStatus?: () => string;
+  brokerDaemon?: UiOptions["brokerDaemon"]; embeddedCompatibility?: boolean }
 /** Used only by the explicit activation coordinator. */
 export function createConfiguredMobileDashboard(options: DashboardHostOptions): DashboardController { return new DashboardController(options); }
 /** Informational safe hint only; opening another desktop never injects mobile admin or grants. */

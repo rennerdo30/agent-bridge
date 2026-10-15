@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { BridgeClient } from "../src/core/client.js";
+import { BridgeClient, brokerConnectionClosedError } from "../src/core/client.js";
 import { BridgeNode } from "../src/core/node.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
@@ -74,4 +74,125 @@ it("reports unconfirmed delivery after two timeouts and does not retry permanent
   request.mockClear().mockRejectedValue(new Error("unauthorized target"));
   await expect(sender.send({ to: "offline", body: "denied" })).rejects.toThrow("unauthorized target");
   expect(request.mock.calls.filter(([op]) => op === "trackedSend")).toHaveLength(1);
+});
+
+it.each(["after_store", "before_store"] as const)("retries a send whose actual connection closed (%s) once on the re-elected connection with the same message id", async (when) => {
+  const sender = env.node("sender"), recipient = env.node("recipient");
+  await sender.start(); await recipient.start();
+  const first = (sender as unknown as { client: BridgeClient }).client, request = first.request.bind(first);
+  const attempts: string[] = [];
+  vi.spyOn(first, "request").mockImplementation(async (op, args: any) => {
+    if (op !== "trackedSend") return request(op, args);
+    attempts.push(args.messageId);
+    if (when === "after_store") await request(op, args);
+    // The actual connection is gone; its outcome is unknown to the caller.
+    const closed = new Promise<void>(resolve => first.once("close", () => resolve())); first.close(); await closed;
+    throw brokerConnectionClosedError();
+  });
+  const retried = vi.spyOn(BridgeClient.prototype, "request");
+  const sent = await sender.send({ to: recipient.name, body: `CONNECTION_CLOSED_${when}` });
+  const second = (sender as unknown as { client: BridgeClient }).client;
+  expect(second).not.toBe(first); expect(second.isClosed).toBe(false);
+  const retries = retried.mock.calls.filter(([op]) => op === "trackedSend").map(([, args]) => (args as { messageId: string }).messageId);
+  expect(attempts).toHaveLength(1); expect(retries).toEqual([attempts[0]]);
+  expect(sent.messages[0]!.id).toBe(attempts[0]);
+  if (when === "after_store") expect(sent.storage).toMatchObject({ id: attempts[0], state: "stored", recovered: true });
+  await until(() => recipient.unread().length === 1);
+  expect(recipient.unread()[0]!.id).toBe(attempts[0]);
+  expect(await sender.messageReceipt(attempts[0]!)).toHaveLength(1);
+});
+
+it("does not retry a closed-connection send a second time when the re-elected connection also closes", async () => {
+  const sender = env.node("sender"); await sender.start();
+  const close = (client: BridgeClient) => {
+    const request = client.request.bind(client);
+    return vi.spyOn(client, "request").mockImplementation(async (op, args: any) => {
+      if (op !== "trackedSend") return request(op, args);
+      const closed = new Promise<void>(resolve => client.once("close", () => resolve())); client.close(); await closed;
+      throw brokerConnectionClosedError();
+    });
+  };
+  const first = (sender as unknown as { client: BridgeClient }).client; close(first);
+  const connected = sender.ensureConnected.bind(sender);
+  let second: BridgeClient | undefined;
+  vi.spyOn(sender, "ensureConnected").mockImplementation(async () => {
+    await connected();
+    const current = (sender as unknown as { client: BridgeClient }).client;
+    if (current !== first && !second) { second = current; close(current); }
+  });
+  await expect(sender.send({ to: "offline", body: "twice-closed" })).rejects.toThrow("Storage cannot be confirmed for message");
+  expect(second).toBeDefined();
+});
+
+// Shared fixture: the first connection closes under trackedSend; the re-elected
+// connection's trackedSend answers with `second` (pass-through for other ops).
+function closeThenReconnect(sender: BridgeNode, second: (op: string) => Error) {
+  const first = (sender as unknown as { client: BridgeClient }).client, firstRequest = first.request.bind(first);
+  vi.spyOn(first, "request").mockImplementation(async (op, args: any) => {
+    if (op !== "trackedSend") return firstRequest(op, args);
+    const closed = new Promise<void>(resolve => first.once("close", () => resolve())); first.close(); await closed;
+    throw brokerConnectionClosedError();
+  });
+  const ops: string[] = [];
+  const connected = sender.ensureConnected.bind(sender);
+  vi.spyOn(sender, "ensureConnected").mockImplementation(async () => {
+    await connected();
+    const current = (sender as unknown as { client: BridgeClient }).client;
+    if (current === first || ops.length) return;
+    ops.push("connected");
+    const request = current.request.bind(current);
+    vi.spyOn(current, "request").mockImplementation(async (op, args: any) => {
+      ops.push(op);
+      if (op === "trackedSend") throw second(op);
+      return request(op, args);
+    });
+  });
+  return ops;
+}
+
+it("never falls back to a fresh-id legacy send when the re-elected broker rejects trackedSend", async () => {
+  const sender = env.node("sender"); await sender.start();
+  const ops = closeThenReconnect(sender, op => new Error(`unknown op: ${op}`));
+  const error = await sender.send({ to: "offline", body: "no-legacy-after-reconnect" }).catch(failure => failure);
+  expect(error).toBeInstanceOf(Error); expect(String(error.message)).toContain("Storage cannot be confirmed for message");
+  expect(error.details).toMatchObject({ state: "unknown" }); expect(error.details.messageId).toMatch(/^[0-9a-f-]{36}$/);
+  expect(ops).toEqual(["connected", "trackedSend"]); expect(ops).not.toContain("send");
+});
+
+it("after the reconnect retry a transient error takes only the read-only lookup, never a third trackedSend", async () => {
+  const sender = env.node("sender"); await sender.start();
+  const ops = closeThenReconnect(sender, op => new Error(`broker request timed out: ${op}`));
+  await expect(sender.send({ to: "offline", body: "lookup-only" })).rejects.toThrow("storage state is unknown");
+  expect(ops).toEqual(["connected", "trackedSend", "sendState"]);
+});
+
+it("a failed reconnect reports the combined unknown-state error", async () => {
+  const sender = env.node("sender"); await sender.start();
+  const first = (sender as unknown as { client: BridgeClient }).client, request = first.request.bind(first);
+  vi.spyOn(first, "request").mockImplementation(async (op, args: any) => {
+    if (op !== "trackedSend") return request(op, args);
+    const closed = new Promise<void>(resolve => first.once("close", () => resolve())); first.close(); await closed;
+    throw brokerConnectionClosedError();
+  });
+  const connected = sender.ensureConnected.bind(sender);
+  let calls = 0;
+  vi.spyOn(sender, "ensureConnected").mockImplementation(async () => {
+    if (++calls === 1) return connected(); // The original send's own connection.
+    throw new Error("SIMULATED election failure");
+  });
+  const error = await sender.send({ to: "offline", body: "reconnect-fails" }).catch(failure => failure);
+  expect(String(error.message)).toContain("storage state is unknown: connection to broker closed; reconnect failed: SIMULATED election failure");
+  expect(error.details).toMatchObject({ state: "unknown", messageId: expect.stringMatching(/^[0-9a-f-]{36}$/) });
+  expect(calls).toBe(2);
+});
+
+it("a non-close send error does not reconnect or retry", async () => {
+  const sender = env.node("sender"); await sender.start();
+  const client = (sender as unknown as { client: BridgeClient }).client;
+  const request = vi.spyOn(client, "request").mockRejectedValue(new Error("SIMULATED permanent failure"));
+  const ensure = vi.spyOn(sender, "ensureConnected");
+  await expect(sender.send({ to: "offline", body: "no-reconnect" })).rejects.toThrow("Storage cannot be confirmed for message");
+  expect(ensure).toHaveBeenCalledTimes(1); // Only the original send's own connection check.
+  expect(request.mock.calls.filter(([op]) => op === "trackedSend")).toHaveLength(1);
+  expect((sender as unknown as { client: BridgeClient }).client).toBe(client); expect(client.isClosed).toBe(false);
 });

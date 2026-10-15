@@ -13,6 +13,7 @@ import { failureCause } from "../core/delegate.js";
 import { createLogger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
 import { resolveDbPath, resolvePipePath } from "../core/paths.js";
+import { quarantineMessage } from "../core/oversize.js";
 import { loadOrCreateToken } from "../core/token.js";
 import { ACK_CONVERSATION_SUFFIX, QUESTION_CONVERSATION_SUFFIX, SIBLING_CONVERSATION_PREFIX, type BridgeMessage, type SendResult } from "../core/protocol.js";
 import type { ParentRoute } from "../core/parent-link.js";
@@ -209,19 +210,15 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
   const deliver = async (body: string, replyTo: string | null, note = false, key?: string, question = false): Promise<SendResult | null> => {
     // One key for all attempts: a send that timed out here may still be queued at a slow broker.
     const dedupeKey = key ?? randomUUID();
-    for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
-      try {
-        // A retry may cross a handoff or reload. Routing changes never replace the active delegate.
-        refreshOwner();
-        // A question is marked so the broker can route it to the project main while the parent is offline (AB-249).
-        const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : question ? QUESTION_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
-        return await node.send({ to: owner, body, conversationId: `job-${job.id}${suffix}`, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
-      } catch (err) {
-        log.warn("could not deliver to the session; retrying", { owner, attempt, err: (err as Error).message });
-        await new Promise((r) => setTimeout(r, Math.min(attempt * 1_000, SEND_RETRY_MAX_MS)));
-      }
-    }
-    return null;
+    // AB-380: a body over the message limit can never be sent: once its full text is in a file, send a stub.
+    body = quarantineMessage(home, { id: dedupeKey, body }).body;
+    return deliverWithRetry(() => {
+      // A retry may cross a handoff or reload. Routing changes never replace the active delegate.
+      refreshOwner();
+      // A question is marked so the broker can route it to the project main while the parent is offline (AB-249).
+      const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : question ? QUESTION_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
+      return node.send({ to: owner, body, conversationId: `job-${job.id}${suffix}`, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
+    }, log, owner);
   };
   const inOrder = (body: string, replyTo: string | null, note: boolean, key?: string, question = false): Promise<SendResult | null> => {
     const sent = chain.then(() => deliver(body, replyTo, note, key, question));
@@ -409,7 +406,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     }
     job.etaReportedAt = undefined;
     if (job.controller.signal.aborted) status = "cancelled";
-    const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause);
+    const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause, home);
     log.info("job turn finished", { status, sessionId: job.sessionId, cause });
     // The supervisor's JobManager emits the finish/fail notification when it settles this
     // result. A detached notifier here would remain inside this runner's owned job scope.
@@ -443,6 +440,26 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
   process.off("SIGINT", stop);
   await node.stop();
   return 0;
+}
+
+/**
+ * Tries a send until the bridge takes it. A too_large refusal is final (AB-380): retrying cannot make it fit, and the
+ * caller keeps what it sent (a finished report stays in the runner state for the session to collect).
+ */
+export async function deliverWithRetry<T>(send: () => Promise<T>, log: Logger, owner: string, attempts = SEND_ATTEMPTS): Promise<T | null> {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await send();
+    } catch (err) {
+      if ((err as { code?: string } | null)?.code === "too_large") {
+        log.error("message too large to deliver; not retried", { owner, err: (err as Error).message });
+        return null;
+      }
+      log.warn("could not deliver to the session; retrying", { owner, attempt, err: (err as Error).message });
+      await new Promise((r) => setTimeout(r, Math.min(attempt * 1_000, SEND_RETRY_MAX_MS)));
+    }
+  }
+  return null;
 }
 
 /** Legacy 0.29.10 control mail also carries its original broker timestamp. */

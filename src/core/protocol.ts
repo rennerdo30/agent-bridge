@@ -252,6 +252,10 @@ export interface AuthArgs {
 }
 
 export interface RequestMap {
+  coreStatus: [Record<string, never>, { version: string; pid: number; uptimeSeconds: number; mode: "daemon" | "embedded" | "embedded_degraded";
+    reason?: string; connectedClients: number; connectedJobClients: number; runningJobs: number; runningJobsEvidence: "legacy_registry_labels_not_execution" }];
+  /** Local authenticated daemon lifecycle wiring; no remote target or configuration mutation. */
+  ensureDashboard: [{ force: boolean; port?: number }, import("../cli/dashboard.js").DashboardInfo | null];
   /** Old peers must explicitly refuse this opcode, never ignore a mode. */
   modeSend: [ModeSendArgs, ModeSendResult];
   /** Virtual addresses are controlled only by the registered parent connection. */
@@ -394,7 +398,10 @@ export class FrameDecoder {
 
   push(chunk: string): Frame[] {
     this.buffer += chunk;
-    if (this.buffer.length > this.maxBytes && !this.buffer.includes("\n")) {
+    // The limit is in bytes (AB-380): a string's UTF-8 size is at least its UTF-16 length and at most three times
+    // it, so the exact count is only needed in between.
+    if (this.buffer.length * 3 > this.maxBytes && !this.buffer.includes("\n") &&
+      (this.buffer.length > this.maxBytes || Buffer.byteLength(this.buffer) > this.maxBytes)) {
       this.buffer = "";
       throw new BridgeError("too_large", "frame exceeds maximum size");
     }

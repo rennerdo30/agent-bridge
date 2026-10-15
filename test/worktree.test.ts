@@ -359,6 +359,54 @@ describe("review diff and handoff files", () => {
 });
 
 describe("auto-commit filtering", () => {
+  it.each(["unstaged", "partial", "staged", "bundle-only"])("excludes complete regenerated bundles with %s changes (AB-274)", async (staging) => {
+    const plugins = ["codex", "claude"];
+    const oldEntry = 'import "./chunks/old-HASH.mjs";\n';
+    const newEntry = 'import "./chunks/new-HASH.mjs";\n';
+    const oldChunk = Buffer.from([0, 1, 2, 255]);
+    const newChunk = Buffer.from([0, 3, 4, 255]);
+    for (const plugin of plugins) {
+      const dist = join(repo, "plugins", plugin, "dist");
+      mkdirSync(join(dist, "chunks"), { recursive: true });
+      writeFileSync(join(dist, "entry.mjs"), oldEntry);
+      writeFileSync(join(dist, "chunks", "old-HASH.mjs"), oldChunk);
+    }
+    git("add", "plugins");
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base bundles");
+    const wt = await createWorktree({ cwd: repo, home, jobId: "bundle", log: nullLogger });
+    for (const plugin of plugins) {
+      const prefix = `plugins/${plugin}/dist`;
+      rmSync(join(wt.path, prefix, "chunks", "old-HASH.mjs"));
+      writeFileSync(join(wt.path, prefix, "chunks", "new-HASH.mjs"), newChunk);
+      writeFileSync(join(wt.path, prefix, "entry.mjs"), newEntry);
+      if (staging === "partial") execFileSync("git", ["add", "-u", "--", prefix], { cwd: wt.path });
+      if (staging === "staged") execFileSync("git", ["add", "-A", "--", prefix], { cwd: wt.path });
+    }
+    if (staging !== "bundle-only") writeFileSync(join(wt.path, "a.txt"), "real source change\n");
+    const outcome = await finishWorktree(wt, "unused", nullLogger);
+    expect(outcome.files).toEqual(staging === "bundle-only" ? [] : ["a.txt"]);
+    expect(git("rev-parse", wt.branch) === wt.base).toBe(staging === "bundle-only");
+    const excluded = plugins.flatMap(plugin => ["entry.mjs", "chunks/old-HASH.mjs", "chunks/new-HASH.mjs"].map(file => `plugins/${plugin}/dist/${file}`)).sort();
+    expect(outcome.skippedFiles?.slice().sort((a, b) => a.path.localeCompare(b.path))).toEqual(
+      excluded.map(path => ({ path, reason: "generated bundle; excluded atomically" })),
+    );
+    expect(execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: wt.path, encoding: "utf8" }).trim()).toBe("");
+    const report = worktreeReport(wt, outcome);
+    for (const path of excluded) expect(report).toContain(`${path} (generated bundle; excluded atomically)`);
+    expect(report).toContain("Keep this worktree");
+    for (const plugin of plugins) {
+      const prefix = `plugins/${plugin}/dist`;
+      expect(git("show", `${wt.branch}:${prefix}/entry.mjs`)).toBe(oldEntry.trim());
+      expect(execFileSync("git", ["show", `${wt.branch}:${prefix}/chunks/old-HASH.mjs`], { cwd: repo })).toEqual(oldChunk);
+      expect(git("ls-tree", "-r", "--name-only", wt.branch, "--", prefix).split("\n").sort()).toEqual([
+        `${prefix}/chunks/old-HASH.mjs`, `${prefix}/entry.mjs`,
+      ]);
+      expect(readFileSync(join(wt.path, prefix, "entry.mjs"), "utf8")).toBe(newEntry);
+      expect(readFileSync(join(wt.path, prefix, "chunks", "new-HASH.mjs"))).toEqual(newChunk);
+      expect(existsSync(join(wt.path, prefix, "chunks", "old-HASH.mjs"))).toBe(false);
+    }
+  });
+
   const unityProject = () => {
     mkdirSync(join(repo, "ProjectSettings"));
     writeFileSync(join(repo, "ProjectSettings", "ProjectVersion.txt"), "m_EditorVersion: 6000.0\n");

@@ -2,12 +2,12 @@ import { HistoryBackground } from "./history-background.js";
 import { NativeChildren, isNativeChildAddress } from "./native-children.js";
 import { HealthMonitor } from "./health.js";
 import { loadConfig } from "./config.js";
-import { conversationPageSchema, readConversation } from "./conversations.js";
+import { conversationPageSchema } from "./conversations.js";
 import { historySearchSchema } from "./history.js";
 import { ReadJournal } from "./read-journal.js";
 import { recordStorePeer, refreshStorePeerIdentities, validStoreCapabilities } from "./store-compatibility.js";
 import { randomUUID } from "node:crypto";
-import { existsSync, renameSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync, renameSync, unlinkSync } from "node:fs";
 import { readMusePrivateJson, writeMusePrivateJson } from "./muse-context.js";
 import { processIdentity } from "./process-identity.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
@@ -55,6 +55,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { canControlJob, mastersFor, chooseJobRecipient, primaryFor } from "./job-ownership.js";
 import { RootConcurrency } from "./root-concurrency.js";
 import { isRecord, retentionLimit } from "./json-store.js";
+import { quarantineMessage } from "./oversize.js";
 import { readArchivedJobSnapshot } from "./job-archive.js";
 import { JobArchiveBackground } from "./job-archive-background.js";
 import { indexedJobProjectionCurrent, readIndexedJobs } from "./job-archive-index.js";
@@ -80,7 +81,31 @@ import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, decisionApplies, decisionScopeSchema, type OwnerDecision } from "./decisions.js";
 import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
 import { OwnerQuestionService, OWNER_ADDRESS } from "./owner-question-service.js";
-import { BROKER_TCP_FILE, ensurePrivateSocketDirectory, isEphemeralBrokerTcpRecord } from "./paths.js";
+import { BROKER_TCP_FILE, ensurePrivateSocketDirectory, isEphemeralBrokerTcpRecord, resolvePipePath } from "./paths.js";
+import { hasEndpointActivationWitness, type EndpointReservation } from "./endpoint-reservation.js";
+
+export type LifecycleServingPhase = "admission" | "prepare" | "write";
+/** Opaque source capability. Shape/copy/serialized flags never confer authority. */
+export interface LifecycleServingCapability { readonly __servingCapability?: never }
+const SERVING_PHASE_MS = { admission: 1000, prepare: 5000, write: 2000 } as const;
+type ServingBinding = { server: Server; ownerInstance: string; generation: number; home: string; identity: string; endpoint: string; revoked: boolean; current(): boolean };
+const servingBindings = new WeakMap<Broker, ServingBinding>();
+const servingCapabilities = new WeakMap<LifecycleServingCapability, { binding: ServingBinding; generation: number; phase: LifecycleServingPhase; expires: number }>();
+function servingHomeIdentity(home: string): string {
+  const stat = lstatSync(home, { bigint: true });
+  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.ino <= 0n || stat.dev < 0n || process.platform === "win32" && stat.dev === 0n) throw Error("unknown");
+  return `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`;
+}
+function unavailableServing(): never { throw new BridgeError("bad_request", "Core lifecycle serving authority is unavailable."); }
+/** Internal consumer validation only; no factory, protocol handler, role flag or fixture mint. */
+export function assertLifecycleServingCapability(capability: LifecycleServingCapability, phase: LifecycleServingPhase): Readonly<{ ownerInstance: string; generation: number; home: string; endpoint: string }> {
+  const grant = servingCapabilities.get(capability);
+  if (!grant || grant.phase !== phase || performance.now() >= grant.expires || grant.binding.revoked || grant.generation !== grant.binding.generation) unavailableServing();
+  try {
+    if (!grant.binding.current() || !grant.binding.server.listening || grant.binding.server.address() !== grant.binding.endpoint || servingHomeIdentity(grant.binding.home) !== grant.binding.identity) unavailableServing();
+  } catch { unavailableServing(); }
+  return Object.freeze({ ownerInstance: grant.binding.ownerInstance, generation: grant.generation, home: grant.binding.home, endpoint: grant.binding.endpoint });
+}
 
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
 export const PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -130,6 +155,20 @@ type Handler<O extends Op> = (conn: Conn, args: RequestMap[O][0]) => RequestMap[
 const HANDOFF_LOCK_WAIT_MS = 2_000;
 const HANDOFF_LOCK_RETRY_MS = 25;
 export class Broker {
+  private hosting: { mode: "daemon" | "embedded" | "embedded_degraded"; reason?: string } = { mode: "embedded" };
+  setHostingMode(mode: "daemon" | "embedded_degraded", reason?: "windows_wmi_unavailable" | "windows_wmi_create_rejected"): void {
+    this.hosting = { mode, ...(reason ? { reason } : {}) };
+  }
+  /** Trusted bootstrap primitive staging only. Ordinary/default startup never invokes it. */
+  lifecycleServingCapability(phase: LifecycleServingPhase, deadline: number): LifecycleServingCapability {
+    const binding = servingBindings.get(this);
+    if (!binding || binding.revoked || !Object.hasOwn(SERVING_PHASE_MS, phase) || !Number.isFinite(deadline)) unavailableServing();
+    const expires = Math.min(deadline, performance.now() + SERVING_PHASE_MS[phase]);
+    if (expires <= performance.now()) unavailableServing();
+    const capability = Object.freeze({});
+    servingCapabilities.set(capability, { binding, generation: binding.generation, phase, expires });
+    assertLifecycleServingCapability(capability, phase); return capability;
+  }
   private mobileResources?: Set<() => Promise<void>>;
   private mobileRetiring?: boolean;
   /** Deliberate owner-only activation, after caller validation; no change to ordinary startup. */
@@ -207,6 +246,8 @@ export class Broker {
   private decisionSync: DecisionSync | null = null;
   private readonly remoteProgress = new Map<string, string>();
   private networkChange: Promise<unknown> = Promise.resolve();
+  private networkAuthorityDeferred = false;
+  private startupAuthorityRevoked = false;
   private readonly handlers: { [O in Exclude<Op, "modeSend">]: Handler<O> };
   private jobsSnapshot: { active: JsonSnapshot; archive: string; records: Record<string, unknown>[] } | null = null;
   private jobsForDispatch: Record<string, unknown>[] | null = null;
@@ -221,10 +262,21 @@ export class Broker {
     /** The supervisor's job registry, for siblings whose peers are not connected between turns. */
     private readonly jobsPath?: string,
     private readonly networking?: { home: string; config: NetworkConfig },
+    private readonly dashboardHost?: { ensure(force: boolean, port?: number): Promise<import("../cli/dashboard.js").DashboardInfo | null> },
   ) {
     this.groups = new ProjectGroups(jobsPath ? dirname(jobsPath) : undefined);
     this.nativeChildren = new NativeChildren(this.store);
     this.handlers = {
+      coreStatus: () => ({ version: APP_VERSION, pid: process.pid, uptimeSeconds: Math.floor(process.uptime()), ...this.hosting,
+        connectedClients: [...this.conns].filter(c => c.authed).length, connectedJobClients: [...this.conns].filter(c => c.authed && c.peer?.jobAgent).length,
+        runningJobs: this.storedJobs().filter(job => job.status === "running").length, runningJobsEvidence: "legacy_registry_labels_not_execution" }),
+      ensureDashboard: (c, a) => {
+        if (c.peer?.jobAgent || c.peer?.subagent) throw new BridgeError("unauthorized", "Only local project sessions and CLI clients can open the dashboard.");
+        const parsed = z.object({ force: z.boolean(), port: z.number().int().min(1).max(65535).optional() }).strict().safeParse(a);
+        if (!parsed.success) throw new BridgeError("bad_request", "Invalid dashboard startup request.");
+        if (!this.dashboardHost) throw new BridgeError("protocol_mismatch", "This broker does not support ensureDashboard hosting; no operation was applied.", { operation: "ensureDashboard" });
+        return this.dashboardHost.ensure(parsed.data.force, parsed.data.port);
+      },
       askOwner: (c,a) => {
         const peer = this.requirePeer(c);
         if (peer.jobAgent || peer.subagent || peer.agent === "other") throw new BridgeError("unauthorized", "Delegated jobs ask their main; only project sessions file owner questions.");
@@ -374,10 +426,11 @@ export class Broker {
         let fallback = false;
         await this.store.retryWrite(() => {
           const job = this.storedJobs().find((j) => `job:${j.id}` === m.from?.id);
-          if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
+          if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string") throw new BridgeError("unauthorized", "Invalid inline job delivery.");
           const recipient = this.jobRecipient(job);
           fallback = recipient !== primaryFor(job);
-          const message = { ...m, jobControlAuthorized: undefined, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) };
+          // AB-380: an oversized report from an older sender is stored as a stub with the same id, never rejected.
+          const message = this.wireMessage({ ...m, jobControlAuthorized: undefined, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) });
           if (this.store.insertJobDelivery(message)) {
             const target = this.connByName(recipient);
             if (target && !target.peer?.unavailable) this.emit(target, "message", message);
@@ -405,8 +458,7 @@ export class Broker {
         return this.store.history.search(parsed.data);
       },
       getConversation: (_, a) => {
-        const page = readConversation(this.store.history.database, conversationPageSchema.parse(a)), migration = this.store.history.legacyReadNotice;
-        return migration ? { ...page, migration } : page;
+        return this.store.history.conversationPage(conversationPageSchema.parse(a));
       },
       reindexHistory: (_, a) => {
         const args = z.object({ reset: z.boolean().optional() }).strict().parse(a);
@@ -512,7 +564,8 @@ export class Broker {
   }
 
   /** Bind the endpoint. Rejects with the socket error (EADDRINUSE when another broker owns it). */
-  listen(): Promise<void> {
+  listen(reservation?: EndpointReservation): Promise<void> {
+    if (reservation) return this.listenReserved(reservation);
     return new Promise((resolve, reject) => {
       const server = createServer((socket) => this.accept(socket));
       const onError = (err: Error) => {
@@ -546,6 +599,45 @@ export class Broker {
       ensurePrivateSocketDirectory(this.pipePath);
       server.listen(this.pipePath);
     });
+  }
+
+  private async listenReserved(reservation: EndpointReservation): Promise<void> {
+    this.server = reservation.ownedServer(this.pipePath);
+    this.networkAuthorityDeferred = true;
+    const optional = (what: string, step: () => void) => {
+      try { step(); } catch (err) { this.log.warn(`broker startup: ${what} failed; continuing without it`, { err: String(err) }); }
+    };
+    try {
+      await this.startServices(optional);
+      const accept = (socket: Socket) => this.accept(socket);
+      reservation.activate(accept, this);
+      this.network?.activateAuthority();
+      this.networkAuthorityDeferred = false;
+      this.server.on("error", err => this.log.error("broker server error", { err }));
+      this.tcpReady = this.startTcpFallback();
+      await this.tcpReady.catch(err => this.log.warn("broker TCP fallback unavailable", { err: String(err) }));
+      // Only this real controlled reservation's completed activation registers a
+      // source issuer. A constructor, legacy listener, tentative or failed start
+      // cannot register/mint. Failure here leaves ordinary serving unchanged.
+      if (!servingBindings.has(this) && this.hosting.mode === "daemon" && this.store.file !== ":memory:"
+        && hasEndpointActivationWitness(reservation, this, this.server, this.pipePath, accept)) {
+        try {
+          const server = this.server, home = realpathSync.native(dirname(this.store.file)), identity = servingHomeIdentity(home), hosting = this.hosting;
+          if (resolvePipePath(home, {}) === this.pipePath && server.listening && server.address() === this.pipePath) {
+            const binding: ServingBinding = { server, home, identity, endpoint: this.pipePath, ownerInstance: randomUUID(), generation: 0, revoked: false,
+              current: () => hasEndpointActivationWitness(reservation, this, server, this.pipePath, accept) && this.server === server && this.hosting === hosting && !this.closing && !this.startupAuthorityRevoked && !this.networkAuthorityDeferred && !this.mobileRetiring && this.store.lifecycleWriteManifest().transactionsSettled };
+            const revoke = () => { binding.revoked = true; binding.generation++; };
+            server.once("close", revoke); server.once("error", revoke); servingBindings.set(this, binding);
+          }
+        } catch { /* Unproved canonical home/endpoint binding is lifecycle unsupported, never repaired. */ }
+      }
+    } catch (error) {
+      this.startupAuthorityRevoked = true;
+      this.network?.deferAuthority();
+      await this.abortStartup().catch(() => {});
+      await reservation.close();
+      throw error;
+    }
   }
 
   /** Undo a failed listen(): background services, timers and the bound server; the store stays open for its owner. */
@@ -604,7 +696,7 @@ export class Broker {
         recipientReceipts: true,
             }, this.log);
             this.installRemoteJobs(this.network);
-            await this.network.start();
+            await this.network.start(this.networkAuthorityDeferred);
           } catch (err) {
             this.remoteDashboard?.close();
             this.remoteDashboard = null;
@@ -713,6 +805,7 @@ export class Broker {
 
   /** Serialize listener changes and let the elected broker remain the sole network writer. */
   private async configureNetwork(value: NetworkConfig): Promise<NetworkStatus> {
+    if (this.networkAuthorityDeferred) throw new BridgeError("bad_request", "Core is initializing; network configuration was not applied.");
     if (!this.networking) throw new BridgeError("bad_request", "Restart all agent-bridge hosting sessions to load this wizard-capable broker.");
     const config = writeNetworkConfig(this.networking.home, value);
     this.remoteDashboard?.close();
@@ -732,7 +825,7 @@ export class Broker {
         recipientReceipts: true,
       }, this.log);
       this.installRemoteJobs(service);
-      try { await service.start(); this.network = service; }
+      try { await service.start(this.networkAuthorityDeferred); this.network = service; }
       catch (err) { await service.close(); throw err; }
     }
     return this.network?.status() ?? { enabled: false, config, discovered: [], paired: [] };
@@ -764,6 +857,7 @@ export class Broker {
   }
 
   private accept(socket: Socket): void {
+    if (this.startupAuthorityRevoked) { socket.destroy(); return; }
     const conn: Conn = { socket, peer: null, authed: false, inFlight: 0, mailGeneration: 0 };
     this.conns.add(conn);
     socket.setEncoding("utf8");
@@ -802,7 +896,7 @@ export class Broker {
     socket.on("close", () => {
       this.conns.delete(conn);
       if (conn.peer) {
-        void this.nativeChildren.endParent(conn.peer).catch(err => this.log.warn("native child fallback deferred", { err: String(err) }));
+        void this.nativeChildren.endParent(conn.peer, true).catch(err => this.log.warn("native child fallback deferred", { err: String(err) }));
         if (!this.closing && !conn.peer.jobAgent && !conn.peer.subagent) {
           const name = conn.peer.name, at = this.now();
           void this.store.retryWrite(() => {
@@ -817,6 +911,7 @@ export class Broker {
   }
 
   private async dispatch(conn: Conn, frame: RequestFrame): Promise<void> {
+    if (this.refuseRevokedStartup(conn, frame)) return;
     this.healthMonitor.start();
     // In-memory probes must not pause background work just to observe its status.
     const countsPressure = !["reindexHistory", "health", "ping"].includes(frame.op);
@@ -832,6 +927,7 @@ export class Broker {
       const turn = this.requestTurn.then(() => new Promise<void>((resolve) => setImmediate(resolve)));
       this.requestTurn = turn;
       await turn;
+      if (this.refuseRevokedStartup(conn, frame)) return;
       if (this.closing) return;
       if (!conn.authed && !UNAUTHENTICATED_OPS.has(frame.op)) throw new BridgeError("unauthorized", "authenticate first");
       this.log.debug("request", { op: frame.op, peer: conn.peer?.name });
@@ -854,11 +950,28 @@ export class Broker {
     }
   }
 
+  private refuseRevokedStartup(conn: Conn, frame: RequestFrame): boolean {
+    if (!this.startupAuthorityRevoked) return false;
+    this.write(conn, { t: "res", id: frame.id, ok: false, error: { code: "internal", message: "Core initialization is unavailable; no request was admitted." } });
+    return true;
+  }
+
   private write(conn: Conn, frame: Parameters<typeof encodeFrame>[0]): boolean {
     if (conn.socket.destroyed) return false;
     try {
-      const data = encodeFrame(frame);
-      if (conn.socket.writableLength + Buffer.byteLength(data) > MAX_CONNECTION_BUFFER_BYTES) {
+      let data = encodeFrame(frame);
+      let bytes = Buffer.byteLength(data);
+      if (bytes > MAX_FRAME_BYTES) {
+        // AB-380: the peer's decoder would reject it and drop the connection, so a reconnect would loop on it.
+        // Skip the frame instead; a response still settles its request, as too_large.
+        const ev = frame.t === "evt" ? frame.ev : undefined, id = frame.t === "evt" && isRecord(frame.data) ? (frame.data as Record<string, unknown>).id : undefined;
+        this.log.error("skipping oversized frame; connection kept", { peer: conn.peer?.name, t: frame.t, ev, id, bytes });
+        if (frame.t !== "res") return true;
+        data = encodeFrame({ t: "res", id: frame.id, ok: false, error: new BridgeError("too_large",
+          `response is ${bytes} bytes, over the ${MAX_FRAME_BYTES}-byte frame limit`, { bytes, limit: MAX_FRAME_BYTES, retryable: false }).toPayload() });
+        bytes = Buffer.byteLength(data);
+      }
+      if (conn.socket.writableLength + bytes > MAX_CONNECTION_BUFFER_BYTES) {
         this.log.warn("closing slow client connection; unread mail remains stored", { peer: conn.peer?.name });
         conn.socket.destroy();
         return false;
@@ -1090,7 +1203,8 @@ export class Broker {
           const recipient = this.jobRecipient(job), target = this.connByName(recipient);
           if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
             if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
-            const message = { ...envelope, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, String(envelope.conversationId)) } as unknown as BridgeMessage;
+            // AB-380: an oversized stored envelope is persisted and sent as a stub; jobs.json keeps the original.
+            const message = this.wireMessage({ ...envelope, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, String(envelope.conversationId)) } as unknown as BridgeMessage);
             const inserted = this.store.insertJobDelivery(message);
             const names = new Set([recipient, envelope.to, envelope.recipient, ...mastersFor(job)]);
             const consumed = this.jobsPath && [...names].some((name) => typeof name === "string" &&
@@ -1104,7 +1218,7 @@ export class Broker {
             const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job));
             const previous = this.connByName(from);
             if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
-            for (const m of moved) this.emit(target, "message", m);
+            for (const m of moved) this.emit(target, "message", this.wireMessage(m, "the bridge database"));
           }
         });
       }
@@ -1567,7 +1681,7 @@ export class Broker {
     const peer = this.requirePeer(conn);
     const previousIdentity = { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name };
     const previousName = peer.name;
-    if (args.sessionId !== undefined && args.sessionId !== peer.sessionId || args.name !== undefined && args.name !== peer.name) await this.nativeChildren.endParent(peer);
+    if (args.sessionId !== undefined && args.sessionId !== peer.sessionId || args.name !== undefined && args.name !== peer.name) await this.nativeChildren.endParent(peer, true);
     const aliases: string[] = [];
     let replay = args.unavailable === false;
     if (args.unavailable !== undefined) {
@@ -1641,7 +1755,7 @@ export class Broker {
       this.store.rememberName(old, this.now());
       this.log.info("session connected again from a new server; replacing the old connection", { name: old.name, by: peer.name, sessionId: peer.sessionId });
       this.emit(c, "replaced", { by: peer.name });
-      void this.nativeChildren.endParent(old).catch(err => this.log.warn("replaced native child fallback deferred", { err: String(err) }));
+      void this.nativeChildren.endParent(old, true).catch(err => this.log.warn("replaced native child fallback deferred", { err: String(err) }));
       this.conns.delete(c);
       c.peer = null;
       this.broadcastEvent("peer_left", old, c);
@@ -2252,6 +2366,11 @@ export class Broker {
       // Ordinary peer and sibling mail still flow; job reports stay durable.
       if (unavailable && message.from.id.startsWith("job:") && !message.conversationId.startsWith("siblings-")) continue;
       const size = Buffer.byteLength(JSON.stringify(message)) + 1;
+      if (size + 1_024 > MAX_FRAME_BYTES) {
+        // AB-380: an item that can never fit must not block every item behind it. It stays stored; doctor lists it.
+        this.logOversizedOnce(`skip:${message.id}`, () => this.log.error("skipping unsendable pending message; it remains stored (see doctor)", { recipient, id: message.id, bytes: size }));
+        continue;
+      }
       if (bytes + size > MAX_FRAME_BYTES) break;
       result.push(message);
       bytes += size;
@@ -2259,8 +2378,32 @@ export class Broker {
     return result;
   }
 
+  /** Where full texts of oversized messages are kept: the bridge home, or none for an in-memory test broker. */
+  private quarantineHome(): string | null {
+    return this.jobsPath ? dirname(this.jobsPath) : this.store.file !== ":memory:" ? dirname(this.store.file) : null;
+  }
+
+  /** Oversized-message logs, once per id and kind per process (replay and refills see the same rows repeatedly). */
+  private readonly oversizedLogged = new Set<string>();
+  private logOversizedOnce(key: string, log: () => void): void {
+    if (this.oversizedLogged.has(key)) return;
+    if (this.oversizedLogged.size >= 10_000) this.oversizedLogged.clear();
+    this.oversizedLogged.add(key);
+    log();
+  }
+
+  /**
+   * AB-380: a transport-safe copy; an oversized body becomes a stub (same id) naming its quarantined full text.
+   * `retainedAt` names where the original is still stored; without it a stub requires a confirmed file write.
+   */
+  private wireMessage(message: BridgeMessage, retainedAt?: string): BridgeMessage {
+    const wired = quarantineMessage(this.quarantineHome(), message, retainedAt);
+    if (wired !== message) this.logOversizedOnce(`stub:${message.id}`, () => this.log.warn("oversized message quarantined; sending a stub", { id: message.id, recipient: message.recipient }));
+    return wired;
+  }
+
   private unreadMail(recipient: string, limit: number): BridgeMessage[] {
-    const messages = this.store.unread(recipient, limit);
+    const messages = this.store.unread(recipient, limit).map((m) => this.wireMessage(m, "the bridge database"));
     if (!this.jobsPath) return messages;
     const noteSenders = new Set(messages.filter((m) => !isQuietMessage(m) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX)).map((m) => m.from.id));
     if (!noteSenders.size) return messages;

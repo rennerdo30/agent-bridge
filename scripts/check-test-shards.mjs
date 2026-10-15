@@ -5,9 +5,9 @@ import { createVitest } from "vitest/node";
 import { caseIdentity, censusDigest, censusMetadata, collectionCacheProof, moduleCensus } from "./ci-reporter.mjs";
 import { testFixtureRoot } from "./test-fixture-root.mjs";
 
-// Use Vitest's configured sequencer, not a second implementation of its hash.
+// Use Vitest's configured sequencer (duration packing, scripts/test-shards.mjs), not a copy of it.
 // `vitest list --filesOnly` does not apply --shard in Vitest 5.
-const count = Number(process.argv[2] ?? 4);
+const count = Number(process.argv[2] ?? 6);
 assert(Number.isInteger(count) && count >= 1, "Expected a positive shard count");
 const output = resolve(process.argv[3] ?? ".agent-bridge-test/ci/shards.json");
 const collect = process.argv[4] === "--collect";

@@ -122,24 +122,65 @@ function scopeMatches(decision: OwnerDecision, filter?: DecisionScope, sessions:
 
 /** Uses the broker's existing database connection; revisions and delivery receipts are append-only. */
 export class DecisionStore {
+  private lifecycleSealed = false;
+  private lifecycleOperations = 0;
+  private lifecycleRevision = 0;
+  private lifecycleUnknown = false;
+  private lifecycleCallbackUnknown = false;
   constructor(private readonly db: DatabaseSync) {}
 
+  // These are this actual consumer's local admission guards, not a canonical
+  // owner registration or a retirement permit. No native handle is exported.
+  private lifecycleChanged(): void {
+    this.lifecycleRevision++;
+    if (!Number.isSafeInteger(this.lifecycleRevision)) this.lifecycleUnknown = true;
+  }
+  private assertLifecycleAdmission(): void {
+    if (this.lifecycleSealed && this.lifecycleOperations === 0)
+      throw Object.assign(new Error("decision consumer is quiesced"), { code: "OWNER_QUIESCED" });
+  }
+  private accepted<T>(operation: () => T): T {
+    if (this.lifecycleSealed) throw Object.assign(new Error("decision consumer is quiesced"), { code: "OWNER_QUIESCED" });
+    this.lifecycleOperations++; this.lifecycleChanged();
+    if (!Number.isSafeInteger(this.lifecycleOperations)) this.lifecycleUnknown = true;
+    try { return operation(); }
+    finally { this.lifecycleOperations--; this.lifecycleChanged(); }
+  }
+  private native<T>(operation: () => T): T {
+    this.assertLifecycleAdmission(); this.lifecycleChanged();
+    try { return operation(); }
+    catch (error) { this.lifecycleUnknown = true; this.lifecycleChanged(); throw error; }
+  }
+  sealLifecycleConsumer() { this.lifecycleSealed = true; this.lifecycleChanged(); return this.lifecycleConsumerObservation(); }
+  resumeLifecycleConsumer() { this.lifecycleSealed = false; this.lifecycleChanged(); return this.lifecycleConsumerObservation(); }
+  lifecycleConsumerObservation() {
+    let transactionSettled = false;
+    try { transactionSettled = this.db.isTransaction === false; } catch { /* unknown actual handle state */ }
+    return Object.freeze({ generation: this.lifecycleRevision, sealed: this.lifecycleSealed, pendingOperations: this.lifecycleOperations,
+      unknown: this.lifecycleUnknown, callbackUnknown: this.lifecycleCallbackUnknown, transactionSettled,
+      ownerBound: false as const, settled: false as const, blocker: "owner_unsupported" as const, ownershipReleased: false as const });
+  }
+
   record(args: DecideArgs & { scope: DecisionScope }, author: MessageAddress, at: number): OwnerDecision {
+    return this.accepted(() => {
     const topic = args.topic.trim().toLowerCase();
     const id = randomUUID();
-    this.db.exec("BEGIN IMMEDIATE");
+    this.native(() => this.db.exec("BEGIN IMMEDIATE"));
     try {
       // The current revision, not the last inserted: a decision synced from a paired PC can be older (AB-261).
-      const previous = this.db.prepare(`SELECT id FROM decisions d WHERE topic = ? AND NOT EXISTS (SELECT 1 FROM decisions newer WHERE newer.supersedes = d.id)
-        ORDER BY created_at DESC, id DESC LIMIT 1`).get(topic);
-      this.db.prepare(`INSERT INTO decisions (id, topic, body, scope, author_id, author_name, author_agent, created_at, source_message_id, supersedes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, topic, args.text.trim(), JSON.stringify(normalizeScope(args.scope)), author.id, author.name, author.agent, at, args.sourceMessageId ?? null, previous?.id ?? null);
-      this.db.exec("COMMIT");
+      const previousStatement = this.native(() => this.db.prepare(`SELECT id FROM decisions d WHERE topic = ? AND NOT EXISTS (SELECT 1 FROM decisions newer WHERE newer.supersedes = d.id)
+        ORDER BY created_at DESC, id DESC LIMIT 1`));
+      const previous = this.native(() => previousStatement.get(topic));
+      const insert = this.native(() => this.db.prepare(`INSERT INTO decisions (id, topic, body, scope, author_id, author_name, author_agent, created_at, source_message_id, supersedes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`));
+      this.native(() => insert.run(id, topic, args.text.trim(), JSON.stringify(normalizeScope(args.scope)), author.id, author.name, author.agent, at, args.sourceMessageId ?? null, previous?.id ?? null));
+      this.native(() => this.db.exec("COMMIT"));
     } catch (err) {
-      this.db.exec("ROLLBACK");
+      this.native(() => this.db.exec("ROLLBACK"));
       throw err;
     }
-    return this.list({ topic, history: true }).find((d) => d.id === id)!;
+    return this.listAccepted({ topic, history: true }).find((d) => d.id === id)!;
+    });
   }
 
   /**
@@ -155,29 +196,35 @@ export class DecisionStore {
    * `current` is derived locally from the supersedes chain, so it is not an input here.
    */
   importSync(decision: Omit<OwnerDecision, "current">): boolean {
+    return this.accepted(() => {
     if (decision.scope !== "all") return false;
     const topic = decision.topic.trim().toLowerCase();
     if (!topic || !decision.text.trim()) return false;
-    this.db.exec("BEGIN IMMEDIATE");
+    this.native(() => this.db.exec("BEGIN IMMEDIATE"));
     try {
-      const inserted = this.db.prepare("INSERT OR IGNORE INTO decisions (id, topic, body, scope, author_id, author_name, author_agent, created_at, source_message_id, supersedes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-        .run(decision.id, topic, decision.text.trim(), JSON.stringify("all" as const),
+      const insert = this.native(() => this.db.prepare("INSERT OR IGNORE INTO decisions (id, topic, body, scope, author_id, author_name, author_agent, created_at, source_message_id, supersedes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"));
+      const inserted = this.native(() => insert.run(decision.id, topic, decision.text.trim(), JSON.stringify("all" as const),
           decision.author.id, decision.author.name, decision.author.agent,
-          decision.createdAt, decision.sourceMessageId, decision.supersedes).changes === 1;
-      this.db.exec("COMMIT");
+          decision.createdAt, decision.sourceMessageId, decision.supersedes)).changes === 1;
+      this.native(() => this.db.exec("COMMIT"));
       return inserted;
     } catch (err) {
-      this.db.exec("ROLLBACK");
+      this.native(() => this.db.exec("ROLLBACK"));
       throw err;
     }
+    });
   }
 
   list(args: DecisionsArgs = {}, peer?: PeerInfo): OwnerDecision[] {
+    return this.accepted(() => this.listAccepted(args, peer));
+  }
+  private listAccepted(args: DecisionsArgs = {}, peer?: PeerInfo): OwnerDecision[] {
     // Current: not superseded, and no newer unsuperseded revision of the topic (a fork from a paired PC, AB-261).
-    const rows = this.db.prepare(`SELECT d.*, NOT EXISTS (SELECT 1 FROM decisions newer WHERE newer.supersedes = d.id)
+    const statement = this.native(() => this.db.prepare(`SELECT d.*, NOT EXISTS (SELECT 1 FROM decisions newer WHERE newer.supersedes = d.id)
         AND NOT EXISTS (SELECT 1 FROM decisions o WHERE o.topic = d.topic AND (o.created_at > d.created_at OR (o.created_at = d.created_at AND o.id > d.id))
           AND NOT EXISTS (SELECT 1 FROM decisions n WHERE n.supersedes = o.id)) AS current
-      FROM decisions d ORDER BY revision DESC`).all() as unknown as DecisionRow[];
+      FROM decisions d ORDER BY revision DESC`));
+    const rows = this.native(() => statement.all()) as unknown as DecisionRow[];
     const query = args.query?.trim().toLowerCase();
     const scope = args.scope ? normalizeScope(args.scope) : undefined;
     const sessions = [...(args.session ? [args.session] : []), ...(peer ? [peer.name, peer.id, ...(peer.sessionId ? [peer.sessionId] : [])] : [])];
@@ -191,22 +238,32 @@ export class DecisionStore {
 
   /** The receipt and durable message commit together, before emitting any event. */
   enqueue(decision: Pick<OwnerDecision, "id">, sessionKey: string, message: BridgeMessage, insert: () => void): boolean {
-    this.db.exec("BEGIN IMMEDIATE");
+    return this.accepted(() => {
+    this.native(() => this.db.exec("BEGIN IMMEDIATE"));
     try {
-      const changed = this.db.prepare("INSERT OR IGNORE INTO decision_deliveries VALUES (?, ?, ?, ?)").run(decision.id, sessionKey, message.id, message.createdAt).changes;
-      if (changed) insert();
-      this.db.exec("COMMIT");
+      const statement = this.native(() => this.db.prepare("INSERT OR IGNORE INTO decision_deliveries VALUES (?, ?, ?, ?)"));
+      const changed = this.native(() => statement.run(decision.id, sessionKey, message.id, message.createdAt)).changes;
+      if (changed) {
+        // An arbitrary callback may own asynchronous/native work we cannot seal.
+        // Preserve accepted execution but never certify it from zero counters.
+        this.lifecycleCallbackUnknown = true; this.lifecycleChanged(); insert();
+      }
+      this.native(() => this.db.exec("COMMIT"));
       return Boolean(changed);
     } catch (err) {
-      this.db.exec("ROLLBACK");
+      this.native(() => this.db.exec("ROLLBACK"));
       throw err;
     }
+    });
   }
 
   /** A hook learns the host session id after hello; retain the provisional receipt as well. */
   linkSession(from: string, to: string): void {
-    this.db.prepare(`INSERT OR IGNORE INTO decision_deliveries
-      SELECT decision_id, ?, message_id, created_at FROM decision_deliveries WHERE session_key = ?`).run(to, from);
+    this.accepted(() => {
+      const statement = this.native(() => this.db.prepare(`INSERT OR IGNORE INTO decision_deliveries
+        SELECT decision_id, ?, message_id, created_at FROM decision_deliveries WHERE session_key = ?`));
+      this.native(() => statement.run(to, from));
+    });
   }
 }
 

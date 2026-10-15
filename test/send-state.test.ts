@@ -89,6 +89,13 @@ it("rejects changed content or another sender's durable identity", async () => {
 
 it("only falls back on explicit old-broker refusal, never silently discarding an explicit id", async () => {
   const sender = env.node("sender"); await sender.start();
+  // start() arms a 100 ms background "pending" refresh (and acks re-arm it). On slow runners it fired
+  // during the sends below and the spy recorded it (AB-361). Settle it and keep it off for this fixture.
+  const node = sender as unknown as { pendingRefreshTimer: NodeJS.Timeout | null; refreshingPending: Promise<void> | null };
+  vi.spyOn(sender as unknown as { schedulePendingRefresh(): void }, "schedulePendingRefresh").mockImplementation(() => {});
+  if (node.pendingRefreshTimer) clearTimeout(node.pendingRefreshTimer);
+  node.pendingRefreshTimer = null;
+  await node.refreshingPending;
   const client = (sender as unknown as { client: BridgeClient }).client, request = client.request.bind(client);
   const ops: string[] = [];
   vi.spyOn(client, "request").mockImplementation(async (op, args: any) => {
