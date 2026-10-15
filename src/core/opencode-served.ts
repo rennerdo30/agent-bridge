@@ -2,8 +2,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { extname } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { checkDepthPublic, childEnvPublic, DelegateError, killTree, trackChild, resolveBinary, unwrapNpmShim, opencodeV2, opencodeVersion, OPENCODE_READ_ONLY_TOOLS, type DelegateRequest, type DelegateResult } from "./delegate.js";
-import { createOpencodeNativeToolPlugin, hasOpencodeNativeTools, OPENCODE_NATIVE_ACTION_PREFIX, OPENCODE_NATIVE_GATE_ID, type OpencodeNativeAccess } from "./opencode-native-tools.js";
+import { checkDepthPublic, childEnvPublic, DelegateError, killTree, trackChild, resolveBinary, unwrapNpmShim, opencodeVersion, OPENCODE_READ_ONLY_TOOLS, type DelegateRequest, type DelegateResult } from "./delegate.js";
+import { createOpencodeNativeToolPlugin, OPENCODE_NATIVE_ACTION_PREFIX, OPENCODE_NATIVE_GATE_ID, opencodeNativeGateReportError, parseOpencodeVersion, unknownOpencodeVersionMessage, type OpencodeNativeAccess } from "./opencode-native-tools.js";
 import { progressEventHandler } from "./progress.js";
 import { boundedDetail, type PermissionDecision, type PermissionRequest } from "./relay.js";
 
@@ -152,11 +152,14 @@ export async function delegateToOpencodeServed(
   },
 ): Promise<DelegateResult> {
   checkDepthPublic(req.maxDelegateDepth);
-  const v2 = await opencodeV2(req.bin, req.cwd, req.log);
+  const versionOutput = await opencodeVersion(req.bin, req.cwd, req.log);
+  const { api: opencodeApi } = parseOpencodeVersion(versionOutput);
+  if (opencodeApi === "unknown") throw new DelegateError(unknownOpencodeVersionMessage(versionOutput), "failed");
+  const v2 = opencodeApi !== "v1";
   const password = randomBytes(PASSWORD_BYTES).toString("hex");
   const permissions = req.permissions === undefined ? OPENCODE_ASK_PERMISSIONS : req.permissions;
   const nativeAccess = req.nativeAccess ?? (permissions === null ? "edit" : "ask");
-  const gate = hasOpencodeNativeTools(await opencodeVersion(req.bin, req.cwd, req.log)) ? createOpencodeNativeToolPlugin(nativeAccess) : null;
+  const gate = opencodeApi === "v2-native" ? createOpencodeNativeToolPlugin(nativeAccess) : null;
   const config = { ...(permissions ? { permission: permissions } : {}),
     ...(nativeAccess === "read" ? { tools: OPENCODE_READ_ONLY_TOOLS } : {}),
     ...(gate ? { plugins: [gate.directory] } : {}) };
@@ -199,7 +202,12 @@ export async function delegateToOpencodeServed(
         for (;;) {
           const plugins = await api("GET", `/plugin?${new URLSearchParams({ "location[directory]": req.cwd })}`);
           const loaded = Array.isArray(plugins) && plugins.find((p: Json) => p.id === OPENCODE_NATIVE_GATE_ID);
-          if (loaded?.state?.status === "active") break;
+          if (loaded?.state?.status === "active") {
+            // Active alone proves nothing: the plugin must report the enforcement contract and the inventory.
+            const problem = opencodeNativeGateReportError(gate.report(), nativeAccess);
+            if (problem) throw new DelegateError(`OpenCode native tool gate ${problem}; refusing delegated execution`, "failed");
+            break;
+          }
           if (loaded?.state?.status === "failed" || Date.now() >= deadline) {
             throw new DelegateError("OpenCode native tool gate did not load; refusing delegated execution", "failed");
           }

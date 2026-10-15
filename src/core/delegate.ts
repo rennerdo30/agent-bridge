@@ -16,7 +16,7 @@ import { progressLineHandler } from "./progress.js";
 import { PermissionRelay, type PermissionDecision } from "./relay.js";
 import { resolveCodexDriveMappings, codexPathPrompt } from "./codex-paths.js";
 import { DEFAULT_MAX_DELEGATE_DEPTH, ENV, MAX_DELEGATE_DEPTH_LIMIT } from "./constants.js";
-import { hasOpencodeNativeTools } from "./opencode-native-tools.js";
+import { parseOpencodeVersion, unknownOpencodeVersionMessage } from "./opencode-native-tools.js";
 
 /** Env var tracking nested delegation, so a delegated agent cannot delegate back forever. */
 export const DELEGATE_DEPTH_ENV = "AGENT_BRIDGE_DELEGATE_DEPTH";
@@ -809,8 +809,12 @@ export async function opencodeV2(bin: string, cwd: string, log: Logger): Promise
 
 export async function delegateToOpencode(req: DelegateRequest & { bin: string; autoApprove: boolean }): Promise<DelegateResult> {
   checkDepth(req.maxDelegateDepth);
-  const v2 = await opencodeV2(req.bin, req.cwd, req.log);
-  if (hasOpencodeNativeTools(await opencodeVersion(req.bin, req.cwd, req.log))) {
+  const versionOutput = await opencodeVersion(req.bin, req.cwd, req.log);
+  const { api } = parseOpencodeVersion(versionOutput);
+  // Unknown output could be any API: never pick flags (or skip the native gate) on a guess.
+  if (api === "unknown") throw new DelegateError(unknownOpencodeVersionMessage(versionOutput), "failed");
+  const v2 = api !== "v1";
+  if (api === "v2-native") {
     // A private server lets us verify the gate loaded before any model/tool execution.
     const { delegateToOpencodeServed } = await import("./opencode-served.js");
     return delegateToOpencodeServed({ ...req,

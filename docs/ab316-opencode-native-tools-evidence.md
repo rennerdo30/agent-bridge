@@ -58,6 +58,24 @@ execution, including calls nested in Code Mode.
 - Editable creation and session tools keep working. Interactive sessions receive
   no injected plugin or configuration. V1 and 2.0.26 keep their existing path.
 
+## Fail-closed follow-up (review P1s)
+
+- Version output is parsed as exactly one SemVer line, prerelease and build
+  metadata included. Any suffixed 2.x build (for example `2.0.29-dev+abc123`)
+  takes the native-gate path. Unparsable output, several versions, or a major
+  version above 2 is unknown: every delegated opencode mode is refused before
+  opencode starts. V2 is never selected without the enforcing plugin.
+- The gate classifies tool identities. Anything that looks native but is not on
+  the known list is denied in read mode and needs a per-call approval in ask
+  mode. Removal-like worktree tools are denied in every delegated mode.
+  Execute hooks without a string tool identity are refused in every mode. An ask
+  call without a session ID or with unserializable input is refused too.
+- Plugin setup fails without the permission/tool hook API, or without
+  `permission.assert` in ask mode. The plugin writes a contract report: contract
+  version, access, registered hooks and native inventory. Before prompting,
+  Bridge requires that report. In read/ask mode the inventory must contain all
+  four proven identities; otherwise the native API is treated as unknown.
+
 ## Validation and limits
 
 `npm run typecheck` passed. Only `test/opencode-native-tools.test.ts` was selected:

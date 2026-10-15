@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { expect, it, vi } from "vitest";
 import { delegateToOpencode, OPENCODE_READ_ONLY_TOOLS, pidAlive } from "../src/core/delegate.js";
 import { delegateToOpencodeServed, opencodePermissionRequest } from "../src/core/opencode-served.js";
-import { createOpencodeNativeToolPlugin, hasOpencodeNativeTools, installOpencodeNativeToolGate, type OpencodeNativeAccess } from "../src/core/opencode-native-tools.js";
+import { classifyOpencodeNativeTool, createOpencodeNativeToolPlugin, hasOpencodeNativeTools, installOpencodeNativeToolGate, opencodeNativeGateReportError, parseOpencodeVersion, type OpencodeNativeAccess } from "../src/core/opencode-native-tools.js";
 import { nullLogger } from "../src/core/logger.js";
 
 const mutations = ["opencode_worktree_create", "opencode_session_move", "opencode_session_rename"];
@@ -119,6 +119,144 @@ createServer((req,res)=>{appendFileSync(new URL('paths',import.meta.url),req.url
   expect(existsSync(config.plugins[0])).toBe(false);
   expect(readFileSync(join(cwd, "paths"), "utf8")).not.toContain("/session");
   expect(pidAlive(Number(readFileSync(join(cwd, "pid"), "utf8")))).toBe(false);
+});
+
+/** A fake `opencode` that prints `version` and serves a plugin list with the gate in `status`. */
+function fakeServedOpencode(name: string, version: string, status: string) {
+  const cwd = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, `opencode-${name}-`));
+  const script = join(cwd, "fake.mjs");
+  writeFileSync(script, `#!/usr/bin/env node
+import {appendFileSync,writeFileSync} from 'node:fs';import {createServer} from 'node:http';
+if(process.argv[2]==='--version'){console.log(${JSON.stringify(version)});process.exit(0)}
+appendFileSync(new URL('calls.jsonl',import.meta.url),JSON.stringify({args:process.argv.slice(2),config:process.env.OPENCODE_CONFIG_CONTENT??null})+'\\n');
+if(process.argv[2]!=='serve'){process.stdin.resume();process.stdin.on('end',()=>console.log(JSON.stringify({type:'text',sessionID:'ses_fixture',part:{text:'done'}})));}
+else{writeFileSync(new URL('pid',import.meta.url),String(process.pid));
+createServer((req,res)=>{appendFileSync(new URL('paths',import.meta.url),req.url+'\\n');res.end(JSON.stringify({data:[{id:'agent-bridge-native-tools',state:{status:${JSON.stringify(status)}}}]}))})
+.listen(0,'127.0.0.1',function(){console.log('listening on http://127.0.0.1:'+this.address().port)});}
+`);
+  const bin = process.platform === "win32" ? join(cwd, "opencode.cmd") : script;
+  if (process.platform === "win32") writeFileSync(bin, '@ECHO off\r\n"%dp0%\\fake.mjs" %*\r\n');
+  else chmodSync(script, 0o755);
+  const read = (file: string) => existsSync(join(cwd, file)) ? readFileSync(join(cwd, file), "utf8") : "";
+  return { bin, cwd, read, calls: () => read("calls.jsonl").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)) };
+}
+
+it.each([
+  ["opencode v2.0.29-dev+abc123", "2.0.29-dev+abc123"], ["2.0.29+build.5", "2.0.29+build.5"],
+  ["opencode v2.0.27-rc.1", "2.0.27-rc.1"], ["v2.0.26-dev", "2.0.26-dev"], ["opencode v2.1.0-beta.2+sha.f00", "2.1.0-beta.2+sha.f00"],
+])("parses suffixed version %s and always requires the native gate", (output, version) => {
+  expect(parseOpencodeVersion(output)).toEqual({ api: "v2-native", version });
+  expect(hasOpencodeNativeTools(output)).toBe(true);
+});
+
+it("never runs a dev/build-suffixed 2.x without the enforcing plugin", async () => {
+  const fake = fakeServedOpencode("dev-suffix", "opencode v2.0.29-dev+abc123", "failed");
+  await expect(delegateToOpencode({ bin: fake.bin, cwd: fake.cwd, prompt: "must not execute", autoApprove: false, timeoutSec: 10, log: nullLogger }))
+    .rejects.toThrow("native tool gate did not load");
+  const calls = fake.calls();
+  expect(calls).toHaveLength(1);
+  expect(calls[0].args[0]).toBe("serve");
+  const config = JSON.parse(calls[0].config);
+  expect(config.plugins).toHaveLength(1);
+  expect(config.tools).toEqual(OPENCODE_READ_ONLY_TOOLS);
+  expect(fake.read("paths")).not.toContain("/session");
+  expect(pidAlive(Number(fake.read("pid")))).toBe(false);
+});
+
+it.each(["opencode version unknown", "", "opencode v3.0.0", "opencode v2.0.29 (local build)", "2.0.29-dev+abc+def",
+  "opencode v2.0.29\nopencode v2.0.30", "opencode v2.0", "nightly"])("treats unknown version output %j as unknown", output => {
+  expect(parseOpencodeVersion(output).api).toBe("unknown");
+  expect(hasOpencodeNativeTools(output)).toBe(false);
+});
+
+it("refuses every delegated mode before starting opencode when the version output is unknown", async () => {
+  const fake = fakeServedOpencode("unknown-version", "opencode dev build (unknown)", "active");
+  const base = { bin: fake.bin, cwd: fake.cwd, prompt: "must not execute", timeoutSec: 10, log: nullLogger };
+  for (const autoApprove of [false, true]) {
+    await expect(delegateToOpencode({ ...base, autoApprove })).rejects.toThrow(/Unrecognized opencode version output .*cannot be proven gated/);
+  }
+  const onPermission = vi.fn(async () => ({ allow: true as const }));
+  await expect(delegateToOpencodeServed({ ...base, onPermission })).rejects.toThrow("Unrecognized opencode version output");
+  await expect(delegateToOpencodeServed({ ...base, onPermission, permissions: null })).rejects.toThrow("Unrecognized opencode version output");
+  expect(fake.calls()).toEqual([]);
+  expect(onPermission).not.toHaveBeenCalled();
+});
+
+it("gates unknown native tool identities: denied in read, approval in ask, removal-like denied everywhere", async () => {
+  const unknown = ["opencode_session_delete", "opencode.session.fork", "worktree_checkout", "session.share", "OPENCODE_SESSION_MOVE"];
+  const removalLike = ["opencode_worktree_delete", "opencode_worktree_prune", "worktree.remove", "OPENCODE_WORKTREE_REMOVE"];
+  for (const tool of unknown) expect(classifyOpencodeNativeTool(tool)).toBe("unknown-native");
+  for (const tool of removalLike) expect(classifyOpencodeNativeTool(tool)).toBe("remove");
+  expect(classifyOpencodeNativeTool("bridge_get_conversation")).toBe("other");
+  const read = await gate("read");
+  for (const tool of unknown) await expect(read.before(event(tool))).rejects.toThrow("denied in read mode");
+  expect(read.assert).not.toHaveBeenCalled();
+  const ask = await gate("ask");
+  for (const tool of unknown) await ask.before(event(tool));
+  expect(ask.assert).toHaveBeenCalledTimes(unknown.length);
+  expect(ask.assert).toHaveBeenCalledWith({ sessionID: "ses_fixture", agent: "build", action: "native.opencode.session_delete",
+    resources: [JSON.stringify(event("").input)], save: [] });
+  const denied = await gate("ask", vi.fn(async () => { throw new Error("explicit denial"); }));
+  for (const tool of unknown) await expect(denied.before(event(tool))).rejects.toThrow("explicit denial");
+  for (const access of ["read", "ask", "edit"] as const) {
+    const g = await gate(access);
+    for (const tool of removalLike) await expect(g.before(event(tool))).rejects.toThrow("use Bridge cleanup");
+    expect(g.assert).not.toHaveBeenCalled();
+  }
+  // The startup inventory must contain the identities the gate was proven against.
+  const report = (inventory: unknown, access: OpencodeNativeAccess = "read") =>
+    opencodeNativeGateReportError({ contract: 1, access, hooks: ["permission.evaluate", "tool.execute.before"], inventory }, access);
+  expect(report([...mutations, "opencode_worktree_remove", "opencode_session_delete", "read"])).toBeNull();
+  expect(report([...mutations, "opencode_worktree_remove"], "ask")).toBeNull();
+  expect(report(["opencode.worktree.create", "opencode.worktree.remove", "opencode.session.move", "opencode.session.rename"])).toMatch("native tool API is unknown");
+  expect(report([...mutations], "ask")).toMatch("without opencode_worktree_remove");
+  expect(report(null)).toMatch("could not read the native tool inventory");
+  expect(report(null, "ask")).toMatch("could not read the native tool inventory");
+  expect(report([...mutations, "opencode_worktree_remove", 7])).toMatch("could not read the native tool inventory");
+});
+
+it("fails closed on unexpected hook and plugin API shapes", async () => {
+  for (const access of ["read", "ask", "edit"] as const) {
+    const g = await gate(access);
+    for (const shape of [undefined, null, "opencode_session_move", {}, { tool: 42 }, { tool: "" }, { name: "opencode_worktree_remove" }]) {
+      await expect(g.before(shape)).rejects.toThrow("unexpected native tool hook shape");
+    }
+    expect(() => g.evaluate(undefined)).toThrow("unexpected native permission hook shape");
+    const evaluation: any = { effect: "allow", permission: "native.opencode.session_move" };
+    g.evaluate(evaluation);
+    expect(evaluation.effect).toBe({ read: "deny", ask: "ask", edit: "allow" }[access]);
+    expect(g.assert).not.toHaveBeenCalled();
+  }
+  const ask = await gate("ask");
+  for (const sessionID of [undefined, 7, ""]) {
+    await expect(ask.before({ ...event("opencode_session_move"), sessionID })).rejects.toThrow("unexpected native tool hook shape");
+  }
+  const cyclic: any = {}; cyclic.self = cyclic;
+  await expect(ask.before({ ...event("opencode_session_rename"), input: cyclic })).rejects.toThrow("unexpected native tool hook shape");
+  expect(ask.assert).not.toHaveBeenCalled();
+  // Setup refuses a plugin API it cannot enforce through, so the plugin never becomes active.
+  const hook = async () => {};
+  await expect(installOpencodeNativeToolGate({ permission: { hook }, tool: {} }, "edit")).rejects.toThrow("lacks permission/tool hooks");
+  await expect(installOpencodeNativeToolGate({ tool: { hook } }, "read")).rejects.toThrow("lacks permission/tool hooks");
+  await expect(installOpencodeNativeToolGate({ permission: { hook }, tool: { hook } }, "ask")).rejects.toThrow("lacks permission.assert");
+  // A report without the registered hooks or with another contract or access is not proof of enforcement.
+  const inventory = [...mutations, "opencode_worktree_remove"];
+  expect(opencodeNativeGateReportError(null, "edit")).toMatch("no enforcement contract");
+  expect(opencodeNativeGateReportError({ contract: 2, access: "read", hooks: ["permission.evaluate", "tool.execute.before"], inventory }, "read")).toMatch("unsupported contract");
+  expect(opencodeNativeGateReportError({ contract: 1, access: "edit", hooks: ["permission.evaluate", "tool.execute.before"], inventory }, "read")).toMatch("instead of");
+  expect(opencodeNativeGateReportError({ contract: 1, access: "ask", hooks: ["tool.execute.before"], inventory }, "ask")).toMatch("enforcement hooks");
+});
+
+it("refuses before prompting when the gate is active but proves no enforcement contract", async () => {
+  // The fake server lists the plugin as active but never runs it, so no gate report exists.
+  const fake = fakeServedOpencode("gate-no-report", "opencode v2.0.29", "active");
+  for (const autoApprove of [false, true]) {
+    await expect(delegateToOpencode({ bin: fake.bin, cwd: fake.cwd, prompt: "must not execute", autoApprove, timeoutSec: 10, log: nullLogger }))
+      .rejects.toThrow("native tool gate reported no enforcement contract");
+  }
+  expect(fake.read("paths")).toContain("/plugin");
+  expect(fake.read("paths")).not.toContain("/session");
+  for (const call of fake.calls()) expect(existsSync(JSON.parse(call.config).plugins[0])).toBe(false);
 });
 
 // Opt in to the installed native CLI. The fake provider emits exact tool calls: no model guesswork,
