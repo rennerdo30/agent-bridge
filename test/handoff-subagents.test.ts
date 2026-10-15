@@ -21,6 +21,7 @@ import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import { chooseJobRecipient, mastersFor } from "../src/core/job-ownership.js";
+import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 
 let env: TestEnv, source: BridgeNode, target: BridgeNode;
 let extra: BridgeNode[] = [];
@@ -37,7 +38,13 @@ const manager = (node: BridgeNode) => {
   return m;
 };
 
-beforeEach(async () => { env = makeEnv(); source = env.node("claude-source"); target = env.node("codex-target", "codex"); await source.start(); await target.start(); });
+beforeEach(async () => {
+  env = makeEnv();
+  // Finish the empty fixture's archive migration before starting its broker
+  // worker or publishing legacy job records. Ownership tests must not race DDL.
+  await migrateJobArchives(path());
+  source = env.node("claude-source"); target = env.node("codex-target", "codex"); await source.start(); await target.start();
+});
 afterEach(async () => { await ui?.close(); ui = undefined; for (const m of managers.splice(0)) m.cancelAll(); for (const n of extra.splice(0)) await n.stop(); await env.cleanup(); });
 
 describe("local subagent ownership handoff", () => {
