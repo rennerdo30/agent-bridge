@@ -11,6 +11,7 @@ import { NetworkDiscovery, type DiscoveredInstance, type DiscoveryDiagnostics } 
 import { decodePairingCode, keyFingerprint, PairingStore, publicIdentitySchema, type NetworkIdentity, type NetworkPair } from "./pairing.js";
 import { receiveTransfer, transferResultSchema, transferSchema, type FileTransfer, type TransferResult } from "./files.js";
 import { FILE_STREAM_CAPABILITY, FILE_STREAM_WINDOW_CAPABILITY, TRANSFER_WINDOW_CHUNKS, TransferManager, type TransferStarted } from "./transfers.js";
+import { REMOTE_JOB_USAGE_CAPABILITY } from "./remote-job-protocol.js";
 
 const MAX_METADATA_CHARS = 4_096;
 const MAX_ID_CHARS = 128;
@@ -46,8 +47,15 @@ const messageSchema = z.object({
   conversationId: textId, replyTo: textId.nullable(), hop: z.number().int().min(0).max(MAX_HOP_COUNT),
   body: z.string().min(1).max(MAX_BODY_CHARS), createdAt: z.number().nonnegative(), readAt: z.null(),
 });
+export const networkHelloSchema = publicIdentitySchema.extend({
+  type: z.literal("hello"), v: z.literal(NETWORK_VERSION), peers: peersSchema,
+  echo: z.boolean().optional(), receipts: z.boolean().optional(),
+  capabilities: z.array(textId).max(MAX_EXTENSION_HANDLERS).optional(),
+  // Shipped readers strip unknown hello fields; keep their eight-capability list intact.
+  additionalCapabilities: z.array(textId).max(MAX_EXTENSION_HANDLERS).optional(),
+});
 const frameSchema = z.discriminatedUnion("type", [
-  publicIdentitySchema.extend({ type: z.literal("hello"), v: z.literal(NETWORK_VERSION), peers: peersSchema, echo: z.boolean().optional(), receipts: z.boolean().optional(), capabilities: z.array(z.string().min(1).max(MAX_ID_CHARS)).max(MAX_EXTENSION_HANDLERS).optional() }),
+  networkHelloSchema,
   z.object({ type: z.literal("file-stream"), payload: z.record(z.string(), z.unknown()) }),
   z.object({ type: z.literal("remote-job"), payload: z.record(z.string(), z.unknown()) }),
   z.object({ type: z.literal("dashboard-read"), payload: z.record(z.string(), z.unknown()) }),
@@ -128,7 +136,7 @@ class Link {
       this.incomingExtensions.length = 0; this.incomingExtensionBytes = 0;
       service.detach(this);
     });
-    this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers(), echo: true, receipts: Boolean(service.supportsReceipts), capabilities: service.extensionCapabilities() });
+    this.write({ type: "hello", v: NETWORK_VERSION, ...service.keys.identity, peers: service.localPeers(), echo: true, receipts: Boolean(service.supportsReceipts), ...service.extensionHelloCapabilities() });
   }
 
   private processBuffer(): void {
@@ -148,7 +156,7 @@ class Link {
           this.peers = frame.peers;
           this.echoSupported = frame.echo === true;
           this.receiptsSupported = frame.receipts === true;
-          this.capabilities = frame.capabilities ?? [];
+          this.capabilities = [...new Set([...(frame.capabilities ?? []), ...(frame.additionalCapabilities ?? [])])];
           this.service.attach(this);
           clearTimeout(this.deadline); this.readyResolve();
         } else if (frame.type === "hello") throw new Error("duplicate network hello");
@@ -370,6 +378,14 @@ export class NetworkService {
 
   extensionCapabilities(): string[] {
     return [...this.extensions.values()].flatMap((extension) => [extension.capability, ...extension.aliases]).concat([FILE_STREAM_WINDOW_CAPABILITY], this.broker.recipientReceipts ? ["recipient-receipts-v1"] : []);
+  }
+
+  extensionHelloCapabilities(): { capabilities: string[]; additionalCapabilities: string[] } {
+    const capabilities = this.extensionCapabilities();
+    return {
+      capabilities: capabilities.filter(capability => capability !== REMOTE_JOB_USAGE_CAPABILITY),
+      additionalCapabilities: capabilities.filter(capability => capability === REMOTE_JOB_USAGE_CAPABILITY),
+    };
   }
 
   receiveExtension(type: NetworkExtensionType, payload: Record<string, unknown>, remote: NetworkPair): void | Promise<void> {

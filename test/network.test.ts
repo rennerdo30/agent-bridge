@@ -21,7 +21,11 @@ import { parseNetworkAddress } from "../src/network/cli.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { DISCOVERY_TTL_MS, MAX_DISCOVERY_BYTES, MAX_NETWORK_FRAME_BYTES, NETWORK_VERSION, PAIRING_TTL_MS, TLS_CIPHER } from "../src/network/constants.js";
 import { NetworkDiscovery } from "../src/network/discovery.js";
-import { NetworkService } from "../src/network/link.js";
+import { NetworkService, networkHelloSchema } from "../src/network/link.js";
+import { REMOTE_JOB_CAPABILITY, REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY, REMOTE_JOB_USAGE_CAPABILITY } from "../src/network/remote-job-protocol.js";
+import { DASHBOARD_CAPABILITY } from "../src/network/dashboard-protocol.js";
+import { DECISION_SYNC_CAPABILITY } from "../src/network/decision-protocol.js";
+import { v03017HelloSchema, v03020HelloSchema } from "./fixtures/legacy-network-hello.js";
 import { decodePairingCode, keyFingerprint, PairingStore } from "../src/network/pairing.js";
 import { collectTransfer, MAX_TRANSFER_BYTES, receiveTransfer, safeTransferPath } from "../src/network/files.js";
 import { until } from "./helpers.js";
@@ -43,13 +47,51 @@ afterEach(async () => {
 });
 
 const peer = (name: string, jobAgent?: "codex"): PeerInfo => ({ id: randomUUID(), name, agent: "claude", cwd: home, pid: process.pid, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false, ...(jobAgent ? { jobAgent } : {}) });
-function service(name: string, peers: PeerInfo[] = [], received: BridgeMessage[] = []): NetworkService {
-  const network = new NetworkService(join(home, name), { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: LOOPBACK, port: 0, discovery: false }, { peers: () => peers, receive: (m) => { received.push(m); return { delivered: true }; } }, nullLogger);
+function service(name: string, peers: PeerInfo[] = [], received: BridgeMessage[] = [], recipientReceipts = false): NetworkService {
+  const network = new NetworkService(join(home, name), { ...DEFAULT_NETWORK_CONFIG, enabled: true, name, bind: LOOPBACK, port: 0, discovery: false }, { peers: () => peers, recipientReceipts, receive: (m) => { received.push(m); return { delivered: true }; } }, nullLogger);
   cleanup.push(() => network.close());
   return network;
 }
 
 describe("network pairing", () => {
+  it("negotiates all nine broker capabilities over TLS while shipped hello readers accept the legacy eight", async () => {
+    const a = service("windows", [peer("caller")], [], true);
+    const b = service("mac", [], [], true);
+    const received: unknown[] = [];
+    for (const network of [a, b]) {
+      network.registerExtension("remote-job", REMOTE_JOB_CAPABILITY, payload => { received.push(payload); },
+        [REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY, REMOTE_JOB_USAGE_CAPABILITY]);
+      network.registerExtension("dashboard-read", DASHBOARD_CAPABILITY, () => {});
+      network.registerExtension("decision-sync", DECISION_SYNC_CAPABILITY, () => {});
+    }
+    const capabilities = a.extensionCapabilities();
+    expect(capabilities).toHaveLength(9);
+    const hello = { type: "hello", v: NETWORK_VERSION, ...a.keys.identity, peers: a.localPeers(), echo: true, receipts: true, ...a.extensionHelloCapabilities() };
+    expect(hello.capabilities).toEqual(capabilities.filter(capability => capability !== REMOTE_JOB_USAGE_CAPABILITY));
+    expect(hello.capabilities).toHaveLength(8);
+    expect(hello.additionalCapabilities).toEqual([REMOTE_JOB_USAGE_CAPABILITY]);
+    for (const oldReader of [v03020HelloSchema, v03017HelloSchema]) {
+      expect(oldReader.safeParse({ ...hello, capabilities }).success).toBe(false);
+      const parsed = oldReader.parse(hello);
+      expect(parsed.capabilities).toEqual(hello.capabilities);
+      expect(parsed.peers).toEqual(hello.peers);
+      expect(parsed).not.toHaveProperty("additionalCapabilities");
+    }
+    expect(networkHelloSchema.parse(hello).additionalCapabilities).toEqual([REMOTE_JOB_USAGE_CAPABILITY]);
+    expect(networkHelloSchema.safeParse({ ...hello, additionalCapabilities: Array(9).fill("extra") }).success).toBe(false);
+    expect(networkHelloSchema.safeParse({ ...hello, additionalCapabilities: ["x".repeat(129)] }).success).toBe(false);
+    expect(networkHelloSchema.safeParse({ ...hello, additionalCapabilities: [""] }).success).toBe(false);
+    await a.start(); await b.start();
+    await a.link(b.keys.invite(), LOOPBACK, b.port);
+    for (const capability of capabilities) {
+      expect(a.peerSupports("mac", capability)).toBe(true);
+      expect(b.peerSupports("windows", capability)).toBe(true);
+    }
+    await a.sendExtension("mac", "remote-job", { action: "usage-capability-probe" });
+    await until(() => received.length === 1);
+    expect(received).toEqual([{ action: "usage-capability-probe" }]);
+  });
+
   it("negotiates optional extensions and gives handlers the authenticated paired identity", async () => {
     const a = service("windows");
     const b = service("mac");
