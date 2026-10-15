@@ -6,8 +6,8 @@ import type { BridgeNode } from "../core/node.js";
 import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage } from "../core/protocol.js";
 
 /** Collect bursts of messages into one wake-up. */
-const WAKE_DEBOUNCE_MS = 1_500;
-const QUEUE_TIMEOUT_MS = 30_000;
+export const WAKE_DEBOUNCE_MS = 1_500;
+export const QUEUE_TIMEOUT_MS = 30_000;
 /**
  * Prompt for the queued turn. The actual messages are injected by the UserPromptSubmit hook when that
  * turn starts, so this stays short and free of shell metacharacters.

@@ -6,6 +6,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { QUEUE_TIMEOUT_MS } from "../src/mcp/codex-wake.js";
 let env: TestEnv, native: ChildProcess | undefined, client: Client | undefined;
 beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { await client?.close(); if (native) { native.kill(); await new Promise<void>(resolve => native!.exitCode !== null ? resolve() : native!.once("exit", () => resolve())); } await env.cleanup(); client = undefined; native = undefined; });
@@ -16,12 +17,16 @@ it.each(["main", "secondary"])("idle Codex %s consumes broadcast and subsequent 
   writeFileSync(nativePath, `const net=require('net'); let state='idle'; const server=net.createServer(socket=>{let input='';socket.on('data',data=>{input+=data; if(!input.includes('\\n'))return; const queued=JSON.parse(input); socket.end('accepted\\n'); state='busy';process.send({event:'turn/started',...queued});});});process.on('message',m=>{if(m.event==='turn/completed'){state='idle';process.send({event:'thread/status',state});}});server.listen(0,'127.0.0.1',()=>process.send({port:server.address().port,state}));`);
   native = fork(nativePath, [], { stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true });
   const address = await new Promise<{port:number}>(resolve => native!.once("message", resolve as any));
-  writeFileSync(join(project, "queue"), `const net=require('net'),args=process.argv.slice(2); const thread=args[args.indexOf('--thread')+1],message=args[args.indexOf('--message')+1]; const socket=net.connect(${address.port},'127.0.0.1',()=>socket.write(JSON.stringify({thread,message})+'\\n'));socket.on('data',()=>socket.end());socket.on('end',()=>process.exit(0));socket.on('error',()=>process.exit(1));`);
+  const queueRelease = join(env.home, "queue-release");
+  writeFileSync(join(project, "queue"), `const net=require('net'),fs=require('fs'),args=process.argv.slice(2); const thread=args[args.indexOf('--thread')+1],message=args[args.indexOf('--message')+1]; const socket=net.connect(${address.port},'127.0.0.1',()=>socket.write(JSON.stringify({thread,message})+'\\n'));socket.on('data',()=>socket.end());socket.on('end',()=>{setInterval(()=>{if(fs.existsSync(${JSON.stringify(queueRelease)}))process.exit(0);},20);});socket.on('error',()=>process.exit(1));`);
   const sender = env.node("sender", "other"); await sender.start();
   if (role === "secondary") { const primary = env.node("primary", "claude"); await primary.relocate(project); await primary.start(); }
   client = new Client({name:"native-idle-codex-fixture",version:"1"});
   const codexHome = codexHost(client, env.home, "codex", "idle-codex");
-  await client.connect(new StdioClientTransport({command:process.execPath,args:[join(import.meta.dirname,"..","plugins","codex","dist","server.mjs"),"--agent=codex"],env:{...process.env,CODEX_HOME:codexHome,AGENT_BRIDGE_HOME:env.home,AGENT_BRIDGE_NAME:"idle-codex",CLAUDE_PROJECT_DIR:project,AGENT_BRIDGE_CODEX_BIN:process.execPath,AGENT_BRIDGE_AUTO_WAKE:"off",AGENT_BRIDGE_WAKE_ON_DIRECT:"on",AGENT_BRIDGE_DASHBOARD:"off",AGENT_BRIDGE_LINGER_SEC:"0"} as Record<string,string>,stderr:"ignore"}));
+  const transport = new StdioClientTransport({command:process.execPath,args:[join(import.meta.dirname,"..","plugins","codex","dist","server.mjs"),"--agent=codex"],env:{...process.env,CODEX_HOME:codexHome,AGENT_BRIDGE_HOME:env.home,AGENT_BRIDGE_NAME:"idle-codex",CLAUDE_PROJECT_DIR:project,AGENT_BRIDGE_CODEX_BIN:process.execPath,AGENT_BRIDGE_AUTO_WAKE:"off",AGENT_BRIDGE_WAKE_ON_DIRECT:"on",AGENT_BRIDGE_DASHBOARD:"off",AGENT_BRIDGE_LINGER_SEC:"0",AGENT_BRIDGE_LOG_CONSOLE:"info"} as Record<string,string>,stderr:"pipe"});
+  let diagnosticOutput = "";
+  transport.stderr?.on("data", data => { diagnosticOutput += data.toString(); });
+  await client.connect(transport);
   const call = (name:string,args={}) => client!.callTool({name,arguments:args,_meta:{threadId:"native-thread","codex/sandbox-state-meta":{sandboxCwd:project}}});
   await call("peers");
   await sender.send({to:"idle-codex",body:"RETAINED_QUIET_COPY",conversationId:"siblings-finished:note"});
@@ -36,6 +41,10 @@ it.each(["main", "secondary"])("idle Codex %s consumes broadcast and subsequent 
   await until(()=>idleReports===1 || errors.length>0);
   expect(errors).toEqual([]); expect(consumed[0]).toContain("BROADCAST_NATIVE_PROOF");
   expect(consumed[0]).not.toContain("RETAINED_QUIET_COPY");
+  // Native completion precedes queue-command exit by construction. The waker is still inFlight
+  // until that command settles; native idle alone is not readiness for measuring a later wake.
+  writeFileSync(queueRelease, "");
+  await until(() => diagnosticOutput.includes("codex accepted queued wake message"), QUEUE_TIMEOUT_MS);
   // This host completed its queued native turn without bridge activity hooks, as in the live incident.
   await sender.send({to:"idle-codex",body:"DIRECT_NATIVE_PROOF"});
   await until(()=>idleReports===2 || errors.length>0);
