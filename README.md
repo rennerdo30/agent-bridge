@@ -22,7 +22,7 @@ agent-bridge connects the coding agents on your machine, and on PCs you pair, in
 
 ## CLI feature support matrix
 
-This table describes the current **agent-bridge 0.30.16 source implementation**. ✅ supported · ⚠️ partial (see footnotes) · ❌ not supported. Delegation rows describe the CLI running the job; “delegate from” describes the supervising session. Muse behavior is covered by protocol fixtures and subprocess tests; live Muse binary/provider acceptance remains pending.
+This table describes **agent-bridge 0.30.17**, plus the unreleased Muse column. ✅ supported · ⚠️ partial (see footnotes) · ❌ not supported. Delegation rows describe the CLI running the job; “delegate from” describes the supervising session. Muse behavior is covered by protocol fixtures and subprocess tests; live Muse binary/provider acceptance remains pending.
 
 | Feature | Claude Code | Codex | opencode | Antigravity | Muse |
 | --- | --- | --- | --- | --- | --- |
