@@ -1,12 +1,16 @@
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, request } from "node:http";
+import { DatabaseSync } from "node:sqlite";
 import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { rawSourceReads } from "../src/core/byte-source.js";
 import { readDashboard } from "../src/core/dashboard-read.js";
 import { HistoryBackground } from "../src/core/history-background.js";
-import { HistoryChangeFeed, historyChangeOf, streamHistoryChanges, type HistoryChange } from "../src/core/history-feed.js";
+import { HISTORY_FEED_SCAN_ROWS, HISTORY_FEED_SCAN_SQL, HistoryChangeFeed, historyChangeOf, streamHistoryChanges, type HistoryChange } from "../src/core/history-feed.js";
+import { ConversationIngestor } from "../src/core/conversations.js";
+import { HistoryIndex } from "../src/core/history.js";
+import { migrateHistoryStore, openHistoryStore } from "../src/core/history-store.js";
 import { nullLogger } from "../src/core/logger.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import { MessageStore } from "../src/core/store.js";
@@ -108,5 +112,82 @@ describe("history change feed (AB-383)", () => {
     }
     console.info(`AB-383 line on disk -> pushed event -> indexed read: ${samples.map(ms => ms.toFixed(0)).join(", ")} ms`);
     expect(Math.max(...samples)).toBeLessThan(PUSH_BUDGET_MS);
+  });
+
+  it("reads new records by rowid range, never by scanning the whole table", () => {
+    const env = makeEnv(); cleanup.push(() => env.cleanup());
+    const db = openHistoryStore(join(env.home, "history.db")); cleanup.push(() => db.close());
+    const plan = db.prepare(`EXPLAIN QUERY PLAN ${HISTORY_FEED_SCAN_SQL}`).all(0, HISTORY_FEED_SCAN_ROWS).map(row => String(row.detail)).join("\n");
+    expect(plan).toMatch(/SEARCH conversation_records USING INTEGER PRIMARY KEY \(rowid>\?\)/);
+    expect(plan).not.toMatch(/SCAN|TEMP B-TREE/);
+  });
+
+  it("releases its timer and history.db connection when the last stream closes", async () => {
+    vi.stubEnv("AGENT_BRIDGE_BACKUP_INTERVAL_MS", "0");
+    const env = makeEnv(); cleanup.push(() => env.cleanup());
+    const store = new MessageStore(env.db, nullLogger); cleanup.push(() => store.close());
+    const db = openHistoryStore(join(env.home, "history.db")); cleanup.push(() => db.close());
+    await migrateHistoryStore(env.db, db);
+    const feed = new HistoryChangeFeed(env.home); cleanup.push(() => feed.close());
+    const first = feed.subscribe(() => {}), second = feed.subscribe(() => {});
+    expect(feed.active).toEqual({ polling: true, connected: true });
+    first();
+    expect(feed.active).toEqual({ polling: true, connected: true });
+    second();
+    expect(feed.active).toEqual({ polling: false, connected: false });
+  });
+
+  it("serves /api/events only behind dashboard authentication and ends open streams on close", async () => {
+    const env = makeEnv(); cleanup.push(() => env.cleanup());
+    const { startUi } = await import("../src/cli/ui.js");
+    const ui = await startUi({ home: env.home, pipe: env.pipe, port: 0, log: nullLogger });
+    let closed = false;
+    cleanup.push(async () => { if (!closed) await ui.close(); });
+    const base = ui.url.replace(/\/\?t=.*$/, "");
+    expect((await fetch(`${base}/api/events`)).status).toBe(403);
+    const cookie = String((await fetch(ui.url, { redirect: "manual" })).headers.get("set-cookie")).split(";")[0]!;
+    // A foreign Host (DNS rebinding) is refused even with the cookie.
+    const foreign = await new Promise<number>((resolve, reject) => {
+      const req = request({ host: "127.0.0.1", port: ui.port, path: "/api/events", headers: { host: "evil.example", cookie } }, res => { res.resume(); resolve(res.statusCode!); });
+      req.on("error", reject); req.end();
+    });
+    expect(foreign).toBe(403);
+    const response = await fetch(`${base}/api/events`, { headers: { cookie } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    const reader = response.body!.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toContain("retry: 1000");
+    const ended = (async () => { for (;;) if ((await reader.read()).done) return true; })();
+    closed = true;
+    await ui.close();
+    await expect(ended).resolves.toBe(true);
+  });
+
+  it("commits a retained chunk and its source offset together: a failed write leaves neither", async () => {
+    vi.stubEnv("AGENT_BRIDGE_BACKUP_INTERVAL_MS", "0");
+    const env = makeEnv(); cleanup.push(() => env.cleanup());
+    const store = new MessageStore(env.db, nullLogger); cleanup.push(() => store.close());
+    const source = new DatabaseSync(env.db); cleanup.push(() => source.close());
+    const db = openHistoryStore(join(env.home, "history.db")); cleanup.push(() => db.close());
+    await migrateHistoryStore(env.db, db);
+    const paths: TranscriptPaths = { claude: join(env.home, "claude"), codex: join(env.home, "empty-codex"), opencode: join(env.home, "empty-opencode") };
+    const cwd = join(env.home, "project"); mkdirSync(cwd);
+    const main = join(paths.claude, "projects", cwd.replace(/[^A-Za-z0-9]/g, "-"), `${SESSION}.jsonl`);
+    mkdirSync(dirname(main), { recursive: true });
+    writeFileSync(main, say("first") + say("second"));
+    const index = new HistoryIndex(db, env.home, paths, source); cleanup.push(() => index.close());
+    const ingest = new ConversationIngestor(db, env.home, paths, source); cleanup.push(() => ingest.close());
+    for (let n = 0; n < 50 && !db.prepare("SELECT 1 FROM history_files WHERE path=?").get(main); n++) index.tick(true);
+    const retained = () => ({
+      records: Number(db.prepare("SELECT count(*) n FROM conversation_records WHERE source=?").get(main)!.n),
+      offset: Number(db.prepare("SELECT offset FROM conversation_sources WHERE id=?").get(main)?.offset ?? 0),
+    });
+    // Fail after the chunk record is inserted, inside the same write.
+    const failing = vi.spyOn(ingest as unknown as { indexRecord(): void }, "indexRecord").mockImplementation(() => { throw new Error("injected index failure"); });
+    expect(() => { for (let n = 0; n < 20; n++) ingest.tick(); }).toThrow("injected index failure");
+    expect(retained()).toEqual({ records: 0, offset: 0 });
+    failing.mockRestore();
+    for (let n = 0; n < 20 && retained().offset === 0; n++) ingest.tick();
+    expect(retained()).toEqual({ records: 1, offset: Buffer.byteLength(say("first") + say("second")) });
   });
 });

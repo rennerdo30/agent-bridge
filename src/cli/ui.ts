@@ -725,8 +725,9 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     url: `http://${UI_HOST}:${port}/?t=${secret}`,
     port,
     close: async () => {
+      // End only the event streams; every other connection closes as before.
       historyFeed.close();
-      server.closeAllConnections?.();
+      server.closeIdleConnections();
       await (await sender?.catch(() => null))?.stop();
       await new Promise<void>((r) => server.close(() => r()));
     },

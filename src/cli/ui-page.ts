@@ -3561,14 +3561,31 @@ setInterval(poll, POLL_MS);
 function pushed(changes) {
   const hit = changes.some((c) => c.kind === "run" ? shownRuns.has(c.run)
     : shownChat && [c.session, c.child].some((id) => id && (id === shownChat.session || id === shownChat.child)));
-  if (!hit) return;
-  pushPending = true;
-  setTimeout(() => { render(); pushPending = false; }, 0);
+  if (hit) pushRender();
 }
-if (typeof EventSource === "function") {
-  const events = new EventSource("/api/events");
+/** One render for any number of pushes that arrive before it runs. */
+function pushRender() {
+  if (pushPending) return;
+  pushPending = true;
+  setTimeout(() => { try { render(); } finally { pushPending = false; } }, 0);
+}
+/** One stream per visible tab: a hidden tab gives its connection slot back and reads again when shown. */
+let events = null;
+function openEvents() {
+  if (events || typeof EventSource !== "function") return;
+  events = new EventSource("/api/events");
+  // (Re)connected: anything retained while the stream was down is read now.
+  events.onopen = () => pushRender();
   events.onmessage = (e) => { try { pushed(JSON.parse(e.data)); } catch { /* malformed: the poll catches up */ } };
 }
+function closeEvents() {
+  if (events) { events.close(); events = null; }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") closeEvents();
+  else { openEvents(); pushRender(); }
+});
+if (document.visibilityState !== "hidden") openEvents();
 </script>
 </body>
 </html>
