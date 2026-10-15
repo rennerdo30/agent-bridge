@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.30.20
+
+- The broker no longer stalls under load from many running jobs. Job control requests (`message_subagent`, handoffs, `jobAuthority`) used to decode the whole job archive several times per request and scan every retained run log; they now look up only the requested job, reuse already-decoded records within a bounded cache, and read a running job's current run directly. In a test home with 3,000 runs, one request dropped from about 470 ms to 5 ms and 15 concurrent requests from about 6 s to 0.16 s (AB-300, #39).
+
 ## 0.30.19
 
 - Add Muse as a fifth coding agent, including native plugin installation, authenticated mail hooks, stable MSP delegation, live steering, approvals, model discovery, session history and remote jobs. Preserve named permission profiles across job reloads and continuations; verify the served profile before submitting a turn (AB-330, #20).
