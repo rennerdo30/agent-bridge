@@ -191,12 +191,6 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
       operation: transportOperation(op), frame_encoded: false, write_call_boundary: "not_reached", write_returned: false,
     }));
     const id = this.nextId++;
-    // AB-380: a frame the broker cannot decode would drop the connection; fail here instead, without retry.
-    const data = encodeFrame({ t: "req", id, op, args });
-    const bytes = Buffer.byteLength(data);
-    if (bytes > MAX_FRAME_BYTES) return Promise.reject(new BridgeError("too_large",
-      `${op} request is ${bytes} bytes, over the ${MAX_FRAME_BYTES}-byte frame limit; it was not sent and must not be retried.`,
-      { operation: op, bytes, limit: MAX_FRAME_BYTES, retryable: false }));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
@@ -215,9 +209,18 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
       }, timer };
       pendingWriteObservations.set(pending, transport);
       this.pending.set(id, pending);
-      this.socket.write(observedEncodedFrame(transport, data));
+      this.socket.write(observedEncodedFrame(transport, this.#withinFrameLimit(id, op, pending, encodeFrame({ t: "req", id, op, args }))));
       transport.write_returned = true;
     });
+  }
+
+  /** AB-380: a frame the broker cannot decode would drop the connection; fail locally instead, without retry. */
+  #withinFrameLimit(id: number, op: Op, pending: Pending, data: ReturnType<typeof encodeFrame>): ReturnType<typeof encodeFrame> {
+    const bytes = Buffer.byteLength(data);
+    if (bytes <= MAX_FRAME_BYTES) return data;
+    clearTimeout(pending.timer); this.pending.delete(id);
+    throw new BridgeError("too_large", `${op} request is ${bytes} bytes, over the ${MAX_FRAME_BYTES}-byte frame limit; it was not sent and must not be retried.`,
+      { operation: op, bytes, limit: MAX_FRAME_BYTES, retryable: false });
   }
 
   close(): void {
