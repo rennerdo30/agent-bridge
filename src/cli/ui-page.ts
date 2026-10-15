@@ -3571,14 +3571,25 @@ function pushRender() {
 }
 /** One stream per visible tab: a hidden tab gives its connection slot back and reads again when shown. */
 let events = null;
+let eventsRetry = null, eventsBackoff = 1000;
 function openEvents() {
-  if (events || typeof EventSource !== "function") return;
-  events = new EventSource("/api/events");
+  if (document.visibilityState === "hidden" || events || eventsRetry !== null || typeof EventSource !== "function") return;
+  const stream = events = new EventSource("/api/events");
   // (Re)connected: anything retained while the stream was down is read now.
-  events.onopen = () => pushRender();
-  events.onmessage = (e) => { try { pushed(JSON.parse(e.data)); } catch { /* malformed: the poll catches up */ } };
+  stream.onopen = () => { if (events === stream) { eventsBackoff = 1000; pushRender(); } };
+  stream.onmessage = (e) => { try { pushed(JSON.parse(e.data)); } catch { /* malformed: the poll catches up */ } };
+  // A 503 can leave EventSource CLOSED, so own retries instead of relying on its native reconnect.
+  stream.onerror = () => {
+    if (events !== stream) return;
+    closeEvents();
+    if (document.visibilityState === "hidden") return;
+    const delay = Math.min(30000, eventsBackoff * (0.8 + Math.random() * 0.4));
+    eventsBackoff = Math.min(30000, eventsBackoff * 2);
+    eventsRetry = setTimeout(() => { eventsRetry = null; openEvents(); }, delay);
+  };
 }
 function closeEvents() {
+  if (eventsRetry !== null) { clearTimeout(eventsRetry); eventsRetry = null; }
   if (events) { events.close(); events = null; }
 }
 document.addEventListener("visibilitychange", () => {
