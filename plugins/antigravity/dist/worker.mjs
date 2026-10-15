@@ -62,7 +62,7 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-ZOO2W2NN.mjs";
+} from "./chunks/chunk-SJO3OECL.mjs";
 import {
   JobRunners,
   closeJobWorktree
@@ -90,7 +90,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-Y7UQ56VK.mjs";
+} from "./chunks/chunk-DQBJSHP6.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -262,7 +262,9 @@ import {
   transcriptPaths
 } from "./chunks/chunk-NVDPULGI.mjs";
 import {
-  processIdentity
+  parentProcessIdentity,
+  processIdentity,
+  readProcessIdentity
 } from "./chunks/chunk-DEWCC5JJ.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
@@ -3001,6 +3003,73 @@ function deriveJobTitle(prompt, maxChars = 80) {
   return title.slice(0, maxChars).trim() || "Background task";
 }
 
+// src/mcp/server-lifecycle.ts
+var SHUTDOWN_DEADLINE_MS = 8e3;
+var PARENT_CHECK_MS = 5e3;
+var PARENT_IDENTITY_CHECK_MS = 10 * 6e4;
+function compareVersions(a, b) {
+  const parse = (v) => {
+    const m = /^v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$/.exec(v.trim());
+    return m ? { nums: m[1].split(".").map(Number), pre: m[2] ?? null } : null;
+  };
+  const x = parse(a), y = parse(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < Math.max(x.nums.length, y.nums.length); i++) {
+    const d = (x.nums[i] ?? 0) - (y.nums[i] ?? 0);
+    if (d) return Math.sign(d);
+  }
+  if (x.pre === y.pre) return 0;
+  if (x.pre === null) return 1;
+  if (y.pre === null) return -1;
+  return x.pre < y.pre ? -1 : 1;
+}
+function shouldYieldTo(replacementVersion, ownVersion) {
+  if (!replacementVersion) return false;
+  return compareVersions(replacementVersion, ownVersion) === 1;
+}
+function pidExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "ESRCH" ? false : void 0;
+  }
+}
+function watchParent(opts) {
+  const checkMs = opts.checkMs ?? PARENT_CHECK_MS;
+  const identityEvery = Math.max(1, Math.round((opts.identityCheckMs ?? PARENT_IDENTITY_CHECK_MS) / checkMs));
+  const currentPpid = opts.currentPpid ?? (() => process.ppid);
+  const alive = opts.alive ?? pidExists;
+  const readIdentity = opts.readIdentity ?? ((pid) => readProcessIdentity(pid));
+  let ticks = 0, busy = false, done = false;
+  const gone = (reason) => {
+    if (done) return;
+    done = true;
+    clearInterval(timer);
+    opts.onGone(reason);
+  };
+  const timer = setInterval(() => {
+    if (done || busy || !Number.isSafeInteger(opts.ppid) || opts.ppid <= 1) return;
+    if (process.platform !== "win32" && currentPpid() !== opts.ppid) return gone(`parent ${opts.ppid} ended (re-parented)`);
+    const exists = alive(opts.ppid);
+    if (exists === false) return gone(`parent ${opts.ppid} ended`);
+    if (exists === void 0 || ++ticks % identityEvery) return;
+    busy = true;
+    void (async () => {
+      const [expected, current] = await Promise.all([opts.identity, readIdentity(opts.ppid)]);
+      if (expected && current && current !== expected) gone(`parent ${opts.ppid} ended (PID reused)`);
+    })().catch(() => {
+    }).finally(() => {
+      busy = false;
+    });
+  }, checkMs);
+  timer.unref();
+  return () => {
+    done = true;
+    clearInterval(timer);
+  };
+}
+
 // src/mcp/server.ts
 var CHANNEL_NOTIFICATION = "notifications/claude/channel";
 var OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
@@ -3297,7 +3366,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-I6REDAOC.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-ZMEKSDKI.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3309,9 +3378,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-4BQN2ZFG.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-RRBWOIWC.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-4BQN2ZFG.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-RRBWOIWC.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3344,11 +3413,18 @@ async function startServer(argv = process.argv.slice(2)) {
     });
   }, 15 * 6e4);
   closeSweep.unref();
+  let stopParentWatch = () => {
+  };
   const shutdown = async (reason) => {
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(closeSweep);
+    stopParentWatch();
     log.info("shutting down", { reason });
+    setTimeout(() => {
+      log.warn("shutdown did not finish in time; exiting", { reason, deadlineMs: SHUTDOWN_DEADLINE_MS });
+      process.exit(0);
+    }, SHUTDOWN_DEADLINE_MS).unref();
     ctx.jobs?.cancelAll();
     await killAllDelegates();
     await mcp.close().catch(() => {
@@ -3371,6 +3447,11 @@ async function startServer(argv = process.argv.slice(2)) {
   process.stdin.on("end", () => void shutdown("stdin ended"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
+  node?.on("replaced", () => {
+    const by = node.replacementVersion;
+    if (shouldYieldTo(by, APP_VERSION)) void shutdown(`replaced by newer server v${by}`);
+  });
+  stopParentWatch = watchParent({ ppid: process.ppid, identity: parentProcessIdentity(), onGone: (reason) => void shutdown(reason) });
   await mcp.connect(transport);
   log.info("MCP transport connected");
   if (agent === "claude" && node) {
