@@ -720,8 +720,11 @@ export async function delegateToClaude(
       onLine: claudeInitSniffer(withSessionSniffer("claude", progressLineHandler("claude", req.onProgress), req.onSession), req.onInfo),
     }));
   } finally {
-    await relay?.stop();
-    await mcp.stop();
+    // Settle both stops: a cleanup failure is logged and never replaces the run's own result or error.
+    const stops = await Promise.allSettled([Promise.resolve().then(() => relay?.stop()), Promise.resolve().then(() => mcp.stop())]);
+    for (const [index, stop] of stops.entries()) {
+      if (stop.status === "rejected") req.log.warn(index ? "claude job MCP cleanup failed" : "claude permission relay cleanup failed", { error: String(stop.reason) });
+    }
   }
   const parsed = parseClaudeJson(res.stdout);
   if (!parsed) {

@@ -16,6 +16,7 @@ import { tokensEqual } from "./token.js";
 import type { Logger } from "./logger.js";
 import { projectKey } from "./project-identity.js";
 import { realFolder } from "./delegate.js";
+import { OWN_SERVER_RULE } from "./claude-mcp.js";
 
 const TOKEN_ENV = "AGENT_BRIDGE_CLAUDE_MCP_TOKEN";
 const TIMEOUT_MS = 30_000;
@@ -53,6 +54,8 @@ export function grantedPluginServers(cwd: string, patterns: readonly string[], c
       merge(manifest?.mcpServers);
       for (const [server, config] of Object.entries<any>(servers)) {
         const name = `plugin_${plugin}_${server}`;
+        // The bridge's own server stays ambient: proxying it would deny the parent's send/report_progress.
+        if (`mcp__${name}` === OWN_SERVER_RULE) continue;
         if (hasServerGrant(name, patterns)) selected.set(name, { name, root, config });
       }
     }

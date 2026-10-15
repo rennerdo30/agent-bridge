@@ -12,9 +12,22 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { until } from "./helpers.js";
 import { readProcessIdentity } from "../src/core/process-identity.js";
+import { OwnedMcpStdio } from "../src/core/owned-mcp-stdio.js";
+
+// Lets a test force the job MCP cleanup to fail; every other test gets the real view unchanged.
+const jobMcp = vi.hoisted(() => ({ failStop: false }));
+vi.mock("../src/core/claude-job-mcp.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/core/claude-job-mcp.js")>();
+  return { ...actual, startClaudeJobMcp: async (...args: Parameters<typeof actual.startClaudeJobMcp>) => {
+    const view = await actual.startClaudeJobMcp(...args);
+    if (!jobMcp.failStop) return view;
+    return { ...view, stop: async () => { await view.stop(); throw new Error("forced MCP cleanup failure"); } };
+  } };
+});
 
 const dirs: string[] = [];
 afterEach(() => {
+  jobMcp.failStop = false;
   vi.restoreAllMocks();
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
@@ -201,6 +214,62 @@ describe("granted plugin MCP exposure in headless Claude jobs", () => {
       expect(Date.now() - started).toBeLessThan(3000);
       await until(() => disconnected);
     } finally { server.closeAllConnections(); await new Promise<void>(done => server.close(() => done())); }
+  });
+
+  it("keeps the run's own result or error when the job MCP cleanup fails", async () => {
+    const fixture = jobFixture();
+    jobMcp.failStop = true;
+    const warn = vi.fn();
+    const log = { ...nullLogger, warn };
+    const request = { cwd: fixture.root, prompt: "inspect tools", permissionMode: "manual" as const, timeoutSec: 15, log,
+      extraEnv: { CLAUDE_CONFIG_DIR: fixture.configDir }, claudeAllowTools: ["pair-desk.create_issue"] };
+    const result = await delegateToClaude({ ...request, bin: fixture.bin });
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.text).servers).toEqual(["job_plugin_fixture_pair-desk"]);
+    expect(warn).toHaveBeenCalledWith("claude job MCP cleanup failed", expect.objectContaining({ error: expect.stringContaining("forced MCP cleanup failure") }));
+    warn.mockClear();
+    const failed = delegateToClaude({ ...request, bin: join(fixture.root, "missing-claude-binary") });
+    await expect(failed).rejects.toSatisfy((error: Error) => !String(error.message).includes("forced MCP cleanup failure"));
+    expect(warn).toHaveBeenCalledWith("claude job MCP cleanup failed", expect.anything());
+  });
+
+  it("never proxies the bridge's own server, even for a broad grant", () => {
+    const f = jobFixture();
+    const bridge = join(f.root, "bridge-plugin");
+    mkdirSync(bridge);
+    writeFileSync(join(bridge, ".mcp.json"), JSON.stringify({ bridge: { command: "must-not-launch" } }));
+    writeFileSync(join(f.configDir, "plugins", "installed_plugins.json"), JSON.stringify({ plugins: {
+      "fixture@market": [{ installPath: f.plugin, scope: "user" }],
+      "agent-bridge@market": [{ installPath: bridge, scope: "user" }],
+    } }));
+    for (const grant of ["*", "b*", "plugin_agent-bridge_bridge"]) {
+      expect(grantedPluginServers(f.root, [grant], f.configDir).map((s) => s.name)).not.toContain("plugin_agent-bridge_bridge");
+    }
+    expect(grantedPluginServers(f.root, ["*"], f.configDir).map((s) => s.name)).toContain("plugin_fixture_pair-desk");
+  });
+
+  it("releases stdio and IPC but kills nothing when the root identity cannot be verified", async () => {
+    const f = jobFixture();
+    const transport = new OwnedMcpStdio({ command: process.execPath, args: [join(f.plugin, "upstream.cjs")],
+      env: { ...process.env, CALLS: f.calls }, cwd: f.root, log: nullLogger, signal: new AbortController().signal });
+    await transport.start();
+    const child = (transport as any).child as import("node:child_process").ChildProcess;
+    const identity = await readProcessIdentity(child.pid!);
+    (transport as any).identity = "forged-identity"; // simulate a PID whose creation identity no longer matches
+    // Keep the root running through close: the job cleanup would otherwise end its only child and let it exit.
+    (transport as any).scope?.detach();
+    (transport as any).scope = undefined;
+    try {
+      await expect(transport.close()).rejects.toThrow("Cannot verify plugin MCP root identity");
+      expect(child.stdin!.destroyed).toBe(true);
+      expect(child.stdout!.destroyed).toBe(true);
+      expect(child.connected).toBe(false);
+      expect(child.killed).toBe(false);
+      expect(child.signalCode).toBeNull();
+    } finally {
+      // Fixture cleanup only for this test-created root with its recorded identity.
+      if (identity && await readProcessIdentity(child.pid!) === identity) process.kill(child.pid!, "SIGKILL");
+    }
   });
 
   it("compares physical project paths without inventing drive aliases or folding case-sensitive folders", () => {

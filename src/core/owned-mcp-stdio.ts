@@ -86,13 +86,19 @@ export class OwnedMcpStdio implements Transport {
         }
       } finally {
         this.scope?.detach();
-        // Check the recorded creation identity before any PID-based tree command.
-        const current = child.pid && await readProcessIdentity(child.pid);
-        if (this.identity && current === this.identity) await killTree(child, "plugin MCP tree cleanup");
-        else if (!this.identity) child.kill(); // gated root: no descendants were allowed to launch
-        else if (child.exitCode === null && child.signalCode === null) throw new Error("Cannot verify plugin MCP root identity for cleanup");
-        child.stdin?.destroy(); child.stdout?.destroy(); child.stderr?.destroy();
-        if (child.connected) child.disconnect();
+        let unverified = false;
+        try {
+          // Check the recorded creation identity before any PID-based tree command.
+          const current = child.pid && await readProcessIdentity(child.pid);
+          if (this.identity && current === this.identity) await killTree(child, "plugin MCP tree cleanup");
+          else if (!this.identity) child.kill(); // gated root: no descendants were allowed to launch
+          else unverified = child.exitCode === null && child.signalCode === null; // never kill an unverified PID
+        } finally {
+          // Release our stdio and IPC handles even when the root cannot be verified.
+          child.stdin?.destroy(); child.stdout?.destroy(); child.stderr?.destroy();
+          if (child.connected) child.disconnect();
+        }
+        if (unverified) throw new Error("Cannot verify plugin MCP root identity for cleanup");
       }
     })();
   }
