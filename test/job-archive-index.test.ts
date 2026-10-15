@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { archiveJobs, readArchivedJobs, readArchivedJobSnapshot } from "../src/core/job-archive.js";
-import { archiveIndexCounters, openJobArchive, readIndexedJobs, readJobVersions } from "../src/core/job-archive-index.js";
+import { archiveDecodedCacheUsage, archiveIndexCounters, openJobArchive, readIndexedJobs, readJobVersions } from "../src/core/job-archive-index.js";
 import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 import { extractBundle } from "../src/core/archive-bundle.js";
 import { writeJsonStore } from "../src/core/json-store.js";
@@ -118,4 +118,47 @@ it("re-decodes only changed records on a full read after an archive write", () =
   // Same records in the same observed order; only the changed one may move.
   expect(after.map(record => record.id).sort()).toEqual([...first].sort());
   expect(after.map(record => record.id).filter(id => id !== "job-7")).toEqual(first.filter(id => id !== "job-7"));
+});
+
+it("bounds decoded rows independently while retaining incremental reuse across WAL changes", () => {
+  const limits = archiveDecodedCacheUsage(), paths: string[] = [];
+  const jobs = [job, { ...job, id: "two" }, { ...job, id: "three" }];
+  expect(limits.maxEntries).toBe(16);
+  for (let i = 0; i < limits.maxEntries; i++) {
+    const at = join(env.home, `decoded-${i}`, "jobs.json"); paths.push(at);
+    archiveJobs(at, jobs); readIndexedJobs(at, { metadata: true });
+    expect(archiveDecodedCacheUsage().entries).toBeLessThanOrEqual(limits.maxEntries);
+    expect(archiveDecodedCacheUsage().bytes).toBeLessThanOrEqual(limits.maxBytes);
+  }
+  // A snapshot hit also refreshes decoded-row recency. The next insert evicts
+  // the second home rather than this recently used one.
+  readIndexedJobs(paths[0]!, { metadata: true });
+  const extra = join(env.home, "decoded-extra", "jobs.json");
+  archiveJobs(extra, jobs); readIndexedJobs(extra, { metadata: true });
+  archiveJobs(paths[0]!, [{ ...job, owner: "new-owner" }]);
+  let before = archiveIndexCounters.decoded;
+  expect(readIndexedJobs(paths[0]!, { metadata: true }).jobs.find(row => row.id === job.id)?.owner).toBe("new-owner");
+  expect(archiveIndexCounters.decoded - before).toBe(1);
+  archiveJobs(paths[1]!, [{ ...job, owner: "evicted-owner" }]);
+  before = archiveIndexCounters.decoded;
+  expect(readIndexedJobs(paths[1]!, { metadata: true }).jobs).toHaveLength(jobs.length);
+  expect(archiveIndexCounters.decoded - before).toBe(jobs.length);
+
+  const entries = archiveDecodedCacheUsage().entries;
+  const oversized = join(env.home, "decoded-oversized", "jobs.json");
+  archiveJobs(oversized, [{ ...job, prompt: "x".repeat(limits.maxBytes) }]);
+  readIndexedJobs(oversized);
+  expect(archiveDecodedCacheUsage().entries).toBe(entries);
+  before = archiveIndexCounters.decoded;
+  readIndexedJobs(oversized);
+  expect(archiveIndexCounters.decoded - before).toBe(1);
+  for (let i = 0; i < 3; i++) {
+    const at = join(env.home, `decoded-budget-${i}`, "jobs.json");
+    archiveJobs(at, [{ ...job, prompt: "y".repeat(limits.maxBytes / 4) }]);
+    readIndexedJobs(at);
+    expect(archiveDecodedCacheUsage().entries).toBeLessThanOrEqual(limits.maxEntries);
+    expect(archiveDecodedCacheUsage().bytes).toBeLessThanOrEqual(limits.maxBytes);
+  }
+  // Two medium maps exceed the shared byte budget even though each fits alone.
+  expect(archiveDecodedCacheUsage().entries).toBe(1);
 });

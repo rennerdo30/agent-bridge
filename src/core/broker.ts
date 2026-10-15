@@ -1221,18 +1221,21 @@ export class Broker {
         if (stored) { if (typeof stored.id === "string") this.recoveredJobs.delete(stored.id); return stored; }
         return [...this.recoveredJobs.values()].find(matches);
       }
+      // Reuse this negative observation in the legacy path. Rechecking inside
+      // storedJobs adds another native projection probe without new evidence.
+      return this.storedJobs(false).find(matches);
     } catch { /* Fall back to the full registry read, which handles its own failures. */ }
     return this.storedJobs().find(matches);
   }
 
-  private storedJobs(): Record<string, unknown>[] {
+  private storedJobs(projectionCurrent?: false): Record<string, unknown>[] {
     if (!this.jobsPath) return [];
     // Sibling routing consults the registry several times in one synchronous dispatch batch.
     // Share that snapshot until the next microtask, without a timer-based stale window.
     if (this.jobsForDispatch) return this.jobsForDispatch;
     try {
       const archive = readArchivedJobSnapshot(this.jobsPath, { metadata: true });
-      if (indexedJobProjectionCurrent(this.jobsPath, archive.signature)) {
+      if (projectionCurrent !== false && indexedJobProjectionCurrent(this.jobsPath, archive.signature)) {
         // A recovered record only stands in for a job the store does not list. Once the store lists it, the
         // stored record wins: a recovery cached before a handoff must not keep routing to the previous owner.
         const stored = new Set(archive.jobs.map((job) => job.id).filter((id): id is string => typeof id === "string"));
