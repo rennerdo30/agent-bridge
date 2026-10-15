@@ -37,6 +37,7 @@ describe("V2 plugin domains with the real Bridge transport", () => {
     writeFileSync(join(home, "config.json"), "{}");
     const original = Client.prototype.callTool;
     spy = vi.spyOn(Client.prototype, "callTool").mockImplementation(async function (this: Client, req: any, ...args: any[]) {
+      if (req.name === "hook_event" && req.arguments?.event === "PostToolUse") await new Promise(resolve => setTimeout(resolve, 1_100));
       const stop = req.name === "hook_event" && req.arguments?.event === "Stop";
       if (stop) stops++;
       try { return await original.apply(this, [req, ...args] as any); }
@@ -79,13 +80,13 @@ describe("V2 plugin domains with the real Bridge transport", () => {
   it("stores busy mail without starting a model turn, includes typed system parts", async () => {
     event("session.execution.started", { sessionID: "ses_main" });
     await new Promise(resolve => setTimeout(resolve, 10));
-    await peer.send({ to: "opencode-v2-test", body: "V2 busy mail" });
     const before = stored.length;
+    await peer.send({ to: "opencode-v2-test", body: "V2 busy mail" });
     const context = { sessionID: "ses_main", system: [] as any[] };
-    await expect.poll(async () => {
-      context.system = []; await callbacks.get("context")!(context);
-      return context.system;
-    }).toContainEqual({ type: "text", text: expect.stringContaining("V2 busy mail") });
+    // A context boundary consumes mail. Polling it can consume a successful
+    // result after expect.poll's deadline, then observe an empty second result.
+    await callbacks.get("context")!(context);
+    expect(context.system).toContainEqual({ type: "text", text: expect.stringContaining("V2 busy mail") });
     expect(stored.slice(before)).toEqual([expect.objectContaining({ sessionID: "ses_main", resume: false, text: expect.stringContaining("V2 busy mail") })]);
     expect(prompted).toHaveLength(0);
   });

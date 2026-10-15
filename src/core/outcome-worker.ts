@@ -81,8 +81,12 @@ parentPort?.on("message", message => {
     if (await outcomeSignature(message.home, inputs, paths) !== sourceSignature) {
       for (const input of inputs) result[input.key] = pendingOutcome(input);
     }
+    // Completion acknowledges released handles, including on Windows. A consumer
+    // draining inspections may remove this isolated home as soon as it receives it.
+    closeMetadataDb(message.home);
     parentPort?.postMessage({ id: message.id, result, signature: sourceSignature, gitPaths: paths });
-  }).catch(() => parentPort?.postMessage({ id: message.id, error: true }))
-    // This worker lives for the whole process: never keep bridge.db open between inspections (Windows file locks).
-    .finally(() => closeMetadataDb(message.home));
+  }).catch(() => {
+    closeMetadataDb(message.home);
+    parentPort?.postMessage({ id: message.id, error: true });
+  });
 });

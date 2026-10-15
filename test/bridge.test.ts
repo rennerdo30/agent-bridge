@@ -1,6 +1,7 @@
 import { mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { setTimeout as realDelay } from "node:timers/promises";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeMetadataDb } from "../src/core/metadata-db.js";
 import { maxSocketPathBytes, resolveDbPath, resolvePipePath } from "../src/core/paths.js";
 import { BridgeClient } from "../src/core/client.js";
@@ -290,11 +291,26 @@ describe("messaging", () => {
     const b = env.node("b", "codex");
     await a.start();
     await b.start();
-    const waiting = b.waitForMessage(2_000, (m) => m.body === "second");
-    await a.send({ to: "b", body: "first" });
-    await a.send({ to: "b", body: "second" });
-    expect((await waiting)?.body).toBe("second");
-    expect(await b.waitForMessage(100, (m) => m.body === "never")).toBeNull();
+    // This checks the wait's predicate/deadline, independently of cold send setup.
+    // Leave sockets and immediates real; control only the deadline under test.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let resolved = false;
+      const waiting = b.waitForMessage(2_000, (m) => m.body === "second").then(value => { resolved = true; return value; });
+      await realDelay(2_100); // A cold producer can outlast the wait's logical deadline.
+      const firstSeen = new Promise<void>(resolve => {
+        const onMessage = (m: BridgeMessage) => { if (m.body === "first") { b.off("message", onMessage); resolve(); } };
+        b.on("message", onMessage);
+      });
+      await a.send({ to: "b", body: "first" });
+      await firstSeen;
+      expect(resolved).toBe(false);
+      await a.send({ to: "b", body: "second" });
+      expect((await waiting)?.body).toBe("second");
+      const timeout = b.waitForMessage(100, (m) => m.body === "never");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await timeout).toBeNull();
+    } finally { vi.useRealTimers(); }
   });
 });
 

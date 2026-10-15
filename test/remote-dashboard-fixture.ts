@@ -15,6 +15,7 @@ import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { until } from "./helpers.js";
 import { NetworkService } from "../src/network/link.js";
 import { RemoteDashboard } from "../src/network/remote-dashboard.js";
+import { drainOutcomeInspections } from "../src/core/outcome-background.js";
 import { DASHBOARD_CAPABILITY, DASHBOARD_FRAME, DASHBOARD_RATE_LIMIT, DASHBOARD_TIMEOUT_MS, dashboardRequestSchema } from "../src/network/dashboard-protocol.js";
 import { CODEX_SESSION, CODEX_CHILD, installTranscriptFixtures } from "./transcript-fixtures.js";
 
@@ -32,6 +33,7 @@ beforeEach(() => {
 });
 afterEach(async () => {
   for (const close of cleanup.reverse()) await close();
+  await drainOutcomeInspections();
   vi.useRealTimers(); vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
