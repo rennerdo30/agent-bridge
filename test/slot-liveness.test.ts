@@ -93,7 +93,7 @@ it("answers availability and an in-flight broker RPC under 500 ms during a 5 s i
 
 it("batches N foreign PIDs once per poll, reuses evidence briefly, and isolates creation identities", async () => {
   livingPids();
-  const cache = new SlotLiveness(), pids = Array.from({ length: 20 }, foreign), at = Date.now();
+  const cache = new SlotLiveness(nullLogger, "linux"), pids = Array.from({ length: 20 }, foreign), at = Date.now();
   let finish!: (result: Map<number, string>) => void;
   probes.query.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   for (const pid of pids) expect(cache.alive(pid, "old", at)).toBe(true);
@@ -124,6 +124,44 @@ it("batches N foreign PIDs once per poll, reuses evidence briefly, and isolates 
   expect(probes.query).toHaveBeenCalledTimes(3);
   finish(new Map());
   await flushed();
+});
+
+it("resolves captures queued during a query without another poll, and settled waits for them", async () => {
+  const cache = new SlotLiveness(nullLogger, "linux"), first = foreign(), second = foreign();
+  const firstListener = vi.fn(), nextListener = vi.fn();
+  let finishFirst!: (result: Map<number, string>) => void;
+  let finishNext!: (result: Map<number, string>) => void;
+  probes.query
+    .mockImplementationOnce(() => new Promise(resolve => { finishFirst = resolve; }))
+    .mockImplementationOnce(() => new Promise(resolve => { finishNext = resolve; }));
+  cache.capture(first, "first", firstListener);
+  await flushed();
+  const settled = cache.settled(), completed = vi.fn();
+  void settled.then(completed);
+  cache.capture(second, "during-query", nextListener);
+  expect(probes.query).toHaveBeenCalledExactlyOnceWith([first]);
+  finishFirst(new Map([[first, "first-identity"]]));
+  await flushed();
+  expect(firstListener).toHaveBeenCalledExactlyOnceWith("first-identity");
+  expect(probes.query.mock.calls).toEqual([[[first]], [[second]]]);
+  expect(completed).not.toHaveBeenCalled();
+  expect(nextListener).not.toHaveBeenCalled();
+  finishNext(new Map([[second, "second-identity"]]));
+  await settled;
+  expect(nextListener).toHaveBeenCalledExactlyOnceWith("second-identity");
+  expect(completed).toHaveBeenCalledTimes(1);
+  expect(probes.query).toHaveBeenCalledTimes(2);
+});
+
+it("splits 20 darwin owners into sequential chunks of 8, 8 and 4 PIDs", async () => {
+  livingPids();
+  const cache = new SlotLiveness(nullLogger, "darwin"), pids = Array.from({ length: 20 }, foreign), at = Date.now();
+  probes.query.mockImplementation(async batch => new Map(batch.map(pid => [pid, "same"])));
+  for (const pid of pids) expect(cache.alive(pid, "same", at)).toBe(true);
+  await cache.settled();
+  expect(probes.query.mock.calls).toEqual([[pids.slice(0, 8)], [pids.slice(8, 16)], [pids.slice(16)]]);
+  for (const pid of pids) expect(cache.alive(pid, "same", at)).toBe(true);
+  expect(probes.query).toHaveBeenCalledTimes(3);
 });
 
 it("retains a dead verdict until a slow poller returns, and caches its own identity permanently", async () => {

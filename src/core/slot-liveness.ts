@@ -54,7 +54,7 @@ export class SlotLiveness {
     return undefined;
   }
 
-  /** Optional completion barrier for offline inspections; hot-path callers never await it. */
+  /** Includes keys queued during a query and their follow-up batches; hot paths never await it. */
   settled(): Promise<void> { return this.refreshed; }
 
   private notify(listener: (identity: string) => void, identity: string): void {
@@ -64,34 +64,39 @@ export class SlotLiveness {
 
   private async refresh(): Promise<void> {
     try {
-      const batch = new Map(this.pending);
-      this.pending.clear();
-      const pids = [...new Set([...batch.values()].map(row => row.pid))];
-      const size = this.platform === "darwin" ? MAX_PS_CONCURRENCY : MAX_BATCH_PIDS;
-      for (let offset = 0; offset < pids.length; offset += size) {
-        const chunk = pids.slice(offset, offset + size), included = new Set(chunk);
-        let identities: Map<number, string> | undefined;
-        try { identities = await readProcessIdentities(chunk); }
-        catch { /* Failed queries are unknown, never evidence of exit. */ }
-        const at = Date.now();
-        for (const [key, row] of batch) {
-          if (!included.has(row.pid)) continue;
-          const identity = identities?.get(row.pid) || undefined;
-          const dead = identity !== undefined && row.recordedAt !== undefined && (row.expected
-            ? identity !== row.expected : identityStartedAfter(identity, row.recordedAt + 1_000));
-          // Classify now, so even a poll much later than the positive TTL can reclaim.
-          this.cache.set(key, { ...row, identity, dead, at });
-          if (row.recordedAt !== undefined && !row.expected) this.cache.set(`${row.pid}|legacy-current`, { pid: row.pid, identity, at });
-          this.pending.delete(key);
-          const listener = this.captures.get(key);
-          this.captures.delete(key);
-          if (identity && listener) this.notify(listener, identity);
-        }
-      }
-      for (const [key, row] of this.cache) if (!this.valid(row)) this.cache.delete(key);
+      // Drain new keys even in a quiet host with no subsequent poll. Keep one
+      // promise for the whole drain so settled() includes every follow-up query.
+      while (this.pending.size) await this.refreshBatch();
     } catch (error) { this.warn("slot identity refresh failed", error); }
     finally { this.querying = false; }
-    // New owners seen during the batch are picked up by the next poll.
+  }
+
+  private async refreshBatch(): Promise<void> {
+    const batch = new Map(this.pending);
+    this.pending.clear();
+    const pids = [...new Set([...batch.values()].map(row => row.pid))];
+    const size = this.platform === "darwin" ? MAX_PS_CONCURRENCY : MAX_BATCH_PIDS;
+    for (let offset = 0; offset < pids.length; offset += size) {
+      const chunk = pids.slice(offset, offset + size), included = new Set(chunk);
+      let identities: Map<number, string> | undefined;
+      try { identities = await readProcessIdentities(chunk); }
+      catch { /* Failed queries are unknown, never evidence of exit. */ }
+      const at = Date.now();
+      for (const [key, row] of batch) {
+        if (!included.has(row.pid)) continue;
+        const identity = identities?.get(row.pid) || undefined;
+        const dead = identity !== undefined && row.recordedAt !== undefined && (row.expected
+          ? identity !== row.expected : identityStartedAfter(identity, row.recordedAt + 1_000));
+        // Classify now, so even a poll much later than the positive TTL can reclaim.
+        this.cache.set(key, { ...row, identity, dead, at });
+        if (row.recordedAt !== undefined && !row.expected) this.cache.set(`${row.pid}|legacy-current`, { pid: row.pid, identity, at });
+        this.pending.delete(key);
+        const listener = this.captures.get(key);
+        this.captures.delete(key);
+        if (identity && listener) this.notify(listener, identity);
+      }
+    }
+    for (const [key, row] of this.cache) if (!this.valid(row)) this.cache.delete(key);
   }
 
   alive = (pid: number, identity?: string | null, recordedAt?: number): boolean => {

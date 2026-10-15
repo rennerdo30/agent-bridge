@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, uptime } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { migrationLock } from "../src/core/migration-lock.js";
@@ -26,8 +26,10 @@ describe("resource slot owner liveness", () => {
     slots.close();
     const db = new DatabaseSync(join(dir, "resource-slots.sqlite"));
     try {
-      // Last renewed an hour ago (expiresAt = renewal + lease); the PID now belongs to a fresh process.
-      db.prepare("INSERT INTO slots(resource, id, pid, held, expiresAt) VALUES ('gpu', 'dead-job', ?, 1, ?)").run(child.pid!, Date.now() - 3_600_000 + SLOT_LEASE_MS);
+      // Stay after this boot even on fresh CI runners, but before the new process.
+      // Pre-boot records correctly take the separate AB-256 recovery path.
+      const recordedAt = Date.now() - Math.min(60_000, uptime() * 500);
+      db.prepare("INSERT INTO slots(resource, id, pid, held, expiresAt) VALUES ('gpu', 'dead-job', ?, 1, ?)").run(child.pid!, recordedAt + SLOT_LEASE_MS);
     } finally { db.close(); }
     const again = new ResourceSlots(dir);
     try {
