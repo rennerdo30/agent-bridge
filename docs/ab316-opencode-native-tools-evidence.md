@@ -73,23 +73,30 @@ execution, including calls nested in Code Mode.
   are refused with a message that agent-bridge needs an update for that opencode
   version. There is no runtime canary. Supporting a new range means repeating
   the native probes below and widening the range in `parseOpencodeVersion`.
-- The gate classifies tool identities. Read-only natives from the proven
-  inventory pass. These are `opencode_worktree_list`, `opencode_models`,
-  `opencode_list_mcp_resources` and `opencode_read_mcp_resource`. Any other id
-  that mentions a worktree, whatever its prefix or separators, is treated as
-  removal and denied in every delegated mode, including edit. Examples are
-  `opencode_worktree_rm`, `_discard`, `_drop`, `remove_worktree`,
-  `WorktreeRemove`, and `opencode worktree remove`. Other unknown native-looking
-  ids are denied in read mode and need a per-call approval in ask mode.
-  Execute hooks without a string tool identity are refused in every mode. An ask
-  call without a session ID or with unserializable input is refused too.
+- The gate classifies tool identities by exact id and fails closed (review
+  follow-up). Only explicitly known identities keep their known treatment:
+  `opencode_worktree_remove` is denied in every delegated mode, edit included;
+  create, move and rename follow the per-mode rules above; `opencode_worktree_list`
+  and `opencode_models` read only and pass. The built-ins of the proven 2.0.29
+  inventory, the Code Mode `execute` wrapper and the Bridge routes allowed in
+  read-only runs stay under opencode's own permission rules. Every other id needs
+  a per-call gate approval (`native.opencode.<tool>`) in read, ask and edit
+  alike: later native tools, renamed removals such as `opencode_worktree_rm` or
+  `remove_checkout`, unrelated MCP tools such as `worktree_status`, and
+  `opencode_list_mcp_resources`/`opencode_read_mcp_resource`, which forward to
+  configured MCP servers whose side effects the gate cannot see. Without
+  `permission.assert` such a call is refused. No substring rule grants or
+  denies anything. Execute hooks without a string tool identity are refused in
+  every mode. An approval call without a session ID or with unserializable
+  input is refused too.
 - Plugin setup fails without the permission/tool hook API, or without
   `permission.assert` in ask mode. The generated `index.js` embeds a random
   per-job nonce. The plugin writes a contract report: contract version, access,
   registered hooks, native inventory and that nonce. Before prompting, Bridge
   requires a report with the matching nonce. In every mode, edit included, the
   inventory must contain all four proven identities. Otherwise the native API is
-  treated as unknown. The report proves the hooks were registered. That they
+  treated as unknown. Extra inventory ids are accepted but never trusted as
+  safe: they classify as unknown, so each call is gated. The report proves the hooks were registered. That they
   fire is proven only by the native probes for the accepted range above.
 - `src/core/history-answer.ts` runs opencode without this gate. It relies on
   `permission: { "*": "deny" }` and `tools: { "*": false }`, so no tool,

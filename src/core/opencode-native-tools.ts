@@ -13,7 +13,7 @@ export const OPENCODE_NATIVE_GATE_HOOKS = ["permission.evaluate", "tool.execute.
 export const OPENCODE_NATIVE_GATED_TOOLS = ["opencode_worktree_create", "opencode_worktree_remove", "opencode_session_move", "opencode_session_rename"] as const;
 const GATE_REPORT_FILE = "gate-report.json";
 
-export type OpencodeNativeToolKind = "remove" | "mutation" | "safe" | "unknown-native" | "other";
+export type OpencodeNativeToolKind = "remove" | "mutation" | "safe" | "unknown" | "other";
 export interface OpencodeNativeGateReport {
   contract: number;
   access: string;
@@ -24,29 +24,35 @@ export interface OpencodeNativeGateReport {
 }
 
 /**
- * Serialized into the plugin too. Keep it free of module closures/imports. Anything that looks like an OpenCode
- * native tool but is not on the known list is "unknown-native": the gate never lets it through unchecked in
- * read or ask mode. Any other id mentioning a worktree, whatever its prefix, counts as removal: a renamed
- * removal tool (rm, discard, drop, purge, ...) must never reach force-deleting unpushed worktrees, even in edit.
+ * Serialized into the plugin too. Keep it free of module closures/imports. Fail closed: only the explicitly known
+ * identities below get their known treatment. Every other id (a native tool added by a later release, a renamed
+ * removal tool, any MCP tool outside the Bridge routes) is "unknown" and needs a per-call gate approval in every
+ * mode. Ids are matched exactly; no substring or prefix rule grants or denies anything.
  */
 export function classifyOpencodeNativeTool(id: unknown): OpencodeNativeToolKind {
-  if (typeof id !== "string" || !id) return "unknown-native";
+  if (typeof id !== "string" || !id) return "unknown";
   const known: Record<string, OpencodeNativeToolKind> = {
+    // Known removal identity: unavailable to delegated jobs in every mode, edit included.
     opencode_worktree_remove: "remove",
     opencode_worktree_create: "mutation",
     opencode_session_move: "mutation",
     opencode_session_rename: "mutation",
+    // Read-only natives in the proven 2.0.29 inventory. The MCP resource tools are not here: they forward to
+    // configured MCP servers whose side effects the gate cannot see, so they stay unknown and gated.
     opencode_worktree_list: "safe",
-    // Read-only natives in the proven 2.0.29 inventory.
     opencode_models: "safe",
-    opencode_list_mcp_resources: "safe",
-    opencode_read_mcp_resource: "safe",
+    // Built-ins of the proven 2.0.29 inventory plus the Code Mode wrapper; opencode's own permission rules and the
+    // delegated tool map govern them, and nested native calls reach this hook under their own ids.
+    execute: "other", edit: "other", glob: "other", grep: "other", patch: "other", question: "other", read: "other",
+    shell: "other", skill: "other", subagent: "other", webfetch: "other", websearch: "other", write: "other",
+    // Bridge routes allowed in read-only runs (OPENCODE_READ_ONLY_TOOLS); a test keeps the two lists equal.
+    bridge_send: "other", bridge_report_progress: "other", bridge_peers: "other", bridge_health: "other",
+    bridge_search_history: "other", bridge_get_conversation: "other", bridge_spawn_codex: "other", bridge_spawn_claude: "other",
+    bridge_ask_codex: "other", bridge_ask_claude: "other", bridge_spawn_antigravity: "other", bridge_ask_antigravity: "other",
+    bridge_spawn_muse: "other", bridge_ask_muse: "other", bridge_message_subagent: "other", bridge_cancel_subagent: "other",
+    bridge_inbox: "other", bridge_wait_for_message: "other",
   };
-  if (Object.prototype.hasOwnProperty.call(known, id)) return known[id]!;
-  // Checked on every id, whatever its prefix or separators ("remove_worktree", "WorktreeRemove", spaces).
-  if (/worktree/i.test(id)) return "remove";
-  const native = /^opencode[_.:/\s-]/i.test(id) || /^sessions?(?:[_.:/\s-]|$)/i.test(id);
-  return native ? "unknown-native" : "other";
+  return Object.prototype.hasOwnProperty.call(known, id) ? known[id]! : "unknown";
 }
 
 /** Serialized into a private, per-run plugin. Keep this function free of module closures/imports. */
@@ -85,8 +91,12 @@ export async function installOpencodeNativeToolGate(
       throw new Error("agent-bridge: native worktree removal is unavailable to delegated jobs; use Bridge cleanup.");
     }
     if (kind === "other" || kind === "safe") return;
-    if (access === "edit") return;
-    if (access !== "ask") throw new Error(`agent-bridge: ${event.tool} is denied in read mode.`);
+    // Known mutations keep their mode treatment; unknown ids need a fresh gate decision in every mode.
+    if (kind === "mutation" && access === "edit") return;
+    if (kind === "mutation" && access !== "ask") throw new Error(`agent-bridge: ${event.tool} is denied in read mode.`);
+    if (typeof ctx.permission.assert !== "function") {
+      throw new Error(`agent-bridge: ${event.tool} needs approval, but the OpenCode plugin API lacks permission.assert; refusing the call.`);
+    }
     if (typeof event.sessionID !== "string" || !event.sessionID) throw shapeError("tool");
     let resource: string | undefined;
     try { resource = JSON.stringify(event.input === undefined ? null : event.input); } catch { throw shapeError("tool"); }
@@ -114,7 +124,10 @@ export async function installOpencodeNativeToolGate(
   return { contract: 1, access, hooks, inventory };
 }
 
-/** Why a gate report does not prove enforcement for this access, or null when it does. */
+/**
+ * Why a gate report does not prove enforcement for this access, or null when it does. Extra inventory ids are
+ * accepted but never trusted: the classifier treats every id it does not know as unknown, so each call is gated.
+ */
 export function opencodeNativeGateReportError(report: unknown, access: OpencodeNativeAccess, nonce?: string): string | null {
   if (!report || typeof report !== "object") return "reported no enforcement contract";
   const r = report as Partial<OpencodeNativeGateReport>;

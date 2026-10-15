@@ -208,33 +208,67 @@ it("refuses every delegated mode before starting opencode when the version outpu
   expect(onPermission).not.toHaveBeenCalled();
 });
 
-it("gates unknown native tool identities: denied in read, approval in ask, removal-like denied everywhere", async () => {
-  const unknown = ["opencode_session_delete", "opencode.session.fork", "session.share", "OPENCODE_SESSION_MOVE", "opencode session archive"];
-  // Every id mentioning a worktree other than the known create/list, whatever prefix, counts as removal.
-  const removalLike = ["opencode_worktree_delete", "opencode_worktree_prune", "worktree.remove", "OPENCODE_WORKTREE_REMOVE",
-    "opencode_worktree_rm", "opencode_worktree_discard", "opencode_worktree_drop", "opencode_worktree_purge", "worktree_checkout",
-    "opencode worktree remove", "remove_worktree", "WorktreeRemove", "git_worktree_switch", "opencode_worktree_create_v2"];
-  for (const tool of unknown) expect(classifyOpencodeNativeTool(tool)).toBe("unknown-native");
-  for (const tool of removalLike) expect(classifyOpencodeNativeTool(tool)).toBe("remove");
-  expect(classifyOpencodeNativeTool("bridge_get_conversation")).toBe("other");
-  const read = await gate("read");
-  // Read-only natives from the proven inventory keep working.
-  for (const tool of ["opencode_worktree_list", "opencode_models", "opencode_list_mcp_resources", "opencode_read_mcp_resource", "read", "grep", "glob"]) {
-    await read.before(event(tool));
-  }
-  for (const tool of unknown) await expect(read.before(event(tool))).rejects.toThrow("denied in read mode");
-  expect(read.assert).not.toHaveBeenCalled();
-  const ask = await gate("ask");
-  for (const tool of unknown) await ask.before(event(tool));
-  expect(ask.assert).toHaveBeenCalledTimes(unknown.length);
-  expect(ask.assert).toHaveBeenCalledWith({ sessionID: "ses_fixture", agent: "build", action: "native.opencode.session_delete",
-    resources: [JSON.stringify(event("").input)], save: [] });
-  const denied = await gate("ask", vi.fn(async () => { throw new Error("explicit denial"); }));
-  for (const tool of unknown) await expect(denied.before(event(tool))).rejects.toThrow("explicit denial");
+it("fails closed: every unknown tool identity needs gate approval in every mode", async () => {
+  const unknown = ["opencode_session_delete", "opencode.session.fork", "session.share", "OPENCODE_SESSION_MOVE", "opencode session archive",
+    // Renamed or differently spelled removals are no longer matched by substring: unknown, so gated.
+    "opencode_worktree_delete", "opencode_worktree_prune", "worktree.remove", "OPENCODE_WORKTREE_REMOVE", "opencode_worktree_rm",
+    "remove_worktree", "WorktreeRemove", "opencode worktree remove", "opencode_worktree_create_v2",
+    "remove_checkout", "opencodeRemoveCheckout",
+    // Unrelated MCP tools are gated like any unknown tool, not denied by name.
+    "worktree_status", "git_worktree_switch", "github_create_issue",
+    // MCP resource natives forward to configured servers whose side effects the gate cannot see.
+    "opencode_list_mcp_resources", "opencode_read_mcp_resource"];
+  for (const tool of unknown) expect(classifyOpencodeNativeTool(tool)).toBe("unknown");
+  for (const id of [undefined, null, 7, ""]) expect(classifyOpencodeNativeTool(id)).toBe("unknown");
+  // Known identities keep their treatment.
+  expect(classifyOpencodeNativeTool("opencode_worktree_remove")).toBe("remove");
+  for (const tool of mutations) expect(classifyOpencodeNativeTool(tool)).toBe("mutation");
+  for (const tool of ["opencode_worktree_list", "opencode_models"]) expect(classifyOpencodeNativeTool(tool)).toBe("safe");
+  for (const tool of ["execute", "read", "grep", "glob", "edit", "write", "patch", "shell"]) expect(classifyOpencodeNativeTool(tool)).toBe("other");
+  // Every Bridge route a read-only run may use is a known identity, so read-only jobs can still report and delegate.
+  const bridgeRoutes = Object.entries(OPENCODE_READ_ONLY_TOOLS).filter(([, on]) => on).map(([id]) => id);
+  expect(bridgeRoutes.length).toBeGreaterThan(0);
+  for (const tool of bridgeRoutes) expect(classifyOpencodeNativeTool(tool)).toBe("other");
+  expect(classifyOpencodeNativeTool("bridge_spawn_opencode")).toBe("unknown");
   for (const access of ["read", "ask", "edit"] as const) {
     const g = await gate(access);
-    for (const tool of removalLike) await expect(g.before(event(tool))).rejects.toThrow("use Bridge cleanup");
+    // Known safe natives and ordinary tools pass without a gate decision.
+    for (const tool of ["opencode_worktree_list", "opencode_models", "read", "grep", "glob", "execute", "bridge_send"]) await g.before(event(tool));
     expect(g.assert).not.toHaveBeenCalled();
+    for (const tool of unknown) await g.before(event(tool));
+    expect(g.assert).toHaveBeenCalledTimes(unknown.length);
+    for (const [tool, action] of [["opencode_session_delete", "session_delete"], ["remove_checkout", "remove_checkout"],
+      ["opencodeRemoveCheckout", "opencodeRemoveCheckout"], ["worktree_status", "worktree_status"],
+      ["opencode_list_mcp_resources", "list_mcp_resources"], ["opencode_read_mcp_resource", "read_mcp_resource"]]) {
+      expect(g.assert).toHaveBeenCalledWith({ sessionID: "ses_fixture", agent: "build", action: `native.opencode.${action}`,
+        resources: [JSON.stringify(event(tool!).input)], save: [] });
+    }
+    // The approval action is forced to a fresh decision in every mode.
+    const evaluation = { action: "native.opencode.worktree_status", effect: "allow" };
+    g.evaluate(evaluation);
+    expect(evaluation.effect).toBe("ask");
+    // A denial blocks the call in every mode.
+    const denied = await gate(access, vi.fn(async () => { throw new Error("explicit denial"); }));
+    for (const tool of unknown) await expect(denied.before(event(tool))).rejects.toThrow("explicit denial");
+    // The known removal identity is still denied before any approval.
+    await expect(g.before(event("opencode_worktree_remove"))).rejects.toThrow("use Bridge cleanup");
+    expect(g.assert).toHaveBeenCalledTimes(unknown.length);
+  }
+  // Known mutations keep their per-mode treatment.
+  const read = await gate("read");
+  for (const tool of mutations) await expect(read.before(event(tool))).rejects.toThrow("denied in read mode");
+  const edit = await gate("edit");
+  for (const tool of mutations) await edit.before(event(tool));
+  expect(read.assert).not.toHaveBeenCalled();
+  expect(edit.assert).not.toHaveBeenCalled();
+  // Without permission.assert an unknown tool cannot be approved, so it is refused rather than allowed.
+  for (const access of ["read", "edit"] as const) {
+    let before!: (event: any) => Promise<void>;
+    await installOpencodeNativeToolGate({ permission: { hook: async () => {} }, tool: { hook: async (_: string, fn: typeof before) => { before = fn; } } }, access);
+    for (const tool of ["remove_checkout", "opencodeRemoveCheckout", "worktree_status", "opencode_read_mcp_resource"]) {
+      await expect(before(event(tool))).rejects.toThrow("lacks permission.assert");
+    }
+    await before(event("read"));
   }
   // The startup inventory must contain the identities the gate was proven against.
   const report = (inventory: unknown, access: OpencodeNativeAccess = "read") =>
@@ -250,6 +284,13 @@ it("gates unknown native tool identities: denied in read, approval in ask, remov
   expect(report(null, "edit")).toMatch("could not read the native tool inventory");
   expect(report([...mutations, "opencode_worktree_rm"], "edit")).toMatch("without opencode_worktree_remove");
   expect(report([...mutations, "opencode_worktree_remove", 7])).toMatch("could not read the native tool inventory");
+  // An unexpected extra native tool is accepted in the inventory but never as safe: it is unknown, so gated.
+  const extra = "opencode_worktree_purge_all";
+  expect(report([...mutations, "opencode_worktree_remove", extra], "edit")).toBeNull();
+  expect(classifyOpencodeNativeTool(extra)).toBe("unknown");
+  const editGate = await gate("edit");
+  await editGate.before(event(extra));
+  expect(editGate.assert).toHaveBeenCalledWith(expect.objectContaining({ action: "native.opencode.worktree_purge_all" }));
 });
 
 it("fails closed on unexpected hook and plugin API shapes", async () => {
