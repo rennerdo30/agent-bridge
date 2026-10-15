@@ -170,9 +170,36 @@ export function storeJobRecords(path: string, jobs: readonly unknown[], archived
 export interface ArchiveSelection { ids?: ReadonlySet<string>; names?: ReadonlySet<string>; metadata?: boolean; active?: boolean; history?: boolean }
 export interface IndexedJobSnapshot { signature: string; jobs: Record<string, unknown>[] }
 const cache = new Map<string, IndexedJobSnapshot & { bytes: number }>();
+/** Decoded rows of the last full read per selection, keyed by id with the row's sha256. A row's metadata and
+ * history are written only together with a new sha256 (putJobRecords), so an unchanged sha256 means unchanged JSON.
+ * Any archive write changes the WAL signature; without this, every broker request re-decoded all records (AB-300). */
+type DecodedRows = Map<string, { sha: string; job: Record<string, unknown> }>;
+const decodedRows = new Map<string, { rows: DecodedRows; bytes: number }>();
+const DECODED_CACHE_KEYS = 16;
+let decodedBytes = 0;
 let cacheBytes = 0;
 const CACHE_BUDGET = 8 * 1024 * 1024;
 export const archiveIndexCounters = { reads: 0, decoded: 0 };
+/** Separate from snapshot validity: WAL changes invalidate snapshots, not unchanged decoded rows. */
+export function archiveDecodedCacheUsage(): { entries: number; bytes: number; maxEntries: number; maxBytes: number } {
+  return { entries: decodedRows.size, bytes: decodedBytes, maxEntries: DECODED_CACHE_KEYS, maxBytes: CACHE_BUDGET };
+}
+function touchDecodedRows(key: string): DecodedRows | undefined {
+  const saved = decodedRows.get(key);
+  if (saved) { decodedRows.delete(key); decodedRows.set(key, saved); }
+  return saved?.rows;
+}
+function retainDecodedRows(key: string, rows: DecodedRows): void {
+  const prior = decodedRows.get(key);
+  if (prior) { decodedBytes -= prior.bytes; decodedRows.delete(key); }
+  const bytes = estimatedJsonBytes([key, [...rows]], CACHE_BUDGET);
+  if (bytes > CACHE_BUDGET) return;
+  decodedRows.set(key, { rows, bytes }); decodedBytes += bytes;
+  while (decodedRows.size > DECODED_CACHE_KEYS || decodedBytes > CACHE_BUDGET) {
+    const first = decodedRows.keys().next().value!;
+    decodedBytes -= decodedRows.get(first)!.bytes; decodedRows.delete(first);
+  }
+}
 export function readIndexedJobs(path: string, selection: ArchiveSelection = {}): IndexedJobSnapshot {
   return drainScan(readIndexedJobSteps(path, false, selection));
 }
@@ -184,12 +211,14 @@ export function* readIndexedJobSteps(path: string, responsive = false, selection
   physicalArchivePath(file); physicalArchivePath(join(dirname(path), "archive"));
   const signature = [file, `${file}-wal`].map(p => existsSync(p) ? fileSignature(statSync(p, { bigint: true })) : "missing").join("|");
   const key = `${file}:${Number(Boolean(selection.metadata))}:${Number(Boolean(selection.active))}:${Number(Boolean(selection.history))}:${JSON.stringify([selection.ids ? [...selection.ids].sort() : null, selection.names ? [...selection.names].sort() : null])}`;
+  const previousDecoded = touchDecodedRows(key);
   const saved = cache.get(key);
   if (saved?.signature === signature) { cache.delete(key); cache.set(key, saved); return saved; }
   if (saved) { cacheBytes -= saved.bytes; cache.delete(key); }
   const db = openJobArchive(path);
   if (!db) return { signature, jobs: [] };
   const jobs: Record<string, unknown>[] = [];
+  let currentDecoded: DecodedRows | undefined;
   try {
     const home = dirname(file), archive = join(home, "archive");
     const bound = responsive ? [home, file, archive].filter(at => existsSync(at)).map(at => {
@@ -239,13 +268,25 @@ export function* readIndexedJobSteps(path: string, responsive = false, selection
           }
         }
       }
-    } else for (const row of db.prepare(`SELECT ${columns} FROM ${from}${selection.active ? " WHERE r.active=1" : ""} ORDER BY r.observed_at,r.id`).iterate()) {
-      yield* beforeStep();
-      decode(row);
+    } else {
+      // Only rows whose sha256 changed since the last full read of this selection are decoded again.
+      const current: DecodedRows = new Map();
+      let one: ReturnType<DatabaseSync["prepare"]> | undefined;
+      for (const row of db.prepare(`SELECT r.id,r.sha256 FROM ${from}${selection.active ? " WHERE r.active=1" : ""} ORDER BY r.observed_at,r.id`).iterate()) {
+        yield* beforeStep();
+        const id = String(row.id), sha = String(row.sha256), known = previousDecoded?.get(id);
+        if (known?.sha === sha) { jobs.push(known.job); current.set(id, known); continue; }
+        const full = (one ??= db.prepare(`SELECT ${columns} FROM ${from} WHERE r.id=? AND r.sha256=?`)).get(id, sha);
+        if (!full) continue;
+        decode(full);
+        current.set(id, { sha, job: jobs[jobs.length - 1]! });
+      }
+      currentDecoded = current;
     }
     unchanged();
   } catch (error) { throw archiveWriteError(error); }
   finally { db.close(); }
+  if (currentDecoded) retainDecodedRows(key, currentDecoded);
   const next = { signature, jobs, bytes: estimatedJsonBytes(jobs, CACHE_BUDGET) };
   if (next.bytes <= CACHE_BUDGET) {
     cache.set(key, next); cacheBytes += next.bytes;
