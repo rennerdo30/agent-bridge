@@ -128,7 +128,7 @@ export function removeWorktreeDirectory(path: string, managedRoot = path): void 
   rmSync(toNamespacedPath(resolve(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
 }
 
-type SkippedFile = { path: string; reason: "whitespace only" | "generated noise" | "untracked; not explicitly staged" };
+type SkippedFile = { path: string; reason: "whitespace only" | "generated noise" | "generated bundle; excluded atomically" | "untracked; not explicitly staged" };
 
 export interface WorktreeOutcome {
   changed: boolean;
@@ -237,7 +237,10 @@ async function autoCommitFiles(wt: Worktree, log: Logger): Promise<SkippedFile[]
     const file = entry.slice(3);
     const literal = `:(literal)${file}`;
     let reason: SkippedFile["reason"] | undefined;
-    if (generatedNoise(wt.path, file)) reason = "generated noise";
+    // Entrypoints and hashed chunks form one generated set. Exclude every change,
+    // including staged additions/deletions, so a checkpoint retains the HEAD bundle.
+    if (/^plugins\/[^/]+\/dist\//.test(file)) reason = "generated bundle; excluded atomically";
+    else if (generatedNoise(wt.path, file)) reason = "generated noise";
     else if (entry.startsWith("??")) reason = "untracked; not explicitly staged";
     else if (entry.startsWith("??") || await git([...trust, "diff", "--ignore-all-space", "--ignore-cr-at-eol", "--no-ext-diff", "--no-textconv", "--no-renames", "HEAD", "--", literal], wt.path, log)) {
       // An already staged deletion has no path left in the index for `git add` to match.
