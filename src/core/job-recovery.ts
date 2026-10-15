@@ -1,14 +1,17 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
 import { isRecord } from "./json-store.js";
 import { AGENT_KINDS } from "./protocol.js";
-import { findHistoryJob, historyJobsSteps, readRunLogs, readRunLogsResponsive } from "./run-history.js";
-import { cloneJson } from "./file-cache.js";
+import { findHistoryJob, historyJobsSteps, readRunLogs, readRunLogsResponsive, type RunLogRecord } from "./run-history.js";
+import { cloneJson, fileSignature, fileTimeMs, readJsonSnapshot } from "./file-cache.js";
 import { drainScanResponsive } from "./responsive-scan.js";
 import { pidAlive } from "./delegate.js";
 import { writtenBeforeBoot } from "./boot-time.js";
 import type { Job } from "../mcp/jobs.js";
 import { readRecoveryHeader, type RecoveryHeader } from "./job-recovery-feed.js";
 import { readPendingRunnerSpec, readRunnerStateRecord } from "./runner-store.js";
+import { safeFile } from "./transcripts/common.js";
+import { RUNS_DIR_NAME, type RunMeta } from "./runfeed.js";
 type StoredJob = Omit<Job, "controller" | "progress" | "queue" | "resume">;
 function runStart(run: ReturnType<typeof readRunLogs>[number]): number {
   if (run.meta.jobStartedAt !== undefined) return run.meta.jobStartedAt;
@@ -65,7 +68,37 @@ async function prepareRecoveryAsync(home: string, ref: string) {
     return undefined;
   })());
   const { spec, launch } = recoverySpec(home, id);
-  return selectRecovery(ref, id, history, spec, launch, await readRunLogsResponsive(home));
+  const currentRun = witnessedRun(home, id, history);
+  return selectRecovery(ref, id, history, spec, launch, currentRun ? [currentRun] : await readRunLogsResponsive(home));
+}
+
+/** A live runner publishes the exact feed for this job generation. Missing or
+ * inconsistent evidence must preserve discovery by metadata, including runs
+ * whose filenames do not contain the job id. No filename convention is proof. */
+function witnessedRun(home: string, id: string, history: Record<string, unknown> | undefined): RunLogRecord | undefined {
+  if (history?.id !== id || history.status !== "running" || !isRecord(history.host) || !Number.isFinite(history.startedAt)) return undefined;
+  const state = readRunnerStateRecord(home, id), witness = state?.currentRun;
+  if (state?.status !== "running" || state.pid !== history.host.pid || state.peer !== history.name ||
+      !(Number(state.updatedAt) >= Number(history.startedAt)) || writtenBeforeBoot(Number(state.updatedAt)) ||
+      !isRecord(witness) || witness.id !== id || witness.startedAt !== history.startedAt ||
+      typeof witness.log !== "string" || basename(witness.log) !== witness.log || !/^[\w.-]+\.log$/.test(witness.log) || !pidAlive(Number(state.pid))) return undefined;
+  try {
+    const root = join(home, RUNS_DIR_NAME), canonical = realpathSync.native(root);
+    const log = join(root, witness.log), meta = log.replace(/\.log$/, ".json");
+    const file = safeFile(root, log, canonical), metadata = safeFile(root, meta, canonical);
+    if (!file || !metadata) return undefined;
+    const logStat = statSync(file, { bigint: true }), metaStat = statSync(metadata, { bigint: true });
+    if (!logStat.isFile() || !metaStat.isFile()) return undefined;
+    const value = readJsonSnapshot(metadata, { file: metadata, stat: metaStat }).value;
+    if (!isRecord(value) || value.job !== history.name || value.jobStartedAt !== history.startedAt) return undefined;
+    // Match the containment and replacement fences of the broad reader. The
+    // second prepareRecoveryAsync repeats this observation after any await.
+    if (safeFile(root, log, canonical) !== file || safeFile(root, meta, canonical) !== metadata ||
+        realpathSync.native(root) !== canonical || fileSignature(statSync(file, { bigint: true })) !== fileSignature(logStat) ||
+        fileSignature(statSync(metadata, { bigint: true })) !== fileSignature(metaStat)) return undefined;
+    return { name: witness.log.slice(0, -4), file, updatedAt: fileTimeMs(logStat.mtimeMs, logStat.mtimeNs),
+      size: Number(logStat.size), signature: fileSignature(logStat), archived: false, meta: value as RunMeta };
+  } catch { return undefined; }
 }
 function recoveryId(ref: string): string | undefined {
   const id = ref.replace(/^.*-(?:job|ask)-/, "");
