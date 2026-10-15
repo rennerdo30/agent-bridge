@@ -1,7 +1,10 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 // Replace only the OS query this module issues; everything else stays the real implementation.
-const query = vi.hoisted(() => ({ results: [] as Array<string | Error>, calls: 0, hold: false, releases: [] as Array<() => void> }));
+const query = vi.hoisted(() => ({ results: [] as Array<string | Error>, calls: 0, hold: false, syncMs: 0, releases: [] as Array<() => void> }));
 const thread = vi.hoisted(() => ({ main: true, data: {} as Record<string, unknown> }));
 vi.mock("node:worker_threads", async original => ({
   ...await original<typeof import("node:worker_threads")>(),
@@ -17,7 +20,24 @@ vi.mock("node:child_process", async original => {
     const finish = () => result instanceof Error ? callback(result) : callback(null, { stdout: result, stderr: "" });
     if (query.hold) query.releases.push(finish); else setImmediate(finish);
   });
-  return { ...actual, execFile };
+  return { ...actual, execFile, execFileSync: vi.fn(() => {
+    const result = next();
+    vi.advanceTimersByTime(query.syncMs);
+    if (result instanceof Error) throw result;
+    return result;
+  }) };
+});
+vi.mock("node:fs", async original => {
+  const actual = await original<typeof import("node:fs")>();
+  return { ...actual, readFileSync: vi.fn((path: unknown, options: unknown) => {
+    if (path === "/proc/sys/kernel/random/boot_id") return "00000000-0000-0000-0000-000000000001\n";
+    if (path === `/proc/${process.pid}/stat`) {
+      const result = next(); vi.advanceTimersByTime(query.syncMs);
+      if (result instanceof Error) throw result;
+      return `1 (node) ${Array.from({ length: 19 }, () => "0").join(" ")} ${result} 0`;
+    }
+    return actual.readFileSync(path as string, options as never);
+  }) };
 });
 vi.mock("node:fs/promises", async original => {
   const actual = await original<typeof import("node:fs/promises")>();
@@ -33,10 +53,30 @@ vi.mock("node:fs/promises", async original => {
   }) };
 });
 
-afterEach(() => { for (const release of query.releases.splice(0)) release(); query.hold = false; vi.useRealTimers(); query.results = []; query.calls = 0; thread.main = true; thread.data = {}; vi.resetModules(); });
+afterEach(() => { for (const release of query.releases.splice(0)) release(); query.hold = false; query.syncMs = 0; vi.useRealTimers(); query.results = []; query.calls = 0; thread.main = true; thread.data = {}; vi.resetModules(); });
 
 const seededIdentity = process.platform === "win32" ? "638950000000000001" : process.platform === "linux"
   ? "00000000-0000-0000-0000-000000000001:123" : "Thu Oct 15 12:00:00 2026";
+it("attributes a 3.5 second migration-lock stall to the cold own-PID probe and removes it with the worker seed", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "history-lock-"));
+  vi.useFakeTimers({ toFake: ["Date", "performance", "setTimeout", "clearTimeout"] });
+  thread.main = false; query.syncMs = 3_500;
+  query.results.push(process.platform === "linux" ? "123" : seededIdentity);
+  try {
+    const cold = await import("../src/core/migration-lock.js");
+    const started = performance.now();
+    const release = cold.migrationLock(join(dir, "history.db"));
+    expect(performance.now() - started).toBe(3_500);
+    expect(query.calls).toBe(1); release();
+    vi.resetModules();
+    thread.data = { ownProcessIdentity: { pid: process.pid, identity: seededIdentity } };
+    const warm = await import("../src/core/migration-lock.js");
+    const seededAt = performance.now();
+    const releaseSeeded = warm.migrationLock(join(dir, "history.db"));
+    expect(performance.now() - seededAt).toBe(0);
+    expect(query.calls).toBe(1); releaseSeeded();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 it("uses a verified same-PID worker seed without an OS query, even when that dependency would fail", async () => {
   thread.main = false; thread.data = { ownProcessIdentity: { pid: process.pid, identity: seededIdentity } };
   query.results.push(new Error("SIMULATED cold OS query"));

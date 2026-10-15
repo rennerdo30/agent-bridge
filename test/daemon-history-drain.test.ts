@@ -72,6 +72,7 @@ vi.mock("../src/core/history-store.js", () => ({
   historyMigrationFailure: () => null, copyLegacyConversationTail: () => 0, legacyTailConflicts: () => 0, migrateHistoryStore: fixture.migration,
 }));
 vi.mock("../src/core/metadata-db.js", () => ({ checkpointOwnedMetadataConnections: fixture.metadata, closeMetadataDbs: fixture.metadataClose }));
+vi.mock("../src/core/process-identity.js", () => ({ processIdentity: () => "fixture-verified-parent-identity" }));
 vi.mock("../src/core/history.js", () => ({ HISTORY_TICK_MS: 100, HistoryIndex: class {
   reset = fixture.indexReset; rememberPeer = fixture.indexPeer; tick = fixture.indexTick; wake = fixture.indexWake; close = fixture.indexClose;
 } }));
@@ -145,6 +146,7 @@ function noRetirement() {
 
 describe("trusted history owner observation; unsupported store closure stays blocked", () => {
   it("keeps default tick/reconcile/peer admission and normal results before a lifecycle seal", async () => {
+    expect(fixture.workerData.ownProcessIdentity).toEqual({ pid: process.pid, identity: "fixture-verified-parent-identity" });
     background.rememberPeer(peer); const tick = background.tick(true), reconcile = background.reconcileAsks();
     expect(background.reconcileAsks()).toBe(reconcile);
     expect(worker.sent).toContainEqual({ peer });

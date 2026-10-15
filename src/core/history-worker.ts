@@ -157,10 +157,16 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
   if (pending || Date.now() < pauseUntil || !enabled()) { reportPaused(true); return { work: 0, discovering: !ready }; }
   running = true;
   const started = performance.now();
-  let budgetMs = 0, ingestMs = 0, indexMs = 0;
+  const phases: Record<string, number> = {};
+  let phase = "budgetMs", phaseStarted = started;
+  const step = (next: string) => {
+    const now = performance.now();
+    phases[phase] = (phases[phase] ?? 0) + now - phaseStarted;
+    phase = next; phaseStarted = now;
+  };
   try {
     const admitted = await budgetAdmission.admit(currentConfig().history.budgetBytes);
-    budgetMs = performance.now() - started;
+    step("resetStateMs");
     if (!admitted) return { work: 0, discovering: !ready };
     reset = requestedReset;
     requestedReset = false;
@@ -173,13 +179,17 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
       saveImportState();
       migrationProgress = { ...migrationProgress, error: null };
     }
+    step("observerNotifyMs");
     reportPaused(false);
+    step("migrationMs");
     if (!ready) {
       try {
         await migrateHistoryStore(workerData.bridge, db, paused, () => stopped, owner => parentPort?.postMessage({ migrationLease: owner }), reset, { ioBytesPerSecond, onProgress: progress => { migrationProgress = progress; parentPort?.postMessage({ migrationProgress }); } });
         migrationFailure = null;
       } catch (err) { migrationFailure = historyMigrationFailure(db); throw err; }
+      step("indexInitMs");
       index ??= new HistoryIndex(db, workerData.home, paths, source);
+      step("ingestInitMs");
       if (!ingest) {
         ingest = new ConversationIngestor(db, workerData.home, paths, source); ingest.onChange = onTranscriptChange;
         const registering = index;
@@ -187,12 +197,15 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
       }
       ready = true;
     }
+    step("admissionCheckMs");
     if (!index || !ingest) return { work: 0, discovering: true };
     if (stopped || paused()) return { work: 0, discovering: true };
     // The legacy tail never gates raw capture: a failure here is reported and native ingestion still runs (AB-226).
+    step("legacyTailMs");
     let legacyWork = 0;
     try { legacyWork = copyLegacyConversationTail(source, db); }
     catch (error) { if (!stopped) parentPort?.postMessage({ error: `legacy history tail deferred; originals retained: ${String(error)}` }); }
+    step("legacyConflictsMs");
     const conflicts = legacyTailConflicts(db);
     if (conflicts !== legacyConflicts) {
       legacyConflicts = conflicts;
@@ -200,25 +213,32 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
       parentPort?.postMessage({ migrationProgress });
       if (conflicts) parentPort?.postMessage({ error: `${conflicts} legacy history tail conflict(s) retained in history.db (history_legacy_conflicts); both originals kept, finalize stays blocked` });
     }
+    step("ingestYieldMs");
     await yieldTurn(10);
+    step("ingestPressureWaitMs");
     await waitForPressureGap();
+    step("peerResetMs");
     if (stopped || paused()) return { work: legacyWork, discovering: true };
     for (const [id, peer] of [...peers].slice(0, 32)) { index.rememberPeer(peer); peers.delete(id); }
     if (reset) { index.reset(); activeReset = false; unappliedReset = false; requestedReset = false; }
     // Preserve raw bytes before spending the next idle gap on derived indexing.
     // Otherwise a full index batch can consume every gap in sustained traffic.
-    const ingestStarted = performance.now();
+    step("ingestMs");
     const rawWork = ingest.tick();
-    ingestMs = performance.now() - ingestStarted;
+    step("indexWakeMs");
     if (transcriptsChanged) { transcriptsChanged = false; index.wake(); }
+    step("indexYieldMs");
     await yieldTurn(10);
+    step("indexPressureWaitMs");
     await waitForPressureGap();
+    step("indexAdmissionMs");
     if (stopped || paused()) return { work: legacyWork + rawWork, discovering: true };
-    const indexStarted = performance.now();
+    step("indexMs");
     const result = index.tick(true);
-    indexMs = performance.now() - indexStarted;
+    step("resultMs");
     return { work: legacyWork + rawWork + result.work, discovering: result.discovering || ingest.discovering };
   } catch (error) {
+    step("failureStateWriteMs");
     if ((error as { code?: string }).code === "HISTORY_IMPORT_VERIFICATION_FAILED") {
       importState = { ...importState, error: String(error) }; saveImportState();
       migrationProgress = { ...migrationProgress, error: importState.error!, paused: true };
@@ -226,11 +246,13 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
     }
     throw error;
   } finally {
+    step("completionMs");
     if (activeReset) { unappliedReset = true; if (lifecycleQuiesced) requestedReset = true; }
     activeReset = false;
     running = false;
     budgetAdmission.complete();
-    parentPort?.postMessage({ historyTiming: { budgetMs, ingestMs, indexMs, totalMs: performance.now() - started } });
+    step("timingNotifyMs");
+    parentPort?.postMessage({ historyTiming: { ...phases, totalMs: performance.now() - started } });
   }
 }
 let dueAt = 0, transcriptsChanged = false, wakeAfterTick = false, liveAfterTick = false, lastTickAt = 0;
@@ -261,14 +283,21 @@ function schedule(delay = HISTORY_TICK_MS): void {
   retainedDueAt = null;
   if (timer) clearTimeout(timer);
   dueAt = Date.now() + delay;
+  const scheduledAt = performance.now();
   timer = setTimeout(async () => {
+    const firedAt = performance.now();
     timer = null;
+    const acceptStarted = performance.now();
     const finish = acceptOperation();
+    const acceptMs = performance.now() - acceptStarted;
     firing++;
     let next = idle.next(0, false);
     try {
       // Resume on the pressure-clear event; polling can miss short idle gaps.
+      const pressureStarted = performance.now();
       await waitForPressureGap();
+      parentPort?.postMessage({ historyTiming: { scheduleWaitMs: firedAt - scheduledAt, scheduleDelayMs: delay,
+        scheduleLateMs: Math.max(0, firedAt - scheduledAt - delay), acceptMs, schedulePressureWaitMs: performance.now() - pressureStarted } });
       if (!migrationFailure && !importState.error) {
         const result = await tick();
         if (result.work || result.discovering && enabled()) next = idle.next(result.work, result.discovering);
@@ -284,7 +313,9 @@ function schedule(delay = HISTORY_TICK_MS): void {
     if (wakeAfterTick) { wakeAfterTick = false; next = 0; }
     firing--;
     schedule(next);
+    const finishStarted = performance.now();
     finish();
+    parentPort?.postMessage({ historyTiming: { operationFinishCheckpointMs: performance.now() - finishStarted } });
   }, delay);
 }
 function close(): void { if (budgetTimer) clearInterval(budgetTimer); index?.close(); ingest?.close(); source.close(); db.close(); closeMetadataDbs(); parentPort?.close(); }

@@ -116,7 +116,7 @@ describe("history change feed (AB-383)", () => {
       samples.push(elapsed);
     }
     console.info(`AB-383 line on disk -> pushed event -> indexed read: ${samples.map(ms => ms.toFixed(0)).join(", ")} ms (event at ${pushed.map(ms => ms.toFixed(0)).join(", ")} ms)`);
-    console.info("AB-383 worker phases (ms):", JSON.stringify(timings.slice(-12)));
+    console.info("AB-383 worker phases (ms):", JSON.stringify(timings));
     expect(Math.max(...samples)).toBeLessThan(PUSH_BUDGET_MS);
   });
 

@@ -27,7 +27,15 @@ let bin: string;
 const managers: JobManager[] = [];
 const connections: { client: Client; server: McpServer }[] = [];
 const remotes: RemoteJobs[] = [];
+const steps: string[] = [];
+const fixtureLog = { ...nullLogger,
+  debug: (message: string) => { steps.push(message); },
+  info: (message: string) => { steps.push(message); },
+  warn: (message: string) => { steps.push(message); },
+  child: () => fixtureLog,
+};
 beforeEach(() => {
+  steps.length = 0;
   vi.stubEnv("AGENT_BRIDGE_MUSE_EXEC", "1");
   env = makeEnv();
   const script = join(env.home, "muse.cjs");
@@ -54,10 +62,10 @@ function calls(): { args: string[]; session: string; prompt: string; cwd: string
   return readFileSync(join(env.home, "calls.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
 }
 async function session(node: BridgeNode) {
-  const jobs = new JobManager(node, nullLogger, join(env.home, "jobs.json"));
+  const jobs = new JobManager(node, fixtureLog, join(env.home, "jobs.json"));
   managers.push(jobs);
   const server = new McpServer({ name: "muse-jobs", version: "1" });
-  registerTools(server, { agent: "claude", cfg: { ...DEFAULT_CONFIG, museBin: bin }, log: nullLogger, node,
+  registerTools(server, { agent: "claude", cfg: { ...DEFAULT_CONFIG, museBin: bin }, log: fixtureLog, node,
     home: env.home, cwd: () => env.home, channelActive: () => false, jobs }, ["muse"]);
   const client = new Client({ name: "muse-jobs-client", version: "1" });
   const [a, b] = InMemoryTransport.createLinkedPair();
@@ -125,8 +133,15 @@ describe("Muse legacy exec profile persistence", () => {
     ({ client, jobs } = await session(node));
     expect(jobs.find(name)?.args).toMatchObject({ access: "edit" });
     expect(jobs.find(name)?.args?.permission_profile).toBeUndefined();
-    await call(client, "message_subagent", { job: name, message: "exact replaces edit", permission_profile: "safe-profile" });
-    await until(() => jobs.find(name)?.status === "done" && calls().length === 6);
+    const finalTurn = await call(client, "message_subagent", { job: name, message: "exact replaces edit", permission_profile: "safe-profile" });
+    expect(finalTurn.error, finalTurn.text).toBeFalsy();
+    try { await until(() => jobs.find(name)?.status === "done" && calls().length === 6); }
+    catch (error) {
+      const job = jobs.find(name);
+      console.info("Muse final profile continuation", { receipt: finalTurn.text, status: job?.status, progress: job?.progress,
+        args: job?.args, calls: calls().length, steps });
+      throw error;
+    }
     expect(jobs.find(name)?.args?.access).toBeUndefined();
     expect(calls()[5]!.args).toEqual(expect.arrayContaining(["--permission-profile", "safe-profile", "--disable-write", "--disable-shell"]));
     const before = calls().length;

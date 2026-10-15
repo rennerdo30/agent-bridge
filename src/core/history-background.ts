@@ -9,6 +9,7 @@ import type { Logger } from "./logger.js";
 import { transcriptPaths } from "./transcripts/common.js";
 import type { PeerInfo } from "./protocol.js";
 import { historyDbPath, releaseExitedHistoryLease, HISTORY_IO_BYTES_PER_SECOND, type HistoryMigrationProgress } from "./history-store.js";
+import { processIdentity } from "./process-identity.js";
 
 type Batch = { work: number; discovering: boolean };
 export interface HistoryWorkerCheckpoint {
@@ -139,8 +140,12 @@ export class HistoryBackground {
       this.restart = null;
       this.lastPressure = undefined;
       this.exited = false;
+      // Threads share the parent's PID, but not its module cache. Reuse the
+      // verified birth identity rather than cold-probing PowerShell in migrationLock.
+      const identity = processIdentity(process.pid);
       this.worker = new Worker(entry, {
-        workerData: { file: historyDbPath(file), bridge: file, home: dirname(file), paths: transcriptPaths(), lifecycleOwnerInstance: this.lifecycleOwnerInstance },
+        workerData: { file: historyDbPath(file), bridge: file, home: dirname(file), paths: transcriptPaths(), lifecycleOwnerInstance: this.lifecycleOwnerInstance,
+          ...(identity ? { ownProcessIdentity: { pid: process.pid, identity } } : {}) },
         execArgv: [],
       });
       const worker = this.worker;
