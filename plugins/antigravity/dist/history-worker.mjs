@@ -1,19 +1,18 @@
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 import {
-  HistoryBudgetAdmission,
   historyBudget
-} from "./chunks/chunk-EBFZLA6V.mjs";
+} from "./chunks/chunk-2PKS7JZW.mjs";
 import {
   HISTORY_TICK_MS,
   HistoryIndex
-} from "./chunks/chunk-K5LOCE6M.mjs";
-import "./chunks/chunk-5FQXA5ZD.mjs";
+} from "./chunks/chunk-7BODFNSS.mjs";
+import "./chunks/chunk-KLBF34ZL.mjs";
 import {
   ConversationIngestor,
   ownsProjectMirrors,
   projectDatabasePath
-} from "./chunks/chunk-C6KVTHCO.mjs";
-import "./chunks/chunk-AL4LE2XJ.mjs";
+} from "./chunks/chunk-7EG4UVAA.mjs";
+import "./chunks/chunk-VZXYRPA6.mjs";
 import {
   HISTORY_IO_BYTES_PER_SECOND,
   copyLegacyConversationTail,
@@ -22,21 +21,21 @@ import {
   migrateHistoryStore,
   openHistoryStore,
   readHistoryMigrationProgress
-} from "./chunks/chunk-AK6MDTLO.mjs";
+} from "./chunks/chunk-WXC7FWGX.mjs";
 import "./chunks/chunk-DODQKEUH.mjs";
 import "./chunks/chunk-HT3JXK2O.mjs";
 import {
   reconcileAskCompletions
-} from "./chunks/chunk-LOV5TPO7.mjs";
+} from "./chunks/chunk-ZQ2B63AL.mjs";
 import {
   loadConfig
-} from "./chunks/chunk-7AVL5VO2.mjs";
-import "./chunks/chunk-PQTSSDXI.mjs";
+} from "./chunks/chunk-H3KBN2YN.mjs";
+import "./chunks/chunk-DXHVZRHI.mjs";
 import "./chunks/chunk-UTSHXRSC.mjs";
 import "./chunks/chunk-IYJ5P7ML.mjs";
 import {
   readHistoryJson
-} from "./chunks/chunk-7ILYHEEI.mjs";
+} from "./chunks/chunk-DS664YOK.mjs";
 import {
   transcriptPaths
 } from "./chunks/chunk-OX5J3NNH.mjs";
@@ -48,12 +47,12 @@ import {
   isRecord,
   nullLogger,
   writeJsonStore
-} from "./chunks/chunk-K2KQEUNB.mjs";
-import "./chunks/chunk-BVMWTWQA.mjs";
+} from "./chunks/chunk-BPL7GJLM.mjs";
+import "./chunks/chunk-ICCAXDVG.mjs";
 import {
   CONFIG_FILE_NAME
 } from "./chunks/chunk-O26G5HFG.mjs";
-import "./chunks/chunk-ARGAVNKJ.mjs";
+import "./chunks/chunk-HYVC3VSW.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/core/history-worker.ts
@@ -192,28 +191,23 @@ function reportPaused(paused2) {
 }
 reportPaused(!enabled() || Boolean(importState.error));
 var paused = () => pending || Date.now() < pauseUntil || !enabled() || storageBudgetPaused;
-function applyStorageBudget(budget) {
+async function checkStorageBudget() {
+  const config = currentConfig();
+  const mirrors = ownsProjectMirrors(workerData.home) ? db.prepare("SELECT DISTINCT project FROM conversations WHERE project != ''").all().map((row) => dirname(projectDatabasePath(String(row.project), workerData.home))) : [];
+  const budget = await historyBudget(workerData.home, config.history.budgetBytes, mirrors);
   storageBudgetPaused = budget.paused;
   if (budget.paused) {
     migrationProgress = { ...migrationProgress, paused: true, error: `History storage budget reached (${budget.bytes}/${budget.budgetBytes} bytes); import paused, sources, cursors and all archives retained. Raise history.budgetBytes to resume; never prune user data.` };
     parentPort?.postMessage({ migrationProgress });
   } else if (migrationProgress.error?.startsWith("History storage budget reached")) migrationProgress = { ...migrationProgress, error: null };
+  return budget.paused;
 }
-var budgetAdmission = new HistoryBudgetAdmission(async () => {
-  const started = performance.now();
-  const config = currentConfig();
-  const mirrors = ownsProjectMirrors(workerData.home) ? db.prepare("SELECT DISTINCT project FROM conversations WHERE project != ''").all().map((row) => dirname(projectDatabasePath(String(row.project), workerData.home))) : [];
-  const budget = await historyBudget(workerData.home, config.history.budgetBytes, mirrors);
-  parentPort?.postMessage({ historyTiming: { budgetScanMs: performance.now() - started } });
-  applyStorageBudget(budget);
-  return budget;
-});
 var checkingBudget = false;
 function budgetTick() {
-  if (checkingBudget || stopped || lifecycleQuiesced) return;
+  if (!running || checkingBudget || stopped || lifecycleQuiesced) return;
   const finish = acceptOperation();
   checkingBudget = true;
-  void budgetAdmission.refresh().catch((error) => {
+  void checkStorageBudget().catch((error) => {
     storageBudgetPaused = true;
     parentPort?.postMessage({ error: String(error) });
   }).finally(() => {
@@ -240,12 +234,8 @@ async function tick(reset = false) {
     return { work: 0, discovering: !ready };
   }
   running = true;
-  const started = performance.now();
-  let budgetMs = 0, ingestMs = 0, indexMs = 0;
   try {
-    const admitted = await budgetAdmission.admit(currentConfig().history.budgetBytes);
-    budgetMs = performance.now() - started;
-    if (!admitted) return { work: 0, discovering: !ready };
+    if (await checkStorageBudget()) return { work: 0, discovering: !ready };
     reset = requestedReset;
     requestedReset = false;
     activeReset = reset;
@@ -308,9 +298,7 @@ async function tick(reset = false) {
       unappliedReset = false;
       requestedReset = false;
     }
-    const ingestStarted = performance.now();
     const rawWork = ingest.tick();
-    ingestMs = performance.now() - ingestStarted;
     if (transcriptsChanged) {
       transcriptsChanged = false;
       index.wake();
@@ -318,9 +306,7 @@ async function tick(reset = false) {
     await yieldTurn(10);
     await waitForPressureGap();
     if (stopped || paused()) return { work: legacyWork + rawWork, discovering: true };
-    const indexStarted = performance.now();
     const result = index.tick(true);
-    indexMs = performance.now() - indexStarted;
     return { work: legacyWork + rawWork + result.work, discovering: result.discovering || ingest.discovering };
   } catch (error) {
     if (error.code === "HISTORY_IMPORT_VERIFICATION_FAILED") {
@@ -337,8 +323,6 @@ async function tick(reset = false) {
     }
     activeReset = false;
     running = false;
-    budgetAdmission.complete();
-    parentPort?.postMessage({ historyTiming: { budgetMs, ingestMs, indexMs, totalMs: performance.now() - started } });
   }
 }
 var dueAt = 0;
@@ -496,7 +480,7 @@ parentPort?.on("message", async (message) => {
       stopped = true;
       releasePressure();
       if (timer) clearTimeout(timer);
-      while (running || checkingBudget) await yieldTurn(10);
+      while (running) await yieldTurn(10);
       close();
       return;
     }
