@@ -16,6 +16,7 @@ const SLOT_DB_NAME = "resource-slots.sqlite";
 const LOCK_WAIT_MS = 3_000;
 /** Busy retries of a release, each after the full busy timeout: about 30 s in total. */
 const RELEASE_ATTEMPTS = 10;
+let nextStoreId = 0;
 
 export interface SlotOwner { id: string; pid: number }
 export interface SlotEntry extends SlotOwner { resource: string; ticket: number; held: boolean; expiresAt: number }
@@ -23,6 +24,7 @@ export interface SlotEntry extends SlotOwner { resource: string; ticket: number;
 /** SQLite's file locks serialize FIFO tickets and leases across processes and recover after crashes. */
 export class ResourceSlots {
   private readonly db: DatabaseSync;
+  private readonly captureId = ++nextStoreId;
   private closed = false;
   constructor(home: string, private readonly isAlive: (pid: number, identity?: string | null, recordedAt?: number) => boolean = slotLiveness.alive, private readonly now = Date.now) {
     mkdirSync(home, { recursive: true });
@@ -91,7 +93,7 @@ export class ResourceSlots {
       const row = this.db.prepare("SELECT ticket, expiresAt, identity FROM slots WHERE resource = ? AND id = ? AND pid = ?").get(resource, owner.id, owner.pid)!;
       if (row.identity !== null) return acquired;
       const recordedAt = Number(row.expiresAt) - SLOT_LEASE_MS;
-      slotLiveness.capture(owner.pid, observed => {
+      slotLiveness.capture(owner.pid, `${this.captureId}|${row.ticket}`, observed => {
         if (this.closed || identityStartedAfter(observed, recordedAt + 1_000)) return;
         // Fence release/replacement/renewal while the query was pending.
         try { this.db.prepare("UPDATE slots SET identity = ? WHERE ticket = ? AND pid = ? AND expiresAt = ? AND identity IS NULL").run(observed, row.ticket!, owner.pid, row.expiresAt!); }
