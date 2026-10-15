@@ -292,7 +292,10 @@ function outcomeFault(writer: DatabaseSync, end: number, fault: OutcomeFault, fi
     // has four clock reads, then both platforms have two autocommit checks.
     // Expire at the first reader guard, not a prior transaction/phase guard.
     if (committed && fault === "reader_preflight" && ++postCommitClockReads >= (portable ? 3 : 7)) expire();
-    return expired ? Math.max(realNow(), end + 1) : realNow();
+    // Until the SIMULATED boundary fires, the phase clock stays strictly before the
+    // original deadline: real SQLite/fsync time on a loaded runner can no longer
+    // expire the phase first, so the simulated boundary is the only reachable expiry.
+    return expired ? Math.max(realNow(), end + 1) : Math.min(realNow(), end - 1);
   });
   const runs: Array<() => void> = [];
   const exec = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
