@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request supersedes its running CI; main pushes always finish.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     strategy:
@@ -49,13 +54,48 @@ jobs:
           path: .agent-bridge-test/ci/
           if-no-files-found: warn
 
-  windows:
-    name: Windows Node ${{ matrix.node }} shard ${{ matrix.shard }}/4
+  # Collect the unsharded inventory once per Node version (the inventory binds the Node
+  # runtime) instead of in every shard job. Each shard downloads it and proves its exact
+  # executed membership against it, as before.
+  windows-collect:
+    name: Windows Node ${{ matrix.node }} collect shard inventory
     strategy:
       fail-fast: false
       matrix:
         node: [22, 24]
-        shard: [1, 2, 3, 4]
+    runs-on: windows-latest
+    env:
+      AGENT_BRIDGE_CI_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Collect unsharded cases and prove complete disjoint coverage
+        run: node scripts/check-test-shards.mjs 6 .agent-bridge-test/ci/shards.json --collect
+      - name: Retain shard inventory
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: shard-inventory-windows-node-${{ matrix.node }}-attempt-${{ github.run_attempt }}
+          path: .agent-bridge-test/ci/shards.json
+          if-no-files-found: error
+
+  windows:
+    name: Windows Node ${{ matrix.node }} shard ${{ matrix.shard }}/6
+    needs: windows-collect
+    # Run even when a collect job failed, so fast tests and the coverage verdict still report.
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+        shard: [1, 2, 3, 4, 5, 6]
     runs-on: windows-latest
     env:
       AGENT_BRIDGE_CI_RESULTS_DIR: .agent-bridge-test/ci
@@ -71,15 +111,21 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
-      - name: Collect unsharded cases and prove complete disjoint coverage
+      # "Re-run failed jobs" keeps a successful collect job, so take the newest attempt's inventory.
+      - name: Download shard inventory
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: shard-inventory-windows-node-${{ matrix.node }}-attempt-*
+          path: .agent-bridge-test/inventory
+      - name: Select shard inventory
         id: collect
-        run: node scripts/check-test-shards.mjs 4 .agent-bridge-test/ci/shards.json --collect
+        run: node scripts/select-shard-inventory.mjs .agent-bridge-test/inventory ${{ matrix.node }} .agent-bridge-test/ci/shards.json
       # The released runner retains lane filters, deadlines and worker limits.
       - name: Fast tests
-        run: npm test -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/fast-results.json
+        run: npm test -- --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/fast-results.json
       - name: Integration tests
         if: ${{ !cancelled() && steps.collect.outcome == 'success' }}
-        run: npm run test:integration -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/integration-results.json
+        run: npm run test:integration -- --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/integration-results.json
       - name: Verify exact collected and executed shard membership
         if: always()
         run: node scripts/check-shard-results.mjs .agent-bridge-test/ci ${{ matrix.shard }}
