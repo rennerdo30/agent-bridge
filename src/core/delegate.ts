@@ -17,6 +17,7 @@ import { PermissionRelay, type PermissionDecision } from "./relay.js";
 import { resolveCodexDriveMappings, codexPathPrompt } from "./codex-paths.js";
 import { DEFAULT_MAX_DELEGATE_DEPTH, ENV, MAX_DELEGATE_DEPTH_LIMIT } from "./constants.js";
 import { createProviderAttemptSource, type ProviderAttemptKey, type ProviderAttemptObserver } from "./provider-attempt-source.js";
+import { parseOpencodeVersion, unknownOpencodeVersionMessage } from "./opencode-native-tools.js";
 
 /** Env var tracking nested delegation, so a delegated agent cannot delegate back forever. */
 export const DELEGATE_DEPTH_ENV = "AGENT_BRIDGE_DELEGATE_DEPTH";
@@ -784,7 +785,7 @@ export function parseOpencodeJsonl(stdout: string): {
   return sawUsage ? { sessionId, text, error, usage: { input, output }, cost } : { sessionId, text, error };
 }
 
-const opencodeVersions = new Map<string, { fingerprint: string; version: Promise<boolean> }>();
+const opencodeVersions = new Map<string, { fingerprint: string; version: Promise<string> }>();
 
 function opencodeFingerprint(resolved: string): string {
   const shim = process.platform === "win32" && WINDOWS_SHIM_EXTS.has(extname(resolved).toLowerCase()) ? unwrapNpmShim(resolved) : null;
@@ -795,7 +796,7 @@ function opencodeFingerprint(resolved: string): string {
 }
 
 /** Probe once per executable; v2 needs a private server to inherit child config and permissions. */
-export function opencodeV2(bin: string, cwd: string, log: Logger): Promise<boolean> {
+export function opencodeVersion(bin: string, cwd: string, log: Logger): Promise<string> {
   const key = resolveBinary(bin) ?? bin;
   const fingerprint = opencodeFingerprint(key);
   const cached = opencodeVersions.get(key);
@@ -803,7 +804,7 @@ export function opencodeV2(bin: string, cwd: string, log: Logger): Promise<boole
   const version = runProcess({ bin, args: ["--version"], stdin: "", cwd, timeoutMs: 10_000, env: childEnv(), log })
     .then(res => {
       if (res.code !== 0) throw new DelegateError("Could not detect opencode version", "failed", res.stderr);
-      return /(?:^|\s)(?:opencode\s+)?v?2\.\d+\.\d+/.test(res.stdout.trim());
+      return res.stdout.trim();
     }).catch(err => {
       // A failed probe must not permanently select V1 flags for a V2 installation.
       if (opencodeVersions.get(key)?.version === version) opencodeVersions.delete(key);
@@ -813,9 +814,26 @@ export function opencodeV2(bin: string, cwd: string, log: Logger): Promise<boole
   return version;
 }
 
+export async function opencodeV2(bin: string, cwd: string, log: Logger): Promise<boolean> {
+  return /(?:^|\s)(?:opencode\s+)?v?2\.\d+\.\d+/.test(await opencodeVersion(bin, cwd, log));
+}
+
 export async function delegateToOpencode(req: DelegateRequest & { bin: string; autoApprove: boolean }): Promise<DelegateResult> {
   checkDepth(req.maxDelegateDepth);
-  const v2 = await opencodeV2(req.bin, req.cwd, req.log);
+  const versionOutput = await opencodeVersion(req.bin, req.cwd, req.log);
+  const { api } = parseOpencodeVersion(versionOutput);
+  // Unknown output could be any API: never pick flags (or skip the native gate) on a guess.
+  if (api === "unknown") throw new DelegateError(unknownOpencodeVersionMessage(versionOutput), "failed");
+  const v2 = api !== "v1";
+  if (api === "v2-native") {
+    // A private server lets us verify the gate loaded before any model/tool execution.
+    const { delegateToOpencodeServed } = await import("./opencode-served.js");
+    return delegateToOpencodeServed({ ...req,
+      nativeAccess: req.autoApprove ? "edit" : "read",
+      permissions: req.autoApprove ? null : OPENCODE_READ_ONLY_PERMISSIONS,
+      onPermission: async () => req.autoApprove ? { allow: true } : { allow: false, message: "This delegated run cannot request approval." },
+    });
+  }
   // runProcess sets both cwd and PWD; --dir was removed in OpenCode 2.
   const args = ["run", "--format", "json"];
   if (v2) args.push("--standalone");
