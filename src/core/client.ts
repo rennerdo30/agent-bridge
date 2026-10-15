@@ -126,6 +126,12 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
   request<O extends Op>(op: O, args: RequestMap[O][0], timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<RequestMap[O][1]> {
     if (this.closed) return Promise.reject(brokerConnectionClosedError());
     const id = this.nextId++;
+    // AB-380: a frame the broker cannot decode would drop the connection; fail here instead, without retry.
+    const data = encodeFrame({ t: "req", id, op, args });
+    const bytes = Buffer.byteLength(data);
+    if (bytes > MAX_FRAME_BYTES) return Promise.reject(new BridgeError("too_large",
+      `${op} request is ${bytes} bytes, over the ${MAX_FRAME_BYTES}-byte frame limit; it was not sent and must not be retried.`,
+      { operation: op, bytes, limit: MAX_FRAME_BYTES, retryable: false }));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
@@ -141,7 +147,7 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
           `Broker ${this.brokerVersion ? "v" + this.brokerVersion : "version unknown (older protocol)"} does not support ${op} required by server v${APP_VERSION}. Update the broker host and reload its session after current jobs finish; no operation was applied.`, { operation: op }));
         else reject(err);
       }, timer });
-      this.socket.write(encodeFrame({ t: "req", id, op, args }));
+      this.socket.write(data);
     });
   }
 

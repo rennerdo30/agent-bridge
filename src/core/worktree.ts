@@ -334,12 +334,33 @@ export function handoffWarning(files: readonly string[]): string | null {
     : null;
 }
 
+/** At most this many skipped paths (or directory groups) are listed in a report (AB-380). */
+export const MAX_LISTED_SKIPPED_PATHS = 50;
+
+/** The skipped files, bounded: every path when few, else counts per top-level directory, then "… and N more". */
+function skippedSummary(skipped: readonly SkippedFile[]): string {
+  const list = (items: string[]) => items.slice(0, MAX_LISTED_SKIPPED_PATHS).join(", ") +
+    (items.length > MAX_LISTED_SKIPPED_PATHS ? `, … and ${items.length - MAX_LISTED_SKIPPED_PATHS} more` : "");
+  if (skipped.length <= MAX_LISTED_SKIPPED_PATHS) return list(skipped.map((f) => `${f.path} (${f.reason})`));
+  const groups = new Map<string, { dir: string; reason: string; count: number }>();
+  for (const f of skipped) {
+    const path = f.path.replace(/\\/g, "/"), slash = path.indexOf("/");
+    const dir = slash > 0 ? path.slice(0, slash + 1) : path, key = `${dir}\0${f.reason}`;
+    const group = groups.get(key) ?? { dir, reason: f.reason, count: 0 };
+    group.count++;
+    groups.set(key, group);
+  }
+  const entries = [...groups.values()].sort((a, b) => b.count - a.count)
+    .map((g) => g.count > 1 ? `${g.dir} (${g.count} files, ${g.reason})` : `${g.dir} (${g.reason})`);
+  return `${skipped.length} files: ${list(entries)}`;
+}
+
 /** Human/agent-readable instructions for taking or discarding the subagent's work. */
 export function worktreeReport(wt: Worktree, outcome: WorktreeOutcome): string {
   const branch = outcome.branch ?? wt.branch;
   const skipped = outcome.skippedFiles ?? [];
   const rule = skipped.length
-    ? `Auto-commit skipped whitespace/line-ending-only changes, generated noise and unstaged untracked files; left on disk: ${skipped.map((f) => `${f.path} (${f.reason})`).join(", ")}.`
+    ? `Auto-commit skipped whitespace/line-ending-only changes, generated noise and unstaged untracked files; left on disk: ${skippedSummary(skipped)}.`
     : "";
   const remove = "git -c core.longpaths=true worktree remove";
   // Only a worktree without any work of its own may be removed.
