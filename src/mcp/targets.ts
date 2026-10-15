@@ -1,6 +1,7 @@
 import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS } from "../core/constants.js";
 import { z } from "zod";
 import { delegateToAntigravity } from "../core/antigravity.js";
+import { runMuse, MUSE_EXEC_ENV } from "../core/muse.js";
 import { CLAUDE_PERMISSION_MODES, CODEX_APPROVALS_REVIEWERS, CODEX_SANDBOXES, type BridgeConfig, type ClaudePermissionMode, type CodexApprovalsReviewer, type CodexSandbox } from "../core/config.js";
 import { DelegateError, delegateToClaude, delegateToCodex, delegateToOpencode, type DelegateRequest, type DelegateResult } from "../core/delegate.js";
 import { listOpencodeModels, resolveOpencodeModel } from "../core/opencode-models.js";
@@ -42,6 +43,7 @@ export interface TargetArgs {
   auto_approve?: boolean;
   terminal_sandbox?: boolean;
   bypass_permissions?: boolean;
+  permission_profile?: string;
 }
 
 export interface DelegationTarget {
@@ -79,6 +81,7 @@ export function supportsAsk(target: CodingAgent, relay: RelayWiring | undefined)
   if (target === "antigravity") return true;
   if (!relay) return false;
   if (target === "opencode") return true;
+  if (target === "muse") return process.env[MUSE_EXEC_ENV] !== "1";
   // Codex: through app-server always; the exec fallback needs the trusted PermissionRequest hook.
   if (target === "codex") return process.env[CODEX_EXEC_ENV] !== "1" || relay.codexHookTrusted;
   return false;
@@ -171,6 +174,26 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
         ...base,
         bin: cfg.claudeBin,
         permissionMode: claudeModeFor(cfg, a),
+      }),
+  },
+  muse: {
+    title: "Muse (muse)",
+    modelExample: '"muse-spark-1.3" or any model id muse accepts',
+    effortExample: '"none", "minimal", "low", "medium", "high", "xhigh", "max" or "ultra"',
+    defaultModel: (cfg) => cfg.museModel,
+    schema: {
+      permission_profile: z.string().min(1).max(80).optional().describe("Named Muse permission profile from its settings (--permission-profile)"),
+    },
+    permissionNote: () => "Muse uses its stable session protocol for steering and approval relay. Read denies mutation tools through the approved Bridge native hook; ask forwards mutation approvals; edit retains native policy. Named profiles are verified before a turn starts. Legacy exec is an explicit compatibility mode; ask then behaves as read.",
+    permission: (_cfg, a) => a.permission_profile ?? a.access ?? "read",
+    run: (cfg, base, a) =>
+      runMuse({
+        ...base,
+        bin: cfg.museBin,
+        access: a.access ?? "read",
+        extraEnv: { ...base.extraEnv, ...(a.relay?.env ?? {}) },
+        ...(a.access === "ask" && a.relay ? { approve: a.relay.onPermission } : {}),
+        permissionProfile: a.permission_profile ?? null,
       }),
   },
   opencode: {

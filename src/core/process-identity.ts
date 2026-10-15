@@ -5,23 +5,26 @@ import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 let parentIdentity: Promise<string | null> | undefined;
+// Use the same Process.StartTime UTC ticks as Get-Process, without loading the
+// Management cmdlet module in a sanitized native plugin environment (AB-330).
+const windowsIdentityCommand = (pid: number) => `try { [Console]::Write([Diagnostics.Process]::GetProcessById(${pid}).StartTime.ToUniversalTime().Ticks) } catch { exit 1 }; exit 0`;
 
 /** A PID alone can be reused. Bind reload recovery to the CLI process's creation time. */
 export function parentProcessIdentity(): Promise<string | null> {
   return parentIdentity ??= readProcessIdentity(process.ppid);
 }
 
-export async function readProcessIdentity(pid: number): Promise<string | null> {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
+export async function readProcessIdentity(pid: number, signal?: AbortSignal): Promise<string | null> {
+  if (!Number.isSafeInteger(pid) || pid <= 0 || signal?.aborted) return null;
   try {
     if (process.platform === "linux") {
-      const [stat, boot] = await Promise.all([readFile(`/proc/${pid}/stat`, "utf8"), readFile("/proc/sys/kernel/random/boot_id", "utf8")]);
+      const [stat, boot] = await Promise.all([readFile(`/proc/${pid}/stat`, { encoding: "utf8", signal }), readFile("/proc/sys/kernel/random/boot_id", { encoding: "utf8", signal })]);
       const start = stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19];
       return start ? `${boot.trim()}:${start}` : null;
     }
     const { stdout } = process.platform === "win32"
-      ? await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`], { windowsHide: true, timeout: 5_000 })
-      : await exec("ps", ["-p", String(pid), "-o", "lstart="], { timeout: 5_000, env: { ...process.env, LC_ALL: "C" } });
+      ? await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windowsIdentityCommand(pid)], { windowsHide: true, timeout: 5_000, signal })
+      : await exec("ps", ["-p", String(pid), "-o", "lstart="], { timeout: 5_000, env: { ...process.env, LC_ALL: "C" }, signal });
     return stdout.trim() || null;
   } catch { return null; }
 }
@@ -113,7 +116,7 @@ export function processIdentity(pid: number): string | undefined {
       if (start) identity = `${readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim()}:${start}`;
     } else {
       identity = (process.platform === "win32"
-        ? execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`], { windowsHide: true, timeout: 5_000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+        ? execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windowsIdentityCommand(pid)], { windowsHide: true, timeout: 5_000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
         : execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { timeout: 5_000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, LC_ALL: "C" } })).trim() || undefined;
     }
     if (pid === process.pid) ownIdentity = identity;

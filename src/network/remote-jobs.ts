@@ -12,7 +12,7 @@ import { startRunFeedReady, type RunFeed, type RunFeedOptions } from "../core/ru
 import { createWorktree, git, gitDirsOutside, type Worktree } from "../core/worktree.js";
 import { isInside, resumeArgs, type DelegateArgs } from "../mcp/delegate-run.js";
 import { JobRunners, readRunnerState } from "../mcp/job-host.js";
-import { JOB_SETTING_KEYS, parseJobSettings } from "../mcp/job-settings.js";
+import { changedJobArgs, JOB_SETTING_KEYS, parseJobSettings, type JobSettings } from "../mcp/job-settings.js";
 import type { Job, RunnerControl, RunnerState } from "../mcp/jobs.js";
 import type { NetworkService } from "./link.js";
 import type { NetworkPair } from "./pairing.js";
@@ -154,7 +154,8 @@ export class RemoteJobs {
       if (!record && this.records.size >= MAX_REMOTE_JOBS) throw new Error("Remote job registry is full.");
       if (!record && request.args.session_id) throw new Error("Remote session continuation requires a job owned by this supervisor.");
       const settings = Object.fromEntries(JOB_SETTING_KEYS.filter((key) => key in request.args).map((key) => [key, (request.args as Record<string, unknown>)[key]]));
-      if (Object.keys(settings).length) { const parsed = parseJobSettings(settings, request.target); if (typeof parsed === "string") throw new Error(parsed); }
+      let parsedSettings: JobSettings = {};
+      if (Object.keys(settings).length) { const parsed = parseJobSettings(settings, request.target); if (typeof parsed === "string") throw new Error(parsed); parsedSettings = parsed; }
       let args: DelegateArgs = { ...request.args, ...(request.target === "codex" ? { native_subagents: request.args.native_subagents ?? cfg.codexSubagents } : {}) };
       let cwd = allowedRemoteDirectory(args.cwd!, policy.allowRoots);
       for (const directory of await gitDirsOutside(cwd, this.log) ?? []) allowedRemoteDirectory(directory, policy.allowRoots);
@@ -166,7 +167,7 @@ export class RemoteJobs {
           : "Remote job did not start a native session; start a new job.");
         cwd = allowedRemoteDirectory(state.workdir ?? cwd, policy.allowRoots);
         worktree = state.worktree ?? null;
-        args = resumeArgs(args, record.job.name, args.prompt, state.sessionId, cwd, worktree, { ...args });
+        args = resumeArgs(args, record.job.name, args.prompt, state.sessionId, cwd, worktree, changedJobArgs({ ...record.args }, parsedSettings));
       } else if (args.worktree) {
         const repo = allowedRemoteDirectory(await git(["rev-parse", "--show-toplevel"], cwd, this.log), policy.allowRoots);
         if (existsSync(join(repo, "worktrees"))) allowedRemoteDirectory(join(repo, "worktrees"), policy.allowRoots);
@@ -223,11 +224,18 @@ export class RemoteJobs {
           pending.controller.abort(new Error("Remote job not_started: cancelled before detached runner startup"));
           return { state: null, alive: true, approvals: [] }; // admission/cancellation has not settled yet
         }
+        let parsedSettings: JobSettings | undefined;
         if (request.control.type === "settings") {
           const settings = parseJobSettings(request.control.settings, record.job.agent);
           if (typeof settings === "string") throw new Error(settings);
+          parsedSettings = settings;
         }
         await this.control({ owner: record.owner, name: record.job.name, id: record.job.id }, request.control as RunnerControl);
+        if (parsedSettings) {
+          record.args = { ...changedJobArgs({ ...record.args }, parsedSettings), prompt: record.args.prompt, title: record.args.title };
+          record.job.args = changedJobArgs(record.job.args, parsedSettings);
+          this.persist();
+        }
         this.log.info("remote job control", { job: record.job.name, control: request.control.type, host: pair.name });
       } else if (request.op === "approval") {
         if (!listPendingApprovals(this.home).some((a) => a.id === request.id && a.job === record!.job.name && a.owner === record!.owner)) throw new Error("Remote approval expired or belongs to another job.");

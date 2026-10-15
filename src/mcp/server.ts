@@ -7,7 +7,10 @@ import { readOutcomeDecision } from "../core/job-outcomes.js";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { MuseHooks } from "./muse-hooks.js";
+import { restoreMuseContext } from "../core/muse-context.js";
 import { AntigravityHooks } from "./antigravity-hooks.js";
+import { museEnvSessionId } from "../core/muse.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult, ServerNotification } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
@@ -90,7 +93,7 @@ const SUBAGENT_TOOLS = new Set(["health", "peers", "send", "report_progress", "h
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 /** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
 const STAND_IN_RECHECK_MS = 30_000;
-const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "allow_tools", "send_to", "title", "notes"] as const;
+const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "permission_profile", "allow_tools", "send_to", "title", "notes"] as const;
 /** Plugin root: dist/server.mjs lives one level below it. */
 const PLUGIN_ROOT = resolve(bundleDirectory(import.meta.url), "..");
 
@@ -262,6 +265,7 @@ function instructionsFor(agent: AgentKind, targets: CodingAgent[]): string {
 export async function startServer(argv: string[] = process.argv.slice(2)): Promise<void> {
   const agentArg = argv.find((a) => a.startsWith("--agent="))?.slice("--agent=".length);
   const agent = parseAgentKind(agentArg ?? process.env[ENV.agent]);
+  if (agent === "muse") await restoreMuseContext();
   const targets = delegationTargets(agent);
   const home = resolveHome();
   const log = createLogger({ home, component: `mcp-${agent}` });
@@ -313,6 +317,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     });
   }
   if (node) {
+    if (agent === "muse") { const id = museEnvSessionId(); if (id) await node.setSessionId(id); }
     ctx.jobs = new JobManager(node, log.child("jobs"), join(home, JOBS_FILE), cfg.maxJobs, undefined, {
       canRestore: () => node.isConnected && (agent !== "claude" || ctx.restoreEligible === true),
       canReceiveHandoff: () => node.isConnected,
@@ -488,6 +493,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
 
   const transport = new StdioServerTransport();
   const antigravityHooks = agent === "antigravity" ? new AntigravityHooks(ctx) : null;
+  const museHooks = agent === "muse" ? new MuseHooks(ctx) : null;
   let shuttingDown = false;
   let closeSweepBusy = false;
   const closeSweep = setInterval(() => {
@@ -520,6 +526,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     await mobileDashboard?.then(controller => controller?.close()).catch(() => {});
     await rewake?.stop().catch(() => {});
     await antigravityHooks?.stop().catch(() => {});
+    await museHooks?.stop().catch(() => {});
     await node?.stop().catch(() => {});
     process.exit(0);
   };
@@ -543,6 +550,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   if (agent === "claude" && node) await node.setWakePolicy(cfg.wakeOnDirect, Boolean(ctx.rewakeAvailable || channel), cfg.maxHops);
   launchInspected();
   await antigravityHooks?.start().catch((err) => log.warn("Antigravity hooks unavailable", { err: String(err) }));
+  await museHooks?.start().catch((err) => log.warn("Muse hooks unavailable", { err: String(err) }));
   if (node) {
     node.on("connected", ({ isBroker }) => {
       if (node.currentSessionId) ctx.onSessionId?.(node.currentSessionId);
@@ -802,7 +810,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     {
       title: "List peers",
       description:
-        "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity): name, agent type, busy/idle, uptime, working directory and session id. " +
+        "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity, Muse): name, agent type, busy/idle, uptime, working directory and session id. " +
         "Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
       inputSchema: { native_child: z.string().optional().describe("Native Claude agent_id issued by its start hook; scopes this call to the child") },
       annotations: { readOnlyHint: true },
@@ -1455,7 +1463,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       annotations: { readOnlyHint: true },
     },
     guarded("usage_limits", async (a: { agent?: string }) => {
-      const bins: Record<CodingAgent, string> = { codex: cfg.codexBin, claude: cfg.claudeBin, opencode: cfg.opencodeBin, antigravity: cfg.antigravityBin };
+      const bins: Record<CodingAgent, string> = { codex: cfg.codexBin, claude: cfg.claudeBin, opencode: cfg.opencodeBin, antigravity: cfg.antigravityBin, muse: cfg.museBin };
       const agents = (a.agent ? [a.agent as CodingAgent] : [...CODING_AGENTS]).filter((x) => resolveBinary(bins[x]));
       if (!agents.length) return text(t("usage.none"), true);
       const reports = await Promise.all(agents.map((x) => readUsage(x, bins[x], ctx.cwd(), log, x === "opencode" ? cfg.opencodeModel : null)));
@@ -1515,7 +1523,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
     "handoff_subagents",
     {
       title: "Hand off subagents",
-      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex, opencode or Antigravity session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
+      description: "Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex, opencode, Antigravity or Muse session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything.",
       inputSchema: {
         to: z.string().min(1).max(64).describe("Exact live local session name from peers"),
         jobs: z.union([z.literal("all"), z.array(z.string().min(1).max(80)).min(1).max(1000)]).optional().describe("Exact job names, or all (default)"),
@@ -1563,6 +1571,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         approvals_reviewer: z.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Codex reviewer for the next turn: auto_review or user. A running turn keeps its reviewer."),
         permission_mode: z.enum(CLAUDE_PERMISSION_MODES as [string, ...string[]]).optional().describe("Claude permission mode for the next turn."),
         auto_approve: z.boolean().optional().describe("opencode auto-approval for the next turn."),
+        permission_profile: z.string().trim().min(1).max(80).optional().describe("Named Muse permission profile for the next turn. Replaces earlier access."),
       },
     },
     guarded("message_subagent", async (a: { job: string; message?: string; title?: string; mode?: SendMode } & JobSettings) => {
@@ -1668,6 +1677,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
       },
     },
     async (a: { event: string; session_id?: string | null; stop_hook_active?: boolean | string | null; cwd?: string | null; agent_id?: string | null; prompt?: string | null; prompt_id?: string | null; transcript_path?: string | null }, extra: ToolExtra) => {
+      // Muse uses authenticated native command hooks; model calls cannot impersonate lifecycle events.
+      if (ctx.agent === "muse") return text("{}");
       // An unsubstituted "${...}" template (Claude Code) or null (Codex) means the host had no value for that field.
       const given = (v: unknown) => (typeof v === "string" && v && !v.startsWith("${") ? v : null);
       try {

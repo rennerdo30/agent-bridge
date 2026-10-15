@@ -473,6 +473,7 @@ async function codexUsage(bin: string, cwd: string, log: Logger): Promise<UsageR
 export async function readUsage(agent: CodingAgent, bin: string, cwd: string, log: Logger, model: string | null = null): Promise<UsageReport> {
   try {
     if (agent === "antigravity") return await antigravityUsage(bin, cwd, log);
+    if (agent === "muse") return { agent, lines: ["Account limit availability is unknown: Muse MSP reports session usage, which does not establish account quotas. Delegated results include the run outcome."], limits: [], maxUsedPercent: null };
     if (agent === "codex") return await codexUsage(bin, cwd, log);
     if (agent === "claude") return parseClaudeUsage(await capture(bin, ["-p", "/usage"], cwd, log));
     const v2 = await opencodeV2(bin, cwd, log);

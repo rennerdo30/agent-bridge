@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add Muse as a fifth coding agent, including native plugin installation, authenticated mail hooks, stable MSP delegation, live steering, approvals, model discovery, session history and remote jobs. Preserve named permission profiles across job reloads and continuations; verify the served profile before submitting a turn.
+
 ## 0.30.18
 
 - Antigravity jobs in `edit` mode no longer ask the supervisor to approve read-only tools such as `view_file`, `list_dir` and searches outside the workspace, including Antigravity's own skills and tool schemas under `~/.gemini`. Reads defer to Antigravity's own permission policy again; shell commands, external MCP tools, writes outside the workspace and unknown tools are still forwarded for approval (AB-367, #43).

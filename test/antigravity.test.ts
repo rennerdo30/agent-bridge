@@ -23,7 +23,7 @@ vi.mock("../src/core/relay.js", async (original) => ({ ...await original<typeof 
 vi.mock("../src/core/antigravity-plugin.js", async (original) => ({ ...await original<typeof import("../src/core/antigravity-plugin.js")>(), requireAntigravityPlugin: vi.fn() }));
 const temporary: string[] = [];
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), "ab-agy-")); temporary.push(dir); return dir; };
-afterEach(() => { vi.clearAllMocks(); for (const dir of temporary.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); for (const dir of temporary.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 const stream = (status = "SUCCESS") => [
   { event: "init", conversation_id: "saved", init: { model: "example" } },
   { event: "step_update", step_update: { conversation_id: "saved", text_delta: "earlier draft" } },
@@ -36,6 +36,7 @@ describe("Antigravity delegation", () => {
     expect(parseAntigravityJsonl(stream("ERROR")).isError).toBe(true);
     expect(parseAntigravityJsonl(JSON.stringify({ event: "result", result: { conversation_id: "saved", status: "SUCCESS", response: "", denied_actions: [{ action: "mcp" }] } }))).toMatchObject({ isError: true, text: "Antigravity denied permissions: mcp" });
     expect(parseAntigravityJsonl('noise\n{"event":"init","conversation_id":"saved"}\n{')).toMatchObject({ sessionId: "saved", isError: true });
+
   });
   it("passes model, effort, sandbox and resume without shell interpolation", async () => {
     mocks.run.mockImplementation(async (opts) => { for (const line of stream().split("\n")) opts.onLine(line); return { code: 0, stdout: stream(), stderr: "" }; });
@@ -74,7 +75,7 @@ describe("Antigravity delegation", () => {
       expect(await response.json()).toEqual({ allow: true });
       return { code: 0, stdout: stream(), stderr: "" };
     });
-    await delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "ask", timeoutSec: 20, log: nullLogger, approve, extraEnv: { AGENT_BRIDGE_RELAY_URL: "http://127.0.0.1:1/inherited" } });
+    await delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "ask", timeoutSec: 20, log: nullLogger, canApprove: true, approve, extraEnv: { AGENT_BRIDGE_RELAY_URL: "http://127.0.0.1:1/inherited" } });
     expect(approve).toHaveBeenCalledWith(expect.objectContaining({ tool: "run_command", detail: "npm test" }));
   });
   it("drains an unanswered approval relay when the CLI times out", async () => {
@@ -86,12 +87,12 @@ describe("Antigravity delegation", () => {
       await waiting;
       throw new DelegateError("timed out", "timeout");
     });
-    await expect(delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "ask", timeoutSec: 1, log: nullLogger, approve })).rejects.toMatchObject({ kind: "timeout" });
+    await expect(delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "ask", timeoutSec: 1, log: nullLogger, canApprove: true, approve })).rejects.toMatchObject({ kind: "timeout" });
     expect(await response).toEqual({ allow: false, message: "Antigravity run ended" });
   });
   it("registers shared targets and keeps Antigravity access settings agent-specific", () => {
     expect(delegationTargets("claude")).toContain("antigravity");
-    expect(delegationTargets("antigravity")).toEqual(["claude", "codex", "opencode", "antigravity"]);
+    expect(delegationTargets("antigravity")).toEqual(["claude", "codex", "opencode", "antigravity", "muse"]);
     expect(DELEGATION_TARGETS.antigravity.permission(DEFAULT_CONFIG, {})).toBe("read");
     expect(supportsAsk("antigravity", undefined)).toBe(true);
     expect(isAutoApproved({ tool: "mcp:pair-desk_pair-desk", detail: "comment: {}" }, ["pair-desk:worker"])).toBe(true);

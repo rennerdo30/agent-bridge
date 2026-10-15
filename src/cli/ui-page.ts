@@ -434,7 +434,7 @@ export const UI_PAGE = `<!doctype html>
   --accent: #4f46e5; --accent-soft: #eef0ff; --on-accent: #ffffff; --ok: #15803d; --ok-soft: #e8f6ed; --warn: #b45309; --warn-soft: #fdf3e2;
   /* One blue: "working" uses the accent, so selection, chips, badges and bubbles share a single hue. */
   --bad: #c2410c; --bad-soft: #fdeee6; --busy: var(--accent); --busy-soft: var(--accent-soft);
-  --claude: #d97757; --codex: #0f9d76; --opencode: #3b82f6; --antigravity: #a78bfa; --other: #8b93a5;
+  --claude: #d97757; --codex: #0f9d76; --opencode: #3b82f6; --antigravity: #a78bfa; --muse: #f472b6; --other: #8b93a5;
   --shadow: 0 1px 2px rgba(16, 24, 40, .05);
   --pop: 0 16px 40px rgba(16, 24, 40, .16);
   --sans: "Segoe UI Variable Text", "Segoe UI Variable", "SF Pro Text", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -531,7 +531,7 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .dot.off { background: var(--faint); }
 .av { width: 34px; height: 34px; border-radius: 9px; flex: none; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 14px; background: var(--other); }
 .av.sm { width: 26px; height: 26px; border-radius: 7px; font-size: 12px; }
-.av.claude { background: var(--claude); } .av.codex { background: var(--codex); } .av.opencode { background: var(--opencode); } .av.antigravity { background: var(--antigravity); }
+.av.claude { background: var(--claude); } .av.codex { background: var(--codex); } .av.opencode { background: var(--opencode); } .av.antigravity { background: var(--antigravity); } .av.muse { background: var(--muse); }
 .pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .pill.running { background: var(--busy-soft); color: var(--busy); }
 .pill.done { background: var(--ok-soft); color: var(--ok); }
@@ -1152,7 +1152,7 @@ form#send select#to {
           <button type="button" role="radio" aria-checked="true" data-v="">Everything</button><button type="button" role="radio" aria-checked="false" data-v="message">Messages</button><button type="button" role="radio" aria-checked="false" data-v="run">Subagent runs</button><button type="button" role="radio" aria-checked="false" data-v="question">Questions</button><button type="button" role="radio" aria-checked="false" data-v="decision">Decisions</button><button type="button" role="radio" aria-checked="false" data-v="transcript">Chats</button>
         </div>
         <div class="seg" role="radiogroup" aria-label="Agent" data-seg="sAgent">
-          <button type="button" role="radio" aria-checked="true" data-v="">All agents</button><button type="button" role="radio" aria-checked="false" data-v="claude">Claude</button><button type="button" role="radio" aria-checked="false" data-v="codex">Codex</button><button type="button" role="radio" aria-checked="false" data-v="opencode">opencode</button><button type="button" role="radio" aria-checked="false" data-v="antigravity">Antigravity</button>
+          <button type="button" role="radio" aria-checked="true" data-v="">All agents</button><button type="button" role="radio" aria-checked="false" data-v="claude">Claude</button><button type="button" role="radio" aria-checked="false" data-v="codex">Codex</button><button type="button" role="radio" aria-checked="false" data-v="opencode">opencode</button><button type="button" role="radio" aria-checked="false" data-v="antigravity">Antigravity</button><button type="button" role="radio" aria-checked="false" data-v="muse">Muse</button>
         </div>
         <label class="toggle" title="A low-cost model (Haiku, Luna or a free opencode model) reads the top results and answers with sources"><input type="checkbox" id="sAnswer"><span class="track" aria-hidden="true"></span>Summarize</label>
         <input type="hidden" id="sKind" value=""><input type="hidden" id="sAgent" value="">
@@ -1333,6 +1333,7 @@ const PERMISSIONS = {
   claude: { key: "permission_mode", options: [["manual", "manual · asks first"], ["plan", "plan · plans only"], ["acceptEdits", "acceptEdits · edits files"], ["auto", "auto · decides itself"], ["bypassPermissions", "bypassPermissions · anything"]] },
   opencode: { key: "auto_approve", options: [["false", "asks first"], ["true", "auto-approve · anything"]] },
   antigravity: { key: "access", options: [["read", "read · looks only"], ["ask", "ask · forwards approvals"], ["edit", "edit · native permissions"]] },
+  muse: { key: "access", options: [["read", "read · looks only"], ["ask", "ask · forwards approvals"], ["edit", "edit · native permissions"]] },
 };
 /** The permission a job's saved settings give its next turn, named like the run's own permission. */
 function nextPermission(next) {
@@ -1771,7 +1772,7 @@ function projectSidebar(items) {
 /** One session inside a shared project: the agent is the label, the main one is marked, a secondary is quieter. */
 function sideMember(x) {
   const p = x.peer || {}, cur = x.name === route.session, main = !!p.projectMain;
-  const agent = { claude: "Claude", codex: "Codex", opencode: "opencode", antigravity: "Antigravity" }[p.agent] || p.agent || "session";
+  const agent = { claude: "Claude", codex: "Codex", opencode: "opencode", antigravity: "Antigravity", muse: "Muse" }[p.agent] || p.agent || "session";
   const state = p.unavailable ? "unavailable" : p.activity || "connected";
   return '<div class="tree-sess member' + (main ? " main" : " secondary") + (cur ? " cur" : "") + (x.live ? "" : " ended") + '">' +
     '<a href="' + href(x.name) + '" title="' + esc(x.name + (p.cwd ? " · " + p.cwd : "")) + '"' + (cur ? ' aria-current="page"' : "") + ">" + dot(p.activity) +
@@ -2033,7 +2034,7 @@ function renderChatForm(x, key) {
   if (!next) return;
   const peer = x.peer || {}, remote = Boolean(pcOf(x.name) || peer.host), child = key !== CHAT_KEY;
   const jobChild = key.startsWith(JOB_CHILD_PREFIX);
-  const supported = Boolean(x.live && !remote && ["claude", "codex", "opencode", "antigravity"].includes(peer.agent));
+  const supported = Boolean(x.live && !remote && ["claude", "codex", "opencode", "antigravity", "muse"].includes(peer.agent));
   const direct = supported && (!child || (peer.agent === "codex" && !jobChild));
   $("chatBody").disabled = !supported;
   $("chatSendBtn").classList.toggle("hidden", child && !direct);
@@ -2046,7 +2047,7 @@ function renderChatForm(x, key) {
       : child ? direct ? "Native input when the CLI supports its live child thread. Parent delivery is also available."
         : "Not supported: direct input to this native subagent. Send to its parent with a note about it."
         : peer.agent === "codex" ? "Native user prompt, queued until idle. A labeled bridge message is the fallback."
-          : peer.agent === "antigravity" ? "Sent as you (owner) through the bridge. Idle mail waits for the next turn or inbox read."
+          : ["antigravity", "muse"].includes(peer.agent) ? "Sent as you (owner) through the bridge. Idle mail waits for the next turn or inbox read."
             : "Sent as you (owner) through the CLI's existing channel or prompt delivery. Wake preferences apply.";
   $("chatSendInfo").textContent = (chatResults.get(next) || {}).text || "";
   void refreshChatReceipt(next);
@@ -2482,7 +2483,7 @@ $("handoffToggle").addEventListener("click", () => {
   handoffSource = route.session; handoffTarget = null;
   $("handoffNote").value = ""; $("handoffSubmit").disabled = true;
   $("handoffInfo").textContent = "Choose the session that will supervise these jobs.";
-  const targets = state.peers.filter((p) => p.name !== handoffSource && !p.subagent && !p.host && !p.name.includes("/") && ["claude", "codex", "opencode", "antigravity"].includes(p.agent));
+  const targets = state.peers.filter((p) => p.name !== handoffSource && !p.subagent && !p.host && !p.name.includes("/") && ["claude", "codex", "opencode", "antigravity", "muse"].includes(p.agent));
   $("handoffTargets").innerHTML = targets.length ? targets.map((p) => '<button type="button" class="handoff-target" aria-pressed="false" data-handoff-target="' + esc(p.name) + '">' + av(p.agent) + '<span><b>' + esc(p.name) + '</b><span class="small muted"> · ' + esc(p.agent + " · " + (p.activity || "connected")) + '</span></span></button>').join("") : '<div class="empty">No other live local sessions.</div>';
   $("handoffForm").classList.remove("hidden");
   $("handoffToggle").setAttribute("aria-expanded", "true");

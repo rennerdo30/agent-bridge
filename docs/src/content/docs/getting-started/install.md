@@ -5,15 +5,31 @@ title: "Installation"
 ## Requirements
 
 - Node.js **22.16+** (the bridge uses built-in `node:sqlite` and incremental backups).
-- At least one installed, authenticated CLI: Claude Code or Codex with plugin support, opencode, or Antigravity. Earlier bridge testing used Codex 0.156; current native queue delivery is verified with 0.160.1. See [delivery requirements](../../messaging-delivery/) when using idle wake.
+- At least one installed, authenticated CLI: Claude Code or Codex with plugin support, opencode, Antigravity, or Muse. Earlier bridge testing used Codex 0.156; current native queue delivery is verified with 0.160.1. See [delivery requirements](../../messaging-delivery/) when using idle wake.
 
 ### All at once
 
 ```bash
-npx -y github:rennerdo30/agent-bridge install        # or: install claude codex opencode
+npx -y github:rennerdo30/agent-bridge install        # or: install claude codex opencode antigravity muse
 ```
 
-The installer finds which tools you have. For each one it shows its plan and asks before running it (`--yes` skips the questions). Claude and Codex use official plugin commands; opencode and Antigravity use their documented global plugin folders. Existing user files are preserved. `uninstall` works the same way; for updates see [Updating](../update/).
+The installer finds which tools you have. For each one it shows its plan and asks before running it (`--yes` skips the questions). Claude and Codex use official plugin commands; opencode and Antigravity use their documented global plugin folders; Muse uses its native plugin manager. Existing user files are preserved. `uninstall` works the same way; for updates see [Updating](../update/).
+
+### Muse
+
+```bash
+npx -y github:rennerdo30/agent-bridge install muse --yes
+```
+
+Installation uses Muse's plugin manager and discloses capability approval.
+Updates inspect changed capabilities without renewing approval; review them
+before explicitly running `muse plugins approve agent-bridge`.
+Start a new Muse session after installation and approval. Read and ask jobs
+require the enabled native Bridge permission hook. Delegation defaults to stable
+MSP over `muse serve`, with steering and approval relay; native command hooks
+deliver active-turn mail. Idle native TUI wake remains unconfirmed. See
+[Muse configuration](../../configuration/muse/) for profiles, models, explicit
+exec compatibility and the remaining live acceptance checks.
 
 ### Claude Code
 

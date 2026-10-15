@@ -1,8 +1,9 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_OPENCODE_BIN } from "../core/constants.js";
+import { DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_MUSE_BIN, DEFAULT_OPENCODE_BIN } from "../core/constants.js";
 import { delegateToClaude, delegateToCodex, delegateToOpencode, resolveBinary, runProcess, type DelegateResult } from "../core/delegate.js";
+import { runMuse } from "../core/muse.js";
 import { t } from "../core/i18n.js";
 import type { Logger } from "../core/logger.js";
 import type { CodingAgent } from "../core/protocol.js";
@@ -14,6 +15,7 @@ export const TESTED_VERSIONS: Record<CodingAgent, string> = {
   claude: "2.1.283",
   codex: "0.157.1",
   opencode: "1.18.32",
+  muse: "1.4.7",
 };
 
 const SMOKE_TIMEOUT_SEC = 180;
@@ -21,6 +23,12 @@ const VERSION_TIMEOUT_MS = 30_000;
 const EXPECTED = "AGENT_BRIDGE_OK";
 const PROMPT = `Reply with exactly ${EXPECTED} and nothing else.`;
 const RESUME_PROMPT = "What did you reply last time? Reply with exactly that word and nothing else.";
+
+/** A terminal error or a different native session must never satisfy the gate. */
+export function smokeResumeSucceeded(first: DelegateResult, second: DelegateResult | null): boolean {
+  return !first.isError && first.text.includes(EXPECTED) && Boolean(first.sessionId) &&
+    Boolean(second && !second.isError && second.sessionId === first.sessionId && second.text.includes(EXPECTED));
+}
 
 async function version(bin: string, log: Logger): Promise<string> {
   try {
@@ -37,7 +45,7 @@ async function version(bin: string, log: Logger): Promise<string> {
  */
 export async function runSmoke(opts: { agents: CodingAgent[]; out: (s: string) => void; log: Logger }): Promise<number> {
   const dir = mkdtempSync(join(tmpdir(), "agent-bridge-smoke-"));
-  const bins: Record<CodingAgent, string> = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN, antigravity: "agy" };
+  const bins: Record<CodingAgent, string> = { claude: DEFAULT_CLAUDE_BIN, codex: DEFAULT_CODEX_BIN, opencode: DEFAULT_OPENCODE_BIN, antigravity: "agy", muse: DEFAULT_MUSE_BIN };
   let failures = 0;
   try {
     for (const agent of opts.agents) {
@@ -52,16 +60,17 @@ export async function runSmoke(opts: { agents: CodingAgent[]; out: (s: string) =
       const run = (prompt: string, sessionId: string | null): Promise<DelegateResult> => {
         const base = { prompt, cwd: dir, sessionId, timeoutSec: SMOKE_TIMEOUT_SEC, log: opts.log };
         if (agent === "antigravity") return delegateToAntigravity({ ...base, bin, access: "read" });
+        if (agent === "muse") return runMuse({ ...base, bin, access: "read" });
         if (agent === "codex") return delegateToCodex({ ...base, bin, sandbox: "read-only" });
         if (agent === "claude") return delegateToClaude({ ...base, bin, permissionMode: "plan" });
         return delegateToOpencode({ ...base, bin, autoApprove: false });
       };
       try {
         const first = await run(PROMPT, null);
-        const okAnswer = first.text.includes(EXPECTED);
+        const okAnswer = !first.isError && first.text.includes(EXPECTED);
         const okSession = Boolean(first.sessionId);
         const second = okSession ? await run(RESUME_PROMPT, first.sessionId) : null;
-        const okResume = Boolean(second?.text.includes(EXPECTED));
+        const okResume = smokeResumeSucceeded(first, second);
         const passed = okAnswer && okSession && okResume;
         if (!passed) failures++;
         opts.out(

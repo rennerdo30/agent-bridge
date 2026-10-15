@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { APP_VERSION, PROTOCOL_VERSION } from "./constants.js";
 import { recordedOwnerAlive } from "./process-identity.js";
 
-export type PluginClient = "claude" | "codex" | "opencode" | "antigravity";
+export type PluginClient = "claude" | "codex" | "opencode" | "antigravity" | "muse";
 export const RUNTIME_SCHEMA = 1;
 export const runtimeRoot = (home: string, client: PluginClient) => join(home, "plugin-versions", client);
 
