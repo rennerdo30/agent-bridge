@@ -117,8 +117,10 @@ describe("unprepared host compatibility", () => {
       .replace('    const mobileReady = !!opts.mobileAdmin?.isReady() && (!opts.mobileStatus || opts.mobileStatus() === "ready");\n', '')
       .replace('    const mobileUnavailable = opts.mobileStatus && !mobileReady ? safeMobileStatus(opts.mobileStatus()) : url.searchParams.has("phonesStatus") ? safeMobileStatus(url.searchParams.get("phonesStatus")) : undefined;\n', '')
       .replace('mobileDashboardPage(mobileReady, mobileUnavailable)', 'UI_PAGE');
-    // Remove only the explicitly reviewed opt-in additions; original default route source stays pinned.
-    expect(sha(ui)).toBe(baseline.uiSha256);
+    // Reviewed Muse quota/chat additions leave mobile routes and startup pinned.
+    const withoutMuse = ui.replace('    readUsage("muse", cfg.museBin, home, log, cfg.museModel),\n', '')
+      .replace('["claude", "codex", "opencode", "antigravity", "muse"].includes(local.agent)', '["claude", "codex", "opencode", "antigravity"].includes(local.agent)');
+    expect(sha(withoutMuse)).toBe(baseline.uiSha256);
   });
   it("does not open mobile stores, install timers/listeners or initialize a question service without preparation", async () => {
     const home = fixtureHome(), messages = new MessageStore(join(home, "bridge.db"), nullLogger), broker = new Broker("fixture-unused-pipe", messages, nullLogger, "fixture-token");

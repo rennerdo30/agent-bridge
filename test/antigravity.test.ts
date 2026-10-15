@@ -1,11 +1,11 @@
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { delegateToAntigravity, parseAntigravityJsonl } from "../src/core/antigravity.js";
 import { DelegateError, retryTransient } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
-import { antigravityPermission, antigravityHookOutput } from "../src/cli/antigravity-hook.js";
+import { antigravityPermission, antigravityHookOutput, hasAntigravityEditRelay } from "../src/cli/antigravity-hook.js";
 import { installAntigravity, uninstallAntigravity } from "../src/cli/antigravity-install.js";
 import { readTranscript, listNativeSubagents } from "../src/core/transcripts/index.js";
 import { antigravityItems } from "../src/core/transcripts/antigravity.js";
@@ -14,6 +14,8 @@ import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { DELEGATION_TARGETS, supportsAsk } from "../src/mcp/targets.js";
 import { isAutoApproved, isHandoffToolCall } from "../src/core/tool-allow.js";
 import { delegationTargets } from "../src/mcp/server.js";
+import { cmdlineIsAntigravity } from "../src/core/procinfo.js";
+import { remoteSpawnArgsSchema, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY } from "../src/network/remote-job-protocol.js";
 
 const mocks = vi.hoisted(() => ({ run: vi.fn(), ask: vi.fn() }));
 vi.mock("../src/core/delegate.js", async (original) => ({ ...await original<typeof import("../src/core/delegate.js")>(), runProcess: mocks.run }));
@@ -21,7 +23,7 @@ vi.mock("../src/core/relay.js", async (original) => ({ ...await original<typeof 
 vi.mock("../src/core/antigravity-plugin.js", async (original) => ({ ...await original<typeof import("../src/core/antigravity-plugin.js")>(), requireAntigravityPlugin: vi.fn() }));
 const temporary: string[] = [];
 const temp = () => { const dir = mkdtempSync(join(tmpdir(), "ab-agy-")); temporary.push(dir); return dir; };
-afterEach(() => { vi.clearAllMocks(); for (const dir of temporary.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); for (const dir of temporary.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 const stream = (status = "SUCCESS") => [
   { event: "init", conversation_id: "saved", init: { model: "example" } },
   { event: "step_update", step_update: { conversation_id: "saved", text_delta: "earlier draft" } },
@@ -34,6 +36,7 @@ describe("Antigravity delegation", () => {
     expect(parseAntigravityJsonl(stream("ERROR")).isError).toBe(true);
     expect(parseAntigravityJsonl(JSON.stringify({ event: "result", result: { conversation_id: "saved", status: "SUCCESS", response: "", denied_actions: [{ action: "mcp" }] } }))).toMatchObject({ isError: true, text: "Antigravity denied permissions: mcp" });
     expect(parseAntigravityJsonl('noise\n{"event":"init","conversation_id":"saved"}\n{')).toMatchObject({ sessionId: "saved", isError: true });
+
   });
   it("passes model, effort, sandbox and resume without shell interpolation", async () => {
     mocks.run.mockImplementation(async (opts) => { for (const line of stream().split("\n")) opts.onLine(line); return { code: 0, stdout: stream(), stderr: "" }; });
@@ -72,7 +75,7 @@ describe("Antigravity delegation", () => {
       expect(await response.json()).toEqual({ allow: true });
       return { code: 0, stdout: stream(), stderr: "" };
     });
-    await delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "ask", timeoutSec: 20, log: nullLogger, approve, extraEnv: { AGENT_BRIDGE_RELAY_URL: "http://127.0.0.1:1/inherited" } });
+    await delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "ask", timeoutSec: 20, log: nullLogger, canApprove: true, approve, extraEnv: { AGENT_BRIDGE_RELAY_URL: "http://127.0.0.1:1/inherited" } });
     expect(approve).toHaveBeenCalledWith(expect.objectContaining({ tool: "run_command", detail: "npm test" }));
   });
   it("drains an unanswered approval relay when the CLI times out", async () => {
@@ -84,12 +87,12 @@ describe("Antigravity delegation", () => {
       await waiting;
       throw new DelegateError("timed out", "timeout");
     });
-    await expect(delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "ask", timeoutSec: 1, log: nullLogger, approve })).rejects.toMatchObject({ kind: "timeout" });
+    await expect(delegateToAntigravity({ bin: "agy", prompt: "task", cwd: temp(), access: "ask", timeoutSec: 1, log: nullLogger, canApprove: true, approve })).rejects.toMatchObject({ kind: "timeout" });
     expect(await response).toEqual({ allow: false, message: "Antigravity run ended" });
   });
   it("registers shared targets and keeps Antigravity access settings agent-specific", () => {
     expect(delegationTargets("claude")).toContain("antigravity");
-    expect(delegationTargets("antigravity")).toEqual(["claude", "codex", "opencode", "antigravity"]);
+    expect(delegationTargets("antigravity")).toEqual(["claude", "codex", "opencode", "antigravity", "muse"]);
     expect(DELEGATION_TARGETS.antigravity.permission(DEFAULT_CONFIG, {})).toBe("read");
     expect(supportsAsk("antigravity", undefined)).toBe(true);
     expect(isAutoApproved({ tool: "mcp:pair-desk_pair-desk", detail: "comment: {}" }, ["pair-desk:worker"])).toBe(true);
@@ -102,13 +105,40 @@ describe("Antigravity delegation", () => {
     expect(changedJobArgs({ access: "read", terminal_sandbox: true }, { bypass_permissions: true })).toEqual({ terminal_sandbox: true, bypass_permissions: true });
     expect(changedJobArgs({ bypass_permissions: true, terminal_sandbox: true }, { access: "read" })).toEqual({ terminal_sandbox: true, access: "read" });
   });
-  it.each([false, true])("honors explicit native approval override=%s and keeps the terminal sandbox", async (bypass) => {
+  it.each([false, true])("honors explicit native approval override=%s, strips inherited relay credentials, and keeps the terminal sandbox", async (bypass) => {
     mocks.run.mockResolvedValue({ code: 0, stdout: stream(), stderr: "" });
-    await DELEGATION_TARGETS.antigravity.run(DEFAULT_CONFIG, { prompt: "task", cwd: temp(), timeoutSec: 20, log: nullLogger }, { access: "read", bypass_permissions: bypass, terminal_sandbox: true });
+    const cwd = temp();
+    const prevUrl = process.env.AGENT_BRIDGE_RELAY_URL, prevToken = process.env.AGENT_BRIDGE_RELAY_TOKEN, prevEdit = process.env.AGENT_BRIDGE_ANTIGRAVITY_EDIT_RELAY;
+    process.env.AGENT_BRIDGE_RELAY_URL = "http://127.0.0.1:9/permission";
+    process.env.AGENT_BRIDGE_RELAY_TOKEN = "ancestor-token";
+    process.env.AGENT_BRIDGE_ANTIGRAVITY_EDIT_RELAY = "1";
+    try {
+      await DELEGATION_TARGETS.antigravity.run(DEFAULT_CONFIG, {
+        prompt: "task",
+        cwd,
+        timeoutSec: 20,
+        log: nullLogger,
+        extraEnv: { AGENT_BRIDGE_RELAY_URL: "http://127.0.0.1:9/permission", AGENT_BRIDGE_RELAY_TOKEN: "ancestor-token", AGENT_BRIDGE_ANTIGRAVITY_EDIT_RELAY: "1" },
+      }, { access: "read", bypass_permissions: bypass, terminal_sandbox: true });
+    } finally {
+      if (prevUrl === undefined) delete process.env.AGENT_BRIDGE_RELAY_URL; else process.env.AGENT_BRIDGE_RELAY_URL = prevUrl;
+      if (prevToken === undefined) delete process.env.AGENT_BRIDGE_RELAY_TOKEN; else process.env.AGENT_BRIDGE_RELAY_TOKEN = prevToken;
+      if (prevEdit === undefined) delete process.env.AGENT_BRIDGE_ANTIGRAVITY_EDIT_RELAY; else process.env.AGENT_BRIDGE_ANTIGRAVITY_EDIT_RELAY = prevEdit;
+    }
     const opts = mocks.run.mock.calls[0]![0];
     expect(opts.env.AGENT_BRIDGE_ANTIGRAVITY_ACCESS).toBe("edit");
+    expect(opts.env.AGENT_BRIDGE_RELAY_URL).toBeUndefined();
+    expect(opts.env.AGENT_BRIDGE_RELAY_TOKEN).toBeUndefined();
+    expect(opts.env.AGENT_BRIDGE_ANTIGRAVITY_EDIT_RELAY).toBeUndefined();
+    expect(hasAntigravityEditRelay(opts.env)).toBe(false);
     expect(opts.args.includes("--dangerously-skip-permissions")).toBe(bypass);
     expect(opts.args).toContain("--sandbox");
+    const editRelay = hasAntigravityEditRelay(opts.env);
+    expect(await antigravityPermission({ toolCall: { name: "view_file", args: { AbsolutePath: join(cwd, "a.ts") } }, workspacePaths: [cwd] }, opts.env.AGENT_BRIDGE_ANTIGRAVITY_ACCESS, editRelay)).toEqual({ decision: "allow" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(cwd, "a.ts") } }, workspacePaths: [cwd] }, opts.env.AGENT_BRIDGE_ANTIGRAVITY_ACCESS, editRelay)).toEqual({ decision: "allow" });
+    expect(await antigravityPermission({ toolCall: { name: "run_command", args: { CommandLine: "npm test" } }, workspacePaths: [cwd] }, opts.env.AGENT_BRIDGE_ANTIGRAVITY_ACCESS, editRelay)).toEqual({ decision: "allow" });
+    expect(await antigravityPermission({ toolCall: { name: "call_mcp_tool", args: { ServerName: "pair-desk", ToolName: "update_handoff" } }, workspacePaths: [cwd] }, opts.env.AGENT_BRIDGE_ANTIGRAVITY_ACCESS, editRelay)).toMatchObject({ decision: "deny" });
+    expect(mocks.ask).not.toHaveBeenCalled();
   });
 });
 
@@ -126,9 +156,44 @@ describe("Antigravity hooks", () => {
     expect(await antigravityPermission(input, "ask")).toEqual({ decision: "allow", permissionOverrides: ["command(npm test)"] });
     expect(await antigravityPermission(input, "ask")).toEqual({ decision: "deny", reason: "owner denied" });
     expect(mocks.ask).toHaveBeenCalledWith(expect.objectContaining({ agent: "antigravity", tool: "run_command", cwd: "/project" }));
-    expect(await antigravityPermission(input, "edit")).toEqual({});
+    expect(await antigravityPermission(input, undefined)).toEqual({ decision: "allow" });
+    expect(await antigravityPermission(input, "edit", false)).toEqual({ decision: "allow" });
+    expect(await antigravityPermission({ toolCall: { name: "view_file", args: { AbsolutePath: "/project/a.ts" } }, workspacePaths: ["/project"] }, undefined)).toEqual({ decision: "allow" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: "/project/a.ts" } }, workspacePaths: ["/project"] }, undefined)).toEqual({ decision: "allow" });
     expect(antigravityHookOutput("PreInvocation", "mail")).toEqual({ injectSteps: [{ ephemeralMessage: "mail" }] });
     expect(antigravityHookOutput("Stop", "mail")).toEqual({ decision: "continue", reason: "mail" });
+  });
+  it("relays non-workspace, symlink-escaped or shell actions in edit mode with auto_approve while delegating workspace files to native policy", async () => {
+    const root = temp(), outside = temp(), aliasHost = temp();
+    const linkedDir = join(root, "escape-dir"), danglingDir = join(root, "dangling-dir"), gitAlias = join(root, "git-alias"), linkedRoot = join(aliasHost, "linked-root");
+    mkdirSync(join(root, ".git"), { recursive: true });
+    writeFileSync(join(outside, "existing.ts"), "outside");
+    symlinkSync(outside, linkedDir, "junction");
+    symlinkSync(join(outside, "missing-target"), danglingDir, "junction");
+    symlinkSync(join(root, ".git"), gitAlias, "junction");
+    symlinkSync(root, linkedRoot, "junction");
+    mocks.ask
+      .mockResolvedValueOnce({ allow: true })
+      .mockResolvedValueOnce({ allow: false, message: "denied command" })
+      .mockResolvedValueOnce({ allow: false, message: "denied symlink existing" })
+      .mockResolvedValueOnce({ allow: false, message: "denied symlink new" })
+      .mockResolvedValueOnce({ allow: false, message: "denied dangling link" })
+      .mockResolvedValueOnce({ allow: false, message: "denied git alias" })
+      .mockResolvedValueOnce({ allow: false, message: "denied uppercase git" })
+      .mockResolvedValueOnce({ allow: false, message: "denied missing root" });
+    expect(await antigravityPermission({ toolCall: { name: "view_file", args: { AbsolutePath: join(root, "a.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "allow" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(root, "src", "a.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "allow" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(linkedRoot, "src", "alias.ts") } }, workspacePaths: [linkedRoot] }, "edit", true)).toEqual({ decision: "allow" });
+    expect(mocks.ask).not.toHaveBeenCalled();
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(root, ".git", "config") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "auto_approve", permissionOverrides: [`write_file(${join(root, ".git", "config")})`] });
+    expect(await antigravityPermission({ toolCall: { name: "run_command", args: { CommandLine: "npm test" } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied command" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(linkedDir, "existing.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied symlink existing" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(linkedDir, "sub", "new.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied symlink new" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(danglingDir, "sub", "new.ts") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied dangling link" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(gitAlias, "config") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied git alias" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(root, ".GIT", "config") } }, workspacePaths: [root] }, "edit", true)).toEqual({ decision: "deny", reason: "denied uppercase git" });
+    expect(await antigravityPermission({ toolCall: { name: "write_to_file", args: { TargetFile: join(root, "missing-root", "a.ts") } }, workspacePaths: [join(root, "missing-root")] }, "edit", true)).toEqual({ decision: "deny", reason: "denied missing root" });
+    expect(mocks.ask).toHaveBeenCalledTimes(8);
   });
   it("normalizes MCP approvals for shared allow rules and declines handoff writes", async () => {
     mocks.ask.mockResolvedValue({ allow: true });
@@ -189,4 +254,27 @@ describe("Antigravity retained transcripts and installation", () => {
     expect(uninstallAntigravity(target).skipped).toEqual([target]);
     expect(readFileSync(join(target, "owner.txt"), "utf8")).toBe("safe");
   });
+  it("recognizes Antigravity Desktop language_server command lines, alternate brain dirs, and remote spawn options", () => {
+    expect(cmdlineIsAntigravity("language_server_windows_x64.exe --app_data_dir antigravity --enable_lsp")).toBe(true);
+    expect(cmdlineIsAntigravity("language_server_macos_arm --override_ide_name antigravity-ide")).toBe(true);
+    expect(cmdlineIsAntigravity("node server.mjs")).toBe(false);
+    const geminiRoot = join(temp(), ".gemini");
+    const cliHome = join(geminiRoot, "antigravity-cli");
+    const appHome = join(geminiRoot, "antigravity");
+    const file = join(appHome, "brain", "desktop-conv", ".system_generated", "logs", "transcript.jsonl");
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify({ type: "USER_INPUT", content: "from desktop", step_index: 0 }) + "\n");
+    const paths = { claude: geminiRoot, codex: geminiRoot, opencode: geminiRoot, antigravity: cliHome };
+    const page = readTranscript({ agent: "antigravity", cwd: geminiRoot, sessionId: "desktop-conv" }, "0", undefined, paths);
+    expect(page?.items).toEqual([expect.objectContaining({ kind: "user", text: "from desktop" })]);
+    expect(REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY).toBe("remote-jobs-antigravity-options-v1");
+    expect(remoteSpawnArgsSchema.parse({ title: "t", prompt: "run", cwd: "/tmp", terminal_sandbox: false, bypass_permissions: true })).toMatchObject({
+      title: "t",
+      prompt: "run",
+      cwd: "/tmp",
+      terminal_sandbox: false,
+      bypass_permissions: true,
+    });
+  });
 });
+

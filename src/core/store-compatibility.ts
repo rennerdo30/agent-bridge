@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { writtenBeforeBoot } from "./boot-time.js";
 import { atomicPluginWrite } from "./plugin-runtime.js";
 import type { PeerInfo } from "./protocol.js";
-import { processIdentity, readProcessIdentities, readProcessIdentitiesSync } from "./process-identity.js";
+import { processIdentity, readProcessIdentities, readProcessIdentitiesSync, readProcessNamesSync } from "./process-identity.js";
 import { existingMetadataDb, metadataDb, saveMetadataValue } from "./metadata-db.js";
 import { importMetadataDomain } from "./metadata-import.js";
 
@@ -13,6 +13,8 @@ interface Presence extends StoreCapabilities { pid: number; name: string; versio
 const identities = new Map<string, { identity: string | null; at: number; signature: string }>();
 const refreshes = new Map<string, Promise<void>>();
 const IDENTITY_REFRESH_MS = 10_000;
+// Only these known Windows OS hosts prove non-Bridge PID reuse; arbitrary/renamed runtimes remain unknown.
+const NON_BRIDGE_WINDOWS_HOST_NAMES = new Set(["svchost", "wmiprvse", "searchfilterhost", "searchprotocolhost", "searchindexer", "msmpeng", "dllhost", "runtimebroker", "csrss", "lsass", "services", "wininit", "smss"]);
 
 /** Re-exported: the boot rule lives in boot-time.ts so lock modules can share it without import cycles. */
 export { writtenBeforeBoot };
@@ -258,11 +260,20 @@ function exitedBehindHandle(pid: number): boolean {
   catch (error) { return ["EPERM", "ESRCH"].includes(String((error as NodeJS.ErrnoException).code)); }
 }
 
-/** The stored presence record of pid, from the metadata rows or the legacy file. */
-function storedPresence(home: string, pid: number): Presence | undefined {
+/** Keep the record revision and its source time bound to an immediate identity query. */
+function storedPresence(home: string, pid: number): { record: Presence; at: number; signature: string; metadata: boolean } | undefined {
   const stored = databasePresence(home);
-  if (stored) return stored.find(entry => entry.record.pid === pid)?.record;
-  try { return JSON.parse(readFileSync(join(home, "storage-capabilities", `${pid}.json`), "utf8")) as Presence; } catch { return undefined; }
+  if (stored) {
+    const entry = stored.find(candidate => candidate.record.pid === pid);
+    return entry && { ...entry, metadata: true };
+  }
+  const path = join(home, "storage-capabilities", `${pid}.json`);
+  try {
+    const signature = presenceSignature(path);
+    const record = JSON.parse(readFileSync(path, "utf8")) as Presence;
+    if (!signature || signature !== presenceSignature(path)) return undefined;
+    return { record, at: statSync(path).mtimeMs, signature, metadata: false };
+  } catch { return undefined; }
 }
 
 /**
@@ -271,24 +282,33 @@ function storedPresence(home: string, pid: number): Presence | undefined {
  * - the live process matches: it is that reader, and it no longer blocks if its recorded capabilities suffice;
  * - a successful query shows another process under that PID, or no running process at all (an exited process
  *   whose PID a lingering handle keeps answering): the recorded reader is gone.
- * A failed query, a listed process whose start time cannot be read (elevated or protected), or a record without
- * an identity keeps the reader blocking.
+ * A failed query or a record without an identity keeps the reader blocking. A listed process with an unreadable
+ * start time is gone only when a successful image-name query identifies a known Windows OS service host (AB-362:
+ * protected processes reusing dead jobs' PIDs). Every other name stays blocking regardless of old capabilities.
  */
 function verifiedNow(home: string, peers: Presence[], format: keyof StoreCapabilities, target: number): Set<number> {
   const candidates = peers.flatMap(peer => {
-    const record = storedPresence(home, peer.pid);
-    return record?.processIdentity ? [{ pid: peer.pid, record, identity: record.processIdentity }] : [];
+    const stored = storedPresence(home, peer.pid);
+    return stored?.record.processIdentity ? [{ pid: peer.pid, ...stored }] : [];
   });
   if (!candidates.length) return new Set();
   const live = readProcessIdentitiesSync(candidates.map(candidate => candidate.pid));
   if (!live) return new Set();
-  return new Set(candidates.filter(({ pid, record, identity }) => {
+  const unreadable = candidates.filter(candidate => live.get(candidate.pid) === "").map(candidate => candidate.pid);
+  const names = unreadable.length ? readProcessNamesSync(unreadable) : undefined;
+  return new Set(candidates.filter(({ pid, record, at, signature, metadata }) => {
+    const current = storedPresence(home, pid);
+    if (!current || current.signature !== signature || current.at !== at || current.metadata !== metadata) return false;
     const now = live.get(pid);
     // Not listed: gone only with the exited-process signature (the PID answers EPERM, e.g. a lingering handle keeps
     // it). A PID that still answers a signal normally but is missing from the list is a race; it keeps blocking.
     if (now === undefined) return exitedBehindHandle(pid);
-    if (now === "") return false;
-    return now !== identity || validStoreCapabilities(record) && (record[format] ?? 0) >= target;
+    const sufficient = validStoreCapabilities(record) && (record[format] ?? 0) >= target;
+    if (now === "") {
+      const name = names?.get(pid)?.trim().split(/[\\/]/).pop()?.replace(/\.exe$/i, "").toLowerCase();
+      return process.platform === "win32" && Boolean(name && NON_BRIDGE_WINDOWS_HOST_NAMES.has(name));
+    }
+    return now !== record.processIdentity || sufficient;
   }).map(candidate => candidate.pid));
 }
 

@@ -156,6 +156,10 @@ export default defineConfig({
                 "slug": "configuration/antigravity"
             },
             {
+                "label": "Muse",
+                "slug": "configuration/muse"
+            },
+            {
                 "label": "Live plugin updates",
                 "slug": "live-plugin-updates"
             }
@@ -235,6 +239,10 @@ export default defineConfig({
             {
                 "label": "Google CLI research",
                 "slug": "google-cli-research"
+            },
+            {
+                "label": "Muse support research",
+                "slug": "muse-support-research"
             },
             {
                 "label": "Development",

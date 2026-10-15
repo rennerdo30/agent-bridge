@@ -1,7 +1,20 @@
 /** Pure data contract shared by the gateway and Expo client. Never import server modules into the app. */
 export type Capability = "overview.read" | "chat.read" | "questions.read" | "questions.answer";
 export type Platform = "android" | "ios";
-export interface Grant { pcId: string; projectIds: string[]; sessionIds: string[]; jobIds: string[]; capabilities: Capability[] }
+/**
+ * Without a scope, a grant names exact sessions and jobs, and projectIds cover owner questions only.
+ * "all" covers every session, job and owner question on pcId, including future ones; "project" covers
+ * every current and future session, job and owner question of the listed projects (plus any listed sessions or jobs).
+ */
+export type GrantScope = "all" | "project";
+export interface Grant { pcId: string; scope?: GrantScope; projectIds: string[]; sessionIds: string[]; jobIds: string[]; capabilities: Capability[] }
+/** Whether one grant covers an entity; capabilities and pcId are checked by the caller. */
+export function grantCovers(grant: Grant, entity: { kind: "session" | "job" | "question"; id: string; projectId: string | null }): boolean {
+  if (grant.scope === "all") return true;
+  if (entity.kind === "session" && grant.sessionIds.includes(entity.id)) return true;
+  if (entity.kind === "job" && grant.jobIds.includes(entity.id)) return true;
+  return (grant.scope === "project" || entity.kind === "question") && !!entity.projectId && grant.projectIds.includes(entity.projectId);
+}
 export interface Credentials {
   deviceId: string; sessionId: string; pcId: string; accessToken: string; refreshToken: string; csrfToken: string;
   accessExpiresAt: number; refreshExpiresAt: number; capabilities: Capability[]; scopes: Grant[];
