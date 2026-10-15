@@ -26,6 +26,8 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   "core/oversize.ts": ["unlinkSync(tmp)"],
   "core/json-store.ts": ["rmSync(tmp, { force: true })"],
   "core/node.ts": ["unlinkSync(this.opts.pipePath)"],
+  // AB-316: own mkdtemp plugin files, non-recursive; reviewed by Claude main 2026-10-16
+  "core/opencode-native-tools.ts": ["unlinkSync(reportFile)", "unlinkSync(entry)", "unlinkSync(manifest)", "rmdirSync(directory)"],
   // Lock/lease files hold only PID, start time and nonce. A stale lock is moved aside first and its moved copy removed
   // only when its nonce still matches; a lease is removed only when its owner process is gone.
   "core/storage-lock.ts": ["rmSync(moved, { force: true })", "rmSync(moved, { force: true })", "rmSync(path)", "rmSync(path, { force: true })", "rmSync(path, { force: true })", "rmSync(lease, { force: true })"],
