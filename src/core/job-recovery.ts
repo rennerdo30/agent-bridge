@@ -2,8 +2,9 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { isRecord } from "./json-store.js";
 import { AGENT_KINDS } from "./protocol.js";
-import { findHistoryJob, historyJobsSteps, readRunLogs, type RunLogRecord } from "./run-history.js";
-import { indexedJobRun, JOB_INDEX_WAIT_MS, waitForJobRunIndex } from "./job-run-index.js";
+import { findHistoryJob, historyJobsSteps, readRunLogs, readRunLogsResponsive, type RunLogRecord } from "./run-history.js";
+import { indexedJobRun, jobRunIndexReady, legacyJobRunAmbiguous, JOB_INDEX_WAIT_MS, waitForJobRunIndex } from "./job-run-index.js";
+import { BridgeError } from "./protocol.js";
 import { cloneJson, fileSignature, fileTimeMs, readJsonSnapshot } from "./file-cache.js";
 import { drainScanResponsive } from "./responsive-scan.js";
 import { pidAlive } from "./delegate.js";
@@ -57,7 +58,11 @@ function prepareRecovery(home: string, ref: string) {
   const history = findHistoryJob(home, ref, id);
   const { spec, launch } = recoverySpec(home, id);
   if (completeContext(home, history, id)) return selectRecovery(ref, id, history, spec, launch, []);
-  return selectRecovery(ref, id, history, spec, launch, readRunLogs(home));
+  const key = typeof history?.name === "string" ? history.name : ref;
+  const ready = jobRunIndexReady(home), ambiguous = ready && legacyJobRunAmbiguous(home, key);
+  return selectRecovery(ref, id, history, spec, launch, ready && !ambiguous
+    ? indexedJobRun(home, key, typeof history?.startedAt === "number" ? history.startedAt : undefined)
+    : readRunLogs(home), ambiguous);
 }
 async function prepareRecoveryAsync(home: string, ref: string, deadline: number) {
   const id = recoveryId(ref);
@@ -74,8 +79,23 @@ async function prepareRecoveryAsync(home: string, ref: string, deadline: number)
   if (completeContext(home, history, id)) return selectRecovery(ref, id, history, spec, launch, []);
   const currentRun = witnessedRun(home, id, history);
   if (currentRun) return selectRecovery(ref, id, history, spec, launch, [currentRun]);
-  await waitForJobRunIndex(home, deadline);
-  return selectRecovery(ref, id, history, spec, launch, indexedJobRun(home, typeof history?.name === "string" ? history.name : ref));
+  const key = typeof history?.name === "string" ? history.name : ref;
+  await waitForJobRunIndex(home, deadline, key);
+  if (legacyJobRunAmbiguous(home, key)) {
+    // Legacy ambiguity requires discovery, sharing the original cold deadline.
+    const stop = new AbortController(), remaining = deadline - performance.now();
+    const error = () => new BridgeError("job_index_preparing", "Job index preparing (ambiguous legacy discovery); retry later. No control submitted.");
+    if (remaining <= 0) throw error();
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const runs = await Promise.race([readRunLogsResponsive(home, undefined, undefined, stop.signal),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => { stop.abort(); reject(error()); }, remaining); })]);
+      return selectRecovery(ref, id, history, spec, launch, runs, true);
+    } catch { throw error(); }
+    finally { clearTimeout(timer); stop.abort(); }
+  }
+  return selectRecovery(ref, id, history, spec, launch, indexedJobRun(home, key,
+    typeof history?.startedAt === "number" ? history.startedAt : undefined));
 }
 
 /** Full history rows come from the selected durable payload, never the routing
@@ -138,15 +158,21 @@ function recoverySpec(home: string, id: string) {
   const launch = isRecord(spec) && isRecord(spec.job) ? spec.job : undefined;
   return { spec, launch };
 }
-function selectRecovery(ref: string, id: string, history: Record<string, unknown> | undefined, spec: unknown, launch: Record<string, unknown> | undefined, runLogs: ReturnType<typeof readRunLogs>) {
-  const runs = runLogs.filter((r) => r.meta.job === ref || r.meta.job === history?.name ||
-    r.name.endsWith(`-${launch?.agent ?? history?.agent ?? ref.split("-")[0]}-${id}`))
+function selectRecovery(ref: string, id: string, history: Record<string, unknown> | undefined, spec: unknown, launch: Record<string, unknown> | undefined, runLogs: ReturnType<typeof readRunLogs>, legacyAmbiguous = false) {
+  const key = typeof history?.name === "string" ? history.name : ref;
+  const candidates = runLogs.filter(r => r.metadataFile || Object.keys(r.meta).length
+    ? r.meta.job === key
+    : r.name.endsWith(`-${launch?.agent ?? history?.agent ?? ref.split("-")[0]}-${id}`));
+  const runs = candidates.filter(r => r.meta.jobStartedAt !== undefined
+    ? !Number.isFinite(history?.startedAt) || r.meta.jobStartedAt === history!.startedAt
+    : !legacyAmbiguous && candidates.length === 1)
     .sort((a, b) => runStart(b) - runStart(a));
   const run = runs[0], meta = run?.meta;
   const name = history?.name ?? launch?.name ?? meta?.job ?? (run && /^[\w]+-(?:job|ask)-[\w-]+$/.test(ref) ? ref : undefined);
   const agent = history?.agent ?? launch?.agent ?? ref.split("-")[0];
   if (typeof name !== "string" || !AGENT_KINDS.includes(agent as never)) return undefined;
   const base = { ...launch, ...history };
+  if (!run && typeof base.prompt !== "string") return undefined;
   return { id, history, spec, launch, run, meta, name, agent, base };
 }
 type Recovery = NonNullable<ReturnType<typeof prepareRecovery>>;

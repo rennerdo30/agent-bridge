@@ -7,7 +7,7 @@ import { refreshStorePeerIdentities } from "./store-compatibility.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { displayPathText } from "./display-paths.js";
 import { readRunnerStateRecord, writeRunnerStateRecord } from "./runner-store.js";
-import { indexRunFile, jobRunIndexReady, markJobRunIndexReady } from "./job-run-index.js";
+import { indexRunFile, invalidateJobRunIndex } from "./job-run-index.js";
 
 /**
  * Live feed of one delegated run: every progress line goes to ~/.agent-bridge/runs/<name>.log (so the
@@ -132,7 +132,6 @@ export async function startRunFeedReady(opts: RunFeedOptions, signal: AbortSigna
 }
 
 export function startRunFeed(opts: RunFeedOptions): RunFeed {
-  const indexReady = jobRunIndexReady(opts.home);
   const now = opts.now ?? Date.now;
   const release = storageLease(opts.home);
   const dir = join(opts.home, RUNS_DIR_NAME);
@@ -148,26 +147,33 @@ export function startRunFeed(opts: RunFeedOptions): RunFeed {
     }
   };
   let meta: RunMeta = { ...opts.meta };
+  let attemptedRouting: string | undefined;
+  const routing = () => JSON.stringify([meta.job ?? null, meta.jobStartedAt ?? null]);
   const writeMeta = (required = false) => {
     try {
-      const metadataIndexReady = jobRunIndexReady(opts.home);
       const path = runMetaPath(logPath);
       const previous = readJsonStore(path);
       writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...meta }), previous);
       // Metadata updates refresh the exact route as soon as the log exists.
-      try { indexRunFile(opts.home, logPath); if (metadataIndexReady) markJobRunIndexReady(opts.home); }
-      catch { /* Initial header has not been written yet. */ }
+      if (logPublished && attemptedRouting !== routing()) {
+        attemptedRouting = routing();
+        try { indexRunFile(opts.home, logPath); }
+        catch { invalidateJobRunIndex(opts.home); }
+      }
     } catch (err) {
       if (required) throw err;
       process.stderr.write(`could not save run metadata: ${String(err)}\n`);
       // never break a run because of the feed
     }
   };
+  let logPublished = false;
   try { mkdirSync(dir, { recursive: true }); writeMeta(opts.requireMetadata); }
   catch (error) { release(); throw error; }
   write(opts.header);
-  try { indexRunFile(opts.home, logPath); if (indexReady) markJobRunIndexReady(opts.home); }
-  catch (error) { if (opts.requireMetadata) { release(); throw error; } }
+  logPublished = true;
+  attemptedRouting = routing();
+  try { indexRunFile(opts.home, logPath); }
+  catch { invalidateJobRunIndex(opts.home); }
   // Only this runner can name its current feed. Keep the generation on the
   // witness: a previous turn's path must never suppress legacy discovery.
   const job = opts.meta?.job, jobStartedAt = opts.meta?.jobStartedAt;

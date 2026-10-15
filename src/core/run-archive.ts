@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync 
 import { basename, dirname, join } from "node:path";
 import { retentionLimit } from "./json-store.js";
 import { readRunLogPreview } from "./run-log-preview.js";
-import { indexRunFile, jobRunIndexReady, markJobRunIndexReady } from "./job-run-index.js";
+import { indexRunFile, invalidateJobRunIndex } from "./job-run-index.js";
 
 export const DEFAULT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 export const ARCHIVE_AGE_ENV = "AGENT_BRIDGE_ARCHIVE_AGE_MS";
@@ -17,7 +17,7 @@ export function finishedRunLine(text: string): string | null {
 /** Preserve the original basename so metadata and log remain addressable as a pair. */
 export function archiveRun(log: string): void {
   if (!finishedRunLine(readRunLogPreview(log))) return;
-  const home = dirname(dirname(log)), indexReady = jobRunIndexReady(home);
+  const home = dirname(dirname(log));
   const dir = join(log, "..", "archive");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const target = join(dir, basename(log));
@@ -29,10 +29,12 @@ export function archiveRun(log: string): void {
     if (existsSync(archivedMeta)) throw new Error(`run metadata archive already exists: ${archivedMeta}`);
     copyFileSync(meta, archivedMeta);
   }
+  try {
   renameSync(log, target);
   if (existsSync(meta)) renameSync(meta, archivedMeta);
-  if (existsSync(archivedMeta) || indexReady) indexRunFile(home, target, archivedMeta);
-  if (indexReady) markJobRunIndexReady(home);
+  // Ordinary legacy log-only archiving must not initialize the metadata store.
+  if (existsSync(archivedMeta) || existsSync(join(home, "bridge.db"))) indexRunFile(home, target, archivedMeta);
+  } catch (error) { invalidateJobRunIndex(home); throw error; }
 }
 
 /** Includes archives written before AB-84, whose filenames carry a timestamp and UUID suffix. */
