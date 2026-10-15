@@ -330,6 +330,8 @@ export class NetworkService {
   private server: Server | null = null;
   private readonly sockets = new Set<Socket>();
   private readonly links = new Map<string, Link>();
+  /** Authenticated paired-PC links currently connected (or connecting): a daemon must not exit idle. */
+  get activeLinks(): number { return this.links.size + this.connecting.size; }
   private readonly connecting = new Set<string>();
   private readonly health = new Map<string, { lastVerifiedAt: number; roundTripMs: number }>();
   private discovery: NetworkDiscovery | null = null;

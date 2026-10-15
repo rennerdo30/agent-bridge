@@ -68,6 +68,13 @@ export const REQUEST_TIMEOUT_MS = 10_000;
 export const HANDOVER_DRAIN_MS = REQUEST_TIMEOUT_MS;
 /** After a daemon hands over to a newer release, older clients leave demand start to that release this long. */
 export const HANDOVER_LAUNCH_GRACE_MS = 15_000;
+/** Within this window after a handover to a release, an older daemon does not hand over to that release again. */
+export const HANDOVER_REPEAT_WINDOW_MS = 10 * 60_000;
+/** Home-directory marker of the last handover: { target, from, at }. */
+export const HANDOVER_MARKER_FILE = "daemon-handover.json";
+/** A late definite creation failure allows a new attempt only after this backoff, doubling per repeat. */
+export const LATE_RELAUNCH_BACKOFF_MIN_MS = 5_000;
+export const LATE_RELAUNCH_BACKOFF_MAX_MS = 5 * 60_000;
 /** A daemon with no connected client exits after this long (override: AGENT_BRIDGE_DAEMON_IDLE_EXIT_MS). */
 export const DAEMON_IDLE_EXIT_MS = 10 * 60_000;
 

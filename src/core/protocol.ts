@@ -141,6 +141,8 @@ export interface HelloArgs {
   /** Shared secret from ~/.agent-bridge/token. */
   token: string;
   peer: Omit<PeerInfo, "name"> & { name: string };
+  /** This client can demand-start a broker daemon itself; only such a newer client may ask a daemon to hand over. */
+  canHost?: boolean;
 }
 export interface HelloResult {
   brokerPid: number;
@@ -249,6 +251,8 @@ export interface UpdatePeerArgs {
 export interface AuthArgs {
   protocol: number;
   token: string;
+  /** As HelloArgs.canHost: omitted (CLI commands, job runners, older clients) never triggers a handover. */
+  canHost?: boolean;
 }
 
 export interface RequestMap {

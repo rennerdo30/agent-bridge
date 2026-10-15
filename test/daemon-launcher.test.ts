@@ -1,7 +1,7 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { classifyWindowsCreate, daemonEnvironment, superviseCreateHelper, windowsArgument, type CreateHelper } from "../src/core/daemon-launcher.js";
+import { classifyWindowsCreate, daemonEnvironment, RelaunchBackoff, superviseCreateHelper, windowsArgument, type CreateHelper } from "../src/core/daemon-launcher.js";
 
 afterEach(() => { vi.useRealTimers(); });
 
@@ -37,6 +37,22 @@ describe("daemon creation evidence", () => {
     expect(env.NODE_OPTIONS).toBeUndefined();
     expect(env.AGENT_BRIDGE_HOME).toBe("fixture-home");
     expect(env.AGENT_BRIDGE_PIPE).toBe("fixture-pipe");
+  });
+});
+
+describe("relaunch backoff after late creation failures", () => {
+  it("spaces attempts 5 s, doubling to a 5 min cap, and resets on registration", () => {
+    let now = 0;
+    const backoff = new RelaunchBackoff(() => now);
+    expect(backoff.ready).toBe(true);
+    const delays = Array.from({ length: 9 }, () => backoff.failed());
+    expect(delays).toEqual([5_000, 10_000, 20_000, 40_000, 80_000, 160_000, 300_000, 300_000, 300_000]);
+    expect(backoff.ready).toBe(false);
+    now += 299_999; expect(backoff.ready).toBe(false);
+    now += 1; expect(backoff.ready).toBe(true);
+    backoff.reset();
+    expect(backoff.ready).toBe(true);
+    expect(backoff.failed()).toBe(5_000);
   });
 });
 

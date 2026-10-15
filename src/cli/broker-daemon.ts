@@ -68,13 +68,16 @@ export async function runBrokerDaemon(home: string, pipe: string, log: Logger): 
   // Handover: an authenticated newer release asked this daemon to step aside. Idle: nobody is left to serve.
   // Both stop like SIGTERM: admit nothing new, drain admitted requests, close the store and the endpoint, exit.
   broker.onNewerClient(stop);
-  broker.exitWhenIdle(daemonIdleExitMs(), stop);
   let dashboard: import("./dashboard.js").DashboardController | undefined;
   let mobile: import("../mobile/activation.js").MobileActivation | undefined;
   let listening = false;
   let dashboardOpening: Promise<DashboardInfo | null> | undefined;
   let dashboardPort: number | undefined;
   let info: DashboardInfo | null = null;
+  // Besides pipe clients, pending remote-job work and paired-PC links (checked by the broker), open or recent
+  // dashboard HTTP/SSE and phone HTTPS connections keep the daemon serving.
+  const idleMs = daemonIdleExitMs();
+  broker.exitWhenIdle(idleMs, stop, () => dashboard?.activity?.active(idleMs) ? "dashboard_client" : mobile?.clientActivity(idleMs) ? "mobile_client" : undefined);
   const ensureDashboard = (force: boolean, requestedPort?: number): Promise<DashboardInfo | null> => {
     if (stopping) return Promise.reject(new BridgeError("bad_request", "Daemon is draining."));
     if (!force && !config.dashboard) return Promise.resolve(null);

@@ -593,18 +593,36 @@ describe("standalone demand-start broker", () => {
     await until(() => launch.mock.calls.length === 2, 10_000);
     expect(a.isBroker).toBe(false);
   });
-  it("a definite failure the helper reports after the decision budget un-latches an unknown attempt", async () => {
-    let late: LateDaemonLaunch | undefined;
-    const daemonHost = env.node("late-host");
-    const launch = vi.fn<NonNullable<NonNullable<ConstructorParameters<typeof BridgeNode>[0]["daemon"]>["launch"]>>()
-      .mockImplementationOnce(async (_options, report) => { late = report; return { kind: "unknown" }; })
-      .mockImplementationOnce(async () => { await daemonHost.start(); return { kind: "created" }; });
-    const a = node("late-failure", launch);
-    await expect(a.start()).rejects.toThrow("could not connect");
-    expect(launch).toHaveBeenCalledOnce();
-    late!({ kind: "unavailable", reason: "windows_wmi_create_rejected" });
-    await a.ensureConnected();
-    expect(launch).toHaveBeenCalledTimes(2); expect(a.isBroker).toBe(false);
+  it("late definite failures un-latch an unknown attempt only after a doubling backoff", async () => {
+    // Only the clock is fake: elections, sockets and timers run for real.
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(1_000_000);
+    try {
+      const reports: LateDaemonLaunch[] = [];
+      const daemonHost = env.node("late-host");
+      const launch = vi.fn<NonNullable<NonNullable<ConstructorParameters<typeof BridgeNode>[0]["daemon"]>["launch"]>>()
+        .mockImplementationOnce(async (_options, report) => { reports.push(report!); return { kind: "unknown" }; })
+        .mockImplementationOnce(async (_options, report) => { reports.push(report!); return { kind: "unknown" }; })
+        .mockImplementationOnce(async () => { await daemonHost.start(); return { kind: "created" }; });
+      const a = node("late-failure", launch);
+      await expect(a.start()).rejects.toThrow("could not connect");
+      expect(launch).toHaveBeenCalledOnce();
+      const first = Date.now();
+      reports[0]!({ kind: "unavailable", reason: "windows_wmi_create_rejected" });
+      vi.setSystemTime(first + 4_999);
+      await expect(a.ensureConnected()).rejects.toThrow("could not connect");
+      expect(launch).toHaveBeenCalledOnce(); // Un-latched, but still inside the 5 s backoff.
+      vi.setSystemTime(first + 5_000);
+      await expect(a.ensureConnected()).rejects.toThrow("could not connect");
+      expect(launch).toHaveBeenCalledTimes(2);
+      const second = Date.now();
+      reports[1]!({ kind: "unavailable", reason: "windows_wmi_create_rejected" });
+      vi.setSystemTime(second + 9_999);
+      await expect(a.ensureConnected()).rejects.toThrow("could not connect");
+      expect(launch).toHaveBeenCalledTimes(2); // The second backoff doubled to 10 s.
+      vi.setSystemTime(second + 10_000);
+      await a.ensureConnected();
+      expect(launch).toHaveBeenCalledTimes(3); expect(a.isBroker).toBe(false);
+    } finally { vi.useRealTimers(); }
   });
   it("an unknown creation that did start a daemon is relaunched after that daemon crashes", async () => {
     // The real creation runs, but its receipt is reported after the decision budget ("unknown").
@@ -627,7 +645,7 @@ describe("standalone demand-start broker", () => {
     const accepted = await a.send({ to: "after-handover", body: "kept across the handover" });
     const newer = await client();
     try {
-      await expect(newer.request("hello", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(env.home), peer: { id: "fixture-newer", name: "newer-release",
+      await expect(newer.request("hello", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(env.home), canHost: true, peer: { id: "fixture-newer", name: "newer-release",
         agent: "codex", cwd: env.home, pid: 424242, agentPid: null, sessionId: null, startedAt: Date.now(), autoWake: false, version: "999.0.0" } }))
         .rejects.toMatchObject({ code: "protocol_mismatch", details: { handover: true } });
     } finally { newer.close(); }

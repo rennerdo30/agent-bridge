@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { ENV } from "./constants.js";
+import { ENV, LATE_RELAUNCH_BACKOFF_MAX_MS, LATE_RELAUNCH_BACKOFF_MIN_MS } from "./constants.js";
 import type { BridgeConfig } from "./config.js";
 
 export type DaemonLaunch = { kind: "created" } | { kind: "unavailable"; reason: "windows_wmi_unavailable" | "windows_wmi_create_rejected" } | { kind: "unknown"; stage?: "read" | "startup" | "create"; errorCode?: number };
@@ -68,6 +68,25 @@ export interface CreateHelper {
   once(event: "error", listener: (error: Error) => void): unknown;
   kill(): unknown;
 }
+/**
+ * Spacing of new creation attempts after late definite failures, per node: 5 s, doubling to 5 min. Only an
+ * authenticated registration resets it, so a creation path that keeps failing late cannot relaunch in a loop.
+ */
+export class RelaunchBackoff {
+  private delay = LATE_RELAUNCH_BACKOFF_MIN_MS;
+  private notBefore = 0;
+  constructor(private readonly now: () => number = () => Date.now()) {}
+  /** Record a late definite failure; returns the delay before the next attempt may start. */
+  failed(): number {
+    const delay = this.delay;
+    this.notBefore = this.now() + delay;
+    this.delay = Math.min(delay * 2, LATE_RELAUNCH_BACKOFF_MAX_MS);
+    return delay;
+  }
+  get ready(): boolean { return this.now() >= this.notBefore; }
+  reset(): void { this.delay = LATE_RELAUNCH_BACKOFF_MIN_MS; this.notBefore = 0; }
+}
+
 /** A classification the helper produced after the decision budget had already settled the launch. */
 export type LateDaemonLaunch = (late: DaemonLaunch) => void;
 

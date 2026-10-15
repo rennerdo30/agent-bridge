@@ -21,7 +21,7 @@ import {
   RECONNECT_BACKOFF_MIN_MS,
 } from "./constants.js";
 import type { Logger } from "./logger.js";
-import { launchDaemon, type DaemonLaunch } from "./daemon-launcher.js";
+import { launchDaemon, RelaunchBackoff, type DaemonLaunch } from "./daemon-launcher.js";
 import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, type BridgeMessage, type EventMap, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer, type ModeSendArgs, type ModeSendResult } from "./protocol.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
 import { ReadJournal } from "./read-journal.js";
@@ -107,6 +107,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private daemonLaunch: DaemonLaunch | undefined;
   /** Until then, leave demand start to the newer release the last daemon handed over to. */
   private handoverGraceUntil = 0;
+  /** Spaces creation attempts that follow late definite failures (5 s doubling to 5 min). */
+  private readonly relaunchBackoff = new RelaunchBackoff();
   private degradedReason: "windows_wmi_unavailable" | "windows_wmi_create_rejected" | undefined;
   private stopping = false;
   /** The bridge gave this session to another server of it (see reclaim). */
@@ -182,6 +184,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return this.broker !== null;
   }
   get usesDaemon(): boolean { return !!this.opts.daemon; }
+  /** Only a node that can demand-start its own daemon may make an older daemon hand over to it. */
+  private get canHostDaemon(): boolean { return !!this.opts.daemon && this.opts.canHostBroker !== false && !this.opts.jobAgent; }
   ensureDashboard(force: boolean, port?: number): Promise<import("../cli/dashboard.js").DashboardInfo | null> {
     return this.withClient(client => client.request("ensureDashboard", { force, ...(port === undefined ? {} : { port }) }));
   }
@@ -350,6 +354,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       if (this.opts.canHostBroker !== false && Date.now() >= this.handoverGraceUntil) {
         if (this.opts.daemon) {
           if (!(await this.clearStaleSocket())) { await sleep(jitter()); continue; }
+          // A late definite failure un-latched the last attempt: wait out its backoff before creating again.
+          if (!this.daemonLaunch && !this.relaunchBackoff.ready) { await sleep(jitter()); continue; }
           if (!this.daemonLaunch) {
             let launch: DaemonLaunch | undefined;
             launch = this.daemonLaunch = await (this.opts.daemon.launch ?? launchDaemon)({ cli: this.opts.daemon.cli, home: dirname(this.opts.dbPath), pipe: this.opts.pipePath,
@@ -357,7 +363,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
               // The helper finished after the decision budget. Only a definite failure of this same attempt
               // un-latches it, so the next election creates again; anything else stays latched as before.
               this.log.info("late daemon creation observation", { kind: late.kind });
-              if (late.kind === "unavailable" && launch !== undefined && this.daemonLaunch === launch) this.daemonLaunch = undefined;
+              if (late.kind === "unavailable" && launch !== undefined && this.daemonLaunch === launch) {
+                this.daemonLaunch = undefined;
+                this.log.info("late creation failure; next creation attempt after backoff", { delayMs: this.relaunchBackoff.failed() });
+              }
             });
             this.log.info("daemon creation observation; authenticated readiness still required", { kind: launch.kind,
               ...(launch.kind === "unknown" ? { stage: launch.stage, errorCode: launch.errorCode } : {}) });
@@ -468,7 +477,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     let brokerVersion: string | undefined;
     // Read presence before hello can trigger writes in a newer broker.
     try {
-      await client.request("auth", { protocol: PROTOCOL_VERSION, token: this.opts.token });
+      await client.request("auth", { protocol: PROTOCOL_VERSION, token: this.opts.token, ...(this.canHostDaemon ? { canHost: true } : {}) });
       brokerVersion = (await client.request("ping", {})).brokerVersion;
       if (this.opts.dbPath !== ":memory:") for (const peer of await client.request("peers", {})) recordStorePeer(dirname(this.opts.dbPath), peer);
     } catch (error) { client.close(); throw error; }
@@ -489,6 +498,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return {
       protocol: PROTOCOL_VERSION,
       token: this.opts.token,
+      ...(this.canHostDaemon ? { canHost: true } : {}),
       peer: {
         id: this.id,
         name: this.currentName,
@@ -517,6 +527,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     // Any authenticated registration settles creation, including an ambiguous attempt: a broker is serving, so
     // after a later loss (crash, idle exit, handover) discovery may demand-start again.
     this.daemonLaunch = undefined;
+    this.relaunchBackoff.reset();
     this.client = client;
     this.currentName = hello.name;
     this.recordOwnStorePeer();

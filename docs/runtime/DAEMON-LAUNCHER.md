@@ -11,8 +11,10 @@ demand-start. There is still no stop/restart command (that code stays held for r
 of `DAEMON-LIFECYCLE-PREREQUISITE.md`); instead a daemon ends by handover to a newer
 release, by idle exit, or by `SIGTERM`/`SIGINT`, each with the drain below.
 
-**Handover.** Daemon hosting only. A client that proves the shared token and carries a
-newer `APP_VERSION` in `hello` (job runners excepted) or a newer `PROTOCOL_VERSION` in
+**Handover.** Daemon hosting only. A client that proves the shared token, sends
+`canHost: true` in `auth`/`hello` (only nodes that can demand-start their own daemon do;
+job runners, delegate runs and status probes never send it) and carries a newer
+`APP_VERSION` in `hello` (not as a job runner) or a newer `PROTOCOL_VERSION` in
 `auth`/`hello` is refused with `protocol_mismatch` and `details.handover`, and the
 daemon starts stopping: it admits no further request on any connection (auth/hello
 get the same refusal, other operations `bad_request` with `applied: false`), sends
@@ -26,8 +28,20 @@ the exclusive bind remains the only admission. Peers of an older release that go
 `handover` event do not demand-start for 15 s, so the newer release wins the
 election. No process is ever stopped by name.
 
-**Idle exit.** With no client of another process connected for 10 minutes
-(`AGENT_BRIDGE_DAEMON_IDLE_EXIT_MS`, 1 s to 24 h), the daemon stops the same way.
+Repeat limit: before stopping, the daemon writes `daemon-handover.json` in the home
+(`{ target, from, at }`, target `version:X` or `protocol:N`, written atomically). A
+daemon that finds a marker for the same target younger than 10 minutes does not hand
+over again: it logs a warning and keeps serving (the version path then registers the
+client normally; the protocol path answers a plain `protocol_mismatch`). If the marker
+cannot be written, it also keeps serving. This bounds churn when the newer release's
+daemon cannot start. Late definite creation failures are spaced per node by a backoff
+of 5 s doubling to 5 min, reset by an authenticated registration.
+
+**Idle exit.** The daemon stops the same way once nothing has been served for 10
+minutes (`AGENT_BRIDGE_DAEMON_IDLE_EXIT_MS`, 1 s to 24 h). Pipe/TCP connections of
+other processes start and stop the timer; when it fires, pending remote-job requests
+and admissions or starts, connected or connecting paired-PC links, and dashboard
+HTTP/SSE or mobile HTTPS connections open or closed within the period restart it.
 
 Production MCP and CLI nodes first discover the existing broker. Concrete endpoint
 absence permits demand start of `node <bundled-cli> broker-daemon`. All peers remain
