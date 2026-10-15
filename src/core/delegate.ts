@@ -10,6 +10,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { ClaudePermissionMode, CodexSandbox } from "./config.js";
 import type { Logger } from "./logger.js";
 import { claudeMcpDenyRules } from "./claude-mcp.js";
+import { startClaudeJobMcp } from "./claude-job-mcp.js";
 import { PARENT_URL_ENV } from "./parent-link.js";
 import { FinalAnswers } from "./final-answers.js";
 import { progressLineHandler } from "./progress.js";
@@ -357,6 +358,8 @@ export function runProcess(opts: {
 }
 
 export interface DelegateRequest {
+  /** Claude-only native MCP exposure; other targets keep their existing approval routing. */
+  claudeAllowTools?: readonly string[];
   maxDelegateDepth?: number;
   /** Maximum open native Codex child threads, excluding this job. */
   nativeSubagents?: number;
@@ -672,35 +675,39 @@ export async function delegateToClaude(
   checkDepth(req.maxDelegateDepth);
   // stream-json lets us report progress; the final "result" line matches --output-format json.
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
-  // Read-only also means no MCP tools: those of the user's plugins can change things. Each server is denied by
-  // name except agent-bridge's (a blanket mcp__* deny would beat the allow for send, which answers the parent).
+  const mcp = await startClaudeJobMcp({ cwd: req.cwd, patterns: req.claudeAllowTools ?? [], env: childEnv(req.extraEnv), log: req.log, signal: req.signal, timeoutMs: Math.min(30_000, req.timeoutSec * 1000) });
+  // Keep ambient plugin servers denied in read-only jobs. Granted tools are exposed through a separate,
+  // filtered server, so whole-server denies never need to be weakened (including on resume).
   const readOnly = isClaudeReadOnly(req.permissionMode);
-  if (readOnly) args.push("--disallowedTools", [...CLAUDE_READ_ONLY_DENIED_TOOLS, ...claudeMcpDenyRules(req.cwd)].join(","));
+  const denied = [...mcp.denied, ...(readOnly ? [...CLAUDE_READ_ONLY_DENIED_TOOLS, ...claudeMcpDenyRules(req.cwd)] : [])];
+  if (denied.length) args.push("--disallowedTools", [...new Set(denied)].join(","));
+  if (Object.keys(mcp.config).length) args.push("--mcp-config", JSON.stringify({ mcpServers: mcp.config }));
   if (req.model) args.push("--model", req.model);
   if (req.effort) args.push("--effort", req.effort);
   if (req.sessionId) args.push("--resume", req.sessionId);
   // Headless Claude denies MCP tools it would ask about: let it answer its parent (see parent-link.ts).
-  if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", `${CLAUDE_PARENT_SEND_TOOL},${CLAUDE_PARENT_PROGRESS_TOOL}`);
+  const allowed = [...mcp.allowed, ...(req.extraEnv?.[PARENT_URL_ENV] ? [CLAUDE_PARENT_SEND_TOOL, CLAUDE_PARENT_PROGRESS_TOOL] : [])];
+  if (allowed.length) args.push("--allowedTools", allowed.join(","));
   // Permission prompts (a command or MCP tool that needs approval) go to approve through a PermissionRequest
   // hook; without it headless Claude settles them on its own, unseen. Never for read-only runs: there the deny
   // list decides alone. The hook fires in `claude -p` since Claude Code 2.1.268; older versions skip it.
   const hookCli = claudeForwardsPrompts(req.permissionMode, req) ? (req.hookCli ?? bundledCli()) : null;
   let relay: PermissionRelay | null = null;
-  const extraEnv = { ...req.extraEnv };
-  if (hookCli && spawnsWithoutShell(req.bin, req.log)) {
-    const approve = req.approve!;
-    relay = new PermissionRelay(async (r) => {
-      const d = await approve(r);
-      return d.allow ? { allow: true } : { allow: false, message: d.message || "Denied by the parent session." };
-    }, req.log);
-    await relay.start();
-    Object.assign(extraEnv, relay.childEnv());
-    args.push("--settings", claudePermissionHookSettings(hookCli));
-  } else if (hookCli) {
-    req.log.warn("claude runs through a shell; its permission prompts are not forwarded", { bin: req.bin });
-  }
+  const extraEnv = { ...req.extraEnv, ...mcp.env };
   let res: RunResult;
   try {
+    if (hookCli && spawnsWithoutShell(req.bin, req.log)) {
+      const approve = req.approve!;
+      relay = new PermissionRelay(async (r) => {
+        const d = await approve(r);
+        return d.allow ? { allow: true } : { allow: false, message: d.message || "Denied by the parent session." };
+      }, req.log);
+      await relay.start();
+      Object.assign(extraEnv, relay.childEnv());
+      args.push("--settings", claudePermissionHookSettings(hookCli));
+    } else if (hookCli) {
+      req.log.warn("claude runs through a shell; its permission prompts are not forwarded", { bin: req.bin });
+    }
     res = await withResumeHint("claude", (o) => claudeSessionFromStream(o), () => runProcess({
       bin: req.bin,
       args,
@@ -714,6 +721,7 @@ export async function delegateToClaude(
     }));
   } finally {
     await relay?.stop();
+    await mcp.stop();
   }
   const parsed = parseClaudeJson(res.stdout);
   if (!parsed) {

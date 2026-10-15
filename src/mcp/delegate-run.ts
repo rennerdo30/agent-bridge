@@ -423,6 +423,7 @@ async function runDelegateInner(
           if (job) rc.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
         },
         approve,
+        ...(target === "claude" ? { claudeAllowTools: autoApprove } : {}),
         onDenied: (message) => { link?.post(message); },
         // Someone answers approve's questions: the user ("ask" relay or a dialog) or, for a background
         // subagent, the parent agent. Else targets keep their own behavior (Claude and opencode).

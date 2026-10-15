@@ -53,6 +53,12 @@ function glob(pattern: string): RegExp {
   return new RegExp(`^${pattern.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`, "i");
 }
 
+/** Whether any grant selects a server, including a tool-specific grant or worker preset. */
+export function hasServerGrant(server: string, patterns: readonly string[]): boolean {
+  return patterns.flatMap((p) => p.trim() === DESK_WORKER_PRESET ? DESK_WORKER_PATTERNS : [p.trim()])
+    .some((p) => serverNames(server).some((name) => glob(p.split(".")[0]!).test(name)));
+}
+
 /**
  * The subagent's own agent-bridge server (send to its parent, report_progress, peers): always allowed, it only
  * talks to the session that runs the subagent. Its name per CLI: Codex "agent-bridge", Claude
