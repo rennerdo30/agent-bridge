@@ -125,7 +125,7 @@ function remoteFixture() {
     execFileSync("git", ["push"], { cwd: writer, env, stdio: "pipe" });
     return execFileSync("git", ["rev-parse", "HEAD"], { cwd: writer, env, encoding: "utf8" }).trim();
   };
-  return { remote, advance };
+  return { remote, advance, writer };
 }
 
 it("forks stale local HEAD from the fetched non-origin default and reports the exact base", async () => {
@@ -137,7 +137,7 @@ it("forks stale local HEAD from the fetched non-origin default and reports the e
   expect(git("rev-parse", wt.branch)).toBe(fresh);
   expect(readFileSync(join(wt.path, "fresh.txt"), "utf8")).toBe("fresh remote bytes");
   expect(worktreeBaseReport(wt)).toContain(`Base: refs/remotes/upstream/trunk ${fresh}`);
-  expect(worktreeBaseReport(wt)).toContain(`cwd HEAD ${stale} is behind`);
+  expect(worktreeBaseReport(wt)).toContain("cwd HEAD was 1 behind refs/remotes/upstream/trunk; using refs/remotes/upstream/trunk");
   const network = mocks.process.mock.calls.map(call => call[0] as Parameters<typeof runProcess>[0]).filter(call => call.args?.includes("fetch") || call.args?.includes("ls-remote"));
   expect(network.length).toBeGreaterThan(0);
   expect(network.every(call => call.timeoutMs === WORKTREE_FETCH_TIMEOUT_MS && call.env?.GIT_TERMINAL_PROMPT === "0")).toBe(true);
@@ -208,9 +208,67 @@ it("does not infer the default from a sole cached feature branch while offline",
   expect(git("rev-parse", wt.branch)).toBe(head);
   expect(git("rev-parse", "refs/remotes/origin/feature")).toBe(cached);
   expect(readFileSync(join(wt.path, "local.txt"), "utf8")).toBe("local-only work");
-  expect(worktreeBaseReport(wt)).toContain("fetch failed or offline");
+  expect(worktreeBaseReport(wt)).toContain("discovery failed or offline");
   expect(worktreeBaseReport(wt)).toContain("WARNING: no remote default tracking ref available; falling back to local HEAD");
   expect(worktreeBaseReport(wt)).not.toContain("cached default");
+  expect(mocks.process.mock.calls.some(call => (call[0] as Parameters<typeof runProcess>[0]).args?.includes("fetch"))).toBe(false);
+});
+
+function localCommit() {
+  writeFileSync(join(repo, "local-work.txt"), "unpublished feature work"); git("add", "local-work.txt");
+  git("-c", "user.name=Fixture Owner", "-c", "user.email=owner@example.test", "commit", "-qm", "local work");
+  return git("rev-parse", "HEAD");
+}
+
+it("keeps feature HEAD ahead of its upstream and fetches only that upstream", async () => {
+  const { advance } = remoteFixture();
+  git("push", "upstream", "HEAD:feature");
+  git("checkout", "-qb", "feature", "--track", "upstream/feature");
+  const head = localCommit(); advance();
+  const wt = await createWorktree({ cwd: repo, home, jobId: "ahead", log: nullLogger });
+  expect(wt.base).toBe(head);
+  expect(wt.baseRef).toBe("local HEAD");
+  expect(readFileSync(join(wt.path, "local-work.txt"), "utf8")).toBe("unpublished feature work");
+  const calls = mocks.process.mock.calls.map(call => (call[0] as Parameters<typeof runProcess>[0]).args ?? []);
+  const fetches = calls.filter(args => args.includes("fetch"));
+  expect(fetches).toHaveLength(1);
+  expect(fetches[0]).toContain("refs/heads/feature:refs/remotes/upstream/feature");
+  expect(calls.some(args => args.includes("ls-remote"))).toBe(false);
+});
+
+it.each([false, true])("keeps diverged HEAD with both SHAs and behind count (upstream=%s)", async upstream => {
+  const { advance, writer } = remoteFixture();
+  if (upstream) {
+    git("push", "upstream", "HEAD:feature");
+    git("checkout", "-qb", "feature", "--track", "upstream/feature");
+  }
+  const head = localCommit(), tip = advance();
+  if (upstream) execFileSync("git", ["push", "origin", "HEAD:feature"], { cwd: writer, env, stdio: "pipe" });
+  const ref = `refs/remotes/upstream/${upstream ? "feature" : "trunk"}`;
+  const wt = await createWorktree({ cwd: repo, home, jobId: "diverged", log: nullLogger });
+  expect(wt.base).toBe(head);
+  expect(wt.baseRef).toBe("local HEAD");
+  expect(worktreeBaseReport(wt)).toContain(`WARNING: DIVERGED cwd HEAD ${head} and ${ref} ${tip}: 1 behind, 1 ahead; keeping local HEAD`);
+  expect(git("rev-parse", wt.branch)).toBe(head);
+});
+
+it("keeps equal HEAD rather than changing its base label to the reference", async () => {
+  remoteFixture(); const head = git("rev-parse", "HEAD");
+  const wt = await createWorktree({ cwd: repo, home, jobId: "equal", log: nullLogger });
+  expect(wt.base).toBe(head);
+  expect(wt.baseRef).toBe("local HEAD");
+});
+
+it("advances a purely behind feature checkout from its fetched upstream", async () => {
+  const { advance, writer } = remoteFixture();
+  git("push", "upstream", "HEAD:feature");
+  git("checkout", "-qb", "feature", "--track", "upstream/feature");
+  const tip = advance();
+  execFileSync("git", ["push", "origin", "HEAD:feature"], { cwd: writer, env, stdio: "pipe" });
+  const wt = await createWorktree({ cwd: repo, home, jobId: "behind-feature", log: nullLogger });
+  expect(wt.base).toBe(tip);
+  expect(wt.baseRef).toBe("refs/remotes/upstream/feature");
+  expect(worktreeBaseReport(wt)).toContain("cwd HEAD was 1 behind refs/remotes/upstream/feature; using refs/remotes/upstream/feature");
 });
 
 it("rejects an invalid explicit base without creating or changing any branch", async () => {

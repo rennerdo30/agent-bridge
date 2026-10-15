@@ -1286,7 +1286,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         .describe(
           "Run in a separate git worktree on its own branch (implies access=edit). Your working copy stays untouched; the result explains how to review, merge or discard the changes.",
         ),
-      base: z.string().min(1).max(4096).optional().describe("Explicit worktree base ref or commit. Default: fetched remote default branch; selected at job start and reported with its SHA in the first status and preamble. Offline uses cached remote ref, or local HEAD with a warning; local-only repositories use HEAD."),
+      base: z.string().min(1).max(4096).optional().describe("Explicit worktree base ref or commit. Otherwise compare HEAD to its fetched upstream, or the remote default without an upstream: advance only when purely behind; keep HEAD when equal, ahead or diverged. Offline uses the cached reference, or HEAD with a warning; local-only repos use HEAD. Exact selection is reported at job start."),
       title: z
         .string()
         .min(1)
@@ -1433,7 +1433,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         // Exact target options (sandbox, permission_mode, auto_approve, bypass_permissions) say it themselves.
         const exact = a.sandbox !== undefined || a.permission_mode !== undefined || a.auto_approve !== undefined || a.bypass_permissions !== undefined;
         const note = exact ? "" : `\n${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
-        return text(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${a.worktree ? `\nBase selected at job start: ${a.base ?? "fetched <remote>/<default> (offline/local fallback reported in first status)"}.` : ""}${derivedTitle ? `\nTitle derived from prompt: "${a.title}".` : ""}`);
+        return text(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${a.worktree ? `\nBase selected at job start: ${a.base ?? "HEAD unless purely behind fetched upstream/default (offline/local fallback reported in first status)"}.` : ""}${derivedTitle ? `\nTitle derived from prompt: "${a.title}".` : ""}`);
       }),
     );
   }

@@ -66,45 +66,56 @@ async function selectWorktreeBase(repo: string, log: Logger, explicit?: string):
   const head = await run(["rev-parse", "HEAD"]);
   const remotes = (await run(["remote"])).split(/\r?\n/).filter(Boolean);
   const baseNotes: string[] = [];
-  let defaultRef: string | undefined;
+  let reference: string | undefined;
   if (remotes.length) {
-    const upstream = await run(["config", "--get", "branch." + (await run(["branch", "--show-current"])) + ".remote"]).catch(() => "");
-    const remote = remotes.includes(upstream) ? upstream : remotes.includes("origin") ? "origin" : remotes[0]!;
-    let defaultBranch = (await run(["symbolic-ref", "-q", `refs/remotes/${remote}/HEAD`]).catch(() => "")).replace(`refs/remotes/${remote}/`, "");
+    const branch = await run(["branch", "--show-current"]);
+    const upstreamRemote = await run(["config", "--get", `branch.${branch}.remote`]).catch(() => "");
+    const merge = await run(["config", "--get", `branch.${branch}.merge`]).catch(() => "");
+    const remote = remotes.includes(upstreamRemote) ? upstreamRemote : remotes.includes("origin") ? "origin" : remotes[0]!;
     const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never" };
-    let discoveryFailed = false;
-    try {
-      const advertised = await git(["ls-remote", "--symref", "--", remote, "HEAD"], repo, log, WORKTREE_FETCH_TIMEOUT_MS, env);
-      defaultBranch = /^ref: refs\/heads\/(.+)\tHEAD\r?$/m.exec(advertised)?.[1] ?? defaultBranch;
-    } catch { discoveryFailed = true; }
-    let fetchFailed = false;
-    if (!defaultBranch) {
-      await git(["fetch", "--no-tags", "--", remote, `refs/heads/*:refs/remotes/${remote}/*`], repo, log, WORKTREE_FETCH_TIMEOUT_MS, env).catch(() => {
-        fetchFailed = true;
-        baseNotes.push(`WARNING: fetch failed or offline for remote ${remote}.`);
-      });
-    }
-    if (defaultBranch) {
-      defaultRef = `refs/remotes/${remote}/${defaultBranch}`;
+    let source: string | undefined;
+    if (upstreamRemote === "." && merge) reference = merge;
+    else if (remotes.includes(upstreamRemote) && merge.startsWith("refs/heads/")) {
+      source = merge;
+      reference = `refs/remotes/${remote}/${merge.slice("refs/heads/".length)}`;
+    } else {
+      let defaultBranch = (await run(["symbolic-ref", "-q", `refs/remotes/${remote}/HEAD`]).catch(() => "")).replace(`refs/remotes/${remote}/`, "");
       try {
-        // Refresh only remote-tracking refs. Never prune or change local branches.
-        await git(["fetch", "--no-tags", "--", remote, `refs/heads/${defaultBranch}:${defaultRef}`], repo, log, WORKTREE_FETCH_TIMEOUT_MS, env);
-        if (discoveryFailed && !fetchFailed) baseNotes.push(`WARNING: remote default discovery failed; fetched cached default ${remote}/${defaultBranch}.`);
-      } catch {
-        fetchFailed = true;
+        const advertised = await git(["ls-remote", "--symref", "--", remote, "HEAD"], repo, log, WORKTREE_FETCH_TIMEOUT_MS, env);
+        defaultBranch = /^ref: refs\/heads\/(.+)\tHEAD\r?$/m.exec(advertised)?.[1] ?? defaultBranch;
+      } catch { baseNotes.push("WARNING: remote default discovery failed or offline."); }
+      if (defaultBranch) {
+        source = `refs/heads/${defaultBranch}`;
+        reference = `refs/remotes/${remote}/${defaultBranch}`;
       }
-      if (fetchFailed) baseNotes.push(`WARNING: fetch failed or offline; using last fetched remote ref ${remote}/${defaultBranch} if available.`);
-      if (!await run(["rev-parse", "--verify", `${defaultRef}^{commit}`]).catch(() => "")) defaultRef = undefined;
     }
-    if (!defaultRef && !explicit) baseNotes.push("WARNING: no remote default tracking ref available; falling back to local HEAD.");
+    if (source && reference) {
+      try {
+        // Fetch only the needed upstream/default. Never prune or change local branches.
+        await git(["fetch", "--no-tags", "--", remote, `${source}:${reference}`], repo, log, WORKTREE_FETCH_TIMEOUT_MS, env);
+      } catch {
+        baseNotes.push(`WARNING: fetch failed or offline; using last fetched remote ref ${reference.replace("refs/remotes/", "")} if available.`);
+      }
+    }
+    if (!reference || !await run(["rev-parse", "--verify", `${reference}^{commit}`]).catch(() => "")) {
+      reference = undefined;
+      if (!explicit) baseNotes.push("WARNING: no remote default tracking ref available; falling back to local HEAD.");
+    }
   } else baseNotes.push("Repository has no remote.");
-  const baseRef = explicit ?? defaultRef ?? "local HEAD";
-  const base = explicit ? await run(["rev-parse", "--verify", "--end-of-options", `${explicit}^{commit}`])
-    : defaultRef ? await run(["rev-parse", "--verify", `${defaultRef}^{commit}`]) : head;
-  const upstreamRef = await run(["rev-parse", "--symbolic-full-name", "@{upstream}"]).catch(() => "");
-  for (const ref of new Set([defaultRef, upstreamRef].filter((ref): ref is string => Boolean(ref)))) {
-    const count = Number(await run(["rev-list", "--count", `${head}..${ref}`]).catch(() => "0"));
-    if (count > 0) baseNotes.push(`WARNING: cwd HEAD ${head} is behind ${ref} by ${count} commit(s).`);
+  let baseRef = explicit ?? "local HEAD";
+  let base = explicit ? await run(["rev-parse", "--verify", "--end-of-options", `${explicit}^{commit}`]) : head;
+  if (reference) {
+    const tip = await run(["rev-parse", "--verify", `${reference}^{commit}`]);
+    const [ahead, behind] = (await run(["rev-list", "--left-right", "--count", `${head}...${tip}`])).split(/\s+/).map(Number);
+    if (behind! > 0) {
+      const ancestor = await run(["merge-base", "--is-ancestor", head, tip]).then(() => true, () => false);
+      if (ancestor) {
+        if (!explicit) {
+          base = tip; baseRef = reference;
+          baseNotes.push(`cwd HEAD was ${behind} behind ${reference}; using ${reference}.`);
+        } else baseNotes.push(`WARNING: cwd HEAD ${head} is behind ${reference} by ${behind} commit(s); explicit base wins.`);
+      } else baseNotes.push(`WARNING: DIVERGED cwd HEAD ${head} and ${reference} ${tip}: ${behind} behind, ${ahead} ahead; ${explicit ? "explicit base wins" : "keeping local HEAD"}.`);
+    }
   }
   return { base, baseRef, baseNotes };
 }
