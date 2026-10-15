@@ -1,10 +1,13 @@
 import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AntigravityHooks } from "../src/mcp/antigravity-hooks.js";
+import { antigravityPermission, postAntigravityHook } from "../src/cli/antigravity-hook.js";
+import { askRelay } from "../src/core/relay.js";
 import { antigravityAncestor } from "../src/core/procinfo.js";
-import { buildHookResponse } from "../src/mcp/hooks.js";
+import { buildHookResponse, confirmAntigravityStopDelivery } from "../src/mcp/hooks.js";
 import { antigravityHookCommand, requireAntigravityPlugin } from "../src/core/antigravity-plugin.js";
 import { grantAntigravityBridgeMcp, installAntigravity } from "../src/cli/antigravity-install.js";
 import { execFileSync } from "node:child_process";
@@ -13,8 +16,57 @@ import type { ServerContext } from "../src/mcp/server.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 
 vi.mock("../src/core/procinfo.js", () => ({ antigravityAncestor: vi.fn(async () => 12345) }));
-vi.mock("../src/mcp/hooks.js", () => ({ buildHookResponse: vi.fn() }));
+vi.mock("../src/mcp/hooks.js", () => ({ buildHookResponse: vi.fn(), confirmAntigravityStopDelivery: vi.fn() }));
+vi.mock("../src/core/relay.js", async (original) => ({ ...await original<typeof import("../src/core/relay.js")>(), askRelay: vi.fn() }));
 afterEach(() => vi.clearAllMocks());
+
+describe("Antigravity edit-mode read policy", () => {
+  it.each([
+    ["skills", "example", "SKILL.md"],
+    ["schemas", "report_progress.json"],
+    ["schemas", "peers.json"],
+    ["schemas", "send.json"],
+    ["schemas", "list_issues.json"],
+  ])("defers view_file of ~/.gemini/%s to native policy without relaying", async (...parts) => {
+    const env = makeEnv();
+    try {
+      const input = { toolCall: { name: "view_file", args: { AbsolutePath: join(homedir(), ".gemini", ...parts) } }, workspacePaths: [env.home] };
+      expect(await antigravityPermission(input, "edit", true)).toEqual({ decision: "allow" });
+      expect(askRelay).not.toHaveBeenCalled();
+      // Read access retains its existing explicit resource permission override.
+      expect(await antigravityPermission(input, "read", true)).toEqual({ decision: "allow", permissionOverrides: [`read_file(${input.toolCall.args.AbsolutePath})`] });
+      expect(askRelay).not.toHaveBeenCalled();
+    } finally { await env.cleanup(); }
+  });
+
+  it.each([
+    ["list_dir", "DirectoryPath"],
+    ["grep_search", "SearchPath"],
+    ["find_by_name", "SearchDirectory"],
+  ])("defers out-of-workspace %s reads to native policy without relaying", async (name, pathKey) => {
+    const env = makeEnv();
+    try {
+      expect(await antigravityPermission({ toolCall: { name, args: { [pathKey]: join(homedir(), ".gemini") } }, workspacePaths: [env.home] }, "edit", true)).toEqual({ decision: "allow" });
+      expect(askRelay).not.toHaveBeenCalled();
+    } finally { await env.cleanup(); }
+  });
+
+  it.each(["write_to_file", "run_command", "call_mcp_tool", "new_unknown_tool"])("still relays %s in edit mode and denies it in read mode", async (name) => {
+    const env = makeEnv();
+    try {
+      const args = name === "write_to_file" ? { TargetFile: join(homedir(), ".gemini", "settings.json") }
+        : name === "run_command" ? { CommandLine: "npm test" }
+        : name === "call_mcp_tool" ? { ServerName: "external-service", ToolName: "read_data" }
+        : { AbsolutePath: join(env.home, "unknown.ts") };
+      const input = { toolCall: { name, args }, workspacePaths: [env.home] };
+      vi.mocked(askRelay).mockResolvedValueOnce({ allow: false, message: "supervisor denied" });
+      expect(await antigravityPermission(input, "edit", true)).toEqual({ decision: "deny", reason: "supervisor denied" });
+      expect(askRelay).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ agent: "antigravity", tool: name === "call_mcp_tool" ? "mcp:external-service" : name, cwd: env.home }));
+      expect(await antigravityPermission(input, "read", true)).toEqual({ decision: "deny", reason: "agent-bridge read access forbids this tool" });
+      expect(askRelay).toHaveBeenCalledTimes(1);
+    } finally { await env.cleanup(); }
+  });
+});
 
 describe("Antigravity native hook routing", () => {
   it("skips native process inspection for an internal server without an inbox", async () => {
@@ -57,25 +109,62 @@ describe("Antigravity native hook routing", () => {
     } finally { await env.cleanup(); }
   });
   it("authenticates mail, continues at Stop and isolates native children and replaced peers", async () => {
-    const env = makeEnv(), node = Object.assign(new EventEmitter(), { currentSessionId: "parent" });
-    const hooks = new AntigravityHooks({ home: env.home, node } as unknown as ServerContext);
+    const env = makeEnv();
+    const setSessionId = vi.fn(async () => {}), ensureConnected = vi.fn(async () => {}), learnCwd = vi.fn(async () => {});
+    const node = Object.assign(new EventEmitter(), { currentSessionId: "parent", setSessionId, ensureConnected });
+    const hooks = new AntigravityHooks({ home: env.home, node, learnCwd } as unknown as ServerContext);
     try {
       await hooks.start();
       const reg = JSON.parse(readFileSync(join(env.home, "antigravity-hooks", "12345.json"), "utf8"));
-      const call = (event: string, id = "parent", secret = reg.secret) => fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ event, input: { conversationId: id, workspacePaths: [env.home] } }) });
+      const call = (event: string, id = "parent", secret = reg.secret, extra: Record<string, unknown> = {}) => fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ event, input: { conversationId: id, workspacePaths: [env.home], ...extra } }) });
       expect((await call("Stop", "parent", "wrong")).status).toBe(403);
+      // PreToolUse learns session/cwd and confirms pending Stop mail without calling buildHookResponse (F1).
+      expect(await (await call("PreToolUse", "parent", reg.secret)).json()).toEqual({});
+      expect(setSessionId).toHaveBeenCalledWith("parent");
+      expect(learnCwd).toHaveBeenCalledWith(env.home);
+      expect(ensureConnected).toHaveBeenCalledTimes(1);
+      expect(confirmAntigravityStopDelivery).toHaveBeenCalledTimes(1);
+      expect(buildHookResponse).not.toHaveBeenCalled();
+      // Zero-based invocationNum=0 on initial prompt -> Stop(executionNum=0) -> continuation invocationNum=1 sets stopHookActive:true.
       vi.mocked(buildHookResponse).mockResolvedValueOnce({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "new mail" } });
-      expect(await (await call("PreInvocation")).json()).toEqual({ injectSteps: [{ ephemeralMessage: "new mail" }] });
-      expect(buildHookResponse).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sessionId: "parent", cwd: env.home }));
+      expect(await (await call("PreInvocation", "parent", reg.secret, { invocationNum: 0 })).json()).toEqual({ injectSteps: [{ ephemeralMessage: "new mail" }] });
+      expect(buildHookResponse).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ sessionId: "parent", cwd: env.home, stopHookActive: false }));
       vi.mocked(buildHookResponse).mockResolvedValueOnce({ decision: "block", reason: "result arrived" });
-      expect(await (await call("Stop")).json()).toEqual({ decision: "continue", reason: "result arrived" });
+      expect(await (await call("Stop", "parent", reg.secret, { executionNum: 0, terminationReason: "NO_TOOL_CALL" })).json()).toEqual({ decision: "continue", reason: "result arrived" });
+      vi.mocked(buildHookResponse).mockResolvedValueOnce({});
+      expect(await (await call("PreInvocation", "parent", reg.secret, { invocationNum: 1 })).json()).toEqual({});
+      expect(buildHookResponse).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ event: "UserPromptSubmit", stopHookActive: true }));
+      // If Stop continuation is not taken and a fresh turn starts at invocationNum=0, stopHookActive is false.
+      vi.mocked(buildHookResponse).mockResolvedValueOnce({ decision: "block", reason: "second result" });
+      expect(await (await call("Stop", "parent", reg.secret, { executionNum: 1, terminationReason: "NO_TOOL_CALL" })).json()).toEqual({ decision: "continue", reason: "second result" });
+      vi.mocked(buildHookResponse).mockResolvedValueOnce({});
+      expect(await (await call("PreInvocation", "parent", reg.secret, { invocationNum: 0 })).json()).toEqual({});
+      expect(buildHookResponse).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ event: "UserPromptSubmit", stopHookActive: false }));
+      // Repeated Stop at the same executionNum or with a cap terminationReason maps to StopFailure without continuing.
+      vi.mocked(buildHookResponse).mockResolvedValueOnce({ decision: "block", reason: "third result" });
+      expect(await (await call("Stop", "parent", reg.secret, { executionNum: 1, terminationReason: "NO_TOOL_CALL" })).json()).toEqual({ decision: "continue", reason: "third result" });
       expect(await (await call("Stop", "child")).json()).toEqual({});
-      expect(buildHookResponse).toHaveBeenCalledTimes(2);
+      vi.mocked(buildHookResponse).mockResolvedValueOnce({});
+      expect(await (await call("Stop", "parent", reg.secret, { executionNum: 1, terminationReason: "NO_TOOL_CALL" })).json()).toEqual({});
+      expect(buildHookResponse).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ event: "StopFailure" }));
+      vi.mocked(buildHookResponse).mockResolvedValueOnce({});
+      expect(await (await call("Stop", "parent", reg.secret, { executionNum: 2, terminationReason: "MAX_FORCED_INVOCATIONS" })).json()).toEqual({});
+      expect(buildHookResponse).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ event: "StopFailure" }));
       node.emit("replaced"); expect((await call("Stop")).status).toBe(403);
       writeFileSync(join(env.home, "antigravity-hooks", "12345.json"), '{"port":1,"secret":"replacement"}');
       node.emit("reclaimed"); vi.mocked(buildHookResponse).mockResolvedValue({});
       expect(JSON.parse(readFileSync(join(env.home, "antigravity-hooks", "12345.json"), "utf8"))).toEqual(reg);
       expect((await call("Stop")).status).toBe(200);
+      vi.mocked(buildHookResponse).mockResolvedValueOnce({ decision: "block", reason: "held mail" });
+      expect(await (await call("Stop", "parent", reg.secret, { executionNum: 3, terminationReason: "NO_TOOL_CALL" })).json()).toEqual({ decision: "continue", reason: "held mail" });
+      vi.mocked(confirmAntigravityStopDelivery).mockClear();
+      vi.mocked(antigravityAncestor).mockImplementationOnce((_start, signal) => new Promise((resolve) => {
+        signal?.addEventListener("abort", () => resolve(null), { once: true });
+      }));
+      expect(await postAntigravityHook("PreToolUse", { conversationId: "parent", workspacePaths: [env.home] }, 50, env.home)).toEqual({});
+      expect(confirmAntigravityStopDelivery).not.toHaveBeenCalled();
+      expect(await postAntigravityHook("PreToolUse", { conversationId: "parent", workspacePaths: [env.home] }, 1_500, env.home)).toEqual({});
+      expect(confirmAntigravityStopDelivery).toHaveBeenCalledTimes(1);
     } finally { await hooks.stop(); await env.cleanup(); }
   });
   it("rejects missing or disabled native permission gates before a CLI can run", async () => {

@@ -39,7 +39,7 @@ LIMIT ?`;
 /** Unanswered job questions in the broker store, newest first. Cached until the store changes. */
 export function openJobQuestions(dbPath: string): JobQuestion[] {
   if (!existsSync(dbPath)) return [];
-  const signature = [dbPath, `${dbPath}-wal`].map((p) => existsSync(p) ? fileSignature(statSync(p)) : "missing").join("|");
+  const signature = [dbPath, `${dbPath}-wal`].map((p) => existsSync(p) ? fileSignature(statSync(p, { bigint: true })) : "missing").join("|");
   const saved = cache.get(dbPath);
   if (saved?.signature === signature) return saved.questions;
   const db = new DatabaseSync(dbPath, { readOnly: true, timeout: 50 });

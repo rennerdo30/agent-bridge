@@ -13,6 +13,10 @@ import { currentDashboardKey, loadDashboardKey } from "./dashboard-key.js";
 import { UI_RECOVERY_PAGE } from "./ui-recovery.js";
 import { existsSync, readFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { MobileDesktopAdmin } from "../mobile/desktop.js";
+import { readMobileDesktopBody } from "../mobile/desktop.js";
+import { MobileFault } from "../mobile/store.js";
+import { MOBILE_DESKTOP_PAGE } from "../mobile/desktop-page.js";
 import type { AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
@@ -29,7 +33,7 @@ import { loadOrCreateToken, tokensEqual } from "../core/token.js";
 import { loadConfig, saveConfigValue } from "../core/config.js";
 import { readUsage, type UsageReport } from "../core/usage.js";
 import { controlDashboardJob, JobControlError, type DashboardJobCommand } from "../core/job-control.js";
-import { UI_PAGE } from "./ui-page.js";
+import { UI_PAGE, mobileDashboardPage, safeMobileStatus } from "./ui-page.js";
 import { codexQueue, deliverDashboardChat, childNote, type QueuePrompt } from "../core/dashboard-chat.js";
 import { networkConfigSchema } from "../network/config.js";
 import { planFirewall, detectFirewall, applyWindowsFirewall } from "../network/firewall.js";
@@ -179,6 +183,9 @@ export interface UiOptions {
   historyAnswer?: HistoryAnswerDependencies;
   /** Replace only the native queue transport in tests; never supplied by an HTTP request. */
   chatQueue?: QueuePrompt;
+  /** Inert opt-in: owner-provisioned mobile registry and exact loopback origin only. */
+  mobileAdmin?: MobileDesktopAdmin;
+  mobileStatus?: () => string;
 }
 
 /** The paired PCs' runs in /api/state are re-fetched in the background at most this often. */
@@ -197,6 +204,7 @@ function readAllUsage(home: string, log: Logger): Promise<UsageReport[]> {
     readUsage("codex", cfg.codexBin, home, log),
     readUsage("opencode", cfg.opencodeBin, home, log, cfg.opencodeModel ?? null),
     readUsage("antigravity", cfg.antigravityBin, home, log, cfg.antigravityModel),
+    readUsage("muse", cfg.museBin, home, log, cfg.museModel),
   ]);
 }
 
@@ -231,6 +239,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       return await client.request(op, args, op === "dashboardRead" ? DASHBOARD_TIMEOUT_MS + 2_000 : undefined);
     } finally { client.close(); }
   };
+  const dashboardControl = async (node: BridgeNode, owner: string, job: string, command: DashboardJobCommand) =>
+    controlDashboardJob(node, owner, job, command, args => networkRequest("dashboardJobSend", { ...args, senderId: node.id }));
 
   const remoteRead = async (host: string, request: DashboardReadRequest): Promise<DashboardReadResult> => {
     try {
@@ -287,12 +297,44 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     const fromUrl = url.searchParams.get("t");
     if (url.pathname === "/" && fromUrl) {
       if (!tokensEqual(fromUrl, activeSecret)) return send(res, 403, UI_RECOVERY_PAGE, "text/html; charset=utf-8");
-      res.writeHead(302, { location: "/", "cache-control": "no-store", "referrer-policy": "no-referrer", "set-cookie": `${COOKIE}=${activeSecret}; Max-Age=31536000; HttpOnly; SameSite=Strict; Path=/` });
+      res.writeHead(302, { location: url.searchParams.has("phonesStatus") ? "/?phonesStatus=" + safeMobileStatus(url.searchParams.get("phonesStatus")) : "/", "cache-control": "no-store", "referrer-policy": "no-referrer", "set-cookie": `${COOKIE}=${activeSecret}; Max-Age=31536000; HttpOnly; SameSite=Strict; Path=/` });
       return res.end();
     }
     if (!tokensEqual(cookieSecret(req), activeSecret)) return send(res, 403, UI_RECOVERY_PAGE, "text/html; charset=utf-8");
 
-    if (req.method === "GET" && url.pathname === "/") return send(res, 200, UI_PAGE, "text/html; charset=utf-8");
+    if (req.method === "GET" && url.pathname === "/api/mobile/status" && opts.mobileStatus) {
+      if (req.headers.host !== `127.0.0.1:${req.socket.localPort}` || url.search) return send(res, 403, { code: "desktop_origin" });
+      const status = opts.mobileStatus(); return send(res, 200, { state: status === "ready" ? "ready" : safeMobileStatus(status) });
+    }
+
+    if (req.method === "GET" && url.pathname === "/mobile/phones") {
+      if (!opts.mobileAdmin) return send(res, 404, { code: "mobile_not_provisioned" });
+      if (`http://${req.headers.host}` !== opts.mobileAdmin.localOrigin) return send(res, 403, { code: "desktop_origin" });
+      if (!opts.mobileAdmin.isReady() || opts.mobileStatus && opts.mobileStatus() !== "ready") return send(res, 503, { code: "source_unavailable" });
+      res.setHeader("cache-control", "no-store"); res.setHeader("referrer-policy", "no-referrer");
+      return send(res, 200, MOBILE_DESKTOP_PAGE, "text/html; charset=utf-8");
+    }
+
+    if (url.pathname.startsWith("/api/mobile/")) {
+      if (!opts.mobileAdmin) return send(res, 404, { code: "mobile_not_provisioned" });
+      if (`http://${req.headers.host}` !== opts.mobileAdmin.localOrigin || url.search) return send(res, 403, { code: "desktop_origin" });
+      if (req.method === "GET" && url.pathname === "/api/mobile/status") return send(res, 200, { state: opts.mobileStatus?.() ?? (opts.mobileAdmin.isReady() ? "ready" : "source_unavailable") });
+      try {
+        const headers: Record<string, string | undefined> = {};
+        for (const [key, value] of Object.entries(req.headers)) {
+          if (Array.isArray(value)) return send(res, 400, { code: "invalid_headers" });
+          headers[key] = value;
+        }
+        const body = req.method === "GET" ? undefined : await readMobileDesktopBody(req);
+        const result = await opts.mobileAdmin.handle(req.method ?? "", url.pathname, headers, body);
+        res.setHeader("cache-control", "no-store");
+        return send(res, result.status, result.body ?? "");
+      } catch (error) { return send(res, error instanceof MobileFault ? error.status : 400, { code: error instanceof MobileFault ? error.code : "invalid_request" }); }
+    }
+
+    const mobileReady = !!opts.mobileAdmin?.isReady() && (!opts.mobileStatus || opts.mobileStatus() === "ready");
+    const mobileUnavailable = opts.mobileStatus && !mobileReady ? safeMobileStatus(opts.mobileStatus()) : url.searchParams.has("phonesStatus") ? safeMobileStatus(url.searchParams.get("phonesStatus")) : undefined;
+    if (req.method === "GET" && url.pathname === "/") return send(res, 200, mobileDashboardPage(mobileReady, mobileUnavailable), "text/html; charset=utf-8");
     if (req.method === "POST" && url.pathname === "/api/coordinator/availability") {
       if (req.headers["x-agent-bridge"] !== "1") return send(res, 403, { error: "missing header" });
       const body = await readJson(req);
@@ -590,7 +632,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         if (!run?.by) return send(res, 409, { error: "parent job has no local owning session" });
         try {
           const sender = await getSender();
-          const result = await controlDashboardJob(sender, await jobOwner(opts.home, name, run.by, sender), name, { type: "message", body: childNote(child.id, child.title, body.body.trim()) });
+          const result = await dashboardControl(sender, await jobOwner(opts.home, name, run.by, sender), name, { type: "message", body: childNote(child.id, child.title, body.body.trim()) });
           return send(res, result.isError ? 409 : 200, { state: result.isError ? "not-supported" : "queued", transport: "parent", text: result.text });
         } catch (err) {
           if (err instanceof JobControlError) return send(res, 409, { error: err.message });
@@ -598,7 +640,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         }
       }
       if (!local) return send(res, 409, { error: "This local session is not connected. Reopen it before sending." });
-      if (!["claude", "codex", "opencode", "antigravity"].includes(local.agent)) return send(res, 409, { state: "not-supported", transport: "bridge", text: "Owner chat is not supported for this CLI." });
+      if (!["claude", "codex", "opencode", "antigravity", "muse"].includes(local.agent)) return send(res, 409, { state: "not-supported", transport: "bridge", text: "Owner chat is not supported for this CLI." });
       const result = await deliverDashboardChat(local, body.body.trim(), { child, parent: body.target === "parent", queue: queueChat,
         send: async (text) => (await getSender()).send({ to: local.name, body: text }) });
       if (result.receipt) {
@@ -636,7 +678,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const parsed = handoffSchema.safeParse({ to: body.to, jobs: body.jobs, note: body.note, switch_project_main: body.switch_project_main });
       if (!parsed.success || typeof body.from !== "string" || body.from.includes("/")) return send(res, 400, { error: "An exact local source and valid handoff arguments are required." });
       try {
-        const result = await controlDashboardJob(await getSender(), body.from, "", { type: "handoff", ...parsed.data });
+        const result = await dashboardControl(await getSender(), body.from, "", { type: "handoff", ...parsed.data });
         return send(res, result.isError ? 409 : 200, result);
       } catch (err) {
         if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });
@@ -654,7 +696,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (!meta) return send(res, 404, { error: "no such run" });
       if (!meta.by || !meta.job) return send(res, 409, { error: "This run has no owning session or job recorded." });
       try {
-        const result = await controlDashboardJob(await getSender(), await jobOwner(opts.home, meta.job, meta.by, await getSender()), meta.job, command);
+        const result = await dashboardControl(await getSender(), await jobOwner(opts.home, meta.job, meta.by, await getSender()), meta.job, command);
         return send(res, result.isError ? 409 : 200, result);
       } catch (err) {
         if (err instanceof JobControlError) return send(res, err.reason === "offline" ? 409 : 504, { error: err.message });

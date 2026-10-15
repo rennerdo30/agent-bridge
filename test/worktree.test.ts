@@ -9,8 +9,19 @@ import { createWorktree, finishWorktree, gitDirsOutside, gitStatusSnapshot, hand
 import { cleanupWorktrees, type CleanupEntry } from "../src/core/worktree-cleanup.js";
 import { formatUsage } from "../src/mcp/format.js";
 import { scanWorktreeLinks } from "../src/core/worktree-links.js";
+import { preferredDriveFixture } from "./preferred-drive-fixture.js";
 
 let repo: string;
+it.each([false, true])("formats report and cleanup paths without changing worktree records (changed=%s)", async (changed) => {
+  const restore = await preferredDriveFixture();
+  try {
+    const wt = { path: "Q:/work", cwd: "Q:/work", repoRoot: "Q:/repo", branch: "saved", base: "base" };
+    const report = worktreeReport(wt, { changed, branch: "saved", diffStat: "", files: [], reviewBase: "base", otherBranches: [] });
+    expect(report).toContain("X:/work");
+    expect(report).not.toContain("Q:/work");
+    expect(wt.path).toBe("Q:/work");
+  } finally { restore(); }
+});
 let home: string;
 const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
 

@@ -1,0 +1,54 @@
+{
+  "reviewedAt": "2026-10-11",
+  "dependencyCommit": "a418392a",
+  "designCommit": "b825cc92",
+  "designCleanup": {
+    "appTests": { "files": 4, "passed": 14 },
+    "clientTests": { "files": 1, "passed": 18 },
+    "rootTypecheck": "pass",
+    "appTypecheck": "pass",
+    "formattingOnlySyntaxComparisons": { "files": 22, "unchanged": 22 },
+    "hermesExport": { "android": "pass", "ios": "pass", "signedNativeBuild": false }
+  },
+  "retentionRepair": {
+    "focusedMobileAndRetentionTests": { "files": 11, "passed": 148 },
+    "includedClientTests": 18,
+    "newPushRetentionTests": 10,
+    "dataRetentionGuardTests": 7,
+    "appTests": { "files": 4, "passed": 14 },
+    "rootTypecheck": "pass",
+    "appTypecheck": "pass",
+    "rootBuild": "pass",
+    "generatedDistCommitted": false,
+    "guardWhitelistChanged": false,
+    "migration": "additive columns and retained push history table",
+    "triggers": ["unsubscribe", "device-revoke", "logout", "refresh-reuse", "provider-invalid"]
+  },
+  "opencodeAssertionCorrection": {
+    "supervisorApproved": true,
+    "exactMainCommit": "962236f8f26a9bda13bcce941b84531a46a530d1",
+    "intentionalSourceCommit": "e39c483548dd4bb4b73ae21df9981ac58927e4e6",
+    "sharedPackagedAncestor": "a679e53746640c04094070730fb8a29558e1e985",
+    "sourceChanged": false,
+    "isolatedTests": { "passed": 12, "failed": 0, "durationSeconds": 13.85 }
+  },
+  "fullRootSuiteRepeatedAfterFollowups": true,
+  "finalFullRootSuite": {
+    "runs": 1,
+    "files": 288,
+    "passedFiles": 287,
+    "failedFiles": 1,
+    "passed": 2138,
+    "failed": 1,
+    "skipped": 3,
+    "total": 2142,
+    "durationSeconds": 2171.38,
+    "failure": "test/split-bundles.test.ts: compiled background worker indexing poll",
+    "opencode": "pass",
+    "retention": "pass",
+    "takeover": "pass"
+  },
+  "splitBundlesIsolatedRerun": { "passed": 2, "failed": 0, "durationSeconds": 5.66 },
+  "opencodeMergeBlockerResolved": true,
+  "remainingRootFailure": "Intermittent compiled-worker indexing timing candidate; full suite is not clean"
+}

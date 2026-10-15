@@ -1,0 +1,649 @@
+{
+  "result": "passed",
+  "sourceHead": "5e28e4646bff15f4fc60d34dbbcefba4a4138a1b",
+  "checkoutCommit": "5e28e4646bff15f4fc60d34dbbcefba4a4138a1b",
+  "checkoutTree": "6d4b5254359d07ec914a228b62ac3e7742f491e6",
+  "renderedHtmlSha256": "3ce63dd5edb94e605865d8111477774137fca7cf6fae0142ea11b2d178d5614f",
+  "rendererBundleSha256": "0dc61f826b287370f2d92c8fb0a54ff6085b48a3f36af4bbf340861cca31d75d",
+  "fixtureFileSha256": "aacce84ae67636986b17c4d445aa0134f131ef1218f17bd556d7590f4a5e0f07",
+  "source": [
+    {
+      "path": "src/cli/ui-page.ts",
+      "blob": "2aa072ffab663841bc1a74aa9d312a7c05d4bc7f",
+      "sha256": "ab8c0065a786992b4db49d17fcbb935252e9b59a13591b4323d2b3af5bfc277c"
+    },
+    {
+      "path": "src/cli/markdown.ts",
+      "blob": "371821ac095c8d8dd2e4f5be4bd3274697cfdaa4",
+      "sha256": "641e8bcf056c990fff7c6e734619beda86d55b4a8ad0f2f8617019fc56dcd179"
+    },
+    {
+      "path": "src/cli/logo.ts",
+      "blob": "46c22161a1491f34ffed304bc5914fd662c334af",
+      "sha256": "fc2a9cb9cadfc4371b3aa6ad8bd11649b45b0219ecb1a2dd7f048dce886323a0"
+    },
+    {
+      "path": "src/network/constants.ts",
+      "blob": "3d20662f6f3993c3808d0e1f583a1dff007da591",
+      "sha256": "9589540a263730fbeab3df496fb952726af2f2632d79c6857eede2ff4dae3c03"
+    },
+    {
+      "path": "src/mobile/vendor/qrcode.js",
+      "blob": "bc173fc733184a124b9ef2787525853e5f85f099",
+      "sha256": "ae8ab65ebf38e38464c9b4b3287cb246c59796ab3191468772066afbdb446f25"
+    },
+    {
+      "path": "scripts/capture-phones-dashboard.mjs",
+      "blob": "04860c8ae5f9bea100eaec5252f6b18aa47ec5fd",
+      "sha256": "6504d001126073eb69de25045982abb086abb792a1049fd835810f61a56c0412"
+    },
+    {
+      "path": ".github/workflows/phones-dashboard-capture.yml",
+      "blob": "c1cb15c98daed6bf08e61375d3f82bf2ec14dc80",
+      "sha256": "16a64935519d6b6960c8de3b896a41ef9e645c2cf8baa77d1b05753b82f7c999"
+    },
+    {
+      "path": "package.json",
+      "blob": "5b9375add3d8a0b7008bd68bdaf3c2b192476845",
+      "sha256": "73690daf36ec24e6e56b0774655bd1fc6663bc11581ec2be26cbba21ab5937f5"
+    },
+    {
+      "path": "package-lock.json",
+      "blob": "b1447b7942412c9db1c249ff53efcab52b0c38ba",
+      "sha256": "fa33e60d72caf2586f520e142e4cfd5c787ba94cb20c09afeb1e2cdb2f098ff7"
+    }
+  ],
+  "versions": {
+    "playwright": "1.64.1",
+    "playwright-core": "1.64.1",
+    "esbuild": "0.28.2",
+    "chromium": "156.0.8078.4",
+    "node": "v24.21.0"
+  },
+  "parameters": {
+    "fixedTime": 1800000000000,
+    "timezone": "UTC",
+    "locale": "en-US",
+    "deviceScaleFactor": 1,
+    "reducedMotion": "reduce",
+    "animations": "disabled",
+    "headless": true
+  },
+  "hosted": {
+    "runId": "38599917949",
+    "attempt": "1",
+    "runnerOs": "Linux"
+  },
+  "captures": [
+    {
+      "file": "phones-dashboard-phones-light.png",
+      "sha256": "98217107ddd5a7447aefd6cd696730263bdad6fbc38a255a00032ff3769b2936",
+      "bytes": 125926,
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1100
+      },
+      "scenario": "paired list"
+    },
+    {
+      "file": "phones-dashboard-qr-light.png",
+      "sha256": "a57d0f7474b5cd437b5520189067f2ca10c9f7dc705913dbea6f3de858cf4972",
+      "bytes": 165772,
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1100
+      },
+      "scenario": "actual vendor QR from synthetic invitation"
+    },
+    {
+      "file": "phones-dashboard-claim-default-light.png",
+      "sha256": "6a11587696c94b00737bba38c2d577796bc805419e230e2dcc239c63d646bfdc",
+      "bytes": 169127,
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1100
+      },
+      "scenario": "whole PC default read-only"
+    },
+    {
+      "file": "phones-dashboard-claim-projects-light.png",
+      "sha256": "eb09eb5e04c330cd79cd6060466a13144be088b767ee7eb750c9d90b9bbf49cf",
+      "bytes": 177751,
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1100
+      },
+      "scenario": "one opaque project and answer opt-in"
+    },
+    {
+      "file": "phones-dashboard-claim-advanced-light.png",
+      "sha256": "90eefdb943c22f655eb9ce19fc7e77648333a492ce666e9c74d74f3588dfe8cb",
+      "bytes": 189179,
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1100
+      },
+      "scenario": "exact sessions; answers disabled"
+    },
+    {
+      "file": "phones-dashboard-claim-advanced-mobile-light.png",
+      "sha256": "a4713dca9fb1496373c78cc94eb2f25fe1833499961a92ecc304221b855381e8",
+      "bytes": 153234,
+      "theme": "light",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scenario": "exact sessions, narrow viewport"
+    },
+    {
+      "file": "phones-dashboard-network-light.png",
+      "sha256": "553cbbfc8eeebb2172f28551d73c519a212b9c7261fe17fc5de58562b4ce053e",
+      "bytes": 113898,
+      "theme": "light",
+      "viewport": {
+        "width": 1440,
+        "height": 1100
+      },
+      "scenario": "unchanged Network"
+    },
+    {
+      "file": "phones-dashboard-side-by-side-light.png",
+      "sha256": "ff6680c3620cf7fa11a9aa5e69822d710fa5052b8d63b034a193fb16980f1f0a",
+      "bytes": 259360,
+      "theme": "light",
+      "viewport": {
+        "width": 2880,
+        "height": 1500
+      },
+      "scenario": "two unmodified source pages in comparison-only iframe wrapper"
+    },
+    {
+      "file": "phones-dashboard-phones-dark.png",
+      "sha256": "e14dfb7cad965d8c8cc84377076676182ba7aac8dede479443f72a7d1e9e62c1",
+      "bytes": 127234,
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1100
+      },
+      "scenario": "paired list"
+    },
+    {
+      "file": "phones-dashboard-qr-dark.png",
+      "sha256": "b24c7b92e2a6d92a655711774a57787724ee5b54700c7d9fdf4e7204c2d487c8",
+      "bytes": 167849,
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1100
+      },
+      "scenario": "actual vendor QR from synthetic invitation"
+    },
+    {
+      "file": "phones-dashboard-claim-default-dark.png",
+      "sha256": "5a7e3cca7c0c2d2df87bb3d915278dbe4bddaebb7caff05c5ddca286e6fc5113",
+      "bytes": 170468,
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1100
+      },
+      "scenario": "whole PC default read-only"
+    },
+    {
+      "file": "phones-dashboard-claim-projects-dark.png",
+      "sha256": "f49ae2881654b71dfac2213984d8332ce6071ef90834c60293821d94b17e5474",
+      "bytes": 179059,
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1100
+      },
+      "scenario": "one opaque project and answer opt-in"
+    },
+    {
+      "file": "phones-dashboard-claim-advanced-dark.png",
+      "sha256": "b8d8ceaaf1733e84671a146e4f82acc3325a4c120673c76214a275474d386e24",
+      "bytes": 190893,
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1100
+      },
+      "scenario": "exact sessions; answers disabled"
+    },
+    {
+      "file": "phones-dashboard-claim-advanced-mobile-dark.png",
+      "sha256": "8d4ec924eeb50e048e680eecabc3449e700bcfacf1d2c311909c06c619ea50bd",
+      "bytes": 153741,
+      "theme": "dark",
+      "viewport": {
+        "width": 390,
+        "height": 844
+      },
+      "scenario": "exact sessions, narrow viewport"
+    },
+    {
+      "file": "phones-dashboard-network-dark.png",
+      "sha256": "a4fc1e373186176f67033c51b5e2466b93250282b29fef91de703a1a830329b1",
+      "bytes": 114237,
+      "theme": "dark",
+      "viewport": {
+        "width": 1440,
+        "height": 1100
+      },
+      "scenario": "unchanged Network"
+    },
+    {
+      "file": "phones-dashboard-side-by-side-dark.png",
+      "sha256": "096f4f224de6e1f3022b884968195b9883d37cf7248f33680e7e594ecc5e2646",
+      "bytes": 260474,
+      "theme": "dark",
+      "viewport": {
+        "width": 2880,
+        "height": 1500
+      },
+      "scenario": "two unmodified source pages in comparison-only iframe wrapper"
+    }
+  ],
+  "requests": [
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "POST",
+      "path": "/api/dashboard/heartbeat",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/state",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/network",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/usage",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/mobile/phones",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/resource-slots",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "POST",
+      "path": "/api/mobile/invitations",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "POST",
+      "path": "/api/dashboard/heartbeat",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/state",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/network",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/usage",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/mobile/phones",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/resource-slots",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "POST",
+      "path": "/api/network/firewall",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/network",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/compare",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "POST",
+      "path": "/api/dashboard/heartbeat",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/state",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/network",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/usage",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "POST",
+      "path": "/api/dashboard/heartbeat",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/state",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/network",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/usage",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/mobile/phones",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/mobile/phones",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "GET",
+      "path": "/api/resource-slots",
+      "query": ""
+    },
+    {
+      "theme": "light",
+      "method": "POST",
+      "path": "/api/network/firewall",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "POST",
+      "path": "/api/dashboard/heartbeat",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/state",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/network",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/usage",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/mobile/phones",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/resource-slots",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "POST",
+      "path": "/api/mobile/invitations",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "POST",
+      "path": "/api/dashboard/heartbeat",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/state",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/network",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/usage",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/mobile/phones",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/resource-slots",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "POST",
+      "path": "/api/network/firewall",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/network",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/compare",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "POST",
+      "path": "/api/dashboard/heartbeat",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/state",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/network",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/usage",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "POST",
+      "path": "/api/dashboard/heartbeat",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/state",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/network",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/usage",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/mobile/phones",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/mobile/phones",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/resource-slots",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "POST",
+      "path": "/api/network/firewall",
+      "query": ""
+    },
+    {
+      "theme": "dark",
+      "method": "GET",
+      "path": "/api/approvals",
+      "query": ""
+    }
+  ],
+  "failures": [],
+  "limits": "Synthetic intercepted presentation only; no broker/app server, backend authorization, real devices, secure storage, native TLS, owner runtime or provider acceptance."
+}

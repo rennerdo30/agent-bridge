@@ -9,7 +9,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFileSync, fork, type ChildProcess } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { open as openFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { constants as priorities, getPriority, setPriority } from "node:os";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
@@ -90,7 +90,13 @@ function fixtureIdentities(home: string): { sessions: string[]; rootSession: str
 }
 interface Seed { schema: 1; home: string; oldVersion: string; oldSha: string; payloadBytes: number; rows: number; rawSha256: string; sourceBytes: number; archiveFiles: number; archiveBytes: number; runs: number; createdAt: string }
 function physicalHome(path: string): string {
-  const result = resolve(path), rel = relative(fixtureRoot, result);
+  // Resolve drive aliases before comparing, but preserve every interior component
+  // so the link checks below still reject junctions/symlinks inside the checkout.
+  const physicalDrivePath = (value: string) => {
+    const absolute = resolve(value), root = parse(absolute).root;
+    return resolve(realpathSync.native(root), relative(root, absolute));
+  };
+  const result = physicalDrivePath(path), rel = relative(physicalDrivePath(fixtureRoot), result);
   if (!rel || isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) throw new Error("Fixture must be strictly below this checkout's .agent-bridge-test");
   for (let current = result; current !== checkout; current = dirname(current)) {
     if (existsSync(current) && lstatSync(current).isSymbolicLink()) throw new Error("Fixture paths must not traverse links");

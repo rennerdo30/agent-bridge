@@ -5,15 +5,31 @@ title: "Installation"
 ## Requirements
 
 - Node.js **22.16+** (the bridge uses built-in `node:sqlite` and incremental backups).
-- At least one installed, authenticated CLI: Claude Code or Codex with plugin support, opencode, or Antigravity. Earlier bridge testing used Codex 0.156; current native queue delivery is verified with 0.160.1. See [delivery requirements](../../messaging-delivery/) when using idle wake.
+- At least one installed, authenticated CLI: Claude Code or Codex with plugin support, opencode, Antigravity, or Muse. Earlier bridge testing used Codex 0.156; current native queue delivery is verified with 0.160.1. See [delivery requirements](../../messaging-delivery/) when using idle wake.
 
 ### All at once
 
 ```bash
-npx -y github:rennerdo30/agent-bridge install        # or: install claude codex opencode
+npx -y github:rennerdo30/agent-bridge install        # or: install claude codex opencode antigravity muse
 ```
 
-The installer finds which tools you have. For each one it shows its plan and asks before running it (`--yes` skips the questions). Claude and Codex use official plugin commands; opencode and Antigravity use their documented global plugin folders. Existing user files are preserved. `uninstall` works the same way; for updates see [Updating](../update/).
+The installer finds which tools you have. For each one it shows its plan and asks before running it (`--yes` skips the questions). Claude and Codex use official plugin commands; opencode and Antigravity use their documented global plugin folders; Muse uses its native plugin manager. Existing user files are preserved. `uninstall` works the same way; for updates see [Updating](../update/).
+
+### Muse
+
+```bash
+npx -y github:rennerdo30/agent-bridge install muse --yes
+```
+
+Installation uses Muse's plugin manager and discloses capability approval.
+Updates inspect changed capabilities without renewing approval; review them
+before explicitly running `muse plugins approve agent-bridge`.
+Start a new Muse session after installation and approval. Read and ask jobs
+require the enabled native Bridge permission hook. Delegation defaults to stable
+MSP over `muse serve`, with steering and approval relay; native command hooks
+deliver active-turn mail. Idle native TUI wake remains unconfirmed. See
+[Muse configuration](../../configuration/muse/) for profiles, models, explicit
+exec compatibility and the remaining live acceptance checks.
 
 ### Claude Code
 
@@ -49,7 +65,7 @@ npx -y github:rennerdo30/agent-bridge install antigravity --yes
 npx -y github:rennerdo30/agent-bridge update antigravity --yes
 ```
 
-Requires installed, authenticated `agy` (verified with 1.2.0 and 1.3.1). Start a new
+Requires installed, authenticated `agy` (verified with 1.2.0, 1.3.1 and 1.3.5). Start a new
 native session after initial installation. Updates keep running sessions on retained
 code and select new code for the next MCP server start. The plugin includes MCP configuration, lifecycle/permission hooks
 and a coordination skill. It exposes the same peer, delegation, history and job
@@ -61,17 +77,16 @@ cancel with `cancel_subagent`; these use the existing durable job lifecycle.
 `read` denies non-reading tools; `ask` forwards those tool approvals to the
 supervisor. Both use the installed bridge gate before every tool, with native
 headless prompting bypassed because 1.2.0 otherwise auto-denies approved calls.
-`edit` keeps native Antigravity permissions; native headless prompts can deny
-commands. Explicit `bypass_permissions: true` runs with native approvals bypassed;
-`false` selects native policy. Either exact override replaces read/ask access.
+`edit` delegates workspace reads/writes (and pathless reading tools) to native policy—which still enforces native Ask/deny rules and soft-denies headless prompts—while forwarding outside-workspace file actions, commands
+and external tools to the supervisor (`auto_approve`, preserving explicit native deny rules). Explicit `bypass_permissions: true` runs with native approvals bypassed;
+`false` selects native policy without supervisor relay. Either exact override replaces read/ask access.
 The installer grants only the bridge MCP server and backs up native
 settings. Terminal sandboxing is
 separate and depends on the installed platform. Active mail arrives at the next
-model invocation or stopping boundary. **Idle TUI sessions receive mail on their
+model invocation or stopping boundary, retaining unread mail if the native Stop continuation cap ends a turn. **Idle TUI sessions receive mail on their
 next turn or through `inbox`; no public programmatic idle wake API is documented.**
 Native Remote Control provides separate desktop/web UI access through a tunnel.
-Account quotas are shown by native `/usage` or `/quota`; the bridge reports them
-as unknown because no machine-readable quota command is documented.
+Account quotas and reset times are read from standalone `agy -p /usage --output-format json` (requires `agy` 1.1.11+).
 
 Native chats and explicit child conversations are read from Antigravity JSONL
 logs without modifying them. Updates publish complete immutable runtimes and back up replaced metadata;

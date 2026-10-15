@@ -24,6 +24,7 @@ import { readArchivedJobSnapshot } from "./job-archive.js";
 import { fileSignature, readJsonSnapshot } from "./file-cache.js";
 import { jobArchivePath } from "./job-archive-index.js";
 import { antigravityItems } from "./transcripts/antigravity.js";
+import { museItems } from "./transcripts/muse.js";
 import { historyReadStatus, openHistoryReader, HISTORY_BATCH_MS } from "./history-store.js";
 import { decodeBytes, encodeBytes, encodeText, registerHistoryFunctions } from "./history-codec.js";
 import { decodeHistoryRow } from "./history-migration.js";
@@ -31,6 +32,25 @@ import { decodeHistoryRow } from "./history-migration.js";
 import { CONVERSATION_BYTES, indexedConversationText } from "./conversation-text.js";
 export { CONVERSATION_BYTES, indexedConversationText } from "./conversation-text.js";
 const JOB_SNAPSHOTS_PER_TICK = 16;
+/** Retained transaction frames keep native records as JSON strings, not nested payloads. */
+function museRecords(row: Record<string, any>): Record<string, any>[] {
+  return typeof row.retained_frame === "string" && Array.isArray(row.children)
+    ? row.children.map(object).flatMap(child => typeof child.record_json === "string" ? [parse(child.record_json)] : [])
+    : [row];
+}
+function museConversationText(raw: Buffer): string {
+  return raw.toString("utf8").trim().split("\n").map(line => {
+    const row = parse(line);
+    const records = museRecords(row);
+    const text = typeof row.retained_frame === "string" && Array.isArray(row.children)
+      ? records.map(record => indexedConversationText(Buffer.from(JSON.stringify(record)))).join("\n")
+      : indexedConversationText(Buffer.from(line));
+    // The native adapter supplies tool/subagent descriptions; full user text stays untruncated here.
+    const details = records.flatMap(museItems).filter(item => item.tool || item.subagent)
+      .map(item => [item.tool, item.summary, item.subagent?.title].filter(Boolean).join("\n"));
+    return [text, ...details].filter(Boolean).join("\n");
+  }).join("\n").slice(0, CONVERSATION_BYTES);
+}
 import { conversationPageSchema, type ConversationRequest, type ConversationPage } from "./conversation-query.js";
 export { conversationPageSchema } from "./conversation-query.js";
 export type { ConversationRequest, ConversationPage } from "./conversation-query.js";
@@ -83,6 +103,7 @@ export class ConversationIngestor {
       join(this.paths.codex, "sessions"),
       this.paths.opencode,
       ...(this.paths.antigravity ? [join(this.paths.antigravity, "brain")] : []),
+      ...(this.paths.muse ? [join(this.paths.muse, "sessions")] : []),
     ]) {
       if (this.watched.has(root)) continue;
       try {
@@ -286,7 +307,7 @@ export class ConversationIngestor {
     const path = join(this.home, "jobs.json");
     const archive = jobArchivePath(path);
     const stores = [path, archive, `${archive}-wal`, join(this.home, "archive")]
-      .map((file) => { try { return fileSignature(statSync(file)); } catch { return "missing"; } }).join("|");
+      .map((file) => { try { return fileSignature(statSync(file, { bigint: true })); } catch { return "missing"; } }).join("|");
     if (stores === this.jobsSignature) return;
     let complete = true;
     let active: Record<string, any> = {};
@@ -396,7 +417,8 @@ export class ConversationIngestor {
       return;
     }
     // Retain bytes exactly once. The derived text omits bulky JSON/tool metadata.
-    const body = indexedConversationText(raw), stored = body === raw.toString("utf8") ? "" : body;
+    const native = this.db.prepare("SELECT kind,agent FROM conversations WHERE id=?").get(conversation);
+    const body = native?.kind === "transcript" && native.agent === "muse" ? museConversationText(raw) : indexedConversationText(raw), stored = body === raw.toString("utf8") ? "" : body;
     const encoded = this.encoded ? encodeBytes(raw) : null;
     const result = encoded
       ? this.db.prepare("INSERT OR IGNORE INTO conversation_records(source,generation,offset,conversation,at,raw,raw_codec,body,part) VALUES(?,?,?,?,?,?,?,?,?)")
@@ -412,7 +434,6 @@ export class ConversationIngestor {
     if (!decodeBytes(retained.raw, retained.raw_codec).equals(raw)) {
       throw Object.assign(new Error(`History import verification failed at ${source}:${generation}:${offset}; cursor not advanced, originals retained`), { code: "HISTORY_IMPORT_VERIFICATION_FAILED" });
     }
-    const native = this.db.prepare("SELECT kind,agent FROM conversations WHERE id=?").get(conversation);
     if (part === null && native?.kind === "transcript" && native.agent === "claude") observeAskToolRecord(this.db, this.home, source, generation, raw, at, offset);
     this.indexRecord(
       record,
@@ -489,7 +510,7 @@ export class ConversationIngestor {
       }
       recordJob =
         binding?.job ??
-        (/^(claude|codex|opencode|antigravity)-job-/.test(String(metadata.from_name))
+        (/^(claude|codex|opencode|antigravity|muse)-job-/.test(String(metadata.from_name))
           ? metadata.from_name
           : recordSession === c.session
             ? recordJob
@@ -909,6 +930,20 @@ export class ConversationIngestor {
               this.db.prepare("UPDATE conversations SET parent=? WHERE id=?").run(source.conversation, child);
             }
           }
+          if (agent === "muse") {
+            for (const record of museRecords(row)) {
+              const stream = object(record.stream);
+              // A retained ancestor's records cannot claim children of this file's session.
+              if (stream.kind !== "session" || stream.id !== c.session) continue;
+              for (const item of museItems(record)) {
+                if (!item.subagent || item.subagent.id === c.session) continue;
+                const child = this.conversation(agent, item.subagent.id, "", null);
+                this.db.prepare(`UPDATE conversations SET parent=? WHERE id=? AND parent IS NULL AND NOT EXISTS(
+                  WITH RECURSIVE ancestors(id) AS (SELECT ? UNION SELECT c.parent FROM conversations c JOIN ancestors a ON c.id=a.id WHERE c.parent IS NOT NULL)
+                  SELECT 1 FROM ancestors WHERE id=?)`).run(source.conversation, child, source.conversation, child);
+              }
+            }
+          }
           if (
             agent === "claude" &&
             row.isSidechain === true &&
@@ -1097,7 +1132,7 @@ export class ConversationIngestor {
       work += this.events(this.source, "decisions", "durable-decisions");
       const archive = join(this.home, "archive.db");
       // The archive database is opened again only after it changes, once a read found nothing new (AB-147).
-      const archiveSignature = [archive, `${archive}-wal`].map((file) => { try { return fileSignature(statSync(file)); } catch { return "missing"; } }).join("|");
+      const archiveSignature = [archive, `${archive}-wal`].map((file) => { try { return fileSignature(statSync(file, { bigint: true })); } catch { return "missing"; } }).join("|");
       if (existsSync(archive) && archiveSignature !== this.quietArchive) {
         const input = new DatabaseSync(archive, {
           readOnly: true,
@@ -1123,7 +1158,7 @@ export class ConversationIngestor {
       }
       for (const c of this.db
         .prepare(
-          `SELECT c.id,p.job,p.project FROM conversations c JOIN conversations p ON c.parent=p.id WHERE (c.job IS NULL AND p.job IS NOT NULL) OR (c.project='' AND p.project<>'') LIMIT 100`,
+          `SELECT c.id,c.agent,c.session,p.job,p.project FROM conversations c JOIN conversations p ON c.parent=p.id WHERE (c.job IS NULL AND p.job IS NOT NULL) OR (c.project='' AND p.project<>'') LIMIT 100`,
         )
         .all()) {
         this.db
@@ -1131,6 +1166,13 @@ export class ConversationIngestor {
             "UPDATE conversations SET job=coalesce(job,?),project=CASE WHEN project='' THEN ? ELSE project END WHERE id=?",
           )
           .run(c.job!, c.project!, c.id!);
+        if (c.agent === "muse") {
+          // Reuse the bounded late-binding pass to tag already retained child documents.
+          const child = this.db.prepare("SELECT project,job FROM conversations WHERE id=?").get(c.id!)!;
+          this.db.prepare(`INSERT INTO conversation_bindings(session,agent,cwd,job) VALUES(?,'muse',?,?)
+            ON CONFLICT(session,agent) DO UPDATE SET cwd=CASE WHEN conversation_bindings.cwd='' THEN excluded.cwd ELSE conversation_bindings.cwd END,
+            job=coalesce(conversation_bindings.job,excluded.job),pending=1`).run(c.session!, child.project!, child.job!);
+        }
         if (c.project)
           this.db
             .prepare(
@@ -1163,7 +1205,7 @@ export class ConversationIngestor {
         this.indexRecord(
           Number(row.id),
           String(row.conversation),
-          String(record.body) || indexedConversationText(record.raw as Buffer),
+          String(record.body) || (String(row.conversation).startsWith("muse:") ? museConversationText(record.raw as Buffer) : indexedConversationText(record.raw as Buffer)),
           Number(row.at),
           Number(row.offset),
         );

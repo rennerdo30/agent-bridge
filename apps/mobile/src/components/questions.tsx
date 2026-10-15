@@ -1,0 +1,147 @@
+import React from "react";
+import { Pressable, TextInput, View } from "react-native";
+import type { Question } from "../client";
+import { useTheme } from "../theme";
+import { AppText, Panel } from "./primitives";
+import { Chip, Pill } from "./status";
+import { strings as copyStrings } from "../strings";
+export function OptionCard({
+  option,
+  selected,
+  disabled,
+  onSelect,
+}: {
+  option: Question["options"][number];
+  selected: boolean;
+  disabled: boolean;
+  onSelect: () => void;
+}) {
+  const { colors, tokens } = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="radio"
+      accessibilityState={{ checked: selected, disabled }}
+      accessibilityLabel={`${option.label}${option.recommended ? ", recommended" : ""}. ${option.consequence}`}
+      onPress={onSelect}
+      disabled={disabled}
+      style={({ pressed }) => ({
+        padding: 16,
+        gap: 8,
+        minHeight: 56,
+        borderRadius: tokens.radius.card,
+        borderWidth: selected ? 1.5 : 1,
+        borderColor: selected || option.recommended ? colors.accent : colors.line,
+        backgroundColor: selected ? colors.accentSoft : colors.panel,
+        opacity: disabled ? tokens.opacity.disabled : pressed ? tokens.opacity.pressed : 1,
+      })}
+    >
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <View
+          accessible={false}
+          style={{
+            width: 20,
+            height: 20,
+            borderRadius: 10,
+            borderWidth: 1.5,
+            borderColor: colors.accent,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {selected && <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: colors.accent }} />}
+        </View>
+        <AppText variant="bodyStrong" style={{ flexShrink: 1 }}>
+          {option.label}
+        </AppText>
+        {option.recommended && <Chip label={copyStrings.copy.recommended} tone="accent" />}
+      </View>
+      <AppText variant="subhead" tone="textMuted">
+        {option.consequence}
+      </AppText>
+    </Pressable>
+  );
+}
+export function AnswerTextArea({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  disabled: boolean;
+}) {
+  const { colors, tokens } = useTheme();
+  return (
+    <TextInput
+      accessibilityLabel={copyStrings.copy.yourExactAnswer}
+      multiline
+      value={value}
+      onChangeText={onChange}
+      editable={!disabled}
+      maxLength={8000}
+      placeholder={copyStrings.copy.yourAnswer}
+      placeholderTextColor={colors.textMuted}
+      style={{
+        color: colors.text,
+        backgroundColor: colors.panel2,
+        padding: 12,
+        borderRadius: tokens.radius.input,
+        borderWidth: 1,
+        borderColor: colors.line,
+        minHeight: 120,
+        textAlignVertical: "top",
+        fontSize: tokens.typography.scale.body.size,
+        lineHeight: tokens.typography.scale.body.lineHeight,
+      }}
+    />
+  );
+}
+export function AnsweredBlock({ q }: { q: Question }) {
+  return (
+    <>
+      <Panel>
+        <Pill status={q.status} />
+        {q.answer && (
+          <>
+            <AppText variant="overline" tone="ok">
+              {copyStrings.copy.answer}
+            </AppText>
+            <AppText selectable>{q.answer.text}</AppText>
+            <AppText variant="caption" tone="textMuted">
+              {q.answer.authorLabel}
+              {copyStrings.copy.message}
+              {new Date(q.answer.at).toLocaleString()}
+            </AppText>
+            {q.answer.source === "declared-default" && (
+              <Chip label={copyStrings.copy.declaredDefaultNotTheOwner} tone="warn" />
+            )}
+          </>
+        )}
+        {q.dismissal && <AppText selectable>{q.dismissal.reason}</AppText>}
+      </Panel>
+      {q.deliveries.map((delivery, i) => (
+        <Panel key={i}>
+          <AppText variant="bodyStrong">{delivery.recipientLabel}</AppText>
+          <AppText
+            variant="caption"
+            tone={
+              delivery.state === "failed" || delivery.state === "unconfirmed"
+                ? "bad"
+                : delivery.consumedAt
+                  ? "ok"
+                  : "textMuted"
+            }
+          >
+            {delivery.state}
+            {delivery.consumedAt
+              ? ` · consumed ${new Date(delivery.consumedAt).toLocaleTimeString()}`
+              : " · consumption unknown"}
+          </AppText>
+        </Panel>
+      ))}
+      <AppText variant="caption" tone="textFaint">
+        {copyStrings.copy.deliveryAndConsumptionDoNotConfirmImplementationAcceptance}
+      </AppText>
+    </>
+  );
+}

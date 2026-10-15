@@ -1,7 +1,7 @@
 import { cloneJson } from "./file-cache.js";
 import { realpathSync } from "node:fs";
 import { dirname } from "node:path";
-import { readIndexedJobs, storeJobRecords, type ArchiveSelection, type IndexedJobSnapshot } from "./job-archive-index.js";
+import { readIndexedJobs, readIndexedJobSteps, storeJobRecords, type ArchiveSelection, type IndexedJobSnapshot } from "./job-archive-index.js";
 
 export function readArchivedJobs(path: string): Record<string, unknown>[] {
   return cloneJson(readArchivedJobSnapshot(path).jobs);
@@ -17,7 +17,7 @@ export function* readArchivedJobSteps(path: string, responsive = false, selectio
   try { canonical = realpathSync.native(dirname(path)); } catch { /* No store yet. */ }
   if (responsive) yield;
   if (canonical && realpathSync.native(dirname(path)) !== canonical) throw new Error("job archive ancestor changed during traversal; data kept unchanged");
-  return readArchivedJobSnapshot(path, selection);
+  return yield* readIndexedJobSteps(path, responsive, selection);
 }
 
 /** Commit full records and all distinct versions before replacing active jobs. */

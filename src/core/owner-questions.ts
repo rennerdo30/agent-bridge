@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -57,6 +57,22 @@ CREATE TABLE question_events (revision INTEGER PRIMARY KEY AUTOINCREMENT, questi
 CREATE TABLE question_alerts (question_id TEXT PRIMARY KEY, notified_at INTEGER NOT NULL, channel TEXT NOT NULL);
 PRAGMA user_version=1;` }];
 
+// Retained v1 writers reject a higher user_version. This independent ledger adds
+// no columns or constraints to their tables; it remains unbounded and durable.
+const mobileAnswerLedger = `
+CREATE TABLE IF NOT EXISTS mobile_question_answers (principal TEXT NOT NULL, replay_key TEXT NOT NULL, request_hash TEXT NOT NULL,
+  question_id TEXT NOT NULL, result TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY(principal,replay_key));
+`;
+
+/** Equality token covers displayed terms and outcome, excluding asynchronous delivery metadata. */
+export function ownerQuestionVersion(q: OwnerQuestion): string {
+  const { deliveries, mirror, deliveryComplete, ...terms } = q;
+  return createHash("sha256").update(JSON.stringify(terms)).digest("base64url");
+}
+export class QuestionVersionConflict extends Error {
+  constructor(readonly currentVersion?: string) { super("Question version conflict"); }
+}
+
 /** An additive extension of the approval registry. Legacy approval processes never open this database.
  * Their bridge.db and permission JSON formats stay unchanged. Future changes back up before migration. */
 export class OwnerQuestionStore {
@@ -65,7 +81,11 @@ export class OwnerQuestionStore {
     mkdirSync(home, { recursive: true, mode: 0o700 });
     const file = join(home, QUESTIONS_FILE), existed = existsSync(file);
     this.db = new DatabaseSync(file);
-    try { migrateSqlite(this.db, file, existed, 1, migrations, log); this.db.exec("PRAGMA busy_timeout=1000"); }
+    try {
+      migrateSqlite(this.db, file, existed, 1, migrations, log);
+      this.db.exec("PRAGMA busy_timeout=1000");
+      this.db.exec(mobileAnswerLedger);
+    }
     catch (error) { this.db.close(); throw error; }
   }
   close(): void { this.db.close(); }
@@ -106,7 +126,31 @@ export class OwnerQuestionStore {
   }
   answer(id: string, input: QuestionAnswerArgs, author: MessageAddress, at = Date.now(), source: "owner" | "declared-default" = "owner"): OwnerQuestion {
     const args = questionAnswerSchema.parse(input);
+    return this.transaction(() => this.answerRecord(id, args, author, at, source));
+  }
+  /** CAS and replay commit in the question transaction, including across independent store handles. */
+  answerMobile(id: string, input: { expectedVersion: string; option?: string; text?: string },
+    principal: string, replayKey: string, author: MessageAddress, at = Date.now()): OwnerQuestion {
+    const { expectedVersion, ...answer } = input;
+    const args = questionAnswerSchema.parse(answer);
+    if (!principal || !/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(replayKey) || !expectedVersion)
+      throw new Error("Invalid mobile answer identity");
+    const hash = createHash("sha256").update(JSON.stringify([id, expectedVersion, args.option ?? null, args.text ?? null])).digest("hex");
     return this.transaction(() => {
+      const prior = this.db.prepare("SELECT request_hash,result FROM mobile_question_answers WHERE principal=? AND replay_key=?").get(principal, replayKey);
+      if (prior) {
+        if (prior.request_hash !== hash) throw new QuestionVersionConflict();
+        return JSON.parse(String(prior.result)) as OwnerQuestion;
+      }
+      const current = this.get(id);
+      if (!current || current.status !== "open" || ownerQuestionVersion(current) !== expectedVersion)
+        throw new QuestionVersionConflict(current ? ownerQuestionVersion(current) : undefined);
+      const result = this.answerRecord(id, args, author, at, "owner");
+      this.db.prepare("INSERT INTO mobile_question_answers VALUES(?,?,?,?,?,?)").run(principal, replayKey, hash, id, JSON.stringify(result), at);
+      return result;
+    });
+  }
+  private answerRecord(id: string, args: QuestionAnswerArgs, author: MessageAddress, at: number, source: "owner" | "declared-default"): OwnerQuestion {
       const q = this.get(id); if (!q || q.status !== "open") throw new Error("Question is no longer open");
       const option = args.option ? q.options.find(o => o.id === args.option) : undefined;
       if (args.option && !option) throw new Error("Unknown option");
@@ -114,7 +158,6 @@ export class OwnerQuestionStore {
       q.status = "answered"; q.answer = { text: args.text ?? option!.label, ...(option ? { option: option.id } : {}), author, at, source, ...(args.pin ? { pin: args.pin } : {}) };
       q.mirror = q.links.some(l => l.kind === "issue") ? { state: "pending" } : undefined;
       this.save(q); return q;
-    });
   }
   dismiss(id: string, status: "cancelled" | "superseded", reason: string, supersededBy?: string): OwnerQuestion {
     return this.transaction(() => {

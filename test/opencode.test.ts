@@ -31,6 +31,10 @@ describe("parseOpencodeJsonl", () => {
   it("reports errors", () => {
     expect(parseOpencodeJsonl('{"type":"error","sessionID":"s","error":{"data":{"message":"no provider"}}}').error).toBe("no provider");
   });
+  it("ignores empty V2 pre-admission session ids", () => {
+    expect(parseOpencodeJsonl('{"type":"error","sessionID":"","error":{"message":"missing session"}}').sessionId).toBeNull();
+    expect(parseOpencodeJsonl('{"type":"step_start","sessionID":""}\n{"type":"text","sessionID":"ses_real","part":{"messageID":"m","text":"ok"}}')).toMatchObject({ sessionId: "ses_real", text: "ok" });
+  });
 });
 
 describe("unwrapNpmShim", () => {
@@ -105,6 +109,7 @@ describe("installers", () => {
         "/skills/agent-bridge/SKILL.md",
       ]);
       expect(res.files.some((file) => file.includes("plugin-versions"))).toBe(true);
+      expect(readFileSync(join(cfg, "plugins", "agent-bridge.js"), "utf8")).toContain("export { default }");
       expect(uninstallOpencode(cfg, src).files).toHaveLength(5);
       expect(uninstallOpencode(cfg, src).files).toHaveLength(0);
     } finally {
@@ -181,9 +186,9 @@ describe("opencode plugin", () => {
     expect(names).toContain("bridge_ask_claude");
     expect(names).toContain("bridge_spawn_codex");
     expect(names).not.toContain("bridge_hook_event");
-    expect(names.filter((name) => /^bridge_(ask|spawn)_(claude|codex|opencode|antigravity)$/.test(name))).toEqual([
-      "bridge_ask_antigravity", "bridge_ask_claude", "bridge_ask_codex", "bridge_ask_opencode",
-      "bridge_spawn_antigravity", "bridge_spawn_claude", "bridge_spawn_codex", "bridge_spawn_opencode",
+    expect(names.filter((name) => /^bridge_(ask|spawn)_(claude|codex|opencode|antigravity|muse)$/.test(name))).toEqual([
+      "bridge_ask_antigravity", "bridge_ask_claude", "bridge_ask_codex", "bridge_ask_muse", "bridge_ask_opencode",
+      "bridge_spawn_antigravity", "bridge_spawn_claude", "bridge_spawn_codex", "bridge_spawn_muse", "bridge_spawn_opencode",
     ]);
   });
 

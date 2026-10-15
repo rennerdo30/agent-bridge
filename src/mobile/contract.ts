@@ -1,0 +1,61 @@
+/** Pure data contract shared by the gateway and Expo client. Never import server modules into the app. */
+export type Capability = "overview.read" | "chat.read" | "questions.read" | "questions.answer";
+export type Platform = "android" | "ios";
+/**
+ * Without a scope, a grant names exact sessions and jobs, and projectIds cover owner questions only.
+ * "all" covers every session, job and owner question on pcId, including future ones; "project" covers
+ * every current and future session, job and owner question of the listed projects (plus any listed sessions or jobs).
+ */
+export type GrantScope = "all" | "project";
+export interface Grant { pcId: string; scope?: GrantScope; projectIds: string[]; sessionIds: string[]; jobIds: string[]; capabilities: Capability[] }
+/** Whether one grant covers an entity; capabilities and pcId are checked by the caller. */
+export function grantCovers(grant: Grant, entity: { kind: "session" | "job" | "question"; id: string; projectId: string | null }): boolean {
+  if (grant.scope === "all") return true;
+  if (entity.kind === "session" && grant.sessionIds.includes(entity.id)) return true;
+  if (entity.kind === "job" && grant.jobIds.includes(entity.id)) return true;
+  return (grant.scope === "project" || entity.kind === "question") && !!entity.projectId && grant.projectIds.includes(entity.projectId);
+}
+export interface Credentials {
+  deviceId: string; sessionId: string; pcId: string; accessToken: string; refreshToken: string; csrfToken: string;
+  accessExpiresAt: number; refreshExpiresAt: number; capabilities: Capability[]; scopes: Grant[];
+}
+export interface Session {
+  id: string; pcId: string; generation: string; name: string; agent: string; projectId: string | null;
+  activity: "busy" | "idle" | "unknown"; connection: "connected" | "offline" | "unavailable";
+  parentId: string | null; chatId: string | null; sendSupported: false; sampledAt: number; version: string;
+}
+export interface Job {
+  id: string; pcId: string; projectId: string | null; parentId: string | null; title: string;
+  status: "running" | "done" | "failed" | "interrupted" | "cancelled" | "unknown";
+  progress: { percent: number | null; note: string | null; at: number | null; etaAt: number | null; etaReportedAt: number | null };
+  chatId: string | null; hasSteps: boolean; archived: boolean; recovered: boolean; sampledAt: number; version: string;
+}
+export interface Question {
+  id: string; kind: "question"; pcId: string; projectId: string; title: string; context: string; topic: string;
+  options: { id: string; label: string; consequence: string; recommended: boolean }[];
+  links: { kind: "issue" | "file" | "commit" | "artifact" | "diff"; display: string }[];
+  blocking: boolean; blocks: string; meanwhile: string; destructive: boolean; authorization: boolean;
+  urgency: "normal" | "urgent"; declaredDefault: { option: string; deadline: number } | null;
+  status: "open" | "answered" | "cancelled" | "superseded"; askedAt: number; version: string;
+  answer: { text: string; option?: string; at: number; source: "owner" | "declared-default"; authorLabel: string } | null;
+  deliveries: { recipientLabel: string; state: string; consumedAt: number | null }[];
+  dismissal: { reason: string; at: number; replacementId?: string } | null;
+}
+export interface ChatItem { id: string; kind: "user" | "assistant" | "tool" | "subagent"; at: number; text?: string; tool?: string; summary?: string; version: string; truncated: boolean }
+export interface Page<T> { items: T[]; next: string | null; generation: string; reset: boolean; sampledAt: number; viewCursor: string }
+export interface Snapshot {
+  apiVersion: 1; pcId: string; epoch: string; cursor: string; sampledAt: number; stale: boolean; capabilities: Capability[];
+  sessions: Session[]; jobs: Job[]; questions: Question[]; pages: { sessions: string | null; jobs: string | null; questions: string | null };
+  sourceState: "ready" | "offline" | "slow" | "unavailable";
+}
+export interface Event {
+  apiVersion: 1; epoch: string; cursor: string; type: "snapshot.required";
+  resource: { kind: "snapshot"; id: string }; version: string; at: number;
+}
+export interface Hello { apiVersion: 1; capabilities: Capability[]; transport: "private-https"; pinning: boolean; send: "unsupported"; pairedPcWrites: "unsupported"; push: "configured" | "unsupported" }
+export interface GatewayError { code: string; message: string; requestId: string; retryable: boolean; currentVersion?: string }
+export type PairingQr = { origin: string; origins: string[]; pcId: string; invitationId: string; nonce: string; expiresAt: number } & ({ v: 1; pins?: never } | { v: 2; pins: string[] });
+/** A display abbreviation only; transport always checks every byte of the full pin. */
+export function shortPin(pin: string): string { return pin.slice(0, 4) + "·" + pin.slice(4, 8) + "·" + pin.slice(8, 12) + "·" + pin.slice(12, 16); }
+export interface PairingClaim { claimId: string; claimToken: string; comparisonCode: string; expiresAt: number }
+export type ClaimResult = { state: "pending" | "denied" | "expired" | "issued" } | { state: "approved"; credentials: Credentials };

@@ -16,6 +16,29 @@ const closes: (() => Promise<void>)[] = [];
 beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { vi.restoreAllMocks(); for (const close of closes.splice(0)) await close(); await env.cleanup(); });
 
+it("returns actionable MCP errors for cancellation during native startup and retries after stop", async () => {
+  const node = env.node("startup-supervisor", "codex"); await node.start();
+  const jobs = new JobManager(node, nullLogger);
+  let stop!: (error: Error) => void;
+  const resume = vi.fn(() => async () => ({ text: "unexpected", sessionId: "new-session", isError: false, details: {} }));
+  const job = jobs.start("codex", null, "original task", () => new Promise((_, reject) => { stop = reject; }), resume);
+  const ctx: ServerContext = { node, jobs, home: env.home, cfg: DEFAULT_CONFIG, agent: "codex", log: nullLogger, cwd: () => env.home, channelActive: () => false };
+  const server = new McpServer({ name: "test", version: "1" }); registerTools(server, ctx, []);
+  const client = new Client({ name: "test", version: "1" }); const [a, b] = InMemoryTransport.createLinkedPair(); await server.connect(a); await client.connect(b);
+  closes.push(async () => { jobs.cancelAll(); await client.close(); await server.close(); });
+  await client.callTool({ name: "cancel_subagent", arguments: { job: job.name } });
+  const stopping = await client.callTool({ name: "message_subagent", arguments: { job: job.name, message: "retry" } });
+  expect(stopping.isError).toBe(true);
+  expect(JSON.stringify(stopping.content)).toContain("retry in 1 s");
+  stop(new Error("cancelled")); await until(() => job.status === "cancelled");
+  const cancelled = await client.callTool({ name: "message_subagent", arguments: { job: job.name, message: "retry again" } });
+  expect(cancelled.isError).toBe(true);
+  expect(JSON.stringify(cancelled.content)).toContain("cancelled before its session started");
+  expect(JSON.stringify(cancelled.content)).toContain("start a new job");
+  expect(JSON.stringify(cancelled.content)).not.toContain("no session to continue");
+  expect(resume).not.toHaveBeenCalled();
+});
+
 it.each(["claude", "codex", "opencode", "antigravity"] as const)("%s can broadcast to running jobs when authority RPCs fail", async agent => {
   const node = env.node("supervisor", agent), other = env.node("other", "other"); await node.start(); await other.start();
   const jobs = new JobManager(node, nullLogger);

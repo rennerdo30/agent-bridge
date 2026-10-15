@@ -103,6 +103,8 @@ it("does not project a previous finished host into a queued continuation when it
   const history = [{ from: "owner", to: "owner", at: Date.now() }];
   Object.assign(document.jobs[0], { host, ownershipHistory: history }); writeFileSync(path, JSON.stringify(document));
   Object.assign(first, { host, ownershipHistory: history });
+  // The earlier runner really exited; delivery alone no longer authorizes another generation.
+  vi.spyOn(jobs.runners!, "alive").mockReturnValue(false);
   const pending = deferred(); first.resume = () => pending.run;
   vi.spyOn(jobs, "persist").mockImplementation(() => {});
   jobs.followUp(first.id, "continue");

@@ -11,6 +11,8 @@ import { APP_VERSION } from "../src/core/constants.js";
 
 let dir: string, paths: PluginDoctorPaths, source: string;
 const put = (path: string, value: unknown) => { mkdirSync(join(path, ".."), { recursive: true }); writeFileSync(path, typeof value === "string" ? value : JSON.stringify(value)); };
+const museUnavailable = () => ({ severity: "warning", code: "muse-installation-inspection-unavailable", path: paths.muse,
+  detail: expect.stringContaining("Muse installation/trust metadata inspection is unavailable without its native manager."), fixable: false });
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "ab-plugin-doctor-")); paths = pluginDoctorPaths(join(dir, "bridge"), dir, {}); source = join(dir, "source");
   put(join(source, ".claude-plugin", "plugin.json"), { name: "agent-bridge", version: APP_VERSION });
@@ -39,7 +41,7 @@ function snapshot(root: string): Record<string, string> {
 describe("plugin doctor in a fake home", () => {
   it("agrees with all four native loaders and performs no writes", () => {
     installed(); const before = snapshot(dir);
-    expect(inspectPluginVersions(paths)).toEqual([]);
+    expect(inspectPluginVersions(paths)).toEqual([museUnavailable()]);
     expect(snapshot(dir)).toEqual(before);
   });
   it("reports the stale Claude marketplace, record and cache independently", () => {
@@ -74,8 +76,8 @@ describe("plugin doctor in a fake home", () => {
     expect(() => process.kill(process.pid, 0)).not.toThrow();
   });
   it("reports damaged selectors and ignores clients that are not installed", () => {
-    expect(inspectPluginVersions(paths)).toEqual([]);
+    expect(inspectPluginVersions(paths)).toEqual([museUnavailable()]);
     put(join(paths.opencode, "agent-bridge", "plugin-versions", "opencode", "active.json"), "broken");
-    expect(inspectPluginVersions(paths)).toEqual([expect.objectContaining({ code: "plugin-version-unreadable", fixable: false })]);
+    expect(inspectPluginVersions(paths)).toEqual([museUnavailable(), expect.objectContaining({ code: "plugin-version-unreadable", fixable: false })]);
   });
 });

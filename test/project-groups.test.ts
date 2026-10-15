@@ -15,6 +15,8 @@ import { metadataFileLease } from "../src/core/metadata-file-lease.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
 import { DEFAULT_CONFIG, loadConfig } from "../src/core/config.js";
 import type { ServerContext } from "../src/mcp/server.js";
+import { withDirectoryAlias } from "./directory-alias-fixture.js";
+import { normalizeProject } from "../src/core/decisions.js";
 
 let env: TestEnv;
 const nodes: BridgeNode[] = [];
@@ -40,6 +42,14 @@ function registry(project: string) {
 }
 
 describe("local project permission groups", () => {
+  it("shares physical project identity with decision scopes through a drive/directory alias", async () => {
+    const path = repo();
+    await withDirectoryAlias(path, (alias) => {
+      expect(canonicalProjectRoot(alias)).toBe(canonicalProjectRoot(path));
+      expect(normalizeProject(alias)).toBe(normalizeProject(path));
+      expect(canonicalProjectRoot(alias)).toBe(realpathSync.native(path));
+    });
+  });
   it("lets a secondary become primary after the starter has closed", async () => {
     await env.node("broker", "other").start();
     const path = repo(); registry(path);

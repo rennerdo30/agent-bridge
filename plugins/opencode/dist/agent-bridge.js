@@ -29027,6 +29027,9 @@ var Protocol = class {
       this.setRequestHandler(GetTaskPayloadRequestSchema, async (request, extra) => {
         const handleTaskResult = async () => {
           const taskId = request.params.taskId;
+          if (!await this._taskStore.getTask(taskId, extra.sessionId)) {
+            throw new McpError(ErrorCode.InvalidParams, `Task not found: ${taskId}`);
+          }
           if (this._taskMessageQueue) {
             let queuedMessage;
             while (queuedMessage = await this._taskMessageQueue.dequeue(taskId, extra.sessionId)) {
@@ -29057,12 +29060,12 @@ var Protocol = class {
             throw new McpError(ErrorCode.InvalidParams, `Task not found: ${taskId}`);
           }
           if (!isTerminal(task.status)) {
-            await this._waitForTaskUpdate(taskId, extra.signal);
+            await this._waitForTaskUpdate(taskId, extra.signal, extra.sessionId);
             return await handleTaskResult();
           }
           if (isTerminal(task.status)) {
             const result = await this._taskStore.getTaskResult(taskId, extra.sessionId);
-            this._clearTaskQueue(taskId);
+            this._clearTaskQueue(taskId, extra.sessionId);
             return {
               ...result,
               _meta: {
@@ -29099,7 +29102,7 @@ var Protocol = class {
             throw new McpError(ErrorCode.InvalidParams, `Cannot cancel task in terminal status: ${task.status}`);
           }
           await this._taskStore.updateTaskStatus(request.params.taskId, "cancelled", "Client cancelled task execution.", extra.sessionId);
-          this._clearTaskQueue(request.params.taskId);
+          this._clearTaskQueue(request.params.taskId, extra.sessionId);
           const cancelledTask = await this._taskStore.getTask(request.params.taskId, extra.sessionId);
           if (!cancelledTask) {
             throw new McpError(ErrorCode.InvalidParams, `Task not found after cancellation: ${request.params.taskId}`);
@@ -29227,6 +29230,19 @@ var Protocol = class {
     const handler = this._requestHandlers.get(request.method) ?? this.fallbackRequestHandler;
     const capturedTransport = this._transport;
     const relatedTaskId = request.params?._meta?.[RELATED_TASK_META_KEY]?.taskId;
+    const sessionId = capturedTransport?.sessionId;
+    const store = this._taskStore;
+    let relatedTaskFound = true;
+    let relatedTaskLookup;
+    if (relatedTaskId && store && this._taskMessageQueue && sessionId !== void 0) {
+      relatedTaskFound = false;
+      relatedTaskLookup = (async () => {
+        if (!await store.getTask(relatedTaskId, sessionId)) {
+          throw new McpError(ErrorCode.InvalidParams, `Task not found: ${relatedTaskId}`);
+        }
+        relatedTaskFound = true;
+      })();
+    }
     if (handler === void 0) {
       const errorResponse = {
         jsonrpc: "2.0",
@@ -29236,7 +29252,10 @@ var Protocol = class {
           message: "Method not found"
         }
       };
-      if (relatedTaskId && this._taskMessageQueue) {
+      if (relatedTaskId && relatedTaskLookup) {
+        const queuedError = { type: "error", message: errorResponse, timestamp: Date.now() };
+        relatedTaskLookup.then(() => this._enqueueTaskMessage(relatedTaskId, queuedError, sessionId), () => capturedTransport?.send(errorResponse)).catch((error62) => this._onerror(new Error(`Failed to send an error response: ${error62}`)));
+      } else if (relatedTaskId && this._taskMessageQueue) {
         this._enqueueTaskMessage(relatedTaskId, {
           type: "error",
           message: errorResponse,
@@ -29287,7 +29306,10 @@ var Protocol = class {
       closeSSEStream: extra?.closeSSEStream,
       closeStandaloneSSEStream: extra?.closeStandaloneSSEStream
     };
-    Promise.resolve().then(() => {
+    (relatedTaskLookup ?? Promise.resolve()).then(() => {
+      if (relatedTaskLookup && abortController.signal.aborted) {
+        throw new McpError(ErrorCode.ConnectionClosed, "Request was cancelled");
+      }
       if (taskCreationParams) {
         this.assertTaskHandlerCapability(request.method);
       }
@@ -29322,7 +29344,7 @@ var Protocol = class {
           ...error62["data"] !== void 0 && { data: error62["data"] }
         }
       };
-      if (relatedTaskId && this._taskMessageQueue) {
+      if (relatedTaskId && this._taskMessageQueue && relatedTaskFound) {
         await this._enqueueTaskMessage(relatedTaskId, {
           type: "error",
           message: errorResponse,
@@ -29802,7 +29824,7 @@ var Protocol = class {
       throw new Error("Cannot enqueue task message: taskStore and taskMessageQueue are not configured");
     }
     const maxQueueSize = this._options?.maxTaskQueueSize;
-    await this._taskMessageQueue.enqueue(taskId, message, sessionId, maxQueueSize);
+    await this._taskMessageQueue.enqueue(taskId, message, sessionId ?? this._transport?.sessionId, maxQueueSize);
   }
   /**
    * Clears the message queue for a task and rejects any pending request resolvers.
@@ -29831,12 +29853,13 @@ var Protocol = class {
    * Uses polling to check for updates at the task's configured poll interval.
    * @param taskId The task ID to wait for
    * @param signal Abort signal to cancel the wait
+   * @param sessionId Session of the request that waits, passed to the task store
    * @returns Promise that resolves when an update occurs or rejects if aborted
    */
-  async _waitForTaskUpdate(taskId, signal) {
+  async _waitForTaskUpdate(taskId, signal, sessionId) {
     let interval = this._options?.defaultTaskPollInterval ?? 1e3;
     try {
-      const task = await this._taskStore?.getTask(taskId);
+      const task = await this._taskStore?.getTask(taskId, sessionId);
       if (task?.pollInterval) {
         interval = task.pollInterval;
       }
@@ -30925,7 +30948,7 @@ var StdioClientTransport = class {
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.30.11";
+var APP_VERSION = "0.30.19";
 var ENV = {
   internal: "AGENT_BRIDGE_INTERNAL",
   home: "AGENT_BRIDGE_HOME",
@@ -30945,6 +30968,7 @@ var ENV = {
   claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
   codexBin: "AGENT_BRIDGE_CODEX_BIN",
   opencodeBin: "AGENT_BRIDGE_OPENCODE_BIN",
+  museBin: "AGENT_BRIDGE_MUSE_BIN",
   dashboard: "AGENT_BRIDGE_DASHBOARD",
   /** "0": background subagents run inside the session's MCP server instead of detached job runners (they then end with it). */
   jobRunner: "AGENT_BRIDGE_JOB_RUNNER"
@@ -31047,7 +31071,7 @@ async function loadZod() {
 var REGISTRY_KEY = /* @__PURE__ */ Symbol.for("agent-bridge.opencode.registry");
 var registry2 = globalThis[REGISTRY_KEY] ??= /* @__PURE__ */ new Map();
 var AgentBridgePlugin = async (input2) => {
-  const key = input2.directory.toLowerCase();
+  const key = `${input2.apiVersion ?? 1}:${input2.directory.toLowerCase()}`;
   let entry = registry2.get(key);
   if (!entry) {
     entry = { refs: 0, hooks: createBridge(input2) };
@@ -31109,13 +31133,21 @@ async function createBridge({ client, directory }) {
   const noteSession = (sessionID) => {
     if (!sessionID || childSessions.has(sessionID)) return;
     activeSession = sessionID;
-    if (!sessionStartSent) {
-      sessionStartSent = true;
-      sessionStart = hook("SessionStart", sessionID).then(async (out) => {
+    if (sessionStartSent) return;
+    if (sessionStart) return sessionStart;
+    sessionStart = (async () => {
+      for (let attempt = 0; attempt < 2 && !disposed; attempt++) {
+        const out = await hook("SessionStart", sessionID);
         const context = out?.reason ?? out?.hookSpecificOutput?.additionalContext;
-        if (!disposed && typeof context === "string" && context) await promptAsync(client, sessionID, context, true);
-      }).catch((err) => log("warn", "could not store initial peer context", { err: String(err) }));
-    }
+        if (typeof context !== "string" || !context) continue;
+        if (disposed) return;
+        await promptAsync(client, sessionID, context, true);
+        sessionStartSent = true;
+        return;
+      }
+    })().catch((err) => log("warn", "could not store initial peer context", { err: String(err) })).finally(() => {
+      sessionStart = null;
+    });
     return sessionStart;
   };
   const stopCheck = async (sessionID) => {
@@ -31156,6 +31188,7 @@ async function createBridge({ client, directory }) {
     const name = t.name;
     tool[`${TOOL_PREFIX}${name}`] = {
       description: `[agent-bridge] ${t.description ?? name}`,
+      inputSchema: t.inputSchema,
       args: jsonSchemaToZodShape(z2, t.inputSchema),
       execute: async (args, ctx) => {
         log("debug", "tool", { name, sessionID: ctx?.sessionID });
@@ -31243,6 +31276,89 @@ ${context}`;
     }
   };
 }
+var plugin_default = {
+  id: "agent-bridge",
+  server: AgentBridgePlugin,
+  setup: async (ctx) => {
+    const hooks = await AgentBridgePlugin({
+      directory: ctx.location.directory,
+      apiVersion: 2,
+      client: { session: { promptAsync: async (opts) => {
+        const sessionID = opts.sessionID;
+        const text = opts.parts[0].text;
+        if (opts.noReply) await ctx.session.synthetic({ sessionID, text, resume: false });
+        else await ctx.session.prompt({ sessionID, text });
+      } } }
+    });
+    const registrations = [];
+    const abort = new AbortController();
+    const log = makeLog();
+    try {
+      registrations.push(await ctx.tool.transform((editor) => {
+        for (const [name, definition] of Object.entries(hooks.tool)) {
+          const t = definition;
+          editor.add({
+            name,
+            description: t.description,
+            input: t.inputSchema,
+            execute: async (args, context) => ({
+              content: await t.execute(args, { sessionID: context.sessionID, abort: context.signal })
+            })
+          });
+        }
+      }));
+      registrations.push(await ctx.session.hook("prompt", async (input2) => {
+        await hooks["chat.message"](input2);
+      }));
+      registrations.push(await ctx.session.hook("context", async (input2) => {
+        const output2 = { system: [] };
+        await hooks["experimental.chat.system.transform"](input2, output2);
+        for (const text of output2.system) input2.system.push({ type: "text", text });
+      }));
+      registrations.push(await ctx.tool.hook("execute.after", async (input2) => {
+        if (input2.status !== "completed") return;
+        const content = input2.result.content;
+        const original = typeof content === "string" ? content : (content ?? []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
+        const output2 = { output: original };
+        await hooks["tool.execute.after"](input2, output2);
+        if (output2.output !== original) {
+          input2.result = { ...input2.result, content: [
+            ...Array.isArray(content) ? content : [{ type: "text", text: content ?? "" }],
+            { type: "text", text: output2.output.slice(original.length) }
+          ] };
+        }
+      }));
+      const events = (async () => {
+        for await (const event of ctx.event.subscribe({ signal: abort.signal })) {
+          if (abort.signal.aborted) break;
+          if (event.location?.directory && event.location.directory !== ctx.location.directory) continue;
+          const p = event.data ?? {};
+          if (event.type === "session.created") {
+            await hooks.event({ event: { type: "session.created", properties: { info: { id: p.sessionID, parentID: p.parentID } } } });
+          } else if (event.type === "session.execution.started") {
+            await hooks.event({ event: { type: "session.status", properties: { sessionID: p.sessionID, status: { type: "busy" } } } });
+          } else if (["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"].includes(event.type)) {
+            await hooks.event({ event: { type: "session.idle", properties: p } });
+          }
+        }
+      })().catch((err) => {
+        if (!abort.signal.aborted) log("warn", "event subscription failed", { err: String(err) });
+      });
+      return async () => {
+        abort.abort();
+        await Promise.all(registrations.map((r) => r.dispose()));
+        await hooks.dispose();
+        await events;
+      };
+    } catch (err) {
+      abort.abort();
+      await Promise.all(registrations.map((r) => r.dispose()));
+      await hooks.dispose();
+      throw err;
+    }
+  }
+};
 export {
-  AgentBridgePlugin
+  AgentBridgePlugin,
+  plugin_default as default
 };

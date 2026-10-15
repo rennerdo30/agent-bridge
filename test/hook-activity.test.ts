@@ -80,7 +80,7 @@ describe("flagged native children of delegated jobs", () => {
 
 // Real hook and waker; only broker/storage and the CLI queue transport are doubles.
 // No database, installed CLI, or live session is used by this fixture.
-function fixture() {
+function fixture(agent: ServerContext["agent"] = "codex") {
   const node = Object.assign(new EventEmitter(), {
     name: "codex-main", id: "main-id", cwd: process.cwd(), currentSessionId: "main-thread",
     activity: "busy" as "busy" | "idle", autoWakeEnabled: false, lastSentAt: 0,
@@ -98,7 +98,7 @@ function fixture() {
   waker.setActivity("busy");
   const activity = vi.fn((state: "busy" | "idle") => { node.activity = state; waker.setActivity(state); });
   const ctx: ServerContext = {
-    agent: "codex", cfg, node: node as unknown as BridgeNode, log: nullLogger,
+    agent, cfg, node: node as unknown as BridgeNode, log: nullLogger,
     home: process.env.AGENT_BRIDGE_HOME!, cwd: () => node.cwd, channelActive: () => false,
     activity, onSessionId: vi.fn(),
     wakeDelivery: { confirm: vi.fn(), release: vi.fn(), active: vi.fn(), idle: vi.fn() } as ServerContext["wakeDelivery"],
@@ -117,10 +117,10 @@ function fixture() {
 beforeEach(() => { vi.useFakeTimers(); queue.mockReset().mockResolvedValue({ code: 0, stdout: "", stderr: "" }); });
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
-describe("main hook activity ownership (AB-269)", () => {
+describe.each(["codex", "claude"] as const)("%s main hook activity ownership (AB-269)", (agent) => {
   it.each(["prepare", "launchKnown", "setSessionId", "ensureConnected", "refreshPending"] as const)(
     "a Stop deadline in %s recovers idle and queues exactly once without consuming mail", async (stage) => {
-      const { node, ctx, activity, arrive } = fixture();
+      const { node, ctx, activity, arrive } = fixture(agent);
       const held = deferred();
       const input = hook("Stop");
       if (stage === "prepare") input.prepare = () => held.promise;
@@ -152,7 +152,7 @@ describe("main hook activity ownership (AB-269)", () => {
   it.each((["prepare", "launchKnown", "setSessionId", "ensureConnected", "refreshPending"] as const)
     .flatMap((stage) => [false, true].map((autoWake) => ({ stage, autoWake }))))(
     "a superseded ordinary Stop in $stage cannot idle or consume newer-turn mail (autoWake=$autoWake)", async ({ stage, autoWake }) => {
-    const { node, ctx, arrive } = fixture();
+    const { node, ctx, arrive } = fixture(agent);
     node.autoWakeEnabled = autoWake;
     const held = deferred();
     const input = hook("Stop");
@@ -176,7 +176,7 @@ describe("main hook activity ownership (AB-269)", () => {
   });
 
   it.each([false, true])("a newer prompt owns activity at ingress, before its metadata completes (pending=%s)", async (pending) => {
-    const { node, ctx, arrive } = fixture();
+    const { node, ctx, arrive } = fixture(agent);
     const stopHeld = deferred(), promptHeld = deferred();
     const old = buildHookResponse(ctx, hook("Stop", { prepare: () => stopHeld.promise }));
     const prompt = buildHookResponse(ctx, hook("UserPromptSubmit", pending ? { prepare: () => promptHeld.promise } : {}));
@@ -191,7 +191,7 @@ describe("main hook activity ownership (AB-269)", () => {
   });
 
   it.each(["UserPromptSubmit", "PostToolUse", "SessionStart"] as const)("an older delayed %s cannot overwrite a newer Stop", async (event) => {
-    const { node, ctx, activity, arrive } = fixture();
+    const { node, ctx, activity, arrive } = fixture(agent);
     const held = deferred();
     const old = buildHookResponse(ctx, hook(event, { prepare: () => held.promise }));
     await buildHookResponse(ctx, hook("Stop"));
@@ -208,7 +208,7 @@ describe("main hook activity ownership (AB-269)", () => {
   });
 
   it.each(["Stop", "UserPromptSubmit", "PostToolUse", "SessionStart"] as const)("a flagged child %s cannot prepare, change session, consume mail or invalidate the owning Stop", async (event) => {
-    const { node, ctx, activity, arrive } = fixture();
+    const { node, ctx, activity, arrive } = fixture(agent);
     const held = deferred(), prepare = vi.fn(async () => {});
     const main = buildHookResponse(ctx, hook("Stop", { prepare: () => held.promise }));
     arrive();
@@ -229,7 +229,7 @@ describe("main hook activity ownership (AB-269)", () => {
   });
 
   it("normal busy activity blocks queued wake until the current Stop", async () => {
-    const { node, ctx, arrive } = fixture();
+    const { node, ctx, arrive } = fixture(agent);
     await buildHookResponse(ctx, hook("UserPromptSubmit"));
     arrive();
     await vi.advanceTimersByTimeAsync(HOOK_BUDGET_MS * 2);
@@ -241,7 +241,7 @@ describe("main hook activity ownership (AB-269)", () => {
   });
 
   it("a current Stop that delivers mail and blocks remains busy", async () => {
-    const { node, ctx, arrive } = fixture(); node.autoWakeEnabled = true;
+    const { node, ctx, arrive } = fixture(agent); node.autoWakeEnabled = true;
     arrive();
     expect(await buildHookResponse(ctx, hook("Stop"))).toMatchObject({ decision: "block" });
     await vi.advanceTimersByTimeAsync(HOOK_BUDGET_MS * 2);
@@ -251,7 +251,7 @@ describe("main hook activity ownership (AB-269)", () => {
   });
 
   it.each(["UserPromptSubmit", "PostToolUse"] as const)("%s reserves busy at ingress while its metadata stalls", async (event) => {
-    const { node, ctx, arrive } = fixture(), held = deferred();
+    const { node, ctx, arrive } = fixture(agent), held = deferred();
     await buildHookResponse(ctx, hook("Stop"));
     expect(node.activity).toBe("idle");
     const active = buildHookResponse(ctx, hook(event, { prepare: () => held.promise }));
@@ -263,7 +263,7 @@ describe("main hook activity ownership (AB-269)", () => {
   });
 
   it("host cancellation retains busy and mail without interpreting it as a deadline", async () => {
-    const { node, ctx, arrive } = fixture();
+    const { node, ctx, arrive } = fixture(agent);
     const held = deferred(), cancel = new AbortController();
     const response = buildHookResponse(ctx, hook("Stop", { signal: cancel.signal, prepare: () => held.promise }));
     arrive(); cancel.abort();
@@ -274,7 +274,7 @@ describe("main hook activity ownership (AB-269)", () => {
   });
 
   it("a Stop for a replaced session does not idle its successor", async () => {
-    const { node, ctx, arrive } = fixture();
+    const { node, ctx, arrive } = fixture(agent);
     const held = deferred();
     const response = buildHookResponse(ctx, hook("Stop", { prepare: () => held.promise }));
     node.currentSessionId = "replacement-thread";
@@ -286,7 +286,7 @@ describe("main hook activity ownership (AB-269)", () => {
   });
 
   it("hook epochs are isolated per context", async () => {
-    const first = fixture(), second = fixture(), held = deferred();
+    const first = fixture(agent), second = fixture(agent), held = deferred();
     const response = buildHookResponse(first.ctx, hook("Stop", { prepare: () => held.promise }));
     await buildHookResponse(second.ctx, hook("UserPromptSubmit"));
     first.arrive();
@@ -296,8 +296,8 @@ describe("main hook activity ownership (AB-269)", () => {
     expect(queue).toHaveBeenCalledOnce(); held.resolve();
   });
 
-  it.each(["claude", "opencode", "antigravity"] as const)("%s deadline behavior stays unchanged", async (agent) => {
-    const { node, ctx, arrive } = fixture(), held = deferred(); ctx.agent = agent;
+  it.each(["opencode", "antigravity"] as const)("%s deadline behavior stays unchanged", async (agent) => {
+    const { node, ctx, arrive } = fixture(agent), held = deferred(); ctx.agent = agent;
     const response = buildHookResponse(ctx, hook("Stop", { prepare: () => held.promise }));
     arrive(); await vi.advanceTimersByTimeAsync(HOOK_BUDGET_MS + 10);
     expect(await response).toEqual({}); expect(node.activity).toBe("busy");

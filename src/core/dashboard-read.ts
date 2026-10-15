@@ -1,5 +1,5 @@
 import { worktreeRoots } from "./worktree.js";
-import { closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync, type Stats } from "node:fs";
+import { closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync, type BigIntStats } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { JOBS_FILE } from "./constants.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
@@ -93,9 +93,9 @@ async function readOutcomeJobs(home: string, log: Logger, names?: ReadonlySet<st
     return await drainScanResponsive((function* () {
       const all = new Map<string, Record<string, unknown>>();
       const canonicalHome = realpathSync.native(home), activePath = join(canonicalHome, JOBS_FILE);
-      let data: unknown = null, activeStat: Stats | undefined;
+      let data: unknown = null, activeStat: BigIntStats | undefined;
       try {
-        if (!indexedJobProjectionCurrent(activePath)) activeStat = lstatSync(activePath);
+        if (!indexedJobProjectionCurrent(activePath)) activeStat = lstatSync(activePath, { bigint: true });
         if (activeStat) {
         if (!unchangedContainedFile(canonicalHome, activePath, activeStat, canonicalHome)) throw new Error("outcome job store must be a contained physical file");
         data = readJsonSnapshot(activePath, { file: activePath, stat: activeStat }).value;
@@ -442,14 +442,14 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       const rawFrom = url.searchParams.get("from") ?? "0";
       if (!/^\d+$/.test(rawFrom) || !Number.isSafeInteger(Number(rawFrom))) return reply(400, { error: "invalid log cursor" });
       const from = Number(rawFrom);
-      const witnessed = lstatSync(log.file);
+      const witnessed = lstatSync(log.file, { bigint: true });
       const logRoot = isInsideDir(log.file, join(ctx.home, "cold")) ? join(ctx.home, "cold") : join(ctx.home, "runs");
       if (!unchangedContainedFile(logRoot, log.file, witnessed)) return reply(404, { error: "no such run" });
-      const size = witnessed.size;
+      const size = Number(witnessed.size);
       const fd = openSync(log.file, "r");
       const buf = Buffer.alloc(Math.min(MAX_LOG_CHUNK + 1, Math.max(0, size - from)));
       try {
-        if (fileSignature(fstatSync(fd)) !== fileSignature(witnessed)) return reply(404, { error: "run changed before reading" });
+        if (fileSignature(fstatSync(fd, { bigint: true })) !== fileSignature(witnessed)) return reply(404, { error: "run changed before reading" });
         readSync(fd, buf, 0, buf.length, from);
       } finally { closeSync(fd); }
       let end = Math.min(buf.length, MAX_LOG_CHUNK);

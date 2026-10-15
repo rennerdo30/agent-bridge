@@ -11,7 +11,7 @@ coverage beyond preview limits.
 
 `search_history` searches local bridge messages, cold `archive.db` messages, owner questions and exact answers, all decision
 revisions, delegated run logs and metadata (including `runs/archive`), and the CLI transcript
-readers for Claude Code, Codex and opencode. Ordinary searches only query the local index:
+readers for Claude Code, Codex, opencode and Antigravity. Ordinary searches only query the local index:
 they do not start a CLI, read usage limits, or call a model. Returned text still occupies
 the calling agent's context, like every MCP result.
 
@@ -76,7 +76,7 @@ search_history({
     project?: string,                  // canonical project path
     session?: string,                  // exact CLI session id or known peer identity
     job?: string,                      // exact job name
-    agent?: "claude" | "codex" | "opencode" | "other",
+    agent?: "claude" | "codex" | "opencode" | "antigravity" | "other",
     kind?: "message" | "run" | "decision" | "transcript" | "approval" | "progress" | "report",
     since?: number | string,           // epoch milliseconds or ISO8601 with timezone
     until?: number | string            // inclusive bounds; since <= until
@@ -113,7 +113,7 @@ Messages, decisions and transcripts use their source timestamps.
   }],
   answer?: {
     text: string,                      // at most 4000 characters; empty on error
-    agent: "claude" | "codex" | "opencode" | null,
+    agent: "claude" | "codex" | "opencode" | "antigravity" | null,
     model: string | null,
     sources: [{ id: string, link: string }], // authenticated source links
     error?: string
