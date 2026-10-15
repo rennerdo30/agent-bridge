@@ -108,8 +108,8 @@ let ownProbeFailed = false;
 let ownRetryAt = 0;
 let ownRefresh: Promise<void> | undefined;
 
-function refreshOwnIdentity(): void {
-  if (ownRefresh || Date.now() < ownRetryAt) return;
+function refreshOwnIdentity(immediate = false): void {
+  if (ownRefresh || !immediate && Date.now() < ownRetryAt) return;
   // A failed native probe must not turn every metadata lease/peer write into
   // another synchronous process launch. Keep unknown fail-closed while one
   // bounded asynchronous probe tries to establish the current process's birth.
@@ -119,6 +119,14 @@ function refreshOwnIdentity(): void {
     ownRetryAt = Date.now() + OWN_IDENTITY_COOLDOWN_MS;
     ownRefresh = undefined;
   });
+}
+
+function ownIdentityUnavailable(): void {
+  ownProbeFailed = true;
+  ownRetryAt = Date.now() + OWN_IDENTITY_COOLDOWN_MS;
+  // Start once now: a later one-shot caller must not be needed to initiate
+  // recovery. Further refreshes remain caller-driven and cooldown-limited.
+  refreshOwnIdentity(true);
 }
 
 /** Creation identity for lock acquisition/recovery, never for polling hot paths. */
@@ -139,11 +147,11 @@ export function processIdentity(pid: number): string | undefined {
     }
     if (pid === process.pid) {
       ownIdentity = identity;
-      if (!identity) { ownProbeFailed = true; ownRetryAt = Date.now() + OWN_IDENTITY_COOLDOWN_MS; }
+      if (!identity) ownIdentityUnavailable();
     }
     return identity;
   } catch {
-    if (pid === process.pid) { ownProbeFailed = true; ownRetryAt = Date.now() + OWN_IDENTITY_COOLDOWN_MS; }
+    if (pid === process.pid) ownIdentityUnavailable();
     return undefined;
   }
 }

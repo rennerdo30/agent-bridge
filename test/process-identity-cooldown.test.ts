@@ -37,6 +37,7 @@ it("does not repeat a slow failed own-PID probe for metadata leases and peer wri
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 75);
     throw new Error("simulated slow native identity probe failure");
   });
+  probes.async.mockResolvedValue({ stdout: "" });
   const leasePath = join(home!, "migration.lock");
   const first = performance.now();
   expect(() => metadataFileLease(leasePath)).toThrowError(expect.objectContaining({ code: "ELEASEBUSY" }));
@@ -49,15 +50,17 @@ it("does not repeat a slow failed own-PID probe for metadata leases and peer wri
   }
   console.info("failed own identity lease/peer probe", { coldMs, repeatedMs: performance.now() - began });
   expect(probes.sync).toHaveBeenCalledTimes(1);
-  expect(probes.async).not.toHaveBeenCalled();
+  expect(probes.async).toHaveBeenCalledTimes(1);
+  await new Promise<void>(resolve => setImmediate(resolve));
 });
 
-it("coalesces refresh after cooldown, retains unknown on failure, and picks up a later verified success", async () => {
+it("coalesces immediate refresh, retains unknown on failure, and picks up a later verified success", async () => {
   const { processIdentity, metadataFileLease } = await fixture();
   probes.sync.mockImplementation(() => { throw new Error("native query timed out"); });
-  expect(processIdentity(process.pid)).toBeUndefined();
   let complete!: (result: { stdout: string }) => void;
   probes.async.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+  expect(processIdentity(process.pid)).toBeUndefined();
+  expect(probes.async).toHaveBeenCalledTimes(1);
   vi.setSystemTime(1_000);
   for (let i = 0; i < 10; i++) expect(processIdentity(process.pid)).toBeUndefined();
   expect(probes.async).toHaveBeenCalledTimes(1);
@@ -73,4 +76,21 @@ it("coalesces refresh after cooldown, retains unknown on failure, and picks up a
   expect(processIdentity(process.pid)).toBe("verified-own-birth");
   expect(probes.sync).toHaveBeenCalledTimes(1);
   const release = metadataFileLease(join(home!, "verified.lock")); release();
+});
+
+it("refreshes after a failed sync probe without another caller initiating recovery", async () => {
+  const { processIdentity, metadataFileLease } = await fixture();
+  probes.sync.mockImplementation(() => { throw new Error("native query timed out"); });
+  let complete!: (result: { stdout: string }) => void;
+  probes.async.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+  expect(processIdentity(process.pid)).toBeUndefined();
+  expect(probes.async).toHaveBeenCalledTimes(1);
+  complete({ stdout: "verified-own-birth" });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  // No caller ran after the failure to trigger a refresh, and the cooldown
+  // has not elapsed. The next one-shot acquisition already has its identity.
+  expect(processIdentity(process.pid)).toBe("verified-own-birth");
+  const release = metadataFileLease(join(home!, "one-shot.lock")); release();
+  expect(probes.sync).toHaveBeenCalledTimes(1);
+  expect(probes.async).toHaveBeenCalledTimes(1);
 });

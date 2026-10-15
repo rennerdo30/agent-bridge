@@ -89,7 +89,7 @@ describe("chunked paired-PC file transfers", () => {
         const id = randomUUID(), start = performance.now();
         await a.send({ id, from: sender, to: "mac/receiver", recipient: "mac/receiver", conversationId: id, replyTo: null, hop: 0, body: "message during transfer", createdAt: Date.now(), readAt: null });
         expect(bMessages.some(m => m.id === id)).toBe(true);
-        if (stream.start && start >= stream.start && (!stream.end || start < stream.end)) latencies.push(performance.now() - start);
+        latencies.push(performance.now() - start);
         if (performance.now() - began > 30_000) throw new Error("fairness transfer deadline");
         await realDelay(30);
       }
