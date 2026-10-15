@@ -56,7 +56,10 @@ export async function runMuseHook(event: string): Promise<number> {
     const session = process.env.MUSE_SESSION_ID, thread = process.env.MUSE_THREAD_ID;
     childBridgeCall = event === "PreToolUse" && !!thread && thread !== session && museBridgeTool(input);
     if (event === "PreToolUse" && museLocalReadAllowed(input, childBridgeCall)) { process.stdout.write("{}"); return 0; }
-    const restored = await restoreMuseContext();
+    // Only permission decisions need the adapter's environment contract. Mail
+    // callbacks authenticate the current hook registration below instead; doing
+    // both repeats DPAPI, host identity and ancestry probes in every fresh CLI.
+    const restored = event === "PreToolUse" ? await restoreMuseContext() : false;
     if (event === "PreToolUse") {
       if (!restored && process.env.AGENT_BRIDGE_INTERNAL === "1") throw new Error("Unauthenticated Muse host context");
       const gate = musePreToolUseGate(input, process.env[MUSE_ACCESS_ENV], childBridgeCall);
