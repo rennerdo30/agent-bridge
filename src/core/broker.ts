@@ -55,6 +55,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { canControlJob, mastersFor, chooseJobRecipient, primaryFor } from "./job-ownership.js";
 import { RootConcurrency } from "./root-concurrency.js";
 import { isRecord, retentionLimit } from "./json-store.js";
+import { quarantineMessage } from "./oversize.js";
 import { readArchivedJobSnapshot } from "./job-archive.js";
 import { JobArchiveBackground } from "./job-archive-background.js";
 import { indexedJobProjectionCurrent, readIndexedJobs } from "./job-archive-index.js";
@@ -425,10 +426,11 @@ export class Broker {
         let fallback = false;
         await this.store.retryWrite(() => {
           const job = this.storedJobs().find((j) => `job:${j.id}` === m.from?.id);
-          if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string" || m.body.length > MAX_BODY_CHARS) throw new BridgeError("unauthorized", "Invalid inline job delivery.");
+          if (!job || (job.executionOwner !== peer.name && job.owner !== peer.name && job.rootName !== peer.name) || typeof job.owner !== "string" || typeof m.body !== "string") throw new BridgeError("unauthorized", "Invalid inline job delivery.");
           const recipient = this.jobRecipient(job);
           fallback = recipient !== primaryFor(job);
-          const message = { ...m, jobControlAuthorized: undefined, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) };
+          // AB-380: an oversized report from an older sender is stored as a stub with the same id, never rejected.
+          const message = this.wireMessage({ ...m, jobControlAuthorized: undefined, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, m.conversationId) });
           if (this.store.insertJobDelivery(message)) {
             const target = this.connByName(recipient);
             if (target && !target.peer?.unavailable) this.emit(target, "message", message);
@@ -957,8 +959,19 @@ export class Broker {
   private write(conn: Conn, frame: Parameters<typeof encodeFrame>[0]): boolean {
     if (conn.socket.destroyed) return false;
     try {
-      const data = encodeFrame(frame);
-      if (conn.socket.writableLength + Buffer.byteLength(data) > MAX_CONNECTION_BUFFER_BYTES) {
+      let data = encodeFrame(frame);
+      let bytes = Buffer.byteLength(data);
+      if (bytes > MAX_FRAME_BYTES) {
+        // AB-380: the peer's decoder would reject it and drop the connection, so a reconnect would loop on it.
+        // Skip the frame instead; a response still settles its request, as too_large.
+        const ev = frame.t === "evt" ? frame.ev : undefined, id = frame.t === "evt" && isRecord(frame.data) ? (frame.data as Record<string, unknown>).id : undefined;
+        this.log.error("skipping oversized frame; connection kept", { peer: conn.peer?.name, t: frame.t, ev, id, bytes });
+        if (frame.t !== "res") return true;
+        data = encodeFrame({ t: "res", id: frame.id, ok: false, error: new BridgeError("too_large",
+          `response is ${bytes} bytes, over the ${MAX_FRAME_BYTES}-byte frame limit`, { bytes, limit: MAX_FRAME_BYTES, retryable: false }).toPayload() });
+        bytes = Buffer.byteLength(data);
+      }
+      if (conn.socket.writableLength + bytes > MAX_CONNECTION_BUFFER_BYTES) {
         this.log.warn("closing slow client connection; unread mail remains stored", { peer: conn.peer?.name });
         conn.socket.destroy();
         return false;
@@ -1190,7 +1203,8 @@ export class Broker {
           const recipient = this.jobRecipient(job), target = this.connByName(recipient);
           if (Array.isArray(job.deliveryHistory)) for (const envelope of job.deliveryHistory) {
             if (!isRecord(envelope) || !isRecord(envelope.from) || envelope.from.id !== `job:${job.id}` || typeof envelope.id !== "string" || typeof envelope.body !== "string") continue;
-            const message = { ...envelope, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, String(envelope.conversationId)) } as unknown as BridgeMessage;
+            // AB-380: an oversized stored envelope is persisted and sent as a stub; jobs.json keeps the original.
+            const message = this.wireMessage({ ...envelope, to: recipient, recipient, conversationId: this.jobConversation(job, recipient, String(envelope.conversationId)) } as unknown as BridgeMessage);
             const inserted = this.store.insertJobDelivery(message);
             const names = new Set([recipient, envelope.to, envelope.recipient, ...mastersFor(job)]);
             const consumed = this.jobsPath && [...names].some((name) => typeof name === "string" &&
@@ -1204,7 +1218,7 @@ export class Broker {
             const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job));
             const previous = this.connByName(from);
             if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
-            for (const m of moved) this.emit(target, "message", m);
+            for (const m of moved) this.emit(target, "message", this.wireMessage(m, "the bridge database"));
           }
         });
       }
@@ -2352,6 +2366,11 @@ export class Broker {
       // Ordinary peer and sibling mail still flow; job reports stay durable.
       if (unavailable && message.from.id.startsWith("job:") && !message.conversationId.startsWith("siblings-")) continue;
       const size = Buffer.byteLength(JSON.stringify(message)) + 1;
+      if (size + 1_024 > MAX_FRAME_BYTES) {
+        // AB-380: an item that can never fit must not block every item behind it. It stays stored; doctor lists it.
+        this.logOversizedOnce(`skip:${message.id}`, () => this.log.error("skipping unsendable pending message; it remains stored (see doctor)", { recipient, id: message.id, bytes: size }));
+        continue;
+      }
       if (bytes + size > MAX_FRAME_BYTES) break;
       result.push(message);
       bytes += size;
@@ -2359,8 +2378,32 @@ export class Broker {
     return result;
   }
 
+  /** Where full texts of oversized messages are kept: the bridge home, or none for an in-memory test broker. */
+  private quarantineHome(): string | null {
+    return this.jobsPath ? dirname(this.jobsPath) : this.store.file !== ":memory:" ? dirname(this.store.file) : null;
+  }
+
+  /** Oversized-message logs, once per id and kind per process (replay and refills see the same rows repeatedly). */
+  private readonly oversizedLogged = new Set<string>();
+  private logOversizedOnce(key: string, log: () => void): void {
+    if (this.oversizedLogged.has(key)) return;
+    if (this.oversizedLogged.size >= 10_000) this.oversizedLogged.clear();
+    this.oversizedLogged.add(key);
+    log();
+  }
+
+  /**
+   * AB-380: a transport-safe copy; an oversized body becomes a stub (same id) naming its quarantined full text.
+   * `retainedAt` names where the original is still stored; without it a stub requires a confirmed file write.
+   */
+  private wireMessage(message: BridgeMessage, retainedAt?: string): BridgeMessage {
+    const wired = quarantineMessage(this.quarantineHome(), message, retainedAt);
+    if (wired !== message) this.logOversizedOnce(`stub:${message.id}`, () => this.log.warn("oversized message quarantined; sending a stub", { id: message.id, recipient: message.recipient }));
+    return wired;
+  }
+
   private unreadMail(recipient: string, limit: number): BridgeMessage[] {
-    const messages = this.store.unread(recipient, limit);
+    const messages = this.store.unread(recipient, limit).map((m) => this.wireMessage(m, "the bridge database"));
     if (!this.jobsPath) return messages;
     const noteSenders = new Set(messages.filter((m) => !isQuietMessage(m) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX)).map((m) => m.from.id));
     if (!noteSenders.size) return messages;

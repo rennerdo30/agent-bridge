@@ -1,7 +1,7 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "87a129e6f5c836fde080f2fc51a9e38b1fc73ae1b4e82c30a8950e307eedc404",
+    "src/core/broker.ts:constructor": "324d5e738b1245c857f3356af324328c38653bbefba3819de514039aa265d5ea",
     "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
     "src/core/broker.ts:startServices": "c99740e533c7b6fd293656682c88daa5cbbc491459f21304268f284219cd3777",
     "src/core/broker.ts:abortStartup": "312021e61034aab8fafee80b154d728fb48427a17709a96c936a21a5cb7e2abb",
@@ -79,6 +79,14 @@
       ],
       "commit": "49d494d4ef0ab11ba78380ec9d19feb4136ffd9d",
       "reason": "AB-330: 49d494d4ef0ab11ba78380ec9d19feb4136ffd9d binds and awaits the ephemeral TCP discovery lifecycle in listen and abortStartup. The abortStartup TCP await follows synchronous mobile retirement so immediate ready=false holds. The close shutdown await was introduced by 99b918121feb08f961cd942fbba1339e80b64994 and remains required to retire the owned listener. Only these three method hashes change; the other ten method hashes, UI hash and behavioral assertions remain unchanged."
+    },
+    "AB-380-into-AB-325": {
+      "base": "d7ee45cce28138105ff5e53adfd991a3a7c6cb48",
+      "methods": [
+        "src/core/broker.ts:constructor"
+      ],
+      "commit": "3f75b534",
+      "reason": "Merging main (AB-380, 3f75b534) into the AB-325 daemon branch combines the daemon constructor changes with the AB-380 inlineJobReport quarantine handler. Only the constructor hash changes; the other twelve method hashes, UI hash and behavioral assertions remain unchanged."
     },
     "AB-325-P4-current-main-integration": {
       "status": "reviewed",

@@ -9,6 +9,8 @@ import { dirname, join } from "node:path";
 import { DEFAULT_MAX_JOBS, DELEGATION_METADATA_VERSION } from "../core/constants.js";
 import { DelegateError, failureCause, pidAlive, type DelegateResult } from "../core/delegate.js";
 import { displayPathText } from "../core/display-paths.js";
+import { capReport, quarantineMessage } from "../core/oversize.js";
+import { resolveHome } from "../core/paths.js";
 import type { Logger } from "../core/logger.js";
 import { ACK_CONVERSATION_SUFFIX, isQuietMessage, type AgentKind, type BridgeMessage } from "../core/protocol.js";
 import { isPureAcknowledgement } from "../core/job-messaging.js";
@@ -202,7 +204,7 @@ const CANCEL_GRACE_MS = 5_000;
 export const QUEUED_FOLLOW_UP_NOTE = "(Your queued follow-up was sent to it; its answer will arrive as another message.)";
 
 /** The message a finished turn reports: how it ended, why it failed, and what the subagent said. */
-export function jobReport(job: Pick<Job, "name" | "agent" | "model" | "sessionId">, status: "done" | "failed" | "cancelled", seconds: number, text: string, cause: string | null): string {
+export function jobReport(job: Pick<Job, "name" | "agent" | "model" | "sessionId">, status: "done" | "failed" | "cancelled", seconds: number, text: string, cause: string | null, home: string = resolveHome()): string {
   const how = job.sessionId
     ? status === "failed"
       ? ` To recover it with its context, call message_subagent(job="${job.name}") (optionally with a message).`
@@ -210,7 +212,8 @@ export function jobReport(job: Pick<Job, "name" | "agent" | "model" | "sessionId
     : "";
   const header = `Subagent ${job.name} (${job.agent}${job.model ? `, model ${job.model}` : ""}) ${status} after ${seconds}s.${how}`;
   // A failure always says why, before whatever the agent said last (which may be only a progress note).
-  return displayPathText([header, cause ? `Cause: ${cause}` : "", text && cause ? `Its last message:\n${text}` : text].filter(Boolean).join("\n\n"));
+  // AB-380: a report never exceeds the message limit; the full text stays in a file under the bridge home.
+  return capReport(home, displayPathText([header, cause ? `Cause: ${cause}` : "", text && cause ? `Its last message:\n${text}` : text].filter(Boolean).join("\n\n")));
 }
 
 /**
@@ -746,8 +749,15 @@ export class JobManager {
         const durable = this.storePath && readStoredJob(this.storePath, pending.jobId, this.history.get(pending.jobId)?.name ?? "", this.log);
         if (!durable || durable.id !== pending.jobId || ![durable.owner, durable.executionOwner, durable.rootName].includes(this.node.name) ||
           !durable.deliveryHistory?.some(message => isDeepStrictEqual(message, pending.message))) return false;
-        return this.node.reportInlineJob!(pending.message).then(() => true);
+        // AB-380: an oversized envelope travels as a stub with the same id; the full text stays in a file.
+        return this.node.reportInlineJob!(this.wireMessage(pending.message)).then(() => true);
       }).then(sent => { if (sent) { this.pendingReports.delete(id); this.reportRetryMs = 500; } }, error => {
+        if ((error as { code?: string } | null)?.code === "too_large") {
+          // Never retried: it can never fit. The durable envelope stays in deliveryHistory for the broker's router.
+          this.pendingReports.delete(id);
+          this.log.error("inline report too large to send; kept in the job store, not retried", { id, err: String(error) });
+          return;
+        }
         this.log.warn("inline report delivery failed; retained for replay", { err: String(error) });
       }).finally(() => { this.reporting.delete(id); this.scheduleReportRetry(); });
     }
@@ -867,7 +877,11 @@ export class JobManager {
       if (index < 0) stored.push(merged); else stored[index] = merged;
       appliedReceipts.set(saved.id, receipt);
       this.own.add(saved.id); this.receipts.push(receipt);
-      for (const message of merged.deliveryHistory ?? []) this.pendingReports.set(message.id, { jobId: saved.id, message });
+      for (const message of merged.deliveryHistory ?? []) {
+        // AB-380: an oversized stored report is quarantined now; it is sent as a stub that keeps its id.
+        if (this.wireMessage(message) !== message) this.log.warn("oversized stored job report quarantined", { id: message.id, job: saved.id });
+        this.pendingReports.set(message.id, { jobId: saved.id, message });
+      }
     }
     const adopted: Job[] = [];
     // The newest ones, plus every job still marked running however old (its runner may still be at work).
@@ -1296,7 +1310,7 @@ export class JobManager {
         if (this.storePath) recordAskCompletion(dirname(this.storePath), job);
         this.persist();
         if ((job.foregroundRecipient && job.foregroundRecipient !== this.node.name) || (job.ownershipHistory?.length && !this.isMine(job.owner))) {
-          this.post(job, jobReport(job, job.status, Math.round((Date.now() - job.startedAt) / 1000), outcome?.result?.text ?? "", job.status === "failed" ? failureCause(outcome ?? {}) : null));
+          this.post(job, jobReport(job, job.status, Math.round((Date.now() - job.startedAt) / 1000), outcome?.result?.text ?? "", job.status === "failed" ? failureCause(outcome ?? {}) : null, this.bridgeHome()));
         }
         // Follow-ups sent while the caller waited continue the session in the background (or wait for a slot).
         if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner)) {
@@ -2129,7 +2143,7 @@ export class JobManager {
     const seconds = Math.round((Date.now() - job.startedAt) / 1000);
     this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId, cause });
     if (this.storePath && !job.host) notifyJobEvent(dirname(this.storePath), status === "done" ? "finish" : "fail", this.log);
-    const message = report === undefined ? jobReport(job, status, seconds, text, cause) : report;
+    const message = report === undefined ? jobReport(job, status, seconds, text, cause, this.bridgeHome()) : report;
 
     // Follow-ups that arrived meanwhile go out right away, into the same session (it keeps its slot).
     if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner) && job.continuationFailure?.turn !== job.startedAt) {
@@ -2186,6 +2200,16 @@ export class JobManager {
     return this.notes.has(m.id) || m.conversationId.endsWith(NOTE_CONVERSATION_SUFFIX) || isQuietMessage(m);
   }
 
+  /** The bridge home: full texts of oversized reports are kept under it (AB-380). */
+  private bridgeHome(): string {
+    return this.storePath ? dirname(this.storePath) : resolveHome();
+  }
+
+  /** A transport-safe copy of a durably stored envelope: an oversized body becomes a stub naming its full text. */
+  private wireMessage(message: BridgeMessage): BridgeMessage {
+    return quarantineMessage(this.bridgeHome(), message, this.storePath ?? undefined);
+  }
+
   private post(job: Job, body: string, replyTo: string | null = null, suffix = "", id: string = randomUUID()): string {
     const m: BridgeMessage = {
       id,
@@ -2199,11 +2223,13 @@ export class JobManager {
       createdAt: Date.now(),
       readAt: null,
     };
+    // AB-380: the original is what is stored durably (its flush sends a stub). The local path keeps no other copy,
+    // so it gets a stub only once the full text is confirmed written to a file.
     if ((job.ownershipHistory?.length || (this.storePath && !this.lineage)) && this.node.reportInlineJob) {
       job.deliveryHistory = [...(job.deliveryHistory ?? []), m];
       this.pendingReports.set(m.id, { jobId: job.id, message: m });
       this.persist();
-    } else this.node.deliverLocal(m);
+    } else this.node.deliverLocal(quarantineMessage(this.bridgeHome(), m));
     return m.id;
   }
 }
