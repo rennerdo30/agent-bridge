@@ -272,8 +272,8 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
         pipePath: resolvePipePath(home),
         token: loadOrCreateToken(home),
         dbPath: resolveDbPath(home),
-        daemon: { cli: join(bundleDirectory(import.meta.url), "cli.mjs"), dashboard: () => cfg.dashboard && !ctx.headless,
-          config: () => ({ network: cfg.network, mobile: mobileAtStartup, dashboardPort: mobilePortAtStartup }) },
+        daemon: cfg.daemon.enabled ? { cli: join(bundleDirectory(import.meta.url), "cli.mjs"), dashboard: () => cfg.dashboard && !ctx.headless,
+          config: () => ({ network: cfg.network, mobile: mobileAtStartup, dashboardPort: mobilePortAtStartup }) } : undefined,
         network: { home, config: cfg.network },
         agent,
         // Until the project dir is known, the folder name would be the plugin version.

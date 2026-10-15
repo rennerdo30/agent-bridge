@@ -38,6 +38,8 @@ export interface HistoryAnswerConfig {
 const DEFAULT_HISTORY_ANSWER: HistoryAnswerConfig = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
 
 export interface BridgeConfig {
+  /** Restart-applied daemon opt-in: AGENT_BRIDGE_DAEMON=1/0 > daemon.enabled > false. */
+  daemon: { enabled: boolean };
   /** Restart-applied, home top-level only; never projected in effective-config diagnostics. */
   mobile?: MobileConfig;
   /** Home-wide spelling preference, shared by sessions, CLI helpers and runners. */
@@ -109,6 +111,7 @@ export interface BridgeConfig {
 }
 
 export const DEFAULT_CONFIG: BridgeConfig = {
+  daemon: { enabled: false },
   pathDisplay: { preferAlias: true },
   history: { ingest: true, budgetBytes: 32 * 1024 ** 3 },
   questionAlerts: DEFAULT_QUESTION_ALERTS,
@@ -333,6 +336,9 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
 
   const d = DEFAULT_CONFIG;
   const cfg: BridgeConfig = {
+    // Only exact 1/0 override config; config accepts booleans only. Invalid values fall through.
+    daemon: { enabled: env.AGENT_BRIDGE_DAEMON === "1" ? true : env.AGENT_BRIDGE_DAEMON === "0" ? false
+      : pick("daemon", null, v => isRecord(v) && typeof v.enabled === "boolean" ? v.enabled : undefined) ?? d.daemon.enabled },
     // Helper reads using another agent kind must not reset this process-wide preference.
     pathDisplay: isRecord(file.pathDisplay) && typeof file.pathDisplay.preferAlias === "boolean" ? { preferAlias: file.pathDisplay.preferAlias } : d.pathDisplay,
     history: {

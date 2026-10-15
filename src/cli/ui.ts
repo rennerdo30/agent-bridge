@@ -188,7 +188,7 @@ export interface UiOptions {
   mobileStatus?: () => string;
   /** Trusted host wiring only; never accepted from an HTTP/configuration payload. */
   brokerDaemon?: BridgeNodeOptions["daemon"];
-  /** Explicit library/fixture compatibility; production hosts never supply this. */
+  /** @deprecated Embedded hosting is the default whenever brokerDaemon is omitted. */
   embeddedCompatibility?: boolean;
 }
 
@@ -222,7 +222,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
   let senderNode: BridgeNode | null = null;
   const getSender = (): Promise<BridgeNode> => {
     senderNode ??= new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log,
-      canHostBroker: !!opts.brokerDaemon || opts.embeddedCompatibility === true, daemon: opts.brokerDaemon,
+      daemon: opts.brokerDaemon,
       network: { home: opts.home, config: loadConfig(opts.home, "other", opts.log).network } });
     sender ??= (async () => {
       try {
