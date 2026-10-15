@@ -1,10 +1,50 @@
 # AB-276: local waiter notice contract
 
-Status: **proposal for root, Claude main and GN-206 review; not implemented**.
-Source baseline: published `7e80ac79bc20c804985f0463125e7832308222b0` (0.30.11).
-This change is documentation only. The CLI, wire operations and files marked
-"new" below do not exist in the baseline. Acceptance of the architecture in
-principle is not toolkit integration, security review or runtime acceptance.
+Status (2026-10-15): **retained design proposal; not implemented**.
+Historical source baseline: published `7e80ac79bc20c804985f0463125e7832308222b0`
+(0.30.11). Reconciled with main `3791480dd2b4d409964f9de1e8d7ec59167e01e9`
+(0.30.19). This change is documentation only. Retaining this record does not
+approve the proposed architecture, toolkit integration, security or runtime
+acceptance. The CLI, wire operations and files marked "new" below remain
+proposals. Historical line references and fixtures below refer to 0.30.11,
+not current source locations or a current release validation result.
+
+## Current disposition and architecture reconciliation
+
+[PR #22](https://github.com/rennerdo30/agent-bridge/pull/22) preserves the unique
+AB-276 contract. AB-276 remains an implementation follow-up after core
+integration; GN-206 exact launch/sidecar acceptance, Windows attestation and
+TTL/secret-retention decisions remain unresolved. Recording this proposal
+does not complete that issue or authorize a toolkit patch.
+
+- [#17](https://github.com/rennerdo30/agent-bridge/pull/17) (open, reviewed
+  comparison head `7c500f686767b960df0498421aeaa3c88dd772d1`) owns the AB-325
+  daemon/core lane. [#29](https://github.com/rennerdo30/agent-bridge/pull/29)
+  (open, `94a75d7c02c244d56275ccc283656211fb7a5ddf`) adds the default-off
+  shadow job/turn ledger. Neither is a released waiter-notice capability.
+  Reconcile issuer, registration, invalidation and store ownership with that
+  lane before implementation. The isolated feature DB below is a data
+  separation requirement, not authority for a second independently elected
+  core writer. The final core owner must define its sole-writer integration
+  and recoverable fencing; this historical proposal does not settle it.
+- [#32](https://github.com/rennerdo30/agent-bridge/pull/32) is merged
+  (`877b2b1f62e80a9ffffbc2c054a7fa04e835b26e`). Its messaging modes and native-child
+  routes do not establish toolkit waiter authority, the isolated notice
+  ledger or dedicated claim/ACK protocol. Future integration must preserve
+  those current messaging contracts rather than replace them with the
+  historical baseline mechanics below.
+- [#20](https://github.com/rennerdo30/agent-bridge/pull/20) is merged
+  (`a3d4e8e18ecf6674afac2d69f7abfc8d4753429b`). Muse support does not establish
+  acceptance of a waiter-notice receiver. Any supported owner host still
+  requires explicit capability negotiation and exact principal binding.
+- Source inspection at the main pin found no `waiterNoticeV1`, `waiterAuth`
+  or `waiterNoticeEmit` in production source. This is source evidence only;
+  no live broker, toolkit, security fixture, build or test was run here.
+
+The proposed file ownership table is historical implementation guidance,
+subject to the core lane's final interfaces. The 0.30.11 coexistence fixture
+remains a pinned legacy scenario; a separately scoped implementation must
+also define fixtures against its then-current release and daemon lifecycle.
 
 Revision: Claude decision `03856544` rejects an ordinary SQLite reader-floor
 bump. Capabilities, notices, delivery claims and acknowledgements belong only
@@ -74,7 +114,7 @@ as part of this design package.
 ## GN-206 canonical inventory and lifecycle boundary
 
 Read-only supplemental inventory:
-`D:/AgentData/worktrees/renner-unity-tools-gn204-20261011/evidence/gn204/gn206-launch-inventory.md`,
+`E:/AgentData/worktrees/renner-unity-tools-gn204-20261011/evidence/gn204/gn206-launch-inventory.md`,
 source `f894de47fcfcd2bc943a800d9e8d3463747ce614`. The inventory was read;
 underlying toolkit source/lifecycle was not executed or independently probed.
 Canonical source references below are from that supplied inventory.
