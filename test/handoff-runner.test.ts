@@ -16,6 +16,7 @@ import { fixtureProcessExists, fixtureProcessGeneration } from "./fixture-proces
 import type { CodingAgent } from "../src/core/protocol.js";
 import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 import { JSON_STORE_VERSION } from "../src/core/json-store.js";
+import { refreshStorePeerIdentities } from "../src/core/store-compatibility.js";
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -233,6 +234,9 @@ it("hands off a blocking ask without returning results or notes to the old calle
   await Promise.race([ready, pending.then(reply => { throw new Error(`Delegate ended before parent-link readiness: ${reply.text}`); })]);
   const job = await Promise.race([admittedJob(j => j.name.startsWith("claude-ask-")), pending.then(reply => { throw new Error(`Delegate ended before admission: ${reply.text}`); })]);
   expect(job).toBeDefined();
+  // Cold Windows reader discovery is fixture setup, not the ownership action
+  // whose broker-side verification deliberately has a shorter bounded budget.
+  await refreshStorePeerIdentities(env.home);
   expect((await call(source, "handoff_subagents", { to: "claude-target" })).error).toBeFalsy();
   await call(source, "inbox");
   const child = parentFromEnv(JSON.parse(readFileSync(linkFile, "utf8")))!;
@@ -269,6 +273,7 @@ it.each([
   // can still be persisting that init under jobs.json.lock; handing off before
   // that write completes races the broker's two-second metadata lease budget.
   await admittedJob(job => job.name === name);
+  await refreshStorePeerIdentities(env.home);
   const child = parentFromEnv(JSON.parse(readFileSync(linkFile, "utf8")))!;
   expect((await call(source, "handoff_subagents", { to: "claude-target", note: "Finish and review" })).error).toBeFalsy();
   expect((await call(source, "message_subagent", { job: name, message: "Former master instruction" })).error).toBeFalsy();
