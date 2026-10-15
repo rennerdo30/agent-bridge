@@ -18,22 +18,27 @@ export interface WindowsJobScope {
 // Assignment happens before delegates start. Future children inherit membership, including
 // detached tools and orphans; no ancestry scan or executable-name matching is involved.
 // The job handle is unnamed and non-inheritable. Never use this for a shared MCP server/broker.
-const GUARD = String.raw`
+/** Native binding block shared by the guardian and its focused tests. */
+export const WINDOWS_JOB_NATIVE = String.raw`
 # Emit the native ABI directly: no C# compiler process on the setup path.
+# [AppDomain]::DefineDynamicAssembly exists only on .NET Framework, i.e. Windows PowerShell 5.1;
+# that is why startWindowsJobScope pins the binary to System32 powershell.exe (not pwsh).
 $assembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly(
   (New-Object Reflection.AssemblyName('BridgeJobScopeNative')), [Reflection.Emit.AssemblyBuilderAccess]::Run)
 $module = $assembly.DefineDynamicModule('Native')
 $type = $module.DefineType('BridgeJobScopeNative', [Reflection.TypeAttributes]'Public, Sealed, Abstract')
 function Define-Native([string]$name, [Type]$returns, [Type[]]$parameters) {
-  $method = $type.DefinePInvokeMethod($name, 'kernel32.dll',
-    [Reflection.MethodAttributes]'Public, Static, PinvokeImpl', [Reflection.CallingConventions]::Standard,
-    $returns, $parameters, [Runtime.InteropServices.CallingConvention]::Winapi, [Runtime.InteropServices.CharSet]::Unicode)
+  # PSReflect pattern: DefinePInvokeMethod writes the ImplMap first, and a later DllImport
+  # attribute cannot change it, so SetLastError would be lost. DefineMethod + PinvokeImpl
+  # leaves the ImplMap to the DllImport attribute, which carries SetLastError and CharSet.
+  $method = $type.DefineMethod($name, [Reflection.MethodAttributes]'Public, Static, PinvokeImpl', $returns, $parameters)
   $method.SetImplementationFlags([Reflection.MethodImplAttributes]::PreserveSig)
+  $dllImport = [Runtime.InteropServices.DllImportAttribute]
   $attribute = New-Object Reflection.Emit.CustomAttributeBuilder(
-    [Runtime.InteropServices.DllImportAttribute].GetConstructor([Type[]]@([string])),
+    $dllImport.GetConstructor([Type[]]@([string])),
     [object[]]@('kernel32.dll'),
-    [Reflection.FieldInfo[]]@([Runtime.InteropServices.DllImportAttribute].GetField('SetLastError')),
-    [object[]]@($true))
+    [Reflection.FieldInfo[]]@($dllImport.GetField('SetLastError'), $dllImport.GetField('CharSet'), $dllImport.GetField('EntryPoint')),
+    [object[]]@($true, [Runtime.InteropServices.CharSet]::Unicode, $name))
   $method.SetCustomAttribute($attribute)
 }
 Define-Native 'CreateJobObject' ([IntPtr]) ([Type[]]@([IntPtr], [string]))
@@ -60,8 +65,8 @@ function Set-Limits([IntPtr]$job, [int]$flags) {
     Check ([BridgeJobScopeNative]::SetInformationJobObject($job, 9, $data, $size))
   } finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($data) }
 }
-function Members([IntPtr]$job, [int]$runner) {
-  for ($size = 4096; $size -le 8388608; $size *= 2) {
+function Members([IntPtr]$job, [int]$runner, [int]$initialSize = 4096) {
+  for ($size = $initialSize; $size -le 8388608; $size *= 2) {
     $data = [Runtime.InteropServices.Marshal]::AllocHGlobal($size)
     try {
       if (![BridgeJobScopeNative]::QueryInformationJobObject($job, 3, $data, $size, [IntPtr]::Zero)) {
@@ -80,6 +85,9 @@ function Members([IntPtr]$job, [int]$runner) {
   }
   throw 'Job membership list exceeded its bound'
 }
+`;
+
+const GUARD = WINDOWS_JOB_NATIVE + String.raw`
 function Cleanup([IntPtr]$job, [int]$runner) {
   $stopped = New-Object 'Collections.Generic.HashSet[int]'
   $deadline = [DateTime]::UtcNow.AddSeconds(5)
@@ -130,7 +138,9 @@ try {
 /** Only the current dedicated runner (or a fresh test-owned fixture) may be assigned. */
 export function startWindowsJobScope(log: Logger, runnerPid = process.pid): Promise<WindowsJobScope> {
   if (process.platform !== "win32") return Promise.reject(new Error("Windows job scopes require Windows"));
+  if (!Number.isSafeInteger(runnerPid) || runnerPid <= 0) return Promise.reject(new Error("Invalid runner PID for a Windows job scope: " + runnerPid));
   const script = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=New-Object Text.UTF8Encoding($false); $runner=" + runnerPid + ";\n" + GUARD;
+  // Windows PowerShell 5.1 (.NET Framework) is required by DefineDynamicAssembly in the guardian.
   const bin = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
   const guardian = spawn(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
   return new Promise((resolve, reject) => {
