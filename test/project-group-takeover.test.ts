@@ -40,9 +40,14 @@ beforeEach(() => {
   env = makeEnv(); const dir = join(env.home, "bin"); mkdirSync(dir);
   const file = join(dir, "fake.mjs");
   writeFileSync(file, `#!/usr/bin/env node
-import {existsSync,writeFileSync,appendFileSync} from 'node:fs';
+import {existsSync,writeFileSync,appendFileSync,readFileSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
 import {createInterface} from 'node:readline';
-appendFileSync(${JSON.stringify(join(env.home, "fixture-pids"))}, String(process.pid)+'\\n');
+// Its own process generation, in the bridge's identity format (Unix teardown signals only a matching PID).
+let identity='';
+try{if(process.platform==='linux'){const stat=readFileSync('/proc/self/stat','utf8');identity=readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim()+':'+stat.slice(stat.lastIndexOf(')')+2).split(' ')[19];}
+else if(process.platform!=='win32')identity=execFileSync('ps',['-p',String(process.pid),'-o','lstart='],{encoding:'utf8',env:{...process.env,LC_ALL:'C'}}).trim();}catch{}
+appendFileSync(${JSON.stringify(join(env.home, "fixture-pids"))}, String(process.pid)+' '+encodeURIComponent(identity)+'\\n');
 if(process.argv.includes('queue')){appendFileSync(${JSON.stringify(join(env.home, "wake-calls"))}, 'wake');process.exit(0);}
 let release,approved=false,asked=false,interval,reading=false,finished=false;
 const send=value=>console.log(JSON.stringify(value));
@@ -91,33 +96,38 @@ afterEach(async () => {
     console.error(`Native takeover phases (ms since start): ${phases.map((p) => `${p.name}+${p.at - start}`).join(", ")}; teardown+${Date.now() - start}`);
   }
   for (const file of releases.splice(0)) { writeFileSync(file, ""); writeFileSync(file + ".approve", ""); }
-  // Only verified process generations are signalled or awaited: a PID of an exited fixture process can already
-  // belong to another process. Runners record their own generation in their state.
+  // A process is signalled only when a successful query shows the generation it recorded at startup: the PID
+  // of an exited fixture process can already belong to another process. Teardown waits at most this long.
+  const deadline = Date.now() + 60_000, retained: string[] = [];
   const states = ids.splice(0).map((id) => readRunnerState(env.home, id)).filter((state): state is NonNullable<typeof state> => Boolean(state?.pid));
-  const live = await queryGenerations(states.map((state) => state.pid)) ?? await queryGenerations(states.map((state) => state.pid));
-  // Without a process query, a runner whose heartbeat is current is still that runner (heartbeats every 15 s).
-  const runners = new Map(states.flatMap((state) => (live ? live.has(state.pid) && (!state.identity || live.get(state.pid) === state.identity)
-    : pidAlive(state.pid) && Date.now() - state.updatedAt < 30_000) ? [[state.pid, live?.get(state.pid) ?? state.identity ?? ""] as const] : []));
+  const live = await generations(states.map((state) => state.pid));
+  const runners = new Map(states.flatMap((state) => state.identity && live?.get(state.pid) === state.identity ? [[state.pid, state.identity] as const] : []));
+  // Alive but unverified (no recorded identity, or no successful query): never signalled; reported and retained.
+  for (const state of states) if (!runners.has(state.pid) && pidAlive(state.pid) && (!live || live.has(state.pid) && !state.identity)) retained.push(`runner ${state.pid} (unverified)`);
   for (const pid of runners.keys()) killPid(pid);
-  await exited(runners);
-  const servers = await generations(transports.splice(0).map((t) => t.pid).filter((pid): pid is number => Boolean(pid)));
+  retained.push(...(await exited(runners, deadline)).map((pid) => `runner ${pid}`));
+  // Servers are this process's own children, alive until their transport closes.
+  const servers = await generations(transports.splice(0).map((t) => t.pid).filter((pid): pid is number => Boolean(pid))) ?? new Map<number, string>();
   for (const client of clients.splice(0)) await client.close();
-  await exited(servers);
+  retained.push(...(await exited(servers, deadline)).map((pid) => `server ${pid}`));
   if (process.platform === "win32") {
     // Each runner's job guardian (PowerShell, working directory in this home) exits after its runner, and the
     // fixture CLIs end with the runner's job object. The home is removed once the guardians are gone (EBUSY otherwise).
-    await exited(await runnerGuardians(env.home, new Set(states.map((state) => state.pid))));
+    retained.push(...(await exited(await runnerGuardians(env.home, new Set(states.map((state) => state.pid))), deadline)).map((pid) => `guardian ${pid}`));
   } else {
-    const fixtures = await generations(recordedPids(join(env.home, "fixture-pids")));
+    const recorded = recordedFixtures(join(env.home, "fixture-pids"));
+    const current = await generations([...recorded.keys()]);
+    const fixtures = new Map([...recorded].filter(([pid, identity]) => identity && current?.get(pid) === identity));
     for (const pid of fixtures.keys()) killPid(pid);
-    await exited(fixtures);
+    retained.push(...(await exited(fixtures, deadline)).map((pid) => `fixture ${pid}`));
   }
+  if (retained.length) throw new Error(`Fixture home retained at ${env.home}; processes still running or unverified: ${retained.join(", ")}`);
   // Windows can retain a detached process's directory handle briefly after its PID disappears.
-  const deadline = Date.now() + 3_000;
+  const removal = Date.now() + 3_000;
   for (;;) {
     try { await env.cleanup(); break; }
     catch (error) {
-      if (process.platform !== "win32" || !["EPERM", "EBUSY", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "") || Date.now() >= deadline) throw error;
+      if (process.platform !== "win32" || !["EPERM", "EBUSY", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "") || Date.now() >= removal) throw error;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
@@ -160,27 +170,35 @@ async function queryGenerations(pids: readonly number[]): Promise<Map<number, st
   try { return await readProcessIdentities([...pids]); } catch { return undefined; }
 }
 
-/** Start identities of these PIDs, from a successful query (one retry); only these are owned generations. */
-async function generations(pids: readonly number[]): Promise<Map<number, string>> {
-  return await queryGenerations(pids) ?? await queryGenerations(pids) ?? new Map();
+/** Start identities of these PIDs from a successful query (one retry); undefined when both queries failed. */
+async function generations(pids: readonly number[]): Promise<Map<number, string> | undefined> {
+  return await queryGenerations(pids) ?? await queryGenerations(pids);
 }
 
-/** Teardown waits for owned process generations to exit; a PID that now belongs to another process has exited. */
-async function exited(owned: ReadonlyMap<number, string>): Promise<void> {
+/**
+ * Waits until owned process generations exit (a PID that now belongs to another process has exited), at most
+ * until the teardown deadline. Returns the PIDs still running then, so teardown reports them and keeps the home.
+ */
+async function exited(owned: ReadonlyMap<number, string>, deadline: number): Promise<number[]> {
   let pending = [...owned.keys()];
   for (let round = 1; ; round++) {
     pending = pending.filter((pid) => pidAlive(pid));
     if (pending.length && round % 20 === 0) {
       const current = await queryGenerations(pending);
-      if (current) pending = pending.filter((pid) => current.has(pid) && (!owned.get(pid) || current.get(pid) === owned.get(pid)));
+      if (current) pending = pending.filter((pid) => current.get(pid) === owned.get(pid));
     }
-    if (!pending.length) return;
+    if (!pending.length || Date.now() >= deadline) return pending;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
 
-function recordedPids(file: string): number[] {
-  return existsSync(file) ? readFileSync(file, "utf8").trim().split(/\s+/).map(Number).filter((pid) => Number.isSafeInteger(pid) && pid > 0) : [];
+/** Fixture CLIs as recorded at their startup: PID and own process generation (empty when unavailable). */
+function recordedFixtures(file: string): Map<number, string> {
+  if (!existsSync(file)) return new Map();
+  return new Map(readFileSync(file, "utf8").split("\n").flatMap((line) => {
+    const [pid, identity = ""] = line.trim().split(" ");
+    return Number.isSafeInteger(Number(pid)) && Number(pid) > 0 ? [[Number(pid), decodeURIComponent(identity)] as const] : [];
+  }));
 }
 
 /**
@@ -200,7 +218,7 @@ async function runnerGuardians(home: string, runnerPids: ReadonlySet<number>): P
         ? [[value.guardianPid, at] as const] : [];
     } catch { return []; }
   }));
-  const live = await generations([...logged.keys()]);
+  const live = await generations([...logged.keys()]) ?? new Map<number, string>();
   const startedAt = (ticks: string) => /^\d+$/.test(ticks) ? Number((BigInt(ticks) - 621_355_968_000_000_000n) / 10_000n) : Infinity;
   return new Map([...live].filter(([pid, ticks]) => startedAt(ticks) <= logged.get(pid)!));
 }
