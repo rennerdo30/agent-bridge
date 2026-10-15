@@ -27,6 +27,7 @@ export const remoteSpawnArgsSchema = z.object({
   session_id: z.string().min(1).max(MAX_PATH_CHARS).optional(),
   timeout_sec: z.number().int().min(10).max(MAX_JOB_TIMEOUT_SEC).optional(),
   access: z.enum(["read", "ask", "edit"]).optional(), worktree: z.boolean().optional(),
+  base: z.string().min(1).max(MAX_PATH_CHARS).optional(),
   allow_tools: z.array(z.string().min(1).max(200)).max(50).optional(),
   notes: z.enum(["none", "milestones", "blockers"]).optional(),
   sandbox: z.enum(CODEX_SANDBOXES).optional(), permission_mode: z.enum(CLAUDE_PERMISSION_MODES).optional(),
