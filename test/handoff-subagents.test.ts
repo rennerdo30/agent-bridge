@@ -195,10 +195,16 @@ describe("local subagent ownership handoff", () => {
   });
 
   it("replays delivery effects after a crash following the registry commit", async () => {
-    save([record("a")]);
     const [from, to] = (await source.peers()).filter((p) => [source.name, target.name].includes(p.name));
+    // Capture real peer identities, then stop the broker and its workers before
+    // injecting the commit-only crash state. Live startup ask reconciliation
+    // takes jobs.json.lock, and a live broker could replay effects before stop.
+    await target.stop(); await source.stop();
+    save([record("a")]);
     const receipt = commitHandoff(path(), from!, to!, { to: target.name });
-    await source.stop(); await target.stop();
+    const reader = new DatabaseSync(env.db, { readOnly: true });
+    try { expect(reader.prepare("SELECT id FROM messages WHERE id=?").get(`${receipt.id}-inherited`)).toBeUndefined(); }
+    finally { reader.close(); }
     const restarted = env.node(target.name, "codex"); await restarted.start();
     await until(() => restarted.unread().some((m) => m.id === `${receipt.id}-inherited`));
     await restarted.stop(); const again = env.node(target.name, "codex"); await again.start();
