@@ -164,13 +164,16 @@ async function tick(reset = false): Promise<{ work: number; discovering: boolean
   } finally { running = false; }
 }
 let dueAt = 0, transcriptsChanged = false, wakeAfterTick = false, liveAfterTick = false, lastTickAt = 0;
+/** Timer callbacks in flight (from firing until they schedule the next one), including the wait before `running`. */
+let firing = 0;
 /** Watched transcript and run-log changes are retained at once (AB-383): a tick within LIVE_WAKE_MS, at most one
  * per LIVE_GAP_MS while a file keeps changing. It never postpones a tick that is due sooner. */
 const LIVE_WAKE_MS = 15, LIVE_GAP_MS = 100;
 function wakeSoon(): void {
   if (stopped) return;
   idle.reset();
-  if (running) { liveAfterTick = true; return; }
+  // Only one pending tick may exist: a wake while a callback is in flight is folded into its next schedule.
+  if (running || firing) { liveAfterTick = true; return; }
   const delay = Math.max(LIVE_WAKE_MS, lastTickAt + LIVE_GAP_MS - Date.now());
   if (timer && dueAt - Date.now() <= delay) return;
   schedule(delay);
@@ -183,6 +186,7 @@ function schedule(delay = HISTORY_TICK_MS): void {
   dueAt = Date.now() + delay;
   timer = setTimeout(async () => {
     timer = null;
+    firing++;
     let next = idle.next(0, false);
     try {
       // Resume on the pressure-clear event; polling can miss short idle gaps.
@@ -200,6 +204,7 @@ function schedule(delay = HISTORY_TICK_MS): void {
     // Backfill gets seconds-scale cadence, never a hot loop. A message or live-file wake during the tick runs one more soon.
     if (liveAfterTick) { liveAfterTick = false; next = Math.min(next, LIVE_GAP_MS); }
     if (wakeAfterTick) { wakeAfterTick = false; next = 0; }
+    firing--;
     schedule(next);
   }, delay);
 }
@@ -214,7 +219,7 @@ parentPort?.on("message", async (message) => {
   }
   if (message.peer) { peers.set(message.peer.id, message.peer); idle.reset(); if (!running) schedule(0); return; }
   // A new bridge message: index it now rather than after an idle backoff; during a tick, right after it.
-  if (message.wake) { idle.reset(); if (running) wakeAfterTick = true; else schedule(0); return; }
+  if (message.wake) { idle.reset(); if (running || firing) wakeAfterTick = true; else schedule(0); return; }
   if (message.stop) {
     stopped = true;
     releasePressure();

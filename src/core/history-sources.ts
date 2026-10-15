@@ -1,6 +1,8 @@
-import { statSync, type Stats } from "node:fs";
+import { closeSync, openSync, readSync, statSync, type Stats } from "node:fs";
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { openFileSource, type ByteSource, type ByteSourceResolver, type ClaudeChildFacts } from "./byte-source.js";
+import { CONVERSATION_BYTES } from "./conversation-text.js";
 import { decodeBytes } from "./history-codec.js";
 import { contentText, MAX_TITLE_CHARS, object, parse, preview, time } from "./transcripts/common.js";
 
@@ -11,11 +13,13 @@ import { contentText, MAX_TITLE_CHARS, object, parse, preview, time } from "./tr
  * size the ingester recorded, and bytes past the ingested offset are read from the file itself.
  */
 
-/** Derived facts about Claude native subagent files; rebuilt from conversation_records, never authoritative. */
+/** Derived facts about Claude native subagent files; rebuilt from conversation_records, never authoritative.
+ * Also the case-insensitive source index the dashboard's path lookup uses on Windows (no full scan for unknown files). */
 export const CLAUDE_CHILD_FACTS_TABLE = `CREATE TABLE IF NOT EXISTS dashboard_claude_children(
  source TEXT PRIMARY KEY, generation INTEGER NOT NULL, upto INTEGER NOT NULL DEFAULT 0,
  head_state INTEGER NOT NULL DEFAULT 0, title TEXT, head_at INTEGER NOT NULL DEFAULT 0,
- assistant_at INTEGER, assistant_done INTEGER NOT NULL DEFAULT 0, oversized_at INTEGER, open_from INTEGER)`;
+ assistant_at INTEGER, assistant_done INTEGER NOT NULL DEFAULT 0, oversized_at INTEGER, open_from INTEGER);
+CREATE INDEX IF NOT EXISTS idx_conversation_sources_nocase ON conversation_sources(id COLLATE NOCASE)`;
 const HEAD_NONE = 0, HEAD_PARSED = 1, HEAD_UNKNOWN = 2;
 const FACT_RECORDS_PER_TICK = 32;
 const CHUNK_CACHE = 64;
@@ -63,7 +67,7 @@ export function foldClaudeChildChunk(facts: ChildFacts, offset: number, chunk: B
   return next;
 }
 
-/** Worker-only: keep subagent facts current from records already retained. Bounded per call. */
+/** Worker-only: keep subagent facts current from records already retained. Bounded per call; nonzero while it made progress. */
 export function refreshClaudeChildFacts(db: DatabaseSync): number {
   let work = 0;
   const stale = db.prepare(`SELECT s.id,s.generation,s.offset FROM conversation_sources s LEFT JOIN dashboard_claude_children c ON c.source=s.id
@@ -86,10 +90,13 @@ export function refreshClaudeChildFacts(db: DatabaseSync): number {
       assistant_done=excluded.assistant_done,oversized_at=excluded.oversized_at,open_from=excluded.open_from`)
       .run(id, generation, facts.upto, facts.head_state, facts.title, facts.head_at, facts.assistant_at, facts.assistant_done, facts.oversized_at, facts.open_from);
   }
-  return work;
+  // Every stale source updated counts, so a caller that runs this only while it progresses drains the backlog.
+  return Math.max(work, stale.length);
 }
 
-interface SourceRow { id: string; path: string; generation: number; offset: number; identity: string }
+interface SourceRow { id: string; path: string; generation: number; offset: number; identity: string; anchor: string }
+const ANCHOR_BYTES = 64;
+const SOURCE_COLUMNS = "id,path,generation,offset,identity,anchor";
 
 /** Read side: serves retained bytes for one dashboard request. Read-only connection. */
 export class HistorySourceResolver implements ByteSourceResolver {
@@ -98,36 +105,77 @@ export class HistorySourceResolver implements ByteSourceResolver {
   /** Bytes past the ingested offset were read from the file. */
   liveTail = false;
   private readonly facts: boolean;
+  private readonly verified = new Map<string, { row: SourceRow; stat: Stats } | null>();
   constructor(private readonly db: DatabaseSync) {
     this.facts = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='dashboard_claude_children'").get();
   }
 
   private row(file: string): SourceRow | null {
-    const exact = this.db.prepare("SELECT id,path,generation,offset,identity FROM conversation_sources WHERE id=? AND format='jsonl'").get(file);
+    const exact = this.db.prepare(`SELECT ${SOURCE_COLUMNS} FROM conversation_sources WHERE id=? AND format='jsonl'`).get(file);
     const found = exact ?? (process.platform === "win32"
-      ? this.db.prepare("SELECT id,path,generation,offset,identity FROM conversation_sources WHERE id=? COLLATE NOCASE AND format='jsonl' LIMIT 1").get(file) : undefined);
-    return found ? { id: String(found.id), path: String(found.path), generation: Number(found.generation), offset: Number(found.offset), identity: String(found.identity) } : null;
+      ? this.db.prepare(`SELECT ${SOURCE_COLUMNS} FROM conversation_sources WHERE id=? COLLATE NOCASE AND format='jsonl' LIMIT 1`).get(file) : undefined);
+    return found ? { id: String(found.id), path: String(found.path), generation: Number(found.generation), offset: Number(found.offset),
+      identity: String(found.identity), anchor: String(found.anchor ?? "") } : null;
   }
 
-  /** The retained copy, if it still describes this file. */
+  /** The retained copy, if it still describes this file. Checked once per request and file. */
   private current(file: string): { row: SourceRow; stat: Stats } | null {
+    if (this.verified.has(file)) return this.verified.get(file)!;
+    const current = this.verify(file);
+    this.verified.set(file, current);
+    return current;
+  }
+
+  private verify(file: string): { row: SourceRow; stat: Stats } | null {
     let stat: Stats;
     try { stat = statSync(file); } catch { return null; }
     const row = this.row(file);
-    const empty = row?.offset === 0 && stat.size === 0;
-    if (!row || !empty && (row.offset === 0 || row.identity !== `${stat.dev}:${stat.ino}:${stat.birthtimeMs}` || stat.size < row.offset)) {
+    if (row?.offset === 0 && stat.size === 0) return { row, stat };
+    if (!row || row.offset === 0 || row.identity !== `${stat.dev}:${stat.ino}:${stat.birthtimeMs}` || stat.size < row.offset
+      || !this.unchangedBefore(file, row, stat)) {
       this.fellBack = true;
       return null;
     }
     return { row, stat };
   }
 
+  /**
+   * The ingester also treats a changed 64-byte anchor before its offset as a rewrite (ConversationIngestor.jsonl), and
+   * identity alone cannot see an in-place rewrite (nor any rewrite where ino is 0). Without reading the file, only an
+   * untouched file qualifies: the ingested size and the mtime its last retained chunk was read at. Otherwise the anchor
+   * is compared with one small read.
+   */
+  private unchangedBefore(file: string, row: SourceRow, stat: Stats): boolean {
+    if (stat.size === row.offset) {
+      const last = this.db.prepare("SELECT at FROM conversation_records WHERE source=? AND generation=? ORDER BY offset DESC LIMIT 1").get(row.id, row.generation);
+      if (last && Number(last.at) === stat.mtimeMs) return true;
+    }
+    if (!row.anchor) return false;
+    const anchor = Buffer.alloc(Math.min(ANCHOR_BYTES, row.offset));
+    const fd = openSync(file, "r");
+    try {
+      if (readSync(fd, anchor, 0, anchor.length, row.offset - anchor.length) !== anchor.length) return false;
+    } finally { closeSync(fd); }
+    return createHash("sha256").update(anchor).digest("hex") === row.anchor;
+  }
+
+  /** A store that fails to answer (busy, damaged) never makes an empty page: the file answers, flagged as importing. */
+  private guarded<T>(fallback: T, read: () => T): T {
+    try { return read(); } catch { this.fellBack = true; return fallback; }
+  }
+
   open(file: string): ByteSource | null {
-    const current = this.current(file);
-    return current ? new RetainedSource(this.db, current.row, current.stat.size, file, () => { this.liveTail = true; }) : null;
+    return this.guarded(null, () => {
+      const current = this.current(file);
+      return current ? new RetainedSource(this.db, current.row, current.stat.size, file, () => { this.liveTail = true; }, () => { this.fellBack = true; }) : null;
+    });
   }
 
   claudeChild(file: string, tailBytes: number): ClaudeChildFacts | null {
+    return this.guarded(null, () => this.childFacts(file, tailBytes));
+  }
+
+  private childFacts(file: string, tailBytes: number): ClaudeChildFacts | null {
     if (!this.facts) return null;
     const current = this.current(file);
     if (!current || current.stat.size !== current.row.offset) return null;
@@ -145,11 +193,18 @@ export class HistorySourceResolver implements ByteSourceResolver {
   }
 
   noInlineSidechains(file: string): boolean {
-    const current = this.current(file);
-    if (!current || current.stat.size !== current.row.offset) return false;
-    const prefix = `${current.row.id}:inline:`;
-    return !this.db.prepare("SELECT 1 FROM conversation_records WHERE source>=? AND source<? AND generation=? LIMIT 1")
-      .get(prefix, `${current.row.id}:inline;`, current.row.generation);
+    return this.guarded(false, () => {
+      const current = this.current(file);
+      if (!current || current.stat.size !== current.row.offset) return false;
+      const { id, generation, offset } = current.row;
+      // The ingester inspects only the head of a record longer than one retained chunk: let the legacy scan decide.
+      // A chunk ends at a record boundary whenever it holds one, so only a chunk of (nearly) full size can split a record.
+      const split = this.db.prepare(`SELECT 1 FROM (SELECT coalesce(lead(offset) OVER (ORDER BY offset), ?) - offset size
+        FROM conversation_records WHERE source=? AND generation=?) WHERE size>=? LIMIT 1`).get(offset, id, generation, CONVERSATION_BYTES - 4);
+      if (split) return false;
+      return !this.db.prepare("SELECT 1 FROM conversation_records WHERE source>=? AND source<? AND generation=? LIMIT 1")
+        .get(`${id}:inline:`, `${id}:inline;`, generation);
+    });
   }
 }
 
@@ -158,7 +213,7 @@ class RetainedSource implements ByteSource {
   private readonly chunks = new Map<number, Buffer>();
   private file: ByteSource | null = null;
   constructor(private readonly db: DatabaseSync, private readonly row: SourceRow, readonly size: number,
-    private readonly path: string, private readonly onLive: () => void) {}
+    private readonly path: string, private readonly onLive: () => void, private readonly onStoreError: () => void) {}
 
   private fromFile(buffer: Buffer, offset: number, length: number, position: number): number {
     if (!this.file) { this.file = openFileSource(this.path); this.onLive(); }
@@ -190,7 +245,7 @@ class RetainedSource implements ByteSource {
         done += n; continue;
       }
       let chunk: { offset: number; bytes: Buffer } | null = null;
-      try { chunk = this.chunkAt(at, Math.min(this.row.offset, position + want)); } catch { /* busy or damaged copy: the file answers */ }
+      try { chunk = this.chunkAt(at, Math.min(this.row.offset, position + want)); } catch { this.onStoreError(); /* busy or damaged copy: the file answers */ }
       if (!chunk) {
         // A gap in the retained copy: the file answers for it.
         const n = this.fromFile(buffer, offset + done, Math.min(left, this.row.offset - at), at);
