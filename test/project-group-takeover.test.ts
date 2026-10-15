@@ -12,6 +12,7 @@ import { readStore } from "../src/mcp/jobs.js";
 import { parentFromEnv } from "../src/core/parent-link.js";
 import { listPendingApprovals } from "../src/core/relay.js";
 import { pidAlive, killPid } from "../src/core/delegate.js";
+import { readProcessIdentities } from "../src/core/process-identity.js";
 import { LOG_DIR_NAME, LOG_FILE_NAME } from "../src/core/constants.js";
 import { STARTUP_CAPACITY } from "../src/core/startup-admission.js";
 import { completionMessageId } from "../src/core/completion.js";
@@ -90,19 +91,27 @@ afterEach(async () => {
     console.error(`Native takeover phases (ms since start): ${phases.map((p) => `${p.name}+${p.at - start}`).join(", ")}; teardown+${Date.now() - start}`);
   }
   for (const file of releases.splice(0)) { writeFileSync(file, ""); writeFileSync(file + ".approve", ""); }
-  const runnerPids = ids.splice(0).map((id) => readRunnerState(env.home, id)?.pid).filter((pid): pid is number => Boolean(pid));
-  // A runner's Windows job guardian (PowerShell) runs in this home and exits only after its runner: it is owned
-  // through the runner and must be gone before the home is removed, or the removal fails with EBUSY.
-  const guardianPids = runnerGuardians(env.home, new Set(runnerPids));
-  for (const pid of runnerPids) if (pidAlive(pid)) killPid(pid);
-  await exited(runnerPids);
-  const servers = transports.splice(0).map((t) => t.pid).filter((pid): pid is number => Boolean(pid));
+  // Only verified process generations are signalled or awaited: a PID of an exited fixture process can already
+  // belong to another process. Runners record their own generation in their state.
+  const states = ids.splice(0).map((id) => readRunnerState(env.home, id)).filter((state): state is NonNullable<typeof state> => Boolean(state?.pid));
+  const live = await queryGenerations(states.map((state) => state.pid)) ?? await queryGenerations(states.map((state) => state.pid));
+  // Without a process query, a runner whose heartbeat is current is still that runner (heartbeats every 15 s).
+  const runners = new Map(states.flatMap((state) => (live ? live.has(state.pid) && (!state.identity || live.get(state.pid) === state.identity)
+    : pidAlive(state.pid) && Date.now() - state.updatedAt < 30_000) ? [[state.pid, live?.get(state.pid) ?? state.identity ?? ""] as const] : []));
+  for (const pid of runners.keys()) killPid(pid);
+  await exited(runners);
+  const servers = await generations(transports.splice(0).map((t) => t.pid).filter((pid): pid is number => Boolean(pid)));
   for (const client of clients.splice(0)) await client.close();
   await exited(servers);
-  const fixturePids = recordedPids(join(env.home, "fixture-pids"));
-  for (const pid of fixturePids) if (pidAlive(pid)) killPid(pid);
-  await exited(fixturePids);
-  await exited(guardianPids);
+  if (process.platform === "win32") {
+    // Each runner's job guardian (PowerShell, working directory in this home) exits after its runner, and the
+    // fixture CLIs end with the runner's job object. The home is removed once the guardians are gone (EBUSY otherwise).
+    await exited(await runnerGuardians(env.home, new Set(states.map((state) => state.pid))));
+  } else {
+    const fixtures = await generations(recordedPids(join(env.home, "fixture-pids")));
+    for (const pid of fixtures.keys()) killPid(pid);
+    await exited(fixtures);
+  }
   // Windows can retain a detached process's directory handle briefly after its PID disappears.
   const deadline = Date.now() + 3_000;
   for (;;) {
@@ -146,27 +155,54 @@ async function waitFor(ready: () => boolean | Promise<boolean>, impossible: () =
   }
 }
 
-/** Teardown waits for the processes this fixture owns to exit before their home is removed. */
-async function exited(pids: readonly number[]): Promise<void> {
-  while (!pids.every((pid) => !pidAlive(pid))) await new Promise((resolve) => setTimeout(resolve, 100));
+/** Start identities of the live PIDs; a PID the query did not see has exited. Undefined: the query failed. */
+async function queryGenerations(pids: readonly number[]): Promise<Map<number, string> | undefined> {
+  try { return await readProcessIdentities([...pids]); } catch { return undefined; }
+}
+
+/** Start identities of these PIDs, from a successful query (one retry); only these are owned generations. */
+async function generations(pids: readonly number[]): Promise<Map<number, string>> {
+  return await queryGenerations(pids) ?? await queryGenerations(pids) ?? new Map();
+}
+
+/** Teardown waits for owned process generations to exit; a PID that now belongs to another process has exited. */
+async function exited(owned: ReadonlyMap<number, string>): Promise<void> {
+  let pending = [...owned.keys()];
+  for (let round = 1; ; round++) {
+    pending = pending.filter((pid) => pidAlive(pid));
+    if (pending.length && round % 20 === 0) {
+      const current = await queryGenerations(pending);
+      if (current) pending = pending.filter((pid) => current.has(pid) && (!owned.get(pid) || current.get(pid) === owned.get(pid)));
+    }
+    if (!pending.length) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
 
 function recordedPids(file: string): number[] {
   return existsSync(file) ? readFileSync(file, "utf8").trim().split(/\s+/).map(Number).filter((pid) => Number.isSafeInteger(pid) && pid > 0) : [];
 }
 
-/** The Windows job guardians the bridge log names for these runners. */
-function runnerGuardians(home: string, runnerPids: ReadonlySet<number>): number[] {
+/**
+ * The live Windows job guardians the bridge log names for these runners. A guardian is owned only when its
+ * process started before the runner logged the ownership (Windows identities are UTC start ticks).
+ */
+async function runnerGuardians(home: string, runnerPids: ReadonlySet<number>): Promise<Map<number, string>> {
   let log: string;
-  try { log = readFileSync(join(home, LOG_DIR_NAME, LOG_FILE_NAME), "utf8"); } catch { return []; }
-  return log.split("\n").flatMap((line) => {
-    const match = / job process ownership established (\{.*\})$/.exec(line.trim());
+  try { log = readFileSync(join(home, LOG_DIR_NAME, LOG_FILE_NAME), "utf8"); } catch { return new Map(); }
+  const logged = new Map(log.split("\n").flatMap((line) => {
+    const match = /^(\S+)\s.* job process ownership established (\{.*\})$/.exec(line.trim());
     if (!match) return [];
     try {
-      const value = JSON.parse(match[1]!) as { runnerPid?: unknown; guardianPid?: unknown };
-      return typeof value.runnerPid === "number" && runnerPids.has(value.runnerPid) && typeof value.guardianPid === "number" ? [value.guardianPid] : [];
+      const value = JSON.parse(match[2]!) as { runnerPid?: unknown; guardianPid?: unknown };
+      const at = Date.parse(match[1]!);
+      return typeof value.runnerPid === "number" && runnerPids.has(value.runnerPid) && typeof value.guardianPid === "number" && Number.isFinite(at)
+        ? [[value.guardianPid, at] as const] : [];
     } catch { return []; }
-  });
+  }));
+  const live = await generations([...logged.keys()]);
+  const startedAt = (ticks: string) => /^\d+$/.test(ticks) ? Number((BigInt(ticks) - 621_355_968_000_000_000n) / 10_000n) : Infinity;
+  return new Map([...live].filter(([pid, ticks]) => startedAt(ticks) <= logged.get(pid)!));
 }
 
 /** Names a job whose runner process has exited; `terminal` also counts a runner that already finished. */
