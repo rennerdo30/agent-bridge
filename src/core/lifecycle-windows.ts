@@ -140,6 +140,11 @@ const verifiedKey = (home: string, ownerInstance: string, scope: Scope) => `${sc
 // The protected lifecycle directory only contains the two pre-created objects
 // (PERSIST journal), so its mtime/ctime stay fixed under ordinary writes; NTFS
 // ChangeTime also moves on an ACL/owner change of that directory.
+// KNOWN LIMIT: an ACL/owner-only change on HOME, its ancestors, receipts.sqlite or
+// its journal is NOT detected by the cached check (their ctime also moves with
+// ordinary writes, so it cannot be part of the identity). A verdict has no TTL:
+// it lasts until an identity change, a refused fresh observation, or process
+// restart. There is deliberately no background re-verification.
 function stamps(home: string, scope: Scope): string {
   if (scope !== "established") return "";
   const stat = lstatSync(join(home, DIRECTORY), { bigint: true });

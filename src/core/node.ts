@@ -679,12 +679,35 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   private async trackedSend(client: BridgeClient, args: RequestMap["trackedSend"][0], explicitId: boolean, reconnected = false): Promise<SendResult> {
+    const unknown = (cause: unknown, detail = "") => new BridgeError("internal", `Storage cannot be confirmed for message ${args.messageId}; storage state is unknown: ${(cause as Error).message}${detail}. Query send_status(message_id="${args.messageId}") or retry send with the same message_id.`, { messageId: args.messageId, state: "unknown" });
+    // Read-only recovery: the broker's stored copy for this exact id, never another write.
+    const lookup = async (cause: unknown): Promise<SendResult> => {
+      try {
+        const state = await client.request("sendState", { id: args.messageId });
+        if (state.message) {
+          const message = state.message;
+          if (!(message.body === args.body || message.body.startsWith(args.body + "\n\n[agent-bridge routing hint:")) ||
+              !this.opts.jobAgent && message.to !== args.to.trim() || message.replyTo !== (args.replyTo?.trim() || null) ||
+              args.conversationId && message.conversationId !== args.conversationId.trim() &&
+              !(this.opts.jobAgent && message.conversationId === args.conversationId.trim() + ":fallback")) {
+            throw new BridgeError("bad_request", "Message id already stored with different content.", { messageId: state.id, state: "stored" });
+          }
+          return { messages: [message], deliveredTo: [], queuedFor: [],
+            storage: { id: state.id, state: "stored", recovered: true, receipts: state.receipts } };
+        }
+        throw new BridgeError("timeout", `Message ${state.id} storage state is unknown; this local broker reports ${state.state} as of ${new Date(state.checkedAt).toISOString()}. An outstanding or remote request can still store it. Query send_status(message_id="${state.id}") or retry send with the same message_id.`, { messageId: state.id, state: "unknown", localState: state.state });
+      } catch (lookupError) {
+        if (lookupError instanceof BridgeError && lookupError.details?.messageId) throw lookupError;
+        throw new BridgeError("timeout", `Storage cannot be confirmed for message ${args.messageId}; storage state is unknown: broker lookup unavailable. Query send_status(message_id="${args.messageId}") or retry send with the same message_id; use a new id only for a new message.`, { messageId: args.messageId, state: "unknown", cause: String(cause) });
+      }
+    };
     try { return await client.request("trackedSend", args); }
     catch (error) {
       // The actual connection closed under this request (e.g. the broker daemon died
       // before the local pipe reported it). The durable message id is deduplicated by
-      // the shared store, so ONE retry with the SAME id on the re-elected connection
-      // stores the message at most once and recovers an already stored copy.
+      // the shared store, so exactly ONE more trackedSend with the SAME id goes to the
+      // re-elected connection. That retry never falls back to a legacy send (new id)
+      // and never takes the transient 100 ms retry; it may only do a read-only lookup.
       if (!reconnected && !this.stopping && errCode(error) === "BROKER_CONNECTION_CLOSED" && client.isClosed) {
         let next: BridgeClient;
         try {
@@ -692,11 +715,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
           if (!this.client || this.client === client || this.client.isClosed) throw brokerConnectionClosedError();
           next = this.client;
         } catch (reconnectError) {
-          throw new BridgeError("internal", `Storage cannot be confirmed for message ${args.messageId}; storage state is unknown: ${(error as Error).message}; reconnect failed: ${(reconnectError as Error).message}. Query send_status(message_id="${args.messageId}") or retry send with the same message_id.`, { messageId: args.messageId, state: "unknown" });
+          throw unknown(error, `; reconnect failed: ${(reconnectError as Error).message}`);
         }
         return this.trackedSend(next, args, explicitId, true);
       }
       if (isUnsupportedOperation(error, "trackedSend")) {
+        // The first attempt may already be stored by the lost broker: a fresh-id legacy send could duplicate it.
+        if (reconnected) throw unknown(error);
         if (explicitId || args.ifNoNewerThan) throw error;
         // An explicit refusal proves nothing was applied. Legacy sends retain their own dedupe key.
         const { messageId: _unused, ...legacy } = args;
@@ -704,32 +729,16 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       }
       if (!transientRequestError(error)) {
         if (error instanceof BridgeError) throw error;
-        throw new BridgeError("internal", `Storage cannot be confirmed for message ${args.messageId}; storage state is unknown: ${(error as Error).message}. Query send_status(message_id="${args.messageId}") or retry send with the same message_id.`, { messageId: args.messageId, state: "unknown" });
+        throw unknown(error);
       }
+      if (reconnected) return lookup(error);
       try {
         await new Promise(resolve => setTimeout(resolve, 100));
         return await client.request("trackedSend", args);
       }
       catch (retryError) {
         if (retryError instanceof BridgeError && retryError.code !== "internal" && retryError.code !== "timeout") throw retryError;
-        try {
-          const state = await client.request("sendState", { id: args.messageId });
-          if (state.message) {
-            const message = state.message;
-            if (!(message.body === args.body || message.body.startsWith(args.body + "\n\n[agent-bridge routing hint:")) ||
-                !this.opts.jobAgent && message.to !== args.to.trim() || message.replyTo !== (args.replyTo?.trim() || null) ||
-                args.conversationId && message.conversationId !== args.conversationId.trim() &&
-                !(this.opts.jobAgent && message.conversationId === args.conversationId.trim() + ":fallback")) {
-              throw new BridgeError("bad_request", "Message id already stored with different content.", { messageId: state.id, state: "stored" });
-            }
-            return { messages: [message], deliveredTo: [], queuedFor: [],
-              storage: { id: state.id, state: "stored", recovered: true, receipts: state.receipts } };
-          }
-          throw new BridgeError("timeout", `Message ${state.id} storage state is unknown; this local broker reports ${state.state} as of ${new Date(state.checkedAt).toISOString()}. An outstanding or remote request can still store it. Query send_status(message_id="${state.id}") or retry send with the same message_id.`, { messageId: state.id, state: "unknown", localState: state.state });
-        } catch (lookupError) {
-          if (lookupError instanceof BridgeError && lookupError.details?.messageId) throw lookupError;
-          throw new BridgeError("timeout", `Storage cannot be confirmed for message ${args.messageId}; storage state is unknown: broker lookup unavailable. Query send_status(message_id="${args.messageId}") or retry send with the same message_id; use a new id only for a new message.`, { messageId: args.messageId, state: "unknown", cause: String(retryError) });
-        }
+        return lookup(retryError);
       }
     }
   }
