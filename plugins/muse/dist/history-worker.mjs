@@ -4,7 +4,7 @@ import {
 } from "./chunks/chunk-2PKS7JZW.mjs";
 import {
   ConversationIngestor
-} from "./chunks/chunk-RDR6BAQB.mjs";
+} from "./chunks/chunk-SGLOGK3S.mjs";
 import {
   HISTORY_TICK_MS,
   HistoryIndex
@@ -13,7 +13,7 @@ import {
   ownsProjectMirrors,
   projectDatabasePath
 } from "./chunks/chunk-CHURQK2F.mjs";
-import "./chunks/chunk-DYLP4SUH.mjs";
+import "./chunks/chunk-DWD7QYDU.mjs";
 import "./chunks/chunk-SKALCUBC.mjs";
 import "./chunks/chunk-ROXW7H3L.mjs";
 import {
@@ -29,7 +29,7 @@ import "./chunks/chunk-PZ6QYUCT.mjs";
 import "./chunks/chunk-V4VFK2LZ.mjs";
 import {
   reconcileAskCompletions
-} from "./chunks/chunk-LQGT4LAW.mjs";
+} from "./chunks/chunk-I4XMXAU3.mjs";
 import {
   loadConfig
 } from "./chunks/chunk-VB42W5UW.mjs";
@@ -38,7 +38,7 @@ import "./chunks/chunk-2JW43AZX.mjs";
 import "./chunks/chunk-RE3I7AXX.mjs";
 import {
   readHistoryJson
-} from "./chunks/chunk-3RXVMHBV.mjs";
+} from "./chunks/chunk-R5ODWW5G.mjs";
 import "./chunks/chunk-HYOPFLLN.mjs";
 import {
   closeMetadataDbs,
@@ -258,12 +258,13 @@ var transcriptsChanged = false;
 var wakeAfterTick = false;
 var liveAfterTick = false;
 var lastTickAt = 0;
+var firing = 0;
 var LIVE_WAKE_MS = 15;
 var LIVE_GAP_MS = 100;
 function wakeSoon() {
   if (stopped) return;
   idle.reset();
-  if (running) {
+  if (running || firing) {
     liveAfterTick = true;
     return;
   }
@@ -281,6 +282,7 @@ function schedule(delay = HISTORY_TICK_MS) {
   dueAt = Date.now() + delay;
   timer = setTimeout(async () => {
     timer = null;
+    firing++;
     let next = idle.next(0, false);
     try {
       await waitForPressureGap();
@@ -301,6 +303,7 @@ function schedule(delay = HISTORY_TICK_MS) {
       wakeAfterTick = false;
       next = 0;
     }
+    firing--;
     schedule(next);
   }, delay);
 }
@@ -335,7 +338,7 @@ parentPort?.on("message", async (message) => {
   }
   if (message.wake) {
     idle.reset();
-    if (running) wakeAfterTick = true;
+    if (running || firing) wakeAfterTick = true;
     else schedule(0);
     return;
   }
