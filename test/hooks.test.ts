@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
 import type { BridgeNode } from "../src/core/node.js";
+import { ParentLink, parentFromEnv } from "../src/core/parent-link.js";
 import { buildHookResponse } from "../src/mcp/hooks.js";
+import { MessageWaitStore } from "../src/mcp/message-wait.js";
 import type { ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
@@ -82,7 +84,51 @@ describe("hook responses", () => {
     await me.setAutoWake(true);
     const out = (await buildHookResponse(ctx(), input("Stop"))) as any;
     expect(out.decision).toBe("block");
+    expect(out.reason).toMatch(/^agent-bridge: new mail\n\n/);
     expect(out.reason).toContain("work");
+    expect(out.reason).toContain("Handle these peer messages now");
+    expect(await buildHookResponse(ctx(), input("Stop"))).toEqual({});
+  });
+
+  it("labels awaited Codex Stop mail with auto-wake off and consumes it once", async () => {
+    await me.setSessionId("s1");
+    const waits = new MessageWaitStore(env.home);
+    waits.save(me, { from: peer.name }, "notify");
+    waits.attach(me);
+    await peer.send({ to: me.name, body: "awaited result" });
+    await until(() => me.unread().length === 1);
+    expect(await buildHookResponse(ctx(), input("Stop"))).toMatchObject({
+      decision: "block", reason: expect.stringMatching(/^agent-bridge: new mail\n\n/),
+    });
+    expect(me.unread()).toHaveLength(0);
+    expect(await buildHookResponse(ctx(), input("Stop"))).toEqual({});
+  });
+
+  it("labels delegated Codex Stop mail without changing other hook context", async () => {
+    const link = new ParentLink("supervisor", () => {}, nullLogger);
+    await link.start();
+    try {
+      const c = ctx({ node: null, parent: parentFromEnv(link.childEnv())! });
+      link.post("adjust the task");
+      const out = await buildHookResponse(c, input("Stop")) as any;
+      expect(out).toMatchObject({ decision: "block", reason: expect.stringMatching(/^agent-bridge: new mail\n\n/) });
+      expect(out.reason).toContain("adjust the task");
+      expect(out.reason).toContain('relation="parent"');
+      link.post("active context");
+      const active = await buildHookResponse(c, input("PostToolUse")) as any;
+      expect(active.reason).not.toContain("agent-bridge: new mail");
+      expect(active.hookSpecificOutput.additionalContext).toContain("active context");
+    } finally { await link.close(); }
+  });
+
+  it("preserves other hosts' Stop reason text", async () => {
+    await me.setAutoWake(true);
+    await peer.send({ to: me.name, body: "host mail" });
+    await until(() => me.unread().length === 1);
+    const out = await buildHookResponse(ctx({ agent: "claude" }), input("Stop")) as any;
+    expect(out.decision).toBe("block");
+    expect(out.reason).toMatch(/^\[agent-bridge\]/);
+    expect(out.reason).toContain("host mail");
   });
 
   it("Stop defers a later reply to the next hook without consuming it", async () => {

@@ -43,6 +43,11 @@ function context(event: HookEvent, additionalContext: string): HookOutput {
   return { hookSpecificOutput: { hookEventName: event, additionalContext } };
 }
 
+/** Codex 0.162 labels every supported Stop continuation "Blocked by hook". */
+function stopMail(ctx: ServerContext, text: string): HookOutput {
+  return { decision: "block", reason: ctx.agent === "codex" ? `agent-bridge: new mail\n\n${text}` : text };
+}
+
 export function discardFinishedNotes(ctx: ServerContext): void {
   const node = ctx.node;
   if (!node) return;
@@ -158,7 +163,7 @@ async function subagentHook(ctx: ServerContext, input: HookInput): Promise<HookO
   ctx.log.info("delivering parent messages to the subagent", { count: msgs.length, event: input.event });
   const text = [msgs.length ? formatParentMessages(parent.name, msgs) : "", children.length ? formatMessages(children) : ""].filter(Boolean).join("\n\n");
   // Before it ends its turn: keep it going so it answers (and adjusts) instead of finishing without seeing them.
-  if (input.event === "Stop") return { decision: "block", reason: text };
+  if (input.event === "Stop") return stopMail(ctx, text);
   // After a tool call, "block" feeds the reason back to the model as feedback on that call (the call itself
   // already ran), which the hosts surface far more reliably than additional context alone.
   if (input.event === "PostToolUse") return { decision: "block", reason: text, hookSpecificOutput: { hookEventName: input.event, additionalContext: text } };
@@ -308,7 +313,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
         if (awaited.length) {
           holdOrMarkRead(ctx, awaited.map((m) => m.id), holdStop);
           ctx.activity?.("busy");
-          return { decision: "block", reason: formatMessages(awaited, { replyHint: false }) };
+          return stopMail(ctx, formatMessages(awaited, { replyHint: false }));
         }
         finishHookTurn(ctx, input);
         return {};
@@ -326,7 +331,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
       }
       ctx.activity?.("busy");
       ctx.log.info("continuing turn for peer messages", { count: msgs.length, autoWake: node.autoWakeEnabled });
-      return { decision: "block", reason: `${formatMessages(msgs, { replyHint: false })}\n\n${STOP_REASON_FOOTER}` };
+      return stopMail(ctx, `${formatMessages(msgs, { replyHint: false })}\n\n${STOP_REASON_FOOTER}`);
     }
     default:
       return {};
