@@ -49,6 +49,20 @@ plugin must be installed first. Model-boundary hooks deliver active mail; an
 idle TUI receives queued messages on its next turn or through inbox. Quotas are
 unknown to the bridge; inspect native `/usage`.
 
+## History search
+
+Before starting or resuming work, after a handoff or restart, and whenever someone refers to an earlier decision, job, branch or message, call `bridge_search_history` instead of guessing or reading log files. It searches bridge mail, owner decisions and questions, job runs and reports, and native CLI transcripts locally, without model calls.
+
+- The query is split into words that must all appear, in any order. Punctuation and quotes are dropped, and words like OR or AND are searched as ordinary words. Put ids that scope the search (job, session, project) into `filters`, not only into the query.
+- Narrow with `filters`: `kind` (message, run, decision, transcript, approval, progress, report = job reports and snapshots, question), `project` (your cwd), `job`, `session`, `agent`, `since`/`until` (epoch ms or ISO 8601 with offset).
+- Read a whole thread by passing a hit's `conversation` to `bridge_get_conversation`; page with `next` as `after`.
+
+Examples:
+
+- Owner rule on a topic: `bridge_search_history({ query: "branch limit", filters: { kind: "decision" } })`
+- A job's reports: `bridge_search_history({ query: "result", filters: { job: "codex-job-1a2b3c4d", kind: "report" } })`. A report can be a snapshot of a still-running job, so check its status before treating it as final.
+- Recent work in this project: `bridge_search_history({ query: "release", filters: { project: "<your cwd>", since: "<ISO time>" } })`
+
 ## Questions to the owner
 
 Use `ask_owner` (`bridge_ask_owner` in opencode) for a missing owner-only decision in your own project. Check `decisions` first. It returns immediately; the exact answer arrives later as a waking message with the question id, also delivered to the responsible project main. Delegated jobs ask their main. Give a one-line title, concise context, topic, 2–4 options with consequences and exactly one recommendation, blocking action and what you do meanwhile. Link the issue and concrete artifact/diff for authorization. Free text is always available. Never secrets, status, peer questions, routine checks or playable owner verification. Answers never bypass native approvals, widen authorization or accept implementation. At most five open per session; same project + issue + topic merges. No silent expiry. Blocking destructive or authorization questions cannot default. Use `withdraw_owner_question` with a reason to cancel or supersede an obsolete question.

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -9,6 +9,11 @@ import { nullLogger } from "../src/core/logger.js";
 import { MessageWaitStore } from "../src/mcp/message-wait.js";
 import { uninstallOpencode } from "../src/cli/opencode-install.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+import { Broker } from "../src/core/broker.js";
+import { PROTOCOL_VERSION } from "../src/core/constants.js";
+import { BROKER_TCP_FILE } from "../src/core/paths.js";
+import { processIdentity } from "../src/core/process-identity.js";
+import { writeMusePrivateJson } from "../src/core/muse-context.js";
 import { normalizeSource, removalOperations } from "./retention-guard.js";
 
 const SOURCE_ROOT = join(import.meta.dirname, "..", "src");
@@ -16,6 +21,9 @@ const SOURCE_ROOT = join(import.meta.dirname, "..", "src");
 const REVIEWED_REMOVALS: Record<string, string[]> = {
   // Exclusively created unpublished key staging file; the active key is never removed.
   "cli/dashboard-key.ts": ["unlinkSync(temp)"],
+  // Exclusively created (wx) unpublished quarantine staging file of a write or rename that failed; the full text
+  // stays in its original store, and a published quarantine file is never removed (AB-380).
+  "core/oversize.ts": ["unlinkSync(tmp)"],
   "core/json-store.ts": ["rmSync(tmp, { force: true })"],
   "core/node.ts": ["unlinkSync(this.opts.pipePath)"],
   // Lock/lease files hold only PID, start time and nonce. A stale lock is moved aside first and its moved copy removed
@@ -47,6 +55,18 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   "core/sqlite-migrations.ts": ["`DELETE FROM ${quoted}`"],
   // Temporary working folder (mkdtempSync) of the low-cost model that answers search questions.
   "core/history-answer.ts": ["rmSync(cwd, { recursive: true, force: true })"],
+  // Bridge-owned scratch folder (mkdtempSync) holding only the prompt file of one Muse run.
+  "core/muse.ts": ["rmSync(dir, { recursive: true, force: true })", "rmSync(dir, { recursive: true, force: true })"],
+  // Private per-process control capabilities only. Active records require exact
+  // generation/nonce ownership; temporary files are exclusively created staging.
+  "core/muse-context.ts": ["unlinkSync(path)"],
+  // Recreated ephemeral endpoint descriptor only: no durable records,
+  // registrations or history. Exact current generation and field shape required;
+  // unknown content and successor generations stay intact, as asserted below.
+  "core/broker.ts": ["unlinkSync(temporary)", "unlinkSync(file)"],
+  "core/antigravity-plugin.ts": ["unlinkSync(temporary)", "unlinkSync(file)"],
+  "mcp/muse-hooks.ts": ["unlinkSync(temporary)", "unlinkSync(this.file)"],
+  "mcp/antigravity-hooks.ts": ["unlinkSync(temporary)", "unlinkSync(this.file)"],
   // Derived search index only (pending queue, full rebuild by reindex); source messages, logs and transcripts are read-only.
   "core/history.ts": ['"DELETE FROM history_pending WHERE id=? AND recipient=?"', '"DELETE FROM history_tags; DELETE FROM history_cursors WHERE source<>\'legacy-record-tail\'; DELETE FROM history_files;"'],
   // Temporary duplicates after whole-file SHA-256 verification and exclusive publication of the final file; truncation trims
@@ -61,6 +81,21 @@ beforeEach(() => { env = makeEnv(); });
 afterEach(async () => { await env.cleanup(); });
 
 describe("owner data retention rule", () => {
+  it.each(["owned-ephemeral", "successor", "durable-data"])("TCP cleanup retains user data and only removes %s when proven ephemeral", async kind => {
+    const store = new MessageStore(join(env.home, "tcp-retention.db"), nullLogger);
+    const broker = new Broker(env.pipe, store, nullLogger, "fixture-token");
+    const file = join(env.home, BROKER_TCP_FILE);
+    const record = { port: 4321, pid: process.pid, identity: processIdentity(process.pid), nonce: "owned", protocol: PROTOCOL_VERSION, pipePath: env.pipe,
+      ...(kind === "successor" ? { nonce: "successor" } : {}), ...(kind === "durable-data" ? { history: "unique user data" } : {}) };
+    writeMusePrivateJson(file, record);
+    const before = readFileSync(file);
+    Object.assign(broker, { tcpNonce: "owned", tcpPort: 4321 });
+    try {
+      await (broker as unknown as { stopTcpFallback(): Promise<void> }).stopTcpFallback();
+      if (kind === "owned-ephemeral") expect(existsSync(file)).toBe(false);
+      else expect(readFileSync(file)).toEqual(before);
+    } finally { await broker.close(); }
+  });
   it("gives finalize and absorb no candidate-removal exceptions", () => {
     for (const file of ["core/storage-finalize.ts", "core/storage-absorb.ts"])
       expect(removalOperations(readFileSync(join(SOURCE_ROOT, file), "utf8"))).toEqual([]);

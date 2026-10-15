@@ -188,7 +188,7 @@ export interface UiOptions {
   mobileStatus?: () => string;
   /** Trusted host wiring only; never accepted from an HTTP/configuration payload. */
   brokerDaemon?: BridgeNodeOptions["daemon"];
-  /** Explicit library/fixture compatibility; production hosts never supply this. */
+  /** @deprecated Embedded hosting is the default whenever brokerDaemon is omitted. */
   embeddedCompatibility?: boolean;
 }
 
@@ -208,6 +208,7 @@ function readAllUsage(home: string, log: Logger): Promise<UsageReport[]> {
     readUsage("codex", cfg.codexBin, home, log),
     readUsage("opencode", cfg.opencodeBin, home, log, cfg.opencodeModel ?? null),
     readUsage("antigravity", cfg.antigravityBin, home, log, cfg.antigravityModel),
+    readUsage("muse", cfg.museBin, home, log, cfg.museModel),
   ]);
 }
 
@@ -222,7 +223,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
   let senderNode: BridgeNode | null = null;
   const getSender = (): Promise<BridgeNode> => {
     senderNode ??= new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log,
-      canHostBroker: !!opts.brokerDaemon || opts.embeddedCompatibility === true, daemon: opts.brokerDaemon,
+      daemon: opts.brokerDaemon,
       network: { home: opts.home, config: loadConfig(opts.home, "other", opts.log).network } });
     sender ??= (async () => {
       try {
@@ -646,7 +647,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         }
       }
       if (!local) return send(res, 409, { error: "This local session is not connected. Reopen it before sending." });
-      if (!["claude", "codex", "opencode", "antigravity"].includes(local.agent)) return send(res, 409, { state: "not-supported", transport: "bridge", text: "Owner chat is not supported for this CLI." });
+      if (!["claude", "codex", "opencode", "antigravity", "muse"].includes(local.agent)) return send(res, 409, { state: "not-supported", transport: "bridge", text: "Owner chat is not supported for this CLI." });
       const result = await deliverDashboardChat(local, body.body.trim(), { child, parent: body.target === "parent", queue: queueChat,
         send: async (text) => (await getSender()).send({ to: local.name, body: text }) });
       if (result.receipt) {

@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 /** Product identity. */
 export const APP_NAME = "agent-bridge";
-export const APP_VERSION = "0.30.15";
+export const APP_VERSION = "0.30.21";
 
 /** Wire protocol version; bump on incompatible changes to the broker protocol. */
 export const PROTOCOL_VERSION = 2;
@@ -28,6 +28,7 @@ export const ENV = {
   claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
   codexBin: "AGENT_BRIDGE_CODEX_BIN",
   opencodeBin: "AGENT_BRIDGE_OPENCODE_BIN",
+  museBin: "AGENT_BRIDGE_MUSE_BIN",
   dashboard: "AGENT_BRIDGE_DASHBOARD",
   /** "0": background subagents run inside the session's MCP server instead of detached job runners (they then end with it). */
   jobRunner: "AGENT_BRIDGE_JOB_RUNNER",
@@ -92,6 +93,7 @@ export const JOBS_FILE = "jobs.json";
 export const DEFAULT_CLAUDE_BIN = "claude";
 export const DEFAULT_CODEX_BIN = "codex";
 export const DEFAULT_OPENCODE_BIN = "opencode";
+export const DEFAULT_MUSE_BIN = "muse";
 /** Web dashboard (agent-bridge ui / started with the bridge). */
 export const DEFAULT_DASHBOARD_PORT = 4777;
 

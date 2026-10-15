@@ -1,6 +1,6 @@
 import { readFileSync, unwatchFile, watchFile } from "node:fs";
 import { basename, join, isAbsolute } from "node:path";
-import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_MAX_JOBS, DEFAULT_MAX_DELEGATE_DEPTH, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV, MAX_DELEGATE_DEPTH_LIMIT, MAX_JOBS_LIMIT } from "./constants.js";
+import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_MAX_JOBS, DEFAULT_MAX_DELEGATE_DEPTH, DEFAULT_MUSE_BIN, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV, MAX_DELEGATE_DEPTH_LIMIT, MAX_JOBS_LIMIT } from "./constants.js";
 import type { Logger } from "./logger.js";
 import { AGENT_KINDS, type AgentKind } from "./protocol.js";
 import { isRecord, readJsonStore, writeJsonStore } from "./json-store.js";
@@ -38,6 +38,8 @@ export interface HistoryAnswerConfig {
 const DEFAULT_HISTORY_ANSWER: HistoryAnswerConfig = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
 
 export interface BridgeConfig {
+  /** Restart-applied daemon opt-in: AGENT_BRIDGE_DAEMON=1/0 > daemon.enabled > false. */
+  daemon: { enabled: boolean };
   /** Restart-applied, home top-level only; never projected in effective-config diagnostics. */
   mobile?: MobileConfig;
   /** Home-wide spelling preference, shared by sessions, CLI helpers and runners. */
@@ -93,6 +95,8 @@ export interface BridgeConfig {
   /** Google's Antigravity CLI is named agy. */
   antigravityBin: string;
   antigravityModel: string | null;
+  museBin: string;
+  museModel: string | null;
   /** opencode model as provider/model, e.g. "anthropic/claude-sonnet-5". */
   opencodeModel: string | null;
   /** Default reasoning effort for subagents: one level for all, or per target agent ({ "codex": "high" }). */
@@ -109,6 +113,7 @@ export interface BridgeConfig {
 }
 
 export const DEFAULT_CONFIG: BridgeConfig = {
+  daemon: { enabled: false },
   pathDisplay: { preferAlias: true },
   history: { ingest: true, budgetBytes: 32 * 1024 ** 3 },
   questionAlerts: DEFAULT_QUESTION_ALERTS,
@@ -140,6 +145,8 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   opencodeBin: DEFAULT_OPENCODE_BIN,
   antigravityBin: "agy",
   antigravityModel: null,
+  museBin: DEFAULT_MUSE_BIN,
+  museModel: null,
   opencodeModel: null,
   effort: {},
   opencodeAutoApprove: false,
@@ -333,6 +340,9 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
 
   const d = DEFAULT_CONFIG;
   const cfg: BridgeConfig = {
+    // Only exact 1/0 override config; config accepts booleans only. Invalid values fall through.
+    daemon: { enabled: env.AGENT_BRIDGE_DAEMON === "1" ? true : env.AGENT_BRIDGE_DAEMON === "0" ? false
+      : pick("daemon", null, v => isRecord(v) && typeof v.enabled === "boolean" ? v.enabled : undefined) ?? d.daemon.enabled },
     // Helper reads using another agent kind must not reset this process-wide preference.
     pathDisplay: isRecord(file.pathDisplay) && typeof file.pathDisplay.preferAlias === "boolean" ? { preferAlias: file.pathDisplay.preferAlias } : d.pathDisplay,
     history: {
@@ -372,6 +382,8 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     opencodeBin: pick("opencodeBin", ENV.opencodeBin, str) ?? d.opencodeBin,
     antigravityBin: pick("antigravityBin", "AGENT_BRIDGE_ANTIGRAVITY_BIN", str) ?? d.antigravityBin,
     antigravityModel: pick("antigravityModel", null, modelName) ?? d.antigravityModel,
+    museBin: pick("museBin", ENV.museBin, str) ?? d.museBin,
+    museModel: pick("museModel", null, modelName) ?? d.museModel,
     opencodeModel: pick("opencodeModel", null, modelName) ?? d.opencodeModel,
     effort: Object.assign({}, d.effort, ...[file, section, project, localSection].map((values) => effortLevels(values.effort) ?? {})),
     opencodeAutoApprove: pick("opencodeAutoApprove", null, parseBool) ?? d.opencodeAutoApprove,

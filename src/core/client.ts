@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { connect, type Socket } from "node:net";
 import { APP_VERSION, CONNECT_TIMEOUT_MS, MAX_FRAME_BYTES, REQUEST_TIMEOUT_MS } from "./constants.js";
 import type { Logger } from "./logger.js";
-import { ensurePrivateSocketDirectory } from "./paths.js";
+import { brokerTcpPortAsync, ensurePrivateSocketDirectory, resolveHome, resolvePipePath } from "./paths.js";
 import {
   BridgeError,
   encodeFrame,
@@ -137,19 +137,47 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
     return new Promise((resolve, reject) => {
       // Never hand the token to an endpoint in a short-socket directory another user controls.
       ensurePrivateSocketDirectory(pipePath, process.platform, options.readOnlyDirectory ?? false);
-      const socket = connect(pipePath);
+      let socket = connect(pipePath);
+      let discovery: AbortController | undefined;
+      let settled = false;
       const timer = setTimeout(() => {
+        settled = true;
+        discovery?.abort();
         socket.destroy();
         reject(Object.assign(new Error("timed out connecting to broker"), { code: "ETIMEDOUT" }));
       }, timeoutMs);
-      socket.once("connect", () => {
+      const connected = () => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         socket.removeAllListeners("error");
         resolve(new BridgeClient(socket, log));
-      });
-      socket.once("error", (err) => {
+      };
+      const failed = (err: Error) => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         reject(err);
+      };
+      socket.once("connect", connected);
+      socket.once("error", (err) => {
+        if (settled) return;
+        // A restricted Windows host may need loopback. Discovery and the second
+        // socket share the ORIGINAL timer; failure cannot buy another timeout.
+        if (process.platform !== "win32") { failed(err); return; }
+        const home = resolveHome();
+        if (pipePath !== resolvePipePath(home)) { failed(err); return; }
+        socket.removeListener("connect", connected);
+        socket.destroy();
+        const controller = discovery = new AbortController();
+        void brokerTcpPortAsync(home, pipePath, controller.signal).then(port => {
+          if (settled || controller.signal.aborted) return;
+          if (!port) { failed(err); return; }
+          log.debug("broker pipe unreachable; trying the loopback fallback", { err: err.message, port });
+          socket = connect(port, "127.0.0.1");
+          socket.once("connect", connected);
+          socket.once("error", failed);
+        }).catch(() => failed(err));
       });
     });
   }
@@ -163,6 +191,12 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
       operation: transportOperation(op), frame_encoded: false, write_call_boundary: "not_reached", write_returned: false,
     }));
     const id = this.nextId++;
+    // AB-380: a frame the broker cannot decode would drop the connection; fail here instead, without retry.
+    const data = encodeFrame({ t: "req", id, op, args });
+    const bytes = Buffer.byteLength(data);
+    if (bytes > MAX_FRAME_BYTES) return Promise.reject(new BridgeError("too_large",
+      `${op} request is ${bytes} bytes, over the ${MAX_FRAME_BYTES}-byte frame limit; it was not sent and must not be retried.`,
+      { operation: op, bytes, limit: MAX_FRAME_BYTES, retryable: false }));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
@@ -181,7 +215,7 @@ export class BridgeClient extends EventEmitter<BridgeClientEvents> {
       }, timer };
       pendingWriteObservations.set(pending, transport);
       this.pending.set(id, pending);
-      this.socket.write(observedEncodedFrame(transport, encodeFrame({ t: "req", id, op, args })));
+      this.socket.write(observedEncodedFrame(transport, data));
       transport.write_returned = true;
     });
   }

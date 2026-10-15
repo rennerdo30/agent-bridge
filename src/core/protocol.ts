@@ -18,11 +18,11 @@ import type { HistorySearch, HistoryResult } from "./history.js";
 import type { TransferProgress, TransferStarted } from "../network/transfers.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
 
-export type AgentKind = "claude" | "codex" | "opencode" | "antigravity" | "other";
-export const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex", "opencode", "antigravity", "other"];
+export type AgentKind = "claude" | "codex" | "opencode" | "antigravity" | "muse" | "other";
+export const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex", "opencode", "antigravity", "muse", "other"];
 /** Agents that agent-bridge can run headlessly (delegation / subagents). */
 export type CodingAgent = Exclude<AgentKind, "other">;
-export const CODING_AGENTS: readonly CodingAgent[] = ["claude", "codex", "opencode", "antigravity"];
+export const CODING_AGENTS: readonly CodingAgent[] = ["claude", "codex", "opencode", "antigravity", "muse"];
 
 /** Broadcast target. */
 export const BROADCAST = "*";
@@ -167,6 +167,32 @@ export interface SendArgs {
    */
   dedupeKey?: string;
 }
+/** Optional wire support only; no store-format or provider capability upgrade. */
+export type SendMode = "auto" | "queue" | "steer" | "restart";
+export interface ModeSendArgs extends SendArgs {
+  mode: SendMode;
+  /** Existing scoped Claude sender selector, authorized by the current parent. */
+  nativeChild?: string;
+}
+export interface SendModeReport {
+  requested: SendMode;
+  effective: "mailbox" | "nativequeue" | "legacyunconfirmed" | "refused";
+  stage: "requested" | "stored" | "unknown";
+  protocolSupport: "mode-v1" | "legacy" | "unknown";
+  sharedIdempotentDelivery: false;
+  reason?: string;
+  capabilities: {
+    route: "mailbox" | "nativequeue" | "legacyunconfirmed" | "unsupported";
+    receiverRole: "session" | "delegated_job" | "native_child" | "unknown";
+    ownedSession: boolean;
+    generationKnown: boolean;
+    activeSteering: false;
+    interruptRestart: false;
+    queue: boolean;
+    idleWake: false | "conditional";
+  };
+}
+export interface ModeSendResult { send: SendResult; mode: SendModeReport }
 export interface MessageReceipt {
   recipient: string;
   readAt: number | null;
@@ -230,6 +256,8 @@ export interface RequestMap {
     reason?: string; connectedClients: number; connectedJobClients: number; runningJobs: number; runningJobsEvidence: "legacy_registry_labels_not_execution" }];
   /** Local authenticated daemon lifecycle wiring; no remote target or configuration mutation. */
   ensureDashboard: [{ force: boolean; port?: number }, import("../cli/dashboard.js").DashboardInfo | null];
+  /** Old peers must explicitly refuse this opcode, never ignore a mode. */
+  modeSend: [ModeSendArgs, ModeSendResult];
   /** Virtual addresses are controlled only by the registered parent connection. */
   nativeChild: [{ agentId: string; action: "start" | "end" | "grant"; sendTo?: string[]; maxHops?: number }, NativeChildAddress | null];
   nativeChildren: [Record<string, never>, NativeChildAddress[]];
@@ -370,7 +398,10 @@ export class FrameDecoder {
 
   push(chunk: string): Frame[] {
     this.buffer += chunk;
-    if (this.buffer.length > this.maxBytes && !this.buffer.includes("\n")) {
+    // The limit is in bytes (AB-380): a string's UTF-8 size is at least its UTF-16 length and at most three times
+    // it, so the exact count is only needed in between.
+    if (this.buffer.length * 3 > this.maxBytes && !this.buffer.includes("\n") &&
+      (this.buffer.length > this.maxBytes || Buffer.byteLength(this.buffer) > this.maxBytes)) {
       this.buffer = "";
       throw new BridgeError("too_large", "frame exceeds maximum size");
     }

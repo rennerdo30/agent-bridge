@@ -1,6 +1,6 @@
 {
   "name": "agent-bridge",
-  "version": "0.30.15",
+  "version": "0.30.21",
   "description": "Let Claude Code and OpenAI Codex talk to each other: live peer messaging over a local pipe plus headless delegation.",
   "license": "MIT",
   "type": "module",
@@ -28,6 +28,7 @@
   "devDependencies": {
     "@types/node": "26.6.3",
     "esbuild": "0.28.2",
+    "playwright": "1.64.1",
     "typescript": "7.0.2",
     "vitest": "5.0.2"
   }

@@ -8,7 +8,7 @@ import { BridgeNode } from "../src/core/node.js";
 import { Broker } from "../src/core/broker.js";
 import { BridgeClient, CLIENT_TRANSPORT_DIAGNOSTIC_COUNT_LIMIT, CLIENT_TRANSPORT_DIAGNOSTIC_RECORD_LIMIT,
   type ClientConnectionClosedDiagnostic } from "../src/core/client.js";
-import { PROTOCOL_VERSION } from "../src/core/constants.js";
+import { APP_VERSION, PROTOCOL_VERSION } from "../src/core/constants.js";
 import type { Op, RequestMap } from "../src/core/protocol.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
@@ -413,7 +413,7 @@ describe("standalone demand-start broker", () => {
     const selected = await port();
     if (mobile) writeFileSync(join(env.home, "config.json"), JSON.stringify({ dashboard: false, mobile: { enabled: true } }));
     const child = spawn(process.execPath, [cli, "ui", "--no-open", `--port=${selected}`], { cwd: env.home, windowsHide: true, stdio: "ignore",
-      env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_HISTORY_INGEST: "0" } }); children.push(child);
+      env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_HISTORY_INGEST: "0", AGENT_BRIDGE_DAEMON: "1" } }); children.push(child);
     let info: ReturnType<typeof readDashboardInfo> = null;
     await until(() => !!(info = readDashboardInfo(env.home)), 10_000);
     const childIdentity = mobile ? null : await readProcessIdentity(child.pid!);
@@ -429,7 +429,7 @@ describe("standalone demand-start broker", () => {
     // configured CLI path. The nonmobile desktop remains in the original CLI.
     if (mobile) {
       const next = spawn(process.execPath, [cli, "ui", "--no-open", `--port=${selected}`], { cwd: env.home, windowsHide: true, stdio: "ignore",
-        env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_HISTORY_INGEST: "0" } }); children.push(next);
+        env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_HISTORY_INGEST: "0", AGENT_BRIDGE_DAEMON: "1" } }); children.push(next);
       await until(() => { const current = readDashboardInfo(env.home); return !!current && current.pid !== first; }, 10_000);
       info = readDashboardInfo(env.home);
     }
@@ -443,15 +443,17 @@ describe("standalone demand-start broker", () => {
     await until(() => recipient.unread().some(message => message.id === accepted.id));
     expect(recipient.unread().find(message => message.id === accepted.id)!.body).toBe("before-crash-0");
   });
-  it("default UI sender stays connect-only and HTTP data cannot opt into embedding", async () => {
+  it("default UI sender hosts an embedded broker and HTTP data cannot opt into the daemon", async () => {
     const observed = observeUiSender();
     try {
       const send = await dashboard();
-      expect((await send("connect-only", { embeddedCompatibility: true })).status).toBe(500);
-      expect(observed.starts).toHaveLength(1); expect(observed.starts[0]!.isBroker).toBe(false);
-      expect(observed.listen).not.toHaveBeenCalled();
+      expect((await send("embedded-by-default", { brokerDaemon: { cli }, daemon: { enabled: true } })).status).toBe(200);
+      expect(observed.starts).toHaveLength(1); expect(observed.starts[0]!.isBroker).toBe(true);
+      expect(observed.listen).toHaveBeenCalledOnce();
       process.stderr.write("AB325 UI pre-election metadata evidence " + JSON.stringify(observed.metadataAtStart) + "\n");
-      await expect(client()).rejects.toMatchObject({ code: "ENOENT" });
+      const status = await client();
+      try { expect(await status.request("coreStatus", {})).toMatchObject({ mode: "embedded", pid: process.pid }); }
+      finally { status.close(); }
     } finally { observed.close(); }
   });
   it("UI unknown creation remains in one retained node across authorized sends", async () => {
@@ -487,12 +489,12 @@ describe("standalone demand-start broker", () => {
   });
   it("core status inspects an absent or serving daemon without demand start or peer registration", async () => {
     const inspect = () => JSON.parse(execFileSync(process.execPath, [cli, "core", "status"], { encoding: "utf8", windowsHide: true,
-      env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe } }));
+      env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_DAEMON: "1" } }));
     expect(inspect()).toEqual({ available: false });
     expect(existsSync(join(env.home, "token"))).toBe(false);
     expect(existsSync(join(env.home, "logs"))).toBe(false);
     const a = node("status-main"); await a.start(); const pid = await remember();
-    expect(inspect()).toMatchObject({ mode: "daemon", pid, version: "0.30.15", runningJobsEvidence: "legacy_registry_labels_not_execution" });
+    expect(inspect()).toMatchObject({ mode: "daemon", pid, version: APP_VERSION, runningJobsEvidence: "legacy_registry_labels_not_execution" });
     expect((await a.peers()).map(peer => peer.name)).toEqual(["status-main"]);
     const token = join(env.home, "token"), retainedToken = join(env.home, "fixture-retained-token");
     renameSync(token, retainedToken);
@@ -512,7 +514,7 @@ describe("standalone demand-start broker", () => {
     const identity = await readProcessIdentity(pid);
     expect(identity).toBeTruthy(); owned.set(pid, identity!); expect(pid).not.toBe(process.pid);
     const statusClient = await client();
-    try { expect(await statusClient.request("coreStatus", {})).toMatchObject({ mode: "daemon", pid, version: "0.30.15", connectedClients: 11, runningJobsEvidence: "legacy_registry_labels_not_execution" }); }
+    try { expect(await statusClient.request("coreStatus", {})).toMatchObject({ mode: "daemon", pid, version: APP_VERSION, connectedClients: 11, runningJobsEvidence: "legacy_registry_labels_not_execution" }); }
     finally { statusClient.close(); }
     expect(peers.every(peer => !peer.isBroker)).toBe(true);
     expect(await peers[0]!.peers()).toHaveLength(10);
@@ -603,7 +605,7 @@ describe("standalone demand-start broker", () => {
       });
       setInterval(()=>{},1000);`;
     const parent = spawn(process.execPath, ["-e", gate, parentCli], { cwd: env.home, windowsHide: true, detached: process.platform !== "win32", stdio: ["ignore", "ignore", "ignore", "ipc"],
-      env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_DASHBOARD: "false", AGENT_BRIDGE_HISTORY_INGEST: "0" } });
+      env: { ...process.env, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_DASHBOARD: "false", AGENT_BRIDGE_HISTORY_INGEST: "0", AGENT_BRIDGE_DAEMON: "1" } });
     children.push(parent);
     const fixtureEvents: string[] = [];
     parent.on("message", message => {

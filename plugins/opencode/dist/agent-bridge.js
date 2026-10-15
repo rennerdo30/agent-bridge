@@ -30948,7 +30948,7 @@ var StdioClientTransport = class {
 import { homedir } from "node:os";
 import { join } from "node:path";
 var APP_NAME = "agent-bridge";
-var APP_VERSION = "0.30.15";
+var APP_VERSION = "0.30.21";
 var ENV = {
   internal: "AGENT_BRIDGE_INTERNAL",
   home: "AGENT_BRIDGE_HOME",
@@ -30968,6 +30968,7 @@ var ENV = {
   claudeBin: "AGENT_BRIDGE_CLAUDE_BIN",
   codexBin: "AGENT_BRIDGE_CODEX_BIN",
   opencodeBin: "AGENT_BRIDGE_OPENCODE_BIN",
+  museBin: "AGENT_BRIDGE_MUSE_BIN",
   dashboard: "AGENT_BRIDGE_DASHBOARD",
   /** "0": background subagents run inside the session's MCP server instead of detached job runners (they then end with it). */
   jobRunner: "AGENT_BRIDGE_JOB_RUNNER"

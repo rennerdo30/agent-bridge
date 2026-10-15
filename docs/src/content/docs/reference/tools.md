@@ -8,22 +8,25 @@ The `ask_*` and `spawn_*` tools are expanded for each supported CLI; a session m
 
 | Tool | Parameters | Behavior |
 | --- | --- | --- |
+| `health` | None | Cheap broker health: round-trip latency, event-loop delay, cached history-import phase, estimated percent and ETA, backup phase and last verification time, and recent error codes. Uses no log or archive reads. If tools are slow, use health or peers instead of reading live bridge log files. Retry a timeout once; report the exact tool error if it persists. |
 | `ask_owner` | `askOwnerSchema` (source schema) | File an owner-only decision for your own project in Waiting for you. Check decisions first. Returns immediately; the exact answer arrives later as a waking direct message with reply_to=question id, also sent to the project main. Jobs must ask their main. Use 2–4 options, one recommendation, and concise context; link a concrete artifact for authorization. Never secrets, status, peer questions, playable checks or routine tool approvals. Answers never bypass native approvals or accept implementation. Same project + issue + topic merges; at most five open per session. Unanswered stays visible; destructive blocking or authorization questions cannot default. |
 | `withdraw_owner_question` | `id`, `status`, `reason`, `supersededBy?` | Explicitly dismiss your own open question with a reason. Superseded requires a replacement question id. This never answers or allows a tool. |
 | `search_history` | `query`, `filters?`, `limit?`, `answer?` | Search local bridge messages (including archives), decisions, delegated run logs and CLI transcripts. Returns bounded snippets with stable source ids and links. Ordinary search makes no model calls. answer=true explicitly spends model tokens on a configured cheap model chosen by availability and usage_limits. Indexing is incremental; use agent-bridge reindex to rebuild. |
-| `get_conversation` | `id`, `after?`, `limit?` | Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export. |
+| `get_conversation` | `conversationPageSchema.shape` (source schema) | Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export. |
 | `decide` | `approval_id?`, `decision?`, `reason?`, `topic?`, `text?`, `scope?`, `source_message_id?` | Answer a pending approval with approval_id and decision (allow, deny or escalate), or record an owner's decision after researching it. A newer decision on the same topic supersedes the previous revision across scopes; history is always retained. Notifications reach sessions in scope once without waking idle sessions. Scope defaults to this project folder. |
 | `decisions` | `query?`, `scope?`, `history?` | List current owner decisions or search topic and text (case-insensitive substring). Scope defaults to this project, including decisions for all sessions and this session. history=true also includes superseded revisions, newest first. |
 | `project_main` | `to` | Choose a live local master of this project as its main contact. Project addresses reach all available live project sessions, including secondaries. Exact session addresses stay direct. |
 | `coordinator_availability` | `unavailable` | Yield this session's project jobs to an available local master, for example before closing or at a usage limit. Set unavailable=false when ready again. The current primary keeps its jobs until explicitly handed back. Explicitly handed-off jobs are excluded. |
-| `peers` | None | List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity): name, agent type, busy/idle, uptime, working directory and session id. Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message. |
-| `send` | `to`, `message`, `reply_to?`, `conversation_id?`, `if_no_newer_than?`, `message_kind?`, `message_id?` | Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "*" for everyone. Delivery means queued in the recipient inbox, not read. Project addresses include available live secondaries. Broadcasts wake every live session according to its settings and include recently seen offline local sessions or known project masters, connected paired-PC sessions and your running jobs; jobs:* targets only your running jobs through existing links, even when authority RPCs are unavailable. Per-recipient results report queueing, not consumption. Direct messages wake idle Claude, Codex and opencode sessions according to wakeOnDirect and available CLI transport; other recipients may read them on their next turn. Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing. |
+| `peers` | `native_child?` | List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity, Muse): name, agent type, busy/idle, uptime, working directory and session id. Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message. |
+| `send` | `to`, `native_child?`, `message`, `reply_to?`, `conversation_id?`, `if_no_newer_than?`, `message_kind?`, `message_id?` | Send a message to another agent. "to" is a peer name from "peers", an agent kind ("claude", "codex") when exactly one is online, or "*" for everyone. Delivery means queued in the recipient inbox, not read. Project addresses include available live secondaries. Broadcasts wake every live session according to its settings and include recently seen offline local sessions or known project masters, connected paired-PC sessions and your running jobs; jobs:* targets only your running jobs through existing links, even when authority RPCs are unavailable. Per-recipient results report queueing, not consumption. Direct messages wake idle Claude, Codex and opencode sessions according to wakeOnDirect and available CLI transport; other recipients may read them on their next turn. Auto-wake is handled on the recipient PC, including paired PCs; it is never enabled by send. Use wait_for_message(read_receipt_of=<sent id>) to wait for consumption. If the recipient is offline the message waits for it. When answering with new information, pass its id as reply_to. Do not send pure acknowledgements or repeat a reply as a status note. Delegated jobs can send to their parent, siblings, or exact local session/job names explicitly granted with send_to at spawn. A job that is blocked, unsure or about to take a consequential step asks its parent with message_kind="question" (question, options, recommendation, what it does meanwhile). Sibling messages arrive live or wait for the next turn, with a quiet supervisor copy. Sending to a finished sibling returns its saved final report immediately; it will not answer. Do not wait for finished siblings or for read receipts from them. Other sessions and broadcasts are unavailable. Peers shows grants and the sibling thread limit before composing. |
 | `send_status` | `message_id` | Look up your message by its durable UUID directly in broker storage and retained archives, without waiting for history indexing. Stored confirms persistence, not delivery or consumption. Pending/not_stored describe the instant checked; an outstanding send may still store it. Retry send with the same message_id to avoid duplicates. |
+| `native_child_grant` | `agent_id`, `send_to` | Parent only: replace exact send_to grants for a live native Claude child. Your bridge jobs already have access. Empty send_to revokes external grants. This never registers a peer or assigns a main role. |
 | `network_status` | None | List discovered LAN instances and explicitly paired broker links. Discovery is untrusted and never connects automatically. Pair using the local CLI. |
+| `resource_slots` | None | Show configured resource slots (resourceSlots, e.g. one Unity editor at a time): who holds each slot and who waits, in queue order. Read-only; jobs take slots with the agent-bridge slot CLI. |
 | `send_files` | `to`, `paths` | Deliver files or folders into an online peer's inbox. Paired PCs stream bounded chunks with SHA-256 and restart resume, returning a transfer id immediately; progress stays available in the dashboard and inbox on request; only completed, failed or cancelled results are delivered automatically. Limits come from network.maxTransferBytes (default 8 GiB). Older brokers and local delivery keep the one MiB / 128 entry path. Symlinks and junctions are rejected; received files are never executed. |
 | `fetch_files` | `from`, `paths` | Pull files into this PC's inbox over a paired encrypted link. The other PC must explicitly configure network.fetchRoots (off by default). Paths are absolute or relative to the source session's working directory and must stay under an allowed root. Returns a transfer id immediately; progress stays available in the dashboard and inbox on request; only completed, failed or cancelled results are delivered automatically. |
 | `cancel_transfer` | `id` | Cancel a paired-PC file transfer by its id. Partial files stay unpublished; cancellation is delivered when the peer reconnects. A completed transfer cannot be cancelled. |
-| `inbox` | `include_quiet?`, `mark_read?`, `limit?` | Read unread messages from other agents, with quiet transfer progress, sibling copies and acknowledgements excluded by default. Use include_quiet=true (or a read-only mark_read=false peek) to inspect retained copies. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt. |
+| `inbox` | `include_quiet?`, `native_child?`, `mark_read?`, `limit?` | Read unread messages from other agents, with quiet transfer progress, sibling copies and acknowledgements excluded by default. Use include_quiet=true (or a read-only mark_read=false peek) to inspect retained copies. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt. |
 | `wait_for_message` | `mode?`, `timeout_sec?`, `from?`, `reply_to?`, `conversation_id?`, `read_receipt_of?`, `resume_id?` | Default mode="notify": register a durable one-shot wait and return immediately. Call once after sending a question, then keep working or end the turn; do not poll or repeat waits. A matching unread message can be returned now; an active channel owns its delivery. Otherwise it arrives through existing direct/auto-wake paths when supported, or on the next hook/inbox call. Global auto-wake settings stay unchanged. Notification waits survive /reload-plugins and session exit, have no timeout, and complete only when matching mail is consumed. Mail stays queued if wake delivery fails or the session is offline. mode="block" waits and returns a message marked read. For compatibility, timeout_sec without mode selects block; read_receipt_of also defaults to block. Single blocking waits are capped at SINGLE_WAIT_SEC seconds; a message timeout arms notify automatically instead of requiring another turn. Claude Code may background calls after 120 seconds; background calls do not survive session exit. A stdio call cannot survive /reload-plugins: peers and SessionStart show a saved resume_id and filters after reconnect. resume_id preserves saved filters and mode; use mode="notify" to convert an interrupted blocking wait. mode="cancel" with resume_id archives a wait without consuming mail. read_receipt_of supports block only and confirms bridge consumption, not a reply or completed work. Nested child waits support block only. |
 | `max_subagents` | `count`, `save?` | Change how many background subagents may run at once in this session, effective immediately (a higher limit starts queued continuations; a lower one stops none). save=true also writes it to ~/.agent-bridge/config.json as the default for new sessions. Only change this when your user asks. |
 | `auto_wake` | `enabled` | Turn auto-wake on or off for this session. When on, a peer message that arrives while you finish a turn makes you continue and handle it (up to the configured hop limit agent-to-agent hops per conversation). Only change this when your user asks. |
@@ -39,11 +42,11 @@ The `ask_*` and `spawn_*` tools are expanded for each supported CLI; a session m
 | `list_models` | `agent`, `query?` | Which models and reasoning efforts a subagent agent accepts, to pick model= and effort= for ask_*/spawn_*. Codex and opencode list their models; for Claude it gives the aliases and effort levels. query filters by name (opencode can list hundreds). Costs no model calls. |
 | `dashboard` | None | Open the agent-bridge web dashboard in the user's browser (sessions, delegated runs with live steps, messages) and return its link. Only call this when the user asks to see the dashboard. |
 | `set_job_outcome` | `job`, `state`, `reason?` | Record that your finished job is held with a reason or discarded. With jobCloseCleanup enabled, discarded local worktree jobs push their commits and reap only a proven clean checkout. Held jobs and local branches are retained. Only its owning supervisor can set it. |
-| `handoff_subagents` | `to`, `jobs?`, `note?`, `switch_project_main?` | Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex, opencode or Antigravity session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything. |
-| `message_subagent` | `job`, `message?`, `title?`, `effort?`, `model?`, `access?`, `sandbox?`, `terminal_sandbox?`, `bypass_permissions?`, `native_subagents?`, `approvals_reviewer?`, `permission_mode?`, `auto_approve?` | Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. It continues in its own session with its full context, in the same folder or worktree. While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. The answer arrives as a message from the job. Plain messages never answer pending approvals; use decide or the dashboard. Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent. If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it). |
+| `handoff_subagents` | `to`, `jobs?`, `note?`, `switch_project_main?` | Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex, opencode, Antigravity or Muse session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything. |
+| `message_subagent` | `job`, `message?`, `title?`, `effort?`, `model?`, `access?`, `sandbox?`, `terminal_sandbox?`, `bypass_permissions?`, `native_subagents?`, `approvals_reviewer?`, `permission_mode?`, `auto_approve?`, `permission_profile?` | Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. Use it to answer a subagent's question promptly. It continues in its own session with its full context, in the same folder or worktree. While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. The answer arrives as a message from the job. Plain messages never answer pending approvals; use decide or the dashboard. Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent. If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it). |
 | `cancel_subagent` | `job` | Stop a background subagent started with spawn_*, or drop a queued continuation (message_subagent while all slots were taken). Pass its job name (e.g. codex-job-1a2b3c4d). |
 | `report_progress` | `percent`, `eta_minutes?`, `note?` | Tell your supervisor, which gave you your current task, how far you are: the percent of the whole task done and a few words on the current step. Call it when you start, after each milestone, and at least every few minutes. Give eta_minutes when you can estimate minutes until completion and update it as you go. It does not interrupt your work. |
-| `hook_event` | `event`, `session_id?`, `stop_hook_active?`, `cwd?`, `agent_id?`, `prompt?`, `prompt_id?`, `transcript_path?` | Internal endpoint for agent-bridge's own hooks. Do not call this tool. |
+| `hook_event` | `event`, `session_id`, `stop_hook_active`, `cwd`, `agent_id`, `prompt`, `prompt_id`, `transcript_path` | Internal endpoint for agent-bridge's own hooks. Do not call this tool. |
 
 ## Delegation options
 
@@ -136,6 +139,12 @@ schema: { permission_mode: z.enum(CLAUDE_PERMISSION_MODES as [string, ...string[
 ```
 
 ```ts
+schema: {
+      permission_profile: z.string().min(1).max(80).optional().describe("Named Muse permission profile from its settings (--permission-profile)"),
+    }
+```
+
+```ts
 schema: { auto_approve: z.boolean().optional().describe("Overrides access: auto-approve every opencode permission request (opencode run --auto)") }
 ```
 
@@ -159,14 +168,6 @@ query: z.string().trim().min(1).max(HISTORY_MAX_QUERY_CHARS)
 filters: historyFiltersSchema.optional()
 limit: z.number().int().min(1).max(HISTORY_MAX_LIMIT).optional()
 answer: z.boolean().optional()
-```
-
-### get_conversation
-
-```ts
-id: z.string().min(1).max(512)
-after: z.number().int().nonnegative().optional()
-limit: z.number().int().min(1).max(100).optional()
 ```
 
 ### decide
@@ -201,15 +202,22 @@ to: z.string().min(1).max(64)
 unavailable: z.boolean()
 ```
 
+### peers
+
+```ts
+native_child: z.string().optional().describe("Native Claude agent_id issued by its start hook; scopes this call to the child")
+```
+
 ### send
 
 ```ts
 to: z.string().min(1).describe('Peer name, project address, agent kind, "*" (sessions and your running jobs), or "jobs:*" (only your running jobs)')
+native_child: z.string().optional().describe("Your scoped native Claude agent_id from SubagentStart; send as that child")
 message: z.string().min(1).max(MAX_BODY_CHARS).describe("Message text (Markdown is fine)")
 reply_to: z.string().optional().describe("Id of the message you are answering")
 conversation_id: z.string().optional().describe("Continue an existing conversation")
 if_no_newer_than: z.string().optional().describe("Refuse this reply if newer unread conversation or recipient mail exists after this message id")
-message_kind: z.enum(["note", "question"]).optional().describe("note retains FYI/status in history without waking or injecting context; question requests supervisor attention")
+message_kind: z.enum(["note", "question"]).optional().describe("note retains FYI/status in history without waking or injecting context; question requests supervisor attention (a job asking its parent when blocked or before a risky step)")
 message_id: z.uuid().optional().describe("Stable UUID for an idempotent send or recovery retry. Reuse this id only with the same content; requires an updated broker.")
 ```
 
@@ -217,6 +225,13 @@ message_id: z.uuid().optional().describe("Stable UUID for an idempotent send or 
 
 ```ts
 message_id: z.uuid()
+```
+
+### native_child_grant
+
+```ts
+agent_id: z.string()
+send_to: z.array(z.string()).max(20)
 ```
 
 ### send_files
@@ -243,6 +258,7 @@ id: z.uuid()
 
 ```ts
 include_quiet: z.boolean().optional().describe("Include historical quiet coordination copies (default false)")
+native_child: z.string().optional().describe("Your scoped native Claude agent_id; read only that child's inbox")
 mark_read: z.boolean().optional().describe("Mark returned messages as read (default true); false also permits inspecting retained quiet copies")
 limit: z.number().int().min(1).max(100).optional()
 ```
@@ -342,6 +358,7 @@ native_subagents: nativeSubagentsSchema
 approvals_reviewer: z.enum(CODEX_APPROVALS_REVIEWERS).optional().describe("Codex reviewer for the next turn: auto_review or user. A running turn keeps its reviewer.")
 permission_mode: z.enum(CLAUDE_PERMISSION_MODES as [string, ...string[]]).optional().describe("Claude permission mode for the next turn.")
 auto_approve: z.boolean().optional().describe("opencode auto-approval for the next turn.")
+permission_profile: z.string().trim().min(1).max(80).optional().describe("Named Muse permission profile for the next turn. Replaces earlier access.")
 ```
 
 ### cancel_subagent

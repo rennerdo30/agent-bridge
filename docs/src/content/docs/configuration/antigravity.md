@@ -38,5 +38,12 @@ uninstall archives the owned plugin, including user additions, and retains
 the native MCP allow rule. No bridge data
 format changes are required for this additive agent kind.
 
+Paired jobs accept the same `terminal_sandbox` and exact `bypass_permissions`
+booleans, including `false`; these options apply only to Antigravity. Changes
+queued with `message_subagent` remain attached to the next resumed turn. `ask`
+denies mutations when no supervisor or user can answer its approval requests.
+Cancellation and timeout stop the CLI process tree and settle pending bridge
+approvals without allowing the requested action.
+
 **Gemini CLI (`gemini`) is separate and is not implemented in this release:** it
 was not installed on the verified PC. See [official evidence and CLI differences](../../google-cli-research/).

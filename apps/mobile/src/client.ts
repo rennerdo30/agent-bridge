@@ -44,7 +44,7 @@ export class MobileClient {
   private update(patch: Partial<ClientState>): void { this.state = { ...this.state, ...patch }; for (const fn of this.listeners) fn(); }
   get writesEnabled(): boolean { return this.foreground && this.state.connection === "ready" && !this.state.writePending && !!this.device && this.device.credentials.accessExpiresAt > this.now() && !!this.state.snapshot && !this.state.snapshot.stale && this.now() - this.state.snapshot.sampledAt < 15_000; }
   canAnswer(question: Question): boolean {
-    return this.writesEnabled && question.pcId === this.device?.credentials.pcId && question.status === "open" && !!this.device?.credentials.scopes.some(g => g.pcId === question.pcId && g.projectIds.includes(question.projectId) && g.capabilities.includes("questions.answer"));
+    return this.writesEnabled && question.pcId === this.device?.credentials.pcId && question.status === "open" && !!this.device?.credentials.scopes.some(g => g.pcId === question.pcId && (g.scope === "all" || g.projectIds.includes(question.projectId)) && g.capabilities.includes("questions.answer"));
   }
   get approvedOrigins(): readonly string[] { return this.device?.origins ?? []; }
   get preferredOrigin(): string | null { return this.device?.preferredOrigin ?? null; }

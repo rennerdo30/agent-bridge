@@ -1,10 +1,26 @@
 import { z } from "zod";
 import { shortPin, type Grant } from "./contract.js";
-import type { MobileSource } from "./adapter.js";
-import { digest, equal, MobileFault, MobileStore, secret } from "./store.js";
+import type { MobileSource, SourceView } from "./adapter.js";
+import { digest, equal, MobileFault, MobileStore, secret, type Device } from "./store.js";
 import qrcode from "./vendor/qrcode.js";
 
-const grantsSchema = z.array(z.object({ pcId: z.string().min(1).max(128), projectIds: z.array(z.string().max(128)).max(100), sessionIds: z.array(z.string().max(128)).max(100), jobIds: z.array(z.string().max(128)).max(100), capabilities: z.array(z.enum(["overview.read", "chat.read", "questions.read", "questions.answer"])).max(4) }).strict()).max(10);
+const grantsSchema = z.array(z.object({ pcId: z.string().min(1).max(128), scope: z.enum(["all", "project"]).optional(), projectIds: z.array(z.string().max(128)).max(100), sessionIds: z.array(z.string().max(128)).max(100), jobIds: z.array(z.string().max(128)).max(100), capabilities: z.array(z.enum(["overview.read", "chat.read", "questions.read", "questions.answer"])).max(4) }).strict()).max(10);
+/** What the claim review offers: projects with their local folder and sizes, and individual sessions. Jobs are covered by project or whole-PC grants only. */
+function catalog(pcId: string, view: SourceView, folders: ReadonlyMap<string, string> = new Map()) {
+  const ids = [...new Set([...view.sessions.flatMap(s => s.projectId ? [s.projectId] : []), ...view.jobs.flatMap(j => j.projectId ? [j.projectId] : []), ...view.questions.map(q => q.projectId)])];
+  const projects = ids.map(id => {
+    const folder = folders.get(id) ?? null;
+    return { id, name: folder ? folder.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || folder : null, folder,
+      sessions: view.sessions.filter(s => s.projectId === id).length, jobs: view.jobs.filter(j => j.projectId === id).length, questions: view.questions.filter(q => q.projectId === id && q.status === "open").length };
+  }).sort((a, b) => b.sessions - a.sessions || (a.name ?? "\uffff").localeCompare(b.name ?? "\uffff") || a.id.localeCompare(b.id));
+  return { pcId, projects, sessions: view.sessions.map(s => ({ id: s.id, name: s.name, agent: s.agent, projectId: s.projectId })) };
+}
+/** A display summary of a paired phone's grants; ids stay on the server. */
+function access(grants: Grant[]) {
+  const scope = grants.some(g => g.scope === "all") ? "all" : grants.some(g => g.scope === "project") ? "project" : "selected";
+  return { scope, projects: new Set(grants.flatMap(g => g.projectIds)).size, sessions: new Set(grants.flatMap(g => g.sessionIds)).size,
+    jobs: new Set(grants.flatMap(g => g.jobIds)).size, answers: grants.some(g => g.capabilities.includes("questions.answer")) };
+}
 export async function readMobileDesktopBody(stream: AsyncIterable<Uint8Array | string>): Promise<string> {
   let size = 0; const chunks: Buffer[] = [];
   for await (const chunk of stream) { const buffer = Buffer.from(chunk); size += buffer.length; if (size > 32 * 1024) throw new MobileFault(413, "body_too_large"); chunks.push(buffer); }
@@ -24,8 +40,9 @@ export class MobileDesktopAdmin {
     if (method === "GET" && path === "/api/mobile/phones") {
       const view = await this.source.snapshot();
       if (!this.ready()) throw new MobileFault(503, "source_unavailable");
-      return { status: 200, body: { csrfToken: this.csrf, devices: this.store.devices(), pending: this.store.pending(),
-        catalog: { pcId: this.store.pcId, sessions: view.sessions.map(s => ({ id: s.id, name: s.name })), jobs: view.jobs.map(j => ({ id: j.id, title: j.title })), projects: [...new Set([...view.questions.map(q => q.projectId), ...view.sessions.flatMap(s => s.projectId ? [s.projectId] : []), ...view.jobs.flatMap(j => j.projectId ? [j.projectId] : [])])] }, gatewayOrigins: this.store.origins, fingerprints: this.store.pins?.map(shortPin) ?? [] } };
+      const devices = this.store.list<Device>("device").map(({ grants, revision, ...device }) => ({ ...device, access: access(grants) }));
+      return { status: 200, body: { csrfToken: this.csrf, devices, pending: this.store.pending(),
+        catalog: catalog(this.store.pcId, view, this.source.projectFolders?.()), gatewayOrigins: this.store.origins, fingerprints: this.store.pins?.map(shortPin) ?? [] } };
     }
     if (headers.origin !== this.localOrigin || !equal(headers["x-mobile-admin-csrf"] ?? "", this.csrf)) throw new MobileFault(403, "desktop_csrf");
     const key = z.string().uuid().parse(headers["idempotency-key"]);
@@ -47,6 +64,7 @@ export class MobileDesktopAdmin {
       if (!this.ready()) throw new MobileFault(503, "source_unavailable");
       // Remote reads remain unsupported: this local adapter cannot prove existing paired-PC trust.
       for (const grant of parsed.grants) {
+        if (grant.scope === "all" && (grant.projectIds.length || grant.sessionIds.length || grant.jobIds.length) || grant.scope === "project" && !grant.projectIds.length) throw new MobileFault(403, "unsupported_grant");
         if (grant.pcId !== this.store.pcId || grant.sessionIds.some(id => !view.sessions.some(s => s.id === id)) || grant.jobIds.some(id => !view.jobs.some(j => j.id === id)) || grant.projectIds.some(id => ![...view.questions, ...view.sessions, ...view.jobs].some(q => q.projectId === id))) throw new MobileFault(403, "unsupported_grant");
       }
       this.store.mutate("desktop-owner", method + path, key, digest("admin", JSON.stringify(parsed)), () => {

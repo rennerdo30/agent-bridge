@@ -31,10 +31,10 @@ async function main(argv: string[]): Promise<number> {
   if (command === "job-state") return (await import("./job-close.js")).runJobClose(command, rest, home, DEFAULT_CONFIG, nullLogger, out);
   const pipe = resolvePipePath(home);
   const log = command === "core" ? nullLogger : createLogger({ home, component: "cli" });
-  const brokerDaemon: NonNullable<BridgeNodeOptions["daemon"]> = { cli: join(bundleDirectory(import.meta.url), "cli.mjs"), dashboard: () => loadConfig(home, "other", log).dashboard,
-    config: () => { const cfg = loadConfig(home, "other", log); const port = rest.find(arg => arg.startsWith("--port="))?.slice(7); return { network: cfg.network, mobile: cfg.mobile, dashboardPort: port ? Number(port) : cfg.dashboardPort }; } };
+  const brokerDaemon = (): BridgeNodeOptions["daemon"] => loadConfig(home, "other", log).daemon.enabled ? { cli: join(bundleDirectory(import.meta.url), "cli.mjs"), dashboard: () => loadConfig(home, "other", log).dashboard,
+    config: () => { const cfg = loadConfig(home, "other", log); const port = rest.find(arg => arg.startsWith("--port="))?.slice(7); return { network: cfg.network, mobile: cfg.mobile, dashboardPort: port ? Number(port) : cfg.dashboardPort }; } } : undefined;
   const makeNode = () =>
-    new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: resolveDbPath(home), daemon: brokerDaemon, agent: "other", name: CLI_PEER_NAME, cwd: process.cwd(), autoWake: false, log });
+    new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: resolveDbPath(home), daemon: brokerDaemon(), agent: "other", name: CLI_PEER_NAME, cwd: process.cwd(), autoWake: false, log });
 
   switch (command) {
     case "core": {
@@ -192,7 +192,7 @@ async function main(argv: string[]): Promise<number> {
       }
       const portArg = rest.find((a) => a.startsWith("--port="))?.slice("--port=".length);
       const port = portArg ? Number(portArg) : loadConfig(home, "other", log).dashboardPort;
-      const controller = new (await import("./dashboard.js")).DashboardController({ home, pipe, port, log, brokerDaemon, ...(mobileUnavailable ? { mobileStatus: () => mobileUnavailable! } : {}) });
+      const controller = new (await import("./dashboard.js")).DashboardController({ home, pipe, port, log, brokerDaemon: brokerDaemon(), ...(mobileUnavailable ? { mobileStatus: () => mobileUnavailable! } : {}) });
       const hosted = await controller.ensure();
       const info = mobileUnavailable ? (await import("./dashboard.js")).withMobileUnavailable(hosted, mobileUnavailable) : hosted;
       out(t("cli.ui.running", { url: info.url }));
@@ -214,6 +214,8 @@ async function main(argv: string[]): Promise<number> {
     }
     case "rewake-hook":
       return (await import("./rewake-hook.js")).runRewakeHook(rest.includes("--standby"));
+    case "muse-hook":
+      return (await import("./muse-hook.js")).runMuseHook(rest[0] ?? "");
     case "session-start-hook":
       return (await import("./session-start-hook.js")).runSessionStartHook(log);
     case "permission-hook":
