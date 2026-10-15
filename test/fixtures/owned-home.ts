@@ -1,4 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // OWNED NEW fixture HOME only, never a profile/ancestor ACL or production mint.
@@ -6,6 +8,11 @@ import { join } from "node:path";
 // runs once, before the tests (beforeAll), and is bounded by the hook timeout; on a
 // loaded runner that start alone can exceed the per-home observer. The unchanged 5 s
 // observer then covers each exclusive creation by the already running helper.
+// "helper_ready" alone is not ready: the FIRST creation still pays PowerShell's one-time
+// ConvertFrom-Json (Utility module autoload) and ACL type loading, 450-700 ms on an idle
+// machine against 1-5 ms for later ones. So the ready handshake ends with one complete,
+// untimed warm-up creation in a fixture-owned directory; no test request is timed
+// before the helper has answered it.
 const HELPER = String.raw`
 $ErrorActionPreference='Stop'
 $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User
@@ -65,6 +72,21 @@ export async function startOwnedHomeHelper(): Promise<void> {
     current.responses.clear();
   });
   await started;
+  const warmRoot = mkdtempSync(join(tmpdir(), "owned-home-warmup-"));
+  try {
+    if (!await request(current, join(warmRoot, "home"))) throw new Error("Owned home helper unavailable");
+  } finally { rmSync(warmRoot, { recursive: true, force: true }); }
+}
+
+function request(current: Helper, path: string): Promise<boolean> {
+  const id = String(++current.next);
+  let answered!: (ready: boolean) => void;
+  const answer = new Promise<boolean>(resolve => { answered = resolve; });
+  current.responses.set(id, answered);
+  const outstanding = answer.then(() => undefined);
+  current.outstanding.add(outstanding); void outstanding.then(() => current.outstanding.delete(outstanding));
+  current.child.stdin!.write(JSON.stringify({ id, path }) + "\n");
+  return answer;
 }
 
 /** Exclusively creates a NEW current-SID-only protected HOME through the running helper.
@@ -73,13 +95,7 @@ export async function startOwnedHomeHelper(): Promise<void> {
 export async function createOwnedHome(path: string, failure: string): Promise<void> {
   const current = helper;
   if (!current || current.exited) throw new Error(failure);
-  const id = String(++current.next);
-  let answered!: (ready: boolean) => void;
-  const answer = new Promise<boolean>(resolve => { answered = resolve; });
-  current.responses.set(id, answered);
-  const outstanding = answer.then(() => undefined);
-  current.outstanding.add(outstanding); void outstanding.then(() => current.outstanding.delete(outstanding));
-  current.child.stdin!.write(JSON.stringify({ id, path }) + "\n");
+  const answer = request(current, path);
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(failure)), HOME_OBSERVER_MS);
     void answer.then(ready => { clearTimeout(timer); ready ? resolve() : reject(new Error(failure)); });

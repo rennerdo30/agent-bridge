@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Broker, assertLifecycleServingCapability } from "../src/core/broker.js";
 import { EndpointReservation } from "../src/core/endpoint-reservation.js";
-import { LifecycleJournal, LifecycleUnavailable } from "../src/core/daemon-lifecycle.js";
+import { LifecycleJournal, LifecycleUnavailable, observeLifecycleWriteOutcome } from "../src/core/daemon-lifecycle.js";
 import { pendingWindowsLifecycleVerifications } from "../src/core/lifecycle-windows.js";
 import * as windowsLifecycle from "../src/core/lifecycle-windows.js";
 import * as identities from "../src/core/process-identity.js";
@@ -99,6 +99,20 @@ async function serving() {
 async function prepared(b: Broker) {
   const end = performance.now() + 5000;
   return LifecycleJournal.prepareServingBootstrap(b.lifecycleServingCapability("prepare", end), end);
+}
+// Real-time insulation for operations whose subject is NOT the phase budget: the clock
+// stays strictly before the ORIGINAL deadline, which every source guard, proof and
+// capability still receives. Budget refusals keep their own SIMULATED-boundary tests.
+async function beforeDeadline<T>(end: number, action: () => Promise<T>): Promise<T> {
+  const realNow = performance.now.bind(performance);
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => Math.min(realNow(), end - 1));
+  try { return await action(); } finally { clock.mockRestore(); }
+}
+// Failure diagnostic only: names the source-associated write outcome (stage/cause).
+function withWriteOutcome(error: unknown): unknown {
+  const outcome = observeLifecycleWriteOutcome(error);
+  if (outcome && error instanceof Error) error.message += ` Write outcome: ${JSON.stringify(outcome)}`;
+  return error;
 }
 const directory = () => join(home, ".core-lifecycle");
 const file = () => join(directory(), "receipts.sqlite");
@@ -349,8 +363,11 @@ describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Bound
     const input = { restartId: "00000000-0000-4000-8000-000000000004", operation: "restart" as const,
       oldInstance: { nonce: actual.ownerInstance, pid: process.pid, creationIdentity: creationIdentity! },
       target: { immutableRuntimePath: join(home, "owned-fixture-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } };
+    // Setup admission, not a budget subject: it keeps its original 1 s deadline,
+    // insulated from real fsync/scheduler stalls of the loaded runner.
     const admittedEnd = performance.now() + 1000;
-    const accepted = await j.admitServing(b.lifecycleServingCapability("admission", admittedEnd), input, admittedEnd);
+    const accepted = await beforeDeadline(admittedEnd, () => j.admitServing(b.lifecycleServingCapability("admission", admittedEnd), input, admittedEnd))
+      .catch(error => { throw withWriteOutcome(error); });
     const bytes = [readFileSync(file()), readFileSync(file() + "-journal")];
     let initializations = 0, victim: DatabaseSync | undefined;
     const exec = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
@@ -397,8 +414,11 @@ describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Bound
     const input = { restartId: "00000000-0000-4000-8000-000000000004", operation: "restart" as const,
       oldInstance: { nonce: actual.ownerInstance, pid: process.pid, creationIdentity: creationIdentity! },
       target: { immutableRuntimePath: join(home, "owned-fixture-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } };
+    // Setup admission, not a budget subject: it keeps its original 1 s deadline,
+    // insulated from real fsync/scheduler stalls of the loaded runner.
     const admittedEnd = performance.now() + 1000;
-    const accepted = await j.admitServing(b.lifecycleServingCapability("admission", admittedEnd), input, admittedEnd);
+    const accepted = await beforeDeadline(admittedEnd, () => j.admitServing(b.lifecycleServingCapability("admission", admittedEnd), input, admittedEnd))
+      .catch(error => { throw withWriteOutcome(error); });
     const bytes = [readFileSync(file()), readFileSync(file() + "-journal")], prepare = DatabaseSync.prototype.prepare;
     let attempted = false, denied: unknown;
     const exec = vi.spyOn(DatabaseSync.prototype, "exec");
@@ -433,7 +453,9 @@ describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Bound
       oldInstance: { nonce: actual.ownerInstance, pid: process.pid, creationIdentity: creationIdentity! },
       target: { immutableRuntimePath: join(home, "owned-fixture-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } };
     const admittedEnd = performance.now() + 1000, cap = b.lifecycleServingCapability("admission", admittedEnd);
-    const accepted = await journal.admitServing(cap, input, admittedEnd); expect(accepted.revision).toBe(1);
+    // Setup admission, not a budget subject (see beforeDeadline).
+    const accepted = await beforeDeadline(admittedEnd, () => journal!.admitServing(cap, input, admittedEnd)).catch(error => { throw withWriteOutcome(error); });
+    expect(accepted.revision).toBe(1);
     const exec = vi.spyOn(DatabaseSync.prototype, "exec");
     expect(() => journal!.selected()).toThrow("lineage_unknown"); expect(() => journal!.admit(input, performance.now() + 1000)).toThrow("lineage_unknown");
     const badEnd = performance.now() + 1000;
@@ -452,8 +474,11 @@ describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Bound
     const input = { restartId: "00000000-0000-4000-8000-000000000003", operation: "restart" as const,
       oldInstance: { nonce: actual.ownerInstance, pid: process.pid, creationIdentity: creationIdentity! },
       target: { immutableRuntimePath: join(home, "owned-fixture-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } };
+    // Setup admission, not a budget subject: it keeps its original 1 s deadline,
+    // insulated from real fsync/scheduler stalls of the loaded runner.
     const admittedEnd = performance.now() + 1000;
-    const accepted = await journal.admitServing(b.lifecycleServingCapability("admission", admittedEnd), input, admittedEnd);
+    const accepted = await beforeDeadline(admittedEnd, () => journal!.admitServing(b.lifecycleServingCapability("admission", admittedEnd), input, admittedEnd))
+      .catch(error => { throw withWriteOutcome(error); });
     const readEnd = performance.now() + 5000, reader = await journal.preparedReaderServing(b.lifecycleServingCapability("prepare", readEnd), input.restartId, readEnd);
     try {
       expect(reader.read()).toEqual(accepted);
