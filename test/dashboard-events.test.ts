@@ -4,12 +4,14 @@ import { DatabaseSync } from "node:sqlite";
 import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { rawSourceReads } from "../src/core/byte-source.js";
+import { activeByteSources, rawSourceReads } from "../src/core/byte-source.js";
+import { historyReader } from "../src/core/dashboard-history.js";
 import { readDashboard } from "../src/core/dashboard-read.js";
 import { HistoryBackground } from "../src/core/history-background.js";
 import { HISTORY_FEED_SCAN_ROWS, HISTORY_FEED_SCAN_SQL, HistoryChangeFeed, historyChangeOf, streamHistoryChanges, type HistoryChange } from "../src/core/history-feed.js";
 import { ConversationIngestor } from "../src/core/conversations.js";
 import { HistoryIndex } from "../src/core/history.js";
+import { HistorySourceResolver } from "../src/core/history-sources.js";
 import { migrateHistoryStore, openHistoryStore } from "../src/core/history-store.js";
 import { nullLogger } from "../src/core/logger.js";
 import type { PeerInfo } from "../src/core/protocol.js";
@@ -56,7 +58,10 @@ describe("history change feed (AB-383)", () => {
     const worker = new HistoryBackground(env.db, nullLogger);
     cleanup.push(() => worker.close());
     const peer = { id: "p1", name: "claude-x", agent: "claude", cwd, pid: 1, agentPid: null, sessionId: SESSION, startedAt: 0, autoWake: false } as unknown as PeerInfo;
-    const ctx = { home: env.home, log: nullLogger, peers: () => [peer], transcripts: paths };
+    // The dashboard's event feed; as in startUi, dashboard reads borrow its held history.db connection (AB-397).
+    const feed = new HistoryChangeFeed(env.home);
+    cleanup.push(() => feed.close());
+    const ctx = { home: env.home, log: nullLogger, peers: () => [peer], transcripts: paths, history: () => feed.connection };
     const page = async (from: string) => (await readDashboard(ctx, { path: "/api/sessions/claude-x/chat", query: { from } } as never)).body as Record<string, any>;
     const deadline = Date.now() + 60_000;
     while ((await page("tail")).importing !== undefined) {
@@ -65,8 +70,6 @@ describe("history change feed (AB-383)", () => {
     }
 
     // The dashboard's event stream, served exactly as startUi serves GET /api/events.
-    const feed = new HistoryChangeFeed(env.home);
-    cleanup.push(() => feed.close());
     const server = createServer((req, res) => streamHistoryChanges(feed, req, res));
     await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
     cleanup.push(() => new Promise<void>(r => { server.closeAllConnections(); server.close(() => r()); }));
@@ -92,7 +95,7 @@ describe("history change feed (AB-383)", () => {
     };
 
     let cursor = (await page("tail")).next as string;
-    const samples: number[] = [];
+    const samples: number[] = [], pushed: number[] = [];
     for (let n = 0; n < 5; n++) {
       await new Promise(r => setTimeout(r, 300));
       const started = performance.now();
@@ -100,6 +103,7 @@ describe("history change feed (AB-383)", () => {
       let changes: HistoryChange[];
       do changes = await nextEvent();
       while (!changes.some(c => c.kind === "chat" && c.session === SESSION));
+      pushed.push(performance.now() - started);
       const before = rawSourceReads();
       const fresh = await page(cursor);
       const elapsed = performance.now() - started;
@@ -110,8 +114,36 @@ describe("history change feed (AB-383)", () => {
       cursor = fresh.next;
       samples.push(elapsed);
     }
-    console.info(`AB-383 line on disk -> pushed event -> indexed read: ${samples.map(ms => ms.toFixed(0)).join(", ")} ms`);
+    console.info(`AB-383 line on disk -> pushed event -> indexed read: ${samples.map(ms => ms.toFixed(0)).join(", ")} ms (event at ${pushed.map(ms => ms.toFixed(0)).join(", ")} ms)`);
     expect(Math.max(...samples)).toBeLessThan(PUSH_BUDGET_MS);
+  });
+
+  it("lets dashboard reads borrow the feed's held history.db connection without closing it (AB-397)", async () => {
+    vi.stubEnv("AGENT_BRIDGE_BACKUP_INTERVAL_MS", "0");
+    const env = makeEnv(); cleanup.push(() => env.cleanup());
+    const store = new MessageStore(env.db, nullLogger); cleanup.push(() => store.close());
+    const db = openHistoryStore(join(env.home, "history.db")); cleanup.push(() => db.close());
+    await migrateHistoryStore(env.db, db);
+    const feed = new HistoryChangeFeed(env.home); cleanup.push(() => feed.close());
+    expect(feed.connection).toBeNull();
+    const unsubscribe = feed.subscribe(() => {});
+    const held = feed.connection!;
+    expect(held).not.toBeNull();
+    const prepare = vi.spyOn(held, "prepare");
+    const reader = historyReader(env.home, () => feed.connection);
+    expect(reader.read(() => activeByteSources()).value).toBeInstanceOf(HistorySourceResolver);
+    expect(prepare).toHaveBeenCalled();
+    reader.close();
+    prepare.mockRestore();
+    // Still the feed's: open, polled, and released only with the last stream.
+    expect(held.prepare("SELECT 1 AS one").get()).toEqual({ one: 1 });
+    expect(feed.active).toEqual({ polling: true, connected: true });
+    unsubscribe();
+    expect(feed.active).toEqual({ polling: false, connected: false });
+    // Without a held connection (or with a closed one) a read opens and closes its own, as before.
+    const fallback = historyReader(env.home, () => held);
+    expect(fallback.read(() => activeByteSources()).value).toBeInstanceOf(HistorySourceResolver);
+    fallback.close();
   });
 
   it("reads new records by rowid range, never by scanning the whole table", () => {
