@@ -234,7 +234,7 @@ it.runIf(process.platform === "win32").each([1, 16, 64])("bounds an actual host 
   const jobs = states.map((state, i) => ({ id: String(i), name: state.peer, status: "running", host: { pid: state.pid } }) as Job);
   jobs.forEach(job => internals.running.set(job.id, job));
   const reads = vi.fn((job: Job) => states[Number(job.id)]!);
-  manager.runners = { state: reads, alive: (_job, state) => runnerProcessAlive(state!), send: vi.fn(), kill: vi.fn() };
+  manager.runners = { state: reads, alive: (_job, state, deferred) => runnerProcessAlive(state!, false, deferred), send: vi.fn(), kill: vi.fn() };
   try {
     internals.watchHosted();
     await vi.advanceTimersByTimeAsync(2_000);
@@ -282,7 +282,7 @@ it.runIf(process.platform === "win32")("keeps failed and unreadable poll probes 
   live.delete(states[3]!.pid);
   expect(runnerProcessAlive(states[3]!)).toBe(false);
   live.set(states[3]!.pid, "638970000000000000");
-  expect(runnerProcessAlive(states[3]!)).toBe(true); // failed new probe stays unknown
+  expect(runnerProcessAlive(states[3]!, false, true)).toBe(true); // failed new probe stays unknown
   await new Promise<void>(resolve => setImmediate(resolve));
   expect(runnerProcessAlive(states[3]!, true)).toBe(false);
 });
@@ -310,7 +310,7 @@ it.runIf(process.platform === "win32")("keeps host ticks and dead-runner settlem
   const deadJob = addJob(dead);
   states.slice(1).forEach(addJob);
   const reads = vi.fn((job: Job) => states.find(state => state.pid === Number(job.id))!);
-  manager.runners = { state: reads, alive: (_job, state) => runnerProcessAlive(state!), send: vi.fn(), kill: vi.fn() };
+  manager.runners = { state: reads, alive: (_job, state, deferred) => runnerProcessAlive(state!, false, deferred), send: vi.fn(), kill: vi.fn() };
   try {
     internals.watchHosted();
     await vi.advanceTimersByTimeAsync(2_000); // batch starts now and will finish at t=7 s
@@ -352,17 +352,17 @@ it.runIf(process.platform === "win32")("ignores a slow A batch after an ordinary
   vi.useFakeTimers();
   const { states, live, spawns, syncSpawns } = simulatedProcesses(1, 5_000);
   const a = states[0]!;
-  expect(runnerProcessAlive(a)).toBe(true); // starts a batch that captures A immediately
+  expect(runnerProcessAlive(a, false, true)).toBe(true); // starts a batch that captures A immediately
   const b = { ...a, identity: "638970000000000000" };
   live.set(b.pid, b.identity);
   await vi.advanceTimersByTimeAsync(2_000);
-  expect(runnerProcessAlive(b)).toBe(true); // no ESRCH or fresh probe between A and B
+  expect(runnerProcessAlive(b, false, true)).toBe(true); // no ESRCH or fresh probe between A and B
   expect(spawns).toHaveBeenCalledTimes(1); // replacement still shares the pending batch
   await vi.advanceTimersByTimeAsync(3_000);
-  expect(runnerProcessAlive(b)).toBe(true); // A's late result must not mark B dead
+  expect(runnerProcessAlive(b, false, true)).toBe(true); // A's late result must not mark B dead
   expect(spawns).toHaveBeenCalledTimes(2); // query B only after the old batch finishes
   await vi.advanceTimersByTimeAsync(5_000);
-  expect(runnerProcessAlive(b)).toBe(true);
+  expect(runnerProcessAlive(b, false, true)).toBe(true);
   expect(spawns).toHaveBeenCalledTimes(2); // B's applicable evidence remains warm
   expect(syncSpawns).not.toHaveBeenCalled();
 });

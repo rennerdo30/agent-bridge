@@ -133,8 +133,11 @@ export function primeRunnerProcessIdentities(pids: number[]): void {
  * Whether the process a runner state names is still that runner: no PID reuse (AB-236). With a recorded identity
  * it must match; older states without one need a process that started before the runner's last heartbeat.
  * Unknown answers keep the conservative "alive" (takeover); `fresh` probes again (kill decisions).
+ * Without a usable cached identity, callers that decide now (admission, close, takeover, PID-reuse refusal)
+ * probe at once, as before AB-368. Only the periodic host poll passes `deferred`: it then joins the coalesced
+ * asynchronous batch and keeps the last-known (or conservative) answer until that batch lands.
  */
-export function runnerProcessAlive(state: Pick<RunnerState, "pid" | "identity" | "updatedAt">, fresh = false): boolean {
+export function runnerProcessAlive(state: Pick<RunnerState, "pid" | "identity" | "updatedAt">, fresh = false, deferred = false): boolean {
   if (!pidAlive(state.pid)) { probed.delete(state.pid); return false; }
   let entry = probed.get(state.pid);
   if (entry?.runner && entry.runner.identity !== state.identity) {
@@ -144,8 +147,11 @@ export function runnerProcessAlive(state: Pick<RunnerState, "pid" | "identity" |
   }
   if (!entry) probed.set(state.pid, entry = { identity: undefined, at: 0, generation: ++identityGeneration });
   entry.runner = { identity: state.identity };
-  if (fresh) probed.set(state.pid, entry = { ...entry, identity: processIdentity(state.pid), at: Date.now(), generation: ++identityGeneration });
-  else if (Date.now() - entry.at >= IDENTITY_CACHE_MS) {
+  const expired = Date.now() - entry.at >= IDENTITY_CACHE_MS;
+  if (fresh || (expired && !deferred)) {
+    // A new generation also fences any batch still in flight for this PID.
+    probed.set(state.pid, entry = { ...entry, identity: processIdentity(state.pid), at: Date.now(), generation: ++identityGeneration });
+  } else if (expired) {
     primeRunnerProcessIdentities([state.pid]);
     entry = probed.get(state.pid);
   }
@@ -273,7 +279,7 @@ export class JobRunners implements JobHost {
     return readRunnerState(this.home, job.id);
   }
 
-  alive(job: Job, state: RunnerState | null): boolean {
+  alive(job: Job, state: RunnerState | null, deferred = false): boolean {
     if (job.remote) return this.remote.alive(job);
     if (!state) {
       // Not reported in yet: still starting, for a while.
@@ -281,7 +287,7 @@ export class JobRunners implements JobHost {
       // A launch from before the current boot never reported in: its PID now belongs to another process.
       return Boolean(host) && !writtenBeforeBoot(host!.startedAt) && (host!.pid !== null ? pidAlive(host!.pid) : Date.now() - host!.startedAt < START_GRACE_MS);
     }
-    return runnerProcessAlive(state);
+    return runnerProcessAlive(state, false, deferred);
   }
 
   send(job: Job, control: RunnerControl): void {

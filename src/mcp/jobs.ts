@@ -188,8 +188,9 @@ export type RunnerControl = { type: "message"; body: string; cid: string } | { t
 /** The session's side of job runners (implemented in job-host.ts). */
 export interface JobHost {
   state(job: Job): RunnerState | null;
-  /** Whether its runner is still at work (or still starting). */
-  alive(job: Job, state: RunnerState | null): boolean;
+  /** Whether its runner is still at work (or still starting). `deferred` (periodic host poll only) may answer
+   * from last-known identity evidence while a batched refresh runs; every other caller gets a definitive probe. */
+  alive(job: Job, state: RunnerState | null, deferred?: boolean): boolean;
   send(job: Job, control: RunnerControl): void;
   /** Stop the runner and everything it started. */
   kill(job: Job): void;
@@ -1847,7 +1848,8 @@ export class JobManager {
         this.note(job, { sessionId: state.sessionId, workdir: state.workdir, worktree: state.worktree });
       }
     }
-    const alive = runners.alive(job, state);
+    // Only the periodic poll (which primed one batch for all runners) may use deferred identity evidence.
+    const alive = runners.alive(job, state, polledState !== undefined);
     // Delivery precedes the runner's last writes and exit. Never overlap runner generations.
     if (state && state.status !== "running") {
       if (!alive) this.settleHosted(job, state);
