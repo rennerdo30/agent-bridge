@@ -3,6 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as realDelay } from "node:timers/promises";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { APP_VERSION } from "../src/core/constants.js";
 import * as identities from "../src/core/process-identity.js";
@@ -80,13 +81,38 @@ it("keeps the genuine released JSON3 reader as a blocker without changing source
 });
 
 it("keeps peers and ordinary sends responsive while a slow identity query holds no metadata lock", async () => {
-  const seeded = seed(), gate = heldReadiness(), handoff = source.handoffSubagents({ to: target.name }); await gate.started;
-  expect(existsSync(`${seeded.path}.lock`)).toBe(false);
-  const begin = performance.now(); expect((await target.peers()).some(peer => peer.name === source.name)).toBe(true);
-  const delivered = await target.send({ to: source.name, body: "ordinary request during handoff readiness" });
-  expect(performance.now() - begin).toBeLessThan(1_000); expect(delivered.deliveredTo).toContain(source.name);
-  expect(readFileSync(seeded.path, "utf8")).toBe(seeded.bytes);
-  gate.release(); expect((await handoff).jobs).toHaveLength(1);
+  // Establish the ordinary request path before measuring interference from the
+  // held identity query. Cold storage/transport initialization is fixture setup.
+  const send = target.send.bind(target);
+  vi.spyOn(target, "send").mockImplementationOnce(async (...args) => { await realDelay(1_100); return send(...args); });
+  await target.peers();
+  await target.send({ to: source.name, body: "fixture request path ready" });
+  const seeded = seed(), gate = heldReadiness();
+  // Observe rejection immediately: a failed latency assertion must still drain
+  // this request before fixture teardown closes its broker connection.
+  const handoff = source.handoffSubagents({ to: target.name }).then(value => ({ value }), error => ({ error }));
+  await gate.started;
+  let failure: unknown;
+  try {
+    expect(existsSync(`${seeded.path}.lock`)).toBe(false);
+    const begin = performance.now(); expect((await target.peers()).some(peer => peer.name === source.name)).toBe(true);
+    const delivered = await target.send({ to: source.name, body: "ordinary request during handoff readiness" });
+    expect(performance.now() - begin).toBeLessThan(1_000); expect(delivered.deliveredTo).toContain(source.name);
+    expect(readFileSync(seeded.path, "utf8")).toBe(seeded.bytes);
+  } catch (error) { failure = error; }
+  gate.release();
+  // Bound the drain on the real clock so a stuck handoff fails clearly instead of hanging to the test timeout.
+  const deadline = new AbortController();
+  try {
+    const settled = await Promise.race([handoff, realDelay(10_000, undefined, { signal: deadline.signal }).then(
+      () => { throw new Error("handoff did not settle after release"); }, () => new Promise<never>(() => {}))]);
+    expect(settled).toMatchObject({ value: { jobs: [expect.objectContaining({ to: target.name })] } });
+  } catch (error) {
+    if (failure === undefined) throw error;
+    // Keep the first assertion failure as the reported cause; surface this one alongside it.
+    console.error("handoff readiness drain also failed after an earlier assertion failure:", error);
+  } finally { deadline.abort(); }
+  if (failure !== undefined) throw failure;
 });
 
 it.each(["source-session", "target-session", "target-name", "target-cwd"])("refuses changed %s registration before publishing ownership", async change => {

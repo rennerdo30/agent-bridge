@@ -70,6 +70,10 @@ class OutcomeBackground {
   private readonly requests = new Map<number, { resolve(value: Inspection): void; reject(error: Error): void }>();
   private id = 0;
   private bytes = 0;
+  /** Call after stopping request ingress, before retiring its storage homes. */
+  async drain(): Promise<void> {
+    while (this.pending.size) await Promise.all(this.pending.values());
+  }
   private async start(): Promise<Worker> {
     let entry = pathToFileURL(join(bundleDirectory(import.meta.url), "outcome-worker.mjs"));
     if (import.meta.url.endsWith(".ts")) {
@@ -135,3 +139,4 @@ class OutcomeBackground {
 }
 const background = new OutcomeBackground();
 export const cachedOutcomes = (home: string, inputs: OutcomeInput[], log: Logger) => background.read(home, inputs, log);
+export const drainOutcomeInspections = () => background.drain();
