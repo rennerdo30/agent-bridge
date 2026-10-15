@@ -53,7 +53,7 @@ import {
 } from "./chunks/chunk-DXFIXMAQ.mjs";
 import {
   antigravityHookOutput
-} from "./chunks/chunk-2O45N5NM.mjs";
+} from "./chunks/chunk-CGVFICGC.mjs";
 import {
   MAX_STREAM_ENTRIES
 } from "./chunks/chunk-DUHRK7IN.mjs";
@@ -62,23 +62,21 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-WWXUK4CE.mjs";
+} from "./chunks/chunk-YYUT2KQU.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-E7NOOT6R.mjs";
+} from "./chunks/chunk-NSJ32E7F.mjs";
 import {
   readWorktreeState
 } from "./chunks/chunk-NOVJUMH7.mjs";
-import "./chunks/chunk-EKBOJH5M.mjs";
+import "./chunks/chunk-7CGFMTXX.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
-  codexAppServerCall,
   describeModels,
   modelParameterDescription,
-  readModels,
-  readUsage
-} from "./chunks/chunk-55MC2ALJ.mjs";
+  readModels
+} from "./chunks/chunk-BMWYGBZH.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
@@ -90,7 +88,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-JZ3ZIFQJ.mjs";
+} from "./chunks/chunk-SEWP5UTV.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -105,7 +103,7 @@ import {
 import {
   REMOTE_JOB_POLL_MS,
   remoteSpawnArgsSchema
-} from "./chunks/chunk-QCVIZHGY.mjs";
+} from "./chunks/chunk-S4N73R24.mjs";
 import {
   formatHealth,
   probeBrokerHealth
@@ -124,8 +122,8 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-DWMSWMFQ.mjs";
-import "./chunks/chunk-K5NXQ42K.mjs";
+} from "./chunks/chunk-XSPPOSNK.mjs";
+import "./chunks/chunk-7RNSAQYK.mjs";
 import {
   ACCESS_LEVELS,
   DEFAULT_FOLLOW_UP,
@@ -141,6 +139,9 @@ import {
   answerPendingApproval,
   appendContextEvent,
   bundledCli,
+  checkUsagePreflight,
+  codexAppServerCall,
+  confirmUsageAdmission,
   currentDelegateDepth,
   failureCause,
   formatParentRoute,
@@ -150,10 +151,13 @@ import {
   nativeSubagentsSchema,
   parentFromEnv,
   parseJobSettings,
+  readUsage,
   resolveBinary,
   runProcess,
+  usageAdmissionText,
+  usageProbeFor,
   verifiedGoneJobOwners
-} from "./chunks/chunk-SYJMCFGQ.mjs";
+} from "./chunks/chunk-QILJHS5T.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
@@ -2589,7 +2593,7 @@ async function runRemoteAsk(node, target, args, job, signal, onProgress) {
   const combined = AbortSignal.any([signal, job.controller.signal]);
   combined.addEventListener("abort", cancel, { once: true });
   try {
-    let snapshot = await node.remoteJob(host, { op: "spawn", job: job.id, target, args: remoteSpawnArgsSchema.parse(raw) });
+    let snapshot = await node.remoteJob(host, { op: "spawn", job: job.id, target, args: remoteSpawnArgsSchema.parse(raw), usageTurn: `${job.id}:${job.startedAt}`, usageControls: job.usagePendingControls });
     if (combined.aborted) {
       cancel();
       combined.throwIfAborted();
@@ -2605,6 +2609,11 @@ async function runRemoteAsk(node, target, args, job, signal, onProgress) {
     for (; ; ) {
       combined.throwIfAborted();
       const state = snapshot.state;
+      if (state?.providerUsage && snapshot.usageTurn === `${job.id}:${job.startedAt}`) {
+        job.providerUsage = { ...state.providerUsage, runId: job.usageRunId, turnStartedAt: job.startedAt };
+        confirmUsageAdmission(job, state.providerUsage.admittedControls ?? []);
+      }
+      if (state?.usageSubmission && snapshot.usageTurn === `${job.id}:${job.startedAt}`) confirmUsageAdmission(job, state.usageSubmission.admitted);
       if (state?.progress) onProgress(state.progress);
       if (state) {
         job.sessionId = state.sessionId ?? job.sessionId;
@@ -3299,7 +3308,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-EXAY56ET.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-DXMV75MN.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3311,9 +3320,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-ZVFQWBP7.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-SY7ZAP4F.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-ZVFQWBP7.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-SY7ZAP4F.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3534,7 +3543,7 @@ ${JSON.stringify(result)}`);
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
       const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-5GVLHDZ2.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-I7TGZBZK.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-BS2Z5HPN.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
@@ -4058,6 +4067,11 @@ ${jobLines.join("\n")}`);
     jobs: ctx.jobs
   };
   const keep = (a) => Object.fromEntries(KEPT_ARGS.filter((k) => a[k] !== void 0).map((k) => [k, a[k]]));
+  const seedUsage = (job, usage) => {
+    if (usage && job.providerUsage?.turnStartedAt !== job.startedAt) {
+      job.providerUsage = { turnStartedAt: job.startedAt, decision: usage, warningReported: usage.type === "warn" };
+    }
+  };
   const resumers = {};
   for (const target of CODING_AGENTS) {
     const profile = DELEGATION_TARGETS[target];
@@ -4118,7 +4132,13 @@ ${jobLines.join("\n")}`);
           if (!ctx.jobs) throw new BridgeError("bad_request", "Remote asks require a supervisor session.");
         }
         if (ctx.jobs && !ctx.jobs.canStart()) return text(t("jobs.limit", { max: ctx.jobs.limit }), true);
+        const usage = a.host || a.worktree ? void 0 : await checkUsagePreflight(usageProbeFor(target, cfg, { home: ctx.home, cwd: a.cwd || ctx.cwd(), log }, a.model));
+        if (usage?.type === "block") return text(usageAdmissionText(usage), true);
         const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a), keep(a));
+        if (tracked) {
+          seedUsage(tracked.job, usage);
+          ctx.jobs?.persist();
+        }
         if (a.host && tracked) {
           tracked.job.remote = { host: a.host, name: `${target}-job-${tracked.job.id}` };
           ctx.jobs.persist();
@@ -4140,8 +4160,11 @@ ${jobLines.join("\n")}`);
         const confirmation = () => text(`Job ${tracked.job.name} is supervised by ${tracked.job.foregroundRecipient}; its report was routed there.`);
         let res;
         try {
-          res = a.host && tracked ? await runRemoteAsk(requireNode(), target, a, tracked.job, extra.signal, onProgress) : await run({ ...a, _job: tracked?.job.name }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false, tracked?.job);
+          res = a.host && tracked ? await runRemoteAsk(requireNode(), target, a, tracked.job, extra.signal, onProgress) : await run({ ...a, _job: tracked?.job.name, _usageWarningReported: usage?.type === "warn" }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false, tracked?.job);
         } catch (err) {
+          if (usage?.type === "warn" && err instanceof Error) err.message = `${usageAdmissionText(usage)}
+
+${err.message}`;
           await contact();
           tracked?.end({ error: err });
           log.warn("ask failed", { job: tracked?.job.name, err: err.message });
@@ -4152,6 +4175,9 @@ ${target} session_id: ${tracked.job.sessionId ?? "-"}
 ` : "";
           return text(`${identity}${describeError(err)}`, true);
         }
+        if (usage?.type === "warn") res = { ...res, text: `${usageAdmissionText(usage)}
+
+${res.text}` };
         await contact();
         tracked?.end({ result: res });
         if (redirected()) return confirmation();
@@ -4182,13 +4208,20 @@ ${res.text || t("delegate.empty")}`, res.isError);
         if (a.host && !ctx.runners) throw new BridgeError("bad_request", "Remote jobs require the bundled runner. Update and reload this session.");
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
-        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job2) => ({ ...a, _job: job2.name }), a), resumeFor(a), keep(a));
+        const usage = a.host || a.worktree ? void 0 : await checkUsagePreflight(usageProbeFor(target, cfg, { home: ctx.home, cwd: a.cwd || ctx.cwd(), log }, a.model));
+        if (usage?.type === "block") return text(usageAdmissionText(usage), true);
+        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job2) => {
+          seedUsage(job2, usage);
+          return { ...a, _job: job2.name };
+        }, a), resumeFor(a), keep(a));
+        seedUsage(job, usage);
+        jobs.persist();
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
         const exact = a.sandbox !== void 0 || a.permission_mode !== void 0 || a.auto_approve !== void 0 || a.bypass_permissions !== void 0;
         const note = exact ? "" : `
 ${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
-        return text(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${derivedTitle ? `
+        return text(`${usage?.type === "warn" ? usageAdmissionText(usage) + "\n\n" : ""}${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${derivedTitle ? `
 Title derived from prompt: "${a.title}".` : ""}`);
       })
     );
