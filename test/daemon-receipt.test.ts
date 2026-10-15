@@ -135,6 +135,22 @@ vi.mock("../src/core/lifecycle-windows.js", async importOriginal => {
     catch (error) { if (trace && observed) completeCall(trace, observed, started, "threw"); throw error; }
     return invocation.then(value => { completed("resolved"); return value; },
       error => { completed("rejected"); verificationFixture.rejected?.(error); throw error; });
+  }, cachedWindowsLifecyclePathProof: (...args: Parameters<typeof native.cachedWindowsLifecyclePathProof>) => {
+    // Same observation hooks for the cached (no-helper) phase check. The proof or
+    // refusal is still produced ONLY by the ORIGINAL source check with its arguments.
+    verificationFixture.before?.(args[0], args[2], args[3]);
+    const diagnostic = args[2] === "admission" && args[3] === "established" && verificationFixture.diagnostic?.result === "not_entered"
+      ? verificationFixture.diagnostic : undefined;
+    const started = performance.now(), trace = initialAdmissionTrace;
+    const observed = trace && args[0] === journalHome && args[2] === "admission" && args[3] === "established" && args[4] === trace.end
+      ? observeCall(trace, "verifier") : undefined;
+    if (diagnostic) { diagnostic.entry = timingBucket(args[4] - started); diagnostic.result = "rejected"; }
+    const completed = (result: "resolved" | "rejected") => {
+      if (trace && observed) completeCall(trace, observed, started, result);
+      if (diagnostic) { const now = performance.now(); diagnostic.resolution = timingBucket(args[4] - now); diagnostic.wall = timingBucket(now - started); diagnostic.result = result; }
+    };
+    try { const proof = native.cachedWindowsLifecyclePathProof(...args); completed("resolved"); return proof; }
+    catch (error) { completed("rejected"); verificationFixture.rejected?.(error); throw error; }
   } };
 });
 

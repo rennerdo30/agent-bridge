@@ -678,9 +678,24 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return this.withClient(c => c.request("sendState", { id }));
   }
 
-  private async trackedSend(client: BridgeClient, args: RequestMap["trackedSend"][0], explicitId: boolean): Promise<SendResult> {
+  private async trackedSend(client: BridgeClient, args: RequestMap["trackedSend"][0], explicitId: boolean, reconnected = false): Promise<SendResult> {
     try { return await client.request("trackedSend", args); }
     catch (error) {
+      // The actual connection closed under this request (e.g. the broker daemon died
+      // before the local pipe reported it). The durable message id is deduplicated by
+      // the shared store, so ONE retry with the SAME id on the re-elected connection
+      // stores the message at most once and recovers an already stored copy.
+      if (!reconnected && !this.stopping && errCode(error) === "BROKER_CONNECTION_CLOSED" && client.isClosed) {
+        let next: BridgeClient;
+        try {
+          await this.ensureConnected();
+          if (!this.client || this.client === client || this.client.isClosed) throw brokerConnectionClosedError();
+          next = this.client;
+        } catch (reconnectError) {
+          throw new BridgeError("internal", `Storage cannot be confirmed for message ${args.messageId}; storage state is unknown: ${(error as Error).message}; reconnect failed: ${(reconnectError as Error).message}. Query send_status(message_id="${args.messageId}") or retry send with the same message_id.`, { messageId: args.messageId, state: "unknown" });
+        }
+        return this.trackedSend(next, args, explicitId, true);
+      }
       if (isUnsupportedOperation(error, "trackedSend")) {
         if (explicitId || args.ifNoNewerThan) throw error;
         // An explicit refusal proves nothing was applied. Legacy sends retain their own dedupe key.

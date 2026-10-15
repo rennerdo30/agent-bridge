@@ -6,7 +6,7 @@ import { z } from "zod";
 import { readProcessIdentity } from "./process-identity.js";
 import { assertLifecycleServingCapability, type LifecycleServingCapability, type LifecycleServingPhase } from "./broker.js";
 import { createWindowsLifecycleObjects, assertWindowsLifecycleCreation, readOwnWindowsLifecycleIdentity, WindowsLifecyclePathUnavailable,
-  verifyWindowsLifecyclePaths, assertWindowsLifecyclePathProof } from "./lifecycle-windows.js";
+  verifyWindowsLifecyclePaths, assertWindowsLifecyclePathProof, cachedWindowsLifecyclePathProof, hasVerifiedWindowsLifecyclePaths } from "./lifecycle-windows.js";
 import { lifecycleInstanceSchema as instanceSchema, lifecycleActorSchema, LIFECYCLE_STATES, LIFECYCLE_NEXT,
   LIFECYCLE_PROOF_REQUIRED, sameLifecycleInstance } from "./daemon-lifecycle-role.js";
 
@@ -332,7 +332,12 @@ export class LifecycleJournal {
         try { if (transactionState(this.writer)) fail("writer_unknown"); }
         catch { this.quarantined = true; fail("writer_unknown"); }
       }
-      const proof = await verifyWindowsLifecyclePaths(home, this.owner.nonce, phase, "established", deadline, capability);
+      // The slow helper-based ACL observation runs at setup (bootstrap) or, when no
+      // verdict is recorded, here. A recorded verdict is reused only after its cheap
+      // identity recheck; a changed identity refuses this phase (fail closed).
+      const proof = hasVerifiedWindowsLifecyclePaths(home, this.owner.nonce, "established")
+        ? cachedWindowsLifecyclePathProof(home, this.owner.nonce, phase, "established", deadline, capability)
+        : await verifyWindowsLifecyclePaths(home, this.owner.nonce, phase, "established", deadline, capability);
       current();
       const guard = () => { current(); assertWindowsLifecyclePathProof(proof, home, this.owner.nonce, phase, "established"); };
       guard(); this.servingPhase = { phase, deadline, guard };
