@@ -5,14 +5,14 @@ import {
 import {
   HISTORY_TICK_MS,
   HistoryIndex
-} from "./chunks/chunk-DZ224LAW.mjs";
-import "./chunks/chunk-66VUFIBS.mjs";
+} from "./chunks/chunk-EH2D4DSB.mjs";
+import "./chunks/chunk-PMHRBYVO.mjs";
 import {
   ConversationIngestor,
   ownsProjectMirrors,
   projectDatabasePath
-} from "./chunks/chunk-UOSZCOMB.mjs";
-import "./chunks/chunk-4MGDH6P4.mjs";
+} from "./chunks/chunk-BZKC74JP.mjs";
+import "./chunks/chunk-XKD7DY5S.mjs";
 import {
   HISTORY_IO_BYTES_PER_SECOND,
   copyLegacyConversationTail,
@@ -21,21 +21,21 @@ import {
   migrateHistoryStore,
   openHistoryStore,
   readHistoryMigrationProgress
-} from "./chunks/chunk-32VTIIWS.mjs";
-import "./chunks/chunk-V4VFK2LZ.mjs";
-import "./chunks/chunk-PZ6QYUCT.mjs";
+} from "./chunks/chunk-VG2BPYQG.mjs";
+import "./chunks/chunk-RVDZO344.mjs";
+import "./chunks/chunk-BDVUYUUR.mjs";
 import {
   reconcileAskCompletions
-} from "./chunks/chunk-4H5DTXKU.mjs";
+} from "./chunks/chunk-CAIIZP3X.mjs";
 import {
   loadConfig
-} from "./chunks/chunk-2NHSQ4EH.mjs";
-import "./chunks/chunk-3X2VUWP6.mjs";
-import "./chunks/chunk-RE3I7AXX.mjs";
+} from "./chunks/chunk-S72NJQVR.mjs";
+import "./chunks/chunk-KUUDTYJ7.mjs";
+import "./chunks/chunk-5H3R35DU.mjs";
 import "./chunks/chunk-IYJ5P7ML.mjs";
 import {
   readHistoryJson
-} from "./chunks/chunk-RZEJWGWA.mjs";
+} from "./chunks/chunk-54NYPMRK.mjs";
 import "./chunks/chunk-HYOPFLLN.mjs";
 import {
   checkpointOwnedMetadataConnections,
@@ -44,11 +44,11 @@ import {
   isRecord,
   nullLogger,
   writeJsonStore
-} from "./chunks/chunk-BQPZDGG6.mjs";
-import "./chunks/chunk-OIZ5WNNF.mjs";
+} from "./chunks/chunk-LNAYXYZY.mjs";
+import "./chunks/chunk-SAM43D5P.mjs";
 import {
   CONFIG_FILE_NAME
-} from "./chunks/chunk-HIVVJXLN.mjs";
+} from "./chunks/chunk-QLF3MF4O.mjs";
 import {
   transcriptPaths
 } from "./chunks/chunk-OX5J3NNH.mjs";

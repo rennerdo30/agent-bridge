@@ -30975,6 +30975,7 @@ var ENV = {
 };
 var DEFAULT_HOME = join(homedir(), `.${APP_NAME}`);
 var LOG_FILE_NAME = `${APP_NAME}.log`;
+var DAEMON_IDLE_EXIT_MS = 10 * 6e4;
 var MAX_FRAME_BYTES = 4 * 1024 * 1024;
 var MESSAGE_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 var PURGE_INTERVAL_MS = 60 * 60 * 1e3;
