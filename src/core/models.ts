@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BridgeConfig } from "./config.js";
+import { museMspQuery } from "./muse-msp.js";
 import { defaultEffort } from "./effort.js";
 import type { Logger } from "./logger.js";
 import { listOpencodeModels } from "./opencode-models.js";
@@ -49,7 +50,8 @@ export function modelParameterDescription(agent: CodingAgent, cfg: BridgeConfig,
     `Any model id or alias ${agent} accepts, passed through verbatim (e.g. ${example}). ` +
     `Default: ${modelDefault(agent, cfg) ?? cached?.defaultModel ?? `${agent}'s own default`}. ` +
     (models.length ? `Available${models.length > SHORT_MODEL_LIST ? " (short list)" : ""}: ${models.slice(0, SHORT_MODEL_LIST).join(", ")}. ` : "") +
-    `Use list_models(agent="${agent}") for the full list and effort levels.`
+    (agent === "opencode" ? `Use list_models(agent="opencode") for catalog hints; explicit provider/model IDs are resolved by opencode, even when the catalog is empty.` :
+      `Use list_models(agent="${agent}") for the full list and effort levels.`)
   );
 }
 
@@ -66,11 +68,11 @@ export async function readModels(agent: CodingAgent, cfg: BridgeConfig, cwd: str
         ? /Aliases for the latest of each family: ([^;]+)/.exec(lines[0] ?? "")?.[1]?.split(", ") ?? []
         : lines.flatMap((l) => {
             const id = /^- (\S+)/.exec(l)?.[1];
-            return id ? [agent === "codex" || agent === "antigravity" ? id.replace(/:$/, "") : id] : [];
+            return id ? [agent === "codex" || agent === "antigravity" || agent === "muse" ? id.replace(/:$/, "") : id] : [];
           });
       const defaultModel = lines.flatMap((l) => /^- (\S+) \(default\)/.exec(l)?.[1] ?? [])[0] ?? null;
       const report: ModelReport = { agent, defaultModel, models, lines };
-      if (!lines[0]?.startsWith("Could not list")) {
+      if (!lines[0]?.startsWith("Could not list") && (!["opencode", "muse"].includes(agent) || models.length > 0)) {
         try {
           mkdirSync(home, { recursive: true });
           writeFileSync(modelCachePath(home, agent), JSON.stringify({ at: Date.now(), bin: modelBin(agent, cfg), effort: cfg.effort[agent] ?? null, report }), { mode: 0o600 });
@@ -110,13 +112,23 @@ export async function describeModels(agent: CodingAgent, cfg: BridgeConfig, cwd:
         ...tail,
       ];
     }
+    if (agent === "muse") {
+      const catalog = await museMspQuery({ bin: cfg.museBin, cwd, log, method: "model/list" });
+      const rows: any[] = Array.isArray(catalog.models) ? catalog.models.filter((m: any) => typeof m?.modelId === "string" && m.modelId && match(m.modelId, m.displayLabel, m.description)) : [];
+      const lines = rows.slice(0, MAX_LISTED).map(m => `- ${m.modelId}${m.isDefault ? " (default)" : ""}: ${m.displayLabel ?? m.modelId}${m.description ? `, ${m.description}` : ""}${Array.isArray(m.variants) ? `. Efforts: ${m.variants.join(", ")}${m.defaultReasoningEffort ? ` (default ${m.defaultReasoningEffort})` : ""}` : ". Efforts: unknown"}`);
+      return [`Muse models (${rows.length}; source ${typeof catalog.source === "string" ? catalog.source : "unknown"}):`, ...lines, ...(rows.length ? [] : ["Catalog is empty or unavailable; explicit model IDs are still passed to Muse for resolution."]), ...tail];
+    }
     if (agent === "antigravity") {
       const rows = (await captureOutput(cfg.antigravityBin, ["models"], cwd, log)).split(/\r?\n/).map((line) => /^([A-Za-z0-9][\w.-]*)\t+(.+)$/.exec(line.trim())).filter((row) => row && match(row[1], row[2]));
       return [`Antigravity CLI models (${rows.length}):`, ...rows.slice(0, MAX_LISTED).map((row) => `- ${row![1]}: ${row![2]}`), "Efforts: low, medium, high, xhigh, max (model-dependent).", ...tail];
     }
-    const models = (await listOpencodeModels(cfg.opencodeBin, cwd, log)).filter((m) => match(m));
+    const catalog = await listOpencodeModels(cfg.opencodeBin, cwd, log);
+    const models = catalog.filter((m) => match(m));
     return [
-      `opencode models (${models.length}${q ? ` matching "${query}"` : ""}), as provider/model:`,
+      catalog.length ? `opencode catalog (${models.length}${q ? ` matching "${query}"` : ""}), as provider/model (not exhaustive):` :
+        "opencode returned an empty catalog; available models are unknown, not necessarily unavailable.",
+      "An explicit provider/model ID may still run; opencode resolves it at startup. Catalog absence does not reject an explicit ID.",
+      ...(cfg.opencodeModel ? [`Configured model: ${cfg.opencodeModel} (configuration, not availability verification).`] : []),
       ...models.slice(0, MAX_LISTED).map((m) => `- ${m}`),
       ...(models.length > MAX_LISTED ? [`… ${models.length - MAX_LISTED} more; narrow it down with query.`] : []),
       `Effort is the model's "variant" (provider-specific, e.g. low, high, max).`,

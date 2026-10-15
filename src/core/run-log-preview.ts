@@ -8,10 +8,10 @@ const WINDOW_BYTES = 32 * 1024;
 export function readRunLogPreview(file: string, expectedSignature?: string): string {
   const fd = openSync(file, "r");
   try {
-    const witnessed = fstatSync(fd);
+    const witnessed = fstatSync(fd, { bigint: true });
     if (!witnessed.isFile() || expectedSignature !== undefined && fileSignature(witnessed) !== expectedSignature)
       throw new Error("run log changed before its preview read");
-    const size = witnessed.size;
+    const size = Number(witnessed.size);
     const read = (position: number, length: number) => {
       const buffer = Buffer.alloc(length);
       const count = readSync(fd, buffer, 0, length, position);

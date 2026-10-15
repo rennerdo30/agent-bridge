@@ -89,7 +89,7 @@ it("ingests retained job snapshots several per batch and rereads the job stores 
 it("leaves an idle project mirror closed until its project gets a newer record", () => {
   const store = new MessageStore(env.db, nullLogger), db = store.history.database;
   const project = conversationProject(env.home), mirror = projectDatabasePath(project, env.home);
-  const signature = () => [mirror, `${mirror}-wal`].map((p) => { try { return fileSignature(statSync(p)); } catch { return "missing"; } }).join("|");
+  const signature = () => [mirror, `${mirror}-wal`].map((p) => { try { return fileSignature(statSync(p, { bigint: true })); } catch { return "missing"; } }).join("|");
   let now = 1_000_000;
   vi.spyOn(Date, "now").mockImplementation(() => now);
   try {

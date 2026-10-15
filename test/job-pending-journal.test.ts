@@ -52,6 +52,24 @@ it.each(["done", "failed", "cancelled"])("keeps durable %s state ahead of a stal
   expect(mergePendingJob(current, stale)).toBeNull();
 });
 
+it("recovers a newer admitted turn's removed permission profile without dropping unknown args", () => {
+  const current = snapshot({ agent: "muse", startedAt: 100, args: { permission_profile: "old-profile", futureSetting: { keep: true } } });
+  const next = { ...current, startedAt: 101, args: { access: "edit" } };
+  retainPendingJob(path, { name: "owner", session: "owner-session", nonce: randomUUID() }, next, current);
+  writeFileSync(path, JSON.stringify({ version: 4, jobs: [current] }));
+  manager().restore(() => undefined);
+  expect(readStore(path)[0]?.args).toEqual({ access: "edit", futureSetting: { keep: true } });
+});
+
+it("keeps newer same-turn access settings ahead of a stale exact-profile receipt", () => {
+  const base = snapshot({ agent: "muse", args: { permission_profile: "old-profile", futureSetting: { keep: true } } });
+  const current = { ...base, args: { access: "read", futureSetting: { keep: true } } };
+  retainPendingJob(path, { name: "owner", session: "owner-session", nonce: randomUUID() }, base, base);
+  writeFileSync(path, JSON.stringify({ version: 4, jobs: [current] }));
+  manager().restore(() => undefined);
+  expect(readStore(path)[0]?.args).toEqual(current.args);
+});
+
 it.each(["done", "cancelled"])("preserves newer same-turn durable queues, forwarded facts, %s status and exact envelopes", status => {
   const base = snapshot({ status: "running", finishedAt: undefined, queuedMessages: [], forwarded: [], deliveryHistory: [] });
   const current = { ...base, status, finishedAt: Date.now(), queuedMessages: ["new accepted follow-up"],
@@ -66,6 +84,34 @@ it.each(["done", "cancelled"])("preserves newer same-turn durable queues, forwar
   const archives = join(pendingJobRoot(path), "archive"), verification = JSON.parse(readFileSync(join(archives, readdirSync(archives)[0]!, "verification.json"), "utf8"));
   expect(verification).toMatchObject({ kind: "superseded", retainedOnlyDataExecuted: false });
   expect(verification.retainedOnlyFields).toEqual(expect.arrayContaining(["status", "queuedMessages", "forwarded"]));
+});
+
+it("recovers an initial executor and its final envelope from the same writer before registry admission", () => {
+  const writer = { name: "owner", session: "owner-session", nonce: randomUUID() };
+  const now = Date.now();
+  const initial = snapshot({ status: "running", startedAt: now - 2, finishedAt: undefined });
+  const admitted = { ...initial, startedAt: now - 1, executionOwner: "owner", executionPid: process.pid };
+  const message = { id: "initial-final", body: "exact cancelled startup envelope" };
+  const final = { ...admitted, status: "cancelled", finishedAt: now, deliveryHistory: [message] };
+  retainPendingJob(path, writer, initial);
+  retainPendingJob(path, writer, admitted, initial);
+  const receipt = retainPendingJob(path, writer, final, admitted), bytes = readFileSync(receipt.path, "utf8");
+  manager().restore(() => undefined);
+  expect(readStore(path)[0]).toMatchObject(final);
+  expect(readdirSync(join(pendingJobRoot(path), "archive")).some(dir =>
+    readFileSync(join(pendingJobRoot(path), "archive", dir, "receipt.json"), "utf8") === bytes)).toBe(true);
+});
+
+it("does not take initial executor authority from a different receipt writer", () => {
+  const initial = snapshot({ status: "running", startedAt: 100, finishedAt: undefined });
+  retainPendingJob(path, { name: "owner", session: "owner-session", nonce: randomUUID() }, initial);
+  const foreign = retainPendingJob(path, { name: "owner", session: "owner-session", nonce: randomUUID() },
+    { ...initial, startedAt: 101, executionOwner: "owner", executionPid: process.pid, status: "cancelled",
+      deliveryHistory: [{ id: "foreign-final", body: "must not become delivery authority" }] }, initial);
+  manager().restore(() => undefined);
+  expect(readStore(path)[0]).toMatchObject({ startedAt: 100, deliveryHistory: [] });
+  expect(readStore(path)[0]!.executionOwner).toBeUndefined();
+  expect(existsSync(foreign.path)).toBe(true);
 });
 
 it("uses writer sequence to recover the latest final envelope even when all writes share a timestamp", () => {

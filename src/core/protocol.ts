@@ -18,11 +18,11 @@ import type { HistorySearch, HistoryResult } from "./history.js";
 import type { TransferProgress, TransferStarted } from "../network/transfers.js";
 import type { DecideArgs, DecisionsArgs, OwnerDecision } from "./decisions.js";
 
-export type AgentKind = "claude" | "codex" | "opencode" | "antigravity" | "other";
-export const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex", "opencode", "antigravity", "other"];
+export type AgentKind = "claude" | "codex" | "opencode" | "antigravity" | "muse" | "other";
+export const AGENT_KINDS: readonly AgentKind[] = ["claude", "codex", "opencode", "antigravity", "muse", "other"];
 /** Agents that agent-bridge can run headlessly (delegation / subagents). */
 export type CodingAgent = Exclude<AgentKind, "other">;
-export const CODING_AGENTS: readonly CodingAgent[] = ["claude", "codex", "opencode", "antigravity"];
+export const CODING_AGENTS: readonly CodingAgent[] = ["claude", "codex", "opencode", "antigravity", "muse"];
 
 /** Broadcast target. */
 export const BROADCAST = "*";
@@ -117,6 +117,8 @@ export interface MessageAddress {
 }
 
 export interface BridgeMessage {
+  /** Local broker's live authorization; omitted from retained mail so replay fails closed. */
+  jobControlAuthorized?: boolean;
   id: string;
   from: MessageAddress;
   /** Target as given by the sender: a peer name, peer id, agent kind or "*". */
@@ -165,6 +167,32 @@ export interface SendArgs {
    */
   dedupeKey?: string;
 }
+/** Optional wire support only; no store-format or provider capability upgrade. */
+export type SendMode = "auto" | "queue" | "steer" | "restart";
+export interface ModeSendArgs extends SendArgs {
+  mode: SendMode;
+  /** Existing scoped Claude sender selector, authorized by the current parent. */
+  nativeChild?: string;
+}
+export interface SendModeReport {
+  requested: SendMode;
+  effective: "mailbox" | "nativequeue" | "legacyunconfirmed" | "refused";
+  stage: "requested" | "stored" | "unknown";
+  protocolSupport: "mode-v1" | "legacy" | "unknown";
+  sharedIdempotentDelivery: false;
+  reason?: string;
+  capabilities: {
+    route: "mailbox" | "nativequeue" | "legacyunconfirmed" | "unsupported";
+    receiverRole: "session" | "delegated_job" | "native_child" | "unknown";
+    ownedSession: boolean;
+    generationKnown: boolean;
+    activeSteering: false;
+    interruptRestart: false;
+    queue: boolean;
+    idleWake: false | "conditional";
+  };
+}
+export interface ModeSendResult { send: SendResult; mode: SendModeReport }
 export interface MessageReceipt {
   recipient: string;
   readAt: number | null;
@@ -224,6 +252,17 @@ export interface AuthArgs {
 }
 
 export interface RequestMap {
+  /** Old peers must explicitly refuse this opcode, never ignore a mode. */
+  modeSend: [ModeSendArgs, ModeSendResult];
+  /** Virtual addresses are controlled only by the registered parent connection. */
+  nativeChild: [{ agentId: string; action: "start" | "end" | "grant"; sendTo?: string[]; maxHops?: number }, NativeChildAddress | null];
+  nativeChildren: [Record<string, never>, NativeChildAddress[]];
+  nativeChildrenEnd: [Record<string, never>, { ended: boolean }];
+  nativeChildPending: [{ agentId: string }, BridgeMessage[]];
+  nativeChildAck: [{ agentId: string; ids: string[] }, { acked: number }];
+  nativeChildSend: [SendArgs & { agentId: string }, SendResult];
+  /** Authenticated owner connection only; senderId selects the dashboard's reply listener. */
+  dashboardJobSend: [SendArgs & { senderId: string }, SendResult];
   health: [Record<string, never>, import("./health.js").BrokerHealth];
   /** Older brokers must refuse this opcode rather than discard the durable identity. */
   trackedSend: [SendArgs & { messageId: string }, SendResult];
@@ -275,6 +314,13 @@ export interface RequestMap {
   fetchFiles: [{ from: string; paths: string[] }, TransferStarted];
   transfers: [Record<string, never>, { transfers: TransferProgress[] }];
   cancelTransfer: [{ id: string }, { id: string; cancelled: boolean }];
+}
+export interface NativeChildAddress {
+  address: string;
+  agentId: string;
+  parent: string;
+  sendTo: string[];
+  maxHops: number;
 }
 export type Op = keyof RequestMap;
 

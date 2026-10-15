@@ -1,0 +1,94 @@
+{
+  "sourceMap": "index-96bbb69082c8bbaa6f983d884e712ca8.hbc.map",
+  "modules": 683,
+  "packages": [
+    {
+      "package": "@expo/cli",
+      "sources": 1
+    },
+    {
+      "package": "@expo/code-signing-certificates",
+      "sources": 0
+    },
+    {
+      "package": "@expo/config",
+      "sources": 0
+    },
+    {
+      "package": "@expo/config-plugins",
+      "sources": 0
+    },
+    {
+      "package": "@expo/inline-modules",
+      "sources": 0
+    },
+    {
+      "package": "@expo/local-build-cache-provider",
+      "sources": 0
+    },
+    {
+      "package": "@expo/metro",
+      "sources": 0
+    },
+    {
+      "package": "@expo/metro-config",
+      "sources": 0
+    },
+    {
+      "package": "@expo/prebuild-config",
+      "sources": 0
+    },
+    {
+      "package": "@react-native/community-cli-plugin",
+      "sources": 0
+    },
+    {
+      "package": "@react-native/virtualized-lists",
+      "sources": 15
+    },
+    {
+      "package": "braces",
+      "sources": 0
+    },
+    {
+      "package": "expo",
+      "sources": 50
+    },
+    {
+      "package": "metro",
+      "sources": 0
+    },
+    {
+      "package": "metro-config",
+      "sources": 0
+    },
+    {
+      "package": "metro-file-map",
+      "sources": 0
+    },
+    {
+      "package": "metro-transform-worker",
+      "sources": 0
+    },
+    {
+      "package": "micromatch",
+      "sources": 0
+    },
+    {
+      "package": "node-forge",
+      "sources": 0
+    },
+    {
+      "package": "react-native",
+      "sources": 447
+    },
+    {
+      "package": "uuid",
+      "sources": 0
+    },
+    {
+      "package": "xcode",
+      "sources": 0
+    }
+  ]
+}

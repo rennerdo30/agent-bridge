@@ -5,6 +5,7 @@ import { basename, isAbsolute, join, relative, resolve, toNamespacedPath } from 
 import { DelegateError, runProcess } from "./delegate.js";
 import { nullLogger, type Logger } from "./logger.js";
 import { resolveWorktreeRemovalPath, unlinkLinks } from "./worktree-links.js";
+import { displayPathText } from "./display-paths.js";
 
 /**
  * Git worktrees for editing subagents: each one works on its own branch in its own checkout, so
@@ -339,11 +340,11 @@ export function worktreeReport(wt: Worktree, outcome: WorktreeOutcome): string {
     : "";
   const remove = "git -c core.longpaths=true worktree remove";
   // Only a worktree without any work of its own may be removed.
-  if (!outcome.changed) return [
+  if (!outcome.changed) return displayPathText([
     skipped.length ? `Worktree ${wt.path} (branch ${branch}) has no real changes committed; excluded files remain on disk. Keep this worktree for review.`
       : `Worktree ${wt.path} (branch ${branch}) has no changes; remove it with: ${remove} "${wt.path}" && git branch -D ${branch}`,
     rule,
-  ].filter(Boolean).join("\n");
+  ].filter(Boolean).join("\n"));
   const others = outcome.otherBranches ?? [];
   const lines = [
     `Changes are committed on branch ${branch} (worktree ${wt.path}), not in your working copy` +
@@ -361,7 +362,7 @@ export function worktreeReport(wt: Worktree, outcome: WorktreeOutcome): string {
   }
   lines.push(skipped.length ? "Excluded files remain on disk. Keep this worktree until they have been reviewed and preserved."
     : `Discard: ${remove} --force "${wt.path}" && git branch -D ${[branch, ...others.map((o) => o.name)].join(" ")}`);
-  return lines.join("\n");
+  return displayPathText(lines.join("\n"));
 }
 
 /** Files that changed in a plain (non-worktree) run: `git status` lines that are new after the run. */

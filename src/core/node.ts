@@ -19,7 +19,7 @@ import {
   RECONNECT_BACKOFF_MIN_MS,
 } from "./constants.js";
 import type { Logger } from "./logger.js";
-import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer } from "./protocol.js";
+import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer, type ModeSendArgs, type ModeSendResult } from "./protocol.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
 import { ReadJournal } from "./read-journal.js";
 import { existingMetadataDb, retainMetadataReader } from "./metadata-db.js";
@@ -168,6 +168,23 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
   get isBroker(): boolean {
     return this.broker !== null;
+  }
+  initializeMobileOwnerQuestions(): boolean {
+    return !this.stopping && !this.replaced && !!this.broker?.initializeMobileOwnerQuestions();
+  }
+  /** No election or service creation. Only an explicitly prepared local broker owner can borrow this. */
+  mobileHostContext(): import("../mobile/host.js").MobileHostContext | undefined {
+    const broker = this.broker;
+    if (!broker || this.stopping || this.replaced) return undefined;
+    const context = broker.mobileHostContext(); if (!context) return undefined;
+    let live = true;
+    return { ...context, ready: () => live && this.broker === broker && !this.stopping && !this.replaced && context.ready(),
+      onDispose: dispose => {
+        const lost = () => { live = false; void dispose().catch(() => {}); };
+        const unregister = context.onDispose(dispose);
+        this.on("stopped", lost); this.on("disconnected", lost);
+        return () => { unregister(); this.off("stopped", lost); this.off("disconnected", lost); };
+      } };
   }
   get isConnected(): boolean {
     return this.client !== null && !this.client.isClosed;
@@ -558,6 +575,42 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     });
   }
 
+  /** One opcode attempt; never use the read-reconnect or send-retry paths. */
+  async sendWithMode(args: ModeSendArgs): Promise<ModeSendResult> {
+    const report: ModeSendResult["mode"] = { requested: args.mode, effective: "legacyunconfirmed", stage: "unknown",
+      protocolSupport: "unknown", sharedIdempotentDelivery: false,
+      capabilities: { route: "legacyunconfirmed", receiverRole: "unknown", ownedSession: false,
+        generationKnown: false, activeSteering: false, interruptRestart: false, queue: false, idleWake: false } };
+    let unsupported = false;
+    const result = await this.withClient(async client => {
+      try { return await client.request("modeSend", args); }
+      catch (error) {
+        // Only the authenticated typed response for THIS opcode proves no effect.
+        if (args.mode === "auto" && error instanceof BridgeError && error.code === "protocol_mismatch" &&
+            error.details?.operation === "modeSend") { unsupported = true; return undefined; }
+        if (error instanceof BridgeError && !["internal", "timeout"].includes(error.code)) {
+          throw new BridgeError(error.code, error.message, { ...error.details, modeReport: error.details?.modeReport ??
+            { ...report, effective: "refused", stage: "requested", reason: error.message } });
+        }
+        throw new BridgeError("timeout", "modeSend outcome unknown; no retry or legacy fallback was attempted.", { modeReport: report, cause: String(error) });
+      }
+    }).catch(error => {
+      if (error instanceof BridgeError && error.details?.modeReport) throw error;
+      throw new BridgeError(error instanceof BridgeError ? error.code : "timeout",
+        `modeSend unavailable or outcome unknown; no retry/fallback: ${String(error)}`, { modeReport: report });
+    });
+    if (result) {
+      this.lastSent = Date.now();
+      if (!args.replyTo) for (const message of result.send.messages) this.asked.add(message.id);
+      if (this.asked.size > QUESTION_ID_MEMORY) this.asked.delete(this.asked.values().next().value!);
+      return result;
+    }
+    if (!unsupported) throw new BridgeError("internal", "modeSend returned no result; outcome unknown.", { modeReport: report });
+    const { mode: _mode, nativeChild, ...legacy } = args;
+    const send = nativeChild ? await this.nativeChildSend(nativeChild, legacy) : await this.send(legacy);
+    return { send, mode: { ...report, protocolSupport: "legacy", stage: "requested", reason: "old broker explicitly refused modeSend; legacy auto applied" } };
+  }
+
   sendState(id: string): Promise<RequestMap["sendState"][1]> {
     return this.withClient(c => c.request("sendState", { id }));
   }
@@ -634,6 +687,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   messageReceipt(id: string) {
     return this.withClient((c) => c.request("messageReceipt", { id }));
   }
+
+  nativeChild(args: RequestMap["nativeChild"][0]) { return this.withClient(c => c.request("nativeChild", args)); }
+  nativeChildren() { return this.withClient(c => c.request("nativeChildren", {})); }
+  nativeChildrenEnd() { return this.withClient(c => c.request("nativeChildrenEnd", {})); }
+  nativeChildPending(agentId: string) { return this.withClient(c => c.request("nativeChildPending", { agentId })); }
+  nativeChildAck(agentId: string, ids: string[]) { return this.withClient(c => c.request("nativeChildAck", { agentId, ids })); }
+  nativeChildSend(agentId: string, args: SendArgs) { return this.withClient(c => c.request("nativeChildSend", { ...args, agentId })); }
 
   peers(signal?: AbortSignal): Promise<PeerInfo[]> {
     return this.withReadClient((c, timeoutMs) => c.request("peers", {}, timeoutMs), signal).then((peers) => peers.filter((p) => !isPluginCacheCwd(p.cwd)));

@@ -4,7 +4,7 @@ import { bundleFilesBounded, extractBundle, retireBundled } from "./archive-bund
 import { JSON_STORE_VERSION } from "./json-store.js";
 import { archivedRecordId, jobArchivePath, jobDigest, markJobProjection, openJobArchive, physicalArchivePath, putJobRecords } from "./job-archive-index.js";
 import { migrationLock } from "./migration-lock.js";
-import { estimatedJsonBytes, fileSignature } from "./file-cache.js";
+import { estimatedJsonBytes, fileSignature, fileTimeMs } from "./file-cache.js";
 import { assertStoreUpgrade, refreshStorePeerIdentities } from "./store-compatibility.js";
 import { setTimeout as yieldWriter } from "node:timers/promises";
 
@@ -93,10 +93,10 @@ export async function migrateJobArchives(path: string): Promise<ArchiveMigration
     }
     if (existsSync(path)) {
       physicalArchivePath(path);
-      const before = lstatSync(path), jobs = records(readFileSync(path), path);
-      if (fileSignature(lstatSync(path)) !== fileSignature(before)) throw new Error("active jobs changed during archive import; retry later");
+      const before = lstatSync(path, { bigint: true }), jobs = records(readFileSync(path), path);
+      if (fileSignature(lstatSync(path, { bigint: true })) !== fileSignature(before)) throw new Error("active jobs changed during archive import; retry later");
       db.exec("BEGIN IMMEDIATE");
-      try { putJobRecords(db, jobs, before.mtimeMs); db.exec("COMMIT"); }
+      try { putJobRecords(db, jobs, fileTimeMs(before.mtimeMs, before.mtimeNs)); db.exec("COMMIT"); }
       catch (error) { if (db.isTransaction) db.exec("ROLLBACK"); throw error; }
       markJobProjection(path, jobs, fileSignature(before));
     }

@@ -66,7 +66,30 @@ describe("next-turn job settings", () => {
     const restored = new JobManager(env.node("claude-settings"), nullLogger, join(env.home, "jobs.json"));
     restored.restore(() => undefined);
     expect(restored.find(job.name)).toMatchObject({ model: "new-model", args: { model: "new-model", access: "read", effort: "high", native_subagents: 0 } });
+    expect(restored.find(job.name)?.args?.sandbox).toBeUndefined();
     expect(jobs.setSettings("missing", { access: "edit" })).toBe(false);
+  });
+
+  it.each([
+    ["codex", { sandbox: "danger-full-access" }],
+    ["claude", { permission_mode: "bypassPermissions" }],
+    ["opencode", { auto_approve: true }],
+    ["antigravity", { bypass_permissions: true }],
+    ["muse", { permission_profile: "named-profile" }],
+  ] as const)("persists %s exact permission deletion without dropping unknown future args", async (agent, exact) => {
+    const job = jobs.start(agent, null, "task", async () => ({ text: "done", sessionId: "saved-session", isError: false, details: {} }), undefined,
+      { ...exact, futureSetting: { nested: "preserve" } });
+    await until(() => job.status === "done");
+    // A reader that does not understand a future argument must preserve its durable bytes.
+    delete job.args!.futureSetting;
+    expect(jobs.setSettings(job.name, { access: "read" })).toBe(true);
+    const restored = new JobManager(env.node("claude-settings"), nullLogger, join(env.home, "jobs.json"));
+    restored.restore(() => undefined);
+    expect(restored.find(job.name)?.args).toEqual({ access: "read", futureSetting: { nested: "preserve" } });
+    expect(restored.setSettings(job.name, exact)).toBe(true);
+    const reloaded = new JobManager(env.node("claude-settings"), nullLogger, join(env.home, "jobs.json"));
+    reloaded.restore(() => undefined);
+    expect(reloaded.find(job.name)?.args).toEqual({ ...exact, futureSetting: { nested: "preserve" } });
   });
 
   it("forwards settings to a detached runner without interrupting its current turn", () => {

@@ -3,6 +3,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
+import { codexHost } from "./helpers.js";
 import { pidAlive } from "../src/core/delegate.js";
 
 let env: TestEnv;
@@ -38,6 +39,7 @@ it("plugin-cache MCP becomes a real session only when tool metadata supplies the
   const childEnv = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
   for (const key of ["AGENT_BRIDGE_INTERNAL", "AGENT_BRIDGE_DELEGATE_DEPTH", "CLAUDE_PROJECT_DIR"]) delete childEnv[key];
   const client = new Client({ name: "host-metadata-test", version: "1" });
+  childEnv.CODEX_HOME = codexHost(client, env.home, "codex", "real-thread");
   const transport = new StdioClientTransport({ command: process.execPath, args: [resolve("plugins/codex/dist/server.mjs"), "--agent=codex"], cwd: cache, stderr: "ignore",
     env: { ...childEnv, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_JOB_RUNNER: "0" } });
   try {

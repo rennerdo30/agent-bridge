@@ -6,7 +6,6 @@ import type { BridgeNode } from "../core/node.js";
 import type { BridgeMessage } from "../core/protocol.js";
 import { parseJobSettings } from "./job-settings.js";
 import type { JobManager } from "./jobs.js";
-import { canControlJob } from "../core/job-ownership.js";
 
 interface DashboardResult {
   outcome: string;
@@ -27,6 +26,11 @@ export function attachDashboardJobControl(node: BridgeNode, jobs: JobManager, lo
       return;
     }
     if (!command || typeof command.requestId !== "string" || typeof command.job !== "string") return;
+    if (command.type === "result") return;
+    if (m.jobControlAuthorized !== true) {
+      log.warn("rejected unauthorized dashboard job command", { from: m.from.name, job: command.job, type: command.type });
+      return;
+    }
     let result: DashboardResult;
     if (command.type === "handoff") {
       try {
@@ -56,7 +60,7 @@ function followUp(node: BridgeNode, jobs: JobManager, ref: string, body: string)
   return {
     outcome,
     text: t(`followUp.${outcome}`, { name: job?.name ?? ref, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }),
-    isError: outcome === "unknown" || outcome === "no-session",
+    isError: outcome === "unknown" || outcome === "no-session" || outcome === "stopping" || outcome === "cancelled-before-start",
   };
 }
 

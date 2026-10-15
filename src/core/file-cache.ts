@@ -50,20 +50,34 @@ export function cloneJson<T>(value: T): T {
   return value;
 }
 
-export function fileSignature(st: { size: number; mtimeMs: number; ctimeMs: number; birthtimeMs: number; ino: number; dev: number }): string {
-  return `${st.dev}:${st.ino}:${st.birthtimeMs}:${st.ctimeMs}:${st.mtimeMs}:${st.size}`;
+interface FileIdentityStat {
+  size: number | bigint; mtimeMs: number | bigint; ctimeMs: number | bigint; birthtimeMs: number | bigint;
+  ino: number | bigint; dev: number | bigint; mtimeNs?: bigint; ctimeNs?: bigint; birthtimeNs?: bigint;
+}
+/** Preserve fractional millisecond fields while taking exact IDs from bigint stats. */
+export const fileTimeMs = (ms: number | bigint, ns?: bigint): number => ns === undefined ? Number(ms) :
+  Number(ns / 1_000_000n) + Number(ns % 1_000_000n) / 1_000_000;
+export function fileSignature(st: FileIdentityStat): string {
+  for (const id of [st.dev, st.ino]) {
+    if (typeof id === "number" && !Number.isSafeInteger(id))
+      throw new Error("file identity changed or unverifiable; rescan with bigint stat");
+  }
+  // Older unversioned witnesses are unknown, never equal to this exact-ID format.
+  return `fs2:${st.dev}:${st.ino}:${fileTimeMs(st.birthtimeMs, st.birthtimeNs)}:${fileTimeMs(st.ctimeMs, st.ctimeNs)}:${fileTimeMs(st.mtimeMs, st.mtimeNs)}:${st.size}`;
 }
 
 /** A directory scanner may supply the fresh identity it already validated in this call.
  * Never supply a retained/cached stat: replacement detection still requires a fresh scan. */
 export function readJsonSnapshot(file: string, scan?: { file: string; stat: Parameters<typeof fileSignature>[0] }): JsonSnapshot {
   if (scan && scan.file !== file) throw new Error("JSON snapshot scan belongs to another file");
-  const st = scan?.stat ?? statSync(file), signature = fileSignature(st);
+  const st = scan?.stat ?? statSync(file, { bigint: true }), signature = fileSignature(st);
   const failure = damaged.get(file);
   if (failure?.signature === signature) throw failure.error;
   damaged.delete(file);
   const saved = cache.get(file);
   if (saved?.signature === signature) {
+    if (scan && fileSignature(statSync(file, { bigint: true })) !== signature)
+      throw new Error("JSON snapshot identity changed before cache reuse");
     cache.delete(file); cache.set(file, saved);
     return saved;
   }
@@ -75,7 +89,7 @@ export function readJsonSnapshot(file: string, scan?: { file: string; stat: Para
       // Keep Node's native UTF-8 pathname reader. The scan already checked the
       // physical entry; verify identity/type again before publishing parsed bytes.
       const raw = readFileSync(file, "utf8");
-      const after = statSync(file);
+      const after = statSync(file, { bigint: true });
       if (!after.isFile() || fileSignature(after) !== signature)
         throw new Error("JSON snapshot identity changed during read");
       value = JSON.parse(raw);

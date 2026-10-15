@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "agent-bridge",
+    "slug": "agent-bridge-mobile",
+    "version": "0.1.0",
+    "icon": "./assets/icon.png",
+    "scheme": "agentbridge",
+    "orientation": "default",
+    "userInterfaceStyle": "automatic",
+    "platforms": [
+      "android",
+      "ios"
+    ],
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#4f46e5"
+      }
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false
+        }
+      }
+    },
+    "plugins": [
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Scan the pairing QR shown by your agent-bridge PC.",
+          "recordAudioAndroid": false
+        }
+      ],
+      "expo-notifications",
+      [
+        "expo-build-properties",
+        {
+          "android": { "usesCleartextTraffic": false },
+          "ios": { "enableSceneSupport": true }
+        }
+      ]
+    ]
+  }
+}

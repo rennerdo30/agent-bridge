@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { makeEnv } from "./helpers.js";
+import { codexHost } from "./helpers.js";
 import { JOB_OUTCOMES_DIR, readOutcomeDecision } from "../src/core/job-outcomes.js";
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "codex", "dist", "server.mjs");
@@ -21,6 +22,7 @@ describe("supervisor outcome MCP tool", () => {
     writeFileSync(join(env.home, "jobs.json"), JSON.stringify(entries));
     const childEnv = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] =>
       !entry[0].startsWith("AGENT_BRIDGE_") && typeof entry[1] === "string"));
+    childEnv.CODEX_HOME = codexHost(client, env.home, "codex", "supervisor");
     const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, "--agent=codex"], cwd: env.home,
       env: { ...childEnv, AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_PIPE: env.pipe, AGENT_BRIDGE_NAME: "supervisor", AGENT_BRIDGE_DASHBOARD: "off" }, stderr: "ignore" });
     try {

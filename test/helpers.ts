@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,7 @@ import type { MessageStore } from "../src/core/store.js";
 import { closeMetadataDb } from "../src/core/metadata-db.js";
 import { describeFileLockers } from "./file-lockers.js";
 import { describeOpenDatabases } from "./open-db-tracker.js";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 
 export interface TestEnv {
   home: string;
@@ -19,6 +20,31 @@ export interface TestEnv {
   db: string;
   node(name: string, agent?: AgentKind, autoWake?: boolean): BridgeNode;
   cleanup(): Promise<void>;
+}
+
+/** Explicit native host identity for bundled MCP admission tests. */
+export function codexRollout(home: string, id: string, parent?: string): string {
+  const codexHome = join(home, "codex"), dir = join(codexHome, "sessions", "2026", "10", "11");
+  mkdirSync(dir, { recursive: true });
+  const payload = parent ? { id, session_id: parent, thread_source: "subagent", parent_thread_id: parent } : { id, source: "cli" };
+  writeFileSync(join(dir, `rollout-fixture-${id}.jsonl`), JSON.stringify({ type: "session_meta", payload }) + "\n");
+  return codexHome;
+}
+
+/** A hermetic main CLI mock: generate its authoritative headers and tools/call identity. */
+export function codexHost(client: Client, home: string, agent: string, name: string): string {
+  let threadId = `fixture-${name}`;
+  const codexHome = codexRollout(home, threadId);
+  if (agent !== "codex") return codexHome;
+  const call = client.callTool.bind(client);
+  client.callTool = async (params, ...rest) => {
+    const hookId = params.name === "hook_event" ? params.arguments?.session_id : undefined;
+    if (typeof hookId === "string" && hookId && !hookId.startsWith("${")) threadId = hookId;
+    const id = typeof params._meta?.threadId === "string" ? params._meta.threadId : threadId;
+    codexRollout(home, id);
+    return call({ ...params, _meta: { ...params._meta, threadId: id } }, ...rest);
+  };
+  return codexHome;
 }
 
 /** An isolated bridge endpoint per test: its own home dir, so its own pipe and database. */

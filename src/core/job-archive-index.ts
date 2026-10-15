@@ -6,6 +6,8 @@ import { cloneJson, estimatedJsonBytes, fileSignature } from "./file-cache.js";
 import { migrateSqlite } from "./sqlite-migrations.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "./sqlite-policy.js";
 import type { Logger } from "./logger.js";
+import { openPreservedReader } from "./storage-preservation.js";
+import { drainScan, SCAN_SLICE_MS, SCAN_STEPS_PER_SLICE } from "./responsive-scan.js";
 
 export const JOB_ARCHIVE_VERSION = 1;
 export const JOB_ARCHIVE_FILE = "job-archive.db";
@@ -69,7 +71,7 @@ CREATE VIEW v_jobs AS SELECT r.id,r.name,r.status,r.started_at,r.finished_at,r.a
 CREATE VIEW current_jobs AS SELECT * FROM v_jobs;
 PRAGMA user_version=1;`;
 
-export function openJobArchive(path: string, writable = false): DatabaseSync | undefined {
+export function openJobArchive(path: string, writable = false, options: { preserveInputs?: boolean } = {}): DatabaseSync | undefined {
   const file = jobArchivePath(path);
   physicalArchivePath(file);
   physicalArchivePath(`${file}-wal`); physicalArchivePath(`${file}-shm`);
@@ -79,7 +81,9 @@ export function openJobArchive(path: string, writable = false): DatabaseSync | u
   if (writable) mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   // Wait out transient writer locks like every other store (AB-255): 100 ms is
   // routinely exceeded by a concurrent archive migration on a loaded runner.
-  const db = new DatabaseSync(file, { readOnly: !writable, timeout: SQLITE_BUSY_TIMEOUT_MS });
+  if (writable && options.preserveInputs) throw new Error("Preserved job archive inputs are readonly.");
+  const db = options.preserveInputs ? openPreservedReader(file, SQLITE_BUSY_TIMEOUT_MS)
+    : new DatabaseSync(file, { readOnly: !writable, timeout: SQLITE_BUSY_TIMEOUT_MS });
   try {
     db.exec(`PRAGMA busy_timeout=${SQLITE_BUSY_TIMEOUT_MS}; PRAGMA foreign_keys=ON`);
     const version = Number(db.prepare("PRAGMA user_version").get()!.user_version);
@@ -151,7 +155,7 @@ export function storeJobRecords(path: string, jobs: readonly unknown[], archived
     try {
       const now = Date.now();
       if (previous.length) {
-        const published = existsSync(path) && db.prepare("SELECT signature FROM archive_projection WHERE version=1").get()?.signature === fileSignature(statSync(path));
+        const published = existsSync(path) && db.prepare("SELECT signature FROM archive_projection WHERE version=1").get()?.signature === fileSignature(statSync(path, { bigint: true }));
         putJobRecords(db, previous, now, !published);
       }
       putJobRecords(db, jobs, now, true, archived);
@@ -170,9 +174,15 @@ let cacheBytes = 0;
 const CACHE_BUDGET = 8 * 1024 * 1024;
 export const archiveIndexCounters = { reads: 0, decoded: 0 };
 export function readIndexedJobs(path: string, selection: ArchiveSelection = {}): IndexedJobSnapshot {
+  return drainScan(readIndexedJobSteps(path, false, selection));
+}
+
+/** Indexed reads must yield between bounded row batches too: one decode loop can exhaust
+ * the responsive traversal's entire budget before its next suspension. */
+export function* readIndexedJobSteps(path: string, responsive = false, selection: ArchiveSelection = {}): Generator<void, IndexedJobSnapshot> {
   const file = jobArchivePath(path);
   physicalArchivePath(file); physicalArchivePath(join(dirname(path), "archive"));
-  const signature = [file, `${file}-wal`].map(p => existsSync(p) ? fileSignature(statSync(p)) : "missing").join("|");
+  const signature = [file, `${file}-wal`].map(p => existsSync(p) ? fileSignature(statSync(p, { bigint: true })) : "missing").join("|");
   const key = `${file}:${Number(Boolean(selection.metadata))}:${Number(Boolean(selection.active))}:${Number(Boolean(selection.history))}:${JSON.stringify([selection.ids ? [...selection.ids].sort() : null, selection.names ? [...selection.names].sort() : null])}`;
   const saved = cache.get(key);
   if (saved?.signature === signature) { cache.delete(key); cache.set(key, saved); return saved; }
@@ -181,6 +191,33 @@ export function readIndexedJobs(path: string, selection: ArchiveSelection = {}):
   if (!db) return { signature, jobs: [] };
   const jobs: Record<string, unknown>[] = [];
   try {
+    const home = dirname(file), archive = join(home, "archive");
+    const bound = responsive ? [home, file, archive].filter(at => existsSync(at)).map(at => {
+      const st = lstatSync(at, { bigint: true });
+      return { at, dev: st.dev, ino: st.ino };
+    }) : [];
+    const unchanged = () => {
+      if (!responsive) return;
+      if (bound.some(({ at, dev, ino }) => {
+        const st = lstatSync(at, { bigint: true });
+        return st.isSymbolicLink() || st.dev !== dev || st.ino !== ino;
+      })) throw new Error("job archive ancestor changed during traversal; data kept unchanged");
+      for (const at of [archive, `${file}-wal`, `${file}-shm`]) {
+        try { if (lstatSync(at).isSymbolicLink()) throw new Error("job archive path must be physical; data kept unchanged"); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      }
+    };
+    // Validate once per bounded batch, not once per row. Native path queries on
+    // Windows otherwise dominate the scan while the opened handles stay pinned.
+    let batchStarted = performance.now(), batchSteps = SCAN_STEPS_PER_SLICE;
+    function* beforeStep(): Generator<void> {
+      if (responsive && (batchSteps >= SCAN_STEPS_PER_SLICE || performance.now() - batchStarted >= SCAN_SLICE_MS)) {
+        yield;
+        unchanged();
+        batchSteps = 0; batchStarted = performance.now();
+      }
+      batchSteps++;
+    }
     archiveIndexCounters.reads++;
     const columns = selection.metadata ? "r.metadata" : selection.history ? "r.history_json AS payload" : "v.payload";
     const from = selection.metadata || selection.history ? "job_records r" : "job_records r JOIN job_versions v USING(id,sha256)";
@@ -194,11 +231,19 @@ export function readIndexedJobs(path: string, selection: ArchiveSelection = {}):
       for (const [field, values] of [["id", selection.ids], ["name", selection.names]] as const) {
         if (!values) continue;
         const query = db.prepare(`SELECT r.id,${columns} FROM ${from} WHERE r.${field}=?${selection.active ? " AND r.active=1" : ""}`);
-        for (const value of values) for (const row of query.all(value)) {
-          if (!seen.has(String(row.id))) { seen.add(String(row.id)); decode(row); }
+        for (const value of values) {
+          yield* beforeStep(); // Missing IDs still consume a bounded native query step.
+          for (const row of query.iterate(value)) {
+            yield* beforeStep();
+            if (!seen.has(String(row.id))) { seen.add(String(row.id)); decode(row); }
+          }
         }
       }
-    } else for (const row of db.prepare(`SELECT ${columns} FROM ${from}${selection.active ? " WHERE r.active=1" : ""} ORDER BY r.observed_at,r.id`).iterate()) decode(row);
+    } else for (const row of db.prepare(`SELECT ${columns} FROM ${from}${selection.active ? " WHERE r.active=1" : ""} ORDER BY r.observed_at,r.id`).iterate()) {
+      yield* beforeStep();
+      decode(row);
+    }
+    unchanged();
   } catch (error) { throw archiveWriteError(error); }
   finally { db.close(); }
   const next = { signature, jobs, bytes: estimatedJsonBytes(jobs, CACHE_BUDGET) };
@@ -213,7 +258,7 @@ export function readIndexedJobs(path: string, selection: ArchiveSelection = {}):
  * An older writer's replacement invalidates this witness immediately. */
 export function markJobProjection(path: string, jobs: readonly unknown[], expectedSignature?: string): void {
   physicalArchivePath(path);
-  const signature = fileSignature(statSync(path)), db = openJobArchive(path, true)!;
+  const signature = fileSignature(statSync(path, { bigint: true })), db = openJobArchive(path, true)!;
   try {
     if (expectedSignature && signature !== expectedSignature) throw new Error("active jobs changed during archive import; retry later");
     db.exec("BEGIN IMMEDIATE");
@@ -230,19 +275,27 @@ export function markJobProjection(path: string, jobs: readonly unknown[], expect
 /** Supervisors ask this on every job poll (AB-147): answer from memory while the active file, the
  * archive and its WAL are unchanged, instead of opening the archive database each time. */
 const projectionChecks = new Map<string, { signature: string; current: boolean }>();
-export function indexedJobProjectionCurrent(path: string): boolean {
+export function indexedJobProjectionCurrent(path: string, expectedIndexSignature?: string): boolean {
   if (!existsSync(path)) return false;
   physicalArchivePath(path);
   const file = jobArchivePath(path);
-  const stat = (p: string) => existsSync(p) ? fileSignature(statSync(p)) : "missing";
-  const active = fileSignature(statSync(path)), signature = [active, stat(file), stat(`${file}-wal`)].join("|");
+  const stat = (p: string) => existsSync(p) ? fileSignature(statSync(p, { bigint: true })) : "missing";
+  const indexSignature = () => [stat(file), stat(`${file}-wal`)].join("|");
+  const observedIndex = indexSignature();
+  // A newer projection witness cannot authorize rows read from an older index.
+  if (expectedIndexSignature !== undefined && expectedIndexSignature !== observedIndex) return false;
+  const active = fileSignature(statSync(path, { bigint: true })), signature = [active, observedIndex].join("|");
   const saved = projectionChecks.get(path);
-  if (saved?.signature === signature) return saved.current;
+  if (saved?.signature === signature) return saved.current &&
+    (expectedIndexSignature === undefined || indexSignature() === expectedIndexSignature);
   const db = openJobArchive(path);
   if (!db) return false;
   let current: boolean;
   try { current = db.prepare("SELECT signature FROM archive_projection WHERE version=1").get()?.signature === active; }
   finally { db.close(); }
+  // A worker may publish while the witness query runs. Fall back to the active
+  // JSON rather than using metadata from a different committed generation.
+  if (expectedIndexSignature !== undefined && indexSignature() !== expectedIndexSignature) return false;
   if (projectionChecks.size >= 64) projectionChecks.delete(projectionChecks.keys().next().value!);
   projectionChecks.set(path, { signature, current });
   return current;

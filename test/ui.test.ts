@@ -262,7 +262,38 @@ describe("web dashboard", () => {
     recordJob("former-owner", job);
     writeFileSync(join(env.home, JOBS_FILE), JSON.stringify([{ name: job.name, owner: peer.name }]));
     const r = await fetch(`${base()}/api/subagents/message`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ run: RUN, body: "after adoption" }) });
-    expect(r.status).toBe(200);
+    let refusalDiagnostic: string | undefined;
+    if (r.status === 409) {
+      refusalDiagnostic = "HTTP 409 diagnostic unavailable";
+      let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+      try {
+        const body = r.clone().body;
+        if (body) {
+          reader = body.getReader();
+          const prefix = "HTTP 409 synthetic fixture response: ";
+          const suffix = "\n[capture truncated: byte/read limit; EOF not observed]";
+          // Bound retained prefix/output, not chunks allocated by fetch or its clone tee.
+          const bytes = new Uint8Array(4096 - Buffer.byteLength(prefix + suffix));
+          let length = 0, ended = false;
+          for (let reads = 0; reads < 64 && length < bytes.length; reads++) {
+            const { done, value } = await reader.read();
+            if (done) { ended = true; break; }
+            const count = Math.min(value.byteLength, bytes.length - length);
+            bytes.set(value.subarray(0, count), length);
+            length += count;
+          }
+          // A truncated trailing UTF-8 sequence stays buffered, never a replacement character.
+          const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, length), { stream: !ended });
+          refusalDiagnostic = prefix + text + (ended ? "" : suffix);
+        }
+      } catch { /* Diagnostic failure must not mask the original status assertion. */ }
+      finally {
+        // Tee cancellation may await the untouched original branch; never await it here.
+        try { void reader?.cancel().catch(() => {}); } catch { /* Diagnostic cleanup only. */ }
+        try { reader?.releaseLock(); } catch { /* Diagnostic cleanup only. */ }
+      }
+    }
+    expect(r.status, refusalDiagnostic).toBe(200);
     expect(received).toEqual(["after adoption"]);
   });
 
@@ -344,8 +375,7 @@ describe("web dashboard", () => {
     attachDashboardJobControl(peer, jobs, nullLogger);
     const job = jobs.start("codex", null, "foreign task", async () => new Promise(() => {}));
     job.owner = "another-session";
-    const sent = await sender.send({ to: peer.name, body: "null", conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true });
-    await until(() => peer.hasSeen(sent.messages[0]!.id));
+    await expect(sender.send({ to: peer.name, body: "null", conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true })).rejects.toMatchObject({ code: "unauthorized" });
     expect(peer.unread()).toEqual([]);
     recordJob(peer.name, job);
     const r = await fetch(`${base()}/api/subagents/message`, { method: "POST", headers: POST_HEADERS(), body: JSON.stringify({ run: RUN, body: "wrong owner" }) });

@@ -251,7 +251,7 @@ it.each([["message", false], ["settings", false], ["message", true], ["settings"
   attachDashboardJobControl(node as unknown as BridgeNode, jobs, nullLogger);
   vi.spyOn(jobs, "share").mockResolvedValue(oldResponse ? saved("missing") as unknown as Job : undefined);
   const synchronous = vi.spyOn(recovery, "recoverJobRecord").mockImplementation(() => { throw new Error("synchronous dashboard fallback forbidden"); });
-  node.emit("job_control", { id: "synthetic-command", from: { name: "dashboard" }, body: JSON.stringify({ requestId: "synthetic-request",
+  node.emit("job_control", { id: "synthetic-command", jobControlAuthorized: true, from: { name: "dashboard" }, body: JSON.stringify({ requestId: "synthetic-request",
     job: "codex-job-missing", type, body: "accepted message", settings: { effort: "high" } }) } as BridgeMessage);
   await new Promise<void>(resolve => setImmediate(resolve));
   expect(send).toHaveBeenCalledTimes(1);

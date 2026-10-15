@@ -5,11 +5,13 @@ import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
 import { describeModels, modelParameterDescription, readModels } from "../src/core/models.js";
 import { captureOutput, codexAppServerCall } from "../src/core/usage.js";
+import { museMspQuery } from "../src/core/muse-msp.js";
 import { listOpencodeModels } from "../src/core/opencode-models.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 vi.mock("../src/core/usage.js", () => ({ captureOutput: vi.fn(), codexAppServerCall: vi.fn() }));
 vi.mock("../src/core/opencode-models.js", () => ({ listOpencodeModels: vi.fn() }));
+vi.mock("../src/core/muse-msp.js", () => ({ museMspQuery: vi.fn() }));
 
 let env: TestEnv;
 const cfg = { ...DEFAULT_CONFIG, effort: {} };
@@ -23,6 +25,40 @@ beforeEach(() => {
 afterEach(async () => env.cleanup());
 
 describe("available subagent models", () => {
+  it("reads Muse's no-turn catalog with effective effort tiers, defaults, filtering and shared caching", async () => {
+    vi.mocked(museMspQuery).mockResolvedValue({ source: "providerCatalog", models: [{ modelId: "muse-primary", displayLabel: "Primary", isDefault: true, variants: ["low", "high"], defaultReasoningEffort: "high" }, { modelId: "muse-other", displayLabel: "Other", variants: { kind: "unknown" } }] });
+    const [a, b] = await Promise.all([readModels("muse", cfg, env.home, nullLogger, env.home), readModels("muse", cfg, env.home, nullLogger, env.home)]);
+    expect(a).toEqual(b);
+    expect(a).toMatchObject({ defaultModel: "muse-primary", models: ["muse-primary", "muse-other"] });
+    expect(a.lines.join("\n")).toContain("Efforts: low, high (default high)");
+    expect(museMspQuery).toHaveBeenCalledOnce();
+    expect(museMspQuery).toHaveBeenCalledWith({ bin: cfg.museBin, cwd: env.home, log: nullLogger, method: "model/list" });
+    expect((await describeModels("muse", cfg, env.home, nullLogger, "other")).join("\n")).not.toContain("- muse-primary");
+    expect((await readModels("muse", cfg, env.home, nullLogger, env.home)).models).toEqual(a.models);
+  });
+  it("does not cache empty or failed Muse catalogs and retains explicit model resolution", async () => {
+    vi.mocked(museMspQuery).mockResolvedValue({ source: "unresolvedCatalog", models: [] });
+    const custom = { ...cfg, museModel: "user-model" };
+    const report = await readModels("muse", custom, env.home, nullLogger, env.home);
+    expect(report).toMatchObject({ defaultModel: "user-model", models: [] });
+    expect(report.lines.join("\n")).toContain("explicit model IDs");
+    await readModels("muse", custom, env.home, nullLogger, env.home);
+    expect(museMspQuery).toHaveBeenCalledTimes(2);
+    vi.mocked(museMspQuery).mockRejectedValueOnce(new Error("unsupported MSP catalog"));
+    expect((await readModels("muse", custom, env.home, nullLogger, env.home)).lines[0]).toContain("Could not list");
+  });
+
+  it("reports empty opencode catalogs as unknown and does not retain an empty cache", async () => {
+    vi.mocked(listOpencodeModels).mockResolvedValue([]);
+    const configured = { ...cfg, opencodeModel: "provider/dynamic" };
+    const report = await readModels("opencode", configured, env.home, nullLogger, env.home);
+    expect(report.models).toEqual([]);
+    expect(report.defaultModel).toBe("provider/dynamic");
+    expect(report.lines.join("\n")).toContain("not necessarily unavailable");
+    expect(report.lines.join("\n")).toContain("not availability verification");
+    await readModels("opencode", configured, env.home, nullLogger, env.home);
+    expect(listOpencodeModels).toHaveBeenCalledTimes(2);
+  });
   it("reads installed Antigravity model slugs without treating status text as a model", async () => {
     vi.mocked(captureOutput).mockResolvedValue("Fetching available models...\nexample-flash-high\tExample Flash High\nexample-pro\tExample Pro\n");
     const report = await readModels("antigravity", cfg, env.home, nullLogger, env.home);

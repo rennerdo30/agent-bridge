@@ -4,7 +4,7 @@ import { DEFAULT_HOME, ENV } from "../core/constants.js";
 import { recordRuntimeSession, selectedWorker, type PluginClient } from "../core/plugin-runtime.js";
 
 const clientArg = process.argv.find((arg) => arg.startsWith("--agent="))?.slice(8) ?? process.env[ENV.agent] ?? "codex";
-const client: PluginClient = ["claude", "codex", "opencode", "antigravity"].includes(clientArg) ? clientArg as PluginClient : "codex";
+const client: PluginClient = ["claude", "codex", "opencode", "antigravity", "muse"].includes(clientArg) ? clientArg as PluginClient : "codex";
 const home = process.env[ENV.home]?.trim() || DEFAULT_HOME;
 const runtimeHome = process.env.AGENT_BRIDGE_PLUGIN_RUNTIME_HOME?.trim() || home;
 const selected = selectedWorker(runtimeHome, client, join(dirname(fileURLToPath(import.meta.url)), "worker.mjs"));

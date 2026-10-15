@@ -6,6 +6,7 @@ import { planFinalize, runFinalize } from "../src/core/storage-finalize.js";
 import { historyDbPath, migrateHistoryStore, openHistoryStore } from "../src/core/history-store.js";
 import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
+import { coldCommandInputs } from "./storage-retention-fixture.js";
 
 let env: TestEnv;
 beforeEach(() => { env = makeEnv(); });
@@ -33,7 +34,14 @@ async function bigHome(pending = false): Promise<string> {
   try { await migrateHistoryStore(env.db, history); } finally { history.close(); }
   await migrateJobArchives(join(env.home, "jobs.json"));
   const snapshots = join(env.home, ".migration-snapshots");
-  return join(snapshots, readdirSync(snapshots).find(name => /^history-v2-source-.*\.db$/.test(name))!);
+  const reference = join(snapshots, readdirSync(snapshots).find(name => /^history-v2-source-.*\.db$/.test(name))!);
+  // Prepare a cold synthetic candidate outside the commands so the original
+  // manifest/tamper proofs and query budgets still run. Actual WAL candidates
+  // have separate no-open byte-preservation regressions in storage-absorb.
+  const cold = new DatabaseSync(reference);
+  try { cold.exec("PRAGMA journal_mode=DELETE"); } finally { cold.close(); }
+  coldCommandInputs(env.home);
+  return reference;
 }
 
 function copyOfBridge(path: string): void {
@@ -71,7 +79,8 @@ it("the proof reads sequentially: no per-row lookups for the legacy history, the
   const plan = runFinalize(env.home, () => {}, { dryRun: true });
   vi.restoreAllMocks();
   expect(plan.blockers).toEqual([]);
-  expect(plan.items.map(i => i.path)).toEqual(expect.arrayContaining([reference, backup, "bridge.db:conversation_records"]));
+  expect(plan.items).toEqual([]);
+  expect(plan.kept.map(i => i.path)).toEqual(expect.arrayContaining([reference, backup, "bridge.db:conversation_records"]));
   // 1,500 records and 300 messages in each of three copies: a lookup per row would be well over 5,000 queries.
   expect(calls.n).toBeLessThan(1500);
   // Nothing was removed by the dry run.
@@ -92,7 +101,7 @@ it("proves the verified migration's source snapshot by its manifest, and keeps i
   try { copy.prepare("INSERT INTO history_pending VALUES('p1','pending body','codex','codex-a','a','claude-b','claude-b',1)").run(); } finally { copy.close(); }
   let plan = runFinalize(env.home, () => {}, { dryRun: true });
   // The snapshot is exactly what the verified migration copied; the other copy needs a live row (or absorb).
-  expect(plan.items.map(i => i.path)).toContain(reference);
+  expect(plan.kept.find(i => i.path === reference)?.reason).toMatch(/retained by policy/);
   expect(plan.kept.find(i => i.path === backup)?.reason).toMatch(/history_pending: 1 of 1 rows are not in/);
   // Changed after the migration verified it: the manifest no longer vouches for that table, which is then proven row
   // by row, and the drained row keeps the snapshot.
