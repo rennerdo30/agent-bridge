@@ -8,8 +8,14 @@ The broker starts backfill eagerly. Requests share the same background operation
 an archive-on-release metadata lease excludes a second process. A cold request
 waits at most half of the existing ten-second request budget, leaving dispatch
 and transport headroom. The two recovery passes share one deadline. If the index
-is still preparing, the request returns `job_index_preparing` with its state and
-submits no control. The shared backfill continues after that request ends.
+is still preparing when the budget ends, the request returns `job_index_preparing`
+with its state and submits no control; only work still running may return it. If
+the index is unavailable (the backfill or a re-observation failed, for example on
+SQLite contention, a lease or an IO error), the request never fails for that
+reason: it uses the pre-index bounded, yielding discovery in the remaining budget.
+The shared backfill continues or retries after that request ends. Backfill writes
+on the broker meet SQLITE_BUSY with an asynchronous backoff and retry of the batch,
+never a blocking wait.
 
 Backfill re-reads each batch of 32 runs outside SQLite, then commits only the database
 work in one short transaction (a run whose metadata changed meanwhile is re-read
@@ -71,8 +77,8 @@ when history knows its generation. Older runs with no metadata or no generation
 are accepted only as a single exact-key candidate.
 Ambiguous legacy keys use discovery within the same cold deadline and never
 select the newest unknown generation blindly. A moved route invalidates readiness
-and schedules reindexing. Non-Bridge discovery failures return retryable
-`job_index_preparing` too. Current registry ownership, grants, native generation,
+and schedules reindexing; that lookup, like a changing or unreadable indexed route,
+uses bounded discovery instead. Current registry ownership, grants, native generation,
 and post-header authority fences
 remain authoritative. Broker shutdown cancels background discovery before
 closing metadata handles. Synchronous recovery uses the ready index too and keeps

@@ -59,7 +59,8 @@ function prepareRecovery(home: string, ref: string) {
   const { spec, launch } = recoverySpec(home, id);
   if (completeContext(home, history, id)) return selectRecovery(ref, id, history, spec, launch, []);
   const key = typeof history?.name === "string" ? history.name : ref;
-  const ready = jobRunIndexReady(home), ambiguous = ready && legacyJobRunAmbiguous(home, key);
+  let ready = false, ambiguous = false;
+  try { ready = jobRunIndexReady(home); ambiguous = ready && legacyJobRunAmbiguous(home, key); } catch { ready = false; }
   const indexed = ready && !ambiguous ? indexedJobRun(home, key, typeof history?.startedAt === "number" ? history.startedAt : undefined) : [];
   // Synchronous callers cannot wait for a per-key reobservation. A ready-index miss (a run an
   // older or external writer created after completion) keeps the pre-index discovery;
@@ -82,22 +83,31 @@ async function prepareRecoveryAsync(home: string, ref: string, deadline: number)
   const currentRun = witnessedRun(home, id, history);
   if (currentRun) return selectRecovery(ref, id, history, spec, launch, [currentRun]);
   const key = typeof history?.name === "string" ? history.name : ref;
-  await waitForJobRunIndex(home, deadline, key, typeof history?.startedAt === "number" ? history.startedAt : undefined);
-  if (legacyJobRunAmbiguous(home, key)) {
-    // Legacy ambiguity requires discovery, sharing the original cold deadline.
+  const startedAt = typeof history?.startedAt === "number" ? history.startedAt : undefined;
+  // Bounded, yielding discovery sharing the original deadline: the pre-index path, never a
+  // synchronous scan on the broker event loop.
+  const discover = async (legacyAmbiguous: boolean, state: string) => {
     const stop = new AbortController(), remaining = deadline - performance.now();
-    const error = () => new BridgeError("job_index_preparing", "Job index preparing (ambiguous legacy discovery); retry later. No control submitted.");
+    const error = () => new BridgeError("job_index_preparing", `Job index preparing (${state}); retry later. No control submitted.`);
     if (remaining <= 0) throw error();
     let timer: NodeJS.Timeout | undefined;
     try {
       const runs = await Promise.race([readRunLogsResponsive(home, undefined, undefined, stop.signal),
         new Promise<never>((_, reject) => { timer = setTimeout(() => { stop.abort(); reject(error()); }, remaining); })]);
-      return selectRecovery(ref, id, history, spec, launch, runs, true);
+      return selectRecovery(ref, id, history, spec, launch, runs, legacyAmbiguous);
     } catch { throw error(); }
     finally { clearTimeout(timer); stop.abort(); }
-  }
-  return selectRecovery(ref, id, history, spec, launch, indexedJobRun(home, key,
-    typeof history?.startedAt === "number" ? history.startedAt : undefined));
+  };
+  // An unavailable index (failed backfill, busy SQLite) never fails the request.
+  if (await waitForJobRunIndex(home, deadline, key, startedAt) === "discover") return discover(false, "discovery running");
+  let ambiguous: boolean;
+  try { ambiguous = legacyJobRunAmbiguous(home, key); } catch { return discover(false, "discovery running"); }
+  // Legacy ambiguity requires discovery too.
+  if (ambiguous) return discover(true, "ambiguous legacy discovery");
+  let runs: RunLogRecord[];
+  // A moved, changing or unreadable indexed route fails only this lookup: discover instead.
+  try { runs = indexedJobRun(home, key, startedAt); } catch { return discover(false, "discovery running"); }
+  return selectRecovery(ref, id, history, spec, launch, runs);
 }
 
 /** Full history rows come from the selected durable payload, never the routing

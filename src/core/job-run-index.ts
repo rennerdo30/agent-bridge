@@ -12,6 +12,7 @@ import { metadataFileLease } from "./metadata-file-lease.js";
 import { BridgeError } from "./protocol.js";
 import { readRunLogsResponsive, type RunLogRecord } from "./run-history.js";
 import { safeFile } from "./transcripts/common.js";
+import { isSqliteBusy } from "./sqlite-policy.js";
 
 const HEAD = "job-run-head-v1", HISTORY = "job-run-history-v1", STATE = "job-run-index-v1";
 /** Completion schema. A bump makes every older completion record unready. */
@@ -33,6 +34,8 @@ export const JOB_INDEX_BUSY_WAIT_MS = 40;
 // A per-key miss is remembered for one completion generation and briefly in time,
 // so a run written later by an older process is still found by a later lookup.
 const MISS_TTL_MS = 30_000, MISS_LIMIT = 4_096, MTIME_SLACK_MS = 60_000;
+// About 10 s of asynchronous backoff before a busy batch fails the attempt (which then retries later).
+const BUSY_RETRIES = 12;
 
 function rootKey(home: string): string { return realpathSync.native(home); }
 function start(run: RunLogRecord): number {
@@ -232,11 +235,11 @@ async function indexObserved(home: string, key: string, runs: RunLogRecord[], si
     signal.throwIfAborted();
     // A feed may rewrite routing metadata after the observation: re-read only that pair under the lock,
     // so a stale observation never commits after the writer's own route update.
-    transaction(home, () => {
+    await retryBusy(signal, () => transaction(home, () => {
       for (const { run, source, witness } of observed) {
         indexJobRun(home, source && metadataWitness(source.metadataFile!) !== witness ? observeRunFile(home, source.file, source.metadataFile!) : run);
       }
-    });
+    }));
     await yieldTurn();
   }
 }
@@ -272,10 +275,10 @@ export function startJobRunBackfill(home: string, attempt = 0): Promise<void> {
       await indexObserved(home, key, runs, stop.signal);
       stop.signal.throwIfAborted();
       if (!complete) throw preparing("catalog observation incomplete");
-      transaction(home, () => {
+      await retryBusy(stop.signal, () => transaction(home, () => {
         if (value(home, STATE, "invalidated") !== before || failureWitness(home) !== failures) throw preparing("unindexed writer change");
         put(home, STATE, "complete", { version: SCHEMA, failures, writer: APP_VERSION, observedFrom, completedAt: Date.now() } satisfies Completion);
-      });
+      }));
       invalid.delete(key); misses.delete(key); watermarks.delete(key);
     } finally { release(); }
   })();
@@ -295,12 +298,27 @@ export async function stopJobRunBackfill(home: string): Promise<void> {
 function preparing(state: string): BridgeError {
   return new BridgeError("job_index_preparing", `Job index preparing (${state}); retry later. No control submitted.`);
 }
+/** Only an operation still running when the request budget ends is "preparing"; its own failure propagates. */
+function stillRunning(state: string): BridgeError {
+  return new BridgeError("job_index_preparing", `Job index preparing (${state}); retry later. No control submitted.`, { budget: true });
+}
 async function bounded(work: Promise<void>, deadline: number, state: string): Promise<void> {
   const remaining = deadline - performance.now();
-  if (remaining <= 0) throw preparing(state);
+  if (remaining <= 0) throw stillRunning(state);
   let timer: NodeJS.Timeout | undefined;
-  try { await Promise.race([work, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(preparing(state)), remaining); })]); }
+  try { await Promise.race([work, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(stillRunning(state)), remaining); })]); }
   finally { clearTimeout(timer); }
+}
+/** Index writes never block the broker: SQLITE_BUSY backs off asynchronously and retries the batch. */
+async function retryBusy<T>(signal: AbortSignal, action: () => T): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    signal.throwIfAborted();
+    try { return action(); }
+    catch (error) {
+      if (!isSqliteBusy(error) || attempt >= BUSY_RETRIES) throw error;
+      await delay(Math.min(25 * 2 ** attempt, 1_000), undefined, { signal });
+    }
+  }
 }
 
 function generation(home: string): string | undefined {
@@ -379,21 +397,24 @@ async function reobserveKey(home: string, ref: string, deadline: number, started
   }
 }
 
-/** Waiting never cancels the shared backfill or buys a new request budget. */
-export async function waitForJobRunIndex(home: string, deadline: number, ref?: string, startedAt?: number): Promise<void> {
+/** Waiting never cancels the shared backfill or buys a new request budget.
+ * "indexed": use exact index lookups. "discover": the index is unavailable (its backfill or
+ * re-observation failed, or SQLite is busy); the caller uses bounded discovery in the remaining
+ * budget instead. Only work still running when the budget ends throws retryable job_index_preparing. */
+export async function waitForJobRunIndex(home: string, deadline: number, ref?: string, startedAt?: number): Promise<"indexed" | "discover"> {
   try {
     if (ready(home)) {
       // Older writers and imported fixtures may introduce a previously unseen key, or a
       // newer turn of a known key, after completion. Such a miss re-observes that key
       // only; readiness stays.
       if (ref) await reobserveKey(home, ref, deadline, startedAt);
-      return;
+      return "indexed";
     }
     await bounded(startJobRunBackfill(home), deadline, "backfill running");
-    if (!ready(home)) throw preparing("backfill incomplete");
+    return ready(home) ? "indexed" : "discover";
   } catch (error) {
-    if (error instanceof BridgeError && error.code === "job_index_preparing") throw error;
-    throw preparing("backfill unavailable");
+    if (error instanceof BridgeError && error.details?.budget === true) throw error;
+    return "discover";
   }
 }
 

@@ -150,9 +150,29 @@ it("retries failed backfill in the background with no new request", async () => 
   await vi.advanceTimersByTimeAsync(250); vi.useRealTimers();
   await until(() => jobRunIndexReady(env.home)); expect(scan).toHaveBeenCalledTimes(2);
 });
-it("maps non-Bridge discovery errors to retryable preparing", async () => {
+it("reports a failed backfill as unavailable so callers discover instead of failing", async () => {
   fixture(); vi.spyOn(history, "readRunLogsResponsive").mockRejectedValue(new Error("synthetic discovery failure"));
-  await expect(waitForJobRunIndex(env.home, performance.now() + JOB_INDEX_WAIT_MS)).rejects.toMatchObject({ code: "job_index_preparing" });
+  await expect(waitForJobRunIndex(env.home, performance.now() + JOB_INDEX_WAIT_MS)).resolves.toBe("discover");
+});
+it("continues a cold job through bounded discovery when the backfill fails with SQLITE_BUSY", async () => {
+  const f = fixture(), original = history.readRunLogsResponsive;
+  const busy = Object.assign(new Error("database is locked"), { code: "ERR_SQLITE_ERROR", errcode: 5 });
+  const scan = vi.spyOn(history, "readRunLogsResponsive").mockRejectedValueOnce(busy).mockImplementation(original);
+  expect(await recoverJobRecordAsync(env.home, f.name)).toMatchObject({ prompt: f.prompt, sessionId: "native-legacy", args: { access: "read", effort: "high" } });
+  expect(scan.mock.calls.length).toBeGreaterThanOrEqual(2); // The failed backfill scan, then discovery.
+});
+it("retries a busy backfill batch asynchronously on the broker and completes", async () => {
+  const f = fixture(), begins = vi.spyOn(metadataDb(env.home), "exec");
+  const other = new DatabaseSync(join(env.home, "bridge.db")); other.exec("BEGIN IMMEDIATE");
+  let settled = false;
+  const work = startBrokerJobRunIndex(env.home).finally(() => { settled = true; });
+  try {
+    // Zero busy wait on the broker: the batch meets SQLITE_BUSY and backs off without blocking.
+    await until(() => db_begins() > 1); expect(settled).toBe(false);
+  } finally { other.exec("ROLLBACK"); other.close(); }
+  await work;
+  expect(jobRunIndexReady(env.home)).toBe(true); expect(indexedJobRun(env.home, f.name)).toHaveLength(1);
+  function db_begins() { return begins.mock.calls.filter(call => call[0] === "BEGIN IMMEDIATE").length; }
 });
 it("reobserves an unseen legacy key introduced after eager empty completion", async () => {
   await startJobRunBackfill(env.home); expect(jobRunIndexReady(env.home)).toBe(true);
