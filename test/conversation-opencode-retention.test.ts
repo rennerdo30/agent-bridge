@@ -49,14 +49,18 @@ it("retains OpenCode messages, huge parts, native grandchildren and observed rev
   // SIMULATED slow metadata work: consume the source slice before its first
   // read, without sleeping or adding load. Search can see the native revision
   // before ConversationIngestor retains it, so the row assertions below matter.
-  let now = Date.now();
+  // One clock spy owns this whole phase: the frozen clock only moves when the
+  // first source sweep is prepared, so that slice really runs out inside the
+  // tick and later sweeps must still converge.
+  let now = Date.now(), slowed = 0;
   const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
   const prepare = DatabaseSync.prototype.prepare;
   const slow = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
-    if (sql === "SELECT * FROM conversation_sources ORDER BY checked,id LIMIT 2") now += HISTORY_BATCH_MS;
+    if (sql === "SELECT * FROM conversation_sources ORDER BY checked,id LIMIT 2" && !slowed++) now += HISTORY_BATCH_MS;
     return prepare.call(this, sql);
   });
-  try { tick(); } finally { slow.mockRestore(); clock.mockRestore(); }
+  try { f.tick(); } finally { slow.mockRestore(); clock.mockRestore(); }
+  expect(slowed).toBeGreaterThan(1);
   expect(
     f.index.search({
       query: "opencode_full_tail",

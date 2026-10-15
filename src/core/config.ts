@@ -257,17 +257,20 @@ export function watchConfig(home: string, agent: AgentKind, log: Logger, onChang
   let localPath = local ? join(local, ".agent-bridge", CONFIG_FILE_NAME) : null;
   // Capture synchronously: watchFile's first asynchronous stat can occur after
   // the first edit, losing it entirely. Contents also detect same-mtime saves.
-  const contents = (file: string | null): string | null => {
+  // Only a missing file is a change. A transient read error (EBUSY/EPERM while
+  // antivirus or an editor holds the file on Windows) keeps the previous baseline,
+  // so it cannot reset settings to their defaults until the next poll.
+  const contents = (file: string | null, previous: string | null): string | null => {
     if (!file) return null;
     try { return readFileSync(file, "utf8"); }
-    catch { return null; }
+    catch (error) { return (error as NodeJS.ErrnoException).code === "ENOENT" ? null : previous; }
   };
-  let homeContents = contents(path), localContents = contents(localPath);
+  let homeContents = contents(path, null), localContents = contents(localPath, null);
   const timer = setInterval(() => {
     const next = typeof projectDir === "function" ? projectDir() : local;
     const moved = next !== local;
     local = next; localPath = local ? join(local, ".agent-bridge", CONFIG_FILE_NAME) : null;
-    const homeNext = contents(path), localNext = contents(localPath);
+    const homeNext = contents(path, homeContents), localNext = contents(localPath, moved ? null : localContents);
     if (!moved && homeNext === homeContents && localNext === localContents) return;
     homeContents = homeNext; localContents = localNext;
     log.info("config file changed; applying it", { path });
