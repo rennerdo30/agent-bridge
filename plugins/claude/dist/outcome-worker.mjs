@@ -2,7 +2,7 @@ import { createRequire as __abCreateRequire } from 'node:module'; const require 
 import {
   outcomeSignature,
   pendingOutcome
-} from "./chunks/chunk-HZAGME3J.mjs";
+} from "./chunks/chunk-4ZN3O4S6.mjs";
 import {
   deriveJobOutcome
 } from "./chunks/chunk-UQEVBCCA.mjs";
@@ -133,6 +133,10 @@ parentPort?.on("message", (message) => {
     if (await outcomeSignature(message.home, inputs, paths) !== sourceSignature) {
       for (const input of inputs) result[input.key] = pendingOutcome(input);
     }
+    closeMetadataDb(message.home);
     parentPort?.postMessage({ id: message.id, result, signature: sourceSignature, gitPaths: paths });
-  }).catch(() => parentPort?.postMessage({ id: message.id, error: true })).finally(() => closeMetadataDb(message.home));
+  }).catch(() => {
+    closeMetadataDb(message.home);
+    parentPort?.postMessage({ id: message.id, error: true });
+  });
 });
