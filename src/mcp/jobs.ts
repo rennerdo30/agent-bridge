@@ -33,6 +33,7 @@ import { metadataFileLease } from "../core/metadata-file-lease.js";
 import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { archivePendingJob, mergePendingJob, readPendingJobs, retainPendingJob, type PendingJobReceipt } from "../core/job-pending-journal.js";
 import { verifiedGoneJobOwners } from "../core/job-restoration.js";
+import { primeRunnerProcessIdentities } from "./job-host.js";
 
 const JOB_ID_LENGTH = 8;
 const PROMPT_PREVIEW_CHARS = 120;
@@ -203,8 +204,9 @@ export type RunnerControl = { type: "message"; body: string; cid: string } | { t
 /** The session's side of job runners (implemented in job-host.ts). */
 export interface JobHost {
   state(job: Job): RunnerState | null;
-  /** Whether its runner is still at work (or still starting). */
-  alive(job: Job, state: RunnerState | null): boolean;
+  /** Whether its runner is still at work (or still starting). `deferred` (periodic host poll only) may answer
+   * from last-known identity evidence while a batched refresh runs; every other caller gets a definitive probe. */
+  alive(job: Job, state: RunnerState | null, deferred?: boolean): boolean;
   send(job: Job, control: RunnerControl): void;
   /** Stop the runner and everything it started. */
   kill(job: Job): void;
@@ -1864,7 +1866,13 @@ export class JobManager {
         clearInterval(this.hostTimer);
         this.hostTimer = null;
       }
-      for (const job of hosted) this.checkHostedSafely(job, true);
+      const states = new Map<Job, RunnerState | null>();
+      for (const job of hosted) {
+        try { states.set(job, this.runners!.state(job)); }
+        catch (err) { this.log.warn("job runner check deferred after failure", { job: job.name, err: String(err) }); }
+      }
+      primeRunnerProcessIdentities([...states].flatMap(([job, state]) => !job.remote && state ? [state.pid] : []));
+      for (const [job, state] of states) this.checkHostedSafely(job, true, state);
       if ([...this.running.values()].some(j => this.foreignInline(j))) void this.checkInlineExecutors();
     }, HOST_POLL_MS);
     this.hostTimer.unref();
@@ -1873,8 +1881,8 @@ export class JobManager {
   /** Poll and message callbacks run outside a tool request's error boundary. A temporary storage
    * or runner fault must not terminate the hosting broker or prevent other jobs being checked.
    */
-  private checkHostedSafely(job: Job, ownershipRefreshed = false): void {
-    try { this.checkHosted(job, ownershipRefreshed); }
+  private checkHostedSafely(job: Job, ownershipRefreshed = false, polledState?: RunnerState | null): void {
+    try { this.checkHosted(job, ownershipRefreshed, polledState); }
     catch (err) { this.log.warn("job runner check deferred after failure", { job: job.name, err: String(err) }); }
   }
 
@@ -1883,12 +1891,12 @@ export class JobManager {
    * itself (a message on the bridge, so it waits for the session even while no server of it runs); this
    * session only posts it when the runner could not, or says why a runner ended without one.
    */
-  private checkHosted(job: Job, ownershipRefreshed = false): void {
+  private checkHosted(job: Job, ownershipRefreshed = false, polledState?: RunnerState | null): void {
     if (!ownershipRefreshed) this.refreshOwnership();
     if (!this.running.has(job.id) || (job.executionOwner && job.executionOwner !== this.node.name)) return;
     if (!this.hostedRunning(job)) return;
     const runners = this.runners!;
-    const state = runners.state(job);
+    const state = polledState === undefined ? runners.state(job) : polledState;
     if (state) {
       if (currentUsage(job, state.providerUsage)) {
         job.providerUsage = state.providerUsage;
@@ -1912,7 +1920,8 @@ export class JobManager {
         this.note(job, { sessionId: state.sessionId, workdir: state.workdir, worktree: state.worktree });
       }
     }
-    const alive = runners.alive(job, state);
+    // Only the periodic poll (which primed one batch for all runners) may use deferred identity evidence.
+    const alive = runners.alive(job, state, polledState !== undefined);
     // Delivery precedes the runner's last writes and exit. Never overlap runner generations.
     if (state && state.status !== "running") {
       if (!alive) this.settleHosted(job, state);
