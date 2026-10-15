@@ -6,7 +6,8 @@ import { z } from "zod";
 import { readProcessIdentity } from "./process-identity.js";
 import { assertLifecycleServingCapability, type LifecycleServingCapability, type LifecycleServingPhase } from "./broker.js";
 import { createWindowsLifecycleObjects, assertWindowsLifecycleCreation, readOwnWindowsLifecycleIdentity, WindowsLifecyclePathUnavailable,
-  verifyWindowsLifecyclePaths, assertWindowsLifecyclePathProof, cachedWindowsLifecyclePathProof, hasVerifiedWindowsLifecyclePaths } from "./lifecycle-windows.js";
+  verifyWindowsLifecyclePaths, assertWindowsLifecyclePathProof, cachedWindowsLifecyclePathProof, hasVerifiedWindowsLifecyclePaths,
+  prepareWindowsLifecycleBootstrap, preparedWindowsLifecycleIdentity, type WindowsLifecyclePreparation } from "./lifecycle-windows.js";
 import { lifecycleInstanceSchema as instanceSchema, lifecycleActorSchema, LIFECYCLE_STATES, LIFECYCLE_NEXT,
   LIFECYCLE_PROOF_REQUIRED, sameLifecycleInstance } from "./daemon-lifecycle-role.js";
 
@@ -417,14 +418,22 @@ export class LifecycleJournal {
   /** Boundary1 ONLY: explicit real serving issuer, exclusive new Windows objects,
    * initial committed lineage. No ordinary admission, controller or role promotion.
    * Existing public Windows bootstrap/reader/admission paths remain unsupported. */
-  static async bootstrapServing(capability: LifecycleServingCapability, deadline: number): Promise<LifecycleJournal> {
+  /** Setup outside the timed bootstrap: own identity + HOME ACL observation (helpers). */
+  static prepareServingBootstrap(capability: LifecycleServingCapability, deadline: number): Promise<WindowsLifecyclePreparation> {
+    return prepareWindowsLifecycleBootstrap(capability, deadline);
+  }
+
+  static async bootstrapServing(capability: LifecycleServingCapability, deadline: number, preparation?: WindowsLifecyclePreparation): Promise<LifecycleJournal> {
     const initial = assertLifecycleServingCapability(capability, "prepare");
     if (process.platform !== "win32" || !Number.isFinite(deadline) || performance.now() >= deadline) fail("publication_unproved");
     const current = () => {
       const actual = assertLifecycleServingCapability(capability, "prepare");
       if (performance.now() >= deadline || actual.ownerInstance !== initial.ownerInstance || actual.generation !== initial.generation || actual.home !== initial.home) fail("writer_unknown");
     };
-    current(); const creationIdentity = await readOwnWindowsLifecycleIdentity(capability, deadline); current();
+    current();
+    const creationIdentity = preparation !== undefined ? preparedWindowsLifecycleIdentity(preparation, capability)
+      : await readOwnWindowsLifecycleIdentity(capability, deadline);
+    current();
     if (!creationIdentity) fail("writer_unknown");
     const owner = { nonce: initial.ownerInstance, pid: process.pid, creationIdentity };
     // Refusal only: any existing object (including a link) or unreadable/unknown
@@ -434,7 +443,7 @@ export class LifecycleJournal {
     catch (error) { if ((error as NodeJS.ErrnoException)?.code === "ENOENT") absent = true; else fail("publication_unproved"); }
     if (!absent) fail("publication_unproved");
     current(); // Original cap/deadline still applies before atomic exclusive creation.
-    const created = await createWindowsLifecycleObjects(capability, deadline); current();
+    const created = await createWindowsLifecycleObjects(capability, deadline, preparation); current();
     const guard = () => { current(); assertWindowsLifecycleCreation(created, capability); };
     const dir = join(initial.home, DIRECTORY), file = join(dir, FILE);
     guard();

@@ -119,6 +119,11 @@ async function serving() {
   broker = new Broker(pipe, store, nullLogger, "fixture-token"); broker.setHostingMode("daemon");
   await broker.listen(reservation); return broker;
 }
+// Setup outside the timed bootstrap phase: own-identity and HOME ACL helpers run here.
+async function prepared(b: Broker) {
+  const end = performance.now() + 5000;
+  return LifecycleJournal.prepareServingBootstrap(b.lifecycleServingCapability("prepare", end), end);
+}
 const directory = () => join(home, ".core-lifecycle");
 const file = () => join(directory(), "receipts.sqlite");
 
@@ -171,7 +176,9 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
     });
     // The actual HOME helper must finish first. Only the subsequent source-owned
     // CREATE_NEW registration crosses the original phase deadline; no FS probe.
-    vi.spyOn(performance, "now").mockImplementation(() => homeClosed && pendingWindowsLifecycleVerifications() > 0 ? end + 1 : realNow());
+    // Before the simulated crossing the clock stays strictly before `end`, so real
+    // helper time cannot expire the HOME observation first.
+    vi.spyOn(performance, "now").mockImplementation(() => homeClosed && pendingWindowsLifecycleVerifications() > 0 ? end + 1 : Math.min(realNow(), end - 1));
     await expect(windowsLifecycle.createWindowsLifecycleObjects(cap, end)).rejects.toMatchObject({ reason: "unavailable" });
     expect(homeClosed).toBe(true); expect(nativeEntries).toBe(1); expect(pendingWindowsLifecycleVerifications()).toBe(0);
     expect(existsSync(directory())).toBe(true); expect(existsSync(file())).toBe(false); expect(existsSync(file() + "-journal")).toBe(false);
@@ -207,9 +214,9 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
     expect(() => windowsLifecycle.assertWindowsLifecycleCreation({}, cap)).toThrow("unavailable");
   });
   it("actual serving issuer publishes real committed lineage with protected new objects and a strict independent reader", async () => {
-    const b = await serving(), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end);
+    const b = await serving(), prep = await prepared(b), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end);
     const before = lstatSync(home, { bigint: true });
-    journal = await LifecycleJournal.bootstrapServing(cap, end).catch(error => {
+    journal = await LifecycleJournal.bootstrapServing(cap, end, prep).catch(error => {
       const stages = ["configure", "schema", "commit", "file_flush", "journal_flush", "readonly_lineage", "final_guard"];
       if (error?.reason === "publication_unproved" && typeof error.bootstrapStage === "string" && stages.includes(error.bootstrapStage)) {
         const errnos = ["EPERM", "EBADF", "EACCES", "EIO", "unknown"];
@@ -301,7 +308,7 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
     expect(actualCode).toBe(0); expect(pendingWindowsLifecycleVerifications()).toBe(0); expect(existsSync(directory())).toBe(false);
   });
   it("actual DB fsync success cannot label a later journal entry guard failure as successful journal fsync", async () => {
-    const b = await serving(), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end);
+    const b = await serving(), prep = await prepared(b), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end);
     const realOpen = originals.openSync!, realFsync = originals.fsyncSync!;
     const owned = new Map<number, "file" | "journal">(); let dbSynced = false, journalSynced = false;
     vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
@@ -316,11 +323,11 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
     vi.spyOn(files, "fsyncSync").mockImplementation(fd => {
       realFsync(fd); if (owned.get(fd) === "file") dbSynced = true; if (owned.get(fd) === "journal") journalSynced = true;
     });
-    await expect(LifecycleJournal.bootstrapServing(cap, end)).rejects.toMatchObject({ reason: "publication_unproved", bootstrapStage: "journal_flush", bootstrapFlushOk: false });
+    await expect(LifecycleJournal.bootstrapServing(cap, end, prep)).rejects.toMatchObject({ reason: "publication_unproved", bootstrapStage: "journal_flush", bootstrapFlushOk: false });
     expect(dbSynced).toBe(true); expect(journalSynced).toBe(false); expect(captured!.isTransaction).toBe(false);
   });
   it("SIMULATED owned fsync plus close failure keeps the primary errno and separate close classification", async () => {
-    const b = await serving(), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end), realOpen = originals.openSync!;
+    const b = await serving(), prep = await prepared(b), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end), realOpen = originals.openSync!;
     const realFsync = originals.fsyncSync!, realClose = originals.closeSync!;
     vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
       if (sql.includes("CREATE TABLE lifecycle_lineage")) captured = this; return sqliteExec.call(this, sql);
@@ -336,18 +343,18 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
       if (fixtureFlushDescriptors.has(fd)) throw Object.assign(new Error("SIMULATED owned close failure"), { code: "EBADF" });
       return realClose(fd);
     });
-    await expect(LifecycleJournal.bootstrapServing(cap, end)).rejects.toMatchObject({ reason: "publication_unproved", bootstrapStage: "file_flush",
+    await expect(LifecycleJournal.bootstrapServing(cap, end, prep)).rejects.toMatchObject({ reason: "publication_unproved", bootstrapStage: "file_flush",
       bootstrapFlushOk: false, bootstrapFlushErrno: "EIO", bootstrapCloseErrno: "EBADF" });
     expect(fixtureFlushDescriptors.size).toBe(1); expect(captured!.isTransaction).toBe(false); expect(existsSync(file() + "-journal")).toBe(true);
   });
   it("SIMULATED pre-COMMIT IO error retains actual owned transaction/objects without production cleanup or recreation", async () => {
-    const b = await serving(), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end);
+    const b = await serving(), prep = await prepared(b), end = performance.now() + 5000, cap = b.lifecycleServingCapability("prepare", end);
     vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
       if (sql.includes("CREATE TABLE lifecycle_lineage")) captured = this;
       if (this === captured && sql === "COMMIT") throw new Error("SIMULATED VFS-style COMMIT error (not actual VFS fault)");
       return sqliteExec.call(this, sql);
     });
-    await expect(LifecycleJournal.bootstrapServing(cap, end)).rejects.toMatchObject({ reason: "publication_unproved" });
+    await expect(LifecycleJournal.bootstrapServing(cap, end, prep)).rejects.toMatchObject({ reason: "publication_unproved" });
     expect(captured).toBeInstanceOf(DatabaseSync); expect(captured!.isTransaction).toBe(true);
     const retained = [readFileSync(file()), readFileSync(file() + "-journal")];
     vi.restoreAllMocks();
@@ -359,8 +366,8 @@ describe.skipIf(process.platform !== "win32")("Windows exclusive-new serving boo
 
 describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Boundary2 (no role promotion or restart acceptance)", () => {
   it("retains the exact real readonly connection when SIMULATED initialization and disposal both fail", async () => {
-    const b = await serving(), end = performance.now() + 5000, initial = b.lifecycleServingCapability("prepare", end);
-    const j = await LifecycleJournal.bootstrapServing(initial, end);
+    const b = await serving(), prep = await prepared(b), end = performance.now() + 5000, initial = b.lifecycleServingCapability("prepare", end);
+    const j = await LifecycleJournal.bootstrapServing(initial, end, prep);
     captured = Reflect.get(j, "writer") as DatabaseSync;
     const actual = assertLifecycleServingCapability(initial, "prepare"), creationIdentity = await identities.readProcessIdentity(process.pid);
     const input = { restartId: "00000000-0000-4000-8000-000000000004", operation: "restart" as const,
@@ -406,8 +413,8 @@ describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Bound
     expect([readFileSync(file()), readFileSync(file() + "-journal")]).toEqual(bytes);
   });
   it("a real readonly prepare phase cannot lend its permission to a reentrant conflicting writer", async () => {
-    const b = await serving(), end = performance.now() + 5000, initial = b.lifecycleServingCapability("prepare", end);
-    const j = await LifecycleJournal.bootstrapServing(initial, end);
+    const b = await serving(), prep = await prepared(b), end = performance.now() + 5000, initial = b.lifecycleServingCapability("prepare", end);
+    const j = await LifecycleJournal.bootstrapServing(initial, end, prep);
     captured = Reflect.get(j, "writer"); // Exact owned handle retained BEFORE any assertion can fail.
     const actual = assertLifecycleServingCapability(initial, "prepare"), creationIdentity = await identities.readProcessIdentity(process.pid);
     expect(creationIdentity).toBeTruthy();
@@ -442,8 +449,8 @@ describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Bound
     expect([readFileSync(file()), readFileSync(file() + "-journal")]).toEqual(bytes);
   });
   it("fresh real phase APIs retain default/copy/wrong-phase refusal without a caller-created permission", async () => {
-    const b = await serving(), end = performance.now() + 5000, initial = b.lifecycleServingCapability("prepare", end);
-    journal = await LifecycleJournal.bootstrapServing(initial, end);
+    const b = await serving(), prep = await prepared(b), end = performance.now() + 5000, initial = b.lifecycleServingCapability("prepare", end);
+    journal = await LifecycleJournal.bootstrapServing(initial, end, prep);
     const actual = assertLifecycleServingCapability(initial, "prepare"), creationIdentity = await identities.readProcessIdentity(process.pid);
     expect(creationIdentity).toBeTruthy();
     const input = { restartId: "00000000-0000-4000-8000-000000000002", operation: "restart" as const,
@@ -462,8 +469,8 @@ describe.skipIf(process.platform !== "win32")("Windows fresh serving phase Bound
     expect(pendingWindowsLifecycleVerifications()).toBe(0);
   });
   it("a returned actual readonly reader works outside factory cleanup then refuses expired/closed reads without renewal or SQL", async () => {
-    const b = await serving(), end = performance.now() + 5000, initial = b.lifecycleServingCapability("prepare", end);
-    journal = await LifecycleJournal.bootstrapServing(initial, end);
+    const b = await serving(), prep = await prepared(b), end = performance.now() + 5000, initial = b.lifecycleServingCapability("prepare", end);
+    journal = await LifecycleJournal.bootstrapServing(initial, end, prep);
     const actual = assertLifecycleServingCapability(initial, "prepare"), creationIdentity = await identities.readProcessIdentity(process.pid);
     expect(creationIdentity).toBeTruthy();
     const input = { restartId: "00000000-0000-4000-8000-000000000003", operation: "restart" as const,

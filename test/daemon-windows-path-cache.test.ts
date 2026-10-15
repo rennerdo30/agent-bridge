@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import * as processes from "node:child_process";
-import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -155,5 +155,31 @@ describe.skipIf(process.platform !== "win32")("Windows lifecycle verified-path c
     const refusedEnd = performance.now() + 5000;
     await expect(journal.selectedServing(broker.lifecycleServingCapability("prepare", refusedEnd), refusedEnd)).rejects.toBeInstanceOf(LifecycleUnavailable);
     expect(spawned).toEqual(["identity", "inspect", "create", "inspect", "inspect"]);
+  });
+  it("a bootstrap preparation moves the identity and HOME helpers out of the timed bootstrap, bound to its exact owner", async () => {
+    const pipe = resolvePipePath(home, {}); reservation = await EndpointReservation.bind(pipe);
+    broker = new Broker(pipe, new MessageStore(resolveDbPath(home), nullLogger), nullLogger, "fixture-token"); broker.setHostingMode("daemon");
+    await broker.listen(reservation);
+    const prepareEnd = performance.now() + 5000;
+    const preparation = await LifecycleJournal.prepareServingBootstrap(broker.lifecycleServingCapability("prepare", prepareEnd), prepareEnd);
+    expect(spawned).toEqual(["identity", "inspect"]);
+    // Only the exact source-minted record works; a caller-made object is refused before any helper.
+    const forgedEnd = performance.now() + 5000;
+    await expect(LifecycleJournal.bootstrapServing(broker.lifecycleServingCapability("prepare", forgedEnd), forgedEnd, Object.freeze({})))
+      .rejects.toThrow("unavailable");
+    expect(spawned).toEqual(["identity", "inspect"]); expect(existsSync(directory())).toBe(false);
+    const end = performance.now() + 5000;
+    journal = await LifecycleJournal.bootstrapServing(broker.lifecycleServingCapability("prepare", end), end, preparation);
+    expect(spawned).toEqual(["identity", "inspect", "create", "inspect"]);
+  });
+  it("a HOME verdict (the preparation's) refuses and forgets a swapped HOME without a helper", async () => {
+    const owner = randomUUID();
+    await verifyWindowsLifecyclePaths(home, owner, "prepare", "home", performance.now() + 5000);
+    expect(spawned).toEqual(["inspect"]); expect(hasVerifiedWindowsLifecyclePaths(home, owner, "home")).toBe(true);
+    const proof = cachedWindowsLifecyclePathProof(home, owner, "prepare", "home", performance.now() + 5000);
+    assertWindowsLifecyclePathProof(proof, home, owner, "prepare", "home");
+    renameSync(home, join(env.home, "retained-home")); mkdirSync(home);
+    expect(() => cachedWindowsLifecyclePathProof(home, owner, "prepare", "home", performance.now() + 5000)).toThrow("unsafe_path");
+    expect(hasVerifiedWindowsLifecyclePaths(home, owner, "home")).toBe(false); expect(spawned).toEqual(["inspect"]);
   });
 });

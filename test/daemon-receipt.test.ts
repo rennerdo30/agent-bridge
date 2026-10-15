@@ -187,7 +187,13 @@ const request = (): LifecycleRequest => ({ restartId: randomUUID(), operation: "
   target: { immutableRuntimePath: join(env.home, "fixture-immutable-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } });
 async function bootstrap() {
   if (portable) journal = await LifecycleJournal.bootstrap(journalHome, owner);
-  else { const end = performance.now() + LIFECYCLE_PREPARE_MS; journal = await LifecycleJournal.bootstrapServing(servingFixture!.broker.lifecycleServingCapability("prepare", end), end); }
+  else {
+    // Own-identity and HOME ACL helpers run in the setup step, outside the timed bootstrap.
+    const prepareEnd = performance.now() + LIFECYCLE_PREPARE_MS;
+    const preparation = await LifecycleJournal.prepareServingBootstrap(servingFixture!.broker.lifecycleServingCapability("prepare", prepareEnd), prepareEnd);
+    const end = performance.now() + LIFECYCLE_PREPARE_MS;
+    journal = await LifecycleJournal.bootstrapServing(servingFixture!.broker.lifecycleServingCapability("prepare", end), end, preparation);
+  }
   return journal;
 }
 const portable = process.platform !== "win32";
@@ -722,8 +728,10 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     if (portable) await expect(LifecycleJournal.bootstrap(journalHome, owner)).rejects.toMatchObject({ reason: "lineage_unknown" });
     else {
       await expect(LifecycleJournal.bootstrap(journalHome, owner)).rejects.toMatchObject({ reason: "publication_unproved" });
+      const prepareEnd = performance.now() + LIFECYCLE_PREPARE_MS;
+      const preparation = await LifecycleJournal.prepareServingBootstrap(servingFixture!.broker.lifecycleServingCapability("prepare", prepareEnd), prepareEnd);
       const end = performance.now() + LIFECYCLE_PREPARE_MS;
-      await expect(LifecycleJournal.bootstrapServing(servingFixture!.broker.lifecycleServingCapability("prepare", end), end))
+      await expect(LifecycleJournal.bootstrapServing(servingFixture!.broker.lifecycleServingCapability("prepare", end), end, preparation))
         .rejects.toMatchObject({ reason: "publication_unproved" });
     }
     expect(existsSync(file() + "-journal")).toBe(false); expect(readFileSync(file())).toEqual(before);
