@@ -188,6 +188,20 @@ afterEach(async () => {
   publishInitialAdmissionTrace();
 });
 const file = () => join(journalHome, ".core-lifecycle", "receipts.sqlite");
+
+// SIMULATED elapsed time only; every SQLite call is native. These semantic
+// cases retain their original phase deadlines through beforeDeadline below.
+function simulateReceiptStall(stage: "BEGIN IMMEDIATE" | "COMMIT") {
+  let elapsed = 0;
+  const now = performance.now.bind(performance);
+  vi.spyOn(performance, "now").mockImplementation(() => now() + elapsed);
+  vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+    const value = sqliteExec.call(this, sql);
+    if (sql === stage) elapsed += LIFECYCLE_ADMISSION_MS + 1;
+    return value;
+  });
+}
+
 const deadline = () => performance.now() + LIFECYCLE_ADMISSION_MS;
 const request = (): LifecycleRequest => ({ restartId: randomUUID(), operation: "restart", oldInstance: owner,
   target: { immutableRuntimePath: join(env.home, "fixture-immutable-runtime.mjs"), version: "fixture", protocol: 1, fileManifestDigest: "a".repeat(64) } });
@@ -286,9 +300,11 @@ async function captureRefusal(action: () => unknown | Promise<unknown>): Promise
 // guard, proof and capability still receives that original deadline; budget
 // refusals keep their own SIMULATED-boundary tests (outcomeFault).
 async function beforeDeadline<T>(end: number, action: (end: number) => Promise<T>): Promise<T> {
-  const realNow = performance.now.bind(performance);
+  // Preserve a supplied slow-dependency clock as well as the native clock.
+  const previous = vi.isMockFunction(performance.now) ? vi.mocked(performance.now).getMockImplementation() : undefined;
+  const realNow = previous ?? performance.now.bind(performance);
   const clock = vi.spyOn(performance, "now").mockImplementation(() => Math.min(realNow(), end - 1));
-  try { return await action(end); } finally { clock.mockRestore(); }
+  try { return await action(end); } finally { if (previous) clock.mockImplementation(previous); else clock.mockRestore(); }
 }
 // Failure diagnostic only: names the source-associated write outcome (stage/cause).
 function withWriteOutcome(error: unknown): unknown {
@@ -468,7 +484,9 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     expect(existsSync(file() + "-journal")).toBe(true);
   });
   it("actual prepared reader rejects UPDATE and INSERT with strict readonly flags/query_only", async () => {
-    const j = await bootstrap(), input = request(); await admit(j, input, deadline());
+    const j = await bootstrap(), input = request();
+    simulateReceiptStall("COMMIT");
+    await beforeDeadline(deadline(), end => admit(j, input, end));
     const prepare = DatabaseSync.prototype.prepare; let checked = false;
     const spy = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (this: DatabaseSync, sql: string) {
       if (sql.startsWith("SELECT l.json AS lineage")) {
@@ -485,20 +503,26 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     expect((await lookup(j, input.restartId))?.revision).toBe(1);
   });
   it("old writer CAS rejects stale prepared acknowledgements and cannot cross release without checkpoint", async () => {
-    const j = await bootstrap(), input = request(); await admit(j, input, deadline());
+    const j = await bootstrap(), input = request();
+    simulateReceiptStall("COMMIT");
+    await beforeDeadline(deadline(), end => admit(j, input, end));
     const replacement = { ...owner, nonce: randomUUID() };
-    await advance(j, input.restartId, 1, "preparing", { replacementInstance: replacement }, deadline());
-    await expect(advance(j, input.restartId, 1, "preparing", { replacementInstance: replacement }, deadline())).rejects.toThrow(LifecycleUnavailable);
-    await advance(j, input.restartId, 2, "draining", {}, deadline()); await advance(j, input.restartId, 3, "prepared", {}, deadline());
-    await expect(advance(j, input.restartId, 4, "release_intent", {}, deadline())).rejects.toThrow(LifecycleUnavailable);
+    const step = (revision: number, state: Parameters<typeof advance>[3], fields: Parameters<typeof advance>[4] = {}) =>
+      beforeDeadline(deadline(), end => advance(j, input.restartId, revision, state, fields, end));
+    await step(1, "preparing", { replacementInstance: replacement });
+    await expect(step(1, "preparing", { replacementInstance: replacement })).rejects.toThrow(LifecycleUnavailable);
+    await step(2, "draining"); await step(3, "prepared");
+    await expect(step(4, "release_intent")).rejects.toThrow(LifecycleUnavailable);
     const retained = await selected(j);
     expect(retained).toMatchObject({ currentActor: { kind: "old", instance: owner }, actorGeneration: 1 });
-    const exec = vi.spyOn(DatabaseSync.prototype, "exec");
-    await expect(advance(j, input.restartId, 4, "release_intent", { checkpointManifest: {
-      closureDigest: "a".repeat(64), owners: [] } }, deadline())).rejects.toThrow("owner_unsupported");
+    // The slow-SQL fixture already spies on exec; start this no-BEGIN census
+    // at the same boundary as the original standalone spy.
+    const exec = vi.spyOn(DatabaseSync.prototype, "exec").mockClear();
+    await expect(step(4, "release_intent", { checkpointManifest: {
+      closureDigest: "a".repeat(64), owners: [] } })).rejects.toThrow("owner_unsupported");
     expect(exec.mock.calls.some(([sql]) => sql === "BEGIN IMMEDIATE")).toBe(false);
     const forgedFields = { currentActor: { kind: "successor", instance: replacement } } as unknown as Parameters<typeof j.advance>[3];
-    await expect(advance(j, input.restartId, 4, "unknown", forgedFields, deadline())).rejects.toThrow("revision_conflict");
+    await expect(step(4, "unknown", forgedFields)).rejects.toThrow("revision_conflict");
     expect(await selected(j)).toEqual(retained);
     expect((await selected(j))?.state).toBe("prepared");
   });
@@ -618,13 +642,16 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
   });
   it("SIMULATED error after actual COMMIT retains committed bytes but quarantined public APIs cannot claim readiness or close", async () => {
     const j = await bootstrap(), input = request();
+    let elapsed = 0; const now = performance.now.bind(performance);
+    vi.spyOn(performance, "now").mockImplementation(() => now() + elapsed);
     vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function (this: DatabaseSync, sql: string) {
       if (sql === "BEGIN IMMEDIATE") captured = this;
       const result = sqliteExec.call(this, sql);
+      if (sql === "BEGIN IMMEDIATE") elapsed += LIFECYCLE_ADMISSION_MS + 1;
       if (sql === "COMMIT") throw Object.assign(new Error("SIMULATED error after real COMMIT"), { errcode: 10 });
       return result;
     });
-    await expect(admit(j, input, deadline())).rejects.toThrow(LifecycleUnavailable);
+    await expect(beforeDeadline(deadline(), end => admit(j, input, end))).rejects.toThrow(LifecycleUnavailable);
     expect(captured!.isTransaction).toBe(false); expect(j.isQuarantined).toBe(true);
     const before = readFileSync(file()), rows = committedFixtureRows(); expect(rows).toHaveLength(1);
     expect(JSON.parse(String(rows[0]!.json))).toMatchObject({ restartId: input.restartId, state: "accepted", revision: 1 });
