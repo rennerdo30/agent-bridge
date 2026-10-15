@@ -3,7 +3,7 @@ import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { BridgeConfig } from "../core/config.js";
 import { killPid, pidAlive } from "../core/delegate.js";
-import { identityStartedAfter, processIdentity, readProcessIdentitiesSync } from "../core/process-identity.js";
+import { identityStartedAfter, processIdentity, readProcessIdentities } from "../core/process-identity.js";
 import { ownerGone, writtenBeforeBoot } from "../core/boot-time.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
@@ -90,6 +90,7 @@ export function writeRunnerState(home: string, id: string, state: RunnerState): 
 /** How long a probed identity of a live runner PID is reused by the frequent liveness checks. */
 const IDENTITY_CACHE_MS = 30_000;
 const probed = new Map<number, { identity: string | undefined; at: number }>();
+let probing: Promise<void> | undefined;
 
 /** Prewarm the same liveness cache once per host poll, rather than spawning once per expired runner. */
 export function primeRunnerProcessIdentities(pids: number[]): void {
@@ -98,12 +99,25 @@ export function primeRunnerProcessIdentities(pids: number[]): void {
     const entry = probed.get(pid);
     return !entry || Date.now() - entry.at >= IDENTITY_CACHE_MS;
   });
-  if (!due.length) return;
-  const identities = readProcessIdentitiesSync(due);
-  const at = Date.now();
-  // Missing, unreadable and failed queries all stay unknown here. In particular, a failed batch
-  // must not cause N single-PID retries in this poll or authorize a kill/recovery decision.
-  for (const pid of due) probed.set(pid, { identity: identities?.get(pid) || undefined, at });
+  if (!due.length || probing) return;
+  // Keep last-known evidence while the bounded asynchronous query runs. Overlapping polls never
+  // await it or launch another batch, even when new runners arrive during this query.
+  const entries = due.map(pid => {
+    const entry = { identity: probed.get(pid)?.identity, at: probed.get(pid)?.at ?? 0 };
+    probed.set(pid, entry);
+    return { pid, entry };
+  });
+  const publish = (identities?: Map<number, string>) => {
+    const at = Date.now();
+    for (const { pid, entry } of entries) {
+      // An observed exit or a fresh kill probe supersedes this in-flight evidence.
+      if (probed.get(pid) !== entry) continue;
+      if (!pidAlive(pid)) { probed.delete(pid); continue; }
+      // Failed, missing and unreadable results are unknown, never proof of exit or a match.
+      probed.set(pid, { identity: identities?.get(pid) || undefined, at });
+    }
+  };
+  probing = readProcessIdentities(due).then(publish, () => publish()).finally(() => { probing = undefined; });
 }
 
 /**
@@ -114,10 +128,14 @@ export function primeRunnerProcessIdentities(pids: number[]): void {
 export function runnerProcessAlive(state: Pick<RunnerState, "pid" | "identity" | "updatedAt">, fresh = false): boolean {
   if (!pidAlive(state.pid)) { probed.delete(state.pid); return false; }
   let entry = probed.get(state.pid);
-  if (fresh || !entry || Date.now() - entry.at >= IDENTITY_CACHE_MS) probed.set(state.pid, entry = { identity: processIdentity(state.pid), at: Date.now() });
+  if (fresh) probed.set(state.pid, entry = { identity: processIdentity(state.pid), at: Date.now() });
+  else if (!entry || Date.now() - entry.at >= IDENTITY_CACHE_MS) {
+    primeRunnerProcessIdentities([state.pid]);
+    entry = probed.get(state.pid);
+  }
   // Unreadable start time (EPERM, a protected process that reused the PID, a zombie): a runner whose last heartbeat
   // predates the current boot is gone, since no process survives a reboot; a recent one stays "alive" (AB-256).
-  if (entry.identity === undefined) return !fresh && !ownerGone({ alive: undefined, recordedAt: state.updatedAt });
+  if (entry?.identity === undefined) return !fresh && !ownerGone({ alive: undefined, recordedAt: state.updatedAt });
   if (state.identity) return entry.identity === state.identity;
   return !Number.isFinite(state.updatedAt) || !identityStartedAfter(entry.identity, state.updatedAt + 1_000);
 }

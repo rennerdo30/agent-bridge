@@ -15,7 +15,20 @@ import { JobManager, type Job, type RunnerState } from "../src/mcp/jobs.js";
 import { nullLogger } from "../src/core/logger.js";
 
 // Keep the real implementation by default, including the existing native AB-362 query checks below.
-vi.mock("node:child_process", async original => ({ ...await original<typeof import("node:child_process")>() }));
+vi.mock("node:child_process", async original => {
+  const actual = await original<typeof import("node:child_process")>();
+  const { promisify } = await import("node:util");
+  const execFile = vi.fn(actual.execFile);
+  // Node's real custom promisifier closes over its original execFile. Route through the mock
+  // so tests count launches at the asynchronous OS boundary as well as the synchronous one.
+  Object.defineProperty(execFile, promisify.custom, { value: (...args: unknown[]) => new Promise((resolve, reject) => {
+    (execFile as (...args: unknown[]) => unknown)(...args, (error: Error | null, stdout: string, stderr: string) => {
+      if (error) reject(error); else resolve({ stdout, stderr });
+    });
+  }) });
+  return { ...actual, execFile };
+});
+const realChildProcess = await vi.importActual<typeof import("node:child_process")>("node:child_process");
 
 // 2026-10-10: ~20 jobs starting at once made the batch PowerShell identity query time out. Its empty result
 // marked every live 0.30.6 reader "unknown, reads 0" and blocked spawn_codex behind a json 0→4 upgrade.
@@ -25,7 +38,11 @@ beforeEach(() => {
   env = makeEnv();
   vi.spyOn(process, "kill").mockImplementation(((target: number) => { if (target === pid) return true; throw Object.assign(new Error("ESRCH"), { code: "ESRCH" }); }) as typeof process.kill);
 });
-afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); await env.cleanup(); });
+afterEach(async () => {
+  vi.useRealTimers(); vi.restoreAllMocks();
+  vi.mocked(childProcess.execFile).mockReset().mockImplementation(realChildProcess.execFile);
+  await env.cleanup();
+});
 
 const versionOf = () => liveStorePeers(env.home).find(peer => peer.pid === pid)?.version;
 const expire = () => vi.setSystemTime(Date.now() + 11_000);
@@ -173,7 +190,7 @@ it.runIf(process.platform === "win32")("reports a failed batch query instead of 
 });
 
 let fixturePid = 3_000_000;
-function simulatedProcesses(count: number) {
+function simulatedProcesses(count: number, delayMs = 0) {
   const states: RunnerState[] = Array.from({ length: count }, () => ({
     pid: ++fixturePid, identity: "638960000000000000", updatedAt: Date.now(), peer: "runner", status: "running",
   }));
@@ -182,27 +199,36 @@ function simulatedProcesses(count: number) {
     if (live.has(pid)) return true;
     throw Object.assign(new Error("ESRCH"), { code: "ESRCH" });
   }) as typeof process.kill);
-  const spawns = vi.spyOn(childProcess, "execFileSync").mockImplementation(((_file: string, args: string[]) => {
+  const commandOutput = (_file: string, args: string[]) => {
     expect(_file).toBe("powershell.exe");
     const command = args.at(-1)!;
     const single = /GetProcessById\((\d+)\)/.exec(command);
     if (single) return live.get(Number(single[1])) ?? "";
     const pids = /@\(([^)]*)\)/.exec(command)![1]!.split(",").map(Number);
     return pids.filter(pid => live.has(pid)).map(pid => `${pid}|${live.get(pid)}`).join("\n");
-  }) as typeof childProcess.execFileSync);
-  return { states, live, spawns };
+  };
+  const syncSpawns = vi.spyOn(childProcess, "execFileSync").mockImplementation(commandOutput as typeof childProcess.execFileSync);
+  const spawns = vi.mocked(childProcess.execFile).mockClear().mockImplementation(((file: string, args: string[], options: { timeout: number }, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
+    expect(options.timeout).toBe(15_000);
+    const output = commandOutput(file, args);
+    if (delayMs) setTimeout(() => callback(null, output, ""), delayMs);
+    else callback(null, output, "");
+    return {};
+  }) as typeof childProcess.execFile);
+  return { states, live, spawns, syncSpawns };
 }
 
-it.runIf(process.platform === "win32").each([1, 16, 64])("bounds an actual host poll to one spawn for %i simulated runners", count => {
+it.runIf(process.platform === "win32").each([1, 16, 64])("bounds an actual host poll to one spawn for %i simulated runners", async count => {
   vi.useFakeTimers();
-  const { states, live, spawns } = simulatedProcesses(count);
-  // The pre-fix poll called this once for each job; count the actual command launches at that boundary.
-  for (const state of states) expect(runnerProcessAlive(state)).toBe(true);
-  expect(spawns).toHaveBeenCalledTimes(count);
-  const before = spawns.mock.calls.length;
+  const { states, spawns, syncSpawns } = simulatedProcesses(count);
+  // Fresh single-PID calls reproduce the original unbatched launch boundary.
+  for (const state of states) expect(runnerProcessAlive(state, true)).toBe(true);
+  expect(syncSpawns).toHaveBeenCalledTimes(count);
+  const before = syncSpawns.mock.calls.length;
   // Expire exactly the same runners, then exercise watchHosted's real timer, not just the prewarm helper.
   vi.setSystemTime(Date.now() + 30_000);
   spawns.mockClear();
+  syncSpawns.mockClear();
   const manager = new JobManager({ name: "host", on: vi.fn() } as never, nullLogger);
   const internals = manager as unknown as { running: Map<string, Job>; watchHosted(): void; hostTimer: NodeJS.Timeout };
   const jobs = states.map((state, i) => ({ id: String(i), name: state.peer, status: "running", host: { pid: state.pid } }) as Job);
@@ -211,24 +237,27 @@ it.runIf(process.platform === "win32").each([1, 16, 64])("bounds an actual host 
   manager.runners = { state: reads, alive: (_job, state) => runnerProcessAlive(state!), send: vi.fn(), kill: vi.fn() };
   try {
     internals.watchHosted();
-    vi.advanceTimersByTime(2_000);
+    await vi.advanceTimersByTimeAsync(2_000);
     expect(spawns).toHaveBeenCalledTimes(1);
     expect(reads).toHaveBeenCalledTimes(count); // consume the same snapshot that was batched
     const after = spawns.mock.calls.length;
-    vi.advanceTimersByTime(2_000);
+    await vi.advanceTimersByTimeAsync(2_000);
     expect(spawns).toHaveBeenCalledTimes(1); // warm cache: zero extra launches
-    vi.advanceTimersByTime(30_000);
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(spawns).toHaveBeenCalledTimes(2); // one refresh, independent of N
+    expect(syncSpawns).not.toHaveBeenCalled();
     console.log(`AB-368 host poll N=${count}: before=${before}, after=${after}, warm=0, refresh=1`);
   } finally { clearInterval(internals.hostTimer); }
 });
 
-it.runIf(process.platform === "win32")("keeps failed and unreadable poll probes unknown and fresh kill probes authoritative", () => {
-  const { states, live, spawns } = simulatedProcesses(4);
+it.runIf(process.platform === "win32")("keeps failed and unreadable poll probes unknown and fresh kill probes authoritative", async () => {
+  const { states, live, spawns, syncSpawns } = simulatedProcesses(4);
   live.set(states[0]!.pid, ""); // protected process: identity unreadable
   live.delete(states[1]!.pid); // cheap liveness notices exit without querying it
   primeRunnerProcessIdentities(states.map(state => state.pid));
+  await new Promise<void>(resolve => setImmediate(resolve));
   expect(spawns).toHaveBeenCalledTimes(1);
+  syncSpawns.mockImplementation(() => { throw new Error("identity unreadable"); });
   expect(runnerProcessAlive(states[0]!)).toBe(true);
   expect(runnerProcessAlive(states[0]!, true)).toBe(false);
   expect(runnerProcessAlive(states[1]!)).toBe(false);
@@ -238,10 +267,14 @@ it.runIf(process.platform === "win32")("keeps failed and unreadable poll probes 
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(Date.now() + 30_000);
   primeRunnerProcessIdentities(states.map(state => state.pid));
+  await new Promise<void>(resolve => setImmediate(resolve));
   expect(runnerProcessAlive(states[2]!)).toBe(false); // expired cache sees the replacement too
   vi.setSystemTime(Date.now() + 30_000);
-  spawns.mockClear().mockImplementation(() => { throw new Error("query timed out"); });
+  spawns.mockClear().mockImplementation(((_file: string, _args: string[], _options: unknown, callback: (error: Error) => void) => {
+    callback(new Error("query timed out")); return {};
+  }) as typeof childProcess.execFile);
   primeRunnerProcessIdentities(states.map(state => state.pid));
+  await new Promise<void>(resolve => setImmediate(resolve));
   expect(spawns).toHaveBeenCalledTimes(1);
   expect(runnerProcessAlive(states[3]!)).toBe(true);
   expect(runnerProcessAlive(states[3]!, true)).toBe(false);
@@ -250,7 +283,69 @@ it.runIf(process.platform === "win32")("keeps failed and unreadable poll probes 
   expect(runnerProcessAlive(states[3]!)).toBe(false);
   live.set(states[3]!.pid, "638970000000000000");
   expect(runnerProcessAlive(states[3]!)).toBe(true); // failed new probe stays unknown
+  await new Promise<void>(resolve => setImmediate(resolve));
   expect(runnerProcessAlive(states[3]!, true)).toBe(false);
+});
+
+it.runIf(process.platform === "win32")("keeps host ticks and dead-runner settlement independent of a five-second batch", async () => {
+  vi.useFakeTimers();
+  const { states, live, spawns, syncSpawns } = simulatedProcesses(16, 5_000);
+  const dead = states[0]!;
+  const protectedState = states[1]!;
+  live.set(protectedState.pid, "");
+  const kill = vi.mocked(process.kill).getMockImplementation()!;
+  vi.mocked(process.kill).mockImplementation(((pid: number, signal?: string | number) => {
+    if (pid === protectedState.pid) throw Object.assign(new Error("EPERM"), { code: "EPERM" });
+    return kill(pid, signal);
+  }) as typeof process.kill);
+  const delivered = vi.fn();
+  const manager = new JobManager({ name: "host", on: vi.fn(), deliverLocal: delivered } as never, nullLogger);
+  const internals = manager as unknown as { running: Map<string, Job>; watchHosted(): void; hostTimer: NodeJS.Timeout };
+  const addJob = (state: RunnerState) => {
+    const job = { id: String(state.pid), name: state.peer, agent: "codex", status: "running", host: { pid: state.pid },
+      startedAt: Date.now(), sessionId: null, queue: [], controller: new AbortController() } as unknown as Job;
+    internals.running.set(job.id, job);
+    return job;
+  };
+  const deadJob = addJob(dead);
+  states.slice(1).forEach(addJob);
+  const reads = vi.fn((job: Job) => states.find(state => state.pid === Number(job.id))!);
+  manager.runners = { state: reads, alive: (_job, state) => runnerProcessAlive(state!), send: vi.fn(), kill: vi.fn() };
+  try {
+    internals.watchHosted();
+    await vi.advanceTimersByTimeAsync(2_000); // batch starts now and will finish at t=7 s
+    expect(spawns).toHaveBeenCalledTimes(1);
+    live.delete(dead.pid);
+    // An overlapping poll also sees a new PID not included in the running batch.
+    const newcomer = { ...dead, pid: ++fixturePid };
+    states.push(newcomer); live.set(newcomer.pid, newcomer.identity!); addJob(newcomer);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(deadJob.status).toBe("failed");
+    expect(deadJob.host).toBeNull();
+    expect(internals.running.has(deadJob.id)).toBe(false);
+    expect(delivered).toHaveBeenCalledTimes(1);
+    expect(spawns).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2_000); // third poll still runs before batch completion
+    expect(reads.mock.calls.length).toBeGreaterThanOrEqual(16 * 3);
+    expect(internals.running.has(String(protectedState.pid))).toBe(true); // EPERM stays conservative
+    expect(syncSpawns).not.toHaveBeenCalled();
+    expect(spawns).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1_000); // late result cannot resurrect the dead runner
+    expect(runnerProcessAlive(dead)).toBe(false);
+    expect(spawns).toHaveBeenCalledTimes(1);
+  } finally { clearInterval(internals.hostTimer); }
+});
+
+it.runIf(process.platform === "win32")("does not let a slow batch overwrite a newer fresh identity probe", async () => {
+  vi.useFakeTimers();
+  const { states, live, spawns } = simulatedProcesses(1, 5_000);
+  const state = states[0]!;
+  primeRunnerProcessIdentities([state.pid]);
+  live.set(state.pid, "638970000000000000");
+  expect(runnerProcessAlive(state, true)).toBe(false);
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(spawns).toHaveBeenCalledTimes(1);
+  expect(runnerProcessAlive(state)).toBe(false);
 });
 
 it.runIf(process.platform === "win32")("keeps batch and single-PID identities byte-identical to persisted Get-Process UTC ticks", () => {
