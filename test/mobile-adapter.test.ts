@@ -66,3 +66,29 @@ describe("fixed mobile local adapter", () => {
     expect(complete).toHaveBeenCalledTimes(1); expect(replay.deliveries).toEqual([{ recipientLabel: "main", state: "busy", consumedAt: 123 }]);
   });
 });
+describe("project identity for grant scopes", () => {
+  it("uses authoritative project roots across session generations and excludes paired-PC peers", async () => {
+    peer.cwd = join(home, "missing-session-worktree"); peer.projectRoot = home;
+    runs = [{ ...runs[0]!, workdir: join(home, "missing-job-worktree"), repoRoot: home }];
+    const peers = [peer, { ...peer, id: "foreign", name: "paired-pc/foreign" }];
+    const local = new LocalMobileSource({ home, log: nullLogger, peers: () => peers }, questions, "fixture-pc", () => true);
+    const first = await local.snapshot();
+    expect(first.sessions).toHaveLength(1); expect(first.jobs[0]!.projectId).toBe(first.sessions[0]!.projectId);
+    expect(local.projectFolders().get(first.sessions[0]!.projectId!)).toBe(home);
+    peer.sessionId = "restarted-native-session"; const later = await local.snapshot();
+    expect(later.sessions[0]!.id).not.toBe(first.sessions[0]!.id); expect(later.sessions[0]!.projectId).toBe(first.sessions[0]!.projectId);
+    expect(JSON.stringify(later)).not.toContain(home); expect(JSON.stringify(later)).not.toContain("missing-session-worktree");
+    peers.length = 0; runs = []; await local.snapshot(); expect(local.projectFolders().size).toBe(0);
+  });
+
+  it("names projects for the desktop only and keeps a removed worktree's jobs in its repository project", async () => {
+    runs = [{ ...runs[0]!, name: "gone-worktree-run", workdir: join(home, "missing-worktree"), repoRoot: peer.cwd }];
+    const view = await adapter.snapshot();
+    expect(view.jobs[0]?.projectId).toBe(view.sessions[0]?.projectId);
+    expect(adapter.projectFolders().get(view.sessions[0]!.projectId!)).toBe("D:/Fixture/Project");
+    expect(JSON.stringify(view)).not.toContain("D:/Fixture");
+    const store = new MobileStore(join(home, "mobile.db"), "fixture-pc", "https://pc.example.test"); closers.push(() => store.close());
+    const catalog = ((await new MobileDesktopAdmin(store, adapter, "http://127.0.0.1:4321").handle("GET", "/api/mobile/phones", {})).body as { catalog: { projects: { name: string; sessions: number; jobs: number }[] } }).catalog;
+    expect(catalog.projects).toEqual([expect.objectContaining({ name: "Project", sessions: 1, jobs: 1 })]);
+  });
+});
