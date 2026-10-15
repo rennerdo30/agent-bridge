@@ -10,6 +10,7 @@ import { createLogger } from "../core/logger.js";
 
 const OWN_SERVERS = ["agent-bridge", "agent-bridge_agent-bridge"];
 const WRITE_TOOLS = ["write_to_file", "replace_file_content", "multi_replace_file_content", "notebook_edit"];
+const READ_ONLY_TOOLS = new Set(["view_file", "grep_search", "find_by_name", "list_dir", "read_url_content", "search_web", "command_status", "list_resources", "read_resource", "finish", "wait", "wait_5_seconds"]);
 
 function allowed(input: Record<string, any>, decision: "allow" | "auto_approve" = "allow"): Record<string, unknown> {
   const call = object(input.toolCall), args = object(call.args), resources: string[] = [];
@@ -77,7 +78,7 @@ export function hasAntigravityEditRelay(env: NodeJS.ProcessEnv = process.env): b
 /** Unknown tools fail closed for restricted delegation. Bridge coordination remains usable. */
 export function antigravityReadingTool(input: Record<string, any>): boolean {
   const call = object(input.toolCall), args = object(call.args);
-  if (["view_file", "grep_search", "find_by_name", "list_dir", "read_url_content", "search_web", "command_status", "list_resources", "read_resource", "finish", "wait", "wait_5_seconds"].includes(call.name)) return true;
+  if (READ_ONLY_TOOLS.has(call.name)) return true;
   if (call.name !== "call_mcp_tool") return false;
   const server = args.ServerName ?? args.server_name ?? args.serverName;
   const tool = args.ToolName ?? args.tool_name ?? args.toolName;
@@ -100,8 +101,10 @@ export async function antigravityPermission(
   if (!access) return { decision: "allow" };
   if (access === "edit") {
     if (!relay) return { decision: "allow" };
+    // Reads always defer to native policy, including Antigravity's own files outside the workspace.
+    if (READ_ONLY_TOOLS.has(call.name)) return { decision: "allow" };
     const path = args.TargetFile ?? args.AbsolutePath ?? args.FilePath ?? args.DirectoryPath ?? args.SearchDirectory ?? args.SearchPath;
-    if ((antigravityReadingTool(input) && (!path || insideWorkspace(path, input.workspacePaths))) || (WRITE_TOOLS.includes(call.name) && insideWorkspace(path, input.workspacePaths))) return { decision: "allow" };
+    if (WRITE_TOOLS.includes(call.name) && insideWorkspace(path, input.workspacePaths)) return { decision: "allow" };
     const decision = await askRelay(request);
     return decision.allow ? allowed(input, "auto_approve") : { decision: "deny", reason: decision.message };
   }
