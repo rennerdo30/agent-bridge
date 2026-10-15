@@ -16,7 +16,8 @@ import * as worktree from "../src/core/worktree.js";
 import * as delegation from "../src/mcp/delegate-run.js";
 import { registerTools } from "../src/mcp/server.js";
 import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
-import { JobManager, readStore } from "../src/mcp/jobs.js";
+import { JobManager, readStore, type Run, type RunnerControl, type RunnerState } from "../src/mcp/jobs.js";
+import { ParentLink } from "../src/core/parent-link.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 import { JobRunners } from "../src/mcp/job-host.js";
 import { RemoteJobs } from "../src/network/remote-jobs.js";
@@ -187,6 +188,48 @@ it("persists a refused turn, retains its queue across restore, and resumes only 
   jobs.followUp(job.name, "explicit continuation");
   await until(() => resume.mock.calls.length === 1);
   expect(resume.mock.calls[0]![0]).toBe("retained steering\n\nexplicit continuation");
+});
+
+it("restores ACKed hosted steering by control ID, preserving identical bodies once per accepted control", async () => {
+  const path = join(home, "jobs.json");
+  let jobs = new JobManager(new LocalCoordinator("owner", "owner-session"), nullLogger, path, 2); managers.push(jobs);
+  let alive = true;
+  let state: RunnerState = { pid: 123, peer: "fixture-runner", updatedAt: Date.now(), status: "running", sessionId: "same-session" };
+  const send = vi.fn((_job: unknown, _control: RunnerControl) => {});
+  jobs.runners = { state: () => state, alive: () => alive, send, kill: () => {} };
+  const resume = vi.fn((..._args: any[]) => async () => answer);
+  const inline = vi.fn(async () => answer);
+  const run: Run = Object.assign(inline, { hosted: () => ({ pid: 123, peer: "fixture-runner", startedAt: Date.now() }) });
+  const job = jobs.start("codex", "selected-model", "task", run, resume);
+  expect(inline).not.toHaveBeenCalled();
+  for (const body of ["identical steering", "identical steering", "unseen steering"]) jobs.followUp(job.name, body);
+  const controls = send.mock.calls.map(([, control]) => control).filter((c): c is Extract<RunnerControl, { type: "message" }> => c.type === "message");
+  expect(controls).toHaveLength(3);
+  const link = new ParentLink("owner", () => {}, nullLogger);
+  for (const control of controls.slice(0, 2)) link.post(control.body, undefined, control.cid);
+  const pending = await link.closeMessages();
+  expect(pending.map(m => m.controlId)).toEqual(controls.slice(0, 2).map(c => c.cid));
+  const retainedControls = pending.map(m => ({ cid: m.controlId!, body: m.body }));
+  state = remoteJobSnapshotSchema.parse({ alive: false, approvals: [], state: { ...state, status: "failed", report: "usage refusal", delivered: true,
+    seen: controls.slice(0, 2).map(c => c.cid), providerUsage: { turnStartedAt: job.startedAt, decision: block, warningReported: false,
+      retainedControls: [...retainedControls, retainedControls[0]!] } } }).state!;
+  alive = false;
+  (jobs as any).checkHosted(job);
+  expect(job.status).toBe("failed");
+  expect(job.queue).toEqual(["identical steering", "identical steering", "unseen steering"]);
+  expect(resume).not.toHaveBeenCalled();
+  expect(readStore(path).find(j => j.id === job.id)?.queuedMessages).toEqual(job.queue);
+  jobs.setDormant(true);
+  jobs = new JobManager(new LocalCoordinator("owner", "owner-session"), nullLogger, path, 2); managers.push(jobs);
+  jobs.restore(() => resume);
+  const restored = jobs.find(job.name, false)!;
+  expect(restored.queue).toEqual(["identical steering", "identical steering", "unseen steering"]);
+  expect(resume).not.toHaveBeenCalled();
+  jobs.followUp(job.name, "explicit continuation");
+  await until(() => resume.mock.calls.length === 1);
+  expect(resume.mock.calls[0]![0]).toBe("identical steering\n\nidentical steering\n\nunseen steering\n\nexplicit continuation");
+  const legacy = new ParentLink("owner", () => {}, nullLogger); legacy.post("legacy body");
+  expect(await legacy.close()).toEqual(["legacy body"]);
 });
 
 it.each(CODING_AGENTS)("remote %s preflight uses executor context and persists typed refusal without a runner", async target => {

@@ -66,6 +66,7 @@ export const remoteJobSnapshotSchema = z.object({
   alive: z.boolean(),
   state: z.object({ pid: z.number().int().nonnegative(), peer: z.string().regex(NETWORK_NAME_PATTERN), status: z.enum(["running", "done", "failed", "cancelled"]), updatedAt: z.number().nonnegative(),
     providerUsage: z.object({ turnStartedAt: z.number().int().nonnegative(), warningReported: z.boolean(),
+      retainedControls: z.array(z.object({ cid: z.string().min(1).max(100), body: z.string().max(MAX_BODY_CHARS) })).optional(),
       decision: z.object({ type: z.enum(["allow", "warn", "block"]), reason: z.enum(["unknown", "read_failed", "invalid_fact", "scope_mismatch", "stale", "reset_elapsed", "usage_exhausted", "credits_exhausted", "balance_exhausted", "low_allowance", "warning_already_reported", "allowance_available"]), resetAt: z.number().int().nonnegative().optional() }) }).optional(),
     model: z.string().nullable().optional(), sessionId: z.string().nullable().optional(), workdir: z.string().nullable().optional(), worktree: worktreeSchema.nullable().optional(),
     progress: z.string().nullable().optional(), percent: z.number().min(0).max(100).optional(), progressNote: z.string().optional(), etaAt: z.number().finite().nonnegative().optional(), etaReportedAt: z.number().finite().nonnegative().optional(), asking: z.boolean().optional(), live: z.boolean().optional(),

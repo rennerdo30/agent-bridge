@@ -142,6 +142,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       ownershipHistory: saved.ownershipHistory, masters: saved.masters, args: { ...job.args, send_to: saved.args?.send_to } });
   };
   const seen: string[] = [];
+  const queuedControls = new Map<string, string>();
   /** The final report is decided: messages arriving now are left to the session (it continues the job). */
   let closing = false;
 
@@ -293,9 +294,9 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       if (!seen.includes(c.cid)) {
         if (job.live) {
           job.awaitingAnswer = true;
-          job.live.post(c.body);
+          job.live.post(c.body, undefined, c.cid);
         }
-        else job.queue.push(c.body);
+        else { job.queue.push(c.body); queuedControls.set(c.cid, c.body); }
         seen.push(c.cid);
       }
       save();
@@ -411,6 +412,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     // Follow-ups that arrived meanwhile go out right away, into the same session, from this runner.
     if (job.queue.length && job.sessionId && !job.controller.signal.aborted && !usageRefused(job)) {
       const queued = job.queue.splice(0).join("\n\n");
+      queuedControls.clear();
       void post(`${report}\n\n${QUEUED_FOLLOW_UP_NOTE}`);
       args = resumeArgs(spec.base, job.name, queued, job.sessionId, job.workdir, job.worktree, job.args);
       if (args.model !== undefined) job.model = args.model;
@@ -423,6 +425,11 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     if (saveTimer) clearTimeout(saveTimer);
     // The state first: once the report arrives, the session must find the job finished.
     const reportId = randomUUID();
+    if (usageRefused(job)) {
+      const retained = new Map(queuedControls);
+      for (const control of job.providerUsage!.retainedControls ?? []) retained.set(control.cid, control.body);
+      job.providerUsage!.retainedControls = [...retained].map(([cid, body]) => ({ cid, body }));
+    }
     save({ status, report, reportId, delivered: false, finishedAt: Date.now() });
     const delivered = await post(report, null, false, `${COMPLETION_DEDUPE_PREFIX}${reportId}`);
     save({ delivered });

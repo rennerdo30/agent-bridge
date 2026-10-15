@@ -508,6 +508,8 @@ export interface ProviderUsageState {
   turnStartedAt: number;
   decision: UsageAdmission;
   warningReported: boolean;
+  /** Pending accepted controls; receipt ACKs are not evidence of native consumption. */
+  retainedControls?: { cid: string; body: string }[];
 }
 export function usageRefused(job: { startedAt: number; providerUsage?: ProviderUsageState }): boolean {
   return job.providerUsage?.turnStartedAt === job.startedAt && job.providerUsage?.decision?.type === "block";

@@ -28,7 +28,7 @@ import { formatSiblingMessages, formatUsage } from "./format.js";
 import { SiblingLink } from "./siblings.js";
 import { denyPendingApprovals, waitForApproval, type Job, type RunResult } from "./jobs.js";
 import { DELEGATION_TARGETS, supportsAsk, usageProbeFor, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
-import { checkUsagePreflight, usageAdmissionText } from "../core/usage.js";
+import { checkUsagePreflight, usageAdmissionText, usageRefused } from "../core/usage.js";
 import { JOB_SETTING_KEYS } from "./job-settings.js";
 import { prepareWorktreeContinuation, recordWorktreeOrigin } from "../core/job-close.js";
 import { invalidateWorktreePathProofWithRetry, worktreeLease } from "../core/worktree-state.js";
@@ -352,16 +352,16 @@ async function runDelegateInner(
       await l.start();
       link = l;
       job.live = {
-        post: (m, sibling) => {
+        post: (m, sibling, controlId) => {
           const from = sibling?.from.name ?? me;
           const message = sibling ? formatSiblingMessages([sibling], siblingLink?.maxHops) : m;
           feed.report(`message from ${from}: ${m.split("\n")[0]!.slice(0, MESSAGE_PREVIEW_CHARS)}`, `message from ${from}: ${m}`);
           // Natively where the target supports it (a real user message in the running turn), else at its next hook.
-          if (!steering) return void l.post(message, sibling);
+          if (!steering) return void l.post(message, sibling, controlId);
           const s = steering;
           const delivery = s.send(message, Boolean(sibling)).then(
-            (ok) => { if (!ok) l.post(message, sibling); else if (sibling) siblingLink?.consumed([sibling.id]); },
-            () => { l.post(message, sibling); },
+            (ok) => { if (!ok) l.post(message, sibling, controlId); else if (sibling) siblingLink?.consumed([sibling.id]); },
+            () => { l.post(message, sibling, controlId); },
           );
           liveDeliveries.add(delivery);
           void delivery.finally(() => liveDeliveries.delete(delivery));
@@ -503,7 +503,10 @@ async function runDelegateInner(
     if (job && link) {
       job.live = null;
       // Messages it never got to see go out as a follow-up right after this turn.
-      job.queue.unshift(...(await link.close()));
+      const pending = await link.closeMessages();
+      job.queue.unshift(...pending.map(message => message.body));
+      if (usageRefused(job)) job.providerUsage!.retainedControls = pending.flatMap(message => message.controlId
+        ? [{ cid: message.controlId, body: message.body }] : []);
     }
   }
 

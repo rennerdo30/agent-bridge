@@ -133,7 +133,7 @@ export interface Job {
   /** An approval question the subagent is waiting on; only an explicit decision answers it. */
   pendingApproval?: ((answer: string, by?: string) => boolean | void) | null;
   /** While it runs: delivers a message into the running subagent (see parent-link.ts). */
-  live?: { post: (message: string, sibling?: BridgeMessage) => void } | null;
+  live?: { post: (message: string, sibling?: BridgeMessage, controlId?: string) => void } | null;
   finishedAt?: number;
   /** Runs in a detached job runner, so it outlives a restart of this session's server (see job-host.ts). */
   host?: JobHostInfo | null;
@@ -1858,7 +1858,13 @@ export class JobManager {
   private settleHosted(job: Job, final: RunnerState | null): void {
     // Messages forwarded to the runner that it never took become a follow-up.
     const seen = new Set(final?.seen ?? this.runners?.state(job)?.seen ?? []);
-    job.queue.push(...(job.forwarded ?? []).filter((f) => !seen.has(f.cid)).map((f) => f.body));
+    const retained = final?.providerUsage?.turnStartedAt === job.startedAt && usageRefused(job)
+      ? final.providerUsage.retainedControls ?? [] : [];
+    const retainedIds = new Set(retained.map(control => control.cid));
+    const recovered = new Map<string, string>();
+    for (const control of job.forwarded ?? []) if (!seen.has(control.cid) || retainedIds.has(control.cid)) recovered.set(control.cid, control.body);
+    for (const control of retained) if (!recovered.has(control.cid)) recovered.set(control.cid, control.body);
+    job.queue.push(...recovered.values());
     job.forwarded = [];
     const pid = job.host?.pid;
     job.host = null;
