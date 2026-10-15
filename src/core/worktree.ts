@@ -77,23 +77,18 @@ async function selectWorktreeBase(repo: string, log: Logger, explicit?: string):
       const advertised = await git(["ls-remote", "--symref", "--", remote, "HEAD"], repo, log, WORKTREE_FETCH_TIMEOUT_MS, env);
       defaultBranch = /^ref: refs\/heads\/(.+)\tHEAD\r?$/m.exec(advertised)?.[1] ?? defaultBranch;
     } catch { discoveryFailed = true; }
-    let fetchedAll = false;
     let fetchFailed = false;
     if (!defaultBranch) {
-      fetchedAll = true;
       await git(["fetch", "--no-tags", "--", remote, `refs/heads/*:refs/remotes/${remote}/*`], repo, log, WORKTREE_FETCH_TIMEOUT_MS, env).catch(() => {
         fetchFailed = true;
         baseNotes.push(`WARNING: fetch failed or offline for remote ${remote}.`);
       });
-      // A single cached branch is unambiguous even when remote HEAD was never recorded.
-      const cached = (await run(["for-each-ref", "--format=%(refname)", `refs/remotes/${remote}/`])).split(/\r?\n/).filter(ref => ref && !ref.endsWith("/HEAD"));
-      if (cached.length === 1) defaultBranch = cached[0]!.slice(`refs/remotes/${remote}/`.length);
     }
     if (defaultBranch) {
       defaultRef = `refs/remotes/${remote}/${defaultBranch}`;
       try {
         // Refresh only remote-tracking refs. Never prune or change local branches.
-        if (!fetchedAll) await git(["fetch", "--no-tags", "--", remote, `refs/heads/${defaultBranch}:${defaultRef}`], repo, log, WORKTREE_FETCH_TIMEOUT_MS, env);
+        await git(["fetch", "--no-tags", "--", remote, `refs/heads/${defaultBranch}:${defaultRef}`], repo, log, WORKTREE_FETCH_TIMEOUT_MS, env);
         if (discoveryFailed && !fetchFailed) baseNotes.push(`WARNING: remote default discovery failed; fetched cached default ${remote}/${defaultBranch}.`);
       } catch {
         fetchFailed = true;

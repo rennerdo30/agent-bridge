@@ -189,6 +189,30 @@ it("warns before falling back to HEAD when an offline remote has never been fetc
   expect(worktreeBaseReport(wt)).toContain("WARNING: no remote default tracking ref available; falling back to local HEAD");
 });
 
+it("does not infer the default from a sole cached feature branch while offline", async () => {
+  const remote = join(root, "single-branch.git");
+  execFileSync("git", ["init", "--bare", "--initial-branch=trunk", remote], { env, stdio: "pipe" });
+  git("push", remote, "HEAD:trunk", "HEAD:feature");
+  git("remote", "add", "origin", remote);
+  git("fetch", "origin", "refs/heads/feature:refs/remotes/origin/feature");
+  const cached = git("rev-parse", "refs/remotes/origin/feature");
+  expect(git("for-each-ref", "--format=%(refname)", "refs/remotes/")).toBe("refs/remotes/origin/feature");
+  writeFileSync(join(repo, "local.txt"), "local-only work"); git("add", "local.txt");
+  git("-c", "user.name=Fixture Owner", "-c", "user.email=owner@example.test", "commit", "-qm", "advance local HEAD");
+  const head = git("rev-parse", "HEAD");
+  expect(head).not.toBe(cached);
+  git("remote", "set-url", "origin", join(root, "offline.git"));
+  const wt = await createWorktree({ cwd: repo, home, jobId: "feature-offline", log: nullLogger });
+  expect(wt.base).toBe(head);
+  expect(wt.baseRef).toBe("local HEAD");
+  expect(git("rev-parse", wt.branch)).toBe(head);
+  expect(git("rev-parse", "refs/remotes/origin/feature")).toBe(cached);
+  expect(readFileSync(join(wt.path, "local.txt"), "utf8")).toBe("local-only work");
+  expect(worktreeBaseReport(wt)).toContain("fetch failed or offline");
+  expect(worktreeBaseReport(wt)).toContain("WARNING: no remote default tracking ref available; falling back to local HEAD");
+  expect(worktreeBaseReport(wt)).not.toContain("cached default");
+});
+
 it("rejects an invalid explicit base without creating or changing any branch", async () => {
   const refs = git("show-ref");
   await expect(createWorktree({ cwd: repo, home, jobId: "invalid", log: nullLogger, base: "--bad-ref" })).rejects.toThrow();
