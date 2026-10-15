@@ -19,6 +19,8 @@ import {
   MAX_BODY_CHARS,
   BROKER_TESTED_JOB_LOAD,
   MAX_FRAME_BYTES,
+  HANDOVER_DRAIN_MS,
+  isNewerRelease,
   MESSAGE_TTL_MS,
   PROTOCOL_VERSION,
   PURGE_INTERVAL_MS,
@@ -158,6 +160,69 @@ export class Broker {
   private hosting: { mode: "daemon" | "embedded" | "embedded_degraded"; reason?: string } = { mode: "embedded" };
   setHostingMode(mode: "daemon" | "embedded_degraded", reason?: "windows_wmi_unavailable" | "windows_wmi_create_rejected"): void {
     this.hosting = { mode, ...(reason ? { reason } : {}) };
+  }
+  private handoverHandler: ((target: EventMap["handover"]) => void) | undefined;
+  private draining = false;
+  private activeRequests = 0;
+  private readonly drainWaiters = new Set<() => void>();
+  private idle: { ms: number; onIdle: () => void; timer: NodeJS.Timeout | null } | undefined;
+  /**
+   * Daemon hosting only: an authenticated client of a newer release (APP_VERSION or PROTOCOL_VERSION) asks this
+   * broker to step aside. The broker stops admitting work at once; the handler drains, closes and exits, and the
+   * newer client then demand-starts its own release. Embedded brokers never hand over (they live with a session).
+   */
+  onNewerClient(handler: (target: EventMap["handover"]) => void): void { this.handoverHandler = handler; }
+  /** Daemon hosting only: call onIdle once no client of another process has been connected for `ms`. */
+  exitWhenIdle(ms: number, onIdle: () => void): void {
+    if (this.idle?.timer) clearTimeout(this.idle.timer);
+    this.idle = { ms, onIdle, timer: null };
+    this.updateIdle();
+  }
+  get isDraining(): boolean { return this.draining; }
+  private updateIdle(): void {
+    const idle = this.idle;
+    if (!idle) return;
+    // The daemon's own dashboard sender registers from this process; it is not a client to stay up for.
+    const served = () => [...this.conns].some(c => c.peer?.pid !== process.pid);
+    if (served() || this.draining || this.closing) {
+      if (idle.timer) { clearTimeout(idle.timer); idle.timer = null; }
+      return;
+    }
+    idle.timer ??= setTimeout(() => {
+      idle.timer = null;
+      if (this.idle !== idle || served() || this.draining || this.closing) return;
+      this.log.info("no client connected; daemon exits after its idle period", { idleMs: idle.ms });
+      idle.onIdle();
+    }, idle.ms);
+  }
+  private handoverRefusal(op: string): BridgeError {
+    // auth/hello answer like an incompatible broker, so every client release backs off and re-elects;
+    // the flag lets current clients retry at once and demand-start after the endpoint is released.
+    return op === "auth" || op === "hello"
+      ? new BridgeError("protocol_mismatch", `agent-bridge ${APP_VERSION} broker is stopping (handover or idle exit); retry shortly.`, { brokerProtocol: PROTOCOL_VERSION, brokerVersion: APP_VERSION, handover: true })
+      : new BridgeError("bad_request", "The broker is stopping (handover to a newer release or idle exit); this request was not applied. Retry shortly.", { handover: true, applied: false, retryLater: true });
+  }
+  private requestHandover(target: EventMap["handover"]): void {
+    if (!this.handoverHandler || this.draining || this.closing) return;
+    this.log.info("newer agent-bridge client connected; daemon hands over", { ...target, brokerVersion: APP_VERSION, brokerProtocol: PROTOCOL_VERSION });
+    this.draining = true;
+    this.updateIdle();
+    for (const c of this.conns) if (c.authed && c.peer) this.emit(c, "handover", target);
+    this.handoverHandler(target);
+  }
+  /**
+   * Stop admitting requests and wait, bounded, until every request admitted before now has answered. Accepted
+   * mail is already committed to SQLite when its send answers; refused requests were never applied.
+   */
+  drain(timeoutMs = HANDOVER_DRAIN_MS): Promise<boolean> {
+    this.draining = true;
+    this.updateIdle();
+    if (!this.activeRequests) return Promise.resolve(true);
+    return new Promise(resolve => {
+      const done = () => { clearTimeout(timer); this.drainWaiters.delete(done); resolve(true); };
+      const timer = setTimeout(() => { this.drainWaiters.delete(done); resolve(false); }, timeoutMs);
+      this.drainWaiters.add(done);
+    });
   }
   /** Trusted bootstrap primitive staging only. Ordinary/default startup never invokes it. */
   lifecycleServingCapability(phase: LifecycleServingPhase, deadline: number): LifecycleServingCapability {
@@ -747,6 +812,9 @@ export class Broker {
       }
       await writeMusePrivateJsonAsync(temporary, { port: address.port, pid: process.pid, identity, nonce, protocol: PROTOCOL_VERSION, pipePath: this.pipePath });
       staged = true;
+      // The read above and the protected write are asynchronous: content that appeared since an absent read
+      // was never checked and may be durable user state, so it is retained rather than replaced.
+      if (!previous && existsSync(file)) throw new Error("Retaining TCP discovery state that appeared during publication");
       renameSync(temporary, file);
     }
     catch (err) { this.log.warn("broker TCP fallback port could not be recorded", { err: String(err) }); }
@@ -776,6 +844,7 @@ export class Broker {
   async close(): Promise<void> {
     this.healthMonitor.close();
     this.closing = true;
+    if (this.idle?.timer) { clearTimeout(this.idle.timer); this.idle.timer = null; }
     if (this.mobileResources) await this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed"));
     this.questions?.close(); this.questions = null;
     this.store.stopWrites();
@@ -865,6 +934,7 @@ export class Broker {
     if (this.startupAuthorityRevoked) { socket.destroy(); return; }
     const conn: Conn = { socket, peer: null, authed: false, inFlight: 0, mailGeneration: 0 };
     this.conns.add(conn);
+    this.updateIdle();
     socket.setEncoding("utf8");
     const decoder = new FrameDecoder(MAX_FRAME_BYTES);
     this.log.debug("connection accepted");
@@ -900,6 +970,7 @@ export class Broker {
     socket.on("error", (err) => this.log.debug("connection error", { err: err.message }));
     socket.on("close", () => {
       this.conns.delete(conn);
+      this.updateIdle();
       if (conn.peer) {
         void this.nativeChildren.endParent(conn.peer, true).catch(err => this.log.warn("native child fallback deferred", { err: String(err) }));
         if (!this.closing && !conn.peer.jobAgent && !conn.peer.subagent) {
@@ -917,6 +988,14 @@ export class Broker {
 
   private async dispatch(conn: Conn, frame: RequestFrame): Promise<void> {
     if (this.refuseRevokedStartup(conn, frame)) return;
+    // A stopping daemon admits nothing new, so drain() has a fixed set of requests to wait for.
+    if (this.draining) { this.write(conn, { t: "res", id: frame.id, ok: false, error: this.handoverRefusal(frame.op).toPayload() }); return; }
+    this.activeRequests++;
+    try { await this.dispatchAdmitted(conn, frame); }
+    finally { if (--this.activeRequests === 0) for (const done of [...this.drainWaiters]) done(); }
+  }
+
+  private async dispatchAdmitted(conn: Conn, frame: RequestFrame): Promise<void> {
     this.healthMonitor.start();
     // In-memory probes must not pause background work just to observe its status.
     const countsPressure = !["reindexHistory", "health", "ping"].includes(frame.op);
@@ -1569,6 +1648,11 @@ export class Broker {
 
   private checkAuth(protocol: number, token: unknown): void {
     if (protocol !== PROTOCOL_VERSION) {
+      // Only a client proving the shared token can make a daemon step aside, and only for a newer protocol.
+      if (this.handoverHandler && typeof protocol === "number" && protocol > PROTOCOL_VERSION && typeof token === "string" && tokensEqual(token, this.token)) {
+        this.requestHandover({ protocol });
+        throw this.handoverRefusal("auth");
+      }
       throw new BridgeError("protocol_mismatch", `broker speaks protocol ${PROTOCOL_VERSION}, client ${protocol}`, {
         brokerProtocol: PROTOCOL_VERSION,
       });
@@ -1589,6 +1673,12 @@ export class Broker {
     if (conn.peer) throw new BridgeError("bad_request", "already registered");
     if (isPluginCacheCwd(String(p.cwd ?? ""))) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     if (p.subagent && !p.jobAgent) throw new BridgeError("bad_request", "Native subagents cannot register as top-level bridge sessions.");
+    // Job runners cannot demand-start a broker, so only a hosting-capable newer client may ask for handover.
+    if (this.handoverHandler && !p.jobAgent && isNewerRelease(p.version, APP_VERSION)) {
+      // Refused before any registration state changes: the newer release registers with its own daemon.
+      this.requestHandover({ version: String(p.version).slice(0, 32) });
+      throw this.handoverRefusal("hello");
+    }
     const peer: PeerInfo = {
       id: String(p.id),
       name: p.name,
@@ -1647,6 +1737,7 @@ export class Broker {
     }
     this.assertQueueRegistration(conn, peer, registration);
     conn.mailReady = registration;
+    this.updateIdle();
     this.log.info("peer joined", { name: peer.name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.

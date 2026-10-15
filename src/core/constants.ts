@@ -64,6 +64,22 @@ export const RECONNECT_BACKOFF_MAX_MS = 30_000;
 export const CONNECT_TIMEOUT_MS = 2_000;
 export const REQUEST_TIMEOUT_MS = 10_000;
 
+/** Daemon handover: how long a stopping daemon lets already-admitted requests finish (the RPC deadline). */
+export const HANDOVER_DRAIN_MS = REQUEST_TIMEOUT_MS;
+/** After a daemon hands over to a newer release, older clients leave demand start to that release this long. */
+export const HANDOVER_LAUNCH_GRACE_MS = 15_000;
+/** A daemon with no connected client exits after this long (override: AGENT_BRIDGE_DAEMON_IDLE_EXIT_MS). */
+export const DAEMON_IDLE_EXIT_MS = 10 * 60_000;
+
+/** True only when `version` is a strictly newer x.y.z release than `than`; anything unparsable is not newer. */
+export function isNewerRelease(version: unknown, than: string): boolean {
+  const parse = (value: unknown) => typeof value === "string" ? /^(\d{1,9})\.(\d{1,9})\.(\d{1,9})(?:$|[-+])/.exec(value)?.slice(1, 4).map(Number) : undefined;
+  const a = parse(version), b = parse(than);
+  if (!a || !b) return false;
+  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i]! > b[i]!;
+  return false;
+}
+
 /** Largest single protocol frame accepted, to bound memory use. */
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 

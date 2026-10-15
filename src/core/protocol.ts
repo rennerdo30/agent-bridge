@@ -366,6 +366,8 @@ export interface EventMap {
   peer_left: PeerInfo;
   /** This connection was replaced by a newer server of the same session (e.g. after /reload-plugins). */
   replaced: { by: string };
+  /** The daemon is handing over to a newer release and is about to exit (no event for embedded brokers). */
+  handover: { version?: string; protocol?: number };
 }
 export type EventName = keyof EventMap;
 

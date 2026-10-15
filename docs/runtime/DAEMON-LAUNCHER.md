@@ -4,18 +4,36 @@ Base: `7adb4817ea2800e56bd26737a81dbe28d7f17219`. Frozen design:
 `a7d87f8fa30bae99a0fdd577c5e7c587a4142759`. Owner decision is AB325
 comment 32216; coordinator narrowed 1a to unchanged legacy behavior extraction.
 
-**Release blocked:** the owner subsequently required core status plus safe restart/stop
-for 1a-i. Read-only `agent-bridge core status` reports the actual serving broker's
-version, PID, uptime, mode, clients and explicitly unverified legacy running-job count.
-It does not demand-start. Restart/stop code is held for independent review of
-`DAEMON-LIFECYCLE-PREREQUISITE.md` at frozen note commit
-`354b132171e4e2e8b85c7f18b1aad052cd25e732`; no status-only release is permitted.
+**Release status (owner, 2026-10-16):** the daemon ships on by default. Read-only
+`agent-bridge core status` reports the actual serving broker's version, PID, uptime,
+mode, clients and explicitly unverified legacy running-job count; it does not
+demand-start. There is still no stop/restart command (that code stays held for review
+of `DAEMON-LIFECYCLE-PREREQUISITE.md`); instead a daemon ends by handover to a newer
+release, by idle exit, or by `SIGTERM`/`SIGINT`, each with the drain below.
+
+**Handover.** Daemon hosting only. A client that proves the shared token and carries a
+newer `APP_VERSION` in `hello` (job runners excepted) or a newer `PROTOCOL_VERSION` in
+`auth`/`hello` is refused with `protocol_mismatch` and `details.handover`, and the
+daemon starts stopping: it admits no further request on any connection (auth/hello
+get the same refusal, other operations `bad_request` with `applied: false`), sends
+connected peers a `handover` event, waits up to the 10 s RPC deadline for admitted
+requests to answer, then retires its services, closes the store and the endpoint and
+exits. Accepted mail is committed when its send answers, so it survives. Clients that
+get the refusal clear any latched creation and retry discovery; after endpoint
+release they demand-start their own release. A demand-started daemon that finds a
+stopping broker waits (bounded) for the endpoint to be released before binding, and
+the exclusive bind remains the only admission. Peers of an older release that got the
+`handover` event do not demand-start for 15 s, so the newer release wins the
+election. No process is ever stopped by name.
+
+**Idle exit.** With no client of another process connected for 10 minutes
+(`AGENT_BRIDGE_DAEMON_IDLE_EXIT_MS`, 1 s to 24 h), the daemon stops the same way.
 
 Production MCP and CLI nodes first discover the existing broker. Concrete endpoint
 absence permits demand start of `node <bundled-cli> broker-daemon`. All peers remain
 clients. The daemon owns the existing Broker/MessageStore and background services;
 session exit does not close it. No service, task, autostart, installer action,
-idle shutdown, domain migration, state-core database or ownership rewrite is added.
+domain migration, state-core database or ownership rewrite is added.
 
 Unix uses detached Node with ignored stdio and unref. Windows uses local built-in
 PowerShell/WMI `Win32_Process.Create`, hidden startup and explicit environment,
@@ -24,8 +42,10 @@ stdin; the static script and executable arguments contain no token. Session pare
 job and control credentials and NODE_OPTIONS are excluded. Creation has a 5-second
 decision budget; a later receipt is classified unknown and never permits fallback.
 The helper is not killed at that point, because a slow but applied Create is then
-found by discovery; it is bounded by a separate 30-second limit. Existing election and
-RPC deadlines are unchanged.
+found by discovery; it is bounded by a separate 30-second limit. The helper's own
+classification after the decision is still observed: a definite failure then
+un-latches the attempt so the next election creates again; a late success or unknown
+leaves it latched. Existing election and RPC deadlines are unchanged.
 
 **Default (owner, 2026-10-16):** the daemon is on by default (`daemon.enabled` defaults
 to `true`); `AGENT_BRIDGE_DAEMON=0` or `"daemon": { "enabled": false }` opt out to the
@@ -49,9 +69,10 @@ degraded node emits one fixed reason and reports `embedded_degraded` in local he
 evidence. It has session lifetime and cannot pass independent daemon acceptance.
 Timeout, invalid/truncated response, provider exception, connection timeout, wrong
 token/protocol and creation without authenticated readiness never permit fallback.
-An ambiguous attempt stays latched throughout the node's lifetime; later attempts
-only discover. A successful authenticated registration permits normal restart
-discovery after connection loss. No forced embedded configuration is added.
+An ambiguous attempt stays latched until it is settled; meanwhile later attempts only
+discover. Any successful authenticated registration (or a handover refusal from an
+authenticated daemon) settles it, so after a later crash, handover or idle exit
+discovery may demand-start again. No forced embedded configuration is added.
 
 The existing versioned Unix socket/named pipe and shared-token protocol remain.
 Bind losers close only their own unbound store; they do not close the winner's

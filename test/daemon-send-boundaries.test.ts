@@ -153,18 +153,18 @@ describe("real transport send admission boundaries (no production recovery chang
     const db = Reflect.get(Reflect.get(Reflect.get(host, "broker"), "store"), "db") as DatabaseSync;
     expect(db.prepare("SELECT id FROM messages WHERE id=?").all(id)).toEqual([]);
   });
-  it("SIMULATED unknown creation followed by real auth-ready then broker loss stays latched without second creation", async () => {
-    const host = env.node("unknown-established-host");
-    const launch = vi.fn(async () => { await host.start(); return { kind: "unknown" as const }; });
+  it("SIMULATED unknown creation settled by real auth-ready creates again after broker loss, never embedding", async () => {
+    const host = env.node("unknown-established-host"), replacement = env.node("replacement-host");
+    const launch = vi.fn<NonNullable<NonNullable<ConstructorParameters<typeof BridgeNode>[0]["daemon"]>["launch"]>>()
+      .mockImplementationOnce(async () => { await host.start(); return { kind: "unknown" }; })
+      .mockImplementationOnce(async () => { await replacement.start(); return { kind: "unknown" }; });
     const client = new BridgeNode({ pipePath: env.pipe, dbPath: env.db, token: loadOrCreateToken(env.home), name: "unknown-client", agent: "codex",
       cwd: env.home, autoWake: false, log: nullLogger, daemon: { cli: "fixture-unused-runtime", launch } }); extra.push(client);
     await client.start(); expect(client.isConnected).toBe(true); expect(client.isBroker).toBe(false); expect(launch).toHaveBeenCalledOnce();
+    // The authenticated registration settled the ambiguous attempt (AB-325 H2): after the loss, discovery
+    // finds no endpoint and creation runs once more instead of staying latched for the session's life.
     const disconnected = once(client, "disconnected"); await host.stop(); await disconnected;
-    await expect(client.ensureConnected()).rejects.toThrow("could not connect");
-    expect(launch).toHaveBeenCalledOnce(); expect(client.isBroker).toBe(false); expect(client.isConnected).toBe(false);
-    // A separately authorized existing host can still be discovered; no new
-    // daemon creation is inferred from authenticated readiness alone.
-    const replacement = env.node("external-established-host"); await replacement.start(); await client.ensureConnected();
-    expect(client.isConnected).toBe(true); expect(launch).toHaveBeenCalledOnce();
+    await client.ensureConnected();
+    expect(launch).toHaveBeenCalledTimes(2); expect(client.isBroker).toBe(false); expect(client.isConnected).toBe(true);
   });
 });

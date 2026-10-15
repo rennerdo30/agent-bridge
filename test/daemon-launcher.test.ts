@@ -1,5 +1,18 @@
-import { describe, expect, it } from "vitest";
-import { classifyWindowsCreate, daemonEnvironment, windowsArgument } from "../src/core/daemon-launcher.js";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { classifyWindowsCreate, daemonEnvironment, superviseCreateHelper, windowsArgument, type CreateHelper } from "../src/core/daemon-launcher.js";
+
+afterEach(() => { vi.useRealTimers(); });
+
+/** A creation helper double: only its streams, close and kill are observable, as for the real PowerShell child. */
+function helper() {
+  const events = new EventEmitter(), stdin = new PassThrough(), stdout = new PassThrough();
+  const kill = vi.fn(() => { setImmediate(() => events.emit("close", null)); return true; });
+  const child = Object.assign(events, { stdin, stdout, kill }) as unknown as CreateHelper & EventEmitter;
+  let input = ""; stdin.setEncoding("utf8").on("data", (chunk: string) => { input += chunk; });
+  return { child, kill, input: () => input, close: (code: number | null, output = "") => { if (output) stdout.write(output); setImmediate(() => events.emit("close", code)); } };
+}
 
 describe("daemon creation evidence", () => {
   it("allows only complete known WMI failures to select degraded compatibility", () => {
@@ -24,5 +37,52 @@ describe("daemon creation evidence", () => {
     expect(env.NODE_OPTIONS).toBeUndefined();
     expect(env.AGENT_BRIDGE_HOME).toBe("fixture-home");
     expect(env.AGENT_BRIDGE_PIPE).toBe("fixture-pipe");
+  });
+});
+
+describe("creation helper outliving the decision budget", () => {
+  it("settles unknown at 5 s, does not kill before 30 s, and reports a late definite failure", async () => {
+    vi.useFakeTimers();
+    const h = helper(), late = vi.fn();
+    const decision = superviseCreateHelper(h.child, '{"fixture":true}', late);
+    await vi.advanceTimersByTimeAsync(5_000);
+    await expect(decision).resolves.toEqual({ kind: "unknown" });
+    expect(h.input()).toBe('{"fixture":true}');
+    await vi.advanceTimersByTimeAsync(24_999);
+    expect(h.kill).not.toHaveBeenCalled(); expect(late).not.toHaveBeenCalled();
+    h.close(0, JSON.stringify({ code: 9, pid: 0 }));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(late).toHaveBeenCalledExactlyOnceWith({ kind: "unavailable", reason: "windows_wmi_create_rejected" });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(h.kill).not.toHaveBeenCalled(); // The 30 s bound is cleared by the helper's own close.
+  });
+  it("reports a late success without un-latching and bounds a hung helper at 30 s", async () => {
+    vi.useFakeTimers();
+    const ok = helper(), okLate = vi.fn();
+    const first = superviseCreateHelper(ok.child, "{}", okLate);
+    await vi.advanceTimersByTimeAsync(6_000);
+    await expect(first).resolves.toEqual({ kind: "unknown" });
+    ok.close(0, JSON.stringify({ code: 0, pid: 1234 }));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(okLate).toHaveBeenCalledExactlyOnceWith({ kind: "created" });
+    const hung = helper(), hungLate = vi.fn();
+    const second = superviseCreateHelper(hung.child, "{}", hungLate);
+    await vi.advanceTimersByTimeAsync(29_999);
+    await expect(second).resolves.toEqual({ kind: "unknown" });
+    expect(hung.kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(hung.kill).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(hungLate).toHaveBeenCalledExactlyOnceWith({ kind: "unknown" });
+  });
+  it("decides from a close inside the budget and reports nothing late", async () => {
+    vi.useFakeTimers();
+    const h = helper(), late = vi.fn();
+    const decision = superviseCreateHelper(h.child, "{}", late);
+    h.close(0, JSON.stringify({ code: 0, pid: 4321 }));
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(decision).resolves.toEqual({ kind: "created" });
+    await vi.advanceTimersByTimeAsync(40_000);
+    expect(late).not.toHaveBeenCalled(); expect(h.kill).not.toHaveBeenCalled();
   });
 });

@@ -239,7 +239,7 @@ class Link {
   }
 
   async echo(timeoutMs = NETWORK_TIMEOUT_MS): Promise<void> {
-    if (!this.echoSupported) throw new Error("Remote broker does not support verification. Update and restart its hosting sessions.");
+    if (!this.echoSupported) throw new Error("Remote broker does not support verification. Update agent-bridge on the paired PC, then start or reload one session there; its background broker hands over to the newer release (an embedded broker needs every hosting session restarted).");
     const result = await this.request({ type: "echo", rid: randomUUID() }, timeoutMs);
     if (result !== true) throw new Error("network echo was not acknowledged");
   }
