@@ -3,7 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { join } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
 import { z } from "zod";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
 import { DELEGATE_DEPTH_ENV } from "../src/core/delegate.js";
 import { DELEGATION_METADATA_VERSION, JOBS_FILE } from "../src/core/constants.js";
@@ -230,6 +230,17 @@ describe("sibling job messaging", () => {
   });
 
   describe("source-witnessed legacy supervisor assignment", () => {
+    // The supervisor's in-process broker starts a history worker thread whose startup
+    // ask reconciliation takes the zero-wait jobs.json lease concurrently with restore.
+    // A real EJOBLOCKED then pre-empts the one SIMULATED refusal each fixture asserts,
+    // so these fixtures run without that unrelated second lease holder.
+    let priorIngest: string | undefined;
+    beforeAll(() => { priorIngest = process.env.AGENT_BRIDGE_HISTORY_INGEST; process.env.AGENT_BRIDGE_HISTORY_INGEST = "0"; });
+    afterAll(() => {
+      if (priorIngest === undefined) delete process.env.AGENT_BRIDGE_HISTORY_INGEST;
+      else process.env.AGENT_BRIDGE_HISTORY_INGEST = priorIngest;
+    });
+
     // Passive fixture access only: no production observer or manufactured witness.
     function state(jobs: JobManager) {
       return jobs as unknown as { history: Map<string, Job>; legacySupervisors: Map<string, unknown>;
