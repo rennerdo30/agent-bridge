@@ -51,6 +51,8 @@ export class RemoteJobs {
   private readonly approvals = new Map<string, () => void>();
   private readonly publishingApprovals = new Set<string>();
   private readonly starting = new Set<string>();
+  /** A remote request awaiting its answer, or a spawn still being admitted or started: a daemon must not exit idle. */
+  get busy(): boolean { return this.pending.size > 0 || this.starting.size > 0 || this.pendingStarts.size > 0; }
   private readonly pendingStarts = new Map<string, { record: RemoteRecord; previous?: RemoteRecord; controller: AbortController; cancelRequested: boolean; committed: boolean }>();
   private readonly runners: JobRunners | null;
   private closed = false;
@@ -78,7 +80,7 @@ export class RemoteJobs {
       }
     }
     const mirrorKey = `${host}/${request.job}`, mirrorTurn = this.mirrorTurns.get(mirrorKey);
-    if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: install remote-jobs-v1 support and restart its hosting sessions.");
+    if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: update agent-bridge on the paired PC to a release with remote-jobs-v1, then start or reload one session there; its background broker hands over to the newer release (an embedded broker needs every hosting session restarted).");
     if (request.op === "spawn" && (request.args.terminal_sandbox !== undefined || request.args.bypass_permissions !== undefined) && !this.network.peerSupports(host, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY)) {
       throw new Error("Remote broker update needed: paired PC does not support Antigravity terminal_sandbox or bypass_permissions options.");
     }

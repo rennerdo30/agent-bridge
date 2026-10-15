@@ -39,16 +39,48 @@ The precedence is exact: **`AGENT_BRIDGE_DAEMON=1` / `0` > `daemon.enabled`
 values are ignored. Project config cannot change daemon activation. Restart the
 hosting session or CLI to apply a change.
 
-An already running broker of an older release keeps serving after an update: new
-sessions connect to it and never start a second broker. The daemon takes over the
-same `~/.agent-bridge` store, with its queued mail, once that broker exits.
-`agent-bridge core status` shows which mode is serving; safe restart/stop commands
-are not available yet.
+An already running embedded broker of an older release keeps serving after an
+update: new sessions connect to it and never start a second broker. The daemon takes
+over the same `~/.agent-bridge` store, with its queued mail, once that broker exits.
+
+**Updates (handover).** When a session of a newer release that can start a daemon
+itself connects to a running daemon (newer `agent-bridge` version or protocol, proven
+by the shared token), the daemon hands over: it stops admitting requests (they are refused as "not applied;
+retry"), lets requests it already admitted finish for up to 10 seconds, closes the
+store and releases the pipe, then exits. The newer session's next election finds no
+broker and starts the new release's daemon on the same `~/.agent-bridge` store, so
+accepted and queued mail carries over. The pipe bind stays exclusive: the new daemon
+waits until the old one has released the pipe and never serves next to it. Older
+sessions that are still running wait 15 seconds before starting a daemon themselves,
+so the newer release wins; they then reconnect to its daemon if the protocol still
+matches (otherwise restart them after the update). Job runners, delegated runs and
+status probes such as `agent-bridge core status` never trigger a handover, because
+they cannot start a daemon themselves. A daemon records each
+handover in `daemon-handover.json` in the bridge home (target release and time). If
+that release's daemon did not take over and an older daemon was started again, the
+older one does not hand over to the same release for 10 minutes; it logs a warning
+and keeps serving, and the newer session registers with it as with any older broker.
+An embedded broker (daemon opted out) never hands over; it is replaced when every
+session hosting it has restarted.
+
+**Idle exit.** A daemon exits cleanly once nothing has been served for 10 minutes;
+the next session starts a new one. `AGENT_BRIDGE_DAEMON_IDLE_EXIT_MS` (1000 to
+86400000) changes the period. These keep it serving: any connected session, job
+runner or CLI command; a remote-job request or a remote spawn that is still being
+admitted or started; a connected (or connecting) paired PC; and dashboard HTTP or
+event-stream connections or phone connections to the mobile host that are open or
+were open within the period. The daemon's own dashboard sender does not count. While
+no daemon runs, paired PCs cannot deliver to this one until a session starts again.
+
+`agent-bridge core status` shows which mode is serving. There is no stop or restart
+command; handover and idle exit are the supported ways a daemon ends, besides
+`SIGTERM`/`SIGINT` to its process.
 
 | Env var | Meaning |
 |---|---|
 | `AGENT_BRIDGE_HOME` | Data directory (default `~/.agent-bridge`) |
 | `AGENT_BRIDGE_DAEMON` | Standalone broker daemon: exact `1` enables, exact `0` disables (opt-out); overrides `daemon.enabled`; default on |
+| `AGENT_BRIDGE_DAEMON_IDLE_EXIT_MS` | Daemon idle exit period in ms with no connected client (default 600000, allowed 1000–86400000; other values keep the default) |
 | `AGENT_BRIDGE_NAME` | Peer name |
 | `AGENT_BRIDGE_AUTO_WAKE` | `on` / `off` |
 | `AGENT_BRIDGE_WAKE_ON_DIRECT` | Wake idle Claude, Codex and opencode for messages addressed to their session name when supported (default `on`); `wakeOnDirect` in config |

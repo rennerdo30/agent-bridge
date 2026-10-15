@@ -12,6 +12,8 @@ import {
   CONNECT_TIMEOUT_MS,
   APP_VERSION,
   DEFAULT_MAX_HOPS,
+  HANDOVER_LAUNCH_GRACE_MS,
+  isNewerRelease,
   ELECTION_RETRY_MIN_MS,
   JOBS_FILE,
   PROTOCOL_VERSION,
@@ -19,8 +21,8 @@ import {
   RECONNECT_BACKOFF_MIN_MS,
 } from "./constants.js";
 import type { Logger } from "./logger.js";
-import { launchDaemon, type DaemonLaunch } from "./daemon-launcher.js";
-import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, type BridgeMessage, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer, type ModeSendArgs, type ModeSendResult } from "./protocol.js";
+import { launchDaemon, RelaunchBackoff, type DaemonLaunch } from "./daemon-launcher.js";
+import { BridgeError, isQuietMessage, isUnsupportedOperation, type AgentKind, type BridgeMessage, type EventMap, type PeerActivity, type PeerInfo, type RequestMap, type SendArgs, type SendResult, type SiblingPeer, type ModeSendArgs, type ModeSendResult } from "./protocol.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
 import { ReadJournal } from "./read-journal.js";
 import { existingMetadataDb, retainMetadataReader } from "./metadata-db.js";
@@ -103,6 +105,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private client: BridgeClient | null = null;
   private broker: Broker | null = null;
   private daemonLaunch: DaemonLaunch | undefined;
+  /** Until then, leave demand start to the newer release the last daemon handed over to. */
+  private handoverGraceUntil = 0;
+  /** Spaces creation attempts that follow late definite failures (5 s doubling to 5 min). */
+  private readonly relaunchBackoff = new RelaunchBackoff();
   private degradedReason: "windows_wmi_unavailable" | "windows_wmi_create_rejected" | undefined;
   private stopping = false;
   /** The bridge gave this session to another server of it (see reclaim). */
@@ -179,6 +185,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return this.broker !== null;
   }
   get usesDaemon(): boolean { return !!this.opts.daemon; }
+  /** Only a node that can demand-start its own daemon may make an older daemon hand over to it. */
+  private get canHostDaemon(): boolean { return !!this.opts.daemon && this.opts.canHostBroker !== false && !this.opts.jobAgent; }
   ensureDashboard(force: boolean, port?: number): Promise<import("../cli/dashboard.js").DashboardInfo | null> {
     return this.withClient(client => client.request("ensureDashboard", { force, ...(port === undefined ? {} : { port }) }));
   }
@@ -323,6 +331,15 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         await this.adopt(client);
         return;
       } catch (err) {
+        if (err instanceof BridgeError && err.details?.handover === true) {
+          // An authenticated daemon is stopping (handover to a newer release, or idle exit) and refuses new work.
+          // Its answer supersedes any latched creation attempt: once it released the endpoint, discovery sees it
+          // absent and this node may demand-start again.
+          this.daemonLaunch = undefined;
+          this.log.info("broker is stopping; retrying discovery", { brokerVersion: err.details.brokerVersion });
+          await sleep(jitter());
+          continue;
+        }
         if (err instanceof BridgeError && (err.code === "unauthorized" || err.code === "protocol_mismatch")) {
           // Retrying cannot help: the running broker is another agent-bridge version or uses another token.
           this.log.error("broker refused this peer", { code: err.code, message: err.message });
@@ -337,17 +354,30 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
           continue;
         }
       }
-      // Nobody is listening: try to become the broker.
-      if (this.opts.canHostBroker !== false) {
+      // Nobody is listening: try to become the broker, unless the last daemon handed over to a newer release
+      // moments ago. That release's client demand-starts its own daemon; an older one started now would only
+      // be asked to hand over again.
+      if (this.opts.canHostBroker !== false && Date.now() >= this.handoverGraceUntil) {
         if (this.opts.daemon) {
           if (!(await this.clearStaleSocket())) { await sleep(jitter()); continue; }
+          // A late definite failure un-latched the last attempt: wait out its backoff before creating again.
+          if (!this.daemonLaunch && !this.relaunchBackoff.ready) { await sleep(jitter()); continue; }
           if (!this.daemonLaunch) {
-            this.daemonLaunch = await (this.opts.daemon.launch ?? launchDaemon)({ cli: this.opts.daemon.cli, home: dirname(this.opts.dbPath), pipe: this.opts.pipePath,
-              cwd: this.currentCwd, dashboard: this.opts.daemon.dashboard?.(), config: this.opts.daemon.config?.() });
-            this.log.info("daemon creation observation; authenticated readiness still required", { kind: this.daemonLaunch.kind,
-              ...(this.daemonLaunch.kind === "unknown" ? { stage: this.daemonLaunch.stage, errorCode: this.daemonLaunch.errorCode } : {}) });
+            let launch: DaemonLaunch | undefined;
+            launch = this.daemonLaunch = await (this.opts.daemon.launch ?? launchDaemon)({ cli: this.opts.daemon.cli, home: dirname(this.opts.dbPath), pipe: this.opts.pipePath,
+              cwd: this.currentCwd, dashboard: this.opts.daemon.dashboard?.(), config: this.opts.daemon.config?.() }, late => {
+              // The helper finished after the decision budget. Only a definite failure of this same attempt
+              // un-latches it, so the next election creates again; anything else stays latched as before.
+              this.log.info("late daemon creation observation", { kind: late.kind });
+              if (late.kind === "unavailable" && launch !== undefined && this.daemonLaunch === launch) {
+                this.daemonLaunch = undefined;
+                this.log.info("late creation failure; next creation attempt after backoff", { delayMs: this.relaunchBackoff.failed() });
+              }
+            });
+            this.log.info("daemon creation observation; authenticated readiness still required", { kind: launch.kind,
+              ...(launch.kind === "unknown" ? { stage: launch.stage, errorCode: launch.errorCode } : {}) });
           }
-          if (this.daemonLaunch.kind === "unavailable") {
+          if (this.daemonLaunch?.kind === "unavailable") {
             // Only definite creation failure AND fresh concrete endpoint absence permit embedding.
             try { const client = await BridgeClient.connect(this.opts.pipePath, this.log); await this.adopt(client); return; }
             catch (error) { if (!["ENOENT", "ECONNREFUSED"].includes(errCode(error))) throw error; }
@@ -453,7 +483,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     let brokerVersion: string | undefined;
     // Read presence before hello can trigger writes in a newer broker.
     try {
-      await client.request("auth", { protocol: PROTOCOL_VERSION, token: this.opts.token });
+      await client.request("auth", { protocol: PROTOCOL_VERSION, token: this.opts.token, ...(this.canHostDaemon ? { canHost: true } : {}) });
       brokerVersion = (await client.request("ping", {})).brokerVersion;
       if (this.opts.dbPath !== ":memory:") for (const peer of await client.request("peers", {})) recordStorePeer(dirname(this.opts.dbPath), peer);
     } catch (error) { client.close(); throw error; }
@@ -474,6 +504,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return {
       protocol: PROTOCOL_VERSION,
       token: this.opts.token,
+      ...(this.canHostDaemon ? { canHost: true } : {}),
       peer: {
         id: this.id,
         name: this.currentName,
@@ -499,8 +530,10 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   private afterHello(client: BridgeClient, hello: { name: string; brokerPid: number; sessionId?: string | null }): void {
     if (this.stopping) { client.close(); return; }
-    // An authenticated registration settles creation. Ambiguous attempts stay latched for life.
-    if (this.daemonLaunch?.kind === "created") this.daemonLaunch = undefined;
+    // Any authenticated registration settles creation, including an ambiguous attempt: a broker is serving, so
+    // after a later loss (crash, idle exit, handover) discovery may demand-start again.
+    this.daemonLaunch = undefined;
+    this.relaunchBackoff.reset();
     this.client = client;
     this.currentName = hello.name;
     this.recordOwnStorePeer();
@@ -561,6 +594,12 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     } else if (ev === "peer_joined" || ev === "peer_left") {
       if (ev === "peer_joined" && this.opts.dbPath !== ":memory:") recordStorePeer(dirname(this.opts.dbPath), data as PeerInfo);
       this.emit(ev, data as PeerInfo);
+    } else if (ev === "handover") {
+      const target = data as EventMap["handover"];
+      if (isNewerRelease(target?.version, APP_VERSION) || (typeof target?.protocol === "number" && target.protocol > PROTOCOL_VERSION)) {
+        this.handoverGraceUntil = Date.now() + HANDOVER_LAUNCH_GRACE_MS;
+        this.log.info("broker hands over to a newer agent-bridge release; leaving demand start to it", { ...target, graceMs: HANDOVER_LAUNCH_GRACE_MS });
+      }
     } else if (ev === "replaced") {
       // A newer server of this same session took over (e.g. /reload-plugins): stay away instead of rejoining.
       const by = data as { by?: string; version?: unknown; agentPid?: unknown; agentStartedAt?: unknown } | undefined;
@@ -901,7 +940,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   remoteJob(host: string, request: RemoteJobRequest): Promise<RemoteJobSnapshot> {
     return this.withClient((c) => c.request("remoteJob", { host, request }, REMOTE_JOB_LOCAL_TIMEOUT_MS)).catch((err) => {
-      if (/unknown op.*remoteJob/.test((err as Error).message)) throw new BridgeError("bad_request", "Local broker update needed: restart its hosting sessions to enable remote jobs.");
+      if (/unknown op.*remoteJob/.test((err as Error).message)) throw new BridgeError("bad_request", "Local broker update needed to enable remote jobs: update agent-bridge, then start or reload one session. A background broker hands over to the newer release on its own; an embedded broker (daemon opted out) is replaced when every session hosting it has restarted.");
       throw err;
     });
   }

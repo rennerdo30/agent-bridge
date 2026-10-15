@@ -247,7 +247,7 @@ class Link {
   }
 
   async echo(timeoutMs = NETWORK_TIMEOUT_MS): Promise<void> {
-    if (!this.echoSupported) throw new Error("Remote broker does not support verification. Update and restart its hosting sessions.");
+    if (!this.echoSupported) throw new Error("Remote broker does not support verification. Update agent-bridge on the paired PC, then start or reload one session there; its background broker hands over to the newer release (an embedded broker needs every hosting session restarted).");
     const result = await this.request({ type: "echo", rid: randomUUID() }, timeoutMs);
     if (result !== true) throw new Error("network echo was not acknowledged");
   }
@@ -338,6 +338,8 @@ export class NetworkService {
   private server: Server | null = null;
   private readonly sockets = new Set<Socket>();
   private readonly links = new Map<string, Link>();
+  /** Authenticated paired-PC links currently connected (or connecting): a daemon must not exit idle. */
+  get activeLinks(): number { return this.links.size + this.connecting.size; }
   private readonly connecting = new Set<string>();
   private readonly health = new Map<string, { lastVerifiedAt: number; roundTripMs: number }>();
   private discovery: NetworkDiscovery | null = null;

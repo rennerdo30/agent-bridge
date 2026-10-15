@@ -7,7 +7,7 @@ import { historySearchSchema } from "./history.js";
 import { ReadJournal } from "./read-journal.js";
 import { recordStorePeer, refreshStorePeerIdentities, validStoreCapabilities } from "./store-compatibility.js";
 import { randomUUID } from "node:crypto";
-import { existsSync, lstatSync, realpathSync, renameSync, unlinkSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { readMusePrivateJson, readMusePrivateJsonAsync, writeMusePrivateJsonAsync } from "./muse-context.js";
 import { ownProcessIdentity, processIdentity } from "./process-identity.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
@@ -19,6 +19,10 @@ import {
   MAX_BODY_CHARS,
   BROKER_TESTED_JOB_LOAD,
   MAX_FRAME_BYTES,
+  HANDOVER_DRAIN_MS,
+  HANDOVER_MARKER_FILE,
+  HANDOVER_REPEAT_WINDOW_MS,
+  isNewerRelease,
   MESSAGE_TTL_MS,
   PROTOCOL_VERSION,
   PURGE_INTERVAL_MS,
@@ -158,6 +162,109 @@ export class Broker {
   private hosting: { mode: "daemon" | "embedded" | "embedded_degraded"; reason?: string } = { mode: "embedded" };
   setHostingMode(mode: "daemon" | "embedded_degraded", reason?: "windows_wmi_unavailable" | "windows_wmi_create_rejected"): void {
     this.hosting = { mode, ...(reason ? { reason } : {}) };
+  }
+  private handoverHandler: ((target: EventMap["handover"]) => void) | undefined;
+  private draining = false;
+  private activeRequests = 0;
+  private readonly drainWaiters = new Set<() => void>();
+  private idle: { ms: number; onIdle: () => void; keepAlive?: () => string | undefined; timer: NodeJS.Timeout | null } | undefined;
+  /**
+   * Daemon hosting only: an authenticated client of a newer release (APP_VERSION or PROTOCOL_VERSION) asks this
+   * broker to step aside. The broker stops admitting work at once; the handler drains, closes and exits, and the
+   * newer client then demand-starts its own release. Embedded brokers never hand over (they live with a session).
+   */
+  onNewerClient(handler: (target: EventMap["handover"]) => void): void { this.handoverHandler = handler; }
+  /**
+   * Daemon hosting only: call onIdle once nothing has been served for `ms`. Served means a pipe/TCP client of
+   * another process, a pending remote-job request or start, a connected paired PC, or whatever the host's
+   * `keepAlive` names (open dashboard HTTP/SSE clients, an active mobile connection). Client connections
+   * start and stop the timer; the other sources are checked when it fires and re-arm it while they last.
+   */
+  exitWhenIdle(ms: number, onIdle: () => void, keepAlive?: () => string | undefined): void {
+    if (this.idle?.timer) clearTimeout(this.idle.timer);
+    this.idle = { ms, onIdle, keepAlive, timer: null };
+    this.updateIdle();
+  }
+  /** Why the daemon is still serving without a connected client, or undefined when it is idle. */
+  private idleKeepAlive(): string | undefined {
+    if (this.remoteJobs?.busy) return "remote_job_admission";
+    if (this.network?.activeLinks) return "paired_pc_link";
+    try { return this.idle?.keepAlive?.(); } catch { return "keep_alive_unknown"; }
+  }
+  get isDraining(): boolean { return this.draining; }
+  private updateIdle(): void {
+    const idle = this.idle;
+    if (!idle) return;
+    // The daemon's own dashboard sender registers from this process; it is not a client to stay up for.
+    const served = () => [...this.conns].some(c => c.peer?.pid !== process.pid);
+    if (served() || this.draining || this.closing) {
+      if (idle.timer) { clearTimeout(idle.timer); idle.timer = null; }
+      return;
+    }
+    const arm = () => setTimeout(() => {
+      idle.timer = null;
+      if (this.idle !== idle || served() || this.draining || this.closing) return;
+      const reason = this.idleKeepAlive();
+      if (reason) { this.log.debug("no client connected, but still serving; idle period restarts", { reason }); idle.timer = arm(); return; }
+      this.log.info("no client connected; daemon exits after its idle period", { idleMs: idle.ms });
+      idle.onIdle();
+    }, idle.ms);
+    idle.timer ??= arm();
+  }
+  private handoverRefusal(op: string): BridgeError {
+    // auth/hello answer like an incompatible broker, so every client release backs off and re-elects;
+    // the flag lets current clients retry at once and demand-start after the endpoint is released.
+    return op === "auth" || op === "hello"
+      ? new BridgeError("protocol_mismatch", `agent-bridge ${APP_VERSION} broker is stopping (handover or idle exit); retry shortly.`, { brokerProtocol: PROTOCOL_VERSION, brokerVersion: APP_VERSION, handover: true })
+      : new BridgeError("bad_request", "The broker is stopping (handover to a newer release or idle exit); this request was not applied. Retry shortly.", { handover: true, applied: false, retryLater: true });
+  }
+  /**
+   * Start a handover unless one to this same target happened within the repeat window. Returns false when this
+   * daemon keeps serving. The marker in the home directory outlives this process: when the newer daemon could
+   * not start and an older one was started again, that older daemon does not hand over to the same release
+   * again for the window, so a client that cannot bring up its daemon cannot make brokers churn.
+   */
+  private requestHandover(target: EventMap["handover"]): boolean {
+    if (!this.handoverHandler || this.draining || this.closing) return false;
+    const key = target.version !== undefined ? `version:${target.version}` : `protocol:${target.protocol}`;
+    if (this.store.file !== ":memory:") {
+      const file = join(dirname(this.store.file), HANDOVER_MARKER_FILE), now = this.now();
+      try {
+        const marker = JSON.parse(readFileSync(file, "utf8")) as { target?: unknown; at?: unknown };
+        if (marker.target === key && typeof marker.at === "number" && now - marker.at >= 0 && now - marker.at < HANDOVER_REPEAT_WINDOW_MS) {
+          this.log.warn("not handing over again to the same newer release within the repeat window; that release's daemon did not take over", { target: key, since: marker.at, windowMs: HANDOVER_REPEAT_WINDOW_MS });
+          return false;
+        }
+      } catch { /* No readable marker: no recent handover to this target. */ }
+      const temporary = `${file}.${randomUUID()}.tmp`;
+      try { writeFileSync(temporary, JSON.stringify({ target: key, from: APP_VERSION, at: now }), { flag: "wx", mode: 0o600 }); renameSync(temporary, file); }
+      catch (err) {
+        try { unlinkSync(temporary); } catch { /* Not created. */ }
+        // Without the marker the repeat limit cannot hold, so fail closed and keep serving.
+        this.log.warn("handover marker could not be recorded; daemon keeps serving", { err: String(err), target: key });
+        return false;
+      }
+    }
+    this.log.info("newer agent-bridge client connected; daemon hands over", { ...target, brokerVersion: APP_VERSION, brokerProtocol: PROTOCOL_VERSION });
+    this.draining = true;
+    this.updateIdle();
+    for (const c of this.conns) if (c.authed && c.peer) this.emit(c, "handover", target);
+    this.handoverHandler(target);
+    return true;
+  }
+  /**
+   * Stop admitting requests and wait, bounded, until every request admitted before now has answered. Accepted
+   * mail is already committed to SQLite when its send answers; refused requests were never applied.
+   */
+  drain(timeoutMs = HANDOVER_DRAIN_MS): Promise<boolean> {
+    this.draining = true;
+    this.updateIdle();
+    if (!this.activeRequests) return Promise.resolve(true);
+    return new Promise(resolve => {
+      const done = () => { clearTimeout(timer); this.drainWaiters.delete(done); resolve(true); };
+      const timer = setTimeout(() => { this.drainWaiters.delete(done); resolve(false); }, timeoutMs);
+      this.drainWaiters.add(done);
+    });
   }
   /** Trusted bootstrap primitive staging only. Ordinary/default startup never invokes it. */
   lifecycleServingCapability(phase: LifecycleServingPhase, deadline: number): LifecycleServingCapability {
@@ -442,7 +549,7 @@ export class Broker {
         return { saved: true };
       },
       auth: (c, a) => {
-        this.checkAuth(a.protocol, a.token);
+        this.checkAuth(a.protocol, a.token, a.canHost);
         c.authed = true;
         return { brokerPid: process.pid };
       },
@@ -747,6 +854,9 @@ export class Broker {
       }
       await writeMusePrivateJsonAsync(temporary, { port: address.port, pid: process.pid, identity, nonce, protocol: PROTOCOL_VERSION, pipePath: this.pipePath });
       staged = true;
+      // The read above and the protected write are asynchronous: content that appeared since an absent read
+      // was never checked and may be durable user state, so it is retained rather than replaced.
+      if (!previous && existsSync(file)) throw new Error("Retaining TCP discovery state that appeared during publication");
       renameSync(temporary, file);
     }
     catch (err) { this.log.warn("broker TCP fallback port could not be recorded", { err: String(err) }); }
@@ -776,6 +886,7 @@ export class Broker {
   async close(): Promise<void> {
     this.healthMonitor.close();
     this.closing = true;
+    if (this.idle?.timer) { clearTimeout(this.idle.timer); this.idle.timer = null; }
     if (this.mobileResources) await this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed"));
     this.questions?.close(); this.questions = null;
     this.store.stopWrites();
@@ -865,6 +976,7 @@ export class Broker {
     if (this.startupAuthorityRevoked) { socket.destroy(); return; }
     const conn: Conn = { socket, peer: null, authed: false, inFlight: 0, mailGeneration: 0 };
     this.conns.add(conn);
+    this.updateIdle();
     socket.setEncoding("utf8");
     const decoder = new FrameDecoder(MAX_FRAME_BYTES);
     this.log.debug("connection accepted");
@@ -900,6 +1012,7 @@ export class Broker {
     socket.on("error", (err) => this.log.debug("connection error", { err: err.message }));
     socket.on("close", () => {
       this.conns.delete(conn);
+      this.updateIdle();
       if (conn.peer) {
         void this.nativeChildren.endParent(conn.peer, true).catch(err => this.log.warn("native child fallback deferred", { err: String(err) }));
         if (!this.closing && !conn.peer.jobAgent && !conn.peer.subagent) {
@@ -917,6 +1030,14 @@ export class Broker {
 
   private async dispatch(conn: Conn, frame: RequestFrame): Promise<void> {
     if (this.refuseRevokedStartup(conn, frame)) return;
+    // A stopping daemon admits nothing new, so drain() has a fixed set of requests to wait for.
+    if (this.draining) { this.write(conn, { t: "res", id: frame.id, ok: false, error: this.handoverRefusal(frame.op).toPayload() }); return; }
+    this.activeRequests++;
+    try { await this.dispatchAdmitted(conn, frame); }
+    finally { if (--this.activeRequests === 0) for (const done of [...this.drainWaiters]) done(); }
+  }
+
+  private async dispatchAdmitted(conn: Conn, frame: RequestFrame): Promise<void> {
     this.healthMonitor.start();
     // In-memory probes must not pause background work just to observe its status.
     const countsPressure = !["reindexHistory", "health", "ping"].includes(frame.op);
@@ -1567,8 +1688,12 @@ export class Broker {
     });
   }
 
-  private checkAuth(protocol: number, token: unknown): void {
+  private checkAuth(protocol: number, token: unknown, canHost?: unknown): void {
     if (protocol !== PROTOCOL_VERSION) {
+      // Only a client proving the shared token that can demand-start its own daemon can make this one step aside,
+      // and only for a newer protocol. CLI commands, job runners and connect-only nodes never send canHost.
+      if (this.handoverHandler && canHost === true && typeof protocol === "number" && protocol > PROTOCOL_VERSION && typeof token === "string" && tokensEqual(token, this.token)
+        && this.requestHandover({ protocol })) throw this.handoverRefusal("auth");
       throw new BridgeError("protocol_mismatch", `broker speaks protocol ${PROTOCOL_VERSION}, client ${protocol}`, {
         brokerProtocol: PROTOCOL_VERSION,
       });
@@ -1580,7 +1705,7 @@ export class Broker {
   }
 
   private async onHello(conn: Conn, args: RequestMap["hello"][0]): Promise<RequestMap["hello"][1]> {
-    this.checkAuth(args.protocol, args.token);
+    this.checkAuth(args.protocol, args.token, args.canHost);
     conn.authed = true;
     const p = args.peer;
     if (!p || !PEER_NAME_PATTERN.test(p.name ?? "") || !AGENT_KINDS.includes(p.agent)) {
@@ -1589,6 +1714,11 @@ export class Broker {
     if (conn.peer) throw new BridgeError("bad_request", "already registered");
     if (isPluginCacheCwd(String(p.cwd ?? ""))) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     if (p.subagent && !p.jobAgent) throw new BridgeError("bad_request", "Native subagents cannot register as top-level bridge sessions.");
+    // Only a newer client that can demand-start its own daemon may ask for handover (never a job runner).
+    // Refused before any registration state changes: the newer release registers with its own daemon. When the
+    // repeat limit holds, the newer client registers here as with any older compatible broker.
+    if (this.handoverHandler && args.canHost === true && !p.jobAgent && isNewerRelease(p.version, APP_VERSION)
+      && this.requestHandover({ version: String(p.version).slice(0, 32) })) throw this.handoverRefusal("hello");
     const peer: PeerInfo = {
       id: String(p.id),
       name: p.name,
@@ -1647,6 +1777,7 @@ export class Broker {
     }
     this.assertQueueRegistration(conn, peer, registration);
     conn.mailReady = registration;
+    this.updateIdle();
     this.log.info("peer joined", { name: peer.name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.

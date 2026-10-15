@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect, Socket } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,19 +9,19 @@ import { BridgeClient } from "../src/core/client.js";
 import { PROTOCOL_VERSION } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
 import { brokerTcpPort, brokerTcpPortAsync, BROKER_TCP_FILE, isEphemeralBrokerTcpRecord } from "../src/core/paths.js";
-import { readMusePrivateJson, readMusePrivateJsonAsync, writeMusePrivateJson } from "../src/core/muse-context.js";
+import { readMusePrivateJson, readMusePrivateJsonAsync, writeMusePrivateJson, writeMusePrivateJsonAsync } from "../src/core/muse-context.js";
 import { processIdentity, readProcessIdentity } from "../src/core/process-identity.js";
 import { MessageStore } from "../src/core/store.js";
 import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, until } from "./helpers.js";
 
 vi.mock("node:net", async original => { const actual = await original<typeof import("node:net")>(); return { ...actual, connect: vi.fn(actual.connect) }; });
-vi.mock("../src/core/muse-context.js", async original => { const actual = await original<typeof import("../src/core/muse-context.js")>(); return { ...actual, readMusePrivateJsonAsync: vi.fn(actual.readMusePrivateJsonAsync) }; });
+vi.mock("../src/core/muse-context.js", async original => { const actual = await original<typeof import("../src/core/muse-context.js")>(); return { ...actual, readMusePrivateJsonAsync: vi.fn(actual.readMusePrivateJsonAsync), writeMusePrivateJsonAsync: vi.fn(actual.writeMusePrivateJsonAsync) }; });
 vi.mock("../src/core/process-identity.js", async original => { const actual = await original<typeof import("../src/core/process-identity.js")>(); return { ...actual, readProcessIdentity: vi.fn(actual.readProcessIdentity) }; });
 
 afterEach(() => {
   vi.useRealTimers(); vi.unstubAllEnvs();
-  vi.mocked(connect).mockReset(); vi.mocked(readMusePrivateJsonAsync).mockReset(); vi.mocked(readProcessIdentity).mockReset();
+  vi.mocked(connect).mockReset(); vi.mocked(readMusePrivateJsonAsync).mockReset(); vi.mocked(writeMusePrivateJsonAsync).mockReset(); vi.mocked(readProcessIdentity).mockReset();
 });
 
 function inaccessiblePipe(): Socket {
@@ -38,6 +38,35 @@ describe("broker loopback fallback", () => {
     const broker = new Broker(env.pipe, new MessageStore(env.db, nullLogger), nullLogger, loadOrCreateToken(env.home));
     try { await broker.listen(); expect(readFileSync(file)).toEqual(before); }
     finally { await broker.close(); expect(readFileSync(file)).toEqual(before); await env.cleanup(); }
+  });
+  it.runIf(process.platform === "win32")("refuses to overwrite a discovery record it could not read", async () => {
+    const env = makeEnv(), file = join(env.home, BROKER_TCP_FILE);
+    // A well-formed ephemeral record: only the failed read, not the content, can make the broker keep it.
+    writeMusePrivateJson(file, { port: 4321, pid: 2147483646, identity: "fixture-generation", nonce: "fixture", protocol: PROTOCOL_VERSION, pipePath: env.pipe });
+    const before = readFileSync(file);
+    vi.mocked(readMusePrivateJsonAsync).mockRejectedValueOnce(new Error("fixture: protected record unreadable"));
+    const broker = new Broker(env.pipe, new MessageStore(env.db, nullLogger), nullLogger, loadOrCreateToken(env.home));
+    try {
+      await broker.listen();
+      expect(readMusePrivateJsonAsync).toHaveBeenCalledOnce();
+      expect(writeMusePrivateJsonAsync).not.toHaveBeenCalled();
+      expect(readFileSync(file)).toEqual(before);
+    } finally { await broker.close(); expect(readFileSync(file)).toEqual(before); await env.cleanup(); }
+  });
+  it.runIf(process.platform === "win32")("retains discovery content that appears while its own record is being written", async () => {
+    const env = makeEnv(), file = join(env.home, BROKER_TCP_FILE);
+    const actual = (await vi.importActual<typeof import("../src/core/muse-context.js")>("../src/core/muse-context.js")).writeMusePrivateJsonAsync;
+    vi.mocked(writeMusePrivateJsonAsync).mockImplementationOnce(async (path, value, flag) => {
+      await actual(path, value, flag);
+      writeMusePrivateJson(file, { userHistory: "appeared during publication" });
+    });
+    const broker = new Broker(env.pipe, new MessageStore(env.db, nullLogger), nullLogger, loadOrCreateToken(env.home));
+    try {
+      await broker.listen();
+      expect(writeMusePrivateJsonAsync).toHaveBeenCalledOnce();
+      expect(readMusePrivateJson(file)).toEqual({ userHistory: "appeared during publication" });
+      expect(readdirSync(env.home).filter(name => name.endsWith(".tmp"))).toEqual([]);
+    } finally { await broker.close(); expect(readMusePrivateJson(file)).toEqual({ userHistory: "appeared during publication" }); await env.cleanup(); }
   });
   it("parses only an authenticated recorded port synchronously and asynchronously", async () => {
     const env = makeEnv();

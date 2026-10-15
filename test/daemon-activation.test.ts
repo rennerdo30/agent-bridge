@@ -105,7 +105,8 @@ describe("daemon activation contract", () => {
     const client = node(cfg.daemon.enabled ? { cli: "fixture-cli.mjs", launch } : undefined);
     await client.start();
     expect(launch).toHaveBeenCalledOnce();
-    expect(launch).toHaveBeenCalledWith(expect.objectContaining({ cli: "fixture-cli.mjs", home: env.home, pipe: env.pipe }));
+    // The second argument receives the creation helper's late classification (see daemon-launcher.test.ts).
+    expect(launch).toHaveBeenCalledWith(expect.objectContaining({ cli: "fixture-cli.mjs", home: env.home, pipe: env.pipe }), expect.any(Function));
     expect(client.isBroker).toBe(false);
     expect(client.isConnected).toBe(true);
   });
