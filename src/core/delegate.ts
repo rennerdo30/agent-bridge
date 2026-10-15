@@ -16,6 +16,7 @@ import { progressLineHandler } from "./progress.js";
 import { PermissionRelay, type PermissionDecision } from "./relay.js";
 import { resolveCodexDriveMappings, codexPathPrompt } from "./codex-paths.js";
 import { DEFAULT_MAX_DELEGATE_DEPTH, ENV, MAX_DELEGATE_DEPTH_LIMIT } from "./constants.js";
+import { createProviderAttemptSource, type ProviderAttemptKey, type ProviderAttemptObserver } from "./provider-attempt-source.js";
 
 /** Env var tracking nested delegation, so a delegated agent cannot delegate back forever. */
 export const DELEGATE_DEPTH_ENV = "AGENT_BRIDGE_DELEGATE_DEPTH";
@@ -240,6 +241,8 @@ export interface RunResult {
   signal?: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
+  /** Opt-in diagnostic registry reference only; lookup is held, never retry authorization. */
+  providerAttemptKey?: ProviderAttemptKey;
 }
 
 /** How a process ended, for error messages: "exited with code 1" or "was killed by signal SIGKILL". */
@@ -262,31 +265,36 @@ export function runProcess(opts: {
   signal?: AbortSignal;
   /** Called with every complete stdout line as it arrives (for progress reporting). */
   onLine?: (line: string) => void;
+  /** Default off. Detached primitive diagnostics; no process/turn/ownership authority. */
+  onAttemptObservation?: ProviderAttemptObserver;
   /** Bind sanitized native plugin children to the owned CLI before it reads input. */
   onSpawn?: (pid: number) => void | Promise<void>;
   /** What runs, for the timeout message (e.g. "git worktree add"); default: a delegated agent run. */
   what?: string;
 }): Promise<RunResult> {
+  const attempt = typeof opts.onAttemptObservation === "function" ? createProviderAttemptSource(opts.onAttemptObservation) : null;
   let command: { resolved: string; args: string[]; needsShell: boolean };
   try {
     command = resolveCommand(opts.bin, opts.args, opts.env, opts.log);
   } catch (err) {
+    attempt?.noteUnreturned();
     return Promise.reject(err);
   }
   const { resolved, args, needsShell } = command;
   opts.log.debug("spawning delegate", { bin: resolved, args, cwd: opts.cwd, shell: needsShell });
 
   return new Promise((resolve, reject) => {
-    const child = spawn(resolved, args, {
+    const launchOptions = {
       cwd: opts.cwd,
       // Some CLIs (opencode) take their project folder from PWD rather than the real cwd; keep them in sync.
       env: { ...jobEnvironment(opts.env), PWD: opts.cwd },
       shell: needsShell,
       windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"],
       // Own process group on POSIX, so the whole tree can be killed (see killTree).
       detached: process.platform !== "win32",
-    });
+    };
+    const child = attempt ? attempt.spawn(resolved, args, launchOptions) : spawn(resolved, args, launchOptions);
     trackChild(child, opts.log);
     // Long runs can print more than the cap: keep the start (session id) and the end (final answer).
     let head = "";
@@ -341,7 +349,8 @@ export function runProcess(opts: {
       stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
     });
     child.on("error", (err) => finish(() => reject(new DelegateError(`failed to start ${opts.bin}: ${err.message}`, "failed"))));
-    child.on("close", (code, signal) => finish(() => resolve({ code, signal, stdout: captured(), stderr })));
+    child.on("close", (code, signal) => finish(() => resolve({ code, signal, stdout: captured(), stderr,
+      ...(attempt ? { providerAttemptKey: attempt.key } : {}) })));
     child.stdin.on("error", () => {
       // The child may exit before reading stdin; the close handler reports the outcome.
     });
@@ -374,6 +383,8 @@ export interface DelegateRequest {
   onInfo?: (info: { model?: string | null; effort?: string | null; permission?: string | null }) => void;
   /** Receives short human-readable status lines while the delegate works. */
   onProgress?: (message: string, full?: string) => void;
+  /** Observation declaration only; adapters without allocated producers leave it unwired. */
+  onAttemptObservation?: ProviderAttemptObserver;
   /** Extra folders the subagent may write (workspace-write), e.g. a worktree's git data in the main repo. */
   writableRoots?: string[];
   /** Called once with the subagent's own session id, as soon as it is known (not only at the end). */

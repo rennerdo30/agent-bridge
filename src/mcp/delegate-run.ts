@@ -27,7 +27,8 @@ import { changedFiles, createWorktree, finishWorktree, git, trustArgs, gitChange
 import { formatSiblingMessages, formatUsage } from "./format.js";
 import { SiblingLink } from "./siblings.js";
 import { denyPendingApprovals, waitForApproval, type Job, type RunResult } from "./jobs.js";
-import { DELEGATION_TARGETS, supportsAsk, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
+import { DELEGATION_TARGETS, supportsAsk, usageProbeFor, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
+import { checkUsagePreflight, confirmUsageAdmission, currentUsage, usageAdmissionText, usageRefused } from "../core/usage.js";
 import { JOB_SETTING_KEYS } from "./job-settings.js";
 import { prepareWorktreeContinuation, recordWorktreeOrigin } from "../core/job-close.js";
 import { invalidateWorktreePathProofWithRetry, worktreeLease } from "../core/worktree-state.js";
@@ -52,7 +53,7 @@ const HANDOFF_DECLINED =
 export const PARENT_APPROVAL_TIMEOUT_MS = 10 * 60_000;
 
 /** _worktree: internal, a follow-up continuing in an existing worktree. _job: the job's name. */
-export type DelegateArgs = { prompt: string; host?: string; model?: string; effort?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; send_to?: string[]; notes?: "none" | "milestones" | "blockers"; title: string; _worktree?: Worktree; _job?: string } & TargetArgs;
+export type DelegateArgs = { prompt: string; host?: string; model?: string; effort?: string; session_id?: string; cwd?: string; timeout_sec?: number; worktree?: boolean; allow_tools?: string[]; send_to?: string[]; notes?: "none" | "milestones" | "blockers"; title: string; _worktree?: Worktree; _job?: string; _usageWarningReported?: boolean } & TargetArgs;
 
 /** Where a background job's approval questions, answers and facts go: this session's JobManager, or a job runner's link to it. */
 export interface JobSink {
@@ -351,16 +352,16 @@ async function runDelegateInner(
       await l.start();
       link = l;
       job.live = {
-        post: (m, sibling) => {
+        post: (m, sibling, controlId) => {
           const from = sibling?.from.name ?? me;
           const message = sibling ? formatSiblingMessages([sibling], siblingLink?.maxHops) : m;
           feed.report(`message from ${from}: ${m.split("\n")[0]!.slice(0, MESSAGE_PREVIEW_CHARS)}`, `message from ${from}: ${m}`);
           // Natively where the target supports it (a real user message in the running turn), else at its next hook.
-          if (!steering) return void l.post(message, sibling);
+          if (!steering) return void l.post(message, sibling, controlId);
           const s = steering;
           const delivery = s.send(message, Boolean(sibling)).then(
-            (ok) => { if (!ok) l.post(message, sibling); else if (sibling) siblingLink?.consumed([sibling.id]); },
-            () => { l.post(message, sibling); },
+            (ok) => { if (!ok) l.post(message, sibling, controlId); else if (sibling) siblingLink?.consumed([sibling.id]); },
+            () => { l.post(message, sibling, controlId); },
           );
           liveDeliveries.add(delivery);
           void delivery.finally(() => liveDeliveries.delete(delivery));
@@ -383,6 +384,7 @@ async function runDelegateInner(
   let slots: ResourceSlots | null = null;
   let slotTimer: NodeJS.Timeout | undefined;
   let res: DelegateResult;
+  let usageWarning = "";
   try {
     if (Object.keys(cfg.resourceSlots).length) {
       slots = new ResourceSlots(rc.home);
@@ -449,15 +451,29 @@ async function runDelegateInner(
         const release = await acquireStartup(rc.home, signal);
         try {
           signal.throwIfAborted();
+          const previous = job?.providerUsage?.turnStartedAt === job?.startedAt ? job?.providerUsage : undefined;
+          if (previous?.decision.type === "warn" && !previous.warningReported) usageWarning = usageAdmissionText(previous.decision);
+          const usage = await checkUsagePreflight(usageProbeFor(target, cfg, { home: rc.home, cwd: workdir, log: dlog }, req.model ?? undefined), previous?.warningReported || a._usageWarningReported || Boolean(usageWarning));
+          signal.throwIfAborted();
+          if (job) {
+            const admittedControls = currentUsage(job, job.providerUsage) ? job.providerUsage?.admittedControls : undefined;
+            job.providerUsage = { runId: job.usageRunId, turnStartedAt: job.startedAt, decision: usage, admittedControls, warningReported: previous?.warningReported === true || usage.type === "warn" || Boolean(usageWarning) };
+            rc.jobs?.persist?.();
+          }
+          if (usage.type === "block") { usageWarning = ""; throw new Error(usageAdmissionText(usage)); }
+          if (usage.type === "warn") usageWarning = usageAdmissionText(usage);
+          if (job) { confirmUsageAdmission(job, (job.usagePendingControls ?? []).map(control => control.cid)); rc.jobs?.persist?.(); }
           onProgress?.("starting native CLI");
           return await profile.run(cfg, { ...req, onSession: (id) => { release(); req.onSession?.(id); } }, { ...a, access, relay: wiring });
         } finally { release(); }
       },
     );
+    if (usageWarning) res = { ...res, text: `${usageWarning}\n\n${res.text}` };
     feed.meta({ session: res.sessionId });
     feed.end(signal.aborted ? "cancelled" : res.isError ? "failed" : "done", displayPathText(res.text));
     if (!res.isError && res.text.trim()) link?.reportCompleted();
   } catch (err) {
+    if (usageWarning && err instanceof Error) err.message = `${usageWarning}\n\n${err.message}`;
     if (err instanceof DelegateError && err.sessionId) feed.meta({ session: err.sessionId });
     if (wt) {
       const branch = await git([...trustArgs(wt.path), "branch", "--show-current"], wt.path, dlog).catch(() => wt.branch);
@@ -489,7 +505,11 @@ async function runDelegateInner(
     if (job && link) {
       job.live = null;
       // Messages it never got to see go out as a follow-up right after this turn.
-      job.queue.unshift(...(await link.close()));
+      const pending = await link.closeMessages();
+      job.queue.unshift(...pending.map(message => message.body));
+      if (job.usageQueuedControls) job.usageQueuedControls.unshift(...pending.map(message => ({ cid: message.controlId ?? randomUUID(), body: message.body })));
+      if (usageRefused(job)) job.providerUsage!.retainedControls = pending.flatMap(message => message.controlId
+        ? [{ cid: message.controlId, body: message.body }] : []);
     }
   }
 

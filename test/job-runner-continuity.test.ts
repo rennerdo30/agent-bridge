@@ -108,7 +108,7 @@ it("keeps the active turn and lease through owner handoff and control ACK timeou
   changeOwner("claude-main-2");
   await vi.waitFor(() => expect(live.post).toHaveBeenCalledOnce(), { timeout: 5_000 });
   await vi.waitFor(() => expect(mocks.node.markRead).toHaveBeenCalledTimes(2), { timeout: 5_000 });
-  expect(live.post).toHaveBeenCalledWith("continue safely");
+  expect(live.post).toHaveBeenCalledWith("continue safely", undefined, "forward-1");
   expect(activeSignal.aborted).toBe(false);
   expect(() => worktreeLease(home!, wt)).toThrow("unreconciled lease");
   mocks.node.send.mockRejectedValueOnce(new Error("broker request timed out: send"));
@@ -169,7 +169,7 @@ it("keeps the main owner's turn usable through a slow second-session control tim
   expect(signal.aborted).toBe(false);
   expect(() => worktreeLease(home!, wt)).toThrow("unreconciled lease");
   mocks.node.emit("message", control("main-control", "claude-main"));
-  await vi.waitFor(() => expect(live.post).toHaveBeenCalledWith("main-control"));
+  await vi.waitFor(() => expect(live.post).toHaveBeenCalledWith("main-control", undefined, "main-control"));
   finish(); expect(await running).toBe(0);
   expect(mocks.node.send.mock.calls.at(-1)?.[0]).toMatchObject({ to: "claude-main", body: expect.stringContaining("main turn still completed") });
   expect(readRunnerState(home, spec.job.id)).toMatchObject({ status: "done", delivered: true, sessionId: "main-native-context", workdir: wt.path });

@@ -33,7 +33,7 @@ import {
 } from "../core/constants.js";
 import { runRemoteAsk } from "./remote-ask.js";
 import { bundledCli, currentDelegateDepth, DelegateError, failureCause, killAllDelegates, PARENT_JOB_ENV, ROOT_NAME_ENV, ROOT_SESSION_ENV, resolveBinary } from "../core/delegate.js";
-import { readUsage, codexAppServerCall } from "../core/usage.js";
+import { readUsage, codexAppServerCall, checkUsagePreflight, usageAdmissionText, type UsageAdmission } from "../core/usage.js";
 import { t } from "../core/i18n.js";
 import { createLogger, type Logger } from "../core/logger.js";
 import { BridgeNode } from "../core/node.js";
@@ -53,7 +53,7 @@ import { CodexWaker, type Activity } from "./codex-wake.js";
 import { reportModActivity } from "./hook-ownership.js";
 import { codexCallIdentity, codexMainThreadAdmission, type CodexCallIdentity } from "./codex-lineage.js";
 import { buildHookResponse, confirmAntigravityStopDelivery, confirmNativeChildDelivery, discardFinishedNotes, releaseAntigravityStopDelivery, type HookEvent } from "./hooks.js";
-import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, type Access } from "./targets.js";
+import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, usageProbeFor, type Access } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
 import { answerPendingApproval, listPendingApprovals, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
 import { LocalCoordinator } from "./local-coordinator.js";
@@ -1252,6 +1252,11 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     jobs: ctx.jobs,
   };
   const keep = (a: DelegateArgs): Record<string, unknown> => Object.fromEntries(KEPT_ARGS.filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
+  const seedUsage = (job: Job, usage: UsageAdmission | undefined) => {
+    if (usage && job.providerUsage?.turnStartedAt !== job.startedAt) {
+      job.providerUsage = { turnStartedAt: job.startedAt, decision: usage, warningReported: usage.type === "warn" };
+    }
+  };
   const resumers: Partial<Record<CodingAgent, (a: DelegateArgs) => Resume>> = {};
   for (const target of CODING_AGENTS) {
     const profile = DELEGATION_TARGETS[target];
@@ -1363,8 +1368,11 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           if (!ctx.jobs) throw new BridgeError("bad_request", "Remote asks require a supervisor session.");
         }
         if (ctx.jobs && !ctx.jobs.canStart()) return text(t("jobs.limit", { max: ctx.jobs.limit }), true);
+        const usage = a.host || a.worktree ? undefined : await checkUsagePreflight(usageProbeFor(target, cfg, { home: ctx.home, cwd: a.cwd || ctx.cwd(), log }, a.model));
+        if (usage?.type === "block") return text(usageAdmissionText(usage), true);
         // Visible in peers while it runs (the caller is blocked, but its coordinator may ask).
         const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a), keep(a));
+        if (tracked) { seedUsage(tracked.job, usage); ctx.jobs?.persist(); }
         if (a.host && tracked) {
           tracked.job.remote = { host: a.host, name: `${target}-job-${tracked.job.id}` };
           ctx.jobs!.persist();
@@ -1389,8 +1397,9 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           // cancel_subagent can stop it too (e.g. from its coordinator), not only the caller.
           res = a.host && tracked
             ? await runRemoteAsk(requireNode(), target, a, tracked.job, extra.signal, onProgress)
-            : await run({ ...a, _job: tracked?.job.name }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false, tracked?.job);
+            : await run({ ...a, _job: tracked?.job.name, _usageWarningReported: usage?.type === "warn" }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false, tracked?.job);
         } catch (err) {
+          if (usage?.type === "warn" && err instanceof Error) err.message = `${usageAdmissionText(usage)}\n\n${err.message}`;
           await contact();
           tracked?.end({ error: err });
           log.warn("ask failed", { job: tracked?.job.name, err: (err as Error).message });
@@ -1398,6 +1407,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           const identity = tracked ? `Job: ${tracked.job.name}\n${target} session_id: ${tracked.job.sessionId ?? "-"}\n\n` : "";
           return text(`${identity}${describeError(err)}`, true);
         }
+        if (usage?.type === "warn") res = { ...res, text: `${usageAdmissionText(usage)}\n\n${res.text}` };
         await contact();
         tracked?.end({ result: res });
         if (redirected()) return confirmation();
@@ -1433,13 +1443,17 @@ ${res.text || t("delegate.empty")}`, res.isError);
         if (a.host && !ctx.runners) throw new BridgeError("bad_request", "Remote jobs require the bundled runner. Update and reload this session.");
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
-        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job) => ({ ...a, _job: job.name }), a), resumeFor(a), keep(a));
+        const usage = a.host || a.worktree ? undefined : await checkUsagePreflight(usageProbeFor(target, cfg, { home: ctx.home, cwd: a.cwd || ctx.cwd(), log }, a.model));
+        if (usage?.type === "block") return text(usageAdmissionText(usage), true);
+        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job) => { seedUsage(job, usage); return { ...a, _job: job.name }; }, a), resumeFor(a), keep(a));
+        seedUsage(job, usage);
+        jobs.persist();
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
         // Exact target options (sandbox, permission_mode, auto_approve, bypass_permissions) say it themselves.
         const exact = a.sandbox !== undefined || a.permission_mode !== undefined || a.auto_approve !== undefined || a.bypass_permissions !== undefined;
         const note = exact ? "" : `\n${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
-        return text(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${derivedTitle ? `\nTitle derived from prompt: "${a.title}".` : ""}`);
+        return text(`${usage?.type === "warn" ? usageAdmissionText(usage) + "\n\n" : ""}${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${derivedTitle ? `\nTitle derived from prompt: "${a.title}".` : ""}`);
       }),
     );
   }
