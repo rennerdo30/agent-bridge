@@ -34,7 +34,7 @@ export class RemoteJobHost {
     // Internal continuation fields belong to the remote registry; only public spawn args cross the link.
     const raw = { ...args, cwd: args.cwd ?? job.workdir } as Record<string, unknown>;
     for (const key of ["host", "_job", "_worktree", "send_to"]) delete raw[key];
-    const request = { op: "spawn", job: job.id, target, args: remoteSpawnArgsSchema.parse(raw), usageTurn: `${job.id}:${job.startedAt}` } as const;
+    const request = { op: "spawn", job: job.id, target, args: remoteSpawnArgsSchema.parse(raw), usageTurn: `${job.id}:${job.startedAt}`, usageControls: job.usagePendingControls } as const;
     this.busy.add(job.id);
     void this.node.remoteJob(host, request).then((snapshot) => {
       this.save(job, snapshot);

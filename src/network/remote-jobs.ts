@@ -92,6 +92,7 @@ export class RemoteJobs {
     try {
       let wireRequest = request;
       if (request.op === "spawn" && !this.network.peerSupports(host, REMOTE_JOB_USAGE_CAPABILITY)) {
+        if (request.usageControls?.length) throw new Error("Remote broker update needed: submitted steering requires remote-jobs-usage-v1 admission acknowledgments.");
         const { usageTurn, ...legacy } = request;
         wireRequest = legacy;
       }
@@ -193,8 +194,9 @@ export class RemoteJobs {
       const job: Job = { id: request.job, name: `${request.target}-job-${request.job}`, agent: request.target,
         model: args.model ?? null, prompt: args.prompt, args: { ...args }, owner, supervisor: `${pair.id}/${peer.supervisor}`,
         startedAt: Date.now(), controller: new AbortController(), queue: [], status: "running", progress: null,
-        sessionId: args.session_id ?? null, workdir: cwd, worktree };
-      job.providerUsage = { turnStartedAt: job.startedAt, decision: usage, warningReported: false };
+        sessionId: args.session_id ?? null, workdir: cwd, worktree, usageRunId: randomUUID(), usagePendingControls: request.usageControls };
+      job.providerUsage = { runId: job.usageRunId, turnStartedAt: job.startedAt, decision: usage, warningReported: false,
+        ...(usage.type === "block" ? { retainedControls: job.usagePendingControls } : {}) };
       const previous = this.records.get(request.job);
       record = { pair: pair.id, peer: peer.supervisor, owner, job, args: { ...args, cwd, _job: job.name }, usageTurn: request.usageTurn };
       this.records.set(job.id, record);

@@ -410,7 +410,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     // The supervisor's JobManager emits the finish/fail notification when it settles this
     // result. A detached notifier here would remain inside this runner's owned job scope.
     // Follow-ups that arrived meanwhile go out right away, into the same session, from this runner.
-    if (job.queue.length && job.sessionId && !job.controller.signal.aborted && !usageRefused(job)) {
+    if (job.queue.length && job.sessionId && !job.controller.signal.aborted && !usageRefused(job) && !job.usagePendingControls?.length) {
       const queued = job.queue.splice(0).join("\n\n");
       job.usagePendingControls = job.usageQueuedControls;
       job.usageQueuedControls = [];

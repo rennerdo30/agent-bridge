@@ -512,6 +512,32 @@ export interface ProviderUsageState {
   warningReported: boolean;
   /** Pending accepted controls; receipt ACKs are not evidence of native consumption. */
   retainedControls?: { cid: string; body: string }[];
+  /** Cumulative CIDs whose submitted prompts reached native admission in this run. */
+  admittedControls?: string[];
+}
+type UsageSubmission = { providerUsage?: ProviderUsageState; usagePendingControls?: { cid: string; body: string }[]; usagePendingHeld?: boolean; queue: string[] };
+/** The only consumption boundary for a submitted batch, shared by local and remote executors. */
+export function confirmUsageAdmission(job: UsageSubmission, admitted: readonly string[]): void {
+  const ids = new Set(admitted);
+  if (job.providerUsage) job.providerUsage.admittedControls = [...new Set([...(job.providerUsage.admittedControls ?? []), ...ids])];
+  if (job.usagePendingHeld) {
+    const count = job.usagePendingControls?.length ?? 0;
+    job.queue = [...job.queue.slice(0, count).filter((_body, index) => !ids.has(job.usagePendingControls![index]!.cid)), ...job.queue.slice(count)];
+  }
+  job.usagePendingControls = job.usagePendingControls?.filter(control => !ids.has(control.cid));
+  if (!job.usagePendingControls?.length) { job.usagePendingControls = undefined; job.usagePendingHeld = undefined; }
+}
+/** Holding a refused batch changes its queue representation, never its submitted provenance. */
+export function holdUsageSubmission(job: UsageSubmission): void {
+  if (job.usagePendingControls?.length && !job.usagePendingHeld) {
+    job.queue.unshift(...job.usagePendingControls.map(control => control.body));
+    job.usagePendingHeld = true;
+  }
+}
+/** Reconstruct an unacknowledged submitted batch even after a pre-settlement reload. */
+export function usageContinuationMessage(job: UsageSubmission): string {
+  holdUsageSubmission(job);
+  return job.queue.join("\n\n");
 }
 export function currentUsage(job: { startedAt: number; usageRunId?: string }, state: ProviderUsageState | undefined): boolean {
   return Boolean(state && (state.runId ? state.runId === job.usageRunId : state.turnStartedAt === job.startedAt));

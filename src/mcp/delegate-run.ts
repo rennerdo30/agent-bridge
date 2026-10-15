@@ -28,7 +28,7 @@ import { formatSiblingMessages, formatUsage } from "./format.js";
 import { SiblingLink } from "./siblings.js";
 import { denyPendingApprovals, waitForApproval, type Job, type RunResult } from "./jobs.js";
 import { DELEGATION_TARGETS, supportsAsk, usageProbeFor, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
-import { checkUsagePreflight, usageAdmissionText, usageRefused } from "../core/usage.js";
+import { checkUsagePreflight, confirmUsageAdmission, currentUsage, usageAdmissionText, usageRefused } from "../core/usage.js";
 import { JOB_SETTING_KEYS } from "./job-settings.js";
 import { prepareWorktreeContinuation, recordWorktreeOrigin } from "../core/job-close.js";
 import { invalidateWorktreePathProofWithRetry, worktreeLease } from "../core/worktree-state.js";
@@ -456,12 +456,13 @@ async function runDelegateInner(
           const usage = await checkUsagePreflight(usageProbeFor(target, cfg, { home: rc.home, cwd: workdir, log: dlog }, req.model ?? undefined), previous?.warningReported || a._usageWarningReported || Boolean(usageWarning));
           signal.throwIfAborted();
           if (job) {
-            job.providerUsage = { runId: job.usageRunId, turnStartedAt: job.startedAt, decision: usage, warningReported: previous?.warningReported === true || usage.type === "warn" || Boolean(usageWarning) };
+            const admittedControls = currentUsage(job, job.providerUsage) ? job.providerUsage?.admittedControls : undefined;
+            job.providerUsage = { runId: job.usageRunId, turnStartedAt: job.startedAt, decision: usage, admittedControls, warningReported: previous?.warningReported === true || usage.type === "warn" || Boolean(usageWarning) };
             rc.jobs?.persist?.();
           }
           if (usage.type === "block") { usageWarning = ""; throw new Error(usageAdmissionText(usage)); }
           if (usage.type === "warn") usageWarning = usageAdmissionText(usage);
-          if (job) { job.usagePendingControls = undefined; rc.jobs?.persist?.(); }
+          if (job) { confirmUsageAdmission(job, (job.usagePendingControls ?? []).map(control => control.cid)); rc.jobs?.persist?.(); }
           onProgress?.("starting native CLI");
           return await profile.run(cfg, { ...req, onSession: (id) => { release(); req.onSession?.(id); } }, { ...a, access, relay: wiring });
         } finally { release(); }

@@ -1,6 +1,6 @@
 import { canonicalProjectRoot, migrateProjectJobs } from "../core/project-identity.js";
 import { canControlJob } from "../core/job-ownership.js";
-import { currentUsage, usageRefused } from "../core/usage.js";
+import { confirmUsageAdmission, currentUsage, holdUsageSubmission, usageContinuationMessage, usageRefused } from "../core/usage.js";
 import { createHash, randomUUID } from "node:crypto";
 import { worktreeProcesses, worktreeProcessReport } from "../core/worktree-processes.js";
 import { setTimeout as delay } from "node:timers/promises";
@@ -67,6 +67,8 @@ export interface Job {
   usageRunId?: string;
   /** Submitted steering remains pending until native admission succeeds. */
   usagePendingControls?: { cid: string; body: string }[];
+  /** Pending CIDs are also represented by the held prefix of queue. */
+  usagePendingHeld?: boolean;
   /** Runner-local provenance for its next queued continuation. */
   usageQueuedControls?: { cid: string; body: string }[];
   /** Cancellation intent belongs to this exact turn and survives supervisor changes. */
@@ -1282,7 +1284,7 @@ export class JobManager {
         if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner) && !usageRefused(job)) {
           if (this.canStart()) {
             let run: Run;
-            try { run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree); }
+            try { run = job.resume(usageContinuationMessage(job), job.sessionId, job.workdir, job.worktree); }
             catch (error) { this.failContinuation(job, error); return; }
             this.launch(job, run);
           }
@@ -1499,7 +1501,7 @@ export class JobManager {
       return { outcome: "waiting", job };
     }
     let run: Run;
-    try { run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree); }
+    try { run = job.resume(usageContinuationMessage(job), job.sessionId, job.workdir, job.worktree); }
     catch (error) { this.failContinuation(job, error); throw error; }
     this.log.info("subagent resumed", { job: job.name, sessionId: job.sessionId });
     return { outcome: this.launch(job, run) ? "started" : "waiting", job };
@@ -1560,7 +1562,7 @@ export class JobManager {
       }
       if (!job.queue.length || !job.resume || !job.sessionId) { this.waitingJobs.delete(job.id); continue; }
       let run: Run;
-      try { run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree); }
+      try { run = job.resume(usageContinuationMessage(job), job.sessionId, job.workdir, job.worktree); }
       catch (error) { this.failContinuation(job, error); continue; }
       this.waitingJobs.delete(job.id);
       this.log.info("subagent resumed (was waiting for a slot)", { job: job.name, sessionId: job.sessionId });
@@ -1602,7 +1604,9 @@ export class JobManager {
   private claimTurn(job: Job): boolean {
     const initial = job.waitingForStart || job.status === "running" && !this.running.has(job.id);
     const reset = () => {
-      job.usagePendingControls = initial ? undefined : job.queue.map(body => ({ cid: randomUUID(), body }));
+      const held = job.usagePendingHeld ? job.usagePendingControls ?? [] : [];
+      job.usagePendingControls = initial ? job.usagePendingControls : job.queue.map((body, index) => ({ cid: held[index]?.cid ?? randomUUID(), body }));
+      job.usagePendingHeld = undefined;
       job.usageRunId = randomUUID();
       job.status = "running";
       job.executionOwner = this.node.name;
@@ -1788,6 +1792,7 @@ export class JobManager {
     catch (err) { this.finish(job, "failed", "", sessionOfError(err), failureCause({ error: err })); return; }
     promise.then(
       (res) => {
+        if ((res.status ?? (res.isError ? "failed" : "done")) === "done") confirmUsageAdmission(job, (job.usagePendingControls ?? []).map(control => control.cid));
         job.workdir = res.workdir ?? job.workdir;
         job.worktree = res.worktree ?? job.worktree;
         this.finish(job, res.status ?? (res.isError ? "failed" : "done"), res.text || "(no answer text returned)", res.sessionId, res.isError ? failureCause({ result: res }) : null);
@@ -1838,7 +1843,10 @@ export class JobManager {
     const runners = this.runners!;
     const state = runners.state(job);
     if (state) {
-      if (currentUsage(job, state.providerUsage)) job.providerUsage = state.providerUsage;
+      if (currentUsage(job, state.providerUsage)) {
+        job.providerUsage = state.providerUsage;
+        confirmUsageAdmission(job, state.providerUsage?.admittedControls ?? []);
+      }
       job.host!.pid = state.pid;
       if (state.model !== undefined) job.model = state.model;
       job.progress = state.progress ?? job.progress;
@@ -1865,20 +1873,25 @@ export class JobManager {
 
   /** A runner-hosted job ended: with its runner's final state, or without (the runner is gone). */
   private settleHosted(job: Job, final: RunnerState | null): void {
+    // Successful completion is also confirmation that this submitted prompt was admitted,
+    // including compatible executors predating explicit CID acknowledgments.
+    if (final?.status === "done") confirmUsageAdmission(job, (job.usagePendingControls ?? []).map(control => control.cid));
+    const unconfirmed = Boolean(job.usagePendingControls?.length);
     // Messages forwarded to the runner that it never took become a follow-up.
     const seen = new Set(final?.seen ?? this.runners?.state(job)?.seen ?? []);
     const retained = currentUsage(job, final?.providerUsage) && usageRefused(job)
       ? final?.providerUsage?.retainedControls ?? [] : [];
     const retainedIds = new Set(retained.map(control => control.cid));
-    const recovered = new Map<string, string>();
+    const recovered = new Map((job.usagePendingControls ?? []).map(control => [control.cid, control.body]));
     const forwarded = new Map((job.forwarded ?? []).map(control => [control.cid, control.body]));
     // Submitted batches precede controls received while admission was pending.
     for (const control of retained) recovered.set(control.cid, forwarded.get(control.cid) ?? control.body);
     for (const control of job.forwarded ?? []) if (!seen.has(control.cid) || retainedIds.has(control.cid)) recovered.set(control.cid, control.body);
-    job.queue.push(...recovered.values());
-    // A submitted batch may have run in an earlier internal runner turn.
-    // Only the final runner's retained CIDs are still awaiting native admission.
-    job.usagePendingControls = undefined;
+    if (unconfirmed || usageRefused(job)) {
+      job.usagePendingControls = [...recovered].map(([cid, body]) => ({ cid, body }));
+      holdUsageSubmission(job);
+    } else job.queue.unshift(...recovered.values());
+    if (unconfirmed && !usageRefused(job)) job.continuationFailure = { turn: job.startedAt, error: "Submitted steering is awaiting native admission confirmation; explicit continuation required." };
     job.forwarded = [];
     const pid = job.host?.pid;
     job.host = null;
@@ -2114,8 +2127,10 @@ export class JobManager {
 
   /** `report`: null when the runner already delivered it, a text to post as it is, or undefined to compose it here. */
   private finish(job: Job, status: "done" | "failed" | "cancelled", text: string, sessionId: string | null, cause: string | null = null, report?: string | null, messageId?: string): void {
-    if (usageRefused(job)) job.queue.unshift(...(job.usagePendingControls ?? []).map(control => control.body));
-    job.usagePendingControls = undefined;
+    if (job.usagePendingControls?.length) {
+      holdUsageSubmission(job);
+      if (!usageRefused(job)) job.continuationFailure = { turn: job.startedAt, error: "Submitted steering is awaiting native admission confirmation; explicit continuation required." };
+    }
     if (job.controller.signal.aborted) status = "cancelled";
     denyPendingApprovals(job);
     this.running.delete(job.id);
@@ -2133,7 +2148,7 @@ export class JobManager {
     // Follow-ups that arrived meanwhile go out right away, into the same session (it keeps its slot).
     if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner) && job.continuationFailure?.turn !== job.startedAt && !usageRefused(job)) {
       let run: Run;
-      try { run = job.resume(job.queue.join("\n\n"), job.sessionId, job.workdir, job.worktree); }
+      try { run = job.resume(usageContinuationMessage(job), job.sessionId, job.workdir, job.worktree); }
       catch (error) {
         this.failContinuation(job, error);
         if (message !== null) this.post(job, message, null, "", messageId);
@@ -2222,7 +2237,7 @@ function executorOffline(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === "unknown_target";
 }
 
-type StoredJob = Pick<Job, "usageRunId" | "usagePendingControls" | "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+type StoredJob = Pick<Job, "usageRunId" | "usagePendingControls" | "usagePendingHeld" | "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
 
 /** Unknown fields survive upgrades; known next-turn settings also honor deletion. */
 function mergeJobFields(previous: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
@@ -2238,6 +2253,7 @@ function toStored(j: Job): StoredJob {
     providerUsage: j.providerUsage,
     usageRunId: j.usageRunId,
     usagePendingControls: j.usagePendingControls,
+    usagePendingHeld: j.usagePendingHeld,
     id: j.id,
     name: j.name,
     agent: j.agent,

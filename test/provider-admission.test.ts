@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { realpathSync } from "node:fs";
@@ -25,7 +25,8 @@ import * as jobHost from "../src/mcp/job-host.js";
 import { runOwnedJobRunner } from "../src/mcp/job-runner.js";
 import { BridgeNode } from "../src/core/node.js";
 import { RemoteJobs } from "../src/network/remote-jobs.js";
-import { remoteJobSnapshotSchema, remoteSpawnArgsSchema, REMOTE_JOB_USAGE_CAPABILITY } from "../src/network/remote-job-protocol.js";
+import { RemoteJobHost } from "../src/mcp/remote-job-host.js";
+import { remoteJobRequestSchema, remoteJobSnapshotSchema, remoteSpawnArgsSchema, REMOTE_JOB_USAGE_CAPABILITY } from "../src/network/remote-job-protocol.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { until } from "./helpers.js";
 
@@ -330,10 +331,73 @@ it("correlates a later hosted usage refusal by run identity while excluding anot
   job.usagePendingControls = [{ cid: "consumed-on-first-turn", body: "already executed" }];
   const submitted = { cid: "submitted-before-late-control", body: "pending continuation batch" };
   state = { ...state, status: "failed", delivered: true, seen: [control.cid], providerUsage: { runId: job.usageRunId,
-    turnStartedAt: job.startedAt + 10_000, decision: block, warningReported: false, retainedControls: [submitted, control] } };
+    turnStartedAt: job.startedAt + 10_000, decision: block, warningReported: false, admittedControls: ["consumed-on-first-turn"], retainedControls: [submitted, control] } };
   alive = false; (jobs as any).checkHosted(job);
   expect(usage.usageRefused(job)).toBe(true); expect(job.status).toBe("failed");
   expect(job.queue).toEqual(["pending continuation batch", "ACKed on later turn", "unseen on later turn"]); expect(resume).not.toHaveBeenCalled();
+});
+
+it("keeps submitted remote CIDs pending across refusal and restore until executor admission confirms them", async () => {
+  const executorHome = join(home, "executor"); mkdirSync(executorHome);
+  writeFileSync(join(executorHome, "config.json"), JSON.stringify({ version: 4, maxJobs: 16, network: { ...DEFAULT_NETWORK_CONFIG,
+    remoteJobs: { enabled: true, allowRoots: [home], agents: ["codex"], allowPeers: ["paired"] } } }));
+  vi.spyOn(delegate, "bundledCli").mockReturnValue("fixture-cli");
+  vi.spyOn(worktree, "gitDirsOutside").mockResolvedValue([]);
+  const check = vi.spyOn(usage, "checkUsagePreflight").mockResolvedValue({ type: "allow", reason: "allowance_available" });
+  let executorState: RunnerState | null = null;
+  vi.spyOn(jobHost, "readRunnerState").mockImplementation(() => executorState);
+  vi.spyOn(JobRunners.prototype, "alive").mockImplementation(() => false);
+  const start = vi.spyOn(JobRunners.prototype, "startAsync").mockImplementation(async current => {
+    // This runner protocol ACK models the same admission boundary exercised by the real-loop fixture.
+    usage.confirmUsageAdmission(current, (current.usagePendingControls ?? []).map(control => control.cid));
+    executorState = { pid: 0, peer: current.name, updatedAt: Date.now(), status: "done", delivered: true,
+      sessionId: "remote-session", workdir: home, providerUsage: structuredClone(current.providerUsage) };
+    return { pid: 0, peer: current.name, startedAt: Date.now() };
+  });
+  const executor = new RemoteJobs({ registerExtension() {} } as any, executorHome, nullLogger, async () => {}); remotes.push(executor);
+  const requests: any[] = [];
+  const node = new LocalCoordinator("owner", "owner-session");
+  const remoteNode = { remoteJob: async (_host: string, raw: any) => {
+    const request = remoteJobRequestSchema.parse(JSON.parse(JSON.stringify(raw))); requests.push(request);
+    return remoteJobSnapshotSchema.parse(await (executor as any).handle({ id: "pair", name: "paired" }, { id: "owner-session", name: "owner", supervisor: "owner-session" }, request));
+  } };
+  const host = new RemoteJobHost(remoteNode as any, home, nullLogger);
+  const path = join(home, "jobs.json"), jobs = new JobManager(node, nullLogger, path, 2); managers.push(jobs);
+  jobs.runners = { state: current => host.state(current), alive: current => host.alive(current), send: (current, control) => host.send(current, control), kill() {} };
+  const args = { cwd: home, prompt: "task", title: "Remote fixture", model: "selected-model", access: "read" as const, sandbox: "read-only" };
+  const runFor = (prompt: string): Run => Object.assign(async () => answer, { hosted: (current: any) => host.start(current, "paired", "codex", { ...args, prompt }) });
+  const resume = vi.fn((message: string) => runFor(message));
+  const job = jobs.start("codex", args.model, "task", runFor("task"), resume);
+  await until(() => host.state(job)?.status === "done"); (jobs as any).checkHosted(job);
+  expect(job.status).toBe("done"); expect(start).toHaveBeenCalledTimes(1);
+  check.mockResolvedValue(block);
+  jobs.followUp(job.name, "remote steering");
+  const submitted = structuredClone(job.usagePendingControls!);
+  expect(submitted).toHaveLength(1); expect(job.queue).toEqual([]);
+  await until(() => host.state(job)?.status === "failed"); (jobs as any).checkHosted(job);
+  expect(job.queue).toEqual(["remote steering"]); expect(job.usagePendingControls).toEqual(submitted);
+  expect(host.state(job)?.providerUsage?.retainedControls).toEqual(submitted);
+  expect(requests.filter(request => request.op === "spawn")[1].usageControls).toEqual(submitted);
+  expect(start).toHaveBeenCalledTimes(1); expect(resume).toHaveBeenCalledTimes(1);
+  expect(readStore(path).find(saved => saved.id === job.id)?.usagePendingControls).toEqual(submitted);
+  jobs.setDormant(true);
+  const restoredJobs = new JobManager(node, nullLogger, path, 2); managers.push(restoredJobs); restoredJobs.runners = jobs.runners;
+  restoredJobs.restore(() => resume);
+  const restored = restoredJobs.find(job.name, false)!;
+  expect(restored.queue).toEqual(["remote steering"]); expect(restored.usagePendingControls).toEqual(submitted);
+  // A reload may observe the submitted receipt before refusal settlement restored its queue view.
+  restored.queue = []; restored.usagePendingHeld = undefined; restoredJobs.persist();
+  restoredJobs.followUp(restored.name, "still exhausted");
+  expect(restored.usagePendingControls?.[0]).toEqual(submitted[0]);
+  await until(() => host.state(restored)?.status === "failed"); (restoredJobs as any).checkHosted(restored);
+  expect(restored.queue).toEqual(["remote steering", "still exhausted"]); expect(start).toHaveBeenCalledTimes(1);
+  check.mockResolvedValue({ type: "allow", reason: "allowance_available" });
+  restoredJobs.followUp(restored.name, "allowance restored");
+  expect(restored.usagePendingControls?.[0]).toEqual(submitted[0]);
+  await until(() => host.state(restored)?.status === "done"); (restoredJobs as any).checkHosted(restored);
+  expect(restored.status).toBe("done"); expect(restored.queue).toEqual([]); expect(restored.usagePendingControls).toBeUndefined();
+  expect(start).toHaveBeenCalledTimes(2);
+  expect(resume.mock.calls.map(([message]) => message)).toEqual(["remote steering", "remote steering\n\nstill exhausted", "remote steering\n\nstill exhausted\n\nallowance restored"]);
 });
 
 it.each(CODING_AGENTS)("remote %s preflight uses executor context and persists typed refusal without a runner", async target => {
@@ -370,16 +434,21 @@ it("negotiates only usage correlation, preserving permissions for strict legacy 
     const network = {
       registerExtension: vi.fn((_frame, _capability, handler, _extra) => { receive = handler; }),
       peerSupports: (_host: string, capability: string) => capability !== REMOTE_JOB_USAGE_CAPABILITY || supportsUsage,
-      sendExtension: async (_host: string, _frame: string, payload: any) => {
+      sendExtension: vi.fn(async (_host: string, _frame: string, payload: any) => {
         serialized = payload.request;
         await receive({ kind: "response", rid: payload.rid, value: { state: null, alive: false, approvals: [] } }, { id: "pair", name: "paired" });
-      },
+      }),
     };
     const remote = new RemoteJobs(network as any, home, nullLogger, async () => {}); remotes.push(remote);
     await remote.request("paired", { id: "supervisor", name: "owner" }, request as any);
     expect(network.registerExtension.mock.calls[0]![3]).toContain(REMOTE_JOB_USAGE_CAPABILITY);
     expect(serialized.args).toEqual(request.args);
     if (supportsUsage) expect(serialized.usageTurn).toBe(request.usageTurn);
-    else { expect(legacy.parse(serialized).args).toEqual(request.args); expect(serialized).not.toHaveProperty("usageTurn"); }
+    else {
+      expect(legacy.parse(serialized).args).toEqual(request.args); expect(serialized).not.toHaveProperty("usageTurn");
+      const sends = network.sendExtension.mock.calls.length;
+      await expect(remote.request("paired", { id: "supervisor", name: "owner" }, { ...request, usageControls: [{ cid: "submitted-cid", body: "task" }] } as any)).rejects.toThrow("submitted steering requires remote-jobs-usage-v1");
+      expect(network.sendExtension).toHaveBeenCalledTimes(sends);
+    }
   }
 });
