@@ -97,12 +97,14 @@ describe("shared resource slots", () => {
   });
 
   it("renews only live leases and cancels waiters without releasing another owner", async () => {
-    let clock = 0;
+    // An unknown asynchronous identity remains occupied for records from this boot.
+    const start = Date.now();
+    let clock = start;
     const s = store(undefined, () => clock);
     s.tryAcquire("unity", 1, owner("a"));
-    clock = SLOT_LEASE_MS - 1;
+    clock = start + SLOT_LEASE_MS - 1;
     s.renew(owner("a"));
-    clock = SLOT_LEASE_MS;
+    clock = start + SLOT_LEASE_MS;
     expect(s.list()[0]?.held).toBe(true);
     const controller = new AbortController();
     const waiting = s.acquire("unity", 1, owner("b"), controller.signal);

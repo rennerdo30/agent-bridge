@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { migrationLock } from "../src/core/migration-lock.js";
 import { processIdentity } from "../src/core/process-identity.js";
 import { ResourceSlots, SLOT_LEASE_MS } from "../src/core/resource-slots.js";
+import { slotLiveness } from "../src/core/slot-liveness.js";
 import { DatabaseSync } from "node:sqlite";
 
 // AB-218: a dead owner's PID reused by an unrelated process must not look alive.
@@ -20,7 +21,7 @@ afterEach(() => { child.kill(); rmSync(dir, { recursive: true, force: true }); }
 const hourAgo = (path: string) => { const t = new Date(Date.now() - 3_600_000); utimesSync(path, t, t); };
 
 describe("resource slot owner liveness", () => {
-  it("frees a slot whose owner PID was reused by a process started after the slot was last renewed", () => {
+  it("frees a slot whose owner PID was reused by a process started after the slot was last renewed", async () => {
     const slots = new ResourceSlots(dir);
     slots.close();
     const db = new DatabaseSync(join(dir, "resource-slots.sqlite"));
@@ -29,14 +30,19 @@ describe("resource slot owner liveness", () => {
       db.prepare("INSERT INTO slots(resource, id, pid, held, expiresAt) VALUES ('gpu', 'dead-job', ?, 1, ?)").run(child.pid!, Date.now() - 3_600_000 + SLOT_LEASE_MS);
     } finally { db.close(); }
     const again = new ResourceSlots(dir);
-    try { expect(again.list()).toEqual([]); } finally { again.close(); }
+    try {
+      expect(again.list()).toHaveLength(1); // unknown while the asynchronous query runs
+      await slotLiveness.settled();
+      expect(again.list()).toEqual([]);
+    } finally { again.close(); }
   });
 
-  it("keeps a slot whose live owner matches, and records the owner's identity", () => {
+  it("keeps a slot whose live owner matches, and records the owner's identity", async () => {
     const slots = new ResourceSlots(dir);
     try {
       expect(slots.tryAcquire("gpu", 1, { id: "live-job", pid: child.pid! })).toBe(true);
       expect(slots.list().map((s) => s.id)).toEqual(["live-job"]);
+      await slotLiveness.settled();
     } finally { slots.close(); }
     const db = new DatabaseSync(join(dir, "resource-slots.sqlite"));
     try {
@@ -44,7 +50,11 @@ describe("resource slot owner liveness", () => {
       db.exec("UPDATE slots SET identity = 'another-process'");
     } finally { db.close(); }
     const again = new ResourceSlots(dir);
-    try { expect(again.list()).toEqual([]); } finally { again.close(); }
+    try {
+      expect(again.list()).toHaveLength(1);
+      await slotLiveness.settled();
+      expect(again.list()).toEqual([]);
+    } finally { again.close(); }
   });
 });
 
