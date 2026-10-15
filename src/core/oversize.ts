@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, statSync, writeSync } from "node:fs";
+import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { MAX_BODY_CHARS } from "./constants.js";
 
@@ -29,10 +29,16 @@ export function quarantineText(home: string, id: string, text: string): string {
   const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   const fd = openSync(tmp, "wx", 0o600);
   try {
-    for (let at = 0; at < data.length;) at += writeSync(fd, data, at);
-    fsyncSync(fd);
-  } finally { closeSync(fd); }
-  renameSync(tmp, file);
+    try {
+      for (let at = 0; at < data.length;) at += writeSync(fd, data, at);
+      fsyncSync(fd);
+    } finally { closeSync(fd); }
+    renameSync(tmp, file);
+  } catch (err) {
+    // A failed attempt must not leave a partial copy behind: each retry uses a fresh temp name.
+    try { unlinkSync(tmp); } catch { /* Already gone. */ }
+    throw err;
+  }
   return file;
 }
 
