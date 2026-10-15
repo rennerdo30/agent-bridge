@@ -125,6 +125,8 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private wakeOnDirect = false;
   private wakeAvailable = false;
   private wakeMaxHops = DEFAULT_MAX_HOPS;
+  private wakePolicyDirty = false;
+  private wakePolicyRevision = 0;
   private currentCwd: string;
   private lastSent = 0;
   /** Ids of messages this peer sent as new questions (not replies); replies to them are awaited. */
@@ -1059,19 +1061,30 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.wakeOnDirect = wakeOnDirect;
     this.wakeAvailable = wakeAvailable;
     this.wakeMaxHops = wakeMaxHops;
-    if (this.isConnected) await this.updatePeer({});
+    this.wakePolicyRevision++;
+    if (this.isConnected) await this.updatePeer({}, true);
   }
 
-  /** Every ordinary peer update carries the local policy, including one whose earlier RPC failed.
-   * Reconnection already sends these same fields in helloArgs(); no separate retry is needed. */
-  private updatePeer(patch: RequestMap["updatePeer"][0]): Promise<RequestMap["updatePeer"][1]> {
-    return this.client!.request("updatePeer", { ...patch,
-      wakeOnDirect: this.wakeOnDirect, wakeAvailable: this.wakeAvailable, wakeMaxHops: this.wakeMaxHops });
+  /** Carry failed policy updates until acknowledged. Ordinary updates must not replay an already
+   * applied policy after a newer wake update. Reconnection also sends the policy in helloArgs(). */
+  private async updatePeer(patch: RequestMap["updatePeer"][0], wake = false): Promise<RequestMap["updatePeer"][1]> {
+    const carriesWake = wake || this.wakePolicyDirty;
+    const revision = this.wakePolicyRevision;
+    try {
+      const peer = await this.client!.request("updatePeer", { ...patch, ...(carriesWake ? {
+        wakeOnDirect: this.wakeOnDirect, wakeAvailable: this.wakeAvailable, wakeMaxHops: this.wakeMaxHops,
+      } : {}) });
+      if (carriesWake && revision === this.wakePolicyRevision) this.wakePolicyDirty = false;
+      return peer;
+    } catch (err) {
+      if (carriesWake && revision === this.wakePolicyRevision) this.wakePolicyDirty = true;
+      throw err;
+    }
   }
 
   async setAutoWake(enabled: boolean): Promise<void> {
     this.autoWake = enabled;
-    if (this.isConnected) await this.updatePeer({ autoWake: enabled });
+    if (this.isConnected) await this.updatePeer({ autoWake: enabled }, true);
   }
 
   get currentSessionId(): string | null {

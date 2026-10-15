@@ -115,7 +115,7 @@ it.each([
     expect((await host.peers()).find(peer => peer.name === "startup")?.wakeAvailable).toBe(false);
     release();
     if (recovery === "update") {
-      await serverNode!.setAutoWake(true); // An ordinary update carries the retained policy.
+      await serverNode!.updateJob({}); // An ordinary update carries the dirty policy.
       expect(calls).toBe(2);
     } else {
       const reconnected = new Promise<void>(resolve => serverNode!.once("connected", () => resolve()));
@@ -124,10 +124,43 @@ it.each([
       expect(calls).toBe(1);
     }
     expect((await host.peers()).find(peer => peer.name === "startup")).toMatchObject({
-      wakeOnDirect: true, wakeAvailable: true, autoWake: recovery === "update",
+      wakeOnDirect: true, wakeAvailable: true, autoWake: false,
     });
+    if (recovery === "update") {
+      const requests = vi.spyOn((serverNode as any).client, "request");
+      await serverNode!.updateJob({});
+      expect(requests.mock.calls.filter(call => call[0] === "updatePeer")).toEqual([["updatePeer", {}]]);
+    }
     expect((await client.callTool({ name: "peers", arguments: {} })).isError).not.toBe(true);
   } finally { release(); warn.mockRestore(); }
+});
+
+it("omits clean wake fields from a non-wake update stalled behind a newer policy", async () => {
+  const host = env.node("host"), target = env.node("target");
+  await host.start(); await target.start();
+  await target.setWakePolicy(true, true, 4);
+  const requests = vi.spyOn((target as any).client, "request");
+  const updates = () => requests.mock.calls.filter(call => call[0] === "updatePeer");
+  const broker = (host as any).broker;
+  let entered = false, release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  vi.spyOn(broker.nativeChildren, "endParent").mockImplementation(async () => { entered = true; await held; });
+  const updating = target.setSessionId("policy-race-session");
+  try {
+    await until(() => entered);
+    expect(updates()[0]).toEqual(["updatePeer", { sessionId: "policy-race-session" }]);
+    await target.setWakePolicy(false, false, 2);
+    release(); await updating;
+    expect((await host.peers()).find(peer => peer.name === "target")).toMatchObject({
+      wakeOnDirect: false, wakeAvailable: false, wakeMaxHops: 2,
+    });
+    await target.updateJob({});
+    expect(updates().at(-1)).toEqual(["updatePeer", {}]);
+    await target.setAutoWake(true);
+    expect(updates().at(-1)).toEqual(["updatePeer", {
+      autoWake: true, wakeOnDirect: false, wakeAvailable: false, wakeMaxHops: 2,
+    }]);
+  } finally { release(); await updating; }
 });
 
 it("still exits through main for a fatal launch inspection error", async () => {
