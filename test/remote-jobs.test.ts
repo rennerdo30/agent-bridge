@@ -97,32 +97,18 @@ afterEach(async context => {
     try { diagnosticSnapshot("before-cleanup"); }
     catch (error) { cleanupError = error; }
   }
-  try {
-  // Read-only inventory. runnerStateIds would create bridge.db and take its migration lease in a home no fixture
-  // process ever opened, which needs this worker's own creation identity (a PowerShell probe on Windows).
-  const stateIdentities = fixtureRunnerIdentities(remoteHome);
-  for (const pid of stateIdentities.keys()) pids.add(pid);
-  // Only this freshly created fixture's published process generation authorizes a kill. A runner still in startup
-  // (store admission, Windows job ownership) has published only its state row, which carries its own creation identity.
-  const generations = await readProcessIdentities([...pids]);
-  for (const pid of pids) if (fixtureProcessExists(pid, `Unable to verify fixture runner ${pid}; retained at ${root}`)) {
-    const recorded = storePresence(remoteHome, pid)?.processIdentity ?? stateIdentities.get(pid);
-    const refusal = `Fixture runner ${pid} has no matching owned process identity; retained at ${root}`;
-    if (!recorded) throw new Error(refusal);
-    if (!await fixtureProcessGeneration(pid, recorded, refusal, {
-      identities: async () => generations, exists: pid => { process.kill(pid, 0); },
-    })) continue;
-    await stopFixtureRunner(pid, recorded);
-  }
-  await waitFor(() => [...pids].every((pid) => !fixtureProcessExists(pid, `Unable to verify fixture runner exit ${pid}; retained at ${root}`)));
-  pids.clear();
-  } catch (error) { failed = true; cleanupError ??= error; }
+  try { await stopFixtureRunners(); }
+  catch (error) { failed = true; cleanupError ??= error; }
   finally {
     // Closing owned transports must still happen when an identity check refuses a PID signal.
     for (const close of cleanup.reverse()) {
       try { await close(); }
       catch (error) { failed = true; cleanupError ??= error; }
     }
+    // A broker can launch a runner after the first inventory, or a runner can publish its state row only now:
+    // inventory again once every broker has exited, with the same PID-plus-creation-identity check.
+    try { await stopFixtureRunners(); }
+    catch (error) { failed = true; cleanupError ??= error; }
     vi.useRealTimers();
     closeMetadataDbs();
     // Every fixture process has exited now: a lease that still names a live owner means something outside the
@@ -148,6 +134,30 @@ afterEach(async context => {
   }
   if (cleanupError) throw cleanupError;
 });
+/** Stop every runner of this fixture (recorded PIDs plus a fresh read-only inventory) and wait for each to exit. */
+async function stopFixtureRunners(): Promise<void> {
+  // Read-only inventory. runnerStateIds would create bridge.db and take its migration lease in a home no fixture
+  // process ever opened, which needs this worker's own creation identity (a PowerShell probe on Windows).
+  const stateIdentities = fixtureRunnerIdentities(remoteHome);
+  for (const pid of stateIdentities.keys()) pids.add(pid);
+  // Only this freshly created fixture's published process generation authorizes a kill. A runner still in startup
+  // (store admission, Windows job ownership) has published only its state row, which carries its own creation identity.
+  const generations = await readProcessIdentities([...pids]);
+  for (const pid of [...pids]) if (fixtureProcessExists(pid, `Unable to verify fixture runner ${pid}; retained at ${root}`)) {
+    const recorded = storePresence(remoteHome, pid)?.processIdentity ?? stateIdentities.get(pid);
+    const refusal = `Fixture runner ${pid} has no matching owned process identity; retained at ${root}`;
+    if (!recorded) throw new Error(refusal);
+    // A different creation identity proves the recorded runner exited and its PID was reused: never ours to stop or await.
+    const current = generations.get(pid);
+    if (current !== undefined && current !== recorded) { pids.delete(pid); continue; }
+    if (!await fixtureProcessGeneration(pid, recorded, refusal, {
+      identities: async () => generations, exists: pid => { process.kill(pid, 0); },
+    })) continue;
+    await stopFixtureRunner(pid, recorded);
+  }
+  await waitFor(() => [...pids].every((pid) => !fixtureProcessExists(pid, `Unable to verify fixture runner exit ${pid}; retained at ${root}`)));
+  pids.clear();
+}
 /** AB-208: a process's presence is a bridge.db metadata row; the file remains only while the store is deferred. */
 function storePresence(home: string, pid: number): Record<string, any> | null {
   const path = resolveDbPath(home);
@@ -271,7 +281,16 @@ async function session(home: string, name: string, agent = "codex"): Promise<Cli
     const pid = transport.pid;
     try { await client.close(); }
     finally { await transport.close(); }
-    if (pid) await exited;
+    // A grandchild that inherited the stdio pipes can hold close back: bound the wait so the rest of teardown
+    // (runner inventory, lease barrier, retained message and log tails) still runs.
+    if (pid) {
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        await Promise.race([exited, new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`session ${pid} did not close; retained at ${root}`)), 30_000);
+        })]);
+      } finally { clearTimeout(timer); }
+    }
     if (stderrError) throw stderrError;
   });
   await client.connect(transport);
