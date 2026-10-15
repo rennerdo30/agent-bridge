@@ -4,15 +4,18 @@ import {
 } from "./chunks/chunk-2PKS7JZW.mjs";
 import {
   ConversationIngestor
-} from "./chunks/chunk-GZJYEMO3.mjs";
+} from "./chunks/chunk-RDR6BAQB.mjs";
 import {
   HISTORY_TICK_MS,
   HistoryIndex
-} from "./chunks/chunk-PYAP7BN6.mjs";
+} from "./chunks/chunk-O73LZCHL.mjs";
 import {
   ownsProjectMirrors,
   projectDatabasePath
 } from "./chunks/chunk-CHURQK2F.mjs";
+import "./chunks/chunk-DYLP4SUH.mjs";
+import "./chunks/chunk-SKALCUBC.mjs";
+import "./chunks/chunk-ROXW7H3L.mjs";
 import {
   HISTORY_IO_BYTES_PER_SECOND,
   copyLegacyConversationTail,
@@ -22,13 +25,11 @@ import {
   openHistoryStore,
   readHistoryMigrationProgress
 } from "./chunks/chunk-OQVSW2YO.mjs";
-import "./chunks/chunk-TK3APK3O.mjs";
-import "./chunks/chunk-HS6DDUE5.mjs";
 import "./chunks/chunk-PZ6QYUCT.mjs";
 import "./chunks/chunk-V4VFK2LZ.mjs";
 import {
   reconcileAskCompletions
-} from "./chunks/chunk-OLMGUTCX.mjs";
+} from "./chunks/chunk-LQGT4LAW.mjs";
 import {
   loadConfig
 } from "./chunks/chunk-VB42W5UW.mjs";
@@ -37,7 +38,7 @@ import "./chunks/chunk-2JW43AZX.mjs";
 import "./chunks/chunk-RE3I7AXX.mjs";
 import {
   readHistoryJson
-} from "./chunks/chunk-74PWY37G.mjs";
+} from "./chunks/chunk-3RXVMHBV.mjs";
 import "./chunks/chunk-HYOPFLLN.mjs";
 import {
   closeMetadataDbs,
@@ -52,7 +53,7 @@ import {
 } from "./chunks/chunk-HIVVJXLN.mjs";
 import {
   transcriptPaths
-} from "./chunks/chunk-NVDPULGI.mjs";
+} from "./chunks/chunk-OX5J3NNH.mjs";
 import "./chunks/chunk-DEWCC5JJ.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
@@ -200,6 +201,10 @@ async function tick(reset = false) {
       if (!ingest) {
         ingest = new ConversationIngestor(db, workerData.home, paths, source);
         ingest.onChange = onTranscriptChange;
+        const registering = index;
+        ingest.onUnknownPaths = (changed) => {
+          registering.registerChanged(changed);
+        };
       }
       ready = true;
     }
@@ -251,10 +256,20 @@ async function tick(reset = false) {
 var dueAt = 0;
 var transcriptsChanged = false;
 var wakeAfterTick = false;
+var liveAfterTick = false;
+var lastTickAt = 0;
+var LIVE_WAKE_MS = 15;
+var LIVE_GAP_MS = 100;
 function wakeSoon() {
-  if (stopped || !timer || dueAt - Date.now() <= HISTORY_TICK_MS) return;
+  if (stopped) return;
   idle.reset();
-  schedule(HISTORY_TICK_MS);
+  if (running) {
+    liveAfterTick = true;
+    return;
+  }
+  const delay = Math.max(LIVE_WAKE_MS, lastTickAt + LIVE_GAP_MS - Date.now());
+  if (timer && dueAt - Date.now() <= delay) return;
+  schedule(delay);
 }
 var onTranscriptChange = () => {
   transcriptsChanged = true;
@@ -276,6 +291,11 @@ function schedule(delay = HISTORY_TICK_MS) {
     } catch (err) {
       if (err.code !== "HISTORY_SNAPSHOT_PAUSED" && !stopped) parentPort?.postMessage({ error: String(err) });
       pauseUntil = Date.now() + 5e3;
+    }
+    lastTickAt = Date.now();
+    if (liveAfterTick) {
+      liveAfterTick = false;
+      next = Math.min(next, LIVE_GAP_MS);
     }
     if (wakeAfterTick) {
       wakeAfterTick = false;
