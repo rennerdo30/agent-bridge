@@ -1,10 +1,56 @@
 # AB-277: Codex MCP lifetime and memory design
 
-Status: **documentation-only proposal for root and Claude review**. No runtime,
+Status (2026-10-15): **retained documentation-only design proposal**. No runtime,
 configuration, process or store changes are implemented or authorized here.
-Baseline: published `7e80ac79bc20c804985f0463125e7832308222b0` (0.30.11), after
+Historical baseline: published `7e80ac79bc20c804985f0463125e7832308222b0` (0.30.11), after
 the accepted AB-264 static checkpoint. No source from broken local `386bf7bb`
-was used. Inspection date: 2026-10-11 UTC.
+was used. Original inspection date: 2026-10-11 UTC. Historical host snapshots,
+package versions, external documentation observations and source line numbers
+below describe that inspection; they are not current live measurements.
+
+## Current disposition and reconciliation
+
+[PR #23](https://github.com/rennerdo30/agent-bridge/pull/23) retains the design
+against main `09229f8c` (0.30.19 plus the merged AB-276 design record), inspected
+2026-10-15. Retaining it does not select a shared backend or complete AB-277.
+The issue's cause review, controlled evidence and scoped implementation/release
+remain open; its existing acceptance criteria and plan remain in force.
+
+- Current `src/mcp/server.ts` dynamically loads history/conversation readers,
+  history answers and dashboard/mobile activation; `src/core/node.ts` lazily
+  imports broker/store. These are existing baseline boundaries, not new
+  savings attributable to this proposal. MCP SDK, validation, job/delegation
+  and host-hook imports still require measured role attribution. Main has
+  no `client-shim`, `runtime-channel` or `runtime-backend` implementation.
+- [#17](https://github.com/rennerdo30/agent-bridge/pull/17) remains open at
+  comparison head `7c500f686767b960df0498421aeaa3c88dd772d1` and owns the AB-325
+  independently hosted daemon/core lifetime. [#29](https://github.com/rennerdo30/agent-bridge/pull/29)
+  remains open at `94a75d7c02c244d56275ccc283656211fb7a5ddf`, adding default-off
+  shadow job/turn state. Neither implements this per-parent MCP sharing
+  proposal. Main still has embedded broker startup in `src/core/node.ts`;
+  future AB-277 work must adopt the core lane's final lifetime interfaces,
+  not create a competing broker owner or presume that candidate is released.
+  The old standalone design [#24](https://github.com/rennerdo30/agent-bridge/pull/24)
+  is closed as superseded by that lane, with its branch retained.
+- [#32](https://github.com/rennerdo30/agent-bridge/pull/32) messaging and
+  [#20](https://github.com/rennerdo30/agent-bridge/pull/20) Muse are merged.
+  New sharing experiments must preserve current send modes, native-child
+  routes, receipts and host contexts. Historical Codex process counts do
+  not measure Muse or establish savings for the current multi-agent release.
+- AB-276 [#22](https://github.com/rennerdo30/agent-bridge/pull/22) merged as a
+  design record in `09229f8c`; its capability remains unimplemented. Use the
+  repository-local contract linked below, not a sibling worktree or old draft.
+- [#25](https://github.com/rennerdo30/agent-bridge/pull/25), retained head
+  `211cfd0ba6bd4be0b1d1e40c2a12afedea8b6bc1`, records a failed-startup
+  historical harness. AB-277 comments 29488/29496 establish no accepted
+  memory baseline or module inventory. That package remains parked pending
+  its own disposition; it proves neither startup cause nor memory savings.
+
+Next implementation owner is the AB-277 lane assigned by the project main,
+after core lifetime integration and a source-pinned measurement scope. The
+alternatives and file table below are conditional review boundaries, not
+current assignments. This reconciliation ran no builds, tests, diagnostics,
+host measurements or live process probes.
 
 ## Recommendation and unanswered cause
 
@@ -155,10 +201,14 @@ Use bounded, batched identity checks off the RPC hot path, not one shell spawn
 per channel/request. Failed startup or election must produce an explicit
 bounded error, not an unowned fallback heavy singleton or silent tool loss.
 
-Broker election is a separate role. A backend that currently hosts the broker
-serves other sessions too; parent-scoped shutdown must either retain that
-service in an independently owned lifetime or gracefully close its own broker
-and prove safe reelection. Detached job runners retain their own job lifecycle
+Broker election is a separate role. The historical embedded-broker alternative
+below is being replaced by the independently owned daemon in #17; implementation
+must use that lane's accepted interfaces once integrated. While an embedded
+host is supported, a backend hosting it serves other sessions too:
+parent-scoped shutdown must retain its independent service lifetime or
+gracefully close only its owned broker and prove safe reelection. A shared MCP
+backend must not terminate an independently hosted daemon when its parent exits.
+Detached job runners retain their own job lifecycle
 and recovery ledger. Parent exit/reload never sweeps them or their native
 children into MCP cleanup. Persistent data and quarantine evidence survive.
 
@@ -193,14 +243,12 @@ AB-268 must remain distinct even under one parent PID.
 
 ## AB-276 dependency and generation distinctions
 
-Related proposal: [AB-276 waiter notice contract](../../../agentbridge-ab276-design-332867e2/docs/runtime/WAITER-NOTICE-CONTRACT.md)
-in `D:/AgentData/worktrees/agentbridge-ab276-design-332867e2`, commit
-`12fa4e682fef026171b89d70e45033fd8b420fa2`. This revised proposal replaces
-the storage design in `1c2a0f70ab9c5fffa9ef61ad3b8924820ecd5669`,
-**superseded by Claude decision `03856544`**; neither is implemented authority.
-The relative link is convenient between
-these local worktrees; use the exact commit/path and this decision when
-reviewing elsewhere.
+Related proposal: [AB-276 waiter notice contract](WAITER-NOTICE-CONTRACT.md),
+retained revision `c4e3eebb`, merged by [#22](https://github.com/rennerdo30/agent-bridge/pull/22)
+in `09229f8c`. It includes the capable-broker election-epoch fencing missing
+from this document's former `12fa4e68` reference. The storage design in
+`1c2a0f70ab9c5fffa9ef61ad3b8924820ecd5669` was **superseded by Claude decision
+`03856544`**. Retention as a design record is not implemented authority.
 
 | Identity/fence | What it means here |
 | --- | --- |
@@ -280,7 +328,7 @@ separate authorization; unit tests do not prove Codex internal launch behavior.
 | Native/main/delegated identities | AB-268 distinctions, slots/depth/hops, private coordinator linkage and permissions remain intact; unverified native child cannot register as main or drain a parent's inbox. |
 | Mail/session replacement | Existing generation and ownership guards hold during reload/reclaim; old-session mail and AB-273 quarantined rows remain excluded; healthy delivery and read receipts stay pinned to the exact owner. |
 | Failure/drain | Backend/shim crash before/after mutation yields truthful known/unknown results, no automatic mutation replay or silent RPC loss. Timers/watchers/context leases do not grow on repeated reload. |
-| Broker/job boundary | Owned broker closes/re-elects without changing another session's authority; detached runners retain state and finish under their own lifecycle after MCP parent exit. |
+| Broker/job boundary | MCP parent exit preserves the independently owned daemon; any supported embedded host closes/re-elects only its owned broker without changing another session's authority. Detached runners retain state and their own lifecycle. |
 | Lazy imports | Tool inventory/capabilities unchanged; role-ineligible modules stay unloaded until needed, first-use failure is explicit, permission and shutdown behavior preserved. |
 | Memory/latency | Paired controlled measurements meet the predeclared budget; include shim/state overhead and broker roles, not just fewer heavy PIDs. |
 
@@ -295,7 +343,7 @@ tentative review boundaries, not authorization to create or edit source.
 | New `src/mcp/client-shim.ts`, `runtime-channel.ts`, `runtime-backend.ts` | Independent MCP channels, authenticated framed IPC, per-channel routing/backpressure and compatible backend election. |
 | New `src/mcp/runtime-context.ts`, `runtime-lifecycle.ts`; `src/mcp/server.ts` | Immutable logical call contexts, owned drain/lease policy and measured role-specific lazy imports. |
 | `src/core/process-identity.ts`, scoped `src/core/node.ts` adapters | Reuse batched creation-identity semantics and explicit context factories; do not weaken broker/session/admission guards. |
-| Separate broker-role package if required | Independently owned elected-broker lifetime; larger scope needs explicit approval before parent-bounded backend shutdown. |
+| #17/#29 core-lane interfaces | Adopt the independently owned daemon lifetime and accepted state interfaces; no parallel broker-role package is assigned by this document. Preserve supported embedded-host compatibility during transition. |
 | New focused `test/mcp-runtime-*.test.ts` and controlled measurement harness | Channel, lifecycle, identity and failure fixtures; memory evidence without fragile exact-RSS assertions. |
 
 Root and Claude review this design together with AB-268 context attribution
