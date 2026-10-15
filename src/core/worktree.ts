@@ -63,7 +63,9 @@ export function worktreeBaseReport(wt: Pick<Worktree, "base" | "baseRef" | "base
 
 async function selectWorktreeBase(repo: string, log: Logger, explicit?: string): Promise<Pick<Worktree, "base" | "baseRef" | "baseNotes">> {
   const run = (args: string[]) => git(args, repo, log);
-  const head = await run(["rev-parse", "HEAD"]);
+  const explicitBase = explicit ? await run(["rev-parse", "--verify", "--end-of-options", `${explicit}^{commit}`]) : undefined;
+  const head = await run(["rev-parse", "--verify", "HEAD^{commit}"]).catch(() => "");
+  if (!head && !explicitBase) throw new Error("worktree isolation needs a valid HEAD commit or an explicit base; HEAD is unborn or unavailable");
   const remotes = (await run(["remote"])).split(/\r?\n/).filter(Boolean);
   const baseNotes: string[] = [];
   let reference: string | undefined;
@@ -92,7 +94,7 @@ async function selectWorktreeBase(repo: string, log: Logger, explicit?: string):
     if (source && reference) {
       try {
         // Fetch only the needed upstream/default. Never prune or change local branches.
-        await git(["fetch", "--no-tags", "--", remote, `${source}:${reference}`], repo, log, WORKTREE_FETCH_TIMEOUT_MS, env);
+        await git(["fetch", "--no-tags", "--no-prune", "--no-prune-tags", "--refmap=", "--no-recurse-submodules", "--no-write-fetch-head", "--", remote, `${source}:${reference}`], repo, log, WORKTREE_FETCH_TIMEOUT_MS, env);
       } catch {
         baseNotes.push(`WARNING: fetch failed or offline; using last fetched remote ref ${reference.replace("refs/remotes/", "")} if available.`);
       }
@@ -103,8 +105,8 @@ async function selectWorktreeBase(repo: string, log: Logger, explicit?: string):
     }
   } else baseNotes.push("Repository has no remote.");
   let baseRef = explicit ?? "local HEAD";
-  let base = explicit ? await run(["rev-parse", "--verify", "--end-of-options", `${explicit}^{commit}`]) : head;
-  if (reference) {
+  let base = explicitBase ?? head;
+  if (reference && head) {
     const tip = await run(["rev-parse", "--verify", `${reference}^{commit}`]);
     const [ahead, behind] = (await run(["rev-list", "--left-right", "--count", `${head}...${tip}`])).split(/\s+/).map(Number);
     if (behind! > 0) {

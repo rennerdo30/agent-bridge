@@ -143,6 +143,50 @@ it("forks stale local HEAD from the fetched non-origin default and reports the e
   expect(network.every(call => call.timeoutMs === WORKTREE_FETCH_TIMEOUT_MS && call.env?.GIT_TERMINAL_PROMPT === "0")).toBe(true);
 });
 
+it("keeps local-only tags despite inherited fetch pruning settings", async () => {
+  const { advance } = remoteFixture(), fresh = advance();
+  git("tag", "owner-only");
+  const tags = git("show-ref", "--tags");
+  // Only this generated repository receives the hostile owner configuration.
+  writeFileSync(join(repo, ".git", "config"), readFileSync(join(repo, ".git", "config"), "utf8") + "\n[fetch]\n\tprune = true\n\tpruneTags = true\n[remote \"upstream\"]\n\tprune = true\n\tpruneTags = true\n");
+  const wt = await createWorktree({ cwd: repo, home, jobId: "retain-tags", log: nullLogger });
+  expect(wt.base).toBe(fresh);
+  expect(git("rev-parse", "refs/remotes/upstream/trunk")).toBe(fresh);
+  expect(git("show-ref", "--tags")).toBe(tags);
+});
+
+it("keeps local branches unmoved despite configured fetch mappings onto heads", async () => {
+  const { advance } = remoteFixture();
+  git("branch", "owner-base");
+  const heads = git("for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/");
+  const fresh = advance();
+  writeFileSync(join(repo, ".git", "config"), readFileSync(join(repo, ".git", "config"), "utf8") + "\n[remote \"upstream\"]\n\tfetch = +refs/heads/trunk:refs/heads/owner-base\n");
+  const wt = await createWorktree({ cwd: repo, home, jobId: "retain-heads", log: nullLogger });
+  expect(wt.base).toBe(fresh);
+  expect(git("rev-parse", "refs/remotes/upstream/trunk")).toBe(fresh);
+  expect(git("for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/").split("\n").filter(line => !line.startsWith(`refs/heads/${wt.branch} `)).join("\n")).toBe(heads);
+});
+
+it("honors an explicit base from an unborn HEAD", async () => {
+  const explicit = git("rev-parse", "HEAD");
+  git("tag", "explicit-base", explicit);
+  git("checkout", "--orphan", "unborn");
+  const wt = await createWorktree({ cwd: repo, home, jobId: "unborn-explicit", log: nullLogger, base: "explicit-base" });
+  expect(wt.base).toBe(explicit);
+  expect(wt.baseRef).toBe("explicit-base");
+  expect(git("rev-parse", wt.branch)).toBe(explicit);
+  expect(readFileSync(join(wt.path, "source.txt"), "utf8")).toBe("base bytes");
+  expect(git("symbolic-ref", "HEAD")).toBe("refs/heads/unborn");
+});
+
+it("rejects an unborn HEAD without an explicit base clearly", async () => {
+  git("checkout", "--orphan", "unborn");
+  const refs = git("show-ref");
+  await expect(createWorktree({ cwd: repo, home, jobId: "unborn", log: nullLogger })).rejects.toThrow("needs a valid HEAD commit or an explicit base");
+  expect(git("show-ref")).toBe(refs);
+  expect(adds()).toEqual([]);
+});
+
 it("honors an explicit base while still warning about the stale cwd", async () => {
   const { advance } = remoteFixture(), explicit = git("rev-parse", "HEAD"); advance();
   git("tag", "explicit-base", explicit);
