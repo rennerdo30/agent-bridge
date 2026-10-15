@@ -21,6 +21,7 @@ import { loadOrCreateToken } from "../src/core/token.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import { chooseJobRecipient, mastersFor } from "../src/core/job-ownership.js";
+import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 
 let env: TestEnv, source: BridgeNode, target: BridgeNode;
 let extra: BridgeNode[] = [];
@@ -37,7 +38,16 @@ const manager = (node: BridgeNode) => {
   return m;
 };
 
-beforeEach(async () => { env = makeEnv(); source = env.node("claude-source"); target = env.node("codex-target", "codex"); await source.start(); await target.start(); });
+beforeEach(async () => {
+  env = makeEnv();
+  // Finish the empty fixture's archive migration before starting its broker
+  // worker or publishing legacy job records. Ownership tests must not race DDL.
+  await migrateJobArchives(path());
+  source = env.node("claude-source"); target = env.node("codex-target", "codex"); await source.start(); await target.start();
+  // Joining peers does not await startup ask reconciliation in the history
+  // worker. Drain that writer before tests seed records or create managers.
+  await source.projectJobs();
+});
 afterEach(async () => { await ui?.close(); ui = undefined; for (const m of managers.splice(0)) m.cancelAll(); for (const n of extra.splice(0)) await n.stop(); await env.cleanup(); });
 
 describe("local subagent ownership handoff", () => {
@@ -188,10 +198,16 @@ describe("local subagent ownership handoff", () => {
   });
 
   it("replays delivery effects after a crash following the registry commit", async () => {
-    save([record("a")]);
     const [from, to] = (await source.peers()).filter((p) => [source.name, target.name].includes(p.name));
+    // Capture real peer identities, then stop the broker and its workers before
+    // injecting the commit-only crash state. Live startup ask reconciliation
+    // takes jobs.json.lock, and a live broker could replay effects before stop.
+    await target.stop(); await source.stop();
+    save([record("a")]);
     const receipt = commitHandoff(path(), from!, to!, { to: target.name });
-    await source.stop(); await target.stop();
+    const reader = new DatabaseSync(env.db, { readOnly: true });
+    try { expect(reader.prepare("SELECT id FROM messages WHERE id=?").get(`${receipt.id}-inherited`)).toBeUndefined(); }
+    finally { reader.close(); }
     const restarted = env.node(target.name, "codex"); await restarted.start();
     await until(() => restarted.unread().some((m) => m.id === `${receipt.id}-inherited`));
     await restarted.stop(); const again = env.node(target.name, "codex"); await again.start();
@@ -235,6 +251,9 @@ describe("local subagent ownership handoff", () => {
   it.each([true, false])("does not let a delayed original executor overwrite a newer continuation (handoff=%s)", async (handoff) => {
     const old = manager(source);
     const tracked = old.track("codex", null, "Initial blocking work");
+    // Persistence can defer while another writer holds the lease. Handoff and
+    // the simulated newer write both require the original durable registration.
+    await until(() => readStore(path()).some(job => job.id === tracked.job.id));
     if (handoff) await source.handoffSubagents({ to: target.name });
     const document = JSON.parse(readFileSync(path(), "utf8"));
     const current = document.jobs.find((j: Job) => j.id === tracked.job.id);

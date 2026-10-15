@@ -4,7 +4,7 @@ import { clearHistoryDocuments, historyReadPath, historyReadStatus, historyReady
 import { decodeText, encodeText, registerHistoryFunctions } from "./history-codec.js";
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, fstatSync, openSync, opendirSync, readSync, statSync, type Dir } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { DatabaseSync, type SQLInputValue, type StatementSync } from "node:sqlite";
 import { z } from "zod";
 import { claudeItems } from "./transcripts/claude.js";
@@ -509,16 +509,7 @@ export class HistoryIndex {
       this.idleFiles = 0;
       this.opencodeComplete = false;
       this.packedComplete = false;
-      this.queue = [
-        { path: join(this.home!, "context-events"), root:this.home!,kind:"context",agent:"other" },
-        { path: join(this.home!, "approvals"), root:this.home!,kind:"approval",agent:"other" },
-        { path: join(this.home!, "archive"), root:this.home!,kind:"approval",agent:"other" },
-        { path: join(this.home!, "runs"), root: join(this.home!, "runs"), kind: "run", agent: "other" },
-        { path: join(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
-        ...(this.paths.antigravity ? [{ path: join(this.paths.antigravity, "brain"), root: this.paths.antigravity, kind: "transcript", agent: "antigravity" }] : []),
-        ...(this.paths.muse ? [{ path: join(this.paths.muse, "sessions"), root: this.paths.muse, kind: "transcript", agent: "muse" }] : []),
-        ...["sessions", "archived_sessions"].map((dir) => ({ path: join(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" })),
-      ];
+      this.queue = this.roots();
     }
     let work = 0;
     while (work < HISTORY_DISCOVERY_PER_TICK && Date.now() < this.deadline && (this.walk || this.queue.length)) {
@@ -532,21 +523,7 @@ export class HistoryIndex {
       const path = join(entry.path, item.name);
       if (item.isDirectory()) { this.queue.push({ ...entry, path }); continue; }
       if (!item.isFile() || !safeFile(entry.root, path)) continue;
-      if ((entry.kind === "context" && item.name.endsWith(".jsonl")) || (entry.kind === "approval" && /^.*\.json(?:-.*)?$/.test(item.name) && (entry.path.includes("approvals") || /^.*approval/.test(item.name)))) {
-        this.register({path,kind:entry.kind,agent:"other",session:null,cwd:"",child:null});
-      } else if (entry.kind === "run" && /\.(?:log|json)(?:-\d+-[\w-]+)?$/.test(item.name)) {
-        this.register({ path, kind: "run", agent: /-(claude|codex|opencode|antigravity|muse)-/.exec(item.name)?.[1] ?? "other", session: null, cwd: "", child: null });
-      } else if (entry.kind === "transcript" && item.name.endsWith(".jsonl")) {
-        if (entry.agent === "antigravity" && item.name !== "transcript.jsonl") continue;
-        if (entry.agent === "muse" && item.name !== "session.jsonl") continue;
-        const head = this.head(path), meta = entry.agent === "codex" ? object(head.payload) : head;
-        // Forked Codex files may begin with ancestor metadata; the filename owns this session.
-        const rolloutId = entry.agent === "codex" ? /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(item.name)?.[1] : undefined;
-        const id = entry.agent === "antigravity" ? basename(dirname(dirname(entry.path))) : entry.agent === "muse" ? basename(entry.path) : rolloutId ?? (typeof meta.id === "string" ? meta.id : typeof meta.sessionId === "string" ? meta.sessionId : basename(path, ".jsonl"));
-        if (!TRANSCRIPT_ID.test(id)) continue;
-        const child = entry.agent === "claude" && basename(entry.path) === "subagents" ? basename(path, ".jsonl").replace(/^agent-/, "") : null;
-        this.register({ path, kind: "transcript", agent: entry.agent, session: child ? basename(dirname(entry.path)) : id, cwd: typeof meta.cwd === "string" ? meta.cwd : "", child });
-      }
+      this.classify(entry, path, item.name);
     }
     work += this.discoverPackedRuns();
     // opencode's indexed session registry avoids a filesystem crawl.
@@ -565,6 +542,52 @@ export class HistoryIndex {
     return work;
   }
 
+  /** Registers one walked file by the walk's rules; `entry.path` is its directory. */
+  private classify(entry: WalkRoot, path: string, name: string): boolean {
+    if ((entry.kind === "context" && name.endsWith(".jsonl")) || (entry.kind === "approval" && /^.*\.json(?:-.*)?$/.test(name) && (entry.path.includes("approvals") || /^.*approval/.test(name)))) {
+      this.register({path,kind:entry.kind,agent:"other",session:null,cwd:"",child:null});
+    } else if (entry.kind === "run" && /\.(?:log|json)(?:-\d+-[\w-]+)?$/.test(name)) {
+      this.register({ path, kind: "run", agent: /-(claude|codex|opencode|antigravity|muse)-/.exec(name)?.[1] ?? "other", session: null, cwd: "", child: null });
+    } else if (entry.kind === "transcript" && name.endsWith(".jsonl")) {
+      if (entry.agent === "antigravity" && name !== "transcript.jsonl") return false;
+      if (entry.agent === "muse" && name !== "session.jsonl") return false;
+      const head = this.head(path), meta = entry.agent === "codex" ? object(head.payload) : head;
+      // Forked Codex files may begin with ancestor metadata; the filename owns this session.
+      const rolloutId = entry.agent === "codex" ? /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i.exec(name)?.[1] : undefined;
+      const id = entry.agent === "antigravity" ? basename(dirname(dirname(entry.path))) : entry.agent === "muse" ? basename(entry.path) : rolloutId ?? (typeof meta.id === "string" ? meta.id : typeof meta.sessionId === "string" ? meta.sessionId : basename(path, ".jsonl"));
+      if (!TRANSCRIPT_ID.test(id)) return false;
+      const child = entry.agent === "claude" && basename(entry.path) === "subagents" ? basename(path, ".jsonl").replace(/^agent-/, "") : null;
+      this.register({ path, kind: "transcript", agent: entry.agent, session: child ? basename(dirname(entry.path)) : id, cwd: typeof meta.cwd === "string" ? meta.cwd : "", child });
+    }
+    else return false;
+    return true;
+  }
+  /** The fixed roots one discovery sweep walks. */
+  private roots(): WalkRoot[] {
+    return [
+      { path: join(this.home!, "context-events"), root:this.home!,kind:"context",agent:"other" },
+      { path: join(this.home!, "approvals"), root:this.home!,kind:"approval",agent:"other" },
+      { path: join(this.home!, "archive"), root:this.home!,kind:"approval",agent:"other" },
+      { path: join(this.home!, "runs"), root: join(this.home!, "runs"), kind: "run", agent: "other" },
+      { path: join(this.paths.claude, "projects"), root: this.paths.claude, kind: "transcript", agent: "claude" },
+      ...(this.paths.antigravity ? [{ path: join(this.paths.antigravity, "brain"), root: this.paths.antigravity, kind: "transcript", agent: "antigravity" }] : []),
+      ...(this.paths.muse ? [{ path: join(this.paths.muse, "sessions"), root: this.paths.muse, kind: "transcript", agent: "muse" }] : []),
+      ...["sessions", "archived_sessions"].map((dir) => ({ path: join(this.paths.codex, dir), root: this.paths.codex, kind: "transcript", agent: "codex" })),
+    ];
+  }
+  /** Files the watcher saw change before any sweep registered them: register them now, by the same rules (AB-383). */
+  registerChanged(paths: string[]): number {
+    if (!this.home) return 0;
+    let registered = 0;
+    for (const path of paths) {
+      const entry = this.roots().find((root) => path.startsWith(root.path + sep));
+      if (!entry) continue;
+      try { if (!statSync(path).isFile()) continue; } catch { continue; }
+      if (!safeFile(entry.root, path)) continue;
+      if (this.classify({ ...entry, path: dirname(path) }, path, basename(path))) registered++;
+    }
+    return registered;
+  }
   /** Packed finished runs live in cold storage, outside runs/ (AB-208). Their index rows in bridge.db name the
    * retained originals, so a reindex finds them without walking cold storage (AB-227). */
   private discoverPackedRuns(): number {
