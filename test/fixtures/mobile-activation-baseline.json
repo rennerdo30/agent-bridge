@@ -1,7 +1,7 @@
 {
   "base": "0fed680017e823197b1fb3344598632f5cd219ed",
   "uiSha256": "876fbc073c419e55a05c806b75c4993d254510c444cbd81d70098efbd22fb98c",
-  "pageSha256": "ccd335998754426c82e3cc4dcaf3da19a8d9697b2c31d115232cb95bcf77d0a9",
+  "pageSha256": "d9a044934fe344c992959ae60a469b6f0d2d6463db34424c28b084ce417a6506",
   "updates": {
     "PR-20": {
       "base": "0761d56fe4c36e505550f9b889841fdf8e82c80a",
@@ -9,7 +9,7 @@
     },
     "AB-383": {
       "base": "9d604d1eb571b432f4d0b47563dcb72d20a5790c",
-      "reason": "AB-383: the dashboard subscribes to GET /api/events while the tab is visible and reads the shown chat or run at once when the history store reports new lines; pushes coalesce into one render and interval polling stays as the safety net. The optional mobile page and default mobile activation behavior are unchanged.",
+      "reason": "AB-383: the dashboard subscribes to GET /api/events while the tab is visible and reads the shown chat or run at once when the history store reports new lines; pushes coalesce into one render and interval polling stays as the safety net; after an error, a visible tab retries the stream (1c75687f, page re-pinned). The optional mobile page and default mobile activation behavior are unchanged.",
       "commit": "f41bf1ed8ee42f27df95f9536de7a63da6752aa4"
     }
   }
