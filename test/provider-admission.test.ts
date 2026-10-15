@@ -29,6 +29,7 @@ import { RemoteJobHost } from "../src/mcp/remote-job-host.js";
 import { remoteJobRequestSchema, remoteJobSnapshotSchema, remoteSpawnArgsSchema, REMOTE_JOB_USAGE_CAPABILITY } from "../src/network/remote-job-protocol.js";
 import { DEFAULT_NETWORK_CONFIG } from "../src/network/config.js";
 import { until } from "./helpers.js";
+import * as processIdentity from "../src/core/process-identity.js";
 
 vi.mock("node:child_process", async importOriginal => {
   const original = await importOriginal<typeof import("node:child_process")>();
@@ -41,13 +42,41 @@ const managers: JobManager[] = [], remotes: RemoteJobs[] = [];
 const block: usage.UsageAdmission = { type: "block", reason: "usage_exhausted" };
 const warn: usage.UsageAdmission = { type: "warn", reason: "low_allowance" };
 const answer = { text: "native answer", sessionId: "same-session", isError: false, details: {} };
-beforeEach(() => { home = realpathSync.native(mkdtempSync(join(tmpdir(), "ab-provider-admission-"))); });
+// A valid own-process identity fixture in the platform's format (as seeded in own-process-identity.test.ts).
+// These tests are about usage/provider admission, not the OS probe: a cold PowerShell probe on a loaded runner
+// can fail closed and queue start(). The real probe is covered by process-identity.test.ts.
+const ownIdentity = process.platform === "win32" ? "638950000000000001" : process.platform === "linux"
+  ? "00000000-0000-0000-0000-000000000001:123" : "Thu Oct 15 12:00:00 2026";
+const realProcessIdentity = processIdentity.processIdentity;
+function ownIdentityAvailable(available: boolean): void {
+  vi.spyOn(processIdentity, "processIdentity").mockImplementation(pid => pid === process.pid ? (available ? ownIdentity : undefined) : realProcessIdentity(pid));
+  vi.spyOn(processIdentity, "ownProcessIdentity").mockResolvedValue(available ? ownIdentity : undefined);
+}
+beforeEach(() => {
+  home = realpathSync.native(mkdtempSync(join(tmpdir(), "ab-provider-admission-")));
+  ownIdentityAvailable(true);
+});
 afterEach(() => {
   for (const jobs of managers.splice(0)) jobs.setDormant(true);
   for (const remote of remotes.splice(0)) remote.close();
   closeMetadataDbs(); vi.restoreAllMocks(); vi.useRealTimers(); vi.mocked(spawn).mockImplementation(actualSpawn); vi.unstubAllEnvs();
 });
 const probe = (agent = "codex" as usage.UsageProbe["agent"]): usage.UsageProbe => ({ agent, bin: process.execPath, cwd: home, home, model: "exact-model", log: nullLogger });
+
+it("queues admission while its own identity is unavailable and starts after readiness", async () => {
+  vi.useFakeTimers();
+  ownIdentityAvailable(false);
+  const jobs = new JobManager(new LocalCoordinator("owner", "owner-session"), nullLogger, join(home, "jobs.json"), 2);
+  managers.push(jobs);
+  const run = vi.fn(async () => answer);
+  const job = jobs.start("codex", null, "task", run);
+  expect(job.waitingForStart).toBe(true);
+  expect(run).not.toHaveBeenCalled();
+  ownIdentityAvailable(true);
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(run).toHaveBeenCalledOnce();
+  expect(job.status).toBe("done");
+});
 const account = { requiresOpenaiAuth: true, account: { type: "chatgpt", email: "fixture@example.invalid", planType: "fixture" }, workspaceRouting: { chatgptAccountId: "fixture-account", backendOrigin: "https://chatgpt.com", accountRoutingOverride: "NO_CONSTRAINT" } };
 function produced(percent: unknown, credits?: unknown, model: string | null = "exact-model") {
   return usage.codexAdmissionFacts({ accountBefore: account, accountAfter: account, config: { config: { model_provider: "openai" } },

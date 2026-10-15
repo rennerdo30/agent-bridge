@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, existsSync, symlinkSync, watch } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, symlinkSync, watch } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,10 +23,14 @@ function delegateToMuseMsp(req: MuseMspRequest) {
   void run.then(() => runs.delete(run), () => runs.delete(run));
   return run;
 }
-function created(path: string) {
+function created(path: string, complete: (contents: string) => boolean = contents => contents.length > 0, observed = () => {}) {
   const ready = deferred<void>();
-  const watcher = watch(join(path, ".."), () => { if (existsSync(path)) ready.resolve(); });
-  if (existsSync(path)) ready.resolve();
+  const check = () => {
+    if (existsSync(path) && complete(readFileSync(path, "utf8"))) ready.resolve();
+    observed();
+  };
+  const watcher = watch(join(path, ".."), check);
+  check();
   return { ready: ready.promise, close: () => watcher.close() };
 }
 afterEach(async () => { vi.useRealTimers(); for (const c of controllers.splice(0)) c.abort(); await Promise.allSettled([...runs]); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 30 }); vi.unstubAllEnvs(); });
@@ -50,7 +54,7 @@ async function stallUntilStartupDeadline(f: ReturnType<typeof fixture>) {
   f.req.extraEnv!.MSP_TEST_STALLED = stalled;
   // Freeze only the parent's deadlines while the real stdio host starts and
   // reaches the requested stall. The filesystem signal stays real; Date/UUIDs stay real.
-  const marker = created(stalled);
+  const marker = created(stalled, contents => contents === f.req.extraEnv!.MSP_TEST_HANG);
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   const run = delegateToMuseMsp({ ...f.req, signal: AbortSignal.any([f.req.signal!, controller.signal]) });
   let settled = false;
@@ -75,6 +79,25 @@ async function stallUntilStartupDeadline(f: ReturnType<typeof fixture>) {
 }
 
 describe("Muse stable MSP delegation", () => {
+  it("waits for complete stalled-marker contents across creation and partial writes", async () => {
+    const f = fixture(), path = join(f.cwd, "stalled-marker");
+    let observed = deferred<void>(), settled = false;
+    const marker = created(path, contents => contents === "turn/start", () => observed.resolve());
+    void marker.ready.then(() => { settled = true; });
+    try {
+      observed = deferred<void>();
+      writeFileSync(path, "");
+      await observed.promise;
+      expect(settled).toBe(false);
+      observed = deferred<void>();
+      writeFileSync(path, "turn/");
+      await observed.promise;
+      expect(settled).toBe(false);
+      writeFileSync(path, "turn/start");
+      await marker.ready;
+      expect(settled).toBe(true);
+    } finally { marker.close(); }
+  });
   it("applies and verifies a resumed experimental profile only after negotiation", async () => {
     const f = fixture({ sessionId: "saved", permissionProfile: "new-profile" }, { MSP_TEST_EXPERIMENTAL: "1", MSP_TEST_PROFILE: "old-profile" });
     const result = await delegateToMuseMsp(f.req);
