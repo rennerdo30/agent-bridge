@@ -54,7 +54,7 @@ function prepareRecovery(home: string, ref: string) {
   if (!id) return undefined;
   const history = findHistoryJob(home, ref, id);
   const { spec, launch } = recoverySpec(home, id);
-  if (completeContext(history, id)) return selectRecovery(ref, id, history, spec, launch, []);
+  if (completeContext(home, history, id)) return selectRecovery(ref, id, history, spec, launch, []);
   return selectRecovery(ref, id, history, spec, launch, readRunLogs(home));
 }
 async function prepareRecoveryAsync(home: string, ref: string) {
@@ -69,22 +69,28 @@ async function prepareRecoveryAsync(home: string, ref: string) {
     return undefined;
   })());
   const { spec, launch } = recoverySpec(home, id);
-  if (completeContext(history, id)) return selectRecovery(ref, id, history, spec, launch, []);
+  if (completeContext(home, history, id)) return selectRecovery(ref, id, history, spec, launch, []);
   const currentRun = witnessedRun(home, id, history);
   return selectRecovery(ref, id, history, spec, launch, currentRun ? [currentRun] : await readRunLogsResponsive(home));
 }
 
 /** Full history rows come from the selected durable payload, never the routing
- * metadata (whose prompt is truncated). Explicit nullable native-context fields
- * distinguish a complete saved job from label-only legacy records that still
- * need enrichment from a launch spec/run. A current runner is overlaid below. */
-function completeContext(history: Record<string, unknown> | undefined, id: string): boolean {
+ * metadata (whose prompt is truncated). Native session identity must be known
+ * in the row or supplied by current runner state; null can mean it had not yet
+ * been learned. Other incomplete legacy fields still need spec/run enrichment. */
+function completeContext(home: string, history: Record<string, unknown> | undefined, id: string): boolean {
   const nullableString = (value: unknown) => value === null || typeof value === "string";
-  return history?.id === id && typeof history.name === "string" && AGENT_KINDS.includes(history.agent as never) &&
+  const complete = history?.id === id && typeof history.name === "string" && AGENT_KINDS.includes(history.agent as never) &&
     typeof history.owner === "string" && typeof history.prompt === "string" && Number.isFinite(history.startedAt) &&
     ["running", "done", "failed", "cancelled", "interrupted"].includes(String(history.status)) &&
     isRecord(history.args) && nullableString(history.model) && nullableString(history.sessionId) &&
     nullableString(history.workdir) && (history.worktree === null || isRecord(history.worktree));
+  if (!complete) return false;
+  if (typeof history.sessionId === "string") return true;
+  const state = readRunnerStateRecord(home, id);
+  // Match finishRecovery's current-state gate so the session is actually overlaid.
+  return typeof state?.pid === "number" && typeof state.updatedAt === "number" &&
+    state.updatedAt >= Number(history.startedAt) && typeof state.sessionId === "string";
 }
 
 /** A runner publishes the exact feed for this job generation. Missing or

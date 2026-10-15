@@ -1,8 +1,9 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { archiveJobs } from "../src/core/job-archive.js";
-import { recoverJobRecordAsync } from "../src/core/job-recovery.js";
+import { recoverJobRecord, recoverJobRecordAsync } from "../src/core/job-recovery.js";
+import { writeRunnerStateRecord } from "../src/core/runner-store.js";
 import * as history from "../src/core/run-history.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
@@ -16,7 +17,7 @@ afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); await env.clea
 
 function retained(status: string, owner = "owner") {
   return { id: "older", name: "codex-job-older", agent: "codex", owner, rootName: owner,
-    status, startedAt: 1, prompt: "exact original task ".repeat(100), sessionId: "retained-native",
+    status, startedAt: 1, prompt: "exact original task ".repeat(100), sessionId: "retained-native" as string | null,
     model: null, workdir: env.home, worktree: null, args: { access: "read", future: { keep: true } },
     future: { context: ["preserve"] } };
 }
@@ -44,6 +45,26 @@ it.each(["done", "failed", "cancelled", "interrupted", "running"])(
       expect(result!).toMatchObject({ ...job, status: status === "running" ? "interrupted" : status, host: null });
       expect(discovery).not.toHaveBeenCalled();
     } finally { release([]); await pending; }
+  },
+);
+
+it.each(["missing", "stale", "null", "current"])(
+  "recovers an unlearned session from run metadata unless %s runner state supplies it", async mode => {
+    const job = { ...retained("done"), sessionId: null, startedAt: 10 }; save(job);
+    const root = join(env.home, "runs"); mkdirSync(root);
+    const run = join(root, "independent-retained-feed");
+    writeFileSync(run + ".log", "header by owner\n         exact task\n         ---\n");
+    writeFileSync(run + ".json", JSON.stringify({ job: job.name, jobStartedAt: job.startedAt, session: "meta-native" }));
+    if (mode !== "missing") writeRunnerStateRecord(env.home, job.id, {
+      pid: process.pid, peer: job.name, status: "done", updatedAt: mode === "stale" ? 9 : 10,
+      sessionId: mode === "null" ? null : "runner-native",
+    });
+    const discovery = vi.spyOn(history, "readRunLogsResponsive");
+    const recovered = await recoverJobRecordAsync(env.home, job.name);
+    expect(recovered).toMatchObject({ ...job, sessionId: mode === "current" ? "runner-native" : "meta-native" });
+    if (mode === "current") expect(discovery).not.toHaveBeenCalled();
+    else expect(discovery).toHaveBeenCalledTimes(2);
+    expect(recovered).toEqual(recoverJobRecord(env.home, job.name));
   },
 );
 
