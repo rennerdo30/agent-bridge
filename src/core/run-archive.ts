@@ -32,10 +32,10 @@ export function archiveRun(log: string): void {
   renameSync(log, target);
   try { if (existsSync(meta)) renameSync(meta, archivedMeta); }
   finally {
-    // The log moved: record its exact new route. Ordinary legacy log-only archiving must not
-    // initialize the metadata store. An index failure is recorded (readiness cleared, repair
-    // queued) and never aborts archiving after a successful move.
-    if (existsSync(archivedMeta) || existsSync(join(home, "bridge.db"))) {
+    // The log moved: record its exact new route. Archiving never initializes the metadata store
+    // (without bridge.db there is no index yet, and its backfill discovers the archived run).
+    // An index failure is recorded (readiness cleared, repair queued) and never aborts archiving.
+    if (existsSync(join(home, "bridge.db"))) {
       try {
         releasingMetadata(home, () => {
           try { indexRunFile(home, target, archivedMeta); }

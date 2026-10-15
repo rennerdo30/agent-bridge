@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "./json-store.js";
 import { archiveOldRuns, archiveRun, finishedRunLine } from "./run-archive.js";
@@ -148,7 +148,10 @@ export function startRunFeed(opts: RunFeedOptions): RunFeed {
   };
   let meta: RunMeta = { ...opts.meta };
   // indexRunFile records nothing on failure; this is the single invalidation (one receipt) per failed route.
+  // A home without bridge.db has no index yet: its backfill creates the store before discovery and then
+  // finds this run, so a feed never initializes the metadata store itself.
   const indexRoute = () => {
+    if (!existsSync(join(opts.home, "bridge.db"))) return;
     try {
       releasingMetadata(opts.home, () => {
         try { indexRunFile(opts.home, logPath); }

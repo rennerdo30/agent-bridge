@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, realpathSync, statSync, type BigIntStats } from "node:fs";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { appendFile } from "node:fs/promises";
 import { basename, join, relative, sep } from "node:path";
 import { setImmediate as yieldTurn, setTimeout as delay } from "node:timers/promises";
@@ -52,20 +53,31 @@ function keys(run: RunLogRecord): string[] {
 function busyWait(home: string): number {
   try { return brokerHomes.has(rootKey(home)) ? 0 : JOB_INDEX_BUSY_WAIT_MS; } catch { return JOB_INDEX_BUSY_WAIT_MS; }
 }
+// Backfill indexes thousands of runs: reuse prepared statements per handle.
+const statements = new WeakMap<DatabaseSync, Map<string, StatementSync>>();
+function statement(db: DatabaseSync, sql: string): StatementSync {
+  let byText = statements.get(db);
+  if (!byText) statements.set(db, byText = new Map());
+  let prepared = byText.get(sql);
+  if (!prepared) byText.set(sql, prepared = db.prepare(sql));
+  return prepared;
+}
 function withBusyWait<T>(home: string, action: () => T): T {
-  const db = metadataDb(home), wait = busyWait(home), timeout = Number(db.prepare("PRAGMA busy_timeout").get()!.timeout);
+  const db = metadataDb(home);
+  if (db.isTransaction) return action(); // The write lock is held; the wait was chosen at BEGIN.
+  const wait = busyWait(home), timeout = Number(statement(db, "PRAGMA busy_timeout").get()!.timeout);
   if (timeout === wait) return action();
   db.exec(`PRAGMA busy_timeout=${wait}`);
   try { return action(); } finally { db.exec(`PRAGMA busy_timeout=${timeout}`); }
 }
 function value(home: string, domain: string, key: string): unknown {
   return withBusyWait(home, () => {
-    const row = metadataDb(home).prepare("SELECT value FROM bridge_metadata WHERE domain=? AND key=?").get(domain, key);
+    const row = statement(metadataDb(home), "SELECT value FROM bridge_metadata WHERE domain=? AND key=?").get(domain, key);
     return row ? JSON.parse(String(row.value)) : undefined;
   });
 }
 function put(home: string, domain: string, key: string, record: unknown): void {
-  metadataDb(home).prepare("INSERT INTO bridge_metadata VALUES (?,?,?,?) ON CONFLICT(domain,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at")
+  statement(metadataDb(home), "INSERT INTO bridge_metadata VALUES (?,?,?,?) ON CONFLICT(domain,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at")
     .run(domain, key, JSON.stringify(record), Date.now());
 }
 function completion(home: string): Completion | undefined {
@@ -151,7 +163,7 @@ export function indexJobRun(home: string, run: RunLogRecord): void {
   const json = JSON.stringify(run), digest = createHash("sha256").update(routingFacts(run)).digest("hex");
   const db = metadataDb(home);
   transaction(home, () => {
-  if (!value(home, HISTORY, digest)) db.prepare("INSERT OR IGNORE INTO bridge_metadata VALUES (?,?,?,?)").run(HISTORY, digest, json, Date.now());
+  if (!value(home, HISTORY, digest)) statement(db, "INSERT OR IGNORE INTO bridge_metadata VALUES (?,?,?,?)").run(HISTORY, digest, json, Date.now());
   for (const key of keys(run)) {
     const previous = value(home, HEAD, key) as IndexedRun | undefined;
     if (previous && routingFacts(previous) === routingFacts(run)) continue;
@@ -177,14 +189,21 @@ function usableMetadata(file: string): Record<string, unknown> {
 /** Called by feed writers, archivers and discovery, so new runs and location changes need no catalog scan.
  * It records nothing on failure; each caller decides whether a failure clears readiness. */
 export function indexRunFile(home: string, file: string, metadataFile = file.replace(/\.log$/, ".json")): void {
-  const root = join(home, "runs"), canonical = realpathSync.native(root);
+  indexJobRun(home, observeRunFile(home, file, metadataFile));
+}
+function metadataWitness(file: string): string {
+  try { return fileSignature(statSync(file, { bigint: true })); } catch { return "missing"; }
+}
+/** Re-observe one exact contained log/metadata pair. Pure file IO: callers run it outside any transaction. */
+function observeRunFile(home: string, file: string, metadataFile: string, canonical = realpathSync.native(join(home, "runs"))): RunLogRecord {
+  const root = join(home, "runs");
   const actual = safeFile(root, file, canonical), meta = safeFile(root, metadataFile, canonical);
   if (!actual || !meta && existsSync(metadataFile)) throw new Error("Run index requires contained log and metadata files");
   const st = statSync(actual, { bigint: true });
   if (!st.isFile()) throw new Error("Run index requires a regular run log");
-  indexJobRun(home, { name: basename(file).replace(/\.log$/, ""), file: actual, metadataFile: meta ?? undefined,
+  return { name: basename(file).replace(/\.log$/, ""), file: actual, metadataFile: meta ?? undefined,
     updatedAt: fileTimeMs(st.mtimeMs, st.mtimeNs), size: Number(st.size), signature: fileSignature(st),
-    archived: file !== join(root, basename(file)), meta: meta ? usableMetadata(meta) : {} });
+    archived: file !== join(root, basename(file)), meta: meta ? usableMetadata(meta) : {} };
 }
 
 /** Runner and MCP route writes (feeds, archiving) must not keep a bridge.db handle they opened
@@ -195,15 +214,27 @@ export function releasingMetadata<T>(home: string, action: () => T): T {
   finally { if (opened && metadataDbOpen(home) && !metadataReaderRetained(home)) { try { closeMetadataDb(home); } catch { /* Process exit releases it. */ } } }
 }
 
-/** Tiny transactions amortize FULL fsync without a long SQLite busy wait.
- * Each update's history/head read+write remains in one transaction. */
+/** Each batch re-observes its exact files first, outside SQLite, then commits only database work in
+ * one short transaction: FULL fsync is amortized over the batch and the write lock is never held
+ * during file IO. Each update's history/head read+write remains in that one transaction. */
+const INDEX_BATCH = 32;
 async function indexObserved(home: string, key: string, runs: RunLogRecord[], signal: AbortSignal): Promise<void> {
-  for (let at = 0; at < runs.length; at += 8) {
+  for (let at = 0; at < runs.length; at += INDEX_BATCH) {
     signal.throwIfAborted();
+    const batch = runs.slice(at, at + INDEX_BATCH);
+    const canonical = batch.some(run => run.metadataFile) ? realpathSync.native(join(home, "runs")) : undefined;
+    const observed = batch.map(run => {
+      if (!run.metadataFile || relative(key, run.file).split(sep)[0] !== "runs") return { run };
+      const witness = metadataWitness(run.metadataFile);
+      return { run: observeRunFile(home, run.file, run.metadataFile, canonical), source: run, witness };
+    });
+    await yieldTurn();
+    signal.throwIfAborted();
+    // A feed may rewrite routing metadata after the observation: re-read only that pair under the lock,
+    // so a stale observation never commits after the writer's own route update.
     transaction(home, () => {
-      for (const run of runs.slice(at, at + 8)) {
-        if (run.metadataFile && relative(key, run.file).split(sep)[0] === "runs") indexRunFile(home, run.file, run.metadataFile);
-        else indexJobRun(home, run);
+      for (const { run, source, witness } of observed) {
+        indexJobRun(home, source && metadataWitness(source.metadataFile!) !== witness ? observeRunFile(home, source.file, source.metadataFile!) : run);
       }
     });
     await yieldTurn();

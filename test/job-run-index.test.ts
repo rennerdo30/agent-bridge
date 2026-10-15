@@ -59,6 +59,7 @@ it("keeps routing discovery complete when metadata is replaced at every scan sus
   finally { feed.end("done"); }
 });
 it("retains routing changes once and performs no index writes for progress-only patches", async () => {
+  metadataDb(env.home); // The index lives in an existing metadata store.
   const feed = startRunFeed({ home: env.home, name: "progress", header: "active", meta: { job: "codex-job-progress", jobStartedAt: 2 } });
   const db = metadataDb(env.home), changes = () => Number(db.prepare("SELECT total_changes() n").get()!.n);
   try {
@@ -390,18 +391,18 @@ it("keeps archiving after a successful move when the route update fails", async 
   expect(jobRunIndexReady(env.home)).toBe(false);
 });
 it("appends exactly one invalidation receipt for one failed feed route update", () => {
+  metadataDb(env.home);
   vi.spyOn(index, "indexRunFile").mockImplementation(() => { throw new Error("synthetic feed index failure"); });
   const feed = startRunFeed({ home: env.home, name: "one-receipt", header: "task", meta: { job: "codex-job-receipt", jobStartedAt: 2 } });
   try { expect(readFileSync(join(env.home, "job-run-index.dirty"), "utf8")).toBe("\n"); }
   finally { feed.end("done"); }
 });
-it("releases a bridge.db handle that a feed or archive route write opened itself", () => {
-  const feed = startRunFeed({ home: env.home, name: "2026-10-01-00-00-00-codex-handle", header: "task", meta: { job: "codex-job-handle" } }); // No generation: no runner-state record, only the route write.
-  try { expect(metadataDbOpen(env.home)).toBe(false); } finally { feed.end("done"); }
+it("releases a bridge.db handle that an archive route write opened itself", () => {
+  const f = fixture("handle", "2026-10-01-00-00-00-codex-handle");
+  metadataDb(env.home); closeMetadataDb(env.home); // The store exists; no handle is open.
+  archiveRun(f.file);
   expect(metadataDbOpen(env.home)).toBe(false);
-  archiveRun(feed.logPath);
-  expect(metadataDbOpen(env.home)).toBe(false);
-  expect(indexedJobRun(env.home, "codex-job-handle")[0]!.archived).toBe(true);
+  expect(indexedJobRun(env.home, f.name)[0]!.archived).toBe(true);
 });
 it("yields to the broker event loop while filtering a large reobservation catalog without extra stats", async () => {
   fixture(); await startBrokerJobRunIndex(env.home);
@@ -429,4 +430,10 @@ it("re-observes a known key when an older writer adds a newer turn after complet
   writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 4, jobs: [{ id: "legacy", name: f.name, agent: "codex", owner: "owner", startedAt: 2, status: "done" }] }));
   expect(await recoverJobRecordAsync(env.home, f.name)).toMatchObject({ prompt: f.prompt, sessionId: "next-native", startedAt: 2 });
   expect(jobRunIndexReady(env.home)).toBe(true); expect(existsSync(join(env.home, "job-run-index.dirty"))).toBe(false);
+});
+it("never initializes the metadata store from a feed or archive route write", () => {
+  const feed = startRunFeed({ home: env.home, name: "2026-10-01-00-00-00-codex-nostore", header: "task", meta: { job: "codex-job-nostore" } });
+  feed.end("done"); archiveRun(feed.logPath);
+  expect(existsSync(join(env.home, "bridge.db"))).toBe(false);
+  expect(existsSync(join(env.home, "runs", "archive", basename(feed.logPath)))).toBe(true);
 });

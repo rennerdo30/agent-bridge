@@ -60,9 +60,11 @@ function prepareRecovery(home: string, ref: string) {
   if (completeContext(home, history, id)) return selectRecovery(ref, id, history, spec, launch, []);
   const key = typeof history?.name === "string" ? history.name : ref;
   const ready = jobRunIndexReady(home), ambiguous = ready && legacyJobRunAmbiguous(home, key);
-  return selectRecovery(ref, id, history, spec, launch, ready && !ambiguous
-    ? indexedJobRun(home, key, typeof history?.startedAt === "number" ? history.startedAt : undefined)
-    : readRunLogs(home), ambiguous);
+  const indexed = ready && !ambiguous ? indexedJobRun(home, key, typeof history?.startedAt === "number" ? history.startedAt : undefined) : [];
+  // Synchronous callers cannot wait for a per-key reobservation. A ready-index miss (a run an
+  // older or external writer created after completion) keeps the pre-index discovery;
+  // selectRecovery applies the same job, generation and single-candidate rules to it.
+  return selectRecovery(ref, id, history, spec, launch, indexed.length ? indexed : readRunLogs(home), ambiguous);
 }
 async function prepareRecoveryAsync(home: string, ref: string, deadline: number) {
   const id = recoveryId(ref);

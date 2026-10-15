@@ -11,8 +11,11 @@ and transport headroom. The two recovery passes share one deadline. If the index
 is still preparing, the request returns `job_index_preparing` with its state and
 submits no control. The shared backfill continues after that request ends.
 
-Backfill commits routing facts in tiny batches of eight runs, yielding between
-batches. The broker never waits for a competing SQLite writer (busy wait 0);
+Backfill re-reads each batch of 32 runs outside SQLite, then commits only the database
+work in one short transaction (a run whose metadata changed meanwhile is re-read
+under the lock), yielding between steps. Feed and archive route writes never create
+bridge.db: a home without it has no index yet, and its backfill finds those runs.
+The broker never waits for a competing SQLite writer (busy wait 0);
 runner, MCP and worker processes wait at most 40 ms before an index write counts
 as failed, so ordinary bridge.db traffic does not clear readiness. History insertion and routing head selection
 share the same transaction (or the packer's existing transaction). Completion
