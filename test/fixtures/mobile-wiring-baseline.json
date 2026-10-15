@@ -7,9 +7,9 @@
     "src/core/broker.ts:abortStartup": "312021e61034aab8fafee80b154d728fb48427a17709a96c936a21a5cb7e2abb",
     "src/core/broker.ts:close": "9ed775327e43196fafe017689287aba3c43d1c4f4c454e85da501d7c0fa48d7b",
     "src/core/node.ts:constructor": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
-    "src/core/node.ts:start": "922dd81e0ddbe0d79b70656ef14bd97cd1e6e331aeb410b8e9a9d92afce9f402",
+    "src/core/node.ts:start": "c2444cc1c41903a2489d3142952a79d2d562b37cea8bf617ae4db5a2b2e10299",
     "src/core/node.ts:stop": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
-    "src/core/node.ts:tryBecomeBroker": "4f09383911f03a965bddce8b8da04d7a5660ab5624a0d09d2f4bb1ebc17f1db9",
+    "src/core/node.ts:tryBecomeBroker": "54662336fe5017d38e0ea9cfd79638255e9f2860c3a7aa0cda2a8c5408dfb5a3",
     "src/cli/dashboard.ts:constructor": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
     "src/cli/dashboard.ts:open": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
@@ -199,6 +199,23 @@
       "uiSha256": "bbadfc88e262038f32ddea3cd4ba661143075d938cf082081c547fefb88283ff",
       "reason": "AB-383: startUi adds GET /api/events (Server-Sent Events from the history change feed); on close it ends only those streams and closes idle connections before the existing sender and sender-node shutdown from main. Re-pinned on current main (b38c3e35) with the existing normalizer: the thirteen method hashes and behavioral assertions remain unchanged; only the UI hash changes.",
       "commit": "f41bf1ed8ee42f27df95f9536de7a63da6752aa4"
+    },
+    "PR-80-daemon-default-on": {
+      "base": "fe8cd90151b1eb9a4994a78c2bac37481fcd95da",
+      "changes": [
+        {
+          "method": "src/core/node.ts:start",
+          "previous": "922dd81e0ddbe0d79b70656ef14bd97cd1e6e331aeb410b8e9a9d92afce9f402",
+          "current": "c2444cc1c41903a2489d3142952a79d2d562b37cea8bf617ae4db5a2b2e10299"
+        },
+        {
+          "method": "src/core/node.ts:tryBecomeBroker",
+          "previous": "4f09383911f03a965bddce8b8da04d7a5660ab5624a0d09d2f4bb1ebc17f1db9",
+          "current": "54662336fe5017d38e0ea9cfd79638255e9f2860c3a7aa0cda2a8c5408dfb5a3"
+        }
+      ],
+      "reason": "PR #80 (reviewed): start() adds only `if (!this.opts.jobAgent) void parentProcessIdentity();` with its comment, to overlap the host identity read with discovery; tryBecomeBroker() adds only `const identity = this.opts.dbPath === \":memory:\" ? undefined : ownProcessIdentity();` before the store imports and `await identity;` after the endpoint reservation. No other control-flow change; other method pins, the complete UI hash, normalizer and assertions are unchanged.",
+      "commit": "c24a6b2a7c16c2c614a48850ee4e24dd8adb397a"
     }
   },
   "revertedUpdates": {
