@@ -108,7 +108,8 @@ describe.skipIf(!existsSync(SERVER)).each(["claude", "codex"] as const)("dashboa
       }
     });
     await attempt("verify fixture children exited", () => waitFor(() => [...children].every(child => !pidAlive(child))));
-    await attempt("stop fixture broker and verify exit", () => stopBroker?.());
+    // Retain rather than signal while any fixture producer/child is uncertain.
+    if (!errors.length) await attempt("stop fixture broker and verify exit", () => stopBroker?.());
     if (failed || errors.length) {
       console.error(`MCP chat fixture retained: ${home}`);
       if (errors.length) throw new AggregateError([...(context.task.result?.errors ?? []), ...errors], "Fixture capture/teardown failed; original failure and fixture retained");

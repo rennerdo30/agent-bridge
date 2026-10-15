@@ -72,7 +72,8 @@ describe.skipIf(!existsSync(SERVER))("bundled MCP server end-to-end", () => {
       await attempt(() => transport.close());
     }
     await attempt(() => until(() => pids.every(pid => !fixtureProcessExists(pid, "Fixture MCP server exit is unavailable"))));
-    await attempt(async () => { await stopBroker?.(); });
+    // A failed producer close must not race a signal with demand-start.
+    if (!errors.length) await attempt(async () => { await stopBroker?.(); });
     // Keep the original failures and fixture when ownership/exit is uncertain.
     if (errors.length) throw new AggregateError(errors, `e2e fixture teardown failed; retained ${home}`);
     await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
