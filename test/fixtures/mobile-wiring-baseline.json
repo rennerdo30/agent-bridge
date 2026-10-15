@@ -1,7 +1,7 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "b46136a2548fb9582ce2274793775f68c635fe461ae6e3d3f11d1ac1ff3836f0",
+    "src/core/broker.ts:constructor": "885c0d3f8994f83dccea0f905740575a5c5a7eb4264e4d7ac31859fde55a9be4",
     "src/core/broker.ts:listen": "7522d16cd88fcd4ca3be9ce6923fc4c64a5c75ffbb5314b43ea7748964851c59",
     "src/core/broker.ts:startServices": "4d48b8bdb253d56458edfb283ed7d85b8530185391be52725961d015f5b26b85",
     "src/core/broker.ts:abortStartup": "312021e61034aab8fafee80b154d728fb48427a17709a96c936a21a5cb7e2abb",
@@ -35,6 +35,14 @@
       ],
       "commit": "49d494d4ef0ab11ba78380ec9d19feb4136ffd9d",
       "reason": "AB-330: 49d494d4ef0ab11ba78380ec9d19feb4136ffd9d binds and awaits the ephemeral TCP discovery lifecycle in listen and abortStartup. The abortStartup TCP await follows synchronous mobile retirement so immediate ready=false holds. The close shutdown await was introduced by 99b918121feb08f961cd942fbba1339e80b64994 and remains required to retire the owned listener. Only these three method hashes change; the other ten method hashes, UI hash and behavioral assertions remain unchanged."
+    },
+    "AB-380": {
+      "base": "a185c5787dbbab50698c06cf7c1f098a14c78a25",
+      "methods": [
+        "src/core/broker.ts:constructor"
+      ],
+      "commit": "3f75b534",
+      "reason": "AB-380: 3f75b534 changes the inlineJobReport handler registered in the constructor to quarantine an oversized report body (same-id stub, full text kept in a file) instead of rejecting it, so an older sender cannot loop on retries. Only the constructor hash changes; the other twelve method hashes, UI hash and behavioral assertions remain unchanged."
     }
   },
   "revertedUpdates": {
