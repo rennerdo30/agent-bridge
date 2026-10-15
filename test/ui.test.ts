@@ -21,7 +21,7 @@ const managers: JobManager[] = [];
 
 beforeEach(async () => {
   env = makeEnv();
-  ui = await startUi({ home: env.home, pipe: env.pipe, port: 0, log: nullLogger, models: async () => [{ agent: "codex", defaultModel: "test-model", models: ["test-model"], lines: ["- test-model (default): Test. Efforts: low, high"] }] });
+  ui = await startUi({ home: env.home, pipe: env.pipe, port: 0, log: nullLogger, embeddedCompatibility: true, models: async () => [{ agent: "codex", defaultModel: "test-model", models: ["test-model"], lines: ["- test-model (default): Test. Efforts: low, high"] }] });
   const first = await fetch(ui.url, { redirect: "manual" });
   expect(first.status).toBe(302);
   cookie = String(first.headers.get("set-cookie")).split(";")[0]!;
