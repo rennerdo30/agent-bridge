@@ -31,7 +31,7 @@ const median = values => {
   const middle = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 };
-const files = Object.fromEntries([...samples].sort(([a], [b]) => a.localeCompare(b))
+const files = Object.fromEntries([...samples].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
   .map(([file, values]) => [file, Math.round(median(values) * 10) / 10]));
 const table = {
   description: "Median Windows file wall time (s) per test file from hosted CI artifacts. " +

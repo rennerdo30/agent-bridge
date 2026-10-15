@@ -25,7 +25,9 @@ informational. Counts are discovered from the new source; historical counts do
 not transfer. Checkout/source head, Node/Vitest/platform, event/run/attempt and
 census digest bind the evidence (a "re-run failed jobs" attempt may reuse the
 inventory of an earlier attempt of the same run, never a later one); accepting a Node/event group requires all six
-job artifacts with matching source/runtime and census digest.
+job artifacts with matching source/runtime and census digest. If setup-node resolves a
+newer Node patch for a later re-run, that reuse fails with "source/runtime differs";
+use "Re-run all jobs" then.
 
 Artifacts retain actual passed/failed/skipped cases and raw errors labelled
 `unclassified (cleanup/teardown or assertion)`. Membership is not failure-cause

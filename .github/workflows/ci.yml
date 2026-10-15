@@ -8,9 +8,10 @@ on:
 permissions:
   contents: read
 
-# A newer push to the same pull request supersedes its running CI; main pushes always finish.
+# A newer push to the same pull request supersedes its running CI. Non-PR runs get a
+# unique group (run id), so pushes to main are never queued behind or cancelled by another run.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -89,7 +90,7 @@ jobs:
   windows:
     name: Windows Node ${{ matrix.node }} shard ${{ matrix.shard }}/6
     needs: windows-collect
-    # Run even when a collect job failed, so fast tests and the coverage verdict still report.
+    # Run even when a collect job failed, so the membership verdict and results artifact still report.
     if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
