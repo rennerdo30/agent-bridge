@@ -32,7 +32,10 @@ export function musePreToolUseGate(input: Record<string, any>, access: string | 
 export async function runMuseHook(event: string): Promise<number> {
   let childBridgeCall = false;
   try {
-    const restored = await restoreMuseContext();
+    // Only permission decisions need the adapter's environment contract. Mail
+    // callbacks authenticate the current hook registration below instead; doing
+    // both repeats DPAPI, host identity and ancestry probes in every fresh CLI.
+    const restored = event === "PreToolUse" ? await restoreMuseContext() : false;
     let raw = "";
     for await (const part of process.stdin) { raw += part; if (raw.length > 256 * 1024) throw new Error("hook input too large"); }
     const input = object(JSON.parse(raw || "{}"));
