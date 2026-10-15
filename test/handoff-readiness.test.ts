@@ -43,7 +43,7 @@ async function server(name: string, released = false) {
   }));
   const childEnv = { ...process.env } as Record<string, string>;
   for (const key of Object.keys(childEnv)) if (key.startsWith("AGENT_BRIDGE_")) delete childEnv[key];
-  Object.assign(childEnv, { AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off",
+  Object.assign(childEnv, { AGENT_BRIDGE_HOME: env.home, AGENT_BRIDGE_NAME: name, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_DAEMON: "0",
     CLAUDE_PROJECT_DIR: env.home, CLAUDE_CONFIG_DIR: join(env.home, "claude"), CODEX_HOME: join(env.home, "codex"), XDG_DATA_HOME: env.home });
   const client = new Client({ name: `fixture-${name}`, version: "1" }); clients.push(client);
   childEnv.CODEX_HOME = codexHost(client, env.home, "codex", name);
