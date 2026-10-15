@@ -361,7 +361,8 @@ export interface EventMap {
   peer_joined: PeerInfo;
   peer_left: PeerInfo;
   /** This connection was replaced by a newer server of the same session (e.g. after /reload-plugins). */
-  replaced: { by: string };
+  /** version: the replacing server's agent-bridge version (AB-385); an older server it replaces then exits. */
+  replaced: { by: string; version?: string };
 }
 export type EventName = keyof EventMap;
 

@@ -78,6 +78,8 @@ import { HISTORY_SEARCH_TOOL_DESCRIPTION, historySearchToolInput, type HistorySe
 import { decisionScopeSchema, MAX_DECISION_TOPIC_CHARS, MAX_DECISION_TEXT_CHARS, type DecideArgs, type DecisionsArgs } from "../core/decisions.js";
 import { askOwnerSchema, type AskOwnerArgs } from "../core/owner-questions.js";
 import { guardServerErrors } from "./job-runner-errors.js";
+import { SHUTDOWN_DEADLINE_MS, shouldYieldTo, watchParent } from "./server-lifecycle.js";
+import { parentProcessIdentity } from "../core/process-identity.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
 
@@ -511,12 +513,16 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
     })().catch((err) => log.warn("idle close sweep kept worktrees", { err: String(err) })).finally(() => { closeSweepBusy = false; });
   }, 15 * 60_000);
   closeSweep.unref();
+  let stopParentWatch: () => void = () => {};
   const shutdown = async (reason: string) => {
     // stdin end, transport close and signals can all fire; shut down once.
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(closeSweep);
+    stopParentWatch();
     log.info("shutting down", { reason });
+    // AB-385: a step that never settles (a delegate tree, a broker close, an MCP close) must not keep this process alive.
+    setTimeout(() => { log.warn("shutdown did not finish in time; exiting", { reason, deadlineMs: SHUTDOWN_DEADLINE_MS }); process.exit(0); }, SHUTDOWN_DEADLINE_MS).unref();
     // Runner-hosted subagents keep going for the next server of this session (see job-host.ts).
     ctx.jobs?.cancelAll();
     // Stop every delegated CLI this process runs itself, with its whole process tree; nothing may keep working unobserved.
@@ -534,6 +540,15 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   process.stdin.on("end", () => void shutdown("stdin ended"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
+  // AB-385: /reload-plugins and plugin updates start a new server without closing this one's stdin. When the broker
+  // reports that a newer agent-bridge version took this session over, the host will never call this server again:
+  // exit (closing a hosted broker, so the remaining servers re-elect) instead of lingering as a stale peer or broker.
+  node?.on("replaced", () => {
+    const by = node.replacementVersion;
+    if (shouldYieldTo(by, APP_VERSION)) void shutdown(`replaced by newer server v${by}`);
+  });
+  // Backstop: a host that ends without closing our stdin. The parent is identified by PID and creation time.
+  stopParentWatch = watchParent({ ppid: process.ppid, identity: parentProcessIdentity(), onGone: (reason) => void shutdown(reason) });
   await mcp.connect(transport);
   log.info("MCP transport connected");
 
