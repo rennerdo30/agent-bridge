@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync 
 import { basename, dirname, join } from "node:path";
 import { retentionLimit } from "./json-store.js";
 import { readRunLogPreview } from "./run-log-preview.js";
-import { indexRunFile, invalidateJobRunIndex } from "./job-run-index.js";
+import { indexRunFile, invalidateJobRunIndex, releasingMetadata } from "./job-run-index.js";
 
 export const DEFAULT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 export const ARCHIVE_AGE_ENV = "AGENT_BRIDGE_ARCHIVE_AGE_MS";
@@ -36,8 +36,12 @@ export function archiveRun(log: string): void {
     // initialize the metadata store. An index failure is recorded (readiness cleared, repair
     // queued) and never aborts archiving after a successful move.
     if (existsSync(archivedMeta) || existsSync(join(home, "bridge.db"))) {
-      try { indexRunFile(home, target, archivedMeta); }
-      catch { try { invalidateJobRunIndex(home); } catch { /* The archived bytes are already retained. */ } }
+      try {
+        releasingMetadata(home, () => {
+          try { indexRunFile(home, target, archivedMeta); }
+          catch { invalidateJobRunIndex(home); }
+        });
+      } catch { /* The archived bytes are already retained. */ }
     }
   }
 }

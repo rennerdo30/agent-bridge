@@ -12,7 +12,7 @@ import { indexedJobRun, indexJobRun, JOB_INDEX_BUSY_WAIT_MS, jobRunIndexReady, J
 import * as fileCache from "../src/core/file-cache.js";
 import { APP_VERSION } from "../src/core/constants.js";
 import { metadataFileLease } from "../src/core/metadata-file-lease.js";
-import { closeMetadataDb, metadataDb } from "../src/core/metadata-db.js";
+import { closeMetadataDb, metadataDb, metadataDbOpen } from "../src/core/metadata-db.js";
 import { archiveOldRuns, archiveRun } from "../src/core/run-archive.js";
 import { packFinishedRuns } from "../src/core/finished-run-bundles.js";
 import { startRunFeed } from "../src/core/runfeed.js";
@@ -394,4 +394,12 @@ it("appends exactly one invalidation receipt for one failed feed route update", 
   const feed = startRunFeed({ home: env.home, name: "one-receipt", header: "task", meta: { job: "codex-job-receipt", jobStartedAt: 2 } });
   try { expect(readFileSync(join(env.home, "job-run-index.dirty"), "utf8")).toBe("\n"); }
   finally { feed.end("done"); }
+});
+it("releases a bridge.db handle that a feed or archive route write opened itself", () => {
+  const feed = startRunFeed({ home: env.home, name: "2026-10-01-00-00-00-codex-handle", header: "task", meta: { job: "codex-job-handle" } }); // No generation: no runner-state record, only the route write.
+  try { expect(metadataDbOpen(env.home)).toBe(false); } finally { feed.end("done"); }
+  expect(metadataDbOpen(env.home)).toBe(false);
+  archiveRun(feed.logPath);
+  expect(metadataDbOpen(env.home)).toBe(false);
+  expect(indexedJobRun(env.home, "codex-job-handle")[0]!.archived).toBe(true);
 });

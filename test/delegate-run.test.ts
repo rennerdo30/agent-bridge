@@ -15,6 +15,7 @@ import { readWorktreeState, rootId, saveWorktreeState } from "../src/core/worktr
 import { closeJobWorktree } from "../src/core/job-close.js";
 import { preferredDriveFixture } from "./preferred-drive-fixture.js";
 import * as feeds from "../src/core/runfeed.js";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
 
 let home: string;
 beforeEach(() => {
@@ -22,7 +23,7 @@ beforeEach(() => {
   mkdirSync(root, { recursive: true });
   home = mkdtempSync(join(root, "run-"));
 });
-afterEach(() => { vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); closeMetadataDb(home); rmSync(home, { recursive: true, force: true }); });
 
 const context = (): RunContext => ({ agent: "claude", cfg: { ...DEFAULT_CONFIG }, home, log: nullLogger, me: () => "parent", cwd: () => home,
   jobs: { askParent: vi.fn(async () => ({ allow: false, reason: "Publish builds only from merged master" })), fromSubagent: vi.fn(), note: vi.fn() },

@@ -7,7 +7,7 @@ import { refreshStorePeerIdentities } from "./store-compatibility.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { displayPathText } from "./display-paths.js";
 import { readRunnerStateRecord, writeRunnerStateRecord } from "./runner-store.js";
-import { indexRunFile, invalidateJobRunIndex } from "./job-run-index.js";
+import { indexRunFile, invalidateJobRunIndex, releasingMetadata } from "./job-run-index.js";
 
 /**
  * Live feed of one delegated run: every progress line goes to ~/.agent-bridge/runs/<name>.log (so the
@@ -149,8 +149,12 @@ export function startRunFeed(opts: RunFeedOptions): RunFeed {
   let meta: RunMeta = { ...opts.meta };
   // indexRunFile records nothing on failure; this is the single invalidation (one receipt) per failed route.
   const indexRoute = () => {
-    try { indexRunFile(opts.home, logPath); }
-    catch { try { invalidateJobRunIndex(opts.home); } catch { /* never break a run because of the index */ } }
+    try {
+      releasingMetadata(opts.home, () => {
+        try { indexRunFile(opts.home, logPath); }
+        catch { invalidateJobRunIndex(opts.home); }
+      });
+    } catch { /* never break a run because of the index */ }
   };
   let attemptedRouting: string | undefined;
   const routing = () => JSON.stringify([meta.job ?? null, meta.jobStartedAt ?? null]);

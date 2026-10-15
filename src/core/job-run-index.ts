@@ -6,7 +6,7 @@ import { setImmediate as yieldTurn, setTimeout as delay } from "node:timers/prom
 import { APP_VERSION, REQUEST_TIMEOUT_MS } from "./constants.js";
 import { fileSignature, fileTimeMs, readJsonSnapshot } from "./file-cache.js";
 import { isRecord } from "./json-store.js";
-import { metadataDb, physicalMetadataPath } from "./metadata-db.js";
+import { closeMetadataDb, metadataDb, metadataDbOpen, metadataReaderRetained, physicalMetadataPath } from "./metadata-db.js";
 import { metadataFileLease } from "./metadata-file-lease.js";
 import { BridgeError } from "./protocol.js";
 import { readRunLogsResponsive, type RunLogRecord } from "./run-history.js";
@@ -185,6 +185,14 @@ export function indexRunFile(home: string, file: string, metadataFile = file.rep
   indexJobRun(home, { name: basename(file).replace(/\.log$/, ""), file: actual, metadataFile: meta ?? undefined,
     updatedAt: fileTimeMs(st.mtimeMs, st.mtimeNs), size: Number(st.size), signature: fileSignature(st),
     archived: file !== join(root, basename(file)), meta: meta ? usableMetadata(meta) : {} });
+}
+
+/** Runner and MCP route writes (feeds, archiving) must not keep a bridge.db handle they opened
+ * themselves: close it again unless it was already open or a live bridge node shares it. */
+export function releasingMetadata<T>(home: string, action: () => T): T {
+  const opened = !metadataDbOpen(home);
+  try { return action(); }
+  finally { if (opened && metadataDbOpen(home) && !metadataReaderRetained(home)) { try { closeMetadataDb(home); } catch { /* Process exit releases it. */ } } }
 }
 
 /** Tiny transactions amortize FULL fsync without a long SQLite busy wait.
