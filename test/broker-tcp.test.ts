@@ -1,3 +1,5 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect, Socket } from "node:net";
@@ -60,6 +62,43 @@ describe("broker loopback fallback", () => {
     expect(brokerTcpPort(env.home, env.pipe)).toBeNull();
     expect(await portAsync()).toBeNull();
     await env.cleanup();
+  });
+
+  it("treats the descriptor of an exited broker as stale without a process identity query", async () => {
+    const env = makeEnv();
+    // A real PID that has exited: the descriptor a killed broker leaves behind.
+    const exited = spawn(process.execPath, ["-e", ""], { stdio: "ignore", windowsHide: true });
+    const pid = exited.pid!;
+    await once(exited, "exit");
+    await until(() => { try { process.kill(pid, 0); return false; } catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; } });
+    writeMusePrivateJson(join(env.home, BROKER_TCP_FILE), { port: 4321, pid, identity: "exited-broker", nonce: "fixture", protocol: PROTOCOL_VERSION, pipePath: env.pipe });
+    try {
+      expect(brokerTcpPort(env.home, env.pipe)).toBeNull();
+      expect(await brokerTcpPortAsync(env.home, env.pipe, new AbortController().signal)).toBeNull();
+      expect(readProcessIdentity).not.toHaveBeenCalled();
+    } finally { await env.cleanup(); }
+  });
+
+  it.runIf(process.platform === "win32")("reports a missing pipe as missing when only an exited broker's descriptor remains", async () => {
+    // Before: discovery queried the dead broker's identity; past the connect deadline that surfaced as ETIMEDOUT,
+    // which elect() treats as a live broker, so the surviving session never took over the broker role.
+    const env = makeEnv(), pipe = new Socket();
+    vi.stubEnv("AGENT_BRIDGE_HOME", env.home);
+    const exited = spawn(process.execPath, ["-e", ""], { stdio: "ignore", windowsHide: true });
+    const pid = exited.pid!;
+    await once(exited, "exit");
+    await until(() => { try { process.kill(pid, 0); return false; } catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; } });
+    writeMusePrivateJson(join(env.home, BROKER_TCP_FILE), { port: 4321, pid, identity: "exited-broker", nonce: "fixture", protocol: PROTOCOL_VERSION, pipePath: env.pipe });
+    // An identity query that never answers within the deadline, as under load.
+    vi.mocked(readProcessIdentity).mockImplementation(() => new Promise(() => {}));
+    vi.mocked(connect).mockReturnValueOnce(pipe);
+    try {
+      const pending = BridgeClient.connect(env.pipe, nullLogger, 5_000);
+      queueMicrotask(() => pipe.emit("error", Object.assign(new Error("fixture missing pipe"), { code: "ENOENT" })));
+      await expect(pending).rejects.toMatchObject({ code: "ENOENT" });
+      expect(readProcessIdentity).not.toHaveBeenCalled();
+      expect(connect).toHaveBeenCalledTimes(1); // No loopback attempt to the dead broker's port.
+    } finally { pipe.destroy(); await env.cleanup(); }
   });
 
   it.runIf(process.platform === "win32")("bounds slow discovery without blocking timers or a working pipe's direct promise", async () => {
