@@ -9,7 +9,7 @@ import {
 } from "./chunks/chunk-DXFIXMAQ.mjs";
 import {
   antigravityHookOutput
-} from "./chunks/chunk-ASP3VU4O.mjs";
+} from "./chunks/chunk-52VQJHM4.mjs";
 import {
   MAX_STREAM_ENTRIES
 } from "./chunks/chunk-5WNJTXGH.mjs";
@@ -18,22 +18,22 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-RKDU5QFG.mjs";
+} from "./chunks/chunk-6RKLKG6C.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-TF2WFRNP.mjs";
+} from "./chunks/chunk-4HNFKLI4.mjs";
 import {
   readWorktreeState
 } from "./chunks/chunk-NOVJUMH7.mjs";
-import "./chunks/chunk-57B5EALB.mjs";
+import "./chunks/chunk-IT6225GK.mjs";
 import {
   codexAppServerCall,
   describeModels,
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-CUID2BGJ.mjs";
+} from "./chunks/chunk-JTOZVEIO.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
@@ -45,7 +45,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-7JN667UG.mjs";
+} from "./chunks/chunk-GPAHPZOB.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -79,8 +79,8 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-H7NCGBTA.mjs";
-import "./chunks/chunk-XYFT24YR.mjs";
+} from "./chunks/chunk-Y7L3UD7X.mjs";
+import "./chunks/chunk-PRBEPEV3.mjs";
 import {
   ACCESS_LEVELS,
   AjvJsonSchemaValidator,
@@ -150,7 +150,7 @@ import {
   serializeMessage,
   toJsonSchemaCompat,
   verifiedGoneJobOwners
-} from "./chunks/chunk-ZRZKPN5K.mjs";
+} from "./chunks/chunk-H35REUG3.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
@@ -3296,7 +3296,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-E6Z43PP3.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-J2LCM242.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3308,9 +3308,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-ZQ42Q6AP.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-EQ4GC5O7.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-ZQ42Q6AP.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-EQ4GC5O7.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3531,7 +3531,7 @@ ${JSON.stringify(result)}`);
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
       const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-BWB6OHM3.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-MXFJGYD6.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-NXDY4JUP.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
