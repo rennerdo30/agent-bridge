@@ -44,6 +44,9 @@ beforeEach(async () => {
   // worker or publishing legacy job records. Ownership tests must not race DDL.
   await migrateJobArchives(path());
   source = env.node("claude-source"); target = env.node("codex-target", "codex"); await source.start(); await target.start();
+  // Joining peers does not await startup ask reconciliation in the history
+  // worker. Drain that writer before tests seed records or create managers.
+  await source.projectJobs();
 });
 afterEach(async () => { await ui?.close(); ui = undefined; for (const m of managers.splice(0)) m.cancelAll(); for (const n of extra.splice(0)) await n.stop(); await env.cleanup(); });
 
@@ -248,6 +251,9 @@ describe("local subagent ownership handoff", () => {
   it.each([true, false])("does not let a delayed original executor overwrite a newer continuation (handoff=%s)", async (handoff) => {
     const old = manager(source);
     const tracked = old.track("codex", null, "Initial blocking work");
+    // Persistence can defer while another writer holds the lease. Handoff and
+    // the simulated newer write both require the original durable registration.
+    await until(() => readStore(path()).some(job => job.id === tracked.job.id));
     if (handoff) await source.handoffSubagents({ to: target.name });
     const document = JSON.parse(readFileSync(path(), "utf8"));
     const current = document.jobs.find((j: Job) => j.id === tracked.job.id);
