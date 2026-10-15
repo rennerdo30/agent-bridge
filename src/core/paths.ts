@@ -55,12 +55,19 @@ export function resolvePipePath(home: string, env: NodeJS.ProcessEnv = process.e
  * user's private directory: in a world-writable /tmp another user could otherwise pre-create it and receive
  * the session token on connect or replace the endpoint. Endpoints anywhere else are left untouched.
  */
-export function ensurePrivateSocketDirectory(pipePath: string, platform: NodeJS.Platform = process.platform): void {
+export function ensurePrivateSocketDirectory(pipePath: string, platform: NodeJS.Platform = process.platform, readOnly = false): void {
   // Native socket endpoints such as { host, port } have no directory to secure.
   if (platform === "win32" || typeof pipePath !== "string") return;
   const uid = process.getuid?.();
   const dir = shortSocketDirectory(uid);
   if (posix.dirname(pipePath) !== dir) return;
+  if (readOnly) {
+    const stat = lstatSync(dir);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || uid === undefined || stat.uid !== uid || (stat.mode & 0o077) !== 0) {
+      throw Object.assign(new Error("Core status endpoint directory is unavailable; no permissions were repaired."), { code: "EUNSAFESOCKETDIR" });
+    }
+    return;
+  }
   try { mkdirSync(dir, { mode: 0o700 }); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
   const stat = lstatSync(dir);

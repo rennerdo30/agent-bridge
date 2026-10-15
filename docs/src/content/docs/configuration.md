@@ -2,7 +2,7 @@
 title: "Configuration"
 ---
 
-`~/.agent-bridge/config.json` (all keys optional; per-agent sections override the top level; env vars override both). Running sessions pick up changes within a few seconds; `name`, `delivery` and the dashboard port need a restart; use the connect wizard to reload `network` settings live:
+`~/.agent-bridge/config.json` (all keys optional; per-agent sections override the top level; env vars override both). Running sessions pick up changes within a few seconds; `name`, `delivery`, daemon activation and the dashboard port need a restart; use the connect wizard to reload `network` settings live:
 
 ```json
 {
@@ -27,9 +27,24 @@ title: "Configuration"
 `spawn_codex`, `ask_codex` or `message_subagent`. This is separate from bridge job
 concurrency and delegation depth. See [native subagent settings and dashboard APIs](../codex-subagents/).
 
+The standalone broker daemon is **off by default**. MCP servers, the CLI and the CLI
+dashboard retain the embedded broker behavior, including dashboard hosting when
+no broker is running. To opt in, set `"daemon": { "enabled": true }` in the home
+config (or its per-agent section), or set `AGENT_BRIDGE_DAEMON=1` in the host's environment.
+The precedence is exact: **`AGENT_BRIDGE_DAEMON=1` / `0` > `daemon.enabled`
+(`true` / `false`) > off**. Environment `0` overrides config `true`; environment
+`1` overrides config `false`. Other environment values and non-boolean config
+values are ignored. Project config cannot change daemon activation. Restart the
+hosting session or CLI to apply a change.
+
+This opt-in preserves the staged standalone path. Enabling and releasing it remain
+gated on status/restart/stop controls, native acceptance and the AB-366 visibility
+gates; this setting does not add those controls or APIs.
+
 | Env var | Meaning |
 |---|---|
 | `AGENT_BRIDGE_HOME` | Data directory (default `~/.agent-bridge`) |
+| `AGENT_BRIDGE_DAEMON` | Standalone broker opt-in: exact `1` enables, exact `0` disables; overrides `daemon.enabled`; default off |
 | `AGENT_BRIDGE_NAME` | Peer name |
 | `AGENT_BRIDGE_AUTO_WAKE` | `on` / `off` |
 | `AGENT_BRIDGE_WAKE_ON_DIRECT` | Wake idle Claude, Codex and opencode for messages addressed to their session name when supported (default `on`); `wakeOnDirect` in config |

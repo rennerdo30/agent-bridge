@@ -1,21 +1,21 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "885c0d3f8994f83dccea0f905740575a5c5a7eb4264e4d7ac31859fde55a9be4",
-    "src/core/broker.ts:listen": "7522d16cd88fcd4ca3be9ce6923fc4c64a5c75ffbb5314b43ea7748964851c59",
-    "src/core/broker.ts:startServices": "4d48b8bdb253d56458edfb283ed7d85b8530185391be52725961d015f5b26b85",
+    "src/core/broker.ts:constructor": "324d5e738b1245c857f3356af324328c38653bbefba3819de514039aa265d5ea",
+    "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
+    "src/core/broker.ts:startServices": "c99740e533c7b6fd293656682c88daa5cbbc491459f21304268f284219cd3777",
     "src/core/broker.ts:abortStartup": "312021e61034aab8fafee80b154d728fb48427a17709a96c936a21a5cb7e2abb",
     "src/core/broker.ts:close": "9ed775327e43196fafe017689287aba3c43d1c4f4c454e85da501d7c0fa48d7b",
     "src/core/node.ts:constructor": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
     "src/core/node.ts:start": "922dd81e0ddbe0d79b70656ef14bd97cd1e6e331aeb410b8e9a9d92afce9f402",
     "src/core/node.ts:stop": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
-    "src/core/node.ts:tryBecomeBroker": "ca4a0147682e50d8748825468e6ac49565d931c6a42b5e45e4ecc2f65d1cc669",
+    "src/core/node.ts:tryBecomeBroker": "4f09383911f03a965bddce8b8da04d7a5660ab5624a0d09d2f4bb1ebc17f1db9",
     "src/cli/dashboard.ts:constructor": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
     "src/cli/dashboard.ts:open": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "de79dfca55109c3f807e5608ff8bb83a5ade39e37a562263b2dd0c05e0a17845",
+  "uiSha256": "6361ed89434a3a21aee8d08d399f0ee9a584fd53ee4803ae67f3ae79ff898378",
   "updates": {
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
@@ -25,6 +25,50 @@
       ],
       "reason": "Scoped native child handlers and retained orphan recovery extend the broker. Other default control-flow and UI pins are unchanged.",
       "commit": "21647e7ba2c563203a606465adec0f0878536683"
+    },
+    "AB-325-1a": {
+      "changes": [
+        {
+          "normalizedSourceFileSha256": "55757cc76149ad6a9aa6f743809149ee13bc599baa9cd8160a91cd6969ef50c2",
+          "previous": "b46136a2548fb9582ce2274793775f68c635fe461ae6e3d3f11d1ac1ff3836f0",
+          "method": "src/core/broker.ts:constructor",
+          "current": "092d0659588267cedc684853f156bab5e924cdb5e37879d25068871530a0fbee"
+        },
+        {
+          "normalizedSourceFileSha256": "e1fe528a267c2a94e28bbbc0e1a6ea69ce13ea418ff515b6514c3868e8e859a9",
+          "previous": "ca4a0147682e50d8748825468e6ac49565d931c6a42b5e45e4ecc2f65d1cc669",
+          "method": "src/core/node.ts:tryBecomeBroker",
+          "current": "d41e6d558b3b4b20b8fa6335cc3665ca7e4543b8dd7282195fef5a4fd52ac450"
+        }
+      ],
+      "reason": "Approved daemon lifecycle handler/read-only status and degraded legacy hosting wiring only. All other method pins and the complete startUi hash remain unchanged. Real hosted daemon auth/concurrency/parent-exit fixtures cover the new path. Failed run 38373145537 remains evidence.",
+      "base": "7adb4817ea2800e56bd26737a81dbe28d7f17219",
+      "initialSourceCommit": "107444c7c705ba723cb69621d87dbbc60a733154"
+    },
+    "AB-325-1a-retention": {
+      "parent": "f4e0c2aac6a0b5606b9f37a71a7906ba4ab3910a",
+      "changes": [
+        {
+          "normalizedSourceFileSha256": "f05bf3f717ef421d4c3183a054afae33b7f2f5411f0bf8a9bccf57318836d703",
+          "method": "src/core/node.ts:tryBecomeBroker",
+          "previous": "d41e6d558b3b4b20b8fa6335cc3665ca7e4543b8dd7282195fef5a4fd52ac450",
+          "current": "fecea4d0b4dda38e2554f9392ff13d6fc49762448f67cca006f28345122a9557"
+        }
+      ],
+      "reason": "Approved centralization of legacy stale-socket cleanup in the existing exact reviewed unlink site, with socket type/current UID/fresh ECONNREFUSED checks. Bind losers never unlink. The retention allowlist, all other method pins, schema/backup deadlines/assertions and complete UI pin remain unchanged. Failed full job 115219351847/run38374490738 retained."
+    },
+    "AB-325-1a-ui-policy": {
+      "sourceCommit": "d4c834842504a1916fc3011a6a8269e46d6c5e9a",
+      "sourceParent": "de42082d109d053f09a4d3480a24b794a498bc50",
+      "reviewedBaseline": "35227bed0cfabf3e47d9418b8dd5114c9eed08d4",
+      "previousUiSha256": "de79dfca55109c3f807e5608ff8bb83a5ade39e37a562263b2dd0c05e0a17845",
+      "uiSha256": "3f013571e860db81fb38d53e848ddf72669a7cb7fbecda4f2a172d0161e6997f",
+      "normalizedSourceFileSha256": "9cefbc8ffa3b3cd49495615010e31efbe10e68fa28df9f1b716c539a7d5a66e2",
+      "sourceDiffSha256": "b9b479562ec5ab1d0eb95288673cc7263ab441ca5584ec216b453de72fb3ce33",
+      "reason": "Owner-approved P2 backend sender wiring only: default connect-only, trusted CLI daemon option, one retained sender node/unknown latch and cleanup. No frontend/routes/auth/schema/deadline change; existing normalizer, all thirteen method pins and assertions retained.",
+      "preservedFailureRun": "38383760743",
+      "preservedOriginalWindowsJob": "115250343801",
+      "preservedIndependentWindowsJob": "115252022028"
     },
     "AB-330": {
       "base": "0761d56fe4c36e505550f9b889841fdf8e82c80a",
@@ -36,13 +80,117 @@
       "commit": "49d494d4ef0ab11ba78380ec9d19feb4136ffd9d",
       "reason": "AB-330: 49d494d4ef0ab11ba78380ec9d19feb4136ffd9d binds and awaits the ephemeral TCP discovery lifecycle in listen and abortStartup. The abortStartup TCP await follows synchronous mobile retirement so immediate ready=false holds. The close shutdown await was introduced by 99b918121feb08f961cd942fbba1339e80b64994 and remains required to retire the owned listener. Only these three method hashes change; the other ten method hashes, UI hash and behavioral assertions remain unchanged."
     },
-    "AB-380": {
-      "base": "a185c5787dbbab50698c06cf7c1f098a14c78a25",
+    "AB-380-into-AB-325": {
+      "base": "d7ee45cce28138105ff5e53adfd991a3a7c6cb48",
       "methods": [
         "src/core/broker.ts:constructor"
       ],
       "commit": "3f75b534",
-      "reason": "AB-380: 3f75b534 changes the inlineJobReport handler registered in the constructor to quarantine an oversized report body (same-id stub, full text kept in a file) instead of rejecting it, so an older sender cannot loop on retries. Only the constructor hash changes; the other twelve method hashes, UI hash and behavioral assertions remain unchanged."
+      "reason": "Merging main (AB-380, 3f75b534) into the AB-325 daemon branch combines the daemon constructor changes with the AB-380 inlineJobReport quarantine handler. Only the constructor hash changes; the other twelve method hashes, UI hash and behavioral assertions remain unchanged."
+    },
+    "AB-325-P4-current-main-integration": {
+      "status": "reviewed",
+      "pr17Commit": "7144289d60532fbaf4d044172406af31109429be",
+      "mainCommit": "c1916b50a86950c2f3a0cf781b41e851441225f3",
+      "requiredProcessIdentityCommit": "2532a2a3c53c2bc902ed998ea907bdfa751ba38a",
+      "reviewBasis": "Owner-approved P4 Phase A authored union plus Phase B instruction; additive e2e union and Muse process registration approved separately. Source approval does not imply runtime or release acceptance.",
+      "changes": [
+        {
+          "method": "src/core/broker.ts:constructor",
+          "pr17": "87a129e6f5c836fde080f2fc51a9e38b1fc73ae1b4e82c30a8950e307eedc404",
+          "main": "b46136a2548fb9582ce2274793775f68c635fe461ae6e3d3f11d1ac1ff3836f0",
+          "current": "87a129e6f5c836fde080f2fc51a9e38b1fc73ae1b4e82c30a8950e307eedc404",
+          "normalizedSourceFileSha256": "8d887d455ca31cb9301a6b5f421a3081bce2e843dc8d54dd4a7e7a158c62ff73"
+        },
+        {
+          "method": "src/core/broker.ts:listen",
+          "pr17": "d96368c44c5d53f177be9261b40b811de29dfc866a90a73b26150e52e8af6ff8",
+          "main": "7522d16cd88fcd4ca3be9ce6923fc4c64a5c75ffbb5314b43ea7748964851c59",
+          "current": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
+          "normalizedSourceFileSha256": "8d887d455ca31cb9301a6b5f421a3081bce2e843dc8d54dd4a7e7a158c62ff73"
+        },
+        {
+          "method": "src/core/broker.ts:startServices",
+          "pr17": "c99740e533c7b6fd293656682c88daa5cbbc491459f21304268f284219cd3777",
+          "main": "4d48b8bdb253d56458edfb283ed7d85b8530185391be52725961d015f5b26b85",
+          "current": "c99740e533c7b6fd293656682c88daa5cbbc491459f21304268f284219cd3777",
+          "normalizedSourceFileSha256": "8d887d455ca31cb9301a6b5f421a3081bce2e843dc8d54dd4a7e7a158c62ff73"
+        },
+        {
+          "method": "src/core/broker.ts:abortStartup",
+          "pr17": "2c7b606eb6c601f877f5d0283f0f1efcb7e4bc11c1af14857c9ca582e8ad6cb5",
+          "main": "312021e61034aab8fafee80b154d728fb48427a17709a96c936a21a5cb7e2abb",
+          "current": "312021e61034aab8fafee80b154d728fb48427a17709a96c936a21a5cb7e2abb",
+          "normalizedSourceFileSha256": "8d887d455ca31cb9301a6b5f421a3081bce2e843dc8d54dd4a7e7a158c62ff73"
+        },
+        {
+          "method": "src/core/broker.ts:close",
+          "pr17": "61af8b1a2dd8e1c2f44fa39055e1963ae82e9887f99eed1d0499ae7e66ea91c2",
+          "main": "9ed775327e43196fafe017689287aba3c43d1c4f4c454e85da501d7c0fa48d7b",
+          "current": "9ed775327e43196fafe017689287aba3c43d1c4f4c454e85da501d7c0fa48d7b",
+          "normalizedSourceFileSha256": "8d887d455ca31cb9301a6b5f421a3081bce2e843dc8d54dd4a7e7a158c62ff73"
+        },
+        {
+          "method": "src/core/node.ts:constructor",
+          "pr17": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
+          "main": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
+          "current": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
+          "normalizedSourceFileSha256": "62f4721ffe783c80240041ceb12cf09a1eb0d74b7c0153aaea59d0dbcd72837d"
+        },
+        {
+          "method": "src/core/node.ts:start",
+          "pr17": "922dd81e0ddbe0d79b70656ef14bd97cd1e6e331aeb410b8e9a9d92afce9f402",
+          "main": "922dd81e0ddbe0d79b70656ef14bd97cd1e6e331aeb410b8e9a9d92afce9f402",
+          "current": "922dd81e0ddbe0d79b70656ef14bd97cd1e6e331aeb410b8e9a9d92afce9f402",
+          "normalizedSourceFileSha256": "62f4721ffe783c80240041ceb12cf09a1eb0d74b7c0153aaea59d0dbcd72837d"
+        },
+        {
+          "method": "src/core/node.ts:stop",
+          "pr17": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
+          "main": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
+          "current": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
+          "normalizedSourceFileSha256": "62f4721ffe783c80240041ceb12cf09a1eb0d74b7c0153aaea59d0dbcd72837d"
+        },
+        {
+          "method": "src/core/node.ts:tryBecomeBroker",
+          "pr17": "4f09383911f03a965bddce8b8da04d7a5660ab5624a0d09d2f4bb1ebc17f1db9",
+          "main": "ca4a0147682e50d8748825468e6ac49565d931c6a42b5e45e4ecc2f65d1cc669",
+          "current": "4f09383911f03a965bddce8b8da04d7a5660ab5624a0d09d2f4bb1ebc17f1db9",
+          "normalizedSourceFileSha256": "62f4721ffe783c80240041ceb12cf09a1eb0d74b7c0153aaea59d0dbcd72837d"
+        },
+        {
+          "method": "src/cli/dashboard.ts:constructor",
+          "pr17": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "main": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "current": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "normalizedSourceFileSha256": "094276820c5824e674907d5d6ee6af5ad14e3401425f6813b010dfd4c7626b4f"
+        },
+        {
+          "method": "src/cli/dashboard.ts:open",
+          "pr17": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
+          "main": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
+          "current": "6eacbb835304e2a5d3c303c54c3c674910cbf4f9a5411b3af62a7747fe2d211b",
+          "normalizedSourceFileSha256": "094276820c5824e674907d5d6ee6af5ad14e3401425f6813b010dfd4c7626b4f"
+        },
+        {
+          "method": "src/cli/dashboard.ts:ensure",
+          "pr17": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
+          "main": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
+          "current": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
+          "normalizedSourceFileSha256": "094276820c5824e674907d5d6ee6af5ad14e3401425f6813b010dfd4c7626b4f"
+        },
+        {
+          "method": "src/cli/dashboard.ts:close",
+          "pr17": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4",
+          "main": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4",
+          "current": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4",
+          "normalizedSourceFileSha256": "094276820c5824e674907d5d6ee6af5ad14e3401425f6813b010dfd4c7626b4f"
+        }
+      ],
+      "previousUiSha256": "3f013571e860db81fb38d53e848ddf72669a7cb7fbecda4f2a172d0161e6997f",
+      "currentUiSha256": "6361ed89434a3a21aee8d08d399f0ee9a584fd53ee4803ae67f3ae79ff898378",
+      "reason": "Recomputed every method pin and complete UI hash on the merged source with the existing mobile-wiring normalizer and assertions unchanged. Retains default-off P3 dashboard hosting, main Muse/Phones/messaging and TCP lifecycle, and PR17 reservation/capability paths. No bulk normalization or assertion change.",
+      "sourceCommit": "1b7ac9cb2ca6e9d534b9f9ac06ee047d8073a8be"
     }
   },
   "revertedUpdates": {
@@ -127,6 +275,38 @@
           "original": "0687fdc76f2f5ee1c5eec552ad2e4e5bc50e3aad"
         }
       ]
+    },
+    "AB-325-1a-bind-first": {
+      "sourceCommit": "7f096a20cfe7ff69df5313486f5c7177ca6ef19f",
+      "sourceParent": "164a11bb4d1f5187dda7d47f00cc6e9b0633a159",
+      "base": "7adb4817ea2800e56bd26737a81dbe28d7f17219",
+      "changes": [
+        {
+          "method": "src/core/broker.ts:listen",
+          "previous": "eb98a2820f42563b76778c1f642d8a4a704c1af4fd4af43aedee9c1263cf2b4d",
+          "current": "d96368c44c5d53f177be9261b40b811de29dfc866a90a73b26150e52e8af6ff8",
+          "previousNormalizedSourceFileSha256": "55757cc76149ad6a9aa6f743809149ee13bc599baa9cd8160a91cd6969ef50c2",
+          "normalizedSourceFileSha256": "82318982cd832d9b32636a4d4d0367310ff768e094ec3dcad4d9cd451844a90c",
+          "sourceFileSha256": "82318982cd832d9b32636a4d4d0367310ff768e094ec3dcad4d9cd451844a90c"
+        },
+        {
+          "method": "src/core/broker.ts:startServices",
+          "previous": "4d48b8bdb253d56458edfb283ed7d85b8530185391be52725961d015f5b26b85",
+          "current": "c99740e533c7b6fd293656682c88daa5cbbc491459f21304268f284219cd3777",
+          "previousNormalizedSourceFileSha256": "55757cc76149ad6a9aa6f743809149ee13bc599baa9cd8160a91cd6969ef50c2",
+          "normalizedSourceFileSha256": "82318982cd832d9b32636a4d4d0367310ff768e094ec3dcad4d9cd451844a90c",
+          "sourceFileSha256": "82318982cd832d9b32636a4d4d0367310ff768e094ec3dcad4d9cd451844a90c"
+        },
+        {
+          "method": "src/core/node.ts:tryBecomeBroker",
+          "previous": "fecea4d0b4dda38e2554f9392ff13d6fc49762448f67cca006f28345122a9557",
+          "current": "4f09383911f03a965bddce8b8da04d7a5660ab5624a0d09d2f4bb1ebc17f1db9",
+          "previousNormalizedSourceFileSha256": "e8de6281d0084ce0b09acfe8ed229d25997df9dbdfc3b77204d3c418357d6767",
+          "normalizedSourceFileSha256": "4adc6c258afdc6dc8219050e8b5d6b1613f50cbd8e4d4057ac827938dfd304bb",
+          "sourceFileSha256": "4adc6c258afdc6dc8219050e8b5d6b1613f50cbd8e4d4057ac827938dfd304bb"
+        }
+      ],
+      "reason": "Owner-reviewed bind-before-store reservation dispatch and cleanup plus additive tentative-network start gate only. Other ten method pins, complete UI hash, normalizer and assertions unchanged. Real auth/tentative-network/native-write/concurrency fixtures implemented for hosted checks; hash match alone is not acceptance. Historical 352/c64/164 failures retained."
     }
   }
 }

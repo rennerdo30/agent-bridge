@@ -3,19 +3,16 @@ import {
   historyBudget
 } from "./chunks/chunk-2PKS7JZW.mjs";
 import {
-  ConversationIngestor
-} from "./chunks/chunk-SGLOGK3S.mjs";
-import {
   HISTORY_TICK_MS,
   HistoryIndex
-} from "./chunks/chunk-O73LZCHL.mjs";
+} from "./chunks/chunk-AR3XNCX6.mjs";
+import "./chunks/chunk-TK3APK3O.mjs";
 import {
+  ConversationIngestor,
   ownsProjectMirrors,
   projectDatabasePath
-} from "./chunks/chunk-CHURQK2F.mjs";
-import "./chunks/chunk-DWD7QYDU.mjs";
-import "./chunks/chunk-SKALCUBC.mjs";
-import "./chunks/chunk-ROXW7H3L.mjs";
+} from "./chunks/chunk-KRGET3XJ.mjs";
+import "./chunks/chunk-HS6DDUE5.mjs";
 import {
   HISTORY_IO_BYTES_PER_SECOND,
   copyLegacyConversationTail,
@@ -24,36 +21,37 @@ import {
   migrateHistoryStore,
   openHistoryStore,
   readHistoryMigrationProgress
-} from "./chunks/chunk-OQVSW2YO.mjs";
-import "./chunks/chunk-PZ6QYUCT.mjs";
+} from "./chunks/chunk-SOSAKSVH.mjs";
 import "./chunks/chunk-V4VFK2LZ.mjs";
+import "./chunks/chunk-PZ6QYUCT.mjs";
 import {
   reconcileAskCompletions
-} from "./chunks/chunk-I4XMXAU3.mjs";
+} from "./chunks/chunk-MIJUX2CO.mjs";
 import {
   loadConfig
-} from "./chunks/chunk-VB42W5UW.mjs";
-import "./chunks/chunk-IYJ5P7ML.mjs";
-import "./chunks/chunk-2JW43AZX.mjs";
+} from "./chunks/chunk-GUU5SJ6T.mjs";
+import "./chunks/chunk-BOKHWZQ3.mjs";
 import "./chunks/chunk-RE3I7AXX.mjs";
+import "./chunks/chunk-IYJ5P7ML.mjs";
 import {
   readHistoryJson
-} from "./chunks/chunk-R5ODWW5G.mjs";
+} from "./chunks/chunk-5W62G7NK.mjs";
 import "./chunks/chunk-HYOPFLLN.mjs";
 import {
+  checkpointOwnedMetadataConnections,
   closeMetadataDbs,
   fileSignature,
   isRecord,
   nullLogger,
   writeJsonStore
-} from "./chunks/chunk-IS3KHBHN.mjs";
+} from "./chunks/chunk-JJ6UMMYX.mjs";
 import "./chunks/chunk-AR4BZM3F.mjs";
 import {
   CONFIG_FILE_NAME
 } from "./chunks/chunk-HIVVJXLN.mjs";
 import {
   transcriptPaths
-} from "./chunks/chunk-OX5J3NNH.mjs";
+} from "./chunks/chunk-NVDPULGI.mjs";
 import "./chunks/chunk-DEWCC5JJ.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
@@ -98,6 +96,66 @@ var pending = false;
 var ready = false;
 var running = false;
 var requestedReset = false;
+var activeReset = false;
+var unappliedReset = false;
+var lifecycleOwnerInstance = workerData.lifecycleOwnerInstance;
+var lifecycleGeneration = 0;
+var lifecycleQuiesced = false;
+var lifecycleUnknown = false;
+var acceptedOperations = /* @__PURE__ */ new Set();
+var checkpointRequest = null;
+var checkpointReported = false;
+var retainedDueAt = null;
+function acceptOperation() {
+  const operation = /* @__PURE__ */ Symbol();
+  acceptedOperations.add(operation);
+  return () => {
+    acceptedOperations.delete(operation);
+    restoreRetainedSchedule();
+    reportCheckpoint();
+  };
+}
+function restoreRetainedSchedule() {
+  if (lifecycleQuiesced || stopped || running || acceptedOperations.size || timer || retainedDueAt === null) return;
+  const due = retainedDueAt;
+  retainedDueAt = null;
+  schedule(Math.max(0, due - Date.now()));
+}
+function reportCheckpoint() {
+  const request = checkpointRequest;
+  if (!request || checkpointReported || !lifecycleQuiesced || running || checkingBudget || acceptedOperations.size) return;
+  checkpointReported = true;
+  const pendingOperations = acceptedOperations.size + peers.size + Number(requestedReset) + pressureWaiters.size + Number(pending);
+  const producerSettled = !stopped && !lifecycleUnknown && pendingOperations === 0;
+  const metadata = producerSettled && performance.now() < request.deadline ? checkpointOwnedMetadataConnections({
+    ownerInstance: lifecycleOwnerInstance,
+    generation: request.generation,
+    home: workerData.home,
+    isCurrentSealed: () => lifecycleQuiesced && !stopped && !lifecycleUnknown && lifecycleGeneration === request.generation && checkpointRequest === request && !running && !checkingBudget && acceptedOperations.size === 0 && !peers.size && !requestedReset && !pressureWaiters.size && !pending
+  }, request.deadline) : null;
+  const unknown = lifecycleUnknown || Boolean(metadata && !metadata.checkpointed && metadata.reason !== "budget" && metadata.reason !== "busy");
+  if (unknown) lifecycleUnknown = true;
+  const result = {
+    ownerInstance: lifecycleOwnerInstance,
+    generation: request.generation,
+    requestId: request.requestId,
+    quiesced: lifecycleQuiesced,
+    pendingOperations,
+    retainedPeers: peers.size,
+    retainedReset: requestedReset,
+    retainedSchedule: retainedDueAt !== null || wakeAfterTick || transcriptsChanged,
+    pressureWaiters: pressureWaiters.size,
+    pressurePending: pending,
+    budgetRunning: checkingBudget,
+    unknown,
+    producerSettled: producerSettled && !unknown,
+    reason: unknown ? "unknown" : producerSettled ? "owner_unsupported" : "pending",
+    metadata,
+    handlesRetained: true,
+    ownershipReleased: false
+  };
+  parentPort?.postMessage({ historyCheckpoint: result });
+}
 var idle = new IdleBackoff(HISTORY_TICK_MS);
 var pauseUntil = 0;
 var storageBudgetPaused = false;
@@ -145,16 +203,19 @@ async function checkStorageBudget() {
   return budget.paused;
 }
 var checkingBudget = false;
-var budgetTimer = setInterval(() => {
-  if (!running || checkingBudget || stopped) return;
+function budgetTick() {
+  if (!running || checkingBudget || stopped || lifecycleQuiesced) return;
+  const finish = acceptOperation();
   checkingBudget = true;
   void checkStorageBudget().catch((error) => {
     storageBudgetPaused = true;
     parentPort?.postMessage({ error: String(error) });
   }).finally(() => {
     checkingBudget = false;
+    finish();
   });
-}, 1e3);
+}
+var budgetTimer = setInterval(budgetTick, 1e3);
 budgetTimer.unref();
 async function waitForPressureGap() {
   while (pending && !stopped) await new Promise((resolve) => {
@@ -177,6 +238,7 @@ async function tick(reset = false) {
     if (await checkStorageBudget()) return { work: 0, discovering: !ready };
     reset = requestedReset;
     requestedReset = false;
+    activeReset = reset;
     if (migrationFailure && !reset) throw new Error(migrationFailure);
     if (importState.error && !reset) throw new Error(importState.error);
     if (reset && importState.error) {
@@ -201,10 +263,6 @@ async function tick(reset = false) {
       if (!ingest) {
         ingest = new ConversationIngestor(db, workerData.home, paths, source);
         ingest.onChange = onTranscriptChange;
-        const registering = index;
-        ingest.onUnknownPaths = (changed) => {
-          registering.registerChanged(changed);
-        };
       }
       ready = true;
     }
@@ -230,7 +288,12 @@ async function tick(reset = false) {
       index.rememberPeer(peer);
       peers.delete(id);
     }
-    if (reset) index.reset();
+    if (reset) {
+      index.reset();
+      activeReset = false;
+      unappliedReset = false;
+      requestedReset = false;
+    }
     const rawWork = ingest.tick();
     if (transcriptsChanged) {
       transcriptsChanged = false;
@@ -250,39 +313,40 @@ async function tick(reset = false) {
     }
     throw error;
   } finally {
+    if (activeReset) {
+      unappliedReset = true;
+      if (lifecycleQuiesced) requestedReset = true;
+    }
+    activeReset = false;
     running = false;
   }
 }
 var dueAt = 0;
 var transcriptsChanged = false;
 var wakeAfterTick = false;
-var liveAfterTick = false;
-var lastTickAt = 0;
-var firing = 0;
-var LIVE_WAKE_MS = 15;
-var LIVE_GAP_MS = 100;
 function wakeSoon() {
-  if (stopped) return;
+  if (lifecycleQuiesced) return;
+  if (stopped || !timer || dueAt - Date.now() <= HISTORY_TICK_MS) return;
   idle.reset();
-  if (running || firing) {
-    liveAfterTick = true;
-    return;
-  }
-  const delay = Math.max(LIVE_WAKE_MS, lastTickAt + LIVE_GAP_MS - Date.now());
-  if (timer && dueAt - Date.now() <= delay) return;
-  schedule(delay);
+  schedule(HISTORY_TICK_MS);
 }
 var onTranscriptChange = () => {
   transcriptsChanged = true;
+  if (lifecycleQuiesced && checkpointReported) parentPort?.postMessage({ historyLifecycleChanged: true });
   wakeSoon();
 };
 function schedule(delay = HISTORY_TICK_MS) {
   if (stopped) return;
+  if (lifecycleQuiesced) {
+    retainedDueAt = Date.now() + delay;
+    return;
+  }
+  retainedDueAt = null;
   if (timer) clearTimeout(timer);
   dueAt = Date.now() + delay;
   timer = setTimeout(async () => {
     timer = null;
-    firing++;
+    const finish = acceptOperation();
     let next = idle.next(0, false);
     try {
       await waitForPressureGap();
@@ -294,21 +358,16 @@ function schedule(delay = HISTORY_TICK_MS) {
       if (err.code !== "HISTORY_SNAPSHOT_PAUSED" && !stopped) parentPort?.postMessage({ error: String(err) });
       pauseUntil = Date.now() + 5e3;
     }
-    lastTickAt = Date.now();
-    if (liveAfterTick) {
-      liveAfterTick = false;
-      next = Math.min(next, LIVE_GAP_MS);
-    }
     if (wakeAfterTick) {
       wakeAfterTick = false;
       next = 0;
     }
-    firing--;
     schedule(next);
+    finish();
   }, delay);
 }
 function close() {
-  clearInterval(budgetTimer);
+  if (budgetTimer) clearInterval(budgetTimer);
   index?.close();
   ingest?.close();
   source.close();
@@ -317,48 +376,104 @@ function close() {
   parentPort?.close();
 }
 parentPort?.on("message", async (message) => {
-  if (message.pressure) {
-    const wasPending = pending;
-    pending = !!message.pending;
-    if (message.lockError) pauseUntil = Date.now() + 5e3;
-    if (!pending) {
-      releasePressure();
-      if (wasPending && !running) {
-        idle.reset();
-        schedule(0);
-      }
-    }
-    return;
-  }
-  if (message.peer) {
-    peers.set(message.peer.id, message.peer);
-    idle.reset();
-    if (!running) schedule(0);
-    return;
-  }
-  if (message.wake) {
-    idle.reset();
-    if (running || firing) wakeAfterTick = true;
-    else schedule(0);
-    return;
-  }
-  if (message.stop) {
-    stopped = true;
-    releasePressure();
-    if (timer) clearTimeout(timer);
-    while (running) await yieldTurn(10);
-    close();
-    return;
-  }
-  try {
-    if (message.reconcileAsks) {
-      parentPort?.postMessage({ id: message.id, result: { work: reconcileAskCompletions(join(workerData.home, "jobs.json")), discovering: false } });
+  if (message.historyLifecycle) {
+    if (typeof lifecycleOwnerInstance !== "string" || message.ownerInstance !== lifecycleOwnerInstance || !Number.isSafeInteger(message.generation) || message.generation < lifecycleGeneration) {
+      lifecycleUnknown = true;
       return;
     }
-    while (running && !stopped) await yieldTurn(10);
-    parentPort?.postMessage({ id: message.id, result: await tick(message.reset) });
-  } catch (err) {
-    parentPort?.postMessage({ id: message.id, error: String(err) });
+    if (message.historyLifecycle === "quiesce") {
+      if (message.generation <= lifecycleGeneration) return;
+      lifecycleGeneration = message.generation;
+      lifecycleQuiesced = true;
+      requestedReset ||= unappliedReset || activeReset;
+      checkpointRequest = null;
+      checkpointReported = false;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+        retainedDueAt = dueAt;
+      }
+      if (budgetTimer) clearInterval(budgetTimer);
+      budgetTimer = null;
+      return;
+    }
+    if (message.historyLifecycle === "resume") {
+      if (message.generation <= lifecycleGeneration) return;
+      lifecycleGeneration = message.generation;
+      lifecycleQuiesced = false;
+      checkpointRequest = null;
+      checkpointReported = false;
+      if (!budgetTimer && !stopped) {
+        budgetTimer = setInterval(budgetTick, 1e3);
+        budgetTimer.unref();
+      }
+      restoreRetainedSchedule();
+      if (retainedDueAt === null && !timer && (wakeAfterTick || peers.size || requestedReset || transcriptsChanged) && !running) schedule(0);
+      return;
+    }
+    if (message.historyLifecycle === "checkpoint") {
+      if (!lifecycleQuiesced || message.generation !== lifecycleGeneration || checkpointRequest || typeof message.requestId !== "string" || !Number.isFinite(message.deadline)) {
+        lifecycleUnknown = true;
+        return;
+      }
+      checkpointRequest = { requestId: message.requestId, generation: message.generation, deadline: message.deadline };
+      reportCheckpoint();
+      return;
+    }
+    lifecycleUnknown = true;
+    return;
+  }
+  if (lifecycleQuiesced && !message.stop && !(message.pressure && !message.pending && !message.lockError)) {
+    lifecycleUnknown = true;
+    return;
+  }
+  const finish = acceptOperation();
+  try {
+    if (message.pressure) {
+      const wasPending = pending;
+      pending = !!message.pending;
+      if (message.lockError) pauseUntil = Date.now() + 5e3;
+      if (!pending) {
+        releasePressure();
+        if (wasPending && !running) {
+          idle.reset();
+          schedule(0);
+        }
+      }
+      return;
+    }
+    if (message.peer) {
+      peers.set(message.peer.id, message.peer);
+      idle.reset();
+      if (!running) schedule(0);
+      return;
+    }
+    if (message.wake) {
+      idle.reset();
+      if (running) wakeAfterTick = true;
+      else schedule(0);
+      return;
+    }
+    if (message.stop) {
+      stopped = true;
+      releasePressure();
+      if (timer) clearTimeout(timer);
+      while (running) await yieldTurn(10);
+      close();
+      return;
+    }
+    try {
+      if (message.reconcileAsks) {
+        parentPort?.postMessage({ id: message.id, result: { work: reconcileAskCompletions(join(workerData.home, "jobs.json")), discovering: false } });
+        return;
+      }
+      while (running && !stopped) await yieldTurn(10);
+      parentPort?.postMessage({ id: message.id, result: await tick(message.reset) });
+    } catch (err) {
+      parentPort?.postMessage({ id: message.id, error: String(err) });
+    }
+  } finally {
+    finish();
   }
 });
 schedule();

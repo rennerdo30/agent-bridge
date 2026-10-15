@@ -1,13 +1,15 @@
 import type { InstallResult } from "./opencode-install.js";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
+import { bundleDirectory } from "../core/bundle-directory.js";
 import { BridgeClient } from "../core/client.js";
 import { LOG_DIR_NAME } from "../core/constants.js";
 import { formatDateTime, t } from "../core/i18n.js";
 import { createLogger, nullLogger } from "../core/logger.js";
-import { BridgeNode } from "../core/node.js";
+import { BridgeNode, type BridgeNodeOptions } from "../core/node.js";
 import { resolveDbPath, resolveHome, resolvePipePath } from "../core/paths.js";
 import { APP_VERSION, PROTOCOL_VERSION } from "../core/constants.js";
-import { loadOrCreateToken } from "../core/token.js";
+import { loadOrCreateToken, tokenPath } from "../core/token.js";
 import { formatMessage, formatReplyRestrictions } from "../mcp/format.js";
 import { CODING_AGENTS, type CodingAgent } from "../core/protocol.js";
 import { DEFAULT_CONFIG, loadConfig } from "../core/config.js";
@@ -28,11 +30,33 @@ async function main(argv: string[]): Promise<number> {
   // State inspection must not create logs or repair malformed configuration/stores.
   if (command === "job-state") return (await import("./job-close.js")).runJobClose(command, rest, home, DEFAULT_CONFIG, nullLogger, out);
   const pipe = resolvePipePath(home);
-  const log = createLogger({ home, component: "cli" });
+  const log = command === "core" ? nullLogger : createLogger({ home, component: "cli" });
+  const brokerDaemon = (): BridgeNodeOptions["daemon"] => loadConfig(home, "other", log).daemon.enabled ? { cli: join(bundleDirectory(import.meta.url), "cli.mjs"), dashboard: () => loadConfig(home, "other", log).dashboard,
+    config: () => { const cfg = loadConfig(home, "other", log); const port = rest.find(arg => arg.startsWith("--port="))?.slice(7); return { network: cfg.network, mobile: cfg.mobile, dashboardPort: port ? Number(port) : cfg.dashboardPort }; } } : undefined;
   const makeNode = () =>
-    new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: resolveDbPath(home), agent: "other", name: CLI_PEER_NAME, cwd: process.cwd(), autoWake: false, log });
+    new BridgeNode({ pipePath: pipe, token: loadOrCreateToken(home), dbPath: resolveDbPath(home), daemon: brokerDaemon(), agent: "other", name: CLI_PEER_NAME, cwd: process.cwd(), autoWake: false, log });
 
   switch (command) {
+    case "core": {
+      if (rest.length !== 1 || rest[0] !== "status") throw new Error("Usage: agent-bridge core status. Safe restart/stop awaits the lifecycle prerequisite review.");
+      let client: BridgeClient;
+      try { client = await BridgeClient.connect(pipe, log, undefined, { readOnlyDirectory: true }); }
+      catch (error) {
+        if (["ENOENT", "ECONNREFUSED"].includes((error as NodeJS.ErrnoException).code ?? "")) { out(JSON.stringify({ available: false })); return 0; }
+        throw error;
+      }
+      try {
+        let token: string;
+        try { token = readFileSync(tokenPath(home), "utf8").trim(); if (!token) throw new Error(); }
+        catch { throw new Error("Core status authentication material is unavailable; no material was created."); }
+        await client.request("auth", { protocol: PROTOCOL_VERSION, token }); out(JSON.stringify(await client.request("coreStatus", {})));
+      }
+      finally { client.close(); }
+      return 0;
+    }
+    case "broker-daemon":
+      if (rest.length) throw new Error("broker-daemon accepts no arguments");
+      return (await import("./broker-daemon.js")).runBrokerDaemon(home, pipe, log);
     case "antigravity-hook": return (await import("./antigravity-hook.js")).runAntigravityHook(rest[0] ?? "PreInvocation");
     case "job-state":
     case "job-close":
@@ -141,6 +165,11 @@ async function main(argv: string[]): Promise<number> {
         const node = makeNode(); let activation: import("../mobile/activation.js").MobileActivation | undefined;
         try {
           await node.start();
+          if (node.usesDaemon && !node.isBroker) {
+            const info = await node.ensureDashboard(true, portArg ? Number(portArg) : cfg.dashboardPort);
+            if (info) { out(t("cli.ui.existing", { url: info.url })); if (!noOpen) openBrowser(info.url); return 0; }
+            mobileUnavailable = "source_unavailable";
+          } else {
           activation = await (await import("../mobile/activation.js")).configuredMobileDashboard(node, mobileConfig, { home, pipe, port: portArg ? Number(portArg) : cfg.dashboardPort, log });
           const info = await activation?.start();
           if (info && activation?.status() === "ready") {
@@ -148,7 +177,8 @@ async function main(argv: string[]): Promise<number> {
             await new Promise<void>(resolve => process.once("SIGINT", resolve)); return 0;
           }
           mobileUnavailable = activation?.status() ?? "source_unavailable";
-        } catch { mobileUnavailable = "restart_required"; }
+          }
+        } catch (error) { if (!node.isConnected) throw error; mobileUnavailable = "restart_required"; }
         finally { await activation?.close().catch(() => {}); await node.stop().catch(() => {}); }
       }
       if (rest.includes("--reset-key")) (await import("./dashboard.js")).dashboardKey(home, true);
@@ -162,7 +192,7 @@ async function main(argv: string[]): Promise<number> {
       }
       const portArg = rest.find((a) => a.startsWith("--port="))?.slice("--port=".length);
       const port = portArg ? Number(portArg) : loadConfig(home, "other", log).dashboardPort;
-      const controller = new (await import("./dashboard.js")).DashboardController({ home, pipe, port, log, ...(mobileUnavailable ? { mobileStatus: () => mobileUnavailable! } : {}) });
+      const controller = new (await import("./dashboard.js")).DashboardController({ home, pipe, port, log, brokerDaemon: brokerDaemon(), ...(mobileUnavailable ? { mobileStatus: () => mobileUnavailable! } : {}) });
       const hosted = await controller.ensure();
       const info = mobileUnavailable ? (await import("./dashboard.js")).withMobileUnavailable(hosted, mobileUnavailable) : hosted;
       out(t("cli.ui.running", { url: info.url }));
