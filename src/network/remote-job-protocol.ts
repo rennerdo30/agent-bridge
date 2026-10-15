@@ -6,6 +6,7 @@ import { NETWORK_NAME_PATTERN } from "./constants.js";
 
 export const REMOTE_JOB_CAPABILITY = "remote-jobs-v1";
 export const REMOTE_JOB_CANCELLED_CAPABILITY = "remote-jobs-cancelled-v1";
+export const REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY = "remote-jobs-antigravity-options-v1";
 export const REMOTE_JOB_FRAME = "remote-job";
 export const REMOTE_JOB_POLL_MS = 2_000;
 export const REMOTE_JOB_REQUEST_TIMEOUT_MS = 30_000;
@@ -29,7 +30,8 @@ export const remoteSpawnArgsSchema = z.object({
   notes: z.enum(["none", "milestones", "blockers"]).optional(),
   sandbox: z.enum(CODEX_SANDBOXES).optional(), permission_mode: z.enum(CLAUDE_PERMISSION_MODES).optional(),
   auto_approve: z.boolean().optional(),
-  terminal_sandbox: z.boolean().optional(), bypass_permissions: z.boolean().optional(),
+  terminal_sandbox: z.boolean().optional(),
+  bypass_permissions: z.boolean().optional(),
   permission_profile: z.string().trim().min(1).max(80).optional(),
   native_subagents: z.number().int().min(0).max(MAX_CODEX_SUBAGENTS).optional(),
   approvals_reviewer: z.enum(CODEX_APPROVALS_REVIEWERS).optional(),

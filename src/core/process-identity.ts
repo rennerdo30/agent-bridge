@@ -85,6 +85,23 @@ export function readProcessIdentitiesSync(pids: number[]): Map<number, string> |
   return result;
 }
 
+/** Bounded image-name evidence for listed processes whose creation identity cannot be read. Failures prove nothing. */
+export function readProcessNamesSync(pids: number[]): Map<number, string> | undefined {
+  const valid = [...new Set(pids.filter(pid => Number.isSafeInteger(pid) && pid > 0))];
+  const result = new Map<number, string>();
+  if (!valid.length) return result;
+  try {
+    const stdout = process.platform === "win32"
+      ? execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `@(${valid.join(",")}) | ForEach-Object { try { $p = [System.Diagnostics.Process]::GetProcessById($_); [string]$p.Id + '|' + [string]$p.ProcessName } catch {} }; exit 0`], { windowsHide: true, timeout: BATCH_QUERY_TIMEOUT_MS, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
+      : execFileSync("ps", ["-p", valid.join(","), "-o", "pid=,comm="], { timeout: BATCH_QUERY_TIMEOUT_MS, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, LC_ALL: "C" } });
+    for (const line of stdout.split(/\r?\n/)) {
+      const match = (process.platform === "win32" ? /^(\d+)\|(.+)$/ : /^(\d+)\s+(.+)$/).exec(line.trim());
+      if (match && valid.includes(Number(match[1])) && match[2]!.trim()) result.set(Number(match[1]), match[2]!.trim());
+    }
+    return result;
+  } catch { return undefined; }
+}
+
 let ownIdentity: string | undefined;
 
 /** Creation identity for lock acquisition/recovery, never for polling hot paths. */

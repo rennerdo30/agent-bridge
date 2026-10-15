@@ -107,7 +107,7 @@ export const DELEGATION_TARGETS: Record<CodingAgent, DelegationTarget> = {
       terminal_sandbox: z.boolean().optional().describe("Enable agy's terminal sandbox (separate from read/ask tool permissions)"),
       bypass_permissions: z.boolean().optional().describe("Exact Antigravity permission override: true bypasses native approvals, false retains native policy. Overrides read/ask access; handoff restrictions remain."),
     },
-    permissionNote: () => "Requires the installed agent-bridge Antigravity plugin. Read denies non-reading tools; ask relays them; edit retains native policy. Idle TUI mail waits for the next turn.",
+    permissionNote: () => "Requires the installed agent-bridge Antigravity plugin. Read denies non-reading tools; ask relays them; edit delegates workspace reads/writes to native policy (subject to native Ask/deny rules) and relays outside-workspace file actions, commands and external tools while preserving native deny rules. Idle TUI mail waits for the next turn.",
     permission: (_cfg, a) => a.bypass_permissions === undefined ? a.access ?? "read" : a.bypass_permissions ? "bypass" : "native",
     run: async (cfg, base, a) => {
       return delegateToAntigravity({ ...base, bin: cfg.antigravityBin, access: a.bypass_permissions === undefined ? a.access ?? "read" : "edit", autoApprove: a.bypass_permissions, sandbox: a.terminal_sandbox, extraEnv: { ...base.extraEnv, ...(a.relay?.env ?? {}) } });
