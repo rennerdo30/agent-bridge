@@ -7,6 +7,8 @@ import { retainMetadataFiles } from "./metadata-import.js";
 import { finishedRunLine } from "./run-archive.js";
 import { readRunLogPreview } from "./run-log-preview.js";
 import { isSqliteBusy } from "./sqlite-policy.js";
+import { indexJobRun, jobRunIndexReady, markJobRunIndexReady } from "./job-run-index.js";
+import type { RunLogRecord } from "./run-history.js";
 
 const RUN_LOG = /\.log(?:-\d+-[\w-]+)?$/;
 /** Bumped in every transaction that writes finished-runs rows; readers use it as a cheap cache signature. */
@@ -21,17 +23,19 @@ function bumpRevision(db: DatabaseSync): void {
  db.prepare(`INSERT INTO bridge_metadata VALUES (?,?,'1',?) ON CONFLICT(domain,key)
   DO UPDATE SET value=CAST(CAST(value AS INTEGER)+1 AS TEXT),updated_at=excluded.updated_at`).run(REVISION[0], REVISION[1], Date.now());
 }
-function upsertRun(db: DatabaseSync, key: string, value: Record<string, unknown>): void {
+function upsertRun(home: string, db: DatabaseSync, key: string, value: Record<string, unknown>): void {
  generation++;
  db.prepare("INSERT INTO bridge_metadata VALUES ('finished-runs',?,?,?) ON CONFLICT(domain,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at")
   .run(key, JSON.stringify(value), Date.now());
  bumpRevision(db);
+ indexJobRun(home, value as unknown as RunLogRecord);
 }
 
 /** Pack completed runs only. Active logs and unknown completion evidence stay physical.
  * The finished-runs row commits in the same transaction as the retained bundle, before any source moves (AB-227):
  * a crash leaves the run either in place or packed and indexed, never moved and unlisted. */
 export function packFinishedRuns(home: string, logs: string[]): number {
+ const indexReady = jobRunIndexReady(home);
  let packed = 0;
  for (const log of logs) {
   physicalMetadataPath(log);
@@ -47,7 +51,7 @@ export function packFinishedRuns(home: string, logs: string[]): number {
   const source = relative(home, log).replace(/\\/g, "/"), key = runName(log);
   const value = { name: key, updatedAt: stat.mtimeMs, size: stat.size, signature: `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`, archived: true, meta };
   retainMetadataFiles(home, files, (db, path, _raw, cold) => {
-   if (path === source) upsertRun(db, key, { ...value, file: cold, bundleSource: source });
+   if (path === source) upsertRun(home, db, key, { ...value, file: cold, bundleSource: source });
   });
   // A source imported before this version (bundle committed, move pending) has no project call; index it now.
   const db = metadataDb(home);
@@ -55,11 +59,12 @@ export function packFinishedRuns(home: string, logs: string[]): number {
    const imported = db.prepare("SELECT cold_path FROM bridge_imports WHERE path=?").get(source);
    if (!imported) throw new Error("Completed run lacks verified retention evidence");
    db.exec("BEGIN IMMEDIATE");
-   try { upsertRun(db, key, { ...value, file: String(imported.cold_path), bundleSource: source }); db.exec("COMMIT"); }
+   try { upsertRun(home, db, key, { ...value, file: String(imported.cold_path), bundleSource: source }); db.exec("COMMIT"); }
    catch (error) { db.exec("ROLLBACK"); throw error; }
   }
   packed++;
  }
+ if (indexReady) markJobRunIndexReady(home);
  return packed;
 }
 
@@ -155,7 +160,7 @@ export function recoverPackedRuns(home: string, limit = 100): number {
   if (existsSync(metaCold)) { try { meta = JSON.parse(readFileSync(metaCold, "utf8")); } catch { /* Raw bytes stay retained. */ } }
   db.exec("BEGIN IMMEDIATE");
   try {
-   upsertRun(db, key, { name: key, file: cold, bundleSource: source, updatedAt: stat.mtimeMs, size: stat.size, signature: `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`, archived: true, meta, recovered: true });
+   upsertRun(home, db, key, { name: key, file: cold, bundleSource: source, updatedAt: stat.mtimeMs, size: stat.size, signature: `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`, archived: true, meta, recovered: true });
    db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }
   if (++recovered >= limit) break;

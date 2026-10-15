@@ -2,7 +2,8 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { isRecord } from "./json-store.js";
 import { AGENT_KINDS } from "./protocol.js";
-import { findHistoryJob, historyJobsSteps, readRunLogs, readRunLogsResponsive, type RunLogRecord } from "./run-history.js";
+import { findHistoryJob, historyJobsSteps, readRunLogs, type RunLogRecord } from "./run-history.js";
+import { indexedJobRun, JOB_INDEX_WAIT_MS, waitForJobRunIndex } from "./job-run-index.js";
 import { cloneJson, fileSignature, fileTimeMs, readJsonSnapshot } from "./file-cache.js";
 import { drainScanResponsive } from "./responsive-scan.js";
 import { pidAlive } from "./delegate.js";
@@ -36,13 +37,14 @@ export function recoverJobRecord(home: string, ref: string): StoredJob | undefin
 
 /** Broker recovery never synchronously rereads an entire retained run feed. */
 export async function recoverJobRecordAsync(home: string, ref: string): Promise<StoredJob | undefined> {
-  const recovery = await prepareRecoveryAsync(home, ref);
+  const deadline = performance.now() + JOB_INDEX_WAIT_MS;
+  const recovery = await prepareRecoveryAsync(home, ref, deadline);
   if (!recovery) return undefined;
   const payload = needsHeader(recovery) && recovery.run ? await readRecoveryHeader(recovery.run.file) : { prompt: "", header: "" };
   if (!payload) return undefined;
   // A handoff or new native turn can update authority while asynchronous IO yields.
   // Re-read durable facts before publishing/authorizing the recovered context.
-  const latest = await prepareRecoveryAsync(home, ref);
+  const latest = await prepareRecoveryAsync(home, ref, deadline);
   if (!latest) return undefined;
   if (!needsHeader(latest)) return finishRecovery(home, latest, { prompt: "", header: "" });
   if (latest.run?.file !== recovery.run?.file || latest.run?.signature !== recovery.run?.signature || contextIdentity(latest) !== contextIdentity(recovery)) return undefined;
@@ -57,7 +59,7 @@ function prepareRecovery(home: string, ref: string) {
   if (completeContext(home, history, id)) return selectRecovery(ref, id, history, spec, launch, []);
   return selectRecovery(ref, id, history, spec, launch, readRunLogs(home));
 }
-async function prepareRecoveryAsync(home: string, ref: string) {
+async function prepareRecoveryAsync(home: string, ref: string, deadline: number) {
   const id = recoveryId(ref);
   if (!id) return undefined;
   const history = await drainScanResponsive((function* () {
@@ -71,7 +73,9 @@ async function prepareRecoveryAsync(home: string, ref: string) {
   const { spec, launch } = recoverySpec(home, id);
   if (completeContext(home, history, id)) return selectRecovery(ref, id, history, spec, launch, []);
   const currentRun = witnessedRun(home, id, history);
-  return selectRecovery(ref, id, history, spec, launch, currentRun ? [currentRun] : await readRunLogsResponsive(home));
+  if (currentRun) return selectRecovery(ref, id, history, spec, launch, [currentRun]);
+  await waitForJobRunIndex(home, deadline);
+  return selectRecovery(ref, id, history, spec, launch, indexedJobRun(home, typeof history?.name === "string" ? history.name : ref));
 }
 
 /** Full history rows come from the selected durable payload, never the routing

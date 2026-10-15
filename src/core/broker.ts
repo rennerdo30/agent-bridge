@@ -62,6 +62,7 @@ import { isRecord, retentionLimit } from "./json-store.js";
 import { quarantineMessage } from "./oversize.js";
 import { readArchivedJobSnapshot } from "./job-archive.js";
 import { JobArchiveBackground } from "./job-archive-background.js";
+import { startJobRunBackfill, stopJobRunBackfill } from "./job-run-index.js";
 import { indexedJobProjectionCurrent, readIndexedJobs } from "./job-archive-index.js";
 import { readJsonSnapshot, type JsonSnapshot } from "./file-cache.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
@@ -755,6 +756,7 @@ export class Broker {
     if (this.mobileResources) await this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed"));
     await this.stopTcpFallback();
     this.questions?.close(); this.questions = null;
+    if (this.jobsPath) await stopJobRunBackfill(dirname(this.jobsPath));
     await this.historyBackground?.close().catch(() => {});
     this.historyBackground = null;
     await this.jobArchiveBackground?.close().catch(() => {});
@@ -773,6 +775,7 @@ export class Broker {
   }
 
   private async startServices(optional: (what: string, step: () => void) => void): Promise<void> {
+        if (this.jobsPath) void startJobRunBackfill(dirname(this.jobsPath)).catch(error => this.log.warn("job run index preparing", { err: String(error) }));
         await this.nativeChildren.recover();
         if (this.jobsPath && this.store.file !== ":memory:") optional("job archive worker", () => { this.jobArchiveBackground = new JobArchiveBackground(this.jobsPath!, this.log); });
         optional("backups", () => this.store.startBackups());
@@ -893,6 +896,7 @@ export class Broker {
     if (this.pendingJobMailRetry) clearTimeout(this.pendingJobMailRetry);
     if (this.jobMailRerouteTimer) { clearTimeout(this.jobMailRerouteTimer); this.jobMailRerouteTimer = null; }
     this.pendingJobMailRetry = null;
+    if (this.jobsPath) await stopJobRunBackfill(dirname(this.jobsPath));
     await this.historyBackground?.close();
     await this.jobArchiveBackground?.close();
     this.jobArchiveBackground = null;

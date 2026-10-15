@@ -25,7 +25,7 @@ function files(dir: string): string[] {
   try { return readdirSync(dir); } catch { return []; }
 }
 
-export interface RunLogRecord { name: string; file: string; updatedAt: number; size: number; signature: string; archived: boolean; meta: RunMeta }
+export interface RunLogRecord { name: string; file: string; updatedAt: number; size: number; signature: string; archived: boolean; meta: RunMeta; metadataFile?: string }
 const runLogSnapshots = new Map<string, { signature: string; records: RunLogRecord[] }>();
 const historyJobSnapshots = new Map<string, { signature: string; jobs: Map<string, Record<string, unknown>> }>();
 
@@ -34,14 +34,19 @@ export function readRunLogs(home: string, namesFilter?: Set<string>): RunLogReco
   return drainScan(readRunLogsSteps(home, namesFilter));
 }
 
-export function readRunLogsResponsive(home: string, namesFilter?: Set<string>): Promise<RunLogRecord[]> {
-  return drainScanResponsive(readRunLogsSteps(home, namesFilter, true));
+export function readRunLogsResponsive(home: string, namesFilter?: Set<string>, observedComplete?: (complete: boolean) => void, signal?: AbortSignal): Promise<RunLogRecord[]> {
+  return drainScanResponsive((function* () {
+    const scan = readRunLogsSteps(home, namesFilter, true, observedComplete);
+    try {
+      for (;;) { signal?.throwIfAborted(); const next = scan.next(); if (next.done) return next.value; yield; }
+    } finally { scan.return([]); }
+  })());
 }
 
-export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, responsive = false): Generator<void, RunLogRecord[]> {
+export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, responsive = false, observedComplete?: (complete: boolean) => void): Generator<void, RunLogRecord[]> {
   const root = join(home, RUNS_DIR_NAME);
   let canonicalRoot: string;
-  try { canonicalRoot = realpathSync.native(root); } catch { return []; }
+  try { canonicalRoot = realpathSync.native(root); } catch (error) { observedComplete?.((error as NodeJS.ErrnoException).code === "ENOENT"); return []; }
   const warmWitness = responsive ? captureWarmRunRoot(root, canonicalRoot) : undefined;
   const records = new Map<string, RunLogRecord>();
   const signatures: string[] = [];
@@ -50,11 +55,11 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
   for (const archived of [true, false]) {
     const dir = archived ? join(root, "archive") : root;
     let canonicalDir: string;
-    try { canonicalDir = realpathSync.native(dir); } catch { continue; }
+    try { canonicalDir = realpathSync.native(dir); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") complete = false; continue; }
     const rel = relative(canonicalRoot, canonicalDir);
-    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) continue;
+    if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) { complete = false; continue; }
     let entries: import("node:fs").Dirent[];
-    try { entries = readdirSync(canonicalDir, { withFileTypes: true }); } catch { continue; }
+    try { entries = readdirSync(canonicalDir, { withFileTypes: true }); } catch { complete = false; continue; }
     entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
     // Fresh lstat validates identity and type, including replacements after enumeration.
     // Internal symlinks retain the existing safeFile containment check on every scan.
@@ -76,7 +81,7 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
       const extension = original.endsWith(".json") ? ".json" : RUN_LOG_NAME.test(original) ? ".log" : null;
       if (!extension || namesFilter && !namesFilter.has(original.slice(0, -extension.length))) continue;
       const record = localFile(entry);
-      if (!record) continue;
+      if (!record) { complete = false; continue; }
       if (warmWitness && !captureWarmRunParents(warmWitness, dirname(record.file))) complete = false;
       signatures.push(`${archived}:${name}:${record.file}:${fileSignature(record.st)}`);
       if (extension === ".json") metadataBytes += Number(record.st.size);
@@ -90,20 +95,23 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
   const key = `${canonicalRoot}:${namesFilter ? JSON.stringify([...namesFilter].sort()) : "*"}`;
   const signature = signatures.join("\n"), saved = runLogSnapshots.get(key);
   if (saved?.signature === signature) {
-    if (!responsive || warmWitness && (yield* stableWarmRunFiles(warmWitness, directories))) return yield* cloneRunRecords(saved.records);
+    if (!responsive || warmWitness && (yield* stableWarmRunFiles(warmWitness, directories))) { observedComplete?.(complete); return yield* cloneRunRecords(saved.records); }
     // Do not reuse discovery paths after a failed witness; the next scan is fresh.
     runLogSnapshots.delete(key);
+    observedComplete?.(false);
     return [];
   }
   for (const { archived, files } of directories) {
     const metadata = new Map<string, RunMeta>();
+    const metadataFiles = new Map<string, string>();
     for (const { original, file, st } of files) {
       yield;
       if (!original.endsWith(".json")) continue;
       try {
         if (responsive && !unchangedContainedFile(root, file, st, canonicalRoot)) { complete = false; continue; }
         const value = readJsonSnapshot(file, { file, stat: st }).value;
-        if (isRecord(value)) metadata.set(original, value as RunMeta);
+        if (isRecord(value)) { metadata.set(original, value as RunMeta); metadataFiles.set(original, file); }
+        else complete = false;
       } catch { complete = false; }
     }
     for (const { original, file, st } of files) {
@@ -112,7 +120,7 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
       try {
         if (!st.isFile()) continue;
         const key = original.slice(0, -".log".length);
-        const record = { name: key, file, updatedAt: fileTimeMs(st.mtimeMs, st.mtimeNs), size: Number(st.size), signature: fileSignature(st), archived, meta: metadata.get(`${key}.json`) ?? {} };
+        const record = { name: key, file, updatedAt: fileTimeMs(st.mtimeMs, st.mtimeNs), size: Number(st.size), signature: fileSignature(st), archived, meta: metadata.get(`${key}.json`) ?? {}, metadataFile: metadataFiles.get(`${key}.json`) };
         const previous = records.get(key);
         if (!previous || !archived || record.updatedAt >= previous.updatedAt) records.set(key, record);
       } catch { /* A concurrent archiver may have moved the file; retry on the next read. */ }
@@ -124,6 +132,7 @@ export function* readRunLogsSteps(home: string, namesFilter?: Set<string>, respo
   runLogSnapshots.delete(key);
   if (complete && metadataBytes <= 256 * 1024 * 1024) runLogSnapshots.set(key, { signature, records: result });
   if (runLogSnapshots.size > 8) runLogSnapshots.delete(runLogSnapshots.keys().next().value!);
+  observedComplete?.(complete);
   return yield* cloneRunRecords(result);
 }
 

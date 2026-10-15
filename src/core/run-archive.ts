@@ -1,7 +1,8 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { retentionLimit } from "./json-store.js";
 import { readRunLogPreview } from "./run-log-preview.js";
+import { indexRunFile, jobRunIndexReady, markJobRunIndexReady } from "./job-run-index.js";
 
 export const DEFAULT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 export const ARCHIVE_AGE_ENV = "AGENT_BRIDGE_ARCHIVE_AGE_MS";
@@ -16,6 +17,7 @@ export function finishedRunLine(text: string): string | null {
 /** Preserve the original basename so metadata and log remain addressable as a pair. */
 export function archiveRun(log: string): void {
   if (!finishedRunLine(readRunLogPreview(log))) return;
+  const home = dirname(dirname(log)), indexReady = jobRunIndexReady(home);
   const dir = join(log, "..", "archive");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const target = join(dir, basename(log));
@@ -29,6 +31,8 @@ export function archiveRun(log: string): void {
   }
   renameSync(log, target);
   if (existsSync(meta)) renameSync(meta, archivedMeta);
+  if (existsSync(archivedMeta) || indexReady) indexRunFile(home, target, archivedMeta);
+  if (indexReady) markJobRunIndexReady(home);
 }
 
 /** Includes archives written before AB-84, whose filenames carry a timestamp and UUID suffix. */
