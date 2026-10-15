@@ -107,6 +107,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   private stopping = false;
   /** The bridge gave this session to another server of it (see reclaim). */
   private replaced = false;
+  private replacedBy: { version?: string; agentPid: number | null; agentStartedAt: string | null } | undefined;
   private electing: Promise<void> | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
@@ -226,6 +227,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   get wasReplaced(): boolean {
     return this.replaced;
+  }
+
+  /** Version and host process of the server that last replaced this one, as far as its broker reported them (AB-385). */
+  get replacement(): { version?: string; agentPid: number | null; agentStartedAt: string | null } | undefined {
+    return this.replaced ? this.replacedBy : undefined;
   }
 
   /**
@@ -557,8 +563,14 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       this.emit(ev, data as PeerInfo);
     } else if (ev === "replaced") {
       // A newer server of this same session took over (e.g. /reload-plugins): stay away instead of rejoining.
-      this.log.info("replaced by a newer server of this session; leaving the bridge", { by: (data as { by?: string })?.by });
+      const by = data as { by?: string; version?: unknown; agentPid?: unknown; agentStartedAt?: unknown } | undefined;
+      this.log.info("replaced by a newer server of this session; leaving the bridge", { by: by?.by, version: by?.version, agentPid: by?.agentPid });
       this.replaced = true;
+      this.replacedBy = {
+        version: typeof by?.version === "string" ? by.version : undefined,
+        agentPid: typeof by?.agentPid === "number" ? by.agentPid : null,
+        agentStartedAt: typeof by?.agentStartedAt === "string" ? by.agentStartedAt : null,
+      };
       // Retiring this session's connection must not evict every other session. The process still
       // owns the elected listener until actual shutdown; reclaim can reconnect to that listener.
       void this.stop(false).catch((err) => this.log.warn("could not retire replaced connection", { err: String(err) }));
