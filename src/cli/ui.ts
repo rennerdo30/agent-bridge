@@ -612,7 +612,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     if (req.method === "GET" && isDashboardReadPath(url.pathname)) {
       const read = dashboardRequestSchema.safeParse({ path: url.pathname, query: Object.fromEntries(url.searchParams) });
       if (!read.success) return send(res, 400, { error: "invalid dashboard read request" });
-      const result = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, history: () => historyFeed.connection, peers: async () => (await brokerPeers(opts.pipe, token, opts.log)).peers }, read.data);
+      const result = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, peers: async () => (await brokerPeers(opts.pipe, token, opts.log)).peers }, read.data);
       return send(res, result.status, result.body);
     }
     const chatSend = /^\/api\/(sessions|jobs)\/([^/]+)\/message$/.exec(url.pathname);
@@ -632,7 +632,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const local = peers.find((p) => p.name === name && !p.host && !p.name.includes("/") && !p.jobAgent && !p.unavailable);
       let child: { id: string; title: string } | undefined;
       if (body.child) {
-        const result = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, history: () => historyFeed.connection, peers: async () => peers }, { path: `/api/${job ? "jobs" : "sessions"}/${encodeURIComponent(name)}/subagents` });
+        const result = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, peers: async () => peers }, { path: `/api/${job ? "jobs" : "sessions"}/${encodeURIComponent(name)}/subagents` });
         child = (result.body as { subagents?: { id: string; title: string }[] }).subagents?.find((s) => s.id === body.child);
         if (!child) return send(res, 404, { error: "no such native child of this session" });
       }

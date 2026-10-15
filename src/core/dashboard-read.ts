@@ -22,7 +22,7 @@ import { readArchivedJobSteps } from "./job-archive.js";
 import { indexedJobProjectionCurrent } from "./job-archive-index.js";
 import { dashboardRequestSchema, type DashboardReadRequest, type DashboardReadResult } from "../network/dashboard-protocol.js";
 import { readRunnerStateRecord } from "./runner-store.js";
-import { historyReader, readWithHistory, withImporting, type HeldHistoryConnection } from "./dashboard-history.js";
+import { historyReader, readWithHistory, withImporting } from "./dashboard-history.js";
 import { HistorySourceResolver } from "./history-sources.js";
 import { activeByteSources } from "./byte-source.js";
 const TASK_PREVIEW_CHARS = 300;
@@ -330,11 +330,7 @@ export function classifyPeers(peers: PeerInfo[], runs: RunSummary[], home: strin
   });
 }
 
-export interface DashboardReadContext {
-  home: string; log: Logger; peers: () => Promise<PeerInfo[]> | PeerInfo[]; transcripts?: TranscriptPaths;
-  /** AB-397: the dashboard event feed's held history.db connection; reads borrow it instead of opening one each. */
-  history?: HeldHistoryConnection;
-}
+export interface DashboardReadContext { home: string; log: Logger; peers: () => Promise<PeerInfo[]> | PeerInfo[]; transcripts?: TranscriptPaths }
 const reply = (status: number, body: unknown): DashboardReadResult => ({ status, body });
 /** The same read-only handlers serve HTTP locally and authenticated paired-link requests. */
 export async function readDashboard(ctx: DashboardReadContext, request: DashboardReadRequest): Promise<DashboardReadResult> {
@@ -396,12 +392,12 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       if (!peer.sessionId) return reply(409, { error: "This session has no sessionId yet." });
       if (!TRANSCRIPT_ID.test(peer.sessionId) || !CODING_AGENTS.includes(peer.agent as typeof CODING_AGENTS[number])) return reply(404, { error: "no transcript for this session" });
       if (sessionMatch[2] === "subagents" && child === undefined) {
-        const listed = readWithHistory(ctx.home, () => listNativeSubagents(peer, ctx.transcripts), ctx.history);
+        const listed = readWithHistory(ctx.home, () => listNativeSubagents(peer, ctx.transcripts));
         return reply(200, withImporting({ subagents: listed.value }, listed.importing));
       }
       const from = url.searchParams.get("from") ?? "0";
       if (!validTranscriptCursor(from)) return reply(400, { error: "invalid transcript cursor" });
-      const page = readWithHistory(ctx.home, () => readTranscript(peer, from, child, ctx.transcripts), ctx.history);
+      const page = readWithHistory(ctx.home, () => readTranscript(peer, from, child, ctx.transcripts));
       return page.value ? reply(200, withImporting(page.value, page.importing)) : reply(404, { error: "no transcript for this session or subagent" });
     }
     if (url.pathname === "/api/runs") {
@@ -427,12 +423,12 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       if (!TRANSCRIPT_ID.test(sessionId) || !CODING_AGENTS.includes(agent as typeof CODING_AGENTS[number])) return reply(404, { error: "no transcript for this job" });
       const session = { agent: agent as PeerInfo["agent"], sessionId, cwd: typeof job?.workdir === "string" ? job.workdir : run?.workdir ?? "" };
       if (child === undefined) {
-        const listed = readWithHistory(ctx.home, () => listNativeSubagents(session, ctx.transcripts), ctx.history);
+        const listed = readWithHistory(ctx.home, () => listNativeSubagents(session, ctx.transcripts));
         return reply(200, withImporting({ subagents: listed.value }, listed.importing));
       }
       const from = url.searchParams.get("from") ?? "0";
       if (!validTranscriptCursor(from)) return reply(400, { error: "invalid transcript cursor" });
-      const page = readWithHistory(ctx.home, () => readTranscript(session, from, child, ctx.transcripts), ctx.history);
+      const page = readWithHistory(ctx.home, () => readTranscript(session, from, child, ctx.transcripts));
       return page.value ? reply(200, withImporting(page.value, page.importing)) : reply(404, { error: "no transcript for this job or subagent" });
     }
     const runChatMatch = /^\/api\/runs\/([\w.-]+)\/chat$/.exec(url.pathname);
@@ -445,7 +441,7 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       const sessionId = run.sessionId ?? run.session ?? (typeof job?.sessionId === "string" ? job.sessionId : typeof job?.threadId === "string" ? job.threadId : null);
       if (!sessionId) return reply(409, { error: "This run has no sessionId yet." });
       if (!TRANSCRIPT_ID.test(sessionId) || !CODING_AGENTS.includes(run.agent as typeof CODING_AGENTS[number])) return reply(404, { error: "no transcript for this run" });
-      const page = readWithHistory(ctx.home, () => readTranscript({ agent: run.agent as PeerInfo["agent"], sessionId, cwd: run.workdir ?? "" }, from, undefined, ctx.transcripts), ctx.history);
+      const page = readWithHistory(ctx.home, () => readTranscript({ agent: run.agent as PeerInfo["agent"], sessionId, cwd: run.workdir ?? "" }, from, undefined, ctx.transcripts));
       return page.value ? reply(200, withImporting(page.value, page.importing)) : reply(404, { error: "no transcript for this run" });
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url.pathname);
@@ -472,7 +468,7 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
           if (sources instanceof HistorySourceResolver && sources.liveTail) return null;
           return { buf: buf.subarray(0, length), size: source.size };
         } finally { source.close(); }
-      }, ctx.history);
+      });
       let buf: Buffer, size: number;
       if (retained.value) ({ buf, size } = retained.value);
       else {

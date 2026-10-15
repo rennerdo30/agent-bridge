@@ -18,8 +18,6 @@ export type HistoryChange =
 
 /** How often the held connection checks data_version: one shared-memory read, no file I/O. */
 export const HISTORY_FEED_POLL_MS = 50;
-/** Busy wait of the held connection; the same as a dashboard read's, since dashboard reads borrow it (AB-397). */
-const HISTORY_FEED_BUSY_MS = 100;
 /** While history.db is missing or not readable yet, and after a failed poll. */
 export const HISTORY_FEED_RETRY_MS = 1_000;
 /** Records read per poll: a rowid range, never a scan of the whole table. */
@@ -73,12 +71,6 @@ export class HistoryChangeFeed {
     };
   }
 
-  /**
-   * The held read-only history.db connection while a stream is open, or null. Dashboard reads on this thread borrow it
-   * (AB-397) rather than opening their own per request; the feed alone opens and closes it.
-   */
-  get connection(): DatabaseSync | null { return this.db; }
-
   /** Whether the poll timer and the history.db connection are held. */
   get active(): { polling: boolean; connected: boolean } { return { polling: this.timer !== null, connected: this.db !== null }; }
 
@@ -112,7 +104,7 @@ export class HistoryChangeFeed {
     if (!existsSync(path)) return false;
     let db: DatabaseSync | undefined;
     try {
-      db = openHistoryReader(path, HISTORY_FEED_BUSY_MS);
+      db = openHistoryReader(path, 50);
       if (!(historyReady(db) || historyV1Readable(db)) || !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='conversation_records'").get()) { db.close(); return false; }
       // Changes from now on; earlier content is what the subscriber's snapshot read returns.
       this.last = Number(db.prepare("SELECT coalesce(max(id),0) n FROM conversation_records").get()!.n);
