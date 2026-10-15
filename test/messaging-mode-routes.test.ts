@@ -46,7 +46,6 @@ it.each(["idle", "busy"] as const)("all 25 sender/receiver pairs at %s use real 
   const host = env.node("mode-host"); await host.start();
   const nodes = new Map<string, BridgeNode>(), clients = new Map<string, Client>();
   for (const kind of kinds) {
-    if (kind === "muse") continue;
     const sender = env.node(`mode-${kind}-sender`, kind), receiver = env.node(`mode-${kind}-receiver`, kind);
     await sender.setSessionId(`matrix-${kind}-sender`); await receiver.setSessionId(`matrix-${kind}-receiver`);
     await sender.start(); await receiver.start(); await wire(receiver).request("updatePeer", { activity });
@@ -54,32 +53,19 @@ it.each(["idle", "busy"] as const)("all 25 sender/receiver pairs at %s use real 
     nodes.set(kind, receiver); clients.set(kind, await tools(sender, undefined, kind));
   }
   for (const sender of kinds) for (const receiver of kinds) {
-    if (sender === "muse") {
-      const raw = await BridgeClient.connect(env.pipe, nullLogger);
-      try {
-        const peer = (await host.peers()).find(p => p.id === host.id)!;
-        await expect(raw.request("hello", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(env.home),
-          peer: { ...peer, id: randomUUID(), name: `muse-${receiver}`, agent: "muse" as AgentKind } })).rejects.toMatchObject({ code: "bad_request" });
-        await expect(raw.request("modeSend", { mode: "auto", to: receiver, body: "invalid sender" })).rejects.toMatchObject({ code: "not_registered" });
-      } finally { raw.close(); }
-      continue;
-    }
-    const client = clients.get(sender)!, target = receiver === "muse" ? "muse" : nodes.get(receiver)!.name;
+    const client = clients.get(sender)!, target = nodes.get(receiver)!.name;
     for (const mode of ["queue", "steer", "restart"] as const) {
       const refused = await client.callTool({ name: "send", arguments: { to: target, message: "unsupported mode", mode } });
       expect(refused.isError).toBe(true);
       expect(modeFrom(refused)).toMatchObject({ requested: mode, effective: "refused", stage: "requested", sharedIdempotentDelivery: false });
     }
     const result = await client.callTool({ name: "send", arguments: { to: target, message: `${sender}->${receiver}:${activity}`, mode: "auto" } });
-    if (receiver === "muse") { expect(result.isError).toBe(true); expect(modeFrom(result).effective).toBe("refused"); }
-    else {
-      expect(result.isError).not.toBe(true);
-      expect(modeFrom(result)).toMatchObject({ requested: "auto", effective: "mailbox", stage: "stored",
-        capabilities: { receiverRole: "session", activeSteering: false, interruptRestart: false, queue: false } });
-      expect((result.structuredContent as { mode?: unknown } | undefined)?.mode).toEqual(modeFrom(result));
-      await until(() => nodes.get(receiver)!.unread().some(m => m.body === `${sender}->${receiver}:${activity}`));
-      expect(nodes.get(receiver)!.unread().filter(m => m.body === "unsupported mode")).toHaveLength(0);
-    }
+    expect(result.isError).not.toBe(true);
+    expect(modeFrom(result)).toMatchObject({ requested: "auto", effective: "mailbox", stage: "stored",
+      capabilities: { receiverRole: "session", activeSteering: false, interruptRestart: false, queue: false } });
+    expect((result.structuredContent as { mode?: unknown } | undefined)?.mode).toEqual(modeFrom(result));
+    await until(() => nodes.get(receiver)!.unread().some(m => m.body === `${sender}->${receiver}:${activity}`));
+    expect(nodes.get(receiver)!.unread().filter(m => m.body === "unsupported mode")).toHaveLength(0);
   }
 });
 
@@ -109,7 +95,6 @@ it.each(["idle", "busy"] as const)("native-role 25-pair matrix at %s uses only r
   const senders = new Map<string, BridgeNode>();
   const receivers = new Map<string, string>([["claude", address]]);
   for (const kind of kinds) {
-    if (kind === "muse") { receivers.set(kind, "muse/sub:unavailable"); continue; }
     const sender = env.node(`native-${kind}-sender`, kind);
     await sender.setSessionId(`native-${kind}-sender`); await sender.start(); senders.set(kind, sender);
     await parent.nativeChild({ agentId: childId, action: "grant", sendTo: [...senders.values()].map(node => node.name) });
@@ -121,28 +106,18 @@ it.each(["idle", "busy"] as const)("native-role 25-pair matrix at %s uses only r
   }
   await wire(parent).request("updatePeer", { activity });
   for (const sender of kinds) for (const receiver of kinds) {
-    if (sender === "muse") {
-      const raw = await BridgeClient.connect(env.pipe, nullLogger);
-      try {
-        const peer = (await parent.peers()).find(p => p.id === parent.id)!;
-        await expect(raw.request("hello", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(env.home),
-          peer: { ...peer, id: randomUUID(), name: `native-muse-${receiver}`, agent: "muse" as AgentKind } })).rejects.toMatchObject({ code: "bad_request" });
-      } finally { raw.close(); }
-      continue;
-    }
     const attempt = senders.get(sender)!.sendWithMode({ mode: "queue", to: receivers.get(receiver)!, body: `native ${sender}->${receiver}` });
     if (receiver === "claude") expect((await attempt).mode).toMatchObject({ effective: "nativequeue", stage: "stored", capabilities: { ownedSession: false, queue: true } });
     else await expect(attempt).rejects.toBeInstanceOf(BridgeError);
   }
   expect((await parent.nativeChildPending(childId)).map(message => message.body).sort()).toEqual([
-    "native claude->claude", "native codex->claude", "native opencode->claude", "native antigravity->claude",
+    "native claude->claude", "native codex->claude", "native opencode->claude", "native antigravity->claude", "native muse->claude",
   ].sort());
 });
 
 it("delegated registrations and job-owner DTO labels cannot create a new queue issuer", async () => {
   const { parent, address, childId } = await native();
   for (const kind of kinds) {
-    if (kind === "muse") continue;
     const job = new BridgeNode({ pipePath: env.pipe, token: loadOrCreateToken(env.home), dbPath: env.db,
       agent: "other", jobAgent: kind, jobOwner: "native-root", jobParent: parent.name,
       id: `job:mode-${kind}`, name: `${kind}-job-mode-fixture`, cwd: env.home, autoWake: false, canHostBroker: false, log: nullLogger });
