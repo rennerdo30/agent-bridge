@@ -62,11 +62,11 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-S5SGG7OV.mjs";
+} from "./chunks/chunk-2JT5JJI6.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-ND5CXQAM.mjs";
+} from "./chunks/chunk-O2UKBP6R.mjs";
 import {
   readWorktreeState
 } from "./chunks/chunk-NOVJUMH7.mjs";
@@ -90,7 +90,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-BQ3VNAXR.mjs";
+} from "./chunks/chunk-ZY33BBDY.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -124,8 +124,8 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-EACJO6OL.mjs";
-import "./chunks/chunk-2WUPX32B.mjs";
+} from "./chunks/chunk-V4OKKHJ4.mjs";
+import "./chunks/chunk-RKZYNSBW.mjs";
 import {
   ACCESS_LEVELS,
   DEFAULT_FOLLOW_UP,
@@ -3299,7 +3299,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-D3IRVTN2.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-OBMGJTJK.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3311,9 +3311,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-X273AVMP.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-2YVKZMSU.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-X273AVMP.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-2YVKZMSU.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
