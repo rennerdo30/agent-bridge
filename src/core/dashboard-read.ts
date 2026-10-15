@@ -22,6 +22,8 @@ import { readArchivedJobSteps } from "./job-archive.js";
 import { indexedJobProjectionCurrent } from "./job-archive-index.js";
 import { dashboardRequestSchema, type DashboardReadRequest, type DashboardReadResult } from "../network/dashboard-protocol.js";
 import { readRunnerStateRecord } from "./runner-store.js";
+import { readWithHistory, withImporting } from "./dashboard-history.js";
+import { activeByteSources } from "./byte-source.js";
 const TASK_PREVIEW_CHARS = 300;
 const STALE_RUN_MS = 150_000;
 const LEGACY_JOB_START_TOLERANCE_MS = 1_000;
@@ -186,7 +188,8 @@ function* listRunsSteps(home: string, now: number, names?: Set<string>, responsi
       let cached = runSummaries.get(log.file);
       if (cached?.signature !== signature) {
         // Parse once while fresh; derive interrupted/ETA state on every poll, even for unchanged logs.
-        cached = { signature, summary: summarizeRun(`${log.name}.log`, readRunLogPreview(log.file, log.signature), log.updatedAt, log.updatedAt, log.meta) };
+        const preview = readWithHistory(home, () => readRunLogPreview(log.file, log.signature)).value;
+        cached = { signature, summary: summarizeRun(`${log.name}.log`, preview, log.updatedAt, log.updatedAt, log.meta) };
         runSummaries.delete(log.file); runSummaries.set(log.file, cached);
         if (runSummaries.size > 2048) runSummaries.delete(runSummaries.keys().next().value!);
       }
@@ -385,11 +388,14 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       if (!peer) return reply(404, { error: "no such local session" });
       if (!peer.sessionId) return reply(409, { error: "This session has no sessionId yet." });
       if (!TRANSCRIPT_ID.test(peer.sessionId) || !CODING_AGENTS.includes(peer.agent as typeof CODING_AGENTS[number])) return reply(404, { error: "no transcript for this session" });
-      if (sessionMatch[2] === "subagents" && child === undefined) return reply(200, { subagents: listNativeSubagents(peer, ctx.transcripts) });
+      if (sessionMatch[2] === "subagents" && child === undefined) {
+        const listed = readWithHistory(ctx.home, () => listNativeSubagents(peer, ctx.transcripts));
+        return reply(200, withImporting({ subagents: listed.value }, listed.importing));
+      }
       const from = url.searchParams.get("from") ?? "0";
       if (!validTranscriptCursor(from)) return reply(400, { error: "invalid transcript cursor" });
-      const page = readTranscript(peer, from, child, ctx.transcripts);
-      return page ? reply(200, page) : reply(404, { error: "no transcript for this session or subagent" });
+      const page = readWithHistory(ctx.home, () => readTranscript(peer, from, child, ctx.transcripts));
+      return page.value ? reply(200, withImporting(page.value, page.importing)) : reply(404, { error: "no transcript for this session or subagent" });
     }
     if (url.pathname === "/api/runs") {
       const rawLimit = url.searchParams.get("limit");
@@ -413,11 +419,14 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       if (!sessionId) return reply(409, { error: "This job has no sessionId yet." });
       if (!TRANSCRIPT_ID.test(sessionId) || !CODING_AGENTS.includes(agent as typeof CODING_AGENTS[number])) return reply(404, { error: "no transcript for this job" });
       const session = { agent: agent as PeerInfo["agent"], sessionId, cwd: typeof job?.workdir === "string" ? job.workdir : run?.workdir ?? "" };
-      if (child === undefined) return reply(200, { subagents: listNativeSubagents(session, ctx.transcripts) });
+      if (child === undefined) {
+        const listed = readWithHistory(ctx.home, () => listNativeSubagents(session, ctx.transcripts));
+        return reply(200, withImporting({ subagents: listed.value }, listed.importing));
+      }
       const from = url.searchParams.get("from") ?? "0";
       if (!validTranscriptCursor(from)) return reply(400, { error: "invalid transcript cursor" });
-      const page = readTranscript(session, from, child, ctx.transcripts);
-      return page ? reply(200, page) : reply(404, { error: "no transcript for this job or subagent" });
+      const page = readWithHistory(ctx.home, () => readTranscript(session, from, child, ctx.transcripts));
+      return page.value ? reply(200, withImporting(page.value, page.importing)) : reply(404, { error: "no transcript for this job or subagent" });
     }
     const runChatMatch = /^\/api\/runs\/([\w.-]+)\/chat$/.exec(url.pathname);
     if (runChatMatch) {
@@ -429,8 +438,8 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       const sessionId = run.sessionId ?? run.session ?? (typeof job?.sessionId === "string" ? job.sessionId : typeof job?.threadId === "string" ? job.threadId : null);
       if (!sessionId) return reply(409, { error: "This run has no sessionId yet." });
       if (!TRANSCRIPT_ID.test(sessionId) || !CODING_AGENTS.includes(run.agent as typeof CODING_AGENTS[number])) return reply(404, { error: "no transcript for this run" });
-      const page = readTranscript({ agent: run.agent as PeerInfo["agent"], sessionId, cwd: run.workdir ?? "" }, from, undefined, ctx.transcripts);
-      return page ? reply(200, page) : reply(404, { error: "no transcript for this run" });
+      const page = readWithHistory(ctx.home, () => readTranscript({ agent: run.agent as PeerInfo["agent"], sessionId, cwd: run.workdir ?? "" }, from, undefined, ctx.transcripts));
+      return page.value ? reply(200, withImporting(page.value, page.importing)) : reply(404, { error: "no transcript for this run" });
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url.pathname);
     if (runMatch) {
@@ -445,17 +454,31 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       const witnessed = lstatSync(log.file, { bigint: true });
       const logRoot = isInsideDir(log.file, join(ctx.home, "cold")) ? join(ctx.home, "cold") : join(ctx.home, "runs");
       if (!unchangedContainedFile(logRoot, log.file, witnessed)) return reply(404, { error: "no such run" });
-      const size = Number(witnessed.size);
-      const fd = openSync(log.file, "r");
-      const buf = Buffer.alloc(Math.min(MAX_LOG_CHUNK + 1, Math.max(0, size - from)));
-      try {
-        if (fileSignature(fstatSync(fd, { bigint: true })) !== fileSignature(witnessed)) return reply(404, { error: "run changed before reading" });
-        readSync(fd, buf, 0, buf.length, from);
-      } finally { closeSync(fd); }
+      // A fully ingested log is served from its retained copy in history.db (AB-383).
+      const retained = readWithHistory(ctx.home, () => {
+        const source = activeByteSources()?.open(log.file);
+        if (!source) return null;
+        try {
+          const buf = Buffer.alloc(Math.min(MAX_LOG_CHUNK + 1, Math.max(0, source.size - from)));
+          const length = source.read(buf, 0, buf.length, from);
+          return { buf: buf.subarray(0, length), size: source.size };
+        } finally { source.close(); }
+      });
+      let buf: Buffer, size: number;
+      if (retained.value) ({ buf, size } = retained.value);
+      else {
+        size = Number(witnessed.size);
+        const fd = openSync(log.file, "r");
+        buf = Buffer.alloc(Math.min(MAX_LOG_CHUNK + 1, Math.max(0, size - from)));
+        try {
+          if (fileSignature(fstatSync(fd, { bigint: true })) !== fileSignature(witnessed)) return reply(404, { error: "run changed before reading" });
+          readSync(fd, buf, 0, buf.length, from);
+        } finally { closeSync(fd); }
+      }
       let end = Math.min(buf.length, MAX_LOG_CHUNK);
       // Never cut a UTF-8 character in half: step back over continuation bytes (10xxxxxx).
       while (end < buf.length && end > 0 && (buf[end]! & 0xc0) === 0x80) end--;
-      return reply(200, { text: buf.subarray(0, end).toString("utf8"), next: Math.min(size, from + end), size });
+      return reply(200, withImporting({ text: buf.subarray(0, end).toString("utf8"), next: Math.min(size, from + end), size }, !retained.value));
     }
   return reply(404, { error: "not found" });
 }
