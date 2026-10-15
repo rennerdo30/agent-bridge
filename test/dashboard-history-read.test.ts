@@ -1,8 +1,9 @@
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { appendFileSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { rawSourceReads } from "../src/core/byte-source.js";
+import { decodeBytes } from "../src/core/history-codec.js";
 import { ConversationIngestor } from "../src/core/conversations.js";
 import { readDashboard } from "../src/core/dashboard-read.js";
 import { HistoryIndex } from "../src/core/history.js";
@@ -79,7 +80,7 @@ async function fixture() {
     expect(result.status).toBe(200);
     return result.body as Record<string, any>;
   };
-  return { env, db, paths, main, kids, runLog, peer, index, ingest, drain, api };
+  return { env, db, source, paths, main, kids, runLog, peer, index, ingest, drain, api };
 }
 
 const chat = `/api/sessions/claude-x/chat`;
@@ -208,5 +209,126 @@ describe("dashboard reads from the history store (AB-383)", () => {
     }
     console.info(`AB-383 append -> retained in history.db by the worker: ${samples.map(ms => ms.toFixed(0)).join(", ")} ms`);
     expect(Math.max(...samples)).toBeLessThan(5_000);
+  });
+  describe("a rewritten file is never served from its stale copy", () => {
+    const identity = (file: string) => { const st = statSync(file); return `${st.dev}:${st.ino}:${st.birthtimeMs}`; };
+    const stored = (f: Awaited<ReturnType<typeof fixture>>) => f.db.prepare("SELECT offset,identity,generation FROM conversation_sources WHERE id=?").get(f.main)!;
+    const expectFileAnswer = async (f: Awaited<ReturnType<typeof fixture>>, marker: string) => {
+      const session = { agent: "claude" as const, cwd: f.peer.cwd, sessionId: SESSION };
+      const tail = await f.api(chat, { from: "tail" });
+      expect(tail.importing).toBe(true);
+      const { importing: _flag, ...page } = tail;
+      expect(page).toEqual(readTranscript(session, "tail", undefined, f.paths));
+      expect(JSON.stringify(page.items)).toContain(marker);
+      const first = await f.api(chat, { from: "0" });
+      expect(first.importing).toBe(true);
+      expect(JSON.stringify(first.items)).toContain(marker);
+      // The ingester sees the rewrite too: a new generation is retained and served again.
+      const generation = Number(stored(f).generation);
+      f.drain();
+      expect(Number(stored(f).generation)).toBeGreaterThan(generation);
+      const again = await f.api(chat, { from: "tail" });
+      expect(again.importing).toBeUndefined();
+      expect(again).toEqual(page);
+    };
+    // Also changes the last bytes before the ingested offset: the 64-byte anchor the ingester checks.
+    const upper = (text: string) => text.replace(/(step|message|echo) (\d)/g, (_, word: string, digit: string) => `${word.toUpperCase()} ${digit}`);
+
+    it("truncated and rewritten in place with the same identity", async () => {
+      const f = await fixture();
+      f.drain();
+      const before = stored(f);
+      // Same inode and birth time: truncate, then write longer content.
+      writeFileSync(f.main, Array.from({ length: LINES + 5 }, (_, n) => line(n).replace(/(step|message) (\d)/g, "rewritten $2")).join("\n") + "\n");
+      expect(identity(f.main)).toBe(String(before.identity));
+      expect(statSync(f.main).size).toBeGreaterThan(Number(before.offset));
+      await expectFileAnswer(f, "rewritten ");
+    });
+
+    it("rewritten to the same size", async () => {
+      const f = await fixture();
+      f.drain();
+      const before = stored(f), original = readFileSync(f.main, "utf8");
+      writeFileSync(f.main, upper(original));
+      expect(statSync(f.main).size).toBe(Number(before.offset));
+      expect(identity(f.main)).toBe(String(before.identity));
+      await expectFileAnswer(f, "STEP ");
+    });
+
+    it("replaced by a new file whose identity cannot be told apart (Windows ino 0, simulated)", async () => {
+      const f = await fixture();
+      f.drain();
+      const original = readFileSync(f.main, "utf8");
+      unlinkSync(f.main);
+      writeFileSync(f.main, upper(original) + line(LINES + 1) + "\n");
+      // With ino 0 the stored identity would equal the new file's: simulate exactly that.
+      f.db.prepare("UPDATE conversation_sources SET identity=? WHERE id=?").run(identity(f.main), f.main);
+      await expectFileAnswer(f, "STEP ");
+    });
+  });
+
+  it("a store that fails to answer gives the file's page flagged importing, never an empty page", async () => {
+    const f = await fixture();
+    f.drain();
+    const session = { agent: "claude" as const, cwd: f.peer.cwd, sessionId: SESSION };
+    // A damaged store: every source lookup fails.
+    f.db.exec("ALTER TABLE conversation_sources RENAME COLUMN offset TO moved_offset");
+    for (const from of ["tail", "0"]) {
+      const body = await f.api(chat, { from });
+      expect(body.importing).toBe(true);
+      const { importing: _flag, ...page } = body;
+      expect(page.items.length).toBeGreaterThan(0);
+      expect(page).toEqual(readTranscript(session, from, undefined, f.paths));
+    }
+    const kids = await f.api(`/api/sessions/claude-x/subagents`);
+    expect(kids.importing).toBe(true);
+    expect(kids.subagents).toEqual(listNativeSubagents(session, f.paths));
+    const run = await f.api(`/api/runs/2026-10-15-01-00-00-codex-job-abcd1234`, { from: "0" });
+    expect(run.importing).toBe(true);
+    expect(run.text).toContain("01:00:01 working");
+  });
+
+  it("an opencode run log registered as a database by an earlier build is retained again from byte 0", async () => {
+    const f = await fixture();
+    f.drain();
+    const row = f.db.prepare("SELECT conversation,generation FROM conversation_sources WHERE id=?").get(f.runLog)!;
+    expect(String(row.conversation)).toMatch(/^bridge:run:/);
+    // Earlier builds ticked offset per database read and never set identity or anchor.
+    f.db.prepare("UPDATE conversation_sources SET format='sqlite',offset=7,identity='',anchor='' WHERE id=?").run(f.runLog);
+    const ingest = new ConversationIngestor(f.db, f.env.home, f.paths, f.source); cleanup.push(() => ingest.close());
+    for (let n = 0, idle = 0; n < 200 && idle < 3; n++) idle = ingest.tick() ? 0 : idle + 1;
+    const after = f.db.prepare("SELECT format,generation,offset FROM conversation_sources WHERE id=?").get(f.runLog)!;
+    expect(after.format).toBe("jsonl");
+    expect(Number(after.generation)).toBe(Number(row.generation) + 1);
+    const records = f.db.prepare("SELECT offset,raw,raw_codec FROM conversation_records WHERE source=? AND generation=? ORDER BY offset").all(f.runLog, Number(after.generation));
+    expect(Number(records[0]?.offset)).toBe(0);
+    expect(Buffer.concat(records.map((r) => decodeBytes(r.raw, r.raw_codec))).equals(readFileSync(f.runLog))).toBe(true);
+    const before = rawSourceReads();
+    const run = await f.api(`/api/runs/${basename(f.runLog, ".log")}`, { from: "0" });
+    expect(rawSourceReads() - before).toBe(0);
+    expect(run.importing).toBeUndefined();
+    expect(run.text).toBe(readFileSync(f.runLog, "utf8"));
+  });
+
+  it("many constantly appending sources are all retained within a bounded number of batches", async () => {
+    const f = await fixture();
+    f.drain();
+    const logs = Array.from({ length: 40 }, (_, n) => join(dirname(f.runLog), `2026-10-15-02-00-${String(n).padStart(2, "0")}-codex-job-${(0xa0000000 + n).toString(16)}.log`));
+    for (const log of logs) writeFileSync(log, `02:00:00 ${basename(log)}\n`);
+    f.index.registerChanged(logs);
+    f.ingest.tick();
+    // Every batch serves at least one changed source, so round robin catches all of them up within logs.length batches;
+    // a fixed order would starve the same sources forever.
+    const caughtUp = new Set<string>();
+    for (let batch = 0; batch < logs.length + 5 && caughtUp.size < logs.length; batch++) {
+      // Every file keeps changing, and the watcher keeps marking every one of them changed.
+      for (const log of logs) appendFileSync(log, `02:00:${String(batch).padStart(2, "0")} line ${batch}\n`);
+      const mark = f.db.prepare("UPDATE conversation_sources SET checked=-1 WHERE id=?");
+      for (const log of logs) mark.run(log);
+      f.ingest.tick();
+      for (const log of logs)
+        if (Number(f.db.prepare("SELECT offset FROM conversation_sources WHERE id=?").get(log)?.offset) === statSync(log).size) caughtUp.add(log);
+    }
+    expect(logs.filter((log) => !caughtUp.has(log))).toEqual([]);
   });
 });

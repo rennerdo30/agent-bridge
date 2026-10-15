@@ -34,15 +34,27 @@ export interface HistoryRead<T> {
  * the file as before and reported as importing. Results equal the file read either way.
  */
 export function readWithHistory<T>(home: string, read: () => T): HistoryRead<T> {
-  const db = openStore(home);
-  if (!db) return { value: read(), importing: true };
-  try {
-    const resolver = new HistorySourceResolver(db);
-    const value = withByteSources(resolver, read);
-    return { value, importing: resolver.fellBack };
-  } catch {
-    return { value: read(), importing: true };
-  } finally { db.close(); }
+  const reader = historyReader(home);
+  try { return reader.read(read); } finally { reader.close(); }
+}
+
+/** One history.db connection for several reads (a run listing), opened on first use. Each read gets its own resolver. */
+export function historyReader(home: string): { read<T>(read: () => T): HistoryRead<T>; close(): void } {
+  let db: DatabaseSync | null | undefined;
+  return {
+    read<T>(read: () => T): HistoryRead<T> {
+      if (db === undefined) db = openStore(home);
+      if (!db) return { value: read(), importing: true };
+      try {
+        const resolver = new HistorySourceResolver(db);
+        const value = withByteSources(resolver, read);
+        return { value, importing: resolver.fellBack };
+      } catch {
+        return { value: read(), importing: true };
+      }
+    },
+    close(): void { db?.close(); db = null; },
+  };
 }
 
 /** The dashboard response with the importing flag added only when it applies, so existing shapes stay unchanged. */

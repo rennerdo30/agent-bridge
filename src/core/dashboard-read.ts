@@ -22,7 +22,8 @@ import { readArchivedJobSteps } from "./job-archive.js";
 import { indexedJobProjectionCurrent } from "./job-archive-index.js";
 import { dashboardRequestSchema, type DashboardReadRequest, type DashboardReadResult } from "../network/dashboard-protocol.js";
 import { readRunnerStateRecord } from "./runner-store.js";
-import { readWithHistory, withImporting } from "./dashboard-history.js";
+import { historyReader, readWithHistory, withImporting } from "./dashboard-history.js";
+import { HistorySourceResolver } from "./history-sources.js";
 import { activeByteSources } from "./byte-source.js";
 const TASK_PREVIEW_CHARS = 300;
 const STALE_RUN_MS = 150_000;
@@ -181,14 +182,16 @@ function runnerHeartbeatFresh(home: string, job: unknown, now: number): boolean 
 
 function* listRunsSteps(home: string, now: number, names?: Set<string>, responsive = false): Generator<void, RunSummary[]> {
   const runs: RunSummary[] = [];
-  for (const log of yield* readRunLogsSteps(home, names, responsive)) {
+  // One history.db connection for the whole listing, opened only when some summary must be parsed.
+  const history = historyReader(home);
+  try { for (const log of yield* readRunLogsSteps(home, names, responsive)) {
     yield;
     try {
       const signature = `${log.signature}:${JSON.stringify(log.meta)}`;
       let cached = runSummaries.get(log.file);
       if (cached?.signature !== signature) {
         // Parse once while fresh; derive interrupted/ETA state on every poll, even for unchanged logs.
-        const preview = readWithHistory(home, () => readRunLogPreview(log.file, log.signature)).value;
+        const preview = history.read(() => readRunLogPreview(log.file, log.signature)).value;
         cached = { signature, summary: summarizeRun(`${log.name}.log`, preview, log.updatedAt, log.updatedAt, log.meta) };
         runSummaries.delete(log.file); runSummaries.set(log.file, cached);
         if (runSummaries.size > 2048) runSummaries.delete(runSummaries.keys().next().value!);
@@ -199,7 +202,7 @@ function* listRunsSteps(home: string, now: number, names?: Set<string>, responsi
       runs.push({ ...cloneJson(cached.summary), ...(stale ? { status: "interrupted", etaAt: undefined, etaReportedAt: undefined } : {}), archived: log.archived, recovered: false, hasLog: true });
     }
     catch { /* A concurrent archive operation is retried on the next refresh. */ }
-  }
+  } } finally { history.close(); }
   // An exact retained run needs no job-snapshot recovery or unrelated archive reads.
   if (names && [...names].every((name) => runs.some((run) => run.name === name)))
     return pageRuns(runs, null, runs.length).runs;
@@ -456,11 +459,13 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       if (!unchangedContainedFile(logRoot, log.file, witnessed)) return reply(404, { error: "no such run" });
       // A fully ingested log is served from its retained copy in history.db (AB-383).
       const retained = readWithHistory(ctx.home, () => {
-        const source = activeByteSources()?.open(log.file);
+        const sources = activeByteSources(), source = sources?.open(log.file);
         if (!source) return null;
         try {
           const buf = Buffer.alloc(Math.min(MAX_LOG_CHUNK + 1, Math.max(0, source.size - from)));
           const length = source.read(buf, 0, buf.length, from);
+          // Bytes from the file itself (its live tail) go through the containment-checked read below.
+          if (sources instanceof HistorySourceResolver && sources.liveTail) return null;
           return { buf: buf.subarray(0, length), size: source.size };
         } finally { source.close(); }
       });
@@ -478,7 +483,7 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       let end = Math.min(buf.length, MAX_LOG_CHUNK);
       // Never cut a UTF-8 character in half: step back over continuation bytes (10xxxxxx).
       while (end < buf.length && end > 0 && (buf[end]! & 0xc0) === 0x80) end--;
-      return reply(200, withImporting({ text: buf.subarray(0, end).toString("utf8"), next: Math.min(size, from + end), size }, !retained.value));
+      return reply(200, withImporting({ text: buf.subarray(0, end).toString("utf8"), next: Math.min(size, from + end), size }, retained.importing));
     }
   return reply(404, { error: "not found" });
 }

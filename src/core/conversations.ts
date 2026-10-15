@@ -85,6 +85,10 @@ export class ConversationIngestor {
   private watched = new Set<string>();
   private dirty = new Set<string>();
   private idleSources = 0;
+  /** Changed sources are served round robin from here, so more than one batch of them never starves (AB-383). */
+  private dirtyAfter = "";
+  /** Claude subagent facts are refreshed while a native source advanced or the last refresh still progressed. */
+  private claudeFacts = true;
   private readonly encoded: boolean;
   private readonly fts: boolean;
   constructor(
@@ -99,7 +103,9 @@ export class ConversationIngestor {
     if (this.encoded) {
       registerHistoryFunctions(db); db.exec(CLAUDE_CHILD_FACTS_TABLE);
       // opencode jobs' run logs are plain files; earlier builds registered them as opencode's database (AB-383).
-      db.prepare("UPDATE conversation_sources SET format='jsonl' WHERE format='sqlite' AND path NOT LIKE 'opencode:%' AND conversation LIKE 'bridge:run:%'").run();
+      // Their offset counted database ticks, not bytes: retain them again from byte 0 in a new generation.
+      db.prepare(`UPDATE conversation_sources SET format='jsonl',offset=0,generation=generation+1,identity='',anchor=''
+        WHERE format='sqlite' AND path NOT LIKE 'opencode:%' AND conversation LIKE 'bridge:run:%'`).run();
     }
     this.checked = Number(
       db
@@ -1239,11 +1245,13 @@ export class ConversationIngestor {
       const sourceDeadline = Date.now() + HISTORY_BATCH_MS;
       const read = (source: Record<string, any>): number => {
         try {
-          return source.format === "jsonl"
+          const amount = source.format === "jsonl"
             ? this.jsonl(source)
             : source.format === "sqlite"
               ? this.sqlite(source)
               : this.journal(source);
+          if (amount && /^claude:.*:native:/.test(String(source.conversation))) this.claudeFacts = true;
+          return amount;
         } catch (err) {
           if (
             !["ENOENT", "EACCES", "EPERM"].includes(
@@ -1256,10 +1264,13 @@ export class ConversationIngestor {
       };
       // Watched changes first: read each changed file up to its end (bounded), so an appended line is
       // retained within this batch. A file still behind at the deadline stays first for the next batch.
-      for (const source of this.db
-        .prepare("SELECT * FROM conversation_sources WHERE checked<0 AND format<>'sqlite' ORDER BY id LIMIT ?")
-        .all(DIRTY_SOURCES_PER_TICK)) {
+      const dirtyNext = this.db.prepare("SELECT * FROM conversation_sources WHERE checked<0 AND format<>'sqlite' AND id>? ORDER BY id LIMIT ?");
+      const dirtySources = dirtyNext.all(this.dirtyAfter, DIRTY_SOURCES_PER_TICK);
+      if (dirtySources.length < DIRTY_SOURCES_PER_TICK)
+        dirtySources.push(...dirtyNext.all("", DIRTY_SOURCES_PER_TICK - dirtySources.length).filter((row) => String(row.id) <= this.dirtyAfter));
+      for (const source of dirtySources) {
         if (Date.now() >= sourceDeadline) break;
+        this.dirtyAfter = String(source.id);
         let current: Record<string, any> | undefined = source, more = 0;
         for (let chunk = 0; current && chunk < DIRTY_CHUNKS_PER_SOURCE && Date.now() < sourceDeadline; chunk++) {
           more = read(current);
@@ -1285,7 +1296,11 @@ export class ConversationIngestor {
           .prepare("UPDATE conversation_sources SET checked=? WHERE id=?")
           .run(++this.checked, source.id!);
       }
-      if (this.encoded) work += refreshClaudeChildFacts(this.db);
+      if (this.encoded && this.claudeFacts) {
+        const facts = refreshClaudeChildFacts(this.db);
+        work += facts;
+        this.claudeFacts = facts > 0;
+      }
     }
     const project = this.db
       .prepare(

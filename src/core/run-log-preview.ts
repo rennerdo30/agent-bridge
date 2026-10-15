@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { fileSignature } from "./file-cache.js";
 import { activeByteSources } from "./byte-source.js";
 
@@ -10,6 +10,11 @@ export function readRunLogPreview(file: string, expectedSignature?: string): str
   // A fully ingested log is read from its retained copy in history.db when a dashboard read routes it there (AB-383).
   const retained = activeByteSources()?.open(file);
   if (retained) {
+    try {
+      const witnessed = statSync(file, { bigint: true });
+      if (!witnessed.isFile() || expectedSignature !== undefined && fileSignature(witnessed) !== expectedSignature)
+        throw new Error("run log changed before its preview read");
+    } catch (err) { retained.close(); throw err; }
     try { return previewOf(retained.size, (buffer, position) => retained.read(buffer, 0, buffer.length, position)); }
     finally { retained.close(); }
   }
