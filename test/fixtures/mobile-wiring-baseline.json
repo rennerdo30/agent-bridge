@@ -181,7 +181,8 @@
       ],
       "previousUiSha256": "3f013571e860db81fb38d53e848ddf72669a7cb7fbecda4f2a172d0161e6997f",
       "currentUiSha256": "6361ed89434a3a21aee8d08d399f0ee9a584fd53ee4803ae67f3ae79ff898378",
-      "reason": "Recomputed every method pin and complete UI hash on the merged source with the existing mobile-wiring normalizer and assertions unchanged. Retains default-off P3 dashboard hosting, main Muse/Phones/messaging and TCP lifecycle, and PR17 reservation/capability paths. No bulk normalization or assertion change."
+      "reason": "Recomputed every method pin and complete UI hash on the merged source with the existing mobile-wiring normalizer and assertions unchanged. Retains default-off P3 dashboard hosting, main Muse/Phones/messaging and TCP lifecycle, and PR17 reservation/capability paths. No bulk normalization or assertion change.",
+      "sourceCommit": "1b7ac9cb2ca6e9d534b9f9ac06ee047d8073a8be"
     }
   },
   "revertedUpdates": {
