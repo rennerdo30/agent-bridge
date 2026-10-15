@@ -89,7 +89,14 @@ export function writeRunnerState(home: string, id: string, state: RunnerState): 
 
 /** How long a probed identity of a live runner PID is reused by the frequent liveness checks. */
 const IDENTITY_CACHE_MS = 30_000;
-const probed = new Map<number, { identity: string | undefined; at: number }>();
+type ProbedIdentity = {
+  identity: string | undefined;
+  at: number;
+  generation: number;
+  runner?: { identity: string | undefined };
+};
+const probed = new Map<number, ProbedIdentity>();
+let identityGeneration = 0;
 let probing: Promise<void> | undefined;
 
 /** Prewarm the same liveness cache once per host poll, rather than spawning once per expired runner. */
@@ -103,18 +110,20 @@ export function primeRunnerProcessIdentities(pids: number[]): void {
   // Keep last-known evidence while the bounded asynchronous query runs. Overlapping polls never
   // await it or launch another batch, even when new runners arrive during this query.
   const entries = due.map(pid => {
-    const entry = { identity: probed.get(pid)?.identity, at: probed.get(pid)?.at ?? 0 };
+    const previous = probed.get(pid);
+    const entry: ProbedIdentity = previous ?? { identity: undefined, at: 0, generation: ++identityGeneration };
     probed.set(pid, entry);
-    return { pid, entry };
+    return { pid, identity: entry.runner?.identity, generation: entry.generation };
   });
   const publish = (identities?: Map<number, string>) => {
     const at = Date.now();
-    for (const { pid, entry } of entries) {
-      // An observed exit or a fresh kill probe supersedes this in-flight evidence.
-      if (probed.get(pid) !== entry) continue;
+    for (const { pid, identity, generation } of entries) {
+      const entry = probed.get(pid);
+      // Observed replacement, exit or a fresh kill probe supersedes this in-flight evidence.
+      if (!entry || entry.generation !== generation || (identity !== undefined && entry.runner?.identity !== identity)) continue;
       if (!pidAlive(pid)) { probed.delete(pid); continue; }
       // Failed, missing and unreadable results are unknown, never proof of exit or a match.
-      probed.set(pid, { identity: identities?.get(pid) || undefined, at });
+      probed.set(pid, { ...entry, identity: identities?.get(pid) || undefined, at });
     }
   };
   probing = readProcessIdentities(due).then(publish, () => publish()).finally(() => { probing = undefined; });
@@ -128,8 +137,15 @@ export function primeRunnerProcessIdentities(pids: number[]): void {
 export function runnerProcessAlive(state: Pick<RunnerState, "pid" | "identity" | "updatedAt">, fresh = false): boolean {
   if (!pidAlive(state.pid)) { probed.delete(state.pid); return false; }
   let entry = probed.get(state.pid);
-  if (fresh) probed.set(state.pid, entry = { identity: processIdentity(state.pid), at: Date.now() });
-  else if (!entry || Date.now() - entry.at >= IDENTITY_CACHE_MS) {
+  if (entry?.runner && entry.runner.identity !== state.identity) {
+    // An ordinary poll can observe PID reuse while an older batch is still pending.
+    // Forget its evidence immediately and fence its eventual result, even without ESRCH.
+    entry = undefined;
+  }
+  if (!entry) probed.set(state.pid, entry = { identity: undefined, at: 0, generation: ++identityGeneration });
+  entry.runner = { identity: state.identity };
+  if (fresh) probed.set(state.pid, entry = { ...entry, identity: processIdentity(state.pid), at: Date.now(), generation: ++identityGeneration });
+  else if (Date.now() - entry.at >= IDENTITY_CACHE_MS) {
     primeRunnerProcessIdentities([state.pid]);
     entry = probed.get(state.pid);
   }

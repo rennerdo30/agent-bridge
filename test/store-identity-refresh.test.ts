@@ -348,6 +348,25 @@ it.runIf(process.platform === "win32")("does not let a slow batch overwrite a ne
   expect(runnerProcessAlive(state)).toBe(false);
 });
 
+it.runIf(process.platform === "win32")("ignores a slow A batch after an ordinary poll observes runner B at the same live PID", async () => {
+  vi.useFakeTimers();
+  const { states, live, spawns, syncSpawns } = simulatedProcesses(1, 5_000);
+  const a = states[0]!;
+  expect(runnerProcessAlive(a)).toBe(true); // starts a batch that captures A immediately
+  const b = { ...a, identity: "638970000000000000" };
+  live.set(b.pid, b.identity);
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(runnerProcessAlive(b)).toBe(true); // no ESRCH or fresh probe between A and B
+  expect(spawns).toHaveBeenCalledTimes(1); // replacement still shares the pending batch
+  await vi.advanceTimersByTimeAsync(3_000);
+  expect(runnerProcessAlive(b)).toBe(true); // A's late result must not mark B dead
+  expect(spawns).toHaveBeenCalledTimes(2); // query B only after the old batch finishes
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(runnerProcessAlive(b)).toBe(true);
+  expect(spawns).toHaveBeenCalledTimes(2); // B's applicable evidence remains warm
+  expect(syncSpawns).not.toHaveBeenCalled();
+});
+
 it.runIf(process.platform === "win32")("keeps batch and single-PID identities byte-identical to persisted Get-Process UTC ticks", () => {
   const old = childProcess.execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
     `(Get-Process -Id ${process.pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`],
