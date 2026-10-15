@@ -871,7 +871,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
 
   async updateJob(patch: { jobParent?: string; jobTitle?: string }): Promise<void> {
     Object.assign(this.opts, patch);
-    if (this.isConnected) await this.client!.request("updatePeer", patch);
+    if (this.isConnected) await this.updatePeer(patch);
   }
 
   networkStatus(): Promise<NetworkStatus> {
@@ -1040,7 +1040,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (sessionId === this.sessionId) return;
     this.sessionId = sessionId;
     // The broker may hand us the name of an older server of this session that we replace.
-    if (this.isConnected) this.currentName = (await this.client!.request("updatePeer", { sessionId })).name;
+    if (this.isConnected) this.currentName = (await this.updatePeer({ sessionId })).name;
     this.recordOwnStorePeer();
     if (sessionId) this.restoreReadState(`session:${sessionId}`);
     this.notificationWaitsChanged();
@@ -1051,7 +1051,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (state === this.activity) return;
     this.activity = state;
     if (this.isConnected) {
-      this.client!.request("updatePeer", { activity: state }).catch((err) => this.log.debug("activity update failed", { err: (err as Error).message }));
+      this.updatePeer({ activity: state }).catch((err) => this.log.debug("activity update failed", { err: (err as Error).message }));
     }
   }
 
@@ -1059,12 +1059,19 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     this.wakeOnDirect = wakeOnDirect;
     this.wakeAvailable = wakeAvailable;
     this.wakeMaxHops = wakeMaxHops;
-    if (this.isConnected) await this.client!.request("updatePeer", { wakeOnDirect, wakeAvailable, wakeMaxHops });
+    if (this.isConnected) await this.updatePeer({});
+  }
+
+  /** Every ordinary peer update carries the local policy, including one whose earlier RPC failed.
+   * Reconnection already sends these same fields in helloArgs(); no separate retry is needed. */
+  private updatePeer(patch: RequestMap["updatePeer"][0]): Promise<RequestMap["updatePeer"][1]> {
+    return this.client!.request("updatePeer", { ...patch,
+      wakeOnDirect: this.wakeOnDirect, wakeAvailable: this.wakeAvailable, wakeMaxHops: this.wakeMaxHops });
   }
 
   async setAutoWake(enabled: boolean): Promise<void> {
     this.autoWake = enabled;
-    if (this.isConnected) await this.client!.request("updatePeer", { autoWake: enabled });
+    if (this.isConnected) await this.updatePeer({ autoWake: enabled });
   }
 
   get currentSessionId(): string | null {
@@ -1085,7 +1092,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     if (name) this.currentName = name;
     this.log.info("peer relocated", { cwd, name: this.currentName });
     if (this.isConnected) {
-      const peer = await this.client!.request("updatePeer", { cwd, ...(name ? { name } : {}) });
+      const peer = await this.updatePeer({ cwd, ...(name ? { name } : {}) });
       this.currentName = peer.name;
     }
     this.recordOwnStorePeer();
