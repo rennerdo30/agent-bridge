@@ -1,16 +1,21 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { claudeMcpDenyRules, OWN_SERVER_RULE } from "../src/core/claude-mcp.js";
 import { delegateToClaude } from "../src/core/delegate.js";
 import { grantedPluginServers, startClaudeJobMcp } from "../src/core/claude-job-mcp.js";
 import { nullLogger } from "../src/core/logger.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { until } from "./helpers.js";
+import { readProcessIdentity } from "../src/core/process-identity.js";
 
 const dirs: string[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
@@ -31,7 +36,7 @@ function jobFixture() {
       let result;
       if (m.method === 'initialize') result = { protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'fixture', version: '1' } };
       if (m.method === 'tools/list') {
-        const names = m.params?.cursor ? ['link_parent', 'set_status', 'set_build', 'set_handoff', 'update_handoff', 'delete_issue', 'merge_issues', 'unmerge', 'queue_command'] : ['get_issue', 'list_issues', 'comment', 'set_plan', 'update_step', 'create_issue'];
+        const names = m.params?.cursor ? ['inventory_get_issue', 'Get_issue', 'link_parent', 'set_status', 'set_build', 'set_handoff', 'update_handoff', 'delete_issue', 'merge_issues', 'unmerge', 'queue_command'] : ['get_issue', 'list_issues', 'comment', 'set_plan', 'update_step', 'create_issue'];
         result = { tools: names.map(name => ({ name, inputSchema: { type: 'object' } })), ...(m.params?.cursor ? {} : { nextCursor: 'page2' }) };
       }
       if (m.method === 'tools/call') { appendFileSync(process.env.CALLS, m.params.name + '\\n'); result = { content: [{ type: 'text', text: m.params.name }] }; }
@@ -129,6 +134,97 @@ describe("granted plugin MCP exposure in headless Claude jobs", () => {
   it("fails closed when a granted server cannot start", async () => {
     const f = jobFixture();
     await expect(startClaudeJobMcp({ cwd: f.root, patterns: ["ungranted.read"], env: { ...process.env, CLAUDE_CONFIG_DIR: f.configDir }, log: nullLogger, timeoutMs: 1000 })).rejects.toThrow("refusing an unfiltered fallback");
+  });
+
+  it("does not alias a prefixed or differently cased raw inventory tool into an exact grant", async () => {
+    const f = jobFixture();
+    writeFileSync(join(f.plugin, ".mcp.json"), JSON.stringify({ inventory: { command: process.execPath, args: ["${CLAUDE_PLUGIN_ROOT}/upstream.cjs"], env: { CALLS: f.calls } } }));
+    const view = await startClaudeJobMcp({ cwd: f.root, patterns: ["inventory.get_issue"], env: { ...process.env, CLAUDE_CONFIG_DIR: f.configDir }, log: nullLogger });
+    const client = new Client({ name: "fixture", version: "1" });
+    try {
+      const cfg = Object.values(view.config)[0] as { url: string };
+      await client.connect(new StreamableHTTPClientTransport(new URL(cfg.url), { requestInit: { headers: { Authorization: `Bearer ${view.env.AGENT_BRIDGE_CLAUDE_MCP_TOKEN}` } } }));
+      expect(view.allowed).toEqual(["mcp__job_plugin_fixture_inventory__get_issue"]);
+      expect((await client.listTools()).tools.map(t => t.name)).toEqual(["get_issue"]);
+      for (const name of ["inventory_get_issue", "Get_issue"]) await expect(client.callTool({ name, arguments: {} })).rejects.toThrow("not granted");
+      await client.callTool({ name: "get_issue", arguments: {} });
+      expect(readFileSync(f.calls, "utf8")).toBe("get_issue\n");
+    } finally { await client.close(); await view.stop(); }
+  });
+
+  it.each(["completion", "cancellation"])("stops the recorded owned root, launcher and stubborn descendant on %s", async (reason) => {
+    const f = jobFixture();
+    const pidsFile = join(f.root, "pids.json");
+    writeFileSync(join(f.plugin, "launcher.cjs"), `
+      const { spawn } = require('node:child_process');
+      const leaf = spawn(process.execPath, ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 60000)"], { stdio: 'ignore', windowsHide: true });
+      require('node:fs').writeFileSync(${JSON.stringify(pidsFile)}, JSON.stringify([process.pid, leaf.pid]));
+      require('./upstream.cjs');
+    `);
+    writeFileSync(join(f.plugin, ".mcp.json"), JSON.stringify({ inventory: { command: process.execPath, args: ["${CLAUDE_PLUGIN_ROOT}/launcher.cjs"], env: { CALLS: f.calls } } }));
+    const log = { ...nullLogger, info: vi.fn() };
+    const controller = new AbortController();
+    const view = await startClaudeJobMcp({ cwd: f.root, patterns: ["inventory.get_issue"], env: { ...process.env, CLAUDE_CONFIG_DIR: f.configDir }, log, signal: controller.signal });
+    const root = log.info.mock.calls.find(([message]) => message === "owned plugin MCP root")![1] as { pid: number; identity: string };
+    const pids: number[] = [root.pid, ...JSON.parse(readFileSync(pidsFile, "utf8"))];
+    const identities = await Promise.all(pids.map(pid => readProcessIdentity(pid)));
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    try {
+      expect(root.identity).toBe(identities[0]);
+      expect(pids.every(alive)).toBe(true);
+      if (reason === "cancellation") controller.abort();
+      await view.stop();
+      await until(() => pids.every(pid => !alive(pid)));
+    } finally {
+      await view.stop();
+      // Failure cleanup is limited to these fixture-created PIDs with their recorded identities.
+      for (const [index, pid] of pids.entries()) if (identities[index] && await readProcessIdentity(pid) === identities[index]) process.kill(pid, "SIGKILL");
+    }
+  });
+
+  it.each(["deadline", "cancellation"])("bounds SSE startup without an endpoint event on %s", async (reason) => {
+    const f = jobFixture();
+    let connected!: () => void;
+    let disconnected = false;
+    const opened = new Promise<void>(done => { connected = done; });
+    const server = createServer((_req, res) => { res.on("close", () => { disconnected = true; }); res.writeHead(200, { "content-type": "text/event-stream" }); res.write(": waiting\n\n"); connected(); });
+    await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
+    writeFileSync(join(f.plugin, ".mcp.json"), JSON.stringify({ inventory: { type: "sse", url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/sse` } }));
+    const controller = new AbortController();
+    const started = Date.now();
+    try {
+      const result = startClaudeJobMcp({ cwd: f.root, patterns: ["inventory.get_issue"], env: { ...process.env, CLAUDE_CONFIG_DIR: f.configDir }, log: nullLogger, timeoutMs: reason === "deadline" ? 500 : 5000, signal: controller.signal });
+      const rejected = expect(result).rejects.toThrow("refusing an unfiltered fallback");
+      await opened;
+      if (reason === "cancellation") controller.abort();
+      await rejected;
+      expect(Date.now() - started).toBeLessThan(3000);
+      await until(() => disconnected);
+    } finally { server.closeAllConnections(); await new Promise<void>(done => server.close(() => done())); }
+  });
+
+  it("compares physical project paths without inventing drive aliases or folding case-sensitive folders", () => {
+    const f = jobFixture();
+    const physical = join(f.root, "Project");
+    const different = join(f.root, "project");
+    const alias = join(f.root, "alias");
+    mkdirSync(physical); symlinkSync(physical, alias, process.platform === "win32" ? "junction" : "dir");
+    const install = (projectPath: string) => writeFileSync(join(f.configDir, "plugins", "installed_plugins.json"), JSON.stringify({ plugins: { "fixture@market": [{ installPath: f.plugin, projectPath }] } }));
+    install(physical);
+    expect(grantedPluginServers(alias, ["pair-desk.get_issue"], f.configDir)).toHaveLength(1);
+    // Realpath proves aliases. Unrelated drive spellings must stay unrelated, even on Windows.
+    install("E:/independent-project");
+    const actual = realpathSync.native;
+    vi.spyOn(realpathSync, "native").mockImplementation((path: any) => {
+      if (/^[DE]:[\\/]independent-project$/i.test(String(path))) return String(path) as any;
+      return actual(path);
+    });
+    expect(grantedPluginServers("D:/independent-project", ["pair-desk.get_issue"], f.configDir)).toHaveLength(0);
+    vi.restoreAllMocks();
+    if (process.platform !== "win32" && !existsSync(different)) {
+      mkdirSync(different); install(physical);
+      expect(grantedPluginServers(different, ["pair-desk.get_issue"], f.configDir)).toHaveLength(0);
+    }
   });
 });
 const tmp = () => {

@@ -1,19 +1,21 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { OwnedMcpStdio } from "./owned-mcp-stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { hasServerGrant, isAutoApproved, isHandoffToolCall } from "./tool-allow.js";
+import { hasServerGrant, isInventoryToolGranted } from "./tool-allow.js";
 import { readBodyText } from "./http-body.js";
 import { tokensEqual } from "./token.js";
 import type { Logger } from "./logger.js";
+import { projectKey } from "./project-identity.js";
+import { realFolder } from "./delegate.js";
 
 const TOKEN_ENV = "AGENT_BRIDGE_CLAUDE_MCP_TOKEN";
 const TIMEOUT_MS = 30_000;
@@ -21,7 +23,10 @@ type PluginServer = { name: string; root: string; config: Record<string, any> };
 function json(path: string): any {
   try { return JSON.parse(readFileSync(path, "utf8")); } catch { return null; }
 }
-const norm = (p: string) => resolve(p).replace(/\\/g, "/").replace(/^d:/i, "e:").toLowerCase();
+function inProject(cwd: string, project: string): boolean {
+  const path = relative(projectKey(realFolder(resolve(project))), projectKey(realFolder(resolve(cwd))));
+  return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith("../") && !path.startsWith("..\\"));
+}
 
 /** Resolve installed plugin declarations without relying on the job's ambient plugin discovery. */
 export function grantedPluginServers(cwd: string, patterns: readonly string[], configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude")): PluginServer[] {
@@ -33,7 +38,7 @@ export function grantedPluginServers(cwd: string, patterns: readonly string[], c
     for (const entry of Array.isArray(entries) ? entries : [entries]) {
       const root = entry?.installPath;
       if (typeof root !== "string") continue;
-      if (entry.projectPath && norm(cwd) !== norm(entry.projectPath) && !norm(cwd).startsWith(norm(entry.projectPath) + "/")) continue;
+      if (entry.projectPath && !inProject(cwd, entry.projectPath)) continue;
       const manifest = json(join(root, ".claude-plugin", "plugin.json"));
       const servers: Record<string, any> = {};
       const merge = (value: any): void => {
@@ -73,15 +78,20 @@ export async function startClaudeJobMcp(options: {
 }) {
   const plugins = grantedPluginServers(options.cwd, options.patterns, options.env.CLAUDE_CONFIG_DIR);
   const clients: Client[] = [];
+  const transports: Transport[] = [];
   let http: Server | undefined;
   let stopping: Promise<void> | undefined;
   const stop = () => stopping ??= (async () => {
     options.signal?.removeEventListener("abort", abort);
     http?.closeAllConnections();
     if (http?.listening) await new Promise<void>((done) => http!.close(() => done()));
+    // Kill owned trees before closing protocol streams: a launcher exiting on EOF can orphan children.
+    const closed = await Promise.allSettled(transports.map((transport) => transport.close()));
     await Promise.allSettled(clients.map((client) => client.close()));
+    const failed = closed.find((result) => result.status === "rejected");
+    if (failed?.status === "rejected") throw new Error("Plugin MCP process cleanup failed", { cause: failed.reason });
   })();
-  const abort = () => { void stop(); };
+  const abort = () => { void stop().catch(() => options.log.warn("Plugin MCP cancellation cleanup failed")); };
   const timeout = options.timeoutMs ?? TIMEOUT_MS;
   const signal = AbortSignal.any([options.signal ?? new AbortController().signal, AbortSignal.timeout(timeout)]);
   const views: { name: string; client: Client; tools: Tool[] }[] = [];
@@ -98,8 +108,8 @@ export async function startClaudeJobMcp(options: {
         let command = expandValue(cfg.command);
         // Plugins commonly ship an extensionless shell launcher beside a Windows launcher.
         if (process.platform === "win32" && existsSync(`${command}.cmd`)) command += ".cmd";
-        transport = new StdioClientTransport({ command, args: (cfg.args ?? []).map(expandValue),
-          env: { ...options.env, ...record(cfg.env), CLAUDE_PLUGIN_ROOT: plugin.root } as Record<string, string>, cwd: options.cwd, stderr: "ignore" });
+        transport = new OwnedMcpStdio({ command, args: (cfg.args ?? []).map(expandValue),
+          env: { ...options.env, ...record(cfg.env), CLAUDE_PLUGIN_ROOT: plugin.root }, cwd: options.cwd, log: options.log, signal });
       } else if (cfg.type === "http" || cfg.type === "sse") {
         const url = new URL(expandValue(cfg.url));
         const requestInit = { headers: record(cfg.headers) };
@@ -107,18 +117,22 @@ export async function startClaudeJobMcp(options: {
       } else throw new Error(`Unsupported granted MCP transport for ${plugin.name}`);
       const client = new Client({ name: "agent-bridge-job", version: "1" });
       clients.push(client);
-      try { await client.connect(transport, { timeout, signal }); }
-      finally {
-        if (transport instanceof StdioClientTransport) options.log.info("started granted plugin MCP", { server: plugin.name, pid: transport.pid });
-      }
+      transports.push(transport);
+      // SDK connect awaits transport.start before its request deadline applies (notably SSE endpoint).
+      let cancel: () => void;
+      await new Promise<void>((done, reject) => {
+        cancel = () => { void transport.close().catch(() => {}); reject(signal.reason); };
+        signal.addEventListener("abort", cancel, { once: true });
+        if (signal.aborted) cancel();
+        else void client.connect(transport, { timeout, signal }).then(done, reject);
+      }).finally(() => signal.removeEventListener("abort", cancel));
       const tools: Tool[] = [];
       let cursor: string | undefined;
       do {
         const page = await client.listTools(cursor ? { cursor } : {}, { timeout, signal });
         tools.push(...page.tools.filter((tool) => {
           if (!/^[\w.-]+$/.test(tool.name)) return false;
-          const call = { tool: `mcp:${plugin.name}`, detail: `${tool.name}: {}` };
-          return isAutoApproved(call, options.patterns) && !isHandoffToolCall(call);
+          return isInventoryToolGranted(plugin.name, tool.name, options.patterns) && !/(set|update)_handoff$/i.test(tool.name);
         }));
         cursor = page.nextCursor;
       } while (cursor);

@@ -49,8 +49,15 @@ export function approvalHint(r: { tool: string; detail: string }): string {
   return ` (not covered by this job's allow_tools; add "${server}.${call.tool}"${preset} to allow it without asking; get_* and list_* only cover reads)`;
 }
 
-function glob(pattern: string): RegExp {
-  return new RegExp(`^${pattern.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`, "i");
+function glob(pattern: string, flags = "i"): RegExp {
+  return new RegExp(`^${pattern.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`, flags);
+}
+
+/** Structured inventory never goes through CLI description or opencode prefix normalization. */
+export function isInventoryToolGranted(server: string, tool: string, patterns: readonly string[]): boolean {
+  const names = serverNames(server).flatMap((name) => [name, `${name}.${tool}`]);
+  return patterns.flatMap((p) => p.trim() === DESK_WORKER_PRESET ? DESK_WORKER_PATTERNS : [p.trim()])
+    .some((pattern) => names.some((name) => glob(pattern, "").test(name)));
 }
 
 /** Whether any grant selects a server, including a tool-specific grant or worker preset. */
