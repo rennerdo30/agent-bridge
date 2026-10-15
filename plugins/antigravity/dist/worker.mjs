@@ -53,7 +53,7 @@ import {
 } from "./chunks/chunk-3SNYC6B4.mjs";
 import {
   antigravityHookOutput
-} from "./chunks/chunk-FGVOZGTM.mjs";
+} from "./chunks/chunk-RKGVWS52.mjs";
 import {
   MAX_STREAM_ENTRIES
 } from "./chunks/chunk-5OKUB2U5.mjs";
@@ -62,15 +62,15 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-SJO3OECL.mjs";
+} from "./chunks/chunk-EUNGQ3BV.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-M752Y3OB.mjs";
+} from "./chunks/chunk-MRGINXMD.mjs";
 import {
   readWorktreeState
 } from "./chunks/chunk-6FOHLUBM.mjs";
-import "./chunks/chunk-RF53ZVVQ.mjs";
+import "./chunks/chunk-TSFUBC3Q.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   codexAppServerCall,
@@ -78,7 +78,7 @@ import {
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-J3ECCIZP.mjs";
+} from "./chunks/chunk-NHO2O4KR.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
@@ -90,7 +90,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-DQBJSHP6.mjs";
+} from "./chunks/chunk-6G6XL5QS.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -124,8 +124,8 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-UQEVBCCA.mjs";
-import "./chunks/chunk-CMOH34MZ.mjs";
+} from "./chunks/chunk-U3HNANSP.mjs";
+import "./chunks/chunk-RBPXGONQ.mjs";
 import {
   ACCESS_LEVELS,
   DEFAULT_FOLLOW_UP,
@@ -153,7 +153,7 @@ import {
   resolveBinary,
   runProcess,
   verifiedGoneJobOwners
-} from "./chunks/chunk-4J3TVGHF.mjs";
+} from "./chunks/chunk-I2Q3AOAR.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
@@ -3004,9 +3004,26 @@ function deriveJobTitle(prompt, maxChars = 80) {
 }
 
 // src/mcp/server-lifecycle.ts
-var SHUTDOWN_DEADLINE_MS = 8e3;
+var SHUTDOWN_STEP_MS = 3e3;
+var NODE_STOP_MS = 8e3;
+var SHUTDOWN_DEADLINE_MS = 3 * SHUTDOWN_STEP_MS + NODE_STOP_MS + 1e3;
 var PARENT_CHECK_MS = 5e3;
 var PARENT_IDENTITY_CHECK_MS = 10 * 6e4;
+function comparePrerelease(a, b) {
+  const x = a.split("."), y = b.split(".");
+  for (let i = 0; i < Math.min(x.length, y.length); i++) {
+    const p = x[i], q = y[i];
+    const pn = /^\d+$/.test(p), qn = /^\d+$/.test(q);
+    if (pn && qn) {
+      const d = Number(p) - Number(q);
+      if (d) return Math.sign(d);
+      continue;
+    }
+    if (pn !== qn) return pn ? -1 : 1;
+    if (p !== q) return p < q ? -1 : 1;
+  }
+  return Math.sign(x.length - y.length);
+}
 function compareVersions(a, b) {
   const parse = (v) => {
     const m = /^v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$/.exec(v.trim());
@@ -3021,11 +3038,29 @@ function compareVersions(a, b) {
   if (x.pre === y.pre) return 0;
   if (x.pre === null) return 1;
   if (y.pre === null) return -1;
-  return x.pre < y.pre ? -1 : 1;
+  return comparePrerelease(x.pre, y.pre);
 }
-function shouldYieldTo(replacementVersion, ownVersion) {
-  if (!replacementVersion) return false;
-  return compareVersions(replacementVersion, ownVersion) === 1;
+function shouldYieldTo(replacement, own) {
+  if (!replacement?.version || compareVersions(replacement.version, own.version) !== 1) return false;
+  if (!own.parentIdentity || !replacement.agentStartedAt || !Number.isSafeInteger(replacement.agentPid)) return false;
+  return replacement.agentPid === own.ppid && replacement.agentStartedAt === own.parentIdentity;
+}
+async function runShutdownSteps(steps, opts = {}) {
+  for (const step of steps) {
+    opts.onStep?.(step.name);
+    const budgetMs = step.budgetMs ?? SHUTDOWN_STEP_MS;
+    let timer;
+    const timedOut = /* @__PURE__ */ Symbol("timeout");
+    const outcome = await Promise.race([
+      Promise.resolve().then(step.run).catch(() => void 0),
+      new Promise((resolve2) => {
+        timer = setTimeout(() => resolve2(timedOut), budgetMs);
+        timer.unref();
+      })
+    ]);
+    if (timer) clearTimeout(timer);
+    if (outcome === timedOut) opts.onTimeout?.(step.name, budgetMs);
+  }
 }
 function pidExists(pid) {
   try {
@@ -3366,7 +3401,7 @@ async function startServer(argv = process.argv.slice(2)) {
       if (!force && !cfg.dashboard) return null;
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-ZMEKSDKI.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-HUGDH7I4.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3378,9 +3413,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-RRBWOIWC.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-4I2H4OTA.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-RRBWOIWC.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-4I2H4OTA.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3415,31 +3450,37 @@ async function startServer(argv = process.argv.slice(2)) {
   closeSweep.unref();
   let stopParentWatch = () => {
   };
-  const shutdown = async (reason) => {
+  const shutdown = async (reason, yielded = false) => {
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(closeSweep);
     stopParentWatch();
     log.info("shutting down", { reason });
+    let step = "start";
     setTimeout(() => {
-      log.warn("shutdown did not finish in time; exiting", { reason, deadlineMs: SHUTDOWN_DEADLINE_MS });
+      log.warn("shutdown did not finish in time; exiting", { reason, step, deadlineMs: SHUTDOWN_DEADLINE_MS });
       process.exit(0);
     }, SHUTDOWN_DEADLINE_MS).unref();
+    if (yielded) ctx.jobs?.yieldInline();
     ctx.jobs?.cancelAll();
-    await killAllDelegates();
-    await mcp.close().catch(() => {
-    });
-    await dashboard?.then((controller) => controller.close()).catch(() => {
-    });
-    await mobileDashboard?.then((controller) => controller?.close()).catch(() => {
-    });
-    await rewake?.stop().catch(() => {
-    });
-    await antigravityHooks?.stop().catch(() => {
-    });
-    await museHooks?.stop().catch(() => {
-    });
-    await node?.stop().catch(() => {
+    const nodeStop = { name: "bridge node", run: () => node?.stop(), budgetMs: NODE_STOP_MS };
+    const steps = [
+      // Stop every delegated CLI this process runs itself, with its whole process tree; nothing may keep working unobserved.
+      { name: "delegates", run: () => killAllDelegates() },
+      { name: "mcp transport", run: () => mcp.close() },
+      { name: "local endpoints", run: () => Promise.allSettled([
+        dashboard?.then((controller) => controller.close()),
+        mobileDashboard?.then((controller) => controller?.close()),
+        rewake?.stop(),
+        antigravityHooks?.stop(),
+        museHooks?.stop()
+      ]) }
+    ];
+    await runShutdownSteps(yielded ? [nodeStop, ...steps] : [...steps, nodeStop], {
+      onStep: (name) => {
+        step = name;
+      },
+      onTimeout: (name, budgetMs) => log.warn("shutdown step did not finish in time; continuing", { reason, step: name, budgetMs })
     });
     process.exit(0);
   };
@@ -3448,8 +3489,12 @@ async function startServer(argv = process.argv.slice(2)) {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
   node?.on("replaced", () => {
-    const by = node.replacementVersion;
-    if (shouldYieldTo(by, APP_VERSION)) void shutdown(`replaced by newer server v${by}`);
+    const by = node.replacement;
+    void parentProcessIdentity().then((parentIdentity) => {
+      if (!node.wasReplaced || !shouldYieldTo(by, { version: APP_VERSION, ppid: process.ppid, parentIdentity })) return;
+      void shutdown(`replaced by newer server v${by.version} of the same host`, true);
+    }).catch(() => {
+    });
   });
   stopParentWatch = watchParent({ ppid: process.ppid, identity: parentProcessIdentity(), onGone: (reason) => void shutdown(reason) });
   await mcp.connect(transport);
@@ -3613,7 +3658,7 @@ ${JSON.stringify(result)}`);
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
       const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-47SYSXOL.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-SXMENF2Y.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-RZUV3LSV.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
