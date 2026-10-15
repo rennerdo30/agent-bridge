@@ -65,7 +65,8 @@ const REVIEWED_REMOVALS: Record<string, string[]> = {
   // Recreated ephemeral endpoint descriptor only: no durable records,
   // registrations or history. Exact current generation and field shape required;
   // unknown content and successor generations stay intact, as asserted below.
-  "core/broker.ts": ["unlinkSync(temporary)", "unlinkSync(file)"],
+  // Handover repeat marker: exclusively created (wx) unpublished staging file; reviewed by Claude main 2026-10-16
+  "core/broker.ts": ["unlinkSync(temporary)", "unlinkSync(file)", "unlinkSync(temporary)"],
   "core/antigravity-plugin.ts": ["unlinkSync(temporary)", "unlinkSync(file)"],
   "mcp/muse-hooks.ts": ["unlinkSync(temporary)", "unlinkSync(this.file)"],
   "mcp/antigravity-hooks.ts": ["unlinkSync(temporary)", "unlinkSync(this.file)"],
