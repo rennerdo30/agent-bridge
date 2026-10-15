@@ -483,6 +483,50 @@ it.each(["exception", "cancellation", "crash"] as const)("retries only unacknowl
   expect(restored.queue).toEqual([]); expect(restored.usagePendingControls).toBeUndefined();
 });
 
+it("never recovers a durable admitted CID evicted from the runner seen window after crash and reload", async () => {
+  const path = join(home, "jobs.json"), node = new LocalCoordinator("owner", "owner-session");
+  let jobs = new JobManager(node, nullLogger, path, 2); managers.push(jobs);
+  let alive = true;
+  const controls = Array.from({ length: 102 }, (_, index) => ({ cid: `eviction-control-${index}`, body: `steering ${index}` }));
+  const deliveries = new Map<string, number>([[controls[0]!.cid, 1]]);
+  let retry: { cid: string; body: string }[] = [];
+  let state: RunnerState = { pid: 0, peer: "fixture-runner", updatedAt: Date.now(), status: "running", sessionId: "same-session" };
+  const runners = { state: () => state, alive: () => alive, send() {}, kill() {} }; jobs.runners = runners;
+  const resume = vi.fn((_message: string): Run => async (_signal, _progress, current) => {
+    retry = structuredClone(current.usagePendingControls ?? []);
+    for (const control of retry) deliveries.set(control.cid, (deliveries.get(control.cid) ?? 0) + 1);
+    return answer;
+  });
+  const run: Run = Object.assign(async () => answer, { hosted: () => ({ pid: 0, peer: "fixture-runner", startedAt: Date.now() }) });
+  const job = jobs.start("codex", null, "task", run, resume);
+  job.forwarded = structuredClone(controls);
+  const allSeen = controls.map(control => control.cid);
+  state = { ...state, seen: allSeen.slice(-100), usageSubmission: { runId: job.usageRunId, turnStartedAt: job.startedAt,
+    admitted: [controls[0]!.cid], pending: controls.slice(1), queued: [] } };
+  expect(allSeen.length).toBeGreaterThan(100); expect(state.seen).toHaveLength(100);
+  expect(state.seen).not.toContain(controls[0]!.cid); expect(job.forwarded).toHaveLength(102);
+  (jobs as any).checkHosted(job); jobs.persist();
+  expect(readStore(path).find(saved => saved.id === job.id)?.usageAdmittedControls).toContain(controls[0]!.cid);
+  jobs.setDormant(true);
+  // The durable job ACK, rather than this later checkpoint's seen/ACK arrays, proves consumption.
+  state = { ...state, usageSubmission: { ...state.usageSubmission!, admitted: [] } };
+  jobs = new JobManager(node, nullLogger, path, 2); managers.push(jobs); jobs.runners = runners; jobs.restore(() => resume);
+  const restored = jobs.find(job.name, false)!;
+  expect(restored.status).toBe("running"); expect(restored.forwarded).toHaveLength(102);
+  restored.usageAdmittedControls = []; jobs.persist(); // A stale writer must not erase a durable ACK.
+  expect(readStore(path).find(saved => saved.id === job.id)?.usageAdmittedControls).toContain(controls[0]!.cid);
+  alive = false; (jobs as any).checkHosted(restored);
+  expect(restored.queue).toEqual(controls.slice(1).map(control => control.body));
+  expect(restored.usagePendingControls).toEqual(controls.slice(1)); expect(resume).not.toHaveBeenCalled();
+  jobs.followUp(restored.name, "explicit retry");
+  await until(() => restored.status === "done");
+  expect(retry.some(control => control.cid === controls[0]!.cid)).toBe(false);
+  for (const control of controls) expect(deliveries.get(control.cid)).toBe(1);
+  expect(resume).toHaveBeenCalledTimes(1); expect(restored.queue).toEqual([]);
+  expect(restored.usageAdmittedControls).toContain(controls[0]!.cid);
+  expect(readStore(path).find(saved => saved.id === job.id)?.usageAdmittedControls).toContain(controls[0]!.cid);
+});
+
 it.each(CODING_AGENTS)("remote %s preflight uses executor context and persists typed refusal without a runner", async target => {
   writeFileSync(join(home, "config.json"), JSON.stringify({ version: 4, maxJobs: 16, network: { ...DEFAULT_NETWORK_CONFIG,
     remoteJobs: { enabled: true, allowRoots: [home], agents: [target], allowPeers: ["paired"] } } }));

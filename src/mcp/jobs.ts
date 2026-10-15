@@ -1611,7 +1611,6 @@ export class JobManager {
       job.usagePendingControls = initial ? job.usagePendingControls : job.queue.map((body, index) => ({ cid: held[index]?.cid ?? randomUUID(), body }));
       job.usagePendingHeld = undefined;
       job.usageRunId = randomUUID();
-      job.usageAdmittedControls = undefined;
       job.status = "running";
       job.executionOwner = this.node.name;
       job.executionPid = process.pid;
@@ -1878,6 +1877,9 @@ export class JobManager {
 
   /** A runner-hosted job ended: with its runner's final state, or without (the runner is gone). */
   private settleHosted(job: Job, final: RunnerState | null): void {
+    // ACKs live for the job's lifetime, independently of the runner's bounded seen window.
+    const durable = this.storePath && readStoredJobSnapshot(this.storePath, job.id, job.name, this.log);
+    if (durable) confirmUsageAdmission(job, durable.usageAdmittedControls ?? []);
     const observed = final ?? this.runners?.state(job);
     const receipt = currentUsage(job, observed?.usageSubmission) ? observed?.usageSubmission : undefined;
     const legacyRetained = currentUsage(job, observed?.providerUsage) ? [...observed?.providerUsage?.retainedControls ?? []] : [];
@@ -1897,7 +1899,7 @@ export class JobManager {
     const forwarded = new Map((job.forwarded ?? []).map(control => [control.cid, control.body]));
     // Submitted batches precede controls received while admission was pending.
     for (const control of retained) recovered.set(control.cid, forwarded.get(control.cid) ?? control.body);
-    for (const control of job.forwarded ?? []) if (!seen.has(control.cid) || retainedIds.has(control.cid)) recovered.set(control.cid, control.body);
+    for (const control of job.forwarded ?? []) if (!admitted.has(control.cid) && (!seen.has(control.cid) || retainedIds.has(control.cid))) recovered.set(control.cid, control.body);
     if (unconfirmed || usageRefused(job)) {
       job.usagePendingControls = [...recovered].map(([cid, body]) => ({ cid, body }));
       holdUsageSubmission(job);
@@ -2253,6 +2255,10 @@ type StoredJob = Pick<Job, "usageRunId" | "usagePendingControls" | "usagePending
 /** Unknown fields survive upgrades; known next-turn settings also honor deletion. */
 function mergeJobFields(previous: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
   const merged = mergeStoreFields(previous, next);
+  if (Array.isArray(previous.usageAdmittedControls) || Array.isArray(next.usageAdmittedControls)) {
+    merged.usageAdmittedControls = [...new Set([...(Array.isArray(previous.usageAdmittedControls) ? previous.usageAdmittedControls : []),
+      ...(Array.isArray(next.usageAdmittedControls) ? next.usageAdmittedControls : [])].filter((cid): cid is string => typeof cid === "string"))];
+  }
   if (isRecord(next.args) && isRecord(merged.args)) {
     for (const key of JOB_SETTING_KEYS) if (next.args[key] === undefined) delete merged.args[key];
   }
