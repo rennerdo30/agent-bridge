@@ -53,7 +53,7 @@ import {
 } from "./chunks/chunk-KXTIXNH2.mjs";
 import {
   antigravityHookOutput
-} from "./chunks/chunk-V5SYHFB2.mjs";
+} from "./chunks/chunk-DSW3A4P5.mjs";
 import {
   MAX_STREAM_ENTRIES
 } from "./chunks/chunk-BWKAWC4R.mjs";
@@ -62,15 +62,15 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-VKQ2ML6E.mjs";
+} from "./chunks/chunk-YB7KI5K6.mjs";
 import {
   JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-QP3KVKMQ.mjs";
+} from "./chunks/chunk-XXD3FPT7.mjs";
 import {
   readWorktreeState
 } from "./chunks/chunk-W7LGWN37.mjs";
-import "./chunks/chunk-ANNWMSWC.mjs";
+import "./chunks/chunk-E6DYXR6L.mjs";
 import "./chunks/chunk-HFRXC4WN.mjs";
 import {
   codexAppServerCall,
@@ -78,7 +78,7 @@ import {
   modelParameterDescription,
   readModels,
   readUsage
-} from "./chunks/chunk-OLMQUEKZ.mjs";
+} from "./chunks/chunk-RNSGOAUN.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
@@ -90,7 +90,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-XOOLXFOK.mjs";
+} from "./chunks/chunk-ICGWRTIY.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -124,8 +124,8 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-JZ6CMPPS.mjs";
-import "./chunks/chunk-IHW7FOJV.mjs";
+} from "./chunks/chunk-V6YPHOKD.mjs";
+import "./chunks/chunk-ZG6FSXFH.mjs";
 import {
   ACCESS_LEVELS,
   DEFAULT_FOLLOW_UP,
@@ -153,12 +153,12 @@ import {
   resolveBinary,
   runProcess,
   verifiedGoneJobOwners
-} from "./chunks/chunk-EK5WAYJW.mjs";
+} from "./chunks/chunk-ZQH63GEB.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
   formatResourceSlots
-} from "./chunks/chunk-LSVDDHSM.mjs";
+} from "./chunks/chunk-G3JNKNPN.mjs";
 import "./chunks/chunk-6KTEQAZ2.mjs";
 import "./chunks/chunk-26TSVBIO.mjs";
 import "./chunks/chunk-JTZGNEMM.mjs";
@@ -3311,7 +3311,7 @@ async function startServer(argv = process.argv.slice(2)) {
       }
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-WRLTOYM5.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-342P7XNY.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3323,9 +3323,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-7SNV3IWB.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-TPBIEZC4.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-7SNV3IWB.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-TPBIEZC4.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3546,7 +3546,7 @@ ${JSON.stringify(result)}`);
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
       const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-CRCTKKUL.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-CRMMN6RK.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-X4NJXSAE.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
