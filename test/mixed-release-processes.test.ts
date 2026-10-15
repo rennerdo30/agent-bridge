@@ -32,7 +32,7 @@ it("keeps released and current MCP processes talking until the older reader exit
   const env = { ...process.env } as Record<string, string>;
   // Test workers must never inherit a delegated job's live supervisor link or runtime selector.
   for (const key of Object.keys(env)) if (key.startsWith("AGENT_BRIDGE_")) delete env[key];
-  Object.assign(env, { AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_HISTORY_INGEST: "0", AGENT_BRIDGE_LOG_CONSOLE: "info", CLAUDE_PROJECT_DIR: home, CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home });
+  Object.assign(env, { AGENT_BRIDGE_HOME: home, AGENT_BRIDGE_DAEMON: "1", AGENT_BRIDGE_DELIVERY: "hooks", AGENT_BRIDGE_DASHBOARD: "off", AGENT_BRIDGE_HISTORY_INGEST: "0", AGENT_BRIDGE_LOG_CONSOLE: "info", CLAUDE_PROJECT_DIR: home, CLAUDE_CONFIG_DIR: join(home, "claude"), CODEX_HOME: join(home, "codex"), XDG_DATA_HOME: home });
   const start = async (file: string, name: string, agent: string) => {
     const client = new Client({ name: `test-${name}`, version: "1" });
     clients.push(client);
