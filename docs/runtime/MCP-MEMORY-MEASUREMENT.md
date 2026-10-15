@@ -1,11 +1,58 @@
 # AB-277: isolated role-memory measurement package
 
-Status: **one approved measurement and one startup-only diagnostic failed before
-readiness; neither was retried**. Memory measurement remains unavailable.
-Claude preparation approval: `884e37d1` and subsequent guard/preflight criteria.
-Source baseline: published `7e80ac79bc20c804985f0463125e7832308222b0`.
-Worktree: `D:/AgentData/worktrees/agentbridge-ab277-mcp-measurement-97821066`.
+Status (2026-10-15): **historical evidence record; one approved measurement and
+one startup-only diagnostic failed before readiness; neither was retried**.
+Memory measurement remains unavailable. Historical preparation approval:
+`884e37d1` and subsequent guard/preflight criteria; it is not a new run approval.
+Historical source baseline: published `7e80ac79bc20c804985f0463125e7832308222b0`
+(0.30.11). Original evidence and source-line references below describe the
+2026-10-11 work, not current runtime acceptance.
+Worktree: `E:/AgentData/worktrees/agentbridge-ab277-mcp-measurement-97821066`.
 Branch: `measure/ab277-role-memory`. No production source is changed.
+
+## Retention and current integration boundary
+
+[PR #25](https://github.com/rennerdo30/agent-bridge/pull/25) retains the failed
+measurement, diagnostic limits and standalone harness from `211cfd0b`.
+Reconciled with main `40672ff4e040b8d48e1282ef1fb730efba97a2b2` (0.30.19 plus
+merged #22/#23 design records), by ordinary merge on 2026-10-15. The four
+executable files remain unchanged; the historical instrumentation hashes
+below still describe those files. A [local README](../../scripts/ab277/README.md)
+documents their opt-in entrypoints and limitations.
+
+Source inspection found no harness imports or execution in production source,
+plugin code, package commands, build entrypoints or `.github` workflows.
+`scripts/test.mjs` invokes Vitest; `vitest.config.ts` selects test lanes from
+`scripts/test-lanes.mjs` or `test/**/*.test.ts`. It does not discover this
+directory's Node `.test.mjs` file. Nothing is wired into product or CI by
+retaining the package. No build, guard test, diagnostic or measurement was
+run during this reconciliation; historical pass claims below were not rerun.
+
+The harness is not validated for current main. In particular:
+
+- `BASE` is a historical label, not a Git-tree admission check. `--prepare`
+  bundles source from its working tree, so running it on this refreshed branch
+  would not reproduce the 0.30.11 baseline despite that label. A future review
+  must pin actual source, dependencies, instrumentation and Node identities.
+- The three roles are only `claude`, `codex`, `opencode`; merged
+  [#20 Muse](https://github.com/rennerdo30/agent-bridge/pull/20) is not measured.
+  Merged [#32 messaging](https://github.com/rennerdo30/agent-bridge/pull/32)
+  and current hook/config behavior require a fresh fixture audit.
+- Readiness requires the broker PID to equal the held MCP child's PID.
+  [#17](https://github.com/rennerdo30/agent-bridge/pull/17) owns the independent
+  daemon/core lifetime and [#29](https://github.com/rennerdo30/agent-bridge/pull/29)
+  its default-off shadow-ledger lane; both remain open at this review.
+  The old embedded-broker expectation is not daemon acceptance. Future work
+  must adopt the core lane's final ownership, readiness and shutdown contract.
+- [#23's design](MCP-MEMORY-DESIGN.md) is retained on main. Its controlled
+  measurement and isolation gates remain open, as do AB-277's existing plan
+  and acceptance criteria. No startup cause, memory baseline, live population
+  attribution, module cost or savings was established by this package.
+
+Retention does not approve a rerun or make this an actively supported current
+benchmark. The project main must separately scope any future measurement
+package and assign its owner. Historical fixture roots remain retained;
+their present on-disk contents were not revalidated in this review.
 
 The root/Claude direction is lazy-role-import investigation first. A shared
 backend remains deferred pending context, authentication, election, broker
@@ -102,13 +149,14 @@ closure. No scan, PID-based kill, process-tree stop or cleanup fallback exists.
 An EOF timeout reports the owned fixture PID and leaves further action to
 the supervisor. All fixture files, including unsuccessful preparations, remain.
 
-## Prepared commands and review evidence
+## Historical prepared commands and review evidence
 
-Preparation commands, run only in the isolated measurement worktree:
+Original preparation commands, recorded for provenance only. They are not
+instructions or authorization to execute against the refreshed branch:
 
 ```powershell
 node --test --test-concurrency=1 scripts/ab277/isolation.test.mjs
-node scripts/ab277/mcp-memory.mjs --prepare --dependencies D:/Development/claude-codex-comm/node_modules
+node scripts/ab277/mcp-memory.mjs --prepare --dependencies E:/Development/claude-codex-comm/node_modules
 ```
 
 Preparation uses the same seven production entrypoints and bundle/splitting
@@ -199,7 +247,7 @@ After the closed-list revision and new pin review, the separately approved
 startup-only invocation ran exactly once from this measurement worktree:
 
 ```powershell
-node scripts/ab277/mcp-memory.mjs --diagnostic-startup --fixture-root D:/AgentData/worktrees/agentbridge-ab277-mcp-measurement-97821066/.agent-bridge-test/ab277-memory/b7a88091-9606-4d3b-b208-68f112e2116b
+node scripts/ab277/mcp-memory.mjs --diagnostic-startup --fixture-root E:/AgentData/worktrees/agentbridge-ab277-mcp-measurement-97821066/.agent-bridge-test/ab277-memory/b7a88091-9606-4d3b-b208-68f112e2116b
 ```
 
 The controller exited 1. Each owned child exited before initialization completed;
@@ -257,9 +305,10 @@ review; there is no automatic retry or optimization authorization.
 - Lazy import changes require Claude measurement review and new implementation
   authorization. No shared backend or protocol change follows from this run.
 
-AB-276 dependency is now revised proposal commit
-`12fa4e682fef026171b89d70e45033fd8b420fa2`, at the sibling
-`docs/runtime/WAITER-NOTICE-CONTRACT.md`. It replaces the rejected floor/shared
+AB-276's [waiter notice contract](WAITER-NOTICE-CONTRACT.md), retained revision
+`c4e3eebb`, was merged as a design record by #22 in `09229f8c`. This replaces the
+former `12fa4e68` reference and includes capable-broker election fencing.
+It replaces the rejected floor/shared
 legacy-mail storage proposal with an isolated feature DB and negotiated
 dedicated claim/ack. Durable authenticated owner generation and Windows
 attestation remain proposed/unimplemented; this harness assumes neither.
