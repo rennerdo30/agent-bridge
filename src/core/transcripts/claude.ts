@@ -1,5 +1,6 @@
 import { dirname, join } from "node:path";
-import { contentText, directory, fileStat, MAX_NATIVE_SUBAGENTS, MAX_TEXT_CHARS, MAX_TITLE_CHARS, object, preview, readHead, readJsonl, readTail, safeFile, scanJsonl, time, TRANSCRIPT_ID, type JsonObject, type NativeSubagent, type TranscriptItem, type TranscriptPage, type TranscriptPaths, type TranscriptSession } from "./common.js";
+import { activeByteSources } from "../byte-source.js";
+import { contentText, MAX_TRANSCRIPT_CHUNK_BYTES, directory, fileStat, MAX_NATIVE_SUBAGENTS, MAX_TEXT_CHARS, MAX_TITLE_CHARS, object, preview, readHead, readJsonl, readTail, safeFile, scanJsonl, time, TRANSCRIPT_ID, type JsonObject, type NativeSubagent, type TranscriptItem, type TranscriptPage, type TranscriptPaths, type TranscriptSession } from "./common.js";
 
 export function claudeSessionFile(session: TranscriptSession, paths: TranscriptPaths): string | null {
   if (!session.sessionId || !TRANSCRIPT_ID.test(session.sessionId)) return null;
@@ -55,11 +56,19 @@ export function listClaudeSubagents(session: TranscriptSession, paths: Transcrip
     if (!id || !TRANSCRIPT_ID.test(id)) continue;
     const file = safeFile(paths.claude, join(dir, name));
     if (!file) continue;
-    const st = fileStat(file), head = readHead(file), tail = readTail(file);
+    const st = fileStat(file);
+    // A fully ingested file's head and tail facts come from the history store (AB-383).
+    const known = activeByteSources()?.claudeChild?.(file, MAX_TRANSCRIPT_CHUNK_BYTES);
+    if (known) {
+      out.set(id, { id, title: known.title ?? preview(`Subagent ${id}`, MAX_TITLE_CHARS), status: known.status, startedAt: known.startedAt || st?.birthtimeMs || 0, updatedAt: st?.mtimeMs || 0 });
+      continue;
+    }
+    const head = readHead(file), tail = readTail(file);
     const last = [...tail].reverse().find((r) => r.type === "assistant");
     out.set(id, { id, title: preview(contentText(object(head.message).content) || `Subagent ${id}`, MAX_TITLE_CHARS), status: object(last?.message).stop_reason === "end_turn" ? "done" : "unknown", startedAt: time(head.timestamp) || st?.birthtimeMs || 0, updatedAt: st?.mtimeMs || 0 });
   }
-  // Old versions wrote sidechain records into the parent's JSONL.
+  // Old versions wrote sidechain records into the parent's JSONL. The store can prove there are none.
+  if (activeByteSources()?.noInlineSidechains?.(main)) return [...out.values()];
   const nestedIds = new Set(out.keys());
   for (const { value: r } of scanJsonl(main)) {
     if (r.isSidechain !== true || typeof r.agentId !== "string" || !TRANSCRIPT_ID.test(r.agentId)) continue;

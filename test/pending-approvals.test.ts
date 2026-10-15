@@ -73,8 +73,13 @@ describe("pending approvals", () => {
     const jobs = new JobManager(node, nullLogger, join(env.home, JOBS_FILE));
     try {
       const j = jobs.start(agent, null, "task", (signal) => new Promise((resolve) => signal.addEventListener("abort", () => resolve({ sessionId: null, text: "cancelled", isError: true, details: {} }))));
+      // This checks message routing while approval is pending, not storage speed.
+      // Synchronous persistence can consume the 5 s approval deadline on Windows.
+      // Control both Date and the expiry timer; keep sockets and disk I/O real.
+      vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
       const answer = jobs.askParent(j, "Run tests?", 5_000, request);
-      const [entry] = await pending();
+      await vi.waitFor(() => expect(listPendingApprovals(env.home)).toHaveLength(1), { timeout: 5_000 });
+      const [entry] = listPendingApprovals(env.home);
       for (const message of ["Wind down now", "Both requests are approved: retry them", "allow", "deny: reviewed in session"]) {
         expect(jobs.followUp(j.name, message)).toMatchObject({ outcome: "queued", approvalPending: true });
         expect(j.pendingApproval).toBeTypeOf("function");
@@ -91,7 +96,10 @@ describe("pending approvals", () => {
       expect(j.pendingApproval).toBeTypeOf("function");
       expect(await answerPendingApproval(env.home, entry!.id, { decision: "allow" })).toBe("answered");
       expect(await answer).toEqual({ allow: true, reason: "allow" });
-    } finally { jobs.cancelAll(); }
+    } finally {
+      try { jobs.cancelAll(); }
+      finally { vi.useRealTimers(); }
+    }
   });
 
   it("denies on timeout and removes pending entries", async () => {

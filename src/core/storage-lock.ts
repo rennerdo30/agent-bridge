@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { processStartMs } from "./process-identity.js";
 import { ownerGone as bootOwnerGone } from "./boot-time.js";
@@ -14,10 +14,61 @@ const START_SLACK_MS = 2_000;
 /** Owner identity written into the maintenance lock and every storage lease. */
 interface LockOwner { pid: number; nonce: string; createdAt: number }
 
-function writeOwner(path: string): LockOwner {
+type LeaseFileIdentity = { dev: bigint; ino: bigint };
+type LeaseCapture = {
+  readonly identity: symbol; readonly path: string;
+  owner?: LockOwner; file: LeaseFileIdentity | null; descriptor?: number;
+  descriptorClose: "not_attempted" | "attempted" | "returned" | "unknown";
+  acquisition: "attempted" | "returned" | "unknown";
+  release: "not_attempted" | "attempted" | "returned" | "unknown";
+  attempts: number;
+};
+const leaseCaptures = new WeakMap<() => void, LeaseCapture>();
+const retainedLeaseCaptures = new Set<LeaseCapture>();
+
+function leaseFileIdentity(path: string): LeaseFileIdentity | null {
+  try {
+    const file = lstatSync(path, { bigint: true });
+    return file.isFile() && !file.isSymbolicLink() && file.dev >= 0n && file.ino > 0n ? { dev: file.dev, ino: file.ino } : null;
+  } catch { return null; }
+}
+function sameLeaseFile(a: LeaseFileIdentity | null, b: LeaseFileIdentity | null): boolean {
+  return a !== null && b !== null && a.dev === b.dev && a.ino === b.ino;
+}
+function observedOwnLease(capture: LeaseCapture): boolean {
+  const current = readOwner(capture.path), owner = capture.owner;
+  return owner !== undefined && current !== null && current.pid === owner.pid && current.nonce === owner.nonce &&
+    current.createdAt === owner.createdAt && sameLeaseFile(capture.file, leaseFileIdentity(capture.path));
+}
+function observedAbsentLease(path: string): boolean {
+  try { lstatSync(path); return false; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "ENOENT"; }
+}
+
+/** Internal historical operation evidence only: no owner binding, process/boot
+ * proof, complete consumer census or permission to remove a lifecycle lease.
+ * Observation never deletes, recovers, probes SQL or exposes a native resource.
+ */
+export function storageLeaseObservation(release: () => void) {
+  const capture = leaseCaptures.get(release);
+  return Object.freeze({ captured: capture !== undefined, acquisition: capture?.acquisition ?? "unavailable",
+    descriptorClose: capture?.descriptorClose ?? "not_attempted", release: capture?.release ?? "not_attempted",
+    identityObserved: capture?.file !== null && capture?.file !== undefined,
+    retained: capture !== undefined && retainedLeaseCaptures.has(capture), overflow: retainedLeaseCaptures.size > 128,
+    ownerBound: false as const, ownershipReleased: false as const });
+}
+
+function writeOwner(path: string, capture?: LeaseCapture): LockOwner {
   const owner: LockOwner = { pid: process.pid, nonce: randomUUID(), createdAt: Date.now() };
+  if (capture) capture.owner = owner;
   const fd = openSync(path, "wx", 0o600);
-  try { writeSync(fd, JSON.stringify(owner)); fsyncSync(fd); } finally { closeSync(fd); }
+  if (capture) capture.descriptor = fd;
+  try { writeSync(fd, JSON.stringify(owner)); fsyncSync(fd); }
+  finally {
+    if (capture) capture.descriptorClose = "attempted";
+    try { closeSync(fd); if (capture) capture.descriptorClose = "returned"; }
+    catch (error) { if (capture) capture.descriptorClose = "unknown"; throw error; }
+  }
   return owner;
 }
 
@@ -74,12 +125,31 @@ export function storageLease(home: string): () => void {
   const dir = join(home, USERS_DIR);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const path = join(dir, `${process.pid}-${randomUUID()}`);
-  writeOwner(path);
+  const capture: LeaseCapture = { identity: Symbol("storage lease acquisition"), path, file: null,
+    descriptorClose: "not_attempted", acquisition: "attempted", release: "not_attempted", attempts: 0 };
+  retainedLeaseCaptures.add(capture);
+  try { writeOwner(path, capture); capture.acquisition = "returned"; capture.file = leaseFileIdentity(path); }
+  catch (error) { capture.acquisition = "unknown"; throw error; }
+  const remove = (force: boolean) => {
+    const own = capture.acquisition === "returned" && capture.descriptorClose === "returned" && observedOwnLease(capture);
+    const priorUnknown = capture.release === "unknown";
+    capture.attempts = Math.min(2, capture.attempts + 1); capture.release = "attempted";
+    try {
+      // Preserve the ordinary callback's existing removal policy. This historical
+      // evidence is NOT the later guarded lifecycle release adapter or its ACK.
+      if (force) rmSync(path, { force: true }); else rmSync(path);
+      capture.release = own && !priorUnknown && capture.attempts === 1 && observedAbsentLease(path) ? "returned" : "unknown";
+      if (capture.release === "returned") retainedLeaseCaptures.delete(capture);
+      else retainedLeaseCaptures.add(capture);
+    } catch (error) { capture.release = "unknown"; retainedLeaseCaptures.add(capture); throw error; }
+  };
+  const release = () => remove(true);
+  leaseCaptures.set(release, capture);
   if (existsSync(lock)) {
-    rmSync(path);
+    remove(false);
     throw maintenanceBusy(lock);
   }
-  return () => rmSync(path, { force: true });
+  return release;
 }
 
 export function storeHome(path: string): string {

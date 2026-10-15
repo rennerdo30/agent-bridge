@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execFile } from "node:child_process";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, watch, type FSWatcher } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
@@ -14,29 +14,67 @@ import { parentFromEnv } from "../src/core/parent-link.js";
 import { pidAlive } from "../src/core/delegate.js";
 import { fixtureProcessExists, fixtureProcessGeneration } from "./fixture-process-generation.js";
 import type { CodingAgent } from "../src/core/protocol.js";
+import { migrateJobArchives } from "../src/core/job-archive-migration.js";
+import { JSON_STORE_VERSION } from "../src/core/json-store.js";
+import { refreshStorePeerIdentities } from "../src/core/store-compatibility.js";
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>(r => { resolve = r; });
+  return { promise, resolve };
+}
 
 const SERVER = join(import.meta.dirname, "..", "plugins", "claude", "dist", "server.mjs");
 let env: TestEnv, bin: string;
+let broker: ReturnType<TestEnv["node"]>;
 const clients: Client[] = [];
 const transports: StdioClientTransport[] = [];
 const fixtureNodes: ReturnType<TestEnv["node"]>[] = [];
 const runnerIds: string[] = [];
 const releases: string[] = [];
+const watchers: FSWatcher[] = [];
+function created(path: string) {
+  const ready = deferred<void>();
+  const watcher = watch(join(path, ".."), () => { if (existsSync(path)) ready.resolve(); });
+  watchers.push(watcher);
+  if (existsSync(path)) ready.resolve();
+  return ready.promise;
+}
+type StoredJob = ReturnType<typeof readStore>[number];
+function admittedJob(matches: (job: StoredJob) => boolean): Promise<StoredJob> {
+  const ready = deferred<StoredJob>();
+  const check = () => {
+    const job = readStore(join(env.home, "jobs.json")).find(job => matches(job) && job.sessionId);
+    if (job) ready.resolve(job);
+  };
+  const watcher = watch(env.home, (_event, filename) => { if (String(filename) === "jobs.json") check(); });
+  watchers.push(watcher); check();
+  return ready.promise;
+}
 let responses: { at: number; name: string; args: Record<string, unknown>; text?: string; error?: unknown }[];
 let captureErrors: unknown[];
 const exec = promisify(execFile);
 /** Runner admission budget, the same as stopOwnedRunner allows for a late admission. */
 const RUNNER_START_MS = 30_000;
-beforeEach(() => {
+beforeEach(async () => {
   clients.length = transports.length = fixtureNodes.length = runnerIds.length = releases.length = 0;
   responses = [];
   captureErrors = [];
   env = makeEnv(); const dir = join(env.home, "bin"); mkdirSync(dir);
+  // These are MCP hosts, not interactive CLI sessions. Keep wake helpers out of
+  // the fixture and give the handoff protocol a broker independent of either host.
+  writeFileSync(join(env.home, "config.json"), JSON.stringify({ wakeOnDirect: false, delivery: "hooks" }));
+  writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: JSON_STORE_VERSION, jobs: [] }));
+  await migrateJobArchives(join(env.home, "jobs.json"));
+  broker = env.node("fixture-broker", "other"); fixtureNodes.push(broker); await broker.start();
   const file = join(dir, "fake.mjs");
   writeFileSync(file, `#!/usr/bin/env node
 import { existsSync, writeFileSync, renameSync } from 'node:fs';
 let prompt=''; process.stdin.setEncoding('utf8'); process.stdin.on('data',d=>prompt+=d);
 process.stdin.on('end',async()=>{
+ // Model a slow native dependency independently of CPU load. Readiness must
+ // come from the delegate, not the old five-second link-file polling budget.
+ if(prompt.includes('blocking work'))await new Promise(r=>setTimeout(r,5500));
  const args=process.argv.slice(2), session=args.includes('--resume')?args[args.indexOf('--resume')+1]:'fixture-'+process.pid;
  console.log(JSON.stringify({type:'system',subtype:'init',session_id:session,model:'fixture'}));
  const release=/release=(\\S+)/.exec(prompt)?.[1], link=/link=(\\S+)/.exec(prompt)?.[1];
@@ -128,6 +166,7 @@ function storePresence(pid: number): Record<string, any> | null {
   return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
 }
 afterEach(async context => {
+  for (const watcher of watchers.splice(0)) watcher.close();
   let failed = context.task.result?.state === "fail";
   const errors: unknown[] = [...captureErrors];
   if (errors.length) failed = true;
@@ -154,6 +193,9 @@ afterEach(async context => {
   if (errors.length) throw new AggregateError(errors, `Fixture cleanup failed; retained at ${env.home}`);
 });
 async function session(name: string, agent: CodingAgent, inline = false) {
+  const registered = deferred<void>();
+  const joined = (peer: { name: string }) => { if (peer.name === name) registered.resolve(); };
+  broker.on("peer_joined", joined);
   const client = new Client({ name: "handoff-test", version: "1" }); clients.push(client);
   const codexHome = codexHost(client, env.home, agent, name);
   const transport = new StdioClientTransport({ command: process.execPath, args: [SERVER, `--agent=${agent}`], cwd: env.home, env: {
@@ -163,8 +205,14 @@ async function session(name: string, agent: CodingAgent, inline = false) {
   const stderrPath = join(env.home, `session-${name}-${agent}.stderr.log`);
   const sessionResponses = responses, sessionErrors = captureErrors;
   transport.stderr?.on("data", data => { try { appendFileSync(stderrPath, data); } catch (error) { sessionResponses.push({ at: Date.now(), name: "stderr", args: {}, error: String(error) }); sessionErrors.push(error); } });
-  await client.connect(transport);
-  await call(client, "peers"); return client;
+  try {
+    await client.connect(transport);
+    // The handshake precedes launch inspection. Non-Codex hosts join on their
+    // own after inspection; an early tool call used to force a premature join
+    // and race their post-handshake updatePeer/restore against the first job.
+    if (agent !== "codex") await registered.promise;
+    await call(client, "peers"); return client;
+  } finally { broker.off("peer_joined", joined); }
 }
 async function call(client: Client, name: string, args: Record<string, unknown> = {}) {
   try {
@@ -178,11 +226,17 @@ async function call(client: Client, name: string, args: Record<string, unknown> 
 it("hands off a blocking ask without returning results or notes to the old caller", async () => {
   const source = await session("codex-source", "codex", true), target = await session("claude-target", "claude");
   const release = join(env.home, "release"), linkFile = join(env.home, "link.json"); releases.push(release);
+  const ready = created(linkFile);
   const pending = call(source, "ask_claude", { prompt: `release=${release} link=${linkFile} blocking work`, title: "Blocking inherited job" });
-  await until(() => existsSync(linkFile));
-  await until(() => readStore(join(env.home, "jobs.json")).some(j => j.name.startsWith("claude-ask-")));
-  const job = readStore(join(env.home, "jobs.json")).find((j) => j.name.startsWith("claude-ask-"))!;
+  // A later assertion can fail while the ask still owns its native delegate.
+  // Cleanup closes that transport; keep its rejection observed until we await it.
+  void pending.catch(() => {});
+  await Promise.race([ready, pending.then(reply => { throw new Error(`Delegate ended before parent-link readiness: ${reply.text}`); })]);
+  const job = await Promise.race([admittedJob(j => j.name.startsWith("claude-ask-")), pending.then(reply => { throw new Error(`Delegate ended before admission: ${reply.text}`); })]);
   expect(job).toBeDefined();
+  // Cold Windows reader discovery is fixture setup, not the ownership action
+  // whose broker-side verification deliberately has a shorter bounded budget.
+  await refreshStorePeerIdentities(env.home);
   expect((await call(source, "handoff_subagents", { to: "claude-target" })).error).toBeFalsy();
   await call(source, "inbox");
   const child = parentFromEnv(JSON.parse(readFileSync(linkFile, "utf8")))!;
@@ -207,13 +261,19 @@ it.each([
   const source = await session("codex-source", fromAgent, inline), target = await session("claude-target", toAgent);
   const observer = env.node("observer", "opencode"); fixtureNodes.push(observer); await observer.start();
   const release = join(env.home, "release"), linkFile = join(env.home, "link.json"); releases.push(release);
+  const ready = created(linkFile);
   const started = await call(source, "spawn_claude", { prompt: `release=${release} link=${linkFile} work on task`, title: "Inherited live runner" });
   expect(started.error).toBeFalsy(); const name = /claude-job-[a-f0-9]+/.exec(started.text)![0], id = name.split("-").at(-1)!;
   // Even an inline first turn continues in a detached runner of the new (runner-hosting) supervisor.
   runnerIds.push(id);
   // A detached Windows runner first establishes its private job object (a PowerShell guardian) before the delegate
   // starts; on a loaded runner that alone takes 8-11 s. Admission and turn deadlines below allow for it.
-  await until(() => existsSync(linkFile), RUNNER_START_MS);
+  await ready;
+  // The fake CLI writes its link immediately after emitting init. The executor
+  // can still be persisting that init under jobs.json.lock; handing off before
+  // that write completes races the broker's two-second metadata lease budget.
+  await admittedJob(job => job.name === name);
+  await refreshStorePeerIdentities(env.home);
   const child = parentFromEnv(JSON.parse(readFileSync(linkFile, "utf8")))!;
   expect((await call(source, "handoff_subagents", { to: "claude-target", note: "Finish and review" })).error).toBeFalsy();
   expect((await call(source, "message_subagent", { job: name, message: "Former master instruction" })).error).toBeFalsy();

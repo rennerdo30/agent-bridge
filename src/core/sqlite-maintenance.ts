@@ -45,11 +45,30 @@ PRAGMA user_version = 1;
 `;
 
 /** Archive schema has its own version sequence; primary migrations belong to MessageStore. */
+type ArchiveInitialization = { readonly identity: symbol; db?: DatabaseSync; readonly file: string;
+  construction: "attempted_unconfirmed" | "returned" | "unknown";
+  state: "initializing" | "returned" | "failed"; close: "not_attempted" | "attempted" | "returned" | "unknown" };
+const archiveInitializations = new WeakMap<DatabaseSync, ArchiveInitialization>();
+const retainedArchiveInitializations = new Set<ArchiveInitialization>();
+/** Internal non-authorizing observation of this exact opener's historical native
+ * capture/outcome. It steps no SQLite SQL, exports no native resource or permission,
+ * and cannot certify a parent owner, current closure, consumer drain or retirement. */
+export function archiveInitializationObservation(db: DatabaseSync): Readonly<{
+  captured: boolean; initialization: ArchiveInitialization["state"] | "unavailable";
+  close: ArchiveInitialization["close"]; retained: boolean; overflow: boolean;
+  ownerBound: false; ownershipReleased: false;
+}> {
+  const record = archiveInitializations.get(db);
+  return Object.freeze({ captured: !!record, initialization: record?.state ?? "unavailable", close: record?.close ?? "not_attempted",
+    retained: !!record && retainedArchiveInitializations.has(record), overflow: retainedArchiveInitializations.size > 128,
+    ownerBound: false, ownershipReleased: false });
+}
 export function openArchive(path: string, options: { migrate?: boolean; home?: string } = {}): DatabaseSync {
   const existed = existsSync(path);
   let admitted: ReturnType<typeof preserveArchiveTarget> | undefined;
   let original: DatabaseSync | undefined;
   let db: DatabaseSync | undefined;
+  let record: ArchiveInitialization | undefined;
   try {
     if (options.migrate === false) {
       if (!options.home) throw new Error("Storage absorb archive home is unavailable; all originals are retained.");
@@ -64,7 +83,11 @@ export function openArchive(path: string, options: { migrate?: boolean; home?: s
       }
     }
     admitted?.check();
+    record = { identity: Symbol(), file: path, construction: "attempted_unconfirmed", state: "initializing", close: "not_attempted" };
+    retainedArchiveInitializations.add(record); // Register BEFORE native construction; an unreturned attempt remains unknown.
     db = new DatabaseSync(path);
+    record.db = db; record.construction = "returned";
+    archiveInitializations.set(db, record); // Capture the actual returned writer BEFORE checks or page SQL.
     admitted?.check();
     db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
     if (options.migrate === false) {
@@ -75,9 +98,26 @@ export function openArchive(path: string, options: { migrate?: boolean; home?: s
     admitted?.check();
     configureSqlite(db);
     admitted?.check();
-    return db;
-  } catch (err) { db?.close(); throw err; }
-  finally { original?.close(); admitted?.close(); }
+    record.state = "returned"; return db;
+  } catch (err) {
+    if (record) {
+      record.state = "failed"; retainedArchiveInitializations.add(record);
+      if (record.construction === "attempted_unconfirmed") record.construction = "unknown";
+      if (db) record.close = "attempted";
+    }
+    try { db?.close(); if (db && record) record.close = "returned"; }
+    catch (closeError) { if (record) record.close = "unknown"; throw closeError; } // Preserve released close-error precedence.
+    throw err;
+  } finally {
+    try { original?.close(); admitted?.close(); }
+    catch (cleanupError) {
+      // A cleanup throw can prevent delivery of the initialized writer. Retain
+      // that exact capture without adding cleanup, SQL or closure authority.
+      if (record) { record.state = "failed"; retainedArchiveInitializations.add(record); }
+      throw cleanupError;
+    }
+    if (record?.state === "returned") retainedArchiveInitializations.delete(record);
+  }
 }
 
 export function archiveDbPath(file: string): string {
