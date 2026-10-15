@@ -15,14 +15,14 @@ import {
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-GU33CUFM.mjs";
+} from "./chunks/chunk-AI55XAZF.mjs";
 import {
   closeJobWorktree
-} from "./chunks/chunk-YY4CD6MR.mjs";
+} from "./chunks/chunk-7V2CSWUF.mjs";
 import {
   readWorktreeState
 } from "./chunks/chunk-T5DDX36S.mjs";
-import "./chunks/chunk-JWOD4VUN.mjs";
+import "./chunks/chunk-C3NXXZCR.mjs";
 import {
   museBridgeTool,
   museHookOutput,
@@ -30,12 +30,12 @@ import {
 } from "./chunks/chunk-TNWIDXST.mjs";
 import {
   antigravityHookOutput
-} from "./chunks/chunk-QHZZQSW6.mjs";
+} from "./chunks/chunk-32MWUPUD.mjs";
 import {
   describeModels,
   modelParameterDescription,
   readModels
-} from "./chunks/chunk-OGJQPFFV.mjs";
+} from "./chunks/chunk-ETRWPERL.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
@@ -47,7 +47,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-GDCWZXO5.mjs";
+} from "./chunks/chunk-5QNSNNJG.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -77,8 +77,8 @@ import {
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-L2ZIQGHZ.mjs";
-import "./chunks/chunk-Y2HCHFXQ.mjs";
+} from "./chunks/chunk-4B425JCE.mjs";
+import "./chunks/chunk-VSJKA3GU.mjs";
 import "./chunks/chunk-OIVM3BAO.mjs";
 import {
   ACCESS_LEVELS,
@@ -156,7 +156,7 @@ import {
   usageAdmissionText,
   usageProbeFor,
   verifiedGoneJobOwners
-} from "./chunks/chunk-NRRZXVAU.mjs";
+} from "./chunks/chunk-VWBJQRC7.mjs";
 import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   ResourceSlots,
@@ -3425,7 +3425,7 @@ async function startServer(argv = process.argv.slice(2)) {
       }
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-HJAOQPQM.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-IDHAQ37D.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3437,9 +3437,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-ALCFXVXS.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-C33KGPMS.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-ALCFXVXS.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-C33KGPMS.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3682,7 +3682,7 @@ ${JSON.stringify(result)}`);
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
       const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-CK6DVMRZ.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-LWGROLCK.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-STI7HG4V.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
