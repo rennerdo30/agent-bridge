@@ -15,7 +15,7 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "bbadfc88e262038f32ddea3cd4ba661143075d938cf082081c547fefb88283ff",
+  "uiSha256": "e441658365497275d9bd8f3492bc58f7d522f63778c742c7c09d2cc81be1e29a",
   "updates": {
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
@@ -216,6 +216,14 @@
       ],
       "reason": "PR #80 (reviewed): start() adds only `if (!this.opts.jobAgent) void parentProcessIdentity();` with its comment, to overlap the host identity read with discovery; tryBecomeBroker() adds only `const identity = this.opts.dbPath === \":memory:\" ? undefined : ownProcessIdentity();` before the store imports and `await identity;` after the endpoint reservation. No other control-flow change; other method pins, the complete UI hash, normalizer and assertions are unchanged.",
       "commit": "c24a6b2a7c16c2c614a48850ee4e24dd8adb397a"
+    },
+    "PR-79-push-latency": {
+      "base": "fe8cd90151b1eb9a4994a78c2bac37481fcd95da",
+      "methods": [],
+      "previousUiSha256": "bbadfc88e262038f32ddea3cd4ba661143075d938cf082081c547fefb88283ff",
+      "uiSha256": "e441658365497275d9bd8f3492bc58f7d522f63778c742c7c09d2cc81be1e29a",
+      "reason": "PR #79 (reviewed): startUi passes `history: () => historyFeed.connection` to the two readDashboard calls (dashboard read route and chat child lookup) so reads borrow the feed held history connection. No other startUi change; method pins, normalizer and assertions are unchanged.",
+      "commit": "03afbdd9e0d122268c0eb66d301d144fd5dbc1cc"
     }
   },
   "revertedUpdates": {
