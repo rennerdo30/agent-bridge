@@ -2,7 +2,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync
 import { basename, dirname, join, relative } from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { DB_FILE_NAME, JOBS_FILE, MAX_BODY_CHARS } from "./constants.js";
+import { DB_FILE_NAME, JOBS_FILE, MAX_BODY_CHARS, MAX_FRAME_BYTES } from "./constants.js";
 import { jsonStoreFiles, listBackups } from "./backups.js";
 import { isRecord, JSON_STORE_VERSION, retentionLimit, writeJsonStore } from "./json-store.js";
 import { ARCHIVE_DB_NAME, ARCHIVE_STORE_VERSION, checkDatabase } from "./sqlite-maintenance.js";
@@ -67,6 +67,10 @@ export function doctor(home: string, now = Date.now()): DoctorReport {
         }
         if (name === DB_FILE_NAME && db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'").get()) {
           const oversized = Number(db.prepare("SELECT COUNT(*) AS n FROM messages WHERE read_at IS NULL AND length(body) > ?").get(MAX_BODY_CHARS)!.n);
+          // Still too large for one frame after its body is stubbed: skipped by refills and replay, kept stored.
+          const unsendable = Number(db.prepare(`SELECT COUNT(*) AS n FROM messages WHERE read_at IS NULL AND length(CAST(id || recipient || from_id || from_name ||
+            from_agent || to_target || conversation_id || coalesce(reply_to, '') AS BLOB)) > ?`).get(MAX_FRAME_BYTES - 64 * 1024)!.n);
+          if (unsendable) finding("error", "unsendable-messages", path, `${unsendable} unread stored messages have headers too large for one ${MAX_FRAME_BYTES}-byte frame; they are skipped and kept for manual review`);
           if (oversized) finding("warning", "oversized-messages", path, `${oversized} unread stored messages exceed ${MAX_BODY_CHARS} characters; they are sent as stubs and their full text is kept under ${join(home, QUARANTINE_DIR)}`);
         }
         if (actual !== expected) finding(actual > expected ? "error" : "warning", "schema-version", path, `Schema ${actual}; code expects ${expected}`);

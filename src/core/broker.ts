@@ -1118,7 +1118,7 @@ export class Broker {
             const moved = this.store.handoffMail(from, recipient, String(job.id), this.now(), recipient !== job.parentJob && recipient !== primaryFor(job));
             const previous = this.connByName(from);
             if (previous && moved.length) this.emit(previous, "mail_retracted", { ids: moved.map((m) => m.id) });
-            for (const m of moved) this.emit(target, "message", this.wireMessage(m));
+            for (const m of moved) this.emit(target, "message", this.wireMessage(m, "the bridge database"));
           }
         });
       }
@@ -2267,8 +2267,8 @@ export class Broker {
       if (unavailable && message.from.id.startsWith("job:") && !message.conversationId.startsWith("siblings-")) continue;
       const size = Buffer.byteLength(JSON.stringify(message)) + 1;
       if (size + 1_024 > MAX_FRAME_BYTES) {
-        // AB-380: an item that can never fit must not block every item behind it.
-        this.log.error("skipping oversized pending message", { recipient, id: message.id, bytes: size });
+        // AB-380: an item that can never fit must not block every item behind it. It stays stored; doctor lists it.
+        this.logOversizedOnce(`skip:${message.id}`, () => this.log.error("skipping unsendable pending message; it remains stored (see doctor)", { recipient, id: message.id, bytes: size }));
         continue;
       }
       if (bytes + size > MAX_FRAME_BYTES) break;
@@ -2283,15 +2283,27 @@ export class Broker {
     return this.jobsPath ? dirname(this.jobsPath) : this.store.file !== ":memory:" ? dirname(this.store.file) : null;
   }
 
-  /** AB-380: a transport-safe copy; an oversized body becomes a stub (same id) naming its quarantined full text. */
-  private wireMessage(message: BridgeMessage): BridgeMessage {
-    const wired = quarantineMessage(this.quarantineHome(), message, "the bridge database");
-    if (wired !== message) this.log.warn("oversized message quarantined; sending a stub", { id: message.id, recipient: message.recipient });
+  /** Oversized-message logs, once per id and kind per process (replay and refills see the same rows repeatedly). */
+  private readonly oversizedLogged = new Set<string>();
+  private logOversizedOnce(key: string, log: () => void): void {
+    if (this.oversizedLogged.has(key)) return;
+    if (this.oversizedLogged.size >= 10_000) this.oversizedLogged.clear();
+    this.oversizedLogged.add(key);
+    log();
+  }
+
+  /**
+   * AB-380: a transport-safe copy; an oversized body becomes a stub (same id) naming its quarantined full text.
+   * `retainedAt` names where the original is still stored; without it a stub requires a confirmed file write.
+   */
+  private wireMessage(message: BridgeMessage, retainedAt?: string): BridgeMessage {
+    const wired = quarantineMessage(this.quarantineHome(), message, retainedAt);
+    if (wired !== message) this.logOversizedOnce(`stub:${message.id}`, () => this.log.warn("oversized message quarantined; sending a stub", { id: message.id, recipient: message.recipient }));
     return wired;
   }
 
   private unreadMail(recipient: string, limit: number): BridgeMessage[] {
-    const messages = this.store.unread(recipient, limit).map((m) => this.wireMessage(m));
+    const messages = this.store.unread(recipient, limit).map((m) => this.wireMessage(m, "the bridge database"));
     if (!this.jobsPath) return messages;
     const noteSenders = new Set(messages.filter((m) => !isQuietMessage(m) && m.conversationId.endsWith(SIBLING_NOTE_SUFFIX)).map((m) => m.from.id));
     if (!noteSenders.size) return messages;

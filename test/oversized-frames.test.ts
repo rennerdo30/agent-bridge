@@ -7,7 +7,7 @@ import { Broker } from "../src/core/broker.js";
 import { BridgeClient } from "../src/core/client.js";
 import { JOBS_FILE, MAX_BODY_CHARS, MAX_FRAME_BYTES, PROTOCOL_VERSION } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
-import { QUARANTINE_DIR } from "../src/core/oversize.js";
+import { QUARANTINE_DIR, quarantineMessage } from "../src/core/oversize.js";
 import { BridgeError, FrameDecoder, type BridgeMessage } from "../src/core/protocol.js";
 import { transientRequestError } from "../src/core/request-retry.js";
 import { MessageStore } from "../src/core/store.js";
@@ -15,6 +15,7 @@ import { loadOrCreateToken } from "../src/core/token.js";
 import { worktreeReport, type Worktree, type WorktreeOutcome } from "../src/core/worktree.js";
 import { JobManager, jobReport } from "../src/mcp/jobs.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
+import { deliverWithRetry } from "../src/mcp/job-runner.js";
 import { makeEnv, seedInbox, until, type TestEnv } from "./helpers.js";
 
 /** Over the 4 MiB frame limit, like the 6.1 MB report of the incident. */
@@ -134,6 +135,35 @@ describe("AB-380 oversized frames", () => {
       expect(pending.map((m) => m.id)).toEqual([big.id, small.id]);
       expect(pending[0]!.body).toBe(stub);
       expect(store.byId(big.id)?.body).toBe(HUGE);
+      // Acknowledging the stub id consumes the stored row: it is not replayed or refilled again.
+      await client.request("ack", { ids: [big.id] });
+      expect(store.byId(big.id)?.readAt).not.toBeNull();
+      expect((await client.request("pending", { limit: 10 })).map((m) => m.id)).toEqual([small.id]);
+      const again = await BridgeClient.connect(env.pipe, nullLogger);
+      const replayed: string[] = [];
+      again.on("event", (name, data) => { if (name === "message") replayed.push((data as BridgeMessage).id); });
+      try {
+        client.close();
+        await until(() => !(broker as unknown as { connByName(name: string): unknown }).connByName("reader"));
+        await hello(again, token);
+        await until(() => replayed.includes(small.id));
+        expect(replayed).not.toContain(big.id);
+      } finally { again.close(); }
+    } finally { client.close(); await broker.close(); }
+  });
+
+  it("settles a request whose response is oversized as a too_large error", async () => {
+    const token = loadOrCreateToken(env.home), store = new MessageStore(env.db, nullLogger);
+    const broker = new Broker(env.pipe, store, nullLogger, token);
+    (broker as unknown as { handlers: Record<string, unknown> }).handlers.ping = () => ({ huge: HUGE });
+    await broker.listen();
+    const client = await BridgeClient.connect(env.pipe, nullLogger);
+    try {
+      const error = await client.request("ping", {} as never).then(() => null, (err: unknown) => err);
+      expect(error).toBeInstanceOf(BridgeError);
+      expect((error as BridgeError).code).toBe("too_large");
+      expect((error as BridgeError).details?.retryable).toBe(false);
+      expect(client.isClosed).toBe(false);
     } finally { client.close(); await broker.close(); }
   });
 
@@ -177,6 +207,36 @@ describe("AB-380 oversized frames", () => {
       expect(existsSync(file) && readFileSync(file, "utf8")).toBe(HUGE);
       await until(() => !(jobs as any).pendingReports.size);
     } finally { jobs.setDormant(true); jobs.cancelAll(); rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it("stores the original report durably even when the quarantine write fails", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ab380-fail-"));
+    writeFileSync(join(home, QUARANTINE_DIR), "a file where the quarantine directory belongs");
+    const node = new LocalCoordinator("owner", "owner-session");
+    const jobs = new JobManager(node, nullLogger, join(home, "jobs.json"));
+    try {
+      const send = vi.fn(async (_m: BridgeMessage) => ({ saved: true }));
+      Object.assign(node, { reportInlineJob: send });
+      const job = { id: "failing", name: "codex-job-failing", agent: "codex", owner: "owner" } as any;
+      const id = (jobs as any).post(job, HUGE) as string;
+      expect(job.deliveryHistory).toHaveLength(1);
+      expect(job.deliveryHistory[0].body).toBe(HUGE);
+      expect((jobs as any).pendingReports.get(id).message.body).toBe(HUGE);
+      // A stub never replaces the only copy: without a written file, the original stays as it is.
+      const m = message("unwritable", HUGE);
+      expect(quarantineMessage(home, m)).toBe(m);
+      expect(quarantineMessage(home, m, "jobs.json").body).toContain("full text at jobs.json (message unwritable)");
+    } finally { jobs.setDormant(true); jobs.cancelAll(); rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it("job-runner delivery does not retry too_large and keeps what it sent", async () => {
+    const send = vi.fn(async () => { throw new BridgeError("too_large", "frame too large", { retryable: false }); });
+    expect(await deliverWithRetry(send, nullLogger, "owner")).toBeNull();
+    expect(send).toHaveBeenCalledTimes(1);
+    // A transient failure is still retried.
+    let calls = 0;
+    expect(await deliverWithRetry(async () => { if (++calls === 1) throw new Error("connection to broker closed"); return "sent"; }, nullLogger, "owner")).toBe("sent");
+    expect(calls).toBe(2);
   });
 
   it("pendingMail continues past an oversized head item", async () => {

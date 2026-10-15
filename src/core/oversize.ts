@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, statSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { MAX_BODY_CHARS } from "./constants.js";
 
@@ -17,20 +17,21 @@ function safeName(id: string): string {
 }
 
 /**
- * Keeps the full text in `<home>/quarantine/<id>.txt` and returns its path. Idempotent for the same id and size;
- * a different text under the same id gets its own content-addressed file, so nothing is ever overwritten.
+ * Keeps the full text in `<home>/quarantine/<id>-<content hash>.txt` (fsynced, then renamed into place) and returns
+ * its path. The name carries the content hash, so an existing file is only reused for the same text, and a different
+ * text under the same id never overwrites or aliases another one. Throws if the text could not be written.
  */
 export function quarantineText(home: string, id: string, text: string): string {
-  const bytes = Buffer.byteLength(text);
-  let file = join(home, QUARANTINE_DIR, `${safeName(id)}.txt`);
-  try {
-    if (statSync(file).size === bytes) return file;
-    file = join(home, QUARANTINE_DIR, `${safeName(id)}-${createHash("sha256").update(text).digest("hex").slice(0, 12)}.txt`);
-    if (statSync(file).size === bytes) return file;
-  } catch { /* Not written yet. */ }
+  const data = Buffer.from(text, "utf8");
+  const file = join(home, QUARANTINE_DIR, `${safeName(id)}-${createHash("sha256").update(data).digest("hex").slice(0, 16)}.txt`);
+  try { if (statSync(file).size === data.length) return file; } catch { /* Not written yet. */ }
   mkdirSync(dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
-  writeFileSync(tmp, text, { encoding: "utf8", mode: 0o600 });
+  const fd = openSync(tmp, "wx", 0o600);
+  try {
+    for (let at = 0; at < data.length;) at += writeSync(fd, data, at);
+    fsyncSync(fd);
+  } finally { closeSync(fd); }
   renameSync(tmp, file);
   return file;
 }
@@ -46,19 +47,23 @@ export function oversizedStub(bytes: number, where: string): string {
 }
 
 /**
- * A transport-safe copy of a stored or queued envelope: the same id and routing, with an oversized body replaced by a
- * stub pointing at the full text. The stored original is never modified. Without a home (or if the file cannot be
- * written), the stub points at the record that still holds the full text.
+ * A transport-safe copy of an envelope: the same id and routing, with an oversized body replaced by a stub pointing at
+ * its full text. The original is never modified.
+ *
+ * `retainedAt` names where the caller still durably holds the original (e.g. "jobs.json"); only then may the stub point
+ * there when the file cannot be written. Without it, the stub is used only once the full text is confirmed written to
+ * a file; otherwise the original is returned unchanged, so a stub is never the only stored copy.
  */
-export function quarantineMessage<T extends { id: string; body: string }>(home: string | null | undefined, message: T, fallback = "the bridge store"): T {
+export function quarantineMessage<T extends { id: string; body: string }>(home: string | null | undefined, message: T, retainedAt?: string): T {
   if (!isOversizedBody(message.body)) return message;
   const bytes = Buffer.byteLength(message.body);
-  let where = `${fallback} (message ${message.id})`;
+  let where: string | undefined;
   if (home) {
     try { where = quarantineText(home, message.id, message.body); }
-    catch { /* Keep the fallback reference: the original is still stored. */ }
+    catch { /* Fall back below. */ }
   }
-  return { ...message, body: oversizedStub(bytes, where) };
+  where ??= retainedAt ? `${retainedAt} (message ${message.id})` : undefined;
+  return where ? { ...message, body: oversizedStub(bytes, where) } : message;
 }
 
 /** Caps a report at MAX_REPORT_CHARS; the full text is kept in a file under the bridge home and named in the body. */

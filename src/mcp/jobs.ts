@@ -2175,13 +2175,13 @@ export class JobManager {
     return this.storePath ? dirname(this.storePath) : resolveHome();
   }
 
-  /** A transport-safe copy of an envelope: an oversized body becomes a stub naming its quarantined full text. */
+  /** A transport-safe copy of a durably stored envelope: an oversized body becomes a stub naming its full text. */
   private wireMessage(message: BridgeMessage): BridgeMessage {
-    return quarantineMessage(this.bridgeHome(), message, "the job store");
+    return quarantineMessage(this.bridgeHome(), message, this.storePath ?? undefined);
   }
 
   private post(job: Job, body: string, replyTo: string | null = null, suffix = "", id: string = randomUUID()): string {
-    const m: BridgeMessage = this.wireMessage({
+    const m: BridgeMessage = {
       id,
       from: { id: `job:${job.id}`, name: job.name, agent: job.agent },
       to: job.owner ?? this.node.name,
@@ -2192,12 +2192,14 @@ export class JobManager {
       body,
       createdAt: Date.now(),
       readAt: null,
-    });
+    };
+    // AB-380: the original is what is stored durably (its flush sends a stub). The local path keeps no other copy,
+    // so it gets a stub only once the full text is confirmed written to a file.
     if ((job.ownershipHistory?.length || (this.storePath && !this.lineage)) && this.node.reportInlineJob) {
       job.deliveryHistory = [...(job.deliveryHistory ?? []), m];
       this.pendingReports.set(m.id, { jobId: job.id, message: m });
       this.persist();
-    } else this.node.deliverLocal(m);
+    } else this.node.deliverLocal(quarantineMessage(this.bridgeHome(), m));
     return m.id;
   }
 }
