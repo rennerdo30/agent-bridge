@@ -1654,7 +1654,7 @@ export class Broker {
       const previousIdentity = { id: old.id, agent: old.agent, sessionId: old.sessionId, name: old.name };
       this.store.rememberName(old, this.now());
       this.log.info("session connected again from a new server; replacing the old connection", { name: old.name, by: peer.name, sessionId: peer.sessionId });
-      this.emit(c, "replaced", { by: peer.name, ...(peer.version ? { version: peer.version } : {}) });
+      this.emit(c, "replaced", { by: peer.name, ...(peer.version ? { version: peer.version } : {}), agentPid: peer.agentPid ?? null, agentStartedAt: peer.agentStartedAt ?? null });
       void this.nativeChildren.endParent(old).catch(err => this.log.warn("replaced native child fallback deferred", { err: String(err) }));
       this.conns.delete(c);
       c.peer = null;

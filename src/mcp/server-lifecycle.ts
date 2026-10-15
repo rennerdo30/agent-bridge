@@ -5,14 +5,31 @@ import { readProcessIdentity } from "../core/process-identity.js";
  * updates start a new server without closing the old one's stdin, so stdin "end" alone never retires it.
  */
 
-/** A graceful shutdown that has not finished by then exits anyway; nothing may keep a retired server alive. */
-export const SHUTDOWN_DEADLINE_MS = 8_000;
+/** Budget of one ordinary shutdown step (closing delegates, the MCP transport, local endpoints). */
+export const SHUTDOWN_STEP_MS = 3_000;
+/** The bridge node gets its own, longer budget: a hosted broker closes its store and releases its locks. */
+export const NODE_STOP_MS = 8_000;
+/** Backstop over the whole shutdown (each step is bounded; this also covers a step that blocks synchronously). */
+export const SHUTDOWN_DEADLINE_MS = 3 * SHUTDOWN_STEP_MS + NODE_STOP_MS + 1_000;
 /** Cheap parent check (signal 0 and the current parent PID); no process is spawned. */
 export const PARENT_CHECK_MS = 5_000;
 /** The parent's creation identity is re-read this often, so a reused PID is not mistaken for the parent. */
 export const PARENT_IDENTITY_CHECK_MS = 10 * 60_000;
 
-/** Numeric dotted versions ("0.30.21"); a pre-release suffix sorts before its release. Unparseable: null. */
+/** Semver 2.0 pre-release precedence: numeric identifiers compare numerically and sort before alphanumeric ones. */
+function comparePrerelease(a: string, b: string): number {
+  const x = a.split("."), y = b.split(".");
+  for (let i = 0; i < Math.min(x.length, y.length); i++) {
+    const p = x[i]!, q = y[i]!;
+    const pn = /^\d+$/.test(p), qn = /^\d+$/.test(q);
+    if (pn && qn) { const d = Number(p) - Number(q); if (d) return Math.sign(d); continue; }
+    if (pn !== qn) return pn ? -1 : 1;
+    if (p !== q) return p < q ? -1 : 1;
+  }
+  return Math.sign(x.length - y.length);
+}
+
+/** Numeric dotted versions ("0.30.21"); a pre-release sorts before its release (semver order). Unparseable: null. */
 export function compareVersions(a: string, b: string): number | null {
   const parse = (v: string) => {
     const m = /^v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$/.exec(v.trim());
@@ -27,17 +44,58 @@ export function compareVersions(a: string, b: string): number | null {
   if (x.pre === y.pre) return 0;
   if (x.pre === null) return 1;
   if (y.pre === null) return -1;
-  return x.pre < y.pre ? -1 : 1;
+  return comparePrerelease(x.pre, y.pre);
+}
+
+/** What the broker reports about the server that replaced this one (see the "replaced" event). */
+export interface Replacement {
+  version?: string;
+  agentPid?: number | null;
+  agentStartedAt?: string | null;
+}
+/** This server's own host process: its parent PID and that parent's creation identity. */
+export interface OwnHost {
+  version: string;
+  ppid: number;
+  parentIdentity: string | null;
 }
 
 /**
- * A server replaced by a newer version of agent-bridge for the same session is never the one the session uses:
- * the host started the newer plugin. A same-version or older replacement keeps the reclaim path (the host may
- * still call this one), and an unknown version (an older broker that does not report it) changes nothing.
+ * Yield (exit) only when the replacement is a strictly newer agent-bridge version started by the very same host
+ * process (same parent PID and creation identity): then the host started the newer plugin and will never call this
+ * server again. Another host process resuming the same session (a second terminal) never makes a server exit.
+ * A same-version or older replacement keeps the reclaim path, and any unknown field (an older broker that does not
+ * report it, an unreadable identity) changes nothing.
  */
-export function shouldYieldTo(replacementVersion: string | undefined, ownVersion: string): boolean {
-  if (!replacementVersion) return false;
-  return compareVersions(replacementVersion, ownVersion) === 1;
+export function shouldYieldTo(replacement: Replacement | undefined, own: OwnHost): boolean {
+  if (!replacement?.version || compareVersions(replacement.version, own.version) !== 1) return false;
+  if (!own.parentIdentity || !replacement.agentStartedAt || !Number.isSafeInteger(replacement.agentPid)) return false;
+  return replacement.agentPid === own.ppid && replacement.agentStartedAt === own.parentIdentity;
+}
+
+export interface ShutdownStep {
+  name: string;
+  run: () => unknown;
+  budgetMs?: number;
+}
+
+/**
+ * Run shutdown steps in order, each bounded by its budget: a step that never settles is logged by name and left
+ * behind, so the steps after it (above all the bridge node and a hosted broker) still run.
+ */
+export async function runShutdownSteps(steps: ShutdownStep[], opts: { onStep?: (name: string) => void; onTimeout?: (name: string, budgetMs: number) => void } = {}): Promise<void> {
+  for (const step of steps) {
+    opts.onStep?.(step.name);
+    const budgetMs = step.budgetMs ?? SHUTDOWN_STEP_MS;
+    let timer: NodeJS.Timeout | undefined;
+    const timedOut = Symbol("timeout");
+    const outcome = await Promise.race([
+      Promise.resolve().then(step.run).catch(() => undefined),
+      new Promise<typeof timedOut>((resolve) => { timer = setTimeout(() => resolve(timedOut), budgetMs); timer.unref(); }),
+    ]);
+    if (timer) clearTimeout(timer);
+    if (outcome === timedOut) opts.onTimeout?.(step.name, budgetMs);
+  }
 }
 
 export interface ParentWatchOptions {

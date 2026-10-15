@@ -78,7 +78,7 @@ import { HISTORY_SEARCH_TOOL_DESCRIPTION, historySearchToolInput, type HistorySe
 import { decisionScopeSchema, MAX_DECISION_TOPIC_CHARS, MAX_DECISION_TEXT_CHARS, type DecideArgs, type DecisionsArgs } from "../core/decisions.js";
 import { askOwnerSchema, type AskOwnerArgs } from "../core/owner-questions.js";
 import { guardServerErrors } from "./job-runner-errors.js";
-import { SHUTDOWN_DEADLINE_MS, shouldYieldTo, watchParent } from "./server-lifecycle.js";
+import { NODE_STOP_MS, runShutdownSteps, SHUTDOWN_DEADLINE_MS, shouldYieldTo, watchParent, type ShutdownStep } from "./server-lifecycle.js";
 import { parentProcessIdentity } from "../core/process-identity.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
@@ -514,26 +514,40 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   }, 15 * 60_000);
   closeSweep.unref();
   let stopParentWatch: () => void = () => {};
-  const shutdown = async (reason: string) => {
+  /** `yielded`: a newer server of this host took the session over (AB-385). */
+  const shutdown = async (reason: string, yielded = false) => {
     // stdin end, transport close and signals can all fire; shut down once.
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(closeSweep);
     stopParentWatch();
     log.info("shutting down", { reason });
-    // AB-385: a step that never settles (a delegate tree, a broker close, an MCP close) must not keep this process alive.
-    setTimeout(() => { log.warn("shutdown did not finish in time; exiting", { reason, deadlineMs: SHUTDOWN_DEADLINE_MS }); process.exit(0); }, SHUTDOWN_DEADLINE_MS).unref();
-    // Runner-hosted subagents keep going for the next server of this session (see job-host.ts).
+    // AB-385: every step is bounded (runShutdownSteps); this backstop also covers one that blocks synchronously.
+    let step = "start";
+    setTimeout(() => { log.warn("shutdown did not finish in time; exiting", { reason, step, deadlineMs: SHUTDOWN_DEADLINE_MS }); process.exit(0); }, SHUTDOWN_DEADLINE_MS).unref();
+    // Runner-hosted subagents keep going for the next server of this session (see job-host.ts). After a yield the
+    // job manager is dormant: it no longer writes the job store, and the session's new server settles the turns
+    // this process ran inline as interrupted (resumable), as for any executor that exited.
+    if (yielded) ctx.jobs?.yieldInline();
     ctx.jobs?.cancelAll();
-    // Stop every delegated CLI this process runs itself, with its whole process tree; nothing may keep working unobserved.
-    await killAllDelegates();
-    await mcp.close().catch(() => {});
-    await dashboard?.then(controller => controller.close()).catch(() => {});
-    await mobileDashboard?.then(controller => controller?.close()).catch(() => {});
-    await rewake?.stop().catch(() => {});
-    await antigravityHooks?.stop().catch(() => {});
-    await museHooks?.stop().catch(() => {});
-    await node?.stop().catch(() => {});
+    const nodeStop: ShutdownStep = { name: "bridge node", run: () => node?.stop(), budgetMs: NODE_STOP_MS };
+    const steps: ShutdownStep[] = [
+      // Stop every delegated CLI this process runs itself, with its whole process tree; nothing may keep working unobserved.
+      { name: "delegates", run: () => killAllDelegates() },
+      { name: "mcp transport", run: () => mcp.close() },
+      { name: "local endpoints", run: () => Promise.allSettled([
+        dashboard?.then(controller => controller.close()),
+        mobileDashboard?.then(controller => controller?.close()),
+        rewake?.stop(),
+        antigravityHooks?.stop(),
+        museHooks?.stop(),
+      ]) },
+    ];
+    // A yielded server is not used by anyone: release a hosted broker (its store and locks) first, with its own budget.
+    await runShutdownSteps(yielded ? [nodeStop, ...steps] : [...steps, nodeStop], {
+      onStep: (name) => { step = name; },
+      onTimeout: (name, budgetMs) => log.warn("shutdown step did not finish in time; continuing", { reason, step: name, budgetMs }),
+    });
     process.exit(0);
   };
   transport.onclose = () => void shutdown("transport closed");
@@ -543,9 +557,14 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   // AB-385: /reload-plugins and plugin updates start a new server without closing this one's stdin. When the broker
   // reports that a newer agent-bridge version took this session over, the host will never call this server again:
   // exit (closing a hosted broker, so the remaining servers re-elect) instead of lingering as a stale peer or broker.
+  // Only a replacement started by this very host process (same parent PID and creation identity) counts: another
+  // terminal resuming the same session must never make a live server exit.
   node?.on("replaced", () => {
-    const by = node.replacementVersion;
-    if (shouldYieldTo(by, APP_VERSION)) void shutdown(`replaced by newer server v${by}`);
+    const by = node.replacement;
+    void parentProcessIdentity().then((parentIdentity) => {
+      if (!node.wasReplaced || !shouldYieldTo(by, { version: APP_VERSION, ppid: process.ppid, parentIdentity })) return;
+      void shutdown(`replaced by newer server v${by!.version} of the same host`, true);
+    }).catch(() => {});
   });
   // Backstop: a host that ends without closing our stdin. The parent is identified by PID and creation time.
   stopParentWatch = watchParent({ ppid: process.ppid, identity: parentProcessIdentity(), onGone: (reason) => void shutdown(reason) });

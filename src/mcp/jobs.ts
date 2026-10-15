@@ -2083,6 +2083,28 @@ export class JobManager {
   }
 
   /**
+   * AB-385: this server yields to a newer server of its session and exits. The turns it executes inline (blocking
+   * asks, runs without a job runner) can never report from here. They are recorded as interrupted (continuable with
+   * message_subagent) in the pending-job journal the session's active server merges, never written to the job
+   * store itself: a replaced server stays dormant, so two servers never write the same jobs. Runner-hosted jobs are
+   * left alone; they keep running for the new server. Call before cancelAll().
+   */
+  yieldInline(): number {
+    const inline = [...this.foreground.values(), ...[...this.running.values()].filter((j) => !j.host && (!j.executionOwner || j.executionOwner === this.node.name))];
+    if (!inline.length || !this.storePath) return 0;
+    const snapshots = inline.map((job) => {
+      this.own.add(job.id);
+      return { ...toStored(job), status: "interrupted", progressNote: undefined, etaAt: undefined, etaReportedAt: undefined } as unknown as Record<string, unknown>;
+    });
+    const dormant = this.dormant;
+    this.dormant = false;
+    try { this.retainOwnedState(snapshots); }
+    finally { this.dormant = dormant; }
+    this.log.info("inline subagent turns recorded as interrupted for the session's new server", { jobs: inline.map((j) => j.name) });
+    return inline.length;
+  }
+
+  /**
    * Stop every subagent of this process (the server shuts down). Runner-hosted ones keep running: the next
    * server of this session takes them over, and their results wait for it on the bridge.
    */

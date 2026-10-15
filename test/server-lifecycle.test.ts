@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { compareVersions, shouldYieldTo, watchParent } from "../src/mcp/server-lifecycle.js";
+import { compareVersions, NODE_STOP_MS, runShutdownSteps, SHUTDOWN_DEADLINE_MS, shouldYieldTo, watchParent } from "../src/mcp/server-lifecycle.js";
 
 const stops: (() => void)[] = [];
 afterEach(() => { for (const stop of stops.splice(0)) stop(); });
@@ -15,13 +15,56 @@ describe("AB-385 server version yield", () => {
     expect(compareVersions("not-a-version", "0.30.21")).toBeNull();
   });
 
-  it("yields only to a strictly newer, known version", () => {
-    expect(shouldYieldTo("0.30.21", "0.30.17")).toBe(true);
-    expect(shouldYieldTo("0.30.21", "0.30.21")).toBe(false);
-    expect(shouldYieldTo("0.30.17", "0.30.21")).toBe(false);
+  it("orders pre-releases by semver identifiers", () => {
+    expect(compareVersions("0.31.0-rc.10", "0.31.0-rc.9")).toBe(1);
+    expect(compareVersions("0.31.0-rc.2", "0.31.0-rc.10")).toBe(-1);
+    expect(compareVersions("0.31.0-1", "0.31.0-alpha")).toBe(-1);
+    expect(compareVersions("0.31.0-alpha", "0.31.0-alpha.1")).toBe(-1);
+    expect(compareVersions("0.31.0-beta", "0.31.0-alpha.9")).toBe(1);
+  });
+
+  const own = { version: "0.30.17", ppid: 4242, parentIdentity: "host-start" };
+  const sameHost = { agentPid: 4242, agentStartedAt: "host-start" };
+
+  it("yields only to a strictly newer version started by the same host process", () => {
+    expect(shouldYieldTo({ version: "0.30.21", ...sameHost }, own)).toBe(true);
+    expect(shouldYieldTo({ version: "0.30.17", ...sameHost }, own)).toBe(false);
+    expect(shouldYieldTo({ version: "0.30.9", ...sameHost }, own)).toBe(false);
     // An older broker does not report the replacing server's version: keep the reclaim path.
-    expect(shouldYieldTo(undefined, "0.30.17")).toBe(false);
-    expect(shouldYieldTo("garbage", "0.30.17")).toBe(false);
+    expect(shouldYieldTo({ ...sameHost }, own)).toBe(false);
+    expect(shouldYieldTo({ version: "garbage", ...sameHost }, own)).toBe(false);
+    expect(shouldYieldTo(undefined, own)).toBe(false);
+  });
+
+  it("never yields to another host process of the same session, or when the host cannot be identified", () => {
+    // A second terminal resuming the same session: same session id, another CLI process.
+    expect(shouldYieldTo({ version: "0.30.21", agentPid: 5151, agentStartedAt: "other-start" }, own)).toBe(false);
+    // A reused PID: same number, another creation time.
+    expect(shouldYieldTo({ version: "0.30.21", agentPid: 4242, agentStartedAt: "other-start" }, own)).toBe(false);
+    expect(shouldYieldTo({ version: "0.30.21", agentPid: null, agentStartedAt: "host-start" }, own)).toBe(false);
+    expect(shouldYieldTo({ version: "0.30.21", agentPid: 4242, agentStartedAt: null }, own)).toBe(false);
+    expect(shouldYieldTo({ version: "0.30.21", ...sameHost }, { ...own, parentIdentity: null })).toBe(false);
+  });
+});
+
+describe("AB-385 bounded shutdown steps", () => {
+  it("leaves a hanging step behind after its budget, names it, and still runs the later steps", async () => {
+    const ran: string[] = [], timedOut: [string, number][] = [];
+    const startedAt = Date.now();
+    await runShutdownSteps([
+      { name: "delegates", run: () => { ran.push("delegates"); } },
+      { name: "hangs", run: () => { ran.push("hangs"); return new Promise(() => {}); }, budgetMs: 50 },
+      { name: "throws", run: () => { ran.push("throws"); throw new Error("boom"); } },
+      { name: "bridge node", run: async () => { ran.push("bridge node"); } },
+    ], { onTimeout: (name, budgetMs) => timedOut.push([name, budgetMs]) });
+    expect(ran).toEqual(["delegates", "hangs", "throws", "bridge node"]);
+    expect(timedOut).toEqual([["hangs", 50]]);
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+  });
+
+  it("budgets the whole shutdown within its backstop", () => {
+    expect(SHUTDOWN_DEADLINE_MS).toBeGreaterThan(NODE_STOP_MS);
+    expect(SHUTDOWN_DEADLINE_MS).toBeLessThanOrEqual(30_000);
   });
 });
 
