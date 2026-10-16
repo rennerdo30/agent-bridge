@@ -253,6 +253,40 @@ describe("desktop catalog refresh", () => {
     return { store, admin, read };
   }
 
+  it.each([9_999, 10_000, 12_000])("checks start-time freshness after a successful %ims refresh before granting authority", async (elapsed) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const work = deferred();
+    const snapshot = vi.fn<MobileSource["snapshot"]>().mockResolvedValueOnce(view("initial"))
+      .mockImplementationOnce(() => work.promise).mockImplementation(async () => view("current"));
+    const { admin, store, read } = fixture(snapshot), headers = await adminHeaders(admin);
+    vi.advanceTimersByTime(MobileDesktopAdmin.CATALOG_MS);
+    const sampled = view("retired"); // Sampled before the session retires while traversal is suspended.
+    expect((await read()).catalog.stale).toBe(true); expect(snapshot).toHaveBeenCalledTimes(2);
+    vi.advanceTimersByTime(elapsed - 1_000);
+    const invitation = store.invite(), pending = store.claim(invitation.invitationId, invitation.nonce, "Fixture", "android", randomUUID()) as PairingClaim;
+    const before = store.pending(), mutate = vi.spyOn(store, "mutate"), confirm = vi.spyOn(store, "confirm");
+    const grant = (id: string): Grant => ({ pcId, projectIds: [], sessionIds: [id], jobIds: [], capabilities: ["overview.read"] });
+    const post = (id: string) => admin.handle("POST", "/api/mobile/claims/" + pending.claimId, headers(), JSON.stringify({
+      comparisonCode: pending.comparisonCode, allow: true, grants: [grant(id)],
+    }));
+    const result = post("retired");
+    const assertion = elapsed < MobileDesktopAdmin.CATALOG_MS
+      ? expect(result).resolves.toMatchObject({ status: 200, body: { state: "recorded" } })
+      : expect(result).rejects.toMatchObject({ status: 503, code: "source_unavailable" });
+    expect(snapshot).toHaveBeenCalledTimes(2); // Confirmation joins the running refresh.
+    await vi.advanceTimersByTimeAsync(1_000);
+    work.resolve(sampled); await assertion;
+    if (elapsed >= MobileDesktopAdmin.CATALOG_MS) {
+      expect(mutate).not.toHaveBeenCalled(); expect(confirm).not.toHaveBeenCalled();
+      expect(store.pending()).toEqual(before); expect(store.list("device")).toEqual([]);
+      expect(snapshot).toHaveBeenCalledTimes(2); // No fallback or automatic retry grants authority.
+      expect((await post("current")).status).toBe(200); expect(snapshot).toHaveBeenCalledTimes(3);
+    }
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(store.list<Device>("device").map(device => device.grants)).toEqual([[grant(elapsed < MobileDesktopAdmin.CATALOG_MS ? "retired" : "current")]]);
+    expect(store.pending()).toEqual([]);
+  });
+
   it("never publishes timed-out A after replacement B or authorizes A's retired identities", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const a = deferred(), b = deferred(), current = view("replacement");

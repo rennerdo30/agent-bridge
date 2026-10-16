@@ -110,8 +110,8 @@ export class MobileDesktopAdmin {
       // A fresh catalog (the one the owner just reviewed) needs no new snapshot; anything it does not know is checked against a new one.
       const cached = this.catalogView, recent = cached && Date.now() - cached.at < MobileDesktopAdmin.CATALOG_MS ? cached.view : undefined;
       if (!recent || !known(recent)) {
-        const { view } = await this.refreshCatalog();
-        if (!this.ready()) throw new MobileFault(503, "source_unavailable");
+        const { at, view } = await this.refreshCatalog();
+        if (!this.ready() || Date.now() - at >= MobileDesktopAdmin.CATALOG_MS) throw new MobileFault(503, "source_unavailable");
         if (!known(view)) throw new MobileFault(403, "unsupported_grant");
       }
       if (!this.ready()) throw new MobileFault(503, "source_unavailable");
