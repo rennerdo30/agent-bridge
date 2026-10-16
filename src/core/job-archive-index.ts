@@ -178,7 +178,9 @@ const decodedRows = new Map<string, { rows: DecodedRows; bytes: number }>();
 const DECODED_CACHE_KEYS = 16;
 let decodedBytes = 0;
 let cacheBytes = 0;
-const CACHE_BUDGET = 8 * 1024 * 1024;
+// The dashboard's full metadata listing must fit: at 8 MB a home with ~1,700 jobs (one with a 6 MB delivery
+// history) was never cached, so every refresh decoded every job again (about a quarter of a core).
+const CACHE_BUDGET = 32 * 1024 * 1024;
 export const archiveIndexCounters = { reads: 0, decoded: 0 };
 /** Separate from snapshot validity: WAL changes invalidate snapshots, not unchanged decoded rows. */
 export function archiveDecodedCacheUsage(): { entries: number; bytes: number; maxEntries: number; maxBytes: number } {
