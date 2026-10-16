@@ -15,6 +15,8 @@ export interface MobileSource {
   chat(id: string, cursor: string | undefined, limit: number): Promise<ContentPage<ChatItem>>;
   steps(id: string, cursor: string | undefined, limit: number): Promise<ContentPage<{ id: string; text: string; at: number | null }>>;
   answer(id: string, body: { expectedVersion: string; option?: string; text?: string }, deviceId: string, key: string): Promise<Question>;
+  /** Only the current questions: no peers, runs or job project discovery (AB-434). */
+  questionView?(): Question[];
   /** Local folder of each opaque project id from the latest snapshot, for the desktop owner only; never part of a snapshot. */
   projectFolders?(): ReadonlyMap<string, string>;
 }
@@ -68,6 +70,10 @@ export class LocalMobileSource implements MobileSource {
     const questions = this.listQuestions().slice(0, 10_000).map(q => { const projected = projectQuestion(q, this.pcId); if (!folders.has(projected.projectId)) folders.set(projected.projectId, q.project); return projected; });
     this.folders = folders;
     return { sessions, jobs, questions, sampledAt, sourceState: "ready" };
+  }
+  questionView(): Question[] {
+    if (!this.ready()) throw new MobileFault(503, "source_unavailable");
+    return this.listQuestions().slice(0, 10_000).map(q => projectQuestion(q, this.pcId));
   }
   projectFolders(): ReadonlyMap<string, string> { return this.folders; }
   private async read(binding: Binding, suffix: string, cursor?: string): Promise<unknown> {
