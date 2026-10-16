@@ -39,17 +39,23 @@ export function recoverJobRecord(home: string, ref: string): StoredJob | undefin
 /** Broker recovery never synchronously rereads an entire retained run feed. */
 export async function recoverJobRecordAsync(home: string, ref: string): Promise<StoredJob | undefined> {
   const deadline = performance.now() + JOB_INDEX_WAIT_MS;
-  const recovery = await prepareRecoveryAsync(home, ref, deadline);
-  if (!recovery) return undefined;
-  const payload = needsHeader(recovery) && recovery.run ? await readRecoveryHeader(recovery.run.file) : { prompt: "", header: "" };
-  if (!payload) return undefined;
   // A handoff or new native turn can update authority while asynchronous IO yields.
-  // Re-read durable facts before publishing/authorizing the recovered context.
-  const latest = await prepareRecoveryAsync(home, ref, deadline);
-  if (!latest) return undefined;
-  if (!needsHeader(latest)) return finishRecovery(home, latest, { prompt: "", header: "" });
-  if (latest.run?.file !== recovery.run?.file || latest.run?.signature !== recovery.run?.signature || contextIdentity(latest) !== contextIdentity(recovery)) return undefined;
-  return finishRecovery(home, latest, payload);
+  // Re-read durable facts before publishing/authorizing the recovered context, and
+  // retry the whole observation a bounded number of times when the facts moved
+  // once during the read (concurrent recoveries publish enriched facts the same
+  // way); a context that keeps changing still fails closed.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const recovery = await prepareRecoveryAsync(home, ref, deadline);
+    if (!recovery) return undefined;
+    const payload = needsHeader(recovery) && recovery.run ? await readRecoveryHeader(recovery.run.file) : { prompt: "", header: "" };
+    if (!payload) return undefined;
+    const latest = await prepareRecoveryAsync(home, ref, deadline);
+    if (!latest) return undefined;
+    if (!needsHeader(latest)) return finishRecovery(home, latest, { prompt: "", header: "" });
+    if (latest.run?.file !== recovery.run?.file || latest.run?.signature !== recovery.run?.signature || contextIdentity(latest) !== contextIdentity(recovery)) continue;
+    return finishRecovery(home, latest, payload);
+  }
+  return undefined;
 }
 
 function prepareRecovery(home: string, ref: string) {

@@ -346,6 +346,35 @@ it("preserves packing when retained metadata is a non-object JSON value", () => 
   expect(readFileSync(retained.file)).toEqual(bytes);
   expect(retained.meta).toEqual({});
 });
+it("recovers the latest context when durable facts change once during the header read", async () => {
+  const f = fixture(); await startJobRunBackfill(env.home);
+  const feed = await import("../src/core/job-recovery-feed.js");
+  const original = feed.readRecoveryHeader;
+  let mutated = false;
+  vi.spyOn(feed, "readRecoveryHeader").mockImplementation(async (...args) => {
+    const payload = await original(...args);
+    if (!mutated) {
+      mutated = true;
+      writeFileSync(f.metadata, JSON.stringify({ ...JSON.parse(readFileSync(f.metadata, "utf8")), session: "changed-session" }));
+    }
+    return payload;
+  });
+  expect(await recoverJobRecordAsync(env.home, f.name)).toMatchObject({ prompt: f.prompt, sessionId: "changed-session" });
+});
+it("fails closed when durable facts keep changing during every header read", async () => {
+  const f = fixture(); await startJobRunBackfill(env.home);
+  const feed = await import("../src/core/job-recovery-feed.js");
+  const original = feed.readRecoveryHeader;
+  let changes = 0;
+  vi.spyOn(feed, "readRecoveryHeader").mockImplementation(async (...args) => {
+    const payload = await original(...args);
+    changes++;
+    writeFileSync(f.metadata, JSON.stringify({ ...JSON.parse(readFileSync(f.metadata, "utf8")), session: `changing-${changes}` }));
+    return payload;
+  });
+  expect(await recoverJobRecordAsync(env.home, f.name)).toBeUndefined();
+  expect(changes).toBeGreaterThan(0);
+});
 it("completes backfill when loose metadata is malformed and records that run with no routing key", async () => {
   const f = fixture(), dir = join(env.home, "runs"), originals = new Map<string, Buffer>();
   for (const [id, bytes] of [["nullmeta", "null"], ["corruptmeta", "{not json"]] as const) {
