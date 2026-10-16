@@ -72,15 +72,6 @@
         "timeoutMs": 25000
       },
       {
-        "id": "bridge-posttooluse",
-        "event": "PostToolUse",
-        "command": [
-          "node",
-          "hooks/post-tool.mjs"
-        ],
-        "timeoutMs": 25000
-      },
-      {
         "id": "bridge-prellmcall",
         "event": "PreLLMCall",
         "command": [

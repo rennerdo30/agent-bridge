@@ -110,6 +110,10 @@ describe("Muse native bootstrap and hook delivery", () => {
       await observer.send({ to: "muse-owner", body: `mail for ${event}` });
       expect(JSON.stringify(await hook(event))).toContain(`mail for ${event}`);
     }
+    // PreToolUse only gates: the next PreLLMCall delivers the mail, so it is never handed out twice per step.
+    await observer.send({ to: "muse-owner", body: "mail waits for the model call" });
+    expect(JSON.stringify(await hook("PreToolUse", undefined, { tool_name: "shell" }))).not.toContain("mail waits for the model call");
+    expect(JSON.stringify(await hook("PreLLMCall"))).toContain("mail waits for the model call");
     await client.callTool({ name: "send", arguments: { to: "observer", message: "open conversation" } });
     await observer.send({ to: "muse-owner", body: "mail at Stop" });
     expect(await hook("Stop")).toMatchObject({ decision: "block", reason: expect.stringContaining("mail at Stop") });
