@@ -229,6 +229,6 @@ it("uses the final duplicate active row and fails closed when incomplete legacy 
   writeFileSync(join(env.home,"jobs.json"),JSON.stringify({version:4,jobs:[{id:"unreadablelegacy",name:"codex-job-unreadablelegacy",agent:"codex",owner:next.name,status:"interrupted",startedAt:1,args:{}}]}));
   const f=fixture("exact context required",next.name,"unreadablelegacy");
   ioMocks.open.mockRejectedValueOnce(Object.assign(new Error("temporarily inaccessible"),{code:"EACCES"}));
-  expect(await next.jobAuthority(f.name)).toBeNull();
+  await expect(next.jobAuthority(f.name)).rejects.toMatchObject({code:"job_index_preparing",message:expect.stringContaining("recovery_header_unavailable")});
   expect(await next.jobAuthority(f.name)).toMatchObject({prompt:"exact context required",owner:next.name});
 });

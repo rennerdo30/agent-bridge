@@ -134,7 +134,7 @@ describe("desktop claim review with scopes", () => {
     view.sessions = [session("s1", "pa"), session("s2", "pa")]; view.jobs = [job("j1", "pa"), job("j2", "pb")];
     source.projectFolders = () => new Map([["pa", "E:/Development/alpha"], ["pb", "E:\\Development\\beta\\"]]);
     const { state } = await admin(), body = state.body as { catalog: Record<string, unknown> };
-    expect(body.catalog).toEqual({ pcId, sessions: [{ id: "s1", name: "Session s1", agent: "codex", projectId: "pa" }, { id: "s2", name: "Session s2", agent: "codex", projectId: "pa" }],
+    expect(body.catalog).toEqual({ pcId, stale: false, sessions: [{ id: "s1", name: "Session s1", agent: "codex", projectId: "pa" }, { id: "s2", name: "Session s2", agent: "codex", projectId: "pa" }],
       projects: [{ id: "pa", name: "alpha", folder: "E:/Development/alpha", sessions: 2, jobs: 1, questions: 0 }, { id: "pb", name: "beta", folder: "E:\\Development\\beta\\", sessions: 0, jobs: 1, questions: 0 }] });
     expect(body.catalog).not.toHaveProperty("jobs");
   });

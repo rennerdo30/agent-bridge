@@ -15,6 +15,11 @@ import { readPendingRunnerSpec, readRunnerStateRecord } from "./runner-store.js"
 import { safeFile } from "./transcripts/common.js";
 import { RUNS_DIR_NAME, type RunMeta } from "./runfeed.js";
 type StoredJob = Omit<Job, "controller" | "progress" | "queue" | "resume">;
+/** Internal attribution only: observing a refusal never changes recovery or its fences. */
+export type RecoveryRefusal =
+  | { reason: "recovery_header_unavailable"; stage: "header_read" }
+  | { reason: "recovery_context_changed"; stage: "context_recheck" }
+  | { reason: "recovery_context_unavailable"; stage: "prepare" | "header_format" | "finish" };
 function runStart(run: ReturnType<typeof readRunLogs>[number]): number {
   if (run.meta.jobStartedAt !== undefined) return run.meta.jobStartedAt;
   const stamp = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(run.name);
@@ -37,19 +42,34 @@ export function recoverJobRecord(home: string, ref: string): StoredJob | undefin
 }
 
 /** Broker recovery never synchronously rereads an entire retained run feed. */
-export async function recoverJobRecordAsync(home: string, ref: string): Promise<StoredJob | undefined> {
+export async function recoverJobRecordAsync(home: string, ref: string,
+  options?: { onUnavailable?: (refusal: RecoveryRefusal) => void }): Promise<StoredJob | undefined> {
+  const refuse = (refusal: RecoveryRefusal) => { options?.onUnavailable?.(refusal); return undefined; };
   const deadline = performance.now() + JOB_INDEX_WAIT_MS;
-  const recovery = await prepareRecoveryAsync(home, ref, deadline);
+  const recovery = await prepareRecoveryAsync(home, ref, deadline, () => refuse({ reason: "recovery_context_unavailable", stage: "prepare" }));
   if (!recovery) return undefined;
-  const payload = needsHeader(recovery) && recovery.run ? await readRecoveryHeader(recovery.run.file) : { prompt: "", header: "" };
-  if (!payload) return undefined;
+  // The header can supply owner/prompt, never native identity. A conclusively
+  // label-only first observation must preserve the local manager's own facts.
+  if (!recovery.history && !recovery.launch && labelOnly(recovery, recoveryContext(home, recovery).sessionId))
+    return refuse({ reason: "recovery_context_unavailable", stage: "finish" });
+  let noPromptSection = false;
+  const payload = needsHeader(recovery) && recovery.run ? await readRecoveryHeader(recovery.run.file, () => { noPromptSection = true; }) : { prompt: "", header: "" };
+  if (!payload) {
+    // This read reached the end of an unchanged file without a prompt separator: a label-only log has no prompt
+    // to recover, so, as before AB-439, the local manager keeps its own facts (a live local job may have a native
+    // session). Every other failed read stays a refusal.
+    if (noPromptSection) return refuse({ reason: "recovery_context_unavailable", stage: "header_format" });
+    return refuse({ reason: "recovery_header_unavailable", stage: "header_read" });
+  }
   // A handoff or new native turn can update authority while asynchronous IO yields.
   // Re-read durable facts before publishing/authorizing the recovered context.
   const latest = await prepareRecoveryAsync(home, ref, deadline);
-  if (!latest) return undefined;
-  if (!needsHeader(latest)) return finishRecovery(home, latest, { prompt: "", header: "" });
-  if (latest.run?.file !== recovery.run?.file || latest.run?.signature !== recovery.run?.signature || contextIdentity(latest) !== contextIdentity(recovery)) return undefined;
-  return finishRecovery(home, latest, payload);
+  if (!latest) return refuse({ reason: "recovery_context_changed", stage: "context_recheck" });
+  const finish = (payload: RecoveryHeader) => finishRecovery(home, latest, payload) ?? refuse({ reason: "recovery_context_unavailable", stage: "finish" });
+  if (!needsHeader(latest)) return finish({ prompt: "", header: "" });
+  if (latest.run?.file !== recovery.run?.file || latest.run?.signature !== recovery.run?.signature || contextIdentity(latest) !== contextIdentity(recovery))
+    return refuse({ reason: "recovery_context_changed", stage: "context_recheck" });
+  return finish(payload);
 }
 
 function prepareRecovery(home: string, ref: string) {
@@ -67,7 +87,7 @@ function prepareRecovery(home: string, ref: string) {
   // selectRecovery applies the same job, generation and single-candidate rules to it.
   return selectRecovery(ref, id, history, spec, launch, indexed.length ? indexed : readRunLogs(home), ambiguous);
 }
-async function prepareRecoveryAsync(home: string, ref: string, deadline: number) {
+async function prepareRecoveryAsync(home: string, ref: string, deadline: number, onUnavailable?: () => void) {
   const id = recoveryId(ref);
   if (!id) return undefined;
   const history = await drainScanResponsive((function* () {
@@ -79,9 +99,10 @@ async function prepareRecoveryAsync(home: string, ref: string, deadline: number)
     return undefined;
   })());
   const { spec, launch } = recoverySpec(home, id);
-  if (completeContext(home, history, id)) return selectRecovery(ref, id, history, spec, launch, []);
+  const select = (runs: RunLogRecord[], ambiguous = false) => selectRecovery(ref, id, history, spec, launch, runs, ambiguous, onUnavailable);
+  if (completeContext(home, history, id)) return select([]);
   const currentRun = witnessedRun(home, id, history);
-  if (currentRun) return selectRecovery(ref, id, history, spec, launch, [currentRun]);
+  if (currentRun) return select([currentRun]);
   const key = typeof history?.name === "string" ? history.name : ref;
   const startedAt = typeof history?.startedAt === "number" ? history.startedAt : undefined;
   // Bounded, yielding discovery sharing the original deadline: the pre-index path, never a
@@ -94,7 +115,7 @@ async function prepareRecoveryAsync(home: string, ref: string, deadline: number)
     try {
       const runs = await Promise.race([readRunLogsResponsive(home, undefined, undefined, stop.signal),
         new Promise<never>((_, reject) => { timer = setTimeout(() => { stop.abort(); reject(error()); }, remaining); })]);
-      return selectRecovery(ref, id, history, spec, launch, runs, legacyAmbiguous);
+      return select(runs, legacyAmbiguous);
     } catch { throw error(); }
     finally { clearTimeout(timer); stop.abort(); }
   };
@@ -107,7 +128,7 @@ async function prepareRecoveryAsync(home: string, ref: string, deadline: number)
   let runs: RunLogRecord[];
   // A moved, changing or unreadable indexed route fails only this lookup: discover instead.
   try { runs = indexedJobRun(home, key, startedAt); } catch { return discover(false, "discovery running"); }
-  return selectRecovery(ref, id, history, spec, launch, runs);
+  return select(runs);
 }
 
 /** Full history rows come from the selected durable payload, never the routing
@@ -170,7 +191,7 @@ function recoverySpec(home: string, id: string) {
   const launch = isRecord(spec) && isRecord(spec.job) ? spec.job : undefined;
   return { spec, launch };
 }
-function selectRecovery(ref: string, id: string, history: Record<string, unknown> | undefined, spec: unknown, launch: Record<string, unknown> | undefined, runLogs: ReturnType<typeof readRunLogs>, legacyAmbiguous = false) {
+function selectRecovery(ref: string, id: string, history: Record<string, unknown> | undefined, spec: unknown, launch: Record<string, unknown> | undefined, runLogs: ReturnType<typeof readRunLogs>, legacyAmbiguous = false, onUnavailable?: () => void) {
   const key = typeof history?.name === "string" ? history.name : ref;
   const candidates = runLogs.filter(r => r.metadataFile || Object.keys(r.meta).length
     ? r.meta.job === key
@@ -182,9 +203,10 @@ function selectRecovery(ref: string, id: string, history: Record<string, unknown
   const run = runs[0], meta = run?.meta;
   const name = history?.name ?? launch?.name ?? meta?.job ?? (run && /^[\w]+-(?:job|ask)-[\w-]+$/.test(ref) ? ref : undefined);
   const agent = history?.agent ?? launch?.agent ?? ref.split("-")[0];
-  if (typeof name !== "string" || !AGENT_KINDS.includes(agent as never)) return undefined;
+  const unavailable = () => { onUnavailable?.(); return undefined; };
+  if (typeof name !== "string" || !AGENT_KINDS.includes(agent as never)) return unavailable();
   const base = { ...launch, ...history };
-  if (!run && typeof base.prompt !== "string") return undefined;
+  if (!run && typeof base.prompt !== "string") return unavailable();
   return { id, history, spec, launch, run, meta, name, agent, base };
 }
 type Recovery = NonNullable<ReturnType<typeof prepareRecovery>>;
@@ -197,19 +219,27 @@ function contextIdentity({ id, name, agent, base, meta }: Recovery): string {
 function needsHeader({ run, base, meta }: Recovery): boolean {
   return Boolean(run && (typeof base.prompt !== "string" || typeof base.owner !== "string" && !meta?.by));
 }
-function finishRecovery(home: string, { id, history, spec, launch, run, meta, name, agent, base }: Recovery, { prompt, header }: RecoveryHeader): StoredJob | undefined {
+function recoveryContext(home: string, { id, base, run, meta }: Recovery) {
   const rawState = readRunnerStateRecord(home, id);
   const state = isRecord(rawState) && typeof rawState.pid === "number" ? rawState : undefined;
   const startedAt = typeof base.startedAt === "number" ? base.startedAt : run ? runStart(run) : 0;
   // Do not mistake a previous runner's final state for a newer continuation.
   const currentState = state && typeof state.updatedAt === "number" && state.updatedAt >= startedAt ? state : undefined;
+  const sessionId = currentState?.sessionId ?? base.sessionId ?? base.threadId ?? meta?.session ?? meta?.continues ?? null;
+  return { startedAt, currentState, sessionId };
+}
+function labelOnly({ history, launch }: Recovery, sessionId: unknown): boolean {
+  return !history && !launch && !sessionId;
+}
+function finishRecovery(home: string, recovery: Recovery, { prompt, header }: RecoveryHeader): StoredJob | undefined {
+  const { id, spec, meta, name, agent, base } = recovery;
+  const { startedAt, currentState, sessionId } = recoveryContext(home, recovery);
   // A runner whose last heartbeat predates the current boot is gone even when its PID answers again (AB-256).
   const alive = currentState?.status === "running" && pidAlive(Number(currentState.pid)) && !writtenBeforeBoot(Number(currentState.updatedAt));
   const owner = typeof base.owner === "string" ? base.owner : meta?.by ?? / by ([\w.-]+)/.exec(header)?.[1];
   if (!owner) return undefined;
-  const sessionId = currentState?.sessionId ?? base.sessionId ?? base.threadId ?? meta?.session ?? meta?.continues ?? null;
   // A label-only log cannot reconstruct a native job; do not overwrite a live manager's facts.
-  if (!history && !launch && !sessionId) return undefined;
+  if (labelOnly(recovery, sessionId)) return undefined;
   return {
     ...base, id: typeof base.id === "string" ? base.id : id, name, agent,
     model: base.model ?? meta?.model ?? null, prompt: typeof base.prompt === "string" ? base.prompt : prompt, startedAt,

@@ -37,7 +37,7 @@ async function prepare() {
   const { build } = createRequire(join(dependencies, 'esbuild/package.json'))('esbuild');
   const built = await build({ absWorkingDir: WORKTREE, preserveSymlinks: true, nodePaths: [dependencies], entryPoints: entries,
     outdir: bundle, outExtension: { '.js': '.mjs' }, chunkNames: 'chunks/[name]-[hash]', splitting: true,
-    bundle: true, platform: 'node', format: 'esm', target: 'node22', external: ['node:*'], legalComments: 'eof', logLevel: 'warning', metafile: true,
+    bundle: true, platform: 'node', format: 'esm', target: 'node24', external: ['node:*'], legalComments: 'eof', logLevel: 'warning', metafile: true,
     banner: { js: "import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);" } });
   const sourceGraph = Object.entries(built.metafile.inputs).map(([path, input]) => ({ module: label(resolve(WORKTREE, path), dependencies), bytes: input.bytes,
     imports: input.imports.map(item => ({ module: item.external ? item.path : label(resolve(WORKTREE, item.path), dependencies), kind: item.kind, external: Boolean(item.external) })) }));
@@ -50,7 +50,7 @@ async function prepare() {
   save(join(root, 'module-graph.json'), { baseline: BASE, inputs: sourceGraph, outputs });
   const probe = join(root, 'guard-probe.mjs');
   await build({ absWorkingDir: WORKTREE, stdin: { contents: "export { readProcessIdentity, readProcessIdentities, readProcessIdentitiesSync } from './src/core/process-identity.ts'; export { inspectClaudeLaunch } from './src/core/procinfo.ts';", resolveDir: WORKTREE },
-    outfile: probe, bundle: true, platform: 'node', format: 'esm', target: 'node22', external: ['node:*'], logLevel: 'warning' });
+    outfile: probe, bundle: true, platform: 'node', format: 'esm', target: 'node24', external: ['node:*'], logLevel: 'warning' });
   const environments = {};
   for (const role of ROLES) {
     const env = childEnvironment(root, role, nonce, process.env.SystemRoot ?? 'C:\\Windows');

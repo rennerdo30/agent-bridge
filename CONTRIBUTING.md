@@ -1,6 +1,6 @@
 # Hosted CI scope
 
-Windows Node22/24 runs six Vitest shards of the unchanged fast and integration
+Windows Node 24 runs six Vitest shards of the unchanged fast and integration
 lanes. Files are packed into shards by measured duration (`scripts/test-shards.mjs`,
 greedy longest-first over the median Windows file times in
 `scripts/test-shard-timings.json`; files without a timing get its default weight).
@@ -72,7 +72,7 @@ How it works:
   known-flaky lane does not cover. A new workflow that runs Vitest outside `ci.yml` sets
   `off` too, unless it has its own known-flaky lane.
 - The CI job "Known-flaky tests (non-blocking)" runs the listed tests on Windows, Linux and
-  macOS with Node 22 and 24 in `only` mode, in their usual fast/integration lane with the
+  macOS with Node 24 in `only` mode, in their usual fast/integration lane with the
   usual deadlines. Its test steps continue on error; the report step writes a table to
   the job summary and a warning for each failed entry and each entry that matched no test.
   Its artifacts keep the raw results.

@@ -73,7 +73,7 @@ import { readNetworkConfig, writeNetworkConfig, type NetworkConfig } from "../ne
 import { z } from "zod";
 import { basename, dirname, join } from "node:path";
 import { ProjectGroups } from "./project-groups.js";
-import { recoverJobRecordAsync } from "./job-recovery.js";
+import { recoverJobRecordAsync, type RecoveryRefusal } from "./job-recovery.js";
 import { findHistoryJob, selectHistoryJobs } from "./run-history.js";
 import { pageProjectJobSummaries, PROJECT_JOB_SUMMARY_PAGE_MAX } from "./project-job-summary.js";
 import { collectTransfer, receiveTransfer, type TransferResult } from "../network/files.js";
@@ -1471,10 +1471,9 @@ export class Broker {
 
   /** Project local runner lineage from durable jobs; do not alter broker routing identities. */
   private dashboardPeers(): PeerInfo[] {
-    const jobs = this.storedJobs();
-    return this.liveConns().flatMap((c) => {
-      const peer = c.peer;
-      if (!peer) return [];
+    const peers = this.liveConns().flatMap((c) => c.peer ? [c.peer] : []);
+    const jobs = this.peerJobs(peers);
+    return peers.flatMap((peer) => {
       const job = jobs.find((j) => j.name === peer.name || `job:${j.id}` === peer.id);
       const field = (key: string): string | undefined => typeof job?.[key] === "string" ? job[key] as string : undefined;
       return [{ ...this.projectPeer(peer), agent: peer.jobAgent ?? peer.agent, parentJob: field("parentJob") ?? peer.parentJob, rootSession: field("rootSession") ?? peer.rootSession ?? peer.jobOwner,
@@ -1638,9 +1637,15 @@ export class Broker {
     if (active && (known?.remote || (isRecord(known?.host) && Date.now() - Number(known.host.startedAt) < 30_000))) return known;
     // A connected inline executor is the only source of its runtime controller.
     if (active && (known?.status === "running" || known?.status === "paused" && known.pausePending) && !known.host && this.connByName(String(known.executionOwner ?? known.owner))) return known;
-    const recovered = this.jobsPath ? await recoverJobRecordAsync(dirname(this.jobsPath), ref) : undefined;
+    let refusal: RecoveryRefusal | undefined;
+    const recovered = this.jobsPath ? await recoverJobRecordAsync(dirname(this.jobsPath), ref, { onUnavailable: value => { refusal = value; } }) : undefined;
     const current = this.storedJob(ref);
-    if (!recovered) return typeof current?.prompt === "string" && typeof current.owner === "string" ? current : undefined;
+    if (!recovered) {
+      if (typeof current?.prompt === "string" && typeof current.owner === "string") return current;
+      if (refusal?.reason === "recovery_context_unavailable") this.log.debug("job context not reconstructible", refusal);
+      else if (refusal) throw new BridgeError("job_index_preparing", `Job recovery unavailable (${refusal.reason}; ${refusal.stage}). No control submitted.`, refusal);
+      return undefined;
+    }
     if (!this.groups.canControl(peer, recovered as unknown as Record<string, unknown>, this.localPeers())) return current;
     this.recoveredJobs.set(recovered.id, recovered as unknown as Record<string, unknown>);
     this.jobsSnapshot = null; this.jobsForDispatch = null;
@@ -1662,7 +1667,16 @@ export class Broker {
       active = rows.filter(isRecord).findLast(record => record.id === job.id);
       }
     }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        // Keep raw storage errors (which may contain SQL, paths or payloads) off the wire.
+        // Only this canonical busy marker is recognized by the existing read retry policy.
+        const busy = isSqliteBusy(error) || /\bdatabase is busy\b/i.test(String((error as Error)?.message));
+        throw new BridgeError(busy ? "job_index_preparing" : "internal",
+          `Job authority unavailable (authority_store_read; authority_fence${busy ? "; SQLITE_BUSY" : ""}). No control submitted.`,
+          { reason: "authority_store_read", stage: "authority_fence" });
+      }
+    }
     this.jobsForDispatch = null;
     const current = active ?? findHistoryJob(dirname(this.jobsPath), String(job.name), job.id) ?? this.storedJob(job.id, false);
     if (!current) return undefined;
@@ -1701,6 +1715,23 @@ export class Broker {
     return this.storedJobs().find(matches);
   }
 
+  /** The stored jobs of these connected peers through indexed probes, as in storedJob (AB-382): every dashboard
+   * refresh decoded the full registry to project a few peers, which blocked broker requests while a tab was open. */
+  private peerJobs(peers: readonly PeerInfo[]): Record<string, unknown>[] {
+    if (!this.jobsPath || this.jobsForDispatch) return this.storedJobs();
+    try {
+      if (indexedJobProjectionCurrent(this.jobsPath)) {
+        const ids = new Set(peers.flatMap((peer) => peer.id.startsWith("job:") ? [peer.id.slice(4)] : []));
+        const stored = readIndexedJobs(this.jobsPath, { metadata: true, ids, names: new Set(peers.map((peer) => peer.name)) }).jobs;
+        // As in storedJobs: a recovered record only stands in for a job the store does not list.
+        for (const job of stored) if (typeof job.id === "string") this.recoveredJobs.delete(job.id);
+        return [...this.recoveredJobs.values(), ...stored];
+      }
+      return this.storedJobs(false);
+    } catch { /* Fall back to the full registry read, which handles its own failures. */ }
+    return this.storedJobs();
+  }
+
   /** Full stored records of the jobs this peer may control, with retained history merged in. */
   private async projectJobRecords(c: Conn): Promise<Record<string, unknown>[]> {
     const peer = this.requirePeer(c);
@@ -1710,7 +1741,10 @@ export class Broker {
     }
     // Surviving runners may exist only in retained snapshots after an old server overwrote the registry.
     const known = new Set(this.storedJobs().map((job) => job.name));
-    for (const runner of this.conns) if (runner.peer?.jobAgent && !known.has(runner.peer.name)) await this.jobForControl(peer, runner.peer.name);
+    for (const runner of this.conns) if (runner.peer?.jobAgent && !known.has(runner.peer.name)) {
+      try { await this.jobForControl(peer, runner.peer.name); }
+      catch { this.log.debug("project runner enrichment deferred", { reason: "job_authority_unavailable" }); }
+    }
     this.jobsForDispatch = null;
     let activeIds = new Set<unknown>();
     try {

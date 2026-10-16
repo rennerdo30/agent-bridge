@@ -730,7 +730,7 @@ describe("cleanup", () => {
     expect(leftovers.find((e) => e.path === foreign)?.action).toBe("kept");
 
     const res = byBranch(await cleanupWorktrees({ cwd: repo, home, all: true, apply: true, log: nullLogger }));
-    expect(res["agent-bridge/done"]!.action).toBe("removed");
+    expect(res["agent-bridge/done"]!.action, res["agent-bridge/done"]!.reason).toBe("removed");
     expect(res["agent-bridge/done"]!.reason).toMatch(/unlinked 1 link/);
     expect(existsSync(done.path)).toBe(false);
     expect(readFileSync(join(shared, "keep.txt"), "utf8")).toBe("must survive\n");
