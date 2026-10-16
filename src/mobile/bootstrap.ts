@@ -30,8 +30,8 @@ export function provisionMobile(options: {
   const push = options.push ? new MobilePush(store, options.push.provider, options.push.encryptionKey, options.push.projectId, options.push.environment) : new MobilePush(store);
   const gateway = new MobileGateway(store, source, push, undefined, ready), desktopAdmin = new MobileDesktopAdmin(store, source, options.desktopOrigin, ready);
   let hintPoll: Promise<void> | undefined;
-  // Incremental hint poll (AB-434): a question is offered to push again only when it was asked anew or the subscribed
-  // devices changed. The persisted per-device dedupe in MobilePush stays the authority; this only skips repeat work.
+  // Incremental hint poll (AB-434): re-offer when asked anew, projected into a different project, or subscribers change.
+  // The persisted per-device dedupe in MobilePush stays the authority; this only skips repeat work.
   const hinted = new Map<string, string>();
   const questions = async () => source.questionView ? source.questionView() : (await source.snapshot()).questions;
   return { gateway, desktopAdmin, close: () => {
@@ -56,7 +56,7 @@ export function provisionMobile(options: {
       const open = (await questions()).filter(q => q.status === "open"), openIds = new Set(open.map(q => q.id));
       for (const id of hinted.keys()) if (!openIds.has(id)) hinted.delete(id);
       for (const question of open) {
-        const state = `${question.askedAt}:${subscriberDigest}`;
+        const state = JSON.stringify([question.askedAt, question.projectId, subscriberDigest]);
         if (hinted.get(question.id) === state) continue;
         await push.notify(question, async () => {
           if (!ready()) return undefined;

@@ -33,23 +33,33 @@ export class MobileDesktopAdmin {
   /** Last source view for the claim review catalog. Pairing state itself is read from the registry on every request (AB-434). */
   private catalogView?: { at: number; view: SourceView; folders?: ReadonlyMap<string, string> };
   private refreshing?: Promise<NonNullable<MobileDesktopAdmin["catalogView"]>>;
+  /** Includes timed-out traversals: timeout refuses callers, but cannot cancel MobileSource.snapshot(). */
+  private catalogTraversals = 0;
   static readonly CATALOG_MS = 10_000;
-  /** A snapshot that never settles must not block later refreshes; the last catalog keeps being served. */
+  /** One hung traversal permits a replacement; two occupied slots refuse further work until one actually settles. */
   static readonly REFRESH_TIMEOUT_MS = 15_000;
   constructor(private readonly store: MobileStore, private readonly source: MobileSource, readonly localOrigin: string, private readonly ready: () => boolean = () => true) {
     const origin = new URL(localOrigin);
     if (origin.origin !== localOrigin || !["localhost", "127.0.0.1"].includes(origin.hostname) || origin.protocol !== "http:") throw new Error("Exact loopback desktop origin required");
   }
-  /** One source snapshot at a time, shared by every waiting request. */
+  /** Callers share one live refresh; at most one additional timed-out traversal may remain quarantined. */
   private refreshCatalog(): Promise<NonNullable<MobileDesktopAdmin["catalogView"]>> {
     if (this.refreshing) return this.refreshing;
+    if (this.catalogTraversals >= 2) return Promise.reject(new MobileFault(503, "catalog_refresh_busy"));
+    this.catalogTraversals++;
+    let expired = false;
+    const startedAt = Date.now();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(() => reject(new MobileFault(503, "source_unavailable")), MobileDesktopAdmin.REFRESH_TIMEOUT_MS); timer.unref?.();
+      timer = setTimeout(() => { expired = true; reject(new MobileFault(503, "source_unavailable")); }, MobileDesktopAdmin.REFRESH_TIMEOUT_MS); timer.unref?.();
     });
     const snapshot = (async () => {
-      const view = await this.source.snapshot();
-      return this.catalogView = { at: Date.now(), view, folders: this.source.projectFolders?.() };
+      try {
+        const view = await this.source.snapshot();
+        // A quarantined result can never publish or become fresh authorization evidence, even after a replacement succeeds.
+        if (expired) throw new MobileFault(503, "source_unavailable");
+        return this.catalogView = { at: startedAt, view, folders: this.source.projectFolders?.() };
+      } finally { this.catalogTraversals--; }
     })();
     snapshot.catch(() => { /* A late failure after the timeout is already reported. */ });
     const work = Promise.race([snapshot, timeout]);
@@ -69,11 +79,11 @@ export class MobileDesktopAdmin {
     if (!this.ready()) throw new MobileFault(503, "source_unavailable");
     if (headers["sec-fetch-site"] === "cross-site" || headers.origin && headers.origin !== this.localOrigin) throw new MobileFault(403, "desktop_origin");
     if (method === "GET" && path === "/api/mobile/phones") {
-      const { view, folders } = await this.catalogFor();
+      const { at, view, folders } = await this.catalogFor();
       if (!this.ready()) throw new MobileFault(503, "source_unavailable");
       const devices = this.store.list<Device>("device").map(({ grants, revision, ...device }) => ({ ...device, access: access(grants) }));
       return { status: 200, body: { csrfToken: this.csrf, devices, pending: this.store.pending(),
-        catalog: catalog(this.store.pcId, view, folders), gatewayOrigins: this.store.origins, fingerprints: this.store.pins?.map(shortPin) ?? [] } };
+        catalog: { ...catalog(this.store.pcId, view, folders), stale: Date.now() - at >= MobileDesktopAdmin.CATALOG_MS }, gatewayOrigins: this.store.origins, fingerprints: this.store.pins?.map(shortPin) ?? [] } };
     }
     if (headers.origin !== this.localOrigin || !equal(headers["x-mobile-admin-csrf"] ?? "", this.csrf)) throw new MobileFault(403, "desktop_csrf");
     const key = z.string().uuid().parse(headers["idempotency-key"]);

@@ -9,7 +9,7 @@ import { MessageStore } from "../src/core/store.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import { provisionMobile } from "../src/mobile/bootstrap.js";
 import { MobileDesktopAdmin } from "../src/mobile/desktop.js";
-import { projectQuestion, type MobileSource } from "../src/mobile/adapter.js";
+import { projectQuestion, type MobileSource, type SourceView } from "../src/mobile/adapter.js";
 import { MobilePush } from "../src/mobile/push.js";
 import { MobileStore, type Device } from "../src/mobile/store.js";
 import type { MobileRequest } from "../src/mobile/gateway.js";
@@ -91,14 +91,14 @@ function req(method: string, path: string, c?: Credentials, body?: unknown, extr
     ...(method !== "GET" ? { "idempotency-key": randomUUID() } : {}), ...(body !== undefined ? { "content-type": "application/json" } : {}), ...extra,
   }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) };
 }
-function mobileFixture() {
+function mobileFixture(questionProject = env.home) {
   const home = env.home, messages = new MessageStore(join(home, "bridge.db"), nullLogger);
   const peers: PeerInfo[] = [{ id: "main-peer", name: "main", agent: "codex", pid: 2, agentPid: null, cwd: home, sessionId: "main-session", activity: "idle", autoWake: false, startedAt: 1, projectMain: true, wakeAvailable: true, wakeOnDirect: true }];
   const service = new OwnerQuestionService(home, messages, nullLogger, () => peers, vi.fn());
   // Each title is its own topic: the store merges asks that share one.
   const ask = (title: string) => service.store.ask({ title, topic: title === "Fixture scope" ? "scope" : title, context: "Synthetic question", options: [
     { id: "keep", label: "Keep", consequence: "Preserves", recommended: true }, { id: "wait", label: "Wait", consequence: "Defers", recommended: false },
-  ], blocking: true, blocks: "Synthetic action", meanwhile: "Read source" }, home, { session: "main", sessionId: "main-session", main: "main", mainSessionId: "main-session", agent: "codex" }).question;
+  ], blocking: true, blocks: "Synthetic action", meanwhile: "Read source" }, questionProject, { session: "main", sessionId: "main-session", main: "main", mainSessionId: "main-session", agent: "codex" }).question;
   const q = ask("Fixture scope");
   closers.push(() => { service.close(); messages.close(); });
   // Every source snapshot reads the peers first: counting them counts snapshot work.
@@ -120,9 +120,9 @@ async function claim(mobile: ReturnType<typeof provisionMobile>, headers: () => 
 }
 
 /** Pairs one phone with the given grant and registers it for push; returns its credentials. */
-async function subscribe(fx: ReturnType<typeof mobileFixture>, headers: () => Record<string, string>): Promise<Credentials> {
-  const { mobile, q, projectId } = fx, pending = await claim(mobile, headers);
-  const grant: Grant = { pcId, projectIds: [projectQuestion(q, pcId).projectId], sessionIds: [], jobIds: [], capabilities: ["overview.read", "questions.read"] };
+async function subscribe(fx: ReturnType<typeof mobileFixture>, headers: () => Record<string, string>, grantedProjectId = projectQuestion(fx.q, pcId).projectId): Promise<Credentials> {
+  const { mobile, projectId } = fx, pending = await claim(mobile, headers);
+  const grant: Grant = { pcId, projectIds: [grantedProjectId], sessionIds: [], jobIds: [], capabilities: ["overview.read", "questions.read"] };
   expect((await mobile.desktopAdmin.handle("POST", "/api/mobile/claims/" + pending.claimId, headers(), JSON.stringify({ comparisonCode: pending.comparisonCode, allow: true, grants: [grant] }))).status).toBe(200);
   const issued = await mobile.gateway.handle(req("GET", "/pairing/claims/" + pending.claimId, undefined, undefined, { authorization: "Bearer " + pending.claimToken, "idempotency-key": randomUUID() }));
   const c = (issued.body as { credentials: Credentials }).credentials;
@@ -175,6 +175,35 @@ describe("mobile hint poll and pairing cost", () => {
 });
 
 describe("incremental hint poll re-offers on real changes only", () => {
+  it("reconsiders the same question when root discovery changes its project eligibility", async () => {
+    const child = join(env.home, "child"); mkdirSync(child);
+    const notify = vi.spyOn(MobilePush.prototype, "notify"), subscriptionState = vi.spyOn(MobilePush.prototype, "subscriptionState");
+    const fx = mobileFixture(child), headers = await adminHeaders(fx.mobile.desktopAdmin);
+    const parentId = projectQuestion({ ...fx.q, project: env.home }, pcId).projectId;
+    expect(projectQuestion(fx.q, pcId).projectId).not.toBe(parentId);
+    const credentials = await subscribe(fx, headers, parentId);
+    const store = fx.mobile.gateway.store, dedupe = `${credentials.deviceId}:${fx.q.id}:${fx.q.askedAt}`;
+    fx.snapshotPeers.mockClear();
+    await fx.mobile.pollQuestionHints();
+    expect(notify).toHaveBeenCalledTimes(1); expect(fx.submit).not.toHaveBeenCalled();
+    expect(store.get("push-dedupe", dedupe)).toBeUndefined();
+    // Same stored question and subscribers; the newly discovered parent repository changes only projection.
+    repository(env.home);
+    expect(projectQuestion(fx.q, pcId).projectId).toBe(parentId);
+    await fx.mobile.pollQuestionHints();
+    expect(notify).toHaveBeenCalledTimes(2); expect(fx.submit).toHaveBeenCalledTimes(1);
+    expect(subscriptionState.mock.results[1]!.value).toBe(subscriptionState.mock.results[0]!.value);
+    expect(notify.mock.calls[1]![0]).toMatchObject({ id: fx.q.id, askedAt: fx.q.askedAt, projectId: parentId });
+    expect(store.get("push-dedupe", dedupe)).toEqual({ state: "submitted" });
+    // Moving the child to another repository rechecks actual grants; moving back rechecks persisted dedupe.
+    const other = join(env.home, "other"); repository(other); linked(child, other, "child");
+    await fx.mobile.pollQuestionHints(); expect(notify).toHaveBeenCalledTimes(3); expect(fx.submit).toHaveBeenCalledTimes(1);
+    linked(child, env.home, "child-returned");
+    await fx.mobile.pollQuestionHints(); expect(notify).toHaveBeenCalledTimes(4); expect(fx.submit).toHaveBeenCalledTimes(1);
+    await fx.mobile.pollQuestionHints(); expect(notify).toHaveBeenCalledTimes(4);
+    expect(fx.snapshotPeers).not.toHaveBeenCalled();
+  });
+
   it("hints a question asked after the first poll", async () => {
     const fx = mobileFixture(), headers = await adminHeaders(fx.mobile.desktopAdmin); await subscribe(fx, headers);
     await fx.mobile.pollQuestionHints(); expect(fx.submit).toHaveBeenCalledTimes(1);
@@ -208,6 +237,101 @@ describe("incremental hint poll re-offers on real changes only", () => {
 });
 
 describe("desktop catalog refresh", () => {
+  function deferred() {
+    let resolve!: (view: SourceView) => void, reject!: (error: Error) => void;
+    const promise = new Promise<SourceView>((yes, no) => { resolve = yes; reject = no; });
+    return { promise, resolve, reject };
+  }
+  function view(id: string): SourceView {
+    return { sessions: [{ id, pcId, generation: id, name: id, agent: "codex", projectId: null, activity: "idle", connection: "connected",
+      parentId: null, chatId: null, sendSupported: false, sampledAt: Date.now(), version: id }], jobs: [], questions: [], sampledAt: Date.now(), sourceState: "ready" };
+  }
+  function fixture(snapshot: MobileSource["snapshot"]) {
+    const store = new MobileStore(join(env.home, "mobile.db"), pcId, origin); closers.push(() => store.close());
+    const admin = new MobileDesktopAdmin(store, { snapshot } as MobileSource, "http://127.0.0.1:4321");
+    const read = async () => (await admin.handle("GET", "/api/mobile/phones", {})).body as { catalog: { sessions: { id: string }[]; stale: boolean } };
+    return { store, admin, read };
+  }
+
+  it("never publishes timed-out A after replacement B or authorizes A's retired identities", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const a = deferred(), b = deferred(), current = view("replacement");
+    const snapshot = vi.fn<MobileSource["snapshot"]>().mockResolvedValueOnce(view("initial"))
+      .mockImplementationOnce(() => a.promise).mockImplementationOnce(() => b.promise).mockResolvedValue(current);
+    const { admin, store, read } = fixture(snapshot), headers = await adminHeaders(admin);
+    vi.advanceTimersByTime(MobileDesktopAdmin.CATALOG_MS);
+    await read(); expect(snapshot).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(MobileDesktopAdmin.REFRESH_TIMEOUT_MS);
+    await read(); expect(snapshot).toHaveBeenCalledTimes(3);
+    b.resolve(current); await vi.advanceTimersByTimeAsync(0);
+    expect((await read()).catalog.sessions).toEqual([expect.objectContaining({ id: "replacement" })]);
+    a.resolve(view("retired")); await vi.advanceTimersByTimeAsync(0);
+    expect((await read()).catalog.sessions).toEqual([expect.objectContaining({ id: "replacement" })]);
+    const invitation = store.invite(), pending = store.claim(invitation.invitationId, invitation.nonce, "Fixture", "android", randomUUID()) as PairingClaim;
+    const confirm = (id: string) => admin.handle("POST", "/api/mobile/claims/" + pending.claimId, headers(), JSON.stringify({
+      comparisonCode: pending.comparisonCode, allow: true,
+      grants: [{ pcId, projectIds: [], sessionIds: [id], jobIds: [], capabilities: ["overview.read"] }],
+    }));
+    await expect(confirm("retired")).rejects.toMatchObject({ status: 403, code: "unsupported_grant" });
+    expect(snapshot).toHaveBeenCalledTimes(4); expect(store.list("device")).toHaveLength(0);
+    expect((await confirm("replacement")).status).toBe(200); expect(snapshot).toHaveBeenCalledTimes(4);
+  });
+
+  it("caps unsettled traversals at two, serves explicitly stale claims live, and frees a settled quarantine", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const a = deferred(), b = deferred(), c = deferred(); let active = 0, peak = 0;
+    const track = (work: ReturnType<typeof deferred>) => { active++; peak = Math.max(peak, active); return work.promise.finally(() => { active--; }); };
+    const snapshot = vi.fn<MobileSource["snapshot"]>().mockResolvedValueOnce(view("initial"))
+      .mockImplementationOnce(() => track(a)).mockImplementationOnce(() => track(b)).mockImplementationOnce(() => track(c));
+    const { admin, store, read } = fixture(snapshot), headers = await adminHeaders(admin);
+    vi.advanceTimersByTime(MobileDesktopAdmin.CATALOG_MS);
+    await read(); await read(); expect(active).toBe(1); expect(snapshot).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(MobileDesktopAdmin.REFRESH_TIMEOUT_MS);
+    await read(); await read(); expect(active).toBe(2); expect(snapshot).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(MobileDesktopAdmin.REFRESH_TIMEOUT_MS);
+    const invitation = store.invite(), pending = store.claim(invitation.invitationId, invitation.nonce, "Live claim", "android", randomUUID()) as PairingClaim;
+    for (let i = 0; i < 4; i++) {
+      const response = await read();
+      expect(snapshot).toHaveBeenCalledTimes(3);
+      expect(response.catalog.stale).toBe(true);
+      expect(response).toMatchObject({ pending: [expect.objectContaining({ claimId: pending.claimId })] });
+      await vi.advanceTimersByTimeAsync(MobileDesktopAdmin.REFRESH_TIMEOUT_MS);
+    }
+    expect(snapshot).toHaveBeenCalledTimes(3); expect(active).toBe(2); expect(peak).toBe(2);
+    // The stale displayed session is not sufficient evidence for a grant while both slots are quarantined.
+    await expect(admin.handle("POST", "/api/mobile/claims/" + pending.claimId, headers(), JSON.stringify({
+      comparisonCode: pending.comparisonCode, allow: true,
+      grants: [{ pcId, projectIds: [], sessionIds: ["initial"], jobIds: [], capabilities: ["overview.read"] }],
+    }))).rejects.toMatchObject({ status: 503, code: "catalog_refresh_busy" });
+    expect(store.list("device")).toHaveLength(0); expect(snapshot).toHaveBeenCalledTimes(3);
+    a.reject(new Error("Late source failure")); await vi.advanceTimersByTimeAsync(0); expect(active).toBe(1);
+    expect((await read()).catalog.sessions[0]!.id).toBe("initial"); expect(snapshot).toHaveBeenCalledTimes(4); expect(active).toBe(2);
+    c.resolve(view("recovered")); await vi.advanceTimersByTimeAsync(0);
+    expect((await read()).catalog).toMatchObject({ sessions: [{ id: "recovered" }], stale: false });
+    b.resolve(view("retired")); await vi.advanceTimersByTimeAsync(0);
+    expect((await read()).catalog.sessions[0]!.id).toBe("recovered"); expect(active).toBe(0); expect(peak).toBe(2);
+  });
+
+  it("bounds first-catalog callers at 15 seconds and refuses a third uncancellable traversal without a cache", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const a = deferred(), b = deferred();
+    const snapshot = vi.fn<MobileSource["snapshot"]>().mockImplementationOnce(() => a.promise).mockImplementationOnce(() => b.promise);
+    const { read } = fixture(snapshot);
+    const first = read(), joined = read(); let settled = false;
+    const firstFailure = expect(first).rejects.toMatchObject({ status: 503, code: "source_unavailable" });
+    const joinedFailure = expect(joined).rejects.toMatchObject({ status: 503, code: "source_unavailable" });
+    void first.then(() => { settled = true; }, () => { settled = true; });
+    await vi.advanceTimersByTimeAsync(MobileDesktopAdmin.REFRESH_TIMEOUT_MS - 1); expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1); await firstFailure; await joinedFailure; expect(snapshot).toHaveBeenCalledTimes(1);
+    const secondFailure = expect(read()).rejects.toMatchObject({ status: 503, code: "source_unavailable" });
+    await vi.advanceTimersByTimeAsync(MobileDesktopAdmin.REFRESH_TIMEOUT_MS); await secondFailure;
+    for (let i = 0; i < 4; i++) {
+      await expect(read()).rejects.toMatchObject({ status: 503, code: "catalog_refresh_busy" });
+      await vi.advanceTimersByTimeAsync(MobileDesktopAdmin.REFRESH_TIMEOUT_MS);
+    }
+    expect(snapshot).toHaveBeenCalledTimes(2);
+  });
+
   it("releases a refresh whose snapshot never settles and keeps serving the last catalog", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const store = new MobileStore(join(env.home, "mobile.db"), pcId, origin); closers.push(() => store.close());
