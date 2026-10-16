@@ -10,6 +10,7 @@ import {
   statSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { gitSafetyArgs } from "./git-safety.js";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { CONVERSATION_SCHEMA } from "./conversation-schema.js";
@@ -64,6 +65,7 @@ export function ensureProjectFolder(project: string): string | null {
     const exclude = execFileSync(
       "git",
       [
+        ...gitSafetyArgs(),
         "-C",
         project,
         "rev-parse",
