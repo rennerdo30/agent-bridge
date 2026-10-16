@@ -1,6 +1,7 @@
 import { codexSubagentConfig } from "./codex-subagents.js";
 import { spawn } from "node:child_process";
 import { APP_VERSION } from "./constants.js";
+import { codexCommandApprovalText, codexFileChangeApprovalText, markerSafe } from "./approval-display.js";
 import { DEFAULT_CODEX_APPROVALS_REVIEWER, type CodexApprovalsReviewer, type CodexSandbox } from "./config.js";
 import { checkDepth, childEnv, DelegateError, exitDescription, killTree, realFolder, resolveCommand, trackChild, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { progressEventHandler } from "./progress.js";
@@ -197,24 +198,24 @@ export async function delegateToCodexAppServer(
     switch (method) {
       case "mcpServer/elicitation/request": {
         const tool = `mcp:${params.serverName ?? "tool"}`;
-        const decision = await decide(tool, String(params.message ?? "an MCP tool call"));
+        const decision = await decide(tool, markerSafe(String(params.message ?? "an MCP tool call")));
         // Form elicitations get their defaults; tool-call approvals have no fields to fill.
         const props = params.requestedSchema?.properties ?? {};
         const content = Object.fromEntries(Object.entries(props).filter(([, v]: [string, any]) => v && "default" in v).map(([k, v]: [string, any]) => [k, v.default]));
         return answer(decision, decision.allow ? { action: "accept", content } : { action: "decline", content: null }, tool);
       }
       case "item/commandExecution/requestApproval": {
-        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
+        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("command", codexCommandApprovalText(params, innerCommand(String(params.command ?? params.reason ?? "a command")), cwd)) : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "command");
       }
       case "item/fileChange/requestApproval": {
         const paths = editPaths.get(params.itemId) ?? [];
-        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
+        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("edit", codexFileChangeApprovalText(params, paths.length ? paths.join(", ") : String(params.reason ?? "file changes"))) : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "edit");
       }
       case "item/permissions/requestApproval": {
         const decision = req.canApprove || req.askMode || req.sandbox === "workspace-write"
-          ? await decide("permissions", `${params.reason ?? "additional permissions"}\n${JSON.stringify(params.permissions ?? {})}`)
+          ? await decide("permissions", markerSafe(`${params.reason ?? "additional permissions"}\n${JSON.stringify(params.permissions ?? {})}`))
           : sandboxDenial;
         return answer(decision, { permissions: decision.allow ? params.permissions ?? {} : {}, scope: "turn" }, "permissions");
       }
