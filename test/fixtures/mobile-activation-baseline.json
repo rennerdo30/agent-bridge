@@ -1,7 +1,7 @@
 {
   "base": "0fed680017e823197b1fb3344598632f5cd219ed",
   "uiSha256": "876fbc073c419e55a05c806b75c4993d254510c444cbd81d70098efbd22fb98c",
-  "pageSha256": "bcb8b55ea4d56b0838009630508406d59a1bd87376efcbe70b54f82daf153a1b",
+  "pageSha256": "3f257b19c1dd40563acfb32cf6b2c4e94ea371ceb5a813254420189d19364960",
   "updates": {
     "PR-20": {
       "base": "0761d56fe4c36e505550f9b889841fdf8e82c80a",
@@ -21,6 +21,11 @@
       "base": "7f5bb53548e7f0880b286f9d1625a07cf85995e3",
       "reason": "AB-398: the desktop dashboard script shows a paused subagent job: \"paused\" becomes a known pill status styled like interrupted, a paused group keeps its place with the working ones, shows its pause reason and time in the row and conversation note, offers a resume_subagent hint, and the counts line adds \"N paused\" (6c3430d1, page re-pinned). The mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged. Merged on top of AB-400 (PR #92): AB-400's outcomeChip now also runs for a paused group (it is not running), so it reads state.jobs only once state is loaded; the result-stored chip is otherwise unchanged.",
       "commit": "6c3430d1"
+    },
+    "AB-401": {
+      "base": "99550f5e",
+      "reason": "AB-401: the desktop dashboard script shows a running job that is queued for a machine slot: pill() takes the group's waitingFor and renders a distinct `pill waiting` (\"waiting · slot <name> #<position>\", \"waiting · startup #N\" or \"waiting · job limit #N\", all escaped, with a title naming the holders); buildModel sets g.waitingFor only for a running group from a well-formed state.jobs[job].waitingFor (known kind, positive integer position, non-negative integer holders); groupRow and the conversation title pass it to pill(); the conversation note shows the wait; one CSS rule `.pill.waiting` uses the existing accent tokens. Page re-pinned. The mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged (mobile-owner-startup's other 10 tests and mobile-activation pass). Re-checked after merging main with AB-404 (PR #95): the page script is unchanged by the merge and by the review fixes; the dashboard pill stays for running jobs' slot and startup waits only (a stored job-limit wait reaches /api/state and peers, not a pill).",
+      "commit": "eb040e0a"
     }
   }
 }

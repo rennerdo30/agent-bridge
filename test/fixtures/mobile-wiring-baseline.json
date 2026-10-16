@@ -15,7 +15,7 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "c9d9206edd58137f774ee7fcdb1d851e5151dba2d623c2257f650f1cccabc435",
+  "uiSha256": "ebdf54b1b23e68246479ded1231d0b2e014a5658cc69f4b8c0281a350dec6b18",
   "updates": {
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
@@ -318,6 +318,14 @@
       ],
       "reason": "AB-404 (PR #95): the broker handler table now calls a private projectJobRecords method for projectJobs (same body, moved out of the constructor) and adds the projectJobSummaries op (slim, frame-bounded pages of the same records). Re-pinned on top of AB-398 (PR #93) after merging main: the constructor differs from main only by that move and the new op; AB-398's pause handling in inlineJobControl is kept unchanged. No mobile, startup or close control-flow change; node.ts and dashboard pins, startUi hash, normalizer and assertions are unchanged, and the other mobile-wiring tests pass unchanged.",
       "commit": "9b7b0a43"
+    },
+    "AB-401-machine-wait": {
+      "base": "99550f5e",
+      "changes": [],
+      "previousUiSha256": "c9d9206edd58137f774ee7fcdb1d851e5151dba2d623c2257f650f1cccabc435",
+      "uiSha256": "ebdf54b1b23e68246479ded1231d0b2e014a5658cc69f4b8c0281a350dec6b18",
+      "reason": "AB-401: startUi's /api/state reads the stored jobs once into `stored`, computes `waits = stateJobWaits(opts.home, stored, opts.log)` (display-only: one snapshot read of resource-slots.sqlite, no process probes, no writes, nothing created when the file is absent) and adds only `...(waits.has(name) ? { waitingFor: waits.get(name) } : {})` to each stored job's entry; the import line adds stateJobWaits. No control-flow change; no mobile route, mobile startup, mobile store or mobile admin code changes and nothing under src/mobile or apps changes, so mobile behaviour is unchanged (mobile-wiring's other 18 tests, mobile-activation, mobile-adapter and mobile-phones-dashboard pass). Broker, node.ts and dashboard method pins, the normalizer and the assertions are unchanged. Re-checked after merging main with AB-404 (PR #95) on top of AB-398 (PR #93): the merge changes no pinned method and not startUi; the method pins are AB-404's (constructor d1059198...) and only uiSha256 differs from main, by exactly this AB-401 change. The review fixes after the merge (a cached read-only slot snapshot behind stateJobWaits, job-limit labelling in JobManager, the `<job>~startup-<uuid>` startup row) do not touch startUi, so its hash is unchanged.",
+      "commit": "eb040e0a"
     }
   },
   "revertedUpdates": {

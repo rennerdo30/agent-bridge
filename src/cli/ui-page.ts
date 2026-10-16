@@ -787,6 +787,8 @@ main.wrap { padding-top: 32px; max-width: 1240px; }
 .pill.running { background: var(--busy-soft); color: var(--busy); }
 .pill.failed, .pill.interrupted, .pill.cancelled { background: var(--warn-soft); color: var(--warn); }
 .pill.failed { background: var(--bad-soft); color: var(--bad); }
+/* AB-401: queued for a machine slot (startup admission, job limit or a resource slot): not working, not stuck. */
+.pill.waiting { background: var(--accent-soft); color: var(--accent); }
 .chip { border-radius: 5px; border-color: transparent; background: var(--panel-2); }
 .av { border-radius: 8px; font-weight: 700; letter-spacing: -.02em; }
 .av.sm { width: 24px; height: 24px; border-radius: 6px; font-size: 11.5px; }
@@ -1324,7 +1326,14 @@ const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : 
     }
     // Statuses can come from a paired PC: only known ones become a class, and every label is escaped (AB-231).
     const PILL_STATUSES = new Set(["running", "paused", "done", "failed", "interrupted", "cancelled"]);
-    const pill = (status, percent) => '<span class="pill' + (PILL_STATUSES.has(status) ? " " + status : "") + '">' + (status === "running" ? (typeof percent === "number" && Number.isFinite(percent) ? "working · " + percent + "%" : "working") : esc(status)) + "</span>";
+    const pill = (status, percent, waiting) => status === "running" && waiting ? '<span class="pill waiting" title="' + esc(waitText(waiting)) + '">waiting · ' + esc(waitLabel(waiting)) + "</span>" :
+      '<span class="pill' + (PILL_STATUSES.has(status) ? " " + status : "") + '">' + (status === "running" ? (typeof percent === "number" && Number.isFinite(percent) ? "working · " + percent + "%" : "working") : esc(status)) + "</span>";
+    // AB-401: what a running job is queued for on its PC (state.jobs[job].waitingFor). Only a well-formed wait counts.
+    const WAIT_KINDS = new Set(["startup", "job-limit", "resource"]);
+    const validWait = (w) => w && typeof w === "object" && WAIT_KINDS.has(w.kind) && Number.isSafeInteger(w.position) && w.position > 0 && Number.isSafeInteger(w.holders) && w.holders >= 0 ? w : null;
+    const waitLabel = (w) => (w.kind === "resource" ? "slot " + String(w.resource || "?") : w.kind === "startup" ? "startup" : "job limit") + " #" + w.position;
+    const waitText = (w) => "Waiting for " + (w.kind === "resource" ? 'machine slot "' + String(w.resource || "?") + '"' : w.kind === "startup" ? "machine startup admission" : "a subagent slot (job limit)") +
+      " · position " + w.position + " · " + w.holders + (Number.isSafeInteger(w.capacity) ? "/" + w.capacity : "") + (w.kind === "job-limit" ? " running" : " held");
 
 /** Next-turn settings the dashboard can change, per agent (the values message_subagent accepts). */
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
@@ -1429,6 +1438,7 @@ function buildModel(s) {
     g.status = saved && saved.status === "paused" ? "paused" : last.status;
     g.pauseReason = saved && saved.status === "paused" ? saved.pauseReason || "supervisor request" : "";
     g.pausedAt = saved && saved.status === "paused" ? saved.pausedAt : null;
+    g.waitingFor = g.status === "running" && saved ? validWait(saved.waitingFor) : null;
     g.updatedAt = last.updatedAt; g.last = last.last; g.task = g.turns[0].task;
     g.startedAt = g.turns[0].startedAt;
     // The newest title: message_subagent(title=...) can rename a job between turns.
@@ -1831,7 +1841,7 @@ function groupRow(g, sel, showOwner) {
       : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") + (g.effort ? effortChip(g.effort) : "") + (g.permission ? permChip(g.permission) : "") +
         (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + runChips(g) + "</div>" +
         '<div class="task">' + esc(g.task || g.last) + "</div></div>") +
-    '<div class="side">' + pill(g.status, g.percent) + outcomeChip(g) + "<span>" + (showOwner ? esc(g.owner) + " · " : "") + (g.status === "paused" ? esc(g.pauseReason + " · " + (g.pausedAt ? time(g.pausedAt) : "time unknown")) : g.etaAt ? esc(etaText(g.etaAt)) : ago(g.updatedAt)) + "</span></div>" +
+    '<div class="side">' + pill(g.status, g.percent, g.waitingFor) + outcomeChip(g) + "<span>" + (showOwner ? esc(g.owner) + " · " : "") + (g.status === "paused" ? esc(g.pauseReason + " · " + (g.pausedAt ? time(g.pausedAt) : "time unknown")) : g.etaAt ? esc(etaText(g.etaAt)) : ago(g.updatedAt)) + "</span></div>" +
     (g.percent !== null ? '<div class="bar" title="' + esc(g.percent + "% · " + g.progressNote) + '"><i style="width:' + g.percent + '%"></i></div>' : "") + "</a>";
 }
 
@@ -2176,9 +2186,9 @@ function renderConversation(g) {
   const first = g.turns[0], last = g.turns[g.turns.length - 1];
   $("cAvatar").innerHTML = av(g.agent);
   // Line 1: what it is and how it stands; line 2: quiet facts; line 3: its own progress note.
-  $("cTitle").innerHTML = '<span class="ttl">' + esc(g.title || g.agent) + "</span>" + pill(g.status, g.percent) + outcomeChip(g);
+  $("cTitle").innerHTML = '<span class="ttl">' + esc(g.title || g.agent) + "</span>" + pill(g.status, g.percent, g.waitingFor) + outcomeChip(g);
   $("cMeta").innerHTML = '<span class="chip">' + esc(g.agent) + "</span>" + (g.model ? '<span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? effortChip(g.effort) : "") + (g.permission ? permChip(g.permission) : "") + runChips(g) + pendingChips(g);
-  $("cNote").textContent = g.status === "paused" ? "Paused " + (g.pausedAt ? time(g.pausedAt) : "") + " · " + g.pauseReason : [g.progressNote && g.percent !== null ? g.progressNote : "", g.etaAt ? etaText(g.etaAt) : ""].filter(Boolean).join(" · ");
+  $("cNote").textContent = g.status === "paused" ? "Paused " + (g.pausedAt ? time(g.pausedAt) : "") + " · " + g.pauseReason : g.waitingFor ? waitText(g.waitingFor) : [g.progressNote && g.percent !== null ? g.progressNote : "", g.etaAt ? etaText(g.etaAt) : ""].filter(Boolean).join(" · ");
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " · ") + time(first.startedAt) + " · " + (first.access || "default") + " access" + (first.workdir ? " · " + first.workdir : "");
   const hint = g.job && g.status === "paused" ? 'Resume it with <code>resume_subagent(job="' + esc(g.job) + '")</code>' : g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'
