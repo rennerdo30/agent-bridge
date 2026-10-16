@@ -15,7 +15,7 @@ import { resolveHome } from "../core/paths.js";
 import type { Logger } from "../core/logger.js";
 import { ACK_CONVERSATION_SUFFIX, isQuietMessage, type AgentKind, type BridgeMessage } from "../core/protocol.js";
 import { isPureAcknowledgement } from "../core/job-messaging.js";
-import { git, trustArgs, type Worktree } from "../core/worktree.js";
+import type { Worktree } from "../core/worktree.js";
 import { assertWritableStore, backupPath, isRecord, JSON_STORE_VERSION, mergeStoreFields, readJsonStore, retainBackups, retentionLimit, writeJsonStore } from "../core/json-store.js";
 import { changedJobArgs, JOB_SETTING_KEYS, type JobSettings } from "./job-settings.js";
 import { assertStoreUpgrade } from "../core/store-compatibility.js";
@@ -2636,6 +2636,9 @@ export function sessionOfError(err: unknown): string | null {
  */
 async function dirtyJobFiles(worktree: Worktree, log: Logger): Promise<string[]> {
   if (!worktree.path || !existsSync(worktree.path)) return [];
+  // Loaded lazily: a static import would close the cycle delegate -> ... -> jobs -> worktree -> delegate,
+  // so worktree.ts could bind runProcess before delegate.ts finished loading (and before a test mock applies).
+  const { git, trustArgs } = await import("../core/worktree.js");
   try {
     const output = await git([...trustArgs(worktree.path), "status", "--porcelain=v1", "-z", "--untracked-files=all"], worktree.path, log, 5_000);
     return output.split("\0").filter(Boolean).map(entry => entry.slice(3));
