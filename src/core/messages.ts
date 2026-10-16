@@ -56,6 +56,8 @@ export const en = {
   "err.ambiguous": "Several peers match; pick one of: {candidates}.",
   "err.unknownTarget": "Unknown recipient: {detail}",
   "err.tooLarge": "Message too large (maximum {max} characters).",
+  "err.responseTooLarge": "The bridge's response to this call is {bytes} bytes, over the {limit}-byte frame limit, so it was not delivered and nothing was changed. Narrow the request (filters, limit/offset); an older broker host may need an update to page it.",
+  "err.requestTooLarge": "This request is {bytes} bytes, over the {limit}-byte frame limit; it was not sent and nothing was changed.",
   "err.protocol": "agent-bridge version mismatch between peers: {detail}. Update all agent-bridge plugins to the same version.",
   "err.generic": "agent-bridge error: {detail}",
   "err.delegateNotFound": "Could not start the other agent: {detail}. Install it or set its path in the agent-bridge config.",

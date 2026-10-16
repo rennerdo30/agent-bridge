@@ -75,6 +75,7 @@ import { basename, dirname, join } from "node:path";
 import { ProjectGroups } from "./project-groups.js";
 import { recoverJobRecordAsync } from "./job-recovery.js";
 import { findHistoryJob, selectHistoryJobs } from "./run-history.js";
+import { pageProjectJobSummaries, PROJECT_JOB_SUMMARY_PAGE_MAX } from "./project-job-summary.js";
 import { collectTransfer, receiveTransfer, type TransferResult } from "../network/files.js";
 import { cancelStoredTransfer, MAX_STREAM_ENTRIES, readTransferHistory, type TransferStarted } from "../network/transfers.js";
 import { MAX_NETWORK_HOST_CHARS, MAX_PAIRING_CODE_CHARS, MAX_PORT } from "../network/constants.js";
@@ -427,29 +428,12 @@ export class Broker {
         const args = z.object({ to: z.string().min(1) }).strict().parse(a);
         return this.switchProjectMain(c.peer, this.connByName(args.to)?.peer ?? undefined);
       },
-      projectJobs: async (c) => {
-        const peer = this.requirePeer(c);
-        if (this.jobsPath && this.historyBackground) {
-          try { await this.historyBackground.reconcileAsks(); }
-          catch (error) { this.log.debug("ask reconciliation deferred; records retained", { error: String(error) }); }
-        }
-        // Surviving runners may exist only in retained snapshots after an old server overwrote the registry.
-        const known = new Set(this.storedJobs().map((job) => job.name));
-        for (const runner of this.conns) if (runner.peer?.jobAgent && !known.has(runner.peer.name)) await this.jobForControl(peer, runner.peer.name);
-        this.jobsForDispatch = null;
-        let activeIds = new Set<unknown>();
-        try {
-          const data = readJsonSnapshot(this.jobsPath!).value;
-          const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : undefined;
-          if (!rows) return [];
-          activeIds = new Set(rows.filter(isRecord).map(record => record.id));
-        }
-        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return []; }
-        const stored = this.storedJobs();
-        const jobs = this.jobsPath && !this.historyBackground ? await projectAskCompletions(this.jobsPath, stored) : stored;
-        const retained = this.jobsPath ? selectHistoryJobs(dirname(this.jobsPath), new Set(jobs.filter(job => !activeIds.has(job.id)).map(job => String(job.name)))) : new Map();
-        return jobs.map(job => activeIds.has(job.id) ? job : { ...job, ...retained.get(String(job.name)) })
-          .filter(job => this.groups.canControl(peer, job, this.localPeers()));
+      projectJobs: (c) => this.projectJobRecords(c),
+      // AB-404: peers needs a few fields; full records with retained history can exceed one frame.
+      projectJobSummaries: async (c, a) => {
+        const args = z.object({ offset: z.number().int().nonnegative().optional(),
+          limit: z.number().int().min(1).max(PROJECT_JOB_SUMMARY_PAGE_MAX).optional() }).strict().parse(a ?? {});
+        return pageProjectJobSummaries(await this.projectJobRecords(c), args);
       },
       coordinatorAvailability: (c, a) => {
         const args = z.object({ name: z.string().optional(), unavailable: z.boolean() }).strict().parse(a);
@@ -1470,6 +1454,32 @@ export class Broker {
       return this.storedJobs(false).find(matches);
     } catch { /* Fall back to the full registry read, which handles its own failures. */ }
     return this.storedJobs().find(matches);
+  }
+
+  /** Full stored records of the jobs this peer may control, with retained history merged in. */
+  private async projectJobRecords(c: Conn): Promise<Record<string, unknown>[]> {
+    const peer = this.requirePeer(c);
+    if (this.jobsPath && this.historyBackground) {
+      try { await this.historyBackground.reconcileAsks(); }
+      catch (error) { this.log.debug("ask reconciliation deferred; records retained", { error: String(error) }); }
+    }
+    // Surviving runners may exist only in retained snapshots after an old server overwrote the registry.
+    const known = new Set(this.storedJobs().map((job) => job.name));
+    for (const runner of this.conns) if (runner.peer?.jobAgent && !known.has(runner.peer.name)) await this.jobForControl(peer, runner.peer.name);
+    this.jobsForDispatch = null;
+    let activeIds = new Set<unknown>();
+    try {
+      const data = readJsonSnapshot(this.jobsPath!).value;
+      const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : undefined;
+      if (!rows) return [];
+      activeIds = new Set(rows.filter(isRecord).map(record => record.id));
+    }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return []; }
+    const stored = this.storedJobs();
+    const jobs = this.jobsPath && !this.historyBackground ? await projectAskCompletions(this.jobsPath, stored) : stored;
+    const retained = this.jobsPath ? selectHistoryJobs(dirname(this.jobsPath), new Set(jobs.filter(job => !activeIds.has(job.id)).map(job => String(job.name)))) : new Map();
+    return jobs.map(job => activeIds.has(job.id) ? job : { ...job, ...retained.get(String(job.name)) })
+      .filter(job => this.groups.canControl(peer, job, this.localPeers()));
   }
 
   private storedJobs(projectionCurrent?: false): Record<string, unknown>[] {

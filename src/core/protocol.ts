@@ -283,6 +283,8 @@ export interface RequestMap {
   dismissOwner: [{ id: string; status: "cancelled" | "superseded"; reason: string; supersededBy?: string }, import("./owner-questions.js").OwnerQuestion];
   dashboardHeartbeat: [{ tab: string; visible: boolean }, { alerts: { id: string; at: number }[]; settings: import("./owner-questions.js").QuestionAlertSettings }];
   projectJobs: [Record<string, never>, Record<string, unknown>[]];
+  /** Slim, frame-bounded pages for peers (AB-404); older brokers refuse it and callers fall back to projectJobs. */
+  projectJobSummaries: [{ offset?: number; limit?: number }, import("./project-job-summary.js").ProjectJobSummaryPage];
   coordinatorAvailability: [{ name?: string; unavailable: boolean }, PeerInfo];
   projectMain: [{ to: string }, PeerInfo];
   handoffSubagents: [import("./job-handoff.js").HandoffArgs, import("./job-handoff.js").HandoffReceipt];

@@ -27,6 +27,7 @@ import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
 import { ReadJournal } from "./read-journal.js";
 import { existingMetadataDb, retainMetadataReader } from "./metadata-db.js";
 import { recordLocalResult } from "./local-result-receipts.js";
+import { compareProjectJobSummaries, summarizeProjectJob, type ProjectJobSummary, type ProjectJobSummaryPage } from "./project-job-summary.js";
 import type { MessageStore } from "./store.js";
 import { SQLITE_STORE_VERSION } from "./store-version.js";
 import { JSON_STORE_VERSION } from "./json-store.js";
@@ -856,6 +857,25 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   }
 
   projectJobs(): Promise<Record<string, unknown>[]> { return this.withClient((c) => c.request("projectJobs", {})); }
+  /**
+   * The shared project jobs as slim summaries, read in frame-bounded pages (AB-404). An older broker without the
+   * op falls back to the full records, which can still exceed one frame when many jobs are retained.
+   */
+  async projectJobSummaries(): Promise<ProjectJobSummary[]> {
+    const jobs: ProjectJobSummary[] = [];
+    for (let offset = 0; ;) {
+      let page: ProjectJobSummaryPage;
+      try { page = await this.withClient((c) => c.request("projectJobSummaries", { offset })); }
+      catch (error) {
+        if (offset === 0 && isUnsupportedOperation(error, "projectJobSummaries")) return (await this.projectJobs()).map(summarizeProjectJob).sort(compareProjectJobSummaries);
+        throw error;
+      }
+      jobs.push(...page.jobs);
+      // A registry that shrank between pages ends the walk instead of looping on a stale offset.
+      if (page.nextOffset === null || page.nextOffset <= offset || page.jobs.length === 0) return jobs;
+      offset = page.nextOffset;
+    }
+  }
   jobRecipient(job: string): Promise<string> { return retryRequest("jobRecipient (read only; no control submitted)", () => this.withClient((c) => c.request("jobRecipient", { job }))); }
   async setUnavailable(unavailable: boolean): Promise<PeerInfo> {
     const peer = await this.withClient((c) => c.request("coordinatorAvailability", { unavailable }));
