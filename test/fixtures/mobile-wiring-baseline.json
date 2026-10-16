@@ -15,7 +15,7 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "c9d9206edd58137f774ee7fcdb1d851e5151dba2d623c2257f650f1cccabc435",
+  "uiSha256": "ebdf54b1b23e68246479ded1231d0b2e014a5658cc69f4b8c0281a350dec6b18",
   "updates": {
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
@@ -306,6 +306,14 @@
       "uiSha256": "c9d9206edd58137f774ee7fcdb1d851e5151dba2d623c2257f650f1cccabc435",
       "reason": "AB-398 (PR #93, commits 6c3430d1, 5b2d91b0, e8e8aade): the Broker constructor's inlineJobControl handler accepts a \"pause\" control (its optional reason must be a string and is collapsed to one line and capped at 500 characters before relaying) and routes a job that is \"paused\" with pausePending like a running one (to its runner host, or to its connected inline executor); every other handler in the constructor is unchanged. startUi's /api/state adds only status, pauseReason and pausedAt to each stored job's saved-settings entry so the desktop dashboard can show paused jobs. No mobile route, mobile startup, mobile store or mobile admin code changes, and nothing under src/mobile or apps changes; mobile behaviour is unchanged. The other twelve method pins, the UI normalizer and the assertions are unchanged. Re-pinned on top of AB-400 (PR #92): startUi's /api/state job map keeps AB-400's `...(j.resultStored ? { resultStored: true } : {})` next to AB-398's status, pauseReason and pausedAt; no other change. Constructor re-pinned on top of AB-399 (PR #94): the pause handling is the only delta from AB-399's constructor; close() is unchanged.",
       "commit": "e8e8aade"
+    },
+    "AB-401-machine-wait": {
+      "base": "99550f5e",
+      "changes": [],
+      "previousUiSha256": "c9d9206edd58137f774ee7fcdb1d851e5151dba2d623c2257f650f1cccabc435",
+      "uiSha256": "ebdf54b1b23e68246479ded1231d0b2e014a5658cc69f4b8c0281a350dec6b18",
+      "reason": "AB-401: startUi's /api/state reads the stored jobs once into `stored`, computes `waits = stateJobWaits(opts.home, stored, opts.log)` (display-only: one snapshot read of resource-slots.sqlite, no process probes, no writes, nothing created when the file is absent) and adds only `...(waits.has(name) ? { waitingFor: waits.get(name) } : {})` to each stored job's entry; the import line adds stateJobWaits. No control-flow change; no mobile route, mobile startup, mobile store or mobile admin code changes and nothing under src/mobile or apps changes, so mobile behaviour is unchanged (mobile-wiring's other 18 tests, mobile-activation, mobile-adapter and mobile-phones-dashboard pass). Broker, node.ts and dashboard method pins, the normalizer and the assertions are unchanged.",
+      "commit": "eb040e0a"
     }
   },
   "revertedUpdates": {
