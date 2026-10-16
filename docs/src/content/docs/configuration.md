@@ -12,6 +12,7 @@ title: "Configuration"
   "maxJobs": 8,
   "maxDelegateDepth": 2,
   "autoApproveTools": ["pair-desk.get_*", "pair-desk.list_*"],
+  "jobs": { "defaultAllowTools": ["pair-desk:worker"] },
   "codexApprovalsReviewer": "auto_review",
   "codexSubagents": 6,
   "lingerSec": 300,
@@ -21,6 +22,14 @@ title: "Configuration"
   "opencodeAutoApprove": false
 }
 ```
+
+`jobs.defaultAllowTools` is the `allow_tools` of every `spawn_*` / `ask_*` job whose call
+passes none (default `["pair-desk:worker"]`: Pair Desk reads, comments, progress, plans,
+steps, issue edits and review locations; never status, build or handoff writes). A list passed
+on the call replaces it; `allow_tools: []` turns it off for one job, and
+`"defaultAllowTools": []` turns it off for all. Home config only (top level or a per-agent
+section); a project config cannot set it. It never applies to native children. See
+[delegation](../concepts/delegation/).
 
 `codexSubagents` sets the default native Codex child-thread budget per delegated job
 (6 by default, integers 0–32; 0 disables). Override it with `native_subagents` on

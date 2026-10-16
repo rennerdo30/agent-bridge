@@ -118,3 +118,7 @@ Read-access jobs allow `pair-desk.get_*` and `pair-desk.list_*` without `allow_t
 normalization covers Codex's underscore name, Claude's plugin server name and opencode's tool
 prefix. These defaults do not cover other servers or desk writes. Handoff writes remain declined
 before any allowlist or remembered server approval is considered.
+
+Since AB-403, a job without `allow_tools` also gets `jobs.defaultAllowTools` (default
+`["pair-desk:worker"]`), in every access mode. An explicit `allow_tools` list replaces that
+default and `[]` turns it off; see [delegation](../concepts/delegation/).

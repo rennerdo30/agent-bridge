@@ -19,7 +19,7 @@ import { PermissionRelay, unreviewable, type PermissionDecision, type Permission
 import { codexPermissionHookHash, codexPermissionHookTrusted, recordCodexHookObservation } from "../core/codex-trust.js";
 import { startRunFeed, startRunFeedReady } from "../core/runfeed.js";
 import { ResourceSlots, resourceSlotHint, SLOT_OWNER_ENV, SLOT_PID_ENV, SLOT_RENEW_MS } from "../core/resource-slots.js";
-import { approvalHint, DESK_READ_PATTERNS, isAutoApproved, isHandoffToolCall, isOwnServerCall } from "../core/tool-allow.js";
+import { approvalHint, DESK_READ_PATTERNS, effectiveAllowTools, isAutoApproved, isHandoffToolCall, isOwnServerCall } from "../core/tool-allow.js";
 import { codexDriveMappings, codexPathReport } from "../core/codex-paths.js";
 import { displayPath, displayPathText } from "../core/display-paths.js";
 import { scanWorktreeLinks, WORKTREE_LINK_HINT, worktreeLinkWarning } from "../core/worktree-links.js";
@@ -247,7 +247,9 @@ async function runDelegateInner(
   // session's user. One "allow" per MCP server covers the rest of the run.
   // Remembered per job, so follow-ups and recoveries don't ask again.
   const allowedServers = job ? (job.allowedServers ??= new Set<string>()) : new Set<string>();
-  const autoApprove = [...cfg.autoApproveTools, ...(access === "read" ? DESK_READ_PATTERNS : []), ...(a.allow_tools ?? [])];
+  // The job's own allow_tools, or the configured default when the call passed none (AB-403). This is the one
+  // place every CLI kind gets its grants from: approve() below and Claude's filtered job MCP view.
+  const autoApprove = [...cfg.autoApproveTools, ...(access === "read" ? DESK_READ_PATTERNS : []), ...effectiveAllowTools(a.allow_tools, cfg.jobs.defaultAllowTools)];
   const approve = async (r: PermissionRequest): Promise<PermissionDecision> => journalPermission(r, async () => {
     // Handoff tools first: no allow pattern or earlier "allow" for their server covers them.
     if (isHandoffToolCall(r)) {

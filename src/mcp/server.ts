@@ -163,6 +163,16 @@ function noUnreadMessage(id: string): CallToolResult {
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 /** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
 const STAND_IN_RECHECK_MS = 30_000;
+/** The configured default allow_tools of jobs (AB-403), for tool descriptions. */
+function defaultAllowText(cfg: BridgeConfig): string {
+  return cfg.jobs.defaultAllowTools.length ? cfg.jobs.defaultAllowTools.map((p) => `"${p}"`).join(", ") : "none";
+}
+function defaultAllowNote(cfg: BridgeConfig): string {
+  return cfg.jobs.defaultAllowTools.length
+    ? ` Without allow_tools the job gets ${defaultAllowText(cfg)}${cfg.jobs.defaultAllowTools.includes("pair-desk:worker") ? " (Pair Desk reads, comments, progress, plans and issue edits; never status, build or handoff writes)" : ""}; pass allow_tools to replace it, [] for none.`
+    : "";
+}
+
 const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "base", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "permission_profile", "allow_tools", "send_to", "title", "notes"] as const;
 /** Plugin root: dist/server.mjs lives one level below it. */
 const PLUGIN_ROOT = resolve(bundleDirectory(import.meta.url), "..");
@@ -1651,7 +1661,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         .max(50)
         .optional()
         .describe(
-          'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (reads only), "pair-desk:worker" (reads, comments, progress, plans, issue edits and review locations; excludes status, builds and handoff writes), or "server" for all of its tools. Add "pair-desk.set_build" separately to allow build publication.',
+          'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (reads only), "pair-desk:worker" (reads, comments, progress, plans, issue edits and review locations; excludes status, builds and handoff writes), or "server" for all of its tools. Add "pair-desk.set_build" separately to allow build publication. ' +
+          `Default when omitted: ${defaultAllowText(cfg)} (config jobs.defaultAllowTools). A list you pass replaces the default (include "pair-desk:worker" to keep it); [] turns it off for this job.`,
         ),
       send_to: z.array(z.string().refine(isJobSendTarget, "Use an exact local session or job name, not an agent kind, broadcast, wildcard or remote address"))
         .max(MAX_JOB_SEND_TARGETS).optional()
@@ -1699,7 +1710,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           "This is one blocking call, not a background job or a polling loop. Return its job id and result as received, including errors; do not automatically start another ask call after a timeout. " +
           `Good for quick second opinions or reviews. For longer or parallel work use spawn_${target}. ` +
           "Pass the returned session_id back to continue the same conversation. " +
-          profile.permissionNote(cfg),
+          profile.permissionNote(cfg) + defaultAllowNote(cfg),
         inputSchema: schema,
       },
       guarded(askName, async (a: DelegateArgs, extra) => {
@@ -1774,7 +1785,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
           `Start ${profile.title} as a background subagent and return immediately with a job id. Keep working meanwhile; ` +
           `the result arrives as a message from "${target}-job-<id>" (injected automatically, or use wait_for_message with from=<job name>). ` +
           `Several subagents can run in parallel (max ${cfg.maxJobs}). ` +
-          profile.permissionNote(cfg),
+          profile.permissionNote(cfg) + defaultAllowNote(cfg),
         inputSchema: { ...schema, title: schema.title.optional().describe("A short title, 3-7 words. Optional: if omitted, derived from the prompt's first nonempty line and noted in the result.") },
       },
       guarded(spawnName, async (input: Omit<DelegateArgs, "title"> & { title?: string }) => {
