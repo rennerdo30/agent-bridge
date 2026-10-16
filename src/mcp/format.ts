@@ -11,7 +11,7 @@ import { displayPath } from "../core/display-paths.js";
 
 const TAG = "agent-bridge-message";
 
-function escapeAttr(v: string): string {
+export function escapeAttr(v: string): string {
   return v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 

@@ -8,7 +8,7 @@ import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
 import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage } from "../core/protocol.js";
 import { tokensEqual } from "../core/token.js";
-import { formatMessage, formatMessages } from "./format.js";
+import { escapeAttr, formatMessage, formatMessages } from "./format.js";
 import { selectForDelivery, unshownMessageNotes } from "./output-bounds.js";
 import type { ClaudeMailScopes } from "./claude-mail-scope.js";
 
@@ -53,7 +53,8 @@ export function wakeMessageIds(text: string): string[] {
  * confirms the note. It never matches `<agent-bridge-message id=`: a note never marks its message read.
  */
 export function oversizedNoteMarker(id: string): string {
-  return `<agent-bridge-oversized id="${id}"/>`;
+  // Ids from paired links are not format-checked: escaped, a crafted id cannot carry another note's marker.
+  return `<agent-bridge-oversized id="${escapeAttr(id)}"/>`;
 }
 /** Ids of the oversized-message notes in a wake-up text (or a prompt that carries one). */
 export function wakeNoteIds(text: string): string[] {
@@ -108,6 +109,12 @@ export class RewakeEndpoint {
   private readonly handedNotes = new Set<string>();
   /** AB-404: notes handed to the mod, with the turn-end and turn-start counts at hand-out (see modNoteInFlight). */
   private readonly modNotes = new Map<string, { ends: number; starts: number }>();
+  /**
+   * AB-404: notes taken back at an acknowledgement although the mod may have submitted them: a mod of v0.30.12 or
+   * older acknowledges at its own turn start, before that prompt's hook. Their prompt still confirms them; they are
+   * not in flight, and the mod's next poll hands them out again (and forgets them here).
+   */
+  private readonly ackedNotes = new Set<string>();
   /** Main turns that ended (busy to idle); ages the hand-outs of a mod that stopped polling. */
   private turnEnds = 0;
   /** Main turns that started (idle to busy): a mod note whose re-poll saw no turn start was not taken. */
@@ -310,6 +317,7 @@ export class RewakeEndpoint {
     // AB-404: a Stop-hook wake-up's notes are not confirmed by the mod's turns, and wakeable() would keep them from
     // the mod: they go back to the hand-outs (at worst one duplicate note). Stop-hook wake-ups end once the mod polls.
     this.handedNotes.clear();
+    this.ackedNotes.clear();
     // The mod polls again while idle: when no turn started since a note was handed to it, that wake-up started
     // no turn, so the note goes out again (AB-404). After a turn start it is queued and waits for its own prompt.
     for (const [id, at] of this.modNotes) if (at.starts === this.turnStarts) this.modNotes.delete(id);
@@ -368,7 +376,7 @@ export class RewakeEndpoint {
     const queued: string[] = [];
     for (const [id, at] of this.modNotes) {
       if (at.starts < this.turnStarts) queued.push(id);
-      else this.modNotes.delete(id);
+      else { this.modNotes.delete(id); this.ackedNotes.add(id); }
     }
     this.confirmNotes(queued);
   }
@@ -376,7 +384,7 @@ export class RewakeEndpoint {
   /** AB-404: these oversized-message notes were shown; the messages themselves stay unread. */
   private confirmNotes(ids: Iterable<string>): void {
     const noted = [...ids];
-    for (const id of noted) { this.handedNotes.delete(id); this.modNotes.delete(id); }
+    for (const id of noted) { this.handedNotes.delete(id); this.modNotes.delete(id); this.ackedNotes.delete(id); }
     if (noted.length) this.oversized?.note(noted);
   }
 
@@ -418,7 +426,7 @@ export class RewakeEndpoint {
   confirmPrompt(prompt: string): void {
     if (!prompt.includes(WAKE_HEADER)) return;
     // AB-404: only notes this endpoint handed out and awaits; a marker for any other id is not one of its notes.
-    this.confirmNotes([...new Set([...this.handedNotes, ...this.modNotes.keys()])].filter((id) => prompt.includes(oversizedNoteMarker(id))));
+    this.confirmNotes([...new Set([...this.handedNotes, ...this.modNotes.keys(), ...this.ackedNotes])].filter((id) => prompt.includes(oversizedNoteMarker(id))));
     const ids = new Set(wakeMessageIds(prompt));
     if (!ids.size) return;
     for (const id of ids) { this.handedOut.delete(id); this.modHandedOut.delete(id); }
