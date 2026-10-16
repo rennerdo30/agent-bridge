@@ -118,7 +118,7 @@ function completeContext(home: string, history: Record<string, unknown> | undefi
   const nullableString = (value: unknown) => value === null || typeof value === "string";
   const complete = history?.id === id && typeof history.name === "string" && AGENT_KINDS.includes(history.agent as never) &&
     typeof history.owner === "string" && typeof history.prompt === "string" && Number.isFinite(history.startedAt) &&
-    ["running", "done", "failed", "cancelled", "interrupted"].includes(String(history.status)) &&
+    ["running", "paused", "done", "failed", "cancelled", "interrupted"].includes(String(history.status)) &&
     isRecord(history.args) && nullableString(history.model) && nullableString(history.sessionId) &&
     nullableString(history.workdir) && (history.worktree === null || isRecord(history.worktree));
   if (!complete) return false;
@@ -136,7 +136,7 @@ function witnessedRun(home: string, id: string, history: Record<string, unknown>
   if (history?.id !== id || !Number.isFinite(history.startedAt)) return undefined;
   const state = readRunnerStateRecord(home, id), witness = state?.currentRun;
   const running = state?.status === "running";
-  if (!state || !["running", "done", "failed", "cancelled"].includes(String(state.status)) || state.peer !== history.name ||
+  if (!state || !["running", "paused", "done", "failed", "cancelled"].includes(String(state.status)) || state.peer !== history.name ||
       running && (history.status !== "running" || !isRecord(history.host) || state.pid !== history.host.pid ||
         writtenBeforeBoot(Number(state.updatedAt)) || !pidAlive(Number(state.pid))) ||
       !(Number(state.updatedAt) >= Number(history.startedAt)) ||
@@ -222,8 +222,10 @@ function finishRecovery(home: string, { id, history, spec, launch, run, meta, na
     sessionId,
     workdir: currentState?.workdir ?? base.workdir ?? meta?.workdir ?? null,
     worktree: currentState?.worktree ?? base.worktree ?? null,
-    status: alive ? "running" : ["done", "failed", "cancelled"].includes(String(currentState?.status)) ? currentState!.status
-      : ["done", "failed", "cancelled"].includes(String(base.status)) ? base.status : "interrupted",
+    status: alive ? base.status === "paused" ? "paused" : "running" : ["paused", "done", "failed", "cancelled"].includes(String(currentState?.status)) ? currentState!.status
+      : base.status === "paused" && base.pausePending ? "interrupted"
+      : ["paused", "done", "failed", "cancelled"].includes(String(base.status)) ? base.status : "interrupted",
+    pausePending: alive && base.pausePending === true ? true : undefined,
     host: alive ? { pid: currentState!.pid, peer: currentState!.peer ?? name, startedAt } : null,
   } as StoredJob;
 }

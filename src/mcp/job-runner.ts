@@ -274,7 +274,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     } catch {
       return;
     }
-    if (c.type === "cancel" && !isCurrentRunnerCancel(m.createdAt, job.startedAt)) {
+    if ((c.type === "cancel" || c.type === "pause") && !isCurrentRunnerCancel(m.createdAt, job.startedAt)) {
       log.info("ignoring cancellation from an earlier job turn", { createdAt: m.createdAt, startedAt: job.startedAt });
       return;
     }
@@ -311,6 +311,13 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     } else if (c.type === "cancel") {
       log.info("cancelled by the session");
       job.queue = [];
+      job.pausePending = false;
+      job.controller.abort();
+      save({ stopping: true });
+    } else if (c.type === "pause") {
+      job.pauseReason = c.reason ?? "Paused by supervisor";
+      job.pausedAt = Date.now();
+      job.pausePending = true;
       job.controller.abort();
       save({ stopping: true });
     }
@@ -353,7 +360,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
 
   let args = spec.args;
   for (;;) {
-    let status: "done" | "failed" | "cancelled" = "failed";
+    let status: "done" | "failed" | "cancelled" | "paused" = "failed";
     let text = "";
     let cause: string | null = null;
     let processesStopped = false;
@@ -400,12 +407,20 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
         log.warn("could not write the worktree process proof; worktree retained", { err: (err as Error).message });
       }
     }
-    if (job.controller.signal.aborted && processesStopped) {
+    if (job.controller.signal.aborted && processesStopped && !job.pausePending) {
       const cleanup = await closeJobWorktree({ home, job: { ...job, status }, enabled: spec.cfg.jobCloseCleanup, log });
       text += `\n\nWorktree close: ${cleanup.action}: ${cleanup.reason}`;
     }
     job.etaReportedAt = undefined;
-    if (job.controller.signal.aborted) status = "cancelled";
+    if (job.pausePending && (!scope || processesStopped)) status = "paused";
+    else if (job.controller.signal.aborted) status = "cancelled";
+    if (status === "paused") {
+      closing = true;
+      if (saveTimer) clearTimeout(saveTimer);
+      save({ status: "paused", finishedAt: Date.now() });
+      log.info("job runner paused", { sessionId: job.sessionId });
+      break;
+    }
     const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause, home);
     log.info("job turn finished", { status, sessionId: job.sessionId, cause });
     // The supervisor's JobManager emits the finish/fail notification when it settles this

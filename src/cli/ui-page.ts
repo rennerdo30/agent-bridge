@@ -536,7 +536,7 @@ h3 .n { color: var(--faint); font-weight: 500; }
 .pill.running { background: var(--busy-soft); color: var(--busy); }
 .pill.done { background: var(--ok-soft); color: var(--ok); }
 .pill.failed { background: var(--bad-soft); color: var(--bad); }
-.pill.interrupted { background: var(--warn-soft); color: var(--warn); }
+.pill.interrupted, .pill.paused { background: var(--warn-soft); color: var(--warn); }
 .pill.running::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.4s infinite; }
 @keyframes pulse { 50% { opacity: .3; } }
 .linkbtn { margin-left: 8px; background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-size: 11.5px; text-transform: none; letter-spacing: 0; cursor: pointer; }
@@ -1323,7 +1323,7 @@ const dot = (activity) => '<span class="dot ' + (activity === "busy" ? "busy" : 
       return '<span class="chip perm ' + risk + '" title="permission level: ' + tip + '">' + esc(p) + "</span>";
     }
     // Statuses can come from a paired PC: only known ones become a class, and every label is escaped (AB-231).
-    const PILL_STATUSES = new Set(["running", "done", "failed", "interrupted", "cancelled"]);
+    const PILL_STATUSES = new Set(["running", "paused", "done", "failed", "interrupted", "cancelled"]);
     const pill = (status, percent) => '<span class="pill' + (PILL_STATUSES.has(status) ? " " + status : "") + '">' + (status === "running" ? (typeof percent === "number" && Number.isFinite(percent) ? "working · " + percent + "%" : "working") : esc(status)) + "</span>";
 
 /** Next-turn settings the dashboard can change, per agent (the values message_subagent accepts). */
@@ -1425,7 +1425,11 @@ function buildModel(s) {
   }
   for (const g of groups.values()) {
     const last = g.turns[g.turns.length - 1];
-    g.status = last.status; g.updatedAt = last.updatedAt; g.last = last.last; g.task = g.turns[0].task;
+    const saved = g.job && s.jobs && s.jobs[g.job];
+    g.status = saved && saved.status === "paused" ? "paused" : last.status;
+    g.pauseReason = saved && saved.status === "paused" ? saved.pauseReason || "supervisor request" : "";
+    g.pausedAt = saved && saved.status === "paused" ? saved.pausedAt : null;
+    g.updatedAt = last.updatedAt; g.last = last.last; g.task = g.turns[0].task;
     g.startedAt = g.turns[0].startedAt;
     // The newest title: message_subagent(title=...) can rename a job between turns.
     g.title = ([...g.turns].reverse().find((t) => t.title) || {}).title || "";
@@ -1441,7 +1445,7 @@ function buildModel(s) {
   const byName = new Map(sessions.map((x) => [x.name, x]));
   // Working subagents first (newest started first), then finished ones (newest finished first). Stable: a
   // row only moves when its subagent finishes or is continued, never while it reports progress.
-  const running = (g) => g.status === "running";
+  const running = (g) => g.status === "running" || g.status === "paused";
   const sorted = [...groups.values()].sort((a, b) =>
     running(a) !== running(b) ? (running(a) ? -1 : 1)
     : running(a) ? b.startedAt - a.startedAt || (a.key < b.key ? -1 : 1)
@@ -1827,19 +1831,20 @@ function groupRow(g, sel, showOwner) {
       : '<div style="min-width:0"><div class="line1"><b>' + esc(g.agent) + "</b>" + (g.model ? '<span class="chip ell">' + esc(g.model) + "</span>" : "") + (g.effort ? effortChip(g.effort) : "") + (g.permission ? permChip(g.permission) : "") +
         (g.turns.length > 1 ? '<span class="chip">' + g.turns.length + " turns</span>" : "") + runChips(g) + "</div>" +
         '<div class="task">' + esc(g.task || g.last) + "</div></div>") +
-    '<div class="side">' + pill(g.status, g.percent) + outcomeChip(g) + "<span>" + (showOwner ? esc(g.owner) + " · " : "") + (g.etaAt ? esc(etaText(g.etaAt)) : ago(g.updatedAt)) + "</span></div>" +
+    '<div class="side">' + pill(g.status, g.percent) + outcomeChip(g) + "<span>" + (showOwner ? esc(g.owner) + " · " : "") + (g.status === "paused" ? esc(g.pauseReason + " · " + (g.pausedAt ? time(g.pausedAt) : "time unknown")) : g.etaAt ? esc(etaText(g.etaAt)) : ago(g.updatedAt)) + "</span></div>" +
     (g.percent !== null ? '<div class="bar" title="' + esc(g.percent + "% · " + g.progressNote) + '"><i style="width:' + g.percent + '%"></i></div>' : "") + "</a>";
 }
 
 /** How many subagents are working, finished, failed (overall and since midnight). */
 function countGroups(groups) {
   const midnight = new Date().setHours(0, 0, 0, 0);
-  const c = { working: 0, done: 0, failed: 0, cancelled: 0, total: groups.length, today: 0, doneToday: 0, failedToday: 0, cancelledToday: 0 };
+  const c = { working: 0, paused: 0, done: 0, failed: 0, cancelled: 0, total: groups.length, today: 0, doneToday: 0, failedToday: 0, cancelledToday: 0 };
   for (const g of groups) {
     const today = g.updatedAt >= midnight;
     if (g.status === "running") c.working++;
     else if (g.status === "done") c.done++, (c.doneToday += today ? 1 : 0);
     else if (g.status === "cancelled") c.cancelled++, (c.cancelledToday += today ? 1 : 0);
+    else if (g.status === "paused") c.paused++;
     else c.failed++, (c.failedToday += today ? 1 : 0);
     if (g.startedAt >= midnight) c.today++;
   }
@@ -1847,7 +1852,7 @@ function countGroups(groups) {
 }
 
 function countsLine(c) {
-  return [c.working && '<span class="w">' + c.working + " working</span>", c.done && '<span class="d">' + c.done + " done</span>", c.failed && '<span class="f">' + c.failed + " failed</span>", c.cancelled && '<span>' + c.cancelled + " cancelled</span>", c.total + " total"].filter(Boolean).join(" · ");
+  return [c.working && '<span class="w">' + c.working + " working</span>", c.paused && '<span>' + c.paused + " paused</span>", c.done && '<span class="d">' + c.done + " done</span>", c.failed && '<span class="f">' + c.failed + " failed</span>", c.cancelled && '<span>' + c.cancelled + " cancelled</span>", c.total + " total"].filter(Boolean).join(" · ");
 }
 /* ---- Resource slots (GET /api/resource-slots, AB-40) ---- */
 let slotsAt = 0;
@@ -1905,7 +1910,7 @@ function renderOverview() {
     (live.length ? byPc : '<div class="panel empty">No sessions connected. Start Claude Code, Codex, opencode or Antigravity with agent-bridge installed.</div>') +
     ended.map(card).join("") +
     (model.orphans.length ? '<div class="card ended"><div class="small muted">Subagent sessions in worktrees</div><div class="kids">' + model.orphans.map(childLine).join("") + "</div></div>" : "");
-  $("ovRuns").innerHTML = model.sorted.length ? model.sorted.filter((g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS).concat(model.sorted.filter((g) => !(g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS))).slice(0, 12).map((g) => groupRow(g, false, true)).join("") + loadOlderButton() : '<div class="empty">No subagents yet. They appear here when a session uses ask_* or spawn_*.</div>';
+  $("ovRuns").innerHTML = model.sorted.length ? model.sorted.filter((g) => g.status === "running" || g.status === "paused" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS).concat(model.sorted.filter((g) => !(g.status === "running" || g.status === "paused" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS))).slice(0, 12).map((g) => groupRow(g, false, true)).join("") + loadOlderButton() : '<div class="empty">No subagents yet. They appear here when a session uses ask_* or spawn_*.</div>';
   $("ovMsgs").innerHTML = messagesHtml(state.messages);
 }
 
@@ -1952,7 +1957,7 @@ function renderSession() {
  */
 function renderSessionList(x, selKey) {
   const chat = hasNativeChat(x);
-  const fresh = (g) => g.status === "running" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS || g.key === selKey;
+  const fresh = (g) => g.status === "running" || g.status === "paused" || Date.now() - g.updatedAt < ARCHIVE_AFTER_MS || g.key === selKey;
   const active = x.groups.filter(fresh), archived = x.groups.filter((g) => !fresh(g));
   const archiveOpen = opened.has("archive:" + x.name);
   const natives = chat ? (nativeLists.get(x.name) || {}).list || [] : [];
@@ -2173,9 +2178,9 @@ function renderConversation(g) {
   // Line 1: what it is and how it stands; line 2: quiet facts; line 3: its own progress note.
   $("cTitle").innerHTML = '<span class="ttl">' + esc(g.title || g.agent) + "</span>" + pill(g.status, g.percent) + outcomeChip(g);
   $("cMeta").innerHTML = '<span class="chip">' + esc(g.agent) + "</span>" + (g.model ? '<span class="chip">' + esc(g.model) + "</span>" : "") + (g.effort ? effortChip(g.effort) : "") + (g.permission ? permChip(g.permission) : "") + runChips(g) + pendingChips(g);
-  $("cNote").textContent = [g.progressNote && g.percent !== null ? g.progressNote : "", g.etaAt ? etaText(g.etaAt) : ""].filter(Boolean).join(" · ");
+  $("cNote").textContent = g.status === "paused" ? "Paused " + (g.pausedAt ? time(g.pausedAt) : "") + " · " + g.pauseReason : [g.progressNote && g.percent !== null ? g.progressNote : "", g.etaAt ? etaText(g.etaAt) : ""].filter(Boolean).join(" · ");
   $("cSub").textContent = (g.owner === "earlier runs" ? "" : "started by " + g.owner + " · ") + time(first.startedAt) + " · " + (first.access || "default") + " access" + (first.workdir ? " · " + first.workdir : "");
-  const hint = g.job && g.status !== "running"
+  const hint = g.job && g.status === "paused" ? 'Resume it with <code>resume_subagent(job="' + esc(g.job) + '")</code>' : g.job && g.status !== "running"
     ? (g.status === "done" ? "Continue it with its context from " : "Recover it with its context from ") + esc(g.owner) + ': <code>message_subagent(job="' + esc(g.job) + '")</code>'
     : "";
   $("cHint").innerHTML = hint;

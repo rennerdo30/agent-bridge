@@ -273,6 +273,9 @@ export function readMeta(file: string): RunMeta {
 export interface StoredJobView {
   owner: string | null;
   next: Record<string, unknown>;
+  status?: string;
+  pauseReason?: string;
+  pausedAt?: number;
   projectRoot?: string;
   remote?: { host: string; name: string };
 }
@@ -303,6 +306,9 @@ function* storedJobViewSteps(jobs: Map<string, Record<string, unknown>>, names?:
     const saved = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
     out.set(name, {
       owner: typeof owner === "string" && owner ? owner : null,
+      ...(typeof j.status === "string" ? { status: j.status } : {}),
+      ...(typeof j.pauseReason === "string" ? { pauseReason: j.pauseReason } : {}),
+      ...(typeof j.pausedAt === "number" ? { pausedAt: j.pausedAt } : {}),
       ...(typeof j.projectRoot === "string" ? { projectRoot: j.projectRoot } : {}),
       next: cloneJson(Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== undefined).map((key) => [key, saved[key]]))),
       ...(remote && typeof remote.host === "string" && typeof remote.name === "string" ? { remote: cloneJson(remote) } : {}),
@@ -346,7 +352,7 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       // Only settings for jobs on this bounded run page are needed by its inspector.
       const names = new Set(page.runs.flatMap((run) => run.job ? [run.job] : []));
       const selected = await selectHistoryJobsResponsive(ctx.home, names);
-      const jobs = Object.fromEntries([...storedJobViews(selected)].map(([name, job]) => [name, { next: job.next, ...(job.remote ? { remote: job.remote } : {}) }]));
+      const jobs = Object.fromEntries([...storedJobViews(selected)].map(([name, job]) => [name, { next: job.next, status: job.status, pauseReason: job.pauseReason, pausedAt: job.pausedAt, ...(job.remote ? { remote: job.remote } : {}) }]));
       return reply(200, { runs: page.runs, runsNext: page.next, runsTotal: page.total, jobs });
     }
     if (url.pathname === "/api/job-outcomes") {

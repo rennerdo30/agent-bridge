@@ -57,6 +57,19 @@ afterEach(() => {
 });
 
 describe("worktree isolation", () => {
+  it("saves untracked non-ignored job files in a WIP commit without ignored files", async () => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: "wip-untracked", log: nullLogger });
+    writeFileSync(join(wt.path, ".gitignore"), "ignored.txt\n");
+    writeFileSync(join(wt.path, "a.txt"), "original  \n");
+    writeFileSync(join(wt.path, "new-source.txt"), "retained work\n");
+    writeFileSync(join(wt.path, "ignored.txt"), "local cache\n");
+    const saved = await finishWorktree(wt, "WIP: save job work", nullLogger, true);
+    expect(saved.files).toContain("new-source.txt");
+    expect(saved.files).toContain("a.txt");
+    expect(git("log", "-1", "--format=%s", wt.branch)).toBe("WIP: save job work");
+    expect(git("ls-tree", "-r", "--name-only", wt.branch)).toContain("new-source.txt");
+    expect(git("ls-tree", "-r", "--name-only", wt.branch)).not.toContain("ignored.txt");
+  });
   it("autosaves tracked and explicitly staged source while preserving private build outputs", async () => {
     const wt = await createWorktree({ cwd: repo, home, jobId: "privatefiles", log: nullLogger });
     writeFileSync(join(wt.path, "a.txt"), "tracked source\n");

@@ -298,7 +298,7 @@ function generatedNoise(root: string, file: string): boolean {
   });
 }
 
-async function autoCommitFiles(wt: Worktree, log: Logger): Promise<SkippedFile[]> {
+async function autoCommitFiles(wt: Worktree, log: Logger, includeUntracked = false): Promise<SkippedFile[]> {
   const trust = trustArgs(wt.path);
   const status = await git([...trust, "status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"], wt.path, log);
   const included: string[] = [];
@@ -311,9 +311,9 @@ async function autoCommitFiles(wt: Worktree, log: Logger): Promise<SkippedFile[]
     // Entrypoints and hashed chunks form one generated set. Exclude every change,
     // including staged additions/deletions, so a checkpoint retains the HEAD bundle.
     if (/^plugins\/[^/]+\/dist\//.test(file)) reason = "generated bundle; excluded atomically";
-    else if (generatedNoise(wt.path, file)) reason = "generated noise";
-    else if (entry.startsWith("??")) reason = "untracked; not explicitly staged";
-    else if (entry.startsWith("??") || await git([...trust, "diff", "--ignore-all-space", "--ignore-cr-at-eol", "--no-ext-diff", "--no-textconv", "--no-renames", "HEAD", "--", literal], wt.path, log)) {
+    else if (!includeUntracked && generatedNoise(wt.path, file)) reason = "generated noise";
+    else if (entry.startsWith("??") && !includeUntracked) reason = "untracked; not explicitly staged";
+    else if (includeUntracked || entry.startsWith("??") || await git([...trust, "diff", "--ignore-all-space", "--ignore-cr-at-eol", "--no-ext-diff", "--no-textconv", "--no-renames", "HEAD", "--", literal], wt.path, log)) {
       // An already staged deletion has no path left in the index for `git add` to match.
       if (!entry.startsWith("D ")) included.push(literal);
     } else reason = "whitespace only";
@@ -329,9 +329,9 @@ async function autoCommitFiles(wt: Worktree, log: Logger): Promise<SkippedFile[]
 }
 
 /** Commit substantive, non-generated changes and summarize the diff of the job's work. */
-export async function finishWorktree(wt: Worktree, message: string, log: Logger): Promise<WorktreeOutcome> {
+export async function finishWorktree(wt: Worktree, message: string, log: Logger, includeUntracked = false): Promise<WorktreeOutcome> {
   const trust = trustArgs(wt.path);
-  const skippedFiles = await autoCommitFiles(wt, log);
+  const skippedFiles = await autoCommitFiles(wt, log, includeUntracked);
   const status = await git([...trust, "diff", "--cached", "--name-only", "-z"], wt.path, log);
   if (status) {
     // Never invent an identity. Keep the checkout and report missing repository configuration.
@@ -342,7 +342,7 @@ export async function finishWorktree(wt: Worktree, message: string, log: Logger)
     for (const key of Object.keys(env)) if (/^GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL)$/i.test(key)) delete env[key];
     // --no-verify alone still runs prepare-commit-msg, which can append forbidden attribution.
     // A linked checkout's .git is a file, so this hooks directory cannot contain executable hooks.
-    await git([...trust, "-c", `core.hooksPath=${resolve(wt.path).replace(/\\/g, "/")}/.git/checkpoint-hooks-disabled`, "commit", "-q", "--no-verify", "-m", "Save worktree changes"], wt.path, log, GIT_TIMEOUT_MS, env);
+    await git([...trust, "-c", `core.hooksPath=${resolve(wt.path).replace(/\\/g, "/")}/.git/checkpoint-hooks-disabled`, "commit", "-q", "--no-verify", "-m", includeUntracked ? "WIP: save job work" : "Save worktree changes"], wt.path, log, GIT_TIMEOUT_MS, env);
   }
   await unlockWorktree(wt.repoRoot, wt.path, log);
   // The job may have switched to (or created) a branch of its own: its work is wherever it committed.

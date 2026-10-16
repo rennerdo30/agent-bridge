@@ -42,7 +42,8 @@ export class RemoteJobHost {
     this.busy.add(job.id);
     void this.node.remoteJob(host, request).then((snapshot) => {
       this.save(job, snapshot);
-      if (job.controller.signal.aborted) this.send(job, { type: "cancel" });
+      if (job.pausePending) this.send(job, { type: "pause", reason: job.pauseReason });
+      else if (job.controller.signal.aborted) this.send(job, { type: "cancel" });
     }, (err) => {
       this.save(job, { state: { pid: 0, peer: `${host}/${job.name}`, status: "failed", updatedAt: Date.now(), report: `Remote job failed: ${(err as Error).message}`, delivered: false }, alive: false, approvals: [] });
     }).finally(() => this.busy.delete(job.id));

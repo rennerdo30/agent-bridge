@@ -481,6 +481,24 @@ async function runDelegateInner(
       const branch = await git([...trustArgs(wt.path), "branch", "--show-current"], wt.path, dlog).catch(() => wt.branch);
       const branchHead = await git([...trustArgs(wt.path), "rev-parse", "HEAD"], wt.path, dlog).catch(() => undefined);
       feed.meta({ branch: branch || wt.branch, branchHead });
+      try {
+        if (linkRoot && scanWorktreeLinks(linkRoot).externalLinks.some(link => link.path === resolve(linkRoot)))
+          throw new Error("the worktree root is an external link");
+        const outcome = await finishWorktree(wt, "WIP: save job work", dlog, true);
+        wt.branch = outcome.branch;
+        wt.branchHead = await git([...trustArgs(wt.repoRoot, wt.path), "rev-parse", "HEAD"], wt.path, dlog);
+        feed.meta({ branch: wt.branch, branchHead: wt.branchHead });
+        if (err instanceof Error) err.message += `\n\n${worktreeReport(wt, outcome)}`;
+      } catch (commitError) {
+        if (err instanceof Error) {
+          err.message += `\n\nCould not make a WIP commit: ${(commitError as Error).message}`;
+          try {
+            const dirty = (await git([...trustArgs(wt.repoRoot, wt.path), "status", "--porcelain=v1", "-z", "--untracked-files=all"], wt.path, dlog))
+              .split("\0").filter(Boolean).map(entry => entry.slice(3));
+            if (dirty.length) err.message += `\nDirty files left on the job worktree:\n${dirty.join("\n")}`;
+          } catch (statusError) { err.message += `\nCould not list dirty files: ${(statusError as Error).message}`; }
+        }
+      }
     }
     feed.end(signal.aborted ? "cancelled" : displayPathText(`failed: ${(err as Error)?.message ?? err}`));
     // The worktree keeps whatever the subagent did before failing: say where it is.
@@ -546,8 +564,8 @@ async function runDelegateInner(
     notes.push("Auto-commit skipped: the worktree root is an external link. Restore worktree isolation before running git or cleanup through it.");
   } else if (wt) {
     try {
-      const message = subagentCommitMessage({ answer: res.text, task: a.prompt, job: a._job, agent: target, model: a.model ?? defaultModel });
-      const outcome = await finishWorktree(wt, message, dlog);
+      const message = `WIP: ${subagentCommitMessage({ answer: res.text, task: a.prompt, job: a._job, agent: target, model: a.model ?? defaultModel })}`;
+      const outcome = await finishWorktree(wt, message, dlog, true);
       wt.branch = outcome.branch;
       wt.branchHead = await git([...trustArgs(wt.repoRoot, wt.path), "rev-parse", "HEAD"], wt.path, dlog);
       feed.meta({ branch: wt.branch, branchHead: wt.branchHead });
@@ -555,6 +573,13 @@ async function runDelegateInner(
     } catch (err) {
       // Never lose the answer over a git problem.
       notes.push(`Could not commit the changes in worktree ${wt.path} (branch ${wt.branch}): ${(err as Error).message}`);
+      try {
+        const dirty = (await git([...trustArgs(wt.repoRoot, wt.path), "status", "--porcelain=v1", "-z", "--untracked-files=all"], wt.path, dlog))
+          .split("\0").filter(Boolean).map(entry => entry.slice(3));
+        if (dirty.length) notes.push(`Dirty files left on the job worktree:\n${dirty.join("\n")}`);
+      } catch (statusError) {
+        notes.push(`Could not list dirty files in the job worktree: ${(statusError as Error).message}`);
+      }
     }
   } else if (before) {
     const after = await gitChangeSnapshot(workdir, dlog);
