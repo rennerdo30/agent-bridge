@@ -1,7 +1,7 @@
 import { codexSubagentConfig } from "./codex-subagents.js";
 import { spawn } from "node:child_process";
 import { APP_VERSION } from "./constants.js";
-import { codexCommandApprovalText, codexFileChangeApprovalText } from "./approval-display.js";
+import { codexCommandApprovalText, codexFileChangeApprovalText, markerSafe } from "./approval-display.js";
 import { DEFAULT_CODEX_APPROVALS_REVIEWER, type CodexApprovalsReviewer, type CodexSandbox } from "./config.js";
 import { checkDepth, childEnv, DelegateError, exitDescription, killTree, realFolder, resolveCommand, trackChild, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { progressEventHandler } from "./progress.js";
@@ -197,7 +197,7 @@ export async function delegateToCodexAppServer(
     switch (method) {
       case "mcpServer/elicitation/request": {
         const tool = `mcp:${params.serverName ?? "tool"}`;
-        const decision = await decide(tool, String(params.message ?? "an MCP tool call"));
+        const decision = await decide(tool, markerSafe(String(params.message ?? "an MCP tool call")));
         // Form elicitations get their defaults; tool-call approvals have no fields to fill.
         const props = params.requestedSchema?.properties ?? {};
         const content = Object.fromEntries(Object.entries(props).filter(([, v]: [string, any]) => v && "default" in v).map(([k, v]: [string, any]) => [k, v.default]));
@@ -214,7 +214,7 @@ export async function delegateToCodexAppServer(
       }
       case "item/permissions/requestApproval": {
         const decision = req.canApprove || req.askMode || req.sandbox === "workspace-write"
-          ? await decide("permissions", `${params.reason ?? "additional permissions"}\n${JSON.stringify(params.permissions ?? {})}`)
+          ? await decide("permissions", markerSafe(`${params.reason ?? "additional permissions"}\n${JSON.stringify(params.permissions ?? {})}`))
           : sandboxDenial;
         return answer(decision, { permissions: decision.allow ? params.permissions ?? {} : {}, scope: "turn" }, "permissions");
       }

@@ -13,6 +13,11 @@
  * and `+args` are escaped: they never contain a raw line break, a square bracket or a bidirectional control, so a
  * hostile path or reason cannot fake a new line, end a marker early or reorder the text. The command itself is
  * shown exactly as it will run.
+ *
+ * A command whose own first line could pass for that header (for example `+args: {...}` or `[sandbox ON]`) always
+ * gets a bridge header line, `[command starts like a marker line]`, so the line a reader or the dashboard takes as
+ * the header is always the bridge's and the whole command stays below it. Question texts without markers of their
+ * own (MCP calls, other approvals) get the same guard through markerSafe.
  */
 
 /** The longest marker value shown; a longer one is cut with its original length named. */
@@ -21,20 +26,39 @@ export const MAX_MARKER_VALUE_CHARS = 200;
 export const MAX_EXTRA_ARGS_CHARS = 600;
 
 /**
- * Line breaks, other control characters, brackets, quotes and bidirectional or invisible format characters.
- * Any of them makes a marker value print as an escaped JSON string.
+ * Characters that never print as themselves in a header: C0 and C1 controls (ANSI escapes included), format
+ * characters (bidirectional controls, zero-width characters, the BOM, Unicode tag characters U+E0000-E007F), lone
+ * surrogates, line and paragraph separators, invisible fillers (soft hyphen, combining grapheme joiner, Hangul
+ * fillers, Mongolian vowel separator, deprecated format and interlinear annotation characters), variation selectors,
+ * and brackets that look like `[` or `]` (fullwidth, white, quill, tick, lenticular, tortoise-shell, half, piece and
+ * vertical presentation forms).
  */
-const UNSAFE = /[\u0000-\u001f\u007f-\u009f[\]"\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/;
-const ESCAPE_AFTER_JSON = /[[\]\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\u007f-\u009f]/g;
+const HIDDEN = String.raw`\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}\u{E0000}-\u{E007F}\u00AD\u034F\u115F\u1160\u3164\uFFA0\u180E\u206A-\u206F\uFFF9-\uFFFB\uFE00-\uFE0F\u{E0100}-\u{E01EF}`;
+const LOOKALIKE_OPEN = String.raw`\uFF3B\u27E6\u2045\u298B\u298D\u298F\u3010\u3014\u3016\u3018\u301A\uFE39\uFE47\uFE5D\u2E22\u2E24\u23A1-\u23A3`;
+const LOOKALIKE_CLOSE = String.raw`\uFF3D\u27E7\u2046\u298C\u298E\u2990\u3011\u3015\u3017\u3019\u301B\uFE3A\uFE48\uFE5E\u2E23\u2E25\u23A4-\u23A6`;
+/** Any of them, a square bracket or a quote makes a marker value print as an escaped JSON string. */
+const UNSAFE = new RegExp(String.raw`[\[\]"${HIDDEN}${LOOKALIKE_OPEN}${LOOKALIKE_CLOSE}]`, "u");
+/** What JSON.stringify leaves raw and is written as a \u escape (a surrogate pair for an astral character). */
+const ESCAPE_AFTER_JSON = new RegExp(String.raw`[\[\]${HIDDEN}${LOOKALIKE_OPEN}${LOOKALIKE_CLOSE}]`, "gu");
 
-/** JSON text with brackets and invisible or bidirectional characters also written as \u escapes. */
+const u4 = (n: number) => `\\u${n.toString(16).padStart(4, "0")}`;
+
+/** JSON text with brackets and invisible, bidirectional or look-alike characters also written as \u escapes. */
 function escapedJson(value: unknown): string {
   const json = JSON.stringify(value) ?? String(value);
-  return json.replace(ESCAPE_AFTER_JSON, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  return json.replace(ESCAPE_AFTER_JSON, (c) => {
+    const code = c.codePointAt(0)!;
+    if (code <= 0xffff) return u4(code);
+    const v = code - 0x10000;
+    return u4(0xd800 + (v >> 10)) + u4(0xdc00 + (v & 0x3ff));
+  });
 }
 
+/** The text cut to max code units, never between the two halves of a surrogate pair, with its length named. */
 function cut(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}…(${text.length} chars)` : text;
+  if (text.length <= max) return text;
+  const end = /[\ud800-\udbff]/.test(text[max - 1] ?? "") ? max - 1 : max;
+  return `${text.slice(0, end)}…(${text.length} chars)`;
 }
 
 /** One marker value: plain when it is harmless text, else an escaped JSON string; always bounded. */
@@ -55,10 +79,32 @@ export function extraArgs(extra: Record<string, unknown>): string {
   return `+args: ${cut(escapedJson(extra), MAX_EXTRA_ARGS_CHARS)}`;
 }
 
-/** The question text: the primary text alone, or the marker header line and then the primary text. */
+/**
+ * A line a reader or the dashboard could take for a marker header: only `[...]` groups (square or look-alike
+ * brackets) and an optional `+args...` tail. A superset of the line the dashboard parses (its approvalFlags).
+ */
+const MARKER_LIKE_LINE = new RegExp(String.raw`^(?:[\[${LOOKALIKE_OPEN}][^\[\]${LOOKALIKE_OPEN}${LOOKALIKE_CLOSE}]*[\]${LOOKALIKE_CLOSE}]\s*)*(?:\+args:.*)?$`, "u");
+/** The bridge's header marker for a command whose own first line could pass for a header. */
+export const MARKER_LIKE_COMMAND = marker("command starts like a marker line");
+
+/** True when the first non-blank line of the text could be taken for a marker header line. */
+export function startsLikeMarkers(primary: string): boolean {
+  const first = primary.split(/\r\n|[\n\r\u2028\u2029]/).find((line) => line.trim() !== "");
+  return first !== undefined && MARKER_LIKE_LINE.test(first.trim());
+}
+
+/**
+ * The question text: the primary text alone, or the marker header line and then the primary text. A primary text
+ * that starts like a header always gets one, so its own first line is never read as the bridge's markers.
+ */
 export function withMarkers(primary: string, markers: string[], extra: Record<string, unknown> = {}): string {
-  const header = [...markers, extraArgs(extra)].filter(Boolean).join(" ");
+  const header = [...markers, startsLikeMarkers(primary) ? MARKER_LIKE_COMMAND : "", extraArgs(extra)].filter(Boolean).join(" ");
   return header ? `${header}\n${primary}` : primary;
+}
+
+/** Question text without markers of its own (MCP calls, other approvals): unchanged unless it starts like a header. */
+export function markerSafe(text: string): string {
+  return withMarkers(text, []);
 }
 
 /** True when the value asks for something: not absent, false, null or empty. */
@@ -114,10 +160,12 @@ function toolMarkers(o: Record<string, unknown>): { markers: string[]; used: Set
 
 /**
  * The question text for a Claude or Codex tool call. A call without a command or path shows its whole input as
- * JSON, as before; MCP tool calls keep that form (their arguments are the request).
+ * JSON, as before. An MCP tool call (`mcp: true`) always shows its whole input as JSON, even when it has a
+ * `command`, `file_path` or `notebook_path` argument: every MCP argument is part of the request, so none becomes a
+ * marker or is left out. The caller bounds the text (boundedDetail) as before.
  */
-export function describeToolInput(toolInput: unknown): string {
-  if (!toolInput || typeof toolInput !== "object" || Array.isArray(toolInput)) return JSON.stringify(toolInput ?? {});
+export function describeToolInput(toolInput: unknown, options: { mcp?: boolean } = {}): string {
+  if (options.mcp || !toolInput || typeof toolInput !== "object" || Array.isArray(toolInput)) return JSON.stringify(toolInput ?? {});
   const o = toolInput as Record<string, unknown>;
   const field = PRIMARY_FIELDS.find((key) => typeof o[key] === "string");
   if (!field) return JSON.stringify(toolInput);
@@ -197,7 +245,7 @@ const OPENCODE_SILENT = new Set(["command", "filepath", "description", "diff", "
 export function opencodePermissionText(p: Record<string, unknown>, primary: string): string {
   const meta = p.metadata && typeof p.metadata === "object" && !Array.isArray(p.metadata) ? p.metadata as Record<string, unknown> : {};
   const fromMeta = typeof meta.command === "string" || typeof meta.filepath === "string";
-  if (!fromMeta) return primary;
+  if (!fromMeta) return markerSafe(primary);
   const markers: string[] = [];
   const used = new Set<string>(OPENCODE_SILENT);
   for (const key of ["workdir", "cwd"]) {
