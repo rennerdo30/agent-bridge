@@ -20,6 +20,7 @@ import { DECISIONS_SCHEMA, DecisionStore } from "./decisions.js";
 import { configureSqlite, isSqliteBusy, retrySqlite, SQLITE_BUSY_TIMEOUT_MS, SQLITE_REQUEST_BUSY_MS } from "./sqlite-policy.js";
 import { attachStoreCompatibility } from "./store-compatibility-overlay.js";
 import { NativeLifecycleReader, type NativeRouteSnapshot } from "./native-lifecycle-reader.js";
+import { physicalPath } from "./project-identity.js";
 
 import { SQLITE_STORE_VERSION } from "./store-version.js";
 export { SQLITE_STORE_VERSION } from "./store-version.js";
@@ -117,7 +118,7 @@ export function migrateMessageSchema(db: DatabaseSync, file: string, existed: bo
 export function registrationIdentity(peer: PeerInfo): string | null {
   if (peer.jobAgent || !Number.isSafeInteger(peer.agentPid) || !peer.agentPid || peer.agentPid <= 0 || !peer.agentStartedAt) return null;
   let cwd = resolve(peer.cwd);
-  try { cwd = realpathSync.native(cwd); } catch { /* A removed working folder still has a stable absolute spelling. */ }
+  try { cwd = physicalPath(cwd); } catch { /* A removed working folder still has a stable absolute spelling. */ }
   if (process.platform === "win32") cwd = cwd.toLowerCase();
   return JSON.stringify([peer.agent, peer.agentPid, peer.agentStartedAt, cwd, peer.name.replace(/-\d+$/, "")]);
 }

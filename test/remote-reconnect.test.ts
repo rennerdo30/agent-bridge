@@ -24,7 +24,14 @@ import { makeEnv, until, type TestEnv } from "./helpers.js";
 const TOKEN = "reconnect-test-token";
 let env: TestEnv;
 let cleanup: (() => void | Promise<void>)[];
-beforeEach(() => { env = makeEnv(); cleanup = []; });
+/** Synthetic CLI and server PIDs of these registrations stand for live processes (AB-399 retires dead CLIs). */
+const FIXTURE_PIDS = new Set([111, 222, 333, 444, 555, 777, 998, 999]);
+beforeEach(() => {
+  env = makeEnv(); cleanup = [];
+  const realKill = process.kill.bind(process);
+  vi.spyOn(process, "kill").mockImplementation(((pid: number, signal?: number | NodeJS.Signals) =>
+    signal === 0 && FIXTURE_PIDS.has(pid) ? true : realKill(pid, signal as NodeJS.Signals)) as typeof process.kill);
+});
 afterEach(async () => {
   vi.restoreAllMocks();
   for (const close of cleanup.reverse()) await close();

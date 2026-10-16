@@ -114,6 +114,12 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   /** The bridge gave this session to another server of it (see reclaim). */
   private replaced = false;
   private replacedBy: { version?: string; agentPid: number | null; agentStartedAt: string | null } | undefined;
+  /**
+   * AB-399: the session's CLI as of this server's start. A POSIX server whose CLI ended is re-parented (ppid 1 or a
+   * subreaper); reporting the new parent would let a dead session look live again on its next hello.
+   */
+  private readonly agentHostPid: number | null = process.ppid ?? null;
+  private retiredBy: "host_exited" | "pid_reused" | undefined;
   private electing: Promise<void> | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectDelay = RECONNECT_BACKOFF_MIN_MS;
@@ -237,6 +243,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     return this.replaced;
   }
 
+  /** Why the broker retired this session's connection, while it stays off the bridge (AB-399). */
+  get retirement(): "host_exited" | "pid_reused" | undefined {
+    return this.replaced ? this.retiredBy : undefined;
+  }
+
   /** Version and host process of the server that last replaced this one, as far as its broker reported them (AB-385). */
   get replacement(): { version?: string; agentPid: number | null; agentStartedAt: string | null } | undefined {
     return this.replaced ? this.replacedBy : undefined;
@@ -250,6 +261,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
   async reclaim(): Promise<void> {
     if (!this.replaced) return;
     this.replaced = false;
+    this.retiredBy = undefined;
     this.stopping = false;
     this.log.info("the session still uses this server: taking its place back on the bridge");
     await this.ensureConnected();
@@ -339,6 +351,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
           this.log.info("broker is stopping; retrying discovery", { brokerVersion: err.details.brokerVersion });
           await sleep(jitter());
           continue;
+        }
+        if (err instanceof BridgeError && err.code === "unauthorized" && err.details?.retired === true) {
+          // AB-399: this session's CLI process has ended; stay off the bridge instead of retrying.
+          this.leaveRetired(err.details.reason);
+          throw err;
         }
         if (err instanceof BridgeError && (err.code === "unauthorized" || err.code === "protocol_mismatch")) {
           // Retrying cannot help: the running broker is another agent-bridge version or uses another token.
@@ -511,7 +528,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
         agent: this.opts.agent,
         cwd: this.currentCwd,
         pid: process.pid,
-        agentPid: process.ppid ?? null,
+        agentPid: this.agentHostPid,
         sessionId: this.sessionId,
         startedAt: Date.now(),
         autoWake: this.autoWake,
@@ -605,6 +622,7 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       const by = data as { by?: string; version?: unknown; agentPid?: unknown; agentStartedAt?: unknown } | undefined;
       this.log.info("replaced by a newer server of this session; leaving the bridge", { by: by?.by, version: by?.version, agentPid: by?.agentPid });
       this.replaced = true;
+      this.retiredBy = undefined;
       this.replacedBy = {
         version: typeof by?.version === "string" ? by.version : undefined,
         agentPid: typeof by?.agentPid === "number" ? by.agentPid : null,
@@ -614,7 +632,24 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       // owns the elected listener until actual shutdown; reclaim can reconnect to that listener.
       void this.stop(false).catch((err) => this.log.warn("could not retire replaced connection", { err: String(err) }));
       this.emit("replaced");
+    } else if (ev === "retired") {
+      this.leaveRetired((data as { reason?: unknown } | undefined)?.reason);
     }
+  }
+
+  /**
+   * AB-399: the broker found this session's CLI process gone (a `retired` event, or a hello refused with
+   * details.retired). Leave like a replaced server (no reconnect, no wake or hook work) instead of churning
+   * reconnects; if the session does call this server again, reclaim() rejoins and the broker checks it afresh.
+   * The MCP server's parent watch exits it once its parent is gone.
+   */
+  private leaveRetired(reason: unknown): void {
+    this.log.info("broker retired this session (its CLI process ended); leaving the bridge", { reason });
+    this.replaced = true;
+    this.replacedBy = undefined;
+    this.retiredBy = reason === "pid_reused" ? "pid_reused" : "host_exited";
+    void this.stop(false).catch((err) => this.log.warn("could not leave after retirement", { err: String(err) }));
+    this.emit("replaced");
   }
 
   private async withClient<T>(fn: (c: BridgeClient) => Promise<T>): Promise<T> {
