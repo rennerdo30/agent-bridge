@@ -35,6 +35,15 @@ import { DEFAULT_HOME, ENV } from "./constants.js";
  *   endpoint taken from repository config (lfs.url, remote.<n>.lfsurl, a remote URL) cannot open a login prompt.
  *   `.lfsconfig` in the tree needs no guard: git-lfs (verified with 3.7.1) ignores its program, transfer-agent and
  *   ssh keys with a warning. Refusals are `GitSafetyRefusal` errors;
+ * - includes: the configuration is read with `--includes`, so active includes are scanned. A plain or conditional
+ *   include (`include.path`, `includeIf.<condition>.path`) in any reached repository's local or worktree config
+ *   refuses every filter-capable command: a condition such as `onbranch:` or `gitdir:` can be inactive here and
+ *   active in the checkout git really runs (the new worktree of `worktree add`), with drivers the guard never saw;
+ * - lazy fetches: every command that is not meant to reach the network runs with GIT_NO_LAZY_FETCH=1 (process
+ *   environment only) and `-c protocol.allow=never` plus `protocol.<ext|file|git|http|https|ssh>.allow=never`, so a
+ *   promisor remote (`remote.<n>.promisor`, `extensions.partialClone`) cannot fetch a missing object through a
+ *   planted transport behind a diff, show, status or checkout. With git before 2.44 (no GIT_NO_LAZY_FETCH; the
+ *   version is read once per process) any promisor configuration refuses the command;
  * - commands that create commits: signing is switched off when repository-local config names a signing program;
  * - diff-like commands get `--no-ext-diff --no-textconv`;
  * - network commands (fetch, ls-remote, pull, push) are refused when repository-local config names a transport,
@@ -126,6 +135,29 @@ const CANONICAL_LFS: Record<string, readonly string[]> = {
 const MAX_NESTING = 8;
 
 const isNetworkKey = (lower: string) => NETWORK_KEYS.test(lower) && !HTTP_TUNING_KEYS.test(lower);
+/** Plain and conditional includes: a conditional one can be inactive here and active in another checkout. */
+const INCLUDE_KEY = /^(include|includeif\..+)\.path$/;
+/** Configuration that makes git fetch missing objects from a promisor remote on an ordinary read. */
+const PROMISOR_KEY = /^(remote\..+\.(promisor|partialclonefilter)|extensions\.partialclone)$/;
+
+/**
+ * For every command that is not meant to reach the network: no transport may start, whatever repository-local
+ * `protocol.*` keys say (per-protocol keys beat `protocol.allow`, and `-c` beats local config). Together with
+ * GIT_NO_LAZY_FETCH=1 this stops a promisor remote from fetching a missing object behind an ordinary read.
+ */
+export const NO_LAZY_FETCH_ARGS: readonly string[] = ["protocol.allow=never",
+  ...["ext", "file", "git", "http", "https", "ssh"].map((name) => `protocol.${name}.allow=never`)].flatMap((value) => ["-c", value]);
+
+/** Whether the installed git honours GIT_NO_LAZY_FETCH (git 2.44 and later); read once per process. */
+let lazyFetchSwitch: boolean | undefined;
+/** Forget the cached git version (tests). */
+export function resetGitFeatureCache(): void { lazyFetchSwitch = undefined; }
+function supportsNoLazyFetch(versionText: string): boolean | undefined {
+  const match = /git version (\d+)\.(\d+)/.exec(versionText);
+  if (!match) return undefined;
+  const [major, minor] = [Number(match[1]), Number(match[2])];
+  return major > 2 || (major === 2 && minor >= 44);
+}
 
 /** `key` as git prints it (subsection case kept); `lower` for case-insensitive matching. */
 export interface RepositoryConfigEntry { scope: string; origin: string; key: string; lower: string; value: string | null }
@@ -163,7 +195,7 @@ const message = (err: unknown) => (err instanceof Error ? err.message : String(e
 function* readRepository(dir: string | null, label: string): Plan<ScannedRepository> {
   let raw: string;
   // Reading configuration executes nothing (no hooks, filters or fsmonitor); includes are expanded and shown.
-  try { raw = yield { args: ["config", "-z", "--list", "--show-origin", "--show-scope"], dir }; }
+  try { raw = yield { args: ["config", "-z", "--list", "--includes", "--show-origin", "--show-scope"], dir }; }
   catch (err) { throw new GitSafetyRefusal(`refused: cannot read the git config of ${label}: ${message(err)} (AB-422)`); }
   const entries = parseConfigList(raw);
   return { label, entries, local: entries.filter((e) => REPOSITORY_SCOPES.has(e.scope)) };
@@ -222,13 +254,27 @@ function* guardPlan(rest: readonly string[], cwd: string): Plan<GitGuards> {
   const sub = rest[0] ?? "";
   const filters = FILTER_COMMANDS.has(sub) && (sub !== "worktree" || FILTER_WORKTREE_COMMANDS.has(rest[1] ?? ""));
   const signing = SIGNING_COMMANDS.has(sub), network = NETWORK_COMMANDS.has(sub);
-  if (!filters && !signing && !network) return { args: [], env: {} };
+  // Every command not meant to reach the network gets no transport and no lazy fetch (promisor remotes).
+  const out: string[] = network ? [] : [...NO_LAZY_FETCH_ARGS];
+  const env: Record<string, string> = network ? {} : { GIT_NO_LAZY_FETCH: "1" };
+  let lazySwitch = network ? true : lazyFetchSwitch;
+  if (lazySwitch === undefined) {
+    let version = "";
+    try { version = yield { args: ["--version"], dir: null }; } catch { /* unknown: treated as too old */ }
+    lazySwitch = supportsNoLazyFetch(version);
+    if (lazySwitch !== undefined) lazyFetchSwitch = lazySwitch;
+  }
+  // Without GIT_NO_LAZY_FETCH support (git before 2.44) a promisor repository is refused for every command.
+  if (!filters && !signing && !network && lazySwitch) return { args: out, env };
   const main = yield* readRepository(null, "the repository");
+  if (!lazySwitch) {
+    const promisor = [...new Set(main.entries.filter((e) => PROMISOR_KEY.test(e.lower)).map((e) => e.key))];
+    if (promisor.length) throw new GitSafetyRefusal(`refused: git config sets ${promisor.join(", ")} (lazy fetches from a promisor remote) and the installed git cannot switch lazy fetching off (GIT_NO_LAZY_FETCH needs git 2.44 or later) (AB-422)`);
+  }
   if (network) {
     const risky = [...new Set(main.local.filter((e) => isNetworkKey(e.lower)).map((e) => e.key))];
     if (risky.length) throw new GitSafetyRefusal(`refused: repository-local git config sets ${risky.join(", ")}, which can start programs or redirect the connection during network access (AB-422)`);
   }
-  const out: string[] = [];
   let lfs = false;
   if (filters) {
     const repos = [main];
@@ -249,6 +295,10 @@ function* guardPlan(rest: readonly string[], cwd: string): Plan<GitGuards> {
         }
       }
     }
+    // An include, above all a conditional one (onbranch:, gitdir:), can be inactive in this checkout and active in
+    // the context git really runs in (the new worktree's checkout, a target worktree): its drivers were never seen.
+    const includes = [...new Set(repos.flatMap((r) => r.local).filter((e) => INCLUDE_KEY.test(e.lower)).map((e) => e.key))];
+    if (includes.length) throw new GitSafetyRefusal(`refused: repository-local git config has ${includes.join(", ")}; included configuration can define filter drivers the bridge cannot check for every checkout, so filter-capable commands are refused (AB-422)`);
     const names = new Set<string>();
     let canonicalLfs = true;
     for (const repo of repos) for (const e of repo.local) {
@@ -277,7 +327,8 @@ function* guardPlan(rest: readonly string[], cwd: string): Plan<GitGuards> {
   if (signing && main.local.some((e) => e.lower.startsWith("gpg.") || e.lower === "user.signingkey")) out.push("-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false");
   // An LFS endpoint from repository config (lfs.url, remote.<n>.lfsurl, a remote URL) may point anywhere: git-lfs
   // and the credential manager must never open a login prompt or dialog for it.
-  return { args: out, env: lfs ? { GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never" } : {} };
+  if (lfs) Object.assign(env, { GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never" });
+  return { args: out, env };
 }
 
 /**

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { assertUnlinked } from "../core/plugin-runtime.js";
-import { diffSafety, gitSafetyArgs, repositoryGuardsSync } from "../core/git-safety.js";
+import { diffSafety, gitSafetyArgs, NO_LAZY_FETCH_ARGS, repositoryGuardsSync } from "../core/git-safety.js";
 
 export function claudeMarketplace(home: string): string {
   const known = join(home, "plugins", "known_marketplaces.json");
@@ -21,7 +21,7 @@ export function syncMarketplace(root: string, client: "claude" | "codex", versio
   const run = (args: string[], env: Record<string, string> = {}) => execFileSync("git", [...safety, ...args],
     { encoding: "utf8", windowsHide: true, timeout: 60_000, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...env } });
   const git = (...args: string[]) => {
-    const guards = repositoryGuardsSync(args, root, (read, dir) => run(["-C", dir ?? root, ...read]));
+    const guards = repositoryGuardsSync(args, root, (read, dir) => run([...NO_LAZY_FETCH_ARGS, "-C", dir ?? root, ...read], { GIT_NO_LAZY_FETCH: "1" }));
     return run(["-C", root, ...guards.args, ...diffSafety(args)], guards.env).trim();
   };
   const fix = `agent-bridge update ${client} --yes`;
