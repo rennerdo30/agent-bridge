@@ -26,8 +26,8 @@ import { scanWorktreeLinks, WORKTREE_LINK_HINT, worktreeLinkWarning } from "../c
 import { changedFiles, createWorktree, finishWorktree, git, trustArgs, gitChangeSnapshot, gitDirsOutside, handoffWarning, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
 import { formatSiblingMessages, formatUsage } from "./format.js";
 import { SiblingLink } from "./siblings.js";
-import { approvalOrigin, denyPendingApprovals, waitForApproval, type ApprovalOutcome, type Job, type RunResult } from "./jobs.js";
-import { approvalIdentity, approvalScope, recordGrant, reusableGrant } from "./approval-reuse.js";
+import { approvalOrigin, denyPendingApprovals, jobSupervision, waitForApproval, type ApprovalOutcome, type Job, type RunResult } from "./jobs.js";
+import { approvalIdentity, approvalScope, dropFileSensitiveGrants, isFileChangeRequest, isFileSensitive, recordGrant, reusableGrant, treeState } from "./approval-reuse.js";
 import { DELEGATION_TARGETS, supportsAsk, usageProbeFor, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
 import { checkUsagePreflight, confirmUsageAdmission, currentUsage, usageAdmissionText, usageRefused } from "../core/usage.js";
 import { JOB_SETTING_KEYS } from "./job-settings.js";
@@ -218,43 +218,61 @@ async function runDelegateInner(
   const reuseFeed: { report?: (line: string) => void } = {};
   const askOnce = async (r: PermissionRequest, ask: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome & { reusedFrom?: string }> => {
     // A runner spec written by an older release has no jobs section: the default (on) applies.
-    const identity = job && (cfg.jobs?.reuseIdenticalApprovals ?? DEFAULT_CONFIG.jobs.reuseIdenticalApprovals) ? approvalIdentity(r) : null;
-    if (!job || !identity) return ask();
-    const scope = approvalScope({ access: a.access, sandbox: a.sandbox, permission: profile.permission(cfg, a), supervisor: job.supervisor ?? job.owner ?? rc.me() });
+    if (!job || !(cfg.jobs?.reuseIdenticalApprovals ?? DEFAULT_CONFIG.jobs.reuseIdenticalApprovals)) return ask();
+    // A file change ends every command grant: an allowed script may be what changed.
+    if (isFileChangeRequest(r) && dropFileSensitiveGrants(job)) dlog.info("file change requested; command grants dropped", { job: job.name });
+    const identity = approvalIdentity(r);
+    if (!identity) return ask();
+    // The supervisor comes from the durable store: a handoff from another process ends the grants.
+    const scope = approvalScope({ access: a.access, sandbox: a.sandbox, permission: profile.permission(cfg, a),
+      supervisor: JSON.stringify([jobSupervision(rc.home, job, dlog), rc.me()]) });
+    const sensitive = isFileSensitive(r);
+    const dirs = [workdir, ...(r.cwd ? [r.cwd] : [])];
+    let tree = sensitive ? await treeState(dirs, dlog) : undefined;
     const grant = reusableGrant(job, scope, identity);
-    if (!grant) {
-      const answer = await ask();
-      recordGrant(job, scope, identity, answer, approvalOrigin(answer));
-      return answer;
+    if (grant && sensitive && (tree === null || tree !== grant.tree)) {
+      dlog.info("files changed since an approval was granted; command grants dropped", { job: job.name, approval: grant.approvalId });
+      dropFileSensitiveGrants(job);
+    } else if (grant) {
+      grant.reuses++;
+      const line = `Approval for ${job.name} reused: ${r.tool}: ${r.detail.slice(0, 200)} is identical to approval ${grant.approvalId}, allowed by ${grant.by} earlier in this job (jobs.reuseIdenticalApprovals).`;
+      dlog.info("identical approval reused", { job: job.name, tool: r.tool, approval: grant.approvalId });
+      reuseFeed.report?.(line);
+      try { await appendContextEvent(rc.home, { kind: "approval", agent: target, project: workdir, job: job.name, session: job.sessionId ?? undefined, payload: { event: "reused", approval: grant.approvalId, by: grant.by, tool: r.tool, command: r.detail } }); }
+      catch (err) { dlog.warn("could not journal a reused approval", { job: job.name, err: String(err) }); }
+      // The first reuse of a grant reaches the supervisor like the question would have; later ones are quiet notes.
+      const noteFailed = (err: unknown) => dlog.warn("could not report a reused approval", { job: job.name, err: String(err) });
+      const first = grant.reuses === 1;
+      try { void Promise.resolve(rc.jobs?.fromSubagent(job, line, null, first, !first)).catch(noteFailed); }
+      catch (err) { noteFailed(err); }
+      return { allow: true, reason: "allow", reusedFrom: grant.approvalId };
     }
-    const line = `Approval for ${job.name} reused: ${r.tool}: ${r.detail.slice(0, 200)} is identical to approval ${grant.approvalId}, allowed by ${grant.by} earlier in this job (jobs.reuseIdenticalApprovals).`;
-    dlog.info("identical approval reused", { job: job.name, tool: r.tool, approval: grant.approvalId });
-    reuseFeed.report?.(line);
-    try { await appendContextEvent(rc.home, { kind: "approval", agent: target, project: workdir, job: job.name, session: job.sessionId ?? undefined, payload: { event: "reused", approval: grant.approvalId, by: grant.by, tool: r.tool, command: r.detail } }); }
-    catch (err) { dlog.warn("could not journal a reused approval", { job: job.name, err: String(err) }); }
-    // A quiet note for the supervisor: it stays in the job's history and the inbox without waking the session.
-    const noteFailed = (err: unknown) => dlog.warn("could not report a reused approval", { job: job.name, err: String(err) });
-    try { void Promise.resolve(rc.jobs?.fromSubagent(job, line, null, false, true)).catch(noteFailed); }
-    catch (err) { noteFailed(err); }
-    return { allow: true, reason: "allow", reusedFrom: grant.approvalId };
+    // The Git state is taken before the question: a change while it waits ends the grant too.
+    if (sensitive && tree === undefined) tree = await treeState(dirs, dlog);
+    const answer = await ask();
+    recordGrant(job, scope, identity, answer, approvalOrigin(answer), tree);
+    return answer;
   };
   // Native permission dialogs keep their existing eligibility; the dashboard can answer the same wait.
-  const askUser = rc.askUser ? async (r: PermissionRequest): Promise<PermissionDecision> => {
-    if (!job) return rc.askUser!(r);
+  const askUserOnce = rc.askUser ? async (r: PermissionRequest): Promise<{ decision: PermissionDecision; reusedFrom?: string }> => {
+    if (!job) return { decision: await rc.askUser!(r) };
     if (rc.jobs && ((job.ownershipHistory?.length && job.owner !== rc.me()) || (rc.jobs.recipient && await rc.jobs.recipient(job) !== rc.me()))) {
       const answer = await askOnce(r, () => rc.jobs!.askParent(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS, r));
-      return answer.allow ? { allow: true } : { allow: false, message: answer.reason };
+      return { decision: answer.allow ? { allow: true } : { allow: false, message: answer.reason }, reusedFrom: answer.reusedFrom };
     }
-    const decision = await askOnce(r, () => waitForApproval(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS,
+    const answer = await askOnce(r, () => waitForApproval(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS,
       (body) => rc.jobs?.fromSubagent(job, body, null, true), dlog, rc.home, r, () => rc.askUser!(r)));
-    return decision.allow ? { allow: true } : { allow: false, message: decision.reason.replace(/^deny:\s*/, "") };
+    return { decision: answer.allow ? { allow: true } : { allow: false, message: answer.reason.replace(/^deny:\s*/, "") }, reusedFrom: answer.reusedFrom };
   } : undefined;
+  /** The run report's line for a decision: a reused one names the approval it reused (AB-402). */
+  const askedLine = (r: PermissionRequest, d: PermissionDecision, reusedFrom: string | undefined, by = "") =>
+    reusedFrom ? `allowed (reused approval ${reusedFrom}): ${r.tool} ${r.detail.slice(0, 80)}` : `${d.allow ? "allowed" : "denied"}${by}: ${r.tool} ${r.detail.slice(0, 80)}`;
   try {
-    if (access === "ask" && askUser) {
+    if (access === "ask" && askUserOnce) {
       const decide = async (r: PermissionRequest) => journalPermission(r, async () => {
         relayCalls++;
-        const d = await askUser(r);
-        asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
+        const { decision: d, reusedFrom } = await askUserOnce(r);
+        asked.push(askedLine(r, d, reusedFrom));
         return d;
       });
       relay = new PermissionRelay(decide, dlog);
@@ -299,11 +317,12 @@ async function runDelegateInner(
       const jobs = rc.jobs;
       const a = await askOnce(r, () => jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS, r));
       d = a.allow ? { allow: true } : { allow: false, message: `Denied by supervisor ${me}: ${a.reason || "no reason supplied"}` };
-      asked.push(a.reusedFrom ? `allowed (reused approval ${a.reusedFrom}): ${r.tool} ${r.detail.slice(0, 80)}` : `${d.allow ? "allowed" : "denied"} by ${me}: ${r.tool} ${r.detail.slice(0, 80)}`);
-    } else if (askUser) {
+      asked.push(askedLine(r, d, a.reusedFrom, ` by ${me}`));
+    } else if (askUserOnce) {
       relayCalls++;
-      d = await askUser(r);
-      asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
+      const answer = await askUserOnce(r);
+      d = answer.decision;
+      asked.push(askedLine(r, d, answer.reusedFrom));
     } else d = r.tool.startsWith("mcp:") && access === "edit" ? { allow: true } : { allow: false, message: "No one to ask in this session." };
     if (d.allow && !r.automaticReview && r.tool.startsWith("mcp:")) allowedServers.add(r.tool);
     return d;

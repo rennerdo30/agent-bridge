@@ -2,7 +2,7 @@ import { appendContextEvent } from "./context-journal.js";
 import { readBodyText } from "./http-body.js";
 import { JOBS_FILE } from "./constants.js";
 import { readStore } from "../mcp/jobs.js";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createServer, type IncomingMessage, type Server } from "node:http";
@@ -36,7 +36,12 @@ export interface PermissionRequest {
   reason?: string;
   /** A terminal Codex auto-review refusal needs an explicit supervisor decision, not an allowlist. */
   automaticReview?: boolean;
-  /** `detail` is a summary, not the exact request (for example a Codex edit without file paths): never reused (AB-402). */
+  /**
+   * The exact request as its source encodes it (see `requestIdentity`): every field of the tool input, not only the
+   * displayed `detail`. Only a request with an identity can reuse an earlier grant (AB-402).
+   */
+  identity?: string;
+  /** `detail` is a summary, not the exact request (for example a file change): never reused (AB-402). */
   inexact?: boolean;
   /** Set when `detail` had to be cut: its original length. Such a request is refused, never decided (AB-241). */
   detailLength?: number;
@@ -61,6 +66,21 @@ export function unreviewable(req: PermissionRequest): PermissionDecision | null 
 }
 
 export type PermissionDecision = { allow: true } | { allow: false; message: string };
+
+/** JSON with object keys sorted at every level; arrays keep their order. No other normalization. */
+export function canonicalJson(value: unknown): string {
+  const sort = (v: unknown): unknown => Array.isArray(v) ? v.map(sort)
+    : v && typeof v === "object" ? Object.fromEntries(Object.keys(v as Record<string, unknown>).sort().map((k) => [k, sort((v as Record<string, unknown>)[k])]))
+    : v;
+  return JSON.stringify(sort(value)) ?? "null";
+}
+
+/** The identity of an exact request: a hash of its canonical JSON (AB-402). */
+export function requestIdentity(value: unknown): string {
+  return createHash("sha256").update(canonicalJson(value)).digest("hex");
+}
+/** A relayed identity is a sha256 hex digest; anything else is ignored. */
+const IDENTITY = /^[0-9a-f]{64}$/;
 
 export type PermissionHandler = (req: PermissionRequest) => Promise<PermissionDecision>;
 
@@ -128,6 +148,9 @@ export class PermissionRelay {
       ...(typeof body.detailLength === "number" && body.detailLength > (detail.detailLength ?? 0) ? { detailLength: body.detailLength } : {}),
       cwd: body.cwd ? String(body.cwd) : undefined,
       ...(typeof body.reason === "string" ? { reason: body.reason.slice(0, MAX_APPROVAL_REASON_CHARS) } : {}),
+      // AB-402: the exact request identity, or the mark that `detail` is only a summary.
+      ...(typeof body.identity === "string" && IDENTITY.test(body.identity) ? { identity: body.identity } : {}),
+      ...(body.inexact === true ? { inexact: true } : {}),
     };
     const refused = unreviewable(request);
     if (refused) {
@@ -187,7 +210,8 @@ interface ApprovalRecord extends PendingApproval {
   token: string;
 }
 
-export type ApprovalAnswer = { decision: "allow" | "deny"; reason?: string; source?: "dashboard" | "MCP decide" };
+/** source: who answered. "remote supervisor": the supervisor of a remote job on the paired PC (its own source is not sent). */
+export type ApprovalAnswer = { decision: "allow" | "deny"; reason?: string; source?: "dashboard" | "MCP decide" | "remote supervisor" };
 export type ApprovalAnswerResult = "answered" | "expired" | "unavailable";
 
 /**
@@ -212,7 +236,7 @@ export async function publishApproval(home: string, approval: PendingApproval, a
       catch { return reply(400, { error: "request too large" }); }
       const body = JSON.parse(raw) as ApprovalAnswer;
       if (!body || (body.decision !== "allow" && body.decision !== "deny") || (body.reason !== undefined && (typeof body.reason !== "string" || body.reason.length > MAX_APPROVAL_REASON_CHARS))) return reply(400, { error: "invalid answer" });
-      if (body.source !== undefined && body.source !== "dashboard" && body.source !== "MCP decide") return reply(400, { error: "invalid source" });
+      if (body.source !== undefined && body.source !== "dashboard" && body.source !== "MCP decide" && body.source !== "remote supervisor") return reply(400, { error: "invalid source" });
       const accepted = Date.now() < approval.deadline && await answer(`${body.decision}${body.reason ? `: ${body.reason}` : ""}`, body.source ?? "dashboard");
       await appendContextEvent(home,{kind:"approval",agent:approval.agent,job:approval.job,payload:{event:"answered",approval:approval.id,...body,accepted}});
       reply(accepted ? 200 : 409, { outcome: accepted ? "answered" : "expired" });
