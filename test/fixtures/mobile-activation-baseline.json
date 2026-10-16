@@ -1,7 +1,7 @@
 {
   "base": "0fed680017e823197b1fb3344598632f5cd219ed",
   "uiSha256": "876fbc073c419e55a05c806b75c4993d254510c444cbd81d70098efbd22fb98c",
-  "pageSha256": "5677a2ede7f6f615de826e0136c5cc7d75e6951903bb5841911674e42ba2283f",
+  "pageSha256": "bcb8b55ea4d56b0838009630508406d59a1bd87376efcbe70b54f82daf153a1b",
   "updates": {
     "PR-20": {
       "base": "0761d56fe4c36e505550f9b889841fdf8e82c80a",
@@ -12,9 +12,14 @@
       "reason": "AB-383: the dashboard subscribes to GET /api/events while the tab is visible and reads the shown chat or run at once when the history store reports new lines; pushes coalesce into one render and interval polling stays as the safety net; after an error, a visible tab retries the stream (1c75687f, page re-pinned). The optional mobile page and default mobile activation behavior are unchanged.",
       "commit": "f41bf1ed8ee42f27df95f9536de7a63da6752aa4"
     },
+    "AB-400": {
+      "base": "e7c4583f0e92caab9029c2917df18c169442a9ea",
+      "reason": "AB-400 (PR #92): outcomeChip adds a constant-text \"result stored\" / \"result stored, not delivered\" / \"delivered\" chip from state.jobs[job].resultStored and the job outcome's delivery receipt; poll() and loadOlder() merge job flags from older /api/runs pages (olderJobs). Page re-pinned from d9a04493 to ada58414. The optional mobile page and default mobile activation behavior are unchanged.",
+      "commit": "7b35f4e240efcf41bdbfd543b161ac0ec93373ba"
+    },
     "AB-398": {
       "base": "7f5bb53548e7f0880b286f9d1625a07cf85995e3",
-      "reason": "AB-398: the desktop dashboard script shows a paused subagent job: \"paused\" becomes a known pill status styled like interrupted, a paused group keeps its place with the working ones, shows its pause reason and time in the row and conversation note, offers a resume_subagent hint, and the counts line adds \"N paused\" (6c3430d1, page re-pinned). The mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged.",
+      "reason": "AB-398: the desktop dashboard script shows a paused subagent job: \"paused\" becomes a known pill status styled like interrupted, a paused group keeps its place with the working ones, shows its pause reason and time in the row and conversation note, offers a resume_subagent hint, and the counts line adds \"N paused\" (6c3430d1, page re-pinned). The mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged. Merged on top of AB-400 (PR #92): AB-400's outcomeChip now also runs for a paused group (it is not running), so it reads state.jobs only once state is loaded; the result-stored chip is otherwise unchanged.",
       "commit": "6c3430d1"
     }
   }

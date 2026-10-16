@@ -152,6 +152,12 @@ export interface Job {
   /** While it runs: delivers a message into the running subagent (see parent-link.ts). */
   live?: { post: (message: string, sibling?: BridgeMessage, controlId?: string) => void } | null;
   finishedAt?: number;
+  /** Terminal report of this process's turn (memory only; jobs.json keeps just resultStored and reportId). */
+  report?: string;
+  /** A terminal report is retained in the runner state or message store, independently of delivery. */
+  resultStored?: boolean;
+  /** Message id of the terminal report: the runner's completion id, or the id this session posted it under. */
+  reportId?: string;
   /** Runs in a detached job runner, so it outlives a restart of this session's server (see job-host.ts). */
   host?: JobHostInfo | null;
   /** Messages forwarded to its runner that it has not confirmed yet; they become a follow-up if it never saw them. */
@@ -1742,6 +1748,10 @@ export class JobManager {
       job.executionOwner = this.node.name;
       job.executionPid = process.pid;
       job.startedAt = Math.max(Date.now(), job.startedAt + 1);
+      job.report = undefined;
+      job.resultStored = undefined;
+      job.reportId = undefined;
+      job.finishedAt = undefined;
       job.cancellingTurn = undefined;
       job.host = null;
       job.waitingForStart = undefined;
@@ -2060,6 +2070,8 @@ export class JobManager {
       if (final.status === "paused") job.pausePending = true;
       // A finished turn keeps a pending pause: finish() delivers its report, then holds any queued follow-ups.
       else if (final.status !== "done") job.pausePending = false;
+      if (typeof final.report === "string") job.report = final.report;
+      if (typeof final.finishedAt === "number") job.finishedAt = final.finishedAt;
       this.finish(job, final.status === "done" ? "done" : final.status === "cancelled" ? "cancelled" : "failed", "", final.sessionId ?? null, null, final.delivered ? null : final.report,
         final.reportId ? completionMessageId(`job:${job.id}`, final.reportId) : undefined);
       return;
@@ -2458,8 +2470,13 @@ export class JobManager {
       job.host = null;
       job.etaAt = undefined;
       job.etaReportedAt = undefined;
+      // A paused job is not finished (the runner state carries its pause time as finishedAt).
+      job.finishedAt = undefined;
+      // A runner that paused after a finished turn (follow-ups held) saved its report (AB-400): it stays stored for
+      // peers(job=...) and is posted once, under the runner's completion ID, if the runner could not deliver it.
+      if (typeof report === "string") job.report = report;
+      if (job.report !== undefined) { messageId ??= randomUUID(); job.resultStored = true; job.reportId = messageId; }
       this.persist();
-      // A runner that paused after a finished turn (follow-ups held) saved its report; post it if undelivered.
       if (typeof report === "string") this.post(job, report, null, "", messageId);
       this.startWaiting();
       if (job.resumeRequested) {
@@ -2484,13 +2501,17 @@ export class JobManager {
     job.status = status;
     job.pauseReason = undefined;
     job.pausedAt = undefined;
-    job.finishedAt = Date.now();
+    job.finishedAt ??= Date.now();
     job.sessionId = sessionId ?? job.sessionId;
-    this.persist();
     const seconds = Math.round((Date.now() - job.startedAt) / 1000);
+    const message = report === undefined ? jobReport(job, status, seconds, text, cause, this.bridgeHome()) : report;
+    // jobs.json is re-read on every heartbeat: it records only where the report is, never its text.
+    messageId ??= randomUUID();
+    if (message !== null) job.report = message;
+    if (message !== null || job.report !== undefined) { job.resultStored = true; job.reportId = messageId; }
+    this.persist();
     this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId, cause });
     if (this.storePath && !job.host) notifyJobEvent(dirname(this.storePath), status === "done" ? "finish" : "fail", this.log);
-    const message = report === undefined ? jobReport(job, status, seconds, text, cause, this.bridgeHome()) : report;
     // A local job's leftover files are listed after the report, without holding up settlement (AB-398).
     if (!job.remote && job.worktree?.path) {
       const worktree = job.worktree;
@@ -2537,14 +2558,19 @@ export class JobManager {
     job.etaAt = undefined;
     job.etaReportedAt = undefined;
     job.finishedAt = undefined;
-    this.persist();
     const seconds = Math.round((Date.now() - job.startedAt) / 1000);
     const message = report === undefined ? jobReport(job, status, seconds, `${text}\n\n${PAUSE_HELD_NOTE}`, cause, this.bridgeHome())
       // The runner may already have delivered its report with "finished, not paused": say this corrects it.
       : report === null ? `Correction: subagent ${job.name} is paused, not finished; its queued follow-ups wait for resume_subagent.`
         : report.includes(PAUSE_HELD_NOTE) ? report
           : report.includes(PAUSE_RACE_NOTE) ? report.replace(PAUSE_RACE_NOTE, PAUSE_HELD_NOTE) : `${report}\n\n${PAUSE_HELD_NOTE}`;
-    this.post(job, message, null, "", typeof report === "string" ? messageId : undefined);
+    // The turn's report is stored before it is posted (AB-400). A runner-delivered report (null) keeps its stored
+    // text and completion ID; the correction is a separate note, never a second copy of the report.
+    messageId ??= randomUUID();
+    if (report !== null) job.report = message;
+    if (job.report !== undefined) { job.resultStored = true; job.reportId = messageId; }
+    this.persist();
+    this.post(job, message, null, "", report === null ? undefined : messageId);
     this.startWaiting();
     if (job.resumeRequested) {
       try { this.startPaused(job); }
@@ -2655,7 +2681,7 @@ function executorOffline(err: unknown): boolean {
   return (err as { code?: string } | null)?.code === "unknown_target";
 }
 
-type StoredJob = Pick<Job, "usageRunId" | "usagePendingControls" | "usagePendingHeld" | "usageAdmittedControls" | "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "pauseReason" | "pausedAt" | "pausePending" | "resumeRequested" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
+type StoredJob = Pick<Job, "usageRunId" | "usagePendingControls" | "usagePendingHeld" | "usageAdmittedControls" | "providerUsage" | "executionPid" | "cancellingTurn" | "continuationFailure" | "waitingForStart" | "projectRoot" | "deliveryHistory" | "ownershipHistory" | "masters" | "executionOwner" | "queuedMessages" | "forwarded" | "id" | "name" | "agent" | "model" | "prompt" | "startedAt" | "status" | "pauseReason" | "pausedAt" | "pausePending" | "resumeRequested" | "sessionId" | "workdir" | "worktree" | "args" | "owner" | "supervisor" | "finishedAt" | "resultStored" | "reportId" | "host" | "remote" | "metadataVersion" | "parentJob" | "rootSession" | "rootName" | "percent" | "progressNote" | "etaAt" | "etaReportedAt">;
 
 /** Unknown fields survive upgrades; known next-turn settings also honor deletion. */
 function mergeJobFields(previous: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
@@ -2714,6 +2740,8 @@ function toStored(j: Job): StoredJob {
     etaAt: j.etaAt,
     etaReportedAt: j.etaReportedAt,
     finishedAt: j.finishedAt,
+    resultStored: j.resultStored,
+    reportId: j.reportId,
     host: j.host ?? null,
     remote: j.remote,
   };

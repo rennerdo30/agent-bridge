@@ -15,7 +15,7 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "e0c104b422af9c26940ccddf2a7310c75f54c5cd4ef4f642b7005bffc41a957c",
+  "uiSha256": "c9d9206edd58137f774ee7fcdb1d851e5151dba2d623c2257f650f1cccabc435",
   "updates": {
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
@@ -268,6 +268,14 @@
       "reason": "AB-407 (PR #86): Broker.startServices adds only `if (this.jobsPath) void startBrokerJobRunIndex(dirname(this.jobsPath)).catch(...)` (eager job run index backfill); abortStartup and close each add only `if (this.jobsPath) await stopJobRunBackfill(dirname(this.jobsPath));` before the history/archive workers close. startUi's jobOwner wraps the synchronous recoverJobRecord call so a retryable job_index_preparing becomes a JobControlError(\"timeout\") (dashboard 504/409) instead of an unhandled error. No other control-flow change; node.ts and dashboard pins, normalizer and assertions are unchanged.",
       "commit": "a9721b08"
     },
+    "AB-400-result-delivery": {
+      "base": "e7c4583f",
+      "changes": [],
+      "previousUiSha256": "e0bdfcaa546e1d956c2038f6d8ca99e089d3da08bebf59c216798a4993fda577",
+      "uiSha256": "1c24d9cb6ac04fdfe34896b7ed2342b835a72c9f793b908563353ccc7361f817",
+      "reason": "AB-400 (PR #92): startUi's /api/state job map adds only `...(j.resultStored ? { resultStored: true } : {})` so the dashboard can show \"result stored, not delivered\". No control-flow change; broker, node.ts and dashboard method pins, normalizer and assertions are unchanged.",
+      "commit": "7b35f4e2"
+    },
     "AB-398-job-pause": {
       "base": "7f5bb535",
       "changes": [
@@ -277,9 +285,9 @@
           "current": "8d1ababb1ba9d360cf4d4752ddf7cc8b57ad0648428cbb38752e4514cfd41f92"
         }
       ],
-      "previousUiSha256": "e0bdfcaa546e1d956c2038f6d8ca99e089d3da08bebf59c216798a4993fda577",
-      "uiSha256": "e0c104b422af9c26940ccddf2a7310c75f54c5cd4ef4f642b7005bffc41a957c",
-      "reason": "AB-398 (PR #93, commits 6c3430d1, 5b2d91b0, e8e8aade): the Broker constructor's inlineJobControl handler accepts a \"pause\" control (its optional reason must be a string and is collapsed to one line and capped at 500 characters before relaying) and routes a job that is \"paused\" with pausePending like a running one (to its runner host, or to its connected inline executor); every other handler in the constructor is unchanged. startUi's /api/state adds only status, pauseReason and pausedAt to each stored job's saved-settings entry so the desktop dashboard can show paused jobs. No mobile route, mobile startup, mobile store or mobile admin code changes, and nothing under src/mobile or apps changes; mobile behaviour is unchanged. The other twelve method pins, the UI normalizer and the assertions are unchanged.",
+      "previousUiSha256": "1c24d9cb6ac04fdfe34896b7ed2342b835a72c9f793b908563353ccc7361f817",
+      "uiSha256": "c9d9206edd58137f774ee7fcdb1d851e5151dba2d623c2257f650f1cccabc435",
+      "reason": "AB-398 (PR #93, commits 6c3430d1, 5b2d91b0, e8e8aade): the Broker constructor's inlineJobControl handler accepts a \"pause\" control (its optional reason must be a string and is collapsed to one line and capped at 500 characters before relaying) and routes a job that is \"paused\" with pausePending like a running one (to its runner host, or to its connected inline executor); every other handler in the constructor is unchanged. startUi's /api/state adds only status, pauseReason and pausedAt to each stored job's saved-settings entry so the desktop dashboard can show paused jobs. No mobile route, mobile startup, mobile store or mobile admin code changes, and nothing under src/mobile or apps changes; mobile behaviour is unchanged. The other twelve method pins, the UI normalizer and the assertions are unchanged. Re-pinned on top of AB-400 (PR #92): startUi's /api/state job map keeps AB-400's `...(j.resultStored ? { resultStored: true } : {})` next to AB-398's status, pauseReason and pausedAt; no other change.",
       "commit": "e8e8aade"
     }
   },

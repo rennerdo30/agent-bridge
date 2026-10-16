@@ -7,6 +7,7 @@ import { shouldWakeClaudeMessage, WAKE_HEADER } from "./rewake.js";
 import type { ServerContext } from "./server.js";
 import { formatDecisionSummary } from "../core/decisions.js";
 import { finishHookTurn, reserveHook } from "./hook-ownership.js";
+import { RESULT_HEADER } from "../core/local-result-receipts.js";
 
 /** Hook events agent-bridge subscribes to in both Claude Code and Codex. */
 export type HookEvent = "SessionStart" | "UserPromptSubmit" | "PostToolUse" | "Stop" | "StopFailure" | "SubagentStart" | "SubagentStop" | "SessionEnd";
@@ -65,6 +66,26 @@ export function discardFinishedNotes(ctx: ServerContext): void {
 }
 
 const antigravityStopPending = new WeakMap<ServerContext, Set<string>>();
+/** Claude/Codex hook output is only a hand-out. A later model boundary proves the result was seen. */
+const completionPending = new WeakMap<ServerContext, Map<string, HookEvent>>();
+
+/** The hook handed these completions out, but a later model boundary has not confirmed them. */
+export function completionAwaitingReceipt(ctx: ServerContext, id: string): boolean {
+  return completionPending.get(ctx)?.has(id) ?? false;
+}
+
+function confirmCompletionDelivery(ctx: ServerContext, input: HookInput): void {
+  const pending = completionPending.get(ctx);
+  if (!pending) return;
+  if (input.event !== "Stop" && input.event !== "PostToolUse" && input.event !== "UserPromptSubmit") return;
+  // A Stop hand-out blocks the stop, so the model ran again before any later PostToolUse, UserPromptSubmit or Stop.
+  // stop_hook_active is not required: opencode never sends it, and Esc during the continuation ends the turn without it.
+  // Other hand-outs (PostToolUse) still need a later Stop, the end of the model step that saw them.
+  const confirmed = [...pending].filter(([, handedAt]) => handedAt === "Stop" || input.event === "Stop").map(([id]) => id);
+  if (confirmed.length) ctx.node?.markRead(confirmed);
+  for (const id of confirmed) pending.delete(id);
+  if (!pending.size) completionPending.delete(ctx);
+}
 
 function holdOrMarkRead(ctx: ServerContext, ids: string[], hold: boolean): void {
   if (!ids.length) return;
@@ -74,8 +95,16 @@ function holdOrMarkRead(ctx: ServerContext, ids: string[], hold: boolean): void 
     for (const id of ids) pending.add(id);
     return;
   }
-  ctx.node?.markRead(ids);
+  const resultIds = new Set(ctx.node?.unread().filter(m => ids.includes(m.id) && m.from.id.startsWith("job:") && RESULT_HEADER.test(m.body.split("\n")[0]!)).map(m => m.id) ?? []);
+  if (resultIds.size) {
+    let pending = completionPending.get(ctx);
+    if (!pending) { pending = new Map(); completionPending.set(ctx, pending); }
+    for (const id of resultIds) pending.set(id, currentHookEvent.get(ctx) ?? "Stop");
+  }
+  ctx.node?.markRead(ids.filter(id => !resultIds.has(id)));
 }
+
+const currentHookEvent = new WeakMap<ServerContext, HookEvent>();
 
 /** Confirm that an Antigravity Stop continuation started a model step or tool call. */
 export function confirmAntigravityStopDelivery(ctx: ServerContext): void {
@@ -99,6 +128,7 @@ function take(ctx: ServerContext, wakeOnly: boolean, notesOnly = false, hold = f
     // Observer copies and acknowledgements remain available in inbox/history on demand.
     // Filter before the batch limit so old chatter cannot delay current results or blockers.
     .filter((m) => !isQuietMessage(m))
+    .filter((m) => !completionAwaitingReceipt(ctx, m.id))
     .filter((m) => !notesOnly || ctx.jobs?.isNote(m) || !shouldWakeClaudeMessage(node, ctx.cfg, m))
     // Ending a turn: a running subagent's status note does not keep it going; it comes with the next prompt.
     .filter((m) => !wakeOnly || (m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m)))
@@ -200,6 +230,7 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
   try {
     if (input.subagent) return await subagentHook(ctx, { ...input, signal: controller.signal });
     if (input.event === "SessionEnd") {
+      completionPending.delete(ctx);
       if (ctx.agent === "claude" && node && !node.wasReplaced && node.currentSessionId === input.sessionId) await withinHook(node.nativeChildrenEnd(), controller.signal);
       return {};
     }
@@ -236,7 +267,9 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
   await withinHook(node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: (err as Error).message })), input.signal!);
   if (!current()) return {};
   // The host discards StopFailure output. Never read/confirm mail that it cannot deliver.
-  if (input.event === "StopFailure") { releaseAntigravityStopDelivery(ctx); finishHookTurn(ctx, input); return {}; }
+  if (input.event === "StopFailure") { completionPending.delete(ctx); releaseAntigravityStopDelivery(ctx); finishHookTurn(ctx, input); return {}; }
+  confirmCompletionDelivery(ctx, input);
+  currentHookEvent.set(ctx, input.event);
   if (ctx.agent === "antigravity") {
     if (input.event === "PostToolUse" || (input.event === "UserPromptSubmit" && input.stopHookActive) || (input.event === "Stop" && input.stopHookActive)) confirmAntigravityStopDelivery(ctx);
     else releaseAntigravityStopDelivery(ctx);
@@ -271,7 +304,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
         peers.length ? `Peers online:\n${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now.",
       ];
       lines.push(...new MessageWaitStore(ctx.home).pending(node).map(resumeWaitHint));
-      const unread = node.unread().filter((m) => !isQuietMessage(m)).length;
+      const unread = node.unread().filter((m) => !isQuietMessage(m) && !completionAwaitingReceipt(ctx, m.id)).length;
       const decisions = await withinHook(node.decisions({ scope: { project: ctx.cwd() } }).catch(() => []), input.signal!);
       if (!current()) return {};
       const summary = formatDecisionSummary(decisions);
@@ -305,7 +338,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
       if (!node.autoWakeEnabled && !inConversation) {
         // A notify wait is explicit permission to deliver its match, even after the listen window ends.
         // Finishing the last job ends runningCount before Stop. Its result still owns delivery.
-        const awaited = node.unread().filter((m) => (node.isNotificationAwaited(m) ||
+        const awaited = node.unread().filter((m) => !completionAwaitingReceipt(ctx, m.id) && (node.isNotificationAwaited(m) ||
           (m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node, ctx.cfg, m)) ||
           ((ctx.agent === "opencode" || ctx.agent === "antigravity") && m.to !== BROADCAST && !(AGENT_KINDS as readonly string[]).includes(m.to) &&
             shouldWakeClaudeMessage(node, ctx.cfg, m))) && m.hop < ctx.cfg.maxHops &&
