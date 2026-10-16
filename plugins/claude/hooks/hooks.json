@@ -158,7 +158,6 @@
     ]
   },
   "modules": [
-    "./wake.ts",
-    "./mail-scope.ts"
+    "./index.ts"
   ]
 }
