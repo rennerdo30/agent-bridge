@@ -84,7 +84,7 @@ export function hasServerGrant(server: string, patterns: readonly string[]): boo
 }
 
 /**
- * The subagent's own agent-bridge server (send to its parent, report_progress, peers): always allowed, it only
+ * The subagent's own agent-bridge server (send to its parent, report_progress, checklist, peers): always allowed, it only
  * talks to the session that runs the subagent. Its name per CLI: Codex "agent-bridge", Claude
  * "plugin_agent-bridge_bridge", opencode "bridge".
  */

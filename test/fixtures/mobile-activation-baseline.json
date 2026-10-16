@@ -1,7 +1,7 @@
 {
   "base": "0fed680017e823197b1fb3344598632f5cd219ed",
   "uiSha256": "876fbc073c419e55a05c806b75c4993d254510c444cbd81d70098efbd22fb98c",
-  "pageSha256": "3f257b19c1dd40563acfb32cf6b2c4e94ea371ceb5a813254420189d19364960",
+  "pageSha256": "0eb9a5b7cbb0d656afdbc2d0478a721d3d38a1b77f85ce087fa47bd8c117c2b4",
   "updates": {
     "PR-20": {
       "base": "0761d56fe4c36e505550f9b889841fdf8e82c80a",
@@ -26,6 +26,10 @@
       "base": "99550f5e",
       "reason": "AB-401: the desktop dashboard script shows a running job that is queued for a machine slot: pill() takes the group's waitingFor and renders a distinct `pill waiting` (\"waiting · slot <name> #<position>\", \"waiting · startup #N\" or \"waiting · job limit #N\", all escaped, with a title naming the holders); buildModel sets g.waitingFor only for a running group from a well-formed state.jobs[job].waitingFor (known kind, positive integer position, non-negative integer holders); groupRow and the conversation title pass it to pill(); the conversation note shows the wait; one CSS rule `.pill.waiting` uses the existing accent tokens. Page re-pinned. The mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged (mobile-owner-startup's other 10 tests and mobile-activation pass). Re-checked after merging main with AB-404 (PR #95): the page script is unchanged by the merge and by the review fixes; the dashboard pill stays for running jobs' slot and startup waits only (a stored job-limit wait reaches /api/state and peers, not a pill).",
       "commit": "eb040e0a"
+    },
+    "AB-428": {
+      "base": "26eec067",
+      "reason": "AB-428: the desktop dashboard script shows a job checklist: buildModel sets g.checklist from the newest run (dashboard-read attaches the bridge checklist to it), runChips adds an escaped \"checklist N/M\" chip with the summary as title, and renderConversation fills a new hidden-by-default #cList element (escaped id, status, text and note per item; cleared in the other views). Five CSS rules (.clist) use existing tokens. Page re-pinned from 3f257b19 to 0eb9a5b7. ui.ts (uiSha256), the mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged."
     }
   }
 }

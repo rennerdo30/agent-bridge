@@ -85,6 +85,11 @@ import { parentProcessIdentity } from "../core/process-identity.js";
 import { ClaudeMailScopes, CLAUDE_CHILD_STATUS_TOOLS, isClaudeMailTool } from "./claude-mail-scope.js";
 import { boundMcpTexts, fitsMcpResult, longestFittingPrefix, messageBodyPage, pageListing, projectFilter, selectForDelivery, sliceWhole, unshownMessageNotes, type ListingLine } from "./output-bounds.js";
 import type { ProjectJobSummary } from "../core/project-job-summary.js";
+import {
+  changeProjectChecklist, checklistSummary, cleanChecklistInputs, CHECKLIST_LIMITS, formatChecklist, JOB_ITEM_STATUSES, peersChecklistText,
+  projectChecklistKey, proposeJobChecklist, readChecklists, readJobChecklist, readProjectChecklist, seedJobChecklist, summaryText,
+  superviseJobChecklist, supervisorRevision, updateJobChecklistAsJob, type ChecklistInput, type ChecklistItem, type JobItemStatus, type ProjectChecklistItem,
+} from "../core/checklists.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
 
@@ -137,7 +142,7 @@ const CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 /** Subagent titles (ask_* / spawn_* `title`), like a chat title. */
 const MAX_TITLE_CHARS = 80;
 /** The tools a delegated subagent's server offers (see registerTools). */
-const SUBAGENT_TOOLS = new Set(["health", "peers", "send", "report_progress", "hook_event", "search_history", "get_conversation"]);
+const SUBAGENT_TOOLS = new Set(["health", "peers", "send", "report_progress", "checklist", "hook_event", "search_history", "get_conversation"]);
 /** AB-404: read-only listings bounded as a last resort, with how to get the rest. inbox and wait_for_message select
  * whole messages themselves (they must not mark a cut message read); peers pages its own entries. */
 const BOUNDED_RESULT_HINTS: Readonly<Record<string, string>> = {
@@ -149,6 +154,9 @@ const BOUNDED_RESULT_HINTS: Readonly<Record<string, string>> = {
   usage_limits: "Ask for one agent.",
   network_status: "Narrow the request.",
   resource_slots: "Narrow the request.",
+  checklist: "Call checklist again with fewer changes; the full list stays in the bridge.",
+  job_checklist: "The full list stays in the bridge; peers(job=...) shows it as JSON.",
+  project_checklist: "Remove items you no longer need.",
 };
 const PEERS_PAGE_HINT = BOUNDED_RESULT_HINTS.peers!;
 /** Bound a finished read-only result; JSON arrays keep their shape (see boundMcpTexts). */
@@ -173,6 +181,23 @@ function defaultAllowNote(cfg: BridgeConfig): string {
     ? ` Without allow_tools the job gets ${defaultAllowText(cfg)} in every access mode, read and ask included${cfg.jobs.defaultAllowTools.includes("pair-desk:worker") ? " (Pair Desk reads, comments, progress, plans, steps, issue edits and review locations; it does not create issues and never writes status, builds or the handoff)" : ""}; pass allow_tools to replace it, [] for none.`
     : "";
 }
+
+/** AB-428: a job's checklist at spawn. Local jobs only; "none" also leaves out the project checklist. */
+type ChecklistArg = ChecklistInput[] | "none";
+const checklistItemSchema = z.object({
+  text: z.string().min(1).max(CHECKLIST_LIMITS.text).describe("One concrete, checkable step"),
+  required: z.boolean().optional().describe("Default true; false for nice-to-have items"),
+});
+const CHECKLIST_ARG_DESCRIPTION =
+  `The job's to-do list, tracked by the bridge: [{ text, required? }] (required unless required=false; at most ${CHECKLIST_LIMITS.items}). ` +
+  "Give one for any task with several deliverables or a definition of done. The project checklist (project_checklist) is added first; [] keeps only it, \"none\" leaves both out. " +
+  "The job ticks items itself and skips a required item only with a note; it cannot add items but proposes them for your approval (job_checklist approve/reject); a blocked item notifies you. Required items still open at the end mark its result incomplete. Local jobs only.";
+const CHECKLIST_REMOTE = "Checklists are local-only for now: a job on a paired PC cannot use them. Leave out checklist (or pass \"none\") for host=...";
+/** Checklist items as JSON for peers(job=...): text stays data, escaped by JSON. */
+function checklistItemsJson(items: readonly ChecklistItem[]) {
+  return items.map(({ id, text, required, source, status, note, why }) => ({ id, text, required, source, status, ...(note ? { note } : {}), ...(why ? { why } : {}) }));
+}
+const projectChecklistLine = (item: ProjectChecklistItem) => `- ${item.id} ${item.required ? "required" : "optional"}: ${JSON.stringify(item.text)}`;
 
 const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "base", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "permission_profile", "allow_tools", "send_to", "title", "notes"] as const;
 /** Plugin root: dist/server.mjs lives one level below it. */
@@ -306,6 +331,8 @@ export interface ServerContext {
   askUser?: (req: PermissionRequest) => Promise<PermissionDecision>;
   /** Whether askUser can reach the user (the host shows MCP elicitation dialogs). */
   userCanAnswer?: () => boolean;
+  /** A delegated job: its supervisor's checklist changes since the last call, as text for its next step (AB-428). */
+  checklistNotice?: () => string | null;
 }
 
 type ToolExtra = {
@@ -332,7 +359,7 @@ export function delegationTargets(_agent: AgentKind): CodingAgent[] {
   return [...CODING_AGENTS];
 }
 
-function instructionsFor(agent: AgentKind, targets: CodingAgent[]): string {
+export function instructionsFor(agent: AgentKind, targets: CodingAgent[]): string {
   const channelNote =
     agent === "claude"
       ? ` When this session runs with the agent-bridge channel enabled, peer messages arrive as <channel source="${APP_NAME}" ...> tags; ` +
@@ -358,6 +385,8 @@ function instructionsFor(agent: AgentKind, targets: CodingAgent[]): string {
     "If you are a delegated job (subagent) and are blocked, unsure, or about to take a consequential or hard-to-reverse step (release, publication, deletion, migration, larger change), ask your parent session instead of guessing or silently narrowing scope: " +
     `"send" to your parent with message_kind="question" (the question, options, your recommendation and what you do meanwhile), then "wait_for_message" in notify mode and continue with safe work. ` +
     `As a parent, answer a job's question promptly with "message_subagent"; if you cannot decide, ask your user with "ask_owner". Answers never grant tool permissions; approvals go through "decide". ` +
+    `Checklists: give a subagent a checklist when you spawn it ("checklist" on spawn_*/ask_*), read its progress in "peers", and answer its proposals and blocked items with "job_checklist". ` +
+    `As a subagent with a checklist, tick items with "checklist" as you go, propose missing items instead of adding them, and report blocked items. ` +
     'Never call "hook_event"; it is reserved for agent-bridge hooks.'
   );
 }
@@ -715,7 +744,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     if (mailScopes && name !== "hook_event") spec = { ...spec, inputSchema: spec.inputSchema instanceof z.ZodObject
       ? spec.inputSchema.safeExtend(mailScopeSchema) : { ...spec.inputSchema as Record<string, unknown>, ...mailScopeSchema } };
     return node || SUBAGENT_TOOLS.has(name) || (ctx.jobs && (
-      name === "decide" || name === "message_subagent" || name === "cancel_subagent" || name === "pause_subagent" || name === "resume_subagent" || name === "inbox" || name === "wait_for_message" ||
+      name === "decide" || name === "job_checklist" || name === "message_subagent" || name === "cancel_subagent" || name === "pause_subagent" || name === "resume_subagent" || name === "inbox" || name === "wait_for_message" ||
       (currentDelegateDepth() < cfg.maxDelegateDepth && (name.startsWith("spawn_") || name.startsWith("ask_") || name === "list_models"))
     )) ? (mcp.registerTool as (...a: unknown[]) => unknown)(name, spec, ...rest) : undefined;
   }) as typeof mcp.registerTool;
@@ -1094,7 +1123,9 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         // AB-401: what it is queued for on this machine (null: not queued; a running job without a wait is working or
         // stalled). A fresh read-only snapshot: nothing is created or written in the slot database.
         const waitingFor = ctx.jobs?.limitWait(job) ?? (job.status === "running" ? slotWaitFor(readSlotSnapshot(ctx.home, 0), job.name, cfg.resourceSlots) : null);
+        const checklist = readChecklists(ctx.home, [job.name]).get(job.name);
         const result = (shown: string | null) => JSON.stringify({ job: job.name, status: job.status, waitingFor, resultStored: typeof report === "string",
+          ...(checklist ? { checklist: { summary: checklist.summary, items: checklistItemsJson(checklist.items) } } : {}),
           delivery: report ? resultDeliveryLabel({ report }, receipt?.status === "read") : null, receipt, report: shown,
           // AB-404: same shape; a report too large for one result is cut at a whole character and says so.
           ...(report && shown !== report ? { reportTruncated: { totalCharacters: report.length, shownCharacters: shown?.length ?? 0,
@@ -1158,6 +1189,9 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       // AB-401: what each listed job is queued for, computed once for every page build.
       const jobWait = new Map([...jobs, ...waiting].map((j) => [j.id, ctx.jobs?.limitWait(j) ?? (j.status === "running" ? slotWaitFor(slotSnapshot, j.name, cfg.resourceSlots) : null)]));
       const recent = (ctx.jobs?.recent() ?? []).filter(matches);
+      // AB-428: "checklist 3/5 done" per job with a checklist; one read for the whole listing.
+      const checklists = readChecklists(ctx.home, [...jobs, ...waiting, ...recent].map((j) => j.name));
+      const checklistNote = (name: string) => { const c = checklists.get(name); return c ? peersChecklistText(c.summary) : ""; };
       const waitHints = waits.pending(n).map(resumeWaitHint);
       return paged((sort) => {
         const lines: ListingLine[] = [
@@ -1192,7 +1226,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         if (jobs.length) {
           lines.push({ header: t("peers.jobs", { count: jobs.length }), category: "jobs" });
           for (const j of sorted(sort, jobs, (job) => job.name)) {
-            lines.push({ category: "jobs", entry: j.status === "paused" ? `- ${j.name}: paused since ${new Date(j.pausedAt ?? Date.now()).toISOString()} (${j.pauseReason ?? "supervisor request"})` : t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.etaAt !== undefined ? t("peers.eta", { minutes: Math.max(0, Math.ceil((j.etaAt - Date.now()) / 60_000)) }) + " · " : "") + (jobWait.get(j.id) ? waitingText(jobWait.get(j.id)!) : j.progress ?? "starting") }) });
+            lines.push({ category: "jobs", entry: j.status === "paused" ? `- ${j.name}: paused since ${new Date(j.pausedAt ?? Date.now()).toISOString()} (${j.pauseReason ?? "supervisor request"})` : t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.etaAt !== undefined ? t("peers.eta", { minutes: Math.max(0, Math.ceil((j.etaAt - Date.now()) / 60_000)) }) + " · " : "") + (jobWait.get(j.id) ? waitingText(jobWait.get(j.id)!) : j.progress ?? "starting") + (checklistNote(j.name) ? ` · ${checklistNote(j.name)}` : "") }) });
           }
         }
         if (waiting.length) {
@@ -1212,7 +1246,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
             }
             // The report text lives only in memory; the stored flag survives a restart.
             const delivery = j.report || j.resultStored ? "result stored; query peers(job=...) for delivery receipt" : null;
-            lines.push({ category: "recent", entry: t("peers.recentJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), status: j.status + (delivery ? `; ${delivery}` : ""), ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }) });
+            lines.push({ category: "recent", entry: t("peers.recentJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), status: j.status + (delivery ? `; ${delivery}` : "") + (checklistNote(j.name) ? `; ${checklistNote(j.name)}` : ""), ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }) });
           }
         }
         lines.push(...waitHints.map((info) => ({ info })));
@@ -1615,6 +1649,24 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     jobs: ctx.jobs,
   };
   const keep = (a: DelegateArgs): Record<string, unknown> => Object.fromEntries(KEPT_ARGS.filter((k) => a[k] !== undefined).map((k) => [k, a[k]]));
+  /** AB-428: refuse a bad checklist before anything starts; remote jobs have none. */
+  const checkChecklist = (checklist: ChecklistArg | undefined, host: string | undefined) => {
+    if (host && Array.isArray(checklist) && checklist.length) throw new BridgeError("bad_request", CHECKLIST_REMOTE);
+    if (Array.isArray(checklist)) cleanChecklistInputs(checklist);
+  };
+  /** Store the job's checklist (with the project checklist of its folder); returns a line for the caller. */
+  const seedChecklist = (jobName: string, checklist: ChecklistArg | undefined, a: DelegateArgs): string => {
+    if (a.host) return "";
+    try {
+      const items = seedJobChecklist(ctx.home, jobName, checklist, checklist === "none" ? null : projectChecklistKey(a.cwd || ctx.cwd()), rc.me());
+      if (!items.length) return "";
+      const fromProject = items.filter((i) => i.source === "project").length;
+      return `\nChecklist: ${items.length} item(s)${fromProject ? `, ${fromProject} from the project checklist` : ""}; peers shows its progress, job_checklist changes it.`;
+    } catch (err) {
+      log.warn("job checklist not stored", { job: jobName, err: (err as Error).message });
+      return `\nChecklist not stored: ${describeError(err)}`;
+    }
+  };
   const seedUsage = (job: Job, usage: UsageAdmission | undefined) => {
     if (usage && job.providerUsage?.turnStartedAt !== job.startedAt) {
       job.providerUsage = { turnStartedAt: job.startedAt, decision: usage, warningReported: usage.type === "warn" };
@@ -1682,6 +1734,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         .max(MAX_JOB_SEND_TARGETS).optional()
         .describe("Explicitly allow this job to send to these exact local session or job names, including replies to messages received by its supervisor. Default is closed. Cross-session jobs require a separate reciprocal grant to answer; they retain hop limits and quiet copies for both owners. No other external recipients are allowed. Kept across continuations."),
       notes: z.enum(["none", "milestones", "blockers"]).optional().describe("Reporting cadence, default none/final report only. Routine notes always remain dashboard/history-only. Explicit questions, final results and approvals can still request attention."),
+      checklist: z.union([z.literal("none"), z.array(checklistItemSchema).max(CHECKLIST_LIMITS.items)]).optional().describe(CHECKLIST_ARG_DESCRIPTION),
       ...profile.schema,
     };
     /** Run the delegate in this process. */
@@ -1727,7 +1780,9 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           profile.permissionNote(cfg) + defaultAllowNote(cfg),
         inputSchema: schema,
       },
-      guarded(askName, async (a: DelegateArgs, extra) => {
+      guarded(askName, async ({ checklist, ...input }: DelegateArgs & { checklist?: ChecklistArg }, extra) => {
+        let a: DelegateArgs = input;
+        checkChecklist(checklist, a.host);
         if (target === "codex" && !a.host) a = { ...a, native_subagents: a.native_subagents ?? cfg.codexSubagents };
         if (a.host && (!a.cwd || a.send_to?.length)) throw new BridgeError("bad_request", "Remote jobs require an absolute remote cwd; send_to is local-only.");
         if (a.host) {
@@ -1741,6 +1796,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         // Visible in peers while it runs (the caller is blocked, but its coordinator may ask).
         const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a), keep(a));
         if (tracked) { seedUsage(tracked.job, usage); ctx.jobs?.persist(); }
+        const checklistLine = tracked ? seedChecklist(tracked.job.name, checklist, a) : "";
         if (a.host && tracked) {
           tracked.job.remote = { host: a.host, name: `${target}-job-${tracked.job.id}` };
           ctx.jobs!.persist();
@@ -1783,7 +1839,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           (tracked ? `Job: ${tracked.job.name}\n` : "") +
           t("delegate.done", { agent: target, session: res.sessionId ?? "-" }) +
           (res.isError ? "\n" + t("delegate.cause", { cause: failureCause({ result: res }) }) : "") +
-          (tracked && res.sessionId ? "\n" + t("delegate.followUp", { job: tracked.job.name }) : "");
+          (tracked && res.sessionId ? "\n" + t("delegate.followUp", { job: tracked.job.name }) : "") + checklistLine;
         return text(`${header}
 
 ${res.text || t("delegate.empty")}`, res.isError);
@@ -1802,7 +1858,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
           profile.permissionNote(cfg) + defaultAllowNote(cfg),
         inputSchema: { ...schema, title: schema.title.optional().describe("A short title, 3-7 words. Optional: if omitted, derived from the prompt's first nonempty line and noted in the result.") },
       },
-      guarded(spawnName, async (input: Omit<DelegateArgs, "title"> & { title?: string }) => {
+      guarded(spawnName, async ({ checklist, ...input }: Omit<DelegateArgs, "title"> & { title?: string; checklist?: ChecklistArg }) => {
+        checkChecklist(checklist, input.host);
         const derivedTitle = input.title === undefined;
         let a: DelegateArgs = { ...input, title: input.title ?? deriveJobTitle(input.prompt, MAX_TITLE_CHARS) };
         if (target === "codex" && !a.host) a = { ...a, native_subagents: a.native_subagents ?? cfg.codexSubagents };
@@ -1816,6 +1873,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job) => { seedUsage(job, usage); return { ...a, _job: job.name }; }, a), resumeFor(a), keep(a));
         seedUsage(job, usage);
         jobs.persist();
+        const checklistLine = seedChecklist(job.name, checklist, a);
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
         // Exact target options (sandbox, permission_mode, auto_approve, bypass_permissions) say it themselves.
@@ -1823,7 +1881,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         // Read and ask jobs still get the default desk allowance (AB-403): say so where "read-only" is said.
         const deskDefault = access !== "edit" && a.allow_tools === undefined && cfg.jobs.defaultAllowTools.includes("pair-desk:worker") ? ` ${t("jobs.accessDeskDefault")}` : "";
         const note = exact ? "" : `\n${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}${deskDefault}`;
-        return text(`${usage?.type === "warn" ? usageAdmissionText(usage) + "\n\n" : ""}${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${a.worktree ? `\nBase selected at job start: ${a.base ?? "HEAD unless purely behind fetched upstream/default (offline/local fallback reported in first status)"}.` : ""}${derivedTitle ? `\nTitle derived from prompt: "${a.title}".` : ""}`);
+        return text(`${usage?.type === "warn" ? usageAdmissionText(usage) + "\n\n" : ""}${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${a.worktree ? `\nBase selected at job start: ${a.base ?? "HEAD unless purely behind fetched upstream/default (offline/local fallback reported in first status)"}.` : ""}${derivedTitle ? `\nTitle derived from prompt: "${a.title}".` : ""}${checklistLine}`);
       }),
     );
   }
@@ -2072,9 +2130,141 @@ ${res.text || t("delegate.empty")}`, res.isError);
     }),
   );
 
+  const itemIds = z.array(z.string().regex(/^c\d{1,4}$/)).min(1).max(CHECKLIST_LIMITS.batch);
+  register(
+    "job_checklist",
+    {
+      title: "Manage a subagent's checklist",
+      description:
+        "Read or change the checklist of one of your subagent jobs (see the checklist argument of spawn_*/ask_*). Without changes it returns the list. " +
+        "Use it to answer a job's checklist proposals (approve or reject; until then they stay proposed), to react to a blocked item, or to change the plan mid-run: " +
+        "add items, edit text, require or unrequire, close items that no longer apply. A running job sees the change at its next step. " +
+        "The job itself only ticks items (a required one is skipped only with a note) and proposes new ones; blocked items and proposals reach you like a job question. Required items still open when it finishes mark its result incomplete. " +
+        "Changes in one call apply together or not at all; nothing is deleted (closed and rejected items stay in the record). Only the job's supervisor can call it.",
+      inputSchema: {
+        job: z.string().min(1).max(80).describe('Job name, e.g. "codex-job-1a2b3c4d" (see peers)'),
+        get: z.boolean().optional().describe("Return the list (the default when nothing changes)"),
+        add: z.array(checklistItemSchema).min(1).max(CHECKLIST_LIMITS.items).optional().describe("New items from you; required unless required=false"),
+        edit: z.array(z.object({ id: z.string().regex(/^c\d{1,4}$/), text: z.string().min(1).max(CHECKLIST_LIMITS.text).optional(), required: z.boolean().optional() }))
+          .min(1).max(CHECKLIST_LIMITS.batch).optional().describe("Change an item's text or required flag"),
+        require: itemIds.optional().describe("Item ids to make required"),
+        unrequire: itemIds.optional().describe("Item ids to make optional"),
+        close: itemIds.optional().describe("Item ids that no longer apply; they stop counting"),
+        approve: itemIds.optional().describe("Proposed item ids to add to the list (optional until you require them)"),
+        reject: itemIds.optional().describe("Proposed item ids to turn down"),
+        note: z.string().max(CHECKLIST_LIMITS.note).optional().describe("Why, stored with closed, approved or rejected items"),
+      },
+    },
+    guarded("job_checklist", async (a: { job: string; get?: boolean; add?: ChecklistInput[]; edit?: { id: string; text?: string; required?: boolean }[];
+      require?: string[]; unrequire?: string[]; close?: string[]; approve?: string[]; reject?: string[]; note?: string }) => {
+      const job = await findJob(a.job);
+      if (!job || job.name !== a.job) throw new BridgeError("bad_request", "No job with that name is owned by this session.");
+      if (job.remote) throw new BridgeError("bad_request", CHECKLIST_REMOTE);
+      const changing = Boolean(a.add || a.edit || a.require || a.unrequire || a.close || a.approve || a.reject);
+      if (a.note !== undefined && !(a.close || a.approve || a.reject)) throw new BridgeError("bad_request", "A note goes with close, approve or reject.");
+      const items = changing ? superviseJobChecklist(ctx.home, job.name, a, rc.me()) : readJobChecklist(ctx.home, job.name);
+      if (!items.length) return text(`${job.name} has no checklist. Add items with job_checklist(job="${job.name}", add=[{ text: "..." }]).`);
+      const summary = checklistSummary(items);
+      return text([`${changing ? "Checklist updated" : "Checklist"} of ${job.name}: ${summaryText(summary)}${summary.requiredOpen ? `; ${summary.requiredOpen} required open` : ""}.`,
+        formatChecklist(items, true),
+        changing && job.status === "running" ? "The running job sees the change at its next step." : ""].filter(Boolean).join("\n"));
+    }),
+  );
+
+  if (node) register(
+    "project_checklist",
+    {
+      title: "Project definition of done",
+      description:
+        "Read or change this project's checklist: the definition of done added to every job started in this project (unless the spawn passes checklist \"none\"). " +
+        "Use it for steps every job must do, such as running the focused tests or updating the changelog. set replaces the list, add appends, remove takes items out (kept in the record). " +
+        "Its required items count like the supervisor's: still open when a job finishes, they mark the result incomplete. " +
+        "Only the project main or the owner changes it; any session can read it. Jobs that already started keep their own copy.",
+      inputSchema: {
+        get: z.boolean().optional().describe("Return the list (the default when nothing changes)"),
+        set: z.array(checklistItemSchema).max(CHECKLIST_LIMITS.projectItems).optional().describe("Replace the whole list; [] empties it"),
+        add: z.array(checklistItemSchema).min(1).max(CHECKLIST_LIMITS.projectItems).optional().describe("Items to append; required unless required=false"),
+        remove: z.array(z.string().regex(/^p\d{1,4}$/)).min(1).max(CHECKLIST_LIMITS.projectItems).optional().describe("Item ids to remove"),
+      },
+    },
+    guarded("project_checklist", async (a: { get?: boolean; set?: ChecklistInput[]; add?: ChecklistInput[]; remove?: string[] }) => {
+      const n = requireNode();
+      const key = projectChecklistKey(ctx.cwd());
+      if (!key) throw new BridgeError("bad_request", "This session has no project folder.");
+      const changing = Boolean(a.set || a.add || a.remove);
+      if (changing) {
+        const self = (await n.peers()).find((p) => p.id === n.id);
+        if (self?.projectGroup && !self.projectMain) throw new BridgeError("bad_request", "Only the project main or the owner changes the project checklist. Ask the project main.");
+      }
+      const items = changing ? changeProjectChecklist(ctx.home, key, a, n.name) : readProjectChecklist(ctx.home, key);
+      return text([`Project checklist of ${key} (${items.length} item(s))${changing ? ", updated" : ""}. New jobs in this project start with it.`,
+        ...(items.length ? items.map(projectChecklistLine) : ["(no items)"])].join("\n"));
+    }),
+  );
+
   // Only in subagents: their own estimate of how far they are, shown to the session that started them.
   if (!node && ctx.parent) {
     const parent = ctx.parent;
+    const jobName = process.env[PARENT_JOB_ENV];
+    if (jobName) {
+      // The brief already showed the list: only later changes by the supervisor are announced (AB-428).
+      let seen = "0:0";
+      try { seen = supervisorRevision(ctx.home, jobName); } catch { /* No store yet: any later change is new. */ }
+      ctx.checklistNotice = () => {
+        try {
+          const revision = supervisorRevision(ctx.home, jobName);
+          if (revision === seen) return null;
+          seen = revision;
+          return `[agent-bridge] Your supervisor changed your checklist:\n${formatChecklist(readJobChecklist(ctx.home, jobName))}`;
+        } catch (err) { log.debug("checklist change check failed", { err: String(err) }); return null; }
+      };
+    }
+    register(
+      "checklist",
+      {
+        title: "Your task checklist",
+        description:
+          `Your to-do list for the task ${parent.name} gave you, kept by the bridge. Without arguments it shows the list. ` +
+          "Tick items as you work: update=[{ id, status, note }] with status in_progress, done, blocked or skipped; a required item can be skipped only with a note saying why. " +
+          `Marking an item blocked notifies ${parent.name}; other ticks are quiet. ` +
+          "When something is missing, propose it: propose=[{ text, why }]. It joins only when your supervisor approves; you cannot add, delete or un-require items yourself. " +
+          "Required items still open when you finish mark your result incomplete.",
+        inputSchema: {
+          update: z.array(z.object({ id: z.string().regex(/^c\d{1,4}$/), status: z.enum(JOB_ITEM_STATUSES),
+            note: z.string().max(CHECKLIST_LIMITS.note).optional().describe("What you did, why you skipped it, or what blocks it") }))
+            .max(CHECKLIST_LIMITS.batch).optional(),
+          propose: z.array(z.object({ text: z.string().min(1).max(CHECKLIST_LIMITS.text), why: z.string().max(CHECKLIST_LIMITS.note).optional() }))
+            .max(CHECKLIST_LIMITS.proposals).optional(),
+        },
+      },
+      guarded("checklist", async (a: { update?: { id: string; status: JobItemStatus; note?: string }[]; propose?: { text: string; why?: string }[] }) => {
+        if (!jobName) throw new BridgeError("bad_request", "This session is not a bridge job; it has no checklist.");
+        const blocked = a.update?.length ? updateJobChecklistAsJob(ctx.home, jobName, a.update).blocked : [];
+        const proposed = a.propose?.length ? proposeJobChecklist(ctx.home, jobName, a.propose).proposed : [];
+        const items = readJobChecklist(ctx.home, jobName);
+        if (!items.length) return text("You have no checklist for this task.");
+        const changed = Boolean(a.update?.length || a.propose?.length);
+        const lines = [`${changed ? "Checklist updated" : "Nothing changed"}. Progress: ${summaryText(checklistSummary(items))}.`, formatChecklist(items)];
+        if (blocked.length || proposed.length) {
+          // Blocked items and proposals reach the supervisor like a job question (same routing and wake-up).
+          const body = [`Checklist of ${jobName}:`,
+            ...blocked.map((i) => `- ${i.id} blocked: ${JSON.stringify(i.text)}${i.note ? ` (note: ${JSON.stringify(i.note)})` : " (no note)"}`),
+            ...(proposed.length ? ["Proposed items, waiting for your approval:",
+              ...proposed.map((i) => `- ${i.id} ${JSON.stringify(i.text)}${i.why ? ` (why: ${JSON.stringify(i.why)})` : ""}`),
+              `Answer with job_checklist(job="${jobName}", approve=[${proposed.map((i) => JSON.stringify(i.id)).join(", ")}]) or reject=[...] with a note.`] : []),
+            ...(blocked.length ? [`Answer the job with message_subagent, or change its checklist with job_checklist(job="${jobName}", ...).`] : []),
+          ].join("\n");
+          try {
+            const route = await parent.send(body, undefined, "question");
+            lines.push(route ? formatParentRoute(route) : t("send.toParent", { name: parent.name }));
+          } catch (err) {
+            lines.push(`Your supervisor could not be notified (${(err as Error).message}); the change is saved and shows in its peers listing.`);
+          }
+          if (proposed.length) lines.push("Proposed items stay proposed until your supervisor approves them; keep working on the rest.");
+        }
+        return text(lines.join("\n"));
+      }),
+    );
     register(
       "report_progress",
       {

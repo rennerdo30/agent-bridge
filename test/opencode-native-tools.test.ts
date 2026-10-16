@@ -36,7 +36,7 @@ it("blocks all three native mutations in read mode without changing ordinary rea
   await g.before(event("read"));
   await g.before(event("opencode_worktree_list"));
   expect(g.assert).not.toHaveBeenCalled();
-  expect(OPENCODE_READ_ONLY_TOOLS).toMatchObject({ "*_*": false, bridge_send: true, bridge_report_progress: true });
+  expect(OPENCODE_READ_ONLY_TOOLS).toMatchObject({ "*_*": false, bridge_send: true, bridge_report_progress: true, bridge_checklist: true });
 });
 
 it("asks again for every mutation with the complete target, and propagates denial", async () => {

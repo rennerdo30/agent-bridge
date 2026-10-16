@@ -10,6 +10,7 @@ const TOOLS = [
   'network_status', 'resource_slots', 'send_files', 'fetch_files', 'cancel_transfer',
   'max_subagents', 'auto_wake', 'usage_limits', 'list_models', 'dashboard', 'set_job_outcome',
   'handoff_subagents', 'message_subagent', 'cancel_subagent', 'pause_subagent', 'resume_subagent', 'report_progress',
+  'checklist', 'job_checklist', 'project_checklist',
   ...['claude', 'codex', 'opencode', 'antigravity', 'muse'].flatMap(agent => [`ask_${agent}`, `spawn_${agent}`]),
   'hook_event',
 ]
