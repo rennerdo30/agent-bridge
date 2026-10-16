@@ -15,8 +15,8 @@ afterEach(() => { vi.clearAllMocks(); });
 
 describe("Muse native plugin lifecycle", () => {
   it.each(["install", "update"] as const)("%s installs the durable bundle, then approves or inspects only after the plugin command succeeds", async action => {
-    const commands = action === "install" ? [["plugins", "install", bundle], ["plugins", "approve", "agent-bridge"]]
-      : [["plugins", "install", bundle], ["plugins", "inspect", "agent-bridge"]];
+    const commands = action === "install" ? [["plugins", "install", bundle, "--scope", "user"], ["plugins", "approve", "agent-bridge"]]
+      : [["plugins", "install", bundle, "--scope", "user"], ["plugins", "inspect", "agent-bridge"]];
     let finish!: (code: number) => void;
     const run = vi.fn<(args: string[]) => Promise<number>>()
       .mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }))
@@ -45,7 +45,7 @@ describe("Muse native plugin lifecycle", () => {
     const run = vi.fn<(args: string[]) => Promise<number>>().mockResolvedValue(23);
     await expect(installMusePlugin(action, run, publish)).rejects.toThrow(/failed with code 23/);
     expect(run).toHaveBeenCalledTimes(1);
-    expect(run).toHaveBeenCalledWith(["plugins", "install", bundle]);
+    expect(run).toHaveBeenCalledWith(["plugins", "install", bundle, "--scope", "user"]);
   });
 
   it.each(["install", "update"] as const)("failed approval after %s surfaces the approval failure", async action => {
@@ -67,7 +67,7 @@ describe("Muse native plugin lifecycle", () => {
     const failure = new Error("Synthetic Muse stderr: capability inspection failed");
     const run = vi.fn<(args: string[]) => Promise<number>>().mockResolvedValueOnce(0).mockRejectedValueOnce(failure);
     await expect(installMusePlugin("update", run, publish)).rejects.toBe(failure);
-    expect(run.mock.calls.map(([args]) => args)).toEqual([["plugins", "install", bundle], ["plugins", "inspect", "agent-bridge"]]);
+    expect(run.mock.calls.map(([args]) => args)).toEqual([["plugins", "install", bundle, "--scope", "user"], ["plugins", "inspect", "agent-bridge"]]);
   });
 
   it("does not run Muse when the durable copy cannot be published", async () => {
