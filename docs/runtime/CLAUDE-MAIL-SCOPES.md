@@ -70,6 +70,8 @@ query are refused, as already established for wait/conversation in AB-405.
 | `handoff_subagents` | a | Refuse |
 | `message_subagent` | b | Refuse continuation/settings changes; child may send ordinary mail using send |
 | `cancel_subagent` | a | Refuse |
+| `pause_subagent` | a | Refuse; parent-only job control |
+| `resume_subagent` | a | Refuse; parent-only job control |
 | `report_progress` | a | Delegated-job servers only; never offered on the shared parent connection |
 | `hook_event` | internal | Native mcp_tool lifecycle transport only; host mod denies every model tool.call for it |
 
