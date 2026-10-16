@@ -205,17 +205,71 @@ describe("AB-399 session liveness", () => {
     await vi.waitFor(() => expect(reused.events).toContainEqual(["retired", { reason: "pid_reused", agentPid: CLI }]));
   });
 
-  it("keeps the first hello's CLI when a re-parented server reconnects with agentPid 1", async () => {
+  it("keeps the first hello's CLI when a re-parented server reconnects with agentPid 1, and refuses it", async () => {
     hosts.set(CLI, "alive");
     const first = await session({ id: "orphan", name: "orphan", agent: "claude", agentPid: CLI, agentStartedAt: "cli-identity" });
     first.client.close();
     const { client } = await sender();
     await vi.waitFor(async () => expect(await names(client)).toEqual(["sender"]));
     hosts.set(CLI, "ESRCH");
-    const again = await session({ id: "orphan", name: "orphan", agent: "claude", agentPid: 1, agentStartedAt: "init-identity" });
+    await expect(session({ id: "orphan", name: "orphan", agent: "claude", agentPid: 1, agentStartedAt: "init-identity" }))
+      .rejects.toMatchObject({ code: "unauthorized", details: { retired: true, reason: "host_exited", agentPid: CLI } });
     later();
     expect(await names(client)).toEqual(["sender"]);
-    await vi.waitFor(() => expect(again.events).toContainEqual(["retired", { reason: "host_exited", agentPid: CLI }]));
+  });
+
+  it("retires on PID reuse before a broker restart, using the recorded CLI start rather than the reconnect", async () => {
+    hosts.set(CLI, "alive");
+    // The CLI started an hour ago; this broker first sees the session now (after its own restart).
+    const restarted = await session({ id: "restarted", name: "restarted", agent: "claude", agentPid: CLI, agentStartedAt: identityStartedAt(clock - 60 * 60_000) });
+    const { client } = await sender();
+    // The PID now belongs to a process started half an hour ago: after the CLI, before this broker's first hello.
+    reader.mockResolvedValue(new Map([[CLI, identityStartedAt(clock - 30 * 60_000)]]));
+    await broker.sweepPeerLiveness();
+    expect(await names(client)).toEqual(["sender"]);
+    await vi.waitFor(() => expect(restarted.events).toContainEqual(["retired", { reason: "pid_reused", agentPid: CLI }]));
+  });
+
+  it("refuses a dead-CLI server before session recovery, replacement or mail claims", async () => {
+    hosts.set(CLI, "ESRCH"); hosts.set(NEXT_CLI, "alive");
+    const { client } = await sender();
+    const queued = await client.request("send", { to: "claude", body: "for any claude", conversationId: "ab399" });
+    expect(queued.deliveredTo).toEqual([]);
+    // A dead-CLI server (say, reconnecting after a broker restart) must not claim mail waiting for "any claude".
+    await expect(session({ id: "dead", name: "lead", agent: "claude", sessionId: "lead-session", agentPid: CLI, agentStartedAt: "dead-identity" }))
+      .rejects.toMatchObject({ code: "unauthorized", details: { retired: true, reason: "host_exited" } });
+    const live = await session({ id: "live", name: "lead", agent: "claude", sessionId: "lead-session", agentPid: NEXT_CLI, agentStartedAt: "live-identity" });
+    await vi.waitFor(() => expect(live.events.some(([ev, data]) => ev === "message" && (data as { body?: string }).body === "for any claude")).toBe(true));
+    // Nor may it replace the live server of the same session.
+    await expect(session({ id: "dead-again", name: "lead", agent: "claude", sessionId: "lead-session", agentPid: CLI, agentStartedAt: "dead-identity" }))
+      .rejects.toMatchObject({ code: "unauthorized", details: { retired: true, reason: "host_exited" } });
+    later();
+    expect(await names(client)).toEqual(["lead", "sender"]);
+    expect(live.events.map(([ev]) => ev)).not.toContain("replaced");
+    const sent = await client.request("send", { to: "lead", body: "still here", conversationId: "ab399" });
+    expect(sent.deliveredTo).toEqual(["lead"]);
+    const retained = new DatabaseSync(env.db, { readOnly: true });
+    try { expect(retained.prepare("SELECT name FROM peer_names WHERE name='lead'").all().length).toBeGreaterThan(0); }
+    finally { retained.close(); }
+  });
+
+  it("never retires a session connected over the loopback TCP fallback", async () => {
+    const internals = broker as unknown as { accept(socket: unknown, transport?: "pipe" | "tcp"): void };
+    const accept = internals.accept.bind(broker);
+    internals.accept = (socket) => accept(socket, "tcp");
+    hosts.set(CLI, "alive");
+    const remote = await session({ id: "remote", name: "remote", agent: "claude", agentPid: CLI, agentStartedAt: "remote-identity" });
+    internals.accept = accept;
+    const { client } = await sender();
+    hosts.set(CLI, "ESRCH");
+    later();
+    expect(await names(client)).toEqual(["remote", "sender"]);
+    reader.mockResolvedValue(new Map([[CLI, identityStartedAt(clock + 60_000)]]));
+    await broker.sweepPeerLiveness();
+    expect(reader).not.toHaveBeenCalled();
+    later();
+    expect(await names(client)).toEqual(["remote", "sender"]);
+    expect(remote.events.map(([ev]) => ev)).not.toContain("retired");
   });
 
   it("does not retire internal, opencode or job peers", async () => {
@@ -247,6 +301,91 @@ describe("AB-399 session liveness", () => {
     expect(peers.find(p => p.sessionId === "lead-session")?.projectMain).toBe(true);
     expect(peers.find(p => p.name === "sender")?.projectMain).toBe(false);
   });
+
+  it("forgets a retired main after the grace window: the current main keeps its role", async () => {
+    hosts.set(CLI, "alive");
+    await session({ id: "main-1", name: "lead", agent: "claude", sessionId: "lead-session", agentPid: CLI, agentStartedAt: "cli-identity" });
+    const { client } = await sender();
+    expect((await client.request("peers", {})).find(p => p.name === "lead")?.projectMain).toBe(true);
+    hosts.set(CLI, "ESRCH");
+    later();
+    expect((await client.request("peers", {})).find(p => p.name === "sender")?.projectMain).toBe(true);
+    clock += 5 * 60_000 + 1;
+    hosts.set(NEXT_CLI, "alive");
+    await session({ id: "main-2", name: "lead", agent: "claude", sessionId: "lead-session", agentPid: NEXT_CLI, agentStartedAt: "resumed-identity" });
+    later();
+    const peers = await client.request("peers", {});
+    expect(peers.find(p => p.sessionId === "lead-session")?.projectMain).toBe(false);
+    expect(peers.find(p => p.name === "sender")?.projectMain).toBe(true);
+  });
+});
+
+/**
+ * A released node that does not know the `retired` event, as in v0.30.21 node.ts: after a close it reconnects
+ * with no delay (onClose), a hello refused with "unauthorized" sends it into nextBackoff (1 s doubling to 30 s),
+ * and every successful hello resets that backoff. Time is simulated: the broker clock advances by each delay.
+ */
+async function oldNodeHellos(peer: Partial<PeerInfo> & { id: string; name: string; agent: AgentKind }, budgetMs: number, maxHellos: number) {
+  let elapsed = 0, backoff = 1_000, hellos = 0, refused = 0;
+  while (elapsed < budgetMs && hellos < maxHellos) {
+    const client = await BridgeClient.connect(env.pipe, nullLogger);
+    clients.push(client);
+    const closed = new Promise<boolean>(resolve => client.once("close", () => resolve(true)));
+    hellos++;
+    let delay: number;
+    try {
+      await client.request("hello", { protocol: PROTOCOL_VERSION, token: loadOrCreateToken(env.home), peer: {
+        cwd: env.home, pid: process.pid, agentPid: null, sessionId: `${peer.id}-session`, startedAt: clock, autoWake: false, activity: "idle", ...peer,
+      } });
+      backoff = 1_000;
+      // Registered: the broker retires it at once (its CLI is gone), or it stays connected and the loop ends.
+      const retired = await Promise.race([closed, new Promise<boolean>(resolve => setTimeout(() => resolve(false), 2_000))]);
+      if (!retired) break;
+      delay = 0;
+    } catch (error) {
+      expect(error).toMatchObject({ code: "unauthorized" });
+      refused++;
+      client.close();
+      delay = backoff;
+      backoff = Math.min(backoff * 2, 30_000);
+    }
+    elapsed += delay;
+    clock += delay;
+  }
+  return { hellos, refused, elapsed };
+}
+
+describe("AB-399 nodes that ignore the retired event", () => {
+  it("cannot reconnect in a tight loop after a host_exited retirement", async () => {
+    hosts.set(CLI, "alive");
+    const first = await session({ id: "legacy", name: "legacy", agent: "claude", agentPid: CLI, agentStartedAt: "cli-identity" });
+    const { client } = await sender();
+    hosts.set(CLI, "ESRCH");
+    later();
+    expect(await names(client)).toEqual(["sender"]);
+    await vi.waitFor(() => expect(first.events).toContainEqual(["retired", { reason: "host_exited", agentPid: CLI }]));
+    // Ten simulated minutes: 0 s, then 1, 2, 4, 8, 16 s and every 30 s after that, about 25 hellos in all.
+    const run = await oldNodeHellos({ id: "legacy", name: "legacy", agent: "claude", agentPid: CLI, agentStartedAt: "cli-identity" }, 10 * 60_000, 200);
+    expect(run.elapsed).toBeGreaterThanOrEqual(10 * 60_000);
+    expect(run.hellos).toBeLessThanOrEqual(26);
+    expect(run.refused).toBe(run.hellos);
+    expect(await names(client)).toEqual(["sender"]);
+  });
+
+  it("cannot reconnect in a tight loop after a pid_reused retirement", async () => {
+    hosts.set(CLI, "alive");
+    const first = await session({ id: "reused-legacy", name: "reused-legacy", agent: "codex", agentPid: CLI, agentStartedAt: "original-identity" });
+    const { client } = await sender();
+    reader.mockResolvedValue(new Map([[CLI, identityStartedAt(clock + 60_000)]]));
+    await broker.sweepPeerLiveness();
+    await vi.waitFor(() => expect(first.events).toContainEqual(["retired", { reason: "pid_reused", agentPid: CLI }]));
+    const run = await oldNodeHellos({ id: "reused-legacy", name: "reused-legacy", agent: "codex", agentPid: CLI, agentStartedAt: "original-identity" }, 10 * 60_000, 200);
+    expect(run.elapsed).toBeGreaterThanOrEqual(10 * 60_000);
+    expect(run.hellos).toBeLessThanOrEqual(26);
+    expect(run.refused).toBe(run.hellos);
+    later();
+    expect(await names(client)).toEqual(["sender"]);
+  });
 });
 
 describe("AB-399 retired node", () => {
@@ -270,5 +409,18 @@ describe("AB-399 retired node", () => {
     later();
     expect(await names(client)).toEqual(["sender"]);
     expect((node as unknown as { helloArgs(): { peer: { agentPid: number | null } } }).helloArgs().peer.agentPid).toBe(CLI);
+  });
+
+  it("stays off the bridge when its hello is refused because its CLI is gone", async () => {
+    vi.spyOn(process, "ppid", "get").mockReturnValue(CLI);
+    hosts.set(CLI, "ESRCH");
+    const node = env.node("late", "claude");
+    await expect(node.ensureConnected()).rejects.toMatchObject({ code: "unauthorized", details: { retired: true } });
+    expect(node.retirement).toBe("host_exited");
+    const { client } = await sender();
+    // Longer than the minimum reconnect backoff: no reconnect attempt follows.
+    await new Promise(r => setTimeout(r, 1_500));
+    expect(node.isConnected).toBe(false);
+    expect(await names(client)).toEqual(["sender"]);
   });
 });

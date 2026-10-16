@@ -352,6 +352,11 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
           await sleep(jitter());
           continue;
         }
+        if (err instanceof BridgeError && err.code === "unauthorized" && err.details?.retired === true) {
+          // AB-399: this session's CLI process has ended; stay off the bridge instead of retrying.
+          this.leaveRetired(err.details.reason);
+          throw err;
+        }
         if (err instanceof BridgeError && (err.code === "unauthorized" || err.code === "protocol_mismatch")) {
           // Retrying cannot help: the running broker is another agent-bridge version or uses another token.
           this.log.error("broker refused this peer", { code: err.code, message: err.message });
@@ -628,17 +633,23 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
       void this.stop(false).catch((err) => this.log.warn("could not retire replaced connection", { err: String(err) }));
       this.emit("replaced");
     } else if (ev === "retired") {
-      // AB-399: the broker found this session's CLI process gone. Leave like a replaced server (no reconnect, no
-      // wake or hook work) instead of churning reconnects; if the session does call this server again, reclaim()
-      // rejoins and the broker checks it afresh. The MCP server's parent watch exits it once its parent is gone.
-      const reason = (data as { reason?: unknown } | undefined)?.reason;
-      this.log.info("broker retired this session (its CLI process ended); leaving the bridge", { reason });
-      this.replaced = true;
-      this.replacedBy = undefined;
-      this.retiredBy = reason === "pid_reused" ? "pid_reused" : "host_exited";
-      void this.stop(false).catch((err) => this.log.warn("could not leave after retirement", { err: String(err) }));
-      this.emit("replaced");
+      this.leaveRetired((data as { reason?: unknown } | undefined)?.reason);
     }
+  }
+
+  /**
+   * AB-399: the broker found this session's CLI process gone (a `retired` event, or a hello refused with
+   * details.retired). Leave like a replaced server (no reconnect, no wake or hook work) instead of churning
+   * reconnects; if the session does call this server again, reclaim() rejoins and the broker checks it afresh.
+   * The MCP server's parent watch exits it once its parent is gone.
+   */
+  private leaveRetired(reason: unknown): void {
+    this.log.info("broker retired this session (its CLI process ended); leaving the bridge", { reason });
+    this.replaced = true;
+    this.replacedBy = undefined;
+    this.retiredBy = reason === "pid_reused" ? "pid_reused" : "host_exited";
+    void this.stop(false).catch((err) => this.log.warn("could not leave after retirement", { err: String(err) }));
+    this.emit("replaced");
   }
 
   private async withClient<T>(fn: (c: BridgeClient) => Promise<T>): Promise<T> {

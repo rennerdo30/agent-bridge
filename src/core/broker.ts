@@ -9,7 +9,7 @@ import { recordStorePeer, refreshStorePeerIdentities, validStoreCapabilities } f
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { readMusePrivateJson, readMusePrivateJsonAsync, writeMusePrivateJsonAsync } from "./muse-context.js";
-import { identityStartedAfter, ownProcessIdentity, processIdentity, readProcessIdentities } from "./process-identity.js";
+import { ownProcessIdentity, processIdentity, readProcessIdentities } from "./process-identity.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { createServer, type Server, type Socket } from "node:net";
 import {
@@ -167,16 +167,34 @@ const LIVENESS_SWEEP_MS = 60_000;
 /** Coarse start-time resolution (ps lstart has seconds) must never read as a later start. */
 const PID_REUSE_SLACK_MS = 2_000;
 const MAX_AGENT_HOSTS = 4_096;
+/** A retired project main gets its role back only when its session reconnects within this window (AB-399). */
+const RETIRED_MAIN_GRACE_MS = 5 * 60_000;
 
 /**
- * Whether a process identity proves a start after `at`. On Windows and Linux this is exact. macOS `ps -o lstart`
- * prints local time, so it is parsed as local time here (identityStartedAfter would read it as UTC and shift it by
- * the zone offset). An unparseable identity proves nothing.
+ * The start time (epoch ms) a process identity describes, or undefined when it cannot be read. Windows ticks and
+ * Linux boot-relative clock ticks (same boot only) are exact; macOS `ps -o lstart` prints local time, so it is
+ * parsed as local time here (identityStartedAfter would read it as UTC and shift it by the zone offset).
  */
-function provenStartedAfter(identity: string, at: number): boolean {
-  if (process.platform === "win32" || process.platform === "linux") return identityStartedAfter(identity, at);
+function identityStartMs(identity: string): number | undefined {
+  if (process.platform === "win32") return /^\d{1,24}$/.test(identity) ? Number((BigInt(identity) - 621355968000000000n) / 10000n) : undefined;
+  if (process.platform === "linux") {
+    const match = /^(.+):(\d+)$/.exec(identity);
+    if (!match) return undefined;
+    try {
+      if (readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() !== match[1]) return undefined;
+      const btime = Number(/^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"))?.[1]);
+      // Linux reports start times in clock ticks; USER_HZ is 100 on every supported build.
+      return Number.isFinite(btime) ? btime * 1000 + Number(match[2]) * 10 : undefined;
+    } catch { return undefined; }
+  }
   const startedAt = Date.parse(identity);
-  return Number.isFinite(startedAt) && startedAt > at;
+  return Number.isFinite(startedAt) ? startedAt : undefined;
+}
+
+/** Whether a process identity proves a start after `at`. An unparseable identity proves nothing. */
+function provenStartedAfter(identity: string, at: number): boolean {
+  const startedAt = identityStartMs(identity);
+  return startedAt !== undefined && startedAt > at;
 }
 
 /** Operations allowed before a connection has authenticated. */
@@ -1214,8 +1232,14 @@ export class Broker {
    * pointing at the CLI it was started by.
    */
   private readonly agentHosts = new Map<string, { agentPid: number | null; agentStartedAt: string | null; firstHelloAt: number }>();
-  /** Project mains whose connection the broker retired; one reconnecting with that identity gets its role back. */
-  private readonly retiredProjectMains = new Map<string, ProjectMainIdentity>();
+  /**
+   * Node ids the broker retired (in memory only). Their CLI is provably gone, so a re-hello from the same server is
+   * refused: a release that ignores the `retired` event reconnects at once, and the refusal sends it into its
+   * normal reconnect backoff instead of a registration loop.
+   */
+  private readonly retiredPeers = new Map<string, EventMap["retired"]["reason"]>();
+  /** Project mains whose connection the broker retired; the same session reconnecting soon gets its role back. */
+  private readonly retiredProjectMains = new Map<string, { main: ProjectMainIdentity; at: number }>();
   private identityReader: (pids: number[]) => Promise<Map<number, string>> = readProcessIdentities;
   private livenessTimer: NodeJS.Timeout | null = null;
   private livenessSweep: Promise<void> | undefined;
@@ -1231,28 +1255,58 @@ export class Broker {
     this.agentHosts.set(peer.id, { agentPid: peer.agentPid ?? null, agentStartedAt: peer.agentStartedAt ?? null, firstHelloAt: this.now() });
   }
 
-  /** Whether a connection's session may be retired when its CLI process is gone (see RETIRABLE_AGENTS). */
-  private retirable(conn: Conn): boolean {
-    const peer = conn.peer;
-    return Boolean(peer && conn.transport === "pipe" && !conn.retired && !peer.jobAgent && !peer.subagent && RETIRABLE_AGENTS.has(peer.agent)
+  /** Whether a session may be retired when its CLI process is gone (see RETIRABLE_AGENTS); TCP peers never are. */
+  private retirablePeer(peer: PeerInfo | null, transport: Conn["transport"]): peer is PeerInfo {
+    return Boolean(peer && transport === "pipe" && !peer.jobAgent && !peer.subagent && RETIRABLE_AGENTS.has(peer.agent)
       && Number.isSafeInteger(peer.agentPid) && peer.agentPid! > 1 && peer.agentStartedAt);
   }
 
+  private retirable(conn: Conn): boolean {
+    return !conn.retired && this.retirablePeer(conn.peer, conn.transport);
+  }
+
   /**
-   * Cheap inline check only: signal 0 (no process is started). True only for ESRCH of the session's CLI while
-   * its server process is visible here; EPERM and every other answer count as alive.
+   * Signal 0 only (no process is started). True only for ESRCH of the session's CLI while its server process is
+   * visible here; EPERM and every other answer count as alive. A server PID that does not exist here belongs to
+   * another PID namespace or a synthetic registration.
    */
-  private hostExited(conn: Conn): boolean {
-    const at = this.now();
-    if (conn.hostProbe && at - conn.hostProbe.at < HOST_PROBE_MS && at >= conn.hostProbe.at) return conn.hostProbe.exited;
+  private hostGone(peer: PeerInfo): boolean {
     const missing = (pid: number) => {
       try { process.kill(pid, 0); return false; }
       catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
     };
-    // A server PID that does not exist here belongs to another PID namespace or a synthetic registration.
-    const exited = !missing(conn.peer!.pid) && missing(conn.peer!.agentPid!);
+    return !missing(peer.pid) && missing(peer.agentPid!);
+  }
+
+  /** hostGone with the probe reused within one burst of view/send work (peers decorates every member). */
+  private hostExited(conn: Conn): boolean {
+    const at = this.now();
+    if (conn.hostProbe && at - conn.hostProbe.at < HOST_PROBE_MS && at >= conn.hostProbe.at) return conn.hostProbe.exited;
+    const exited = this.hostGone(conn.peer!);
     conn.hostProbe = { at, exited };
     return exited;
+  }
+
+  /**
+   * Hello gate for retirable sessions, before any registration work (session recovery, replacing an older server
+   * of the session, mail claims). A server the broker already retired, or one whose frozen CLI is gone, is
+   * refused with "unauthorized": every node release treats that as "back off and retry" (nextBackoff), so even a
+   * release that knows nothing of retirement cannot reconnect in a tight loop. Current nodes read `retired` from
+   * the details and stay off the bridge.
+   */
+  private refuseRetiredHello(conn: Conn, peer: PeerInfo): void {
+    if (!this.retirablePeer(peer, conn.transport)) return;
+    const reason = this.retiredPeers.get(peer.id) ?? (this.hostGone(peer) ? "host_exited" : undefined);
+    if (!reason) return;
+    this.rememberRetired(peer.id, reason);
+    this.log.debug("refusing a session whose CLI process ended", { name: peer.name, agentPid: peer.agentPid, reason });
+    throw new BridgeError("unauthorized", "This session's CLI process has ended; the broker retired its bridge server.", { retired: true, reason, agentPid: peer.agentPid ?? null });
+  }
+
+  private rememberRetired(id: string, reason: EventMap["retired"]["reason"]): void {
+    this.retiredPeers.delete(id);
+    if (this.retiredPeers.size >= MAX_AGENT_HOSTS) this.retiredPeers.delete(this.retiredPeers.keys().next().value!);
+    this.retiredPeers.set(id, reason);
   }
 
   /**
@@ -1286,7 +1340,8 @@ export class Broker {
     const peer = conn.peer;
     if (!peer || conn.retired) return;
     conn.retired = true;
-    for (const [key, main] of this.projectMains) if (ownsProjectMain(main, peer)) this.retiredProjectMains.set(key, main);
+    this.rememberRetired(peer.id, reason);
+    for (const [key, main] of this.projectMains) if (ownsProjectMain(main, peer)) this.retiredProjectMains.set(key, { main, at: this.now() });
     this.log.info("retiring session whose CLI process ended", { name: peer.name, agentPid: peer.agentPid, reason });
     this.emit(conn, "retired", { reason, agentPid: peer.agentPid ?? null });
     conn.socket.end();
@@ -1301,7 +1356,8 @@ export class Broker {
   /**
    * Background creation-identity check: one asynchronous batch query for all retirable sessions, one at a time.
    * A session retires only on proven PID reuse: the process now holding its CLI PID started after the session's
-   * first hello. An unreadable, failed or merely different identity (format, time zone) counts as alive.
+   * CLI did (its recorded identity's start time, else the first hello on this broker). An unreadable, failed or
+   * merely different identity (format, time zone) counts as alive.
    */
   sweepPeerLiveness(): Promise<void> {
     if (this.livenessSweep) return this.livenessSweep;
@@ -1316,7 +1372,8 @@ export class Broker {
         if (this.closing || !peer || !this.conns.has(conn) || !this.retirable(conn)) continue;
         const current = identities.get(peer.agentPid!);
         if (!current || current === peer.agentStartedAt) continue;
-        const since = this.agentHosts.get(peer.id)?.firstHelloAt ?? peer.startedAt;
+        // After a broker restart the first hello here is the reconnect, so the recorded CLI start is the better bound.
+        const since = identityStartMs(peer.agentStartedAt!) ?? this.agentHosts.get(peer.id)?.firstHelloAt ?? peer.startedAt;
         if (provenStartedAfter(current, since + PID_REUSE_SLACK_MS)) this.retire(conn, "pid_reused");
       }
     })().finally(() => { if (this.livenessSweep === sweep) this.livenessSweep = undefined; });
@@ -1330,8 +1387,11 @@ export class Broker {
     if (!key || peer.jobAgent || peer.subagent) return decorated;
     const members = this.localPeers().filter((p) => !p.jobAgent && !p.subagent && this.groups.decorate(p).projectGroup === key)
       .sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name));
-    const retired = this.retiredProjectMains.get(key), back = retired && members.find(p => ownsProjectMain(retired, p));
-    // A retired main that reconnects (the same session) takes its role back, as after a broker restart.
+    // Remembered retired mains are in-memory state only; past the grace window the current main keeps its role.
+    const at = this.now();
+    for (const [group, entry] of this.retiredProjectMains) if (at - entry.at > RETIRED_MAIN_GRACE_MS || at < entry.at) this.retiredProjectMains.delete(group);
+    const retired = this.retiredProjectMains.get(key), back = retired && members.find(p => ownsProjectMain(retired.main, p));
+    // A retired main whose session reconnects soon (a resumed CLI) takes its role back, as after a broker restart.
     if (back) { this.retiredProjectMains.delete(key); this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, back); }
     let main = members.find(p => this.projectMains.has(key) && ownsProjectMain(this.projectMains.get(key)!, p));
     if (!main) { main = members[0]; if (main) this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, main); }
@@ -1696,8 +1756,8 @@ export class Broker {
         ...(previous?.finishedAt !== undefined ? { finishedAt: previous.finishedAt } : {}) });
     }
     const caller = this.requirePeer(conn);
-    for (const parent of this.conns) if (parent.peer) {
-      for (const child of this.nativeChildren.list(parent.peer)) {
+    for (const parent of this.liveConns()) {
+      for (const child of this.nativeChildren.list(parent.peer!)) {
         if (this.nativeAllowed(this.nativeChildren.target(child.address), caller.name)) peers.set(child.address, { name: child.address, title: "Native Claude child", agent: "claude", status: "running" });
       }
     }
@@ -1907,6 +1967,7 @@ export class Broker {
       } : {}),
     };
     this.freezeAgentHost(peer);
+    this.refuseRetiredHello(conn, peer);
     if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
     // Recover the identity before allocating a name. Arrival order cannot swap an
     // established suffixed session with another session's base name on reconnect.
