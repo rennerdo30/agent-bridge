@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isPluginCacheCwd } from "./session-visibility.js";
+import { gitSafetyArgs } from "./git-safety.js";
 
 const projectRoots = new Map<string, { root: string | null; expiresAt: number; marker: string }>();
 const PROJECT_ROOT_CACHE_MS = 30_000;
@@ -151,7 +152,7 @@ function discoverProjectRoot(physical: string): ProjectDiscovery {
 
 /** Bound repeated legacy-record migration without retaining missing paths or stale Git roots forever. */
 function resolveProjectRoot(physical: string, visibleRoot: (root: string) => string | null): string | null {
-    const git = (args: string[]) => execFileSync("git", ["-C", physical, "rev-parse", ...args],
+    const git = (args: string[]) => execFileSync("git", [...gitSafetyArgs(), "-C", physical, "rev-parse", ...args],
       { encoding: "utf8", timeout: 3_000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim();
     try {
       const top = realpathSync.native(git(["--show-toplevel"]));
@@ -159,11 +160,11 @@ function resolveProjectRoot(physical: string, visibleRoot: (root: string) => str
       // Ordinary repositories and linked worktrees share the main checkout's .git directory.
       if (common.endsWith("/.git") || common.endsWith("\\.git")) return visibleRoot(realpathSync.native(dirname(common)));
       try {
-        const configured = execFileSync("git", ["--git-dir", common, "config", "--get", "core.worktree"],
+        const configured = execFileSync("git", [...gitSafetyArgs(), "--git-dir", common, "config", "--get", "core.worktree"],
           { encoding: "utf8", timeout: 3_000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] }).trim();
         if (configured) return visibleRoot(realpathSync.native(resolve(common, configured)));
       } catch { /* A separate Git directory can instead identify its main through worktree metadata. */ }
-      const worktrees = execFileSync("git", ["-C", physical, "worktree", "list", "--porcelain"],
+      const worktrees = execFileSync("git", [...gitSafetyArgs(), "-C", physical, "worktree", "list", "--porcelain"],
         { encoding: "utf8", timeout: 3_000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
       const main = worktrees.split(/\r?\n\r?\n/).find((entry) => !/^bare$/m.test(entry));
       const root = main && /^worktree (.+)$/m.exec(main)?.[1];

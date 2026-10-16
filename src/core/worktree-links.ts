@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { gitSafetyArgs } from "./git-safety.js";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, realpathSync, rmSync, rmdirSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep, toNamespacedPath } from "node:path";
@@ -22,7 +23,8 @@ function ignoredCacheLink(root: string, path: string): boolean {
   const rel = relative(root, path).split(sep).join("/");
   try {
     root = realpathSync.native(root);
-    const args = ["-c", `safe.directory=${root.split(sep).join("/")}`];
+    // AB-422: the same hardening as every other bridge git call (no fsmonitor, hooks or editors).
+    const args = ["-c", `safe.directory=${root.split(sep).join("/")}`, ...gitSafetyArgs()];
     const tracked = execFileSync("git", [...args, "ls-files", "-z", "--", `:(literal)${rel}`], { cwd: root, encoding: "utf8", timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] });
     if (tracked) return false;
     // POSIX Git refuses cache/ through a symlink; cache alone cannot match directory-only rules.

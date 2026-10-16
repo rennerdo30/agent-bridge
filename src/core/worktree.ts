@@ -6,6 +6,7 @@ import { DelegateError, runProcess } from "./delegate.js";
 import { nullLogger, type Logger } from "./logger.js";
 import { resolveWorktreeRemovalPath, unlinkLinks } from "./worktree-links.js";
 import { displayPathText } from "./display-paths.js";
+import { diffSafety, gitSafetyArgs, repositoryGuards, splitGitArgs } from "./git-safety.js";
 
 /**
  * Git worktrees for editing subagents: each one works on its own branch in its own checkout, so
@@ -48,13 +49,29 @@ export function trustArgs(...dirs: string[]): string[] {
   return dirs.flatMap((d) => ["-c", `safe.directory=${resolve(d).replace(/\\/g, "/")}`]);
 }
 
+/**
+ * Every bridge git call. The repositories it works in (job worktrees, a job's cwd, the owner's project) may carry
+ * configuration a job wrote, so each call is hardened centrally (AB-422, see git-safety.ts): fsmonitor, hooks,
+ * editors and auto-gc are off, repository-local filter drivers and signing programs are neutralised, diffs use
+ * no external or textconv driver, and network access is refused when repository-local config names a program.
+ */
 export async function git(args: string[], cwd: string, log: Logger, timeoutMs = GIT_TIMEOUT_MS, env = process.env): Promise<string> {
   // Name the command in errors ("git worktree add timed out after 600s"), not the -c options before it.
   const what = `git ${args.filter((a, i) => !a.startsWith("-") && args[i - 1] !== "-c").slice(0, 2).join(" ")}`;
-  const res = await runProcess({ bin: GIT, args: [...LONG_PATH_ARGS, ...args], stdin: "", cwd, timeoutMs, env, log, what });
-  if (res.code !== 0) throw new Error(`${what} failed: ${(res.stderr || res.stdout).trim().slice(0, 500)}`);
+  const { options, rest } = splitGitArgs(args);
+  const prefix = [...LONG_PATH_ARGS, ...options, ...gitSafetyArgs()];
+  const exec = async (argv: string[], runEnv: NodeJS.ProcessEnv, label: string) => {
+    const res = await runProcess({ bin: GIT, args: argv, stdin: "", cwd, timeoutMs, env: runEnv, log, what: label });
+    if (res.code !== 0) throw new Error(`${label} failed: ${(res.stderr || res.stdout).trim().slice(0, 500)}`);
+    return res.stdout;
+  };
+  const sub = rest[0] ?? "";
+  const guards = await repositoryGuards(sub, (read) => exec([...prefix, ...read], env, `git ${read[0]}`))
+    .catch((err: Error) => { throw new Error(`${what} failed: ${err.message}`); });
+  // A prompt can never be answered here; the owner's GIT_SSH_COMMAND and global helpers stay in effect.
+  const runEnv = sub === "fetch" || sub === "ls-remote" || sub === "pull" || sub === "push" ? { ...env, GIT_TERMINAL_PROMPT: "0" } : env;
   // Only trailing whitespace: leading spaces are meaningful in `git status --porcelain`.
-  return res.stdout.trimEnd();
+  return (await exec([...prefix, ...guards, ...diffSafety(rest)], runEnv, what)).trimEnd();
 }
 
 export function worktreeBaseReport(wt: Pick<Worktree, "base" | "baseRef" | "baseNotes">): string {
@@ -409,9 +426,9 @@ export async function finishWorktree(wt: Worktree, message: string, log: Logger,
     }
     const env = { ...process.env };
     for (const key of Object.keys(env)) if (/^GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL)$/i.test(key)) delete env[key];
-    // --no-verify alone still runs prepare-commit-msg, which can append forbidden attribution.
-    // A linked checkout's .git is a file, so this hooks directory cannot contain executable hooks.
-    await git([...trust, "-c", `core.hooksPath=${resolve(wt.path).replace(/\\/g, "/")}/.git/checkpoint-hooks-disabled`, "commit", "-q", "--no-verify", "-m", subject], wt.path, log, GIT_TIMEOUT_MS, env);
+    // --no-verify alone still runs prepare-commit-msg, which can append forbidden attribution: git() points
+    // core.hooksPath at the bridge's empty hooks directory for every call (AB-422), so no hook runs.
+    await git([...trust, "commit", "-q", "--no-verify", "-m", subject], wt.path, log, GIT_TIMEOUT_MS, env);
   }
   await unlockWorktree(wt.repoRoot, wt.path, log);
   // The job may have switched to (or created) a branch of its own: its work is wherever it committed.
