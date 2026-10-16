@@ -52,6 +52,6 @@ export async function installMusePlugin(action: Action, run: (args: string[]) =>
     if (code !== 0) throw new Error(`muse ${args.join(" ")} failed with code ${code}`);
     done.push(`muse ${args.join(" ")}`);
   }
-  if (action === "update") done.push("Changed capabilities remain modified/review_needed. Read the inspected package, then explicitly run muse plugins approve agent-bridge. A disabled plugin stays disabled (muse plugins enable agent-bridge turns it on). Activation is in the next new session; running sessions keep their existing package.");
+  if (action === "update") done.push("Changed capabilities remain modified/review_needed. Read the inspected package, then explicitly run muse plugins approve agent-bridge. A disabled plugin stays disabled and has nothing to approve until it is on: run muse plugins enable agent-bridge first, then approve. Activation is in the next new session; running sessions keep their existing package.");
   return done;
 }
