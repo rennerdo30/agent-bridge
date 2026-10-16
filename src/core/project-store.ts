@@ -107,9 +107,17 @@ export function projectDatabasePath(project: string, home?: string): string {
 
 /** Only the default user home owns repository mirrors. Custom/test homes remain fully contained.
  * Compare physical paths so a drive alias cannot accidentally grant or remove ownership. */
+const mirrorOwnership = new Map<string, boolean>();
 export function ownsProjectMirrors(home: string): boolean {
-  const physical = (path: string) => { try { return realpathSync.native(path); } catch { return resolve(path); } };
-  return projectKey(physical(home)) === projectKey(physical(DEFAULT_HOME));
+  // The history worker asks every second for each project; resolving both paths each time was a measurable share
+  // of an idle broker's CPU. A resolved answer is kept; an unresolvable home is asked again next time.
+  const cached = mirrorOwnership.get(home);
+  if (cached !== undefined) return cached;
+  let resolved = true;
+  const physical = (path: string) => { try { return realpathSync.native(path); } catch { resolved = false; return resolve(path); } };
+  const owns = projectKey(physical(home)) === projectKey(physical(DEFAULT_HOME));
+  if (resolved) { if (mirrorOwnership.size >= 64) mirrorOwnership.clear(); mirrorOwnership.set(home, owns); }
+  return owns;
 }
 
 /**

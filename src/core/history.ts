@@ -697,9 +697,11 @@ export class HistoryIndex {
           this.advance(source, hash); metadataChanged = 1;
         }
       }
+      // A run's documents are all `run:<run>:…`: the id range uses the primary key. `run` has no index, and
+      // a plain `run=?` scanned the whole history store for every checked run log on every idle sweep.
       const changed = this.statement(this.db, `UPDATE history_documents SET session=?,job=? WHERE rowid IN
-        (SELECT rowid FROM history_documents WHERE run=? AND (session IS NOT ? OR job IS NOT ?) LIMIT ?) RETURNING id`)
-        .all(session, job, run, session, job, HISTORY_ROWS_PER_SOURCE);
+        (SELECT rowid FROM history_documents WHERE id>=? AND id<? AND run=? AND (session IS NOT ? OR job IS NOT ?) LIMIT ?) RETURNING id`)
+        .all(session, job, `run:${run}:`, `run:${run};`, run, session, job, HISTORY_ROWS_PER_SOURCE);
       for (const row of changed) if (session) this.statement(this.db, "INSERT OR IGNORE INTO history_tags VALUES (?, 'session', ?)").run(row.id!, session);
       if (!length) return changed.length + metadataChanged;
       this.put({ id: `run:${run}:${offset}`, kind: "run", agent: file.agent, at, body: `${typeof meta.title === "string" ? meta.title : ""}\n${buffer.subarray(0, length).toString("utf8")}`,
