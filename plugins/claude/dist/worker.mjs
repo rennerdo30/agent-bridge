@@ -12,29 +12,29 @@ import {
   shouldWakeClaudeMessage,
   sliceWhole,
   unshownMessageNotes
-} from "./chunks/chunk-UDTTJ3T2.mjs";
+} from "./chunks/chunk-OXWMBA2S.mjs";
 import {
   guardServerErrors,
   readJobReport,
   resultDeliveryLabel
-} from "./chunks/chunk-4CCQEOJP.mjs";
+} from "./chunks/chunk-2QFTUMLR.mjs";
 import {
   MAX_STREAM_ENTRIES,
   NATIVE_AGENT_ID
-} from "./chunks/chunk-TBXPXU4A.mjs";
+} from "./chunks/chunk-QREQC6AT.mjs";
 import {
   isBridgeWorktree,
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-LDGZJAWA.mjs";
+} from "./chunks/chunk-FTQREQVT.mjs";
 import {
   closeJobWorktree
-} from "./chunks/chunk-2X5NVNHS.mjs";
+} from "./chunks/chunk-AR5CMNJW.mjs";
 import {
   readWorktreeState
-} from "./chunks/chunk-CQJWVZZI.mjs";
-import "./chunks/chunk-EAYAONVE.mjs";
+} from "./chunks/chunk-7CVKDWQE.mjs";
+import "./chunks/chunk-DG2C6JPU.mjs";
 import {
   museBridgeTool,
   museHookOutput,
@@ -42,19 +42,19 @@ import {
 } from "./chunks/chunk-FHYEROEN.mjs";
 import {
   antigravityHookOutput
-} from "./chunks/chunk-2VZVBTOH.mjs";
+} from "./chunks/chunk-NSSS2E2Q.mjs";
 import {
   readSlotSnapshot,
   slotWaitFor,
   waitingText
-} from "./chunks/chunk-GSYRQPVA.mjs";
-import "./chunks/chunk-FVEVV5XM.mjs";
+} from "./chunks/chunk-ZZS7DLRZ.mjs";
+import "./chunks/chunk-YXMHG3YN.mjs";
 import "./chunks/chunk-QETSCJMA.mjs";
 import {
   describeModels,
   modelParameterDescription,
   readModels
-} from "./chunks/chunk-P5J2IPHB.mjs";
+} from "./chunks/chunk-NGIMALV2.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
@@ -66,7 +66,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-7XEX72ZJ.mjs";
+} from "./chunks/chunk-U4PYPZLH.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -78,32 +78,32 @@ import {
   formatProjectRoute,
   formatReplyRestrictions,
   formatVersionSkew
-} from "./chunks/chunk-M5WIF6BD.mjs";
+} from "./chunks/chunk-NNJPXXTU.mjs";
 import {
   formatHealth,
   probeBrokerHealth
-} from "./chunks/chunk-ZZMSWUNL.mjs";
-import "./chunks/chunk-BXX3M25H.mjs";
+} from "./chunks/chunk-N3SEYCBC.mjs";
+import "./chunks/chunk-L2VOUJ5D.mjs";
 import "./chunks/chunk-RQUYBZWF.mjs";
 import "./chunks/chunk-VWICCY7R.mjs";
 import {
   HISTORY_SEARCH_TOOL_DESCRIPTION,
   historySearchToolInput
-} from "./chunks/chunk-IVCBEGXV.mjs";
+} from "./chunks/chunk-HJDPKZ5I.mjs";
 import {
   conversationPageSchema
-} from "./chunks/chunk-XNQS3HEK.mjs";
+} from "./chunks/chunk-4TTW4D6I.mjs";
 import {
   MAX_HOLD_REASON_CHARS,
   deriveJobOutcome,
   readOutcomeDecision,
   readResultDelivery,
   setJobOutcome
-} from "./chunks/chunk-VFN34S7I.mjs";
-import "./chunks/chunk-3IEP5AFW.mjs";
+} from "./chunks/chunk-HFU6DLS3.mjs";
+import "./chunks/chunk-TWHGZNT5.mjs";
 import {
   RESULT_HEADER
-} from "./chunks/chunk-UB57JGQU.mjs";
+} from "./chunks/chunk-WAOM4CGG.mjs";
 import {
   ACCESS_LEVELS,
   AjvJsonSchemaValidator,
@@ -180,17 +180,17 @@ import {
   usageAdmissionText,
   usageProbeFor,
   verifiedGoneJobOwners
-} from "./chunks/chunk-TTHQ5MAE.mjs";
+} from "./chunks/chunk-3OYRXGOD.mjs";
 import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
   formatResourceSlots
-} from "./chunks/chunk-XWFBN72F.mjs";
+} from "./chunks/chunk-ND5WFNSL.mjs";
 import {
   REMOTE_JOB_POLL_MS,
   remoteSpawnArgsSchema
-} from "./chunks/chunk-V2V6Q7ZP.mjs";
+} from "./chunks/chunk-LPVHWGLA.mjs";
 import {
   MAX_JOB_SEND_TARGETS,
   isJobSendTarget,
@@ -204,7 +204,7 @@ import {
   resolveDbPath,
   resolveHome,
   resolvePipePath
-} from "./chunks/chunk-5XN3OUEH.mjs";
+} from "./chunks/chunk-AVUVMYZP.mjs";
 import {
   MUSE_ACCESS_ENV,
   antigravityAncestor,
@@ -218,7 +218,7 @@ import {
 import {
   bundleDirectory
 } from "./chunks/chunk-D5ZW6VFT.mjs";
-import "./chunks/chunk-WUECLVIN.mjs";
+import "./chunks/chunk-A6B24JJE.mjs";
 import {
   CLAUDE_PERMISSION_MODES,
   CODEX_APPROVALS_REVIEWERS,
@@ -230,7 +230,7 @@ import {
   parseAgentKind,
   saveConfigValue,
   watchConfig
-} from "./chunks/chunk-O44SBES4.mjs";
+} from "./chunks/chunk-5ZLT4NYT.mjs";
 import {
   MAX_DECISION_TEXT_CHARS,
   MAX_DECISION_TOPIC_CHARS,
@@ -238,15 +238,15 @@ import {
   decisionApplies,
   decisionScopeSchema,
   formatDecisionSummary
-} from "./chunks/chunk-RQPPSK5B.mjs";
+} from "./chunks/chunk-SIODXLCS.mjs";
 import {
   ZodOptional,
   canonicalProjectRoot,
   external_exports,
   isInternalBridgeProcess,
   isPluginCacheCwd
-} from "./chunks/chunk-DQLCSQJB.mjs";
-import "./chunks/chunk-3STYJDBM.mjs";
+} from "./chunks/chunk-7V4B5SQP.mjs";
+import "./chunks/chunk-IBXYWH6D.mjs";
 import {
   TRANSCRIPT_ID,
   directory,
@@ -272,8 +272,8 @@ import {
   isRecord,
   readJsonStore,
   writeJsonStore
-} from "./chunks/chunk-SCH2MQMZ.mjs";
-import "./chunks/chunk-DRBBJP7G.mjs";
+} from "./chunks/chunk-J4YP2FBF.mjs";
+import "./chunks/chunk-SDOF5BVV.mjs";
 import {
   APP_NAME,
   APP_VERSION,
@@ -287,7 +287,7 @@ import {
   MAX_JOBS_LIMIT,
   MAX_JOB_TIMEOUT_SEC,
   MAX_WAIT_SEC
-} from "./chunks/chunk-M2P5YTJL.mjs";
+} from "./chunks/chunk-4UEZB7GB.mjs";
 import {
   parentProcessIdentity,
   processIdentity,
@@ -2448,7 +2448,7 @@ var MuseHooks = class {
           if (access === "ask" && !museReadingTool(input)) return { hookSpecificOutput: { hookEventName: event, permissionDecision: "ask" } };
         }
         if (body.thread && body.thread !== this.session) return {};
-        const mapped = event === "PreLLMCall" || event === "PreToolUse" ? "PostToolUse" : event;
+        const mapped = event === "PreLLMCall" ? "PostToolUse" : event;
         if (!["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "StopFailure", "SessionEnd"].includes(mapped)) return {};
         const output = await buildHookResponse(this.ctx, { event: mapped, sessionId: this.session, cwd: typeof input.cwd === "string" ? input.cwd : null, stopHookActive: input.stop_hook_active === true, prompt: typeof input.prompt === "string" ? input.prompt : null, promptId: typeof input.turn_id === "string" ? input.turn_id : null, signal: controller.signal });
         return controller.signal.aborted || this.retired ? {} : museHookOutput(event, output);
@@ -3702,7 +3702,7 @@ async function startServer(argv = process.argv.slice(2)) {
       }
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-BMBX7S5B.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-KY6PCHMT.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3714,9 +3714,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-64DIPXSH.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-X7XSBJDY.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-64DIPXSH.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-X7XSBJDY.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -4086,8 +4086,8 @@ ${JSON.stringify(result)}`);
     },
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-MEPRGWW4.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-FZCG6LSI.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-ZQZIEHQG.mjs")).readHistory(resolveDbPath(ctx.home), args);
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-ASBSC3WU.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
@@ -4095,7 +4095,7 @@ ${JSON.stringify(result)}`);
     description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
     inputSchema: { ...conversationPageSchema.shape, ...mailScopeSchema },
     annotations: { readOnlyHint: true }
-  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-D6PZQC6N.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
+  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-3CKU5A6F.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
   register(
     "decide",
     {
