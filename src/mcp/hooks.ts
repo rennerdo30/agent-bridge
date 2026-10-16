@@ -75,6 +75,49 @@ export function completionAwaitingReceipt(ctx: ServerContext, id: string): boole
   return completionPending.get(ctx)?.has(id) ?? false;
 }
 
+/** Completions whose hook hand-out may have reached the model but was never confirmed (StopFailure, session end). */
+const completionRepeats = new WeakMap<ServerContext, Set<string>>();
+const MAX_COMPLETION_REPEATS = 500;
+
+/** The hook output that carried these completions may have been shown: a later copy is marked as a repeat. */
+function dropPendingCompletions(ctx: ServerContext): void {
+  const pending = completionPending.get(ctx);
+  completionPending.delete(ctx);
+  if (!pending?.size) return;
+  let repeats = completionRepeats.get(ctx);
+  if (!repeats) { repeats = new Set(); completionRepeats.set(ctx, repeats); }
+  for (const id of pending.keys()) repeats.add(id);
+  while (repeats.size > MAX_COMPLETION_REPEATS) repeats.delete(repeats.values().next().value!);
+  ctx.wakeDelivery?.repeat?.(pending.keys());
+}
+
+/** A copy of this message repeats an earlier hand-out that may have reached the model (AB-396). */
+function repeated(ctx: ServerContext, m: BridgeMessage): boolean {
+  return Boolean(completionRepeats.get(ctx)?.has(m.id) || ctx.wakeDelivery?.repeated?.(m.id));
+}
+
+/** Hook context for unread mail, with repeats marked. */
+function formatHookMessages(ctx: ServerContext, msgs: BridgeMessage[], opts: { replyHint?: boolean } = {}): string {
+  return formatMessages(msgs, { ...opts, repeat: (m) => repeated(ctx, m) });
+}
+
+/** Unread mail a hook may show: neither a completion awaiting its receipt, a mod wake-up on its way to its own turn,
+ * nor a message already listed by id as too large for one result (AB-404; inbox pages it). */
+function hookDeliverable(ctx: ServerContext, m: BridgeMessage): boolean {
+  return !completionAwaitingReceipt(ctx, m.id) && !ctx.wakeDelivery?.inFlight?.(m.id) && !oversizedMessageNoted(ctx, m.id);
+}
+
+/**
+ * Messages the Claude wake path (mod or Stop hooks) may submit as their own turn. A completion a hook already
+ * handed out is delivered: it waits for its receipt at a later boundary and never starts a second turn (AB-396).
+ */
+export function claudeWakeCandidate(ctx: ServerContext, m: BridgeMessage): boolean {
+  const node = ctx.node;
+  return node != null && !ctx.channelActive() && m.hop < ctx.cfg.maxHops &&
+    // Running-job notes remain in explicit inbox reads and history (see JobManager.fromSubagent).
+    !ctx.jobs?.isNote(m) && !completionAwaitingReceipt(ctx, m.id) && shouldWakeClaudeMessage(node, ctx.cfg, m);
+}
+
 function confirmCompletionDelivery(ctx: ServerContext, input: HookInput): void {
   const pending = completionPending.get(ctx);
   if (!pending) return;
@@ -175,7 +218,7 @@ function take(ctx: ServerContext, wakeOnly: boolean, notesOnly: boolean, hold: b
     // Observer copies and acknowledgements remain available in inbox/history on demand.
     // Filter before the batch limit so old chatter cannot delay current results or blockers.
     .filter((m) => !isQuietMessage(m))
-    .filter((m) => !completionAwaitingReceipt(ctx, m.id))
+    .filter((m) => hookDeliverable(ctx, m))
     .filter((m) => !notesOnly || ctx.jobs?.isNote(m) || !shouldWakeClaudeMessage(node, ctx.cfg, m))
     // Ending a turn: a running subagent's status note does not keep it going; it comes with the next prompt.
     .filter((m) => !wakeOnly || (m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m)));
@@ -290,7 +333,7 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
   try {
     if (input.subagent) return await subagentHook(ctx, { ...input, signal: controller.signal });
     if (input.event === "SessionEnd") {
-      completionPending.delete(ctx);
+      dropPendingCompletions(ctx);
       if (ctx.agent === "claude" && node && !node.wasReplaced && node.currentSessionId === input.sessionId) await withinHook(node.nativeChildrenEnd(), controller.signal);
       return {};
     }
@@ -327,7 +370,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
   await withinHook(node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: (err as Error).message })), input.signal!);
   if (!current()) return {};
   // The host discards StopFailure output. Never read/confirm mail that it cannot deliver.
-  if (input.event === "StopFailure") { completionPending.delete(ctx); releaseAntigravityStopDelivery(ctx); finishHookTurn(ctx, input); return {}; }
+  if (input.event === "StopFailure") { dropPendingCompletions(ctx); releaseAntigravityStopDelivery(ctx); finishHookTurn(ctx, input); return {}; }
   confirmCompletionDelivery(ctx, input);
   currentHookEvent.set(ctx, input.event);
   if (ctx.agent === "antigravity") {
@@ -347,6 +390,8 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
   // session comes first, the wake-up was lost and they are shown again below.
   // The wake-up's own turn starts with a prompt carrying its text: that is delivery, not a new user prompt.
   const wakeTurn = input.event === "UserPromptSubmit" && Boolean(input.prompt?.includes(WAKE_HEADER));
+  // The mod's wake prompt carries its message ids: shown now, wherever they were handed out (AB-396).
+  if (wakeTurn) ctx.wakeDelivery?.confirmPrompt?.(input.prompt!);
   if (input.event === "PostToolUse" || input.event === "Stop" || wakeTurn) ctx.wakeDelivery?.confirm();
   else ctx.wakeDelivery?.release();
   if (input.event === "PostToolUse" || input.event === "UserPromptSubmit") ctx.wakeDelivery?.active();
@@ -364,7 +409,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
         peers.length ? `Peers online:\n${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now.",
       ];
       lines.push(...new MessageWaitStore(ctx.home).pending(node).map(resumeWaitHint));
-      const unread = node.unread().filter((m) => !isQuietMessage(m) && !completionAwaitingReceipt(ctx, m.id)).length;
+      const unread = node.unread().filter((m) => !isQuietMessage(m) && hookDeliverable(ctx, m)).length;
       const decisions = await withinHook(node.decisions({ scope: { project: ctx.cwd() } }).catch(() => []), input.signal!);
       if (!current()) return {};
       const summary = formatDecisionSummary(decisions);
@@ -376,7 +421,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
     case "PostToolUse": {
       if (!busyAtIngress) ctx.activity?.("busy");
       // Muted session messages use active hooks; observer copies stay on demand.
-      const delivery = take(ctx, false, channel, false, (msgs) => formatMessages(msgs), (text) => context(input.event, text));
+      const delivery = take(ctx, false, channel, false, (msgs) => formatHookMessages(ctx, msgs), (text) => context(input.event, text));
       return delivery.text ? context(input.event, delivery.text) : {};
     }
     case "Stop": {
@@ -398,12 +443,12 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
       if (!node.autoWakeEnabled && !inConversation) {
         // A notify wait is explicit permission to deliver its match, even after the listen window ends.
         // Finishing the last job ends runningCount before Stop. Its result still owns delivery.
-        const awaited = node.unread().filter((m) => !completionAwaitingReceipt(ctx, m.id) && (node.isNotificationAwaited(m) ||
+        const awaited = node.unread().filter((m) => hookDeliverable(ctx, m) && (node.isNotificationAwaited(m) ||
           (m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node, ctx.cfg, m)) ||
           ((ctx.agent === "opencode" || ctx.agent === "antigravity") && m.to !== BROADCAST && !(AGENT_KINDS as readonly string[]).includes(m.to) &&
             shouldWakeClaudeMessage(node, ctx.cfg, m))) && m.hop < ctx.cfg.maxHops &&
           !isQuietMessage(m) && !m.conversationId.endsWith(":note"));
-        const delivery = boundedDelivery(ctx, awaited, (msgs) => formatMessages(msgs, { replyHint: false }), (text) => stopMail(ctx, text));
+        const delivery = boundedDelivery(ctx, awaited, (msgs) => formatHookMessages(ctx, msgs, { replyHint: false }), (text) => stopMail(ctx, text));
         if (delivery.text) {
           holdOrMarkRead(ctx, delivery.msgs.map((m) => m.id), holdStop);
           ctx.activity?.("busy");
@@ -412,7 +457,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
         finishHookTurn(ctx, input);
         return {};
       }
-      const delivery = take(ctx, true, false, holdStop, (msgs) => formatMessages(msgs, { replyHint: false }), (text) => stopMail(ctx, text), STOP_REASON_FOOTER);
+      const delivery = take(ctx, true, false, holdStop, (msgs) => formatHookMessages(ctx, msgs, { replyHint: false }), (text) => stopMail(ctx, text), STOP_REASON_FOOTER);
       const msgs = delivery.msgs;
       // Stop never long-polls. Notify-mode subscriptions and the existing wake path deliver later.
       if (!msgs.length && jobsRunning > 0) {

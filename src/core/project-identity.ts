@@ -5,6 +5,25 @@ import { isPluginCacheCwd } from "./session-visibility.js";
 
 const projectRoots = new Map<string, { root: string | null; expiresAt: number; marker: string }>();
 const PROJECT_ROOT_CACHE_MS = 30_000;
+/**
+ * The physical spelling of a path. realpathSync.native already resolves Windows SUBST and mapped-drive aliases
+ * (AB-399). A path that no longer exists (a removed working folder) resolves through its nearest existing ancestor,
+ * so an alias spelling still canonicalizes without listing drive mappings or starting a process. Throws only when no
+ * ancestor resolves either.
+ */
+export function physicalPath(path: string, real: (path: string) => string = realpathSync.native): string {
+  try { return real(path); }
+  catch (error) {
+    const rest: string[] = [];
+    for (let dir = path; ;) {
+      const parent = dirname(dir);
+      if (parent === dir) throw error;
+      rest.unshift(basename(dir));
+      dir = parent;
+      try { return join(real(dir), ...rest); } catch { /* Keep walking towards the root. */ }
+    }
+  }
+}
 
 /** The common Git directory identifies linked worktrees; physical paths unify subst aliases. */
 export function canonicalProjectRoot(cwd: string): string | null {

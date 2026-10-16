@@ -377,6 +377,12 @@ export interface EventMap {
    * older server replaced by a newer one of the same host process exits.
    */
   replaced: { by: string; version?: string; agentPid?: number | null; agentStartedAt?: string | null };
+  /**
+   * AB-399: the broker retired this connection because the session's CLI process ended (host_exited: signal 0
+   * found no such process) or its PID now belongs to a process started later (pid_reused). The server stays off the
+   * bridge instead of reconnecting; it rejoins only when the session calls it again.
+   */
+  retired: { reason: "host_exited" | "pid_reused"; agentPid?: number | null };
   /** The daemon is handing over to a newer release and is about to exit (no event for embedded brokers). */
   handover: { version?: string; protocol?: number };
 }

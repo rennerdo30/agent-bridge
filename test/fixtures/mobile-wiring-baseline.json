@@ -1,11 +1,11 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "d47986d1cf9d6b0666bf7e920861ade9d19f7410744cc5a9de5f9c6e776ed7da",
+    "src/core/broker.ts:constructor": "ff65f7716adae2dd8c157212c26983ec4201d1813b655f0458109fa587c702d2",
     "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
     "src/core/broker.ts:startServices": "07bc9bdb56bea9ae2c5c3f0c89639469f7fa5ccfb0d8e5bc97fc1efbfd93fe2f",
     "src/core/broker.ts:abortStartup": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
-    "src/core/broker.ts:close": "4958782171a8f0e4846cfcb02cc515c112653f519830b842c42996ed22a4c44e",
+    "src/core/broker.ts:close": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27",
     "src/core/node.ts:constructor": "0094b2611e538459faa5577274f1a9b2437e7a3c1f6e9361cbe2c02428f0dd07",
     "src/core/node.ts:start": "c2444cc1c41903a2489d3142952a79d2d562b37cea8bf617ae4db5a2b2e10299",
     "src/core/node.ts:stop": "b98b5631cf7643be62bce61fac172fc79c0da09db2c7720abf14502736b57359",
@@ -276,16 +276,33 @@
       "reason": "AB-400 (PR #92): startUi's /api/state job map adds only `...(j.resultStored ? { resultStored: true } : {})` so the dashboard can show \"result stored, not delivered\". No control-flow change; broker, node.ts and dashboard method pins, normalizer and assertions are unchanged.",
       "commit": "7b35f4e2"
     },
+    "AB-399-peer-liveness": {
+      "base": "99fc3ba3",
+      "changes": [
+        {
+          "method": "src/core/broker.ts:constructor",
+          "previous": "a0c87adcecd93ba68139a2cb6ad21e823e1aae36cc64d9d6209631d3e7399314",
+          "current": "75f6b310251fc0ae44703324697cb9e7fb3db84b59981e7926700bb4dcd4b662"
+        },
+        {
+          "method": "src/core/broker.ts:close",
+          "previous": "4958782171a8f0e4846cfcb02cc515c112653f519830b842c42996ed22a4c44e",
+          "current": "fb5a92326cac082ae181f38208c0af708a2b342297038d021f67a13bcd8b9b27"
+        }
+      ],
+      "reason": "AB-399 (PR #94): the constructor's hello handler adds only `this.afterRegistration(c)` (a deferred dead-CLI check after the hello reply); Broker.close() adds only the liveness sweep timer clear. No mobile or other control-flow change; node.ts and dashboard pins, UI hash, normalizer and assertions are unchanged.",
+      "commit": "e1ba9195"
+    },
     "AB-404-project-job-summaries": {
       "base": "4bde4d8a",
       "changes": [
         {
           "method": "src/core/broker.ts:constructor",
-          "previous": "a0c87adcecd93ba68139a2cb6ad21e823e1aae36cc64d9d6209631d3e7399314",
-          "current": "d47986d1cf9d6b0666bf7e920861ade9d19f7410744cc5a9de5f9c6e776ed7da"
+          "previous": "75f6b310251fc0ae44703324697cb9e7fb3db84b59981e7926700bb4dcd4b662",
+          "current": "ff65f7716adae2dd8c157212c26983ec4201d1813b655f0458109fa587c702d2"
         }
       ],
-      "reason": "AB-404 (PR #95): the broker handler table now calls a private projectJobRecords method for projectJobs (same body, moved out of the constructor) and adds the projectJobSummaries op (slim, frame-bounded pages of the same records). No mobile, startup or close control-flow change; node.ts and dashboard pins, startUi hash, normalizer and assertions are unchanged, and the other mobile-wiring tests pass unchanged.",
+      "reason": "AB-404 (PR #95): the broker handler table now calls a private projectJobRecords method for projectJobs (same body, moved out of the constructor) and adds the projectJobSummaries op (slim, frame-bounded pages of the same records). Re-pinned on top of AB-399 after merging main: the constructor differs from main only by that move and the new op. No mobile, startup or close control-flow change; node.ts and dashboard pins, startUi hash, normalizer and assertions are unchanged, and the other mobile-wiring tests pass unchanged.",
       "commit": "9b7b0a43"
     }
   },
