@@ -206,8 +206,15 @@ function* listRunsSteps(home: string, now: number, names?: Set<string>, responsi
         while (runSummaries.size > cap) runSummaries.delete(runSummaries.keys().next().value!);
       }
       // A silent log alone is not an interruption: a fresh job can wait for admission, a queue or a long model step.
-      // Its runner heartbeat (every 15 s) proves it is still at work.
-      const stale = cached.summary.status === "running" && now - log.updatedAt > STALE_RUN_MS && !runnerHeartbeatFresh(home, log.meta.job, now);
+      // Its runner heartbeat (every 15 s) proves it is still at work. Long-interrupted runs stay "running" in their
+      // summary, so a missing heartbeat is remembered for a minute instead of re-reading the runner state each poll.
+      let stale = false;
+      if (cached.summary.status === "running" && now - log.updatedAt > STALE_RUN_MS) {
+        if (!(cached.silentUntil && now < cached.silentUntil)) {
+          stale = !runnerHeartbeatFresh(home, log.meta.job, now);
+          cached.silentUntil = stale ? now + SILENT_RUNNER_RECHECK_MS : undefined;
+        } else stale = true;
+      }
       runs.push({ ...cloneJson(cached.summary), ...(stale ? { status: "interrupted", etaAt: undefined, etaReportedAt: undefined } : {}), archived: log.archived, recovered: false, hasLog: true });
     }
     catch { /* A concurrent archive operation is retried on the next refresh. */ }
@@ -267,7 +274,8 @@ function* listRunsSteps(home: string, now: number, names?: Set<string>, responsi
   return pageRuns(runs, null, runs.length).runs;
 }
 
-const runSummaries = new Map<string, { signature: string; summary: RunSummary }>();
+const runSummaries = new Map<string, { signature: string; summary: RunSummary; silentUntil?: number }>();
+const SILENT_RUNNER_RECHECK_MS = 60_000;
 export const RUN_SUMMARY_CACHE_MIN = 2048;
 
 export function readMeta(file: string): RunMeta {
