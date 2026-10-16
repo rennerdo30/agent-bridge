@@ -25,10 +25,15 @@ title: "Configuration"
 
 `jobs.defaultAllowTools` is the `allow_tools` of every `spawn_*` / `ask_*` job whose call
 passes none (default `["pair-desk:worker"]`: Pair Desk reads, comments, progress, plans,
-steps, issue edits and review locations; never status, build or handoff writes). A list passed
-on the call replaces it; `allow_tools: []` turns it off for one job, and
-`"defaultAllowTools": []` turns it off for all. Home config only (top level or a per-agent
-section); a project config cannot set it. It never applies to native children. See
+steps, issue edits and review locations; it does not create issues and never writes status,
+builds or the handoff). It applies in every access mode, so `read` and `ask` jobs may write
+those desk entries without asking too. A list passed on the call replaces it;
+`allow_tools: []` turns it off for one job, and `"defaultAllowTools": []` turns it off for all.
+Home config only; a project config cannot set it. The section that applies is the one of the
+session that spawns the job (its agent section, else the top level); for a job on a paired PC,
+the receiving PC's section for the target agent. It covers the bridge job and what runs inside it
+(for example Task subagents of a Claude job), not the session itself or its own native children.
+Tool descriptions show the value from when the session started. See
 [delegation](../concepts/delegation/).
 
 `codexSubagents` sets the default native Codex child-thread budget per delegated job

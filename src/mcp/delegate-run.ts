@@ -2,7 +2,7 @@ import { worktreeBaseReport, worktreeRoots } from "../core/worktree.js";
 import { randomUUID } from "node:crypto";
 import { appendContextEvent } from "../core/context-journal.js";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import type { BridgeConfig } from "../core/config.js";
+import { DEFAULT_CONFIG, type BridgeConfig } from "../core/config.js";
 import { APP_VERSION, DEFAULT_DELEGATE_TIMEOUT_SEC, DELEGATION_METADATA_VERSION, ENV, MAX_JOB_TIMEOUT_SEC } from "../core/constants.js";
 import { bundledCli, checkDepth, DelegateError, PARENT_JOB_ENV, ROOT_NAME_ENV, ROOT_SESSION_ENV, retryTransient, type DelegateResult } from "../core/delegate.js";
 import { RootConcurrency } from "../core/root-concurrency.js";
@@ -249,7 +249,13 @@ async function runDelegateInner(
   const allowedServers = job ? (job.allowedServers ??= new Set<string>()) : new Set<string>();
   // The job's own allow_tools, or the configured default when the call passed none (AB-403). This is the one
   // place every CLI kind gets its grants from: approve() below and Claude's filtered job MCP view.
-  const autoApprove = [...cfg.autoApproveTools, ...(access === "read" ? DESK_READ_PATTERNS : []), ...effectiveAllowTools(a.allow_tools, cfg.jobs.defaultAllowTools)];
+  // Runner specs written by an older release carry no `jobs` key: use the built-in default then.
+  const defaultAllowTools = cfg.jobs?.defaultAllowTools ?? DEFAULT_CONFIG.jobs.defaultAllowTools;
+  // Grants the caller set itself (config allowlist, read access, an explicit allow_tools). A Claude job must load
+  // the servers they select; a server selected only by the default allowance is skipped when it cannot start.
+  const baseAllow = [...cfg.autoApproveTools, ...(access === "read" ? DESK_READ_PATTERNS : [])];
+  const requiredAllow = [...baseAllow, ...(a.allow_tools ?? [])];
+  const autoApprove = [...baseAllow, ...effectiveAllowTools(a.allow_tools, defaultAllowTools)];
   const approve = async (r: PermissionRequest): Promise<PermissionDecision> => journalPermission(r, async () => {
     // Handoff tools first: no allow pattern or earlier "allow" for their server covers them.
     if (isHandoffToolCall(r)) {
@@ -429,7 +435,7 @@ async function runDelegateInner(
           if (job) rc.jobs?.note(job, { sessionId: id, workdir, worktree: wt });
         },
         approve,
-        ...(target === "claude" ? { claudeAllowTools: autoApprove } : {}),
+        ...(target === "claude" ? { claudeAllowTools: autoApprove, claudeRequiredAllowTools: requiredAllow } : {}),
         onDenied: (message) => { link?.post(message); },
         // Someone answers approve's questions: the user ("ask" relay or a dialog) or, for a background
         // subagent, the parent agent. Else targets keep their own behavior (Claude and opencode).
