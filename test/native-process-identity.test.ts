@@ -4,8 +4,9 @@ import { afterAll, afterEach, beforeEach, expect, it, vi } from "vitest";
 /**
  * AB-427: Windows identities from the resident native host (OpenProcess + GetProcessTimes) instead of one
  * PowerShell launch per query. The PowerShell probes stay as the fallback, so every native reading is compared
- * with the PowerShell reading of the same process. Launches from process-identity.ts are recorded; the host
- * itself is spawned by a worker thread and is not part of this module's mocked child_process.
+ * with the PowerShell reading of the same process. execFile/execFileSync launches (the PowerShell probes) are
+ * recorded. The host is spawned on the main thread with child_process.spawn, which this mock passes through
+ * unrecorded, so `launches` counts only probes.
  */
 const launches = vi.hoisted(() => [] as string[]);
 vi.mock("node:child_process", async original => {
@@ -105,6 +106,15 @@ it.runIf(windows)("answers a batch in one request, with exited, invalid and prot
   expect(sync.has(4)).toBe(true);
   if (legacyProtected) expect(sync.get(4)).toBe(legacyProtected);
   expect(batch.get(4) ?? "").toBe(sync.get(4));
+});
+
+it.runIf(windows)("answers a PID above the Windows int range as not running, not as unreadable", async () => {
+  expect(await native.nativeIdentityHostStarted()).toBe(true);
+  expect(native.readNativeIdentitiesSync([2147483648, 4294967295], 5_000)).toEqual(new Map());
+  expect(await native.readNativeIdentities([2147483648], 5_000)).toEqual(new Map());
+  const own = native.readNativeIdentitiesSync([process.pid, 2147483648], 5_000);
+  expect(own?.get(process.pid)).toMatch(/^\d+$/);
+  expect(own?.has(2147483648)).toBe(false);
 });
 
 it.runIf(windows)("keeps the PowerShell probe while the host is cold, then reads natively", async () => {

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { MessageChannel, receiveMessageOnPort, Worker, type MessagePort } from "node:worker_threads";
+import { isMainThread, MessageChannel, receiveMessageOnPort, Worker, type MessagePort } from "node:worker_threads";
 
 /**
  * Windows process creation identities through direct kernel32 calls (AB-427): OpenProcess, WaitForSingleObject,
@@ -35,8 +35,12 @@ const IDLE_MS = 5 * 60_000;
 /** A host that cannot start (no PowerShell, blocked script) is not retried for this long. */
 const FAILURE_COOLDOWN_MS = 60_000;
 const STARTUP_TIMEOUT_MS = 15_000;
+/** After this many failed starts, native reads stay off for the rest of the process (no restart churn). */
+const MAX_START_FAILURES = 3;
 
-// $pipe is prepended by hostCommand. The host prints "ready" once its pipe exists, then serves one connection.
+// $pipe is prepended by startHost; the script arrives on stdin (no -EncodedCommand). Before "ready" the host checks
+// its own reading against .NET's StartTime of itself, so a broken native path exits (a start failure) instead of
+// answering. Its pipe allows only the current user. It prints "ready" once the pipe exists, then serves one connection.
 // One request line: "<id> <pid> <pid> ...". One answer line: "<id> <pid>=<value> ..." where value is the tick
 // string, "-" (not a running process) or "?" (running, times unreadable; or an unexpected error: absence unproven).
 // [Type]::new rather than New-Object: New-Object autoloads the Utility module (about 0.7 s more per start).
@@ -80,8 +84,13 @@ function Read-Identity([int]$id) {
     return [string][DateTime]::FromFileTime([long]$times[1]).ToUniversalTime().Ticks
   } finally { $handle.Dispose() }
 }
+if ((Read-Identity $PID) -ne [string][Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().Ticks) { exit 5 }
+$security = [IO.Pipes.PipeSecurity]::new()
+$security.SetAccessRuleProtection($true, $false)
+$security.AddAccessRule([IO.Pipes.PipeAccessRule]::new([Security.Principal.WindowsIdentity]::GetCurrent().User,
+  [IO.Pipes.PipeAccessRights]::FullControl, [Security.AccessControl.AccessControlType]::Allow))
 $server = [IO.Pipes.NamedPipeServerStream]::new($pipe, [IO.Pipes.PipeDirection]::InOut, 1,
-  [IO.Pipes.PipeTransmissionMode]::Byte, [IO.Pipes.PipeOptions]::Asynchronous)
+  [IO.Pipes.PipeTransmissionMode]::Byte, [IO.Pipes.PipeOptions]::Asynchronous, 4096, 4096, $security)
 [Console]::Out.WriteLine('ready'); [Console]::Out.Flush()
 $connecting = $server.BeginWaitForConnection($null, $null)
 if (!$connecting.AsyncWaitHandle.WaitOne(15000)) { exit 4 }
@@ -97,7 +106,9 @@ while ($null -ne ($line = $reader.ReadLine())) {
   for ($i = 1; $i -lt $parts.Length; $i++) {
     if ($parts[$i] -notmatch '^\d{1,10}$') { continue }
     $value = '?'
-    try { $value = Read-Identity ([int]$parts[$i]) } catch { $value = '?' }
+    # Windows PIDs fit in an int; a larger number cannot be a running process.
+    if ([long]$parts[$i] -gt [int]::MaxValue) { $value = '-' }
+    else { try { $value = Read-Identity ([int]$parts[$i]) } catch { $value = '?' } }
     $null = $answer.Append(' ').Append($parts[$i]).Append('=').Append($value)
   }
   $writer.WriteLine($answer.ToString()); $writer.Flush()
@@ -184,11 +195,24 @@ interface Helper {
 
 let helper: Helper | undefined;
 let failedAt = 0;
+let startFailures = 0;
 let nextId = 0;
 
-/** Native reads are on by default on Windows; AGENT_BRIDGE_NATIVE_PROCESS_IDENTITY=0 restores the PowerShell probes. */
+/** A failed host start: cool down, and after MAX_START_FAILURES keep native reads off for this process. */
+function startFailed(): void {
+  failedAt = Date.now();
+  startFailures++;
+}
+
+/**
+ * Native reads are on by default on Windows, on the main thread only: a host spawned from a worker thread (history,
+ * job-archive and outcome workers take metadata leases and migration/storage locks) could inherit a concurrent
+ * main-thread child's stdio handles and hold them open for minutes. Workers keep the PowerShell probe.
+ * AGENT_BRIDGE_NATIVE_PROCESS_IDENTITY=0 restores the PowerShell probes everywhere.
+ */
 function enabled(): boolean {
-  return process.platform === "win32" && process.env.AGENT_BRIDGE_NATIVE_PROCESS_IDENTITY !== "0" && Date.now() - failedAt >= FAILURE_COOLDOWN_MS;
+  return process.platform === "win32" && isMainThread && process.env.AGENT_BRIDGE_NATIVE_PROCESS_IDENTITY !== "0" &&
+    startFailures < MAX_START_FAILURES && Date.now() - failedAt >= FAILURE_COOLDOWN_MS;
 }
 
 function getHelper(): Helper | undefined {
@@ -208,7 +232,7 @@ function getHelper(): Helper | undefined {
       if (message.type === "disconnected") {
         // The host exits on EOF; a connection that never became ready is a start failure.
         // A failed connection leaves the host waiting for one: stop the host this module started.
-        if (message.failed) { failedAt = Date.now(); settleStart(created, false); created.host?.kill(); }
+        if (message.failed) { startFailed(); settleStart(created, false); created.host?.kill(); }
         return;
       }
       const resolve = created.pending.get(message.id!);
@@ -219,7 +243,7 @@ function getHelper(): Helper | undefined {
     worker.unref();
     return helper = created;
   } catch {
-    failedAt = Date.now();
+    startFailed();
     return undefined;
   }
 }
@@ -237,12 +261,15 @@ function startHost(current: Helper): void {
   const script = "$pipe = '" + pipe.slice("\\\\.\\pipe\\".length) + "'\n" + HOST;
   let host: ChildProcess;
   try {
-    host = spawn(bin, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")],
-      { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+    // The script is read from stdin and run as one script block; stdin is closed after it.
+    host = spawn(bin, ["-NoProfile", "-NonInteractive", "-Command", "& ([scriptblock]::Create([Console]::In.ReadToEnd()))"],
+      { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
   } catch {
-    failedAt = Date.now(); settleStart(current, false); return;
+    startFailed(); settleStart(current, false); return;
   }
   current.host = host;
+  host.stdin!.on("error", () => { /* a host that died early is reported through exit */ });
+  host.stdin!.end(script);
   Atomics.store(current.state, 2, host.pid ?? 0);
   let ready = false;
   const startup = setTimeout(() => { if (!ready) host.kill(); }, STARTUP_TIMEOUT_MS);
@@ -261,7 +288,7 @@ function startHost(current: Helper): void {
     ended = true; clearTimeout(startup);
     if (current.host === host) { current.host = undefined; Atomics.store(current.state, 2, 0); }
     current.worker.postMessage({ type: "close" });
-    if (!ready) { failedAt = Date.now(); settleStart(current, false); }
+    if (!ready) { startFailed(); settleStart(current, false); }
   };
   // A spawn failure (ENOENT) reports "error" without "exit".
   host.on("error", () => { if (host.pid === undefined || host.exitCode !== null) end(); });
@@ -293,6 +320,8 @@ function parse(pids: number[], results: string[] | undefined): Map<number, strin
     if (value === "?") result.set(pid, "");
     else if (value !== "-") result.set(pid, value);
   }
+  // Every PID unreadable means the native path itself is suspect (not one protected process): let the probe decide.
+  if (pids.every(pid => answers.get(pid) === "?")) return undefined;
   return result;
 }
 
@@ -412,7 +441,10 @@ export async function stopNativeIdentityHost(): Promise<void> {
   await current.worker.terminate();
 }
 
-/** Reset the start-failure cooldown (tests). */
+/** Reset the start-failure cooldown (tests); the per-process failure count is kept. */
 export function resetNativeIdentityCooldown(): void {
   failedAt = 0;
 }
+
+/** Native answer parsing, exported for tests. */
+export const parseNativeAnswer = parse;
