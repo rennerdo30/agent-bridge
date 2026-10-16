@@ -983,7 +983,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       if (recent.length) {
         lines.push(t("peers.recent"));
         for (const j of recent) {
-          const delivery = j.report ? "result stored; query peers(job=...) for delivery receipt" : null;
+          // The report text lives only in memory; the stored flag survives a restart.
+          const delivery = j.report || j.resultStored ? "result stored; query peers(job=...) for delivery receipt" : null;
           lines.push(t("peers.recentJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), status: j.status + (delivery ? `; ${delivery}` : ""), ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }));
         }
       }
