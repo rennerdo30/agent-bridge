@@ -165,6 +165,18 @@ describe("incremental source indexing", () => {
     drain(index); expect(index.search({ query: "cantaloupe" }).hits).toEqual(metadata);
     expect(readFileSync(file, "utf8")).toBe("09:00:00 walnut metadata\n");
   });
+  it("late run metadata re-tags only that run's documents, not a run whose name shares its prefix", async () => {
+    const s = await store(), index = fixtureIndex(s), runs = join(env.home, "runs");
+    mkdirSync(runs, { recursive: true });
+    const first = "2026-10-06-09-00-00-codex-prefix.log", second = "2026-10-06-09-00-00-codex-prefix.log2.log";
+    writeFileSync(join(runs, first), "09:00:00 quince first\n");
+    writeFileSync(join(runs, second), "09:00:00 quince second\n");
+    drain(index);
+    writeFileSync(join(runs, first.replace(/\.log$/, ".json")), JSON.stringify({ job: "codex-job-prefix", session: "prefix-session" }));
+    drain(index);
+    const tagged = index.search({ query: "quince", filters: { session: "prefix-session" } }).hits;
+    expect(tagged.map(hit => hit.run)).toEqual([first]);
+  });
   it("indexes run chunks and metadata, retries partial lines and includes archived logs", async () => {
     const s = await store(), index = fixtureIndex(s), run = "2026-10-06-09-00-00-codex-example.log", file = join(env.home, "runs", "archive", run);
     mkdirSync(dirname(file), { recursive: true });
