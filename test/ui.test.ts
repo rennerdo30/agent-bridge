@@ -42,6 +42,19 @@ function recordJob(owner: string, job: Job): void {
 }
 
 describe("web dashboard", () => {
+  it("marks stored final reports in state and run pages after broker delivery", async () => {
+    const peer = env.node("claude-result-state", "claude"); await peer.start();
+    const jobs = new JobManager(peer, nullLogger, join(env.home, JOBS_FILE));
+    managers.push(jobs);
+    const job = jobs.start("codex", null, "review", async () => ({ sessionId: "review", text: "Stored final review", isError: false, details: {} }));
+    await until(() => job.status === "done");
+    recordJob(peer.name, job);
+    const state = await (await fetch(`${base()}/api/state`, { headers: { cookie } })).json();
+    expect(state.jobs[job.name].resultStored).toBe(true);
+    const runs = await (await fetch(`${base()}/api/runs`, { headers: { cookie } })).json();
+    expect(runs.jobs[job.name].resultStored).toBe(true);
+  });
+
   it("offers Continue for an interrupted retained record and resumes it through the available project master", async () => {
     const master = env.node("codex-master", "codex"); await master.start();
     const name = "codex-job-1234abcd";

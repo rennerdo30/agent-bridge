@@ -422,6 +422,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       if (args.model !== undefined) job.model = args.model;
       job.startedAt = Date.now();
       job.progress = null;
+      extra = { status: "running" };
       save();
       continue;
     }
@@ -430,8 +431,9 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     // The state first: once the report arrives, the session must find the job finished.
     const reportId = randomUUID();
     const final = { report, reportId, delivered: false };
+    const finishedAt = Date.now();
     await deliverFinalResult(final,
-      (stored) => save({ status, ...stored, finishedAt: Date.now() }, true),
+      (stored) => save({ status, ...stored, finishedAt }, true),
       async (body, id) => {
         const result = await inOrder(body, null, false, `${COMPLETION_DEDUPE_PREFIX}${id}`);
         return result && { stored: result.messages.length > 0 };

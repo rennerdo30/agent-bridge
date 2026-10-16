@@ -524,7 +524,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         remoteErrors,
         messages: recentMessages(dbPath),
         // Saved next-turn settings per job (message_subagent or the dashboard may have changed them).
-        jobs: { ...Object.fromEntries([...(await readStoredJobsResponsive(opts.home))].map(([name, j]) => [name, { next: j.next, projectRoot: j.projectRoot, ...(j.remote ? { remote: j.remote } : {}) }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) },
+        jobs: { ...Object.fromEntries([...(await readStoredJobsResponsive(opts.home))].map(([name, j]) => [name, { next: j.next, projectRoot: j.projectRoot, ...(j.resultStored ? { resultStored: true } : {}), ...(j.remote ? { remote: j.remote } : {}) }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) },
       });
     }
     if (req.method === "GET" && url.pathname === "/api/network") {

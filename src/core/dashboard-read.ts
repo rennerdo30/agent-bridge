@@ -416,7 +416,14 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       const rawLimit = url.searchParams.get("limit");
       const limit = rawLimit === null ? DEFAULT_RUN_PAGE_SIZE : /^\d+$/.test(rawLimit) ? Number(rawLimit) : NaN;
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_RUN_PAGE_SIZE) return reply(400, { error: `limit must be an integer from 1 to ${MAX_RUN_PAGE_SIZE}` });
-      try { return reply(200, pageRuns(await listRunsResponsive(ctx.home), url.searchParams.get("before"), limit)); }
+      try {
+        const page = pageRuns(await listRunsResponsive(ctx.home), url.searchParams.get("before"), limit);
+        const names = new Set(page.runs.flatMap(run => run.job ? [run.job] : []));
+        const views = await readStoredJobsResponsive(ctx.home, names);
+        const jobs = Object.fromEntries([...views].map(([name, job]) => [name, { next: job.next,
+          ...(job.resultStored ? { resultStored: true } : {}), ...(job.remote ? { remote: job.remote } : {}) }]));
+        return reply(200, { ...page, jobs });
+      }
       catch { return reply(400, { error: "invalid run cursor" }); }
     }
     const jobChildrenMatch = /^\/api\/jobs\/([\w.-]+)\/subagents(?:\/([^/]+))?$/.exec(url.pathname);

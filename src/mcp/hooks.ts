@@ -67,15 +67,21 @@ export function discardFinishedNotes(ctx: ServerContext): void {
 
 const antigravityStopPending = new WeakMap<ServerContext, Set<string>>();
 /** Claude/Codex hook output is only a hand-out. A later model boundary proves the result was seen. */
-const completionPending = new WeakMap<ServerContext, { ids: Set<string>; event: HookEvent }>();
+const completionPending = new WeakMap<ServerContext, Map<string, HookEvent>>();
+
+/** The hook handed these completions out, but a later model boundary has not confirmed them. */
+export function completionAwaitingReceipt(ctx: ServerContext, id: string): boolean {
+  return completionPending.get(ctx)?.has(id) ?? false;
+}
 
 function confirmCompletionDelivery(ctx: ServerContext, input: HookInput): void {
   const pending = completionPending.get(ctx);
   if (!pending) return;
-  completionPending.delete(ctx);
-  const stepped = input.event === "PostToolUse" || input.event === "Stop" &&
-    (pending.event !== "Stop" || input.stopHookActive);
-  if (stepped) ctx.node?.markRead([...pending.ids]);
+  if (input.event !== "Stop") return;
+  const confirmed = [...pending].filter(([, event]) => event !== "Stop" || input.stopHookActive).map(([id]) => id);
+  if (confirmed.length) ctx.node?.markRead(confirmed);
+  for (const id of confirmed) pending.delete(id);
+  if (!pending.size) completionPending.delete(ctx);
 }
 
 function holdOrMarkRead(ctx: ServerContext, ids: string[], hold: boolean): void {
@@ -87,7 +93,11 @@ function holdOrMarkRead(ctx: ServerContext, ids: string[], hold: boolean): void 
     return;
   }
   const resultIds = new Set(ctx.node?.unread().filter(m => ids.includes(m.id) && m.from.id.startsWith("job:") && RESULT_HEADER.test(m.body.split("\n")[0]!)).map(m => m.id) ?? []);
-  if (resultIds.size) completionPending.set(ctx, { ids: resultIds, event: currentHookEvent.get(ctx) ?? "Stop" });
+  if (resultIds.size) {
+    let pending = completionPending.get(ctx);
+    if (!pending) { pending = new Map(); completionPending.set(ctx, pending); }
+    for (const id of resultIds) pending.set(id, currentHookEvent.get(ctx) ?? "Stop");
+  }
   ctx.node?.markRead(ids.filter(id => !resultIds.has(id)));
 }
 
@@ -115,6 +125,7 @@ function take(ctx: ServerContext, wakeOnly: boolean, notesOnly = false, hold = f
     // Observer copies and acknowledgements remain available in inbox/history on demand.
     // Filter before the batch limit so old chatter cannot delay current results or blockers.
     .filter((m) => !isQuietMessage(m))
+    .filter((m) => !completionAwaitingReceipt(ctx, m.id))
     .filter((m) => !notesOnly || ctx.jobs?.isNote(m) || !shouldWakeClaudeMessage(node, ctx.cfg, m))
     // Ending a turn: a running subagent's status note does not keep it going; it comes with the next prompt.
     .filter((m) => !wakeOnly || (m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m)))
@@ -290,7 +301,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
         peers.length ? `Peers online:\n${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now.",
       ];
       lines.push(...new MessageWaitStore(ctx.home).pending(node).map(resumeWaitHint));
-      const unread = node.unread().filter((m) => !isQuietMessage(m)).length;
+      const unread = node.unread().filter((m) => !isQuietMessage(m) && !completionAwaitingReceipt(ctx, m.id)).length;
       const decisions = await withinHook(node.decisions({ scope: { project: ctx.cwd() } }).catch(() => []), input.signal!);
       if (!current()) return {};
       const summary = formatDecisionSummary(decisions);
@@ -324,7 +335,7 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
       if (!node.autoWakeEnabled && !inConversation) {
         // A notify wait is explicit permission to deliver its match, even after the listen window ends.
         // Finishing the last job ends runningCount before Stop. Its result still owns delivery.
-        const awaited = node.unread().filter((m) => (node.isNotificationAwaited(m) ||
+        const awaited = node.unread().filter((m) => !completionAwaitingReceipt(ctx, m.id) && (node.isNotificationAwaited(m) ||
           (m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node, ctx.cfg, m)) ||
           ((ctx.agent === "opencode" || ctx.agent === "antigravity") && m.to !== BROADCAST && !(AGENT_KINDS as readonly string[]).includes(m.to) &&
             shouldWakeClaudeMessage(node, ctx.cfg, m))) && m.hop < ctx.cfg.maxHops &&

@@ -1663,6 +1663,8 @@ export class JobManager {
       job.executionOwner = this.node.name;
       job.executionPid = process.pid;
       job.startedAt = Math.max(Date.now(), job.startedAt + 1);
+      job.report = undefined;
+      job.finishedAt = undefined;
       job.cancellingTurn = undefined;
       job.host = null;
       job.waitingForStart = undefined;
@@ -1964,6 +1966,8 @@ export class JobManager {
     const pid = job.host?.pid;
     job.host = null;
     if (final) {
+      if (typeof final.report === "string") job.report = final.report;
+      if (typeof final.finishedAt === "number") job.finishedAt = final.finishedAt;
       this.finish(job, final.status === "done" ? "done" : final.status === "cancelled" ? "cancelled" : "failed", "", final.sessionId ?? null, null, final.delivered ? null : final.report,
         final.reportId ? completionMessageId(`job:${job.id}`, final.reportId) : undefined);
       return;
@@ -2227,7 +2231,7 @@ export class JobManager {
     job.etaAt = undefined;
     job.etaReportedAt = undefined;
     job.status = status;
-    job.finishedAt = Date.now();
+    job.finishedAt ??= Date.now();
     job.sessionId = sessionId ?? job.sessionId;
     const seconds = Math.round((Date.now() - job.startedAt) / 1000);
     const message = report === undefined ? jobReport(job, status, seconds, text, cause, this.bridgeHome()) : report;

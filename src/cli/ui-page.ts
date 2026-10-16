@@ -2382,6 +2382,7 @@ async function poll() {
     const next = await r.json();
     if (next.brokerState === "slow" || next.brokerState === "unavailable") next.peers = (state && state.peers) || next.peers;
     state = next;
+    state.jobs = { ...olderJobs, ...state.jobs };
     const h = state.health, m = h && h.history, backup = h && h.backup;
     const migration = (m ? ' · history ' + esc(m.phase) + ' ~' + esc(Number(m.percent).toFixed(1)) + '% · ' + (m.etaSeconds == null ? 'ETA pending' : 'ETA ~' + Math.ceil(m.etaSeconds / 60) + ' min') : '') + (backup ? ' · backup ' + esc(backup.phase) + (backup.lastError ? ' (' + esc(backup.lastError) + ')' : '') : h ? ' · backup disabled' : '');
     $("status").innerHTML = state.brokerState === "slow"
@@ -3277,9 +3278,9 @@ const OUTCOME_LABEL = { merged: ["merged", "ok"], held: ["held", "warn"], unmerg
 function outcomeChip(g) {
   const o = g.status !== "running" && g.job && outcomes && outcomes[g.job] && outcomes[g.job].outcome;
   const merge = o && o.merge;
-  const result = g.status !== "running" && g.job && state.jobs && state.jobs[g.job] && state.jobs[g.job].resultStored
-    ? '<span class="chip outcome ' + (o && o.delivery && o.delivery.status === "read" ? "ok" : "warn") + '">' +
-      (o && o.delivery && o.delivery.status === "read" ? "delivered" : "result stored, not delivered") + '</span>' : "";
+  const result = g.status !== "running" && g.job && state.jobs && state.jobs[g.job] && state.jobs[g.job].resultStored && o && o.delivery
+    ? '<span class="chip outcome ' + (o.delivery.status === "read" ? "ok" : o.delivery.status === "unknown" ? "" : "warn") + '">' +
+      (o.delivery.status === "read" ? "delivered" : o.delivery.status === "unknown" ? "result stored" : "result stored, not delivered") + '</span>' : "";
   if (!merge || !OUTCOME_LABEL[merge.state]) return result;
   if (o.observation && o.observation.state === "pending") return result + '<span class="chip outcome" title="Outcome verification is running in the background">checking outcome</span>';
   const [label, cls] = OUTCOME_LABEL[merge.state];
@@ -3294,7 +3295,7 @@ function runChips(g) {
 }
 
 /* ---- Older subagents: /api/state carries the newest page, GET /api/runs?before= the rest (archived and recovered too) ---- */
-let olderRuns = [], olderNext = undefined, olderLoading = false;
+let olderRuns = [], olderNext = undefined, olderLoading = false, olderJobs = {};
 const OLDER_PAGE = 100;
 const olderCursor = () => (olderNext === undefined ? state && state.runsNext : olderNext);
 function loadOlderButton() {
@@ -3312,6 +3313,8 @@ async function loadOlder() {
     const r = await fetch("/api/runs?before=" + encodeURIComponent(next) + "&limit=" + OLDER_PAGE);
     if (r.ok) {
       const d = await r.json();
+      olderJobs = { ...olderJobs, ...(d.jobs || {}) };
+      state.jobs = { ...olderJobs, ...state.jobs };
       const known = new Set(olderRuns.map((x) => x.name));
       olderRuns.push(...(d.runs || []).filter((x) => !known.has(x.name)));
       olderNext = d.next || null;

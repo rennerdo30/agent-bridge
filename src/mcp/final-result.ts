@@ -8,8 +8,10 @@ export interface StoredFinalResult {
 }
 
 const MAX_BACKOFF_MS = 30_000;
+const MAX_DELIVERY_ATTEMPTS = 6;
+const PERMANENT_DELIVERY_CODES = new Set(["unauthorized", "not_found", "bad_request", "too_large", "forbidden"]);
 
-/** Persist before the first send. Retry the same identity until the broker confirms storage. */
+/** Persist before the first send. Bound retries so the session can settle and post a retained result. */
 export async function deliverFinalResult(
   result: StoredFinalResult,
   persist: (result: StoredFinalResult) => void,
@@ -20,14 +22,14 @@ export async function deliverFinalResult(
 ): Promise<void> {
   if (result.delivered) return;
   let backoff = 1_000;
-  // A transient writer failure must hold the report in memory and prevent any send.
-  while (!signal?.aborted) {
+  // Never send before the runner state holds the report for session fallback.
+  for (let attempt = 0; attempt < MAX_DELIVERY_ATTEMPTS && !signal?.aborted; attempt++) {
     try { persist(result); break; }
-    catch { await wait(backoff); backoff = Math.min(backoff * 2, MAX_BACKOFF_MS); }
+    catch { if (attempt === MAX_DELIVERY_ATTEMPTS - 1) return; await wait(backoff); backoff = Math.min(backoff * 2, MAX_BACKOFF_MS); }
   }
   if (signal?.aborted) return;
   backoff = 1_000;
-  while (!signal?.aborted) {
+  for (let attempt = 0; attempt < MAX_DELIVERY_ATTEMPTS && !signal?.aborted; attempt++) {
     try {
       let found = false;
       try { found = alreadyStored ? await alreadyStored(result.reportId) : false; }
@@ -41,8 +43,12 @@ export async function deliverFinalResult(
         persist({ ...result, delivered: true });
         return;
       }
-    } catch { /* The result is retained; the next attempt uses the same id. */ }
+    } catch (error) {
+      if (PERMANENT_DELIVERY_CODES.has((error as { code?: string } | null)?.code ?? "")) return;
+      // The result is retained; the next attempt uses the same id.
+    }
     if (signal?.aborted) return;
+    if (attempt === MAX_DELIVERY_ATTEMPTS - 1) return;
     await wait(backoff);
     backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
   }

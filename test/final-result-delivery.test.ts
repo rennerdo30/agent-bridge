@@ -1,7 +1,9 @@
 import { expect, it, vi } from "vitest";
 import { deliverFinalResult, readStoredFinalResult, resultDeliveryLabel, type StoredFinalResult } from "../src/mcp/final-result.js";
 import { writeRunnerState } from "../src/mcp/job-host.js";
-import { makeEnv } from "./helpers.js";
+import { JobManager, type Job, type RunnerState } from "../src/mcp/jobs.js";
+import { nullLogger } from "../src/core/logger.js";
+import { makeEnv, until } from "./helpers.js";
 
 const report = "Subagent codex-job-12345678 done after 1s.\n\nFinal review";
 const initial = (): StoredFinalResult => ({ report, reportId: "turn-one", delivered: false });
@@ -62,4 +64,75 @@ it("does not send again after a durable receipt", async () => {
   expect(send).not.toHaveBeenCalled();
   expect(persist).toHaveBeenLastCalledWith({ ...initial(), delivered: true });
   expect(resultDeliveryLabel(initial(), true)).toBe("delivered");
+});
+
+it("stops on a permanent refusal so the retained result can be posted by the session", async () => {
+  let saved = initial();
+  const send = vi.fn().mockRejectedValue(Object.assign(new Error("owner unavailable"), { code: "unauthorized" }));
+  const wait = vi.fn(async () => {});
+  await deliverFinalResult(saved, state => { saved = state; }, send, wait);
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(wait).not.toHaveBeenCalled();
+  expect(saved).toEqual(initial());
+  const env = makeEnv();
+  const node = env.node("claude-permanent-refusal", "claude");
+  await node.start();
+  const jobs = new JobManager(node, nullLogger);
+  try {
+    const job = jobs.start("codex", null, "review", async () => new Promise(() => {}));
+    job.host = { pid: process.pid, peer: job.name, startedAt: job.startedAt };
+    const final: RunnerState = { pid: process.pid, peer: job.name, status: "done", updatedAt: Date.now(), ...saved };
+    jobs.runners = { state: () => final, alive: () => false, send: vi.fn(), kill: vi.fn() };
+    (jobs as unknown as { checkHosted(job: Job, ownershipRefreshed: boolean, polledState: RunnerState): void }).checkHosted(job, true, final);
+    await until(() => node.unread().some(message => message.body === report));
+    expect(job.status).toBe("done");
+    expect(job.report).toBe(report);
+  } finally { jobs.cancelAll(); await env.cleanup(); }
+});
+
+it("caps transient delivery attempts with the same ID and leaves the result for session fallback", async () => {
+  let saved = initial();
+  const send = vi.fn().mockRejectedValue(new Error("broker offline"));
+  const waits: number[] = [];
+  await deliverFinalResult(saved, state => { saved = state; }, send, async ms => { waits.push(ms); });
+  expect(send).toHaveBeenCalledTimes(6);
+  expect(send.mock.calls.every(call => call[1] === "turn-one")).toBe(true);
+  expect(waits).toEqual([1_000, 2_000, 4_000, 8_000, 16_000]);
+  expect(saved.delivered).toBe(false);
+});
+
+it("posts the same retained report when the runner exits without delivery", async () => {
+  const env = makeEnv();
+  const node = env.node("claude-final-fallback", "claude");
+  await node.start();
+  const jobs = new JobManager(node, nullLogger);
+  try {
+    const job = jobs.start("codex", null, "review", async () => new Promise(() => {}));
+    job.host = { pid: process.pid, peer: job.name, startedAt: job.startedAt };
+    const final = { pid: process.pid, peer: job.name, status: "done" as const, updatedAt: Date.now(),
+      finishedAt: 12345, report, reportId: "turn-one", delivered: false };
+    jobs.runners = { state: () => final, alive: () => false, send: vi.fn(), kill: vi.fn() };
+    (jobs as unknown as { checkHosted(job: Job, ownershipRefreshed: boolean, polledState: RunnerState): void }).checkHosted(job, true, final);
+    await until(() => node.unread().some(message => message.body === report));
+    expect(job).toMatchObject({ status: "done", report, finishedAt: 12345 });
+    expect(node.unread().filter(message => message.body === report)).toHaveLength(1);
+  } finally { jobs.cancelAll(); await env.cleanup(); }
+});
+
+it("clears a stored report when a new turn starts", async () => {
+  const env = makeEnv();
+  const node = env.node("claude-result-turns", "claude");
+  await node.start();
+  const jobs = new JobManager(node, nullLogger);
+  try {
+    const job = jobs.start("codex", null, "review", async () => ({ sessionId: "first", text: "Old report", isError: false, details: {} }),
+      () => async () => new Promise(() => {}));
+    await until(() => job.status === "done");
+    expect(job.report).toContain("Old report");
+    expect(job.finishedAt).toBeTypeOf("number");
+    expect(jobs.followUp(job.name, "next review").outcome).toBe("started");
+    expect(job).toMatchObject({ status: "running" });
+    expect(job.report).toBeUndefined();
+    expect(job.finishedAt).toBeUndefined();
+  } finally { jobs.cancelAll(); await env.cleanup(); }
 });
