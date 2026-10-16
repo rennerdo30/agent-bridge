@@ -1,7 +1,8 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, statSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { retentionLimit } from "./json-store.js";
 import { readRunLogPreview } from "./run-log-preview.js";
+import { indexRunFile, invalidateJobRunIndex, releasingMetadata } from "./job-run-index.js";
 
 export const DEFAULT_ARCHIVE_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 export const ARCHIVE_AGE_ENV = "AGENT_BRIDGE_ARCHIVE_AGE_MS";
@@ -16,6 +17,7 @@ export function finishedRunLine(text: string): string | null {
 /** Preserve the original basename so metadata and log remain addressable as a pair. */
 export function archiveRun(log: string): void {
   if (!finishedRunLine(readRunLogPreview(log))) return;
+  const home = dirname(dirname(log));
   const dir = join(log, "..", "archive");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const target = join(dir, basename(log));
@@ -28,7 +30,20 @@ export function archiveRun(log: string): void {
     copyFileSync(meta, archivedMeta);
   }
   renameSync(log, target);
-  if (existsSync(meta)) renameSync(meta, archivedMeta);
+  try { if (existsSync(meta)) renameSync(meta, archivedMeta); }
+  finally {
+    // The log moved: record its exact new route. Archiving never initializes the metadata store
+    // (without bridge.db there is no index yet, and its backfill discovers the archived run).
+    // An index failure is recorded (readiness cleared, repair queued) and never aborts archiving.
+    if (existsSync(join(home, "bridge.db"))) {
+      try {
+        releasingMetadata(home, () => {
+          try { indexRunFile(home, target, archivedMeta); }
+          catch { invalidateJobRunIndex(home); }
+        });
+      } catch { /* The archived bytes are already retained. */ }
+    }
+  }
 }
 
 /** Includes archives written before AB-84, whose filenames carry a timestamp and UUID suffix. */
@@ -56,7 +71,8 @@ export function archiveOldRuns(home: string, now = Date.now()): number {
   for (const file of runLogFiles(home).filter((p) => !p.includes(`${join("runs", "archive")}`))) {
     if (statSync(file).mtimeMs < now - age && finishedRunLine(readRunLogPreview(file))) { archiveRun(file); count++; }
   }
-  // Packing archived runs (AB-208) is maintenance work for the broker's job archive worker and
-  // doctor --archive; runner processes never open bridge.db here.
+  // archiveRun records each moved route in bridge.db when it exists or the run has metadata.
+  // Packing archived runs (AB-208) stays maintenance work for the broker's job archive worker and
+  // doctor --archive.
   return count;
 }

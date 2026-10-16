@@ -43,7 +43,7 @@ export class JobArchiveBackground {
       const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
       const output = join(root, ".agent-bridge-test", "job-archive-worker.mjs");
       const inputs = ["job-archive-worker.ts", "job-archive-index.ts", "job-archive-migration.ts", "archive-bundle.ts", "store-compatibility.ts", "sqlite-migrations.ts",
-        "finished-run-bundles.ts", "metadata-import.ts", "metadata-db.ts", "run-archive.ts", "run-log-preview.ts", "runner-store.ts", "json-store.ts", "process-identity.ts"];
+        "finished-run-bundles.ts", "metadata-import.ts", "metadata-db.ts", "run-archive.ts", "run-log-preview.ts", "runner-store.ts", "json-store.ts", "process-identity.ts", "job-run-index.ts", "run-history.ts"];
       if (!existsSync(output) || inputs.some(name => statSync(join(root, "src/core", name)).mtimeMs > statSync(output).mtimeMs)) {
         mkdirSync(dirname(output), { recursive: true });
         const built = createRequire(import.meta.url)("esbuild").buildSync({ entryPoints: [join(root, "src/core/job-archive-worker.ts")], outfile: output,

@@ -63,7 +63,8 @@ it.each(["missing", "stale", "null", "current"])(
     const recovered = await recoverJobRecordAsync(env.home, job.name);
     expect(recovered).toMatchObject({ ...job, sessionId: mode === "current" ? "runner-native" : "meta-native" });
     if (mode === "current") expect(discovery).not.toHaveBeenCalled();
-    else expect(discovery).toHaveBeenCalledTimes(2);
+    // AB-407: the index replaces the old double catalog scan
+    else expect(discovery).toHaveBeenCalledTimes(1);
     expect(recovered).toEqual(recoverJobRecord(env.home, job.name));
   },
 );

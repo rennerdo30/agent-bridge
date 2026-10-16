@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { isRecord, mergeStoreFields, readJsonStore, retentionLimit, writeJsonStore } from "./json-store.js";
 import { archiveOldRuns, archiveRun, finishedRunLine } from "./run-archive.js";
@@ -7,6 +7,7 @@ import { refreshStorePeerIdentities } from "./store-compatibility.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { displayPathText } from "./display-paths.js";
 import { readRunnerStateRecord, writeRunnerStateRecord } from "./runner-store.js";
+import { indexRunFile, invalidateJobRunIndex, releasingMetadata } from "./job-run-index.js";
 
 /**
  * Live feed of one delegated run: every progress line goes to ~/.agent-bridge/runs/<name>.log (so the
@@ -146,20 +147,40 @@ export function startRunFeed(opts: RunFeedOptions): RunFeed {
     }
   };
   let meta: RunMeta = { ...opts.meta };
+  // indexRunFile records nothing on failure; this is the single invalidation (one receipt) per failed route.
+  // A home without bridge.db has no index yet: its backfill creates the store before discovery and then
+  // finds this run, so a feed never initializes the metadata store itself.
+  const indexRoute = () => {
+    if (!existsSync(join(opts.home, "bridge.db"))) return;
+    try {
+      releasingMetadata(opts.home, () => {
+        try { indexRunFile(opts.home, logPath); }
+        catch { invalidateJobRunIndex(opts.home); }
+      });
+    } catch { /* never break a run because of the index */ }
+  };
+  let attemptedRouting: string | undefined;
+  const routing = () => JSON.stringify([meta.job ?? null, meta.jobStartedAt ?? null]);
   const writeMeta = (required = false) => {
     try {
       const path = runMetaPath(logPath);
       const previous = readJsonStore(path);
       writeJsonStore(path, mergeStoreFields(isRecord(previous) ? previous : {}, { ...meta }), previous);
+      // Metadata updates refresh the exact route as soon as the log exists.
+      if (logPublished && attemptedRouting !== routing()) { attemptedRouting = routing(); indexRoute(); }
     } catch (err) {
       if (required) throw err;
       process.stderr.write(`could not save run metadata: ${String(err)}\n`);
       // never break a run because of the feed
     }
   };
+  let logPublished = false;
   try { mkdirSync(dir, { recursive: true }); writeMeta(opts.requireMetadata); }
   catch (error) { release(); throw error; }
   write(opts.header);
+  logPublished = true;
+  attemptedRouting = routing();
+  indexRoute();
   // Only this runner can name its current feed. Keep the generation on the
   // witness: a previous turn's path must never suppress legacy discovery.
   const job = opts.meta?.job, jobStartedAt = opts.meta?.jobStartedAt;

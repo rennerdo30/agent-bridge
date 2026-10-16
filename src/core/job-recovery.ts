@@ -3,6 +3,8 @@ import { basename, join } from "node:path";
 import { isRecord } from "./json-store.js";
 import { AGENT_KINDS } from "./protocol.js";
 import { findHistoryJob, historyJobsSteps, readRunLogs, readRunLogsResponsive, type RunLogRecord } from "./run-history.js";
+import { indexedJobRun, jobRunIndexReady, legacyJobRunAmbiguous, JOB_INDEX_WAIT_MS, waitForJobRunIndex } from "./job-run-index.js";
+import { BridgeError } from "./protocol.js";
 import { cloneJson, fileSignature, fileTimeMs, readJsonSnapshot } from "./file-cache.js";
 import { drainScanResponsive } from "./responsive-scan.js";
 import { pidAlive } from "./delegate.js";
@@ -36,13 +38,14 @@ export function recoverJobRecord(home: string, ref: string): StoredJob | undefin
 
 /** Broker recovery never synchronously rereads an entire retained run feed. */
 export async function recoverJobRecordAsync(home: string, ref: string): Promise<StoredJob | undefined> {
-  const recovery = await prepareRecoveryAsync(home, ref);
+  const deadline = performance.now() + JOB_INDEX_WAIT_MS;
+  const recovery = await prepareRecoveryAsync(home, ref, deadline);
   if (!recovery) return undefined;
   const payload = needsHeader(recovery) && recovery.run ? await readRecoveryHeader(recovery.run.file) : { prompt: "", header: "" };
   if (!payload) return undefined;
   // A handoff or new native turn can update authority while asynchronous IO yields.
   // Re-read durable facts before publishing/authorizing the recovered context.
-  const latest = await prepareRecoveryAsync(home, ref);
+  const latest = await prepareRecoveryAsync(home, ref, deadline);
   if (!latest) return undefined;
   if (!needsHeader(latest)) return finishRecovery(home, latest, { prompt: "", header: "" });
   if (latest.run?.file !== recovery.run?.file || latest.run?.signature !== recovery.run?.signature || contextIdentity(latest) !== contextIdentity(recovery)) return undefined;
@@ -55,9 +58,16 @@ function prepareRecovery(home: string, ref: string) {
   const history = findHistoryJob(home, ref, id);
   const { spec, launch } = recoverySpec(home, id);
   if (completeContext(home, history, id)) return selectRecovery(ref, id, history, spec, launch, []);
-  return selectRecovery(ref, id, history, spec, launch, readRunLogs(home));
+  const key = typeof history?.name === "string" ? history.name : ref;
+  let ready = false, ambiguous = false;
+  try { ready = jobRunIndexReady(home); ambiguous = ready && legacyJobRunAmbiguous(home, key); } catch { ready = false; }
+  const indexed = ready && !ambiguous ? indexedJobRun(home, key, typeof history?.startedAt === "number" ? history.startedAt : undefined) : [];
+  // Synchronous callers cannot wait for a per-key reobservation. A ready-index miss (a run an
+  // older or external writer created after completion) keeps the pre-index discovery;
+  // selectRecovery applies the same job, generation and single-candidate rules to it.
+  return selectRecovery(ref, id, history, spec, launch, indexed.length ? indexed : readRunLogs(home), ambiguous);
 }
-async function prepareRecoveryAsync(home: string, ref: string) {
+async function prepareRecoveryAsync(home: string, ref: string, deadline: number) {
   const id = recoveryId(ref);
   if (!id) return undefined;
   const history = await drainScanResponsive((function* () {
@@ -71,7 +81,33 @@ async function prepareRecoveryAsync(home: string, ref: string) {
   const { spec, launch } = recoverySpec(home, id);
   if (completeContext(home, history, id)) return selectRecovery(ref, id, history, spec, launch, []);
   const currentRun = witnessedRun(home, id, history);
-  return selectRecovery(ref, id, history, spec, launch, currentRun ? [currentRun] : await readRunLogsResponsive(home));
+  if (currentRun) return selectRecovery(ref, id, history, spec, launch, [currentRun]);
+  const key = typeof history?.name === "string" ? history.name : ref;
+  const startedAt = typeof history?.startedAt === "number" ? history.startedAt : undefined;
+  // Bounded, yielding discovery sharing the original deadline: the pre-index path, never a
+  // synchronous scan on the broker event loop.
+  const discover = async (legacyAmbiguous: boolean, state: string) => {
+    const stop = new AbortController(), remaining = deadline - performance.now();
+    const error = () => new BridgeError("job_index_preparing", `Job index preparing (${state}); retry later. No control submitted.`);
+    if (remaining <= 0) throw error();
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const runs = await Promise.race([readRunLogsResponsive(home, undefined, undefined, stop.signal),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => { stop.abort(); reject(error()); }, remaining); })]);
+      return selectRecovery(ref, id, history, spec, launch, runs, legacyAmbiguous);
+    } catch { throw error(); }
+    finally { clearTimeout(timer); stop.abort(); }
+  };
+  // An unavailable index (failed backfill, busy SQLite) never fails the request.
+  if (await waitForJobRunIndex(home, deadline, key, startedAt) === "discover") return discover(false, "discovery running");
+  let ambiguous: boolean;
+  try { ambiguous = legacyJobRunAmbiguous(home, key); } catch { return discover(false, "discovery running"); }
+  // Legacy ambiguity requires discovery too.
+  if (ambiguous) return discover(true, "ambiguous legacy discovery");
+  let runs: RunLogRecord[];
+  // A moved, changing or unreadable indexed route fails only this lookup: discover instead.
+  try { runs = indexedJobRun(home, key, startedAt); } catch { return discover(false, "discovery running"); }
+  return selectRecovery(ref, id, history, spec, launch, runs);
 }
 
 /** Full history rows come from the selected durable payload, never the routing
@@ -134,15 +170,21 @@ function recoverySpec(home: string, id: string) {
   const launch = isRecord(spec) && isRecord(spec.job) ? spec.job : undefined;
   return { spec, launch };
 }
-function selectRecovery(ref: string, id: string, history: Record<string, unknown> | undefined, spec: unknown, launch: Record<string, unknown> | undefined, runLogs: ReturnType<typeof readRunLogs>) {
-  const runs = runLogs.filter((r) => r.meta.job === ref || r.meta.job === history?.name ||
-    r.name.endsWith(`-${launch?.agent ?? history?.agent ?? ref.split("-")[0]}-${id}`))
+function selectRecovery(ref: string, id: string, history: Record<string, unknown> | undefined, spec: unknown, launch: Record<string, unknown> | undefined, runLogs: ReturnType<typeof readRunLogs>, legacyAmbiguous = false) {
+  const key = typeof history?.name === "string" ? history.name : ref;
+  const candidates = runLogs.filter(r => r.metadataFile || Object.keys(r.meta).length
+    ? r.meta.job === key
+    : r.name.endsWith(`-${launch?.agent ?? history?.agent ?? ref.split("-")[0]}-${id}`));
+  const runs = candidates.filter(r => r.meta.jobStartedAt !== undefined
+    ? !Number.isFinite(history?.startedAt) || r.meta.jobStartedAt === history!.startedAt
+    : !legacyAmbiguous && candidates.length === 1)
     .sort((a, b) => runStart(b) - runStart(a));
   const run = runs[0], meta = run?.meta;
   const name = history?.name ?? launch?.name ?? meta?.job ?? (run && /^[\w]+-(?:job|ask)-[\w-]+$/.test(ref) ? ref : undefined);
   const agent = history?.agent ?? launch?.agent ?? ref.split("-")[0];
   if (typeof name !== "string" || !AGENT_KINDS.includes(agent as never)) return undefined;
   const base = { ...launch, ...history };
+  if (!run && typeof base.prompt !== "string") return undefined;
   return { id, history, spec, launch, run, meta, name, agent, base };
 }
 type Recovery = NonNullable<ReturnType<typeof prepareRecovery>>;

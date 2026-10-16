@@ -346,6 +346,7 @@ export interface ErrorPayload {
 }
 
 export type ErrorCode =
+  | "job_index_preparing"
   | "bad_request"
   | "not_registered"
   | "ambiguous_target"
