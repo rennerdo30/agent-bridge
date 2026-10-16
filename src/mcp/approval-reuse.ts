@@ -1,11 +1,6 @@
-import { createHash } from "node:crypto";
-import { createReadStream, existsSync } from "node:fs";
-import { stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import type { Logger } from "../core/logger.js";
-import { physicalPath } from "../core/project-identity.js";
-import { canonicalJson, requestIdentity, type PermissionRequest } from "../core/relay.js";
-import { git } from "../core/worktree.js";
+import { isClaudeReadOnly } from "../core/delegate.js";
+import type { ClaudePermissionMode } from "../core/config.js";
+import { requestIdentity, type PermissionRequest } from "../core/relay.js";
 import type { ApprovalOrigin, Job } from "./jobs.js";
 
 /**
@@ -18,12 +13,12 @@ import type { ApprovalOrigin, Job } from "./jobs.js";
  *   (a summary, a file change, a reviewer refusal, a sandbox permission request) is always asked;
  * - a grant never crosses jobs, a change of access, sandbox or permission settings, or a change of supervisor
  *   (read from the durable job store, so a handoff ends it); it ends when the job's turn finishes;
- * - a command grant (anything but an MCP tool) is dropped as soon as the job's files change: a file change request,
- *   or any difference in the Git state of the job folder and the request's folder since the grant was made (HEAD and
- *   the current branch, and every changed, staged, untracked or deleted file that is not ignored, with its content);
- *   a repository with submodules, a file over 64 MiB or a state that cannot be read keeps no command grant. Ignored
- *   files (node_modules, .env, generated config), the job's other writable folders and scripts outside these
- *   folders are not covered;
+ * - a command grant (anything but an MCP tool) is kept and reused only while the job's settings are read-only
+ *   (see readOnlyJob), checked when it is granted and again when it is reused. What a command runs can change
+ *   only through files; a read-only job changes files only through an approval it asks for, so any allowed file
+ *   change, other command or request without an exact identity ends the job's command grants. Nothing on this path
+ *   runs Git or reads the job's files: job-controlled repositories can run code through Git (core.fsmonitor,
+ *   filters) and hide files from it;
  * - a deny is never reused, and any later deny of the same request revokes its grant.
  */
 
@@ -40,8 +35,8 @@ export interface ApprovalGrant {
   approvalId: string;
   by: string;
   at: number;
-  /** For a command grant: the Git state of its folders when it was granted. Undefined for an MCP tool. */
-  tree?: string;
+  /** A command grant (anything but an MCP tool): reused only in a read-only job. */
+  command: boolean;
   /** How often it was reused; the first reuse wakes the supervisor. */
   reuses: number;
 }
@@ -71,8 +66,8 @@ export function isFileChangeRequest(r: Pick<PermissionRequest, "tool">): boolean
   return FILE_CHANGE_TOOLS.has(r.tool);
 }
 
-/** A grant whose effect depends on the job's files (anything but an MCP tool). */
-export function isFileSensitive(r: Pick<PermissionRequest, "tool">): boolean {
+/** A command request: anything but an MCP tool. Its effect depends on the job's files. */
+export function isCommandRequest(r: Pick<PermissionRequest, "tool">): boolean {
   return !r.tool.startsWith("mcp:");
 }
 
@@ -81,108 +76,46 @@ export function approvalScope(parts: { access?: string; sandbox?: string; permis
   return JSON.stringify([parts.access ?? "default", parts.sandbox ?? "", parts.permission, parts.supervisor]);
 }
 
-/** Above this size a file's content is not hashed and no command grant is kept (fail closed). Mutable for tests. */
-export const approvalReuseLimits = { maxFileBytes: 64 * 1024 * 1024 };
-
-/** One spelling per physical folder: subst and mapped-drive aliases, separators and (on Windows) case. */
-function folderKey(dir: string): string {
-  const key = physicalPath(resolve(dir)).replace(/\\/g, "/").replace(/\/+$/, "");
-  return process.platform === "win32" ? key.toLowerCase() : key;
-}
-
-/** The SHA-256 of a file's content, streamed; "missing" when it is gone; null when it is not a regular file or too big. */
-async function fileFingerprint(path: string): Promise<string | null> {
-  let info;
-  try { info = await stat(path); }
-  catch (err) { return (err as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : null; }
-  if (!info.isFile() || info.size > approvalReuseLimits.maxFileBytes) return null;
-  const hash = createHash("sha256");
-  let bytes = 0;
-  try {
-    for await (const chunk of createReadStream(path)) {
-      bytes += (chunk as Buffer).length;
-      // The file grew past the cap while it was read.
-      if (bytes > approvalReuseLimits.maxFileBytes) return null;
-      hash.update(chunk as Buffer);
-    }
-  } catch { return null; }
-  return hash.digest("hex");
+/** An allow pattern that cannot reach the job's files: the Pair Desk server writes only to the desk. */
+function deskOnlyPattern(pattern: string): boolean {
+  const p = pattern.trim();
+  return p === "pair-desk:worker" || p === "pair-desk" || /^pair-desk\.[\w*.-]+$/.test(p);
 }
 
 /**
- * One repository's state: its HEAD commit and symbolic ref, and the status line and content hash of every changed,
- * staged, untracked or deleted file that is not ignored. Null when it cannot be read completely: a repository with
- * submodules (a .gitmodules file, or a gitlink whose commit or content changed), an untracked folder that holds its
- * own repository, a file that is not regular or over the size cap.
+ * Whether the job's settings let it change files only through an approval it asks for (AB-402), from its target,
+ * effective permission (DelegationTarget.permission) and the patterns of MCP tools it may call without asking.
+ * Read-only:
+ * - Codex: the effective sandbox is "read-only" (access read or ask, or sandbox "read-only", or the configured
+ *   codexSandbox when neither is given). workspace-write and danger-full-access are not.
+ * - Claude: the permission mode is default, manual or plan (the bridge denies Write, Edit, MultiEdit,
+ *   NotebookEdit, Bash and PowerShell in these). acceptEdits, auto, dontAsk and bypassPermissions are not.
+ * - opencode: the effective permission is "read-only" (edit and bash need a permission request, which is asked or
+ *   refused). auto-approve is not.
+ * - Antigravity: access read or ask, without bypass_permissions (true or false). Muse: access read or ask, without
+ *   a permission_profile.
+ * - Every auto-approved MCP pattern (autoApproveTools, allow_tools or the default allowance) names only the Pair
+ *   Desk server ("pair-desk", "pair-desk.<tool>" or "pair-desk:worker"); any other pattern may let the job write
+ *   files without asking.
+ * Anything else, including an unknown target or permission, is not read-only (fail closed).
  */
-async function repoState(root: string, log: Logger): Promise<unknown[] | null> {
-  if (existsSync(join(root, ".gitmodules"))) return null;
-  let status: string;
-  try {
-    // A gitlink without .gitmodules shows as a submodule entry below. (`git submodule` is a shell script: not used.)
-    status = await git(["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], root, log);
-  } catch { return null; }
-  const tokens = status.split("\0");
-  if (tokens.at(-1) === "") tokens.pop();
-  let oid: string | null = null, head: string | null = null;
-  const files: [string, string, string][] = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i]!;
-    if (token.startsWith("# ")) {
-      const [key, ...value] = token.slice(2).split(" ");
-      if (key === "branch.oid") oid = value.join(" ");
-      else if (key === "branch.head") head = value.join(" ");
-      continue;
-    }
-    let header: string, path: string;
-    if (token.startsWith("? ")) { header = "?"; path = token.slice(2); }
-    else {
-      // "1 XY sub mH mI mW hH hI path", "2 ... Xscore path" + NUL + origPath, "u XY sub m1 m2 m3 mW h1 h2 h3 path".
-      const fields = token[0] === "1" ? 8 : token[0] === "2" ? 9 : token[0] === "u" ? 10 : -1;
-      if (fields < 0) return null;
-      const parts = token.split(" ");
-      header = parts.slice(0, fields).join(" ");
-      path = parts.slice(fields).join(" ");
-      if (token[0] === "2") header += "\0" + (tokens[++i] ?? "");
-      // A submodule entry (sub field "S...").
-      if (parts[2]?.startsWith("S")) return null;
-    }
-    // An untracked folder listed as such holds its own repository: its content is not visible here.
-    if (path.endsWith("/")) return null;
-    const content = await fileFingerprint(join(root, path));
-    if (content === null) return null;
-    files.push([path, header, content]);
+export function readOnlyJob(job: {
+  target: string;
+  permission: string;
+  permissionProfile?: string;
+  bypassPermissions?: boolean;
+  allowPatterns: readonly string[];
+}): boolean {
+  if (!job.allowPatterns.every(deskOnlyPattern)) return false;
+  const lookOrAsk = job.permission === "read" || job.permission === "ask";
+  switch (job.target) {
+    case "codex": return job.permission === "read-only";
+    case "claude": return isClaudeReadOnly(job.permission as ClaudePermissionMode);
+    case "opencode": return job.permission === "read-only";
+    case "antigravity": return job.bypassPermissions === undefined && lookOrAsk;
+    case "muse": return job.permissionProfile === undefined && lookOrAsk;
+    default: return false;
   }
-  if (oid === null || head === null) return null;
-  files.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
-  return [oid, head, files];
-}
-
-/**
- * The Git state of these folders, or null when one of them is not in a Git repository or cannot be read completely:
- * then a command grant is not kept. Each repository counts once, however its folders are spelled (AB-402). It covers
- * HEAD and the current branch (a commit or a branch switch changes it) and every changed, staged, untracked or deleted
- * file that is not ignored, with its content; not ignored files (node_modules, .env, generated config) and not
- * scripts outside these repositories.
- */
-export async function treeState(dirs: readonly string[], log: Logger): Promise<string | null> {
-  const roots = new Map<string, string>();
-  for (const dir of dirs.filter(Boolean)) {
-    let root: string;
-    try { root = await git(["rev-parse", "--show-toplevel"], physicalPath(resolve(dir)), log); }
-    catch { return null; }
-    if (!root) return null;
-    const key = folderKey(root);
-    if (!roots.has(key)) roots.set(key, physicalPath(root));
-  }
-  if (!roots.size) return null;
-  const states: unknown[] = [];
-  for (const key of [...roots.keys()].sort()) {
-    const state = await repoState(roots.get(key)!, log);
-    if (!state) return null;
-    states.push([key, state]);
-  }
-  return createHash("sha256").update(canonicalJson(states)).digest("hex");
 }
 
 /** The job's grants under this scope; grants from another scope (or another job) are dropped. */
@@ -197,12 +130,12 @@ export function reusableGrant(job: Job, scope: string, identity: string): Approv
   return current(job, scope)?.grants.find((grant) => grant.identity === identity);
 }
 
-/** Drop every command grant of the job (its files changed); MCP tool grants stay. */
-export function dropFileSensitiveGrants(job: Job): number {
+/** Drop every command grant of the job (it may have changed files); MCP tool grants stay. */
+export function dropCommandGrants(job: Job): number {
   const grants = job.approvalGrants;
   if (!grants) return 0;
   const before = grants.grants.length;
-  grants.grants = grants.grants.filter((grant) => grant.tree === undefined);
+  grants.grants = grants.grants.filter((grant) => !grant.command);
   return before - grants.grants.length;
 }
 
@@ -213,18 +146,18 @@ export function clearApprovalGrants(job: Job): void {
 
 /**
  * Remember an explicit "allow" by the supervisor or the owner. Any deny of the same request revokes its grant.
- * tree: the Git state for a command grant (null when unknown: then nothing is kept), undefined for an MCP tool.
+ * command: a command grant, kept only when readOnly (the job's settings when it was granted).
  */
-export function recordGrant(job: Job, scope: string, identity: string, answer: { allow: boolean }, origin: ApprovalOrigin | undefined, tree?: string | null): boolean {
+export function recordGrant(job: Job, scope: string, identity: string, answer: { allow: boolean }, origin: ApprovalOrigin | undefined, command: boolean, readOnly: boolean): boolean {
   if (!answer.allow) {
     const grants = job.approvalGrants;
     if (grants) grants.grants = grants.grants.filter((grant) => grant.identity !== identity);
     return false;
   }
-  if (!origin || !EXPLICIT_DECIDERS.has(origin.by) || tree === null) return false;
+  if (!origin || !EXPLICIT_DECIDERS.has(origin.by) || (command && !readOnly)) return false;
   const grants = current(job, scope) ?? (job.approvalGrants = { jobId: job.id, scope, grants: [] });
   grants.grants = grants.grants.filter((grant) => grant.identity !== identity);
-  grants.grants.push({ identity, approvalId: origin.approvalId, by: origin.by, at: Date.now(), reuses: 0, ...(tree !== undefined ? { tree } : {}) });
+  grants.grants.push({ identity, approvalId: origin.approvalId, by: origin.by, at: Date.now(), command, reuses: 0 });
   while (grants.grants.length > MAX_APPROVAL_GRANTS) grants.grants.shift();
   return true;
 }

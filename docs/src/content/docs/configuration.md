@@ -64,18 +64,33 @@ Limits that keep it safe:
 
 - **File changes are always asked** (Claude `Write`, `Edit`, `MultiEdit`, `NotebookEdit`; Codex
   file changes; opencode edits): their paths say where, not what.
-- **A command grant ends when the job's files change**: any file change request, or any
-  change of the Git state of the job's folder and the command's folder since the grant was
-  made: `HEAD` and the current branch (so a commit or a branch switch ends it), and changed,
-  staged, untracked or deleted files that are not ignored, compared by content. Each
-  repository counts once, however its folder is spelled (drive aliases, separators).
-- **Not covered**: ignored files (`node_modules`, `.env`, generated config), the job's other
-  writable folders and scripts outside the job's and the command's folders. A change there
-  does not end a command grant; the reuse note says so.
-- **No command grant is kept** (each command is asked) for a folder outside a Git
-  repository, a repository with submodules (a `.gitmodules` file, or a gitlink whose commit
-  or content changed), an untracked nested repository, a changed file over 64 MiB or a state
-  that cannot be read completely.
+- **Command approvals are reused only in read-only jobs.** A command (a shell command, or any
+  tool that is not an MCP tool) runs whatever the job's files say, so its grant is kept and
+  reused only while the job cannot change files without asking. The job's settings are
+  checked when the grant is made (both when the question is asked and when it is answered)
+  and again at each reuse; if either is not read-only, the command is asked. Read-only means:
+  - Codex: the effective sandbox is `read-only` (`access` `read` or `ask`, `sandbox:
+    "read-only"`, or `codexSandbox` when neither is given). `workspace-write` and
+    `danger-full-access` are not, so Codex `edit` jobs and worktree edit jobs are not.
+  - Claude: permission mode `default`, `manual` or `plan` (agent-bridge denies `Write`,
+    `Edit`, `MultiEdit`, `NotebookEdit`, `Bash` and `PowerShell` in these). `acceptEdits`,
+    `auto`, `dontAsk` and `bypassPermissions` are not.
+  - opencode: the effective permission is read-only (`access` `read` or `ask`, or
+    `auto_approve: false`); auto-approve is not.
+  - Antigravity: `access` `read` or `ask` without `bypass_permissions`. Muse: `access` `read`
+    or `ask` without a `permission_profile`.
+  - Every auto-approved MCP pattern (`autoApproveTools`, `allow_tools` or the default
+    allowance) names only the Pair Desk server (`pair-desk`, `pair-desk.<tool>` or
+    `pair-desk:worker`). Any other pattern could let the job write files without asking.
+  - Anything else, including an unknown agent, permission or pattern, is not read-only.
+- **A read-only job changes files only through what it is allowed**, so an allowed file
+  change request (dropped already when it is asked), an allowed different command or an
+  allowed request without an exact identity ends the job's command grants.
+- **No Git, no file reads**: the approval path runs no Git command and reads none of the
+  job's files. A job-controlled repository could run code through Git (`core.fsmonitor`,
+  filters) and hide files from it (`.git/info/exclude`, `assume-unchanged`).
+- **MCP tool calls** that are identical are reused at every access level. MCP requests
+  without an exact identity (see below) are always asked.
 - **No grant at all** is kept or reused when the job store exists but cannot be read or does
   not have the job: its supervisor is then unknown.
 - A grant never widens and never crosses jobs: it ends with the job's turn, when the job's
