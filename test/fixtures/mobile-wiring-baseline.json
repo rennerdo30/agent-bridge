@@ -1,7 +1,7 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "a0c87adcecd93ba68139a2cb6ad21e823e1aae36cc64d9d6209631d3e7399314",
+    "src/core/broker.ts:constructor": "d47986d1cf9d6b0666bf7e920861ade9d19f7410744cc5a9de5f9c6e776ed7da",
     "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
     "src/core/broker.ts:startServices": "07bc9bdb56bea9ae2c5c3f0c89639469f7fa5ccfb0d8e5bc97fc1efbfd93fe2f",
     "src/core/broker.ts:abortStartup": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
@@ -275,6 +275,18 @@
       "uiSha256": "1c24d9cb6ac04fdfe34896b7ed2342b835a72c9f793b908563353ccc7361f817",
       "reason": "AB-400 (PR #92): startUi's /api/state job map adds only `...(j.resultStored ? { resultStored: true } : {})` so the dashboard can show \"result stored, not delivered\". No control-flow change; broker, node.ts and dashboard method pins, normalizer and assertions are unchanged.",
       "commit": "7b35f4e2"
+    },
+    "AB-404-project-job-summaries": {
+      "base": "4bde4d8a",
+      "changes": [
+        {
+          "method": "src/core/broker.ts:constructor",
+          "previous": "a0c87adcecd93ba68139a2cb6ad21e823e1aae36cc64d9d6209631d3e7399314",
+          "current": "d47986d1cf9d6b0666bf7e920861ade9d19f7410744cc5a9de5f9c6e776ed7da"
+        }
+      ],
+      "reason": "AB-404 (PR #95): the broker handler table now calls a private projectJobRecords method for projectJobs (same body, moved out of the constructor) and adds the projectJobSummaries op (slim, frame-bounded pages of the same records). No mobile, startup or close control-flow change; node.ts and dashboard pins, startUi hash, normalizer and assertions are unchanged, and the other mobile-wiring tests pass unchanged.",
+      "commit": "9b7b0a43"
     }
   },
   "revertedUpdates": {
