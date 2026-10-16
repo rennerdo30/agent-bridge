@@ -922,7 +922,13 @@ export class BridgeNode extends EventEmitter<BridgeNodeEvents> {
     // Inline results used to bypass the broker. Retain their unread envelopes before transferring.
     return this.withClient(async (c) => {
       for (const m of this.unread()) if (m.from.id.startsWith("job:")) {
-        const job = await c.request("jobAuthority", { job: m.from.name });
+        let job;
+        try { job = await c.request("jobAuthority", { job: m.from.name }); }
+        catch {
+          // Optional retention preflight: keep the original envelope unread for a later attempt.
+          this.log.debug("handoff result retention deferred", { reason: "job_authority_unavailable" });
+          continue;
+        }
         if (job && (job.owner === this.name || job.rootName === this.name)) await c.request("inlineJobReport", m);
       }
       return c.request("handoffSubagents", args);

@@ -19,7 +19,7 @@ type StoredJob = Omit<Job, "controller" | "progress" | "queue" | "resume">;
 export type RecoveryRefusal =
   | { reason: "recovery_header_unavailable"; stage: "header_read" }
   | { reason: "recovery_context_changed"; stage: "context_recheck" }
-  | { reason: "recovery_context_unavailable"; stage: "prepare" | "context_recheck" | "finish" };
+  | { reason: "recovery_context_unavailable"; stage: "prepare" | "finish" };
 function runStart(run: ReturnType<typeof readRunLogs>[number]): number {
   if (run.meta.jobStartedAt !== undefined) return run.meta.jobStartedAt;
   const stamp = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(run.name);
@@ -48,12 +48,16 @@ export async function recoverJobRecordAsync(home: string, ref: string,
   const deadline = performance.now() + JOB_INDEX_WAIT_MS;
   const recovery = await prepareRecoveryAsync(home, ref, deadline, () => refuse({ reason: "recovery_context_unavailable", stage: "prepare" }));
   if (!recovery) return undefined;
+  // The header can supply owner/prompt, never native identity. A conclusively
+  // label-only first observation must preserve the local manager's own facts.
+  if (!recovery.history && !recovery.launch && labelOnly(recovery, recoveryContext(home, recovery).sessionId))
+    return refuse({ reason: "recovery_context_unavailable", stage: "finish" });
   const payload = needsHeader(recovery) && recovery.run ? await readRecoveryHeader(recovery.run.file) : { prompt: "", header: "" };
   if (!payload) return refuse({ reason: "recovery_header_unavailable", stage: "header_read" });
   // A handoff or new native turn can update authority while asynchronous IO yields.
   // Re-read durable facts before publishing/authorizing the recovered context.
   const latest = await prepareRecoveryAsync(home, ref, deadline);
-  if (!latest) return refuse({ reason: "recovery_context_unavailable", stage: "context_recheck" });
+  if (!latest) return refuse({ reason: "recovery_context_changed", stage: "context_recheck" });
   const finish = (payload: RecoveryHeader) => finishRecovery(home, latest, payload) ?? refuse({ reason: "recovery_context_unavailable", stage: "finish" });
   if (!needsHeader(latest)) return finish({ prompt: "", header: "" });
   if (latest.run?.file !== recovery.run?.file || latest.run?.signature !== recovery.run?.signature || contextIdentity(latest) !== contextIdentity(recovery))
@@ -192,7 +196,7 @@ function selectRecovery(ref: string, id: string, history: Record<string, unknown
   const run = runs[0], meta = run?.meta;
   const name = history?.name ?? launch?.name ?? meta?.job ?? (run && /^[\w]+-(?:job|ask)-[\w-]+$/.test(ref) ? ref : undefined);
   const agent = history?.agent ?? launch?.agent ?? ref.split("-")[0];
-  const unavailable = () => { if (history || launch || candidates.length) onUnavailable?.(); return undefined; };
+  const unavailable = () => { onUnavailable?.(); return undefined; };
   if (typeof name !== "string" || !AGENT_KINDS.includes(agent as never)) return unavailable();
   const base = { ...launch, ...history };
   if (!run && typeof base.prompt !== "string") return unavailable();
@@ -208,19 +212,27 @@ function contextIdentity({ id, name, agent, base, meta }: Recovery): string {
 function needsHeader({ run, base, meta }: Recovery): boolean {
   return Boolean(run && (typeof base.prompt !== "string" || typeof base.owner !== "string" && !meta?.by));
 }
-function finishRecovery(home: string, { id, history, spec, launch, run, meta, name, agent, base }: Recovery, { prompt, header }: RecoveryHeader): StoredJob | undefined {
+function recoveryContext(home: string, { id, base, run, meta }: Recovery) {
   const rawState = readRunnerStateRecord(home, id);
   const state = isRecord(rawState) && typeof rawState.pid === "number" ? rawState : undefined;
   const startedAt = typeof base.startedAt === "number" ? base.startedAt : run ? runStart(run) : 0;
   // Do not mistake a previous runner's final state for a newer continuation.
   const currentState = state && typeof state.updatedAt === "number" && state.updatedAt >= startedAt ? state : undefined;
+  const sessionId = currentState?.sessionId ?? base.sessionId ?? base.threadId ?? meta?.session ?? meta?.continues ?? null;
+  return { startedAt, currentState, sessionId };
+}
+function labelOnly({ history, launch }: Recovery, sessionId: unknown): boolean {
+  return !history && !launch && !sessionId;
+}
+function finishRecovery(home: string, recovery: Recovery, { prompt, header }: RecoveryHeader): StoredJob | undefined {
+  const { id, spec, meta, name, agent, base } = recovery;
+  const { startedAt, currentState, sessionId } = recoveryContext(home, recovery);
   // A runner whose last heartbeat predates the current boot is gone even when its PID answers again (AB-256).
   const alive = currentState?.status === "running" && pidAlive(Number(currentState.pid)) && !writtenBeforeBoot(Number(currentState.updatedAt));
   const owner = typeof base.owner === "string" ? base.owner : meta?.by ?? / by ([\w.-]+)/.exec(header)?.[1];
   if (!owner) return undefined;
-  const sessionId = currentState?.sessionId ?? base.sessionId ?? base.threadId ?? meta?.session ?? meta?.continues ?? null;
   // A label-only log cannot reconstruct a native job; do not overwrite a live manager's facts.
-  if (!history && !launch && !sessionId) return undefined;
+  if (labelOnly(recovery, sessionId)) return undefined;
   return {
     ...base, id: typeof base.id === "string" ? base.id : id, name, agent,
     model: base.model ?? meta?.model ?? null, prompt: typeof base.prompt === "string" ? base.prompt : prompt, startedAt,

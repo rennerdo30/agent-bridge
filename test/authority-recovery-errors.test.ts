@@ -170,34 +170,38 @@ it.each(["path", "signature", "context"] as const)("F3/N3: deferred header refus
   expect(control.emit).not.toHaveBeenCalled(); expect(control.send).not.toHaveBeenCalled();
 });
 
-it("N4: known incomplete context is unavailable while a genuinely absent ref remains null", async () => {
+it("N4: definitive first-pass non-reconstructibility and genuinely absent refs remain null", async () => {
   const f = legacyFixture();
   vi.spyOn(index, "waitForJobRunIndex").mockResolvedValue("indexed");
   vi.spyOn(index, "legacyJobRunAmbiguous").mockReturnValue(false);
   vi.spyOn(index, "indexedJobRun").mockReturnValue([]);
-  await expect(f.broker.handlers.jobAuthority(f.conn, { job: f.job.name })).rejects.toMatchObject({
-    code: "job_index_preparing", details: { reason: "recovery_context_unavailable", stage: "prepare" } });
+  const observer = vi.fn();
+  expect(await recovery.recoverJobRecordAsync(env.home, f.job.name, { onUnavailable: observer })).toBeUndefined();
+  expect(observer).toHaveBeenCalledExactlyOnceWith({ reason: "recovery_context_unavailable", stage: "prepare" });
+  expect(await f.broker.handlers.jobAuthority(f.conn, { job: f.job.name })).toBeNull();
   expect(await f.broker.handlers.jobAuthority(f.conn, { job: "codex-job-absent" })).toBeNull();
 });
 
-it("N4: prepared context disappearing after the header await is attributed without re-prepare", async () => {
+it("N3: prepared context disappearing after the header await is a change without re-prepare", async () => {
   const f = legacyFixture(), held = deferredHeader();
   const pending = f.broker.handlers.jobAuthority(f.conn, { job: f.job.name }).catch(error => error);
   await held.ready;
   writeFileSync(f.registry, JSON.stringify({ version: 4, jobs: [] }));
   renameSync(f.file, f.file + ".unavailable");
   held.release();
-  expect(await pending).toMatchObject({ code: "job_index_preparing", details: { reason: "recovery_context_unavailable", stage: "context_recheck" } });
+  expect(await pending).toMatchObject({ code: "job_index_preparing", details: { reason: "recovery_context_changed", stage: "context_recheck" } });
   expect(held.read).toHaveBeenCalledTimes(1); expect(index.waitForJobRunIndex).toHaveBeenCalledTimes(2);
 });
 
-it("N4: an unreconstructible owner remains a refusal with a bounded finish reason", async () => {
+it("N4: an unreconstructible owner remains null with bounded internal finish attribution", async () => {
   const f = legacyFixture(), { owner: _owner, ...row } = f.row;
   writeFileSync(f.registry, JSON.stringify({ version: 4, jobs: [row] }));
   writeFileSync(f.metadata, JSON.stringify({ job: f.job.name, session: "native" }));
-  vi.spyOn(feeds, "readRecoveryHeader").mockResolvedValueOnce({ header: "no owner", prompt: "private prompt" });
-  await expect(f.broker.handlers.jobAuthority(f.conn, { job: f.job.name })).rejects.toMatchObject({
-    code: "job_index_preparing", details: { reason: "recovery_context_unavailable", stage: "finish" } });
+  vi.spyOn(feeds, "readRecoveryHeader").mockResolvedValue({ header: "no owner", prompt: "private prompt" });
+  const observer = vi.fn();
+  expect(await recovery.recoverJobRecordAsync(env.home, f.job.name, { onUnavailable: observer })).toBeUndefined();
+  expect(observer).toHaveBeenCalledExactlyOnceWith({ reason: "recovery_context_unavailable", stage: "finish" });
+  expect(await f.broker.handlers.jobAuthority(f.conn, { job: f.job.name })).toBeNull();
 });
 
 it.each(["unavailable", "changed"] as const)("preserves usable stored-current fallback after recovery is %s", async reason => {
@@ -287,23 +291,25 @@ async function callerFixture(f: ReturnType<typeof fixture>) {
 it.each(["authority", "header", "context", "prepared"] as const)("message_subagent preserves named %s uncertainty through the real share/MCP boundary", async stage => {
   const f = legacyFixture();
   const reason = { authority: "authority_store_read", header: "recovery_header_unavailable",
-    context: "recovery_context_changed", prepared: "recovery_context_unavailable" }[stage];
+    context: "recovery_context_changed", prepared: "recovery_context_changed" }[stage];
   let held: ReturnType<typeof deferredHeader> | undefined;
   if (stage === "authority") failAfterAwait(f, Object.assign(new Error(`private SQL at ${env.home}`), { code: "EACCES" }));
   else if (stage === "header") vi.spyOn(feeds, "readRecoveryHeader").mockResolvedValueOnce(undefined);
   else if (stage === "context") held = deferredHeader();
-  else {
-    vi.spyOn(index, "waitForJobRunIndex").mockResolvedValue("indexed");
-    vi.spyOn(index, "legacyJobRunAmbiguous").mockReturnValue(false);
-    vi.spyOn(index, "indexedJobRun").mockReturnValue([]);
-  }
+  else held = deferredHeader();
   const caller = await callerFixture(f), lookup = vi.spyOn(caller.jobs, "findAsync"), follow = vi.spyOn(caller.jobs, "followUp");
+  const stale = { ...f.job, args: { title: "original title", effort: "low" }, controller: new AbortController(), progress: null, queue: [] };
+  (caller.jobs as unknown as { history: Map<string, unknown> }).history.set(String(f.job.id), stale);
+  const before = { ...stale, args: { ...stale.args }, queue: [...stale.queue] };
   const title = vi.spyOn(caller.jobs, "setTitle"), settings = vi.spyOn(caller.jobs, "setSettings");
   try {
     const pending = caller.client.callTool({ name: "message_subagent", arguments: { job: f.job.name, message: "do not submit", title: "do not rename", access: "read" } });
     if (held) {
       await held.ready;
-      writeFileSync(f.metadata, JSON.stringify({ job: f.job.name, session: "changed-native", by: "owner" }));
+      if (stage === "prepared") {
+        writeFileSync(f.registry, JSON.stringify({ version: 4, jobs: [] }));
+        renameSync(f.file, f.file + ".unavailable");
+      } else writeFileSync(f.metadata, JSON.stringify({ job: f.job.name, session: "changed-native", by: "owner" }));
       held.release();
     }
     const result = await pending, output = JSON.stringify(result);
@@ -312,6 +318,7 @@ it.each(["authority", "header", "context", "prepared"] as const)("message_subage
     expect(caller.request).toHaveBeenCalledTimes(1);
     expect(lookup).not.toHaveBeenCalled(); expect(follow).not.toHaveBeenCalled();
     expect(title).not.toHaveBeenCalled(); expect(settings).not.toHaveBeenCalled();
+    expect(stale).toEqual(before);
   } finally { await caller.close(); }
 });
 

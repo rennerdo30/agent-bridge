@@ -1643,7 +1643,8 @@ export class Broker {
     const current = this.storedJob(ref);
     if (!recovered) {
       if (typeof current?.prompt === "string" && typeof current.owner === "string") return current;
-      if (refusal) throw new BridgeError("job_index_preparing", `Job recovery unavailable (${refusal.reason}; ${refusal.stage}). No control submitted.`, refusal);
+      if (refusal?.reason === "recovery_context_unavailable") this.log.debug("job context not reconstructible", refusal);
+      else if (refusal) throw new BridgeError("job_index_preparing", `Job recovery unavailable (${refusal.reason}; ${refusal.stage}). No control submitted.`, refusal);
       return undefined;
     }
     if (!this.groups.canControl(peer, recovered as unknown as Record<string, unknown>, this.localPeers())) return current;
@@ -1724,7 +1725,10 @@ export class Broker {
     }
     // Surviving runners may exist only in retained snapshots after an old server overwrote the registry.
     const known = new Set(this.storedJobs().map((job) => job.name));
-    for (const runner of this.conns) if (runner.peer?.jobAgent && !known.has(runner.peer.name)) await this.jobForControl(peer, runner.peer.name);
+    for (const runner of this.conns) if (runner.peer?.jobAgent && !known.has(runner.peer.name)) {
+      try { await this.jobForControl(peer, runner.peer.name); }
+      catch { this.log.debug("project runner enrichment deferred", { reason: "job_authority_unavailable" }); }
+    }
     this.jobsForDispatch = null;
     let activeIds = new Set<unknown>();
     try {
