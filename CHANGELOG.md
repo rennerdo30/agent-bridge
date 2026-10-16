@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.30.28
+
+- **Idle broker CPU.** The history worker kept up to a whole core busy long after the import finished: every checked run log re-tagged its documents with a query that scanned the whole history store, which has no index on `run`. The lookup now uses the documents' primary-key id range (`run:<run>:`). The once-a-second storage budget check also no longer resolves two real paths per project.
+
 ## 0.30.27
 
 - **Claude Code: agent-bridge hooks run again.** Since 0.30.22 the Claude plugin's `hooks/hooks.json` named two hooks modules (`wake.ts` and `mail-scope.ts`); Claude Code loads one per plugin and refuses a second, so none of the plugin's hooks ran: sessions showed no busy/idle (grey in the dashboard), peer mail was not delivered through hooks and native subagents were not registered. One entry module (`hooks/index.ts`) now registers both mods.
