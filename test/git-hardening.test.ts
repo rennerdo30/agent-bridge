@@ -5,7 +5,7 @@ import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
 import { closeMetadataDb } from "../src/core/metadata-db.js";
-import { changedFilesNote, createWorktree, finishWorktree, gitChangeSnapshot, gitStatusSnapshot, snapshotChanges } from "../src/core/worktree.js";
+import { changedFilesNote, codexHookObservation, createWorktree, finishWorktree, gitChangeSnapshot, gitStatusSnapshot, snapshotChanges } from "../src/core/worktree.js";
 import { repositoryGuards } from "../src/core/git-safety.js";
 import { cleanupWorktrees } from "../src/core/worktree-cleanup.js";
 
@@ -172,7 +172,7 @@ function fakeGitLfs(): void {
   const script = join(bin, "git-lfs");
   writeFileSync(script, [
     "#!/bin/sh",
-    `node "${slash(join(evil, "marker.js"))}" "lfs:$1"`,
+    `node "${slash(join(evil, "marker.js"))}" ` + '"lfs:$1" "prompt=${GIT_TERMINAL_PROMPT:-unset}" "gcm=${GCM_INTERACTIVE:-unset}"',
     'case "$1" in',
     "  clean)",
     "    git config --get-regexp '^lfs\\.extension\\..*\\.clean$' | while read -r key cmd; do sh -c \"$cmd\" </dev/null; done",
@@ -255,6 +255,50 @@ describe("bridge git calls: nested repositories, target worktrees and Git LFS (A
     expect(entries.find((e) => e.branch === wt.branch)?.action).toBe("removed");
   });
 
+  it("finds gitlinks of a repository whose core.worktree points to another directory", async () => {
+    // The git directory lives in gitroot; its work tree (core.worktree) is a separate folder.
+    const gitroot = join(root, "gitroot"), tree = join(root, "tree");
+    mkdirSync(gitroot);
+    mkdirSync(tree);
+    git(gitroot, "init", "-q");
+    git(gitroot, "config", "core.worktree", slash(tree));
+    git(gitroot, "config", "user.name", "Repository Owner");
+    git(gitroot, "config", "user.email", "owner@example.test");
+    writeFileSync(join(tree, "top.txt"), "top\n");
+    const inner = join(tree, "inner");
+    mkdirSync(inner);
+    git(inner, "init", "-q");
+    writeFileSync(join(inner, ".gitattributes"), "*.txt filter=wtinner\n");
+    writeFileSync(join(inner, "s.txt"), "inner\n");
+    git(inner, "add", ".");
+    git(inner, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "inner");
+    git(gitroot, "add", "top.txt", "inner");
+    git(gitroot, "commit", "-q", "-m", "tree with gitlink");
+    git(inner, "config", "filter.wtinner.clean", planted("core-worktree-filter"));
+    touch(join(inner, "s.txt"));
+    git(gitroot, "status", "--porcelain");
+    expect(markerText()).toMatch(/core-worktree-filter/);
+    rmSync(markers);
+    touch(join(inner, "s.txt"));
+    expect(await gitChangeSnapshot(gitroot, nullLogger)).not.toBeNull();
+    expect(markerText()).toBe("");
+  });
+
+  it("cleanup keeps a worktree whose removal the guards refused, even when the refusal text looks like a permission error", async () => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: "ab422abd", log: nullLogger });
+    // A gitlink named "Permission denied" in the main checkout's index whose .git file points nowhere: only
+    // `worktree remove` (run in the main checkout) reaches it, and its guard refusal names that path.
+    const head = git(repo, "rev-parse", "HEAD");
+    git(repo, "update-index", "--add", "--cacheinfo", `160000,${head},Permission denied`);
+    mkdirSync(join(repo, "Permission denied"));
+    writeFileSync(join(repo, "Permission denied", ".git"), `gitdir: ${slash(join(root, "missing"))}\n`);
+    const entries = await cleanupWorktrees({ cwd: repo, home, apply: true, log: nullLogger });
+    const entry = entries.find((e) => e.branch === wt.branch);
+    expect(entry?.action).toBe("kept");
+    expect(entry?.reason).toMatch(/AB-422/);
+    expect(existsSync(join(wt.path, "a.txt"))).toBe(true);
+  });
+
   it("keeps a canonical repository-local Git LFS driver working (checkout smudges, WIP commits clean)", async () => {
     fakeGitLfs();
     for (const [key, value] of CANONICAL_LFS) git(repo, "config", key, value);
@@ -262,6 +306,8 @@ describe("bridge git calls: nested repositories, target worktrees and Git LFS (A
     const wt = await createWorktree({ cwd: repo, home, jobId: "ab422eee", log: nullLogger });
     expect(readFileSync(join(wt.path, "big.bin"), "utf8")).toBe("binary payload\n");
     expect(markerText()).toMatch(/lfs:smudge/);
+    // Finding 4 of the second review: an LFS endpoint from repository config can never open a login prompt.
+    expect(markerText()).toMatch(/lfs:smudge prompt=0 gcm=Never/);
     writeFileSync(join(wt.path, "new.bin"), "job binary\n");
     await finishWorktree(wt, "WIP: lfs work", nullLogger, true);
     expect(git(repo, "cat-file", "-p", `${wt.branch}:new.bin`)).toBe("pointer:job binary");
@@ -318,20 +364,47 @@ describe("AB-422 guard decisions", () => {
   it("keeps the canonical local filter.lfs driver and neutralises any other value of it", async () => {
     const canonical: [string, string, string][] = [["local", "filter.lfs.clean", "git-lfs clean -- %f"], ["local", "filter.lfs.smudge", "git-lfs smudge -- %f"],
       ["local", "filter.lfs.process", "git-lfs filter-process"], ["local", "filter.lfs.required", "true"]];
-    expect(await repositoryGuards(["status"], root, configured(canonical))).toEqual([]);
+    expect((await repositoryGuards(["status"], root, configured(canonical))).args).toEqual([]);
     for (const value of ["git-lfs.exe filter-process", "/tmp/git-lfs filter-process", "git-lfs filter-process --verbose", "evil"]) {
       const guards = await repositoryGuards(["status"], root, configured([...canonical, ["local", "filter.lfs.process", value]]));
-      expect(guards).toContain("filter.lfs.process=");
+      expect(guards.args).toContain("filter.lfs.process=");
     }
   });
 
-  it.each(["lfs.extension.x.clean", "lfs.customtransfer.x.path", "lfs.standalonetransferagent", "credential.helper", "core.sshCommand", "http.proxy", "remote.origin.proxy"])(
-    "refuses a filter-capable call with active Git LFS and local %s", async (key) => {
-      const entries: [string, string, string][] = [["global", "filter.lfs.process", "git-lfs filter-process"], ["local", key, "x"]];
-      await expect(repositoryGuards(["status"], root, configured(entries))).rejects.toThrow(/Git LFS is active/);
-      // Without an active LFS driver nothing reads those keys during a status.
-      if (!key.startsWith("lfs.")) expect(await repositoryGuards(["status"], root, configured([["local", key, "x"]]))).toEqual([]);
+  const activeLfs = (key: string): [string, string, string][] => [["global", "filter.lfs.process", "git-lfs filter-process"], ["local", key, "x"]];
+
+  it.each(["lfs.extension.x.clean", "lfs.customtransfer.x.path", "lfs.standalonetransferagent"])(
+    "refuses every filter-capable call with active Git LFS and local %s", async (key) => {
+      for (const command of [["status"], ["add", "-A"], ["commit", "-m", "x"], ["checkout", "main"], ["worktree", "add", "x"]]) {
+        await expect(repositoryGuards(command, root, configured(activeLfs(key)))).rejects.toThrow(/Git LFS is active/);
+      }
     });
+
+  it.each(["credential.helper", "core.sshCommand", "http.proxy", "http.sslVerify", "remote.origin.proxy"])(
+    "with active Git LFS and local %s, refuses only commands that can smudge (download)", async (key) => {
+      for (const command of [["checkout", "main"], ["switch", "main"], ["restore", "."], ["reset", "--hard"], ["stash"], ["merge", "x"], ["pull"], ["worktree", "add", "x"],
+        ["read-tree", "-u", "x"], ["checkout-index", "-a"], ["cherry-pick", "x"], ["revert", "x"], ["rebase", "x"], ["am"]]) {
+        // pull is also a network command and may be refused by that check first.
+        await expect(repositoryGuards(command, root, configured(activeLfs(key))), command.join(" ")).rejects.toThrow(command[0] === "pull" ? /refused/ : /Git LFS is active/);
+      }
+      // Clean-only commands never download, so the owner's local credential or http settings do not block them.
+      for (const command of [["status", "--porcelain"], ["add", "-A"], ["commit", "-m", "x"], ["diff"], ["rm", "x"], ["mv", "a", "b"], ["update-index", "--refresh"], ["worktree", "remove", "x"]]) {
+        expect((await repositoryGuards(command, root, configured(activeLfs(key)))).args, command.join(" ")).toEqual([]);
+      }
+    });
+
+  it("sets no-prompt variables for the guarded command while Git LFS is active, and only then", async () => {
+    const active = await repositoryGuards(["status"], root, configured([["global", "filter.lfs.process", "git-lfs filter-process"]]));
+    expect(active.env).toEqual({ GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never" });
+    expect((await repositoryGuards(["status"], root, configured([]))).env).toEqual({});
+  });
+
+  it("records a failed hook observation when the working copy could be compared before the job but not after it", () => {
+    expect(codexHookObservation(1, null)).toBe("verified");
+    expect(codexHookObservation(0, ["a.txt"])).toBe("failed");
+    expect(codexHookObservation(0, null)).toBe("failed");
+    expect(codexHookObservation(0, [])).toBeNull();
+  });
 
   it.each(["http.proxy", "http.sslVerify", "http.https://example.test/.sslCAInfo", "http.curloptResolve", "http.extraHeader", "remote.origin.proxy"])(
     "refuses network commands with local %s", async (key) => {
@@ -339,7 +412,7 @@ describe("AB-422 guard decisions", () => {
     });
 
   it("allows pure http transfer tuning for network commands", async () => {
-    expect(await repositoryGuards(["fetch"], root, configured([["local", "http.postbuffer", "1"], ["local", "http.https://x/.lowspeedtime", "9"]]))).toEqual([]);
+    expect((await repositoryGuards(["fetch"], root, configured([["local", "http.postbuffer", "1"], ["local", "http.https://x/.lowspeedtime", "9"]]))).args).toEqual([]);
   });
 
   it("reports an unavailable after-snapshot as unknown, never as 'No files changed'", () => {

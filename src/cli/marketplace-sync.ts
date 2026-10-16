@@ -18,10 +18,11 @@ export function syncMarketplace(root: string, client: "claude" | "codex", versio
   // AB-422: anything running as the owner can write this clone's .git/config, so every call gets the bridge's
   // git hardening (no fsmonitor, hooks, editors, local filter drivers, external diffs or local transport programs).
   const safety = gitSafetyArgs();
-  const run = (args: string[]) => execFileSync("git", [...safety, ...args], { encoding: "utf8", windowsHide: true, timeout: 60_000, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+  const run = (args: string[], env: Record<string, string> = {}) => execFileSync("git", [...safety, ...args],
+    { encoding: "utf8", windowsHide: true, timeout: 60_000, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...env } });
   const git = (...args: string[]) => {
     const guards = repositoryGuardsSync(args, root, (read, dir) => run(["-C", dir ?? root, ...read]));
-    return run(["-C", root, ...guards, ...diffSafety(args)]).trim();
+    return run(["-C", root, ...guards.args, ...diffSafety(args)], guards.env).trim();
   };
   const fix = `agent-bridge update ${client} --yes`;
   if (!existsSync(join(root, ".git"))) throw new Error(`Missing Git marketplace clone: ${root}. Fix: ${client} plugin marketplace ${client === "claude" ? "update" : "upgrade"} agent-bridge, then ${fix}`);

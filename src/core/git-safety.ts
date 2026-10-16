@@ -25,11 +25,16 @@ import { DEFAULT_HOME, ENV } from "./constants.js";
  *   (`git-lfs clean -- %f`, `git-lfs smudge [--skip] -- %f`, `git-lfs filter-process [--skip]`, required
  *   true/false: a bare `git-lfs` from PATH) is kept, like the owner's global one. git-lfs itself reads
  *   repository-local configuration, so while an LFS driver is active the call is refused when any reached
- *   repository's local or worktree config sets `lfs.extension.*` or `lfs.customtransfer.*` (programs),
- *   `lfs.standalonetransferagent`, or a network key below (transport programs, credential helpers, proxies, TLS
+ *   repository's local or worktree config sets `lfs.extension.*` or `lfs.customtransfer.*` (programs) or
+ *   `lfs.standalonetransferagent`; commands that write working-tree files (and so make git-lfs download: checkout,
+ *   switch, restore, reset, stash, merge, pull, rebase, cherry-pick, revert, am, read-tree, checkout-index,
+ *   worktree add) are also refused for a network key below (transport programs, credential helpers, proxies, TLS
  *   settings LFS transfers use). A refused status is "unknown" to its callers (cleanup keeps the worktree, change
- *   snapshots report unknown); a refused write (worktree add, WIP commit) fails. `.lfsconfig` in the tree needs no
- *   guard: git-lfs (verified with 3.7.1) ignores its program, transfer-agent and ssh keys with a warning;
+ *   snapshots report unknown); a refused write (worktree add, WIP commit) fails. While LFS is active the guarded
+ *   command also runs with GIT_TERMINAL_PROMPT=0 and GCM_INTERACTIVE=Never in its own environment, so an LFS
+ *   endpoint taken from repository config (lfs.url, remote.<n>.lfsurl, a remote URL) cannot open a login prompt.
+ *   `.lfsconfig` in the tree needs no guard: git-lfs (verified with 3.7.1) ignores its program, transfer-agent and
+ *   ssh keys with a warning. Refusals are `GitSafetyRefusal` errors;
  * - commands that create commits: signing is switched off when repository-local config names a signing program;
  * - diff-like commands get `--no-ext-diff --no-textconv`;
  * - network commands (fetch, ls-remote, pull, push) are refused when repository-local config names a transport,
@@ -48,6 +53,14 @@ import { DEFAULT_HOME, ENV } from "./constants.js";
  * bridge cannot lock against.
  */
 
+/**
+ * A guard refused the command (or could not check it). Callers treat it as git's own refusal, never as a
+ * permission or I/O failure, even when its text quotes git's stderr or a path.
+ */
+export class GitSafetyRefusal extends Error {
+  override name = "GitSafetyRefusal";
+}
+
 /** Below the bridge home: an always-empty directory used as `core.hooksPath`. */
 export const EMPTY_HOOKS_DIR_NAME = "git-hooks-empty";
 
@@ -55,7 +68,7 @@ export function emptyHooksDir(env: NodeJS.ProcessEnv = process.env): string {
   const dir = join(resolve(env[ENV.home]?.trim() || DEFAULT_HOME), EMPTY_HOOKS_DIR_NAME);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   // Fail closed: a hook placed here would run on every bridge git call.
-  if (readdirSync(dir).length) throw new Error(`refusing to run git: the bridge hooks directory ${dir} must be empty (AB-422)`);
+  if (readdirSync(dir).length) throw new GitSafetyRefusal(`refusing to run git: the bridge hooks directory ${dir} must be empty (AB-422)`);
   return dir;
 }
 
@@ -84,6 +97,9 @@ const FILTER_COMMANDS = new Set(["add", "am", "apply", "checkout", "checkout-ind
   "read-tree", "rebase", "reset", "restore", "revert", "rm", "stash", "status", "switch", "update-index", "worktree"]);
 /** `git worktree` subcommands that check out files or run a status in a worktree. */
 const FILTER_WORKTREE_COMMANDS = new Set(["add", "remove", "move"]);
+/** Subcommands that write working-tree files and so can make git-lfs download objects (and `worktree add`). */
+const SMUDGE_COMMANDS = new Set(["am", "checkout", "checkout-index", "cherry-pick", "merge", "pull", "read-tree", "rebase", "reset", "restore",
+  "revert", "stash", "switch"]);
 /** Subcommands that can create a signed commit or tag. */
 const SIGNING_COMMANDS = new Set(["am", "cherry-pick", "commit", "merge", "pull", "rebase", "revert", "stash", "tag"]);
 /** Subcommands that can show a patch and so run an external diff or textconv driver. */
@@ -148,7 +164,7 @@ function* readRepository(dir: string | null, label: string): Plan<ScannedReposit
   let raw: string;
   // Reading configuration executes nothing (no hooks, filters or fsmonitor); includes are expanded and shown.
   try { raw = yield { args: ["config", "-z", "--list", "--show-origin", "--show-scope"], dir }; }
-  catch (err) { throw new Error(`refused: cannot read the git config of ${label}: ${message(err)} (AB-422)`); }
+  catch (err) { throw new GitSafetyRefusal(`refused: cannot read the git config of ${label}: ${message(err)} (AB-422)`); }
   const entries = parseConfigList(raw);
   return { label, entries, local: entries.filter((e) => REPOSITORY_SCOPES.has(e.scope)) };
 }
@@ -158,31 +174,34 @@ function* readRepository(dir: string | null, label: string): Plan<ScannedReposit
  * with that repository's own configuration inside each one. Populated means `<path>/.git` exists (a directory
  * or a `.git` file pointing anywhere), the same test git uses before it recurses.
  */
-function* nestedRepositories(dir: string | null, base: string, found: ScannedRepository[], seen: Set<string>, depth: number): Plan<void> {
+function* nestedRepositories(dir: string | null, label: string, found: ScannedRepository[], seen: Set<string>, depth: number): Plan<void> {
   let raw: string;
-  try { raw = yield { args: ["ls-files", "-s", "-z", "--", ":/"], dir }; }
+  // Paths relative to the top of the work tree, which core.worktree can put anywhere (not below `dir`).
+  try { raw = yield { args: ["ls-files", "--full-name", "-s", "-z", "--", ":/"], dir }; }
   catch (err) {
     // Only a repository without a work tree (bare, or a git directory) has no index to read.
     let inside = "";
     try { inside = (yield { args: ["rev-parse", "--is-inside-work-tree"], dir }).trim(); } catch { /* refused below */ }
     if (inside === "false") return;
-    throw new Error(`refused: cannot list the gitlinks of ${dir ?? base}: ${message(err)} (AB-422)`);
+    throw new GitSafetyRefusal(`refused: cannot list the gitlinks of ${label}: ${message(err)} (AB-422)`);
   }
-  for (const record of raw.split("\0")) {
-    // "<mode> <object> <stage>\t<path>", the path relative to the directory the command ran in.
-    if (!record.startsWith("160000 ")) continue;
-    const tab = record.indexOf("\t");
-    if (tab < 0) continue;
-    const path = resolve(base, record.slice(tab + 1));
+  // "<mode> <object> <stage>\t<path>"
+  const gitlinks = raw.split("\0").filter((record) => record.startsWith("160000 ") && record.includes("\t"));
+  if (!gitlinks.length) return;
+  let top = "";
+  try { top = (yield { args: ["rev-parse", "--show-toplevel"], dir }).trim(); } catch { /* refused below */ }
+  if (!top) throw new GitSafetyRefusal(`refused: cannot find the work tree of ${label} to check its gitlinks (AB-422)`);
+  for (const record of gitlinks) {
+    const path = resolve(top, record.slice(record.indexOf("\t") + 1));
     try { lstatSync(join(path, ".git")); } catch { continue; }
     let key: string;
     try { key = realpathSync.native(path); } catch { key = path; }
     if (process.platform === "win32") key = key.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    if (depth >= MAX_NESTING) throw new Error(`refused: repositories nested deeper than ${MAX_NESTING} levels at ${path} (AB-422)`);
+    if (depth >= MAX_NESTING) throw new GitSafetyRefusal(`refused: repositories nested deeper than ${MAX_NESTING} levels at ${path} (AB-422)`);
     found.push(yield* readRepository(path, `the nested repository ${path}`));
-    yield* nestedRepositories(path, path, found, seen, depth + 1);
+    yield* nestedRepositories(path, `the nested repository ${path}`, found, seen, depth + 1);
   }
 }
 
@@ -196,23 +215,27 @@ function lfsActive(repo: ScannedRepository): boolean {
   return [...last.values()].some((value) => value.trim() !== "");
 }
 
-function* guardPlan(rest: readonly string[], cwd: string): Plan<string[]> {
+/** Extra `-c` arguments for the guarded command, and process-local environment for it (never persisted). */
+export interface GitGuards { args: string[]; env: Record<string, string> }
+
+function* guardPlan(rest: readonly string[], cwd: string): Plan<GitGuards> {
   const sub = rest[0] ?? "";
   const filters = FILTER_COMMANDS.has(sub) && (sub !== "worktree" || FILTER_WORKTREE_COMMANDS.has(rest[1] ?? ""));
   const signing = SIGNING_COMMANDS.has(sub), network = NETWORK_COMMANDS.has(sub);
-  if (!filters && !signing && !network) return [];
+  if (!filters && !signing && !network) return { args: [], env: {} };
   const main = yield* readRepository(null, "the repository");
   if (network) {
     const risky = [...new Set(main.local.filter((e) => isNetworkKey(e.lower)).map((e) => e.key))];
-    if (risky.length) throw new Error(`refused: repository-local git config sets ${risky.join(", ")}, which can start programs or redirect the connection during network access (AB-422)`);
+    if (risky.length) throw new GitSafetyRefusal(`refused: repository-local git config sets ${risky.join(", ")}, which can start programs or redirect the connection during network access (AB-422)`);
   }
   const out: string[] = [];
+  let lfs = false;
   if (filters) {
     const repos = [main];
     const seen = new Set<string>();
     // A status or diff told to ignore submodules never enters them.
     const ignoresSubmodules = (sub === "status" || sub === "diff") && rest.some((a) => a === "--ignore-submodules" || a === "--ignore-submodules=all");
-    if (!ignoresSubmodules) yield* nestedRepositories(null, cwd, repos, seen, 0);
+    if (!ignoresSubmodules) yield* nestedRepositories(null, `the repository at ${cwd}`, repos, seen, 0);
     if (sub === "worktree" && (rest[1] === "remove" || rest[1] === "move")) {
       // Git runs a status inside the target worktree, with that worktree's own config.worktree and gitlinks.
       const target = rest.slice(2).find((a) => !a.startsWith("-"));
@@ -222,7 +245,7 @@ function* guardPlan(rest: readonly string[], cwd: string): Plan<string[]> {
         try { lstatSync(path); } catch { exists = false; }
         if (exists) {
           repos.push(yield* readRepository(path, `the worktree ${path}`));
-          yield* nestedRepositories(path, path, repos, seen, 0);
+          yield* nestedRepositories(path, `the worktree ${path}`, repos, seen, 0);
         }
       }
     }
@@ -238,24 +261,30 @@ function* guardPlan(rest: readonly string[], cwd: string): Plan<string[]> {
     // The standard local Git LFS driver stays; any other value of it is treated like every other local driver.
     if (canonicalLfs) names.delete("lfs");
     if (!names.has("lfs") && repos.some(lfsActive)) {
-      const risky = [...new Set(repos.flatMap((r) => r.local).filter((e) => LFS_PROGRAM_KEYS.test(e.lower) || isNetworkKey(e.lower)).map((e) => e.key))];
-      if (risky.length) throw new Error(`refused: Git LFS is active and repository-local git config sets ${risky.join(", ")}, which git-lfs reads and which can start programs or redirect its transfers (AB-422)`);
+      lfs = true;
+      // Programs (extensions, transfer agents) can run on every clean; transport, credential and proxy settings
+      // matter only when git-lfs downloads, which happens only when a command writes working-tree files.
+      const smudges = SMUDGE_COMMANDS.has(sub) || (sub === "worktree" && rest[1] === "add");
+      const risky = [...new Set(repos.flatMap((r) => r.local).filter((e) => LFS_PROGRAM_KEYS.test(e.lower) || (smudges && isNetworkKey(e.lower))).map((e) => e.key))];
+      if (risky.length) throw new GitSafetyRefusal(`refused: Git LFS is active and repository-local git config sets ${risky.join(", ")}, which git-lfs reads and which can start programs or redirect its transfers (AB-422)`);
     }
     for (const name of names) {
       // `-c` splits at the first "=": a driver name containing one could not be overridden reliably.
-      if (/[=\r\n]/.test(name)) throw new Error(`refused: repository-local git config defines a filter driver whose name cannot be neutralised: ${JSON.stringify(name)} (AB-422)`);
+      if (/[=\r\n]/.test(name)) throw new GitSafetyRefusal(`refused: repository-local git config defines a filter driver whose name cannot be neutralised: ${JSON.stringify(name)} (AB-422)`);
       out.push("-c", `filter.${name}.clean=`, "-c", `filter.${name}.smudge=`, "-c", `filter.${name}.process=`, "-c", `filter.${name}.required=false`);
     }
   }
   if (signing && main.local.some((e) => e.lower.startsWith("gpg.") || e.lower === "user.signingkey")) out.push("-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false");
-  return out;
+  // An LFS endpoint from repository config (lfs.url, remote.<n>.lfsurl, a remote URL) may point anywhere: git-lfs
+  // and the credential manager must never open a login prompt or dialog for it.
+  return { args: out, env: lfs ? { GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never" } : {} };
 }
 
 /**
  * The extra `-c` options (and refusals) the command `rest` (subcommand first) needs when run in `cwd`. `run`
  * executes a hardened, read-only git command with the caller's options, in `dir` or in `cwd`.
  */
-export async function repositoryGuards(rest: readonly string[], cwd: string, run: GuardRunner<Promise<string>>): Promise<string[]> {
+export async function repositoryGuards(rest: readonly string[], cwd: string, run: GuardRunner<Promise<string>>): Promise<GitGuards> {
   const plan = guardPlan(rest, resolve(cwd));
   let step = plan.next();
   while (!step.done) {
@@ -268,7 +297,7 @@ export async function repositoryGuards(rest: readonly string[], cwd: string, run
 }
 
 /** The same guards for synchronous callers (the marketplace clone update). */
-export function repositoryGuardsSync(rest: readonly string[], cwd: string, run: GuardRunner<string>): string[] {
+export function repositoryGuardsSync(rest: readonly string[], cwd: string, run: GuardRunner<string>): GitGuards {
   const plan = guardPlan(rest, resolve(cwd));
   let step = plan.next();
   while (!step.done) {
