@@ -96,9 +96,21 @@ describe("history change feed (AB-383)", () => {
     };
 
     let cursor = (await page("tail")).next as string;
+    // Setup, outside the measured window: the worker's previous timer callback (the earlier line's tick,
+    // including its indexing tail) has finished. On a loaded runner one tick took ~1 s, longer than the
+    // 300 ms gap, so the next sample also measured the previous line's leftover work, not its own latency.
+    const fired = (key: string) => timings.filter(t => key in t).length;
+    const workerSettled = async () => {
+      const until = Date.now() + 60_000;
+      while (fired("scheduleWaitMs") !== fired("operationFinishCheckpointMs")) {
+        if (Date.now() > until) throw new Error("history worker tick did not finish");
+        await new Promise(r => setTimeout(r, 10));
+      }
+    };
     const samples: number[] = [], pushed: number[] = [];
     for (let n = 0; n < 5; n++) {
       await new Promise(r => setTimeout(r, 300));
+      await workerSettled();
       const started = performance.now();
       appendFileSync(main, say(`live ${n}`));
       let changes: HistoryChange[];
