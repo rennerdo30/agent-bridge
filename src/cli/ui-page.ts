@@ -3277,11 +3277,14 @@ const OUTCOME_LABEL = { merged: ["merged", "ok"], held: ["held", "warn"], unmerg
 function outcomeChip(g) {
   const o = g.status !== "running" && g.job && outcomes && outcomes[g.job] && outcomes[g.job].outcome;
   const merge = o && o.merge;
-  if (!merge || !OUTCOME_LABEL[merge.state]) return "";
-  if (o.observation && o.observation.state === "pending") return '<span class="chip outcome" title="Outcome verification is running in the background">checking outcome</span>';
+  const result = g.status !== "running" && g.job && state.jobs && state.jobs[g.job] && state.jobs[g.job].resultStored
+    ? '<span class="chip outcome ' + (o && o.delivery && o.delivery.status === "read" ? "ok" : "warn") + '">' +
+      (o && o.delivery && o.delivery.status === "read" ? "delivered" : "result stored, not delivered") + '</span>' : "";
+  if (!merge || !OUTCOME_LABEL[merge.state]) return result;
+  if (o.observation && o.observation.state === "pending") return result + '<span class="chip outcome" title="Outcome verification is running in the background">checking outcome</span>';
   const [label, cls] = OUTCOME_LABEL[merge.state];
   const tip = [o.observation && o.observation.state === "stale" && "cached evidence; refresh pending", merge.branch && "branch " + merge.branch, merge.baseBranch && "into " + merge.baseBranch, merge.reason].filter(Boolean).join(" · ");
-  return '<span class="chip outcome ' + cls + '" title="' + esc(tip) + '">' + label + "</span>";
+  return result + '<span class="chip outcome ' + cls + '" title="' + esc(tip) + '">' + label + "</span>";
 }
 /** Where a run lives: on a paired PC, or rebuilt from its job record after its log was lost. */
 function runChips(g) {

@@ -7,7 +7,7 @@ import { readStore } from "./jobs.js";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { settleUsageAttempt, usageRefused, usageSubmissionReceipt } from "../core/usage.js";
-import { COMPLETION_DEDUPE_PREFIX } from "../core/completion.js";
+import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "../core/completion.js";
 import { takeRunnerSpec } from "../core/runner-store.js";
 import { failureCause } from "../core/delegate.js";
 import { createLogger } from "../core/logger.js";
@@ -30,6 +30,7 @@ import { acquireStartup } from "../core/startup-admission.js";
 import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { guardRunnerErrors } from "./job-runner-errors.js";
 import { configurePathDisplay } from "../core/display-paths.js";
+import { deliverFinalResult } from "./final-result.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
 const SEND_ATTEMPTS = 30;
@@ -148,7 +149,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
   let closing = false;
 
   let extra: Partial<RunnerState> = { status: "running" };
-  const save = (patch: Partial<RunnerState> = {}) => {
+  const save = (patch: Partial<RunnerState> = {}, required = false) => {
     extra = { ...extra, ...patch };
     try {
       refreshOwner();
@@ -175,6 +176,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       });
     } catch (err) {
       log.warn("could not write the job runner state", { err: (err as Error).message });
+      if (required) throw err;
     }
   };
 
@@ -427,10 +429,17 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     if (saveTimer) clearTimeout(saveTimer);
     // The state first: once the report arrives, the session must find the job finished.
     const reportId = randomUUID();
-    save({ status, report, reportId, delivered: false, finishedAt: Date.now() });
-    const delivered = await post(report, null, false, `${COMPLETION_DEDUPE_PREFIX}${reportId}`);
-    save({ delivered });
-    log.info("job runner done", { status, delivered });
+    const final = { report, reportId, delivered: false };
+    await deliverFinalResult(final,
+      (stored) => save({ status, ...stored, finishedAt: Date.now() }, true),
+      async (body, id) => {
+        const result = await inOrder(body, null, false, `${COMPLETION_DEDUPE_PREFIX}${id}`);
+        return result && { stored: result.messages.length > 0 };
+      },
+      async (ms) => { await delay(ms); },
+      job.controller.signal,
+      async (id) => (await node.sendState(completionMessageId(`job:${job.id}`, id))).state === "stored");
+    log.info("job runner done", { status, delivered: extra.delivered === true });
     break;
   }
   clearInterval(heartbeat);

@@ -7,6 +7,7 @@ import { shouldWakeClaudeMessage, WAKE_HEADER } from "./rewake.js";
 import type { ServerContext } from "./server.js";
 import { formatDecisionSummary } from "../core/decisions.js";
 import { finishHookTurn, reserveHook } from "./hook-ownership.js";
+import { RESULT_HEADER } from "../core/local-result-receipts.js";
 
 /** Hook events agent-bridge subscribes to in both Claude Code and Codex. */
 export type HookEvent = "SessionStart" | "UserPromptSubmit" | "PostToolUse" | "Stop" | "StopFailure" | "SubagentStart" | "SubagentStop" | "SessionEnd";
@@ -65,6 +66,17 @@ export function discardFinishedNotes(ctx: ServerContext): void {
 }
 
 const antigravityStopPending = new WeakMap<ServerContext, Set<string>>();
+/** Claude/Codex hook output is only a hand-out. A later model boundary proves the result was seen. */
+const completionPending = new WeakMap<ServerContext, { ids: Set<string>; event: HookEvent }>();
+
+function confirmCompletionDelivery(ctx: ServerContext, input: HookInput): void {
+  const pending = completionPending.get(ctx);
+  if (!pending) return;
+  completionPending.delete(ctx);
+  const stepped = input.event === "PostToolUse" || input.event === "Stop" &&
+    (pending.event !== "Stop" || input.stopHookActive);
+  if (stepped) ctx.node?.markRead([...pending.ids]);
+}
 
 function holdOrMarkRead(ctx: ServerContext, ids: string[], hold: boolean): void {
   if (!ids.length) return;
@@ -74,8 +86,12 @@ function holdOrMarkRead(ctx: ServerContext, ids: string[], hold: boolean): void 
     for (const id of ids) pending.add(id);
     return;
   }
-  ctx.node?.markRead(ids);
+  const resultIds = new Set(ctx.node?.unread().filter(m => ids.includes(m.id) && m.from.id.startsWith("job:") && RESULT_HEADER.test(m.body.split("\n")[0]!)).map(m => m.id) ?? []);
+  if (resultIds.size) completionPending.set(ctx, { ids: resultIds, event: currentHookEvent.get(ctx) ?? "Stop" });
+  ctx.node?.markRead(ids.filter(id => !resultIds.has(id)));
 }
+
+const currentHookEvent = new WeakMap<ServerContext, HookEvent>();
 
 /** Confirm that an Antigravity Stop continuation started a model step or tool call. */
 export function confirmAntigravityStopDelivery(ctx: ServerContext): void {
@@ -200,6 +216,7 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
   try {
     if (input.subagent) return await subagentHook(ctx, { ...input, signal: controller.signal });
     if (input.event === "SessionEnd") {
+      completionPending.delete(ctx);
       if (ctx.agent === "claude" && node && !node.wasReplaced && node.currentSessionId === input.sessionId) await withinHook(node.nativeChildrenEnd(), controller.signal);
       return {};
     }
@@ -236,7 +253,9 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
   await withinHook(node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: (err as Error).message })), input.signal!);
   if (!current()) return {};
   // The host discards StopFailure output. Never read/confirm mail that it cannot deliver.
-  if (input.event === "StopFailure") { releaseAntigravityStopDelivery(ctx); finishHookTurn(ctx, input); return {}; }
+  if (input.event === "StopFailure") { completionPending.delete(ctx); releaseAntigravityStopDelivery(ctx); finishHookTurn(ctx, input); return {}; }
+  confirmCompletionDelivery(ctx, input);
+  currentHookEvent.set(ctx, input.event);
   if (ctx.agent === "antigravity") {
     if (input.event === "PostToolUse" || (input.event === "UserPromptSubmit" && input.stopHookActive) || (input.event === "Stop" && input.stopHookActive)) confirmAntigravityStopDelivery(ctx);
     else releaseAntigravityStopDelivery(ctx);

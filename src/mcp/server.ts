@@ -1,6 +1,7 @@
 import { describeResourceSlots, formatResourceSlots, ResourceSlots } from "../core/resource-slots.js";
 import { bundleDirectory } from "../core/bundle-directory.js";
-import { MAX_HOLD_REASON_CHARS, setJobOutcome, deriveJobOutcome } from "../core/job-outcomes.js";
+import { MAX_HOLD_REASON_CHARS, setJobOutcome, deriveJobOutcome, readResultDelivery } from "../core/job-outcomes.js";
+import { resultDeliveryLabel } from "./final-result.js";
 import { closeJobWorktree } from "../core/job-close.js";
 import { readWorktreeState } from "../core/worktree-state.js";
 import { readOutcomeDecision } from "../core/job-outcomes.js";
@@ -972,7 +973,10 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       const recent = ctx.jobs?.recent() ?? [];
       if (recent.length) {
         lines.push(t("peers.recent"));
-        for (const j of recent) lines.push(t("peers.recentJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), status: j.status, ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }));
+        for (const j of recent) {
+          const delivery = j.report ? resultDeliveryLabel({ report: j.report }, readResultDelivery(ctx.home, j).status === "read") : null;
+          lines.push(t("peers.recentJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), status: j.status + (delivery ? `; ${delivery}` : ""), ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }));
+        }
       }
       lines.push(...waits.pending(n).map(resumeWaitHint));
       for (const j of [...jobs, ...waiting, ...recent]) if (j.remote) lines.push(`Remote job ${j.name}: ${j.remote.host}/${j.remote.name}`);
