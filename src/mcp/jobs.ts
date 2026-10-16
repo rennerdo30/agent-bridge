@@ -7,7 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { closeSync, constants as fsConstants, copyFileSync, existsSync, fsyncSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { DEFAULT_MAX_JOBS, DELEGATION_METADATA_VERSION } from "../core/constants.js";
+import { DEFAULT_MAX_JOBS, DELEGATION_METADATA_VERSION, JOBS_FILE } from "../core/constants.js";
 import { DelegateError, failureCause, pidAlive, type DelegateResult } from "../core/delegate.js";
 import { displayPathText } from "../core/display-paths.js";
 import { capReport, quarantineMessage } from "../core/oversize.js";
@@ -269,6 +269,20 @@ const approvalAnswers = new WeakMap<Job, Set<(answer: string, by?: string) => bo
 /** Ending a turn must never leave an approval waiting after the job is gone. */
 export function denyPendingApprovals(job: Job, reason = "job finished"): void {
   for (const answer of [...(approvalAnswers.get(job) ?? [])]) answer(reason, "job completion");
+  // Identical-approval grants end with the turn (AB-402).
+  job.approvalGrants = undefined;
+}
+
+/**
+ * Who supervises the job, read from the durable job store when it has the job (a handoff_subagents from another
+ * process updates only the store), else from memory (AB-402). Any handoff changes it.
+ */
+export function jobSupervision(home: string | undefined, job: Job, log?: Logger): string {
+  const durable = home ? readStoredJob(join(home, JOBS_FILE), job.id, job.name, log) : undefined;
+  const source: Pick<Job, "supervisor" | "owner" | "rootName" | "rootSession" | "ownershipHistory"> = durable ?? job;
+  const history = Array.isArray(source.ownershipHistory) ? source.ownershipHistory : [];
+  const last = history.at(-1) as { id?: unknown } | undefined;
+  return JSON.stringify([source.supervisor ?? null, source.owner ?? null, source.rootName ?? null, source.rootSession ?? null, history.length, typeof last?.id === "string" ? last.id : null]);
 }
 
 /** An approval answer. */

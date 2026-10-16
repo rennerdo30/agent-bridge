@@ -41,21 +41,48 @@ Tool descriptions show the value from when the session started. See
 `spawn_codex`, `ask_codex` or `message_subagent`. This is separate from bridge job
 concurrency and delegation depth. See [native subagent settings and dashboard APIs](../codex-subagents/).
 
-`jobs.reuseIdenticalApprovals` (default `true`, home config only; a project config cannot
-change it) lets a job reuse an approval that the supervisor (`decide`) or the owner
-(dashboard or a native dialog) already **allowed** in the same job, when the new request is
-identical: the same asking agent, tool, working folder and exact request text (command line,
-file path, or MCP tool with its arguments; only line endings and surrounding whitespace are
-normalized). The job gets no second question; the supervisor gets a quiet note naming the
-original approval id, the job's step log shows the line, and the approvals history records a
-`reused` event. A grant never widens and never crosses jobs: it ends with the job, when the
-job's access, sandbox or permission settings change, and when its supervisor changes. A deny is
-never reused (the job asks again), and allows from `autoApproveTools`, `allow_tools` or a
-per-server MCP allow create no reuse entries. Requests without an exact identity are always
-asked: Codex automatic-review refusals, Codex sandbox permission requests, and Codex
-summaries (MCP elicitation text, edits without file paths, commands without a command line).
-Grants live in the memory of the process that runs the job (at most 64 per job); a job turn
-started in a new runner process asks again. Set it to `false` to ask every time.
+`jobs.reuseIdenticalApprovals` (default `true`, home config only; a project config can change
+it in neither direction) lets a job reuse an approval that the supervisor (`decide`) or the
+owner (dashboard or a native dialog) already **allowed** in the same turn of the same job, when
+the new request is provably the same action. Its identity is the exact request as its source
+encodes it, bound to the asking agent, the tool, the folder and the text the question showed;
+nothing is normalized:
+
+- Claude and Codex `PermissionRequest` hooks: the tool name and every field of its tool input
+  (a different `dangerouslyDisableSandbox`, `run_in_background`, `timeout`, `workdir`,
+  `sandbox_permissions` or `justification` makes it a different request);
+- Codex app-server commands: the raw command line with its shell wrapper, the `cwd` Codex
+  names (else the job's folder) and every other approval field (network context, proposed
+  policy amendments, reason), without the per-request ids;
+- opencode: the whole `permission.asked` event without its per-request ids.
+
+The job gets no second question. The first reuse of each grant reaches the supervisor like a
+question would; later ones are quiet notes. All name the original approval id, and the job's
+step log, run report and approvals history (`reused` event) show them.
+
+Limits that keep it safe:
+
+- **File changes are always asked** (Claude `Write`, `Edit`, `MultiEdit`, `NotebookEdit`; Codex
+  file changes; opencode edits): their paths say where, not what.
+- **A command grant ends when the job's files change**: any file change request, or any
+  change of the Git state of the job's folder and the command's folder (changed, untracked or
+  deleted files that are not ignored, compared by content) since the grant was made. Changes
+  to ignored files or to files outside these repositories are not detected, and a folder
+  outside a Git repository keeps no command grants (each command is asked).
+- A grant never widens and never crosses jobs: it ends with the job's turn, when the job's
+  access, sandbox or permission settings change, and when its supervisor changes. The
+  supervisor is read from the job store, so a `handoff_subagents` from another process ends
+  the grants at once.
+- A deny is never reused (the job asks again) and revokes a grant of the same request, also
+  one allowed while the denied question waited.
+- Allows from `autoApproveTools`, `allow_tools`, a per-server MCP allow, a timeout or a paired
+  PC's supervisor (`remote supervisor`) create no grants.
+- Requests without an exact identity are always asked: Codex MCP elicitations (their text is a
+  summary), Codex automatic-review refusals and sandbox permission requests, Antigravity and
+  Muse approvals, and cut requests.
+
+Grants live in the memory of the process that runs the job (at most 64 per job). Set it to
+`false` to ask every time.
 
 The standalone broker daemon is **on by default**. When no broker is running, the
 first MCP server, CLI command or CLI dashboard starts one background broker process

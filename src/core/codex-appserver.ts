@@ -6,7 +6,7 @@ import { DEFAULT_CODEX_APPROVALS_REVIEWER, type CodexApprovalsReviewer, type Cod
 import { checkDepth, childEnv, DelegateError, exitDescription, killTree, realFolder, resolveCommand, trackChild, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { progressEventHandler } from "./progress.js";
 import { CODEX_ASK_HINT } from "./delegate.js";
-import type { PermissionDecision } from "./relay.js";
+import { requestIdentity, type PermissionDecision } from "./relay.js";
 import { FinalAnswers } from "./final-answers.js";
 import { resolveCodexDriveMappings, codexPathPrompt } from "./codex-paths.js";
 import { codexExecutionPrompt } from "./codex-env.js";
@@ -84,6 +84,21 @@ function asExecEvent(kind: "item.started" | "item.completed", item: any): unknow
   return { type: kind, item: { ...item, type } };
 }
 
+/** Per-request bookkeeping in a Codex command approval; everything else is part of what is approved. */
+const COMMAND_APPROVAL_VOLATILE = new Set(["approvalId", "itemId", "threadId", "turnId", "startedAtMs"]);
+
+/**
+ * The exact identity of a Codex command approval (AB-402): the raw command line (with its shell wrapper), the folder
+ * it runs in (`params.cwd`, else the job's folder) and every other approval-relevant field (network context,
+ * proposed policy amendments, reason, kind, environment). None without a command line: that request is a summary.
+ */
+export function commandIdentity(params: Record<string, unknown>, jobCwd: string): { identity: string; cwd: string } | undefined {
+  if (typeof params.command !== "string") return undefined;
+  const runCwd = typeof params.cwd === "string" && params.cwd ? params.cwd : jobCwd;
+  const fields = Object.fromEntries(Object.entries(params).filter(([key]) => !COMMAND_APPROVAL_VOLATILE.has(key)));
+  return { identity: requestIdentity({ method: "item/commandExecution/requestApproval", ...fields, cwd: runCwd }), cwd: runCwd };
+}
+
 export async function delegateToCodexAppServer(
   req: DelegateRequest & { bin: string; sandbox: CodexSandbox; windowsSandbox?: "unelevated" | "elevated"; approvalsReviewer?: CodexApprovalsReviewer; askMode?: boolean; writableRoots?: string[]; networkAccess?: boolean; startupTimeoutMs?: number },
 ): Promise<DelegateResult> {
@@ -148,11 +163,14 @@ export async function delegateToCodexAppServer(
       }
     }
   };
-  /** inexact: `detail` is a summary, not the exact request, so a grant of it is never reused (AB-402). */
-  const decide = async (tool: string, detail: string, automaticReview = false, inexact = false): Promise<PermissionDecision> => {
+  /**
+   * exact: the request's identity (AB-402); without one, `detail` is a summary and a grant of it is never reused.
+   * exact.cwd: the folder the request runs in, when Codex names it.
+   */
+  const decide = async (tool: string, detail: string, automaticReview = false, exact?: { identity: string; cwd?: string }): Promise<PermissionDecision> => {
     if (!req.approve) return { allow: false, message: "Denied by agent-bridge: no approval handler is available." };
     try {
-      return await req.approve({ agent: "codex", tool, detail, cwd, ...(automaticReview ? { automaticReview } : {}), ...(inexact ? { inexact } : {}) });
+      return await req.approve({ agent: "codex", tool, detail, cwd: exact?.cwd ?? cwd, ...(automaticReview ? { automaticReview } : {}), ...(exact ? { identity: exact.identity } : { inexact: true }) });
     } catch (err) {
       return { allow: false, message: `Denied by agent-bridge: approval forwarding failed: ${String((err as Error)?.message ?? err)}` };
     }
@@ -200,19 +218,20 @@ export async function delegateToCodexAppServer(
       case "mcpServer/elicitation/request": {
         const tool = `mcp:${params.serverName ?? "tool"}`;
         // The elicitation message is display text, not the tool's exact arguments.
-        const decision = await decide(tool, markerSafe(String(params.message ?? "an MCP tool call")), false, true);
+        const decision = await decide(tool, markerSafe(String(params.message ?? "an MCP tool call")));
         // Form elicitations get their defaults; tool-call approvals have no fields to fill.
         const props = params.requestedSchema?.properties ?? {};
         const content = Object.fromEntries(Object.entries(props).filter(([, v]: [string, any]) => v && "default" in v).map(([k, v]: [string, any]) => [k, v.default]));
         return answer(decision, decision.allow ? { action: "accept", content } : { action: "decline", content: null }, tool);
       }
       case "item/commandExecution/requestApproval": {
-        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("command", codexCommandApprovalText(params, innerCommand(String(params.command ?? params.reason ?? "a command")), cwd), false, typeof params.command !== "string") : sandboxDenial;
+        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("command", codexCommandApprovalText(params, innerCommand(String(params.command ?? params.reason ?? "a command")), cwd), false, commandIdentity(params, cwd)) : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "command");
       }
       case "item/fileChange/requestApproval": {
         const paths = editPaths.get(params.itemId) ?? [];
-        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("edit", codexFileChangeApprovalText(params, paths.length ? paths.join(", ") : String(params.reason ?? "file changes")), false, !paths.length) : sandboxDenial;
+        // A file change is always asked (AB-402): paths are display text, not the change itself.
+        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("edit", codexFileChangeApprovalText(params, paths.length ? paths.join(", ") : String(params.reason ?? "file changes"))) : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "edit");
       }
       case "item/permissions/requestApproval": {

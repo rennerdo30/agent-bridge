@@ -33,8 +33,10 @@ describe("Claude subagent permission prompts", () => {
       tool: "mcp:plugin_x_desk",
       detail: 'list_projects: {"a":1}',
       cwd: "/w",
+      // AB-402: the exact request (every tool input field), for identical-approval reuse.
+      identity: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
-    expect(hookRequest("claude", { tool_name: "Bash", tool_input: { command: "git init x" } })).toEqual({ agent: "claude", tool: "Bash", detail: "git init x", cwd: undefined });
+    expect(hookRequest("claude", { tool_name: "Bash", tool_input: { command: "git init x" } })).toEqual({ agent: "claude", tool: "Bash", detail: "git init x", cwd: undefined, identity: expect.stringMatching(/^[0-9a-f]{64}$/) });
     // Codex permission hooks use the same MCP tool naming convention. An MCP call shows its whole input as JSON,
     // even with a `command` argument (AB-417 review): every MCP argument is part of the request.
     expect(hookRequest("codex", { tool_name: "mcp__s__t", tool_input: { command: "ls" } })).toMatchObject({ tool: "mcp:s", detail: 't: {"command":"ls"}' });
@@ -77,6 +79,7 @@ describe("opencode subagent permission questions", () => {
       tool: "mcp:pair-desk",
       detail: "pair-desk_list_projects: *",
       cwd: "/w",
+      identity: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
     expect(opencodePermissionRequest({ permission: "pair_x" }, servers, "/w").tool).toBe("mcp:pair");
     expect(opencodePermissionRequest({ permission: "my_server_go" }, servers, "/w").tool).toBe("mcp:my server");
@@ -85,6 +88,7 @@ describe("opencode subagent permission questions", () => {
       tool: "external_directory",
       detail: "/tmp/x/*",
       cwd: "/w",
+      identity: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
     expect(opencodePermissionRequest({ permission: "bash", metadata: { command: "npm test" } }, [], "/w").detail).toBe("npm test");
   });
