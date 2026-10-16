@@ -691,7 +691,11 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
             childId = scope.agentId;
             authenticatedMail = true;
           } else if (childId === undefined) {
-            const children = await node!.nativeChildren();
+            // A broker without native child routes (older release) cannot have a live child.
+            const children = await node!.nativeChildren().catch(err => {
+              if (isUnsupportedOperation(err, "nativeChildren")) return [];
+              throw err;
+            });
             // Unscoped while a child is live: the caller is ambiguous. Give a read-only
             // status, never parent message bodies, history, receipts or wait registration.
             if (children.length) return text(["Ambiguous caller while native children are live. Mail remains queued for parent hooks; use an explicit native_child inbox for child mail.",
