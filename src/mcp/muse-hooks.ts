@@ -59,7 +59,10 @@ export class MuseHooks {
           if (access === "ask" && !museReadingTool(input)) return { hookSpecificOutput: { hookEventName: event, permissionDecision: "ask" } };
         }
         if (body.thread && body.thread !== this.session) return {};
-        const mapped = event === "PreLLMCall" || event === "PreToolUse" ? "PostToolUse" : event;
+        // Mail reaches the model before each model call (PreLLMCall). PreToolUse only gates: each Muse hook is a new
+        // process, and repeating the mail check before and after every tool made three of them per step.
+        // PostToolUse is still served for plugins installed before it was dropped.
+        const mapped = event === "PreLLMCall" ? "PostToolUse" : event;
         if (!["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop", "StopFailure", "SessionEnd"].includes(mapped)) return {};
         const output = await buildHookResponse(this.ctx, { event: mapped as HookEvent, sessionId: this.session, cwd: typeof input.cwd === "string" ? input.cwd : null, stopHookActive: input.stop_hook_active === true, prompt: typeof input.prompt === "string" ? input.prompt : null, promptId: typeof input.turn_id === "string" ? input.turn_id : null, signal: controller.signal });
         return controller.signal.aborted || this.retired ? {} : museHookOutput(event, output);

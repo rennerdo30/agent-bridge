@@ -8,7 +8,7 @@ let env: TestEnv | undefined;
 afterEach(async () => { await env?.cleanup(); env = undefined; });
 const events = [
   ["session-start", "SessionStart"], ["user-prompt", "UserPromptSubmit"], ["pre-tool", "PreToolUse"],
-  ["post-tool", "PostToolUse"], ["pre-llm", "PreLLMCall"], ["stop", "Stop"],
+  ["pre-llm", "PreLLMCall"], ["stop", "Stop"],
   ["stop-failure", "StopFailure"], ["session-end", "SessionEnd"],
 ];
 function fixture(cli?: string) {
@@ -38,6 +38,6 @@ describe("Muse hook wrapper process", () => {
   it("fails closed for a gated hook if the CLI cannot load", async () => {
     const home = fixture();
     expect((await invoke(home, "pre-tool")).output).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
-    expect((await invoke(home, "post-tool")).output).toEqual({});
+    expect((await invoke(home, "pre-llm")).output).toEqual({});
   });
 });

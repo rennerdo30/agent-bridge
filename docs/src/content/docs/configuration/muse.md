@@ -75,9 +75,10 @@ and no-turn queries keep experimental APIs disabled.
 ## Native mail and history
 
 Muse's injected `MUSE_SESSION_ID` binds the registered peer to the native root
-session. Authenticated command hooks inject mail at UserPromptSubmit,
-PreLLMCall and PostToolUse, and may continue a stopping turn when mail is
-eligible for delivery. Native child hooks cannot consume the root inbox or
+session. Authenticated command hooks inject mail at UserPromptSubmit and
+PreLLMCall (before every model call), and may continue a stopping turn when mail is
+eligible for delivery. PreToolUse only gates tools; there is no PostToolUse hook,
+because each Muse hook starts a process and the next PreLLMCall delivers the same mail. Native child hooks cannot consume the root inbox or
 change root session/activity. Native children share the root's MCP server;
 their PreToolUse gate denies Bridge tool calls to prevent root impersonation.
 Delegated plugin processes recover only their
