@@ -24,6 +24,7 @@ import { indexedJobProjectionCurrent, readIndexedJobs } from "../core/job-archiv
 import { cloneJson, readJsonSnapshot } from "../core/file-cache.js";
 import { ARCHIVE_AGE_ENV, DEFAULT_ARCHIVE_AGE_MS } from "../core/run-archive.js";
 import { newApprovalId, publishApproval, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
+import type { ApprovalGrants } from "./approval-reuse.js";
 import { notifyJobEvent } from "../core/notifications.js";
 import { RootConcurrency } from "../core/root-concurrency.js";
 import { completionMessageId } from "../core/completion.js";
@@ -147,6 +148,8 @@ export interface Job {
   awaitingAnswer?: boolean;
   /** MCP servers the parent allowed for this job (kept across its follow-ups). */
   allowedServers?: Set<string>;
+  /** Explicit "allow" answers this job may reuse for identical requests (AB-402); memory only, bounded. */
+  approvalGrants?: ApprovalGrants;
   /** An approval question the subagent is waiting on; only an explicit decision answers it. */
   pendingApproval?: ((answer: string, by?: string) => boolean | void) | null;
   /** While it runs: delivers a message into the running subagent (see parent-link.ts). */
@@ -268,7 +271,17 @@ export function denyPendingApprovals(job: Job, reason = "job finished"): void {
   for (const answer of [...(approvalAnswers.get(job) ?? [])]) answer(reason, "job completion");
 }
 
-export function waitForApproval(job: Job, question: string, timeoutMs: number, post: (body: string) => void, log: Logger, home?: string, request?: PermissionRequest, askUser?: () => Promise<PermissionDecision>, escalate?: (body: string) => Promise<void>, forceEscalate = false): Promise<{ allow: boolean; reason: string }> {
+/** An approval answer. */
+export type ApprovalOutcome = { allow: boolean; reason: string };
+/** Which approval an answer settled and who decided it ("MCP decide", "dashboard", "user in session", "timeout", ...). */
+export type ApprovalOrigin = { approvalId: string; by: string };
+const approvalOrigins = new WeakMap<ApprovalOutcome, ApprovalOrigin>();
+/** The approval id and decider behind an answer of this process's waitForApproval; none for any other answer. */
+export function approvalOrigin(answer: ApprovalOutcome): ApprovalOrigin | undefined { return approvalOrigins.get(answer); }
+/** Tag an answer with its origin (waitForApproval does this; tests may tag stand-in answers). */
+export function tagApprovalOrigin<T extends ApprovalOutcome>(answer: T, origin: ApprovalOrigin): T { approvalOrigins.set(answer, origin); return answer; }
+
+export function waitForApproval(job: Job, question: string, timeoutMs: number, post: (body: string) => void, log: Logger, home?: string, request?: PermissionRequest, askUser?: () => Promise<PermissionDecision>, escalate?: (body: string) => Promise<void>, forceEscalate = false): Promise<ApprovalOutcome> {
   return new Promise((resolve) => {
     let settled = false;
     let cleanup: (() => void) | undefined;
@@ -305,7 +318,7 @@ export function waitForApproval(job: Job, question: string, timeoutMs: number, p
           ? `Approval for ${job.name} was withdrawn because the job was paused; permission remains ungranted. It asks again after resume_subagent if it still needs it.`
           : `Approval for ${job.name} ${allow ? "allowed" : "denied"} by ${by}.`); }
       catch { log.warn("could not report approval answer", { job: job.name }); }
-      resolve({ allow, reason: answer.trim() });
+      resolve(tagApprovalOrigin({ allow, reason: answer.trim() }, { approvalId, by }));
       return true;
     };
     const timer = setTimeout(() => settle("no answer in time", "timeout"), timeoutMs);
@@ -2636,7 +2649,7 @@ export class JobManager {
    * example). The question arrives as a message from the job; the agent answers with message_subagent.
    * No answer within the time limit counts as "deny".
    */
-  askParent(job: Job, question: string, timeoutMs: number, request?: PermissionRequest): Promise<{ allow: boolean; reason: string }> {
+  askParent(job: Job, question: string, timeoutMs: number, request?: PermissionRequest): Promise<ApprovalOutcome> {
     return waitForApproval(job, question, timeoutMs, (body) => this.post(job, body), this.log, this.storePath ? dirname(this.storePath) : undefined, request, undefined, this.lineage?.escalate, Boolean(job.foreground && this.lineage));
   }
 
