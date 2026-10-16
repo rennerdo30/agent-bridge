@@ -121,6 +121,21 @@ describe("worktree isolation", () => {
     expect(status).toContain("?? staged-big.bin");
     expect(worktreeReport(wt, saved)).toContain("possible secrets");
   });
+  it.each([false, true])("keeps an intent-to-add secret or large file out of the checkpoint (untracked %s)", async (includeUntracked) => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: `intent-filter-${includeUntracked}`, log: nullLogger });
+    writeFileSync(join(wt.path, ".env.local"), "fixture\n");
+    writeFileSync(join(wt.path, "intent-big.bin"), Buffer.alloc(5 * 1024 * 1024 + 1));
+    writeFileSync(join(wt.path, "intent-source.txt"), "kept work\n");
+    execFileSync("git", ["add", "-N", "--", ".env.local", "intent-big.bin", "intent-source.txt"], { cwd: wt.path });
+    const saved = await finishWorktree(wt, "Save worktree changes", nullLogger, includeUntracked);
+    const committed = git("ls-tree", "-r", "--name-only", wt.branch).split("\n");
+    expect(committed).toContain("intent-source.txt");
+    expect(committed).not.toContain(".env.local");
+    expect(committed).not.toContain("intent-big.bin");
+    expect(saved.skippedFiles).toContainEqual({ path: ".env.local", reason: "possible secret; never auto-committed" });
+    expect(saved.skippedFiles).toContainEqual({ path: "intent-big.bin", reason: "larger than 5 MB; not auto-committed" });
+    expect(readFileSync(join(wt.path, ".env.local"), "utf8")).toBe("fixture\n");
+  });
   it.each([
     ["MERGE_HEAD", "a merge is in progress"], ["CHERRY_PICK_HEAD", "a cherry-pick is in progress"], ["REVERT_HEAD", "a revert is in progress"],
     ["rebase-merge", "a rebase is in progress"], ["rebase-apply", "a rebase is in progress"], ["index.lock", "an index.lock is present"],

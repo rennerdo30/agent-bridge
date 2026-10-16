@@ -2540,7 +2540,8 @@ export class JobManager {
     this.persist();
     const seconds = Math.round((Date.now() - job.startedAt) / 1000);
     const message = report === undefined ? jobReport(job, status, seconds, `${text}\n\n${PAUSE_HELD_NOTE}`, cause, this.bridgeHome())
-      : report === null ? `Subagent ${job.name} is paused; its queued follow-ups wait for resume_subagent.`
+      // The runner may already have delivered its report with "finished, not paused": say this corrects it.
+      : report === null ? `Correction: subagent ${job.name} is paused, not finished; its queued follow-ups wait for resume_subagent.`
         : report.includes(PAUSE_HELD_NOTE) ? report
           : report.includes(PAUSE_RACE_NOTE) ? report.replace(PAUSE_RACE_NOTE, PAUSE_HELD_NOTE) : `${report}\n\n${PAUSE_HELD_NOTE}`;
     this.post(job, message, null, "", typeof report === "string" ? messageId : undefined);

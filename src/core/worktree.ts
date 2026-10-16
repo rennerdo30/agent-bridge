@@ -349,7 +349,8 @@ async function autoCommitFiles(wt: Worktree, log: Logger, includeUntracked = fal
     const untracked = entry.startsWith("??");
     // A file the job staged itself (index state A: added, not in HEAD) gets the same secret and size filter as an
     // untracked one; a skipped one is unstaged below, never deleted from disk (AB-398 N2).
-    const added = entry[0] === "A";
+    // Intent-to-add (`git add -N`, worktree state A) counts too: `git diff HEAD` would show it as new content.
+    const added = entry[0] === "A" || entry[1] === "A";
     let reason: SkippedFile["reason"] | undefined;
     // Entrypoints and hashed chunks form one generated set. Exclude every change,
     // including staged additions/deletions, so a checkpoint retains the HEAD bundle.
@@ -364,7 +365,7 @@ async function autoCommitFiles(wt: Worktree, log: Logger, includeUntracked = fal
     } else reason = "whitespace only";
     if (reason) {
       skipped.push({ path: file, reason });
-      if (entry[0] !== "?" && entry[0] !== " ") unstage.push(literal);
+      if (added || entry[0] !== "?" && entry[0] !== " ") unstage.push(literal);
     }
   }
   // The job may already have staged noise. Unstage it without changing the files on disk.
