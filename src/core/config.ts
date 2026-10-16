@@ -78,6 +78,8 @@ export interface BridgeConfig {
   codexWindowsSandbox: "unelevated" | "elevated";
   /** Push and safely reap explicitly closed worktree jobs. Never enabled implicitly. */
   jobCloseCleanup: boolean;
+  /** Job approval behaviour. reuseIdenticalApprovals: an approval identical to one explicitly allowed earlier in the same job is reused (AB-402). */
+  jobs: { reuseIdenticalApprovals: boolean };
   /** Reviewer for eligible delegated Codex approvals; does not change the sandbox. */
   codexApprovalsReviewer: CodexApprovalsReviewer;
   /** Worktree edits: null inherits codexSandbox; read-only default becomes full access on Windows. */
@@ -135,6 +137,7 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   codexSandbox: "read-only",
   codexWindowsSandbox: "unelevated",
   jobCloseCleanup: false,
+  jobs: { reuseIdenticalApprovals: true },
   codexApprovalsReviewer: DEFAULT_CODEX_APPROVALS_REVIEWER,
   codexWorktreeSandbox: null,
   codexWorkspaceWriteNetworkAccess: null,
@@ -378,6 +381,7 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     codexSandbox: pick("codexSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexSandbox,
     codexWindowsSandbox: pick("codexWindowsSandbox", null, (v) => oneOf(v, ["unelevated", "elevated"] as const)) ?? d.codexWindowsSandbox,
     jobCloseCleanup: pick("jobCloseCleanup", null, parseBool) ?? d.jobCloseCleanup,
+    jobs: { reuseIdenticalApprovals: pick("jobs", null, (v) => isRecord(v) && typeof v.reuseIdenticalApprovals === "boolean" ? v.reuseIdenticalApprovals : undefined) ?? d.jobs.reuseIdenticalApprovals },
     codexApprovalsReviewer: pick("codexApprovalsReviewer", null, (v) => oneOf(v, CODEX_APPROVALS_REVIEWERS)) ?? d.codexApprovalsReviewer,
     codexWorktreeSandbox: pick("codexWorktreeSandbox", null, (v) => oneOf(v, CODEX_SANDBOXES)) ?? d.codexWorktreeSandbox,
     codexWorkspaceWriteNetworkAccess: pick("codexWorkspaceWriteNetworkAccess", null, parseBool) ?? d.codexWorkspaceWriteNetworkAccess,

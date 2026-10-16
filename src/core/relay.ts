@@ -36,6 +36,8 @@ export interface PermissionRequest {
   reason?: string;
   /** A terminal Codex auto-review refusal needs an explicit supervisor decision, not an allowlist. */
   automaticReview?: boolean;
+  /** `detail` is a summary, not the exact request (for example a Codex edit without file paths): never reused (AB-402). */
+  inexact?: boolean;
   /** Set when `detail` had to be cut: its original length. Such a request is refused, never decided (AB-241). */
   detailLength?: number;
 }

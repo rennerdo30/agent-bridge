@@ -316,6 +316,51 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   }, 15_000);
 });
 
+describe("Codex approval identity (AB-402)", () => {
+  it("marks summaries as inexact so a grant of them is never reused, and exact command lines as exact", async () => {
+    const root = process.env.AGENT_BRIDGE_TEST_ROOT!;
+    mkdirSync(root, { recursive: true });
+    const dir = mkdtempSync(join(root, "inexact-"));
+    writeFileSync(join(dir, "app-server"), `
+const { createInterface } = require("node:readline");
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+const replies = [];
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const m = JSON.parse(line);
+  if (m.result && m.id >= 100) {
+    replies.push(m.id);
+    if (replies.length === 4) {
+      send({ method: "item/completed", params: { turnId: "turn", item: { type: "agentMessage", text: "done" } } });
+      send({ method: "turn/completed", params: { turn: { id: "turn", status: "completed" } } });
+    }
+    return;
+  }
+  if (m.method === "initialize") send({ id: m.id, result: {} });
+  if (m.method === "thread/start") send({ id: m.id, result: { thread: { id: "session" }, model: "gpt-6-sol" } });
+  if (m.method === "turn/start") {
+    send({ id: m.id, result: { turn: { id: "turn" } } });
+    send({ id: 100, method: "mcpServer/elicitation/request", params: { serverName: "pair-desk", message: 'Allow the pair-desk MCP server to run tool "set_build"?' } });
+    send({ id: 101, method: "item/commandExecution/requestApproval", params: { command: "npm test" } });
+    send({ id: 102, method: "item/commandExecution/requestApproval", params: { reason: "run the checks" } });
+    send({ id: 103, method: "item/fileChange/requestApproval", params: { reason: "edit files" } });
+  }
+});
+`);
+    const asked: Record<string, boolean> = {};
+    try {
+      await delegateToCodexAppServer({ bin: process.execPath, cwd: dir, prompt: "task", timeoutSec: 10, sandbox: "read-only", askMode: true, log: nullLogger,
+        approve: async (r) => { asked[`${r.tool} ${r.detail}`] = r.inexact === true; return { allow: true }; },
+      });
+      expect(asked).toEqual({
+        'mcp:pair-desk Allow the pair-desk MCP server to run tool "set_build"?': true,
+        "command npm test": false,
+        "command run the checks": true,
+        "edit edit files": true,
+      });
+    } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+  }, 15_000);
+});
+
 describe("native Codex message steering", () => {
   it("preserves the final deliverable before a later sibling acknowledgement", async () => {
     const dir = mkdtempSync(join(tmpdir(), "ab-final-deliverable-"));

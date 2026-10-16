@@ -147,10 +147,11 @@ export async function delegateToCodexAppServer(
       }
     }
   };
-  const decide = async (tool: string, detail: string, automaticReview = false): Promise<PermissionDecision> => {
+  /** inexact: `detail` is a summary, not the exact request, so a grant of it is never reused (AB-402). */
+  const decide = async (tool: string, detail: string, automaticReview = false, inexact = false): Promise<PermissionDecision> => {
     if (!req.approve) return { allow: false, message: "Denied by agent-bridge: no approval handler is available." };
     try {
-      return await req.approve({ agent: "codex", tool, detail, cwd, ...(automaticReview ? { automaticReview } : {}) });
+      return await req.approve({ agent: "codex", tool, detail, cwd, ...(automaticReview ? { automaticReview } : {}), ...(inexact ? { inexact } : {}) });
     } catch (err) {
       return { allow: false, message: `Denied by agent-bridge: approval forwarding failed: ${String((err as Error)?.message ?? err)}` };
     }
@@ -196,19 +197,20 @@ export async function delegateToCodexAppServer(
     switch (method) {
       case "mcpServer/elicitation/request": {
         const tool = `mcp:${params.serverName ?? "tool"}`;
-        const decision = await decide(tool, String(params.message ?? "an MCP tool call"));
+        // The elicitation message is display text, not the tool's exact arguments.
+        const decision = await decide(tool, String(params.message ?? "an MCP tool call"), false, true);
         // Form elicitations get their defaults; tool-call approvals have no fields to fill.
         const props = params.requestedSchema?.properties ?? {};
         const content = Object.fromEntries(Object.entries(props).filter(([, v]: [string, any]) => v && "default" in v).map(([k, v]: [string, any]) => [k, v.default]));
         return answer(decision, decision.allow ? { action: "accept", content } : { action: "decline", content: null }, tool);
       }
       case "item/commandExecution/requestApproval": {
-        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
+        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command")), false, typeof params.command !== "string") : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "command");
       }
       case "item/fileChange/requestApproval": {
         const paths = editPaths.get(params.itemId) ?? [];
-        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
+        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes"), false, !paths.length) : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "edit");
       }
       case "item/permissions/requestApproval": {

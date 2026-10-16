@@ -12,6 +12,7 @@ title: "Configuration"
   "maxJobs": 8,
   "maxDelegateDepth": 2,
   "autoApproveTools": ["pair-desk.get_*", "pair-desk.list_*"],
+  "jobs": { "reuseIdenticalApprovals": true },
   "codexApprovalsReviewer": "auto_review",
   "codexSubagents": 6,
   "lingerSec": 300,
@@ -26,6 +27,22 @@ title: "Configuration"
 (6 by default, integers 0–32; 0 disables). Override it with `native_subagents` on
 `spawn_codex`, `ask_codex` or `message_subagent`. This is separate from bridge job
 concurrency and delegation depth. See [native subagent settings and dashboard APIs](../codex-subagents/).
+
+`jobs.reuseIdenticalApprovals` (default `true`, home config only; a project config cannot
+change it) lets a job reuse an approval that the supervisor (`decide`) or the owner
+(dashboard or a native dialog) already **allowed** in the same job, when the new request is
+identical: the same asking agent, tool, working folder and exact request text (command line,
+file path, or MCP tool with its arguments; only line endings and surrounding whitespace are
+normalized). The job gets no second question; the supervisor gets a quiet note naming the
+original approval id, the job's step log shows the line, and the approvals history records a
+`reused` event. A grant never widens and never crosses jobs: it ends with the job, when the
+job's access, sandbox or permission settings change, and when its supervisor changes. A deny is
+never reused (the job asks again), and allows from `autoApproveTools`, `allow_tools` or a
+per-server MCP allow create no reuse entries. Requests without an exact identity are always
+asked: Codex automatic-review refusals, Codex sandbox permission requests, and Codex
+summaries (MCP elicitation text, edits without file paths, commands without a command line).
+Grants live in the memory of the process that runs the job (at most 64 per job); a job turn
+started in a new runner process asks again. Set it to `false` to ask every time.
 
 The standalone broker daemon is **on by default**. When no broker is running, the
 first MCP server, CLI command or CLI dashboard starts one background broker process
