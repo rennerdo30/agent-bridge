@@ -6,6 +6,7 @@ import type { Logger } from "./logger.js";
 import { BRANCH_PREFIX, git, removeWorktreeDirectory, trustArgs, type Worktree } from "./worktree.js";
 import { readStore } from "../mcp/jobs.js";
 import { worktreeLease } from "./worktree-state.js";
+import { GitSafetyRefusal } from "./git-safety.js";
 import { resolveWorktreeRemovalPath, unlinkLinks, scanWorktreeLinks, worktreeLinkWarning, type WorktreeLinkScan } from "./worktree-links.js";
 
 /**
@@ -140,7 +141,8 @@ async function inspect(path: string, jobs: StoredJob[], apply: boolean, log: Log
       // Git's refusal (new modified/untracked files, submodules, ...) is the safety signal: keep the folder. Only
       // permission or open-handle failures (files of another account, AB-119) may be finished here, and only
       // when a fresh look still finds nothing uncommitted.
-      if (!PERMISSION_FAILURE.test(message)) { refused = message.split("\n")[0]!; return; }
+      // A bridge safety refusal (AB-422) never ran `worktree remove` at all, whatever text it quotes: keep the folder.
+      if (err instanceof GitSafetyRefusal || !PERMISSION_FAILURE.test(message)) { refused = message.split("\n")[0]!; return; }
       if (existsSync(toNamespacedPath(join(path, ".git")))) {
         const again = await git([...trust, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"], path, log).catch(() => null);
         if (again !== "") { refused = again === null ? "git status failed after a partial removal" : "new uncommitted changes appeared"; return; }

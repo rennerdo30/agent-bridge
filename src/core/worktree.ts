@@ -7,7 +7,7 @@ import { DelegateError, runProcess } from "./delegate.js";
 import { nullLogger, type Logger } from "./logger.js";
 import { resolveWorktreeRemovalPath, unlinkLinks } from "./worktree-links.js";
 import { displayPathText } from "./display-paths.js";
-import { diffSafety, gitSafetyArgs, repositoryGuards, splitGitArgs } from "./git-safety.js";
+import { diffSafety, GitSafetyRefusal, gitSafetyArgs, repositoryGuards, splitGitArgs } from "./git-safety.js";
 
 /**
  * Git worktrees for editing subagents: each one works on its own branch in its own checkout, so
@@ -15,8 +15,9 @@ import { diffSafety, gitSafetyArgs, repositoryGuards, splitGitArgs } from "./git
  */
 const GIT = "git";
 const LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
-/** Upper bound for one guard read (`ls-files -s` of a very large index); larger output is refused, never truncated. */
-const GUARD_READ_MAX_BYTES = 512 * 1024 * 1024;
+/** Upper bound for one guard read (`ls-files -s` of a very large index), below V8's maximum string length; larger
+ * output is refused, never truncated. */
+const GUARD_READ_MAX_BYTES = 256 * 1024 * 1024;
 const REMOVE_RETRIES = 3;
 /** Most git commands; generous, since many parallel subagents (and virus scanners) slow the disk down. */
 const GIT_TIMEOUT_MS = 180_000;
@@ -70,16 +71,23 @@ export async function git(args: string[], cwd: string, log: Logger, timeoutMs = 
   };
   const sub = rest[0] ?? "";
   // Guard reads need their complete output (a gitlink listing of a large index is bigger than runProcess keeps).
+  // All reads of one call share a single deadline: the call's own timeout, not a new one per read.
+  const deadline = Date.now() + timeoutMs;
   const read = (argv: string[], dir: string | null) => new Promise<string>((done, fail) => {
-    execFile(GIT, [...prefix, ...(dir ? ["-C", dir] : []), ...argv], { cwd, env, timeout: timeoutMs, windowsHide: true, encoding: "utf8", maxBuffer: GUARD_READ_MAX_BYTES },
+    const left = deadline - Date.now();
+    if (left <= 0) { fail(new Error(`git ${argv[0]} not started: the guard checks used up ${Math.round(timeoutMs / 1000)}s`)); return; }
+    execFile(GIT, [...prefix, ...(dir ? ["-C", dir] : []), ...argv], { cwd, env, timeout: left, windowsHide: true, encoding: "utf8", maxBuffer: GUARD_READ_MAX_BYTES },
       (err, stdout, stderr) => err ? fail(new Error(`git ${argv[0]} failed: ${(stderr || err.message).trim().slice(0, 500)}`)) : done(stdout));
   });
+  // Every guard failure is a refusal (GitSafetyRefusal), whatever text from git it quotes.
   const guards = await repositoryGuards(rest, cwd, read)
-    .catch((err: Error) => { throw new Error(`${what} failed: ${err.message}`); });
-  // A prompt can never be answered here; the owner's GIT_SSH_COMMAND and global helpers stay in effect.
-  const runEnv = sub === "fetch" || sub === "ls-remote" || sub === "pull" || sub === "push" ? { ...env, GIT_TERMINAL_PROMPT: "0" } : env;
+    .catch((err: Error) => { throw new GitSafetyRefusal(`${what} refused: ${err.message}`); });
+  // A prompt can never be answered here; the owner's GIT_SSH_COMMAND and global helpers stay in effect. The
+  // guards add process-local variables of their own (no prompts while Git LFS is active).
+  const network = sub === "fetch" || sub === "ls-remote" || sub === "pull" || sub === "push";
+  const runEnv = network || Object.keys(guards.env).length ? { ...env, ...(network ? { GIT_TERMINAL_PROMPT: "0" } : {}), ...guards.env } : env;
   // Only trailing whitespace: leading spaces are meaningful in `git status --porcelain`.
-  return (await exec([...prefix, ...guards, ...diffSafety(rest)], runEnv, what)).trimEnd();
+  return (await exec([...prefix, ...guards.args, ...diffSafety(rest)], runEnv, what)).trimEnd();
 }
 
 export function worktreeBaseReport(wt: Pick<Worktree, "base" | "baseRef" | "baseNotes">): string {
@@ -610,9 +618,19 @@ export function snapshotChanges(before: Map<string, string>, after: Map<string, 
 
 /** The working-copy report after a job: an unknown comparison is never reported as "No files changed". */
 export function changedFilesNote(changed: string[] | null, access?: string): string | null {
-  if (changed === null) return "Files changed in your working copy: unknown. git status was refused or failed after the job (for example because repository-local git config could run programs, AB-422), so the working copy could not be compared; check it yourself.";
+  if (changed === null) return "Files changed in your working copy: unknown. git status was refused or failed before or after the job (for example because the folder is not a git repository, or repository-local git config could run programs, AB-422), so the working copy could not be compared; check it yourself.";
   if (changed.length) return `Files changed in your working copy:\n${changed.join("\n")}`;
   return access === "edit" ? "No files changed." : null;
+}
+
+/**
+ * What a Codex ask-mode run tells about its permission hook, given a before snapshot was taken: the hook asked
+ * ("verified"); files changed without it asking, or the working copy turned into one git refuses to compare
+ * (the job changed repository state, AB-422), so it was bypassed ("failed"); or nothing to tell (null).
+ */
+export function codexHookObservation(relayCalls: number, changed: string[] | null): "verified" | "failed" | null {
+  if (relayCalls > 0) return "verified";
+  return changed === null || changed.length ? "failed" : null;
 }
 
 /** Every root that can hold bridge-managed worktrees: the default and the configured worktreeRoot (AB-177).
