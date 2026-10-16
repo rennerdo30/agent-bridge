@@ -38,13 +38,30 @@ async function scan(file: string): Promise<{ value: RecoveryHeader; signature: s
       consume(decoder.write(buffer.subarray(0, bytesRead)));
       await yieldIO();
     }
-    if (!finished) throw new Error("Retained run feed has no complete prompt separator");
-    const value = { header, prompt: prompt.join("\n") };
     // Do not publish mixed generations if a legacy writer changed the header.
     const stable = signature(await handle.stat()) === identity && signature(await stat(file)) === identity;
     if (!stable) throw new Error("Retained run feed changed during recovery");
-    return { value, signature: identity };
+    // Read to the end of an unchanged file: this log has no prompt section, a fact rather than a failed read.
+    if (!finished) throw new NoPromptSection(identity);
+    return { value: { header, prompt: prompt.join("\n") }, signature: identity };
   } finally { await handle.close(); }
+}
+
+class NoPromptSection extends Error {
+  constructor(readonly signature: string) { super("Retained run feed has no complete prompt separator"); }
+}
+/** Files last read whole and unchanged without a prompt separator, by the file signature that was read. */
+const missingSeparator = new Map<string, string>();
+
+/**
+ * Whether the last failed readRecoveryHeader of this file read all of it, unchanged, and found no prompt
+ * separator, and the file is still that version. A label-only log has no prompt to recover; any other
+ * failure (IO, a concurrent change, or no recorded read) is real uncertainty (AB-439).
+ */
+export async function recoveryHeaderLacksSeparator(file: string): Promise<boolean> {
+  const seen = missingSeparator.get(file);
+  if (!seen) return false;
+  try { return signature(await stat(file)) === seen; } catch { return false; }
 }
 
 /** Failed/unknown reads never populate the cache: a later request retries them. */
@@ -58,13 +75,21 @@ export async function readRecoveryHeader(file: string): Promise<RecoveryHeader |
   const read = (async () => {
     try {
       const result = await scan(file), bytes = Buffer.byteLength(result.value.header) + Buffer.byteLength(result.value.prompt);
+      missingSeparator.delete(file);
       if (result.signature && bytes <= CACHE_BYTES) {
         const prior = snapshots.get(file); if (prior) cachedBytes -= prior.bytes;
         snapshots.delete(file); snapshots.set(file, { ...result, bytes }); cachedBytes += bytes;
         while (cachedBytes > CACHE_BYTES || snapshots.size > CACHE_ENTRIES) { const oldest = snapshots.keys().next().value!; cachedBytes -= snapshots.get(oldest)!.bytes; snapshots.delete(oldest); }
       }
       return result.value;
-    } catch { return undefined; }
+    } catch (error) {
+      missingSeparator.delete(file);
+      if (error instanceof NoPromptSection) {
+        missingSeparator.set(file, error.signature);
+        if (missingSeparator.size > CACHE_ENTRIES) missingSeparator.delete(missingSeparator.keys().next().value!);
+      }
+      return undefined;
+    }
     finally { pending.delete(key); }
   })();
   pending.set(key, read); const value = await read; return value ? { ...value } : undefined;

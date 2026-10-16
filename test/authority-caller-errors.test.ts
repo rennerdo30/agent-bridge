@@ -120,8 +120,9 @@ it("dashboard label-only local job keeps successful message and settings control
   } finally { f.close(); }
 });
 
-it("the same missing header is N2 when metadata proves a native session; no local substitute is used", async () => {
-  const f = await localCaller(), read = vi.spyOn(feeds, "readRecoveryHeader"), follow = vi.spyOn(f.jobs, "followUp");
+it("a failed header read is N2 when metadata proves a native session; no local substitute is used", async () => {
+  // A read that fails (not a whole, unchanged label-only log, which has no prompt to recover) stays uncertainty.
+  const f = await localCaller(), read = vi.spyOn(feeds, "readRecoveryHeader").mockResolvedValueOnce(undefined), follow = vi.spyOn(f.jobs, "followUp");
   const lookup = vi.spyOn(f.jobs, "findAsync");
   writeFileSync(join(env.home, "runs", "2026-10-06-06-32-18-codex-dashboard.json"), JSON.stringify({ by: "owner", job: f.job.name, session: "native" }));
   const before = { status: f.job.status, args: f.job.args, sessionId: f.job.sessionId };
@@ -139,7 +140,8 @@ it.each(["stale", "no-pid", "fresh"] as const)("label-only early check uses the 
   const state = { ...(kind === "no-pid" ? {} : { pid: 0 }), status: "done", sessionId: "runner-native",
     updatedAt: kind === "stale" ? startedAt - 1 : startedAt };
   vi.spyOn(runner, "readRunnerStateRecord").mockReturnValue(state);
-  const read = vi.spyOn(feeds, "readRecoveryHeader"), observer = vi.fn();
+  // The fresh session reaches the header read; make that read fail so the gate's N2 path is what is observed.
+  const read = vi.spyOn(feeds, "readRecoveryHeader").mockResolvedValueOnce(undefined), observer = vi.fn();
   try {
     expect(await recoverJobRecordAsync(env.home, f.job.name, { onUnavailable: observer })).toBeUndefined();
     expect(observer).toHaveBeenCalledExactlyOnceWith(kind === "fresh"

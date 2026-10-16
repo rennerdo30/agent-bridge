@@ -10,7 +10,7 @@ import { drainScanResponsive } from "./responsive-scan.js";
 import { pidAlive } from "./delegate.js";
 import { writtenBeforeBoot } from "./boot-time.js";
 import type { Job } from "../mcp/jobs.js";
-import { readRecoveryHeader, type RecoveryHeader } from "./job-recovery-feed.js";
+import { readRecoveryHeader, recoveryHeaderLacksSeparator, type RecoveryHeader } from "./job-recovery-feed.js";
 import { readPendingRunnerSpec, readRunnerStateRecord } from "./runner-store.js";
 import { safeFile } from "./transcripts/common.js";
 import { RUNS_DIR_NAME, type RunMeta } from "./runfeed.js";
@@ -19,7 +19,7 @@ type StoredJob = Omit<Job, "controller" | "progress" | "queue" | "resume">;
 export type RecoveryRefusal =
   | { reason: "recovery_header_unavailable"; stage: "header_read" }
   | { reason: "recovery_context_changed"; stage: "context_recheck" }
-  | { reason: "recovery_context_unavailable"; stage: "prepare" | "finish" };
+  | { reason: "recovery_context_unavailable"; stage: "prepare" | "header_format" | "finish" };
 function runStart(run: ReturnType<typeof readRunLogs>[number]): number {
   if (run.meta.jobStartedAt !== undefined) return run.meta.jobStartedAt;
   const stamp = /^(\d{4})-(\d\d)-(\d\d)-(\d\d)-(\d\d)-(\d\d)-/.exec(run.name);
@@ -53,7 +53,14 @@ export async function recoverJobRecordAsync(home: string, ref: string,
   if (!recovery.history && !recovery.launch && labelOnly(recovery, recoveryContext(home, recovery).sessionId))
     return refuse({ reason: "recovery_context_unavailable", stage: "finish" });
   const payload = needsHeader(recovery) && recovery.run ? await readRecoveryHeader(recovery.run.file) : { prompt: "", header: "" };
-  if (!payload) return refuse({ reason: "recovery_header_unavailable", stage: "header_read" });
+  if (!payload) {
+    // Read whole and unchanged without a prompt separator: a label-only log has no prompt to recover, so, as
+    // before AB-439, the local manager keeps its own facts (a live local job may have a native session).
+    // Every other failed read stays a refusal.
+    if (recovery.run && await recoveryHeaderLacksSeparator(recovery.run.file))
+      return refuse({ reason: "recovery_context_unavailable", stage: "header_format" });
+    return refuse({ reason: "recovery_header_unavailable", stage: "header_read" });
+  }
   // A handoff or new native turn can update authority while asynchronous IO yields.
   // Re-read durable facts before publishing/authorizing the recovered context.
   const latest = await prepareRecoveryAsync(home, ref, deadline);
