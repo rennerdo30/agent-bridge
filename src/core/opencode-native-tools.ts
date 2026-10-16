@@ -50,7 +50,7 @@ export function classifyOpencodeNativeTool(id: unknown): OpencodeNativeToolKind 
     bridge_search_history: "other", bridge_get_conversation: "other", bridge_spawn_codex: "other", bridge_spawn_claude: "other",
     bridge_ask_codex: "other", bridge_ask_claude: "other", bridge_spawn_antigravity: "other", bridge_ask_antigravity: "other",
     bridge_spawn_muse: "other", bridge_ask_muse: "other", bridge_message_subagent: "other", bridge_cancel_subagent: "other",
-    bridge_inbox: "other", bridge_wait_for_message: "other",
+    bridge_pause_subagent: "other", bridge_resume_subagent: "other", bridge_inbox: "other", bridge_wait_for_message: "other",
   };
   return Object.prototype.hasOwnProperty.call(known, id) ? known[id]! : "unknown";
 }

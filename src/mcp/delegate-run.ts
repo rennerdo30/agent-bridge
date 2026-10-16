@@ -384,8 +384,9 @@ async function runDelegateInner(
   const slotOwner = { id: `${a._job ?? target}-${randomUUID()}`, pid: process.pid };
   let slots: ResourceSlots | null = null;
   let slotTimer: NodeJS.Timeout | undefined;
-  let res: DelegateResult;
+  let res!: DelegateResult;
   let usageWarning = "";
+  let failure: { err: unknown } | undefined;
   try {
     if (Object.keys(cfg.resourceSlots).length) {
       slots = new ResourceSlots(rc.home);
@@ -475,22 +476,8 @@ async function runDelegateInner(
     feed.end(signal.aborted ? "cancelled" : res.isError ? "failed" : "done", displayPathText(res.text));
     if (!res.isError && res.text.trim()) link?.reportCompleted();
   } catch (err) {
-    if (usageWarning && err instanceof Error) err.message = `${usageWarning}\n\n${err.message}`;
-    if (err instanceof DelegateError && err.sessionId) feed.meta({ session: err.sessionId });
-    if (wt) {
-      const branch = await git([...trustArgs(wt.path), "branch", "--show-current"], wt.path, dlog).catch(() => wt.branch);
-      const branchHead = await git([...trustArgs(wt.path), "rev-parse", "HEAD"], wt.path, dlog).catch(() => undefined);
-      feed.meta({ branch: branch || wt.branch, branchHead });
-    }
-    feed.end(signal.aborted ? "cancelled" : displayPathText(`failed: ${(err as Error)?.message ?? err}`));
-    // The worktree keeps whatever the subagent did before failing: say where it is.
-    if (wt && err instanceof Error) err.message += `\n\n${worktreeBaseReport(wt)}\nIts worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
-    if (linkRoot && err instanceof Error) {
-      try { const warning = worktreeLinkWarning(scanWorktreeLinks(linkRoot)); if (warning) err.message += `\n\n${warning}`; }
-      catch (scanError) { err.message += `\nWARNING: worktree link inspection failed: ${(scanError as Error).message}`; }
-    }
-    if (err instanceof Error) err.message = displayPathText(err.message);
-    throw err;
+    // Settled after the cleanup below, so the WIP checkpoint never races the turn's own teardown.
+    failure = { err };
   } finally {
     if (job) denyPendingApprovals(job);
     clearInterval(slotTimer);
@@ -513,6 +500,38 @@ async function runDelegateInner(
       if (usageRefused(job)) job.providerUsage!.retainedControls = pending.flatMap(message => message.controlId
         ? [{ cid: message.controlId, body: message.body }] : []);
     }
+  }
+  if (failure) {
+    const { err } = failure;
+    if (usageWarning && err instanceof Error) err.message = `${usageWarning}\n\n${err.message}`;
+    if (err instanceof DelegateError && err.sessionId) feed.meta({ session: err.sessionId });
+    if (wt) {
+      const branch = await git([...trustArgs(wt.path), "branch", "--show-current"], wt.path, dlog).catch(() => wt.branch);
+      const branchHead = await git([...trustArgs(wt.path), "rev-parse", "HEAD"], wt.path, dlog).catch(() => undefined);
+      feed.meta({ branch: branch || wt.branch, branchHead });
+      try {
+        if (linkRoot && scanWorktreeLinks(linkRoot).externalLinks.some(link => link.path === resolve(linkRoot)))
+          throw new Error("the worktree root is an external link");
+        // A real WIP checkpoint: the turn failed, so its subject says so ("WIP: " + the sanitized subject).
+        const subject = `WIP: ${subagentCommitMessage({ answer: "", task: a.prompt, job: a._job, agent: target, model: a.model ?? defaultModel })}`;
+        const outcome = await finishWorktree(wt, subject, dlog, true);
+        wt.branch = outcome.branch;
+        wt.branchHead = await git([...trustArgs(wt.repoRoot, wt.path), "rev-parse", "HEAD"], wt.path, dlog);
+        feed.meta({ branch: wt.branch, branchHead: wt.branchHead });
+        if (err instanceof Error) err.message += `\n\n${worktreeReport(wt, outcome)}`;
+      } catch (commitError) {
+        if (err instanceof Error) err.message += `\n\nCould not make a WIP commit: ${(commitError as Error).message}${await dirtyFilesNote(wt, dlog)}`;
+      }
+    }
+    feed.end(signal.aborted ? "cancelled" : displayPathText(`failed: ${(err as Error)?.message ?? err}`));
+    // The worktree keeps whatever the subagent did before failing: say where it is.
+    if (wt && err instanceof Error) err.message += `\n\n${worktreeBaseReport(wt)}\nIts worktree (with any partial work) is ${wt.path} on branch ${wt.branch}.`;
+    if (linkRoot && err instanceof Error) {
+      try { const warning = worktreeLinkWarning(scanWorktreeLinks(linkRoot)); if (warning) err.message += `\n\n${warning}`; }
+      catch (scanError) { err.message += `\nWARNING: worktree link inspection failed: ${(scanError as Error).message}`; }
+    }
+    if (err instanceof Error) err.message = displayPathText(err.message);
+    throw err;
   }
 
   const notes: string[] = [`Step-by-step log: ${feed.logPath}`];
@@ -546,15 +565,18 @@ async function runDelegateInner(
     notes.push("Auto-commit skipped: the worktree root is an external link. Restore worktree isolation before running git or cleanup through it.");
   } else if (wt) {
     try {
-      const message = subagentCommitMessage({ answer: res.text, task: a.prompt, job: a._job, agent: target, model: a.model ?? defaultModel });
-      const outcome = await finishWorktree(wt, message, dlog);
+      // A finished turn keeps main's sanitized subject; a turn that did not finish (paused, cancelled or failed)
+      // is a real WIP checkpoint. finishWorktree accepts only these subjects, never arbitrary caller text.
+      const subject = subagentCommitMessage({ answer: res.text, task: a.prompt, job: a._job, agent: target, model: a.model ?? defaultModel });
+      const unfinished = res.isError || signal.aborted;
+      const outcome = await finishWorktree(wt, unfinished ? `WIP: ${subject}` : subject, dlog, true);
       wt.branch = outcome.branch;
       wt.branchHead = await git([...trustArgs(wt.repoRoot, wt.path), "rev-parse", "HEAD"], wt.path, dlog);
       feed.meta({ branch: wt.branch, branchHead: wt.branchHead });
       notes.push(worktreeReport(wt, outcome));
     } catch (err) {
       // Never lose the answer over a git problem.
-      notes.push(`Could not commit the changes in worktree ${wt.path} (branch ${wt.branch}): ${(err as Error).message}`);
+      notes.push(`Could not commit the changes in worktree ${wt.path} (branch ${wt.branch}): ${(err as Error).message}${await dirtyFilesNote(wt, dlog)}`);
     }
   } else if (before) {
     const after = await gitChangeSnapshot(workdir, dlog);
@@ -574,4 +596,13 @@ async function runDelegateInner(
   }
   if (wt) notes.unshift(worktreeBaseReport(wt));
   return { ...res, workdir, worktree: wt ?? undefined, text: displayPathText(notes.length ? `${res.text}\n\n---\n${notes.join("\n\n")}` : res.text) };
+}
+
+/** The job's uncommitted files when no checkpoint could be made, so nothing is left only on disk unreported. */
+async function dirtyFilesNote(wt: Worktree, log: Logger): Promise<string> {
+  try {
+    const dirty = (await git([...trustArgs(wt.repoRoot, wt.path), "status", "--porcelain=v1", "-z", "--untracked-files=all"], wt.path, log))
+      .split("\0").filter(Boolean).map(entry => entry.slice(3));
+    return dirty.length ? `\nDirty files left on the job worktree:\n${dirty.join("\n")}` : "";
+  } catch (statusError) { return `\nCould not list dirty files in the job worktree: ${(statusError as Error).message}`; }
 }

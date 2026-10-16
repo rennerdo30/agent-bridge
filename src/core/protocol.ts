@@ -52,7 +52,9 @@ export interface SiblingPeer {
   name: string;
   title: string;
   agent: AgentKind;
-  status: "running" | "done" | "failed" | "interrupted" | "cancelled";
+  status: "running" | "paused" | "done" | "failed" | "interrupted" | "cancelled";
+  pauseReason?: string;
+  pausedAt?: number;
   finishedAt?: number;
 }
 

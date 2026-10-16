@@ -20,7 +20,7 @@ import type { ParentRoute } from "../core/parent-link.js";
 import { isPureAcknowledgement } from "../core/job-messaging.js";
 import { resumeArgs, runDelegate, type JobSink, type RunContext } from "./delegate-run.js";
 import { CONTROL_CONVERSATION_PREFIX, JOB_PEER_PREFIX, RUNNER_HEARTBEAT_MS, writeRunnerState, type RunnerSpec } from "./job-host.js";
-import { jobReport, NOTE_CONVERSATION_SUFFIX, QUEUED_FOLLOW_UP_NOTE, sessionOfError, waitForApproval, type Job, type RunnerControl, type RunnerState } from "./jobs.js";
+import { jobReport, NOTE_CONVERSATION_SUFFIX, PAUSE_HELD_NOTE, PAUSE_RACE_NOTE, pauseReasonText, QUEUED_FOLLOW_UP_NOTE, sessionOfError, waitForApproval, type Job, type RunnerControl, type RunnerState } from "./jobs.js";
 import { changedJobArgs } from "./job-settings.js";
 import { processCleanupReport, establishWindowsJobScope, type WindowsJobScope } from "../core/windows-job-scope.js";
 import type { Logger } from "../core/logger.js";
@@ -138,6 +138,8 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     usageQueuedControls: [],
     allowedServers: new Set(spec.job.allowedServers),
   };
+  /** The first turn of this runner: pause mail from before it belongs to an earlier runner. */
+  const runnerStartedAt = job.startedAt;
   let owner = spec.owner;
   const refreshOwner = () => {
     const saved = readStore(join(home, JOBS_FILE)).find((j) => j.id === job.id);
@@ -274,7 +276,9 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     } catch {
       return;
     }
-    if (c.type === "cancel" && !isCurrentRunnerCancel(m.createdAt, job.startedAt)) {
+    // A pause holds the job, not one turn: one sent while this runner switched to a queued continuation
+    // still applies. Only control mail older than this runner (an earlier runner's turn) is ignored.
+    if (c.type === "pause" && !isCurrentRunnerCancel(m.createdAt, runnerStartedAt) || c.type === "cancel" && !isCurrentRunnerCancel(m.createdAt, job.startedAt)) {
       log.info("ignoring cancellation from an earlier job turn", { createdAt: m.createdAt, startedAt: job.startedAt });
       return;
     }
@@ -311,6 +315,15 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     } else if (c.type === "cancel") {
       log.info("cancelled by the session");
       job.queue = [];
+      job.pausePending = false;
+      job.controller.abort();
+      save({ stopping: true });
+    } else if (c.type === "pause") {
+      // A repeated pause for the same turn changes nothing.
+      if (job.pausePending || closing) { node.markRead([m.id]); return; }
+      job.pauseReason = pauseReasonText(c.reason);
+      job.pausedAt = Date.now();
+      job.pausePending = true;
       job.controller.abort();
       save({ stopping: true });
     }
@@ -354,18 +367,38 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
   configurePathDisplay(spec.cfg.pathDisplay ?? { preferAlias: true });
   const rc: RunContext = { agent: spec.byAgent, cfg: spec.cfg, home, log, me: () => owner, cwd: () => spec.cwd, jobs: sink, jobNode: node };
 
+  /**
+   * A turn's final report: persisted in the runner state before the first send, then delivered once under a stable
+   * completion ID (AB-400). Used by every terminal path, including a pause that holds queued follow-ups (AB-398).
+   */
+  const deliverFinal = async (report: string, status: "done" | "failed" | "cancelled" | "paused"): Promise<void> => {
+    const final = { report, reportId: randomUUID(), delivered: false };
+    const finishedAt = Date.now();
+    await deliverFinalResult(final,
+      (stored) => save({ status, ...stored, finishedAt }, true),
+      async (body, id) => {
+        const result = await inOrder(body, null, false, `${COMPLETION_DEDUPE_PREFIX}${id}`, false, true);
+        return result && { stored: result.messages.length > 0 };
+      },
+      async (ms) => { await delay(ms); },
+      shutdown.signal,
+      async (id) => (await node.sendState(completionMessageId(`job:${job.id}`, id))).state === "stored");
+  };
+
   let args = spec.args;
   for (;;) {
-    let status: "done" | "failed" | "cancelled" = "failed";
+    let status: "done" | "failed" | "cancelled" | "paused" = "failed";
     let text = "";
     let cause: string | null = null;
     let processesStopped = false;
+    let completed = false;
     try {
       const res = await runDelegate(rc, target, args, job.controller.signal, onProgress, true, job);
       job.workdir = res.workdir ?? job.workdir;
       job.worktree = res.worktree ?? job.worktree;
       job.sessionId = res.sessionId ?? job.sessionId;
       status = res.status ?? (res.isError ? "failed" : "done");
+      completed = status === "done";
       text = res.text || "(no answer text returned)";
       cause = res.isError ? failureCause({ result: res }) : null;
     } catch (err) {
@@ -376,6 +409,10 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       settleUsageAttempt(job, status === "done");
       save();
     }
+    // Ordering (AB-398): runDelegate above already made the job's commit or WIP checkpoint, so this cleanup runs
+    // after it. Files that still-running job processes write between that commit and their stop are never
+    // committed; the session only lists them as dirty files when it settles the turn. A paused job keeps its
+    // worktree (closeJobWorktree below is skipped while a pause is pending).
     if (scope) {
       try {
         const cleanup = await scope.cleanup();
@@ -403,12 +440,50 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
         log.warn("could not write the worktree process proof; worktree retained", { err: (err as Error).message });
       }
     }
-    if (job.controller.signal.aborted && processesStopped) {
+    if (job.controller.signal.aborted && processesStopped && !job.pausePending) {
       const cleanup = await closeJobWorktree({ home, job: { ...job, status }, enabled: spec.cfg.jobCloseCleanup, log });
       text += `\n\nWorktree close: ${cleanup.action}: ${cleanup.reason}`;
     }
     job.etaReportedAt = undefined;
-    if (job.controller.signal.aborted) status = "cancelled";
+    // Decided after the last await, so a pause arriving meanwhile is seen. A pause that raced a completed turn
+    // never swallows its report; a pause stays a pause even when job-owned processes would not stop (AB-398).
+    const outcome = runnerTurnOutcome({ status, completed, pausePending: job.pausePending === true, scoped: Boolean(scope), processesStopped });
+    if (holdsQueuedFollowUps({ pauseRaced: outcome.pauseRaced, queued: job.queue.length, sessionId: job.sessionId })) {
+      // The turn finished, but follow-ups wait: deliver its report, then hold them. The job is paused with its
+      // queue kept (the session recovers it from usageQueuedControls); no continuation starts here (AB-398).
+      log.info("pause arrived as the turn finished; holding its queued follow-ups", { sessionId: job.sessionId, queued: job.queue.length });
+      job.pausePending = false;
+      closing = true;
+      if (saveTimer) clearTimeout(saveTimer);
+      const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), `${text}\n\n${PAUSE_HELD_NOTE}`, cause, home);
+      // The report is persisted first and delivered once under its completion ID (AB-400): if the bridge does not
+      // take it, the session posts the stored report when it settles the pause.
+      await deliverFinal(report, "paused");
+      log.info("job runner paused with held follow-ups", { delivered: extra.delivered === true });
+      break;
+    }
+    if (outcome.pauseRaced) {
+      log.info("pause arrived after the turn had finished; delivering its report", { sessionId: job.sessionId });
+      job.pausePending = false;
+      job.pauseReason = undefined;
+      job.pausedAt = undefined;
+      text += `\n\n${PAUSE_RACE_NOTE}`;
+      // The pause aborted only a finished turn: later follow-ups of this runner need a live controller.
+      job.controller = new AbortController();
+    }
+    if (outcome.status === "paused") status = "paused";
+    else if (job.controller.signal.aborted) status = "cancelled";
+    if (status === "paused") {
+      closing = true;
+      if (saveTimer) clearTimeout(saveTimer);
+      save({ status: "paused", finishedAt: Date.now() });
+      log.info("job runner paused", { sessionId: job.sessionId, processesStopped: processesStopped || !scope });
+      if (outcome.pausedWithLeftovers) {
+        await post(`Subagent ${job.name} is paused, but its job-owned processes did not all stop; they may still be using the machine. ` +
+          `${cause ?? "Process cleanup did not finish."}\n\n${text.trim()}`);
+      }
+      break;
+    }
     const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause, home);
     log.info("job turn finished", { status, sessionId: job.sessionId, cause });
     // The supervisor's JobManager emits the finish/fail notification when it settles this
@@ -430,18 +505,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     closing = true;
     if (saveTimer) clearTimeout(saveTimer);
     // The state first: once the report arrives, the session must find the job finished.
-    const reportId = randomUUID();
-    const final = { report, reportId, delivered: false };
-    const finishedAt = Date.now();
-    await deliverFinalResult(final,
-      (stored) => save({ status, ...stored, finishedAt }, true),
-      async (body, id) => {
-        const result = await inOrder(body, null, false, `${COMPLETION_DEDUPE_PREFIX}${id}`, false, true);
-        return result && { stored: result.messages.length > 0 };
-      },
-      async (ms) => { await delay(ms); },
-      shutdown.signal,
-      async (id) => (await node.sendState(completionMessageId(`job:${job.id}`, id))).state === "stored");
+    await deliverFinal(report, status);
     log.info("job runner done", { status, delivered: extra.delivered === true });
     break;
   }
@@ -476,6 +540,26 @@ export async function deliverWithRetry<T>(send: () => Promise<T>, log: Logger, o
     }
   }
   return null;
+}
+
+/**
+ * A pause that raced a finished turn while follow-ups were queued holds them: the report is delivered and the job
+ * is paused with its queue kept, instead of starting the continuation and calling the job finished (AB-398 N1).
+ */
+export function holdsQueuedFollowUps(o: { pauseRaced: boolean; queued: number; sessionId: string | null | undefined }): boolean {
+  return o.pauseRaced && o.queued > 0 && Boolean(o.sessionId);
+}
+
+/**
+ * How a runner turn ends when a pause may be pending (AB-398). A pause that arrived after the turn completed
+ * never swallows its report; a pause whose job-owned processes would not stop stays a pause (never a silent
+ * cancellation) and the supervisor is told about the leftovers.
+ */
+export function runnerTurnOutcome(o: { status: "done" | "failed" | "cancelled" | "paused"; completed: boolean; pausePending: boolean; scoped: boolean; processesStopped: boolean }):
+  { status: "done" | "failed" | "cancelled" | "paused"; pauseRaced: boolean; pausedWithLeftovers: boolean } {
+  if (!o.pausePending) return { status: o.status, pauseRaced: false, pausedWithLeftovers: false };
+  if (o.completed) return { status: o.status, pauseRaced: true, pausedWithLeftovers: false };
+  return { status: "paused", pauseRaced: false, pausedWithLeftovers: o.scoped && !o.processesStopped };
 }
 
 /** Sends one at a time in call order. A failed send never blocks the sends queued after it. */

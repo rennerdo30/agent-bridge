@@ -122,7 +122,9 @@ const PENDING_MAX_LIMIT = 500;
 const NAME_SUFFIX_LIMIT = 100;
 const MAX_FILE_ADDRESS_CHARS = 256;
 const MAX_FILE_PATH_CHARS = 1_024;
-const SIBLING_STATUSES = new Set<SiblingPeer["status"]>(["running", "done", "failed", "interrupted", "cancelled"]);
+/** Pause reasons are bounded wherever they are relayed (the same limit as the pause_subagent tool). */
+const MAX_PAUSE_REASON_CHARS = 500;
+const SIBLING_STATUSES = new Set<SiblingPeer["status"]>(["running", "paused", "done", "failed", "interrupted", "cancelled"]);
 const MAX_INFLIGHT_PER_CONNECTION = 128;
 const PAUSE_INFLIGHT_PER_CONNECTION = 32;
 const MAX_CONNECTION_BUFFER_BYTES = 4 * MAX_FRAME_BYTES;
@@ -570,13 +572,21 @@ export class Broker {
       inlineJobControl: async (c, a) => {
         const peer = this.requirePeer(c), job = this.currentJobAuthority(await this.jobForControl(peer, a.job));
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) throw new BridgeError("unauthorized", "Only the current supervisor can control this job.");
-        if (!a.control || !["message", "title", "settings", "effort", "cancel"].includes(a.control.type)) throw new BridgeError("bad_request", "Invalid inline control.");
-        if (job.host && job.status === "running") {
+        if (!a.control || !["message", "title", "settings", "effort", "cancel", "pause"].includes(a.control.type)) throw new BridgeError("bad_request", "Invalid inline control.");
+        // A pause reason travels to runners, peers and the dashboard: only a bounded string is relayed (AB-398).
+        if (a.control.type === "pause") {
+          const reason: unknown = a.control.reason;
+          if (reason !== undefined && typeof reason !== "string") throw new BridgeError("bad_request", "Invalid pause reason.");
+          // One line: newlines in a relayed reason could otherwise add lines to peers or sibling text.
+          const line = reason?.replace(/\s+/g, " ").trim().slice(0, MAX_PAUSE_REASON_CHARS).trim();
+          a = { ...a, control: { type: "pause", ...(line ? { reason: line } : {}) } };
+        }
+        if (job.host && (job.status === "running" || job.status === "paused" && job.pausePending)) {
           await this.onSend(c, { to: String(job.name), body: JSON.stringify(a.control), conversationId: `${CONTROL_CONVERSATION_PREFIX}${job.id}` });
           return { sent: true };
         }
         const executor = typeof (job.executionOwner ?? job.owner) === "string" ? this.connByName(String(job.executionOwner ?? job.owner)) : undefined;
-        if (job.status !== "running") {
+        if (job.status !== "running" && !(job.status === "paused" && job.pausePending)) {
           const recipient = this.jobRecipient(job);
           const primary = this.connByName(recipient);
           if (!primary) throw new BridgeError("unknown_target", "No job master is currently connected.");
@@ -1643,7 +1653,7 @@ export class Broker {
     }
     if (active && (known?.remote || (isRecord(known?.host) && Date.now() - Number(known.host.startedAt) < 30_000))) return known;
     // A connected inline executor is the only source of its runtime controller.
-    if (active && known?.status === "running" && !known.host && this.connByName(String(known.executionOwner ?? known.owner))) return known;
+    if (active && (known?.status === "running" || known?.status === "paused" && known.pausePending) && !known.host && this.connByName(String(known.executionOwner ?? known.owner))) return known;
     const recovered = this.jobsPath ? await recoverJobRecordAsync(dirname(this.jobsPath), ref) : undefined;
     const current = this.storedJob(ref);
     if (!recovered) return typeof current?.prompt === "string" && typeof current.owner === "string" ? current : undefined;
@@ -1758,7 +1768,7 @@ export class Broker {
       return records.flatMap((j) => j && (!target || j.name === target) && (this.sameJobFamily(peer, { id: `job:${j.id}`, jobOwner: String(j.supervisor) } as PeerInfo, records) || this.sharedJobs(peer, { id: `job:${j.id}` } as PeerInfo, records) || peer.jobSendTo?.includes(String(j.name))) && typeof j.id === "string" &&
         typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id &&
         AGENT_KINDS.includes(j.agent as AgentKind) && SIBLING_STATUSES.has(j.status as SiblingPeer["status"])
-        ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent as AgentKind, status: j.status as SiblingPeer["status"], ...(typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}), report: typeof j.report === "string" ? j.report : null }]
+        ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent as AgentKind, status: j.status as SiblingPeer["status"], ...(typeof j.pauseReason === "string" ? { pauseReason: j.pauseReason } : {}), ...(typeof j.pausedAt === "number" ? { pausedAt: j.pausedAt } : {}), ...(typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}), report: typeof j.report === "string" ? j.report : null }]
         : []);
     } catch {
       return [];
@@ -1774,6 +1784,7 @@ export class Broker {
       const previous = stored.find((s) => s.id === p.id);
       if (previous) peers.delete(previous.name);
       peers.set(p.name, { name: p.name, title: p.jobTitle ?? "", agent: p.jobAgent!, status: previous?.status ?? "running",
+        ...(previous?.pauseReason ? { pauseReason: previous.pauseReason } : {}), ...(previous?.pausedAt ? { pausedAt: previous.pausedAt } : {}),
         ...(previous?.finishedAt !== undefined ? { finishedAt: previous.finishedAt } : {}) });
     }
     const caller = this.requirePeer(conn);
@@ -1851,7 +1862,7 @@ export class Broker {
       const supervisor = this.connByName(owner);
       if (supervisor) this.emit(supervisor, "message", note);
     }
-    if (stored && stored.status !== "running") {
+    if (stored && stored.status !== "running" && stored.status !== "paused") {
       result.finishedRecipient = { name: stored.name, status: stored.status, report: stored.report,
         ...(stored.finishedAt !== undefined ? { finishedAt: stored.finishedAt } : {}) };
     }

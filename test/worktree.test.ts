@@ -57,6 +57,127 @@ afterEach(() => {
 });
 
 describe("worktree isolation", () => {
+  it("saves untracked non-ignored job files in a WIP commit without ignored files", async () => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: "wip-untracked", log: nullLogger });
+    writeFileSync(join(wt.path, ".gitignore"), "ignored.txt\n");
+    writeFileSync(join(wt.path, "a.txt"), "original  \n");
+    writeFileSync(join(wt.path, "new-source.txt"), "retained work\n");
+    writeFileSync(join(wt.path, "ignored.txt"), "local cache\n");
+    const saved = await finishWorktree(wt, "WIP: save job work", nullLogger, true);
+    expect(saved.files).toContain("new-source.txt");
+    // A whitespace-only change to a tracked file stays out of the checkpoint, untracked files or not (AB-398 L2).
+    expect(saved.files).not.toContain("a.txt");
+    expect(saved.skippedFiles).toContainEqual({ path: "a.txt", reason: "whitespace only" });
+    expect(git("log", "-1", "--format=%s", wt.branch)).toBe("WIP: save job work");
+    expect(git("ls-tree", "-r", "--name-only", wt.branch)).toContain("new-source.txt");
+    expect(git("ls-tree", "-r", "--name-only", wt.branch)).not.toContain("ignored.txt");
+  });
+  it("keeps secrets, generated noise and files over 5 MB out of a WIP checkpoint and reports them", async () => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: "wip-filter", log: nullLogger });
+    const secrets = [".env", ".env.local", "config/.ENV.production", "certs/server.pem", "keys/api.KEY", "AuthKey.p8", "store.p12", "cert.pfx", "putty.ppk",
+      "app.jks", "release.keystore", "id_rsa", "id_ed25519.pub", "id_ecdsa", "id_dsa_old", "credentials", "credentials.yml", "gcp-credentials-prod.json",
+      "service-account-ci.json", "secrets.yaml", "token.secret", "app.secrets", "auth.json", ".npmrc", ".pypirc", ".netrc", ".git-credentials",
+      "vault.kdbx", "profile.mobileprovision", "terraform.tfstate", "terraform.tfstate.backup", "home/.ssh/config", "home/.aws/config",
+      "home/.gnupg/pubring.kbx", "home/.azure/accessTokens.txt"];
+    const allowed = [".env.example", ".env.sample", ".env.template", "src/keys.ts", "docs/using-credentials.md", "secretsauce.txt", "environment.ts"];
+    for (const file of [...secrets, ...allowed, "node_modules/pkg/index.js", "Thumbs.db"]) {
+      mkdirSync(join(wt.path, file, ".."), { recursive: true });
+      writeFileSync(join(wt.path, file), "fixture\n");
+    }
+    writeFileSync(join(wt.path, "big.bin"), Buffer.alloc(5 * 1024 * 1024 + 1));
+    writeFileSync(join(wt.path, "exactly-5mb.bin"), Buffer.alloc(5 * 1024 * 1024));
+    const saved = await finishWorktree(wt, "WIP: save job work", nullLogger, true);
+    const committed = git("ls-tree", "-r", "--name-only", wt.branch).split("\n");
+    for (const file of secrets) {
+      expect(committed).not.toContain(file);
+      expect(saved.skippedFiles).toContainEqual({ path: file, reason: "possible secret; never auto-committed" });
+    }
+    for (const file of [...allowed, "exactly-5mb.bin"]) expect(committed).toContain(file);
+    expect(committed).not.toContain("big.bin");
+    expect(saved.skippedFiles).toContainEqual({ path: "big.bin", reason: "larger than 5 MB; not auto-committed" });
+    expect(saved.skippedFiles).toContainEqual({ path: "node_modules/pkg/index.js", reason: "generated noise" });
+    expect(saved.skippedFiles).toContainEqual({ path: "Thumbs.db", reason: "generated noise" });
+    // Skipped files stay on disk, and the report names them for the supervisor.
+    expect(readFileSync(join(wt.path, ".env"), "utf8")).toBe("fixture\n");
+    expect(worktreeReport(wt, saved)).toContain("possible secrets");
+  });
+  it.each([false, true])("keeps a secret or a file over 5 MB the job staged itself out of the checkpoint (untracked %s)", async (includeUntracked) => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: `staged-filter-${includeUntracked}`, log: nullLogger });
+    writeFileSync(join(wt.path, ".env.local"), "fixture\n");
+    writeFileSync(join(wt.path, "staged-big.bin"), Buffer.alloc(5 * 1024 * 1024 + 1));
+    writeFileSync(join(wt.path, "staged-source.txt"), "kept work\n");
+    execFileSync("git", ["add", "--", ".env.local", "staged-big.bin", "staged-source.txt"], { cwd: wt.path });
+    const saved = await finishWorktree(wt, "Save worktree changes", nullLogger, includeUntracked);
+    const committed = git("ls-tree", "-r", "--name-only", wt.branch).split("\n");
+    expect(committed).toContain("staged-source.txt");
+    expect(committed).not.toContain(".env.local");
+    expect(committed).not.toContain("staged-big.bin");
+    expect(saved.skippedFiles).toContainEqual({ path: ".env.local", reason: "possible secret; never auto-committed" });
+    expect(saved.skippedFiles).toContainEqual({ path: "staged-big.bin", reason: "larger than 5 MB; not auto-committed" });
+    // Unstaged, never deleted: both files stay on disk as untracked files.
+    expect(readFileSync(join(wt.path, ".env.local"), "utf8")).toBe("fixture\n");
+    const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: wt.path, encoding: "utf8" });
+    expect(status).toContain("?? .env.local");
+    expect(status).toContain("?? staged-big.bin");
+    expect(worktreeReport(wt, saved)).toContain("possible secrets");
+  });
+  it.each([false, true])("keeps an intent-to-add secret or large file out of the checkpoint (untracked %s)", async (includeUntracked) => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: `intent-filter-${includeUntracked}`, log: nullLogger });
+    writeFileSync(join(wt.path, ".env.local"), "fixture\n");
+    writeFileSync(join(wt.path, "intent-big.bin"), Buffer.alloc(5 * 1024 * 1024 + 1));
+    writeFileSync(join(wt.path, "intent-source.txt"), "kept work\n");
+    execFileSync("git", ["add", "-N", "--", ".env.local", "intent-big.bin", "intent-source.txt"], { cwd: wt.path });
+    const saved = await finishWorktree(wt, "Save worktree changes", nullLogger, includeUntracked);
+    const committed = git("ls-tree", "-r", "--name-only", wt.branch).split("\n");
+    expect(committed).toContain("intent-source.txt");
+    expect(committed).not.toContain(".env.local");
+    expect(committed).not.toContain("intent-big.bin");
+    expect(saved.skippedFiles).toContainEqual({ path: ".env.local", reason: "possible secret; never auto-committed" });
+    expect(saved.skippedFiles).toContainEqual({ path: "intent-big.bin", reason: "larger than 5 MB; not auto-committed" });
+    expect(readFileSync(join(wt.path, ".env.local"), "utf8")).toBe("fixture\n");
+  });
+  it.each([
+    ["MERGE_HEAD", "a merge is in progress"], ["CHERRY_PICK_HEAD", "a cherry-pick is in progress"], ["REVERT_HEAD", "a revert is in progress"],
+    ["rebase-merge", "a rebase is in progress"], ["rebase-apply", "a rebase is in progress"], ["index.lock", "an index.lock is present"],
+  ])("skips the WIP checkpoint while %s exists", async (marker, why) => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: `guard-${marker.toLowerCase().replace(/[^a-z]/g, "")}`, log: nullLogger });
+    const gitDir = execFileSync("git", ["rev-parse", "--absolute-git-dir"], { cwd: wt.path, encoding: "utf8" }).trim();
+    if (marker.startsWith("rebase-")) mkdirSync(join(gitDir, marker));
+    else writeFileSync(join(gitDir, marker), git("rev-parse", "HEAD") + "\n");
+    writeFileSync(join(wt.path, "work.txt"), "unsaved\n");
+    const head = git("rev-parse", wt.branch);
+    await expect(finishWorktree(wt, "WIP: save job work", nullLogger, true)).rejects.toThrow(`Checkpoint commit skipped: ${why}.`);
+    expect(git("rev-parse", wt.branch)).toBe(head);
+    expect(readFileSync(join(wt.path, "work.txt"), "utf8")).toBe("unsaved\n");
+    if (marker.startsWith("rebase-")) rmSync(join(gitDir, marker), { recursive: true }); else rmSync(join(gitDir, marker));
+  });
+  it("skips the WIP checkpoint on a detached HEAD and outside a linked worktree", async () => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: "detached", log: nullLogger });
+    execFileSync("git", ["checkout", "-q", "--detach"], { cwd: wt.path });
+    writeFileSync(join(wt.path, "work.txt"), "unsaved\n");
+    await expect(finishWorktree(wt, "WIP: save job work", nullLogger, true)).rejects.toThrow("Checkpoint commit skipped: HEAD is detached.");
+    const main = { ...wt, path: repo, cwd: repo };
+    writeFileSync(join(repo, "a.txt"), "main checkout edit\n");
+    await expect(finishWorktree(main, "WIP: save job work", nullLogger, true)).rejects.toThrow("is not a linked job worktree");
+    expect(git("status", "--porcelain")).toContain("a.txt");
+  });
+  it("uses an allowed checkpoint message and falls back for any other text", async () => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: "message", log: nullLogger });
+    writeFileSync(join(wt.path, "a.txt"), "first\n");
+    await finishWorktree(wt, "WIP: save job work", nullLogger);
+    expect(git("log", "-1", "--format=%s", wt.branch)).toBe("WIP: save job work");
+    writeFileSync(join(wt.path, "a.txt"), "second\n");
+    await finishWorktree(wt, "Task text with Co-Authored-By: someone", nullLogger, true);
+    expect(git("log", "-1", "--format=%B", wt.branch)).toBe("WIP: save job work");
+    // The sanitized subject of a finished turn, and "WIP: " plus it for a real WIP checkpoint, are kept (N3).
+    const subject = subagentCommitMessage({ answer: "done", task: "task", agent: "codex" });
+    writeFileSync(join(wt.path, "a.txt"), "third\n");
+    await finishWorktree(wt, subject, nullLogger, true);
+    expect(git("log", "-1", "--format=%B", wt.branch)).toBe(subject);
+    writeFileSync(join(wt.path, "a.txt"), "fourth\n");
+    await finishWorktree(wt, `WIP: ${subject}`, nullLogger, true);
+    expect(git("log", "-1", "--format=%B", wt.branch)).toBe(`WIP: ${subject}`);
+  });
   it("autosaves tracked and explicitly staged source while preserving private build outputs", async () => {
     const wt = await createWorktree({ cwd: repo, home, jobId: "privatefiles", log: nullLogger });
     writeFileSync(join(wt.path, "a.txt"), "tracked source\n");

@@ -66,7 +66,9 @@ describe("delegated worktree contracts", () => {
     const j = job();
     vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
       git(req.cwd, "checkout", "-qb", "finished-work");
+      writeFileSync(join(req.cwd, ".gitignore"), "ignored.txt\n");
       writeFileSync(join(req.cwd, "result.txt"), "done\n");
+      writeFileSync(join(req.cwd, "ignored.txt"), "cache\n");
       return { sessionId: "saved", text: "done", isError: false, details: {} };
     });
     const result = await runDelegate(rc, "codex", { title: "task", prompt: "task", access: "edit", worktree: true, _job: j.name }, j.controller.signal, undefined, true, j);
@@ -78,6 +80,69 @@ describe("delegated worktree contracts", () => {
     expect(saved.branchHead).toMatch(/^[a-f0-9]{40}$/);
     expect(result.worktree?.branch).toBe("finished-work");
     expect(result.worktree?.branchHead).toBe(saved.branchHead);
+    expect(git(result.worktree!.path, "log", "-1", "--format=%s")).toBe("Save worktree changes");
+    expect(git(result.worktree!.path, "ls-tree", "-r", "--name-only", "HEAD")).toContain("result.txt");
+    expect(git(result.worktree!.path, "ls-tree", "-r", "--name-only", "HEAD")).not.toContain("ignored.txt");
+  });
+  it("saves failed job work in a WIP commit", async () => {
+    const repo = join(home, "failed-repo");
+    mkdirSync(repo);
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    git(repo, "init", "-q");
+    git(repo, "config", "--local", "user.name", "Test");
+    git(repo, "config", "--local", "user.email", "test@example.test");
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--allow-empty", "-qm", "base");
+    let jobWorktree = "";
+    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      jobWorktree = req.cwd;
+      writeFileSync(join(req.cwd, "partial.txt"), "retained\n");
+      throw new DelegateError("native turn failed", "failed");
+    });
+    await expect(runDelegate({ ...context(), cwd: () => repo }, "codex", { title: "failed", prompt: "task", access: "edit", worktree: true }, new AbortController().signal, undefined, true, job())).rejects.toThrow("native turn failed");
+    expect(git(jobWorktree, "log", "-1", "--format=%s")).toBe("WIP: Save worktree changes");
+    expect(git(jobWorktree, "ls-tree", "-r", "--name-only", "HEAD")).toContain("partial.txt");
+  });
+  it("lists a failed job's files instead of committing during a merge, and never commits secrets", async () => {
+    const repo = join(home, "merging-repo");
+    mkdirSync(repo);
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    git(repo, "init", "-q");
+    git(repo, "config", "--local", "user.name", "Test");
+    git(repo, "config", "--local", "user.email", "test@example.test");
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--allow-empty", "-qm", "base");
+    let jobWorktree = "";
+    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      jobWorktree = req.cwd;
+      writeFileSync(join(req.cwd, "half-merged.txt"), "conflict\n");
+      const gitDir = execFileSync("git", ["rev-parse", "--absolute-git-dir"], { cwd: req.cwd, encoding: "utf8" }).trim();
+      writeFileSync(join(gitDir, "MERGE_HEAD"), git(req.cwd, "rev-parse", "HEAD") + "\n");
+      throw new DelegateError("native turn failed", "failed");
+    });
+    const error = await runDelegate({ ...context(), cwd: () => repo }, "codex", { title: "merging", prompt: "task", access: "edit", worktree: true }, new AbortController().signal, undefined, true, job()).catch((e: Error) => e);
+    expect(String((error as Error).message)).toContain("Could not make a WIP commit: Checkpoint commit skipped: a merge is in progress.");
+    expect(String((error as Error).message)).toContain("Dirty files left on the job worktree:\nhalf-merged.txt");
+    expect(git(jobWorktree, "log", "-1", "--format=%s")).toBe("base");
+  });
+  it("keeps a finished job's secret files out of its WIP commit and reports them", async () => {
+    const repo = join(home, "secret-repo");
+    mkdirSync(repo);
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+    git(repo, "init", "-q");
+    git(repo, "config", "--local", "user.name", "Test");
+    git(repo, "config", "--local", "user.email", "test@example.test");
+    git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--allow-empty", "-qm", "base");
+    let jobWorktree = "";
+    vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+      jobWorktree = req.cwd;
+      writeFileSync(join(req.cwd, "work.txt"), "kept\n");
+      writeFileSync(join(req.cwd, ".env"), "fixture-not-a-secret\n");
+      return { sessionId: "s", text: "done", isError: false, details: {} };
+    });
+    const result = await runDelegate({ ...context(), cwd: () => repo }, "codex", { title: "secret", prompt: "task", access: "edit", worktree: true }, new AbortController().signal, undefined, true, job());
+    const committed = git(jobWorktree, "ls-tree", "-r", "--name-only", "HEAD");
+    expect(committed).toContain("work.txt");
+    expect(committed).not.toContain(".env");
+    expect(result.text).toContain(".env (possible secret; never auto-committed)");
   });
   it.each([false, true])("instructs continued worktrees and reports ignored external links (failure=%s)", async (fail) => {
     const rc = context();
