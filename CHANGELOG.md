@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.30.31
+
+- **Muse in T3 Code works again.** A `muse serve` that agent-bridge did not start (T3 Code and other MSP clients) was treated as a Bridge job waiting for its private handoff, so its bridge server marked itself internal and the hook denied every shell and write tool ("agent-bridge permission gate unavailable"). A serve host without Bridge's delegation markers is now an owner session; Bridge jobs still authenticate and fail closed.
+- **Faster dashboard refreshes.** Open job questions are found in three single passes instead of rescanning every message once per question (about 0.9 s to 0.1 s on a 23,000-message store). Long-interrupted runs recheck their runner once a minute instead of on every poll.
+
 ## 0.30.30
 
 - **Muse stays usable after an update.** Reinstalling the Muse plugin left it disabled with its hooks and MCP server unapproved, so Muse denied every shell and write tool ("agent-bridge permission gate unavailable") until `muse plugins enable` and `approve` were run by hand. An update now re-enables and re-approves the plugin when it was enabled before; a plugin you disabled stays disabled.
