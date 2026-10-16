@@ -7,6 +7,7 @@ import { BRANCH_PREFIX, git, removeWorktreeDirectory, trustArgs, type Worktree }
 import { readStore } from "../mcp/jobs.js";
 import { worktreeLease } from "./worktree-state.js";
 import { GitSafetyRefusal } from "./git-safety.js";
+import { ownProcessIdentity } from "./process-identity.js";
 import { resolveWorktreeRemovalPath, unlinkLinks, scanWorktreeLinks, worktreeLinkWarning, type WorktreeLinkScan } from "./worktree-links.js";
 
 /**
@@ -159,6 +160,20 @@ async function inspect(path: string, jobs: StoredJob[], apply: boolean, log: Log
   } finally { release?.(); }
 }
 
+/** Probes of this process's creation identity before an applying cleanup inspects anything (AB-419). */
+const OWN_IDENTITY_ATTEMPTS = 3;
+
+/**
+ * Removal holds a worktree lease, and the lease fails closed while this process's creation identity is unknown.
+ * On Windows the first probe is a PowerShell launch that can exceed its timeout on a loaded PC; the lease's
+ * synchronous probe would then keep a clean, merged worktree only because the probe was slow (AB-419). Resolve
+ * the identity first, off the event loop, a bounded number of times. If it stays unknown, nothing changes: every
+ * lease still refuses and every worktree is kept.
+ */
+async function resolveOwnIdentity(): Promise<void> {
+  for (let attempt = 0; attempt < OWN_IDENTITY_ATTEMPTS; attempt++) if (await ownProcessIdentity()) return;
+}
+
 /** Failures of `git worktree remove` that come from permissions or open handles, not from git's safety checks. */
 const PERMISSION_FAILURE = /Permission denied|Access is denied|\bEPERM\b|\bEACCES\b|\bEBUSY\b|used by another process|resource busy/i;
 
@@ -208,6 +223,7 @@ export async function cleanupWorktrees(opts: {
   }
   opts.onScope?.({ all: Boolean(opts.all), repository, projects });
   if (opts.apply && projects.length > 1 && !opts.all) throw new Error("Removing worktrees from multiple repositories requires --all --yes.");
+  if (opts.apply && candidates.length) await resolveOwnIdentity();
   const out: CleanupEntry[] = [];
   for (const candidate of candidates) {
     // Verify identity again immediately before inspection/deletion in case the scope changed meanwhile.
