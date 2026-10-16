@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
+import { confirmUsageAdmission } from "../src/core/usage.js";
 import { JobManager, readStore, type Resume, type RunResult } from "../src/mcp/jobs.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 
@@ -167,6 +168,7 @@ it("admits a durable local continuation without leaving a waiter that intercepts
   const jobs = manager(new LocalCoordinator("executor", "source-root"));
   const liveMessage = vi.fn();
   const factory = vi.fn<Resume>(() => async (signal, _progress, active) => {
+    confirmUsageAdmission(active, (active.usagePendingControls ?? []).map(control => control.cid));
     active.live = { post: liveMessage };
     return new Promise((_resolve, reject) => {
       signal.addEventListener("abort", () => reject(new Error("current continuation cancelled")), { once: true });
@@ -194,4 +196,25 @@ it("admits a durable local continuation without leaving a waiter that intercepts
   // The owner cancelled the continuation: an aborted controller settles as cancelled, not failed.
   expect(job.status).toBe("cancelled");
   expect(readStore(path())[0]).toMatchObject({ status: "cancelled", queuedMessages: [] });
+});
+
+it("retains a durable continuation batch when cancellation precedes any admission ACK", async () => {
+  const jobs = manager(new LocalCoordinator("executor", "source-root"));
+  let attempting = false;
+  const factory = vi.fn<Resume>(() => async (signal) => new Promise((_resolve, reject) => {
+    attempting = true;
+    signal.addEventListener("abort", () => reject(new Error("cancelled before admission")), { once: true });
+  }));
+  const job = jobs.start("claude", null, "original durable context", async () => done("first turn complete"), factory);
+  await flush(); await flush();
+  expect(jobs.followUp(job.name, "resume exact context").outcome).toBe("started");
+  expect(factory).toHaveBeenCalledOnce();
+  expect(attempting).toBe(true);
+  const pending = [...job.usagePendingControls!];
+  expect(pending).toEqual([{ cid: expect.any(String), body: "resume exact context" }]);
+  expect(jobs.cancel(job.name)).toBe(true);
+  await flush(); await flush();
+  expect(job.status).toBe("cancelled");
+  expect(readStore(path())[0]).toMatchObject({ status: "cancelled", queuedMessages: ["resume exact context"], usagePendingControls: pending });
+  expect(factory).toHaveBeenCalledOnce();
 });

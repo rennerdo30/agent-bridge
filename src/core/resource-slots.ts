@@ -4,56 +4,29 @@ import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 import { RESOURCE_NAME_PATTERN } from "./config.js";
 import { configureSqlite, isSqliteBusy } from "./sqlite-policy.js";
-import { processIdentity, recordedOwnerLiveness } from "./process-identity.js";
-import { ownerGone, writtenBeforeBoot } from "./boot-time.js";
+import { slotLiveness } from "./slot-liveness.js";
+import { identityStartedAfter } from "./process-identity.js";
 
 export const SLOT_OWNER_ENV = "AGENT_BRIDGE_SLOT_OWNER";
 export const SLOT_PID_ENV = "AGENT_BRIDGE_SLOT_PID";
 export const SLOT_LEASE_MS = 6 * 60 * 60_000;
 export const SLOT_RENEW_MS = 60_000;
 const SLOT_POLL_MS = 250;
-const SLOT_DB_NAME = "resource-slots.sqlite";
+export const SLOT_DB_NAME = "resource-slots.sqlite";
 const LOCK_WAIT_MS = 3_000;
 /** Busy retries of a release, each after the full busy timeout: about 30 s in total. */
 const RELEASE_ATTEMPTS = 10;
+let nextStoreId = 0;
 
 export interface SlotOwner { id: string; pid: number }
 export interface SlotEntry extends SlotOwner { resource: string; ticket: number; held: boolean; expiresAt: number }
 
-/** Identity probes are slow (PowerShell on Windows): verdicts and own identities are reused for a minute. */
-const PROBE_CACHE_MS = 60_000;
-const verdicts = new Map<string, { alive: boolean; at: number }>();
-const identities = new Map<number, { identity: string | undefined; at: number }>();
-
-/**
- * A slot owner is alive while its PID exists and (AB-218) still belongs to the same process: its recorded identity
- * matches, or, for rows without one, the process using the PID started before the row was last renewed.
- */
-function alive(pid: number, identity?: string | null, recordedAt?: number): boolean {
-  // EPERM or an unreadable start time is unknown: the owner is gone only when it was last renewed before the
-  // current boot, since no process survives a reboot (AB-256).
-  try { process.kill(pid, 0); }
-  catch (err) { return !ownerGone({ alive: (err as NodeJS.ErrnoException).code === "ESRCH" ? false : undefined, recordedAt }); }
-  if (recordedAt === undefined) return true;
-  const key = `${pid}|${identity ?? ""}|${identity ? writtenBeforeBoot(recordedAt) : recordedAt}`, cached = verdicts.get(key);
-  if (cached && Date.now() - cached.at < PROBE_CACHE_MS) return cached.alive;
-  const verdict = !ownerGone({ alive: recordedOwnerLiveness(pid, identity ?? undefined, recordedAt), recordedAt });
-  verdicts.set(key, { alive: verdict, at: Date.now() });
-  return verdict;
-}
-
-function ownerIdentity(pid: number): string | null {
-  const cached = identities.get(pid);
-  if (cached && Date.now() - cached.at < PROBE_CACHE_MS) return cached.identity ?? null;
-  const identity = processIdentity(pid);
-  identities.set(pid, { identity, at: Date.now() });
-  return identity ?? null;
-}
-
 /** SQLite's file locks serialize FIFO tickets and leases across processes and recover after crashes. */
 export class ResourceSlots {
   private readonly db: DatabaseSync;
-  constructor(home: string, private readonly isAlive: (pid: number, identity?: string | null, recordedAt?: number) => boolean = alive, private readonly now = Date.now) {
+  private readonly captureId = ++nextStoreId;
+  private closed = false;
+  constructor(home: string, private readonly isAlive: (pid: number, identity?: string | null, recordedAt?: number) => boolean = slotLiveness.alive, private readonly now = Date.now) {
     mkdirSync(home, { recursive: true });
     this.db = new DatabaseSync(join(home, SLOT_DB_NAME));
     configureSqlite(this.db);
@@ -82,9 +55,8 @@ export class ResourceSlots {
   }
 
   /**
-   * Owner liveness probes can take seconds (PowerShell on Windows). They run before the write
-   * transaction: holding the slot database lock during them made other processes' writes, including
-   * a startup lease release, fail with SQLITE_BUSY after the busy timeout.
+   * Liveness uses immediate PID checks and cached asynchronous identity evidence.
+   * Observe before the transaction; no process query holds the slot database lock.
    */
   private deadOwners(): { pid: number; identity: string | null; expiresAt: number }[] {
     const owners = this.db.prepare("SELECT pid, identity, MAX(expiresAt) AS expiresAt FROM slots GROUP BY pid, identity").all();
@@ -102,9 +74,9 @@ export class ResourceSlots {
   tryAcquire(resource: string, count: number, owner: SlotOwner): boolean {
     if (!RESOURCE_NAME_PATTERN.test(resource) || !Number.isInteger(count) || count < 1) throw new Error("Invalid resource name or capacity.");
     if (!owner.id || !Number.isSafeInteger(owner.pid) || owner.pid <= 0 || !this.isAlive(owner.pid)) throw new Error("A resource slot needs a live owner process.");
-    // Probe outside the write transaction: it can take a moment on Windows.
-    const identity = ownerIdentity(owner.pid), dead = this.deadOwners();
-    return this.transaction(() => {
+    // Queue identity refreshes outside the write transaction.
+    const identity = slotLiveness.identity(owner.pid), dead = this.deadOwners();
+    const acquired = this.transaction(() => {
       this.prune(dead);
       this.db.prepare("INSERT INTO slots(resource, id, pid, held, expiresAt, identity) VALUES (?, ?, ?, 0, ?, ?) ON CONFLICT(resource, id) DO NOTHING").run(resource, owner.id, owner.pid, this.now() + SLOT_LEASE_MS, identity);
       const own = this.db.prepare("SELECT ticket, pid, held FROM slots WHERE resource = ? AND id = ?").get(resource, owner.id)!;
@@ -117,6 +89,18 @@ export class ResourceSlots {
       this.db.prepare("UPDATE slots SET held = 1 WHERE ticket = ?").run(own.ticket!);
       return true;
     });
+    if (!identity) {
+      const row = this.db.prepare("SELECT ticket, expiresAt, identity FROM slots WHERE resource = ? AND id = ? AND pid = ?").get(resource, owner.id, owner.pid)!;
+      if (row.identity !== null) return acquired;
+      const recordedAt = Number(row.expiresAt) - SLOT_LEASE_MS;
+      slotLiveness.capture(owner.pid, `${this.captureId}|${row.ticket}`, observed => {
+        if (this.closed || identityStartedAfter(observed, recordedAt + 1_000)) return;
+        // Fence release/replacement/renewal while the query was pending.
+        try { this.db.prepare("UPDATE slots SET identity = ? WHERE ticket = ? AND pid = ? AND expiresAt = ? AND identity IS NULL").run(observed, row.ticket!, owner.pid, row.expiresAt!); }
+        catch (error) { if (!isSqliteBusy(error)) throw error; }
+      });
+    }
+    return acquired;
   }
 
   async acquire(resource: string, count: number, owner: SlotOwner, signal?: AbortSignal): Promise<void> {
@@ -161,21 +145,18 @@ export class ResourceSlots {
   }
 
   /**
-   * For display (dashboard, peers): unexpired rows without new liveness probes, which take ~0.5 s each on Windows
-   * and block the serving process. Holders a cached verdict already proved gone are left out; pruning stays with
-   * acquire and release.
+   * For display (dashboard, peers): unexpired rows without probes or writes.
+   * Pruning stays with list and acquisition.
    */
   snapshot(): SlotEntry[] {
     const now = this.now();
     return this.db.prepare("SELECT * FROM slots WHERE expiresAt > ? ORDER BY ticket").all(now).flatMap((row) => {
-      const pid = Number(row.pid), recordedAt = Number(row.expiresAt) - SLOT_LEASE_MS, identity = row.identity as string | null;
-      const key = `${pid}|${identity ?? ""}|${identity ? writtenBeforeBoot(recordedAt) : recordedAt}`, cached = verdicts.get(key);
-      if (cached && now - cached.at < PROBE_CACHE_MS && !cached.alive) return [];
+      const pid = Number(row.pid);
       return [{ resource: String(row.resource), id: String(row.id), pid, ticket: Number(row.ticket), held: Boolean(row.held), expiresAt: Number(row.expiresAt) }];
     });
   }
 
-  close(): void { this.db.close(); }
+  close(): void { this.closed = true; this.db.close(); }
 
   /** Move live root leases without enforcing capacity: inherited work must keep running. */
   moveJobs(resource: string, names: string[]): void {
@@ -201,14 +182,14 @@ export function resourceSlotHint(counts: Record<string, number>, cli: string | n
 }
 
 /** Holders first, then the queue in ticket order: shown by peers, the resource_slots tool and the dashboard (AB-40). */
-export function describeResourceSlots(entries: SlotEntry[], capacities: Record<string, number> = {}): { resource: string; capacity: number | null; held: SlotEntry[]; waiting: SlotEntry[] }[] {
+export function describeResourceSlots(entries: readonly SlotEntry[], capacities: Record<string, number> = {}): { resource: string; capacity: number | null; held: SlotEntry[]; waiting: SlotEntry[] }[] {
   const resources = [...new Set([...Object.keys(capacities), ...entries.map(e => e.resource)])].sort();
   return resources.map(resource => {
     const mine = entries.filter(e => e.resource === resource).sort((a, b) => a.ticket - b.ticket);
     return { resource, capacity: capacities[resource] ?? null, held: mine.filter(e => e.held), waiting: mine.filter(e => !e.held) };
   });
 }
-export function formatResourceSlots(entries: SlotEntry[], capacities: Record<string, number> = {}): string[] {
+export function formatResourceSlots(entries: readonly SlotEntry[], capacities: Record<string, number> = {}): string[] {
   return describeResourceSlots(entries, capacities).filter(r => r.held.length || r.waiting.length).map(r =>
     `- ${r.resource}${r.capacity !== null ? ` (${r.held.length}/${r.capacity})` : ""}: held by ${r.held.map(e => `${e.id} [pid ${e.pid}]`).join(", ") || "nobody"}` +
     (r.waiting.length ? `; waiting: ${r.waiting.map(e => e.id).join(", ")}` : ""));

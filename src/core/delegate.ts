@@ -10,12 +10,15 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { ClaudePermissionMode, CodexSandbox } from "./config.js";
 import type { Logger } from "./logger.js";
 import { claudeMcpDenyRules } from "./claude-mcp.js";
+import { startClaudeJobMcp } from "./claude-job-mcp.js";
 import { PARENT_URL_ENV } from "./parent-link.js";
 import { FinalAnswers } from "./final-answers.js";
 import { progressLineHandler } from "./progress.js";
 import { PermissionRelay, type PermissionDecision } from "./relay.js";
 import { resolveCodexDriveMappings, codexPathPrompt } from "./codex-paths.js";
 import { DEFAULT_MAX_DELEGATE_DEPTH, ENV, MAX_DELEGATE_DEPTH_LIMIT } from "./constants.js";
+import { createProviderAttemptSource, type ProviderAttemptKey, type ProviderAttemptObserver } from "./provider-attempt-source.js";
+import { parseOpencodeVersion, unknownOpencodeVersionMessage } from "./opencode-native-tools.js";
 
 /** Env var tracking nested delegation, so a delegated agent cannot delegate back forever. */
 export const DELEGATE_DEPTH_ENV = "AGENT_BRIDGE_DELEGATE_DEPTH";
@@ -240,6 +243,8 @@ export interface RunResult {
   signal?: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
+  /** Opt-in diagnostic registry reference only; lookup is held, never retry authorization. */
+  providerAttemptKey?: ProviderAttemptKey;
 }
 
 /** How a process ended, for error messages: "exited with code 1" or "was killed by signal SIGKILL". */
@@ -262,31 +267,36 @@ export function runProcess(opts: {
   signal?: AbortSignal;
   /** Called with every complete stdout line as it arrives (for progress reporting). */
   onLine?: (line: string) => void;
+  /** Default off. Detached primitive diagnostics; no process/turn/ownership authority. */
+  onAttemptObservation?: ProviderAttemptObserver;
   /** Bind sanitized native plugin children to the owned CLI before it reads input. */
   onSpawn?: (pid: number) => void | Promise<void>;
   /** What runs, for the timeout message (e.g. "git worktree add"); default: a delegated agent run. */
   what?: string;
 }): Promise<RunResult> {
+  const attempt = typeof opts.onAttemptObservation === "function" ? createProviderAttemptSource(opts.onAttemptObservation) : null;
   let command: { resolved: string; args: string[]; needsShell: boolean };
   try {
     command = resolveCommand(opts.bin, opts.args, opts.env, opts.log);
   } catch (err) {
+    attempt?.noteUnreturned();
     return Promise.reject(err);
   }
   const { resolved, args, needsShell } = command;
   opts.log.debug("spawning delegate", { bin: resolved, args, cwd: opts.cwd, shell: needsShell });
 
   return new Promise((resolve, reject) => {
-    const child = spawn(resolved, args, {
+    const launchOptions = {
       cwd: opts.cwd,
       // Some CLIs (opencode) take their project folder from PWD rather than the real cwd; keep them in sync.
       env: { ...jobEnvironment(opts.env), PWD: opts.cwd },
       shell: needsShell,
       windowsHide: true,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"],
       // Own process group on POSIX, so the whole tree can be killed (see killTree).
       detached: process.platform !== "win32",
-    });
+    };
+    const child = attempt ? attempt.spawn(resolved, args, launchOptions) : spawn(resolved, args, launchOptions);
     trackChild(child, opts.log);
     // Long runs can print more than the cap: keep the start (session id) and the end (final answer).
     let head = "";
@@ -341,7 +351,8 @@ export function runProcess(opts: {
       stderr = (stderr + d).slice(-MAX_CAPTURE_CHARS);
     });
     child.on("error", (err) => finish(() => reject(new DelegateError(`failed to start ${opts.bin}: ${err.message}`, "failed"))));
-    child.on("close", (code, signal) => finish(() => resolve({ code, signal, stdout: captured(), stderr })));
+    child.on("close", (code, signal) => finish(() => resolve({ code, signal, stdout: captured(), stderr,
+      ...(attempt ? { providerAttemptKey: attempt.key } : {}) })));
     child.stdin.on("error", () => {
       // The child may exit before reading stdin; the close handler reports the outcome.
     });
@@ -357,6 +368,13 @@ export function runProcess(opts: {
 }
 
 export interface DelegateRequest {
+  /** Claude-only native MCP exposure; other targets keep their existing approval routing. */
+  claudeAllowTools?: readonly string[];
+  /**
+   * The part of claudeAllowTools the caller granted itself (AB-403). Servers selected only by the rest (the
+   * default job allowance) are skipped with a warning when they cannot start. Omitted: every grant is required.
+   */
+  claudeRequiredAllowTools?: readonly string[];
   maxDelegateDepth?: number;
   /** Maximum open native Codex child threads, excluding this job. */
   nativeSubagents?: number;
@@ -374,6 +392,8 @@ export interface DelegateRequest {
   onInfo?: (info: { model?: string | null; effort?: string | null; permission?: string | null }) => void;
   /** Receives short human-readable status lines while the delegate works. */
   onProgress?: (message: string, full?: string) => void;
+  /** Observation declaration only; adapters without allocated producers leave it unwired. */
+  onAttemptObservation?: ProviderAttemptObserver;
   /** Extra folders the subagent may write (workspace-write), e.g. a worktree's git data in the main repo. */
   writableRoots?: string[];
   /** Called once with the subagent's own session id, as soon as it is known (not only at the end). */
@@ -432,7 +452,7 @@ export const OPENCODE_READ_ONLY_TOOLS = {
   bridge_spawn_codex: true, bridge_spawn_claude: true, bridge_ask_codex: true, bridge_ask_claude: true,
   bridge_spawn_antigravity: true, bridge_ask_antigravity: true,
   bridge_spawn_muse: true, bridge_ask_muse: true,
-  bridge_message_subagent: true, bridge_cancel_subagent: true, bridge_inbox: true, bridge_wait_for_message: true,
+  bridge_message_subagent: true, bridge_cancel_subagent: true, bridge_pause_subagent: true, bridge_resume_subagent: true, bridge_inbox: true, bridge_wait_for_message: true,
 } as const;
 
 export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -672,35 +692,39 @@ export async function delegateToClaude(
   checkDepth(req.maxDelegateDepth);
   // stream-json lets us report progress; the final "result" line matches --output-format json.
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
-  // Read-only also means no MCP tools: those of the user's plugins can change things. Each server is denied by
-  // name except agent-bridge's (a blanket mcp__* deny would beat the allow for send, which answers the parent).
+  const mcp = await startClaudeJobMcp({ cwd: req.cwd, patterns: req.claudeAllowTools ?? [], requiredPatterns: req.claudeRequiredAllowTools, env: childEnv(req.extraEnv), log: req.log, signal: req.signal, timeoutMs: Math.min(30_000, req.timeoutSec * 1000) });
+  // Keep ambient plugin servers denied in read-only jobs. Granted tools are exposed through a separate,
+  // filtered server, so whole-server denies never need to be weakened (including on resume).
   const readOnly = isClaudeReadOnly(req.permissionMode);
-  if (readOnly) args.push("--disallowedTools", [...CLAUDE_READ_ONLY_DENIED_TOOLS, ...claudeMcpDenyRules(req.cwd)].join(","));
+  const denied = [...mcp.denied, ...(readOnly ? [...CLAUDE_READ_ONLY_DENIED_TOOLS, ...claudeMcpDenyRules(req.cwd)] : [])];
+  if (denied.length) args.push("--disallowedTools", [...new Set(denied)].join(","));
+  if (Object.keys(mcp.config).length) args.push("--mcp-config", JSON.stringify({ mcpServers: mcp.config }));
   if (req.model) args.push("--model", req.model);
   if (req.effort) args.push("--effort", req.effort);
   if (req.sessionId) args.push("--resume", req.sessionId);
   // Headless Claude denies MCP tools it would ask about: let it answer its parent (see parent-link.ts).
-  if (req.extraEnv?.[PARENT_URL_ENV]) args.push("--allowedTools", `${CLAUDE_PARENT_SEND_TOOL},${CLAUDE_PARENT_PROGRESS_TOOL}`);
+  const allowed = [...mcp.allowed, ...(req.extraEnv?.[PARENT_URL_ENV] ? [CLAUDE_PARENT_SEND_TOOL, CLAUDE_PARENT_PROGRESS_TOOL] : [])];
+  if (allowed.length) args.push("--allowedTools", allowed.join(","));
   // Permission prompts (a command or MCP tool that needs approval) go to approve through a PermissionRequest
   // hook; without it headless Claude settles them on its own, unseen. Never for read-only runs: there the deny
   // list decides alone. The hook fires in `claude -p` since Claude Code 2.1.268; older versions skip it.
   const hookCli = claudeForwardsPrompts(req.permissionMode, req) ? (req.hookCli ?? bundledCli()) : null;
   let relay: PermissionRelay | null = null;
-  const extraEnv = { ...req.extraEnv };
-  if (hookCli && spawnsWithoutShell(req.bin, req.log)) {
-    const approve = req.approve!;
-    relay = new PermissionRelay(async (r) => {
-      const d = await approve(r);
-      return d.allow ? { allow: true } : { allow: false, message: d.message || "Denied by the parent session." };
-    }, req.log);
-    await relay.start();
-    Object.assign(extraEnv, relay.childEnv());
-    args.push("--settings", claudePermissionHookSettings(hookCli));
-  } else if (hookCli) {
-    req.log.warn("claude runs through a shell; its permission prompts are not forwarded", { bin: req.bin });
-  }
+  const extraEnv = { ...req.extraEnv, ...mcp.env };
   let res: RunResult;
   try {
+    if (hookCli && spawnsWithoutShell(req.bin, req.log)) {
+      const approve = req.approve!;
+      relay = new PermissionRelay(async (r) => {
+        const d = await approve(r);
+        return d.allow ? { allow: true } : { allow: false, message: d.message || "Denied by the parent session." };
+      }, req.log);
+      await relay.start();
+      Object.assign(extraEnv, relay.childEnv());
+      args.push("--settings", claudePermissionHookSettings(hookCli));
+    } else if (hookCli) {
+      req.log.warn("claude runs through a shell; its permission prompts are not forwarded", { bin: req.bin });
+    }
     res = await withResumeHint("claude", (o) => claudeSessionFromStream(o), () => runProcess({
       bin: req.bin,
       args,
@@ -713,7 +737,11 @@ export async function delegateToClaude(
       onLine: claudeInitSniffer(withSessionSniffer("claude", progressLineHandler("claude", req.onProgress), req.onSession), req.onInfo),
     }));
   } finally {
-    await relay?.stop();
+    // Settle both stops: a cleanup failure is logged and never replaces the run's own result or error.
+    const stops = await Promise.allSettled([Promise.resolve().then(() => relay?.stop()), Promise.resolve().then(() => mcp.stop())]);
+    for (const [index, stop] of stops.entries()) {
+      if (stop.status === "rejected") req.log.warn(index ? "claude job MCP cleanup failed" : "claude permission relay cleanup failed", { error: String(stop.reason) });
+    }
   }
   const parsed = parseClaudeJson(res.stdout);
   if (!parsed) {
@@ -773,7 +801,7 @@ export function parseOpencodeJsonl(stdout: string): {
   return sawUsage ? { sessionId, text, error, usage: { input, output }, cost } : { sessionId, text, error };
 }
 
-const opencodeVersions = new Map<string, { fingerprint: string; version: Promise<boolean> }>();
+const opencodeVersions = new Map<string, { fingerprint: string; version: Promise<string> }>();
 
 function opencodeFingerprint(resolved: string): string {
   const shim = process.platform === "win32" && WINDOWS_SHIM_EXTS.has(extname(resolved).toLowerCase()) ? unwrapNpmShim(resolved) : null;
@@ -784,7 +812,7 @@ function opencodeFingerprint(resolved: string): string {
 }
 
 /** Probe once per executable; v2 needs a private server to inherit child config and permissions. */
-export function opencodeV2(bin: string, cwd: string, log: Logger): Promise<boolean> {
+export function opencodeVersion(bin: string, cwd: string, log: Logger): Promise<string> {
   const key = resolveBinary(bin) ?? bin;
   const fingerprint = opencodeFingerprint(key);
   const cached = opencodeVersions.get(key);
@@ -792,7 +820,7 @@ export function opencodeV2(bin: string, cwd: string, log: Logger): Promise<boole
   const version = runProcess({ bin, args: ["--version"], stdin: "", cwd, timeoutMs: 10_000, env: childEnv(), log })
     .then(res => {
       if (res.code !== 0) throw new DelegateError("Could not detect opencode version", "failed", res.stderr);
-      return /(?:^|\s)(?:opencode\s+)?v?2\.\d+\.\d+/.test(res.stdout.trim());
+      return res.stdout.trim();
     }).catch(err => {
       // A failed probe must not permanently select V1 flags for a V2 installation.
       if (opencodeVersions.get(key)?.version === version) opencodeVersions.delete(key);
@@ -802,9 +830,26 @@ export function opencodeV2(bin: string, cwd: string, log: Logger): Promise<boole
   return version;
 }
 
+export async function opencodeV2(bin: string, cwd: string, log: Logger): Promise<boolean> {
+  return /(?:^|\s)(?:opencode\s+)?v?2\.\d+\.\d+/.test(await opencodeVersion(bin, cwd, log));
+}
+
 export async function delegateToOpencode(req: DelegateRequest & { bin: string; autoApprove: boolean }): Promise<DelegateResult> {
   checkDepth(req.maxDelegateDepth);
-  const v2 = await opencodeV2(req.bin, req.cwd, req.log);
+  const versionOutput = await opencodeVersion(req.bin, req.cwd, req.log);
+  const { api } = parseOpencodeVersion(versionOutput);
+  // Unknown output could be any API: never pick flags (or skip the native gate) on a guess.
+  if (api === "unknown") throw new DelegateError(unknownOpencodeVersionMessage(versionOutput), "failed");
+  const v2 = api !== "v1";
+  if (api === "v2-native") {
+    // A private server lets us verify the gate loaded before any model/tool execution.
+    const { delegateToOpencodeServed } = await import("./opencode-served.js");
+    return delegateToOpencodeServed({ ...req,
+      nativeAccess: req.autoApprove ? "edit" : "read",
+      permissions: req.autoApprove ? null : OPENCODE_READ_ONLY_PERMISSIONS,
+      onPermission: async () => req.autoApprove ? { allow: true } : { allow: false, message: "This delegated run cannot request approval." },
+    });
+  }
   // runProcess sets both cwd and PWD; --dir was removed in OpenCode 2.
   const args = ["run", "--format", "json"];
   if (v2) args.push("--standalone");

@@ -403,6 +403,10 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     writeFileSync(join(home, "kept.txt"), "unique fixture bytes");
     git(["add", "kept.txt"]);
     git(["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture"]);
+    // AB-398 checkpoints a cancelled turn as a WIP commit, which needs an identity. Pin it in the fixture repository so
+    // the result does not depend on whether the machine has a global Git identity (CI runners have none).
+    git(["config", "user.name", "fixture"]);
+    git(["config", "user.email", "fixture@example.invalid"]);
     const session = await startSession();
     const release = join(home, "release-worktree"), link = release + ".link.json";
     releases.push(release);
@@ -415,7 +419,12 @@ describe.skipIf(!existsSync(SERVER))("background subagents in job runners", () =
     writeFileSync(join(path, "retained-untracked.txt"), "retained worktree bytes");
     expect(await call(session, "cancel_subagent", { job: job[0] })).toContain("Cancelled subagent");
     await waitFor(() => !pidAlive(first.pid));
-    await call(session, "wait_for_message", { from: job[0], timeout_sec: 10 });
+    expect(await call(session, "wait_for_message", { from: job[0], timeout_sec: 10 })).toContain("cancelled after");
+    // The cancelled turn's untracked file is kept in a WIP checkpoint on the job branch, so no dirty-files notice follows.
+    const inWorktree = (args: string[]) => execFileSync("git", args, { cwd: path, windowsHide: true, encoding: "utf8", stdio: "pipe" }).trim();
+    expect(inWorktree(["log", "-1", "--format=%s"])).toMatch(/^WIP: /);
+    expect(inWorktree(["show", "HEAD:retained-untracked.txt"])).toBe("retained worktree bytes");
+    expect(inWorktree(["status", "--porcelain=v1", "--untracked-files=all"])).toBe("");
     const nextRelease = join(home, "release-worktree-next"), nextLink = nextRelease + ".link.json";
     releases.push(nextRelease);
     expect(await call(session, "message_subagent", { job: job[0], message: `release=${nextRelease} link=${nextLink} Continue` })).toContain("Sent to");

@@ -18,6 +18,8 @@ const REMOVE_RETRIES = 3;
 const GIT_TIMEOUT_MS = 180_000;
 /** `git worktree add` checks out the whole tree: on a large repository under load that takes minutes. */
 const WORKTREE_ADD_TIMEOUT_MS = 600_000;
+/** Network discovery and fetch each have a short, independent bound. */
+export const WORKTREE_FETCH_TIMEOUT_MS = 10_000;
 export const BRANCH_PREFIX = "agent-bridge/";
 const MAX_DIFFSTAT_CHARS = 4_000;
 
@@ -29,6 +31,9 @@ export interface Worktree {
   branch: string;
   /** Commit the branch started from. */
   base: string;
+  /** Selected ref and selection facts (optional for older saved worktrees). */
+  baseRef?: string;
+  baseNotes?: string[];
   /** Branch checked out where the worktree was created (null: detached HEAD, or a job saved by an older version). */
   baseBranch?: string | null;
   /** Last finished tip, retained when its branch is removed. */
@@ -52,14 +57,78 @@ export async function git(args: string[], cwd: string, log: Logger, timeoutMs = 
   return res.stdout.trimEnd();
 }
 
-export async function createWorktree(opts: { cwd: string; home: string; jobId: string; log: Logger; worktreeRoot?: string | null }): Promise<Worktree> {
+export function worktreeBaseReport(wt: Pick<Worktree, "base" | "baseRef" | "baseNotes">): string {
+  return [`Base: ${wt.baseRef ?? "saved fork point"} ${wt.base}`, ...(wt.baseNotes ?? [])].join("\n");
+}
+
+async function selectWorktreeBase(repo: string, log: Logger, explicit?: string): Promise<Pick<Worktree, "base" | "baseRef" | "baseNotes">> {
+  const run = (args: string[]) => git(args, repo, log);
+  const explicitBase = explicit ? await run(["rev-parse", "--verify", "--end-of-options", `${explicit}^{commit}`]) : undefined;
+  const head = await run(["rev-parse", "--verify", "HEAD^{commit}"]).catch(() => "");
+  if (!head && !explicitBase) throw new Error("worktree isolation needs a valid HEAD commit or an explicit base; HEAD is unborn or unavailable");
+  const remotes = (await run(["remote"])).split(/\r?\n/).filter(Boolean);
+  const baseNotes: string[] = [];
+  let reference: string | undefined;
+  if (remotes.length) {
+    const branch = await run(["branch", "--show-current"]);
+    const upstreamRemote = await run(["config", "--get", `branch.${branch}.remote`]).catch(() => "");
+    const merge = await run(["config", "--get", `branch.${branch}.merge`]).catch(() => "");
+    const remote = remotes.includes(upstreamRemote) ? upstreamRemote : remotes.includes("origin") ? "origin" : remotes[0]!;
+    const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never" };
+    let source: string | undefined;
+    if (upstreamRemote === "." && merge) reference = merge;
+    else if (remotes.includes(upstreamRemote) && merge.startsWith("refs/heads/")) {
+      source = merge;
+      reference = `refs/remotes/${remote}/${merge.slice("refs/heads/".length)}`;
+    } else {
+      let defaultBranch = (await run(["symbolic-ref", "-q", `refs/remotes/${remote}/HEAD`]).catch(() => "")).replace(`refs/remotes/${remote}/`, "");
+      try {
+        const advertised = await git(["ls-remote", "--symref", "--", remote, "HEAD"], repo, log, WORKTREE_FETCH_TIMEOUT_MS, env);
+        defaultBranch = /^ref: refs\/heads\/(.+)\tHEAD\r?$/m.exec(advertised)?.[1] ?? defaultBranch;
+      } catch { baseNotes.push("WARNING: remote default discovery failed or offline."); }
+      if (defaultBranch) {
+        source = `refs/heads/${defaultBranch}`;
+        reference = `refs/remotes/${remote}/${defaultBranch}`;
+      }
+    }
+    if (source && reference) {
+      try {
+        // Fetch only the needed upstream/default. Never prune or change local branches.
+        await git(["fetch", "--no-tags", "--no-prune", "--no-prune-tags", "--refmap=", "--no-recurse-submodules", "--no-write-fetch-head", "--", remote, `${source}:${reference}`], repo, log, WORKTREE_FETCH_TIMEOUT_MS, env);
+      } catch {
+        baseNotes.push(`WARNING: fetch failed or offline; using last fetched remote ref ${reference.replace("refs/remotes/", "")} if available.`);
+      }
+    }
+    if (!reference || !await run(["rev-parse", "--verify", `${reference}^{commit}`]).catch(() => "")) {
+      reference = undefined;
+      if (!explicit) baseNotes.push("WARNING: no remote default tracking ref available; falling back to local HEAD.");
+    }
+  } else baseNotes.push("Repository has no remote.");
+  let baseRef = explicit ?? "local HEAD";
+  let base = explicitBase ?? head;
+  if (reference && head) {
+    const tip = await run(["rev-parse", "--verify", `${reference}^{commit}`]);
+    const [ahead, behind] = (await run(["rev-list", "--left-right", "--count", `${head}...${tip}`])).split(/\s+/).map(Number);
+    if (behind! > 0) {
+      const ancestor = await run(["merge-base", "--is-ancestor", head, tip]).then(() => true, () => false);
+      if (ancestor) {
+        if (!explicit) {
+          base = tip; baseRef = reference;
+          baseNotes.push(`cwd HEAD was ${behind} behind ${reference}; using ${reference}.`);
+        } else baseNotes.push(`WARNING: cwd HEAD ${head} is behind ${reference} by ${behind} commit(s); explicit base wins.`);
+      } else baseNotes.push(`WARNING: DIVERGED cwd HEAD ${head} and ${reference} ${tip}: ${behind} behind, ${ahead} ahead; ${explicit ? "explicit base wins" : "keeping local HEAD"}.`);
+    }
+  }
+  return { base, baseRef, baseNotes };
+}
+
+export async function createWorktree(opts: { cwd: string; home: string; jobId: string; log: Logger; worktreeRoot?: string | null; base?: string }): Promise<Worktree> {
   let repoRoot: string;
   try {
     repoRoot = await git(["rev-parse", "--show-toplevel"], opts.cwd, opts.log);
   } catch {
     throw new Error(`worktree isolation needs a git repository, but ${opts.cwd} is not inside one`);
   }
-  const base = await git(["rev-parse", "HEAD"], repoRoot, opts.log);
   const baseBranch = (await git(["symbolic-ref", "-q", "--short", "HEAD"], repoRoot, opts.log).catch(() => "")) || null;
   let branch = `${BRANCH_PREFIX}${opts.jobId}`;
   const dir = opts.worktreeRoot ?? join(opts.home, "worktrees");
@@ -67,6 +136,8 @@ export async function createWorktree(opts: { cwd: string; home: string; jobId: s
   if (await worktreeLocationExists(repoRoot, branch, path, opts.log)) {
     throw new Error(`could not create a worktree for the subagent; existing branch or path retained: ${branch}, ${path}`);
   }
+  const selection = await selectWorktreeBase(repoRoot, opts.log, opts.base);
+  const { base } = selection;
   mkdirSync(dir, { recursive: true });
   // This runs in the MCP server (as the user), never inside the sandboxed agent, so the worktree is the user's.
   try {
@@ -93,7 +164,7 @@ export async function createWorktree(opts: { cwd: string; home: string; jobId: s
   // Different spellings of the same folder (drive mappings, junctions) make rel absolute or "..": use the root.
   const cwd = rel && !rel.startsWith("..") && !isAbsolute(rel) ? join(path, rel) : path;
   opts.log.info("worktree created", { repoRoot, path, branch });
-  return { repoRoot, path, cwd, branch, base, baseBranch };
+  return { repoRoot, path, cwd, branch, ...selection, baseBranch };
 }
 
 /** Release a lock on a worktree (best effort: usually there is none). */
@@ -128,7 +199,7 @@ export function removeWorktreeDirectory(path: string, managedRoot = path): void 
   rmSync(toNamespacedPath(resolve(path)), { recursive: true, force: true, maxRetries: REMOVE_RETRIES });
 }
 
-type SkippedFile = { path: string; reason: "whitespace only" | "generated noise" | "generated bundle; excluded atomically" | "untracked; not explicitly staged" };
+type SkippedFile = { path: string; reason: "whitespace only" | "generated noise" | "generated bundle; excluded atomically" | "untracked; not explicitly staged" | "possible secret; never auto-committed" | "larger than 5 MB; not auto-committed" };
 
 export interface WorktreeOutcome {
   changed: boolean;
@@ -227,7 +298,46 @@ function generatedNoise(root: string, file: string): boolean {
   });
 }
 
-async function autoCommitFiles(wt: Worktree, log: Logger): Promise<SkippedFile[]> {
+/** Untracked files above this size stay on disk: a WIP checkpoint must not bloat the job branch. */
+export const MAX_UNTRACKED_CHECKPOINT_BYTES = 5 * 1024 * 1024;
+const SECRET_DIRECTORIES = new Set([".ssh", ".aws", ".gnupg", ".azure"]);
+const SECRET_NAMES = new Set([".npmrc", ".pypirc", ".netrc", ".git-credentials", "auth.json"]);
+
+/** Case-insensitive basename deny list for untracked files: keys, credentials and token-bearing tool config. */
+export function secretLikePath(file: string): boolean {
+  const parts = file.replace(/\\/g, "/").toLowerCase().split("/");
+  if (parts.slice(0, -1).some((part) => SECRET_DIRECTORIES.has(part))) return true;
+  const name = parts.at(-1)!;
+  if (name === ".env") return true;
+  if (name.startsWith(".env.")) return !/\.(example|sample|template)$/.test(name);
+  if (SECRET_NAMES.has(name)) return true;
+  if (/\.(pem|key|p8|p12|pfx|ppk|jks|keystore|secret|secrets|kdbx|mobileprovision)$/.test(name)) return true;
+  if (/^id_(rsa|dsa|ecdsa|ed25519)/.test(name)) return true;
+  if (name.startsWith("credentials") || /credentials.*\.json$/.test(name) || /^service-account.*\.json$/.test(name) || name.startsWith("secrets.")) return true;
+  return name.includes(".tfstate");
+}
+
+function oversized(root: string, file: string): boolean {
+  try { return lstatSync(toNamespacedPath(join(root, file))).size > MAX_UNTRACKED_CHECKPOINT_BYTES; }
+  catch { return false; }
+}
+
+/**
+ * A checkpoint commit is refused while git is mid-operation or HEAD is detached: committing then would
+ * finish or corrupt the job's merge, rebase, cherry-pick or revert. The caller lists the dirty files instead.
+ */
+async function checkpointBlocker(wt: Worktree, log: Logger, includeUntracked: boolean): Promise<string | undefined> {
+  const trust = trustArgs(wt.path);
+  const gitDir = await git([...trust, "rev-parse", "--absolute-git-dir"], wt.path, log);
+  const states: [string, string][] = [["index.lock", "an index.lock is present"], ["MERGE_HEAD", "a merge is in progress"],
+    ["CHERRY_PICK_HEAD", "a cherry-pick is in progress"], ["REVERT_HEAD", "a revert is in progress"],
+    ["rebase-merge", "a rebase is in progress"], ["rebase-apply", "a rebase is in progress"]];
+  for (const [name, why] of states) if (existsSync(toNamespacedPath(join(gitDir, name)))) return why;
+  if (includeUntracked && !(await git([...trust, "symbolic-ref", "-q", "HEAD"], wt.path, log).catch(() => ""))) return "HEAD is detached";
+  return undefined;
+}
+
+async function autoCommitFiles(wt: Worktree, log: Logger, includeUntracked = false): Promise<SkippedFile[]> {
   const trust = trustArgs(wt.path);
   const status = await git([...trust, "status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"], wt.path, log);
   const included: string[] = [];
@@ -236,19 +346,26 @@ async function autoCommitFiles(wt: Worktree, log: Logger): Promise<SkippedFile[]
   for (const entry of status.split("\0").filter(Boolean)) {
     const file = entry.slice(3);
     const literal = `:(literal)${file}`;
+    const untracked = entry.startsWith("??");
+    // A file the job staged itself (index state A: added, not in HEAD) gets the same secret and size filter as an
+    // untracked one; a skipped one is unstaged below, never deleted from disk (AB-398 N2).
+    // Intent-to-add (`git add -N`, worktree state A) counts too: `git diff HEAD` would show it as new content.
+    const added = entry[0] === "A" || entry[1] === "A";
     let reason: SkippedFile["reason"] | undefined;
     // Entrypoints and hashed chunks form one generated set. Exclude every change,
     // including staged additions/deletions, so a checkpoint retains the HEAD bundle.
     if (/^plugins\/[^/]+\/dist\//.test(file)) reason = "generated bundle; excluded atomically";
     else if (generatedNoise(wt.path, file)) reason = "generated noise";
-    else if (entry.startsWith("??")) reason = "untracked; not explicitly staged";
-    else if (entry.startsWith("??") || await git([...trust, "diff", "--ignore-all-space", "--ignore-cr-at-eol", "--no-ext-diff", "--no-textconv", "--no-renames", "HEAD", "--", literal], wt.path, log)) {
+    else if (untracked && !includeUntracked) reason = "untracked; not explicitly staged";
+    else if ((untracked || added) && secretLikePath(file)) reason = "possible secret; never auto-committed";
+    else if ((untracked || added) && oversized(wt.path, file)) reason = "larger than 5 MB; not auto-committed";
+    else if (untracked || await git([...trust, "diff", "--ignore-all-space", "--ignore-cr-at-eol", "--no-ext-diff", "--no-textconv", "--no-renames", "HEAD", "--", literal], wt.path, log)) {
       // An already staged deletion has no path left in the index for `git add` to match.
       if (!entry.startsWith("D ")) included.push(literal);
     } else reason = "whitespace only";
     if (reason) {
       skipped.push({ path: file, reason });
-      if (entry[0] !== "?" && entry[0] !== " ") unstage.push(literal);
+      if (added || entry[0] !== "?" && entry[0] !== " ") unstage.push(literal);
     }
   }
   // The job may already have staged noise. Unstage it without changing the files on disk.
@@ -257,10 +374,33 @@ async function autoCommitFiles(wt: Worktree, log: Logger): Promise<SkippedFile[]
   return skipped;
 }
 
-/** Commit substantive, non-generated changes and summarize the diff of the job's work. */
-export async function finishWorktree(wt: Worktree, message: string, log: Logger): Promise<WorktreeOutcome> {
+/**
+ * Checkpoint subjects that may become commit metadata: subagentCommitMessage's sanitized subject for a finished
+ * turn, "WIP: " plus that subject for a real WIP checkpoint, and the legacy WIP subject. Any other text (task or
+ * answer text, which may carry attribution or instructions) falls back to the plain default for its mode.
+ */
+const SANITIZED_SUBJECT = subagentCommitMessage({ answer: "", task: "", agent: "" });
+export const CHECKPOINT_MESSAGES = new Set([SANITIZED_SUBJECT, `WIP: ${SANITIZED_SUBJECT}`, "WIP: save job work"]);
+
+/** A linked worktree keeps a `.git` file, never a directory: the disabled-hooks path below relies on that. */
+async function assertLinkedWorktree(wt: Worktree, log: Logger): Promise<void> {
   const trust = trustArgs(wt.path);
-  const skippedFiles = await autoCommitFiles(wt, log);
+  const dotGit = join(wt.path, ".git");
+  let file = false;
+  try { file = lstatSync(toNamespacedPath(dotGit)).isFile(); } catch { /* missing */ }
+  const [gitDir, common] = (await git([...trust, "rev-parse", "--absolute-git-dir", "--git-common-dir"], wt.path, log)).split(/\r?\n/);
+  if (!file || !gitDir || !common || resolve(wt.path, common).toLowerCase() === resolve(gitDir).toLowerCase())
+    throw new Error(`${wt.path} is not a linked job worktree; refusing to make a checkpoint commit there.`);
+}
+
+/** Commit substantive, non-generated changes and summarize the diff of the job's work. */
+export async function finishWorktree(wt: Worktree, message: string, log: Logger, includeUntracked = false): Promise<WorktreeOutcome> {
+  const trust = trustArgs(wt.path);
+  await assertLinkedWorktree(wt, log);
+  const blocker = await checkpointBlocker(wt, log, includeUntracked);
+  if (blocker) throw new Error(`Checkpoint commit skipped: ${blocker}.`);
+  const subject = CHECKPOINT_MESSAGES.has(message) ? message : includeUntracked ? "WIP: save job work" : "Save worktree changes";
+  const skippedFiles = await autoCommitFiles(wt, log, includeUntracked);
   const status = await git([...trust, "diff", "--cached", "--name-only", "-z"], wt.path, log);
   if (status) {
     // Never invent an identity. Keep the checkout and report missing repository configuration.
@@ -271,7 +411,7 @@ export async function finishWorktree(wt: Worktree, message: string, log: Logger)
     for (const key of Object.keys(env)) if (/^GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL)$/i.test(key)) delete env[key];
     // --no-verify alone still runs prepare-commit-msg, which can append forbidden attribution.
     // A linked checkout's .git is a file, so this hooks directory cannot contain executable hooks.
-    await git([...trust, "-c", `core.hooksPath=${resolve(wt.path).replace(/\\/g, "/")}/.git/checkpoint-hooks-disabled`, "commit", "-q", "--no-verify", "-m", "Save worktree changes"], wt.path, log, GIT_TIMEOUT_MS, env);
+    await git([...trust, "-c", `core.hooksPath=${resolve(wt.path).replace(/\\/g, "/")}/.git/checkpoint-hooks-disabled`, "commit", "-q", "--no-verify", "-m", subject], wt.path, log, GIT_TIMEOUT_MS, env);
   }
   await unlockWorktree(wt.repoRoot, wt.path, log);
   // The job may have switched to (or created) a branch of its own: its work is wherever it committed.
@@ -360,7 +500,7 @@ export function worktreeReport(wt: Worktree, outcome: WorktreeOutcome): string {
   const branch = outcome.branch ?? wt.branch;
   const skipped = outcome.skippedFiles ?? [];
   const rule = skipped.length
-    ? `Auto-commit skipped whitespace/line-ending-only changes, generated noise and unstaged untracked files; left on disk: ${skippedSummary(skipped)}.`
+    ? `Auto-commit skipped whitespace/line-ending-only changes, generated noise, possible secrets, files over 5 MB and unstaged untracked files; left on disk: ${skippedSummary(skipped)}.`
     : "";
   const remove = "git -c core.longpaths=true worktree remove";
   // Only a worktree without any work of its own may be removed.

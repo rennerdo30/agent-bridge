@@ -7,6 +7,7 @@ import { NETWORK_NAME_PATTERN } from "./constants.js";
 export const REMOTE_JOB_CAPABILITY = "remote-jobs-v1";
 export const REMOTE_JOB_CANCELLED_CAPABILITY = "remote-jobs-cancelled-v1";
 export const REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY = "remote-jobs-antigravity-options-v1";
+export const REMOTE_JOB_USAGE_CAPABILITY = "remote-jobs-usage-v1";
 export const REMOTE_JOB_FRAME = "remote-job";
 export const REMOTE_JOB_POLL_MS = 2_000;
 export const REMOTE_JOB_REQUEST_TIMEOUT_MS = 30_000;
@@ -26,6 +27,7 @@ export const remoteSpawnArgsSchema = z.object({
   session_id: z.string().min(1).max(MAX_PATH_CHARS).optional(),
   timeout_sec: z.number().int().min(10).max(MAX_JOB_TIMEOUT_SEC).optional(),
   access: z.enum(["read", "ask", "edit"]).optional(), worktree: z.boolean().optional(),
+  base: z.string().min(1).max(MAX_PATH_CHARS).optional(),
   allow_tools: z.array(z.string().min(1).max(200)).max(50).optional(),
   notes: z.enum(["none", "milestones", "blockers"]).optional(),
   sandbox: z.enum(CODEX_SANDBOXES).optional(), permission_mode: z.enum(CLAUDE_PERMISSION_MODES).optional(),
@@ -40,13 +42,16 @@ const settingsSchema = z.record(z.string(), z.unknown());
 export const remoteControlSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("message"), body: z.string().min(1).max(MAX_BODY_CHARS), cid: z.uuid() }).strict(),
   z.object({ type: z.literal("cancel") }).strict(),
+  z.object({ type: z.literal("pause"), reason: z.string().max(500).optional() }).strict(),
   z.object({ type: z.literal("attach") }).strict(),
   z.object({ type: z.literal("title"), title: z.string().min(1).max(MAX_TITLE_CHARS) }).strict(),
   z.object({ type: z.literal("effort"), effort: z.string().regex(/^[A-Za-z0-9_-]{1,20}$/) }).strict(),
   z.object({ type: z.literal("settings"), settings: settingsSchema }).strict(),
 ]);
 export const remoteJobRequestSchema = z.discriminatedUnion("op", [
-  z.object({ op: z.literal("spawn"), job: z.string().regex(/^[0-9a-f]{8}$/), target: z.enum(CODING_AGENTS), args: remoteSpawnArgsSchema }).strict(),
+  z.object({ op: z.literal("spawn"), job: z.string().regex(/^[0-9a-f]{8}$/), target: z.enum(CODING_AGENTS), args: remoteSpawnArgsSchema,
+    usageTurn: z.string().min(1).max(100).optional(),
+    usageControls: z.array(z.object({ cid: z.string().min(1).max(100), body: z.string().max(MAX_BODY_CHARS) }).strict()).optional() }).strict(),
   z.object({ op: z.literal("state"), job: z.string().regex(/^[0-9a-f]{8}$/) }).strict(),
   z.object({ op: z.literal("control"), job: z.string().regex(/^[0-9a-f]{8}$/), control: remoteControlSchema }).strict(),
   z.object({ op: z.literal("approval"), job: z.string().regex(/^[0-9a-f]{8}$/), id: z.uuid(), decision: z.enum(["allow", "deny"]), reason: z.string().max(4_000).optional() }).strict(),
@@ -61,8 +66,17 @@ export function remoteSnapshotForPeer<T extends { state: { status: string; repor
 }
 const worktreeSchema = z.object({ repoRoot: z.string(), path: z.string(), cwd: z.string(), branch: z.string(), base: z.string(), baseBranch: z.string().nullable().optional() });
 export const remoteJobSnapshotSchema = z.object({
+  usageTurn: z.string().min(1).max(100).optional(),
   alive: z.boolean(),
-  state: z.object({ pid: z.number().int().nonnegative(), peer: z.string().regex(NETWORK_NAME_PATTERN), status: z.enum(["running", "done", "failed", "cancelled"]), updatedAt: z.number().nonnegative(),
+  state: z.object({ pid: z.number().int().nonnegative(), peer: z.string().regex(NETWORK_NAME_PATTERN), status: z.enum(["running", "paused", "done", "failed", "cancelled"]), updatedAt: z.number().nonnegative(),
+    usageSubmission: z.object({ runId: z.string().min(1).max(100).optional(), turnStartedAt: z.number().int().nonnegative(),
+      pending: z.array(z.object({ cid: z.string().min(1).max(100), body: z.string().max(MAX_BODY_CHARS) })),
+      queued: z.array(z.object({ cid: z.string().min(1).max(100), body: z.string().max(MAX_BODY_CHARS) })),
+      admitted: z.array(z.string().min(1).max(100)) }).optional(),
+    providerUsage: z.object({ runId: z.string().min(1).max(100).optional(), turnStartedAt: z.number().int().nonnegative(), warningReported: z.boolean(),
+      admittedControls: z.array(z.string().min(1).max(100)).optional(),
+      retainedControls: z.array(z.object({ cid: z.string().min(1).max(100), body: z.string().max(MAX_BODY_CHARS) })).optional(),
+      decision: z.object({ type: z.enum(["allow", "warn", "block"]), reason: z.enum(["unknown", "read_failed", "invalid_fact", "scope_mismatch", "stale", "reset_elapsed", "usage_exhausted", "credits_exhausted", "balance_exhausted", "low_allowance", "warning_already_reported", "allowance_available"]), resetAt: z.number().int().nonnegative().optional() }) }).optional(),
     model: z.string().nullable().optional(), sessionId: z.string().nullable().optional(), workdir: z.string().nullable().optional(), worktree: worktreeSchema.nullable().optional(),
     progress: z.string().nullable().optional(), percent: z.number().min(0).max(100).optional(), progressNote: z.string().optional(), etaAt: z.number().finite().nonnegative().optional(), etaReportedAt: z.number().finite().nonnegative().optional(), asking: z.boolean().optional(), live: z.boolean().optional(),
     seen: z.array(z.string()).optional(), report: z.string().optional(), delivered: z.boolean().optional(), finishedAt: z.number().optional() }).nullable(),

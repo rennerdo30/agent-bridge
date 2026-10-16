@@ -135,12 +135,15 @@ describe("Muse native bootstrap and hook delivery", () => {
     expect(await (await fetch(`http://127.0.0.1:${reg.port}/hook`, { method: "POST", headers: { authorization: `Bearer ${reg.secret}` }, body: JSON.stringify({ session: "wrong", event: "Stop" }) })).json()).toEqual({});
     for (const patch of [{ hostIdentity: "reused-host-pid" }, { identity: "reused-server-pid" }, { session: "foreign-session" }, { pid: 2_147_483_647 }]) {
       writeMusePrivateJson(registration, { ...reg, ...patch }, "w");
-      expect(await hook("PreToolUse", undefined, { tool_name: "read_file" })).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: "agent-bridge permission gate unavailable" } });
+      // A Bridge tool needs the authenticated endpoint; a forged binding fails closed.
+      expect(await hook("PreToolUse", undefined, { tool_name: "mcp__plugin_agent_bridge_bridge__send" })).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny", permissionDecisionReason: "agent-bridge permission gate unavailable" } });
+      // AB-384: a known read never depends on the endpoint, so it stays allowed.
+      expect(await hook("PreToolUse", undefined, { tool_name: "read_file" })).toEqual({});
     }
     writeMusePrivateJson(registration, reg, "w");
     expect(await hook("PreToolUse", "native-child", { tool_name: "read_file" })).toEqual({});
     writeFileSync(registration, "{");
-    expect(await hook("PreToolUse", undefined, { tool_name: "read_file" })).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
+    expect(await hook("PreToolUse", undefined, { tool_name: "mcp__plugin_agent_bridge_bridge__send" })).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
   });
 
   it.each([1, 2])("restores a sanitized delegated MCP child's parent and depth with cap %i", async cap => {

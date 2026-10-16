@@ -36,6 +36,27 @@ function guardian() {
   return child;
 }
 
+it.skipIf(process.platform !== "win32")("establishes ownership without waiting for a stalled C# compiler", async () => {
+  vi.useFakeTimers();
+  const child = guardian();
+  spawn.mockImplementation((_bin, args) => {
+    const script = Buffer.from(args.at(-1), "base64").toString("utf16le");
+    // Mock only the slow dependency: C# compilation finishes after setup's
+    // existing deadline. Direct native binding needs no compiler at all.
+    setTimeout(() => child.stdout.write('{"type":"ready"}\n'), script.includes("Add-Type") ? 8_001 : 0);
+    child.stdin.on("data", chunk => {
+      if (String(chunk) === "retain\n") child.stdout.write('{"type":"retained"}\n');
+    });
+    return child;
+  });
+  let scope: WindowsJobScope | undefined;
+  const outcome = startWindowsJobScope(nullLogger, 456).then(value => { scope = value; return "ready"; }, error => error.message);
+  await vi.advanceTimersByTimeAsync(8_000);
+  expect(await outcome).toBe("ready");
+  expect(scope?.guardian).toBe(child);
+  expect(child.kill).not.toHaveBeenCalled();
+});
+
 it.skipIf(process.platform !== "win32")("bounds setup and never accepts late readiness", async () => {
   vi.useFakeTimers();
   const child = guardian();

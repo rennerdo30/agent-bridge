@@ -1,12 +1,14 @@
 import { HOOK_MAX_MESSAGES, HOOK_BUDGET_MS } from "../core/constants.js";
 import { siblingMaxHops } from "../core/job-messaging.js";
 import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage } from "../core/protocol.js";
-import { formatMessages, formatParentMessages, formatPeer } from "./format.js";
+import { formatMessage, formatMessages, formatParentMessages, formatPeer } from "./format.js";
+import { selectForDelivery, unshownMessageNotes } from "./output-bounds.js";
 import { MessageWaitStore, resumeWaitHint } from "./message-wait.js";
 import { shouldWakeClaudeMessage, WAKE_HEADER } from "./rewake.js";
 import type { ServerContext } from "./server.js";
 import { formatDecisionSummary } from "../core/decisions.js";
 import { finishHookTurn, reserveHook } from "./hook-ownership.js";
+import { RESULT_HEADER } from "../core/local-result-receipts.js";
 
 /** Hook events agent-bridge subscribes to in both Claude Code and Codex. */
 export type HookEvent = "SessionStart" | "UserPromptSubmit" | "PostToolUse" | "Stop" | "StopFailure" | "SubagentStart" | "SubagentStop" | "SessionEnd";
@@ -43,6 +45,11 @@ function context(event: HookEvent, additionalContext: string): HookOutput {
   return { hookSpecificOutput: { hookEventName: event, additionalContext } };
 }
 
+/** Codex 0.162 labels every supported Stop continuation "Blocked by hook". */
+function stopMail(ctx: ServerContext, text: string): HookOutput {
+  return { decision: "block", reason: ctx.agent === "codex" ? `agent-bridge: new mail\n\n${text}` : text };
+}
+
 export function discardFinishedNotes(ctx: ServerContext): void {
   const node = ctx.node;
   if (!node) return;
@@ -60,6 +67,69 @@ export function discardFinishedNotes(ctx: ServerContext): void {
 }
 
 const antigravityStopPending = new WeakMap<ServerContext, Set<string>>();
+/** Claude/Codex hook output is only a hand-out. A later model boundary proves the result was seen. */
+const completionPending = new WeakMap<ServerContext, Map<string, HookEvent>>();
+
+/** The hook handed these completions out, but a later model boundary has not confirmed them. */
+export function completionAwaitingReceipt(ctx: ServerContext, id: string): boolean {
+  return completionPending.get(ctx)?.has(id) ?? false;
+}
+
+/** Completions whose hook hand-out may have reached the model but was never confirmed (StopFailure, session end). */
+const completionRepeats = new WeakMap<ServerContext, Set<string>>();
+const MAX_COMPLETION_REPEATS = 500;
+
+/** The hook output that carried these completions may have been shown: a later copy is marked as a repeat. */
+function dropPendingCompletions(ctx: ServerContext): void {
+  const pending = completionPending.get(ctx);
+  completionPending.delete(ctx);
+  if (!pending?.size) return;
+  let repeats = completionRepeats.get(ctx);
+  if (!repeats) { repeats = new Set(); completionRepeats.set(ctx, repeats); }
+  for (const id of pending.keys()) repeats.add(id);
+  while (repeats.size > MAX_COMPLETION_REPEATS) repeats.delete(repeats.values().next().value!);
+  ctx.wakeDelivery?.repeat?.(pending.keys());
+}
+
+/** A copy of this message repeats an earlier hand-out that may have reached the model (AB-396). */
+function repeated(ctx: ServerContext, m: BridgeMessage): boolean {
+  return Boolean(completionRepeats.get(ctx)?.has(m.id) || ctx.wakeDelivery?.repeated?.(m.id));
+}
+
+/** Hook context for unread mail, with repeats marked. */
+function formatHookMessages(ctx: ServerContext, msgs: BridgeMessage[], opts: { replyHint?: boolean } = {}): string {
+  return formatMessages(msgs, { ...opts, repeat: (m) => repeated(ctx, m) });
+}
+
+/** Unread mail a hook may show: neither a completion awaiting its receipt, a mod wake-up on its way to its own turn,
+ * nor a message already listed by id as too large for one result (AB-404; inbox pages it). */
+function hookDeliverable(ctx: ServerContext, m: BridgeMessage): boolean {
+  return !completionAwaitingReceipt(ctx, m.id) && !ctx.wakeDelivery?.inFlight?.(m.id) && !oversizedMessageNoted(ctx, m.id);
+}
+
+/**
+ * Messages the Claude wake path (mod or Stop hooks) may submit as their own turn. A completion a hook already
+ * handed out is delivered: it waits for its receipt at a later boundary and never starts a second turn (AB-396).
+ */
+export function claudeWakeCandidate(ctx: ServerContext, m: BridgeMessage): boolean {
+  const node = ctx.node;
+  return node != null && !ctx.channelActive() && m.hop < ctx.cfg.maxHops &&
+    // Running-job notes remain in explicit inbox reads and history (see JobManager.fromSubagent).
+    !ctx.jobs?.isNote(m) && !completionAwaitingReceipt(ctx, m.id) && shouldWakeClaudeMessage(node, ctx.cfg, m);
+}
+
+function confirmCompletionDelivery(ctx: ServerContext, input: HookInput): void {
+  const pending = completionPending.get(ctx);
+  if (!pending) return;
+  if (input.event !== "Stop" && input.event !== "PostToolUse" && input.event !== "UserPromptSubmit") return;
+  // A Stop hand-out blocks the stop, so the model ran again before any later PostToolUse, UserPromptSubmit or Stop.
+  // stop_hook_active is not required: opencode never sends it, and Esc during the continuation ends the turn without it.
+  // Other hand-outs (PostToolUse) still need a later Stop, the end of the model step that saw them.
+  const confirmed = [...pending].filter(([, handedAt]) => handedAt === "Stop" || input.event === "Stop").map(([id]) => id);
+  if (confirmed.length) ctx.node?.markRead(confirmed);
+  for (const id of confirmed) pending.delete(id);
+  if (!pending.size) completionPending.delete(ctx);
+}
 
 function holdOrMarkRead(ctx: ServerContext, ids: string[], hold: boolean): void {
   if (!ids.length) return;
@@ -69,8 +139,16 @@ function holdOrMarkRead(ctx: ServerContext, ids: string[], hold: boolean): void 
     for (const id of ids) pending.add(id);
     return;
   }
-  ctx.node?.markRead(ids);
+  const resultIds = new Set(ctx.node?.unread().filter(m => ids.includes(m.id) && m.from.id.startsWith("job:") && RESULT_HEADER.test(m.body.split("\n")[0]!)).map(m => m.id) ?? []);
+  if (resultIds.size) {
+    let pending = completionPending.get(ctx);
+    if (!pending) { pending = new Map(); completionPending.set(ctx, pending); }
+    for (const id of resultIds) pending.set(id, currentHookEvent.get(ctx) ?? "Stop");
+  }
+  ctx.node?.markRead(ids.filter(id => !resultIds.has(id)));
 }
+
+const currentHookEvent = new WeakMap<ServerContext, HookEvent>();
 
 /** Confirm that an Antigravity Stop continuation started a model step or tool call. */
 export function confirmAntigravityStopDelivery(ctx: ServerContext): void {
@@ -85,21 +163,73 @@ export function releaseAntigravityStopDelivery(ctx: ServerContext): void {
   antigravityStopPending.delete(ctx);
 }
 
-/** Messages eligible to be injected now. `wakeOnly` limits to those allowed to trigger work (below the hop limit). */
-function take(ctx: ServerContext, wakeOnly: boolean, notesOnly = false, hold = false): BridgeMessage[] {
+/** AB-404: messages too large for one hook result that a hook already listed by id. They stay unread (inbox lists
+ * them and pages their bodies); hooks do not list them again, so a Stop hook cannot loop on one. */
+const oversizedNoted = new WeakMap<ServerContext, Set<string>>();
+function notedOversized(ctx: ServerContext): Set<string> {
+  let noted = oversizedNoted.get(ctx);
+  if (!noted) { noted = new Set(); oversizedNoted.set(ctx, noted); }
+  return noted;
+}
+/** Already listed by id as too large; waits skip it so it cannot answer every later wait (AB-404). */
+export function oversizedMessageNoted(ctx: ServerContext, id: string): boolean {
+  return oversizedNoted.get(ctx)?.has(id) ?? false;
+}
+/** A tool result told the model about these oversized messages; hooks need not repeat it. */
+export function noteOversizedMessages(ctx: ServerContext, ids: readonly string[]): void {
+  if (!ids.length) return;
+  const noted = notedOversized(ctx);
+  for (const id of ids) noted.add(id);
+}
+
+export interface HookDelivery { msgs: BridgeMessage[]; text: string }
+
+/**
+ * AB-404: choose the messages a hook can hand out in full. `wrap` builds the hook output; its serialized size (the
+ * hook_event tool returns JSON.stringify(output) as text) is what is bounded. Oversized messages are listed by id
+ * once and stay unread; messages that do not fit after others stay unread for the next hook. Only `msgs` may be
+ * marked read or held by the caller. `oncePrefix` is text that comes with this hook only (parent-link messages):
+ * whether a message is too large is decided without it, so a large one-time prefix defers a message instead of
+ * listing it as oversized for good.
+ */
+function boundedDelivery(ctx: ServerContext, candidates: readonly BridgeMessage[], format: (msgs: BridgeMessage[]) => string,
+  wrap: (text: string) => HookOutput, options: { prefix?: string; oncePrefix?: string; footer?: string; pageCall?: (id: string) => string } = {}): HookDelivery {
+  const noted = notedOversized(ctx);
+  const pageCall = options.pageCall ?? ((id: string) => `inbox(id="${id}", offset=0)`);
+  const compose = (shown: BridgeMessage[], oversized: BridgeMessage[], deferred: BridgeMessage[], once = options.oncePrefix) => [
+    options.prefix ?? "",
+    once ?? "",
+    shown.length ? format(shown) : "",
+    ...unshownMessageNotes(oversized, deferred.length, pageCall),
+    shown.length && options.footer ? options.footer : "",
+  ].filter(Boolean).join("\n\n");
+  const serialized = (once?: string) => (shown: BridgeMessage[], oversized: BridgeMessage[], deferred: BridgeMessage[]) =>
+    JSON.stringify(wrap(compose(shown, oversized, deferred, once)));
+  const selection = selectForDelivery(candidates.filter((m) => !noted.has(m.id)).slice(0, HOOK_MAX_MESSAGES),
+    serialized(options.oncePrefix), formatMessage, undefined, serialized(""));
+  for (const m of selection.oversized) noted.add(m.id);
+  const text = selection.shown.length || selection.oversized.length ? compose(selection.shown, selection.oversized, selection.deferred) : "";
+  return { msgs: selection.shown, text };
+}
+
+/** Messages eligible to be injected now. `wakeOnly` limits to those allowed to trigger work (below the hop limit).
+ * Only the messages shown in full are marked read (or held). */
+function take(ctx: ServerContext, wakeOnly: boolean, notesOnly: boolean, hold: boolean, format: (msgs: BridgeMessage[]) => string,
+  wrap: (text: string) => HookOutput, footer?: string): HookDelivery {
   const node = ctx.node!;
   discardFinishedNotes(ctx);
-  const msgs = node
+  const candidates = node
     .unread()
     // Observer copies and acknowledgements remain available in inbox/history on demand.
     // Filter before the batch limit so old chatter cannot delay current results or blockers.
     .filter((m) => !isQuietMessage(m))
+    .filter((m) => hookDeliverable(ctx, m))
     .filter((m) => !notesOnly || ctx.jobs?.isNote(m) || !shouldWakeClaudeMessage(node, ctx.cfg, m))
     // Ending a turn: a running subagent's status note does not keep it going; it comes with the next prompt.
-    .filter((m) => !wakeOnly || (m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m)))
-    .slice(0, HOOK_MAX_MESSAGES);
-  holdOrMarkRead(ctx, msgs.map((m) => m.id), hold);
-  return msgs;
+    .filter((m) => !wakeOnly || (m.hop < ctx.cfg.maxHops && !ctx.jobs?.isNote(m)));
+  const delivery = boundedDelivery(ctx, candidates, format, wrap, { footer });
+  holdOrMarkRead(ctx, delivery.msgs.map((m) => m.id), hold);
+  return delivery;
 }
 
 /** A delegated subagent: its parent's messages arrive over the parent link, not the bridge. */
@@ -128,7 +258,14 @@ async function subagentHook(ctx: ServerContext, input: HookInput): Promise<HookO
     if (!child || input.signal?.aborted) return {};
     await withinHook(confirmNativeChildDelivery(ctx, input.agentId), input.signal!);
     const identity = `[agent-bridge] Your scoped native child address is "${child.address}". Use native_child="${child.agentId}" on peers, inbox and send. Your parent is ${child.parent}; bridge jobs owned by it and exact send_to grants may reach you. Never act as the parent session.`;
-    const messages = (await withinHook(node.nativeChildPending(input.agentId), input.signal!)).filter(m => !isQuietMessage(m) && (input.event !== "Stop" || m.hop < child.maxHops));
+    const pending = (await withinHook(node.nativeChildPending(input.agentId), input.signal!)).filter(m => !isQuietMessage(m) && (input.event !== "Stop" || m.hop < child.maxHops));
+    const wrap = (text: string): HookOutput => input.event === "Stop" ? { decision: "block", reason: text }
+      : input.event === "PostToolUse" ? { decision: "block", reason: text, hookSpecificOutput: { hookEventName: input.event, additionalContext: text } }
+      : context(input.event, text);
+    // AB-404: only messages shown in full are handed out (and acknowledged at the next child boundary).
+    const handed = boundedDelivery(ctx, pending, (msgs) => formatMessages(msgs), wrap,
+      { prefix: identity, pageCall: (id) => `inbox(native_child="${child.agentId}", id="${id}", offset=0)` });
+    const messages = handed.msgs;
     // Hand-out is not a receipt. A cancelled/deadline hook must leave mail returnable
     // at SubagentStop or parent end; the next child hook/tool confirms this hand-out.
     if (messages.length) {
@@ -136,9 +273,9 @@ async function subagentHook(ctx: ServerContext, input: HookInput): Promise<HookO
       if (!deliveries) { deliveries = new Map(); nativeDeliveries.set(ctx, deliveries); }
       deliveries.set(input.agentId, messages.map(m => m.id));
     }
-    const delivery = [identity, messages.length ? formatMessages(messages) : ""].filter(Boolean).join("\n\n");
-    if (input.event === "Stop") return messages.length ? { decision: "block", reason: delivery } : {};
-    if (input.event === "PostToolUse" && messages.length) return { decision: "block", reason: delivery, hookSpecificOutput: { hookEventName: input.event, additionalContext: delivery } };
+    const delivery = handed.text || identity;
+    if (input.event === "Stop") return handed.text ? wrap(delivery) : {};
+    if (input.event === "PostToolUse" && handed.text) return wrap(delivery);
     return context(input.event, delivery);
   }
   const parent = ctx.parent;
@@ -148,17 +285,23 @@ async function subagentHook(ctx: ServerContext, input: HookInput): Promise<HookO
     ctx.log.debug("parent inbox unavailable", { err: (err as Error).message });
     return [];
   }); parentReads.set(ctx, pending); }
-  const hasChildren = Boolean(ctx.childInbox?.unread().length);
+  // Child mail already listed as oversized stays unread but must not starve parent delivery.
+  const hasChildren = Boolean(ctx.childInbox?.unread().some((m) => !notedOversized(ctx).has(m.id)));
   const msgs = hasChildren ? [] : await withinHook(pending, input.signal!);
   if (!hasChildren) parentReads.delete(ctx);
-  const children = ctx.childInbox?.take() ?? [];
-  if (msgs.length === 0 && children.length === 0) {
+  // Parent-link messages are consumed by the link when fetched, so they cannot stay unread here; each is capped
+  // at MAX_BODY_CHARS by the link. Child-job mail is local: only what is shown in full is marked read (AB-404).
+  const parentText = msgs.length ? formatParentMessages(parent.name, msgs) : "";
+  const wrapChild = (text: string): HookOutput => ({ decision: "block", reason: text, hookSpecificOutput: { hookEventName: input.event, additionalContext: text } });
+  const childDelivery = ctx.childInbox ? boundedDelivery(ctx, ctx.childInbox.unread(), (ms) => formatMessages(ms), wrapChild, { oncePrefix: parentText }) : { msgs: [], text: parentText };
+  ctx.childInbox?.markRead(childDelivery.msgs.map((m) => m.id));
+  if (msgs.length === 0 && !childDelivery.text) {
     return {};
   }
   ctx.log.info("delivering parent messages to the subagent", { count: msgs.length, event: input.event });
-  const text = [msgs.length ? formatParentMessages(parent.name, msgs) : "", children.length ? formatMessages(children) : ""].filter(Boolean).join("\n\n");
+  const text = childDelivery.text || parentText;
   // Before it ends its turn: keep it going so it answers (and adjusts) instead of finishing without seeing them.
-  if (input.event === "Stop") return { decision: "block", reason: text };
+  if (input.event === "Stop") return stopMail(ctx, text);
   // After a tool call, "block" feeds the reason back to the model as feedback on that call (the call itself
   // already ran), which the hosts surface far more reliably than additional context alone.
   if (input.event === "PostToolUse") return { decision: "block", reason: text, hookSpecificOutput: { hookEventName: input.event, additionalContext: text } };
@@ -195,6 +338,7 @@ export async function buildHookResponse(ctx: ServerContext, input: HookInput): P
   try {
     if (input.subagent) return await subagentHook(ctx, { ...input, signal: controller.signal });
     if (input.event === "SessionEnd") {
+      dropPendingCompletions(ctx);
       if (ctx.agent === "claude" && node && !node.wasReplaced && node.currentSessionId === input.sessionId) await withinHook(node.nativeChildrenEnd(), controller.signal);
       return {};
     }
@@ -231,7 +375,9 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
   await withinHook(node.ensureConnected().catch((err) => ctx.log.warn("bridge not reachable from hook", { err: (err as Error).message })), input.signal!);
   if (!current()) return {};
   // The host discards StopFailure output. Never read/confirm mail that it cannot deliver.
-  if (input.event === "StopFailure") { releaseAntigravityStopDelivery(ctx); finishHookTurn(ctx, input); return {}; }
+  if (input.event === "StopFailure") { dropPendingCompletions(ctx); releaseAntigravityStopDelivery(ctx); finishHookTurn(ctx, input); return {}; }
+  confirmCompletionDelivery(ctx, input);
+  currentHookEvent.set(ctx, input.event);
   if (ctx.agent === "antigravity") {
     if (input.event === "PostToolUse" || (input.event === "UserPromptSubmit" && input.stopHookActive) || (input.event === "Stop" && input.stopHookActive)) confirmAntigravityStopDelivery(ctx);
     else releaseAntigravityStopDelivery(ctx);
@@ -249,6 +395,8 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
   // session comes first, the wake-up was lost and they are shown again below.
   // The wake-up's own turn starts with a prompt carrying its text: that is delivery, not a new user prompt.
   const wakeTurn = input.event === "UserPromptSubmit" && Boolean(input.prompt?.includes(WAKE_HEADER));
+  // The mod's wake prompt carries its message ids: shown now, wherever they were handed out (AB-396).
+  if (wakeTurn) ctx.wakeDelivery?.confirmPrompt?.(input.prompt!);
   if (input.event === "PostToolUse" || input.event === "Stop" || wakeTurn) ctx.wakeDelivery?.confirm();
   else ctx.wakeDelivery?.release();
   if (input.event === "PostToolUse" || input.event === "UserPromptSubmit") ctx.wakeDelivery?.active();
@@ -266,7 +414,9 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
         peers.length ? `Peers online:\n${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now.",
       ];
       lines.push(...new MessageWaitStore(ctx.home).pending(node).map(resumeWaitHint));
-      const unread = node.unread().filter((m) => !isQuietMessage(m)).length;
+      // AB-404: oversized messages listed by id before still count: they stay unread, and after /clear or a
+      // compaction the model no longer knows about them.
+      const unread = node.unread().filter((m) => !isQuietMessage(m) && !completionAwaitingReceipt(ctx, m.id) && !ctx.wakeDelivery?.inFlight?.(m.id)).length;
       const decisions = await withinHook(node.decisions({ scope: { project: ctx.cwd() } }).catch(() => []), input.signal!);
       if (!current()) return {};
       const summary = formatDecisionSummary(decisions);
@@ -278,8 +428,8 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
     case "PostToolUse": {
       if (!busyAtIngress) ctx.activity?.("busy");
       // Muted session messages use active hooks; observer copies stay on demand.
-      const msgs = take(ctx, false, channel);
-      return msgs.length ? context(input.event, formatMessages(msgs)) : {};
+      const delivery = take(ctx, false, channel, false, (msgs) => formatHookMessages(ctx, msgs), (text) => context(input.event, text));
+      return delivery.text ? context(input.event, delivery.text) : {};
     }
     case "Stop": {
       if (channel) {
@@ -300,33 +450,35 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
       if (!node.autoWakeEnabled && !inConversation) {
         // A notify wait is explicit permission to deliver its match, even after the listen window ends.
         // Finishing the last job ends runningCount before Stop. Its result still owns delivery.
-        const awaited = node.unread().filter((m) => (node.isNotificationAwaited(m) ||
+        const awaited = node.unread().filter((m) => hookDeliverable(ctx, m) && (node.isNotificationAwaited(m) ||
           (m.from.id.startsWith("job:") && shouldWakeClaudeMessage(node, ctx.cfg, m)) ||
           ((ctx.agent === "opencode" || ctx.agent === "antigravity") && m.to !== BROADCAST && !(AGENT_KINDS as readonly string[]).includes(m.to) &&
             shouldWakeClaudeMessage(node, ctx.cfg, m))) && m.hop < ctx.cfg.maxHops &&
-          !isQuietMessage(m) && !m.conversationId.endsWith(":note")).slice(0, HOOK_MAX_MESSAGES);
-        if (awaited.length) {
-          holdOrMarkRead(ctx, awaited.map((m) => m.id), holdStop);
+          !isQuietMessage(m) && !m.conversationId.endsWith(":note"));
+        const delivery = boundedDelivery(ctx, awaited, (msgs) => formatHookMessages(ctx, msgs, { replyHint: false }), (text) => stopMail(ctx, text));
+        if (delivery.text) {
+          holdOrMarkRead(ctx, delivery.msgs.map((m) => m.id), holdStop);
           ctx.activity?.("busy");
-          return { decision: "block", reason: formatMessages(awaited, { replyHint: false }) };
+          return stopMail(ctx, delivery.text);
         }
         finishHookTurn(ctx, input);
         return {};
       }
-      const msgs = take(ctx, true, false, holdStop);
+      const delivery = take(ctx, true, false, holdStop, (msgs) => formatHookMessages(ctx, msgs, { replyHint: false }), (text) => stopMail(ctx, text), STOP_REASON_FOOTER);
+      const msgs = delivery.msgs;
       // Stop never long-polls. Notify-mode subscriptions and the existing wake path deliver later.
       if (!msgs.length && jobsRunning > 0) {
         const waits = new MessageWaitStore(ctx.home);
         waits.save(node, {}, "notify");
         waits.attach(node);
       }
-      if (msgs.length === 0) {
+      if (!delivery.text) {
         finishHookTurn(ctx, input);
         return {};
       }
       ctx.activity?.("busy");
       ctx.log.info("continuing turn for peer messages", { count: msgs.length, autoWake: node.autoWakeEnabled });
-      return { decision: "block", reason: `${formatMessages(msgs, { replyHint: false })}\n\n${STOP_REASON_FOOTER}` };
+      return stopMail(ctx, delivery.text);
     }
     default:
       return {};

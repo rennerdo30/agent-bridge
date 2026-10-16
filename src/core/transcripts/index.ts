@@ -1,4 +1,4 @@
-import { readClaudeChat, listClaudeSubagents, listClaudeSubagentsResponsive } from "./claude.js";
+import { readClaudeChat, listClaudeSubagents } from "./claude.js";
 import { readCodexChat, listCodexSubagents } from "./codex.js";
 import { readOpencodeChat, listOpencodeSubagents } from "./opencode.js";
 import { readAntigravityChat, listAntigravitySubagents } from "./antigravity.js";
@@ -34,23 +34,3 @@ export function listNativeSubagents(session: TranscriptSession, paths: Transcrip
     default: return [];
   }
 }
-
-/** Dashboard tabs poll the same lists: share one in-flight scan and reuse a just-finished one briefly (AB-382). */
-export const NATIVE_SUBAGENT_FRESH_MS = 1_500;
-const MAX_SHARED_LISTS = 256;
-const sharedLists = new Map<string, { promise: Promise<NativeSubagent[]>; doneAt: number | null }>();
-export function listNativeSubagentsShared(session: TranscriptSession, paths: TranscriptPaths = transcriptPaths(), freshMs = NATIVE_SUBAGENT_FRESH_MS): Promise<NativeSubagent[]> {
-  const key = JSON.stringify([session.agent, session.sessionId ?? null, session.cwd ?? null, paths]);
-  const now = Date.now(), saved = sharedLists.get(key);
-  if (saved && (saved.doneAt === null || now - saved.doneAt < freshMs)) return saved.promise.then(copyList);
-  const entry: { promise: Promise<NativeSubagent[]>; doneAt: number | null } = { promise: Promise.resolve([]), doneAt: null };
-  entry.promise = (session.agent === "claude" ? listClaudeSubagentsResponsive(session, paths) : Promise.resolve().then(() => listNativeSubagents(session, paths)))
-    .then((list) => { entry.doneAt = Date.now(); return list; }, (error) => { if (sharedLists.get(key) === entry) sharedLists.delete(key); throw error; });
-  sharedLists.delete(key); sharedLists.set(key, entry);
-  if (sharedLists.size > MAX_SHARED_LISTS) for (const [old, value] of sharedLists) {
-    if (sharedLists.size <= MAX_SHARED_LISTS) break;
-    if (value.doneAt !== null) sharedLists.delete(old);
-  }
-  return entry.promise.then(copyList);
-}
-const copyList = (list: NativeSubagent[]) => list.map((item) => ({ ...item }));

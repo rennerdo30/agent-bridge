@@ -2,37 +2,38 @@ import { createRequire as __abCreateRequire } from 'node:module'; const require 
 import {
   outcomeSignature,
   pendingOutcome
-} from "./chunks/chunk-HZAGME3J.mjs";
+} from "./chunks/chunk-4ZN3O4S6.mjs";
 import {
   deriveJobOutcome
-} from "./chunks/chunk-UQEVBCCA.mjs";
-import "./chunks/chunk-CMOH34MZ.mjs";
-import "./chunks/chunk-4J3TVGHF.mjs";
-import "./chunks/chunk-BLJAWYAY.mjs";
+} from "./chunks/chunk-5ALJOYET.mjs";
+import "./chunks/chunk-3TLLQ7CK.mjs";
+import "./chunks/chunk-OIVM3BAO.mjs";
+import "./chunks/chunk-FAOTCQYY.mjs";
 import "./chunks/chunk-6KTEQAZ2.mjs";
-import "./chunks/chunk-D5ZW6VFT.mjs";
-import "./chunks/chunk-3QYUMWCP.mjs";
-import "./chunks/chunk-JTZGNEMM.mjs";
+import "./chunks/chunk-PXCXTUUZ.mjs";
+import "./chunks/chunk-XPI25MO7.mjs";
 import "./chunks/chunk-ORHVXX2T.mjs";
-import "./chunks/chunk-AFDAMMNA.mjs";
-import "./chunks/chunk-OLMGUTCX.mjs";
-import "./chunks/chunk-VB42W5UW.mjs";
+import "./chunks/chunk-DNAUDSOJ.mjs";
+import "./chunks/chunk-D5ZW6VFT.mjs";
+import "./chunks/chunk-FI54DU4N.mjs";
+import "./chunks/chunk-Q5IQLWCD.mjs";
+import "./chunks/chunk-ZQ2B63AL.mjs";
+import "./chunks/chunk-H3KBN2YN.mjs";
+import "./chunks/chunk-DXHVZRHI.mjs";
+import "./chunks/chunk-UTSHXRSC.mjs";
 import "./chunks/chunk-IYJ5P7ML.mjs";
-import "./chunks/chunk-2JW43AZX.mjs";
-import "./chunks/chunk-RE3I7AXX.mjs";
 import {
   readRunStarts
-} from "./chunks/chunk-74PWY37G.mjs";
+} from "./chunks/chunk-DS664YOK.mjs";
+import "./chunks/chunk-OX5J3NNH.mjs";
 import "./chunks/chunk-HYOPFLLN.mjs";
 import {
   closeMetadataDb,
   nullLogger
-} from "./chunks/chunk-IS3KHBHN.mjs";
-import "./chunks/chunk-AR4BZM3F.mjs";
-import "./chunks/chunk-HIVVJXLN.mjs";
-import "./chunks/chunk-VNQ4UNAO.mjs";
-import "./chunks/chunk-NVDPULGI.mjs";
-import "./chunks/chunk-DEWCC5JJ.mjs";
+} from "./chunks/chunk-BPL7GJLM.mjs";
+import "./chunks/chunk-ICCAXDVG.mjs";
+import "./chunks/chunk-O26G5HFG.mjs";
+import "./chunks/chunk-HYVC3VSW.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/core/outcome-worker.ts
@@ -87,52 +88,66 @@ async function gitPaths(inputs) {
   }
   return [...paths].sort();
 }
+async function inspect(message) {
+  const inputs = message.inputs;
+  if (await outcomeSignature(message.home, inputs, message.gitPaths) !== message.signature) throw new Error("Outcome inputs changed before inspection");
+  const paths = await gitPaths(inputs);
+  const sourceSignature = await outcomeSignature(message.home, inputs, paths);
+  if (await outcomeSignature(message.home, inputs, message.gitPaths) !== message.signature) throw new Error("Outcome inputs changed while resolving Git");
+  const starts = inputs.some((input) => input.kind === "run") ? await readRunStarts(message.home) : [];
+  const result = {};
+  for (const input of inputs) {
+    const next = input.kind === "run" ? starts.filter((run) => run.job === input.job.name && (run.jobStartedAt ?? run.startedAt) > input.job.startedAt).sort((a, b) => (a.jobStartedAt ?? a.startedAt) - (b.jobStartedAt ?? b.startedAt))[0] : void 0;
+    const signature = sourceSignature + JSON.stringify(input);
+    const key = `${message.home}:${input.kind}:${input.key}`;
+    let saved = cache.get(key);
+    if (saved?.signature !== signature || Date.now() - saved.at >= 5e3) {
+      try {
+        const outcome = await deriveJobOutcome(message.home, input.job, nullLogger, { ...input.opts, before: next?.jobStartedAt ?? next?.startedAt });
+        saved = {
+          signature,
+          at: Date.now(),
+          outcome: { ...outcome, observation: { state: "ready", checkedAt: Date.now() } },
+          bytes: Buffer.byteLength(JSON.stringify(outcome) + signature + key)
+        };
+        const previous = cache.get(key);
+        if (previous) cacheBytes -= previous.bytes;
+        cache.delete(key);
+        if (saved.bytes <= 8 * 1024 * 1024) {
+          cache.set(key, saved);
+          cacheBytes += saved.bytes;
+        }
+        while (cache.size > 1024 || cacheBytes > 8 * 1024 * 1024) {
+          const oldest = cache.keys().next().value;
+          cacheBytes -= cache.get(oldest).bytes;
+          cache.delete(oldest);
+        }
+      } catch {
+        saved = void 0;
+      }
+    }
+    result[input.key] = saved?.outcome ?? pendingOutcome(input);
+    await new Promise((resolve2) => setTimeout(resolve2, 2));
+  }
+  if (await outcomeSignature(message.home, inputs, paths) !== sourceSignature) {
+    for (const input of inputs) result[input.key] = pendingOutcome(input);
+  }
+  return { id: message.id, result, signature: sourceSignature, gitPaths: paths };
+}
 var turn = Promise.resolve();
 parentPort?.on("message", (message) => {
   turn = turn.then(async () => {
-    const inputs = message.inputs;
-    if (await outcomeSignature(message.home, inputs, message.gitPaths) !== message.signature) throw new Error("Outcome inputs changed before inspection");
-    const paths = await gitPaths(inputs);
-    const sourceSignature = await outcomeSignature(message.home, inputs, paths);
-    if (await outcomeSignature(message.home, inputs, message.gitPaths) !== message.signature) throw new Error("Outcome inputs changed while resolving Git");
-    const starts = inputs.some((input) => input.kind === "run") ? await readRunStarts(message.home) : [];
-    const result = {};
-    for (const input of inputs) {
-      const next = input.kind === "run" ? starts.filter((run) => run.job === input.job.name && (run.jobStartedAt ?? run.startedAt) > input.job.startedAt).sort((a, b) => (a.jobStartedAt ?? a.startedAt) - (b.jobStartedAt ?? b.startedAt))[0] : void 0;
-      const signature = sourceSignature + JSON.stringify(input);
-      const key = `${message.home}:${input.kind}:${input.key}`;
-      let saved = cache.get(key);
-      if (saved?.signature !== signature || Date.now() - saved.at >= 5e3) {
-        try {
-          const outcome = await deriveJobOutcome(message.home, input.job, nullLogger, { ...input.opts, before: next?.jobStartedAt ?? next?.startedAt });
-          saved = {
-            signature,
-            at: Date.now(),
-            outcome: { ...outcome, observation: { state: "ready", checkedAt: Date.now() } },
-            bytes: Buffer.byteLength(JSON.stringify(outcome) + signature + key)
-          };
-          const previous = cache.get(key);
-          if (previous) cacheBytes -= previous.bytes;
-          cache.delete(key);
-          if (saved.bytes <= 8 * 1024 * 1024) {
-            cache.set(key, saved);
-            cacheBytes += saved.bytes;
-          }
-          while (cache.size > 1024 || cacheBytes > 8 * 1024 * 1024) {
-            const oldest = cache.keys().next().value;
-            cacheBytes -= cache.get(oldest).bytes;
-            cache.delete(oldest);
-          }
-        } catch {
-          saved = void 0;
-        }
+    let reply = { id: message.id, error: true };
+    try {
+      reply = await inspect(message);
+    } catch {
+    } finally {
+      try {
+        closeMetadataDb(message.home);
+      } finally {
+        parentPort?.postMessage(reply);
       }
-      result[input.key] = saved?.outcome ?? pendingOutcome(input);
-      await new Promise((resolve2) => setTimeout(resolve2, 2));
     }
-    if (await outcomeSignature(message.home, inputs, paths) !== sourceSignature) {
-      for (const input of inputs) result[input.key] = pendingOutcome(input);
-    }
-    parentPort?.postMessage({ id: message.id, result, signature: sourceSignature, gitPaths: paths });
-  }).catch(() => parentPort?.postMessage({ id: message.id, error: true })).finally(() => closeMetadataDb(message.home));
+  }).catch(() => {
+  });
 });

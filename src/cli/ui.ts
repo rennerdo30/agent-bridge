@@ -21,9 +21,10 @@ import type { AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
 import { BridgeClient } from "../core/client.js";
+import { ConnectionActivity } from "../core/connection-activity.js";
 import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, APP_VERSION, MAX_BODY_CHARS, PROTOCOL_VERSION } from "../core/constants.js";
 import type { Logger } from "../core/logger.js";
-import { BridgeNode } from "../core/node.js";
+import { BridgeNode, type BridgeNodeOptions } from "../core/node.js";
 import { resolveDbPath } from "../core/paths.js";
 import { BridgeError, CODING_AGENTS, isUnsupportedOperation, type PeerInfo } from "../core/protocol.js";
 import { brokerFailureState } from "../core/health.js";
@@ -50,7 +51,8 @@ import { answerHistory, type HistoryAnswerDependencies } from "../core/history-a
 import { readDecisions, decisionScopeSchema, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, type DecisionsArgs } from "../core/decisions.js";
 import { answerPendingApproval, listPendingApprovals, MAX_APPROVAL_REASON_CHARS } from "../core/relay.js";
 import { questionAnswerSchema, questionAlertSettingsSchema, readOwnerQuestions } from "../core/owner-questions.js";
-import { classifyPeers, listRunsResponsive, readStoredJobsResponsive, readDashboard, readMeta } from "../core/dashboard-read.js";
+import { classifyPeers, listRunsResponsive, readStoredJobsResponsive, readDashboard, readMeta, stateJobWaits } from "../core/dashboard-read.js";
+import { HistoryChangeFeed, streamHistoryChanges } from "../core/history-feed.js";
 import { openJobQuestions, type JobQuestion } from "../core/job-questions.js";
 export { classifyPeers, listRuns, readStoredJobs, summarizeRun, finishedRunOutcomes } from "../core/dashboard-read.js";
 export type { RunSummary, DashboardPeer, StoredJobView } from "../core/dashboard-read.js";
@@ -73,7 +75,13 @@ const RUN_NAME = /^[\w.-]+\.log$/;
 
 /** A server may have adopted a job from an earlier stand-in name since its log was written. */
 async function jobOwner(home: string, job: string, original: string, node: BridgeNode): Promise<string> {
-  const record = recoverJobRecord(home, job);
+  let record: ReturnType<typeof recoverJobRecord>;
+  try { record = recoverJobRecord(home, job); }
+  catch (err) {
+    // A cold or changing job index is retryable; report it like an unavailable owner, never as a crash.
+    if (err instanceof BridgeError && err.code === "job_index_preparing") throw new JobControlError(err.message, "timeout");
+    throw err;
+  }
   if (!record) return original;
   const peers = await node.peers();
   return chooseJobRecipient(record as unknown as Record<string, unknown>, peers, new ProjectGroups(home).members(record as unknown as Record<string, unknown>, peers));
@@ -186,6 +194,10 @@ export interface UiOptions {
   /** Inert opt-in: owner-provisioned mobile registry and exact loopback origin only. */
   mobileAdmin?: MobileDesktopAdmin;
   mobileStatus?: () => string;
+  /** Trusted host wiring only; never accepted from an HTTP/configuration payload. */
+  brokerDaemon?: BridgeNodeOptions["daemon"];
+  /** @deprecated Embedded hosting is the default whenever brokerDaemon is omitted. */
+  embeddedCompatibility?: boolean;
 }
 
 /** The paired PCs' runs in /api/state are re-fetched in the background at most this often. */
@@ -208,7 +220,7 @@ function readAllUsage(home: string, log: Logger): Promise<UsageReport[]> {
   ]);
 }
 
-export async function startUi(opts: UiOptions): Promise<{ url: string; port: number; close: () => Promise<void> }> {
+export async function startUi(opts: UiOptions): Promise<{ url: string; port: number; close: () => Promise<void>; activity: ConnectionActivity }> {
   const secret = opts.secret ?? loadDashboardKey(opts.home);
   const token = loadOrCreateToken(opts.home);
   const dbPath = resolveDbPath(opts.home);
@@ -216,16 +228,19 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
   const queueChat = opts.chatQueue ?? codexQueue(loadConfig(opts.home, "other", opts.log).codexBin, opts.log);
   /** The lazily started "you" peer; one shared start, so concurrent sends never start two. */
   let sender: Promise<BridgeNode> | null = null;
+  let senderNode: BridgeNode | null = null;
   const getSender = (): Promise<BridgeNode> => {
+    senderNode ??= new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log,
+      daemon: opts.brokerDaemon,
+      network: { home: opts.home, config: loadConfig(opts.home, "other", opts.log).network } });
     sender ??= (async () => {
-      const node = new BridgeNode({ pipePath: opts.pipe, token, dbPath, agent: "other", name: UI_PEER_NAME, cwd: opts.home, autoWake: false, log: opts.log, network: { home: opts.home, config: loadConfig(opts.home, "other", opts.log).network } });
       try {
-        await node.start();
-        return node;
+        await senderNode!.start();
+        return senderNode!;
       } catch (err) {
-        // Let the next send start afresh instead of keeping a half-started node (and its retries).
+        // A later send retries discovery through the SAME node/unknown-launch
+        // latch. It never creates a second node or competing daemon attempt.
         sender = null;
-        await node.stop();
         throw err;
       }
     })();
@@ -287,6 +302,8 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
     return usage.reports;
   };
 
+  // Pushes "this conversation moved" to open dashboards as soon as the history worker retains new lines (AB-383).
+  const historyFeed = new HistoryChangeFeed(opts.home);
   const handle = async (req: IncomingMessage, res: ServerResponse) => {
     const host = String(req.headers.host ?? "").replace(/:\d+$/, "");
     if (!ALLOWED_HOSTS.has(host)) return send(res, 403, { error: "forbidden host" });
@@ -490,6 +507,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const remote = await remoteStateNow();
       const remoteStates = Object.values(remote).filter((r) => r.status === 200).map((r) => r.body as { runs: unknown[]; jobs: Record<string, unknown> });
       const remoteErrors = Object.fromEntries(Object.entries(remote).filter(([, r]) => r.status !== 200).map(([host, r]) => [host, r.body]));
+      const stored = await readStoredJobsResponsive(opts.home), waits = stateJobWaits(opts.home, stored, opts.log);
       return send(res, 200, {
         version: APP_VERSION,
         brokerPid,
@@ -503,7 +521,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
         remoteErrors,
         messages: recentMessages(dbPath),
         // Saved next-turn settings per job (message_subagent or the dashboard may have changed them).
-        jobs: { ...Object.fromEntries([...(await readStoredJobsResponsive(opts.home))].map(([name, j]) => [name, { next: j.next, projectRoot: j.projectRoot, ...(j.remote ? { remote: j.remote } : {}) }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) },
+        jobs: { ...Object.fromEntries([...stored].map(([name, j]) => [name, { next: j.next, projectRoot: j.projectRoot, status: j.status, pauseReason: j.pauseReason, pausedAt: j.pausedAt, ...(j.resultStored ? { resultStored: true } : {}), ...(j.remote ? { remote: j.remote } : {}), ...(waits.has(name) ? { waitingFor: waits.get(name) } : {}) }])), ...Object.assign({}, ...remoteStates.map((r) => r.jobs)) },
       });
     }
     if (req.method === "GET" && url.pathname === "/api/network") {
@@ -598,10 +616,11 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const result = await remoteRead(host, parsed.data);
       return send(res, result.status, result.body);
     }
+    if (req.method === "GET" && url.pathname === "/api/events") return streamHistoryChanges(historyFeed, req, res);
     if (req.method === "GET" && isDashboardReadPath(url.pathname)) {
       const read = dashboardRequestSchema.safeParse({ path: url.pathname, query: Object.fromEntries(url.searchParams) });
       if (!read.success) return send(res, 400, { error: "invalid dashboard read request" });
-      const result = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, peers: async () => (await brokerPeers(opts.pipe, token, opts.log)).peers }, read.data);
+      const result = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, history: () => historyFeed.connection, peers: async () => (await brokerPeers(opts.pipe, token, opts.log)).peers }, read.data);
       return send(res, result.status, result.body);
     }
     const chatSend = /^\/api\/(sessions|jobs)\/([^/]+)\/message$/.exec(url.pathname);
@@ -621,7 +640,7 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       const local = peers.find((p) => p.name === name && !p.host && !p.name.includes("/") && !p.jobAgent && !p.unavailable);
       let child: { id: string; title: string } | undefined;
       if (body.child) {
-        const result = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, peers: async () => peers }, { path: `/api/${job ? "jobs" : "sessions"}/${encodeURIComponent(name)}/subagents` });
+        const result = await readDashboard({ home: opts.home, log: opts.log, transcripts: opts.transcripts, history: () => historyFeed.connection, peers: async () => peers }, { path: `/api/${job ? "jobs" : "sessions"}/${encodeURIComponent(name)}/subagents` });
         child = (result.body as { subagents?: { id: string; title: string }[] }).subagents?.find((s) => s.id === body.child);
         if (!child) return send(res, 404, { error: "no such native child of this session" });
       }
@@ -712,6 +731,9 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       if (!res.headersSent) send(res, 500, { error: String((err as Error).message) });
     });
   });
+  // Open browser connections (event streams included) keep a broker daemon from exiting idle.
+  const activity = new ConnectionActivity();
+  activity.track(server);
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(opts.port, UI_HOST, () => resolve());
@@ -720,8 +742,13 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
   return {
     url: `http://${UI_HOST}:${port}/?t=${secret}`,
     port,
+    activity,
     close: async () => {
-      await (await sender?.catch(() => null))?.stop();
+      // End only the event streams; every other connection closes as before.
+      historyFeed.close();
+      server.closeIdleConnections();
+      await sender?.catch(() => null);
+      await senderNode?.stop();
       await new Promise<void>((r) => server.close(() => r()));
     },
   };

@@ -12,8 +12,9 @@ import { readRunLogPreview } from "./run-log-preview.js";
 import { DEFAULT_RUN_PAGE_SIZE, MAX_RUN_PAGE_SIZE, pageRuns, readHistoryJobs, readHistoryJson, readRunLogsSteps, historyJobsSteps, selectHistoryJobs, selectHistoryJobsResponsive, unchangedContainedFile } from "./run-history.js";
 import { drainScan, drainScanResponsive } from "./responsive-scan.js";
 import type { Worktree } from "./worktree.js";
-import { listNativeSubagentsShared, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "./transcripts/index.js";
+import { listNativeSubagents, readTranscript, TRANSCRIPT_ID, validTranscriptCursor, type TranscriptPaths } from "./transcripts/index.js";
 import { JOB_OUTCOME_CONTRACT_VERSION, type JobOutcome, type OutcomeJob } from "./job-outcomes.js";
+import { readRunnerStateRecord } from "./runner-store.js";
 import { cachedOutcomes, type OutcomeInput } from "./outcome-background.js";
 import { JOB_SETTING_KEYS } from "../mcp/job-settings.js";
 import { cloneJson, fileSignature, readJsonSnapshot } from "./file-cache.js";
@@ -21,7 +22,11 @@ import type { readStore } from "../mcp/jobs.js";
 import { readArchivedJobSteps } from "./job-archive.js";
 import { indexedJobProjectionCurrent } from "./job-archive-index.js";
 import { dashboardRequestSchema, type DashboardReadRequest, type DashboardReadResult } from "../network/dashboard-protocol.js";
-import { readRunnerStateRecord } from "./runner-store.js";
+import { historyReader, readWithHistory, withImporting, type HeldHistoryConnection } from "./dashboard-history.js";
+import { HistorySourceResolver } from "./history-sources.js";
+import { activeByteSources } from "./byte-source.js";
+import { loadConfig } from "./config.js";
+import { readSlotSnapshot, storedJobWaits, type WaitingFor } from "./job-waiting.js";
 const TASK_PREVIEW_CHARS = 300;
 const STALE_RUN_MS = 150_000;
 const LEGACY_JOB_START_TOLERANCE_MS = 1_000;
@@ -179,14 +184,17 @@ function runnerHeartbeatFresh(home: string, job: unknown, now: number): boolean 
 
 function* listRunsSteps(home: string, now: number, names?: Set<string>, responsive = false): Generator<void, RunSummary[]> {
   const runs: RunSummary[] = [];
-  for (const log of yield* readRunLogsSteps(home, names, responsive)) {
+  // One history.db connection for the whole listing, opened only when some summary must be parsed.
+  const history = historyReader(home);
+  try { for (const log of yield* readRunLogsSteps(home, names, responsive)) {
     yield;
     try {
       const signature = `${log.signature}:${JSON.stringify(log.meta)}`;
       let cached = runSummaries.get(log.file);
       if (cached?.signature !== signature) {
         // Parse once while fresh; derive interrupted/ETA state on every poll, even for unchanged logs.
-        cached = { signature, summary: summarizeRun(`${log.name}.log`, readRunLogPreview(log.file, log.signature), log.updatedAt, log.updatedAt, log.meta) };
+        const preview = history.read(() => readRunLogPreview(log.file, log.signature)).value;
+        cached = { signature, summary: summarizeRun(`${log.name}.log`, preview, log.updatedAt, log.updatedAt, log.meta) };
         runSummaries.delete(log.file); runSummaries.set(log.file, cached);
         if (runSummaries.size > 2048) runSummaries.delete(runSummaries.keys().next().value!);
       }
@@ -196,7 +204,7 @@ function* listRunsSteps(home: string, now: number, names?: Set<string>, responsi
       runs.push({ ...cloneJson(cached.summary), ...(stale ? { status: "interrupted", etaAt: undefined, etaReportedAt: undefined } : {}), archived: log.archived, recovered: false, hasLog: true });
     }
     catch { /* A concurrent archive operation is retried on the next refresh. */ }
-  }
+  } } finally { history.close(); }
   // An exact retained run needs no job-snapshot recovery or unrelated archive reads.
   if (names && [...names].every((name) => runs.some((run) => run.name === name)))
     return pageRuns(runs, null, runs.length).runs;
@@ -267,27 +275,42 @@ export function readMeta(file: string): RunMeta {
 export interface StoredJobView {
   owner: string | null;
   next: Record<string, unknown>;
+  status?: string;
+  pauseReason?: string;
+  pausedAt?: number;
+  resultStored?: boolean;
   projectRoot?: string;
   remote?: { host: string; name: string };
+  /** AB-401: when it started and whether its session's job limit still holds it back. */
+  startedAt?: number;
+  waitingForStart?: boolean;
+}
+
+/** AB-401: what each stored job is queued for on this machine (see job-waiting.ts); display only. */
+export function stateJobWaits(home: string, views: ReadonlyMap<string, StoredJobView>, log: Logger): Map<string, WaitingFor> {
+  try {
+    return storedJobWaits([...views].map(([name, v]) => ({ name, owner: v.owner, status: v.status, startedAt: v.startedAt, waitingForStart: v.waitingForStart })),
+      () => readSlotSnapshot(home), () => loadConfig(home, "other", log).resourceSlots);
+  } catch { return new Map(); }
 }
 
 /** Jobs from the sessions' store (`{ jobs: [...] }`; before 0.26 a bare array). Read-only and best effort. */
 export function readStoredJobs(home: string, names?: ReadonlySet<string>): Map<string, StoredJobView> {
-  return storedJobViews(drainScan(historyJobsSteps(home, false, { names, metadata: true })));
+  return storedJobViews(home, drainScan(historyJobsSteps(home, false, { names, metadata: true })));
 }
 
-function storedJobViews(jobs: Map<string, Record<string, unknown>>): Map<string, StoredJobView> {
-  return drainScan(storedJobViewSteps(jobs));
+function storedJobViews(home: string, jobs: Map<string, Record<string, unknown>>): Map<string, StoredJobView> {
+  return drainScan(storedJobViewSteps(home, jobs));
 }
 
 /** All saved settings, without cloning retained prompt/context fields. */
 export function readStoredJobsResponsive(home: string, names?: ReadonlySet<string>): Promise<Map<string, StoredJobView>> {
   return drainScanResponsive((function* () {
-    return yield* storedJobViewSteps(yield* historyJobsSteps(home, true, { names, metadata: true }), names);
+    return yield* storedJobViewSteps(home, yield* historyJobsSteps(home, true, { names, metadata: true }), names);
   })());
 }
 
-function* storedJobViewSteps(jobs: Map<string, Record<string, unknown>>, names?: ReadonlySet<string>): Generator<void, Map<string, StoredJobView>> {
+function* storedJobViewSteps(home: string, jobs: Map<string, Record<string, unknown>>, names?: ReadonlySet<string>): Generator<void, Map<string, StoredJobView>> {
   const out = new Map<string, StoredJobView>();
   for (const j of jobs.values()) {
     yield;
@@ -295,9 +318,20 @@ function* storedJobViewSteps(jobs: Map<string, Record<string, unknown>>, names?:
     const { name, owner, args, remote } = j as { name?: unknown; owner?: unknown; args?: unknown; remote?: { host: string; name: string } };
     if (typeof name !== "string" || names && !names.has(name)) continue;
     const saved = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+    let runner: Record<string, unknown> | null = null;
+    if (j.status === "running" && isRecord(j.host) && typeof j.id === "string") {
+      try { runner = readRunnerStateRecord(home, j.id); }
+      catch { /* The saved job record still remains available. */ }
+    }
     out.set(name, {
       owner: typeof owner === "string" && owner ? owner : null,
+      ...(typeof j.status === "string" ? { status: j.status } : {}),
+      ...(typeof j.pauseReason === "string" ? { pauseReason: j.pauseReason } : {}),
+      ...(typeof j.pausedAt === "number" ? { pausedAt: j.pausedAt } : {}),
+      ...(j.resultStored === true || typeof j.report === "string" || typeof runner?.report === "string" ? { resultStored: true } : {}),
       ...(typeof j.projectRoot === "string" ? { projectRoot: j.projectRoot } : {}),
+      ...(typeof j.startedAt === "number" ? { startedAt: j.startedAt } : {}),
+      ...(j.waitingForStart === true ? { waitingForStart: true } : {}),
       next: cloneJson(Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== undefined).map((key) => [key, saved[key]]))),
       ...(remote && typeof remote.host === "string" && typeof remote.name === "string" ? { remote: cloneJson(remote) } : {}),
     });
@@ -324,7 +358,11 @@ export function classifyPeers(peers: PeerInfo[], runs: RunSummary[], home: strin
   });
 }
 
-export interface DashboardReadContext { home: string; log: Logger; peers: () => Promise<PeerInfo[]> | PeerInfo[]; transcripts?: TranscriptPaths }
+export interface DashboardReadContext {
+  home: string; log: Logger; peers: () => Promise<PeerInfo[]> | PeerInfo[]; transcripts?: TranscriptPaths;
+  /** AB-397: the dashboard event feed's held history.db connection; reads borrow it instead of opening one each. */
+  history?: HeldHistoryConnection;
+}
 const reply = (status: number, body: unknown): DashboardReadResult => ({ status, body });
 /** The same read-only handlers serve HTTP locally and authenticated paired-link requests. */
 export async function readDashboard(ctx: DashboardReadContext, request: DashboardReadRequest): Promise<DashboardReadResult> {
@@ -336,7 +374,11 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       // Only settings for jobs on this bounded run page are needed by its inspector.
       const names = new Set(page.runs.flatMap((run) => run.job ? [run.job] : []));
       const selected = await selectHistoryJobsResponsive(ctx.home, names);
-      const jobs = Object.fromEntries([...storedJobViews(selected)].map(([name, job]) => [name, { next: job.next, ...(job.remote ? { remote: job.remote } : {}) }]));
+      const views = storedJobViews(ctx.home, selected), waits = stateJobWaits(ctx.home, views, ctx.log);
+      const jobs = Object.fromEntries([...views].map(([name, job]) => [name, { next: job.next,
+        status: job.status, pauseReason: job.pauseReason, pausedAt: job.pausedAt,
+        ...(job.resultStored ? { resultStored: true } : {}), ...(job.remote ? { remote: job.remote } : {}),
+        ...(waits.has(name) ? { waitingFor: waits.get(name) } : {}) }]));
       return reply(200, { runs: page.runs, runsNext: page.next, runsTotal: page.total, jobs });
     }
     if (url.pathname === "/api/job-outcomes") {
@@ -385,18 +427,27 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       if (!peer) return reply(404, { error: "no such local session" });
       if (!peer.sessionId) return reply(409, { error: "This session has no sessionId yet." });
       if (!TRANSCRIPT_ID.test(peer.sessionId) || !CODING_AGENTS.includes(peer.agent as typeof CODING_AGENTS[number])) return reply(404, { error: "no transcript for this session" });
-      if (sessionMatch[2] === "subagents" && child === undefined) return reply(200, { subagents: await listNativeSubagentsShared(peer, ctx.transcripts) });
+      if (sessionMatch[2] === "subagents" && child === undefined) {
+        const listed = readWithHistory(ctx.home, () => listNativeSubagents(peer, ctx.transcripts), ctx.history);
+        return reply(200, withImporting({ subagents: listed.value }, listed.importing));
+      }
       const from = url.searchParams.get("from") ?? "0";
       if (!validTranscriptCursor(from)) return reply(400, { error: "invalid transcript cursor" });
-      const page = readTranscript(peer, from, child, ctx.transcripts);
-      return page ? reply(200, page) : reply(404, { error: "no transcript for this session or subagent" });
+      const page = readWithHistory(ctx.home, () => readTranscript(peer, from, child, ctx.transcripts), ctx.history);
+      return page.value ? reply(200, withImporting(page.value, page.importing)) : reply(404, { error: "no transcript for this session or subagent" });
     }
     if (url.pathname === "/api/runs") {
       const rawLimit = url.searchParams.get("limit");
       const limit = rawLimit === null ? DEFAULT_RUN_PAGE_SIZE : /^\d+$/.test(rawLimit) ? Number(rawLimit) : NaN;
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_RUN_PAGE_SIZE) return reply(400, { error: `limit must be an integer from 1 to ${MAX_RUN_PAGE_SIZE}` });
-      try { return reply(200, pageRuns(await listRunsResponsive(ctx.home), url.searchParams.get("before"), limit)); }
-      catch { return reply(400, { error: "invalid run cursor" }); }
+      const page = await listRunsResponsive(ctx.home).then(runs => pageRuns(runs, url.searchParams.get("before"), limit)).catch(() => null);
+      if (!page) return reply(400, { error: "invalid run cursor" });
+      const names = new Set(page.runs.flatMap(run => run.job ? [run.job] : []));
+      // Job settings are an optional overlay: an unreadable store never turns a valid page into a cursor error.
+      const views = await readStoredJobsResponsive(ctx.home, names).catch(() => new Map<string, StoredJobView>());
+      const jobs = Object.fromEntries([...views].map(([name, job]) => [name, { next: job.next,
+        ...(job.resultStored ? { resultStored: true } : {}), ...(job.remote ? { remote: job.remote } : {}) }]));
+      return reply(200, { ...page, jobs });
     }
     const jobChildrenMatch = /^\/api\/jobs\/([\w.-]+)\/subagents(?:\/([^/]+))?$/.exec(url.pathname);
     if (jobChildrenMatch) {
@@ -413,11 +464,14 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       if (!sessionId) return reply(409, { error: "This job has no sessionId yet." });
       if (!TRANSCRIPT_ID.test(sessionId) || !CODING_AGENTS.includes(agent as typeof CODING_AGENTS[number])) return reply(404, { error: "no transcript for this job" });
       const session = { agent: agent as PeerInfo["agent"], sessionId, cwd: typeof job?.workdir === "string" ? job.workdir : run?.workdir ?? "" };
-      if (child === undefined) return reply(200, { subagents: await listNativeSubagentsShared(session, ctx.transcripts) });
+      if (child === undefined) {
+        const listed = readWithHistory(ctx.home, () => listNativeSubagents(session, ctx.transcripts), ctx.history);
+        return reply(200, withImporting({ subagents: listed.value }, listed.importing));
+      }
       const from = url.searchParams.get("from") ?? "0";
       if (!validTranscriptCursor(from)) return reply(400, { error: "invalid transcript cursor" });
-      const page = readTranscript(session, from, child, ctx.transcripts);
-      return page ? reply(200, page) : reply(404, { error: "no transcript for this job or subagent" });
+      const page = readWithHistory(ctx.home, () => readTranscript(session, from, child, ctx.transcripts), ctx.history);
+      return page.value ? reply(200, withImporting(page.value, page.importing)) : reply(404, { error: "no transcript for this job or subagent" });
     }
     const runChatMatch = /^\/api\/runs\/([\w.-]+)\/chat$/.exec(url.pathname);
     if (runChatMatch) {
@@ -429,8 +483,8 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       const sessionId = run.sessionId ?? run.session ?? (typeof job?.sessionId === "string" ? job.sessionId : typeof job?.threadId === "string" ? job.threadId : null);
       if (!sessionId) return reply(409, { error: "This run has no sessionId yet." });
       if (!TRANSCRIPT_ID.test(sessionId) || !CODING_AGENTS.includes(run.agent as typeof CODING_AGENTS[number])) return reply(404, { error: "no transcript for this run" });
-      const page = readTranscript({ agent: run.agent as PeerInfo["agent"], sessionId, cwd: run.workdir ?? "" }, from, undefined, ctx.transcripts);
-      return page ? reply(200, page) : reply(404, { error: "no transcript for this run" });
+      const page = readWithHistory(ctx.home, () => readTranscript({ agent: run.agent as PeerInfo["agent"], sessionId, cwd: run.workdir ?? "" }, from, undefined, ctx.transcripts), ctx.history);
+      return page.value ? reply(200, withImporting(page.value, page.importing)) : reply(404, { error: "no transcript for this run" });
     }
     const runMatch = /^\/api\/runs\/([\w.-]+)$/.exec(url.pathname);
     if (runMatch) {
@@ -445,17 +499,33 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       const witnessed = lstatSync(log.file, { bigint: true });
       const logRoot = isInsideDir(log.file, join(ctx.home, "cold")) ? join(ctx.home, "cold") : join(ctx.home, "runs");
       if (!unchangedContainedFile(logRoot, log.file, witnessed)) return reply(404, { error: "no such run" });
-      const size = Number(witnessed.size);
-      const fd = openSync(log.file, "r");
-      const buf = Buffer.alloc(Math.min(MAX_LOG_CHUNK + 1, Math.max(0, size - from)));
-      try {
-        if (fileSignature(fstatSync(fd, { bigint: true })) !== fileSignature(witnessed)) return reply(404, { error: "run changed before reading" });
-        readSync(fd, buf, 0, buf.length, from);
-      } finally { closeSync(fd); }
+      // A fully ingested log is served from its retained copy in history.db (AB-383).
+      const retained = readWithHistory(ctx.home, () => {
+        const sources = activeByteSources(), source = sources?.open(log.file);
+        if (!source) return null;
+        try {
+          const buf = Buffer.alloc(Math.min(MAX_LOG_CHUNK + 1, Math.max(0, source.size - from)));
+          const length = source.read(buf, 0, buf.length, from);
+          // Bytes from the file itself (its live tail) go through the containment-checked read below.
+          if (sources instanceof HistorySourceResolver && sources.liveTail) return null;
+          return { buf: buf.subarray(0, length), size: source.size };
+        } finally { source.close(); }
+      }, ctx.history);
+      let buf: Buffer, size: number;
+      if (retained.value) ({ buf, size } = retained.value);
+      else {
+        size = Number(witnessed.size);
+        const fd = openSync(log.file, "r");
+        buf = Buffer.alloc(Math.min(MAX_LOG_CHUNK + 1, Math.max(0, size - from)));
+        try {
+          if (fileSignature(fstatSync(fd, { bigint: true })) !== fileSignature(witnessed)) return reply(404, { error: "run changed before reading" });
+          readSync(fd, buf, 0, buf.length, from);
+        } finally { closeSync(fd); }
+      }
       let end = Math.min(buf.length, MAX_LOG_CHUNK);
       // Never cut a UTF-8 character in half: step back over continuation bytes (10xxxxxx).
       while (end < buf.length && end > 0 && (buf[end]! & 0xc0) === 0x80) end--;
-      return reply(200, { text: buf.subarray(0, end).toString("utf8"), next: Math.min(size, from + end), size });
+      return reply(200, withImporting({ text: buf.subarray(0, end).toString("utf8"), next: Math.min(size, from + end), size }, retained.importing));
     }
   return reply(404, { error: "not found" });
 }

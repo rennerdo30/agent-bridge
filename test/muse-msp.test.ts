@@ -1,29 +1,103 @@
-import { mkdtempSync, readFileSync, rmSync, existsSync, symlinkSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, symlinkSync, watch } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { delegateToMuseMsp, museMspQuery, type MuseMspRequest, type MuseSteering } from "../src/core/muse-msp.js";
+import { delegateToMuseMsp as delegate, museMspQuery, type MuseMspRequest, type MuseSteering } from "../src/core/muse-msp.js";
 import { DELEGATE_DEPTH_ENV } from "../src/core/delegate.js";
 import { nullLogger } from "../src/core/logger.js";
 
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>(r => { resolve = r; });
+  return { promise, resolve };
+}
+
 const host = fileURLToPath(new URL("./fixtures/muse-msp/host.cjs", import.meta.url));
 const dirs: string[] = [];
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 30 }); vi.unstubAllEnvs(); });
+const controllers: AbortController[] = [];
+const runs = new Set<Promise<unknown>>();
+function delegateToMuseMsp(req: MuseMspRequest) {
+  const run = delegate(req); runs.add(run);
+  void run.then(() => runs.delete(run), () => runs.delete(run));
+  return run;
+}
+function created(path: string, complete: (contents: string) => boolean = contents => contents.length > 0, observed = () => {}) {
+  const ready = deferred<void>();
+  const check = () => {
+    if (existsSync(path) && complete(readFileSync(path, "utf8"))) ready.resolve();
+    observed();
+  };
+  const watcher = watch(join(path, ".."), check);
+  check();
+  return { ready: ready.promise, close: () => watcher.close() };
+}
+afterEach(async () => { vi.useRealTimers(); for (const c of controllers.splice(0)) c.abort(); await Promise.allSettled([...runs]); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 30 }); vi.unstubAllEnvs(); });
 function fixture(overrides: Partial<MuseMspRequest> = {}, env: Record<string, string> = {}) {
   const cwd = mkdtempSync(join(tmpdir(), "ab-muse-msp-")); dirs.push(cwd);
   const logfile = join(cwd, "requests.jsonl");
   const req: MuseMspRequest = { bin: process.execPath, serveArgs: [host], cwd, access: "edit", prompt: "Complete this task", timeoutSec: 5, cleanupTimeoutMs: 30, log: nullLogger, ...overrides, extraEnv: { MSP_TEST_LOG: logfile, MSP_TEST_PID: join(cwd, "host.pid"), ...env, ...overrides.extraEnv } };
+  const controller = new AbortController(); controllers.push(controller);
+  req.signal = req.signal ? AbortSignal.any([req.signal, controller.signal]) : controller.signal;
   const calls = () => readFileSync(logfile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
   return { req, calls, cwd };
 }
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 async function until(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 100; i++) { if (predicate()) return; await new Promise((r) => setTimeout(r, 10)); }
+  for (let i = 0; i < 100; i++) { if (predicate()) return; await sleep(10); }
   throw new Error("fixture condition did not happen");
 }
 
+async function stallUntilStartupDeadline(f: ReturnType<typeof fixture>) {
+  const stalled = join(f.cwd, "host.stalled"), controller = new AbortController();
+  f.req.extraEnv!.MSP_TEST_STALLED = stalled;
+  // Freeze only the parent's deadlines while the real stdio host starts and
+  // reaches the requested stall. The filesystem signal stays real; Date/UUIDs stay real.
+  const marker = created(stalled, contents => contents === f.req.extraEnv!.MSP_TEST_HANG);
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const run = delegateToMuseMsp({ ...f.req, signal: AbortSignal.any([f.req.signal!, controller.signal]) });
+  let settled = false;
+  void run.then(() => { settled = true; }, () => { settled = true; });
+  try {
+    await Promise.race([marker.ready, run]);
+    expect(readFileSync(stalled, "utf8")).toBe(f.req.extraEnv!.MSP_TEST_HANG);
+    vi.advanceTimersByTime(f.req.startupTimeoutMs! - 1);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    // Expire the original 80/100 ms deadline, then restore real timers before
+    // rejection microtasks begin transport cleanup and its separate deadlines.
+    vi.advanceTimersByTime(1);
+    vi.useRealTimers();
+    return await run;
+  } finally {
+    marker.close();
+    vi.useRealTimers();
+    controller.abort();
+    await run.catch(() => {});
+  }
+}
+
 describe("Muse stable MSP delegation", () => {
+  it("waits for complete stalled-marker contents across creation and partial writes", async () => {
+    const f = fixture(), path = join(f.cwd, "stalled-marker");
+    let observed = deferred<void>(), settled = false;
+    const marker = created(path, contents => contents === "turn/start", () => observed.resolve());
+    void marker.ready.then(() => { settled = true; });
+    try {
+      observed = deferred<void>();
+      writeFileSync(path, "");
+      await observed.promise;
+      expect(settled).toBe(false);
+      observed = deferred<void>();
+      writeFileSync(path, "turn/");
+      await observed.promise;
+      expect(settled).toBe(false);
+      writeFileSync(path, "turn/start");
+      await marker.ready;
+      expect(settled).toBe(true);
+    } finally { marker.close(); }
+  });
   it("applies and verifies a resumed experimental profile only after negotiation", async () => {
     const f = fixture({ sessionId: "saved", permissionProfile: "new-profile" }, { MSP_TEST_EXPERIMENTAL: "1", MSP_TEST_PROFILE: "old-profile" });
     const result = await delegateToMuseMsp(f.req);
@@ -115,10 +189,11 @@ describe("Muse stable MSP delegation", () => {
 
   it("injects live messages with an exact turn guard and reports the native response", async () => {
     let steering: MuseSteering | null = null;
+    const ready = deferred<MuseSteering>();
     const onAnswer = vi.fn();
-    const f = fixture({ live: { from: "parent", onSteering: (value) => { steering = value; }, onAnswer } }, { MSP_TEST_MODE: "hold" });
+    const f = fixture({ onSpawn: async () => { await sleep(1100); }, live: { from: "parent", onSteering: (value) => { steering = value; if (value) ready.resolve(value); }, onAnswer } }, { MSP_TEST_MODE: "hold" });
     const run = delegateToMuseMsp(f.req);
-    await until(() => steering !== null);
+    await Promise.race([ready.promise, run.then(() => { throw new Error("host ended before steering was ready"); })]);
     expect(await steering!.send("Please explain progress")).toBe(true);
     await expect(run).resolves.toMatchObject({ text: "Completed native turn" });
     const steer = f.calls().find((m) => m.method === "turn/steer");
@@ -130,10 +205,11 @@ describe("Muse stable MSP delegation", () => {
 
   it("returns false for unsupported live steering without pretending the message was sent", async () => {
     let steering: MuseSteering | null = null;
+    const ready = deferred<MuseSteering>();
     const controller = new AbortController();
-    const f = fixture({ signal: controller.signal, live: { from: "parent", onSteering: (value) => { steering = value; }, onAnswer: vi.fn() } }, { MSP_TEST_MODE: "hold", MSP_TEST_UNSUPPORTED: "turn/steer" });
+    const f = fixture({ signal: controller.signal, live: { from: "parent", onSteering: (value) => { steering = value; if (value) ready.resolve(value); }, onAnswer: vi.fn() } }, { MSP_TEST_MODE: "hold", MSP_TEST_UNSUPPORTED: "turn/steer" });
     const run = delegateToMuseMsp(f.req); run.catch(() => {});
-    await until(() => steering !== null);
+    await Promise.race([ready.promise, run.then(() => { throw new Error("host ended before steering was ready"); })]);
     expect(await steering!.send("change task")).toBe(false);
     controller.abort();
     await expect(run).rejects.toMatchObject({ kind: "aborted" });
@@ -162,14 +238,14 @@ describe("Muse stable MSP delegation", () => {
   });
 
   it("preserves startup deadlines and does not submit a paid turn after a stalled session start", async () => {
-    const f = fixture({ startupTimeoutMs: 80 }, { MSP_TEST_HANG: "session/start" });
-    await expect(delegateToMuseMsp(f.req)).rejects.toMatchObject({ startupFailed: true });
+    const f = fixture({ startupTimeoutMs: 80, onSpawn: async () => { await sleep(1100); } }, { MSP_TEST_HANG: "session/start" });
+    await expect(stallUntilStartupDeadline(f)).rejects.toMatchObject({ startupFailed: true, message: expect.stringContaining("did not answer session/start within startup timeout") });
     expect(f.calls().some((m) => m.method === "turn/start")).toBe(false);
   });
 
   it("marks an unanswered turn admission as unsafe to replay and preserves the session", async () => {
     const f = fixture({ startupTimeoutMs: 100 }, { MSP_TEST_HANG: "turn/start" });
-    await expect(delegateToMuseMsp(f.req)).rejects.toMatchObject({ startupFailed: false, sessionId: "0198f0aa-1111-7000-8000-0000000000aa" });
+    await expect(stallUntilStartupDeadline(f)).rejects.toMatchObject({ startupFailed: false, sessionId: "0198f0aa-1111-7000-8000-0000000000aa", message: expect.stringContaining("did not answer turn/start within startup timeout") });
     expect(f.calls().filter((m) => m.method === "turn/start")).toHaveLength(1);
   });
 
@@ -190,8 +266,9 @@ describe("Muse stable MSP delegation", () => {
     const controller = new AbortController();
     const f = fixture({ signal: controller.signal }, { MSP_TEST_MODE: "cancel" });
     f.req.extraEnv!.MSP_TEST_TOOL_PID = join(f.cwd, "tool.pid");
+    const marker = created(join(f.cwd, "tool.pid"));
     const run = delegateToMuseMsp(f.req); run.catch(() => {});
-    await until(() => existsSync(join(f.cwd, "tool.pid")));
+    try { await Promise.race([marker.ready, run]); } finally { marker.close(); }
     controller.abort();
     await expect(run).rejects.toMatchObject({ kind: "aborted", sessionId: "0198f0aa-1111-7000-8000-0000000000aa" });
     const call = f.calls().find((m) => m.method === "turn/cancel");
@@ -204,8 +281,9 @@ describe("Muse stable MSP delegation", () => {
     const controller = new AbortController();
     const f = fixture({ signal: controller.signal }, { MSP_TEST_MODE: "orphan" });
     f.req.extraEnv!.MSP_TEST_TOOL_PID = join(f.cwd, "tool.pid");
+    const marker = created(join(f.cwd, "tool.pid"));
     const run = delegateToMuseMsp(f.req); run.catch(() => {});
-    await until(() => existsSync(join(f.cwd, "tool.pid")));
+    try { await Promise.race([marker.ready, run]); } finally { marker.close(); }
     controller.abort();
     await expect(run).rejects.toMatchObject({ kind: "aborted" });
     await until(() => !alive(Number(readFileSync(join(f.cwd, "tool.pid"), "utf8"))));
@@ -363,10 +441,11 @@ describe("Muse approval decisions", () => {
   });
 
   it("cancels without waiting on an unresponsive supervisor approval", async () => {
-    const controller = new AbortController(), approve = vi.fn(() => new Promise<never>(() => {}));
+    const ready = deferred<void>();
+    const controller = new AbortController(), approve = vi.fn(() => { ready.resolve(); return new Promise<never>(() => {}); });
     const f = fixture({ access: "ask", canApprove: true, approve, signal: controller.signal }, { MSP_TEST_MODE: "approval" });
     const run = delegateToMuseMsp(f.req); run.catch(() => {});
-    await until(() => approve.mock.calls.length === 1);
+    await Promise.race([ready.promise, run]);
     controller.abort();
     await expect(run).rejects.toMatchObject({ kind: "aborted" });
     expect(f.calls().some((m) => m.method === "approval/decide")).toBe(false);

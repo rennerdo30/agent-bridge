@@ -62,6 +62,8 @@ export function formatParentRoute(route: ParentRoute): string {
 export interface LinkMessage {
   id: string;
   body: string;
+  /** Original runner-control identity, independent of the child link's reply identity. */
+  controlId?: string;
   sibling?: BridgeMessage;
 }
 
@@ -116,8 +118,8 @@ export class ParentLink {
   }
 
   /** Queue a message for the subagent; it gets it at its next step. */
-  post(body: string, sibling?: BridgeMessage): LinkMessage {
-    const m = { id: sibling?.id ?? randomUUID(), body, ...(sibling ? { sibling } : {}) };
+  post(body: string, sibling?: BridgeMessage, controlId?: string): LinkMessage {
+    const m = { id: sibling?.id ?? randomUUID(), body, ...(sibling ? { sibling } : {}), ...(controlId ? { controlId } : {}) };
     this.pending.push(m);
     return m;
   }
@@ -132,9 +134,14 @@ export class ParentLink {
    * follow-up, so a message that arrived as it finished is not lost).
    */
   async close(): Promise<string[]> {
+    return (await this.closeMessages()).map(m => m.body);
+  }
+
+  /** Preserve source control identities when a refused runner retains pending steering. */
+  async closeMessages(): Promise<LinkMessage[]> {
     // Only supervisor instructions can start a continuation. Sibling mail remains in broker history
     // (unconsumed mail stays in its inbox) and must never replace a completed task's report.
-    const left = [...this.unanswered.splice(0), ...this.pending.splice(0)].filter((m) => !m.sibling).map((m) => m.body);
+    const left = [...this.unanswered.splice(0), ...this.pending.splice(0)].filter((m) => !m.sibling);
     const s = this.server;
     this.server = null;
     if (s) await new Promise<void>((r) => s.close(() => r()));

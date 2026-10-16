@@ -2,14 +2,14 @@ import { HistoryBackground } from "./history-background.js";
 import { NativeChildren, isNativeChildAddress } from "./native-children.js";
 import { HealthMonitor } from "./health.js";
 import { loadConfig } from "./config.js";
-import { conversationPageSchema, readConversation } from "./conversations.js";
+import { conversationPageSchema } from "./conversations.js";
 import { historySearchSchema } from "./history.js";
 import { ReadJournal } from "./read-journal.js";
 import { recordStorePeer, refreshStorePeerIdentities, validStoreCapabilities } from "./store-compatibility.js";
 import { randomUUID } from "node:crypto";
-import { existsSync, renameSync, unlinkSync } from "node:fs";
-import { readMusePrivateJson, writeMusePrivateJson } from "./muse-context.js";
-import { processIdentity } from "./process-identity.js";
+import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { readMusePrivateJson, readMusePrivateJsonAsync, writeMusePrivateJsonAsync } from "./muse-context.js";
+import { ownProcessIdentity, processIdentity, readProcessIdentities } from "./process-identity.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { createServer, type Server, type Socket } from "node:net";
 import {
@@ -19,6 +19,10 @@ import {
   MAX_BODY_CHARS,
   BROKER_TESTED_JOB_LOAD,
   MAX_FRAME_BYTES,
+  HANDOVER_DRAIN_MS,
+  HANDOVER_MARKER_FILE,
+  HANDOVER_REPEAT_WINDOW_MS,
+  isNewerRelease,
   MESSAGE_TTL_MS,
   PROTOCOL_VERSION,
   PURGE_INTERVAL_MS,
@@ -58,6 +62,7 @@ import { isRecord, retentionLimit } from "./json-store.js";
 import { quarantineMessage } from "./oversize.js";
 import { readArchivedJobSnapshot } from "./job-archive.js";
 import { JobArchiveBackground } from "./job-archive-background.js";
+import { startBrokerJobRunIndex, stopJobRunBackfill } from "./job-run-index.js";
 import { indexedJobProjectionCurrent, readIndexedJobs } from "./job-archive-index.js";
 import { readJsonSnapshot, type JsonSnapshot } from "./file-cache.js";
 import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "./completion.js";
@@ -70,6 +75,7 @@ import { basename, dirname, join } from "node:path";
 import { ProjectGroups } from "./project-groups.js";
 import { recoverJobRecordAsync } from "./job-recovery.js";
 import { findHistoryJob, selectHistoryJobs } from "./run-history.js";
+import { pageProjectJobSummaries, PROJECT_JOB_SUMMARY_PAGE_MAX } from "./project-job-summary.js";
 import { collectTransfer, receiveTransfer, type TransferResult } from "../network/files.js";
 import { cancelStoredTransfer, MAX_STREAM_ENTRIES, readTransferHistory, type TransferStarted } from "../network/transfers.js";
 import { MAX_NETWORK_HOST_CHARS, MAX_PAIRING_CODE_CHARS, MAX_PORT } from "../network/constants.js";
@@ -81,7 +87,31 @@ import { DASHBOARD_JOB_CONVERSATION } from "./job-control.js";
 import { DECISION_MESSAGE_HOP, MAX_DECISION_TEXT_CHARS, MAX_DECISION_TOPIC_CHARS, decisionApplies, decisionScopeSchema, type OwnerDecision } from "./decisions.js";
 import { askOwnerSchema, questionAnswerSchema, QUESTIONS_FILE } from "./owner-questions.js";
 import { OwnerQuestionService, OWNER_ADDRESS } from "./owner-question-service.js";
-import { BROKER_TCP_FILE, ensurePrivateSocketDirectory, isEphemeralBrokerTcpRecord } from "./paths.js";
+import { BROKER_TCP_FILE, ensurePrivateSocketDirectory, isEphemeralBrokerTcpRecord, resolvePipePath } from "./paths.js";
+import { hasEndpointActivationWitness, type EndpointReservation } from "./endpoint-reservation.js";
+
+export type LifecycleServingPhase = "admission" | "prepare" | "write";
+/** Opaque source capability. Shape/copy/serialized flags never confer authority. */
+export interface LifecycleServingCapability { readonly __servingCapability?: never }
+const SERVING_PHASE_MS = { admission: 1000, prepare: 5000, write: 2000 } as const;
+type ServingBinding = { server: Server; ownerInstance: string; generation: number; home: string; identity: string; endpoint: string; revoked: boolean; current(): boolean };
+const servingBindings = new WeakMap<Broker, ServingBinding>();
+const servingCapabilities = new WeakMap<LifecycleServingCapability, { binding: ServingBinding; generation: number; phase: LifecycleServingPhase; expires: number }>();
+function servingHomeIdentity(home: string): string {
+  const stat = lstatSync(home, { bigint: true });
+  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.ino <= 0n || stat.dev < 0n || process.platform === "win32" && stat.dev === 0n) throw Error("unknown");
+  return `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`;
+}
+function unavailableServing(): never { throw new BridgeError("bad_request", "Core lifecycle serving authority is unavailable."); }
+/** Internal consumer validation only; no factory, protocol handler, role flag or fixture mint. */
+export function assertLifecycleServingCapability(capability: LifecycleServingCapability, phase: LifecycleServingPhase): Readonly<{ ownerInstance: string; generation: number; home: string; endpoint: string }> {
+  const grant = servingCapabilities.get(capability);
+  if (!grant || grant.phase !== phase || performance.now() >= grant.expires || grant.binding.revoked || grant.generation !== grant.binding.generation) unavailableServing();
+  try {
+    if (!grant.binding.current() || !grant.binding.server.listening || grant.binding.server.address() !== grant.binding.endpoint || servingHomeIdentity(grant.binding.home) !== grant.binding.identity) unavailableServing();
+  } catch { unavailableServing(); }
+  return Object.freeze({ ownerInstance: grant.binding.ownerInstance, generation: grant.generation, home: grant.binding.home, endpoint: grant.binding.endpoint });
+}
 
 /** Peer names double as offline queue keys, so keep them simple and unambiguous. */
 export const PEER_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -93,7 +123,9 @@ const PENDING_MAX_LIMIT = 500;
 const NAME_SUFFIX_LIMIT = 100;
 const MAX_FILE_ADDRESS_CHARS = 256;
 const MAX_FILE_PATH_CHARS = 1_024;
-const SIBLING_STATUSES = new Set<SiblingPeer["status"]>(["running", "done", "failed", "interrupted", "cancelled"]);
+/** Pause reasons are bounded wherever they are relayed (the same limit as the pause_subagent tool). */
+const MAX_PAUSE_REASON_CHARS = 500;
+const SIBLING_STATUSES = new Set<SiblingPeer["status"]>(["running", "paused", "done", "failed", "interrupted", "cancelled"]);
 const MAX_INFLIGHT_PER_CONNECTION = 128;
 const PAUSE_INFLIGHT_PER_CONNECTION = 32;
 const MAX_CONNECTION_BUFFER_BYTES = 4 * MAX_FRAME_BYTES;
@@ -114,6 +146,64 @@ interface Conn {
   mailGeneration: number;
   /** Published only after this exact registration finished queued-mail expiry. */
   mailReady?: QueueRegistration;
+  /** The listener that accepted it: only local-pipe peers share this machine's PID namespace (AB-399). */
+  transport: "pipe" | "tcp";
+  /** AB-399: the broker found this session's CLI process gone and told the server to stay off the bridge. */
+  retired?: boolean;
+  /** Its hello finished; until then the hello's own reply must reach the server before any retirement. */
+  registered?: boolean;
+  /** Last cheap signal-0 probe of the session's CLI process (see hostExited). */
+  hostProbe?: { at: number; exited: boolean };
+  /** The broker's own first identity reading of the session's CLI (POSIX without exact start ticks). */
+  hostBaseline?: string;
+}
+
+/**
+ * AB-399: CLIs that start the bridge MCP server as their own child, so the hello's agentPid is the session's
+ * process. Other hosts are exempt from retirement: opencode can host the server through a launcher or in-process,
+ * Antigravity and Muse servers report helper processes (their hooks resolve hosts via antigravityAncestor and
+ * museHostPid), and "other" covers the dashboard "you" peer and CLI peers inside the broker daemon.
+ */
+const RETIRABLE_AGENTS: ReadonlySet<string> = new Set(["claude", "codex"]);
+/** Reuse of a signal-0 probe within one burst of view/send work (peers decorates every member). */
+const HOST_PROBE_MS = 1_000;
+/**
+ * Background creation-identity check of connected sessions (one batch query, never on a request). It only catches
+ * PID reuse (ESRCH is checked inline) and current servers already exit on parent loss (watchParent), so it runs at
+ * watchParent's identity cadence: on Windows each sweep starts one PowerShell process.
+ */
+const LIVENESS_SWEEP_MS = 10 * 60_000;
+/** Coarse start-time resolution (ps lstart has seconds) must never read as a later start. */
+const PID_REUSE_SLACK_MS = 2_000;
+const MAX_AGENT_HOSTS = 4_096;
+/** A retired project main gets its role back only when its session reconnects within this window (AB-399). */
+const RETIRED_MAIN_GRACE_MS = 5 * 60_000;
+
+/**
+ * The start time (epoch ms) a process identity describes, or undefined when it cannot be read. Windows ticks and
+ * Linux boot-relative clock ticks (same boot only) are exact; macOS `ps -o lstart` prints local time, so it is
+ * parsed as local time here (identityStartedAfter would read it as UTC and shift it by the zone offset).
+ */
+function identityStartMs(identity: string): number | undefined {
+  if (process.platform === "win32") return /^\d{1,24}$/.test(identity) ? Number((BigInt(identity) - 621355968000000000n) / 10000n) : undefined;
+  if (process.platform === "linux") {
+    const match = /^(.+):(\d+)$/.exec(identity);
+    if (!match) return undefined;
+    try {
+      if (readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() !== match[1]) return undefined;
+      const btime = Number(/^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"))?.[1]);
+      // Linux reports start times in clock ticks; USER_HZ is 100 on every supported build.
+      return Number.isFinite(btime) ? btime * 1000 + Number(match[2]) * 10 : undefined;
+    } catch { return undefined; }
+  }
+  const startedAt = Date.parse(identity);
+  return Number.isFinite(startedAt) ? startedAt : undefined;
+}
+
+/** Whether a process identity proves a start after `at`. An unparseable identity proves nothing. */
+function provenStartedAfter(identity: string, at: number): boolean {
+  const startedAt = identityStartMs(identity);
+  return startedAt !== undefined && startedAt > at;
 }
 
 /** Operations allowed before a connection has authenticated. */
@@ -131,6 +221,123 @@ type Handler<O extends Op> = (conn: Conn, args: RequestMap[O][0]) => RequestMap[
 const HANDOFF_LOCK_WAIT_MS = 2_000;
 const HANDOFF_LOCK_RETRY_MS = 25;
 export class Broker {
+  private hosting: { mode: "daemon" | "embedded" | "embedded_degraded"; reason?: string } = { mode: "embedded" };
+  setHostingMode(mode: "daemon" | "embedded_degraded", reason?: "windows_wmi_unavailable" | "windows_wmi_create_rejected"): void {
+    this.hosting = { mode, ...(reason ? { reason } : {}) };
+  }
+  private handoverHandler: ((target: EventMap["handover"]) => void) | undefined;
+  private draining = false;
+  private activeRequests = 0;
+  private readonly drainWaiters = new Set<() => void>();
+  private idle: { ms: number; onIdle: () => void; keepAlive?: () => string | undefined; timer: NodeJS.Timeout | null } | undefined;
+  /**
+   * Daemon hosting only: an authenticated client of a newer release (APP_VERSION or PROTOCOL_VERSION) asks this
+   * broker to step aside. The broker stops admitting work at once; the handler drains, closes and exits, and the
+   * newer client then demand-starts its own release. Embedded brokers never hand over (they live with a session).
+   */
+  onNewerClient(handler: (target: EventMap["handover"]) => void): void { this.handoverHandler = handler; }
+  /**
+   * Daemon hosting only: call onIdle once nothing has been served for `ms`. Served means a pipe/TCP client of
+   * another process, a pending remote-job request or start, a connected paired PC, or whatever the host's
+   * `keepAlive` names (open dashboard HTTP/SSE clients, an active mobile connection). Client connections
+   * start and stop the timer; the other sources are checked when it fires and re-arm it while they last.
+   */
+  exitWhenIdle(ms: number, onIdle: () => void, keepAlive?: () => string | undefined): void {
+    if (this.idle?.timer) clearTimeout(this.idle.timer);
+    this.idle = { ms, onIdle, keepAlive, timer: null };
+    this.updateIdle();
+  }
+  /** Why the daemon is still serving without a connected client, or undefined when it is idle. */
+  private idleKeepAlive(): string | undefined {
+    if (this.remoteJobs?.busy) return "remote_job_admission";
+    if (this.network?.activeLinks) return "paired_pc_link";
+    try { return this.idle?.keepAlive?.(); } catch { return "keep_alive_unknown"; }
+  }
+  get isDraining(): boolean { return this.draining; }
+  private updateIdle(): void {
+    const idle = this.idle;
+    if (!idle) return;
+    // The daemon's own dashboard sender registers from this process; it is not a client to stay up for.
+    const served = () => [...this.conns].some(c => c.peer?.pid !== process.pid);
+    if (served() || this.draining || this.closing) {
+      if (idle.timer) { clearTimeout(idle.timer); idle.timer = null; }
+      return;
+    }
+    const arm = () => setTimeout(() => {
+      idle.timer = null;
+      if (this.idle !== idle || served() || this.draining || this.closing) return;
+      const reason = this.idleKeepAlive();
+      if (reason) { this.log.debug("no client connected, but still serving; idle period restarts", { reason }); idle.timer = arm(); return; }
+      this.log.info("no client connected; daemon exits after its idle period", { idleMs: idle.ms });
+      idle.onIdle();
+    }, idle.ms);
+    idle.timer ??= arm();
+  }
+  private handoverRefusal(op: string): BridgeError {
+    // auth/hello answer like an incompatible broker, so every client release backs off and re-elects;
+    // the flag lets current clients retry at once and demand-start after the endpoint is released.
+    return op === "auth" || op === "hello"
+      ? new BridgeError("protocol_mismatch", `agent-bridge ${APP_VERSION} broker is stopping (handover or idle exit); retry shortly.`, { brokerProtocol: PROTOCOL_VERSION, brokerVersion: APP_VERSION, handover: true })
+      : new BridgeError("bad_request", "The broker is stopping (handover to a newer release or idle exit); this request was not applied. Retry shortly.", { handover: true, applied: false, retryLater: true });
+  }
+  /**
+   * Start a handover unless one to this same target happened within the repeat window. Returns false when this
+   * daemon keeps serving. The marker in the home directory outlives this process: when the newer daemon could
+   * not start and an older one was started again, that older daemon does not hand over to the same release
+   * again for the window, so a client that cannot bring up its daemon cannot make brokers churn.
+   */
+  private requestHandover(target: EventMap["handover"]): boolean {
+    if (!this.handoverHandler || this.draining || this.closing) return false;
+    const key = target.version !== undefined ? `version:${target.version}` : `protocol:${target.protocol}`;
+    if (this.store.file !== ":memory:") {
+      const file = join(dirname(this.store.file), HANDOVER_MARKER_FILE), now = this.now();
+      try {
+        const marker = JSON.parse(readFileSync(file, "utf8")) as { target?: unknown; at?: unknown };
+        if (marker.target === key && typeof marker.at === "number" && now - marker.at >= 0 && now - marker.at < HANDOVER_REPEAT_WINDOW_MS) {
+          this.log.warn("not handing over again to the same newer release within the repeat window; that release's daemon did not take over", { target: key, since: marker.at, windowMs: HANDOVER_REPEAT_WINDOW_MS });
+          return false;
+        }
+      } catch { /* No readable marker: no recent handover to this target. */ }
+      const temporary = `${file}.${randomUUID()}.tmp`;
+      try { writeFileSync(temporary, JSON.stringify({ target: key, from: APP_VERSION, at: now }), { flag: "wx", mode: 0o600 }); renameSync(temporary, file); }
+      catch (err) {
+        try { unlinkSync(temporary); } catch { /* Not created. */ }
+        // Without the marker the repeat limit cannot hold, so fail closed and keep serving.
+        this.log.warn("handover marker could not be recorded; daemon keeps serving", { err: String(err), target: key });
+        return false;
+      }
+    }
+    this.log.info("newer agent-bridge client connected; daemon hands over", { ...target, brokerVersion: APP_VERSION, brokerProtocol: PROTOCOL_VERSION });
+    this.draining = true;
+    this.updateIdle();
+    for (const c of this.conns) if (c.authed && c.peer) this.emit(c, "handover", target);
+    this.handoverHandler(target);
+    return true;
+  }
+  /**
+   * Stop admitting requests and wait, bounded, until every request admitted before now has answered. Accepted
+   * mail is already committed to SQLite when its send answers; refused requests were never applied.
+   */
+  drain(timeoutMs = HANDOVER_DRAIN_MS): Promise<boolean> {
+    this.draining = true;
+    this.updateIdle();
+    if (!this.activeRequests) return Promise.resolve(true);
+    return new Promise(resolve => {
+      const done = () => { clearTimeout(timer); this.drainWaiters.delete(done); resolve(true); };
+      const timer = setTimeout(() => { this.drainWaiters.delete(done); resolve(false); }, timeoutMs);
+      this.drainWaiters.add(done);
+    });
+  }
+  /** Trusted bootstrap primitive staging only. Ordinary/default startup never invokes it. */
+  lifecycleServingCapability(phase: LifecycleServingPhase, deadline: number): LifecycleServingCapability {
+    const binding = servingBindings.get(this);
+    if (!binding || binding.revoked || !Object.hasOwn(SERVING_PHASE_MS, phase) || !Number.isFinite(deadline)) unavailableServing();
+    const expires = Math.min(deadline, performance.now() + SERVING_PHASE_MS[phase]);
+    if (expires <= performance.now()) unavailableServing();
+    const capability = Object.freeze({});
+    servingCapabilities.set(capability, { binding, generation: binding.generation, phase, expires });
+    assertLifecycleServingCapability(capability, phase); return capability;
+  }
   private mobileResources?: Set<() => Promise<void>>;
   private mobileRetiring?: boolean;
   /** Deliberate owner-only activation, after caller validation; no change to ordinary startup. */
@@ -208,6 +415,8 @@ export class Broker {
   private decisionSync: DecisionSync | null = null;
   private readonly remoteProgress = new Map<string, string>();
   private networkChange: Promise<unknown> = Promise.resolve();
+  private networkAuthorityDeferred = false;
+  private startupAuthorityRevoked = false;
   private readonly handlers: { [O in Exclude<Op, "modeSend">]: Handler<O> };
   private jobsSnapshot: { active: JsonSnapshot; archive: string; records: Record<string, unknown>[] } | null = null;
   private jobsForDispatch: Record<string, unknown>[] | null = null;
@@ -222,10 +431,21 @@ export class Broker {
     /** The supervisor's job registry, for siblings whose peers are not connected between turns. */
     private readonly jobsPath?: string,
     private readonly networking?: { home: string; config: NetworkConfig },
+    private readonly dashboardHost?: { ensure(force: boolean, port?: number): Promise<import("../cli/dashboard.js").DashboardInfo | null> },
   ) {
     this.groups = new ProjectGroups(jobsPath ? dirname(jobsPath) : undefined);
     this.nativeChildren = new NativeChildren(this.store);
     this.handlers = {
+      coreStatus: () => ({ version: APP_VERSION, pid: process.pid, uptimeSeconds: Math.floor(process.uptime()), ...this.hosting,
+        connectedClients: [...this.conns].filter(c => c.authed).length, connectedJobClients: [...this.conns].filter(c => c.authed && c.peer?.jobAgent).length,
+        runningJobs: this.storedJobs().filter(job => job.status === "running").length, runningJobsEvidence: "legacy_registry_labels_not_execution" }),
+      ensureDashboard: (c, a) => {
+        if (c.peer?.jobAgent || c.peer?.subagent) throw new BridgeError("unauthorized", "Only local project sessions and CLI clients can open the dashboard.");
+        const parsed = z.object({ force: z.boolean(), port: z.number().int().min(1).max(65535).optional() }).strict().safeParse(a);
+        if (!parsed.success) throw new BridgeError("bad_request", "Invalid dashboard startup request.");
+        if (!this.dashboardHost) throw new BridgeError("protocol_mismatch", "This broker does not support ensureDashboard hosting; no operation was applied.", { operation: "ensureDashboard" });
+        return this.dashboardHost.ensure(parsed.data.force, parsed.data.port);
+      },
       askOwner: (c,a) => {
         const peer = this.requirePeer(c);
         if (peer.jobAgent || peer.subagent || peer.agent === "other") throw new BridgeError("unauthorized", "Delegated jobs ask their main; only project sessions file owner questions.");
@@ -268,29 +488,12 @@ export class Broker {
         const args = z.object({ to: z.string().min(1) }).strict().parse(a);
         return this.switchProjectMain(c.peer, this.connByName(args.to)?.peer ?? undefined);
       },
-      projectJobs: async (c) => {
-        const peer = this.requirePeer(c);
-        if (this.jobsPath && this.historyBackground) {
-          try { await this.historyBackground.reconcileAsks(); }
-          catch (error) { this.log.debug("ask reconciliation deferred; records retained", { error: String(error) }); }
-        }
-        // Surviving runners may exist only in retained snapshots after an old server overwrote the registry.
-        const known = new Set(this.storedJobs().map((job) => job.name));
-        for (const runner of this.conns) if (runner.peer?.jobAgent && !known.has(runner.peer.name)) await this.jobForControl(peer, runner.peer.name);
-        this.jobsForDispatch = null;
-        let activeIds = new Set<unknown>();
-        try {
-          const data = readJsonSnapshot(this.jobsPath!).value;
-          const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : undefined;
-          if (!rows) return [];
-          activeIds = new Set(rows.filter(isRecord).map(record => record.id));
-        }
-        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return []; }
-        const stored = this.storedJobs();
-        const jobs = this.jobsPath && !this.historyBackground ? await projectAskCompletions(this.jobsPath, stored) : stored;
-        const retained = this.jobsPath ? selectHistoryJobs(dirname(this.jobsPath), new Set(jobs.filter(job => !activeIds.has(job.id)).map(job => String(job.name)))) : new Map();
-        return jobs.map(job => activeIds.has(job.id) ? job : { ...job, ...retained.get(String(job.name)) })
-          .filter(job => this.groups.canControl(peer, job, this.localPeers()));
+      projectJobs: (c) => this.projectJobRecords(c),
+      // AB-404: peers needs a few fields; full records with retained history can exceed one frame.
+      projectJobSummaries: async (c, a) => {
+        const args = z.object({ offset: z.number().int().nonnegative().optional(),
+          limit: z.number().int().min(1).max(PROJECT_JOB_SUMMARY_PAGE_MAX).optional() }).strict().parse(a ?? {});
+        return pageProjectJobSummaries(await this.projectJobRecords(c), args);
       },
       coordinatorAvailability: (c, a) => {
         const args = z.object({ name: z.string().optional(), unavailable: z.boolean() }).strict().parse(a);
@@ -353,13 +556,21 @@ export class Broker {
       inlineJobControl: async (c, a) => {
         const peer = this.requirePeer(c), job = this.currentJobAuthority(await this.jobForControl(peer, a.job));
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) throw new BridgeError("unauthorized", "Only the current supervisor can control this job.");
-        if (!a.control || !["message", "title", "settings", "effort", "cancel"].includes(a.control.type)) throw new BridgeError("bad_request", "Invalid inline control.");
-        if (job.host && job.status === "running") {
+        if (!a.control || !["message", "title", "settings", "effort", "cancel", "pause"].includes(a.control.type)) throw new BridgeError("bad_request", "Invalid inline control.");
+        // A pause reason travels to runners, peers and the dashboard: only a bounded string is relayed (AB-398).
+        if (a.control.type === "pause") {
+          const reason: unknown = a.control.reason;
+          if (reason !== undefined && typeof reason !== "string") throw new BridgeError("bad_request", "Invalid pause reason.");
+          // One line: newlines in a relayed reason could otherwise add lines to peers or sibling text.
+          const line = reason?.replace(/\s+/g, " ").trim().slice(0, MAX_PAUSE_REASON_CHARS).trim();
+          a = { ...a, control: { type: "pause", ...(line ? { reason: line } : {}) } };
+        }
+        if (job.host && (job.status === "running" || job.status === "paused" && job.pausePending)) {
           await this.onSend(c, { to: String(job.name), body: JSON.stringify(a.control), conversationId: `${CONTROL_CONVERSATION_PREFIX}${job.id}` });
           return { sent: true };
         }
         const executor = typeof (job.executionOwner ?? job.owner) === "string" ? this.connByName(String(job.executionOwner ?? job.owner)) : undefined;
-        if (job.status !== "running") {
+        if (job.status !== "running" && !(job.status === "paused" && job.pausePending)) {
           const recipient = this.jobRecipient(job);
           const primary = this.connByName(recipient);
           if (!primary) throw new BridgeError("unknown_target", "No job master is currently connected.");
@@ -391,11 +602,11 @@ export class Broker {
         return { saved: true };
       },
       auth: (c, a) => {
-        this.checkAuth(a.protocol, a.token);
+        this.checkAuth(a.protocol, a.token, a.canHost);
         c.authed = true;
         return { brokerPid: process.pid };
       },
-      hello: async (c, a) => { const result = await this.onHello(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id); if (job?.ownershipHistory) this.refreshJobPeer(job); void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) })); this.store.history.rememberPeer(c.peer!); return result; },
+      hello: async (c, a) => { const result = await this.onHello(c, a); const job = this.storedJobs().find((j) => `job:${j.id}` === c.peer?.id); if (job?.ownershipHistory) this.refreshJobPeer(job); void this.routePendingJobMail().catch((err) => this.log.warn("pending job reroute deferred", { err: String(err) })); this.store.history.rememberPeer(c.peer!); this.afterRegistration(c); return result; },
       send: (c, a) => this.onSend(c, { ...a, messageId: undefined }),
       trackedSend: (c, a) => this.onTrackedSend(c, a),
       sendState: (c, a) => this.sendState(c, z.uuid().parse(a.id).toLowerCase()),
@@ -407,8 +618,7 @@ export class Broker {
         return this.store.history.search(parsed.data);
       },
       getConversation: (_, a) => {
-        const page = readConversation(this.store.history.database, conversationPageSchema.parse(a)), migration = this.store.history.legacyReadNotice;
-        return migration ? { ...page, migration } : page;
+        return this.store.history.conversationPage(conversationPageSchema.parse(a));
       },
       reindexHistory: (_, a) => {
         const args = z.object({ reset: z.boolean().optional() }).strict().parse(a);
@@ -514,7 +724,8 @@ export class Broker {
   }
 
   /** Bind the endpoint. Rejects with the socket error (EADDRINUSE when another broker owns it). */
-  listen(): Promise<void> {
+  listen(reservation?: EndpointReservation): Promise<void> {
+    if (reservation) return this.listenReserved(reservation);
     return new Promise((resolve, reject) => {
       const server = createServer((socket) => this.accept(socket));
       const onError = (err: Error) => {
@@ -550,6 +761,45 @@ export class Broker {
     });
   }
 
+  private async listenReserved(reservation: EndpointReservation): Promise<void> {
+    this.server = reservation.ownedServer(this.pipePath);
+    this.networkAuthorityDeferred = true;
+    const optional = (what: string, step: () => void) => {
+      try { step(); } catch (err) { this.log.warn(`broker startup: ${what} failed; continuing without it`, { err: String(err) }); }
+    };
+    try {
+      await this.startServices(optional);
+      const accept = (socket: Socket) => this.accept(socket);
+      reservation.activate(accept, this);
+      this.network?.activateAuthority();
+      this.networkAuthorityDeferred = false;
+      this.server.on("error", err => this.log.error("broker server error", { err }));
+      this.tcpReady = this.startTcpFallback();
+      await this.tcpReady.catch(err => this.log.warn("broker TCP fallback unavailable", { err: String(err) }));
+      // Only this real controlled reservation's completed activation registers a
+      // source issuer. A constructor, legacy listener, tentative or failed start
+      // cannot register/mint. Failure here leaves ordinary serving unchanged.
+      if (!servingBindings.has(this) && this.hosting.mode === "daemon" && this.store.file !== ":memory:"
+        && hasEndpointActivationWitness(reservation, this, this.server, this.pipePath, accept)) {
+        try {
+          const server = this.server, home = realpathSync.native(dirname(this.store.file)), identity = servingHomeIdentity(home), hosting = this.hosting;
+          if (resolvePipePath(home, {}) === this.pipePath && server.listening && server.address() === this.pipePath) {
+            const binding: ServingBinding = { server, home, identity, endpoint: this.pipePath, ownerInstance: randomUUID(), generation: 0, revoked: false,
+              current: () => hasEndpointActivationWitness(reservation, this, server, this.pipePath, accept) && this.server === server && this.hosting === hosting && !this.closing && !this.startupAuthorityRevoked && !this.networkAuthorityDeferred && !this.mobileRetiring && this.store.lifecycleWriteManifest().transactionsSettled };
+            const revoke = () => { binding.revoked = true; binding.generation++; };
+            server.once("close", revoke); server.once("error", revoke); servingBindings.set(this, binding);
+          }
+        } catch { /* Unproved canonical home/endpoint binding is lifecycle unsupported, never repaired. */ }
+      }
+    } catch (error) {
+      this.startupAuthorityRevoked = true;
+      this.network?.deferAuthority();
+      await this.abortStartup().catch(() => {});
+      await reservation.close();
+      throw error;
+    }
+  }
+
   /** Undo a failed listen(): background services, timers and the bound server; the store stays open for its owner. */
   private async abortStartup(): Promise<void> {
     this.healthMonitor.close();
@@ -558,6 +808,7 @@ export class Broker {
     if (this.mobileResources) await this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed"));
     await this.stopTcpFallback();
     this.questions?.close(); this.questions = null;
+    if (this.jobsPath) await stopJobRunBackfill(dirname(this.jobsPath));
     await this.historyBackground?.close().catch(() => {});
     this.historyBackground = null;
     await this.jobArchiveBackground?.close().catch(() => {});
@@ -576,6 +827,7 @@ export class Broker {
   }
 
   private async startServices(optional: (what: string, step: () => void) => void): Promise<void> {
+        if (this.jobsPath) void startBrokerJobRunIndex(dirname(this.jobsPath)).catch(error => this.log.warn("job run index preparing", { err: String(error) }));
         await this.nativeChildren.recover();
         if (this.jobsPath && this.store.file !== ":memory:") optional("job archive worker", () => { this.jobArchiveBackground = new JobArchiveBackground(this.jobsPath!, this.log); });
         optional("backups", () => this.store.startBackups());
@@ -606,7 +858,7 @@ export class Broker {
         recipientReceipts: true,
             }, this.log);
             this.installRemoteJobs(this.network);
-            await this.network.start();
+            await this.network.start(this.networkAuthorityDeferred);
           } catch (err) {
             this.remoteDashboard?.close();
             this.remoteDashboard = null;
@@ -629,34 +881,42 @@ export class Broker {
    */
   private async startTcpFallback(): Promise<void> {
     if (process.platform !== "win32" || this.store.file === ":memory:") return;
-    const home = dirname(this.store.file);
-    const identity = processIdentity(process.pid);
+    const home = dirname(this.store.file), file = join(home, BROKER_TCP_FILE);
+    // The pipe is already serving: every PowerShell helper here (own creation identity, DPAPI
+    // unprotect of a previous record, DPAPI protect of the new one) runs off the event loop.
+    // Run synchronously they blocked authentication of waiting clients for seconds on Windows.
+    const [identity, previous] = await Promise.all([ownProcessIdentity(),
+      existsSync(file) ? Promise.resolve().then(() => readMusePrivateJsonAsync(file)).then(record => ({ record }), (error: unknown) => ({ error })) : undefined]);
     if (!identity || this.closing) return;
     const nonce = this.tcpNonce = randomUUID();
-    const server = createServer((socket) => this.accept(socket));
+    const server = createServer((socket) => this.accept(socket, "tcp"));
     this.tcpServer = server;
     server.on("error", (err) => this.log.warn("broker TCP fallback error", { err: String(err) }));
     await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", () => {
       server.removeListener("error", reject);
-      const address = server.address();
-      if (!address || typeof address === "string" || this.closing) { resolve(); return; }
-      this.tcpPort = address.port;
-      const temporary = join(home, `${BROKER_TCP_FILE}.${nonce}.tmp`);
-      let staged = false;
-      try {
-        const file = join(home, BROKER_TCP_FILE);
-        // This recreated descriptor is ephemeral. Unknown content may be durable
-        // user state: neither publication nor shutdown may overwrite/remove it.
-        if (existsSync(file) && !isEphemeralBrokerTcpRecord(readMusePrivateJson(file))) throw new Error("Retaining unknown TCP discovery state");
-        writeMusePrivateJson(temporary, { port: address.port, pid: process.pid, identity, nonce, protocol: PROTOCOL_VERSION, pipePath: this.pipePath });
-        staged = true;
-        renameSync(temporary, file);
-      }
-      catch (err) { this.log.warn("broker TCP fallback port could not be recorded", { err: String(err) }); }
-      finally { if (staged) try { unlinkSync(temporary); } catch { /* Exclusively owned unpublished staging only. */ } }
-      this.log.info("broker loopback fallback listening", { port: address.port });
       resolve();
     }); });
+    const address = server.address();
+    if (!address || typeof address === "string" || this.closing) return;
+    this.tcpPort = address.port;
+    const temporary = join(home, `${BROKER_TCP_FILE}.${nonce}.tmp`);
+    let staged = false;
+    try {
+      // This recreated descriptor is ephemeral. Unknown content may be durable
+      // user state: neither publication nor shutdown may overwrite/remove it.
+      if (previous && ("error" in previous ? true : !isEphemeralBrokerTcpRecord(previous.record))) {
+        throw "error" in previous ? previous.error : new Error("Retaining unknown TCP discovery state");
+      }
+      await writeMusePrivateJsonAsync(temporary, { port: address.port, pid: process.pid, identity, nonce, protocol: PROTOCOL_VERSION, pipePath: this.pipePath });
+      staged = true;
+      // The read above and the protected write are asynchronous: content that appeared since an absent read
+      // was never checked and may be durable user state, so it is retained rather than replaced.
+      if (!previous && existsSync(file)) throw new Error("Retaining TCP discovery state that appeared during publication");
+      renameSync(temporary, file);
+    }
+    catch (err) { this.log.warn("broker TCP fallback port could not be recorded", { err: String(err) }); }
+    finally { if (staged) try { unlinkSync(temporary); } catch { /* Exclusively owned unpublished staging only. */ } }
+    this.log.info("broker loopback fallback listening", { port: address.port });
   }
 
   private async stopTcpFallback(): Promise<void> {
@@ -681,12 +941,15 @@ export class Broker {
   async close(): Promise<void> {
     this.healthMonitor.close();
     this.closing = true;
+    if (this.livenessTimer) { clearInterval(this.livenessTimer); this.livenessTimer = null; }
+    if (this.idle?.timer) { clearTimeout(this.idle.timer); this.idle.timer = null; }
     if (this.mobileResources) await this.disposeMobileResources().catch(() => this.mobileDisposalDiagnostic("mobile_disposal_failed"));
     this.questions?.close(); this.questions = null;
     this.store.stopWrites();
     if (this.pendingJobMailRetry) clearTimeout(this.pendingJobMailRetry);
     if (this.jobMailRerouteTimer) { clearTimeout(this.jobMailRerouteTimer); this.jobMailRerouteTimer = null; }
     this.pendingJobMailRetry = null;
+    if (this.jobsPath) await stopJobRunBackfill(dirname(this.jobsPath));
     await this.historyBackground?.close();
     await this.jobArchiveBackground?.close();
     this.jobArchiveBackground = null;
@@ -715,6 +978,7 @@ export class Broker {
 
   /** Serialize listener changes and let the elected broker remain the sole network writer. */
   private async configureNetwork(value: NetworkConfig): Promise<NetworkStatus> {
+    if (this.networkAuthorityDeferred) throw new BridgeError("bad_request", "Core is initializing; network configuration was not applied.");
     if (!this.networking) throw new BridgeError("bad_request", "Restart all agent-bridge hosting sessions to load this wizard-capable broker.");
     const config = writeNetworkConfig(this.networking.home, value);
     this.remoteDashboard?.close();
@@ -734,7 +998,7 @@ export class Broker {
         recipientReceipts: true,
       }, this.log);
       this.installRemoteJobs(service);
-      try { await service.start(); this.network = service; }
+      try { await service.start(this.networkAuthorityDeferred); this.network = service; }
       catch (err) { await service.close(); throw err; }
     }
     return this.network?.status() ?? { enabled: false, config, discovered: [], paired: [] };
@@ -765,9 +1029,11 @@ export class Broker {
     }
   }
 
-  private accept(socket: Socket): void {
-    const conn: Conn = { socket, peer: null, authed: false, inFlight: 0, mailGeneration: 0 };
+  private accept(socket: Socket, transport: Conn["transport"] = "pipe"): void {
+    if (this.startupAuthorityRevoked) { socket.destroy(); return; }
+    const conn: Conn = { socket, peer: null, authed: false, inFlight: 0, mailGeneration: 0, transport };
     this.conns.add(conn);
+    this.updateIdle();
     socket.setEncoding("utf8");
     const decoder = new FrameDecoder(MAX_FRAME_BYTES);
     this.log.debug("connection accepted");
@@ -803,8 +1069,9 @@ export class Broker {
     socket.on("error", (err) => this.log.debug("connection error", { err: err.message }));
     socket.on("close", () => {
       this.conns.delete(conn);
+      this.updateIdle();
       if (conn.peer) {
-        void this.nativeChildren.endParent(conn.peer).catch(err => this.log.warn("native child fallback deferred", { err: String(err) }));
+        void this.nativeChildren.endParent(conn.peer, true).catch(err => this.log.warn("native child fallback deferred", { err: String(err) }));
         if (!this.closing && !conn.peer.jobAgent && !conn.peer.subagent) {
           const name = conn.peer.name, at = this.now();
           void this.store.retryWrite(() => {
@@ -819,6 +1086,15 @@ export class Broker {
   }
 
   private async dispatch(conn: Conn, frame: RequestFrame): Promise<void> {
+    if (this.refuseRevokedStartup(conn, frame)) return;
+    // A stopping daemon admits nothing new, so drain() has a fixed set of requests to wait for.
+    if (this.draining) { this.write(conn, { t: "res", id: frame.id, ok: false, error: this.handoverRefusal(frame.op).toPayload() }); return; }
+    this.activeRequests++;
+    try { await this.dispatchAdmitted(conn, frame); }
+    finally { if (--this.activeRequests === 0) for (const done of [...this.drainWaiters]) done(); }
+  }
+
+  private async dispatchAdmitted(conn: Conn, frame: RequestFrame): Promise<void> {
     this.healthMonitor.start();
     // In-memory probes must not pause background work just to observe its status.
     const countsPressure = !["reindexHistory", "health", "ping"].includes(frame.op);
@@ -834,6 +1110,7 @@ export class Broker {
       const turn = this.requestTurn.then(() => new Promise<void>((resolve) => setImmediate(resolve)));
       this.requestTurn = turn;
       await turn;
+      if (this.refuseRevokedStartup(conn, frame)) return;
       if (this.closing) return;
       if (!conn.authed && !UNAUTHENTICATED_OPS.has(frame.op)) throw new BridgeError("unauthorized", "authenticate first");
       this.log.debug("request", { op: frame.op, peer: conn.peer?.name });
@@ -854,6 +1131,12 @@ export class Broker {
       this.historyBackground?.pressure(this.historyPendingRequests > 0);
       this.store.backupPressure(this.historyPendingRequests > 0);
     }
+  }
+
+  private refuseRevokedStartup(conn: Conn, frame: RequestFrame): boolean {
+    if (!this.startupAuthorityRevoked) return false;
+    this.write(conn, { t: "res", id: frame.id, ok: false, error: { code: "internal", message: "Core initialization is unavailable; no request was admitted." } });
+    return true;
   }
 
   private write(conn: Conn, frame: Parameters<typeof encodeFrame>[0]): boolean {
@@ -943,13 +1226,188 @@ export class Broker {
     return publicPeer;
   }
 
-  private localPeers(): PeerInfo[] { return [...this.conns].flatMap((c) => c.peer ? [c.peer] : []); }
+  /**
+   * AB-399: each node's session host as of its first hello on this broker. A POSIX MCP server whose CLI ended is
+   * re-parented (agentPid 1 or a subreaper) and would otherwise revive on its next hello; the frozen host keeps
+   * pointing at the CLI it was started by.
+   */
+  private readonly agentHosts = new Map<string, { agentPid: number | null; agentStartedAt: string | null; firstHelloAt: number }>();
+  /**
+   * Node ids the broker retired (in memory only). Their CLI is provably gone, so a re-hello from the same server is
+   * refused: a release that ignores the `retired` event reconnects at once, and the refusal sends it into its
+   * normal reconnect backoff instead of a registration loop.
+   */
+  private readonly retiredPeers = new Map<string, EventMap["retired"]["reason"]>();
+  /** Project mains whose connection the broker retired; the same session reconnecting soon gets its role back. */
+  private readonly retiredProjectMains = new Map<string, { main: ProjectMainIdentity; at: number }>();
+  private identityReader: (pids: number[]) => Promise<Map<number, string>> = readProcessIdentities;
+  private livenessTimer: NodeJS.Timeout | null = null;
+  private livenessSweep: Promise<void> | undefined;
+
+  /** Test seam: the batch creation-identity reader used by the background liveness sweep. */
+  setIdentityReader(reader: (pids: number[]) => Promise<Map<number, string>>): void { this.identityReader = reader; }
+
+  private freezeAgentHost(peer: PeerInfo): void {
+    // Only retirable sessions need a frozen host; others would only cycle the bounded map.
+    if (peer.jobAgent || peer.subagent || !RETIRABLE_AGENTS.has(peer.agent)) return;
+    const known = this.agentHosts.get(peer.id);
+    if (known) { peer.agentPid = known.agentPid; peer.agentStartedAt = known.agentStartedAt; return; }
+    if (this.agentHosts.size >= MAX_AGENT_HOSTS) this.agentHosts.delete(this.agentHosts.keys().next().value!);
+    this.agentHosts.set(peer.id, { agentPid: peer.agentPid ?? null, agentStartedAt: peer.agentStartedAt ?? null, firstHelloAt: this.now() });
+  }
+
+  /** Whether a session may be retired when its CLI process is gone (see RETIRABLE_AGENTS); TCP peers never are. */
+  private retirablePeer(peer: PeerInfo | null, transport: Conn["transport"]): peer is PeerInfo {
+    return Boolean(peer && transport === "pipe" && !peer.jobAgent && !peer.subagent && RETIRABLE_AGENTS.has(peer.agent)
+      && Number.isSafeInteger(peer.agentPid) && peer.agentPid! > 1 && peer.agentStartedAt);
+  }
+
+  private retirable(conn: Conn): boolean {
+    return !conn.retired && this.retirablePeer(conn.peer, conn.transport);
+  }
+
+  /**
+   * Signal 0 only (no process is started). True only for ESRCH of the session's CLI while its server process is
+   * visible here; EPERM and every other answer count as alive. A server PID that does not exist here belongs to
+   * another PID namespace or a synthetic registration.
+   */
+  private hostGone(peer: PeerInfo): boolean {
+    const missing = (pid: number) => {
+      try { process.kill(pid, 0); return false; }
+      catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
+    };
+    return !missing(peer.pid) && missing(peer.agentPid!);
+  }
+
+  /** hostGone with the probe reused within one burst of view/send work (peers decorates every member). */
+  private hostExited(conn: Conn): boolean {
+    const at = this.now();
+    if (conn.hostProbe && at - conn.hostProbe.at < HOST_PROBE_MS && at >= conn.hostProbe.at) return conn.hostProbe.exited;
+    const exited = this.hostGone(conn.peer!);
+    conn.hostProbe = { at, exited };
+    return exited;
+  }
+
+  /**
+   * Hello gate for retirable sessions, before any registration work (session recovery, replacing an older server
+   * of the session, mail claims). A server the broker already retired, or one whose frozen CLI is gone, is
+   * refused with "unauthorized": every node release treats that as "back off and retry" (nextBackoff), so even a
+   * release that knows nothing of retirement cannot reconnect in a tight loop. Current nodes read `retired` from
+   * the details and stay off the bridge.
+   */
+  private refuseRetiredHello(conn: Conn, peer: PeerInfo): void {
+    if (!this.retirablePeer(peer, conn.transport)) return;
+    const reason = this.retiredPeers.get(peer.id) ?? (this.hostGone(peer) ? "host_exited" : undefined);
+    if (!reason) return;
+    this.rememberRetired(peer.id, reason);
+    this.log.debug("refusing a session whose CLI process ended", { name: peer.name, agentPid: peer.agentPid, reason });
+    throw new BridgeError("unauthorized", "This session's CLI process has ended; the broker retired its bridge server.", { retired: true, reason, agentPid: peer.agentPid ?? null });
+  }
+
+  private rememberRetired(id: string, reason: EventMap["retired"]["reason"]): void {
+    this.retiredPeers.delete(id);
+    if (this.retiredPeers.size >= MAX_AGENT_HOSTS) this.retiredPeers.delete(this.retiredPeers.keys().next().value!);
+    this.retiredPeers.set(id, reason);
+  }
+
+  /**
+   * A connected MCP server may outlive its CLI parent. The retained DB name is history, while the socket stops
+   * representing a live session once its CLI process is gone. Inline this reads only the retirement verdict and
+   * a cached signal-0 probe; creation identities are checked by the background sweep (sweepPeerLiveness).
+   */
+  private liveConns(): Conn[] {
+    const live: Conn[] = [];
+    for (const conn of this.conns) {
+      if (!conn.peer || conn.retired || conn.socket.destroyed) continue;
+      if (conn.registered && this.retirable(conn)) {
+        this.startLivenessSweep();
+        if (this.hostExited(conn)) { this.retire(conn, "host_exited"); continue; }
+      }
+      live.push(conn);
+    }
+    return live;
+  }
+
+  /** Check a new registration once its hello reply is written, so a dead session is told at once (AB-399). */
+  private afterRegistration(conn: Conn): void {
+    setImmediate(() => {
+      conn.registered = true;
+      if (!this.closing && this.conns.has(conn) && this.retirable(conn) && this.hostExited(conn)) this.retire(conn, "host_exited");
+    });
+  }
+
+  /** Tell the server why it leaves (so it stays off instead of reconnecting) and close its connection. */
+  private retire(conn: Conn, reason: EventMap["retired"]["reason"]): void {
+    const peer = conn.peer;
+    if (!peer || conn.retired) return;
+    conn.retired = true;
+    this.rememberRetired(peer.id, reason);
+    for (const [key, main] of this.projectMains) if (ownsProjectMain(main, peer)) this.retiredProjectMains.set(key, { main, at: this.now() });
+    this.log.info("retiring session whose CLI process ended", { name: peer.name, agentPid: peer.agentPid, reason });
+    this.emit(conn, "retired", { reason, agentPid: peer.agentPid ?? null });
+    conn.socket.end();
+  }
+
+  private startLivenessSweep(): void {
+    if (this.livenessTimer || this.closing) return;
+    this.livenessTimer = setInterval(() => void this.sweepPeerLiveness().catch(err => this.log.warn("peer liveness sweep failed", { err: String(err) })), LIVENESS_SWEEP_MS);
+    this.livenessTimer.unref();
+  }
+
+  /**
+   * Background creation-identity check: one asynchronous batch query for all retirable sessions, one at a time.
+   * A session retires only on proven PID reuse: the process now holding its CLI PID started after the session's
+   * CLI did (its recorded identity's start time, else the first hello on this broker). An unreadable, failed or
+   * merely different identity (format, time zone) counts as alive.
+   */
+  sweepPeerLiveness(): Promise<void> {
+    if (this.livenessSweep) return this.livenessSweep;
+    // A host already gone (ESRCH) is retired inline; only hosts that still answer signal 0 need an identity read.
+    const targets = [...this.conns].filter(conn => this.retirable(conn) && !this.hostExited(conn));
+    if (!targets.length || this.closing) {
+      // No reader process while nothing needs one; liveConns starts the timer again for a new retirable session.
+      if (!targets.length && this.livenessTimer) { clearInterval(this.livenessTimer); this.livenessTimer = null; }
+      return Promise.resolve();
+    }
+    const sweep = (async () => {
+      let identities: Map<number, string>;
+      try { identities = await this.identityReader(targets.map(conn => conn.peer!.agentPid!)); }
+      catch (error) { this.log.debug("peer identity query failed; sessions stay live", { err: String(error) }); return; }
+      for (const conn of targets) {
+        const peer = conn.peer;
+        if (this.closing || !peer || !this.conns.has(conn) || !this.retirable(conn)) continue;
+        const current = identities.get(peer.agentPid!);
+        if (!current || current === peer.agentStartedAt) continue;
+        let since: number;
+        if (process.platform === "win32" || process.platform === "linux") {
+          // After a broker restart the first hello here is the reconnect, so the recorded CLI start is the better bound.
+          since = identityStartMs(peer.agentStartedAt!) ?? this.agentHosts.get(peer.id)?.firstHelloAt ?? peer.startedAt;
+        } else {
+          // ps lstart is local time in the printing process's zone, and the server's TZ may differ from the
+          // broker's: compare only with the broker's own first reading of this host.
+          const baseline = conn.hostBaseline ??= current;
+          if (current === baseline) continue;
+          since = identityStartMs(baseline) ?? this.agentHosts.get(peer.id)?.firstHelloAt ?? peer.startedAt;
+        }
+        if (provenStartedAfter(current, since + PID_REUSE_SLACK_MS)) this.retire(conn, "pid_reused");
+      }
+    })().finally(() => { if (this.livenessSweep === sweep) this.livenessSweep = undefined; });
+    return this.livenessSweep = sweep;
+  }
+
+  private localPeers(): PeerInfo[] { return this.liveConns().map((c) => c.peer!); }
 
   private projectPeer(peer: PeerInfo): PeerInfo {
     const decorated = this.groups.decorate(peer), key = decorated.projectGroup;
     if (!key || peer.jobAgent || peer.subagent) return decorated;
     const members = this.localPeers().filter((p) => !p.jobAgent && !p.subagent && this.groups.decorate(p).projectGroup === key)
       .sort((a, b) => a.startedAt - b.startedAt || a.name.localeCompare(b.name));
+    // Remembered retired mains are in-memory state only; past the grace window the current main keeps its role.
+    const at = this.now();
+    for (const [group, entry] of this.retiredProjectMains) if (at - entry.at > RETIRED_MAIN_GRACE_MS || at < entry.at) this.retiredProjectMains.delete(group);
+    const retired = this.retiredProjectMains.get(key), back = retired && members.find(p => ownsProjectMain(retired.main, p));
+    // A retired main whose session reconnects soon (a resumed CLI) takes its role back, as after a broker restart.
+    if (back) { this.retiredProjectMains.delete(key); this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, back); }
     let main = members.find(p => this.projectMains.has(key) && ownsProjectMain(this.projectMains.get(key)!, p));
     if (!main) { main = members[0]; if (main) this.recordProjectMain(key, `project:${basename(decorated.projectRoot!)}`, main); }
     return { ...decorated, projectMain: main?.id === peer.id, projectAddress: `project:${basename(decorated.projectRoot!)}`, projectRoute: this.projectRoutes.get(key) };
@@ -959,6 +1417,7 @@ export class Broker {
     if (!target || target.jobAgent || target.subagent || target.host) throw new BridgeError("bad_request", "Choose a live local project master.");
     const peer = this.projectPeer(target);
     if (!peer.projectGroup || source && (source.jobAgent || this.projectPeer(source).projectGroup !== peer.projectGroup)) throw new BridgeError("unauthorized", "Only a master of this project may switch its main session.");
+    this.retiredProjectMains.delete(peer.projectGroup);
     this.recordProjectMain(peer.projectGroup, peer.projectAddress!, target);
     return this.projectPeer(target);
   }
@@ -1012,7 +1471,7 @@ export class Broker {
 
   /** Project local runner lineage from durable jobs; do not alter broker routing identities. */
   private dashboardPeers(): PeerInfo[] {
-    const peers = [...this.conns].flatMap((c) => c.peer ? [c.peer] : []);
+    const peers = [...this.liveConns()].flatMap((c) => c.peer ? [c.peer] : []);
     const jobs = this.peerJobs(peers);
     return peers.flatMap((peer) => {
       const job = jobs.find((j) => j.name === peer.name || `job:${j.id}` === peer.id);
@@ -1023,7 +1482,7 @@ export class Broker {
   }
 
   private connByName(name: string): Conn | undefined {
-    for (const c of this.conns) if (c.peer?.name === name) return c;
+    for (const c of this.liveConns()) if (c.peer?.name === name) return c;
     return undefined;
   }
 
@@ -1177,7 +1636,7 @@ export class Broker {
     }
     if (active && (known?.remote || (isRecord(known?.host) && Date.now() - Number(known.host.startedAt) < 30_000))) return known;
     // A connected inline executor is the only source of its runtime controller.
-    if (active && known?.status === "running" && !known.host && this.connByName(String(known.executionOwner ?? known.owner))) return known;
+    if (active && (known?.status === "running" || known?.status === "paused" && known.pausePending) && !known.host && this.connByName(String(known.executionOwner ?? known.owner))) return known;
     const recovered = this.jobsPath ? await recoverJobRecordAsync(dirname(this.jobsPath), ref) : undefined;
     const current = this.storedJob(ref);
     if (!recovered) return typeof current?.prompt === "string" && typeof current.owner === "string" ? current : undefined;
@@ -1258,6 +1717,32 @@ export class Broker {
     return this.storedJobs();
   }
 
+  /** Full stored records of the jobs this peer may control, with retained history merged in. */
+  private async projectJobRecords(c: Conn): Promise<Record<string, unknown>[]> {
+    const peer = this.requirePeer(c);
+    if (this.jobsPath && this.historyBackground) {
+      try { await this.historyBackground.reconcileAsks(); }
+      catch (error) { this.log.debug("ask reconciliation deferred; records retained", { error: String(error) }); }
+    }
+    // Surviving runners may exist only in retained snapshots after an old server overwrote the registry.
+    const known = new Set(this.storedJobs().map((job) => job.name));
+    for (const runner of this.conns) if (runner.peer?.jobAgent && !known.has(runner.peer.name)) await this.jobForControl(peer, runner.peer.name);
+    this.jobsForDispatch = null;
+    let activeIds = new Set<unknown>();
+    try {
+      const data = readJsonSnapshot(this.jobsPath!).value;
+      const rows = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.jobs) ? data.jobs : undefined;
+      if (!rows) return [];
+      activeIds = new Set(rows.filter(isRecord).map(record => record.id));
+    }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return []; }
+    const stored = this.storedJobs();
+    const jobs = this.jobsPath && !this.historyBackground ? await projectAskCompletions(this.jobsPath, stored) : stored;
+    const retained = this.jobsPath ? selectHistoryJobs(dirname(this.jobsPath), new Set(jobs.filter(job => !activeIds.has(job.id)).map(job => String(job.name)))) : new Map();
+    return jobs.map(job => activeIds.has(job.id) ? job : { ...job, ...retained.get(String(job.name)) })
+      .filter(job => this.groups.canControl(peer, job, this.localPeers()));
+  }
+
   private storedJobs(projectionCurrent?: false): Record<string, unknown>[] {
     if (!this.jobsPath) return [];
     // Sibling routing consults the registry several times in one synchronous dispatch batch.
@@ -1309,7 +1794,7 @@ export class Broker {
       return records.flatMap((j) => j && (!target || j.name === target) && (this.sameJobFamily(peer, { id: `job:${j.id}`, jobOwner: String(j.supervisor) } as PeerInfo, records) || this.sharedJobs(peer, { id: `job:${j.id}` } as PeerInfo, records) || peer.jobSendTo?.includes(String(j.name))) && typeof j.id === "string" &&
         typeof j.name === "string" && j.name !== peer.name && `job:${j.id}` !== peer.id &&
         AGENT_KINDS.includes(j.agent as AgentKind) && SIBLING_STATUSES.has(j.status as SiblingPeer["status"])
-        ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent as AgentKind, status: j.status as SiblingPeer["status"], ...(typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}), report: typeof j.report === "string" ? j.report : null }]
+        ? [{ id: `job:${j.id}`, name: j.name, title: isRecord(j.args) && typeof j.args.title === "string" ? j.args.title : "", agent: j.agent as AgentKind, status: j.status as SiblingPeer["status"], ...(typeof j.pauseReason === "string" ? { pauseReason: j.pauseReason } : {}), ...(typeof j.pausedAt === "number" ? { pausedAt: j.pausedAt } : {}), ...(typeof j.finishedAt === "number" ? { finishedAt: j.finishedAt } : {}), report: typeof j.report === "string" ? j.report : null }]
         : []);
     } catch {
       return [];
@@ -1325,11 +1810,12 @@ export class Broker {
       const previous = stored.find((s) => s.id === p.id);
       if (previous) peers.delete(previous.name);
       peers.set(p.name, { name: p.name, title: p.jobTitle ?? "", agent: p.jobAgent!, status: previous?.status ?? "running",
+        ...(previous?.pauseReason ? { pauseReason: previous.pauseReason } : {}), ...(previous?.pausedAt ? { pausedAt: previous.pausedAt } : {}),
         ...(previous?.finishedAt !== undefined ? { finishedAt: previous.finishedAt } : {}) });
     }
     const caller = this.requirePeer(conn);
-    for (const parent of this.conns) if (parent.peer) {
-      for (const child of this.nativeChildren.list(parent.peer)) {
+    for (const parent of this.liveConns()) {
+      for (const child of this.nativeChildren.list(parent.peer!)) {
         if (this.nativeAllowed(this.nativeChildren.target(child.address), caller.name)) peers.set(child.address, { name: child.address, title: "Native Claude child", agent: "claude", status: "running" });
       }
     }
@@ -1402,7 +1888,7 @@ export class Broker {
       const supervisor = this.connByName(owner);
       if (supervisor) this.emit(supervisor, "message", note);
     }
-    if (stored && stored.status !== "running") {
+    if (stored && stored.status !== "running" && stored.status !== "paused") {
       result.finishedRecipient = { name: stored.name, status: stored.status, report: stored.report,
         ...(stored.finishedAt !== undefined ? { finishedAt: stored.finishedAt } : {}) };
     }
@@ -1478,8 +1964,12 @@ export class Broker {
     });
   }
 
-  private checkAuth(protocol: number, token: unknown): void {
+  private checkAuth(protocol: number, token: unknown, canHost?: unknown): void {
     if (protocol !== PROTOCOL_VERSION) {
+      // Only a client proving the shared token that can demand-start its own daemon can make this one step aside,
+      // and only for a newer protocol. CLI commands, job runners and connect-only nodes never send canHost.
+      if (this.handoverHandler && canHost === true && typeof protocol === "number" && protocol > PROTOCOL_VERSION && typeof token === "string" && tokensEqual(token, this.token)
+        && this.requestHandover({ protocol })) throw this.handoverRefusal("auth");
       throw new BridgeError("protocol_mismatch", `broker speaks protocol ${PROTOCOL_VERSION}, client ${protocol}`, {
         brokerProtocol: PROTOCOL_VERSION,
       });
@@ -1491,7 +1981,7 @@ export class Broker {
   }
 
   private async onHello(conn: Conn, args: RequestMap["hello"][0]): Promise<RequestMap["hello"][1]> {
-    this.checkAuth(args.protocol, args.token);
+    this.checkAuth(args.protocol, args.token, args.canHost);
     conn.authed = true;
     const p = args.peer;
     if (!p || !PEER_NAME_PATTERN.test(p.name ?? "") || !AGENT_KINDS.includes(p.agent)) {
@@ -1500,6 +1990,11 @@ export class Broker {
     if (conn.peer) throw new BridgeError("bad_request", "already registered");
     if (isPluginCacheCwd(String(p.cwd ?? ""))) throw new BridgeError("bad_request", "Plugin-cache processes cannot register as sessions.");
     if (p.subagent && !p.jobAgent) throw new BridgeError("bad_request", "Native subagents cannot register as top-level bridge sessions.");
+    // Only a newer client that can demand-start its own daemon may ask for handover (never a job runner).
+    // Refused before any registration state changes: the newer release registers with its own daemon. When the
+    // repeat limit holds, the newer client registers here as with any older compatible broker.
+    if (this.handoverHandler && args.canHost === true && !p.jobAgent && isNewerRelease(p.version, APP_VERSION)
+      && this.requestHandover({ version: String(p.version).slice(0, 32) })) throw this.handoverRefusal("hello");
     const peer: PeerInfo = {
       id: String(p.id),
       name: p.name,
@@ -1529,6 +2024,8 @@ export class Broker {
         jobSendTo: Array.isArray(p.jobSendTo) ? p.jobSendTo.filter(isJobSendTarget).slice(0, MAX_JOB_SEND_TARGETS) : [],
       } : {}),
     };
+    this.freezeAgentHost(peer);
+    this.refuseRetiredHello(conn, peer);
     if (!peer.sessionId) peer.sessionId = this.store.recoverSession(peer);
     // Recover the identity before allocating a name. Arrival order cannot swap an
     // established suffixed session with another session's base name on reconnect.
@@ -1558,6 +2055,7 @@ export class Broker {
     }
     this.assertQueueRegistration(conn, peer, registration);
     conn.mailReady = registration;
+    this.updateIdle();
     this.log.info("peer joined", { name: peer.name, agent: peer.agent, jobAgent: peer.jobAgent, cwd: peer.cwd, claimed });
     if (!peer.jobAgent) this.broadcastEvent("peer_joined", peer, conn);
     // Deliver the backlog right after the hello response has been written.
@@ -1597,7 +2095,7 @@ export class Broker {
     const peer = this.requirePeer(conn);
     const previousIdentity = { id: peer.id, agent: peer.agent, sessionId: peer.sessionId, name: peer.name };
     const previousName = peer.name;
-    if (args.sessionId !== undefined && args.sessionId !== peer.sessionId || args.name !== undefined && args.name !== peer.name) await this.nativeChildren.endParent(peer);
+    if (args.sessionId !== undefined && args.sessionId !== peer.sessionId || args.name !== undefined && args.name !== peer.name) await this.nativeChildren.endParent(peer, true);
     const aliases: string[] = [];
     let replay = args.unavailable === false;
     if (args.unavailable !== undefined) {
@@ -1670,8 +2168,8 @@ export class Broker {
       const previousIdentity = { id: old.id, agent: old.agent, sessionId: old.sessionId, name: old.name };
       this.store.rememberName(old, this.now());
       this.log.info("session connected again from a new server; replacing the old connection", { name: old.name, by: peer.name, sessionId: peer.sessionId });
-      this.emit(c, "replaced", { by: peer.name });
-      void this.nativeChildren.endParent(old).catch(err => this.log.warn("replaced native child fallback deferred", { err: String(err) }));
+      this.emit(c, "replaced", { by: peer.name, ...(peer.version ? { version: peer.version } : {}), agentPid: peer.agentPid ?? null, agentStartedAt: peer.agentStartedAt ?? null });
+      void this.nativeChildren.endParent(old, true).catch(err => this.log.warn("replaced native child fallback deferred", { err: String(err) }));
       this.conns.delete(c);
       c.peer = null;
       this.broadcastEvent("peer_left", old, c);
@@ -1715,7 +2213,7 @@ export class Broker {
   private recipientConn(name: string): Conn | undefined {
     const exact = this.connByName(name);
     if (exact) return exact;
-    const matches = [...this.conns].filter((c) => c.peer && this.store.namesFor(c.peer).includes(name));
+    const matches = this.liveConns().filter((c) => c.peer && this.store.namesFor(c.peer).includes(name));
     return matches.length === 1 ? matches[0] : undefined;
   }
 
@@ -1777,7 +2275,7 @@ export class Broker {
 
   /** Turns a sender-supplied target into live connections and/or offline queue keys. */
   private resolveTargets(to: string, sender: PeerInfo): { live: Conn[]; queued: string[]; skipped?: string[] } {
-    const all = [...this.conns].filter((c) => c.peer && c.peer.id !== sender.id);
+    const all = this.liveConns().filter((c) => c.peer && c.peer.id !== sender.id);
     // Broadcasts and agent kinds address sessions; job runners only get mail sent to them by name.
     const others = all.filter((c) => !c.peer!.jobAgent);
     if (to.startsWith("project:")) {

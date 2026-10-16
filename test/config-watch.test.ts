@@ -1,13 +1,91 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, statSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { type BridgeConfig, loadConfig, saveConfigValue, watchConfig } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
 import { until } from "./helpers.js";
 import { configurePathDisplay, pathDisplayPrefersAlias } from "../src/core/display-paths.js";
 
+// Passthrough, except for one path made busy by a test (a Windows antivirus or editor lock).
+const busy = vi.hoisted(() => ({ path: null as string | null, reads: 0 }));
+vi.mock("node:fs", async (original) => {
+  const fs = await original<typeof import("node:fs")>();
+  const readFileSync = ((...args: Parameters<typeof fs.readFileSync>) => {
+    if (busy.path !== null && args[0] === busy.path) {
+      busy.reads++;
+      throw Object.assign(new Error(`EBUSY: resource busy or locked, open '${busy.path}'`), { code: "EBUSY" });
+    }
+    return fs.readFileSync(...args);
+  }) as typeof fs.readFileSync;
+  return { ...fs, default: { ...fs, readFileSync }, readFileSync };
+});
+
 describe("config file", () => {
+  it("reloads project edits and project switches, and stops polling on disposal", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ab-cfg-project-"));
+    const first = join(home, "first"), second = join(home, "second");
+    for (const project of [first, second]) mkdirSync(join(project, ".agent-bridge"), { recursive: true });
+    const firstConfig = join(first, ".agent-bridge", "config.json");
+    writeFileSync(firstConfig, '{"name":"first"}');
+    writeFileSync(join(second, ".agent-bridge", "config.json"), '{"name":"second"}');
+    let project = first;
+    vi.useFakeTimers();
+    const changed = vi.fn();
+    const stop = watchConfig(home, "codex", nullLogger, changed, () => project);
+    try {
+      writeFileSync(firstConfig, '{"name":"edited"}');
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ name: "edited" }));
+      project = second;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(changed).toHaveBeenLastCalledWith(expect.objectContaining({ name: "second" }));
+      stop();
+      project = first;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(changed).toHaveBeenCalledTimes(2);
+    } finally { stop(); vi.useRealTimers(); rmSync(home, { recursive: true, force: true }); }
+  });
+  it("detects a replacement before the first poll even with the same mtime and size", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ab-cfg-poll-"));
+    vi.useFakeTimers();
+    let stop: (() => void) | undefined;
+    try {
+      const path = join(home, "config.json");
+      writeFileSync(path, '{"maxJobs":10}');
+      const initial = statSync(path);
+      const changed = vi.fn();
+      stop = watchConfig(home, "codex", nullLogger, changed);
+      writeFileSync(path, '{"maxJobs":12}');
+      utimesSync(path, initial.atime, initial.mtime);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(changed).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ maxJobs: 12 }));
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(changed).toHaveBeenCalledTimes(1);
+    } finally { stop?.(); vi.useRealTimers(); rmSync(home, { recursive: true, force: true }); }
+  });
+  it("keeps the baseline on a transient read error and still applies a real deletion", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ab-cfg-busy-"));
+    vi.useFakeTimers();
+    let stop: (() => void) | undefined;
+    try {
+      const path = join(home, "config.json");
+      writeFileSync(path, '{"maxJobs":12}');
+      const changed = vi.fn();
+      stop = watchConfig(home, "codex", nullLogger, changed);
+      busy.path = path; busy.reads = 0;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(busy.reads).toBeGreaterThan(0);
+      expect(changed).not.toHaveBeenCalled();
+      busy.path = null;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(changed).not.toHaveBeenCalled();
+      rmSync(path);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(changed).toHaveBeenCalledOnce();
+      expect(changed.mock.calls[0]![0].maxJobs).not.toBe(12);
+    } finally { busy.path = null; stop?.(); vi.useRealTimers(); rmSync(home, { recursive: true, force: true }); }
+  });
   it("updates alias display preference when the home config is reloaded", async () => {
     const home = mkdtempSync(join(tmpdir(), "ab-cfg-paths-"));
     let stop: (() => void) | undefined;

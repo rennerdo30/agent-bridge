@@ -1,8 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, realpathSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readStoredJobsResponsive } from "../src/core/dashboard-read.js";
+import * as snapshots from "../src/core/file-cache.js";
+import { writeJsonStore } from "../src/core/json-store.js";
 import { BridgeNode } from "../src/core/node.js";
 import { nullLogger } from "../src/core/logger.js";
 import { loadOrCreateToken } from "../src/core/token.js";
@@ -33,14 +36,45 @@ async function node(name: string, cwd: string, job?: { id: string; parent: strin
   nodes.push(n); await n.start(); return n;
 }
 function registry(project: string): void {
-  writeFileSync(join(env.home, "jobs.json"), JSON.stringify({ version: 2, jobs: [{ id: "one", name: "codex-job-one", agent: "codex", model: null, prompt: "task",
+  // Publish the same indexed snapshot as a real job writer. A raw legacy file
+  // can be replaced by startup migration while the responsive reader yields.
+  writeJsonStore(join(env.home, "jobs.json"), { jobs: [legacyJob(project)] }, null);
+}
+function legacyJob(project: string): Record<string, unknown> {
+  return { id: "one", name: "codex-job-one", agent: "codex", model: null, prompt: "task",
     startedAt: Date.now(), status: "running", sessionId: null, workdir: project, worktree: null, owner: "claude-parent", rootName: "claude-parent",
-    supervisor: "claude-parent", args: { title: "Job one" } }] }));
+    supervisor: "claude-parent", args: { title: "Job one" } };
 }
 const isMainOf = (n: BridgeNode) => async (name: string) => (await n.peers()).some((p) => p.name === name && p.projectMain === true);
 const question = (runner: BridgeNode, body: string) => runner.send({ to: "claude-parent", body, conversationId: "job-one:question" }, { quiet: true });
 
 describe("job questions to the parent (AB-249)", () => {
+  it("discards a responsive dashboard read whose raw jobs.json a registry writer replaced while it yielded", async () => {
+    const path = repo();
+    // A raw legacy file has no current indexed projection, so the responsive read
+    // takes the compatibility path and reads jobs.json itself.
+    const file = join(env.home, "jobs.json"), canonical = join(realpathSync.native(env.home), "jobs.json");
+    writeFileSync(file, JSON.stringify({ version: 2, jobs: [legacyJob(path)] }));
+    const bytes = readFileSync(file), read = snapshots.readJsonSnapshot;
+    let replaced = 0;
+    const changed = vi.spyOn(snapshots, "readJsonSnapshot").mockImplementation((...args) => {
+      const value = read(...args);
+      if (args[0] === file || args[0] === canonical) {
+        // Same bytes, new file: what an atomic writer (or startup migration) leaves behind.
+        const next = file + ".replacement";
+        writeFileSync(next, bytes); renameSync(next, file); replaced++;
+      }
+      return value;
+    });
+    let torn: Map<string, { owner: string | null }>;
+    try { torn = await readStoredJobsResponsive(env.home, new Set(["codex-job-one"])); }
+    finally { changed.mockRestore(); }
+    expect(replaced).toBe(1);
+    // The suspended read cannot vouch for the replaced file and returns nothing rather than a torn view.
+    expect(torn.has("codex-job-one")).toBe(false);
+    // The next refresh reads the replacement and shows the seeded parent again.
+    expect((await readStoredJobsResponsive(env.home, new Set(["codex-job-one"]))).get("codex-job-one")?.owner).toBe("claude-parent");
+  });
   it("delivers to a connected parent and reports it", async () => {
     const path = repo(); registry(path);
     await node("codex-main", path);

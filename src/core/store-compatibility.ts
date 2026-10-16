@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { writtenBeforeBoot } from "./boot-time.js";
 import { atomicPluginWrite } from "./plugin-runtime.js";
 import type { PeerInfo } from "./protocol.js";
-import { processIdentity, readProcessIdentities, readProcessIdentitiesSync, readProcessNamesSync } from "./process-identity.js";
+import { identityStartedAfter, processIdentity, readProcessIdentities, readProcessIdentitiesSync, readProcessNamesSync } from "./process-identity.js";
 import { existingMetadataDb, metadataDb, saveMetadataValue } from "./metadata-db.js";
 import { importMetadataDomain } from "./metadata-import.js";
 
@@ -12,6 +12,8 @@ interface Presence extends StoreCapabilities { pid: number; name: string; versio
 
 const identities = new Map<string, { identity: string | null; at: number; signature: string }>();
 const refreshes = new Map<string, Promise<void>>();
+/** The last failed background identity query per home, cleared by the next successful one (AB-390: named in waits). */
+const refreshFailures = new Map<string, { at: number; error: string }>();
 const IDENTITY_REFRESH_MS = 10_000;
 // Only these known Windows OS hosts prove non-Bridge PID reuse; arbitrary/renamed runtimes remain unknown.
 const NON_BRIDGE_WINDOWS_HOST_NAMES = new Set(["svchost", "wmiprvse", "searchfilterhost", "searchprotocolhost", "searchindexer", "msmpeng", "dllhost", "runtimebroker", "csrss", "lsass", "services", "wininit", "smss"]);
@@ -24,6 +26,12 @@ function databasePresence(home: string): {record: Presence; signature: string; a
   if (!db?.prepare("SELECT 1 FROM bridge_components WHERE name='import:storage-capabilities'").get()) return undefined;
   return db.prepare("SELECT key,value,updated_at FROM bridge_metadata WHERE domain='storage-capabilities'").all()
     .filter(row => /^\d+$/.test(String(row.key))).map(row => ({record:JSON.parse(String(row.value)) as Presence,signature:String(row.value),at:Number(row.updated_at)}));
+}
+
+/** False only for a PID that no longer exists (ESRCH); EPERM and other answers leave it to the identity query. */
+function pidExists(pid: number): boolean {
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
 }
 
 function presenceSignature(path: string): string | undefined {
@@ -63,18 +71,29 @@ async function refreshIdentityCache(home: string): Promise<void> {
     let failed = false;
     const refresh = (async () => {
       let current: Map<number, string>;
-      try { current = await readProcessIdentities(records.filter(record => record.pid !== process.pid).map(record => record.pid)); }
-      catch {
+      // Only PIDs that still exist go to the OS query. Retained rows of exited readers (thousands on a busy machine)
+      // made one batch query slow enough to time out under load, so no reader was ever verified (AB-390). The round
+      // itself still runs (an empty list costs nothing): awaiting callers keep one asynchronous scan as their barrier,
+      // and a gone PID is recorded below without an identity, so a later process under it starts unverified.
+      const gone = new Set(records.filter(record => record.pid !== process.pid && !pidExists(record.pid)).map(record => record.pid));
+      try { current = await readProcessIdentities(records.filter(record => record.pid !== process.pid && !gone.has(record.pid)).map(record => record.pid)); }
+      catch (error) {
+        refreshFailures.set(home, { at: Date.now(), error: error instanceof Error ? error.message : String(error) });
         // A failed or timed-out query (an overloaded system) observed nothing: keep each reader's last verified
         // identity for another interval instead of marking every live reader unknown, which blocked upgrades and
         // job starts. Readers never verified stay unknown until a later query succeeds.
         failed = true;
-        for (const { path } of records) { const cached = identities.get(path); if (cached) identities.set(path, { ...cached, at: Date.now() }); }
+        // A gone PID needs no query: it never keeps the old generation's identity.
+        for (const { pid, path, signature } of records) {
+          if (gone.has(pid)) { identities.set(path, { identity: null, at: Date.now(), signature }); continue; }
+          const cached = identities.get(path); if (cached) identities.set(path, { ...cached, at: Date.now() });
+        }
         return;
       }
+      refreshFailures.delete(home);
       // Bind the result to the record observed before the OS query. A new PID
       // generation published during/after that query must be verified again.
-      for (const { pid, path, signature } of records) identities.set(path, { identity: pid === process.pid ? processIdentity(pid) ?? null : current.get(pid) ?? null, at: Date.now(), signature });
+      for (const { pid, path, signature } of records) identities.set(path, { identity: pid === process.pid ? processIdentity(pid) ?? null : gone.has(pid) ? null : current.get(pid) ?? null, at: Date.now(), signature });
     })();
     refreshes.set(home, refresh);
     try { await refresh; } finally { refreshes.delete(home); }
@@ -282,21 +301,25 @@ function storedPresence(home: string, pid: number): { record: Presence; at: numb
  * - the live process matches: it is that reader, and it no longer blocks if its recorded capabilities suffice;
  * - a successful query shows another process under that PID, or no running process at all (an exited process
  *   whose PID a lingering handle keeps answering): the recorded reader is gone.
- * A failed query or a record without an identity keeps the reader blocking. A listed process with an unreadable
+ * - a record without an identity (an older peer's hello or an imported legacy file) is gone only when the process now
+ *   holding its PID provably started after the record was observed (observedAt, else the row or file time): that
+ *   process cannot be the recorded reader (AB-390: a conhost reusing an exited session's PID blocked every job start).
+ *   A process started before it may be that reader and keeps blocking until the background refresh verifies it.
+ * A failed query keeps the reader blocking and is reported (`lookupFailed`). A listed process with an unreadable
  * start time is gone only when a successful image-name query identifies a known Windows OS service host (AB-362:
  * protected processes reusing dead jobs' PIDs). Every other name stays blocking regardless of old capabilities.
  */
-function verifiedNow(home: string, peers: Presence[], format: keyof StoreCapabilities, target: number): Set<number> {
+function verifiedNow(home: string, peers: Presence[], format: keyof StoreCapabilities, target: number): { gone: Set<number>; lookupFailed: boolean } {
   const candidates = peers.flatMap(peer => {
     const stored = storedPresence(home, peer.pid);
-    return stored?.record.processIdentity ? [{ pid: peer.pid, ...stored }] : [];
+    return stored ? [{ pid: peer.pid, ...stored }] : [];
   });
-  if (!candidates.length) return new Set();
+  if (!candidates.length) return { gone: new Set(), lookupFailed: false };
   const live = readProcessIdentitiesSync(candidates.map(candidate => candidate.pid));
-  if (!live) return new Set();
+  if (!live) return { gone: new Set(), lookupFailed: true };
   const unreadable = candidates.filter(candidate => live.get(candidate.pid) === "").map(candidate => candidate.pid);
   const names = unreadable.length ? readProcessNamesSync(unreadable) : undefined;
-  return new Set(candidates.filter(({ pid, record, at, signature, metadata }) => {
+  return { lookupFailed: false, gone: new Set(candidates.filter(({ pid, record, at, signature, metadata }) => {
     const current = storedPresence(home, pid);
     if (!current || current.signature !== signature || current.at !== at || current.metadata !== metadata) return false;
     const now = live.get(pid);
@@ -308,18 +331,43 @@ function verifiedNow(home: string, peers: Presence[], format: keyof StoreCapabil
       const name = names?.get(pid)?.trim().split(/[\\/]/).pop()?.replace(/\.exe$/i, "").toLowerCase();
       return process.platform === "win32" && Boolean(name && NON_BRIDGE_WINDOWS_HOST_NAMES.has(name));
     }
+    if (!record.processIdentity) return startedAfterRecord(now, typeof record.observedAt === "number" ? record.observedAt : at);
     return now !== record.processIdentity || sufficient;
-  }).map(candidate => candidate.pid));
+  }).map(candidate => candidate.pid)) };
+}
+
+/**
+ * Whether a live creation identity proves its process started after `recordedAt` (epoch ms), with a second of slack
+ * for coarse start times. Windows identities are UTC ticks and Linux ones boot-relative ticks. Other platforms record
+ * `ps lstart` in local time, so it is parsed as local time (not via legacyPidReused, which appends UTC). Anything
+ * unparseable proves nothing, and the reader keeps blocking.
+ */
+function startedAfterRecord(identity: string, recordedAt: number): boolean {
+  if (!Number.isFinite(recordedAt)) return false;
+  const after = recordedAt + 1_000;
+  if (process.platform === "win32" || process.platform === "linux") return identityStartedAfter(identity, after);
+  const startedAt = Date.parse(identity);
+  return Number.isFinite(startedAt) && startedAt > after;
 }
 
 export function assertStoreUpgrade(home: string, format: keyof StoreCapabilities, current: number, target: number): void {
   if (target <= current) return;
   let blockers = liveStorePeers(home).filter((peer) => (peer[format] ?? 0) < target);
   const unverified = blockers.filter(peer => peer.version === "unknown");
+  let lookupFailed = false;
   if (unverified.length && unverified.length <= 64) {
     const verified = verifiedNow(home, unverified, format, target);
-    blockers = blockers.filter(peer => !verified.has(peer.pid));
+    lookupFailed = verified.lookupFailed;
+    blockers = blockers.filter(peer => !verified.gone.has(peer.pid));
   }
   if (!blockers.length) return;
-  throw Object.assign(new Error(`Waiting to upgrade ${format} store ${current}→${target}: ${blockers.map((p) => `${p.name} (v${p.version}, pid ${p.pid}, reads ${p[format]})`).join(", ")}. Existing sessions keep their code and data; retry when these readers finish naturally.`), { code: "STORE_UPGRADE_DEFERRED" });
+  // Unknown liveness says why, so a failed lookup is never mistaken for a reader that is still running (AB-390).
+  const unknown = blockers.filter(peer => peer.version === "unknown").map(peer => peer.pid);
+  const background = refreshFailures.get(home);
+  const why = !unknown.length ? "" : lookupFailed
+    ? ` Liveness of pid ${unknown.join(", ")} is unknown: the process identity lookup failed${background ? ` (background refresh: ${background.error})` : ""}; they keep blocking until a lookup succeeds.`
+    : unverified.length > 64
+      ? ` Liveness of ${unknown.length} readers is unverified: more than 64 exceed the immediate lookup, so they wait for the background identity refresh${background ? `, which last failed: ${background.error}` : ""}.`
+      : background ? ` The background process identity refresh last failed: ${background.error}.` : "";
+  throw Object.assign(new Error(`Waiting to upgrade ${format} store ${current}→${target}: ${blockers.map((p) => `${p.name} (v${p.version}, pid ${p.pid}, reads ${p[format]})`).join(", ")}.${why} Existing sessions keep their code and data; retry when these readers finish naturally.`), { code: "STORE_UPGRADE_DEFERRED" });
 }

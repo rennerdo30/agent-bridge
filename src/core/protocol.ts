@@ -52,7 +52,9 @@ export interface SiblingPeer {
   name: string;
   title: string;
   agent: AgentKind;
-  status: "running" | "done" | "failed" | "interrupted" | "cancelled";
+  status: "running" | "paused" | "done" | "failed" | "interrupted" | "cancelled";
+  pauseReason?: string;
+  pausedAt?: number;
   finishedAt?: number;
 }
 
@@ -141,6 +143,8 @@ export interface HelloArgs {
   /** Shared secret from ~/.agent-bridge/token. */
   token: string;
   peer: Omit<PeerInfo, "name"> & { name: string };
+  /** This client can demand-start a broker daemon itself; only such a newer client may ask a daemon to hand over. */
+  canHost?: boolean;
 }
 export interface HelloResult {
   brokerPid: number;
@@ -249,9 +253,15 @@ export interface UpdatePeerArgs {
 export interface AuthArgs {
   protocol: number;
   token: string;
+  /** As HelloArgs.canHost: omitted (CLI commands, job runners, older clients) never triggers a handover. */
+  canHost?: boolean;
 }
 
 export interface RequestMap {
+  coreStatus: [Record<string, never>, { version: string; pid: number; uptimeSeconds: number; mode: "daemon" | "embedded" | "embedded_degraded";
+    reason?: string; connectedClients: number; connectedJobClients: number; runningJobs: number; runningJobsEvidence: "legacy_registry_labels_not_execution" }];
+  /** Local authenticated daemon lifecycle wiring; no remote target or configuration mutation. */
+  ensureDashboard: [{ force: boolean; port?: number }, import("../cli/dashboard.js").DashboardInfo | null];
   /** Old peers must explicitly refuse this opcode, never ignore a mode. */
   modeSend: [ModeSendArgs, ModeSendResult];
   /** Virtual addresses are controlled only by the registered parent connection. */
@@ -275,6 +285,8 @@ export interface RequestMap {
   dismissOwner: [{ id: string; status: "cancelled" | "superseded"; reason: string; supersededBy?: string }, import("./owner-questions.js").OwnerQuestion];
   dashboardHeartbeat: [{ tab: string; visible: boolean }, { alerts: { id: string; at: number }[]; settings: import("./owner-questions.js").QuestionAlertSettings }];
   projectJobs: [Record<string, never>, Record<string, unknown>[]];
+  /** Slim, frame-bounded pages for peers (AB-404); older brokers refuse it and callers fall back to projectJobs. */
+  projectJobSummaries: [{ offset?: number; limit?: number }, import("./project-job-summary.js").ProjectJobSummaryPage];
   coordinatorAvailability: [{ name?: string; unavailable: boolean }, PeerInfo];
   projectMain: [{ to: string }, PeerInfo];
   handoffSubagents: [import("./job-handoff.js").HandoffArgs, import("./job-handoff.js").HandoffReceipt];
@@ -338,6 +350,7 @@ export interface ErrorPayload {
 }
 
 export type ErrorCode =
+  | "job_index_preparing"
   | "bad_request"
   | "not_registered"
   | "ambiguous_target"
@@ -361,7 +374,19 @@ export interface EventMap {
   peer_joined: PeerInfo;
   peer_left: PeerInfo;
   /** This connection was replaced by a newer server of the same session (e.g. after /reload-plugins). */
-  replaced: { by: string };
+  /**
+   * version, agentPid, agentStartedAt: the replacing server's agent-bridge version and host process (AB-385). An
+   * older server replaced by a newer one of the same host process exits.
+   */
+  replaced: { by: string; version?: string; agentPid?: number | null; agentStartedAt?: string | null };
+  /**
+   * AB-399: the broker retired this connection because the session's CLI process ended (host_exited: signal 0
+   * found no such process) or its PID now belongs to a process started later (pid_reused). The server stays off the
+   * bridge instead of reconnecting; it rejoins only when the session calls it again.
+   */
+  retired: { reason: "host_exited" | "pid_reused"; agentPid?: number | null };
+  /** The daemon is handing over to a newer release and is about to exit (no event for embedded brokers). */
+  handover: { version?: string; protocol?: number };
 }
 export type EventName = keyof EventMap;
 

@@ -15,6 +15,7 @@ import { readWorktreeState, rootId, saveWorktreeState } from "../src/core/worktr
 import { closeJobWorktree } from "../src/core/job-close.js";
 import { preferredDriveFixture } from "./preferred-drive-fixture.js";
 import * as feeds from "../src/core/runfeed.js";
+import { closeMetadataDb } from "../src/core/metadata-db.js";
 
 let home: string;
 beforeEach(() => {
@@ -22,7 +23,7 @@ beforeEach(() => {
   mkdirSync(root, { recursive: true });
   home = mkdtempSync(join(root, "run-"));
 });
-afterEach(() => { vi.restoreAllMocks(); rmSync(home, { recursive: true, force: true }); });
+afterEach(() => { vi.restoreAllMocks(); closeMetadataDb(home); rmSync(home, { recursive: true, force: true }); });
 
 const context = (): RunContext => ({ agent: "claude", cfg: { ...DEFAULT_CONFIG }, home, log: nullLogger, me: () => "parent", cwd: () => home,
   jobs: { askParent: vi.fn(async () => ({ allow: false, reason: "Publish builds only from merged master" })), fromSubagent: vi.fn(), note: vi.fn() },
@@ -56,8 +57,12 @@ describe("delegation approval routing", () => {
     const j = job();
     j.allowedServers = new Set(["mcp:pair-desk"]);
     vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
-      expect(await req.approve!({ agent: "codex", tool: "mcp:pair-desk", detail: 'tool "get_issue" refused', automaticReview: true })).toMatchObject({ allow: false });
-      expect(await req.approve!({ agent: "codex", tool: "mcp:pair-desk", detail: 'tool "list_projects" refused', automaticReview: true })).toMatchObject({ allow: false });
+      // The real Codex review-retry shape (codex-appserver.ts): "<tool>: <reason>\nAction: …\nApprove a retry …".
+      const retry = (tool: string) => `${tool}: Automatic approval review refused this action\nAction: {"toolName":"${tool}"}\nApprove a retry of this exact action? Codex policy still applies.`;
+      expect(await req.approve!({ agent: "codex", tool: "mcp:pair-desk", detail: retry("get_issue"), automaticReview: true })).toMatchObject({ allow: false });
+      expect(await req.approve!({ agent: "codex", tool: "mcp:pair-desk", detail: retry("list_projects"), automaticReview: true })).toMatchObject({ allow: false });
+      // A refused handoff write is still declined outright: the parent is never asked to approve a retry (AB-423).
+      expect(await req.approve!({ agent: "codex", tool: "mcp:pair-desk", detail: retry("set_handoff"), automaticReview: true })).toMatchObject({ allow: false });
       return { sessionId: "saved", text: "done", isError: false, details: {} };
     });
     await runDelegate(rc, "codex", { title: "review", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
@@ -65,6 +70,8 @@ describe("delegation approval routing", () => {
   });
   it.each(["codex", "claude", "opencode"] as const)("allows desk reads by default without granting writes for %s", async (target) => {
     const rc = context();
+    // Read access alone grants desk reads; the default job allowance (AB-403) is cleared to isolate it.
+    rc.cfg.jobs = { defaultAllowTools: [] };
     const j = job();
     vi.spyOn(DELEGATION_TARGETS[target], "run").mockImplementation(async (_cfg, req) => {
       for (const server of ["pair-desk", "pair_desk", "plugin_agent-pair-programming_pair-desk"]) {

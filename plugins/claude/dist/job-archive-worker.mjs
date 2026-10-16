@@ -3,12 +3,13 @@ import {
   bundleFilesBounded,
   extractBundle,
   retireBundled
-} from "./chunks/chunk-TH6TC3QE.mjs";
+} from "./chunks/chunk-W4YLCPRR.mjs";
 import {
   importRunnerFiles,
   packArchivedRuns,
   runnerFilesImported
-} from "./chunks/chunk-74PWY37G.mjs";
+} from "./chunks/chunk-DS664YOK.mjs";
+import "./chunks/chunk-OX5J3NNH.mjs";
 import "./chunks/chunk-HYOPFLLN.mjs";
 import {
   JSON_STORE_VERSION,
@@ -26,17 +27,16 @@ import {
   physicalArchivePath,
   putJobRecords,
   refreshStorePeerIdentities
-} from "./chunks/chunk-IS3KHBHN.mjs";
-import "./chunks/chunk-AR4BZM3F.mjs";
-import "./chunks/chunk-HIVVJXLN.mjs";
-import "./chunks/chunk-NVDPULGI.mjs";
-import "./chunks/chunk-DEWCC5JJ.mjs";
+} from "./chunks/chunk-BPL7GJLM.mjs";
+import "./chunks/chunk-ICCAXDVG.mjs";
+import "./chunks/chunk-O26G5HFG.mjs";
+import "./chunks/chunk-HYVC3VSW.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/core/job-archive-worker.ts
 import { parentPort, workerData } from "node:worker_threads";
 import { dirname as dirname2 } from "node:path";
-import { setImmediate as yieldTurn, setTimeout as sleep } from "node:timers/promises";
+import { setImmediate as yieldTurn } from "node:timers/promises";
 
 // src/core/job-archive-migration.ts
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
@@ -181,9 +181,104 @@ async function migrateJobArchives(path) {
 // src/core/job-archive-worker.ts
 var stop = new AbortController();
 var repackRequested = false;
+var lifecycleQuiesced = false;
+var lifecycleUnknown = false;
+var operationActive = true;
+var lifecycleRequest = null;
+var lifecycleRevision = 0;
+var idleWake = null;
+var resumeWake = null;
+function reportLifecycle() {
+  if (lifecycleRevision >= Number.MAX_SAFE_INTEGER) lifecycleUnknown = true;
+  else lifecycleRevision++;
+  parentPort?.postMessage({ archiveLifecycle: {
+    ownerInstance: workerData.lifecycleOwner,
+    requestId: lifecycleRequest,
+    revision: lifecycleRevision,
+    quiesced: lifecycleQuiesced,
+    pendingOperations: operationActive || repackRequested ? 1 : 0,
+    unknown: lifecycleUnknown,
+    settled: lifecycleQuiesced && !operationActive && !repackRequested && !lifecycleUnknown && !stop.signal.aborted
+  } });
+}
+async function idleWait(milliseconds) {
+  const due = performance.now() + milliseconds;
+  while (!stop.signal.aborted) {
+    await pauseBetweenOperations();
+    const remaining = due - performance.now();
+    if (remaining <= 0 || stop.signal.aborted) return;
+    await new Promise((resolve) => {
+      const finish = () => {
+        clearTimeout(timer);
+        stop.signal.removeEventListener("abort", finish);
+        if (idleWake === finish) idleWake = null;
+        resolve();
+      };
+      const timer = setTimeout(finish, remaining);
+      idleWake = finish;
+      stop.signal.addEventListener("abort", finish, { once: true });
+    });
+  }
+}
+async function pauseBetweenOperations() {
+  while (lifecycleQuiesced && !stop.signal.aborted) {
+    if (repackRequested) {
+      repackRequested = false;
+      operationActive = true;
+      reportLifecycle();
+      try {
+        const runs = await packRuns(home);
+        if (runs.packed || runs.failed) parentPort?.postMessage({ packed: runs });
+      } catch (error) {
+        lifecycleUnknown = true;
+        parentPort?.postMessage({ packError: String(error) });
+      } finally {
+        operationActive = false;
+        reportLifecycle();
+      }
+      continue;
+    }
+    reportLifecycle();
+    await new Promise((resolve) => {
+      resumeWake = resolve;
+    });
+    resumeWake = null;
+  }
+}
 parentPort?.on("message", (message) => {
   if (message?.stop) stop.abort();
-  if (message?.repack) repackRequested = true;
+  if (message?.stop) {
+    idleWake?.();
+    resumeWake?.();
+    reportLifecycle();
+  }
+  if (message?.repack) {
+    repackRequested = true;
+    reportLifecycle();
+    if (lifecycleQuiesced) idleWake?.();
+    resumeWake?.();
+  }
+  const control = message?.archiveLifecycle;
+  if (!control) return;
+  if (control.ownerInstance !== workerData.lifecycleOwner || typeof control.requestId !== "string" || !/^[a-f0-9-]{36}$/.test(control.requestId)) {
+    lifecycleUnknown = true;
+    reportLifecycle();
+    return;
+  }
+  if (control.kind === "quiesce") {
+    lifecycleQuiesced = true;
+    lifecycleRequest = control.requestId;
+    idleWake?.();
+    reportLifecycle();
+  } else if (control.kind === "resume" && control.requestId === lifecycleRequest) {
+    lifecycleQuiesced = false;
+    lifecycleRequest = null;
+    resumeWake?.();
+    reportLifecycle();
+  } else {
+    lifecycleUnknown = true;
+    reportLifecycle();
+  }
 });
 async function packRuns(home2) {
   let packed = 0, failed = 0;
@@ -192,6 +287,7 @@ async function packRuns(home2) {
       let batchFailures = 0;
       const batch = packArchivedRuns(home2, void 0, 100, (failure) => {
         batchFailures++;
+        lifecycleUnknown = true;
         parentPort?.postMessage({ warning: "archived run kept in place, not packed", failure });
       });
       packed += batch;
@@ -209,41 +305,64 @@ async function importRunners(home2) {
   if (raw === "off") return;
   const first = raw === void 0 || !/^\d+$/.test(raw) ? 3e4 : Number(raw);
   const interval = 6e4;
-  await sleep(first, void 0, { signal: stop.signal });
-  for (; ; ) {
-    if (!runnerFilesImported(home2)) {
-      try {
-        const result = await importRunnerFiles(home2, { signal: stop.signal });
-        if (result.imported || result.remaining) parentPort?.postMessage({ runnerImport: result });
-      } catch (error) {
-        if (stop.signal.aborted) return;
-        parentPort?.postMessage({ runnerImportError: String(error) });
+  await idleWait(first);
+  while (!stop.signal.aborted) {
+    await pauseBetweenOperations();
+    if (stop.signal.aborted) return;
+    operationActive = true;
+    reportLifecycle();
+    try {
+      if (!runnerFilesImported(home2)) {
+        try {
+          const result = await importRunnerFiles(home2, { signal: stop.signal });
+          if (result.deferred || result.remaining) lifecycleUnknown = true;
+          if (result.imported || result.remaining) parentPort?.postMessage({ runnerImport: result });
+        } catch (error) {
+          if (stop.signal.aborted) return;
+          lifecycleUnknown = true;
+          parentPort?.postMessage({ runnerImportError: String(error) });
+        }
       }
+      if (repackRequested) {
+        repackRequested = false;
+        const runs = await packRuns(home2);
+        if (runs.packed || runs.failed) parentPort?.postMessage({ packed: runs });
+      }
+    } finally {
+      operationActive = false;
+      reportLifecycle();
     }
-    if (repackRequested) {
-      repackRequested = false;
-      const runs = await packRuns(home2);
-      if (runs.packed || runs.failed) parentPort?.postMessage({ packed: runs });
-    }
-    await sleep(interval, void 0, { signal: stop.signal });
+    await idleWait(interval);
   }
 }
 var home = dirname2(workerData.path);
 try {
-  if (!workerData.packOnly) parentPort?.postMessage({ result: await migrateJobArchives(workerData.path) });
+  if (!workerData.packOnly) {
+    const result = await migrateJobArchives(workerData.path);
+    if (result.deferred || result.kept) lifecycleUnknown = true;
+    parentPort?.postMessage({ result });
+  }
 } catch (error) {
+  lifecycleUnknown = true;
   parentPort?.postMessage({ error: String(error) });
 }
 try {
   const runs = await packRuns(home);
   if (runs.packed || runs.failed) parentPort?.postMessage({ packed: runs });
 } catch (error) {
+  lifecycleUnknown = true;
   parentPort?.postMessage({ packError: String(error) });
 }
+operationActive = false;
+reportLifecycle();
+await pauseBetweenOperations();
 try {
   if (!workerData.packOnly && !stop.signal.aborted) await importRunners(home);
 } catch (error) {
-  if (!stop.signal.aborted) parentPort?.postMessage({ runnerImportError: String(error) });
+  if (!stop.signal.aborted) {
+    lifecycleUnknown = true;
+    parentPort?.postMessage({ runnerImportError: String(error) });
+  }
 } finally {
   closeMetadataDbs();
   parentPort?.close();

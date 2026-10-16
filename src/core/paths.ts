@@ -55,12 +55,19 @@ export function resolvePipePath(home: string, env: NodeJS.ProcessEnv = process.e
  * user's private directory: in a world-writable /tmp another user could otherwise pre-create it and receive
  * the session token on connect or replace the endpoint. Endpoints anywhere else are left untouched.
  */
-export function ensurePrivateSocketDirectory(pipePath: string, platform: NodeJS.Platform = process.platform): void {
+export function ensurePrivateSocketDirectory(pipePath: string, platform: NodeJS.Platform = process.platform, readOnly = false): void {
   // Native socket endpoints such as { host, port } have no directory to secure.
   if (platform === "win32" || typeof pipePath !== "string") return;
   const uid = process.getuid?.();
   const dir = shortSocketDirectory(uid);
   if (posix.dirname(pipePath) !== dir) return;
+  if (readOnly) {
+    const stat = lstatSync(dir);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || uid === undefined || stat.uid !== uid || (stat.mode & 0o077) !== 0) {
+      throw Object.assign(new Error("Core status endpoint directory is unavailable; no permissions were repaired."), { code: "EUNSAFESOCKETDIR" });
+    }
+    return;
+  }
   try { mkdirSync(dir, { mode: 0o700 }); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
   const stat = lstatSync(dir);
@@ -81,12 +88,23 @@ export function isEphemeralBrokerTcpRecord(value: Record<string, any>): boolean 
     typeof value.port === "number" && Number.isInteger(value.port) && value.port > 0 && value.port <= 65535;
 }
 
+/**
+ * A recorded broker PID that no longer exists cannot serve the recorded port. A broker that was terminated
+ * (its session closed, its process killed) leaves its descriptor behind; checking existence first keeps that
+ * stale descriptor from costing a process identity query (PowerShell on Windows, seconds under load) on every
+ * election attempt. Only ESRCH proves exit: EPERM and other answers keep the authenticated identity check.
+ */
+function recordedBrokerExited(pid: number): boolean {
+  try { process.kill(pid, 0); return false; }
+  catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
+}
+
 /** The loopback port recorded by the running broker, or null when it serves no fallback. */
 export function brokerTcpPort(home: string, pipePath = resolvePipePath(home)): number | null {
   try {
     const value = readMusePrivateJson(join(home, BROKER_TCP_FILE));
     if (!isEphemeralBrokerTcpRecord(value) || value.pipePath !== pipePath || value.protocol !== PROTOCOL_VERSION || !Number.isSafeInteger(value.pid) ||
-      typeof value.identity !== "string" || value.identity !== processIdentity(value.pid) || typeof value.nonce !== "string" || !value.nonce) return null;
+      typeof value.identity !== "string" || recordedBrokerExited(value.pid) || value.identity !== processIdentity(value.pid) || typeof value.nonce !== "string" || !value.nonce) return null;
     return typeof value.port === "number" && Number.isInteger(value.port) && value.port > 0 && value.port <= 65535 ? value.port : null;
   } catch {
     return null;
@@ -99,6 +117,10 @@ export async function brokerTcpPortAsync(home: string, pipePath: string, signal:
     const value = await readMusePrivateJsonAsync(join(home, BROKER_TCP_FILE), signal);
     if (!isEphemeralBrokerTcpRecord(value) || value.pipePath !== pipePath || value.protocol !== PROTOCOL_VERSION || !Number.isSafeInteger(value.pid) ||
       typeof value.identity !== "string" || typeof value.nonce !== "string" || !value.nonce || signal.aborted) return null;
+    // A broker that exited cannot answer on its recorded port. Without this, an election after the broker
+    // was killed waited on the identity query past the connect deadline and reported ETIMEDOUT, which elect()
+    // treats as a live but slow broker: the surviving session retried connecting instead of taking over.
+    if (recordedBrokerExited(value.pid)) return null;
     const identity = await readProcessIdentity(value.pid, signal);
     return !signal.aborted && value.identity === identity ? value.port : null;
   } catch { return null; }

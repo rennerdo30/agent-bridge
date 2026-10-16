@@ -1,84 +1,41 @@
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 import {
-  guardServerErrors
-} from "./chunks/chunk-Q4TGWKCP.mjs";
-import {
-  AjvJsonSchemaValidator,
-  CallToolRequestSchema,
-  CallToolResultSchema,
-  CompleteRequestSchema,
-  CreateMessageResultSchema,
-  CreateMessageResultWithToolsSchema,
-  CreateTaskResultSchema,
-  ElicitResultSchema,
-  EmptyResultSchema,
-  ErrorCode,
-  GetPromptRequestSchema,
-  InitializeRequestSchema,
-  InitializedNotificationSchema,
-  LATEST_PROTOCOL_VERSION,
-  ListPromptsRequestSchema,
-  ListResourceTemplatesRequestSchema,
-  ListResourcesRequestSchema,
-  ListRootsResultSchema,
-  ListToolsRequestSchema,
-  LoggingLevelSchema,
-  McpError,
-  Protocol,
-  ReadBuffer,
-  ReadResourceRequestSchema,
-  SUPPORTED_PROTOCOL_VERSIONS,
-  SetLevelRequestSchema,
-  assertClientRequestTaskCapability,
-  assertCompleteRequestPrompt,
-  assertCompleteRequestResourceTemplate,
-  assertToolsCallTaskCapability,
-  getLiteralValue,
-  getObjectShape,
-  getParseErrorMessage,
-  getSchemaDescription,
-  isSchemaOptional,
-  mergeCapabilities,
-  normalizeObjectSchema,
-  objectFromShape,
-  safeParse,
-  safeParseAsync,
-  serializeMessage,
-  toJsonSchemaCompat
-} from "./chunks/chunk-ORHJL4OP.mjs";
-import {
   RewakeEndpoint,
   WAKE_HEADER,
   shouldWakeClaudeMessage
-} from "./chunks/chunk-3SNYC6B4.mjs";
+} from "./chunks/chunk-6C3Q772Q.mjs";
 import {
-  antigravityHookOutput
-} from "./chunks/chunk-FGVOZGTM.mjs";
+  guardServerErrors
+} from "./chunks/chunk-Q4TGWKCP.mjs";
 import {
   MAX_STREAM_ENTRIES
-} from "./chunks/chunk-5OKUB2U5.mjs";
+} from "./chunks/chunk-GJX2UCRK.mjs";
 import {
   isBridgeWorktree,
   isInside,
   resumeArgs,
   runDelegate
-} from "./chunks/chunk-ZOO2W2NN.mjs";
+} from "./chunks/chunk-XA25A7RF.mjs";
 import {
-  JobRunners,
   closeJobWorktree
-} from "./chunks/chunk-M752Y3OB.mjs";
+} from "./chunks/chunk-UMHHP76K.mjs";
 import {
   readWorktreeState
-} from "./chunks/chunk-6FOHLUBM.mjs";
-import "./chunks/chunk-RF53ZVVQ.mjs";
-import "./chunks/chunk-HFRXC4WN.mjs";
+} from "./chunks/chunk-T5DDX36S.mjs";
+import "./chunks/chunk-2POHVGND.mjs";
 import {
-  codexAppServerCall,
+  museBridgeTool,
+  museHookOutput,
+  museReadingTool
+} from "./chunks/chunk-TNWIDXST.mjs";
+import {
+  antigravityHookOutput
+} from "./chunks/chunk-UG7GJOPT.mjs";
+import {
   describeModels,
   modelParameterDescription,
-  readModels,
-  readUsage
-} from "./chunks/chunk-J3ECCIZP.mjs";
+  readModels
+} from "./chunks/chunk-XQ2N63QK.mjs";
 import "./chunks/chunk-KNKN5CEU.mjs";
 import "./chunks/chunk-IOGZQ3DT.mjs";
 import {
@@ -90,7 +47,7 @@ import {
 import {
   BridgeNode,
   DASHBOARD_JOB_CONVERSATION
-} from "./chunks/chunk-Y7UQ56VK.mjs";
+} from "./chunks/chunk-TEWFOKQW.mjs";
 import {
   formatDelivery,
   formatDuration,
@@ -101,70 +58,115 @@ import {
   formatProjectRoute,
   formatReplyRestrictions,
   formatVersionSkew
-} from "./chunks/chunk-OVC2JA2V.mjs";
-import {
-  REMOTE_JOB_POLL_MS,
-  remoteSpawnArgsSchema
-} from "./chunks/chunk-GHL2YWJD.mjs";
+} from "./chunks/chunk-CZMPPT44.mjs";
 import {
   formatHealth,
   probeBrokerHealth
-} from "./chunks/chunk-G5UG7VX7.mjs";
-import "./chunks/chunk-5CUVWCAS.mjs";
+} from "./chunks/chunk-T2PTM45O.mjs";
+import "./chunks/chunk-EI4KXCUW.mjs";
 import "./chunks/chunk-RQUYBZWF.mjs";
-import {
-  conversationPageSchema
-} from "./chunks/chunk-PZ6QYUCT.mjs";
 import {
   HISTORY_SEARCH_TOOL_DESCRIPTION,
   historySearchToolInput
-} from "./chunks/chunk-V4VFK2LZ.mjs";
+} from "./chunks/chunk-DODQKEUH.mjs";
+import {
+  conversationPageSchema
+} from "./chunks/chunk-HT3JXK2O.mjs";
 import {
   MAX_HOLD_REASON_CHARS,
   deriveJobOutcome,
   readOutcomeDecision,
   setJobOutcome
-} from "./chunks/chunk-UQEVBCCA.mjs";
-import "./chunks/chunk-CMOH34MZ.mjs";
+} from "./chunks/chunk-5ALJOYET.mjs";
+import "./chunks/chunk-3TLLQ7CK.mjs";
+import "./chunks/chunk-OIVM3BAO.mjs";
 import {
   ACCESS_LEVELS,
+  AjvJsonSchemaValidator,
+  CallToolRequestSchema,
+  CallToolResultSchema,
+  CompleteRequestSchema,
+  CreateMessageResultSchema,
+  CreateMessageResultWithToolsSchema,
+  CreateTaskResultSchema,
   DEFAULT_FOLLOW_UP,
   DELEGATION_TARGETS,
   DelegateError,
+  ElicitResultSchema,
+  EmptyResultSchema,
+  ErrorCode,
   FOLLOW_UP_GATE_REASONS,
+  GetPromptRequestSchema,
+  InitializeRequestSchema,
+  InitializedNotificationSchema,
   JOB_SETTING_KEYS,
   JobManager,
+  JobRunners,
+  LATEST_PROTOCOL_VERSION,
+  ListPromptsRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  ListResourcesRequestSchema,
+  ListRootsResultSchema,
+  ListToolsRequestSchema,
+  LoggingLevelSchema,
+  McpError,
   PARENT_JOB_ENV,
   PERMISSION_KEY_AGENT,
+  Protocol,
   ROOT_NAME_ENV,
   ROOT_SESSION_ENV,
+  ReadBuffer,
+  ReadResourceRequestSchema,
+  SUPPORTED_PROTOCOL_VERSIONS,
+  SetLevelRequestSchema,
   answerPendingApproval,
   appendContextEvent,
+  assertClientRequestTaskCapability,
+  assertCompleteRequestPrompt,
+  assertCompleteRequestResourceTemplate,
+  assertToolsCallTaskCapability,
   bundledCli,
+  checkUsagePreflight,
+  codexAppServerCall,
+  confirmUsageAdmission,
   currentDelegateDepth,
   failureCause,
   formatParentRoute,
+  getLiteralValue,
+  getObjectShape,
+  getParseErrorMessage,
+  getSchemaDescription,
+  isSchemaOptional,
   killAllDelegates,
   listPendingApprovals,
+  mergeCapabilities,
   museEnvSessionId,
   nativeSubagentsSchema,
+  normalizeObjectSchema,
+  objectFromShape,
   parentFromEnv,
   parseJobSettings,
+  readUsage,
   resolveBinary,
   runProcess,
+  safeParse,
+  safeParseAsync,
+  serializeMessage,
+  toJsonSchemaCompat,
+  usageAdmissionText,
+  usageProbeFor,
   verifiedGoneJobOwners
-} from "./chunks/chunk-4J3TVGHF.mjs";
+} from "./chunks/chunk-FAOTCQYY.mjs";
+import "./chunks/chunk-6KTEQAZ2.mjs";
 import {
   ResourceSlots,
   describeResourceSlots,
   formatResourceSlots
-} from "./chunks/chunk-BLJAWYAY.mjs";
-import "./chunks/chunk-6KTEQAZ2.mjs";
+} from "./chunks/chunk-PXCXTUUZ.mjs";
 import {
-  bundleDirectory
-} from "./chunks/chunk-D5ZW6VFT.mjs";
-import "./chunks/chunk-3QYUMWCP.mjs";
-import "./chunks/chunk-JTZGNEMM.mjs";
+  REMOTE_JOB_POLL_MS,
+  remoteSpawnArgsSchema
+} from "./chunks/chunk-XPI25MO7.mjs";
 import {
   MAX_JOB_SEND_TARGETS,
   isJobSendTarget,
@@ -172,12 +174,27 @@ import {
 } from "./chunks/chunk-ORHVXX2T.mjs";
 import {
   loadOrCreateToken,
+  tokensEqual
+} from "./chunks/chunk-DNAUDSOJ.mjs";
+import {
+  bundleDirectory
+} from "./chunks/chunk-D5ZW6VFT.mjs";
+import {
   resolveDbPath,
   resolveHome,
-  resolvePipePath,
-  tokensEqual
-} from "./chunks/chunk-AFDAMMNA.mjs";
-import "./chunks/chunk-OLMGUTCX.mjs";
+  resolvePipePath
+} from "./chunks/chunk-FI54DU4N.mjs";
+import {
+  MUSE_ACCESS_ENV,
+  antigravityAncestor,
+  inspectClaudeLaunch,
+  museHookFile,
+  museHostPid,
+  readMusePrivateJson,
+  restoreMuseContext,
+  writeMusePrivateJson
+} from "./chunks/chunk-Q5IQLWCD.mjs";
+import "./chunks/chunk-ZQ2B63AL.mjs";
 import {
   CLAUDE_PERMISSION_MODES,
   CODEX_APPROVALS_REVIEWERS,
@@ -189,7 +206,21 @@ import {
   parseAgentKind,
   saveConfigValue,
   watchConfig
-} from "./chunks/chunk-VB42W5UW.mjs";
+} from "./chunks/chunk-H3KBN2YN.mjs";
+import {
+  MAX_DECISION_TEXT_CHARS,
+  MAX_DECISION_TOPIC_CHARS,
+  askOwnerSchema,
+  decisionScopeSchema,
+  formatDecisionSummary
+} from "./chunks/chunk-DXHVZRHI.mjs";
+import {
+  ZodOptional,
+  canonicalProjectRoot,
+  external_exports,
+  isInternalBridgeProcess,
+  isPluginCacheCwd
+} from "./chunks/chunk-UTSHXRSC.mjs";
 import {
   AGENT_KINDS,
   BROADCAST,
@@ -200,21 +231,15 @@ import {
   isQuietMessage,
   isUnsupportedOperation
 } from "./chunks/chunk-IYJ5P7ML.mjs";
+import "./chunks/chunk-DS664YOK.mjs";
 import {
-  MAX_DECISION_TEXT_CHARS,
-  MAX_DECISION_TOPIC_CHARS,
-  askOwnerSchema,
-  decisionScopeSchema,
-  formatDecisionSummary
-} from "./chunks/chunk-2JW43AZX.mjs";
-import {
-  ZodOptional,
-  canonicalProjectRoot,
-  external_exports,
-  isInternalBridgeProcess,
-  isPluginCacheCwd
-} from "./chunks/chunk-RE3I7AXX.mjs";
-import "./chunks/chunk-74PWY37G.mjs";
+  TRANSCRIPT_ID,
+  directory,
+  object,
+  readJsonl,
+  safeFile,
+  transcriptPaths
+} from "./chunks/chunk-OX5J3NNH.mjs";
 import "./chunks/chunk-HYOPFLLN.mjs";
 import {
   archiveFile,
@@ -222,8 +247,8 @@ import {
   isRecord,
   readJsonStore,
   writeJsonStore
-} from "./chunks/chunk-IS3KHBHN.mjs";
-import "./chunks/chunk-AR4BZM3F.mjs";
+} from "./chunks/chunk-BPL7GJLM.mjs";
+import "./chunks/chunk-ICCAXDVG.mjs";
 import {
   APP_NAME,
   APP_VERSION,
@@ -237,33 +262,12 @@ import {
   MAX_JOBS_LIMIT,
   MAX_JOB_TIMEOUT_SEC,
   MAX_WAIT_SEC
-} from "./chunks/chunk-HIVVJXLN.mjs";
+} from "./chunks/chunk-O26G5HFG.mjs";
 import {
-  museBridgeTool,
-  museHookOutput,
-  museReadingTool
-} from "./chunks/chunk-LVDZCAYS.mjs";
-import {
-  MUSE_ACCESS_ENV,
-  antigravityAncestor,
-  inspectClaudeLaunch,
-  museHookFile,
-  museHostPid,
-  readMusePrivateJson,
-  restoreMuseContext,
-  writeMusePrivateJson
-} from "./chunks/chunk-VNQ4UNAO.mjs";
-import {
-  TRANSCRIPT_ID,
-  directory,
-  object,
-  readJsonl,
-  safeFile,
-  transcriptPaths
-} from "./chunks/chunk-NVDPULGI.mjs";
-import {
-  processIdentity
-} from "./chunks/chunk-DEWCC5JJ.mjs";
+  parentProcessIdentity,
+  processIdentity,
+  readProcessIdentity
+} from "./chunks/chunk-HYVC3VSW.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/mcp/server.ts
@@ -1975,6 +1979,11 @@ var STOP_REASON_FOOTER = 'Handle these peer messages now: do what is reasonable,
 function context(event, additionalContext) {
   return { hookSpecificOutput: { hookEventName: event, additionalContext } };
 }
+function stopMail(ctx, text2) {
+  return { decision: "block", reason: ctx.agent === "codex" ? `agent-bridge: new mail
+
+${text2}` : text2 };
+}
 function discardFinishedNotes(ctx) {
   const node = ctx.node;
   if (!node) return;
@@ -2073,7 +2082,7 @@ async function subagentHook(ctx, input) {
   }
   ctx.log.info("delivering parent messages to the subagent", { count: msgs.length, event: input.event });
   const text2 = [msgs.length ? formatParentMessages(parent.name, msgs) : "", children.length ? formatMessages(children) : ""].filter(Boolean).join("\n\n");
-  if (input.event === "Stop") return { decision: "block", reason: text2 };
+  if (input.event === "Stop") return stopMail(ctx, text2);
   if (input.event === "PostToolUse") return { decision: "block", reason: text2, hookSpecificOutput: { hookEventName: input.event, additionalContext: text2 } };
   return context(input.event, text2);
 }
@@ -2212,7 +2221,7 @@ ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online rig
         if (awaited.length) {
           holdOrMarkRead(ctx, awaited.map((m) => m.id), holdStop);
           ctx.activity?.("busy");
-          return { decision: "block", reason: formatMessages(awaited, { replyHint: false }) };
+          return stopMail(ctx, formatMessages(awaited, { replyHint: false }));
         }
         finishHookTurn(ctx, input);
         return {};
@@ -2229,9 +2238,9 @@ ${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online rig
       }
       ctx.activity?.("busy");
       ctx.log.info("continuing turn for peer messages", { count: msgs.length, autoWake: node.autoWakeEnabled });
-      return { decision: "block", reason: `${formatMessages(msgs, { replyHint: false })}
+      return stopMail(ctx, `${formatMessages(msgs, { replyHint: false })}
 
-${STOP_REASON_FOOTER}` };
+${STOP_REASON_FOOTER}`);
     }
     default:
       return {};
@@ -2587,7 +2596,7 @@ async function runRemoteAsk(node, target, args, job, signal, onProgress) {
   const combined = AbortSignal.any([signal, job.controller.signal]);
   combined.addEventListener("abort", cancel, { once: true });
   try {
-    let snapshot = await node.remoteJob(host, { op: "spawn", job: job.id, target, args: remoteSpawnArgsSchema.parse(raw) });
+    let snapshot = await node.remoteJob(host, { op: "spawn", job: job.id, target, args: remoteSpawnArgsSchema.parse(raw), usageTurn: `${job.id}:${job.startedAt}`, usageControls: job.usagePendingControls });
     if (combined.aborted) {
       cancel();
       combined.throwIfAborted();
@@ -2603,6 +2612,11 @@ async function runRemoteAsk(node, target, args, job, signal, onProgress) {
     for (; ; ) {
       combined.throwIfAborted();
       const state = snapshot.state;
+      if (state?.providerUsage && snapshot.usageTurn === `${job.id}:${job.startedAt}`) {
+        job.providerUsage = { ...state.providerUsage, runId: job.usageRunId, turnStartedAt: job.startedAt };
+        confirmUsageAdmission(job, state.providerUsage.admittedControls ?? []);
+      }
+      if (state?.usageSubmission && snapshot.usageTurn === `${job.id}:${job.startedAt}`) confirmUsageAdmission(job, state.usageSubmission.admitted);
       if (state?.progress) onProgress(state.progress);
       if (state) {
         job.sessionId = state.sessionId ?? job.sessionId;
@@ -3001,6 +3015,108 @@ function deriveJobTitle(prompt, maxChars = 80) {
   return title.slice(0, maxChars).trim() || "Background task";
 }
 
+// src/mcp/server-lifecycle.ts
+var SHUTDOWN_STEP_MS = 3e3;
+var NODE_STOP_MS = 8e3;
+var SHUTDOWN_DEADLINE_MS = 3 * SHUTDOWN_STEP_MS + NODE_STOP_MS + 1e3;
+var PARENT_CHECK_MS = 5e3;
+var PARENT_IDENTITY_CHECK_MS = 10 * 6e4;
+function comparePrerelease(a, b) {
+  const x = a.split("."), y = b.split(".");
+  for (let i = 0; i < Math.min(x.length, y.length); i++) {
+    const p = x[i], q = y[i];
+    const pn = /^\d+$/.test(p), qn = /^\d+$/.test(q);
+    if (pn && qn) {
+      const d = Number(p) - Number(q);
+      if (d) return Math.sign(d);
+      continue;
+    }
+    if (pn !== qn) return pn ? -1 : 1;
+    if (p !== q) return p < q ? -1 : 1;
+  }
+  return Math.sign(x.length - y.length);
+}
+function compareVersions(a, b) {
+  const parse = (v) => {
+    const m = /^v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$/.exec(v.trim());
+    return m ? { nums: m[1].split(".").map(Number), pre: m[2] ?? null } : null;
+  };
+  const x = parse(a), y = parse(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < Math.max(x.nums.length, y.nums.length); i++) {
+    const d = (x.nums[i] ?? 0) - (y.nums[i] ?? 0);
+    if (d) return Math.sign(d);
+  }
+  if (x.pre === y.pre) return 0;
+  if (x.pre === null) return 1;
+  if (y.pre === null) return -1;
+  return comparePrerelease(x.pre, y.pre);
+}
+function shouldYieldTo(replacement, own) {
+  if (!replacement?.version || compareVersions(replacement.version, own.version) !== 1) return false;
+  if (!own.parentIdentity || !replacement.agentStartedAt || !Number.isSafeInteger(replacement.agentPid)) return false;
+  return replacement.agentPid === own.ppid && replacement.agentStartedAt === own.parentIdentity;
+}
+async function runShutdownSteps(steps, opts = {}) {
+  for (const step of steps) {
+    opts.onStep?.(step.name);
+    const budgetMs = step.budgetMs ?? SHUTDOWN_STEP_MS;
+    let timer;
+    const timedOut = /* @__PURE__ */ Symbol("timeout");
+    const outcome = await Promise.race([
+      Promise.resolve().then(step.run).catch(() => void 0),
+      new Promise((resolve2) => {
+        timer = setTimeout(() => resolve2(timedOut), budgetMs);
+        timer.unref();
+      })
+    ]);
+    if (timer) clearTimeout(timer);
+    if (outcome === timedOut) opts.onTimeout?.(step.name, budgetMs);
+  }
+}
+function pidExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "ESRCH" ? false : void 0;
+  }
+}
+function watchParent(opts) {
+  const checkMs = opts.checkMs ?? PARENT_CHECK_MS;
+  const identityEvery = Math.max(1, Math.round((opts.identityCheckMs ?? PARENT_IDENTITY_CHECK_MS) / checkMs));
+  const currentPpid = opts.currentPpid ?? (() => process.ppid);
+  const alive = opts.alive ?? pidExists;
+  const readIdentity = opts.readIdentity ?? ((pid) => readProcessIdentity(pid));
+  let ticks = 0, busy = false, done = false;
+  const gone = (reason) => {
+    if (done) return;
+    done = true;
+    clearInterval(timer);
+    opts.onGone(reason);
+  };
+  const timer = setInterval(() => {
+    if (done || busy || !Number.isSafeInteger(opts.ppid) || opts.ppid <= 1) return;
+    if (process.platform !== "win32" && currentPpid() !== opts.ppid) return gone(`parent ${opts.ppid} ended (re-parented)`);
+    const exists = alive(opts.ppid);
+    if (exists === false) return gone(`parent ${opts.ppid} ended`);
+    if (exists === void 0 || ++ticks % identityEvery) return;
+    busy = true;
+    void (async () => {
+      const [expected, current] = await Promise.all([opts.identity, readIdentity(opts.ppid)]);
+      if (expected && current && current !== expected) gone(`parent ${opts.ppid} ended (PID reused)`);
+    })().catch(() => {
+    }).finally(() => {
+      busy = false;
+    });
+  }, checkMs);
+  timer.unref();
+  return () => {
+    done = true;
+    clearInterval(timer);
+  };
+}
+
 // src/mcp/server.ts
 var CHANNEL_NOTIFICATION = "notifications/claude/channel";
 var OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
@@ -3008,7 +3124,7 @@ var CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 var MAX_TITLE_CHARS = 80;
 var SUBAGENT_TOOLS = /* @__PURE__ */ new Set(["health", "peers", "send", "report_progress", "hook_event", "search_history", "get_conversation"]);
 var STAND_IN_RECHECK_MS = 3e4;
-var KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "permission_profile", "allow_tools", "send_to", "title", "notes"];
+var KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "base", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "permission_profile", "allow_tools", "send_to", "title", "notes"];
 var PLUGIN_ROOT = resolve(bundleDirectory(import.meta.url), "..");
 function pathFromUriOrPath(v) {
   if (typeof v !== "string" || !v) return null;
@@ -3137,6 +3253,11 @@ async function startServer(argv = process.argv.slice(2)) {
     pipePath: resolvePipePath(home),
     token: loadOrCreateToken(home),
     dbPath: resolveDbPath(home),
+    daemon: cfg.daemon.enabled ? {
+      cli: join5(bundleDirectory(import.meta.url), "cli.mjs"),
+      dashboard: () => cfg.dashboard && !ctx.headless,
+      config: () => ({ network: cfg.network, mobile: mobileAtStartup, dashboardPort: mobilePortAtStartup })
+    } : void 0,
     network: { home, config: cfg.network },
     agent,
     // Until the project dir is known, the folder name would be the plugin version.
@@ -3295,9 +3416,16 @@ async function startServer(argv = process.argv.slice(2)) {
   const ensureDashboard = async (force) => {
     try {
       if (!force && !cfg.dashboard) return null;
+      if (node?.usesDaemon && !node.isBroker) {
+        try {
+          return await node.ensureDashboard(force, mobilePortAtStartup);
+        } catch (error) {
+          if (!isUnsupportedOperation(error, "ensureDashboard")) throw error;
+        }
+      }
       if (mobileAtStartup && node) {
         try {
-          mobileDashboard ??= import("./chunks/activation-I6REDAOC.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
+          mobileDashboard ??= import("./chunks/activation-RBXZLL6L.mjs").then(({ configuredMobileDashboard }) => configuredMobileDashboard(
             node,
             mobileAtStartup,
             { home, pipe: resolvePipePath(home), port: mobilePortAtStartup, log: log.child("mobile") }
@@ -3309,9 +3437,9 @@ async function startServer(argv = process.argv.slice(2)) {
           mobileUnavailable = () => "restart_required";
         }
       }
-      dashboard ??= import("./chunks/dashboard-4BQN2ZFG.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
+      dashboard ??= import("./chunks/dashboard-OYE2YVBY.mjs").then(({ DashboardController }) => new DashboardController({ home, pipe: resolvePipePath(home), port: cfg.dashboardPort, log: log.child("dashboard"), ...mobileUnavailable ? { mobileStatus: () => mobileUnavailable() } : {} }));
       const info = await (await dashboard).ensure();
-      return mobileUnavailable ? (await import("./chunks/dashboard-4BQN2ZFG.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
+      return mobileUnavailable ? (await import("./chunks/dashboard-OYE2YVBY.mjs")).withMobileUnavailable(info, mobileUnavailable()) : info;
     } catch (err) {
       log.warn("could not start the dashboard", { err: err.message, port: cfg.dashboardPort });
       return null;
@@ -3344,26 +3472,39 @@ async function startServer(argv = process.argv.slice(2)) {
     });
   }, 15 * 6e4);
   closeSweep.unref();
-  const shutdown = async (reason) => {
+  let stopParentWatch = () => {
+  };
+  const shutdown = async (reason, yielded = false) => {
     if (shuttingDown) return;
     shuttingDown = true;
     clearInterval(closeSweep);
+    stopParentWatch();
     log.info("shutting down", { reason });
+    let step = "start";
+    setTimeout(() => {
+      log.warn("shutdown did not finish in time; exiting", { reason, step, deadlineMs: SHUTDOWN_DEADLINE_MS });
+      process.exit(0);
+    }, SHUTDOWN_DEADLINE_MS).unref();
+    if (yielded) ctx.jobs?.yieldInline();
     ctx.jobs?.cancelAll();
-    await killAllDelegates();
-    await mcp.close().catch(() => {
-    });
-    await dashboard?.then((controller) => controller.close()).catch(() => {
-    });
-    await mobileDashboard?.then((controller) => controller?.close()).catch(() => {
-    });
-    await rewake?.stop().catch(() => {
-    });
-    await antigravityHooks?.stop().catch(() => {
-    });
-    await museHooks?.stop().catch(() => {
-    });
-    await node?.stop().catch(() => {
+    const nodeStop = { name: "bridge node", run: () => node?.stop(), budgetMs: NODE_STOP_MS };
+    const steps = [
+      // Stop every delegated CLI this process runs itself, with its whole process tree; nothing may keep working unobserved.
+      { name: "delegates", run: () => killAllDelegates() },
+      { name: "mcp transport", run: () => mcp.close() },
+      { name: "local endpoints", run: () => Promise.allSettled([
+        dashboard?.then((controller) => controller.close()),
+        mobileDashboard?.then((controller) => controller?.close()),
+        rewake?.stop(),
+        antigravityHooks?.stop(),
+        museHooks?.stop()
+      ]) }
+    ];
+    await runShutdownSteps(yielded ? [nodeStop, ...steps] : [...steps, nodeStop], {
+      onStep: (name) => {
+        step = name;
+      },
+      onTimeout: (name, budgetMs) => log.warn("shutdown step did not finish in time; continuing", { reason, step: name, budgetMs })
     });
     process.exit(0);
   };
@@ -3371,6 +3512,15 @@ async function startServer(argv = process.argv.slice(2)) {
   process.stdin.on("end", () => void shutdown("stdin ended"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
   process.on("SIGINT", () => void shutdown("SIGINT"));
+  node?.on("replaced", () => {
+    const by = node.replacement;
+    void parentProcessIdentity().then((parentIdentity) => {
+      if (!node.wasReplaced || !shouldYieldTo(by, { version: APP_VERSION, ppid: process.ppid, parentIdentity })) return;
+      void shutdown(`replaced by newer server v${by.version} of the same host`, true);
+    }).catch(() => {
+    });
+  });
+  stopParentWatch = watchParent({ ppid: process.ppid, identity: parentProcessIdentity(), onGone: (reason) => void shutdown(reason) });
   await mcp.connect(transport);
   log.info("MCP transport connected");
   if (agent === "claude" && node) {
@@ -3382,7 +3532,7 @@ async function startServer(argv = process.argv.slice(2)) {
       log.info("delivery mode resolved", { delivery: channel ? "channel" : "hooks" });
     }
   }
-  if (agent === "claude" && node) await node.setWakePolicy(cfg.wakeOnDirect, Boolean(ctx.rewakeAvailable || channel), cfg.maxHops);
+  if (agent === "claude" && node) await node.setWakePolicy(cfg.wakeOnDirect, Boolean(ctx.rewakeAvailable || channel), cfg.maxHops).catch((err) => log.warn("startup wake policy update failed; retained locally for the next peer update or connection", { err: err.message }));
   launchInspected();
   await antigravityHooks?.start().catch((err) => log.warn("Antigravity hooks unavailable", { err: String(err) }));
   await museHooks?.start().catch((err) => log.warn("Muse hooks unavailable", { err: String(err) }));
@@ -3390,7 +3540,7 @@ async function startServer(argv = process.argv.slice(2)) {
     node.on("connected", ({ isBroker }) => {
       if (node.currentSessionId) ctx.onSessionId?.(node.currentSessionId);
       if (channel) for (const m of node.unread()) void pushChannel(m);
-      if (isBroker && cfg.dashboard && !ctx.headless) void ensureDashboard(false);
+      if ((isBroker || node.usesDaemon) && cfg.dashboard && !ctx.headless) void ensureDashboard(false);
       const adopt = () => void node.peers().then(async (peers) => {
         const online = new Set(peers.map((p) => p.name));
         const candidates = ctx.jobs?.standInOwners(online) ?? [];
@@ -3510,7 +3660,7 @@ ${JSON.stringify(result)}`);
     description: "Cheap broker health: round-trip latency, event-loop delay, cached history-import phase, estimated percent and ETA, backup phase and last verification time, and recent error codes. Uses no log or archive reads. If tools are slow, use health or peers instead of reading live bridge log files. Retry a timeout once; report the exact tool error if it persists.",
     inputSchema: {},
     annotations: { readOnlyHint: true }
-  }, guarded("health", async () => text(JSON.stringify(await probeBrokerHealth(resolvePipePath(home), log)))));
+  }, guarded("health", async () => text(JSON.stringify({ ...await probeBrokerHealth(resolvePipePath(home), log), nodeHosting: ctx.node?.hostingEvidence() ?? null }))));
   register("ask_owner", {
     title: "Ask the owner a decision question",
     description: "File an owner-only decision for your own project in Waiting for you. Check decisions first. Returns immediately; the exact answer arrives later as a waking direct message with reply_to=question id, also sent to the project main. Jobs must ask their main. Use 2\u20134 options, one recommendation, and concise context; link a concrete artifact for authorization. Never secrets, status, peer questions, playable checks or routine tool approvals. Answers never bypass native approvals or accept implementation. Same project + issue + topic merges; at most five open per session. Unanswered stays visible; destructive blocking or authorization questions cannot default.",
@@ -3531,8 +3681,8 @@ ${JSON.stringify(result)}`);
     },
     guarded("search_history", async (a) => {
       const { answer, ...args } = a;
-      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-47SYSXOL.mjs")).readHistory(resolveDbPath(ctx.home), args);
-      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-SXMENF2Y.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
+      const result = ctx.node ? await ctx.node.searchHistory(args) : (await import("./chunks/history-CK6DVMRZ.mjs")).readHistory(resolveDbPath(ctx.home), args);
+      return text(JSON.stringify(answer ? { ...result, answer: await (await import("./chunks/history-answer-PKCVNUZO.mjs")).answerHistory(a.query, result, cfg, ctx.home, log) } : result));
     })
   );
   register("get_conversation", {
@@ -3540,7 +3690,7 @@ ${JSON.stringify(result)}`);
     description: "Fetch a complete locally retained conversation by the conversation id returned in search_history. Pages contain exact raw bytes (base64) and text chunks with source offsets. Pass next as after; concatenate chunks per source/generation to reconstruct JSONL or SQLite snapshots. No model calls or network export.",
     inputSchema: conversationPageSchema.shape,
     annotations: { readOnlyHint: true }
-  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-O23OXQTT.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
+  }, guarded("get_conversation", async (args) => text(JSON.stringify(ctx.node ? await ctx.node.getConversation(args) : (await import("./chunks/conversations-PI2SW7S3.mjs")).readConversationFile(resolveDbPath(ctx.home), args)))));
   register(
     "decide",
     {
@@ -4056,6 +4206,11 @@ ${jobLines.join("\n")}`);
     jobs: ctx.jobs
   };
   const keep = (a) => Object.fromEntries(KEPT_ARGS.filter((k) => a[k] !== void 0).map((k) => [k, a[k]]));
+  const seedUsage = (job, usage) => {
+    if (usage && job.providerUsage?.turnStartedAt !== job.startedAt) {
+      job.providerUsage = { turnStartedAt: job.startedAt, decision: usage, warningReported: usage.type === "warn" };
+    }
+  };
   const resumers = {};
   for (const target of CODING_AGENTS) {
     const profile = DELEGATION_TARGETS[target];
@@ -4074,6 +4229,7 @@ ${jobLines.join("\n")}`);
       worktree: external_exports.boolean().optional().describe(
         "Run in a separate git worktree on its own branch (implies access=edit). Your working copy stays untouched; the result explains how to review, merge or discard the changes."
       ),
+      base: external_exports.string().min(1).max(4096).optional().describe("Explicit worktree base ref or commit. Otherwise compare HEAD to its fetched upstream, or the remote default without an upstream: advance only when purely behind; keep HEAD when equal, ahead or diverged. Offline uses the cached reference, or HEAD with a warning; local-only repos use HEAD. Exact selection is reported at job start."),
       title: external_exports.string().min(1).max(MAX_TITLE_CHARS).describe('A short title for this subagent, 3-7 words, like a chat title (e.g. "Fix castle gate alignment"). Required. Shown in peers and the dashboard.'),
       allow_tools: external_exports.array(external_exports.string().min(1).max(200)).max(50).optional().describe(
         'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (reads only), "pair-desk:worker" (reads, comments, progress, plans, issue edits and review locations; excludes status, builds and handoff writes), or "server" for all of its tools. Add "pair-desk.set_build" separately to allow build publication.'
@@ -4116,7 +4272,13 @@ ${jobLines.join("\n")}`);
           if (!ctx.jobs) throw new BridgeError("bad_request", "Remote asks require a supervisor session.");
         }
         if (ctx.jobs && !ctx.jobs.canStart()) return text(t("jobs.limit", { max: ctx.jobs.limit }), true);
+        const usage = a.host || a.worktree ? void 0 : await checkUsagePreflight(usageProbeFor(target, cfg, { home: ctx.home, cwd: a.cwd || ctx.cwd(), log }, a.model));
+        if (usage?.type === "block") return text(usageAdmissionText(usage), true);
         const tracked = ctx.jobs?.track(target, a.model ?? defaultModel, a.prompt, resumeFor(a), keep(a));
+        if (tracked) {
+          seedUsage(tracked.job, usage);
+          ctx.jobs?.persist();
+        }
         if (a.host && tracked) {
           tracked.job.remote = { host: a.host, name: `${target}-job-${tracked.job.id}` };
           ctx.jobs.persist();
@@ -4138,8 +4300,11 @@ ${jobLines.join("\n")}`);
         const confirmation = () => text(`Job ${tracked.job.name} is supervised by ${tracked.job.foregroundRecipient}; its report was routed there.`);
         let res;
         try {
-          res = a.host && tracked ? await runRemoteAsk(requireNode(), target, a, tracked.job, extra.signal, onProgress) : await run({ ...a, _job: tracked?.job.name }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false, tracked?.job);
+          res = a.host && tracked ? await runRemoteAsk(requireNode(), target, a, tracked.job, extra.signal, onProgress) : await run({ ...a, _job: tracked?.job.name, _usageWarningReported: usage?.type === "warn" }, tracked ? AbortSignal.any([extra.signal, tracked.job.controller.signal]) : extra.signal, onProgress, false, tracked?.job);
         } catch (err) {
+          if (usage?.type === "warn" && err instanceof Error) err.message = `${usageAdmissionText(usage)}
+
+${err.message}`;
           await contact();
           tracked?.end({ error: err });
           log.warn("ask failed", { job: tracked?.job.name, err: err.message });
@@ -4150,6 +4315,9 @@ ${target} session_id: ${tracked.job.sessionId ?? "-"}
 ` : "";
           return text(`${identity}${describeError(err)}`, true);
         }
+        if (usage?.type === "warn") res = { ...res, text: `${usageAdmissionText(usage)}
+
+${res.text}` };
         await contact();
         tracked?.end({ result: res });
         if (redirected()) return confirmation();
@@ -4180,13 +4348,21 @@ ${res.text || t("delegate.empty")}`, res.isError);
         if (a.host && !ctx.runners) throw new BridgeError("bad_request", "Remote jobs require the bundled runner. Update and reload this session.");
         const jobs = ctx.jobs;
         if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
-        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job2) => ({ ...a, _job: job2.name }), a), resumeFor(a), keep(a));
+        const usage = a.host || a.worktree ? void 0 : await checkUsagePreflight(usageProbeFor(target, cfg, { home: ctx.home, cwd: a.cwd || ctx.cwd(), log }, a.model));
+        if (usage?.type === "block") return text(usageAdmissionText(usage), true);
+        const job = jobs.start(target, a.model ?? defaultModel, a.prompt, background((job2) => {
+          seedUsage(job2, usage);
+          return { ...a, _job: job2.name };
+        }, a), resumeFor(a), keep(a));
+        seedUsage(job, usage);
+        jobs.persist();
         const cwd = a.cwd || ctx.cwd();
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
         const exact = a.sandbox !== void 0 || a.permission_mode !== void 0 || a.auto_approve !== void 0 || a.bypass_permissions !== void 0;
         const note = exact ? "" : `
 ${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
-        return text(`${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${derivedTitle ? `
+        return text(`${usage?.type === "warn" ? usageAdmissionText(usage) + "\n\n" : ""}${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${a.worktree ? `
+Base selected at job start: ${a.base ?? "HEAD unless purely behind fetched upstream/default (offline/local fallback reported in first status)"}.` : ""}${derivedTitle ? `
 Title derived from prompt: "${a.title}".` : ""}`);
       })
     );

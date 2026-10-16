@@ -1,0 +1,221 @@
+{
+  "comment": "Known-flaky tests: skipped in the normal CI lanes, run and reported in the non-blocking known-flaky lane. Each entry is re-checked weekly by its owner; see CONTRIBUTING.md \"Known-flaky tests\".",
+  "entries": [
+    {
+      "file": "test/daemon-backup-drain.test.ts",
+      "test": "owned automatic-backup settlement (not whole-core durability) > timeout and second observer leave the same actual capture alive; completion preserves exact accepted bytes",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-21",
+      "seen": "AB325 lifecycle Windows Node 22 and 24 (runs 38854025643, 38855920781)"
+    },
+    {
+      "file": "test/daemon-lifecycle.test.ts",
+      "test": "standalone demand-start broker > actual CLI ui authorized sends use a daemon before/after crash (mobile-configured=false)",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-22",
+      "seen": "Windows Node 24 shard 5/6 (main run 38852705600); AB325 lifecycle Windows Node 24 (run 38848262390)"
+    },
+    {
+      "file": "test/daemon-lifecycle.test.ts",
+      "test": "standalone demand-start broker > actual CLI ui authorized sends use a daemon before/after crash (mobile-configured=true)",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-23",
+      "seen": "Windows Node 24 shard 5/6 (main run 38852705600)"
+    },
+    {
+      "file": "test/daemon-lifecycle.test.ts",
+      "test": "standalone demand-start broker > UI definitive unavailable creation preserves explicit degraded compatibility only",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-21",
+      "seen": "AB325 lifecycle Windows Node 22 and 24 (runs 38849251200, 38849984389, 38855920781)"
+    },
+    {
+      "file": "test/daemon-receipt.test.ts",
+      "test": "source-associated publication UNKNOWN (not controller or durability authority) > SIMULATED reader_native_expiry failure after ORIGINAL COMMIT cannot acknowledge its tentative return value",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-22",
+      "seen": "Windows Node 22 shard 1/6 (main run 38837368512)"
+    },
+    {
+      "file": "test/dashboard-events.test.ts",
+      "test": "history change feed (AB-383) > pushes an appended line to an open event stream and serves it from history.db within the budget",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-23",
+      "seen": "Windows Node 24 shard 1/6 (main run 38856603889)"
+    },
+    {
+      "file": "test/dashboard-history-read.test.ts",
+      "test": "dashboard reads from the history store (AB-383) > serves lines appended after ingestion: a watched change is retained in the next batch",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-21",
+      "seen": "Windows Node 24 and 22 shard 3/6 (runs 38841134793, 38850550770)"
+    },
+    {
+      "file": "test/dashboard-history-read.test.ts",
+      "test": "dashboard reads from the history store (AB-383) > serves the newest chat page, forward pages and subagents equal to the file reads, with zero raw reads",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-22",
+      "seen": "Windows Node 24 and 22 shard 3/6 (main run 38837368512, run 38846662924)"
+    },
+    {
+      "file": "test/dashboard-history-read.test.ts",
+      "test": "dashboard reads from the history store (AB-383) > a rewritten file is never served from its stale copy > rewritten to the same size",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-23",
+      "seen": "Windows Node 22 shard 3/6 (runs 38850550770, 38852829447)"
+    },
+    {
+      "file": "test/dashboard-history-read.test.ts",
+      "test": "dashboard reads from the history store (AB-383) > a rewritten file is never served from its stale copy > replaced by a new file whose identity cannot be told apart (Windows ino 0, simulated)",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-21",
+      "seen": "Windows Node 22 and 24 shard 3/6 (runs 38857072165, 38858490705)"
+    },
+    {
+      "file": "test/handoff-runner.test.ts",
+      "test": "hands off a blocking ask without returning results or notes to the old caller",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-22",
+      "seen": "Windows Node 24 shard 6/6 (main run 38852843323)"
+    },
+    {
+      "file": "test/handoff-subagents.test.ts",
+      "test": "local subagent ownership handoff > retains former-master controls and prevents the old manager overwriting ownership",
+      "issue": "AB-421",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-23",
+      "seen": "Windows Node 22 and 24 shard 4/6 (run 38835584198, main run 38843335834)"
+    },
+    {
+      "file": "test/history.test.ts",
+      "test": "authenticated history endpoint and broker API > wakes a backed-off history worker so a new message is searchable within about 2 s",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-21",
+      "seen": "Windows Node 24 shard 5/6 (run 38846199958)"
+    },
+    {
+      "file": "test/history.test.ts",
+      "test": "authenticated history endpoint and broker API > exposes broker-owned search and bounded rebuild to clients",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-22",
+      "seen": "Windows Node 24 and 22 shard 5/6 (main run 38852705600, run 38852829447)"
+    },
+    {
+      "file": "test/hooks.test.ts",
+      "test": "hook responses > SessionStart reports identity and peers",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-23",
+      "seen": "Windows Node 24 shard 3/6 (main run 38843335834)"
+    },
+    {
+      "file": "test/job-recovery-async.test.ts",
+      "test": "yields throughout a cold archive/run catalog, matches offline recovery and clones only selected jobs",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-21",
+      "seen": "Windows Node 22 and 24 shard 4/6 (main run 38849169431, runs 38833198807, 38849984408)"
+    },
+    {
+      "file": "test/job-recovery.test.ts",
+      "test": "recovers a 0.29.10 backup with current handoff authority and preserves unknown data",
+      "issue": "AB-420",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-22",
+      "seen": "macOS Node 22 and 24 (runs 38845915331, 38854025601)"
+    },
+    {
+      "file": "test/job-runner.test.ts",
+      "test": "background subagents in job runners > keeps explicit session reply grants across a detached job continuation",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-23",
+      "seen": "Windows Node 24 shard 3/6 (main run 38852843323)"
+    },
+    {
+      "file": "test/job-terminal-handoff.test.ts",
+      "test": "retains a throwing handoff continuation's accepted queue across persistence and restore until explicit retry",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-21",
+      "seen": "Windows Node 22 and 24 shard 5/6 (main run 38852705600, run 38854025601)"
+    },
+    {
+      "file": "test/muse-job-contracts.test.ts",
+      "test": "Muse legacy exec profile persistence > keeps the initial profile through continuation and reload, and replaces exact profiles with access",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-22",
+      "seen": "Windows Node 24 and 22 shard 5/6 (main run 38837368512, run 38846199958)"
+    },
+    {
+      "file": "test/muse-job-contracts.test.ts",
+      "test": "Muse legacy exec profile persistence > shows that slow context admission consumes the completion wait before the profile CLI can finish",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-23",
+      "seen": "Windows Node 22 shard 5/6 (runs 38846199958, 38850550770)"
+    },
+    {
+      "file": "test/project-group-takeover.test.ts",
+      "test": "observes a stored final and consumption receipts on a separate read-only connection before delivery confirmation",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-21",
+      "seen": "Windows Node 24 shard 2/6 (main run 38843335834, run 38849984408)"
+    },
+    {
+      "file": "test/siblings.test.ts",
+      "test": "sibling job messaging > source-witnessed legacy supervisor assignment > invalidates the assignment on a durable root session change before any skipped import",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-22",
+      "seen": "Windows Node 24 shard 3/6 (main run 38843335834)"
+    },
+    {
+      "file": "test/ui.test.ts",
+      "test": "web dashboard > saves a job's next-turn settings without continuing it, and lists them in the state",
+      "issue": "AB-410",
+      "owner": "claude-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-23",
+      "seen": "Windows Node 24 shard 4/6, Ubuntu Node 24 (main run 38856603889, run 38849251187); AB325 lifecycle macOS Node 24"
+    }
+  ]
+}

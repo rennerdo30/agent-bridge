@@ -7,6 +7,23 @@ const READ_TOOLS = new Set(["read", "read_file", "view_file", "glob", "grep", "g
 export function museBridgeTool(input: Record<string, any>): boolean {
   return /^mcp__(?:plugin_agent_bridge_bridge|agent_bridge)__[a-zA-Z0-9_]+$/.test(String(input.tool_name ?? ""));
 }
+// Bridge tools that only observe state; mutating Bridge tools (send, spawn_*, decide, ...) keep the authenticated path.
+const READ_ONLY_BRIDGE_TOOLS = new Set(["health", "peers", "list_models", "usage_limits", "network_status", "search_history", "get_conversation"]);
+/**
+ * A known read-only tool needs no Bridge context: every access mode (read, ask,
+ * edit) leaves it to Muse's native policy, so the answer is "no decision"
+ * whether or not the host handoff can be authenticated. Deciding it before the
+ * DPAPI/CIM handoff restore and the endpoint round trip keeps a slow or absent
+ * Bridge from turning a read into a deny (AB-384). Native children still never
+ * reach root Bridge tools; unknown and mutating tools take the gated path.
+ */
+export function museLocalReadAllowed(input: Record<string, any>, childBridgeCall: boolean): boolean {
+  if (childBridgeCall) return false;
+  const tool = String(input.tool_name ?? "");
+  if (READ_TOOLS.has(tool.toLowerCase())) return true;
+  const bridge = /^mcp__(?:plugin_agent_bridge_bridge|agent_bridge)__([a-zA-Z0-9_]+)$/.exec(tool);
+  return !!bridge && READ_ONLY_BRIDGE_TOOLS.has(bridge[1]!);
+}
 export function museReadingTool(input: Record<string, any>): boolean {
   const tool = String(input.tool_name ?? "");
   return READ_TOOLS.has(tool.toLowerCase()) || museBridgeTool(input);
@@ -32,12 +49,17 @@ export function musePreToolUseGate(input: Record<string, any>, access: string | 
 export async function runMuseHook(event: string): Promise<number> {
   let childBridgeCall = false;
   try {
-    const restored = await restoreMuseContext();
     let raw = "";
     for await (const part of process.stdin) { raw += part; if (raw.length > 256 * 1024) throw new Error("hook input too large"); }
     const input = object(JSON.parse(raw || "{}"));
+    // MUSE_* identity comes from the native host, not from the restored Bridge context.
     const session = process.env.MUSE_SESSION_ID, thread = process.env.MUSE_THREAD_ID;
     childBridgeCall = event === "PreToolUse" && !!thread && thread !== session && museBridgeTool(input);
+    if (event === "PreToolUse" && museLocalReadAllowed(input, childBridgeCall)) { process.stdout.write("{}"); return 0; }
+    // Only permission decisions need the adapter's environment contract. Mail
+    // callbacks authenticate the current hook registration below instead; doing
+    // both repeats DPAPI, host identity and ancestry probes in every fresh CLI.
+    const restored = event === "PreToolUse" ? await restoreMuseContext() : false;
     if (event === "PreToolUse") {
       if (!restored && process.env.AGENT_BRIDGE_INTERNAL === "1") throw new Error("Unauthenticated Muse host context");
       const gate = musePreToolUseGate(input, process.env[MUSE_ACCESS_ENV], childBridgeCall);

@@ -1,4 +1,4 @@
-import { readFileSync, unwatchFile, watchFile } from "node:fs";
+import { readFileSync } from "node:fs";
 import { basename, join, isAbsolute } from "node:path";
 import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, CONFIG_FILE_NAME, DEFAULT_CLAUDE_BIN, DEFAULT_CODEX_BIN, DEFAULT_LINGER_SEC, DEFAULT_MAX_HOPS, DEFAULT_MAX_JOBS, DEFAULT_MAX_DELEGATE_DEPTH, DEFAULT_MUSE_BIN, DEFAULT_OPENCODE_BIN, DEFAULT_DASHBOARD_PORT, ENV, MAX_DELEGATE_DEPTH_LIMIT, MAX_JOBS_LIMIT } from "./constants.js";
 import type { Logger } from "./logger.js";
@@ -38,6 +38,8 @@ export interface HistoryAnswerConfig {
 const DEFAULT_HISTORY_ANSWER: HistoryAnswerConfig = { preference: ["codex", "claude", "opencode"], claudeModel: "haiku", codexModel: "gpt-6-luna", opencodeModel: null };
 
 export interface BridgeConfig {
+  /** Restart-applied standalone broker daemon, on by default: AGENT_BRIDGE_DAEMON=1/0 > daemon.enabled > true. */
+  daemon: { enabled: boolean };
   /** Restart-applied, home top-level only; never projected in effective-config diagnostics. */
   mobile?: MobileConfig;
   /** Home-wide spelling preference, shared by sessions, CLI helpers and runners. */
@@ -60,6 +62,11 @@ export interface BridgeConfig {
   maxDelegateDepth: number;
   /** MCP tools subagents may call without asking the parent (server.tool patterns or presets; see tool-allow.ts). */
   autoApproveTools: string[];
+  /**
+   * Spawned and asked jobs (AB-403). defaultAllowTools is the allow_tools of a job whose spawn_* / ask_* call
+   * passes none; an explicit list replaces it and an explicit [] turns it off. Home config only.
+   */
+  jobs: { defaultAllowTools: string[] };
   /** Machine-wide named resource capacities, shared by all jobs using this home directory. */
   resourceSlots: Record<string, number>;
   delivery: DeliveryMode;
@@ -111,6 +118,7 @@ export interface BridgeConfig {
 }
 
 export const DEFAULT_CONFIG: BridgeConfig = {
+  daemon: { enabled: true },
   pathDisplay: { preferAlias: true },
   history: { ingest: true, budgetBytes: 32 * 1024 ** 3 },
   questionAlerts: DEFAULT_QUESTION_ALERTS,
@@ -124,6 +132,7 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   maxJobs: DEFAULT_MAX_JOBS,
   maxDelegateDepth: DEFAULT_MAX_DELEGATE_DEPTH,
   autoApproveTools: [],
+  jobs: { defaultAllowTools: ["pair-desk:worker"] },
   resourceSlots: {},
   delivery: "auto",
   claudeBin: DEFAULT_CLAUDE_BIN,
@@ -241,6 +250,18 @@ function toolPatterns(v: unknown): string[] | undefined {
   return (list as string[]).map((x) => x.trim()).filter(Boolean);
 }
 
+/** jobs.defaultAllowTools from the first source that sets it validly; [] is a valid, empty default. */
+function jobDefaultAllowTools(sources: Record<string, unknown>[], log: Logger): string[] | undefined {
+  for (const source of sources) {
+    const jobs = source.jobs;
+    if (!isRecord(jobs) || jobs.defaultAllowTools === undefined) continue;
+    const parsed = toolPatterns(jobs.defaultAllowTools);
+    if (parsed) return parsed;
+    log.warn("ignoring invalid config value", { key: "jobs.defaultAllowTools", value: String(jobs.defaultAllowTools) });
+  }
+  return undefined;
+}
+
 /** How often a running session checks config.json for changes. */
 const CONFIG_POLL_MS = 2_000;
 
@@ -252,23 +273,29 @@ export function watchConfig(home: string, agent: AgentKind, log: Logger, onChang
   const path = join(home, CONFIG_FILE_NAME);
   let local = typeof projectDir === "function" ? projectDir() : projectDir;
   let localPath = local ? join(local, ".agent-bridge", CONFIG_FILE_NAME) : null;
-  const listener = (cur: { mtimeMs: number }, prev: { mtimeMs: number }) => {
-    if (cur.mtimeMs === prev.mtimeMs) return;
+  // Capture synchronously: watchFile's first asynchronous stat can occur after
+  // the first edit, losing it entirely. Contents also detect same-mtime saves.
+  // Only a missing file is a change. A transient read error (EBUSY/EPERM while
+  // antivirus or an editor holds the file on Windows) keeps the previous baseline,
+  // so it cannot reset settings to their defaults until the next poll.
+  const contents = (file: string | null, previous: string | null): string | null => {
+    if (!file) return null;
+    try { return readFileSync(file, "utf8"); }
+    catch (error) { return (error as NodeJS.ErrnoException).code === "ENOENT" ? null : previous; }
+  };
+  let homeContents = contents(path, null), localContents = contents(localPath, null);
+  const timer = setInterval(() => {
+    const next = typeof projectDir === "function" ? projectDir() : local;
+    const moved = next !== local;
+    local = next; localPath = local ? join(local, ".agent-bridge", CONFIG_FILE_NAME) : null;
+    const homeNext = contents(path, homeContents), localNext = contents(localPath, moved ? null : localContents);
+    if (!moved && homeNext === homeContents && localNext === localContents) return;
+    homeContents = homeNext; localContents = localNext;
     log.info("config file changed; applying it", { path });
     onChange(loadConfig(home, agent, log, process.env, local));
-  };
-  watchFile(path, { interval: CONFIG_POLL_MS, persistent: false }, listener);
-  if (localPath) watchFile(localPath, { interval: CONFIG_POLL_MS, persistent: false }, listener);
-  const timer = typeof projectDir === "function" ? setInterval(() => {
-    const next = projectDir();
-    if (next === local) return;
-    if (localPath) unwatchFile(localPath, listener);
-    local = next; localPath = join(next, ".agent-bridge", CONFIG_FILE_NAME);
-    watchFile(localPath, { interval: CONFIG_POLL_MS, persistent: false }, listener);
-    onChange(loadConfig(home, agent, log, process.env, local));
-  }, CONFIG_POLL_MS) : null;
-  timer?.unref();
-  return () => { unwatchFile(path, listener); if (localPath) unwatchFile(localPath, listener); if (timer) clearInterval(timer); };
+  }, CONFIG_POLL_MS);
+  timer.unref();
+  return () => clearInterval(timer);
 }
 
 /** Set one top-level value in config.json, keeping the rest of the file. */
@@ -337,6 +364,9 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
 
   const d = DEFAULT_CONFIG;
   const cfg: BridgeConfig = {
+    // Only exact 1/0 override config; config accepts booleans only. Invalid values fall through.
+    daemon: { enabled: env.AGENT_BRIDGE_DAEMON === "1" ? true : env.AGENT_BRIDGE_DAEMON === "0" ? false
+      : pick("daemon", null, v => isRecord(v) && typeof v.enabled === "boolean" ? v.enabled : undefined) ?? d.daemon.enabled },
     // Helper reads using another agent kind must not reset this process-wide preference.
     pathDisplay: isRecord(file.pathDisplay) && typeof file.pathDisplay.preferAlias === "boolean" ? { preferAlias: file.pathDisplay.preferAlias } : d.pathDisplay,
     history: {
@@ -352,6 +382,8 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     maxJobs: pick("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
     maxDelegateDepth: pick("maxDelegateDepth", ENV.maxDelegateDepth, (v) => parseIntInRange(v, 1, MAX_DELEGATE_DEPTH_LIMIT)) ?? d.maxDelegateDepth,
     autoApproveTools: pick("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
+    // Home config only (agent section, then top level); a project config cannot loosen approvals.
+    jobs: { defaultAllowTools: [...(jobDefaultAllowTools([section, file], log) ?? d.jobs.defaultAllowTools)] },
     // Capacities must agree across agents; per-agent sections cannot override shared resources.
     resourceSlots: resourceSlots(file.resourceSlots) ?? d.resourceSlots,
     delivery: pick("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,

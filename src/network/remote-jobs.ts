@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { loadConfig } from "../core/config.js";
+import { markerSafe } from "../core/approval-display.js";
+import { checkUsagePreflight, usageAdmissionText, usageSubmissionReceipt } from "../core/usage.js";
+import { usageProbeFor } from "../mcp/targets.js";
+import { REMOTE_JOB_USAGE_CAPABILITY } from "./remote-job-protocol.js";
 import { bundledCli } from "../core/delegate.js";
 import { isRecord, readJsonStore, writeJsonStore } from "../core/json-store.js";
 import type { Logger } from "../core/logger.js";
@@ -18,8 +22,8 @@ import type { NetworkService } from "./link.js";
 import type { NetworkPair } from "./pairing.js";
 import { MAX_REMOTE_JOBS, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY, REMOTE_JOB_CAPABILITY, REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_FRAME, REMOTE_JOB_RATE_LIMIT, REMOTE_JOB_RATE_WINDOW_MS, REMOTE_JOB_REQUEST_TIMEOUT_MS, REMOTE_JOB_SPAWN_LIMIT, remoteJobRequestSchema, remoteJobWireSchema, remoteJobSnapshotSchema, remoteSnapshotForPeer, type RemoteJobRequest } from "./remote-job-protocol.js";
 
-export interface RemoteJobSnapshot { state: RunnerState | null; alive: boolean; approvals: PendingApproval[] }
-interface RemoteRecord { pair: string; peer: string; owner: string; job: Job; args: DelegateArgs }
+export interface RemoteJobSnapshot { state: RunnerState | null; alive: boolean; approvals: PendingApproval[]; usageTurn?: string }
+interface RemoteRecord { pair: string; peer: string; owner: string; job: Job; args: DelegateArgs; usageRefusal?: RunnerState; usageTurn?: string }
 type StoredRemoteRecord = Omit<RemoteRecord, "job"> & { job: Omit<Job, "controller" | "queue"> };
 const REMOTE_JOBS_FILE = "remote-jobs.json";
 interface Pending { host: string; resolve: (value: RemoteJobSnapshot) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
@@ -48,6 +52,8 @@ export class RemoteJobs {
   private readonly approvals = new Map<string, () => void>();
   private readonly publishingApprovals = new Set<string>();
   private readonly starting = new Set<string>();
+  /** A remote request awaiting its answer, or a spawn still being admitted or started: a daemon must not exit idle. */
+  get busy(): boolean { return this.pending.size > 0 || this.starting.size > 0 || this.pendingStarts.size > 0; }
   private readonly pendingStarts = new Map<string, { record: RemoteRecord; previous?: RemoteRecord; controller: AbortController; cancelRequested: boolean; committed: boolean }>();
   private readonly runners: JobRunners | null;
   private closed = false;
@@ -62,7 +68,7 @@ export class RemoteJobs {
       if (typeof r.pair !== "string" || typeof r.peer !== "string" || !r.job?.id || !r.args) continue;
       this.records.set(r.job.id, { ...r, job: { ...r.job, controller: new AbortController(), queue: [] } });
     }
-    network.registerExtension(REMOTE_JOB_FRAME, REMOTE_JOB_CAPABILITY, (payload, pair) => this.receive(payload, pair), [REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY]);
+    network.registerExtension(REMOTE_JOB_FRAME, REMOTE_JOB_CAPABILITY, (payload, pair) => this.receive(payload, pair), [REMOTE_JOB_CANCELLED_CAPABILITY, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY, REMOTE_JOB_USAGE_CAPABILITY]);
   }
 
   async request(host: string, peer: Pick<PeerInfo, "id" | "name">, raw: RemoteJobRequest, supervisor = peer.id, localJobName?: string): Promise<RemoteJobSnapshot> {
@@ -75,7 +81,7 @@ export class RemoteJobs {
       }
     }
     const mirrorKey = `${host}/${request.job}`, mirrorTurn = this.mirrorTurns.get(mirrorKey);
-    if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: install remote-jobs-v1 support and restart its hosting sessions.");
+    if (!this.network.peerSupports(host, REMOTE_JOB_CAPABILITY)) throw new Error("Remote broker update needed or paired PC disconnected: update agent-bridge on the paired PC to a release with remote-jobs-v1, then start or reload one session there; its background broker hands over to the newer release (an embedded broker needs every hosting session restarted).");
     if (request.op === "spawn" && (request.args.terminal_sandbox !== undefined || request.args.bypass_permissions !== undefined) && !this.network.peerSupports(host, REMOTE_JOB_ANTIGRAVITY_OPTIONS_CAPABILITY)) {
       throw new Error("Remote broker update needed: paired PC does not support Antigravity terminal_sandbox or bypass_permissions options.");
     }
@@ -87,7 +93,13 @@ export class RemoteJobs {
     });
     void response.catch(() => {});
     try {
-      await this.network.sendExtension(host, REMOTE_JOB_FRAME, { kind: "request", rid, peer: { id: peer.id, name: peer.name, supervisor }, request });
+      let wireRequest = request;
+      if (request.op === "spawn" && !this.network.peerSupports(host, REMOTE_JOB_USAGE_CAPABILITY)) {
+        if (request.usageControls?.length) throw new Error("Remote broker update needed: submitted steering requires remote-jobs-usage-v1 admission acknowledgments.");
+        const { usageTurn, ...legacy } = request;
+        wireRequest = legacy;
+      }
+      await this.network.sendExtension(host, REMOTE_JOB_FRAME, { kind: "request", rid, peer: { id: peer.id, name: peer.name, supervisor }, request: wireRequest });
       const snapshot = await response;
       // The remote result is authoritative even when this PC cannot yet retain its mirror.
       try {
@@ -99,6 +111,9 @@ export class RemoteJobs {
     } catch (err) {
       const p = this.pending.get(rid);
       if (p) { clearTimeout(p.timer); this.pending.delete(rid); p.reject(err as Error); }
+      if (request.op === "spawn" && request.args.base !== undefined) {
+        throw new Error(`Remote spawn with explicit base ${request.args.base} failed; an older peer may not support the base option. Check the paired PC before retrying: ${(err as Error).message}`);
+      }
       throw err;
     }
   }
@@ -162,17 +177,22 @@ export class RemoteJobs {
       let worktree: Worktree | null = null;
       if (record) {
         const state = this.snapshot(record).state;
-        if (!state?.sessionId) throw new Error(state?.status === "cancelled"
+        if (!state?.sessionId && !record.usageRefusal) throw new Error(state?.status === "cancelled"
           ? "Remote job was cancelled before its session started; start a new job."
           : "Remote job did not start a native session; start a new job.");
-        cwd = allowedRemoteDirectory(state.workdir ?? cwd, policy.allowRoots);
-        worktree = state.worktree ?? null;
-        args = resumeArgs(args, record.job.name, args.prompt, state.sessionId, cwd, worktree, changedJobArgs({ ...record.args }, parsedSettings));
-      } else if (args.worktree) {
+        cwd = allowedRemoteDirectory(state?.workdir ?? cwd, policy.allowRoots);
+        worktree = state?.worktree ?? null;
+        if (state?.sessionId) args = resumeArgs(args, record.job.name, args.prompt, state.sessionId, cwd, worktree, changedJobArgs({ ...record.args }, parsedSettings));
+        else if (args.session_id) throw new Error("A refused job has no native session to resume.");
+      }
+      // Only this executor's authenticated account may decide a remote refusal.
+      const usage = !record && args.worktree ? { type: "allow", reason: "unknown" } as const
+        : await checkUsagePreflight(usageProbeFor(request.target, cfg, { home: this.home, cwd, log: this.log }, args.model));
+      if (!record && args.worktree && usage.type !== "block") {
         const repo = allowedRemoteDirectory(await git(["rev-parse", "--show-toplevel"], cwd, this.log), policy.allowRoots);
         if (existsSync(join(repo, "worktrees"))) allowedRemoteDirectory(join(repo, "worktrees"), policy.allowRoots);
         // Managed checkouts remain under an allowed root, including their git metadata.
-        worktree = await createWorktree({ cwd, home: repo, worktreeRoot: cfg.worktreeRoot, jobId: request.job, log: this.log });
+        worktree = await createWorktree({ cwd, home: repo, worktreeRoot: cfg.worktreeRoot, base: args.base, jobId: request.job, log: this.log });
         cwd = allowedRemoteDirectory(worktree.cwd, policy.allowRoots);
         args = { ...args, cwd, worktree: false, _worktree: worktree };
       }
@@ -180,10 +200,19 @@ export class RemoteJobs {
       const job: Job = { id: request.job, name: `${request.target}-job-${request.job}`, agent: request.target,
         model: args.model ?? null, prompt: args.prompt, args: { ...args }, owner, supervisor: `${pair.id}/${peer.supervisor}`,
         startedAt: Date.now(), controller: new AbortController(), queue: [], status: "running", progress: null,
-        sessionId: args.session_id ?? null, workdir: cwd, worktree };
+        sessionId: args.session_id ?? null, workdir: cwd, worktree, usageRunId: randomUUID(), usagePendingControls: request.usageControls };
+      job.providerUsage = { runId: job.usageRunId, turnStartedAt: job.startedAt, decision: usage, warningReported: false,
+        ...(usage.type === "block" ? { retainedControls: job.usagePendingControls } : {}) };
       const previous = this.records.get(request.job);
-      record = { pair: pair.id, peer: peer.supervisor, owner, job, args: { ...args, cwd, _job: job.name } };
+      record = { pair: pair.id, peer: peer.supervisor, owner, job, args: { ...args, cwd, _job: job.name }, usageTurn: request.usageTurn };
       this.records.set(job.id, record);
+      if (usage.type === "block") {
+        job.status = "failed";
+        record.usageRefusal = { pid: 0, peer: job.name, status: "failed", updatedAt: Date.now(),
+          sessionId: job.sessionId, providerUsage: job.providerUsage, usageSubmission: usageSubmissionReceipt(job), report: usageAdmissionText(usage), delivered: false, finishedAt: Date.now() };
+        this.persist();
+        return this.snapshot(record);
+      }
       const staged = record;
       const admission = { record: staged, previous, controller: job.controller, cancelRequested: false, committed: false };
       this.pendingStarts.set(job.id, admission);
@@ -247,9 +276,10 @@ export class RemoteJobs {
   }
 
   private snapshot(record: RemoteRecord): RemoteJobSnapshot {
+    if (record.usageRefusal) return { state: record.usageRefusal, alive: false, approvals: [], usageTurn: record.usageTurn };
     const state = readRunnerState(this.home, record.job.id);
     const alive = this.runners?.alive(record.job, state) ?? Boolean(state && state.status === "running");
-    return { state, alive, approvals: listPendingApprovals(this.home).filter((a) => a.job === record.job.name && a.owner === record.owner) };
+    return { state, alive, approvals: listPendingApprovals(this.home).filter((a) => a.job === record.job.name && a.owner === record.owner), usageTurn: record.usageTurn };
   }
 
   private persist(): void {
@@ -300,7 +330,8 @@ export class RemoteJobs {
       if (this.approvals.has(id) || this.publishingApprovals.has(id)) continue;
       this.publishingApprovals.add(id);
       try {
-        const close = await publishApproval(this.home, { ...approval, owner, job: `${host}/${approval.job}` }, async (body) => {
+        // AB-417: the remote bridge may be older than the marker guard, so its question text gets the guard here too.
+        const close = await publishApproval(this.home, { ...approval, command: markerSafe(approval.command), owner, job: `${host}/${approval.job}` }, async (body) => {
           if (Date.now() >= approval.deadline) return false;
           try {
             await this.request(host, peer, { op: "approval", job: request.job, id: approval.id, decision: body.startsWith("allow") ? "allow" : "deny", reason: body.includes(":") ? body.slice(body.indexOf(":") + 1).trim() : undefined }, supervisor);

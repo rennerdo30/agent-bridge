@@ -9,10 +9,11 @@ import { MobileActivationFault, privateAddress, readPrivateMaterial, type Mobile
 import { prepareMobileDesktopHost, type MobileHostNode, type PreparedMobileDesktopHost, type MobileHostConfig } from "./host.js";
 import type { PushProvider } from "./push.js";
 import { loadMobileIdentity } from "./identity.js";
+import { ConnectionActivity } from "../core/connection-activity.js";
 
 export type ActivationStatus = "preparing" | "ready" | "source_unavailable" | MobileActivationFault["category"];
 export interface ActivationNode extends MobileHostNode { readonly isBroker: boolean; initializeMobileOwnerQuestions(): boolean }
-interface Desktop { ensure(): Promise<DashboardInfo>; close(): Promise<void> }
+interface Desktop { ensure(): Promise<DashboardInfo>; close(): Promise<void>; readonly activity?: ConnectionActivity }
 export interface ActivationDependencies {
   material?(file: string): Promise<Buffer>;
   addresses?(hostname: string): Promise<string[]>;
@@ -44,6 +45,9 @@ export class MobileActivation {
   private state: ActivationStatus = "preparing";
   constructor(private readonly node: ActivationNode, private readonly config: MobileConfig,
     private readonly options: { home: string; pipe: string; port: number; log: Logger }, private readonly deps: ActivationDependencies = {}) {}
+  private readonly phones = new ConnectionActivity();
+  /** Phone HTTPS connections (open, or within `recentMs`) or open desktop dashboard connections of this host. */
+  clientActivity(recentMs: number): boolean { return this.phones.active(recentMs) || !!this.desktop?.activity?.active(recentMs); }
   status = (): ActivationStatus => this.state === "ready" && !this.prepared?.ready() ? "source_unavailable" : this.state;
   start(): Promise<DashboardInfo | undefined> { return this.starting ??= this.open(); }
   private diagnostic(errorCategory: ActivationStatus): void {
@@ -92,6 +96,7 @@ export class MobileActivation {
       const info = await this.desktop.ensure();
       for (const { config, server } of this.prepared.listeners) {
         if (this.retired || !this.prepared.ready()) throw new MobileActivationFault("source_unavailable");
+        this.phones.track(server);
         await new Promise<void>((resolve, reject) => {
           const cleanup = () => { clearTimeout(timer); server.off("error", failed); server.off("listening", done); };
           const done = () => { cleanup(); resolve(); }, failed = () => { cleanup(); reject(new MobileActivationFault("restart_required")); };

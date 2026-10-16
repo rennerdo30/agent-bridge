@@ -12,6 +12,7 @@ import { readStore } from "../src/mcp/jobs.js";
 import { parentFromEnv } from "../src/core/parent-link.js";
 import { listPendingApprovals } from "../src/core/relay.js";
 import { pidAlive, killPid } from "../src/core/delegate.js";
+import { readProcessIdentities } from "../src/core/process-identity.js";
 import { LOG_DIR_NAME, LOG_FILE_NAME } from "../src/core/constants.js";
 import { STARTUP_CAPACITY } from "../src/core/startup-admission.js";
 import { completionMessageId } from "../src/core/completion.js";
@@ -29,13 +30,24 @@ function linkReady(path: string): boolean {
 let env: TestEnv, bin: string;
 const transports: StdioClientTransport[] = [];
 const clients: Client[] = [], ids: string[] = [], releases: string[] = [];
+/** Failure evidence: which wait a takeover case was in, and since when. */
+let phases: { name: string; at: number }[] = [];
+/** Aborted by teardown: a body still running after a test timeout must not start or wait for anything else. */
+let fixture = new AbortController();
+const phase = (name: string) => { phases.push({ name, at: Date.now() }); };
 beforeEach(() => {
+  phases = []; fixture = new AbortController();
   env = makeEnv(); const dir = join(env.home, "bin"); mkdirSync(dir);
   const file = join(dir, "fake.mjs");
   writeFileSync(file, `#!/usr/bin/env node
-import {existsSync,writeFileSync,appendFileSync} from 'node:fs';
+import {existsSync,writeFileSync,appendFileSync,readFileSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
 import {createInterface} from 'node:readline';
-appendFileSync(${JSON.stringify(join(env.home, "fixture-pids"))}, String(process.pid)+'\\n');
+// Its own process generation, in the bridge's identity format (Unix teardown signals only a matching PID).
+let identity='';
+try{if(process.platform==='linux'){const stat=readFileSync('/proc/self/stat','utf8');identity=readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim()+':'+stat.slice(stat.lastIndexOf(')')+2).split(' ')[19];}
+else if(process.platform!=='win32')identity=execFileSync('ps',['-p',String(process.pid),'-o','lstart='],{encoding:'utf8',env:{...process.env,LC_ALL:'C'}}).trim();}catch{}
+appendFileSync(${JSON.stringify(join(env.home, "fixture-pids"))}, String(process.pid)+' '+encodeURIComponent(identity)+'\\n');
 if(process.argv.includes('queue')){appendFileSync(${JSON.stringify(join(env.home, "wake-calls"))}, 'wake');process.exit(0);}
 let release,approved=false,asked=false,interval,reading=false,finished=false;
 const send=value=>console.log(JSON.stringify(value));
@@ -78,22 +90,44 @@ createInterface({input:process.stdin}).on('line',line=>{
   else { chmodSync(file, 0o755); bin = file; }
 });
 afterEach(async () => {
+  fixture.abort();
+  if (phases.length && phases.at(-1)!.name !== "done") {
+    const start = phases[0]!.at;
+    console.error(`Native takeover phases (ms since start): ${phases.map((p) => `${p.name}+${p.at - start}`).join(", ")}; teardown+${Date.now() - start}`);
+  }
   for (const file of releases.splice(0)) { writeFileSync(file, ""); writeFileSync(file + ".approve", ""); }
-  const runnerPids = ids.splice(0).map((id) => readRunnerState(env.home, id)?.pid).filter((pid): pid is number => Boolean(pid));
-  for (const pid of runnerPids) if (pidAlive(pid)) killPid(pid);
-  await until(() => runnerPids.every((pid) => !pidAlive(pid)), 5_000);
-  const servers = transports.splice(0).map((t) => t.pid).filter((pid): pid is number => Boolean(pid));
+  // A process is signalled only when a successful query shows the generation it recorded at startup: the PID
+  // of an exited fixture process can already belong to another process. Teardown waits at most this long.
+  const deadline = Date.now() + 60_000, retained: string[] = [];
+  const states = ids.splice(0).map((id) => readRunnerState(env.home, id)).filter((state): state is NonNullable<typeof state> => Boolean(state?.pid));
+  const live = await generations(states.map((state) => state.pid));
+  const runners = new Map(states.flatMap((state) => state.identity && live?.get(state.pid) === state.identity ? [[state.pid, state.identity] as const] : []));
+  // Alive but unverified (no recorded identity, or no successful query): never signalled; reported and retained.
+  for (const state of states) if (!runners.has(state.pid) && pidAlive(state.pid) && (!live || live.has(state.pid) && !state.identity)) retained.push(`runner ${state.pid} (unverified)`);
+  for (const pid of runners.keys()) killPid(pid);
+  retained.push(...(await exited(runners, deadline)).map((pid) => `runner ${pid}`));
+  // Servers are this process's own children, alive until their transport closes.
+  const servers = await generations(transports.splice(0).map((t) => t.pid).filter((pid): pid is number => Boolean(pid))) ?? new Map<number, string>();
   for (const client of clients.splice(0)) await client.close();
-  await until(() => servers.every((pid) => !pidAlive(pid)), 5_000);
-  const fixturePids = existsSync(join(env.home, "fixture-pids")) ? readFileSync(join(env.home, "fixture-pids"), "utf8").trim().split(/\s+/).map(Number) : [];
-  for (const pid of fixturePids) if (pidAlive(pid)) killPid(pid);
-  await until(() => fixturePids.every((pid) => !pidAlive(pid)), 5_000);
+  retained.push(...(await exited(servers, deadline)).map((pid) => `server ${pid}`));
+  if (process.platform === "win32") {
+    // Each runner's job guardian (PowerShell, working directory in this home) exits after its runner, and the
+    // fixture CLIs end with the runner's job object. The home is removed once the guardians are gone (EBUSY otherwise).
+    retained.push(...(await exited(await runnerGuardians(env.home, new Set(states.map((state) => state.pid))), deadline)).map((pid) => `guardian ${pid}`));
+  } else {
+    const recorded = recordedFixtures(join(env.home, "fixture-pids"));
+    const current = await generations([...recorded.keys()]);
+    const fixtures = new Map([...recorded].filter(([pid, identity]) => identity && current?.get(pid) === identity));
+    for (const pid of fixtures.keys()) killPid(pid);
+    retained.push(...(await exited(fixtures, deadline)).map((pid) => `fixture ${pid}`));
+  }
+  if (retained.length) throw new Error(`Fixture home retained at ${env.home}; processes still running or unverified: ${retained.join(", ")}`);
   // Windows can retain a detached process's directory handle briefly after its PID disappears.
-  const deadline = Date.now() + 3_000;
+  const removal = Date.now() + 3_000;
   for (;;) {
     try { await env.cleanup(); break; }
     catch (error) {
-      if (process.platform !== "win32" || !["EPERM", "EBUSY", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "") || Date.now() >= deadline) throw error;
+      if (process.platform !== "win32" || !["EPERM", "EBUSY", "ENOTEMPTY"].includes((error as NodeJS.ErrnoException).code ?? "") || Date.now() >= removal) throw error;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
@@ -109,8 +143,114 @@ async function session(name: string, agent: "codex" | "claude" | "opencode") {
   await call(client, "peers"); return client;
 }
 async function call(client: Client, name: string, args: Record<string, unknown> = {}) {
+  fixture.signal.throwIfAborted();
   const result = await client.callTool({ name, arguments: args, _meta: { threadId: "takeover-thread" } });
   return { text: (result.content as { text: string }[]).map((c) => c.text ?? "").join("\n"), error: result.isError };
+}
+
+/**
+ * Waits for an explicit readiness condition instead of a wall-clock budget: these fixtures run ten native runners
+ * whose Windows startup and failover take a load-dependent time. It stops early only on evidence that the
+ * condition can no longer hold (`impossible` names it); a genuine hang still fails at the test timeout.
+ */
+async function waitFor(ready: () => boolean | Promise<boolean>, impossible: () => string | undefined = () => undefined, stepMs = 100): Promise<void> {
+  const signal = fixture.signal;
+  for (;;) {
+    signal.throwIfAborted();
+    if (await ready()) return;
+    const reason = impossible();
+    // The condition can hold just before its evidence ends it (a runner reports, then exits).
+    if (reason) { if (await ready()) return; throw new Error(reason); }
+    await new Promise((resolve) => setTimeout(resolve, stepMs));
+  }
+}
+
+/** Start identities of the live PIDs; a PID the query did not see has exited. Undefined: the query failed. */
+async function queryGenerations(pids: readonly number[]): Promise<Map<number, string> | undefined> {
+  try { return await readProcessIdentities([...pids]); } catch { return undefined; }
+}
+
+/** Start identities of these PIDs from a successful query (one retry); undefined when both queries failed. */
+async function generations(pids: readonly number[]): Promise<Map<number, string> | undefined> {
+  return await queryGenerations(pids) ?? await queryGenerations(pids);
+}
+
+/**
+ * Waits until owned process generations exit (a PID that now belongs to another process has exited), at most
+ * until the teardown deadline. Returns the PIDs still running then, so teardown reports them and keeps the home.
+ */
+async function exited(owned: ReadonlyMap<number, string>, deadline: number): Promise<number[]> {
+  let pending = [...owned.keys()];
+  for (let round = 1; ; round++) {
+    pending = pending.filter((pid) => pidAlive(pid));
+    if (pending.length && round % 20 === 0) {
+      const current = await queryGenerations(pending);
+      if (current) pending = pending.filter((pid) => current.get(pid) === owned.get(pid));
+    }
+    if (!pending.length || Date.now() >= deadline) return pending;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+}
+
+/** Fixture CLIs as recorded at their startup: PID and own process generation (empty when unavailable). */
+function recordedFixtures(file: string): Map<number, string> {
+  if (!existsSync(file)) return new Map();
+  return new Map(readFileSync(file, "utf8").split("\n").flatMap((line) => {
+    const [pid, identity = ""] = line.trim().split(" ");
+    return Number.isSafeInteger(Number(pid)) && Number(pid) > 0 ? [[Number(pid), decodeURIComponent(identity)] as const] : [];
+  }));
+}
+
+/**
+ * The live Windows job guardians the bridge log names for these runners. A guardian is owned only when its
+ * process started before the runner logged the ownership (Windows identities are UTC start ticks).
+ */
+async function runnerGuardians(home: string, runnerPids: ReadonlySet<number>): Promise<Map<number, string>> {
+  let log: string;
+  try { log = readFileSync(join(home, LOG_DIR_NAME, LOG_FILE_NAME), "utf8"); } catch { return new Map(); }
+  const logged = new Map(log.split("\n").flatMap((line) => {
+    const match = /^(\S+)\s.* job process ownership established (\{.*\})$/.exec(line.trim());
+    if (!match) return [];
+    try {
+      const value = JSON.parse(match[2]!) as { runnerPid?: unknown; guardianPid?: unknown };
+      const at = Date.parse(match[1]!);
+      return typeof value.runnerPid === "number" && runnerPids.has(value.runnerPid) && typeof value.guardianPid === "number" && Number.isFinite(at)
+        ? [[value.guardianPid, at] as const] : [];
+    } catch { return []; }
+  }));
+  const live = await generations([...logged.keys()]) ?? new Map<number, string>();
+  const startedAt = (ticks: string) => /^\d+$/.test(ticks) ? Number((BigInt(ticks) - 621_355_968_000_000_000n) / 10_000n) : Infinity;
+  return new Map([...live].filter(([pid, ticks]) => startedAt(ticks) <= logged.get(pid)!));
+}
+
+/** Names a job whose runner process has exited; `terminal` also counts a runner that already finished. */
+function runnerGone(home: string, jobs: readonly TakeoverJob[], terminal = false): string | undefined {
+  for (const job of jobs) {
+    const state = readRunnerState(home, job.id);
+    if (state?.pid && !pidAlive(state.pid)) return `${job.name}: runner ${state.pid} exited (${state.status})`;
+    if (terminal && state && state.status !== "running") return `${job.name}: runner finished early (${state.status})`;
+  }
+  return undefined;
+}
+
+/** Delivery cannot complete any more: a runner exited without a delivered or stored final report. */
+function finalReportLost(home: string, jobs: readonly TakeoverJob[]): string | undefined {
+  const ready = finalReportStates(home, jobs);
+  const lost = jobs.find((job, index) => {
+    const state = readRunnerState(home, job.id);
+    return !ready[index] && Boolean(state?.pid) && !pidAlive(state!.pid);
+  });
+  return lost ? `${lost.name}: runner exited without a delivered or stored final report` : undefined;
+}
+
+/**
+ * A child message or note through the parent link. Under load the runner can answer after the link's response deadline:
+ * the documented result is "unconfirmed; it may already be queued". The test then checks arrival explicitly
+ * (the retained copies below) instead of trusting or resending; every other error still fails.
+ */
+async function sendThroughLink(send: () => Promise<unknown>): Promise<void> {
+  try { await send(); }
+  catch (error) { if (!/^Delivery is unconfirmed after the parent-link response timed out/.test(String((error as Error).message))) throw error; }
 }
 
 /** Failure evidence only: no specs, parent-link contents, prompts or environment. */
@@ -124,17 +264,22 @@ type TakeoverJob = { name: string; id: string };
 
 /** A terminal state precedes the runner's final send; wait for its durable envelope, too. */
 function finalReportsReady(home: string, jobs: readonly TakeoverJob[]): boolean {
+  return finalReportStates(home, jobs).every(Boolean);
+}
+
+/** Per job: done, and its final report delivered or durably stored. */
+function finalReportStates(home: string, jobs: readonly TakeoverJob[]): boolean[] {
   const states = jobs.map(job => readRunnerState(home, job.id));
-  if (!states.every(state => state?.status === "done")) return false;
-  if (states.every(state => state?.delivered === true)) return true;
+  const done = states.map(state => state?.status === "done");
+  if (states.every((state, index) => !done[index] || state?.delivered === true)) return states.map((state, index) => done[index]! && state?.delivered === true);
   let db: DatabaseSync | undefined;
   try {
     db = new DatabaseSync(resolveDbPath(home), { readOnly: true });
     db.exec("PRAGMA busy_timeout=0");
     const stored = db.prepare(`SELECT 1 FROM messages WHERE id=? AND from_id=? AND ${unquarantined("messages")} LIMIT 1`);
-    return states.every((state, index) => state?.delivered === true || Boolean(diagnosticUuid(state?.reportId) &&
-      stored.get(completionMessageId(`job:${jobs[index]!.id}`, state!.reportId!), `job:${jobs[index]!.id}`)));
-  } catch { return false; }
+    return states.map((state, index) => done[index]! && (state?.delivered === true || Boolean(diagnosticUuid(state?.reportId) &&
+      stored.get(completionMessageId(`job:${jobs[index]!.id}`, state!.reportId!), `job:${jobs[index]!.id}`))));
+  } catch { return jobs.map(() => false); }
   finally { try { db?.close(); } catch { /* Readiness must not retain a fixture database handle. */ } }
 }
 
@@ -303,19 +448,27 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   if (mode !== "closed") await env.node("broker", "other").start();
   const primaryAgent = mode === "opencode" ? "opencode" : "claude";
   const primaryName = `${primaryAgent}-master`;
+  phase("sessions");
   const source = await session(primaryName, primaryAgent), target = await session("codex-master", "codex");
-  const starts = await Promise.allSettled(Array.from({ length: 10 }, async (_, index) => {
+  phase("spawns");
+  // One spawn request at a time. A spawn is synchronous work in the primary's server, so ten concurrent
+  // requests queued behind each other and the last ones outlived the MCP client's 60 s request timeout on
+  // loaded Windows runners. The runners themselves still start concurrently: each spawn returns at once.
+  const jobs: { name: string; id: string; release: string; link: string }[] = [];
+  for (let index = 0; index < 10; index++) {
     const release = join(env.home, `release-${index}`), link = `${release}.link`; releases.push(release);
     const started = await call(source, "spawn_codex", { prompt: `release=${release} link=${link} ${index === 2 ? "approve=yes" : ""} ${index === 1 ? "instruction=yes" : ""} complete item ${index}`, title: `Takeover item ${index}` });
     expect(started.error, started.text).toBeFalsy();
     const name = /(?:codex|claude)-job-[a-f0-9]+/.exec(started.text)![0], id = name.split("-").at(-1)!; ids.push(id);
-    return { name, id, release, link };
-  }));
-  const failed = starts.find((result) => result.status === "rejected");
-  if (failed?.status === "rejected") throw failed.reason;
-  const jobs = starts.map((result) => (result as PromiseFulfilledResult<{ name: string; id: string; release: string; link: string }>).value);
+    jobs.push({ name, id, release, link });
+  }
+  phase("native-readiness");
   try {
-    await until(() => jobs.every((j) => linkReady(j.link) && readRunnerState(env.home, j.id)?.sessionId && readRunnerState(env.home, j.id)?.live), 60_000);
+    // Ready: every native turn is live and holds its parent link. Startup admission serializes the Windows job
+    // guardians and CLI handshakes, so this takes a load-dependent time; a runner that exits or finishes first
+    // can never become ready.
+    await waitFor(() => jobs.every((j) => linkReady(j.link) && readRunnerState(env.home, j.id)?.sessionId && readRunnerState(env.home, j.id)?.live),
+      () => runnerGone(env.home, jobs, true), 250);
   } catch (cause) {
     let summary = "diagnostics unavailable";
     try {
@@ -347,34 +500,47 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   }
   const children = jobs.map((j) => parentFromEnv(JSON.parse(readFileSync(j.link, "utf8")))!);
   // Leave one result and note pending in the starter's inbox before it becomes unavailable.
-  await children[0]!.send("Pending before takeover");
+  phase("takeover");
+  await sendThroughLink(() => children[0]!.send("Pending before takeover"));
   if (mode === "closed") await source.close();
   else expect((await call(source, "coordinator_availability", { unavailable: true })).error).toBeFalsy();
-  await expect.poll(async () => {
+  phase("failover");
+  // The project master lists the surviving job once failover (and, for a closed primary, broker re-election)
+  // completed; every runner must still be alive meanwhile.
+  await waitFor(async () => {
     try { return (await call(target, "peers")).text.includes(jobs[9]!.name); }
     catch { return false; } // A pipe request can straddle broker election.
-    // Re-election after the primary closes takes seconds on loaded runners (AB-255).
-  }, { timeout: 10_000 }).toBe(true);
+  }, () => runnerGone(env.home, jobs), 250);
   expect(jobs.every((j) => pidAlive(readRunnerState(env.home, j.id)!.pid))).toBe(true);
   expect((await call(target, "peers")).text).toContain(jobs[9]!.name);
+  phase("steering");
   expect((await call(target, "message_subagent", { job: jobs[1]!.name, message: "Continue under the project master", title: "Inherited project work" })).error).toBeFalsy();
-  await until(() => existsSync(jobs[1]!.release + ".instruction") && readFileSync(jobs[1]!.release + ".instruction", "utf8").includes("Continue under the project master"), 5_000);
+  await waitFor(() => existsSync(jobs[1]!.release + ".instruction") && readFileSync(jobs[1]!.release + ".instruction", "utf8").includes("Continue under the project master"),
+    () => runnerGone(env.home, [jobs[1]!], true));
   expect(readFileSync(jobs[1]!.release + ".instruction", "utf8")).toContain("Continue under the project master");
-  await Promise.all(children.map((child, i) => child.send(`After takeover note ${i}`, undefined, "note")));
+  phase("notes");
+  for (const [i, child] of children.entries()) await sendThroughLink(() => child.send(`After takeover note ${i}`, undefined, "note"));
+  phase("approval");
   writeFileSync(jobs[2]!.release + ".approve", "");
-  await until(() => listPendingApprovals(env.home).some((a) => a.job === jobs[2]!.name), 5_000);
+  await waitFor(() => listPendingApprovals(env.home).some((a) => a.job === jobs[2]!.name), () => runnerGone(env.home, [jobs[2]!], true));
   const approval = listPendingApprovals(env.home).find((a) => a.job === jobs[2]!.name)!;
   expect((await call(target, "decide", { approval_id: approval.id, decision: "allow" })).error).toBeFalsy();
-  await until(() => existsSync(jobs[2]!.release + ".approved") && readFileSync(jobs[2]!.release + ".approved", "utf8") === "true", 5_000);
+  await waitFor(() => existsSync(jobs[2]!.release + ".approved") && readFileSync(jobs[2]!.release + ".approved", "utf8") === "true",
+    () => runnerGone(env.home, [jobs[2]!], true));
   expect(readFileSync(jobs[2]!.release + ".approved", "utf8")).toBe("true");
+  phase("final-reports");
   for (const job of jobs) writeFileSync(job.release, "");
-  try { await until(() => finalReportsReady(env.home, jobs), 10_000); }
+  // Each final report is delivered or durably stored before its runner exits; a runner that exits without
+  // either has lost it, which fails at once with the receipt diagnostics.
+  try { await waitFor(() => finalReportsReady(env.home, jobs), () => finalReportLost(env.home, jobs), 250); }
   catch (error) { printFinalReportDiagnostics(env.home, jobs, primaryName, mode, 0, ""); throw error; }
-  await until(() => existsSync(join(env.home, "wake-calls")), 5_000);
+  phase("wake");
+  await waitFor(() => existsSync(join(env.home, "wake-calls")));
+  phase("inbox");
   let delivered = "";
   let inboxReads = 0;
-  const deadline = Date.now() + 5_000;
-  while ((delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length < 10 && Date.now() < deadline) {
+  // Every final is stored for the project master now: read until all ten arrived (duplicates are checked below).
+  while ((delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length < 10) {
     delivered += (await call(target, "inbox")).text;
     inboxReads++;
     if ((delivered.match(/Subagent codex-job-[a-f0-9]+ \(codex\) done after/g) ?? []).length < 10) await new Promise((r) => setTimeout(r, 20));
@@ -387,6 +553,7 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
     for (const job of jobs) expect(envelopes.filter((m) => m[2]!.includes(`Subagent ${job.name} (codex) done after`))).toHaveLength(1);
   } catch (error) { printFinalReportDiagnostics(env.home, jobs, primaryName, mode, inboxReads, delivered); throw error; }
   expect(delivered).toContain("Takeover approval request");
+  phase("retained");
   // Quiet supervision copies remain retained and explicitly discoverable after failover.
   const retainedNotes = (await call(target, "inbox", { include_quiet: true, limit: 100 })).text;
   expect(retainedNotes).toContain("Pending before takeover");
@@ -397,4 +564,5 @@ it.each(["closed", "unavailable", "opencode"])("ten jobs survive a %s primary an
   expect((await call(returning, "inbox")).text).not.toContain("Takeover result ");
   // The durable primary never changed; restoring availability governs new envelopes only.
   expect(readStore(join(env.home, "jobs.json")).filter((j) => jobs.some((x) => x.id === j.id)).every((j) => j.owner === primaryName)).toBe(true);
+  phase("done");
 });

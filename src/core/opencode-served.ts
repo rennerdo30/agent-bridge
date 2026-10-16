@@ -1,7 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { extname } from "node:path";
-import { checkDepthPublic, childEnvPublic, DelegateError, killTree, trackChild, resolveBinary, unwrapNpmShim, opencodeV2, type DelegateRequest, type DelegateResult } from "./delegate.js";
+import { setTimeout as delay } from "node:timers/promises";
+import { markerSafe, opencodePermissionText } from "./approval-display.js";
+import { checkDepthPublic, childEnvPublic, DelegateError, killTree, trackChild, resolveBinary, unwrapNpmShim, opencodeVersion, OPENCODE_READ_ONLY_TOOLS, type DelegateRequest, type DelegateResult } from "./delegate.js";
+import { createOpencodeNativeToolPlugin, OPENCODE_NATIVE_ACTION_PREFIX, OPENCODE_NATIVE_GATE_ID, opencodeNativeGateReportError, parseOpencodeVersion, unknownOpencodeVersionMessage, type OpencodeNativeAccess } from "./opencode-native-tools.js";
 import { progressEventHandler } from "./progress.js";
 import { boundedDetail, type PermissionDecision, type PermissionRequest } from "./relay.js";
 
@@ -127,9 +130,10 @@ function mcpToolPrefix(server: string): string {
 export function opencodePermissionRequest(p: Json, mcpServers: string[], cwd: string): PermissionRequest {
   const permission = String(p.permission ?? "unknown");
   const detail = permissionDetail(p);
+  if (permission.startsWith(OPENCODE_NATIVE_ACTION_PREFIX)) return { agent: "opencode", tool: permission, ...boundedDetail(markerSafe(detail)), cwd };
   const server = [...mcpServers].sort((a, b) => b.length - a.length).find((s) => permission.startsWith(mcpToolPrefix(s)));
-  if (server) return { agent: "opencode", tool: `mcp:${server}`, ...boundedDetail(`${permission}: ${detail}`), cwd };
-  return { agent: "opencode", tool: permission, ...boundedDetail(detail), cwd };
+  if (server) return { agent: "opencode", tool: `mcp:${server}`, ...boundedDetail(markerSafe(`${permission}: ${detail}`)), cwd };
+  return { agent: "opencode", tool: permission, ...boundedDetail(permissionText(p)), cwd };
 }
 
 function permissionDetail(p: Json): string {
@@ -139,26 +143,43 @@ function permissionDetail(p: Json): string {
   return cmd || patterns || JSON.stringify(meta);
 }
 
+/** The question text for a non-MCP permission: its working folder, timeout, patterns and other metadata marked (AB-417). */
+function permissionText(p: Json): string {
+  return opencodePermissionText(p, permissionDetail(p));
+}
+
 export async function delegateToOpencodeServed(
   req: DelegateRequest & {
     bin: string;
     onPermission: (r: PermissionRequest) => Promise<PermissionDecision>;
     /** Permission rules layered over the user's config; null keeps the user's own rules (access "edit"). */
     permissions?: Record<string, string> | null;
+    nativeAccess?: OpencodeNativeAccess;
   },
 ): Promise<DelegateResult> {
   checkDepthPublic(req.maxDelegateDepth);
-  const v2 = await opencodeV2(req.bin, req.cwd, req.log);
+  const versionOutput = await opencodeVersion(req.bin, req.cwd, req.log);
+  const { api: opencodeApi } = parseOpencodeVersion(versionOutput);
+  if (opencodeApi === "unknown") throw new DelegateError(unknownOpencodeVersionMessage(versionOutput), "failed");
+  const v2 = opencodeApi !== "v1";
   const password = randomBytes(PASSWORD_BYTES).toString("hex");
   const permissions = req.permissions === undefined ? OPENCODE_ASK_PERMISSIONS : req.permissions;
+  const nativeAccess = req.nativeAccess ?? (permissions === null ? "edit" : "ask");
+  const gate = opencodeApi === "v2-native" ? createOpencodeNativeToolPlugin(nativeAccess) : null;
+  const config = { ...(permissions ? { permission: permissions } : {}),
+    ...(nativeAccess === "read" ? { tools: OPENCODE_READ_ONLY_TOOLS } : {}),
+    ...(gate ? { plugins: [gate.directory] } : {}) };
   const env = childEnvPublic({
     ...req.extraEnv,
     OPENCODE_SERVER_PASSWORD: password,
     OPENCODE_PASSWORD: password,
     OPENCODE_SERVER_USERNAME: SERVER_USER,
-    ...(permissions ? { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: permissions }) } : {}),
+    ...(Object.keys(config).length ? { OPENCODE_CONFIG_CONTENT: JSON.stringify(config) } : {}),
   });
-  const { child, url } = await startServe(req.bin, req.cwd, env, req.log);
+  let served: Awaited<ReturnType<typeof startServe>>;
+  try { served = await startServe(req.bin, req.cwd, env, req.log); }
+  catch (error) { gate?.dispose(); throw error; }
+  const { child, url } = served;
   const auth = `Basic ${Buffer.from(`${SERVER_USER}:${password}`).toString("base64")}`;
   const q = `directory=${encodeURIComponent(req.cwd)}`;
   const ac = new AbortController();
@@ -181,6 +202,24 @@ export async function delegateToOpencodeServed(
   let knownSession: string | null = req.sessionId ?? null;
   try {
     if (v2) {
+      if (gate) {
+        // Plugin inventory is live, not an activation barrier. Do not race its initial empty list.
+        const deadline = Date.now() + SERVE_START_TIMEOUT_MS;
+        for (;;) {
+          const plugins = await api("GET", `/plugin?${new URLSearchParams({ "location[directory]": req.cwd })}`);
+          const loaded = Array.isArray(plugins) && plugins.find((p: Json) => p.id === OPENCODE_NATIVE_GATE_ID);
+          if (loaded?.state?.status === "active") {
+            // Active alone proves nothing: the plugin must report the enforcement contract and the inventory.
+            const problem = opencodeNativeGateReportError(gate.report(), nativeAccess, gate.nonce);
+            if (problem) throw new DelegateError(`OpenCode native tool gate ${problem}; refusing delegated execution`, "failed");
+            break;
+          }
+          if (loaded?.state?.status === "failed" || Date.now() >= deadline) {
+            throw new DelegateError("OpenCode native tool gate did not load; refusing delegated execution", "failed");
+          }
+          await delay(100, undefined, { signal: ac.signal });
+        }
+      }
       const [providerID, ...rest] = (req.model ?? "").split("/");
       const [id, variant] = rest.join("/").split("#");
       const model = req.model ? { providerID, id, ...(req.effort || variant ? { variant: req.effort ?? variant } : {}) } : undefined;
@@ -318,5 +357,6 @@ export async function delegateToOpencodeServed(
     req.signal?.removeEventListener("abort", onAbort);
     ac.abort();
     await killTree(child);
+    gate?.dispose();
   }
 }

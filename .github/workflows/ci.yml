@@ -8,7 +8,74 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request supersedes its running CI. Non-PR runs get a
+# unique group (run id), so pushes to main are never queued behind or cancelled by another run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # Known-flaky list (test/known-flaky.json, CONTRIBUTING.md): every entry needs a test
+  # file and name, an issue, an owner and a weekly re-check date. An expired date fails here.
+  known-flaky-list:
+    name: Known-flaky list is complete and re-checked
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: node scripts/known-flaky.mjs validate
+
+  # The lanes below skip the listed tests (vitest.config.ts runner). This lane runs ONLY
+  # them and reports the results without blocking: the test steps continue on error and
+  # the report turns failures into warnings and the step summary.
+  known-flaky:
+    name: Known-flaky tests (non-blocking) ${{ matrix.os }} Node ${{ matrix.node }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      AGENT_BRIDGE_KNOWN_FLAKY: only
+      AGENT_BRIDGE_CI_RESULTS_DIR: .agent-bridge-test/known-flaky
+      AGENT_BRIDGE_CI_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+      KNOWN_FLAKY_LABEL: ${{ matrix.os }} Node ${{ matrix.node }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Each lane keeps its own deadlines and worker limits; files outside a lane are not found there.
+      - name: Listed fast tests
+        continue-on-error: true
+        shell: bash
+        run: npm test -- --passWithNoTests --reporter=default --reporter=./scripts/ci-reporter.mjs $(node scripts/known-flaky.mjs files)
+      - name: Listed integration tests
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        shell: bash
+        run: npm run test:integration -- --passWithNoTests --reporter=default --reporter=./scripts/ci-reporter.mjs $(node scripts/known-flaky.mjs files)
+      - name: Report known-flaky results
+        if: ${{ !cancelled() }}
+        run: node scripts/known-flaky.mjs report .agent-bridge-test/known-flaky
+      - name: Retain known-flaky results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: known-flaky-${{ matrix.os }}-node-${{ matrix.node }}-attempt-${{ github.run_attempt }}
+          path: .agent-bridge-test/known-flaky/
+          if-no-files-found: warn
+
   test:
     strategy:
       fail-fast: false
@@ -38,8 +105,14 @@ jobs:
       - name: Integration tests
         if: success() || failure()
         run: npm run test:integration -- --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/integration-results.json
+      # Known-flaky list: "skipped by known-flaky: N" per lane in the job summary; N must equal the
+      # listed tests collected in this job, and every listed test must be reported skipped.
+      - name: Known-flaky skips match the list
+        if: ${{ !cancelled() }}
+        run: node scripts/known-flaky.mjs skips .agent-bridge-test/ci
+      # Bundles are committed only in release PRs (AGENTS.md, owner 2026-10-16).
       - name: Bundles are committed and up to date
-        if: matrix.os == 'ubuntu-latest' && matrix.node == 24
+        if: matrix.os == 'ubuntu-latest' && matrix.node == 24 && startsWith(github.head_ref || github.ref_name, 'release/')
         run: git diff --exit-code -- plugins
       - name: Test results and flaky diagnostics
         if: always()
@@ -49,13 +122,48 @@ jobs:
           path: .agent-bridge-test/ci/
           if-no-files-found: warn
 
-  windows:
-    name: Windows Node ${{ matrix.node }} shard ${{ matrix.shard }}/4
+  # Collect the unsharded inventory once per Node version (the inventory binds the Node
+  # runtime) instead of in every shard job. Each shard downloads it and proves its exact
+  # executed membership against it, as before.
+  windows-collect:
+    name: Windows Node ${{ matrix.node }} collect shard inventory
     strategy:
       fail-fast: false
       matrix:
         node: [22, 24]
-        shard: [1, 2, 3, 4]
+    runs-on: windows-latest
+    env:
+      AGENT_BRIDGE_CI_SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Collect unsharded cases and prove complete disjoint coverage
+        run: node scripts/check-test-shards.mjs 6 .agent-bridge-test/ci/shards.json --collect
+      - name: Retain shard inventory
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: shard-inventory-windows-node-${{ matrix.node }}-attempt-${{ github.run_attempt }}
+          path: .agent-bridge-test/ci/shards.json
+          if-no-files-found: error
+
+  windows:
+    name: Windows Node ${{ matrix.node }} shard ${{ matrix.shard }}/6
+    needs: windows-collect
+    # Run even when a collect job failed, so the membership verdict and results artifact still report.
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+        shard: [1, 2, 3, 4, 5, 6]
     runs-on: windows-latest
     env:
       AGENT_BRIDGE_CI_RESULTS_DIR: .agent-bridge-test/ci
@@ -71,15 +179,26 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
-      - name: Collect unsharded cases and prove complete disjoint coverage
+      # "Re-run failed jobs" keeps a successful collect job, so take the newest attempt's inventory.
+      - name: Download shard inventory
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: shard-inventory-windows-node-${{ matrix.node }}-attempt-*
+          path: .agent-bridge-test/inventory
+      - name: Select shard inventory
         id: collect
-        run: node scripts/check-test-shards.mjs 4 .agent-bridge-test/ci/shards.json --collect
+        run: node scripts/select-shard-inventory.mjs .agent-bridge-test/inventory ${{ matrix.node }} .agent-bridge-test/ci/shards.json
       # The released runner retains lane filters, deadlines and worker limits.
       - name: Fast tests
-        run: npm test -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/fast-results.json
+        run: npm test -- --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/fast-results.json
       - name: Integration tests
         if: ${{ !cancelled() && steps.collect.outcome == 'success' }}
-        run: npm run test:integration -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/integration-results.json
+        run: npm run test:integration -- --shard=${{ matrix.shard }}/6 --reporter=default --reporter=json --reporter=./scripts/ci-reporter.mjs --outputFile.json=.agent-bridge-test/ci/integration-results.json
+      # Known-flaky list: "skipped by known-flaky: N" per lane in the job summary; N must equal the
+      # listed tests collected in this job, and every listed test must be reported skipped.
+      - name: Known-flaky skips match the list
+        if: ${{ !cancelled() }}
+        run: node scripts/known-flaky.mjs skips .agent-bridge-test/ci
       - name: Verify exact collected and executed shard membership
         if: always()
         run: node scripts/check-shard-results.mjs .agent-bridge-test/ci ${{ matrix.shard }}

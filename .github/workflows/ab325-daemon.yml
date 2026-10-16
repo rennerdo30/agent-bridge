@@ -1,0 +1,85 @@
+name: AB325 daemon candidate
+on:
+  push:
+    branches: ['agent-bridge/7add4a1f']
+  pull_request:
+    paths:
+      - 'src/core/daemon-launcher.ts'
+      - 'src/core/daemon-lifecycle.ts'
+      - 'src/core/daemon-lifecycle-role.ts'
+      - 'src/core/lifecycle-windows.ts'
+      - 'src/core/endpoint-reservation.ts'
+      - 'src/core/native-lifecycle-reader.ts'
+      - 'src/core/native-children.ts'
+      - 'src/core/store.ts'
+      - 'src/core/metadata-db.ts'
+      - 'src/core/backup-background.ts'
+      - 'src/core/backup-worker.ts'
+      - 'src/core/job-archive-background.ts'
+      - 'src/core/job-archive-worker.ts'
+      - 'src/core/history-background.ts'
+      - 'src/core/history-worker.ts'
+      - 'src/network/link.ts'
+      - 'src/cli/broker-daemon.ts'
+      - 'src/core/node.ts'
+      - 'src/core/broker.ts'
+      - 'src/core/protocol.ts'
+      - 'src/core/client.ts'
+      - 'src/core/paths.ts'
+      - 'src/cli/main.ts'
+      - 'src/cli/ui.ts'
+      - 'src/cli/dashboard.ts'
+      - 'src/mcp/server.ts'
+      - 'test/daemon-*.test.ts'
+      - 'test/ui.test.ts'
+      - 'test/network-local-peers.test.ts'
+      - 'test/mixed-release-processes.test.ts'
+      - 'test/fixtures/mobile-wiring-baseline.json'
+      - 'scripts/ab325-artifact.mjs'
+      - '.github/workflows/ab325-daemon.yml'
+permissions:
+  contents: read
+jobs:
+  lifecycle:
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    # Diagnostic workflow: run every selected test, ignoring test/known-flaky.json (CONTRIBUTING.md).
+    env:
+      AGENT_BRIDGE_KNOWN_FLAKY: 'off'
+      SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+      BASE_HEAD: ${{ github.event.pull_request.base.sha || '7adb4817ea2800e56bd26737a81dbe28d7f17219' }}
+      ORIGINAL_BASE_HEAD: '7adb4817ea2800e56bd26737a81dbe28d7f17219'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Preserve exact hosted bundles and runtime manifest
+        run: |
+          node scripts/ab325-artifact.mjs
+          node --input-type=module -e "import {readFileSync,writeFileSync} from 'node:fs'; const p='.agent-bridge-test/ab325-artifact/manifest.json'; const m=JSON.parse(readFileSync(p,'utf8')); if(m.sourceHead!==process.env.SOURCE_HEAD) throw Error('SOURCE_HEAD mismatch'); m.originalBaseHead=process.env.ORIGINAL_BASE_HEAD; m.validationKind='source-only; current-main integration not certified'; writeFileSync(p,JSON.stringify(m,null,2)+'\n');"
+      - name: Launcher classification
+        run: npm test -- test/daemon-launcher.test.ts test/network-local-peers.test.ts
+      - name: Startup, concurrency, auth, lifecycle and existing mobile compatibility
+        env:
+          AGENT_BRIDGE_DAEMON: '1'
+        run: npm run test:integration -- test/daemon-lifecycle.test.ts test/daemon-readonly.test.ts test/daemon-receipt.test.ts test/daemon-journal-role.test.ts test/daemon-send-boundaries.test.ts test/daemon-endpoint.test.ts test/daemon-native-refusal.test.ts test/daemon-network.test.ts test/daemon-store-drain.test.ts test/daemon-store-final-close.test.ts test/daemon-backup-drain.test.ts test/daemon-windows-paths.test.ts test/daemon-windows-bootstrap.test.ts test/daemon-windows-path-cache.test.ts test/daemon-metadata-checkpoint.test.ts test/daemon-metadata-final-close.test.ts test/daemon-archive-drain.test.ts test/daemon-serving-capability.test.ts test/daemon-history-drain.test.ts test/ui.test.ts test/mobile-activation.test.ts test/mobile-wiring.test.ts test/mobile-owner-startup.test.ts test/job-process-scope.test.ts test/data-retention.test.ts test/mixed-release-processes.test.ts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: ab325-${{ matrix.os }}-node${{ matrix.node }}-${{ github.event.pull_request.head.sha || github.sha }}
+          path: .agent-bridge-test/ab325-artifact
+          include-hidden-files: true
+          if-no-files-found: error

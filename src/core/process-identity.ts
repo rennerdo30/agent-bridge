@@ -2,6 +2,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
+import { isMainThread, workerData } from "node:worker_threads";
 
 const exec = promisify(execFile);
 let parentIdentity: Promise<string | null> | undefined;
@@ -102,12 +103,63 @@ export function readProcessNamesSync(pids: number[]): Map<number, string> | unde
   } catch { return undefined; }
 }
 
-let ownIdentity: string | undefined;
+// Only a constructor-owned same-process worker handoff may avoid the cold OS
+// query. Unknown/malformed handoffs retain the ordinary probe and cooldown path.
+const ownSeed = !isMainThread ? workerData?.ownProcessIdentity : undefined;
+const validSeedIdentity = (identity: unknown): identity is string => typeof identity === "string" && identity.length > 0 && identity === identity.trim() &&
+  (process.platform === "win32" ? /^\d+$/.test(identity) : process.platform === "linux" ? /^[0-9a-f-]{36}:\d+$/i.test(identity) : Number.isFinite(Date.parse(identity + " UTC")));
+let ownIdentity: string | undefined = ownSeed?.pid === process.pid && validSeedIdentity(ownSeed.identity)
+  ? ownSeed.identity : undefined;
+const OWN_IDENTITY_COOLDOWN_MS = 1_000;
+let ownProbeFailed = false;
+let ownRetryAt = 0;
+// The one in-flight asynchronous own-identity probe, shared by ownProcessIdentity() and the cooldown refresh.
+let ownRefresh: Promise<string | undefined> | undefined;
+
+function startOwnRefresh(): Promise<string | undefined> {
+  // A failure is not cached: ownIdentity is only filled by a successful probe, so the next caller retries.
+  return ownRefresh ??= readProcessIdentity(process.pid).then(identity => {
+    if (identity) ownIdentity ??= identity;
+    return ownIdentity;
+  }).finally(() => {
+    ownRetryAt = Date.now() + OWN_IDENTITY_COOLDOWN_MS;
+    ownRefresh = undefined;
+  });
+}
+
+function refreshOwnIdentity(immediate = false): void {
+  if (ownRefresh || !immediate && Date.now() < ownRetryAt) return;
+  // A failed native probe must not turn every metadata lease/peer write into
+  // another synchronous process launch. Keep unknown fail-closed while one
+  // bounded asynchronous probe tries to establish the current process's birth.
+  void startOwnRefresh();
+}
+
+function ownIdentityUnavailable(): void {
+  ownProbeFailed = true;
+  ownRetryAt = Date.now() + OWN_IDENTITY_COOLDOWN_MS;
+  // Start once now: a later one-shot caller must not be needed to initiate
+  // recovery. Further refreshes remain caller-driven and cooldown-limited.
+  refreshOwnIdentity(true);
+}
+
+/**
+ * This process's creation identity without blocking the event loop. On Windows the query is a PowerShell
+ * process (about 0.7 s on an idle PC, several seconds on a loaded one), so broker hosts start it early and
+ * await it before the store's migration lock and the TCP fallback record need it. It joins the single
+ * in-flight own-identity probe (starting one immediately, regardless of the failure cooldown). A success
+ * fills the cache that processIdentity(process.pid) returns; a failure is not cached and never guessed.
+ */
+export function ownProcessIdentity(): Promise<string | undefined> {
+  if (ownIdentity) return Promise.resolve(ownIdentity);
+  return startOwnRefresh();
+}
 
 /** Creation identity for lock acquisition/recovery, never for polling hot paths. */
 export function processIdentity(pid: number): string | undefined {
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined;
   if (pid === process.pid && ownIdentity) return ownIdentity;
+  if (pid === process.pid && ownProbeFailed) { refreshOwnIdentity(); return undefined; }
   try {
     let identity: string | undefined;
     if (process.platform === "linux") {
@@ -119,9 +171,15 @@ export function processIdentity(pid: number): string | undefined {
         ? execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", windowsIdentityCommand(pid)], { windowsHide: true, timeout: 5_000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })
         : execFileSync("ps", ["-p", String(pid), "-o", "lstart="], { timeout: 5_000, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, LC_ALL: "C" } })).trim() || undefined;
     }
-    if (pid === process.pid) ownIdentity = identity;
+    if (pid === process.pid) {
+      ownIdentity = identity;
+      if (!identity) ownIdentityUnavailable();
+    }
     return identity;
-  } catch { return undefined; }
+  } catch {
+    if (pid === process.pid) ownIdentityUnavailable();
+    return undefined;
+  }
 }
 
 /** Unknown access/probe failures never authorize recovery of another owner's data. */

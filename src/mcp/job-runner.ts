@@ -6,7 +6,8 @@ import { JOBS_FILE } from "../core/constants.js";
 import { readStore } from "./jobs.js";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { COMPLETION_DEDUPE_PREFIX } from "../core/completion.js";
+import { settleUsageAttempt, usageRefused, usageSubmissionReceipt } from "../core/usage.js";
+import { completionMessageId, COMPLETION_DEDUPE_PREFIX } from "../core/completion.js";
 import { takeRunnerSpec } from "../core/runner-store.js";
 import { failureCause } from "../core/delegate.js";
 import { createLogger } from "../core/logger.js";
@@ -19,7 +20,7 @@ import type { ParentRoute } from "../core/parent-link.js";
 import { isPureAcknowledgement } from "../core/job-messaging.js";
 import { resumeArgs, runDelegate, type JobSink, type RunContext } from "./delegate-run.js";
 import { CONTROL_CONVERSATION_PREFIX, JOB_PEER_PREFIX, RUNNER_HEARTBEAT_MS, writeRunnerState, type RunnerSpec } from "./job-host.js";
-import { jobReport, NOTE_CONVERSATION_SUFFIX, QUEUED_FOLLOW_UP_NOTE, sessionOfError, waitForApproval, type Job, type RunnerControl, type RunnerState } from "./jobs.js";
+import { jobReport, NOTE_CONVERSATION_SUFFIX, PAUSE_HELD_NOTE, PAUSE_RACE_NOTE, pauseReasonText, QUEUED_FOLLOW_UP_NOTE, sessionOfError, waitForApproval, type Job, type RunnerControl, type RunnerState } from "./jobs.js";
 import { changedJobArgs } from "./job-settings.js";
 import { processCleanupReport, establishWindowsJobScope, type WindowsJobScope } from "../core/windows-job-scope.js";
 import type { Logger } from "../core/logger.js";
@@ -29,9 +30,12 @@ import { acquireStartup } from "../core/startup-admission.js";
 import { refreshStorePeerIdentities } from "../core/store-compatibility.js";
 import { guardRunnerErrors } from "./job-runner-errors.js";
 import { configurePathDisplay } from "../core/display-paths.js";
+import { deliverFinalResult, PERMANENT_DELIVERY_CODES } from "./final-result.js";
 
 /** Delivering a message to the session: tries for several minutes (the bridge may be changing hands, or no session hosts it). */
 const SEND_ATTEMPTS = 30;
+/** deliverFinalResult retries a final result itself, with backoff, and then leaves it to the session fallback. */
+const FINAL_SEND_ATTEMPTS = 1;
 const SEND_RETRY_MAX_MS = 10_000;
 /** Progress lines come fast: the state file is written at most this often for them. */
 const PROGRESS_SAVE_MS = 1_000;
@@ -107,7 +111,7 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
       const stop = () => controller.abort();
       process.on("SIGTERM", stop); process.on("SIGINT", stop);
       try {
-        const release = await acquireStartup(home, controller.signal);
+        const release = await acquireStartup(home, controller.signal, spec.job.name);
         try { controller.signal.throwIfAborted(); scope = await establishWindowsJobScope(log); }
         finally { release(); }
       } finally { process.off("SIGTERM", stop); process.off("SIGINT", stop); }
@@ -123,7 +127,7 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
   }
 }
 
-async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJobScope | null): Promise<number> {
+export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJobScope | null): Promise<number> {
   const { home, target } = spec;
   const job: Job = {
     ...spec.job,
@@ -131,8 +135,11 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     progress: null,
     status: "running",
     queue: [],
+    usageQueuedControls: [],
     allowedServers: new Set(spec.job.allowedServers),
   };
+  /** The first turn of this runner: pause mail from before it belongs to an earlier runner. */
+  const runnerStartedAt = job.startedAt;
   let owner = spec.owner;
   const refreshOwner = () => {
     const saved = readStore(join(home, JOBS_FILE)).find((j) => j.id === job.id);
@@ -146,7 +153,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
   let closing = false;
 
   let extra: Partial<RunnerState> = { status: "running" };
-  const save = (patch: Partial<RunnerState> = {}) => {
+  const save = (patch: Partial<RunnerState> = {}, required = false) => {
     extra = { ...extra, ...patch };
     try {
       refreshOwner();
@@ -158,6 +165,8 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
         updatedAt: Date.now(),
         model: job.model,
         sessionId: job.sessionId,
+        providerUsage: job.providerUsage,
+        usageSubmission: usageSubmissionReceipt(job),
         workdir: job.workdir,
         worktree: job.worktree,
         progress: job.progress,
@@ -171,6 +180,7 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       });
     } catch (err) {
       log.warn("could not write the job runner state", { err: (err as Error).message });
+      if (required) throw err;
     }
   };
 
@@ -202,25 +212,21 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
 
   // Messages to the session, in order. Each is tried until the bridge takes it (the session may be offline:
   // then it waits in the store for the session's next server).
-  let chain: Promise<unknown> = Promise.resolve();
-  const deliver = async (body: string, replyTo: string | null, note = false, key?: string, question = false): Promise<SendResult | null> => {
+  const deliver = async (body: string, replyTo: string | null, note = false, key?: string, question = false, final = false): Promise<SendResult | null> => {
     // One key for all attempts: a send that timed out here may still be queued at a slow broker.
     const dedupeKey = key ?? randomUUID();
     // AB-380: a body over the message limit can never be sent: once its full text is in a file, send a stub.
     body = quarantineMessage(home, { id: dedupeKey, body }).body;
+    // deliverFinalResult retries a final result with bounded attempts; a permanent refusal starts the session fallback at once.
     return deliverWithRetry(() => {
       // A retry may cross a handoff or reload. Routing changes never replace the active delegate.
       refreshOwner();
       // A question is marked so the broker can route it to the project main while the parent is offline (AB-249).
       const suffix = isPureAcknowledgement(body) ? ACK_CONVERSATION_SUFFIX : question ? QUESTION_CONVERSATION_SUFFIX : note ? NOTE_CONVERSATION_SUFFIX : "";
       return node.send({ to: owner, body, conversationId: `job-${job.id}${suffix}`, ...(replyTo ? { replyTo } : {}), dedupeKey }, { quiet: true });
-    }, log, owner);
+    }, log, owner, final ? FINAL_SEND_ATTEMPTS : SEND_ATTEMPTS, final ? PERMANENT_DELIVERY_CODES : undefined);
   };
-  const inOrder = (body: string, replyTo: string | null, note: boolean, key?: string, question = false): Promise<SendResult | null> => {
-    const sent = chain.then(() => deliver(body, replyTo, note, key, question));
-    chain = sent;
-    return sent;
-  };
+  const inOrder = inSendOrder(deliver);
   const post = (body: string, replyTo: string | null = null, note = false, key?: string): Promise<boolean> =>
     inOrder(body, replyTo, note, key).then((result) => result !== null);
   /** Send a question and say where the broker put it: the parent, the project main, or a queue. */
@@ -270,7 +276,9 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     } catch {
       return;
     }
-    if (c.type === "cancel" && !isCurrentRunnerCancel(m.createdAt, job.startedAt)) {
+    // A pause holds the job, not one turn: one sent while this runner switched to a queued continuation
+    // still applies. Only control mail older than this runner (an earlier runner's turn) is ignored.
+    if (c.type === "pause" && !isCurrentRunnerCancel(m.createdAt, runnerStartedAt) || c.type === "cancel" && !isCurrentRunnerCancel(m.createdAt, job.startedAt)) {
       log.info("ignoring cancellation from an earlier job turn", { createdAt: m.createdAt, startedAt: job.startedAt });
       return;
     }
@@ -288,9 +296,9 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
       if (!seen.includes(c.cid)) {
         if (job.live) {
           job.awaitingAnswer = true;
-          job.live.post(c.body);
+          job.live.post(c.body, undefined, c.cid);
         }
-        else job.queue.push(c.body);
+        else { job.queue.push(c.body); job.usageQueuedControls!.push({ cid: c.cid, body: c.body }); }
         seen.push(c.cid);
       }
       save();
@@ -307,6 +315,15 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     } else if (c.type === "cancel") {
       log.info("cancelled by the session");
       job.queue = [];
+      job.pausePending = false;
+      job.controller.abort();
+      save({ stopping: true });
+    } else if (c.type === "pause") {
+      // A repeated pause for the same turn changes nothing.
+      if (job.pausePending || closing) { node.markRead([m.id]); return; }
+      job.pauseReason = pauseReasonText(c.reason);
+      job.pausedAt = Date.now();
+      job.pausePending = true;
       job.controller.abort();
       save({ stopping: true });
     }
@@ -327,7 +344,10 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
     });
   };
   node.on("message", onControl);
+  // Runner shutdown (SIGTERM/SIGINT) ends final-result retries; a turn cancel never does.
+  const shutdown = new AbortController();
   const stop = () => {
+    shutdown.abort();
     job.queue = [];
     job.controller.abort();
     setTimeout(() => process.exit(1), STOP_DEADLINE_MS).unref();
@@ -347,25 +367,52 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
   configurePathDisplay(spec.cfg.pathDisplay ?? { preferAlias: true });
   const rc: RunContext = { agent: spec.byAgent, cfg: spec.cfg, home, log, me: () => owner, cwd: () => spec.cwd, jobs: sink, jobNode: node };
 
+  /**
+   * A turn's final report: persisted in the runner state before the first send, then delivered once under a stable
+   * completion ID (AB-400). Used by every terminal path, including a pause that holds queued follow-ups (AB-398).
+   */
+  const deliverFinal = async (report: string, status: "done" | "failed" | "cancelled" | "paused"): Promise<void> => {
+    const final = { report, reportId: randomUUID(), delivered: false };
+    const finishedAt = Date.now();
+    await deliverFinalResult(final,
+      (stored) => save({ status, ...stored, finishedAt }, true),
+      async (body, id) => {
+        const result = await inOrder(body, null, false, `${COMPLETION_DEDUPE_PREFIX}${id}`, false, true);
+        return result && { stored: result.messages.length > 0 };
+      },
+      async (ms) => { await delay(ms); },
+      shutdown.signal,
+      async (id) => (await node.sendState(completionMessageId(`job:${job.id}`, id))).state === "stored");
+  };
+
   let args = spec.args;
   for (;;) {
-    let status: "done" | "failed" | "cancelled";
+    let status: "done" | "failed" | "cancelled" | "paused" = "failed";
     let text = "";
     let cause: string | null = null;
     let processesStopped = false;
+    let completed = false;
     try {
       const res = await runDelegate(rc, target, args, job.controller.signal, onProgress, true, job);
       job.workdir = res.workdir ?? job.workdir;
       job.worktree = res.worktree ?? job.worktree;
       job.sessionId = res.sessionId ?? job.sessionId;
       status = res.status ?? (res.isError ? "failed" : "done");
+      completed = status === "done";
       text = res.text || "(no answer text returned)";
       cause = res.isError ? failureCause({ result: res }) : null;
     } catch (err) {
       job.sessionId = sessionOfError(err) ?? job.sessionId;
       status = "failed";
       cause = failureCause({ error: err });
+    } finally {
+      settleUsageAttempt(job, status === "done");
+      save();
     }
+    // Ordering (AB-398): runDelegate above already made the job's commit or WIP checkpoint, so this cleanup runs
+    // after it. Files that still-running job processes write between that commit and their stop are never
+    // committed; the session only lists them as dirty files when it settles the turn. A paused job keeps its
+    // worktree (closeJobWorktree below is skipped while a pause is pending).
     if (scope) {
       try {
         const cleanup = await scope.cleanup();
@@ -393,35 +440,73 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
         log.warn("could not write the worktree process proof; worktree retained", { err: (err as Error).message });
       }
     }
-    if (job.controller.signal.aborted && processesStopped) {
+    if (job.controller.signal.aborted && processesStopped && !job.pausePending) {
       const cleanup = await closeJobWorktree({ home, job: { ...job, status }, enabled: spec.cfg.jobCloseCleanup, log });
       text += `\n\nWorktree close: ${cleanup.action}: ${cleanup.reason}`;
     }
     job.etaReportedAt = undefined;
-    if (job.controller.signal.aborted) status = "cancelled";
+    // Decided after the last await, so a pause arriving meanwhile is seen. A pause that raced a completed turn
+    // never swallows its report; a pause stays a pause even when job-owned processes would not stop (AB-398).
+    const outcome = runnerTurnOutcome({ status, completed, pausePending: job.pausePending === true, scoped: Boolean(scope), processesStopped });
+    if (holdsQueuedFollowUps({ pauseRaced: outcome.pauseRaced, queued: job.queue.length, sessionId: job.sessionId })) {
+      // The turn finished, but follow-ups wait: deliver its report, then hold them. The job is paused with its
+      // queue kept (the session recovers it from usageQueuedControls); no continuation starts here (AB-398).
+      log.info("pause arrived as the turn finished; holding its queued follow-ups", { sessionId: job.sessionId, queued: job.queue.length });
+      job.pausePending = false;
+      closing = true;
+      if (saveTimer) clearTimeout(saveTimer);
+      const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), `${text}\n\n${PAUSE_HELD_NOTE}`, cause, home);
+      // The report is persisted first and delivered once under its completion ID (AB-400): if the bridge does not
+      // take it, the session posts the stored report when it settles the pause.
+      await deliverFinal(report, "paused");
+      log.info("job runner paused with held follow-ups", { delivered: extra.delivered === true });
+      break;
+    }
+    if (outcome.pauseRaced) {
+      log.info("pause arrived after the turn had finished; delivering its report", { sessionId: job.sessionId });
+      job.pausePending = false;
+      job.pauseReason = undefined;
+      job.pausedAt = undefined;
+      text += `\n\n${PAUSE_RACE_NOTE}`;
+      // The pause aborted only a finished turn: later follow-ups of this runner need a live controller.
+      job.controller = new AbortController();
+    }
+    if (outcome.status === "paused") status = "paused";
+    else if (job.controller.signal.aborted) status = "cancelled";
+    if (status === "paused") {
+      closing = true;
+      if (saveTimer) clearTimeout(saveTimer);
+      save({ status: "paused", finishedAt: Date.now() });
+      log.info("job runner paused", { sessionId: job.sessionId, processesStopped: processesStopped || !scope });
+      if (outcome.pausedWithLeftovers) {
+        await post(`Subagent ${job.name} is paused, but its job-owned processes did not all stop; they may still be using the machine. ` +
+          `${cause ?? "Process cleanup did not finish."}\n\n${text.trim()}`);
+      }
+      break;
+    }
     const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause, home);
     log.info("job turn finished", { status, sessionId: job.sessionId, cause });
     // The supervisor's JobManager emits the finish/fail notification when it settles this
     // result. A detached notifier here would remain inside this runner's owned job scope.
     // Follow-ups that arrived meanwhile go out right away, into the same session, from this runner.
-    if (job.queue.length && job.sessionId && !job.controller.signal.aborted) {
+    if (job.queue.length && job.sessionId && !job.controller.signal.aborted && !usageRefused(job) && !job.usagePendingControls?.length) {
       const queued = job.queue.splice(0).join("\n\n");
+      job.usagePendingControls = job.usageQueuedControls;
+      job.usageQueuedControls = [];
       void post(`${report}\n\n${QUEUED_FOLLOW_UP_NOTE}`);
       args = resumeArgs(spec.base, job.name, queued, job.sessionId, job.workdir, job.worktree, job.args);
       if (args.model !== undefined) job.model = args.model;
       job.startedAt = Date.now();
       job.progress = null;
+      extra = { status: "running" };
       save();
       continue;
     }
     closing = true;
     if (saveTimer) clearTimeout(saveTimer);
     // The state first: once the report arrives, the session must find the job finished.
-    const reportId = randomUUID();
-    save({ status, report, reportId, delivered: false, finishedAt: Date.now() });
-    const delivered = await post(report, null, false, `${COMPLETION_DEDUPE_PREFIX}${reportId}`);
-    save({ delivered });
-    log.info("job runner done", { status, delivered });
+    await deliverFinal(report, status);
+    log.info("job runner done", { status, delivered: extra.delivered === true });
     break;
   }
   clearInterval(heartbeat);
@@ -437,20 +522,54 @@ async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: WindowsJo
  * Tries a send until the bridge takes it. A too_large refusal is final (AB-380): retrying cannot make it fit, and the
  * caller keeps what it sent (a finished report stays in the runner state for the session to collect).
  */
-export async function deliverWithRetry<T>(send: () => Promise<T>, log: Logger, owner: string, attempts = SEND_ATTEMPTS): Promise<T | null> {
+export async function deliverWithRetry<T>(send: () => Promise<T>, log: Logger, owner: string, attempts = SEND_ATTEMPTS,
+  rethrow?: ReadonlySet<string>): Promise<T | null> {
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       return await send();
     } catch (err) {
+      // The caller handles these refusals itself (a final result hands over to the session fallback).
+      if (rethrow?.has((err as { code?: string } | null)?.code ?? "")) throw err;
       if ((err as { code?: string } | null)?.code === "too_large") {
         log.error("message too large to deliver; not retried", { owner, err: (err as Error).message });
         return null;
       }
       log.warn("could not deliver to the session; retrying", { owner, attempt, err: (err as Error).message });
+      if (attempt === attempts) break;
       await new Promise((r) => setTimeout(r, Math.min(attempt * 1_000, SEND_RETRY_MAX_MS)));
     }
   }
   return null;
+}
+
+/**
+ * A pause that raced a finished turn while follow-ups were queued holds them: the report is delivered and the job
+ * is paused with its queue kept, instead of starting the continuation and calling the job finished (AB-398 N1).
+ */
+export function holdsQueuedFollowUps(o: { pauseRaced: boolean; queued: number; sessionId: string | null | undefined }): boolean {
+  return o.pauseRaced && o.queued > 0 && Boolean(o.sessionId);
+}
+
+/**
+ * How a runner turn ends when a pause may be pending (AB-398). A pause that arrived after the turn completed
+ * never swallows its report; a pause whose job-owned processes would not stop stays a pause (never a silent
+ * cancellation) and the supervisor is told about the leftovers.
+ */
+export function runnerTurnOutcome(o: { status: "done" | "failed" | "cancelled" | "paused"; completed: boolean; pausePending: boolean; scoped: boolean; processesStopped: boolean }):
+  { status: "done" | "failed" | "cancelled" | "paused"; pauseRaced: boolean; pausedWithLeftovers: boolean } {
+  if (!o.pausePending) return { status: o.status, pauseRaced: false, pausedWithLeftovers: false };
+  if (o.completed) return { status: o.status, pauseRaced: true, pausedWithLeftovers: false };
+  return { status: "paused", pauseRaced: false, pausedWithLeftovers: o.scoped && !o.processesStopped };
+}
+
+/** Sends one at a time in call order. A failed send never blocks the sends queued after it. */
+export function inSendOrder<A extends unknown[], T>(send: (...args: A) => Promise<T>): (...args: A) => Promise<T> {
+  let chain: Promise<unknown> = Promise.resolve();
+  return (...args: A) => {
+    const sent = chain.then(() => send(...args));
+    chain = sent.catch(() => undefined);
+    return sent;
+  };
 }
 
 /** Legacy 0.29.10 control mail also carries its original broker timestamp. */

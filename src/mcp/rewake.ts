@@ -8,7 +8,9 @@ import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
 import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage } from "../core/protocol.js";
 import { tokensEqual } from "../core/token.js";
-import { formatMessages } from "./format.js";
+import { escapeAttr, formatMessage, formatMessages } from "./format.js";
+import { selectForDelivery, unshownMessageNotes } from "./output-bounds.js";
+import type { ClaudeMailScopes } from "./claude-mail-scope.js";
 
 /**
  * Wake an idle Claude Code session when something it is waiting for arrives: a background subagent's
@@ -31,6 +33,39 @@ export const WAKE_CONFIRM_MS = 20_000;
 const STANDBY_GRACE_MS = 3_000;
 /** How often the mod's wait re-checks whether the session went idle (messages themselves end it at once). */
 const MOD_TICK_MS = 2_000;
+/**
+ * Turn ends after which a mod hand-out that was neither shown nor acknowledged goes back to the hooks (AB-396).
+ * A live mod polls after every turn end and either submits or acknowledges what it is handed, so the hand-out
+ * is refreshed or confirmed long before this. Two, because the queued wake turn itself may end before its
+ * prompt hook confirmed it. Only a mod that stopped polling lets a hand-out age out; it is then a repeat.
+ */
+const MOD_HANDOUT_TURNS = 2;
+/** Remembered ids of messages that may have been shown before (bounded). */
+const MAX_REPEATS = 500;
+
+/** Ids of the agent-bridge messages in a wake-up text (or a prompt that carries one). */
+export function wakeMessageIds(text: string): string[] {
+  return [...text.matchAll(/<agent-bridge-message id="([^"]+)"/g)].map((m) => m[1]!);
+}
+
+/**
+ * AB-404: a wake-up's note for a message too large to show carries its id in this tag, so the wake-up's own prompt
+ * confirms the note. It never matches `<agent-bridge-message id=`: a note never marks its message read.
+ */
+export function oversizedNoteMarker(id: string): string {
+  // Ids from paired links are not format-checked: escaped, a crafted id cannot carry another note's marker.
+  return `<agent-bridge-oversized id="${escapeAttr(id)}"/>`;
+}
+/** Ids of the oversized-message notes in a wake-up text (or a prompt that carries one). */
+export function wakeNoteIds(text: string): string[] {
+  return [...text.matchAll(/<agent-bridge-oversized id="([^"]+)"\/>/g)].map((m) => m[1]!);
+}
+
+/** AB-404: messages already listed by id as too large for one result (shared with the hooks and inbox tools). */
+export interface OversizedMessages {
+  noted(id: string): boolean;
+  note(ids: readonly string[]): void;
+}
 
 export interface RewakeRegistration {
   port: number;
@@ -59,8 +94,33 @@ export class RewakeEndpoint {
   private registered: string | null = null;
   /** Only the newest waiter gets messages; an older one (from an earlier turn) is released empty. */
   private waiter: AbortController | null = null;
-  /** Messages handed to a wake-up that the session has not shown activity for yet. */
+  /** Messages handed to a Stop-hook wake-up that the session has not shown activity for yet. */
   private readonly handedOut = new Set<string>();
+  /**
+   * Messages handed to the mod, with the turn-end count at hand-out. The mod submits them as a prompt, which
+   * Claude Code queues behind a turn that starts meanwhile: they are on their way to their own turn, so the
+   * hooks must not show them too (AB-396). Read when that prompt's hook runs or the mod acknowledges them.
+   */
+  private readonly modHandedOut = new Map<string, number>();
+  /**
+   * AB-404: oversized-message notes handed to a Stop-hook wake-up. A note counts as shown (OversizedMessages.note)
+   * only when the wake-up is confirmed like its messages; a lost wake-up's notes are listed again.
+   */
+  private readonly handedNotes = new Set<string>();
+  /** AB-404: notes handed to the mod, with the turn-end and turn-start counts at hand-out (see modNoteInFlight). */
+  private readonly modNotes = new Map<string, { ends: number; starts: number }>();
+  /**
+   * AB-404: notes taken back at an acknowledgement although the mod may have submitted them: a mod of v0.30.12 or
+   * older acknowledges at its own turn start, before that prompt's hook. Their prompt still confirms them; they are
+   * not in flight, and the mod's next poll hands them out again (and forgets them here).
+   */
+  private readonly ackedNotes = new Set<string>();
+  /** Main turns that ended (busy to idle); ages the hand-outs of a mod that stopped polling. */
+  private turnEnds = 0;
+  /** Main turns that started (idle to busy): a mod note whose re-poll saw no turn start was not taken. */
+  private turnStarts = 0;
+  /** Messages whose earlier hand-out may have reached the model: a later copy is marked as a repeat. */
+  private readonly repeats = new Set<string>();
   /** The second hook of a turn end, waiting to retry a wake-up that did not start a turn. */
   private standby: { ac: AbortController; release: (reason: string) => void; wake: () => void } | null = null;
   private confirmTimer: NodeJS.Timeout | undefined;
@@ -82,11 +142,36 @@ export class RewakeEndpoint {
     private readonly shouldWake: (m: BridgeMessage) => boolean,
     private readonly log: Logger,
     private readonly activity?: (event: import("./hook-ownership.js").ModActivity) => boolean,
+    private readonly mailScopes?: ClaudeMailScopes,
+    private readonly oversized?: OversizedMessages,
+    /** How long the standby waits before taking a message (tests shorten it). */
+    private readonly standbyGraceMs = STANDBY_GRACE_MS,
   ) {}
+
+  /**
+   * A message a wake-up may carry: it should wake the session, and it is not an oversized message whose note was
+   * shown (AB-404) or is on its way to its own mod turn.
+   */
+  private readonly deliverable = (m: BridgeMessage): boolean =>
+    this.shouldWake(m) && !this.oversized?.noted(m.id) && !this.modNoteInFlight(m.id);
+  /** A message that should start a wake-up: deliverable, and not a note this endpoint handed out and awaits (AB-404). */
+  private readonly wakeable = (m: BridgeMessage): boolean => this.deliverable(m) && !this.handedNotes.has(m.id);
 
   async start(): Promise<void> {
     this.server = createServer((req, res) => {
       const url = new URL(req.url ?? "/", `http://${HOST}`);
+      if (url.pathname === "/mail-scope" && tokensEqual(String(req.headers.authorization ?? "").replace(/^Bearer /, ""), this.secret)) {
+        const session = url.searchParams.get("session_id");
+        if (req.method !== "POST" || this.retired || !this.mailScopes || !session || session !== this.registered || session !== this.node.currentSessionId) {
+          res.writeHead(409).end(); return;
+        }
+        res.setHeader("cache-control", "no-store");
+        try {
+          const token = this.mailScopes.issue(url.searchParams.get("tool") ?? "", session, url.searchParams.get("agent_id") ?? undefined);
+          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ token }));
+        } catch { res.writeHead(403).end(); }
+        return;
+      }
       if (url.pathname === "/activity" && tokensEqual(String(req.headers.authorization ?? "").replace(/^Bearer /, ""), this.secret)) {
         const accepted = !this.retired && this.activity?.({ sessionId: url.searchParams.get("session_id") ?? "", turnId: url.searchParams.get("turn_id") ?? "", sequence: Number(url.searchParams.get("sequence")), busy: url.searchParams.get("busy") === "1", instance: url.searchParams.get("instance") ?? undefined });
         if (accepted) this.modSeen = true;
@@ -97,10 +182,10 @@ export class RewakeEndpoint {
         // The mod reports turns starting and ending.
         this.modSeen = true;
         const busy = url.searchParams.get("busy") === "1";
-        // A turn started after the mod submitted what this endpoint handed out: it reached the session (it is in
-        // Claude Code's prompt queue). Confirmed here, where it was handed out, so it is never handed out again,
-        // even when the session's hooks reach another server of it.
-        if (busy) this.confirmDelivery();
+        // The mod acknowledges a hand-out it submitted before (older mods: a turn started after its submission):
+        // it is in Claude Code's prompt queue or was shown. Confirmed here, where it was handed out, so it is
+        // never handed out again, even when the session's hooks reach another server of it.
+        if (busy) { this.confirmDelivery(); this.confirmMod([...this.modHandedOut.keys()]); this.acknowledgeNotes(); }
         this.setBusy(busy);
         res.writeHead(204).end();
         return;
@@ -133,14 +218,32 @@ export class RewakeEndpoint {
     res.end(JSON.stringify({ text, superseded }));
   }
 
-  /** Hand the waiting messages to a wake-up; they stay unread until the session shows activity. */
-  private handOut(): string {
-    const msgs = this.node.unread().filter(this.shouldWake);
+  /**
+   * Hand the waiting messages to a wake-up; they stay unread until the session shows activity. AB-404: the
+   * wake-up text is bounded like a hook result. Only messages shown in full are handed out; one too large to
+   * show is listed by id once (it stays unread and inbox pages it), and the rest wait for the next wake-up.
+   */
+  private handOut(toMod = false): string {
+    const render = (shown: BridgeMessage[], oversized: BridgeMessage[], deferred: BridgeMessage[]) => [
+      shown.length ? formatMessages(shown, { header: WAKE_HEADER, repeat: (m) => this.repeated(m.id) }) : WAKE_HEADER,
+      ...unshownMessageNotes(oversized, deferred.length, (id) => `inbox(id="${id}", offset=0)`)
+        .map((note, i) => i < oversized.length ? `${oversizedNoteMarker(oversized[i]!.id)} ${note}` : note),
+    ].join("\n\n");
+    // A retry carries the notes of the wake-up it repeats: they were never confirmed.
+    const { shown, oversized, deferred } = selectForDelivery(this.node.unread().filter(this.deliverable), render, formatMessage);
     // Not marked read yet: Claude Code does not always turn a hook's wake-up into a turn. They count as
-    // delivered once the session shows activity (confirmDelivery); until then a retry, the next prompt or
-    // the next turn still gets them.
-    for (const m of msgs) this.handedOut.add(m.id);
-    return formatMessages(msgs, { header: WAKE_HEADER });
+    // delivered once the session shows activity (confirmDelivery) or, for the mod, once their own prompt
+    // runs or the mod acknowledges them; until then a retry or the next poll still gets them. A note for an
+    // oversized message is confirmed the same way, and only then is it not listed again (AB-404).
+    for (const m of shown) {
+      if (toMod) this.modHandedOut.set(m.id, this.turnEnds);
+      else this.handedOut.add(m.id);
+    }
+    for (const m of oversized) {
+      if (toMod) this.modNotes.set(m.id, { ends: this.turnEnds, starts: this.turnStarts });
+      else this.handedNotes.add(m.id);
+    }
+    return shown.length || oversized.length ? render(shown, oversized, deferred) : "";
   }
 
   /** The turn-end hook: wakes the session for the next message that should wake it. */
@@ -151,7 +254,7 @@ export class RewakeEndpoint {
     const ac = new AbortController();
     this.waiter = ac;
     res.on("close", () => ac.abort("closed"));
-    void this.node.waitForMessage(REWAKE_POLL_MS, this.shouldWake, ac.signal).then((first) => {
+    void this.node.waitForMessage(REWAKE_POLL_MS, this.wakeable, ac.signal).then((first) => {
       if (this.waiter === ac) this.waiter = null;
       let text = "";
       if (first && !res.destroyed) {
@@ -188,16 +291,18 @@ export class RewakeEndpoint {
     // A message nobody else waits for: take it (after a short grace, in case a new turn's hook is starting).
     const loop = () =>
       void this.node
-        .waitForMessage(REWAKE_POLL_MS, (m) => this.shouldWake(m) && !this.handedOut.has(m.id) && !this.waiter, ac.signal)
+        // Not while a wake-up is unconfirmed: that one is retried (retryWake), and handing out again here would
+        // repeat its messages without marking them as repeats (a deferred message would re-select them).
+        .waitForMessage(REWAKE_POLL_MS, (m) => this.wakeable(m) && !this.pendingWake() && !this.waiter, ac.signal)
         .then((m) => {
           if (done) return;
           if (!m) return finish("", false);
           setTimeout(() => {
             if (done) return;
-            if (this.waiter || this.handedOut.has(m.id)) return loop();
+            if (this.waiter || this.pendingWake()) return loop();
             this.log.info("waking the session (standby)", { reason: "no other hook waiting" });
             this.standby?.wake();
-          }, STANDBY_GRACE_MS).unref();
+          }, this.standbyGraceMs).unref();
         });
     loop();
   }
@@ -209,6 +314,13 @@ export class RewakeEndpoint {
    */
   private waitMod(res: ServerResponse): void {
     this.modSeen = true;
+    // AB-404: a Stop-hook wake-up's notes are not confirmed by the mod's turns, and wakeable() would keep them from
+    // the mod: they go back to the hand-outs (at worst one duplicate note). Stop-hook wake-ups end once the mod polls.
+    this.handedNotes.clear();
+    this.ackedNotes.clear();
+    // The mod polls again while idle: when no turn started since a note was handed to it, that wake-up started
+    // no turn, so the note goes out again (AB-404). After a turn start it is queued and waits for its own prompt.
+    for (const [id, at] of this.modNotes) if (at.starts === this.turnStarts) this.modNotes.delete(id);
     this.modWaiter?.abort("superseded");
     const ac = new AbortController();
     this.modWaiter = ac;
@@ -216,21 +328,22 @@ export class RewakeEndpoint {
     const deadline = Date.now() + REWAKE_POLL_MS;
     void (async () => {
       while (!ac.signal.aborted && Date.now() < deadline) {
-        const waiting = this.node.unread().some(this.shouldWake);
+        const waiting = this.node.unread().some(this.wakeable);
         if (waiting && !this.busy) break;
         // Busy with a message already waiting: check again shortly (waitForMessage would return it at once).
         if (waiting) await new Promise<void>((r) => setTimeout(r, MOD_TICK_MS).unref());
-        else await this.node.waitForMessage(MOD_TICK_MS, this.shouldWake, ac.signal);
+        else await this.node.waitForMessage(MOD_TICK_MS, this.wakeable, ac.signal);
       }
       if (this.modWaiter === ac) this.modWaiter = null;
-      if (ac.signal.aborted || Date.now() >= deadline) return this.reply(res, "", ac.signal.reason === "superseded");
-      const text = this.handOut();
-      this.log.info("waking the session (mod)", { count: this.handedOut.size });
+      if (ac.signal.aborted || Date.now() >= deadline || res.destroyed) return this.reply(res, "", ac.signal.reason === "superseded");
+      const text = this.handOut(true);
+      this.log.info("waking the session (mod)", { count: this.modHandedOut.size });
       this.reply(res, text, false);
     })();
   }
 
   private setBusy(busy: boolean): void {
+    if (busy && !this.busy) this.turnStarts++;
     this.busy = busy;
     // A turn started: a message now goes out with the tool hooks, not as a wake-up queued behind the turn.
     if (busy) this.modWaiter?.abort("superseded");
@@ -243,14 +356,104 @@ export class RewakeEndpoint {
 
   /** A turn ended (the Stop hook ran). */
   sessionIdle(): void {
+    if (this.busy) this.turnEnds++;
     this.setBusy(false);
+  }
+
+  /** Read mod hand-outs: shown in their own turn or acknowledged by the mod. */
+  private confirmMod(ids: string[]): void {
+    const shown = ids.filter((id) => this.modHandedOut.delete(id));
+    if (shown.length) this.node.markRead(shown);
+  }
+
+  /**
+   * AB-404: the mod acknowledged a hand-out (its message ids were all submitted before), so it did not submit this
+   * text. A note in it counts as shown only when its hand-out came before a real turn start: an earlier hand-out the
+   * mod submitted, queued behind that turn. A note handed out since (no turn started) was in the acknowledged text
+   * only, so it is not confirmed but handed out again on the mod's re-poll, as a note-only wake-up it submits.
+   */
+  private acknowledgeNotes(): void {
+    const queued: string[] = [];
+    for (const [id, at] of this.modNotes) {
+      if (at.starts < this.turnStarts) queued.push(id);
+      else { this.modNotes.delete(id); this.ackedNotes.add(id); }
+    }
+    this.confirmNotes(queued);
+  }
+
+  /** AB-404: these oversized-message notes were shown; the messages themselves stay unread. */
+  private confirmNotes(ids: Iterable<string>): void {
+    const noted = [...ids];
+    for (const id of noted) { this.handedNotes.delete(id); this.modNotes.delete(id); this.ackedNotes.delete(id); }
+    if (noted.length) this.oversized?.note(noted);
+  }
+
+  /** Whether a Stop-hook wake-up (messages or notes) waits for its confirmation. */
+  private pendingWake(): boolean {
+    return this.handedOut.size > 0 || this.handedNotes.size > 0;
+  }
+
+  /**
+   * A note handed to the mod is on its way to its own wake turn. One that outlived MOD_HANDOUT_TURNS turn ends goes
+   * back to the hooks and wake-ups, like a mod hand-out (AB-396).
+   */
+  private modNoteInFlight(id: string): boolean {
+    const at = this.modNotes.get(id);
+    if (at === undefined) return false;
+    if (this.turnEnds - at.ends < MOD_HANDOUT_TURNS) return true;
+    this.modNotes.delete(id);
+    this.log.warn("a mod wake-up's note for an oversized message was not shown; it is listed again", { id });
+    return false;
+  }
+
+  /**
+   * A message on its way to its own wake turn: the mod gave it to Claude Code as a prompt, so a hook must not
+   * inject it as well (AB-396). A hand-out that outlived MOD_HANDOUT_TURNS turn ends without the mod taking it
+   * again goes back to the hooks, as a repeat.
+   */
+  inFlight(id: string): boolean {
+    if (this.modNoteInFlight(id)) return true;
+    const at = this.modHandedOut.get(id);
+    if (at === undefined) return false;
+    if (this.turnEnds - at < MOD_HANDOUT_TURNS) return true;
+    this.modHandedOut.delete(id);
+    this.markRepeat([id]);
+    this.log.warn("a mod wake-up was neither shown nor acknowledged; the hooks deliver it as a repeat", { id });
+    return false;
+  }
+
+  /** A turn's prompt: a wake-up's own prompt shows its messages, wherever they were handed out. */
+  confirmPrompt(prompt: string): void {
+    if (!prompt.includes(WAKE_HEADER)) return;
+    // AB-404: only notes this endpoint handed out and awaits; a marker for any other id is not one of its notes.
+    this.confirmNotes([...new Set([...this.handedNotes, ...this.modNotes.keys(), ...this.ackedNotes])].filter((id) => prompt.includes(oversizedNoteMarker(id))));
+    const ids = new Set(wakeMessageIds(prompt));
+    if (!ids.size) return;
+    for (const id of ids) { this.handedOut.delete(id); this.modHandedOut.delete(id); }
+    const shown = this.node.unread().filter((m) => ids.has(m.id)).map((m) => m.id);
+    if (shown.length) this.node.markRead(shown);
+  }
+
+  /** These messages may already have reached the model; a later copy says so. */
+  markRepeat(ids: Iterable<string>): void {
+    for (const id of ids) {
+      this.repeats.delete(id);
+      this.repeats.add(id);
+    }
+    while (this.repeats.size > MAX_REPEATS) this.repeats.delete(this.repeats.values().next().value!);
+  }
+
+  /** Whether a copy of this message repeats an earlier hand-out. */
+  repeated(id: string): boolean {
+    return this.repeats.has(id);
   }
 
   /** The first wake-up was not confirmed: give the same messages to the standby hook. */
   private retryWake(): void {
-    if (this.handedOut.size === 0) return;
-    // The mod polls again by itself when its wake-up started no turn, and gets the same messages.
-    if (this.modSeen) return;
+    if (!this.pendingWake()) return;
+    // The mod polls again by itself when its wake-up started no turn, and gets the same messages. AB-404: the notes
+    // go to it too; kept here they would be kept from its hand-outs and confirmed by its turns unshown.
+    if (this.modSeen) { this.handedNotes.clear(); return; }
     if (!this.standby) {
       this.log.warn("a wake-up was not taken and no standby hook waits; the messages go out with the next prompt", { count: this.handedOut.size });
       return;
@@ -260,10 +463,13 @@ export class RewakeEndpoint {
   }
   /**
    * The session is active (a hook of it ran, or a new waiter started after a turn): the messages of the
-   * last wake-up reached it. Called before hooks inject unread mail, so they are not shown twice.
+   * last Stop-hook wake-up reached it. Called before hooks inject unread mail, so they are not shown twice.
+   * Mod hand-outs are not confirmed by unrelated activity: the mod drops a hand-out when a turn started first,
+   * and only their own prompt (confirmPrompt) or the mod's acknowledgement (/mod) proves delivery.
    */
   confirmDelivery(): void {
     clearTimeout(this.confirmTimer);
+    this.confirmNotes(this.handedNotes);
     if (this.handedOut.size === 0) return;
     this.node.markRead([...this.handedOut]);
     this.handedOut.clear();
@@ -281,10 +487,25 @@ export class RewakeEndpoint {
     this.standby?.release("active");
   }
 
-  /** The wake-up was lost (a new prompt came first): its messages go out with that prompt instead. */
+  /**
+   * The Stop-hook wake-up looks lost (a new prompt came first): its messages go out with that prompt instead,
+   * marked as repeats because Claude Code may still start the wake-up's turn. Mod hand-outs are not lost: the
+   * mod's prompt is queued behind this one and shows them in its own turn.
+   */
   releaseUndelivered(): void {
     if (this.handedOut.size) this.log.warn("a wake-up did not reach the session; delivering its messages with the next prompt", { count: this.handedOut.size });
+    this.markRepeat(this.handedOut);
     this.handedOut.clear();
+    // AB-404: its notes were not shown either; the next hook or wake-up lists the oversized messages again.
+    this.handedNotes.clear();
+  }
+
+  /** The hooks' view of this endpoint (ServerContext.wakeDelivery). */
+  delivery(): NonNullable<import("./server.js").ServerContext["wakeDelivery"]> {
+    return {
+      confirm: () => this.confirmDelivery(), release: () => this.releaseUndelivered(), active: () => this.sessionActive(), idle: () => this.sessionIdle(), modActive: () => this.modActive,
+      confirmPrompt: (prompt) => this.confirmPrompt(prompt), inFlight: (id) => this.inFlight(id), repeat: (ids) => this.markRepeat(ids), repeated: (id) => this.repeated(id),
+    };
   }
 
   /** Whether a hook is currently waiting (used by tests and diagnostics). */

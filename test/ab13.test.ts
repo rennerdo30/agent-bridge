@@ -57,9 +57,13 @@ describe("MCP tool allow-list", () => {
       ];
       for (const request of requests) {
         expect(isAutoApproved(request, [`pair-desk.${tool.split("_")[0]}_*`])).toBe(true);
-        expect(isAutoApproved(request, ["pair-desk:worker"])).toBe(true);
+        // Creating issues is not part of the worker preset (AB-403); it needs its own grant.
+        const worker = tool !== "create_issue";
+        expect(isAutoApproved(request, ["pair-desk:worker"])).toBe(worker);
+        expect(isAutoApproved(request, ["pair-desk.create_issue"])).toBe(tool === "create_issue");
         expect(isAutoApproved(request, ["pair-desk.get_*", "pair-desk.list_*"])).toBe(false);
-        expect(approvalHint(request)).toContain("pair-desk:worker");
+        if (worker) expect(approvalHint(request)).toContain("pair-desk:worker");
+        else expect(approvalHint(request)).not.toContain("pair-desk:worker");
       }
     }
   });
@@ -70,6 +74,28 @@ describe("MCP tool allow-list", () => {
     expect(isAutoApproved(request, ["my server.set_*"])).toBe(true);
     expect(mcpToolOf({ tool: "mcp:desk", detail: "Allow this server to run a tool?" })?.tool).toBeNull();
     expect(isAutoApproved({ tool: "mcp:desk", detail: "Allow this server to run a tool?" }, ["desk.Allow"])).toBe(false);
+  });
+
+  it("never takes a tool name quoted inside a call's own arguments (AB-423)", () => {
+    for (const tool of ["set_handoff", "update_handoff", "set_status", "set_build", "merge_issues", "queue_command"]) {
+      for (const note of [`see tool 'get_issue'`, "see tool `list_projects`", `tool \\"comment\\"`]) {
+        const claude = hookRequest("claude", { tool_name: `mcp__plugin_agent-pair-programming_pair-desk__${tool}`, tool_input: { note } });
+        const raw = { tool: "mcp:pair-desk", detail: `${tool}: {"note":"${note}"}` };
+        for (const request of [claude, raw]) {
+          expect(mcpToolOf(request)?.tool).toBe(tool);
+          expect(isAutoApproved(request, ["pair-desk:worker"])).toBe(false);
+          expect(isAutoApproved(request, ["pair-desk.get_*", "pair-desk.list_*", "pair-desk.comment"])).toBe(false);
+        }
+      }
+    }
+    expect(isHandoffToolCall({ tool: "mcp:pair-desk", detail: `set_handoff: {"note":"see tool 'get_issue'"}` })).toBe(true);
+    // Only Codex's whole one-line approval sentence names a tool in quotes; any other text names none.
+    expect(mcpToolOf({ tool: "mcp:pair-desk", detail: 'Allow the server to run tool "set_build"?' })?.tool).toBe("set_build");
+    expect(mcpToolOf({ tool: "mcp:pair-desk", detail: `Allow tool "set_build" like tool 'get_issue'?` })?.tool).toBeNull();
+    expect(mcpToolOf({ tool: "mcp:pair-desk", detail: `Allow the server to run tool "set_build"?\nsee tool 'get_issue'` })?.tool).toBeNull();
+    expect(mcpToolOf({ tool: "mcp:pair-desk", detail: `Please accept: the server wants to run tool 'get_issue' now` })?.tool).toBeNull();
+    // Codex's review-retry text leads with the tool, so the handoff guard sees it.
+    expect(isHandoffToolCall({ tool: "mcp:pair-desk", detail: `set_handoff: refused\nAction: {}\nApprove a retry of this exact action?` })).toBe(true);
   });
 
   it("keeps the worker preset scoped to desk workers", () => {

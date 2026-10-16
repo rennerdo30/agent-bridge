@@ -15,7 +15,15 @@ export function checkShardResults(root, shard, metadata) {
     assert(Number.isInteger(inventory.count) && inventory.count > 0, "Invalid partition count");
     assert(Number.isInteger(shard) && shard >= 1 && shard <= inventory.count, "Invalid shard");
     assert.equal(inventory.complete, true, "Unsharded collection incomplete; coverage unknown");
-    assert.deepEqual(inventory.metadata, metadata, "Unsharded source/runtime differs from this job");
+    // The inventory comes from the collect job of the same run. "Re-run failed jobs" reuses
+    // it from an earlier attempt, so the attempt may be lower; everything else must match.
+    const { attempt: inventoryAttempt, ...inventoryIdentity } = inventory.metadata ?? {};
+    const { attempt: jobAttempt, ...jobIdentity } = metadata;
+    assert.deepEqual(inventoryIdentity, jobIdentity, "Unsharded source/runtime differs from this job");
+    assert(inventoryAttempt === jobAttempt || (inventoryAttempt !== null && jobAttempt !== null &&
+      Number.isInteger(Number(inventoryAttempt)) && Number(inventoryAttempt) >= 1 && Number(inventoryAttempt) < Number(jobAttempt)),
+      "Unsharded inventory is from a later or unknown run attempt");
+    proof.inventoryAttempt = inventoryAttempt;
     assert.equal(inventory.censusSha256, censusDigest(inventory.unsharded), "Unsharded census digest changed");
     proof.censusSha256 = inventory.censusSha256;
     const allFiles = Object.values(inventory.lanes).flat(2);

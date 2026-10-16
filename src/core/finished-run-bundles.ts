@@ -7,6 +7,9 @@ import { retainMetadataFiles } from "./metadata-import.js";
 import { finishedRunLine } from "./run-archive.js";
 import { readRunLogPreview } from "./run-log-preview.js";
 import { isSqliteBusy } from "./sqlite-policy.js";
+import { isRecord } from "./json-store.js";
+import { indexJobRun, invalidateJobRunIndex } from "./job-run-index.js";
+import type { RunLogRecord } from "./run-history.js";
 
 const RUN_LOG = /\.log(?:-\d+-[\w-]+)?$/;
 /** Bumped in every transaction that writes finished-runs rows; readers use it as a cheap cache signature. */
@@ -14,24 +17,29 @@ const REVISION = ["finished-runs-revision", "revision"] as const;
 /** Runs that could not be packed: retained in place, skipped until their bytes change (AB-219). */
 const FAILURES = "finished-run-pack-failures";
 
-type PackedRun = { name: string; file: string; updatedAt: number; size: number; signature: string; archived: true; meta: Record<string, unknown> };
+type PackedRun = { name: string; file: string; updatedAt: number; size: number; signature: string; archived: true; meta: Record<string, unknown>; metadataFile?: string };
 const runName = (log: string) => basename(log).replace(RUN_LOG, "");
 
 function bumpRevision(db: DatabaseSync): void {
  db.prepare(`INSERT INTO bridge_metadata VALUES (?,?,'1',?) ON CONFLICT(domain,key)
   DO UPDATE SET value=CAST(CAST(value AS INTEGER)+1 AS TEXT),updated_at=excluded.updated_at`).run(REVISION[0], REVISION[1], Date.now());
 }
-function upsertRun(db: DatabaseSync, key: string, value: Record<string, unknown>): void {
+function upsertRun(home: string, db: DatabaseSync, key: string, value: Record<string, unknown>): void {
  generation++;
+ const coldMeta = String(value.file).replace(RUN_LOG, ".json");
+ value = { ...value, metadataFile: value.metadataFile ? coldMeta : undefined };
  db.prepare("INSERT INTO bridge_metadata VALUES ('finished-runs',?,?,?) ON CONFLICT(domain,key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at")
   .run(key, JSON.stringify(value), Date.now());
  bumpRevision(db);
+ // Packed originals keep their exact metadata too; revalidate it on every hit.
+ indexJobRun(home, value as unknown as RunLogRecord);
 }
 
 /** Pack completed runs only. Active logs and unknown completion evidence stay physical.
  * The finished-runs row commits in the same transaction as the retained bundle, before any source moves (AB-227):
  * a crash leaves the run either in place or packed and indexed, never moved and unlisted. */
 export function packFinishedRuns(home: string, logs: string[]): number {
+ try {
  let packed = 0;
  for (const log of logs) {
   physicalMetadataPath(log);
@@ -45,9 +53,10 @@ export function packFinishedRuns(home: string, logs: string[]): number {
   }
   files.push(log);
   const source = relative(home, log).replace(/\\/g, "/"), key = runName(log);
-  const value = { name: key, updatedAt: stat.mtimeMs, size: stat.size, signature: `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`, archived: true, meta };
+  const value = { name: key, updatedAt: stat.mtimeMs, size: stat.size, signature: `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`, archived: true, meta,
+   metadataFile: existsSync(metaPath) && isRecord(meta) ? metaPath : undefined };
   retainMetadataFiles(home, files, (db, path, _raw, cold) => {
-   if (path === source) upsertRun(db, key, { ...value, file: cold, bundleSource: source });
+   if (path === source) upsertRun(home, db, key, { ...value, file: cold, bundleSource: source });
   });
   // A source imported before this version (bundle committed, move pending) has no project call; index it now.
   const db = metadataDb(home);
@@ -55,12 +64,13 @@ export function packFinishedRuns(home: string, logs: string[]): number {
    const imported = db.prepare("SELECT cold_path FROM bridge_imports WHERE path=?").get(source);
    if (!imported) throw new Error("Completed run lacks verified retention evidence");
    db.exec("BEGIN IMMEDIATE");
-   try { upsertRun(db, key, { ...value, file: String(imported.cold_path), bundleSource: source }); db.exec("COMMIT"); }
+   try { upsertRun(home, db, key, { ...value, file: String(imported.cold_path), bundleSource: source }); db.exec("COMMIT"); }
    catch (error) { db.exec("ROLLBACK"); throw error; }
   }
   packed++;
  }
  return packed;
+ } catch (error) { invalidateJobRunIndex(home); throw error; }
 }
 
 /** Content-free indexed polling never opens the cold originals or compressed members. */
@@ -76,7 +86,9 @@ export const RECHECK_MS = 2_000;
 function toRecord(key: string, value: string): PackedRun | null {
  try {
   const v = JSON.parse(value) as Record<string, unknown>;
-  return { name: key, file: String(v.file), updatedAt: Number(v.updatedAt), size: Number(v.size), signature: String(v.signature), archived: true, meta: (v.meta && typeof v.meta === "object" ? v.meta : {}) as Record<string, unknown> };
+  const file = String(v.file), metadataFile = file.replace(RUN_LOG, ".json");
+  return { name: key, file, updatedAt: Number(v.updatedAt), size: Number(v.size), signature: String(v.signature), archived: true,
+   meta: isRecord(v.meta) ? v.meta : {}, metadataFile: isRecord(v.meta) && existsSync(metadataFile) ? metadataFile : undefined };
  } catch { return null; }
 }
 const copy = (record: PackedRun): PackedRun => ({ ...record, meta: structuredClone(record.meta) });
@@ -155,9 +167,10 @@ export function recoverPackedRuns(home: string, limit = 100): number {
   if (existsSync(metaCold)) { try { meta = JSON.parse(readFileSync(metaCold, "utf8")); } catch { /* Raw bytes stay retained. */ } }
   db.exec("BEGIN IMMEDIATE");
   try {
-   upsertRun(db, key, { name: key, file: cold, bundleSource: source, updatedAt: stat.mtimeMs, size: stat.size, signature: `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`, archived: true, meta, recovered: true });
+   upsertRun(home, db, key, { name: key, file: cold, bundleSource: source, updatedAt: stat.mtimeMs, size: stat.size, signature: `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}`, archived: true, meta, recovered: true,
+    metadataFile: existsSync(metaCold) && isRecord(meta) ? metaCold : undefined });
    db.exec("COMMIT");
-  } catch (error) { db.exec("ROLLBACK"); throw error; }
+  } catch (error) { db.exec("ROLLBACK"); invalidateJobRunIndex(home); throw error; }
   if (++recovered >= limit) break;
  }
  return recovered;

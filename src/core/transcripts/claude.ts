@@ -1,6 +1,7 @@
 import { realpathSync, type Stats } from "node:fs";
 import { dirname, join } from "node:path";
-import { drainScan, drainScanResponsive } from "../responsive-scan.js";
+import { activeByteSources } from "../byte-source.js";
+import { drainScan } from "../responsive-scan.js";
 import { contentText, directory, fileStat, MAX_DISCOVERY_BYTES, MAX_NATIVE_SUBAGENTS, MAX_TEXT_CHARS, MAX_TITLE_CHARS, MAX_TRANSCRIPT_CHUNK_BYTES, object, preview, readHead, readJsonl, readJsonlChunk, safeFile, time, TRANSCRIPT_ID, type JsonObject, type NativeSubagent, type TranscriptItem, type TranscriptPage, type TranscriptPaths, type TranscriptSession } from "./common.js";
 
 export function claudeSessionFile(session: TranscriptSession, paths: TranscriptPaths): string | null {
@@ -174,6 +175,12 @@ export function* claudeSubagentSteps(session: TranscriptSession, paths: Transcri
     const file = root ? safeFile(paths.claude, listed, root) : null;
     if (!file) continue;
     const st = fileStat(file);
+    // A fully ingested file's head and tail facts come from the history store (AB-383).
+    const known = activeByteSources()?.claudeChild?.(file, MAX_TRANSCRIPT_CHUNK_BYTES);
+    if (known) {
+      out.set(id, { id, title: known.title ?? preview(`Subagent ${id}`, MAX_TITLE_CHARS), status: known.status, startedAt: known.startedAt || st?.birthtimeMs || 0, updatedAt: st?.mtimeMs || 0 });
+      continue;
+    }
     if (!st) { out.set(id, { id, title: preview(`Subagent ${id}`, MAX_TITLE_CHARS), status: "unknown", startedAt: 0, updatedAt: 0 }); continue; }
     const summary = { ...childSummary(id, file, st, saved?.file === file ? saved : undefined), file };
     current.set(listed, summary);
@@ -181,7 +188,8 @@ export function* claudeSubagentSteps(session: TranscriptSession, paths: Transcri
   }
   // Files no longer listed leave the cache with the previous generation.
   remember(childCache, dir, current);
-  // Old versions wrote sidechain records into the parent's JSONL.
+  // Old versions wrote sidechain records into the parent's JSONL. The store can prove there are none.
+  if (activeByteSources()?.noInlineSidechains?.(main)) return [...out.values()];
   const nestedIds = new Set(out.keys());
   for (const [id, child] of yield* legacyChildren(main)) {
     if (nestedIds.has(id) || out.size >= MAX_NATIVE_SUBAGENTS) continue;
@@ -190,10 +198,7 @@ export function* claudeSubagentSteps(session: TranscriptSession, paths: Transcri
   return [...out.values()];
 }
 
+/** Synchronous: the dashboard runs it inside readWithHistory, whose byte sources never span an await (AB-383). */
 export function listClaudeSubagents(session: TranscriptSession, paths: TranscriptPaths): NativeSubagent[] {
   return drainScan(claudeSubagentSteps(session, paths));
-}
-
-export function listClaudeSubagentsResponsive(session: TranscriptSession, paths: TranscriptPaths): Promise<NativeSubagent[]> {
-  return drainScanResponsive(claudeSubagentSteps(session, paths));
 }
