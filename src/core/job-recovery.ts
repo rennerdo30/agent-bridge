@@ -223,7 +223,6 @@ function finishRecovery(home: string, { id, history, spec, launch, run, meta, na
     workdir: currentState?.workdir ?? base.workdir ?? meta?.workdir ?? null,
     worktree: currentState?.worktree ?? base.worktree ?? null,
     status: alive ? base.status === "paused" ? "paused" : "running" : ["paused", "done", "failed", "cancelled"].includes(String(currentState?.status)) ? currentState!.status
-      : base.status === "paused" && base.pausePending ? "interrupted"
       : ["paused", "done", "failed", "cancelled"].includes(String(base.status)) ? base.status : "interrupted",
     pausePending: alive && base.pausePending === true ? true : undefined,
     host: alive ? { pid: currentState!.pid, peer: currentState!.peer ?? name, startedAt } : null,

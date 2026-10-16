@@ -20,7 +20,7 @@ import type { ParentRoute } from "../core/parent-link.js";
 import { isPureAcknowledgement } from "../core/job-messaging.js";
 import { resumeArgs, runDelegate, type JobSink, type RunContext } from "./delegate-run.js";
 import { CONTROL_CONVERSATION_PREFIX, JOB_PEER_PREFIX, RUNNER_HEARTBEAT_MS, writeRunnerState, type RunnerSpec } from "./job-host.js";
-import { jobReport, NOTE_CONVERSATION_SUFFIX, QUEUED_FOLLOW_UP_NOTE, sessionOfError, waitForApproval, type Job, type RunnerControl, type RunnerState } from "./jobs.js";
+import { DEFAULT_PAUSE_REASON, jobReport, MAX_PAUSE_REASON_CHARS, NOTE_CONVERSATION_SUFFIX, PAUSE_RACE_NOTE, QUEUED_FOLLOW_UP_NOTE, sessionOfError, waitForApproval, type Job, type RunnerControl, type RunnerState } from "./jobs.js";
 import { changedJobArgs } from "./job-settings.js";
 import { processCleanupReport, establishWindowsJobScope, type WindowsJobScope } from "../core/windows-job-scope.js";
 import type { Logger } from "../core/logger.js";
@@ -135,6 +135,8 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     usageQueuedControls: [],
     allowedServers: new Set(spec.job.allowedServers),
   };
+  /** The first turn of this runner: pause mail from before it belongs to an earlier runner. */
+  const runnerStartedAt = job.startedAt;
   let owner = spec.owner;
   const refreshOwner = () => {
     const saved = readStore(join(home, JOBS_FILE)).find((j) => j.id === job.id);
@@ -274,7 +276,9 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     } catch {
       return;
     }
-    if ((c.type === "cancel" || c.type === "pause") && !isCurrentRunnerCancel(m.createdAt, job.startedAt)) {
+    // A pause holds the job, not one turn: one sent while this runner switched to a queued continuation
+    // still applies. Only control mail older than this runner (an earlier runner's turn) is ignored.
+    if (c.type === "pause" && !isCurrentRunnerCancel(m.createdAt, runnerStartedAt) || c.type === "cancel" && !isCurrentRunnerCancel(m.createdAt, job.startedAt)) {
       log.info("ignoring cancellation from an earlier job turn", { createdAt: m.createdAt, startedAt: job.startedAt });
       return;
     }
@@ -315,7 +319,9 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       job.controller.abort();
       save({ stopping: true });
     } else if (c.type === "pause") {
-      job.pauseReason = c.reason ?? "Paused by supervisor";
+      // A repeated pause for the same turn changes nothing.
+      if (job.pausePending || closing) { node.markRead([m.id]); return; }
+      job.pauseReason = (c.reason ?? "").trim().slice(0, MAX_PAUSE_REASON_CHARS) || DEFAULT_PAUSE_REASON;
       job.pausedAt = Date.now();
       job.pausePending = true;
       job.controller.abort();
@@ -364,12 +370,14 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     let text = "";
     let cause: string | null = null;
     let processesStopped = false;
+    let completed = false;
     try {
       const res = await runDelegate(rc, target, args, job.controller.signal, onProgress, true, job);
       job.workdir = res.workdir ?? job.workdir;
       job.worktree = res.worktree ?? job.worktree;
       job.sessionId = res.sessionId ?? job.sessionId;
       status = res.status ?? (res.isError ? "failed" : "done");
+      completed = status === "done";
       text = res.text || "(no answer text returned)";
       cause = res.isError ? failureCause({ result: res }) : null;
     } catch (err) {
@@ -412,13 +420,29 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       text += `\n\nWorktree close: ${cleanup.action}: ${cleanup.reason}`;
     }
     job.etaReportedAt = undefined;
-    if (job.pausePending && (!scope || processesStopped)) status = "paused";
+    // Decided after the last await, so a pause arriving meanwhile is seen. A pause that raced a completed turn
+    // never swallows its report; a pause stays a pause even when job-owned processes would not stop (AB-398).
+    const outcome = runnerTurnOutcome({ status, completed, pausePending: job.pausePending === true, scoped: Boolean(scope), processesStopped });
+    if (outcome.pauseRaced) {
+      log.info("pause arrived after the turn had finished; delivering its report", { sessionId: job.sessionId });
+      job.pausePending = false;
+      job.pauseReason = undefined;
+      job.pausedAt = undefined;
+      text += `\n\n${PAUSE_RACE_NOTE}`;
+      // The pause aborted only a finished turn: later follow-ups of this runner need a live controller.
+      job.controller = new AbortController();
+    }
+    if (outcome.status === "paused") status = "paused";
     else if (job.controller.signal.aborted) status = "cancelled";
     if (status === "paused") {
       closing = true;
       if (saveTimer) clearTimeout(saveTimer);
       save({ status: "paused", finishedAt: Date.now() });
-      log.info("job runner paused", { sessionId: job.sessionId });
+      log.info("job runner paused", { sessionId: job.sessionId, processesStopped: processesStopped || !scope });
+      if (outcome.pausedWithLeftovers) {
+        await post(`Subagent ${job.name} is paused, but its job-owned processes did not all stop; they may still be using the machine. ` +
+          `${cause ?? "Process cleanup did not finish."}\n\n${text.trim()}`);
+      }
       break;
     }
     const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), text, cause, home);
@@ -475,6 +499,18 @@ export async function deliverWithRetry<T>(send: () => Promise<T>, log: Logger, o
     }
   }
   return null;
+}
+
+/**
+ * How a runner turn ends when a pause may be pending (AB-398). A pause that arrived after the turn completed
+ * never swallows its report; a pause whose job-owned processes would not stop stays a pause (never a silent
+ * cancellation) and the supervisor is told about the leftovers.
+ */
+export function runnerTurnOutcome(o: { status: "done" | "failed" | "cancelled" | "paused"; completed: boolean; pausePending: boolean; scoped: boolean; processesStopped: boolean }):
+  { status: "done" | "failed" | "cancelled" | "paused"; pauseRaced: boolean; pausedWithLeftovers: boolean } {
+  if (!o.pausePending) return { status: o.status, pauseRaced: false, pausedWithLeftovers: false };
+  if (o.completed) return { status: o.status, pauseRaced: true, pausedWithLeftovers: false };
+  return { status: "paused", pauseRaced: false, pausedWithLeftovers: o.scoped && !o.processesStopped };
 }
 
 /** Legacy 0.29.10 control mail also carries its original broker timestamp. */

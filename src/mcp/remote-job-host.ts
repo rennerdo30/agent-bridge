@@ -15,6 +15,8 @@ interface Cached { fetchedAt: number; snapshot: RemoteJobSnapshot }
 export class RemoteJobHost {
   private readonly busy = new Set<string>();
   private readonly cache = new Map<string, Cached>();
+  /** The turn each job's pause was sent for (job id -> "id:startedAt"). */
+  private readonly pauseSent = new Map<string, string>();
   constructor(private readonly node: BridgeNode, private readonly home: string, private readonly log: Logger) {}
   private path(job: Job): string { return join(this.home, "remote-job-states", `${job.id}.json`); }
   private read(job: Job): Cached | null {
@@ -59,6 +61,12 @@ export class RemoteJobHost {
     return cached ? cached.snapshot.alive && Date.now() - cached.fetchedAt < REMOTE_STATE_GRACE_MS : Date.now() - (job.host?.startedAt ?? 0) < REMOTE_STATE_GRACE_MS;
   }
   send(job: Job, control: RunnerControl): void {
+    // One pause per turn reaches the remote runner; repeated polls or retries never resend it (AB-398).
+    if (control.type === "pause") {
+      const turn = `${job.id}:${job.startedAt}`;
+      if (this.pauseSent.get(job.id) === turn) return;
+      this.pauseSent.set(job.id, turn);
+    }
     this.sendRequest(job, { op: "control", job: job.id, control });
   }
   private sendRequest(job: Job, request: RemoteJobRequest): void {

@@ -650,7 +650,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
   // Nested supervisors keep private child tools without independent-session bridge privileges.
   const register = ((name: string, ...rest: unknown[]) =>
     node || SUBAGENT_TOOLS.has(name) || (ctx.jobs && (
-      name === "decide" || name === "message_subagent" || name === "cancel_subagent" || name === "inbox" || name === "wait_for_message" ||
+      name === "decide" || name === "message_subagent" || name === "cancel_subagent" || name === "pause_subagent" || name === "resume_subagent" || name === "inbox" || name === "wait_for_message" ||
       (currentDelegateDepth() < cfg.maxDelegateDepth && (name.startsWith("spawn_") || name.startsWith("ask_") || name === "list_models"))
     )) ? (mcp.registerTool as (...a: unknown[]) => unknown)(name, ...rest) : undefined) as typeof mcp.registerTool;
   const requireNode = (): BridgeNode => {
@@ -1735,8 +1735,12 @@ ${res.text || t("delegate.empty")}`, res.isError);
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       if (a.job && !await jobs.share(a.job)) throw new BridgeError("bad_request", `Unknown or unauthorized job ${a.job}.`);
-      const paused = a.all ? jobs.pauseAll(a.reason) : [a.job!].filter(name => jobs.pause(name, a.reason));
-      return text(JSON.stringify({ paused }));
+      if (a.all) {
+        const result = jobs.pauseAll(a.reason);
+        return text(JSON.stringify(result), result.failed.length > 0 && result.paused.length === 0);
+      }
+      jobs.pause(a.job!, a.reason);
+      return text(JSON.stringify({ paused: [a.job], failed: [] }));
     }),
   );
 
@@ -1752,7 +1756,11 @@ ${res.text || t("delegate.empty")}`, res.isError);
       const jobs = ctx.jobs;
       if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
       if (a.job && !await jobs.share(a.job)) throw new BridgeError("bad_request", `Unknown or unauthorized job ${a.job}.`);
-      return text(JSON.stringify({ resumed: a.all ? jobs.resumeAll() : jobs.resumePaused(a.job!) }));
+      if (a.all) {
+        const result = jobs.resumeAll();
+        return text(JSON.stringify(result), result.failed.length > 0 && result.resumed.length === 0);
+      }
+      return text(JSON.stringify({ resumed: jobs.resumePaused(a.job!), failed: [] }));
     }),
   );
 

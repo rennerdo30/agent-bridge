@@ -2,11 +2,10 @@ import { canonicalProjectRoot, migrateProjectJobs } from "../core/project-identi
 import { canControlJob } from "../core/job-ownership.js";
 import { confirmUsageAdmission, currentUsage, holdUsageSubmission, settleUsageAttempt, usageContinuationMessage, usageRefused } from "../core/usage.js";
 import { createHash, randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
 import { worktreeProcesses, worktreeProcessReport } from "../core/worktree-processes.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
-import { closeSync, constants as fsConstants, copyFileSync, fsyncSync, openSync } from "node:fs";
+import { closeSync, constants as fsConstants, copyFileSync, existsSync, fsyncSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DEFAULT_MAX_JOBS, DELEGATION_METADATA_VERSION } from "../core/constants.js";
 import { DelegateError, failureCause, pidAlive, type DelegateResult } from "../core/delegate.js";
@@ -16,7 +15,7 @@ import { resolveHome } from "../core/paths.js";
 import type { Logger } from "../core/logger.js";
 import { ACK_CONVERSATION_SUFFIX, isQuietMessage, type AgentKind, type BridgeMessage } from "../core/protocol.js";
 import { isPureAcknowledgement } from "../core/job-messaging.js";
-import type { Worktree } from "../core/worktree.js";
+import { git, trustArgs, type Worktree } from "../core/worktree.js";
 import { assertWritableStore, backupPath, isRecord, JSON_STORE_VERSION, mergeStoreFields, readJsonStore, retainBackups, retentionLimit, writeJsonStore } from "../core/json-store.js";
 import { changedJobArgs, JOB_SETTING_KEYS, type JobSettings } from "./job-settings.js";
 import { assertStoreUpgrade } from "../core/store-compatibility.js";
@@ -223,6 +222,11 @@ const HOST_POLL_MS = 2_000;
 /** cancel_subagent asks a runner to stop first; after this long it is killed. */
 const CANCEL_GRACE_MS = 5_000;
 /** Said after a report when follow-ups that arrived meanwhile were sent to the subagent right away. */
+/** Appended when a pause arrived after the turn had already finished (AB-398). */
+export const PAUSE_RACE_NOTE = "(A pause request arrived after this turn had already finished; the job is finished, not paused.)";
+/** The longest pause reason kept in job state, peers and the dashboard. */
+export const MAX_PAUSE_REASON_CHARS = 500;
+export const DEFAULT_PAUSE_REASON = "Paused by supervisor";
 export const QUEUED_FOLLOW_UP_NOTE = "(Your queued follow-up was sent to it; its answer will arrive as another message.)";
 
 /** The message a finished turn reports: how it ended, why it failed, and what the subagent said. */
@@ -282,14 +286,17 @@ export function waitForApproval(job: Job, question: string, timeoutMs: number, p
       const allow = /^\s*(allow|yes|y|approve|approved|ok|okay|go ahead|accept)\b/i.test(answer);
       try { post(by === "timeout"
         ? `Approval for ${job.name} expired without a decision; permission remains ungranted. Check bridge availability and request approval again before retrying. No owner denial was received.`
-        : `Approval for ${job.name} ${allow ? "allowed" : "denied"} by ${by}.`); }
+        : by === "pause"
+          ? `Approval for ${job.name} was withdrawn because the job was paused; permission remains ungranted. It asks again after resume_subagent if it still needs it.`
+          : `Approval for ${job.name} ${allow ? "allowed" : "denied"} by ${by}.`); }
       catch { log.warn("could not report approval answer", { job: job.name }); }
       resolve({ allow, reason: answer.trim() });
       return true;
     };
     const timer = setTimeout(() => settle("no answer in time", "timeout"), timeoutMs);
     timer.unref?.();
-    const aborted = () => settle("job cancelled", "cancellation");
+    // A pause also aborts the turn: say so, rather than reporting a cancellation (AB-398).
+    const aborted = () => job.pausePending ? settle("job paused", "pause") : settle("job cancelled", "cancellation");
     job.controller.signal.addEventListener("abort", aborted, { once: true });
     let answers = approvalAnswers.get(job);
     if (!answers) { answers = new Set(); approvalAnswers.set(job, answers); }
@@ -467,7 +474,9 @@ export class JobManager {
         this.cancelInlineTurn(job, job.startedAt);
       }
       else if (control.type === "pause") {
-        job.pauseReason = control.reason ?? "Paused by supervisor";
+        // Only this executor's live turn can be paused; a pause for a turn that already ended is not replayed.
+        if (job.controller.signal.aborted || job.status !== "running" && !(job.status === "paused" && job.pausePending)) return;
+        job.pauseReason = (control.reason ?? "").trim().slice(0, MAX_PAUSE_REASON_CHARS) || DEFAULT_PAUSE_REASON;
         job.pausedAt ??= Date.now();
         job.pausePending = true;
         job.status = "paused";
@@ -733,7 +742,7 @@ export class JobManager {
         this.history.set(s.id, job);
       }
       this.own.add(s.id);
-      if (s.status !== "running" && s.status !== "paused" && job.queue.length && !this.waitingJobs.has(s.id)) this.waitForSlot(job);
+      if ((s.status !== "running" && s.status !== "paused" || s.status === "paused" && s.resumeRequested && !s.pausePending) && job.queue.length && !this.waitingJobs.has(s.id)) this.waitForSlot(job);
       if ((s.status === "running" || s.status === "paused" && s.pausePending) && s.host && !this.running.has(s.id) && this.takeOver(job)) {
         this.running.set(s.id, job); job.status = s.status;
         this.runners?.send(job, { type: "attach" }); this.watchHosted();
@@ -940,8 +949,11 @@ export class JobManager {
       }
       const hosted = (s.status === "running" || s.status === "paused" && s.pausePending) && Boolean(s.host);
       const mine = this.isMine(s.owner);
+      // An inline turn's pause was pending when its executor ended: no runner can finish it, so it is simply paused.
+      const pauseSettled = s.status === "paused" && s.pausePending === true && !s.host && !(s.executionPid && s.executionPid !== process.pid && pidAlive(s.executionPid));
       const job: Job = {
         ...s,
+        ...(pauseSettled ? { pausePending: false } : {}),
         recoveredRecord: cloneJson(s) as unknown as Record<string, unknown>,
         status: s.status === "running" && !(hosted && !mine) ? "interrupted" : s.status,
         controller: new AbortController(),
@@ -956,7 +968,12 @@ export class JobManager {
     // Jobs saved before sibling identities existed need the same group as later jobs of their supervisor.
     this.assignLegacySupervisors();
     this.settleAdopted(adopted);
-    for (const job of this.history.values()) if (job.waitingForStart && this.isMine(job.owner)) this.waitForSlot(job);
+    // A paused job never starts on its own after a restart; one whose resume was waiting for a slot keeps waiting (AB-398).
+    for (const job of this.history.values()) {
+      if (!this.isMine(job.owner)) continue;
+      if (job.waitingForStart && (job.status !== "paused" || job.resumeRequested)) this.waitForSlot(job);
+      else if (job.status === "paused" && job.resumeRequested && !job.pausePending && job.queue.length) this.waitForSlot(job);
+    }
     this.persist();
   }
 
@@ -967,6 +984,8 @@ export class JobManager {
     // What the runner learned after the old server last saved (its session, above all) makes it recoverable.
     if (state) Object.assign(job, { sessionId: state.sessionId ?? job.sessionId, workdir: state.workdir ?? job.workdir, worktree: state.worktree ?? job.worktree });
     if (this.runners.alive(job, state) || (state && state.status !== "running")) return true;
+    // A pause the runner never confirmed still holds: the job stays paused and resumable, never running again on its own.
+    if (job.status === "paused") { job.pausePending = false; return false; }
     job.status = "interrupted";
     if (state?.sessionId) this.own.add(job.id);
     return false;
@@ -1333,7 +1352,15 @@ export class JobManager {
         job.etaAt = undefined;
         job.etaReportedAt = undefined;
         job.finishedAt = Date.now();
-        job.status = job.controller.signal.aborted ? "cancelled" : outcome?.result?.status ?? (outcome?.result && !outcome.result.isError ? "done" : "failed");
+        const completed = (outcome?.result?.status ?? (outcome?.result && !outcome.result.isError ? "done" : "failed")) === "done";
+        // A pause that raced a completed turn never swallows its result: the run is finished, not paused (AB-398).
+        const pauseRaced = job.pausePending === true && completed;
+        if (pauseRaced) {
+          job.pausePending = false; job.resumeRequested = false; job.pauseReason = undefined; job.pausedAt = undefined;
+          this.log.info("pause arrived after the ask had finished; delivering its result", { job: job.name });
+        }
+        const aborted = job.controller.signal.aborted && !pauseRaced;
+        job.status = aborted ? "cancelled" : outcome?.result?.status ?? (outcome?.result && !outcome.result.isError ? "done" : "failed");
         job.sessionId = outcome?.result?.sessionId ?? sessionOfError(outcome?.error) ?? job.sessionId;
         job.workdir = outcome?.result?.workdir ?? job.workdir;
         job.worktree = outcome?.result?.worktree ?? job.worktree;
@@ -1342,7 +1369,10 @@ export class JobManager {
           job.pausePending = false;
           job.finishedAt = undefined;
           this.persist();
-          if (job.resumeRequested) this.startPaused(job);
+          if (job.resumeRequested) {
+            try { this.startPaused(job); }
+            catch (error) { this.post(job, `Subagent ${job.name} remains paused: ${String(error)}`); }
+          }
           this.startWaiting();
           return;
         }
@@ -1353,7 +1383,7 @@ export class JobManager {
           this.post(job, jobReport(job, job.status, Math.round((Date.now() - job.startedAt) / 1000), outcome?.result?.text ?? "", job.status === "failed" ? failureCause(outcome ?? {}) : null, this.bridgeHome()));
         }
         // Follow-ups sent while the caller waited continue the session in the background (or wait for a slot).
-        if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner) && !usageRefused(job)) {
+        if (job.queue.length && job.resume && job.sessionId && !aborted && this.isMine(job.owner) && !usageRefused(job)) {
           if (this.canStart()) {
             let run: Run;
             try { run = job.resume(usageContinuationMessage(job), job.sessionId, job.workdir, job.worktree); }
@@ -2091,23 +2121,44 @@ export class JobManager {
     if (this.waitingJobs.has(job.id)) this.startWaiting();
   }
 
-  /** Cancel a background job, a blocking ask_* run or a continuation waiting for a slot, by name or id. */
-  pause(ref: string, reason = "Paused by supervisor"): boolean {
+  /** Whether a job has a turn (running, starting or a queued continuation) that a pause can hold. */
+  private pausable(job: Job): boolean {
+    return job.status === "running" || job.status !== "paused" && (Boolean(job.waitingForStart) || this.waitingJobs.has(job.id));
+  }
+
+  /** Why a job cannot be paused: an explicit "already finished" when its turn ended first (AB-398). */
+  private pauseRefusal(job: Job, ref: string): string {
+    if (job.status === "paused") return `${ref} is already paused.`;
+    if (job.status === "done" || job.status === "failed" || job.status === "cancelled") return `${ref} already finished (${job.status}); there is no turn to pause.`;
+    if (job.status === "interrupted") return `${ref} is interrupted, not running; continue it with message_subagent.`;
+    return `${ref} is not a running job.`;
+  }
+
+  /**
+   * Pause a running job at a turn boundary: its session, worktree and queued continuations are kept, and it is
+   * never reported as done. A queued continuation is held without starting. Throws when there is nothing to pause.
+   */
+  pause(ref: string, reason = DEFAULT_PAUSE_REASON): boolean {
     const job = this.controlJob(ref);
-    if (!job || job.status !== "running" && !job.waitingForStart) throw new Error(`${ref} is not a running job.`);
+    if (!job) throw new Error(`Unknown job ${ref}.`);
+    if (!this.pausable(job)) throw new Error(this.pauseRefusal(job, ref));
+    reason = reason.trim().slice(0, MAX_PAUSE_REASON_CHARS) || DEFAULT_PAUSE_REASON;
     return this.transition(job, () => {
       this.refreshControlTurn(job);
-      if (job.status !== "running" && !job.waitingForStart) throw new Error(`${ref} is not a running job.`);
+      if (!this.pausable(job)) throw new Error(this.pauseRefusal(job, ref));
       job.pauseReason = reason;
       job.pausedAt = Date.now();
       job.pausePending = true;
-      job.status = "paused";
-      if (job.waitingForStart && this.waitingJobs.has(job.id)) {
+      job.resumeRequested = false;
+      // Not started yet (a queued start or a continuation waiting for a slot): hold it where it is.
+      if (this.waitingJobs.has(job.id) && !this.running.has(job.id) && !this.foreground.has(job.id)) {
         this.waitingJobs.delete(job.id);
+        job.status = "paused";
         job.pausePending = false;
         this.persist();
         return true;
       }
+      job.status = "paused";
       this.persist();
       if (this.hostedRunning(job)) this.runners!.send(job, { type: "pause", reason });
       else if (job.remoteControl) job.remoteControl({ type: "pause", reason });
@@ -2118,11 +2169,15 @@ export class JobManager {
     });
   }
 
-  pauseAll(reason = "Paused by supervisor"): string[] {
-    const paused: string[] = [];
+  /** Pause every job of this supervisor; one failure never stops the others (AB-398). */
+  pauseAll(reason = DEFAULT_PAUSE_REASON): { paused: string[]; failed: { job: string; error: string }[] } {
+    const result: { paused: string[]; failed: { job: string; error: string }[] } = { paused: [], failed: [] };
     this.refreshOwnership();
-    for (const job of [...this.history.values()].filter(j => (j.status === "running" || j.waitingForStart) && this.isMine(j.owner))) if (this.pause(job.name, reason)) paused.push(job.name);
-    return paused;
+    for (const job of [...this.history.values()].filter(j => this.pausable(j) && this.isMine(j.owner))) {
+      try { if (this.pause(job.name, reason)) result.paused.push(job.name); }
+      catch (error) { result.failed.push({ job: job.name, error: error instanceof Error ? error.message : String(error) }); }
+    }
+    return result;
   }
 
   resumePaused(ref: string): string[] {
@@ -2133,35 +2188,43 @@ export class JobManager {
       this.refreshControlTurn(job);
       if (job.status !== "paused") throw new Error(`${ref} is not paused.`);
       if (job.pausePending) { job.resumeRequested = true; this.persist(); }
-      else ready = true;
+      // Already resumed and waiting for a free slot: keep its place and its single resume note.
+      else if (!this.waitingJobs.has(job.id)) ready = true;
     });
     if (ready) this.startPaused(job);
     return [job.name];
   }
 
-  resumeAll(): string[] {
-    const resumed: string[] = [];
+  /** Resume every paused job of this supervisor; one failure never stops the others (AB-398). */
+  resumeAll(): { resumed: string[]; failed: { job: string; error: string }[] } {
+    const result: { resumed: string[]; failed: { job: string; error: string }[] } = { resumed: [], failed: [] };
     this.refreshOwnership();
-    for (const job of [...this.history.values()].filter(j => j.status === "paused" && this.isMine(j.owner))) resumed.push(...this.resumePaused(job.name));
-    return resumed;
+    for (const job of [...this.history.values()].filter(j => j.status === "paused" && this.isMine(j.owner))) {
+      try { result.resumed.push(...this.resumePaused(job.name)); }
+      catch (error) { result.failed.push({ job: job.name, error: error instanceof Error ? error.message : String(error) }); }
+    }
+    return result;
   }
 
   private startPaused(job: Job): void {
-    if (job.waitingForStart && this.pendingRuns.has(job.id)) {
-      const run = this.pendingRuns.get(job.id)!;
-      this.pendingRuns.delete(job.id);
-      if (!this.canStart()) { this.pendingRuns.set(job.id, run); this.waitForSlot(job); return; }
-      this.launch(job, run);
+    // Recorded while it waits, so a restart keeps its resume (and its place in the slot queue).
+    job.resumeRequested = true;
+    if (job.waitingForStart) {
+      const run = this.pendingRuns.get(job.id);
+      if (run && this.canStart()) { this.pendingRuns.delete(job.id); this.launch(job, run); return; }
+      // Without its prepared run (a restart dropped it), the slot loop rebuilds it from the saved prompt.
+      this.waitForSlot(job);
+      this.persist();
+      this.startWaiting();
       return;
     }
-    if (!job.resume || !job.sessionId) throw new Error(`${job.name} has no retained session to resume.`);
-    const message = `You were paused (${job.pauseReason ?? "supervisor request"}); continue exactly where you stopped.`;
-    job.queue.unshift(message);
-    job.resumeRequested = false;
+    if (!job.resume || !job.sessionId) { job.resumeRequested = false; throw new Error(`${job.name} has no retained session to resume.`); }
+    const note = pausedNote(job);
+    if (job.queue[0] !== note) job.queue.unshift(note);
     if (!this.canStart()) { this.waitForSlot(job); this.persist(); return; }
     let run: Run;
     try { run = job.resume(usageContinuationMessage(job), job.sessionId, job.workdir, job.worktree); }
-    catch (error) { this.failContinuation(job, error); throw error; }
+    catch (error) { job.resumeRequested = false; this.failContinuation(job, error); throw error; }
     this.launch(job, run);
   }
 
@@ -2347,6 +2410,15 @@ export class JobManager {
 
   /** `report`: null when the runner already delivered it, a text to post as it is, or undefined to compose it here. */
   private finish(job: Job, status: "done" | "failed" | "cancelled", text: string, sessionId: string | null, cause: string | null = null, report?: string | null, messageId?: string): void {
+    // A pause that raced a completed turn never swallows its report: the job is finished, not paused (AB-398).
+    const pauseRaced = job.pausePending === true && status === "done";
+    if (pauseRaced) {
+      job.pausePending = false;
+      job.resumeRequested = false;
+      this.log.info("pause arrived after the turn had finished; delivering its report", { job: job.name });
+      if (report === undefined) text += `\n\n${PAUSE_RACE_NOTE}`;
+      else if (report !== null) report += `\n\n${PAUSE_RACE_NOTE}`;
+    }
     if (job.pausePending) {
       this.running.delete(job.id);
       job.sessionId = sessionId ?? job.sessionId;
@@ -2370,7 +2442,8 @@ export class JobManager {
       holdUsageSubmission(job);
       if (!usageRefused(job)) job.continuationFailure = { turn: job.startedAt, error: "Submitted steering is awaiting native admission confirmation; explicit continuation required." };
     }
-    if (job.controller.signal.aborted) status = "cancelled";
+    const aborted = job.controller.signal.aborted && !pauseRaced;
+    if (aborted) status = "cancelled";
     denyPendingApprovals(job);
     this.running.delete(job.id);
     job.etaAt = undefined;
@@ -2384,13 +2457,17 @@ export class JobManager {
     const seconds = Math.round((Date.now() - job.startedAt) / 1000);
     this.log.info("subagent finished", { job: job.name, status, seconds, sessionId: job.sessionId, cause });
     if (this.storePath && !job.host) notifyJobEvent(dirname(this.storePath), status === "done" ? "finish" : "fail", this.log);
-    const dirty = dirtyJobFiles(job.worktree);
-    const dirtyNote = dirty.length ? `\n\nDirty files left on the job worktree:\n${dirty.join("\n")}` : "";
-    const message = report === undefined ? jobReport(job, status, seconds, text + dirtyNote, cause, this.bridgeHome()) : report === null ? null : report + dirtyNote;
-    if (report === null && dirtyNote) this.post(job, `Subagent ${job.name} ended with uncommitted files.${dirtyNote}`);
+    const message = report === undefined ? jobReport(job, status, seconds, text, cause, this.bridgeHome()) : report;
+    // A local job's leftover files are listed after the report, without holding up settlement (AB-398).
+    if (!job.remote && job.worktree?.path) {
+      const worktree = job.worktree;
+      void dirtyJobFiles(worktree, this.log).then((dirty) => {
+        if (dirty.length) this.post(job, `Subagent ${job.name} ended with uncommitted files on its worktree ${worktree.path}; keep that worktree for review:\n${dirty.join("\n")}`);
+      }).catch((error) => this.log.warn("could not list a job's dirty files", { job: job.name, err: String(error) }));
+    }
 
     // Follow-ups that arrived meanwhile go out right away, into the same session (it keeps its slot).
-    if (job.queue.length && job.resume && job.sessionId && !job.controller.signal.aborted && this.isMine(job.owner) && job.continuationFailure?.turn !== job.startedAt && !usageRefused(job)) {
+    if (job.queue.length && job.resume && job.sessionId && !aborted && this.isMine(job.owner) && job.continuationFailure?.turn !== job.startedAt && !usageRefused(job)) {
       let run: Run;
       try { run = job.resume(usageContinuationMessage(job), job.sessionId, job.workdir, job.worktree); }
       catch (error) {
@@ -2483,14 +2560,16 @@ export function sessionOfError(err: unknown): string | null {
   return err instanceof DelegateError ? (err.sessionId ?? null) : null;
 }
 
-/** A crash or failed checkpoint still leaves a file-by-file final handoff. Git respects .gitignore. */
-function dirtyJobFiles(worktree: Worktree | null): string[] {
-  if (!worktree?.path) return [];
+/**
+ * A crash or failed checkpoint still leaves a file-by-file final handoff. Git respects .gitignore. Only a
+ * local worktree that still exists is inspected; a removed or remote one has nothing here to list.
+ */
+async function dirtyJobFiles(worktree: Worktree, log: Logger): Promise<string[]> {
+  if (!worktree.path || !existsSync(worktree.path)) return [];
   try {
-    const output = execFileSync("git", ["-C", worktree.path, "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-      { encoding: "utf8", timeout: 5_000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
+    const output = await git([...trustArgs(worktree.path), "status", "--porcelain=v1", "-z", "--untracked-files=all"], worktree.path, log, 5_000);
     return output.split("\0").filter(Boolean).map(entry => entry.slice(3));
-  } catch { return [`Could not inspect dirty files in ${worktree.path}; preserve this worktree for review.`]; }
+  } catch { return [`(could not inspect the dirty files in ${worktree.path}; keep this worktree for review)`]; }
 }
 
 /** One turn of an inline job and its executor: a later turn or another executor is a different turn. */
@@ -2690,4 +2769,9 @@ export function acquireLock(path: string, waitMs = LOCK_WAIT_MS, nonBlockingReco
     if ((error as NodeJS.ErrnoException).code !== "ELEASEBUSY") throw error;
     throw Object.assign(new Error("timed out locking jobs store"), { code: "EJOBLOCKED" });
   }
+}
+
+/** The single note a resumed job gets ahead of its queued messages. */
+function pausedNote(job: Pick<Job, "pauseReason">): string {
+  return `You were paused (${job.pauseReason ?? "supervisor request"}); continue exactly where you stopped.`;
 }

@@ -48,7 +48,7 @@ it("keeps a paused job paused and resumes its same native session", async () => 
   expect(resume.mock.calls[0]?.[1]).toBe("same-native-session");
   expect(resume.mock.calls[0]?.[0]).toContain("retained next step");
   expect(continued).toHaveBeenCalledOnce();
-  expect(() => jobs.pause(job.name)).toThrow(/not a running job/);
+  expect(() => jobs.pause(job.name)).toThrow(/already finished \(done\)/);
 });
 
 it("pauses and resumes all owned jobs and refuses a finished job", async () => {
@@ -58,10 +58,10 @@ it("pauses and resumes all owned jobs and refuses a finished job", async () => {
   const one = jobs.start("codex", null, "one", interruptible, resume);
   const two = jobs.start("codex", null, "two", interruptible, resume);
   jobs.note(one, { sessionId: "session-one" }); jobs.note(two, { sessionId: "session-two" });
-  expect(jobs.pauseAll("owner build")).toEqual([one.name, two.name]);
+  expect(jobs.pauseAll("owner build")).toEqual({ paused: [one.name, two.name], failed: [] });
   expect(one.status).toBe("paused"); expect(two.status).toBe("paused");
   await flush();
-  expect(jobs.resumeAll()).toEqual([one.name, two.name]);
+  expect(jobs.resumeAll()).toEqual({ resumed: [one.name, two.name], failed: [] });
   await flush();
   expect(resume).toHaveBeenCalledTimes(2);
   expect(() => jobs.pause("missing-or-finished")).toThrow();

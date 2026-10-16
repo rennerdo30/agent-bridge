@@ -122,6 +122,8 @@ const PENDING_MAX_LIMIT = 500;
 const NAME_SUFFIX_LIMIT = 100;
 const MAX_FILE_ADDRESS_CHARS = 256;
 const MAX_FILE_PATH_CHARS = 1_024;
+/** Pause reasons are bounded wherever they are relayed (the same limit as the pause_subagent tool). */
+const MAX_PAUSE_REASON_CHARS = 500;
 const SIBLING_STATUSES = new Set<SiblingPeer["status"]>(["running", "paused", "done", "failed", "interrupted", "cancelled"]);
 const MAX_INFLIGHT_PER_CONNECTION = 128;
 const PAUSE_INFLIGHT_PER_CONNECTION = 32;
@@ -513,6 +515,12 @@ export class Broker {
         const peer = this.requirePeer(c), job = this.currentJobAuthority(await this.jobForControl(peer, a.job));
         if (!job || !this.groups.canControl(peer, job, this.localPeers())) throw new BridgeError("unauthorized", "Only the current supervisor can control this job.");
         if (!a.control || !["message", "title", "settings", "effort", "cancel", "pause"].includes(a.control.type)) throw new BridgeError("bad_request", "Invalid inline control.");
+        // A pause reason travels to runners, peers and the dashboard: only a bounded string is relayed (AB-398).
+        if (a.control.type === "pause") {
+          const reason: unknown = a.control.reason;
+          if (reason !== undefined && typeof reason !== "string") throw new BridgeError("bad_request", "Invalid pause reason.");
+          a = { ...a, control: { type: "pause", ...(reason ? { reason: reason.slice(0, MAX_PAUSE_REASON_CHARS) } : {}) } };
+        }
         if (job.host && (job.status === "running" || job.status === "paused" && job.pausePending)) {
           await this.onSend(c, { to: String(job.name), body: JSON.stringify(a.control), conversationId: `${CONTROL_CONVERSATION_PREFIX}${job.id}` });
           return { sent: true };
