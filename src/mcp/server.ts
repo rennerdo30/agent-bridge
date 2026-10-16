@@ -53,7 +53,7 @@ import { formatInboxMessages, formatProjectRoute, formatReplyRestrictions, forma
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { reportModActivity } from "./hook-ownership.js";
 import { codexCallIdentity, codexMainThreadAdmission, type CodexCallIdentity } from "./codex-lineage.js";
-import { buildHookResponse, completionAwaitingReceipt, confirmAntigravityStopDelivery, confirmNativeChildDelivery, discardFinishedNotes, releaseAntigravityStopDelivery, type HookEvent } from "./hooks.js";
+import { buildHookResponse, claudeWakeCandidate, completionAwaitingReceipt, confirmAntigravityStopDelivery, confirmNativeChildDelivery, discardFinishedNotes, releaseAntigravityStopDelivery, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, usageProbeFor, type Access } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
 import { answerPendingApproval, listPendingApprovals, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
@@ -198,7 +198,17 @@ export interface ServerContext {
   /** Delegated subagents: the live link to the session that runs them. */
   parent?: ParentClient | null;
   /** Claude Code: messages handed to a wake-up count as delivered only once the session shows activity. */
-  wakeDelivery?: { confirm: () => void; release: () => void; active: () => void; idle?: () => void; modActive?: () => boolean };
+  wakeDelivery?: {
+    confirm: () => void; release: () => void; active: () => void; idle?: () => void; modActive?: () => boolean;
+    /** A turn's prompt: a wake-up's own prompt shows its messages (AB-396). */
+    confirmPrompt?: (prompt: string) => void;
+    /** Handed to the mod and on its way to its own wake turn: hooks must not show it too (AB-396). */
+    inFlight?: (id: string) => boolean;
+    /** Remember messages whose earlier hand-out may have reached the model. */
+    repeat?: (ids: Iterable<string>) => void;
+    /** A copy of this message repeats an earlier hand-out. */
+    repeated?: (id: string) => boolean;
+  };
   /** A headless `claude -p` run: stays off the bridge unless one of its tools is used. */
   headless?: boolean;
   /** Positively identified interactive launch; unknown/headless Claude cannot restore other jobs. */
@@ -446,12 +456,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   let rewake: RewakeEndpoint | null = null;
   if (agent === "claude" && node) {
     // With the channel active, messages already arrive as channel events: waking too would deliver them twice.
-    const shouldWake = (m: BridgeMessage) =>
-      !ctx.channelActive() &&
-      m.hop < cfg.maxHops &&
-      // Running-job notes remain in explicit inbox reads and history (see JobManager.fromSubagent).
-      !ctx.jobs?.isNote(m) &&
-      shouldWakeClaudeMessage(node, cfg, m);
+    const shouldWake = (m: BridgeMessage) => claudeWakeCandidate(ctx, m);
     rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"), (event) => reportModActivity(ctx, event), ctx.claudeMailScopes);
     try {
       await rewake.start();
@@ -461,7 +466,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
       // Only the server the session uses serves wake-ups (see RewakeEndpoint.retire).
       node.on("replaced", () => rewake?.retire());
       node.on("reclaimed", () => rewake?.unretire());
-      ctx.wakeDelivery = { confirm: () => rewake?.confirmDelivery(), release: () => rewake?.releaseUndelivered(), active: () => rewake?.sessionActive(), idle: () => rewake?.sessionIdle(), modActive: () => rewake?.modActive ?? false };
+      ctx.wakeDelivery = rewake.delivery();
     } catch (err) {
       log.warn("background wake-ups unavailable", { err: (err as Error).message });
       rewake = null;
