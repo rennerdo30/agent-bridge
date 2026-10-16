@@ -227,15 +227,6 @@
       "seen": "Windows Node 22 shard 5/6 (main run 38870273983): undici TimeoutError at daemon-lifecycle.test.ts:452; passed locally"
     },
     {
-      "file": "test/job-run-index.test.ts",
-      "test": "uses durable exact lookups after reopen while an unrelated catalog dependency remains stalled",
-      "issue": "AB-410",
-      "owner": "muse-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-10-21",
-      "seen": "macOS Node 22 (main run 38870273983): expected null to match object; passed locally in test/job-run-index.test.ts (49 tests in 2 files)"
-    },
-    {
       "file": "test/broker-queue-expiry-contention.test.ts",
       "test": "defers a combined availability/session/rename replay until final-name expiry finishes",
       "issue": "AB-410",
@@ -254,15 +245,6 @@
       "seen": "Windows Node 24 shard 5/6 (main run 38873872600): expected false to be true at remote-jobs.test.ts:566"
     },
     {
-      "file": "test/jobs-archive-persist.test.ts",
-      "test": "does not republish unchanged persisted records across ten sessions; retains changed accepted bytes",
-      "issue": "AB-410",
-      "owner": "muse-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
-      "seen": "Windows Node 24 shard 6/6 (main run 38873872600): test timed out in 120000ms; passed locally"
-    },
-    {
       "file": "test/job-runner.test.ts",
       "test": "background subagents in job runners > cancel_subagent then message_subagent continues the same worktree and archives its lease",
       "issue": "AB-410",
@@ -279,15 +261,6 @@
       "added": "2026-10-16",
       "recheckBy": "2026-10-23",
       "seen": "Windows Node 22 shard 6/6 (main run 38877634285 at f25782cf, the current main head when listed)"
-    },
-    {
-      "file": "test/mobile-identity.test.ts",
-      "test": "owner-private mobile PC identity > generates one P-256 key, correct IP/DNS SANs, a self-signature and canonical SPKI hash; persists across changed origins/renewal",
-      "issue": "AB-410",
-      "owner": "muse-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
-      "seen": "Windows Node 24 shard 2/6 (main run 38877634285 at f25782cf, the current main head when listed)"
     }
   ]
 }
