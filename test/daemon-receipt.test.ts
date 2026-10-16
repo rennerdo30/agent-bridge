@@ -51,7 +51,9 @@ function observeCall(trace: InitialAdmissionTrace, operation: ObservedOperation)
     trace.records.push(record); return record;
   } catch { trace.overflow = true; return; } // Lost diagnostic evidence never proves no entry.
 }
-function diagnosticNow(): number { try { return performance.now(); } catch { return NaN; } }
+// Diagnostics read the unmocked clock, so a beforeDeadline clamp cannot hide real setup lateness.
+const realDiagnosticClock = performance.now.bind(performance);
+function diagnosticNow(): number { try { return realDiagnosticClock(); } catch { return NaN; } }
 function completeCall(trace: InitialAdmissionTrace, record: CallObservation | undefined, started: number, disposition: CallDisposition): void {
   if (!record) return;
   try {
@@ -120,14 +122,14 @@ vi.mock("../src/core/lifecycle-windows.js", async importOriginal => {
     verificationFixture.before?.(args[0], args[2], args[3]);
     const diagnostic = args[2] === "admission" && args[3] === "established" && verificationFixture.diagnostic?.result === "not_entered"
       ? verificationFixture.diagnostic : undefined;
-    const started = performance.now();
+    const started = diagnosticNow();
     const trace = initialAdmissionTrace;
     const observed = trace && args[0] === journalHome && args[2] === "admission" && args[3] === "established" && args[4] === trace.end
       ? observeCall(trace, "verifier") : undefined;
     if (diagnostic) { diagnostic.entry = timingBucket(args[4] - started); diagnostic.result = "rejected"; }
     const completed = (result: "resolved" | "rejected") => {
       if (trace && observed) completeCall(trace, observed, started, result);
-      if (diagnostic) { const now = performance.now(); diagnostic.resolution = timingBucket(args[4] - now); diagnostic.wall = timingBucket(now - started); diagnostic.result = result; }
+      if (diagnostic) { const now = diagnosticNow(); diagnostic.resolution = timingBucket(args[4] - now); diagnostic.wall = timingBucket(now - started); diagnostic.result = result; }
     };
     // Every proof is still produced/refused by the ORIGINAL native observer with
     // every original capability/deadline argument; no fixture-created permission.
@@ -142,13 +144,13 @@ vi.mock("../src/core/lifecycle-windows.js", async importOriginal => {
     verificationFixture.before?.(args[0], args[2], args[3]);
     const diagnostic = args[2] === "admission" && args[3] === "established" && verificationFixture.diagnostic?.result === "not_entered"
       ? verificationFixture.diagnostic : undefined;
-    const started = performance.now(), trace = initialAdmissionTrace;
+    const started = diagnosticNow(), trace = initialAdmissionTrace;
     const observed = trace && args[0] === journalHome && args[2] === "admission" && args[3] === "established" && args[4] === trace.end
       ? observeCall(trace, "verifier") : undefined;
     if (diagnostic) { diagnostic.entry = timingBucket(args[4] - started); diagnostic.result = "rejected"; }
     const completed = (result: "resolved" | "rejected") => {
       if (trace && observed) completeCall(trace, observed, started, result);
-      if (diagnostic) { const now = performance.now(); diagnostic.resolution = timingBucket(args[4] - now); diagnostic.wall = timingBucket(now - started); diagnostic.result = result; }
+      if (diagnostic) { const now = diagnosticNow(); diagnostic.resolution = timingBucket(args[4] - now); diagnostic.wall = timingBucket(now - started); diagnostic.result = result; }
     };
     try { const proof = native.cachedWindowsLifecyclePathProof(...args); completed("resolved"); return proof; }
     catch (error) { completed("rejected"); verificationFixture.rejected?.(error); throw error; }
@@ -240,7 +242,8 @@ async function observeInitialAdmission(mismatch: MismatchCase) {
     const j = await bootstrap(), input = request(), end = deadline();
     trace.end = end; // The original deadline is evaluated exactly once, here.
     try {
-      const accepted = await admit(j, input, end); trace.outcome = "resolved";
+      // Setup admission, not the behaviour under test: insulated from runner stalls.
+      const accepted = await beforeDeadline(end, original => admit(j, input, original)); trace.outcome = "resolved";
       return { j, input, accepted };
     } catch (error) { trace.outcome = "rejected"; trace.reason = diagnosticReason(error); throw error; }
   } finally { exec.mockRestore(); }
@@ -428,7 +431,8 @@ function outcomeFault(writer: DatabaseSync, end: number, fault: OutcomeFault, fi
 }
 async function verificationRefusal(query: VerificationQuery, boundary: VerificationBoundary) {
   const j = await capturedOutcomeJournal(), input = request();
-  if (query === "conflict") await admit(j, input, deadline()); // Separate original accepted operation, before fault capture.
+  // Separate original accepted operation (setup), before fault capture.
+  if (query === "conflict") await beforeDeadline(deadline(), end => admit(j, input, end));
   const end = deadline(), fault = outcomeFault(captured!, end, "reader_chain", 1, { query, boundary });
   let error: unknown, unexpected: unknown, retained = false;
   try { error = await captureRefusal(() => admit(j, query === "conflict" ? { ...input, operation: "stop" } : input, end)); }
@@ -456,14 +460,16 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
       if (sql.includes("PRAGMA journal_mode=PERSIST")) captured = this;
       return sqliteExec.call(this, sql);
     });
-    const began = performance.now(), j = await bootstrap(), input = request(), accepted = await admit(j, input, deadline());
+    const began = performance.now(), j = await bootstrap(), input = request();
+    const accepted = await beforeDeadline(deadline(), end => admit(j, input, end)); // Initial acceptance is setup.
     spy.mockRestore();
     expect(captured!.prepare("PRAGMA journal_mode").get()?.journal_mode).toBe("persist");
     expect(captured!.prepare("PRAGMA synchronous").get()?.synchronous).toBe(2);
     expect(captured!.prepare("PRAGMA journal_size_limit").get()?.journal_size_limit).toBe(-1);
-    expect(await admit(j, input, deadline())).toEqual(accepted);
-    const prepared = await advance(j, input.restartId, 1, "preparing", {}, deadline());
-    expect(prepared.revision).toBe(2); expect(await admit(j, input, deadline())).toEqual(prepared);
+    // Idempotency/retention semantics, not the phase budget: original deadlines, clamped clock.
+    expect(await beforeDeadline(deadline(), end => admit(j, input, end))).toEqual(accepted);
+    const prepared = await beforeDeadline(deadline(), end => advance(j, input.restartId, 1, "preparing", {}, end));
+    expect(prepared.revision).toBe(2); expect(await beforeDeadline(deadline(), end => admit(j, input, end))).toEqual(prepared);
     await expect(admit(j, { ...input, operation: "stop" }, deadline())).rejects.toThrow(LifecycleUnavailable);
     const db = new DatabaseSync(file(), { readOnly: true });
     try {
@@ -557,7 +563,8 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
   it("a retained dangling selection refuses new-ID admission without overwriting its intent or accepted rows", async () => {
     const j = await bootstrap(), input = request(), missing = request();
     expect(await selected(j)).toBeNull(); expect(await lookup(j, missing.restartId)).toBeNull();
-    const accepted = await admit(j, input, deadline()), reader = await preparedReader(j, input.restartId), fixture = new DatabaseSync(file());
+    const accepted = await beforeDeadline(deadline(), end => admit(j, input, end)); // Setup admission.
+    const reader = await preparedReader(j, input.restartId), fixture = new DatabaseSync(file());
     try {
       expect(reader.read()).toEqual(accepted);
       // Explicit OWNED retained-state fault only; the normal source writer has
@@ -624,7 +631,7 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
       return sqliteExec.call(this, sql);
     });
     const j = await bootstrap(); spy.mockRestore();
-    const input = request(), retained = await admit(j, input, deadline());
+    const input = request(), retained = await beforeDeadline(deadline(), end => admit(j, input, end)); // Setup admission.
     // Native isTransaction is nonconfigurable. Inject ONLY the unavailable
     // observation at this private fixture boundary; keep real SQLite methods.
     const actual = captured!;
@@ -699,7 +706,8 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
     }) : undefined;
     const j = await bootstrap(), input = request();
     capture?.mockRestore(); // Bootstrap failure still uses the unchanged afterEach mock restoration.
-    if (portable) await admit(j, input, deadline());
+    // The initial admission is setup for the missing-journal refusal below.
+    if (portable) await beforeDeadline(deadline(), end => admit(j, input, end));
     else {
       // One bounded record for the original initial admission. No IDs, paths,
       // SQL text, absolute timestamps or alleged native helper timing are emitted.
@@ -726,7 +734,7 @@ describe("lifecycle-only committed receipt storage (not restart acceptance)", ()
       try {
         // Windows created this private trace above. Capture the one original
         // third argument during its original evaluation, not a fresh allowance.
-        await admit(j, input, (trace!.end = deadline()));
+        await beforeDeadline((trace!.end = deadline()), end => admit(j, input, end));
         if (trace) trace.outcome = "resolved";
       } catch (error) {
         if (trace) { trace.outcome = "rejected"; trace.reason = diagnosticReason(error); }
@@ -963,7 +971,8 @@ describe("source-associated publication UNKNOWN (not controller or durability au
   });
 
   it.each(["advance", "conflict"] as const)("late ORIGINAL %s COMMIT cannot replay its CAS/evidence publication", async mode => {
-    const j = await capturedOutcomeJournal(), input = request(), accepted = await admit(j, input, deadline());
+    const j = await capturedOutcomeJournal(), input = request();
+    const accepted = await beforeDeadline(deadline(), end => admit(j, input, end)); // Setup admission before the fault.
     const end = deadline(), fault = outcomeFault(captured!, end, "late_commit");
     let error: unknown;
     try {
