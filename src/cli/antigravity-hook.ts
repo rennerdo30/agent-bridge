@@ -2,6 +2,7 @@ import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ANTIGRAVITY_ACCESS_ENV, ANTIGRAVITY_EDIT_RELAY_ENV } from "../core/antigravity.js";
 import { antigravityAncestor } from "../core/procinfo.js";
+import { markerSafe } from "../core/approval-display.js";
 import { resolveHome } from "../core/paths.js";
 import { askRelay, boundedDetail, RELAY_TOKEN_ENV, RELAY_URL_ENV } from "../core/relay.js";
 import { object } from "../core/transcripts/common.js";
@@ -94,7 +95,7 @@ export async function antigravityPermission(
   const call = object(input.toolCall), args = object(call.args);
   const server = args.ServerName ?? args.server_name ?? args.serverName;
   const tool = args.ToolName ?? args.tool_name ?? args.toolName;
-  const request = { agent: "antigravity", tool: call.name === "call_mcp_tool" ? `mcp:${server ?? "unknown"}` : String(call.name ?? "unknown"), ...boundedDetail((call.name === "call_mcp_tool" ? `${tool ?? "unknown"}: ` : "") + JSON.stringify(args)), cwd: Array.isArray(input.workspacePaths) ? input.workspacePaths[0] : undefined };
+  const request = { agent: "antigravity", tool: call.name === "call_mcp_tool" ? `mcp:${server ?? "unknown"}` : String(call.name ?? "unknown"), ...boundedDetail(markerSafe((call.name === "call_mcp_tool" ? `${tool ?? "unknown"}: ` : "") + JSON.stringify(args))), cwd: Array.isArray(input.workspacePaths) ? input.workspacePaths[0] : undefined };
   if (access && isHandoffToolCall(request)) return { decision: "deny", reason: "Delegated jobs report to their supervisor; handoff writes are declined" };
   if ((!access || access === "edit") && call.name === "call_mcp_tool" && OWN_SERVERS.includes(server)) return allowed(input);
   // Top-level "allow" without permissionOverrides delegates to Antigravity's default policy.

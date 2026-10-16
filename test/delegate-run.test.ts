@@ -57,8 +57,12 @@ describe("delegation approval routing", () => {
     const j = job();
     j.allowedServers = new Set(["mcp:pair-desk"]);
     vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
-      expect(await req.approve!({ agent: "codex", tool: "mcp:pair-desk", detail: 'tool "get_issue" refused', automaticReview: true })).toMatchObject({ allow: false });
-      expect(await req.approve!({ agent: "codex", tool: "mcp:pair-desk", detail: 'tool "list_projects" refused', automaticReview: true })).toMatchObject({ allow: false });
+      // The real Codex review-retry shape (codex-appserver.ts): "<tool>: <reason>\nAction: …\nApprove a retry …".
+      const retry = (tool: string) => `${tool}: Automatic approval review refused this action\nAction: {"toolName":"${tool}"}\nApprove a retry of this exact action? Codex policy still applies.`;
+      expect(await req.approve!({ agent: "codex", tool: "mcp:pair-desk", detail: retry("get_issue"), automaticReview: true })).toMatchObject({ allow: false });
+      expect(await req.approve!({ agent: "codex", tool: "mcp:pair-desk", detail: retry("list_projects"), automaticReview: true })).toMatchObject({ allow: false });
+      // A refused handoff write is still declined outright: the parent is never asked to approve a retry (AB-423).
+      expect(await req.approve!({ agent: "codex", tool: "mcp:pair-desk", detail: retry("set_handoff"), automaticReview: true })).toMatchObject({ allow: false });
       return { sessionId: "saved", text: "done", isError: false, details: {} };
     });
     await runDelegate(rc, "codex", { title: "review", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);

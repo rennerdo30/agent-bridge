@@ -351,6 +351,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 `);
     const asked: Record<string, boolean> = {};
     const requests: Record<string, { cwd?: string; identity?: string }> = {};
+    const otherWorkdirCommand = "command [workdir: /elsewhere]\nnpm run build";
     try {
       await delegateToCodexAppServer({ bin: process.execPath, cwd: dir, prompt: "task", timeoutSec: 10, sandbox: "read-only", askMode: true, log: nullLogger,
         approve: async (r) => { asked[`${r.tool} ${r.detail}`] = r.inexact === true; requests[`${r.tool} ${r.detail}`] = { cwd: r.cwd, identity: r.identity }; return { allow: true }; },
@@ -362,13 +363,61 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         "edit edit files": true,
         // A file change is never reused, also when its paths are known (AB-402 H2).
         "edit a.ts": true,
-        "command npm run build": false,
+        [otherWorkdirCommand]: false,
       });
       // The command's identity covers the raw command line and the folder Codex runs it in (AB-402 M1).
       expect(requests["command npm test"]).toEqual(commandIdentity({ command: "npm test" }, dir));
-      expect(requests["command npm run build"]).toEqual(commandIdentity({ command: "bash -lc 'npm run build'", cwd: "/elsewhere" }, dir));
-      expect(requests["command npm run build"]!.cwd).toBe("/elsewhere");
+      expect(requests[otherWorkdirCommand]).toEqual(commandIdentity({ command: "bash -lc 'npm run build'", cwd: "/elsewhere" }, dir));
+      expect(requests[otherWorkdirCommand]!.cwd).toBe("/elsewhere");
       expect(requests["edit a.ts"]!.identity).toBeUndefined();
+    } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+  }, 15_000);
+});
+
+describe("Codex approval questions show escalation and network requests (AB-417)", () => {
+  it("marks network context, proposed amendments, another folder and a write root", async () => {
+    const root = process.env.AGENT_BRIDGE_TEST_ROOT!;
+    mkdirSync(root, { recursive: true });
+    const dir = mkdtempSync(join(root, "ab417-"));
+    writeFileSync(join(dir, "app-server"), `
+const { createInterface } = require("node:readline");
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+let replies = 0;
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const m = JSON.parse(line);
+  if (m.result && m.id >= 100) {
+    if (++replies === 2) {
+      send({ method: "item/completed", params: { turnId: "turn", item: { type: "agentMessage", text: "done" } } });
+      send({ method: "turn/completed", params: { turn: { id: "turn", status: "completed" } } });
+    }
+    return;
+  }
+  if (m.method === "initialize") send({ id: m.id, result: {} });
+  if (m.method === "thread/start") send({ id: m.id, result: { thread: { id: "session" }, model: "gpt-6-sol" } });
+  if (m.method === "turn/start") {
+    send({ id: m.id, result: { turn: { id: "turn" } } });
+    send({ id: 100, method: "item/commandExecution/requestApproval", params: { threadId: "session", turnId: "turn", itemId: "c1", command: "curl https://example.com", cwd: "/elsewhere\\n[ok]", reason: "needs network",
+      networkApprovalContext: { host: "example.com", protocol: "https" }, proposedNetworkPolicyAmendments: [{ host: "example.com", action: "allow" }], proposedExecpolicyAmendment: ["curl"] } });
+    send({ id: 101, method: "item/fileChange/requestApproval", params: { threadId: "session", turnId: "turn", itemId: "f1", reason: "write outside", grantRoot: "/" } });
+  }
+  if (m.method === "turn/steer") send({ id: m.id, result: {} });
+});
+`);
+    const asked: string[] = [];
+    try {
+      await delegateToCodexAppServer({ bin: process.execPath, cwd: dir, prompt: "task", timeoutSec: 10, sandbox: "read-only", askMode: true, log: nullLogger,
+        approve: async (r) => { asked.push(r.detail); return { allow: false, message: "no" }; },
+      });
+      expect(asked).toHaveLength(2);
+      const [command, edit] = asked as [string, string];
+      expect(command.split("\n")).toHaveLength(2);
+      expect(command.split("\n")[1]).toBe("curl https://example.com");
+      expect(command).toContain("[network: https://example.com]");
+      expect(command).toContain('[proposed exec rule: \\u005b"curl"\\u005d]');
+      expect(command).toContain('[proposed network rule: \\u005b{"host":"example.com","action":"allow"}\\u005d]');
+      expect(command).toContain('[workdir: "/elsewhere\\n\\u005bok\\u005d"]');
+      expect(command).toContain("[reason: needs network]");
+      expect(edit).toBe("[grant write root: /]\nwrite outside");
     } finally { rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
   }, 15_000);
 });
