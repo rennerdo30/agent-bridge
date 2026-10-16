@@ -94,13 +94,35 @@ export interface JsonlPage { entries: JsonlEntry[]; next: string }
 
 /** Byte cursors keep an oversized-line discard flag; incomplete final lines are retried. */
 export function readJsonl(file: string, from = "0", maxBytes = MAX_TRANSCRIPT_CHUNK_BYTES): JsonlPage {
+  const { entries, next } = readJsonlChunk(file, from, maxBytes);
+  return { entries, next };
+}
+
+/** Bytes kept from just before a resume offset, to tell an append from an in-place rewrite. */
+const JSONL_MARK_BYTES = 256;
+export interface JsonlChunk extends JsonlPage {
+  /** Bytes read; a chunk that filled `maxBytes` is final for an append-only file. */
+  length: number; maxBytes: number;
+  /** With `mark`: the bytes just before `next`, for a later `expect`. */
+  mark?: Buffer;
+  /** The bytes before the start offset differ from `expect`: the file was rewritten, nothing was parsed. */
+  rewritten?: boolean;
+}
+
+/** readJsonl plus resume support: the byte count read and an optional fingerprint check of the bytes before `from`. */
+export function readJsonlChunk(file: string, from = "0", maxBytes = MAX_TRANSCRIPT_CHUNK_BYTES, opts: { expect?: Buffer; mark?: boolean } = {}): JsonlChunk {
   const match = /^(?:j:)?(\d+)(?::([01]))?$/.exec(from);
   let offset = match ? Number(match[1]) : 0, discard = match?.[2] === "1";
   if (!Number.isSafeInteger(offset)) offset = 0;
   let src: ByteSource | undefined;
+  const bytesBefore = (end: number) => {
+    const out = Buffer.alloc(Math.min(JSONL_MARK_BYTES, end));
+    return out.subarray(0, src!.read(out, 0, out.length, end - out.length));
+  };
   try {
     src = openByteSource(file);
     const size = src.size;
+    if (opts.expect && (offset > size || !bytesBefore(offset).equals(opts.expect))) return { entries: [], next: from, length: 0, maxBytes, rewritten: true };
     if (from === "tail") { offset = Math.max(0, size - TRANSCRIPT_TAIL_BYTES); maxBytes = Math.max(maxBytes, TRANSCRIPT_TAIL_BYTES); }
     if (offset > size) { offset = 0; discard = false; }
     // Check a manually supplied offset too: never parse the middle of a record.
@@ -123,8 +145,8 @@ export function readJsonl(file: string, from = "0", maxBytes = MAX_TRANSCRIPT_CH
     if (start === 0 && length === maxBytes) { offset += length; discard = true; }
     else if (discard) offset += length;
     else offset += start;
-    return { entries, next: `j:${offset}:${discard ? 1 : 0}` };
-  } catch { return { entries: [], next: `j:${offset}:${discard ? 1 : 0}` }; }
+    return { entries, next: `j:${offset}:${discard ? 1 : 0}`, length, maxBytes, ...(opts.mark ? { mark: bytesBefore(offset) } : {}) };
+  } catch { return { entries: [], next: `j:${offset}:${discard ? 1 : 0}`, length: 0, maxBytes, ...(opts.expect ? { rewritten: true } : {}) }; }
   finally { src?.close(); }
 }
 
