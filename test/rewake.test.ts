@@ -80,6 +80,10 @@ describe.skipIf(!existsSync(CLI))("background wake-ups", () => {
     // Claude Code never started the wake-up's turn; the user writes next.
     const out = (await buildHookResponse(ctx, { event: "UserPromptSubmit", sessionId: null, stopHookActive: false })) as { hookSpecificOutput?: { additionalContext: string } };
     expect(out.hookSpecificOutput?.additionalContext).toContain("caves are done");
+    // A job result handed out by a hook is read only once a later model boundary proves the model saw it (AB-400):
+    // the Stop that ends this prompt's turn.
+    expect(me.unread()).toHaveLength(1);
+    await buildHookResponse(ctx, { event: "Stop", sessionId: null, stopHookActive: false });
     expect(me.unread()).toHaveLength(0);
   });
 
