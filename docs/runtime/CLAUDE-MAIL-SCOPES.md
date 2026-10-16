@@ -55,9 +55,10 @@ existing reclaim), then applies these rules.
 
 `plugins/claude/hooks/mail-scope.ts` intercepts the four tools on the
 `tool.call` event. Claude Code pins the event's `agentId` to the originating
-loop; it is absent on main. Tool arguments are carried in `e.input` on observed
-hosts; the 2.1.300 mod type contract spreads them beside the envelope, so the
-mod writes into `e.input` when present and beside the envelope otherwise.
+loop; it is absent on main. The event is flat: tool arguments sit beside
+`tool`, `tool_use_id` and `agentId` (the nested `{ tool, input, ... }` shape is
+`tool.check`'s). The mod places the token only at that top level, so a
+model-supplied `input` argument is an ordinary argument and cannot divert it.
 
 The mod asks the authenticated loopback endpoint of the current, registered
 session (the existing registration mechanism; retired servers refuse) for a
@@ -65,8 +66,11 @@ random, in-memory capability. Each one expires after ten seconds, belongs to one
 session and tool, records the pinned agent identity, and permits one validation
 attempt; the bounded grant map prunes expired entries. The mod always replaces
 any model-supplied `_bridge_scope` argument. If no capability can be obtained
-(endpoint down, timeout, old server), it removes the argument and lets the call
-through unscoped, and the server decides by the rules above.
+(endpoint down, timeout, old server), a parent call (no `agentId`) goes through
+unscoped without the argument and the server decides by the rules above. A
+child call (`agentId` set) is denied instead: a child never needs unscoped mail,
+and before its SubagentStart route is live an unscoped call would count as the
+parent.
 
 The server strips the argument before logging or forwarding to broker or
 storage. Tokens never appear in bridge logs, tool results or persistent bridge

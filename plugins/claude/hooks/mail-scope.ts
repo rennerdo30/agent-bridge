@@ -18,29 +18,24 @@ async function scope($: Engine, tool: string, agentId?: string): Promise<string 
   return typeof token === 'string' ? token : null
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
 /** Set or remove the capability argument, always replacing any value the model supplied.
- * Tool arguments sit in `e.input` where the host nests them, else beside the envelope
- * (the 2.1.300 type contract spreads them; observed hosts nest them). Never both. */
+ * Claude Code's tool.call event is flat: tool arguments sit beside tool, tool_use_id and
+ * agentId. The only placement is that top level; a model-supplied `input` argument is
+ * an ordinary argument and never receives the token, so it cannot downgrade the call. */
 function withScope(e: Record<string, unknown>, token: string | null): Record<string, unknown> {
-  const put = (args: Record<string, unknown>): Record<string, unknown> => {
-    const { _bridge_scope: _model, ...rest } = args
-    return token === null ? rest : { ...rest, _bridge_scope: token }
-  }
-  if (!isRecord(e.input)) return put(e)
-  const { _bridge_scope: _model, ...envelope } = e
-  return { ...envelope, input: put(e.input) }
+  const { _bridge_scope: _model, ...rest } = e
+  return token === null ? rest : { ...rest, _bridge_scope: token }
 }
 
 export const register: Register = on => {
   on('tool.call', { tool: TOOLS.map(tool => `${PREFIX}${tool}`) }, async ($, e, next) => {
     // agentId is pinned by Claude Code: changing it in next(e) is refused by the host.
-    // No inference from the last hook or active child. Without a capability the call goes
+    // No inference from the last hook or active child. Without a capability a parent call goes
     // on unscoped; the server then serves parent mail only while no native child is live.
     const tool = e.tool.slice(PREFIX.length)
     const token = await Promise.race([scope($, tool, e.agentId).catch(() => null), $.clock.sleep(TIMEOUT_MS).then(() => null)])
+    // A child call never legitimately needs unscoped mail: it could only reach parent mail.
+    if (token === null && e.agentId !== undefined) return { deny: 'Bridge mail scope for this native child could not be obtained; child mail remains queued for hooks.' }
     return next(withScope(e as unknown as Record<string, unknown>, token) as unknown as typeof e)
   })
 }

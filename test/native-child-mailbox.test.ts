@@ -120,12 +120,9 @@ it("a replaced server takes the session back before applying mail scope rules", 
   expect(reclaim).toHaveBeenCalledTimes(1);
 });
 
-type Shape = "nested" | "flat";
 /** Real authenticated endpoint + actual host-mod middleware + registered MCP handler.
- * "nested" is the observed tool.call event: { tool, input, tool_use_id, agentId };
- * "flat" is the 2.1.300 type contract's spread arguments. */
-async function hostMod(opts: { shape?: Shape; endpointFails?: boolean } = {}) {
-  const shape = opts.shape ?? "nested";
+ * Claude Code's tool.call event is flat: { tool, tool_use_id, agentId, ...args }. */
+async function hostMod(opts: { endpointFails?: boolean } = {}) {
   mcpServer = new McpServer({ name: "claude-mail-fixture", version: "1" });
   registerTools(mcpServer, ctx, []);
   mcpClient = new Client({ name: "host-mod-fixture", version: "1" });
@@ -148,13 +145,10 @@ async function hostMod(opts: { shape?: Shape; endpointFails?: boolean } = {}) {
   const forwarded: Record<string, unknown>[] = [];
   const host = (tool: string, args: Record<string, unknown> = {}, nativeId?: string) => {
     const name = `mcp__plugin_agent-bridge_bridge__${tool}`;
-    const event = shape === "nested" ? { tool: name, input: args, tool_use_id: "host-call", agentId: nativeId }
-      : { tool: name, tool_use_id: "host-call", ...args, agentId: nativeId };
+    const event = { tool: name, tool_use_id: "host-call", ...args, agentId: nativeId };
     return hooks.get("tool.call")(engine, Object.freeze(event), async (e: any) => {
       expect(e.agentId).toBe(nativeId);
-      const { tool: _tool, tool_use_id: _id, agentId: _agent, ...flat } = e;
-      if (shape === "nested") expect(Object.keys(flat)).toEqual(["input"]);
-      const input = shape === "nested" ? e.input : flat;
+      const { tool: _tool, tool_use_id: _id, agentId: _agent, ...input } = e;
       forwarded.push(input);
       return mcpClient!.callTool({ name: tool, arguments: input });
     });
@@ -162,8 +156,8 @@ async function hostMod(opts: { shape?: Shape; endpointFails?: boolean } = {}) {
   return Object.assign(host, { forwarded });
 }
 
-it.each(["nested", "flat"] as const)("parent inbox, wait and history work through current-host authentication (%s event, live child)", async shape => {
-  const host = await hostMod({ shape });
+it("parent inbox, wait and history work through current-host authentication with a live child", async () => {
+  const host = await hostMod();
   await childStart();
   const first = await parentMail();
   expect(JSON.stringify(await host("inbox", { _bridge_scope: "model-forged" }))).toContain(first.message.body);
@@ -193,7 +187,37 @@ it("parent mail works on a current host with no live child", async () => {
   expect(JSON.stringify(await host("inbox"))).toContain(message.body);
 });
 
-it("a failing scope endpoint passes the call through unscoped: parent works without a child, no bodies with one", async () => {
+it("a model-injected input argument cannot downgrade a scoped call", async () => {
+  const host = await hostMod();
+  await childStart();
+  const { message } = await parentMail();
+  // Unscoped, a parent call with a live child would only get the ambiguous status.
+  const parent = await host("inbox", { input: {}, mark_read: false });
+  expect(JSON.stringify(parent)).toContain(message.body);
+  expect(host.forwarded[0]!._bridge_scope).toEqual(expect.any(String));
+  expect(host.forwarded[0]!.input).toEqual({});
+  const child = await host("inbox", { input: { _bridge_scope: "model-forged" } }, agentId);
+  expect(JSON.stringify(child)).not.toContain(message.body);
+  expect(host.forwarded[1]!._bridge_scope).toEqual(expect.any(String));
+  expect(host.forwarded[1]!.input).toEqual({ _bridge_scope: "model-forged" });
+  expect(ctx.node!.unread()).toContainEqual(expect.objectContaining({ id: message.id }));
+});
+
+it("a child call is denied, not passed through, when its scope request fails", async () => {
+  const host = await hostMod({ endpointFails: true });
+  const { message } = await parentMail();
+  // Before SubagentStart (no live route) an unscoped call would otherwise count as the parent.
+  for (const tool of ["inbox", "wait_for_message", "get_conversation", "search_history"]) {
+    const result = await host(tool, tool === "get_conversation" ? { id: message.conversationId } : tool === "search_history" ? { query: "Private" } : {}, agentId);
+    expect(result).toEqual({ deny: expect.any(String) });
+  }
+  await childStart();
+  expect(await host("inbox", {}, agentId)).toEqual({ deny: expect.any(String) });
+  expect(host.forwarded).toEqual([]);
+  expect(ctx.node!.unread()).toContainEqual(expect.objectContaining({ id: message.id }));
+});
+
+it("a failing scope endpoint passes a parent call through unscoped: it works without a child, no bodies with one", async () => {
   const host = await hostMod({ endpointFails: true });
   const first = await parentMail();
   expect(JSON.stringify(await host("inbox", { _bridge_scope: "model-forged" }))).toContain(first.message.body);
