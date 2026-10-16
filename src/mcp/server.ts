@@ -53,7 +53,7 @@ import { formatInboxMessages, formatProjectRoute, formatReplyRestrictions, forma
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { reportModActivity } from "./hook-ownership.js";
 import { codexCallIdentity, codexMainThreadAdmission, type CodexCallIdentity } from "./codex-lineage.js";
-import { buildHookResponse, claudeWakeCandidate, completionAwaitingReceipt, confirmAntigravityStopDelivery, confirmNativeChildDelivery, discardFinishedNotes, releaseAntigravityStopDelivery, type HookEvent } from "./hooks.js";
+import { buildHookResponse, claudeWakeCandidate, completionAwaitingReceipt, confirmAntigravityStopDelivery, confirmNativeChildDelivery, discardFinishedNotes, noteOversizedMessages, oversizedMessageNoted, releaseAntigravityStopDelivery, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, usageProbeFor, type Access } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
 import { answerPendingApproval, listPendingApprovals, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
@@ -82,10 +82,53 @@ import { guardServerErrors } from "./job-runner-errors.js";
 import { NODE_STOP_MS, runShutdownSteps, SHUTDOWN_DEADLINE_MS, shouldYieldTo, watchParent, type ShutdownStep } from "./server-lifecycle.js";
 import { parentProcessIdentity } from "../core/process-identity.js";
 import { ClaudeMailScopes, CLAUDE_CHILD_STATUS_TOOLS, isClaudeMailTool } from "./claude-mail-scope.js";
+import { boundMcpTexts, fitsMcpResult, longestFittingPrefix, messageBodyPage, pageListing, projectFilter, selectForDelivery, sliceWhole, unshownMessageNotes, type ListingLine } from "./output-bounds.js";
+import type { ProjectJobSummary } from "../core/project-job-summary.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
 
 const CHANNEL_NOTIFICATION = "notifications/claude/channel";
+
+/**
+ * Push one peer message through the Claude channel. AB-404: a body too large for one result is announced by id
+ * instead and stays unread (inbox pages it); a message already announced that way is not pushed again. Only a
+ * message whose full body was pushed is marked read.
+ */
+export function channelPusher(ctx: ServerContext, enabled: () => boolean,
+  notify: (params: { content: string; meta: Record<string, string> }) => Promise<unknown>): (m: BridgeMessage) => Promise<void> {
+  const inFlight = new Set<string>();
+  return async (m) => {
+    const node = ctx.node, cfg = ctx.cfg, log = ctx.log;
+    if (!enabled() || !node || completionAwaitingReceipt(ctx, m.id) || m.hop >= cfg.maxHops || ctx.jobs?.isNote(m) || isQuietMessage(m)) return;
+    // Messages excluded from waking use hooks even during an active turn, avoiding a channel/hook race.
+    if (!shouldWakeClaudeMessage(node, cfg, m)) return;
+    if (oversizedMessageNoted(ctx, m.id)) return;
+    if (!node.get(m.id) || inFlight.has(m.id)) return;
+    inFlight.add(m.id);
+    const tooLarge = !fitsMcpResult(m.body);
+    const content = tooLarge ? unshownMessageNotes([m], 0, (id) => `inbox(id="${id}", offset=0)`).join("\n") : m.body;
+    try {
+      await notify({
+        content,
+        meta: {
+          message_id: m.id,
+          from: m.from.name,
+          agent: m.from.agent,
+          conversation_id: m.conversationId,
+          hop: String(m.hop),
+          ...(m.replyTo ? { reply_to: m.replyTo } : {}),
+        },
+      });
+      if (tooLarge) { noteOversizedMessages(ctx, [m.id]); log.debug("oversized message announced via channel; it stays unread", { id: m.id }); }
+      else { node.markRead([m.id]); log.debug("message pushed via channel", { id: m.id }); }
+    } catch (err) {
+      log.warn("channel push failed; message stays in inbox", { id: m.id, err: (err as Error).message });
+    } finally {
+      inFlight.delete(m.id);
+    }
+  };
+}
+
 /** Sent to the opencode plugin (our MCP client in --agent=opencode mode) when a message arrives. */
 export const OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
 /** Experimental Codex capability: Codex then adds the sandbox state (incl. session cwd) to each tools/call _meta. */
@@ -94,6 +137,29 @@ const CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 const MAX_TITLE_CHARS = 80;
 /** The tools a delegated subagent's server offers (see registerTools). */
 const SUBAGENT_TOOLS = new Set(["health", "peers", "send", "report_progress", "hook_event", "search_history", "get_conversation"]);
+/** AB-404: read-only listings bounded as a last resort, with how to get the rest. inbox and wait_for_message select
+ * whole messages themselves (they must not mark a cut message read); peers pages its own entries. */
+const BOUNDED_RESULT_HINTS: Readonly<Record<string, string>> = {
+  peers: "Use peers(limit=..., offset=...) with the same filters, or narrow it with agent, project, status or name.",
+  decisions: "Narrow it with query=..., or leave history off.",
+  search_history: "Use a smaller limit or a narrower query or filters.",
+  get_conversation: "Request a smaller page of the conversation.",
+  list_models: "Ask for one agent's models.",
+  usage_limits: "Ask for one agent.",
+  network_status: "Narrow the request.",
+  resource_slots: "Narrow the request.",
+};
+const PEERS_PAGE_HINT = BOUNDED_RESULT_HINTS.peers!;
+/** Bound a finished read-only result; JSON arrays keep their shape (see boundMcpTexts). */
+function boundResult(result: CallToolResult, hint: string): CallToolResult {
+  if (!result.content.every((item) => item.type === "text")) return result;
+  const texts = result.content.map((item) => (item as { text: string }).text);
+  if (fitsMcpResult(texts)) return result;
+  return { ...result, content: boundMcpTexts(texts, hint).map((value) => ({ type: "text" as const, text: value })) };
+}
+function noUnreadMessage(id: string): CallToolResult {
+  return text(`No unread message ${id}. It may already have been read; get_conversation and search_history show retained messages.`, true);
+}
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 /** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
 const STAND_IN_RECHECK_MS = 30_000;
@@ -142,8 +208,14 @@ function describeError(err: unknown): string {
         return t("err.ambiguous", { candidates: ((err.details?.candidates as string[]) ?? []).join(", ") });
       case "unknown_target":
         return t("err.unknownTarget", { detail: err.message });
-      case "too_large":
+      case "too_large": {
+        // AB-404: a frame-limit refusal (a broker response or an outgoing request) is not a message-size error.
+        const bytes = err.details?.bytes, limit = err.details?.limit;
+        if (typeof bytes === "number" && typeof limit === "number") {
+          return t(err.message.startsWith("response") ? "err.responseTooLarge" : "err.requestTooLarge", { bytes, limit });
+        }
         return t("err.tooLarge", { max: MAX_BODY_CHARS });
+      }
       case "protocol_mismatch":
         return t("err.protocol", { detail: err.message });
       default:
@@ -410,36 +482,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   registerTools(mcp, ctx, targets);
   if (node && ctx.jobs) attachDashboardJobControl(node, ctx.jobs, log);
 
-  const channelInFlight = new Set<string>();
-  const pushChannel = async (m: BridgeMessage) => {
-    if (!channel || !node || completionAwaitingReceipt(ctx, m.id) || m.hop >= cfg.maxHops || ctx.jobs?.isNote(m) || isQuietMessage(m)) return;
-    // Messages excluded from waking use hooks even during an active turn, avoiding a channel/hook race.
-    if (!shouldWakeClaudeMessage(node, cfg, m)) return;
-    if (!node.get(m.id) || channelInFlight.has(m.id)) return;
-    channelInFlight.add(m.id);
-    try {
-      await mcp.server.notification({
-        method: CHANNEL_NOTIFICATION,
-        params: {
-          content: m.body,
-          meta: {
-            message_id: m.id,
-            from: m.from.name,
-            agent: m.from.agent,
-            conversation_id: m.conversationId,
-            hop: String(m.hop),
-            ...(m.replyTo ? { reply_to: m.replyTo } : {}),
-          },
-        },
-      });
-      node.markRead([m.id]);
-      log.debug("message pushed via channel", { id: m.id });
-    } catch (err) {
-      log.warn("channel push failed; message stays in inbox", { id: m.id, err: (err as Error).message });
-    } finally {
-      channelInFlight.delete(m.id);
-    }
-  };
+  const pushChannel = channelPusher(ctx, () => channel, (params) => mcp.server.notification({ method: CHANNEL_NOTIFICATION, params }));
   node?.on("message", (m) => void pushChannel(m));
   node?.on("notification_waits_changed", () => { for (const m of node.unread()) void pushChannel(m); });
   if (agent === "opencode" && node) {
@@ -458,7 +501,8 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   if (agent === "claude" && node) {
     // With the channel active, messages already arrive as channel events: waking too would deliver them twice.
     const shouldWake = (m: BridgeMessage) => claudeWakeCandidate(ctx, m);
-    rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"), (event) => reportModActivity(ctx, event), ctx.claudeMailScopes);
+    rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"), (event) => reportModActivity(ctx, event), ctx.claudeMailScopes,
+      { noted: (id) => oversizedMessageNoted(ctx, id), note: (ids) => noteOversizedMessages(ctx, ids) });
     try {
       await rewake.start();
       ctx.rewakeAvailable = true;
@@ -677,6 +721,33 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     });
     return children.length ? ["Live native child addresses:", ...children.map(c => `- ${c.address} (Claude native child; send_to: ${c.sendTo.join(", ") || "none"})`)] : [];
   };
+  /** How far each unread message has been read in order through inbox(id, offset) (AB-404). */
+  const pagedReads = new Map<string, number>();
+  /**
+   * One page of one unread message body. The message counts as shown in full (`complete`) only once its pages were
+   * read in order from the start with consumption on; only then may the caller mark it read.
+   */
+  const readMessagePage = (m: BridgeMessage, offset: number | undefined, consume: boolean,
+    pageCall: (id: string, offset: number) => string, prefix?: string): { text: string; complete: boolean } => {
+    const covered = pagedReads.get(m.id) ?? 0;
+    // How far the in-order read reaches after a page [start, end): a page past the covered part does not extend it.
+    const reachedBy = (start: number, end: number) => start <= covered ? Math.max(covered, end) : covered;
+    const page = messageBodyPage(m.body, offset ?? 0, (slice, start, end) => [
+      prefix ?? "",
+      formatMessages([{ ...m, body: slice }], { header: `[agent-bridge] Message ${m.id}, characters ${start}-${end} of ${m.body.length}.` }),
+      end < m.body.length
+        ? `Next page: ${pageCall(m.id, end)}. The message stays unread until all its pages have been read in order${consume ? "" : " without mark_read=false"}.`
+        : !consume || reachedBy(start, end) >= m.body.length
+          ? `End of message ${m.id}.`
+          // The last page, but the body was not read in order from offset 0: nothing is marked read (AB-404).
+          : `This is the last page, but message ${m.id} stays unread: characters ${reachedBy(start, end)}-${start} were not read yet. Continue with ${pageCall(m.id, reachedBy(start, end))}.`,
+    ].filter(Boolean).join("\n\n"));
+    if (!consume) return { text: page.text, complete: false };
+    const reached = reachedBy(page.start, page.end);
+    const complete = reached >= m.body.length;
+    if (complete) pagedReads.delete(m.id); else pagedReads.set(m.id, reached);
+    return { text: page.text, complete };
+  };
   const guarded =
     <A>(name: string, fn: (args: A, extra: ToolExtra) => Promise<CallToolResult>) =>
     async (args: A, extra: ToolExtra): Promise<CallToolResult> => {
@@ -742,7 +813,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
             if (name === "decisions") {
               const decisions = await node.decisions({ query: a.query as string | undefined, history: a.history as boolean | undefined,
                 scope: { project: ctx.cwd() }, session: child.address });
-              return text(JSON.stringify(decisions.filter(d => decisionApplies(d, { id: child.address, name: child.address, sessionId: child.address, cwd: ctx.cwd() }))));
+              return boundResult(text(JSON.stringify(decisions.filter(d => decisionApplies(d, { id: child.address, name: child.address, sessionId: child.address, cwd: ctx.cwd() })))), BOUNDED_RESULT_HINTS.decisions!);
             }
             if (name === "network_status") {
               const status = await node.networkStatus();
@@ -756,7 +827,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
               finally { slots.close(); }
             }
             // Model catalogues and account quota summaries are shared read-only status.
-            return await fn(args, extra);
+            return boundResult(await fn(args, extra), BOUNDED_RESULT_HINTS[name] ?? "Narrow the request.");
           }
           if (name === "send" && a.message_kind !== undefined) throw new BridgeError("unauthorized", "Native child send does not support parent message_kind routing.");
           if (name === "send" && a.mode !== undefined) {
@@ -770,19 +841,48 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           await confirmNativeChildDelivery(ctx, childId);
           const identity = `Your native child bridge address is ${child.address}. Parent: ${child.parent}.`;
           if (name === "peers") {
-            const jobs = (await node.projectJobs()).filter(j => j.owner === child.parent && j.supervisor === node.currentSessionId);
-            return text([identity, ...jobs.map(j => `${j.name} (${j.agent}, ${j.status})`), `Explicit send_to grants: ${child.sendTo.join(", ") || "none"}`].join("\n"));
+            // Scope unchanged: the parent's jobs supervised by this session. Slim summaries, sorted by name (AB-404).
+            const inProject = projectFilter(a.project as string | undefined);
+            // As in the main path: an older broker's full listing may be refused as too large; say so instead of failing.
+            let jobsNote: string | null = null;
+            const summaries = await node.projectJobSummaries().catch((err: unknown) => {
+              if (!(err instanceof BridgeError && err.code === "too_large")) throw err;
+              jobsNote = `Project jobs are not shown: ${describeError(err)}`;
+              return [] as ProjectJobSummary[];
+            });
+            const jobs = summaries.filter(j => j.owner === child.parent && j.supervisor === node.currentSessionId);
+            const visible = jobs.filter(j => (!inProject || inProject([ctx.cwd()])) &&
+              (!a.agent || j.agent === a.agent) && (!a.status || j.status.toLowerCase() === String(a.status).toLowerCase()) &&
+              (!a.name || `${j.name} ${j.title ?? ""}`.toLowerCase().includes(String(a.name).toLowerCase())));
+            return text(pageListing([{ info: identity }, ...(jobsNote ? [{ info: jobsNote }] : []), ...visible.map(j => ({ entry: `${j.name} (${j.agent}, ${j.status})`, category: "jobs" })),
+              { info: `Explicit send_to grants: ${child.sendTo.join(", ") || "none"}` }],
+            { offset: a.offset as number | undefined, limit: a.limit as number | undefined, hint: `Use peers(native_child="${childId}", limit=..., offset=...) with the same filters.` }).text);
           }
           if (name === "search_history") {
             // Only the child's own mail: its address pins the session filter, and messages only.
             const result = await node.searchHistory({ query: String(a.query), limit: a.limit as number | undefined,
               filters: { ...(a.filters as HistorySearch["filters"]), session: child.address, kind: "message" } });
-            return text(`${identity}\n${JSON.stringify(result)}`);
+            return boundResult(text(`${identity}\n${JSON.stringify(result)}`), BOUNDED_RESULT_HINTS.search_history!);
           }
           if (name === "inbox") {
-            const messages = (await node.nativeChildPending(childId)).filter(m => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, typeof a.limit === "number" ? a.limit : HOOK_MAX_MESSAGES);
-            if (a.mark_read !== false && messages.length) await node.nativeChildAck(childId, messages.map(m => m.id));
-            return text(`${identity}\n\n${messages.length ? formatMessages(messages) : "No unread native child mail."}`);
+            const all = await node.nativeChildPending(childId);
+            const pageCall = (id: string, offset = 0) => `inbox(native_child="${childId}", id="${id}", offset=${offset})`;
+            if (typeof a.id === "string") {
+              const message = all.find(m => m.id === a.id);
+              if (!message) return noUnreadMessage(a.id);
+              const page = readMessagePage(message, a.offset as number | undefined, a.mark_read !== false, pageCall, identity);
+              if (page.complete) await node.nativeChildAck(childId, [message.id]);
+              return text(page.text);
+            }
+            const pending = all.filter(m => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, typeof a.limit === "number" ? a.limit : HOOK_MAX_MESSAGES);
+            // AB-404: only messages shown in full are acknowledged; an oversized one is listed by id and never blocks the rest.
+            const render = (shown: BridgeMessage[], oversized: BridgeMessage[], deferred: BridgeMessage[]) => [identity,
+              shown.length ? formatMessages(shown) : oversized.length || deferred.length ? "" : "No unread native child mail.",
+              ...unshownMessageNotes(oversized, deferred.length, (id) => pageCall(id))].filter(Boolean).join("\n\n");
+            const selection = selectForDelivery(pending, render, formatMessage);
+            if (a.mark_read !== false && selection.shown.length) await node.nativeChildAck(childId, selection.shown.map(m => m.id));
+            noteOversizedMessages(ctx, selection.oversized.map(m => m.id));
+            return text(render(selection.shown, selection.oversized, selection.deferred));
           }
           const result = await node.nativeChildSend(childId, { to: String(a.to), body: String(a.message), replyTo: a.reply_to as string | undefined, conversationId: a.conversation_id as string | undefined, ifNoNewerThan: a.if_no_newer_than as string | undefined, messageId: a.message_id as string | undefined });
           return text(`${identity}\nMessage ${result.messages[0]?.id} stored. The parent received a quiet copy.\n${JSON.stringify(result)}`);
@@ -807,7 +907,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           result.content.unshift({ type: "text", text: formatModeReport(report) });
           result.structuredContent = { ...result.structuredContent, mode: report };
         }
-        return result;
+        const hint = BOUNDED_RESULT_HINTS[name];
+        return hint ? boundResult(result, hint) : result;
       } catch (err) {
         log.warn("tool failed", { tool: name, err: (err as Error).message });
         return text(describeError(err), true);
@@ -941,109 +1042,162 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       title: "List peers",
       description:
         "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity, Muse): name, agent type, busy/idle, uptime, working directory and session id. " +
-        "Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
+        "Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message. " +
+        "Large listings page their entries: filter with agent, project (an absolute path matches that folder and below by physical path; other text matches a path substring), status or name, and page with limit/offset.",
       inputSchema: { native_child: z.string().optional().describe("Native Claude agent_id issued by its start hook; scopes this call to the child"),
-        job: z.string().optional().describe("Return this supervisor's stored job report and receipt for one exact job name") },
+        job: z.string().optional().describe("Return this supervisor's stored job report and receipt for one exact job name"),
+        agent: z.enum(CODING_AGENTS as unknown as [string, ...string[]]).optional(),
+        project: z.string().max(256).optional().describe("Project folder substring"),
+        status: z.string().max(64).optional().describe("Peer activity or job status"),
+        name: z.string().max(256).optional().describe("Case-insensitive name or title substring"),
+        limit: z.number().int().min(1).max(500).optional(),
+        offset: z.number().int().nonnegative().optional() },
       annotations: { readOnlyHint: true },
     },
-    guarded("peers", async (a: { job?: string }) => {
+    guarded("peers", async (a: { job?: string; agent?: string; project?: string; status?: string; name?: string; limit?: number; offset?: number }) => {
+      const inProject = projectFilter(a.project);
+      const filtered = Boolean(a.agent || a.project || a.status || a.name);
+      const matches = (entry: { name?: string; title?: string; agent?: string; status?: string; activity?: string | null; cwd?: string | null; workdir?: string | null; projectRoot?: string | null; args?: unknown }) =>
+        (!a.agent || entry.agent === a.agent) &&
+        (!inProject || inProject([entry.cwd, entry.workdir, entry.projectRoot, isRecord(entry.args) && typeof entry.args.cwd === "string" ? entry.args.cwd : undefined])) &&
+        (!a.status || (entry.status ?? entry.activity ?? "").toLowerCase() === a.status.toLowerCase()) &&
+        (!a.name || `${entry.name ?? ""} ${entry.title ?? ""} ${isRecord(entry.args) ? entry.args.title ?? "" : ""}`.toLowerCase().includes(a.name.toLowerCase()));
+      // AB-404: a listing that fits keeps its familiar order and has no paging note. Paging (limit/offset, or a listing
+      // too large for one result) uses a deterministic name order so every offset addresses the same entry; information
+      // lines stay on every page.
+      const sorted = <T>(sort: boolean, items: readonly T[], key: (item: T) => string): T[] =>
+        sort ? [...items].sort((x, y) => { const kx = key(x), ky = key(y); return kx < ky ? -1 : kx > ky ? 1 : 0; }) : [...items];
+      const paged = (build: (sort: boolean) => ListingLine[]): CallToolResult => {
+        const paging = { offset: a.offset, limit: a.limit, hint: PEERS_PAGE_HINT };
+        if (a.limit === undefined && a.offset === undefined) {
+          const whole = pageListing(build(false), paging);
+          if (whole.nextOffset === null) return text(whole.text);
+        }
+        return text(pageListing(build(true), paging).text);
+      };
       if (a.job) {
         const job = await findJob(a.job);
         if (!job || job.name !== a.job) return text("No job with that name is owned by this session.", true);
         const report = job.report ?? (job.status === "running" ? null : readJobReport(ctx.home, job));
         const receipt = report ? readResultDelivery(ctx.home, job) : null;
-        return text(JSON.stringify({ job: job.name, status: job.status, resultStored: typeof report === "string",
-          delivery: report ? resultDeliveryLabel({ report }, receipt?.status === "read") : null, receipt, report: report ?? null }));
+        const result = (shown: string | null) => JSON.stringify({ job: job.name, status: job.status, resultStored: typeof report === "string",
+          delivery: report ? resultDeliveryLabel({ report }, receipt?.status === "read") : null, receipt, report: shown,
+          // AB-404: same shape; a report too large for one result is cut at a whole character and says so.
+          ...(report && shown !== report ? { reportTruncated: { totalCharacters: report.length, shownCharacters: shown?.length ?? 0,
+            note: "The full report stays stored with the job; this result shows its beginning." } } : {}) });
+        if (!report || fitsMcpResult(result(report))) return text(result(report ?? null));
+        return text(result(sliceWhole(report, 0, longestFittingPrefix(report, (prefix) => fitsMcpResult(result(prefix))))));
       }
       if (!node && ctx.parent) {
-        const siblings = await ctx.parent.siblings.peers();
+        const siblings = (await ctx.parent.siblings.peers()).filter(matches);
         // A runner already alive during an upgrade may still serve the earlier parent-link API.
         const policy = await ctx.parent.siblings.policy?.().catch((err: unknown) => {
           if (String(err).includes("not found")) return undefined;
           throw err;
         });
-        return text([
-          ...await probeBrokerHealth(resolvePipePath(home), log).then(h => h ? [formatHealth(h)] : []).catch(() => []),
-          `You are a delegated job of ${ctx.parent.name}. Use send(to="${ctx.parent.name}", message=...) to message your parent.`,
-          siblings.length ? "Sibling and explicitly granted jobs:" : "No sibling jobs are available right now.",
-          ...siblings.map((s) => `- ${s.name}${s.title ? ` "${s.title}"` : ""} (${s.agent}, ${s.status}${s.status === "paused" ? ` since ${new Date(s.pausedAt ?? Date.now()).toISOString()}; ${s.pauseReason ?? "supervisor request"}` : s.status !== "running" ? "; finished; will not answer" : ""})`),
-          "Do not wait for finished siblings to reply. Use their final report or ask your parent for an explicit continuation. Use send(to=<sibling job name>, message=...) to coordinate directly. The supervisor can inspect copies on demand or in the dashboard.",
-          ...(ctx.jobs?.list().map((j) => `Your child: ${j.name}${j.args?.title ? ` "${j.args.title}"` : ""} (${j.agent}, ${j.status})`) ?? []),
-          ...(policy ? [`Sibling threads allow ${policy.maxHops} messages, including the first message. Incoming messages show replies remaining before you compose.`,
-            `Explicit send_to grants: ${policy.sendTo.length ? policy.sendTo.join(", ") : "none"}. Only these exact external session or job names are allowed. External jobs need their own reciprocal grant to reply.`] : []),
-        ].join("\n"));
+        const healthLines = await probeBrokerHealth(resolvePipePath(home), log).then(h => h ? [formatHealth(h)] : []).catch(() => []);
+        const children = (ctx.jobs?.list() ?? []).filter(matches);
+        return paged((sort) => [
+          ...healthLines.map((info) => ({ info })),
+          { info: `You are a delegated job of ${ctx.parent!.name}. Use send(to="${ctx.parent!.name}", message=...) to message your parent.` },
+          siblings.length ? { header: "Sibling and explicitly granted jobs:", category: "siblings" }
+            : { info: filtered ? "No sibling jobs match the filters." : "No sibling jobs are available right now." },
+          ...sorted(sort, siblings, (s) => s.name).map((s) => ({ category: "siblings",
+            entry: `- ${s.name}${s.title ? ` "${s.title}"` : ""} (${s.agent}, ${s.status}${s.status === "paused" ? ` since ${new Date(s.pausedAt ?? Date.now()).toISOString()}; ${s.pauseReason ?? "supervisor request"}` : s.status !== "running" ? "; finished; will not answer" : ""})` })),
+          { info: "Do not wait for finished siblings to reply. Use their final report or ask your parent for an explicit continuation. Use send(to=<sibling job name>, message=...) to coordinate directly. The supervisor can inspect copies on demand or in the dashboard." },
+          ...sorted(sort, children, (j) => j.name).map((j) => ({ category: "children", entry: `Your child: ${j.name}${j.args?.title ? ` "${j.args.title}"` : ""} (${j.agent}, ${j.status})` })),
+          ...(policy ? [{ info: `Sibling threads allow ${policy.maxHops} messages, including the first message. Incoming messages show replies remaining before you compose.` },
+            { info: `Explicit send_to grants: ${policy.sendTo.length ? policy.sendTo.join(", ") : "none"}. Only these exact external session or job names are allowed. External jobs need their own reciprocal grant to reply.` }] : []),
+        ]);
       }
       const n = requireNode();
       const peers = await n.peers();
       const health = await n.health().catch(() => null);
       await n.refreshPending();
-      const shared = await n.projectJobs();
+      // AB-404: slim, frame-bounded pages instead of full job records. A broker too old to page them may still refuse
+      // an oversized full listing; peers then reports that instead of failing.
+      let sharedNote: string | null = null;
+      const shared: ProjectJobSummary[] = await n.projectJobSummaries().catch((err: unknown) => {
+        if (!(err instanceof BridgeError && err.code === "too_large")) throw err;
+        sharedNote = `Project jobs are not shown: ${describeError(err)}`;
+        return [];
+      });
       // Job runners are this or another session's subagents, not sessions (an older broker still lists them).
-      const others = peers.filter((p) => p.id !== n.id && !p.id.startsWith("job:"));
-      const lines = [
-        ...formatVersionSkew(peers),
-        t("peers.self", {
-          name: n.name,
-          broker: n.isBroker ? t("common.yes") : t("common.no"),
-          autoWake: n.autoWakeEnabled ? t("common.on") : t("common.off"),
-          delivery: ctx.agent === "claude" ? (ctx.channelActive() ? "channel" : "hooks") : "hooks",
-          unread: n.unread().filter((m) => !isQuietMessage(m)).length,
-        }),
-        others.length ? t("peers.header", { count: others.length }) : t("peers.none"),
-        ...others.map((p) => formatPeer(p)),
-      ];
-      lines.push(...await nativeChildSummary(n));
+      const others = peers.filter((p) => p.id !== n.id && !p.id.startsWith("job:")).filter(matches);
+      const nativeChildren = await nativeChildSummary(n);
       const quietCount = n.unread().filter(isQuietMessage).length;
-      if (health) lines.push(formatHealth(health));
-      if (quietCount) lines.push(`${quietCount} retained quiet message(s), available with inbox(include_quiet=true) or history; excluded from actionable unread mail.`);
       const load = await n.brokerLoad().catch(() => null); // Earlier brokers do not expose the additive load probe.
-      if (load && load.connectedJobs > load.testedJobs) lines.push(`Broker load warning: ${load.connectedJobs} jobs are connected; the load check covered ${load.testedJobs}. Queue additional work to stay within the measured load.`);
-      const groupPeers = peers.filter((p) => p.projectGroup && !p.host);
-      if (groupPeers.length) lines.push("Local project groups:", ...groupPeers.map((p) => `- ${p.projectAddress}: ${p.name} (${p.projectMain ? "main" : "secondary"}${p.unavailable ? ", unavailable" : ""})`));
-      for (const p of groupPeers.filter((p) => p.projectMain && p.projectRoute)) lines.push(formatProjectRoute(p.projectRoute!));
-      if (shared.length) lines.push("Project jobs (shared local authority):", ...shared.map((j) => `- ${j.name} (${j.agent}, ${j.status}; primary ${j.owner})${isRecord(j.args) && j.args.title ? ` \"${j.args.title}\"` : ""}${j.status === "paused" ? `; paused since ${new Date(typeof j.pausedAt === "number" ? j.pausedAt : Date.now()).toISOString()} (${typeof j.pauseReason === "string" ? j.pauseReason : "supervisor request"})` : ""}`));
+      const groupPeers = peers.filter((p) => p.projectGroup && !p.host && matches(p));
+      const visibleShared = shared.filter(matches);
       const transferNotes = new Map<string, BridgeMessage>();
       for (const message of n.unread()) {
         if (message.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX)) transferNotes.set(message.conversationId, message);
       }
-      if (transferNotes.size) {
-        lines.push("Latest unread file-transfer progress (retained notes, not live status):");
-        for (const message of transferNotes.values()) lines.push(`- ${message.body}`);
-      }
+      let slotLines: string[] = [];
       try {
         const slots = new ResourceSlots(ctx.home);
-        let slotLines: string[];
         try { slotLines = formatResourceSlots(slots.snapshot(), cfg.resourceSlots); } finally { slots.close(); }
-        if (slotLines.length) lines.push("Resource slots (holders, then the queue in order):", ...slotLines);
       } catch { /* Slot state is advisory in peers; the slot CLI reports its own errors. */ }
-      const jobs = ctx.jobs?.list() ?? [];
-      if (jobs.length) {
-        lines.push(t("peers.jobs", { count: jobs.length }));
-        for (const j of jobs) {
-          lines.push(j.status === "paused" ? `- ${j.name}: paused since ${new Date(j.pausedAt ?? Date.now()).toISOString()} (${j.pauseReason ?? "supervisor request"})` : t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.etaAt !== undefined ? t("peers.eta", { minutes: Math.max(0, Math.ceil((j.etaAt - Date.now()) / 60_000)) }) + " · " : "") + (j.progress ?? "starting") }));
+      const jobs = (ctx.jobs?.list() ?? []).filter(matches);
+      const waiting = (ctx.jobs?.waiting() ?? []).filter(matches);
+      const recent = (ctx.jobs?.recent() ?? []).filter(matches);
+      const waitHints = waits.pending(n).map(resumeWaitHint);
+      return paged((sort) => {
+        const lines: ListingLine[] = [
+          ...formatVersionSkew(peers).map((info) => ({ info })),
+          { info: t("peers.self", {
+            name: n.name,
+            broker: n.isBroker ? t("common.yes") : t("common.no"),
+            autoWake: n.autoWakeEnabled ? t("common.on") : t("common.off"),
+            delivery: ctx.agent === "claude" ? (ctx.channelActive() ? "channel" : "hooks") : "hooks",
+            unread: n.unread().filter((m) => !isQuietMessage(m)).length,
+          }) },
+          others.length ? { header: t("peers.header", { count: others.length }), category: "peers" }
+            : { info: filtered ? "No other peers match the filters." : t("peers.none") },
+          ...sorted(sort, others, (p) => p.name).map((p) => ({ category: "peers", entry: formatPeer(p) })),
+        ];
+        if (nativeChildren.length) lines.push({ header: nativeChildren[0]!, category: "native" }, ...nativeChildren.slice(1).map((entry) => ({ category: "native", entry })));
+        if (health) lines.push({ info: formatHealth(health) });
+        if (quietCount) lines.push({ info: `${quietCount} retained quiet message(s), available with inbox(include_quiet=true) or history; excluded from actionable unread mail.` });
+        if (load && load.connectedJobs > load.testedJobs) lines.push({ info: `Broker load warning: ${load.connectedJobs} jobs are connected; the load check covered ${load.testedJobs}. Queue additional work to stay within the measured load.` });
+        if (groupPeers.length) lines.push({ header: "Local project groups:", category: "groups" },
+          ...sorted(sort, groupPeers, (p) => `${p.projectAddress ?? ""}\u0000${p.name}`).map((p) => ({ category: "groups",
+            entry: `- ${p.projectAddress}: ${p.name} (${p.projectMain ? "main" : "secondary"}${p.unavailable ? ", unavailable" : ""})` })));
+        for (const p of groupPeers.filter((p) => p.projectMain && p.projectRoute)) lines.push({ info: formatProjectRoute(p.projectRoute!) });
+        if (sharedNote) lines.push({ info: sharedNote });
+        if (visibleShared.length) lines.push({ header: "Project jobs (shared local authority):", category: "shared" },
+          ...sorted(sort, visibleShared, (j) => j.name).map((j) => ({ category: "shared", entry: `- ${j.name} (${j.agent}, ${j.status}; primary ${j.owner})${j.title ? ` \"${j.title}\"` : ""}${j.status === "paused" ? `; paused since ${new Date(j.pausedAt ?? Date.now()).toISOString()} (${j.pauseReason ?? "supervisor request"})` : ""}` })));
+        if (transferNotes.size) {
+          lines.push({ info: "Latest unread file-transfer progress (retained notes, not live status):" });
+          for (const message of transferNotes.values()) lines.push({ info: `- ${message.body}` });
         }
-      }
-      const waiting = ctx.jobs?.waiting() ?? [];
-      if (waiting.length) {
-        lines.push(t("peers.waiting", { count: waiting.length, max: ctx.jobs!.limit }));
-        for (const j of waiting) lines.push(t("peers.waitingJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), messages: j.queue.length }));
-      }
-      const recent = ctx.jobs?.recent() ?? [];
-      if (recent.length) {
-        lines.push(t("peers.recent"));
-        for (const j of recent) {
-          if (j.status === "paused") {
-            lines.push(`- ${j.name}: paused since ${new Date(j.pausedAt ?? Date.now()).toISOString()} (${j.pauseReason ?? "supervisor request"}); resume_subagent continues its session`);
-            continue;
+        if (slotLines.length) lines.push({ info: "Resource slots (holders, then the queue in order):" }, ...slotLines.map((info) => ({ info })));
+        if (jobs.length) {
+          lines.push({ header: t("peers.jobs", { count: jobs.length }), category: "jobs" });
+          for (const j of sorted(sort, jobs, (job) => job.name)) {
+            lines.push({ category: "jobs", entry: j.status === "paused" ? `- ${j.name}: paused since ${new Date(j.pausedAt ?? Date.now()).toISOString()} (${j.pauseReason ?? "supervisor request"})` : t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.etaAt !== undefined ? t("peers.eta", { minutes: Math.max(0, Math.ceil((j.etaAt - Date.now()) / 60_000)) }) + " · " : "") + (j.progress ?? "starting") }) });
           }
-          // The report text lives only in memory; the stored flag survives a restart.
-          const delivery = j.report || j.resultStored ? "result stored; query peers(job=...) for delivery receipt" : null;
-          lines.push(t("peers.recentJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), status: j.status + (delivery ? `; ${delivery}` : ""), ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }));
         }
-      }
-      lines.push(...waits.pending(n).map(resumeWaitHint));
-      for (const j of [...jobs, ...waiting, ...recent]) if (j.remote) lines.push(`Remote job ${j.name}: ${j.remote.host}/${j.remote.name}`);
-      return text(lines.join("\n"));
+        if (waiting.length) {
+          lines.push({ header: t("peers.waiting", { count: waiting.length, max: ctx.jobs!.limit }), category: "waiting" });
+          for (const j of sorted(sort, waiting, (job) => job.name)) lines.push({ category: "waiting", entry: t("peers.waitingJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), messages: j.queue.length }) });
+        }
+        if (recent.length) {
+          lines.push({ header: t("peers.recent"), category: "recent" });
+          for (const j of sorted(sort, recent, (job) => job.name)) {
+            if (j.status === "paused") {
+              lines.push({ category: "recent", entry: `- ${j.name}: paused since ${new Date(j.pausedAt ?? Date.now()).toISOString()} (${j.pauseReason ?? "supervisor request"}); resume_subagent continues its session` });
+              continue;
+            }
+            // The report text lives only in memory; the stored flag survives a restart.
+            const delivery = j.report || j.resultStored ? "result stored; query peers(job=...) for delivery receipt" : null;
+            lines.push({ category: "recent", entry: t("peers.recentJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), status: j.status + (delivery ? `; ${delivery}` : ""), ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }) });
+          }
+        }
+        lines.push(...waitHints.map((info) => ({ info })));
+        for (const j of [...jobs, ...waiting, ...recent]) if (j.remote) lines.push({ info: `Remote job ${j.name}: ${j.remote.host}/${j.remote.name}` });
+        return lines;
+      });
     }),
   );
 
@@ -1232,27 +1386,54 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     "inbox",
     {
       title: "Read inbox",
-      description: "Read unread messages from other agents, with quiet transfer progress, sibling copies and acknowledgements excluded by default. Use include_quiet=true (or a read-only mark_read=false peek) to inspect retained copies. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt.",
+      description: "Read unread messages from other agents, with quiet transfer progress, sibling copies and acknowledgements excluded by default. Use include_quiet=true (or a read-only mark_read=false peek) to inspect retained copies. Messages are marked read unless mark_read is false. Peeking with mark_read=false does not produce a read receipt. " +
+        "A message too large for one result is listed by id and stays unread; read it in pages with inbox(id=..., offset=...). It is marked read once all its pages were read in order.",
       inputSchema: {
         include_quiet: z.boolean().optional().describe("Include historical quiet coordination copies (default false)"),
         ...mailScopeSchema,
         native_child: z.string().optional().describe("Your scoped native Claude agent_id; read only that child's inbox"),
         mark_read: z.boolean().optional().describe("Mark returned messages as read (default true); false also permits inspecting retained quiet copies"),
         limit: z.number().int().min(1).max(100).optional(),
+        id: z.string().min(1).max(256).optional().describe("Read one unread message by id, in pages, when it is too large for one result"),
+        offset: z.number().int().nonnegative().optional().describe("With id: the body character to start the page at (default 0)"),
       },
     },
-    guarded("inbox", async (a: { mark_read?: boolean; limit?: number; include_quiet?: boolean }) => {
+    guarded("inbox", async (a: { mark_read?: boolean; limit?: number; include_quiet?: boolean; id?: string; offset?: number }) => {
+      // AB-404: a message is marked read only when it was shown in full. One too large for a result is listed by id,
+      // stays unread and never blocks the messages after it; inbox(id, offset) reads its body in pages.
+      const consume = a.mark_read !== false;
+      const pageCall = (id: string, offset = 0) => `inbox(id="${id}", offset=${offset})`;
+      const render = (tail: string[]) => (shown: BridgeMessage[], oversized: BridgeMessage[], deferred: BridgeMessage[]) => [
+        shown.length ? formatInboxMessages(shown) : oversized.length || deferred.length ? "" : t("inbox.empty"),
+        ...unshownMessageNotes(oversized, deferred.length, (id) => pageCall(id)), ...tail].filter(Boolean).join("\n");
       if (ctx.childInbox) {
-        const msgs = ctx.childInbox.unread().filter((m) => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
-        if (a.mark_read !== false) ctx.childInbox.markRead(msgs.map((m) => m.id));
-        return text(msgs.length ? formatInboxMessages(msgs) : t("inbox.empty"));
+        if (a.id !== undefined) {
+          const message = ctx.childInbox.unread().find((m) => m.id === a.id);
+          if (!message) return noUnreadMessage(a.id);
+          const page = readMessagePage(message, a.offset, consume, pageCall);
+          if (page.complete) ctx.childInbox.markRead([message.id]);
+          return text(page.text);
+        }
+        const pending = ctx.childInbox.unread().filter((m) => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
+        const selection = selectForDelivery(pending, render([]), formatMessage);
+        if (consume) ctx.childInbox.markRead(selection.shown.map((m) => m.id));
+        noteOversizedMessages(ctx, selection.oversized.map((m) => m.id));
+        return text(render([])(selection.shown, selection.oversized, selection.deferred));
       }
       const n = requireNode();
-      const msgs = n.unread().filter((m) => !completionAwaitingReceipt(ctx, m.id) && ((a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m))).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
+      if (a.id !== undefined) {
+        const message = n.unread().find((m) => m.id === a.id);
+        if (!message) return noUnreadMessage(a.id);
+        const page = readMessagePage(message, a.offset, consume, pageCall);
+        if (page.complete) n.markRead([message.id]);
+        return text(page.text);
+      }
+      const pending = n.unread().filter((m) => !completionAwaitingReceipt(ctx, m.id) && ((a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m))).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
       const children = await nativeChildSummary(n);
-      if (msgs.length === 0) return text([t("inbox.empty"), ...children].join("\n"));
-      if (a.mark_read !== false) n.markRead(msgs.map((m) => m.id));
-      return text([formatInboxMessages(msgs), ...children].join("\n"));
+      const selection = selectForDelivery(pending, render(children), formatMessage);
+      if (consume && selection.shown.length) n.markRead(selection.shown.map((m) => m.id));
+      noteOversizedMessages(ctx, selection.oversized.map((m) => m.id));
+      return text(render(children)(selection.shown, selection.oversized, selection.deferred));
     }),
   );
 
@@ -1284,11 +1465,17 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     guarded("wait_for_message", async (a: WaitFilters & { mode?: "notify" | "block" | "cancel"; timeout_sec?: number; resume_id?: string }, extra) => {
       if (ctx.childInbox) {
         if (a.read_receipt_of || a.resume_id || (a.mode && a.mode !== "block")) return text("Nested waits support block with child-message filters only; child replies also arrive through hooks.", true);
-        const matches = (m: BridgeMessage) => (!a.from || m.from.name === a.from || m.from.agent === a.from) && (!a.reply_to || m.replyTo === a.reply_to) && (!a.conversation_id || m.conversationId === a.conversation_id);
+        const matches = (m: BridgeMessage) => !oversizedMessageNoted(ctx, m.id) && (!a.from || m.from.name === a.from || m.from.agent === a.from) && (!a.reply_to || m.replyTo === a.reply_to) && (!a.conversation_id || m.conversationId === a.conversation_id);
         if (!ctx.childInbox.unread().some(matches)) await ctx.childInbox.wait(singleWaitTimeoutMs(a.timeout_sec ?? DEFAULT_WAIT_SEC), extra.signal, matches);
+        // AB-404: only messages shown in full are consumed; an oversized one is listed by id and stays unread.
         const msgs = ctx.childInbox.unread().filter(matches).slice(0, HOOK_MAX_MESSAGES);
-        ctx.childInbox.markRead(msgs.map((m) => m.id));
-        return text(msgs.length ? formatInboxMessages(msgs) : t("inbox.empty"));
+        const render = (shown: BridgeMessage[], oversized: BridgeMessage[], deferred: BridgeMessage[]) => [
+          shown.length ? formatInboxMessages(shown) : oversized.length || deferred.length ? "" : t("inbox.empty"),
+          ...unshownMessageNotes(oversized, deferred.length, (id) => `inbox(id="${id}", offset=0)`)].filter(Boolean).join("\n");
+        const selection = selectForDelivery(msgs, render, formatMessage);
+        ctx.childInbox.markRead(selection.shown.map((m) => m.id));
+        noteOversizedMessages(ctx, selection.oversized.map((m) => m.id));
+        return text(render(selection.shown, selection.oversized, selection.deferred));
       }
       const n = requireNode();
       if (extra.signal.aborted) return text("Wait cancelled before registration; mail remains queued.");
@@ -1306,11 +1493,18 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       }, mode);
       const filters = record.filters;
       if (mode === "notify") {
-        const existing = n.unread().find((m) => !completionAwaitingReceipt(ctx, m.id) && matchesNotificationWait(filters, m));
+        const existing = n.unread().find((m) => !completionAwaitingReceipt(ctx, m.id) && !oversizedMessageNoted(ctx, m.id) && matchesNotificationWait(filters, m));
         // An active channel may already be pushing this mail; leave acknowledgment to it to avoid two copies.
         if (existing && !ctx.channelActive()) {
-          n.markRead([existing.id]);
-          return text(formatMessages([existing], { header: "[agent-bridge] Message received." }));
+          const shown = formatMessages([existing], { header: "[agent-bridge] Message received." });
+          if (fitsMcpResult(shown)) {
+            n.markRead([existing.id]);
+            return text(shown);
+          }
+          // AB-404: too large to show in full. It stays unread for inbox paging; the one-shot wait is answered.
+          waits.remove(record.id);
+          noteOversizedMessages(ctx, [existing.id]);
+          return text(unshownMessageNotes([existing], 0, (id) => `inbox(id="${id}", offset=0)`).join("\n"));
         }
         n.notificationWaitsChanged();
         return text(`${resumeWaitHint(record)} Keep working or end the turn; no further wait calls are needed. Wake delivery respects quiet-message and hop guards and requires a supported live host; otherwise use inbox on the next turn.`);
@@ -1325,11 +1519,17 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
             return text(`Read receipt for ${filters.read_receipt_of}: ` + receipts.map((r) => `${r.recipient} consumed at ${new Date(r.readAt!).toISOString()}`).join(", ") + ". This confirms bridge consumption, not completed work.");
           }
         } else {
-          const m = await n.waitForMessage(timeout, (x) => !completionAwaitingReceipt(ctx, x.id) && matchesWait(filters, x), extra.signal);
+          const m = await n.waitForMessage(timeout, (x) => !completionAwaitingReceipt(ctx, x.id) && !oversizedMessageNoted(ctx, x.id) && matchesWait(filters, x), extra.signal);
           if (m) {
-            n.markRead([m.id]);
             waits.remove(record.id);
-            return text(formatMessages([m], { header: "[agent-bridge] Message received." }));
+            const shown = formatMessages([m], { header: "[agent-bridge] Message received." });
+            if (fitsMcpResult(shown)) {
+              n.markRead([m.id]);
+              return text(shown);
+            }
+            // AB-404: too large to show in full; it stays unread for inbox paging.
+            noteOversizedMessages(ctx, [m.id]);
+            return text(unshownMessageNotes([m], 0, (id) => `inbox(id="${id}", offset=0)`).join("\n"));
           }
         }
         if (extra.signal.aborted || n.wasReplaced || !n.isConnected) return text(`Wait interrupted. ${resumeWaitHint(record)}`);
