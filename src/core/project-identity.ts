@@ -1,10 +1,27 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync, type Stats } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isPluginCacheCwd } from "./session-visibility.js";
 
-const projectRoots = new Map<string, { root: string | null; expiresAt: number; marker: string }>();
-const PROJECT_ROOT_CACHE_MS = 30_000;
+/**
+ * A path's cheap identity: one lstat, no open/read/realpath. A failure records its code, so an appearing path also changes
+ * it. A directory is identified without its times: adding files to a drive root or a worktrees folder never changes a discovered
+ * root, while every file or pointer that discovery reads below it is probed on its own.
+ */
+const identity = (s: Stats): string => s.isDirectory() ? `${s.dev}:${s.ino}:${s.mode}` : `${s.dev}:${s.ino}:${s.mode}:${s.birthtimeMs}:${s.mtimeMs}:${s.size}`;
+const failure = (error: unknown): string => `!${(error as NodeJS.ErrnoException).code ?? "error"}`;
+function probe(path: string): string {
+  try { return identity(lstatSync(path)); } catch (error) { return failure(error); }
+}
+interface RootMemo { dir: string; root: string | null; probes: [string, string][]; expiresAt: number }
+/**
+ * Memoized discovery per physical path and ceiling setting (AB-434). A hit costs one realpath, one stat and one lstat
+ * per path the discovery looked at (pointer files, metadata files and directories, missing candidates included), so any
+ * pointer/content/layout change re-discovers immediately. Git-subprocess fallbacks keep their bounded 30 s lifetime;
+ * other results are re-discovered at least every five minutes.
+ */
+const projectRoots = new Map<string, RootMemo>();
+const PROJECT_ROOT_CACHE_MS = 30_000, PROJECT_ROOT_MEMO_MS = 300_000, PROJECT_ROOT_MEMO_MAX = 512;
 /**
  * The physical spelling of a path. realpathSync.native already resolves Windows SUBST and mapped-drive aliases
  * (AB-399). A path that no longer exists (a removed working folder) resolves through its nearest existing ancestor,
@@ -32,20 +49,26 @@ export function canonicalProjectRoot(cwd: string): string | null {
   try {
     const physical = realpathSync.native(cwd);
     if (isPluginCacheCwd(physical)) return null;
-    if (!statSync(physical).isDirectory()) return null;
-    const cached = projectRoots.get(physical), now = Date.now(), discovery = discoverProjectRoot(physical);
-    if (cached && cached.expiresAt > now && cached.marker === discovery.marker) return cached.root;
+    const stat = statSync(physical);
+    if (!stat.isDirectory()) return null;
+    const key = JSON.stringify([physical, process.env.GIT_CEILING_DIRECTORIES ?? null]), dir = `${stat.dev}:${stat.ino}`;
+    const cached = projectRoots.get(key), now = Date.now();
+    if (cached && cached.expiresAt > now && cached.dir === dir && cached.probes.every(([path, identity]) => probe(path) === identity)) {
+      projectRoots.delete(key); projectRoots.set(key, cached); return cached.root;
+    }
+    const discovery = discoverProjectRoot(physical);
     const root = discovery.fallback ? resolveProjectRoot(physical, visibleRoot) : discovery.root === null ? null : visibleRoot(discovery.root);
-    if (projectRoots.size >= 256) projectRoots.delete(projectRoots.keys().next().value!);
-    projectRoots.set(physical, { root, expiresAt: now + PROJECT_ROOT_CACHE_MS, marker: discovery.marker });
+    projectRoots.delete(key);
+    if (projectRoots.size >= PROJECT_ROOT_MEMO_MAX) projectRoots.delete(projectRoots.keys().next().value!);
+    projectRoots.set(key, { dir, root, probes: discovery.probes, expiresAt: now + (discovery.fallback ? PROJECT_ROOT_CACHE_MS : PROJECT_ROOT_MEMO_MS) });
     return root;
   } catch { return null; }
 }
 
-interface ProjectDiscovery { marker: string; root: string | null; fallback?: boolean }
+interface ProjectDiscovery { root: string | null; fallback?: boolean; probes: [string, string][] }
 
 /** Git excludes strict ancestor ceilings. Empty list entries disable later canonicalization. */
-function discoveryCeiling(physical: string, configured: string | undefined): string | null {
+function discoveryCeiling(physical: string, configured: string | undefined, seen: (path: string) => void = () => {}): string | null {
   if (!configured) return null;
   const cwd = physical.replace(/\\/g, "/");
   let canonicalize = true, ceiling: string | null = null;
@@ -68,23 +91,32 @@ function discoveryCeiling(physical: string, configured: string | undefined): str
  * for ordinary/linked worktrees or damaged known layouts on the broker thread.
  */
 function discoverProjectRoot(physical: string): ProjectDiscovery {
+  const probes = new Map<string, string>();
+  const found = walkProjectRoot(physical, probes);
+  return { ...found, probes: [...probes] };
+}
+
+function walkProjectRoot(physical: string, probes: Map<string, string>): Omit<ProjectDiscovery, "probes"> {
   const configuredCeilings = process.env.GIT_CEILING_DIRECTORIES;
-  const ceiling = discoveryCeiling(physical, configuredCeilings);
-  const markers: string[] = [JSON.stringify(["ceiling", configuredCeilings, ceiling])];
+  // Every path looked at, with its identity before it was read: the memo's whole validity check.
+  const seen = (path: string) => { if (!probes.has(path)) probes.set(path, probe(path)); };
+  const ceiling = discoveryCeiling(physical, configuredCeilings, seen);
   const checkedDirectories = new Set<string>();
   const stamp = (path: string) => {
-    const stat = lstatSync(path);
-    markers.push(`${path}:${stat.dev}:${stat.ino}:${stat.birthtimeMs}:${stat.mtimeMs}:${stat.size}`);
+    let stat: Stats;
+    try { stat = lstatSync(path); } catch (error) { if (!probes.has(path)) probes.set(path, failure(error)); throw error; }
+    if (!probes.has(path)) probes.set(path, identity(stat));
     if (stat.isSymbolicLink()) throw new Error("linked Git metadata");
     return stat;
   };
   const text = (path: string, maxBytes = 8192) => {
     const stat = stamp(path);
     if (!stat.isFile() || stat.size > maxBytes) throw new Error("unsupported Git metadata file");
-    const value = readFileSync(path, "utf8"); markers.push(value); return value.trim();
+    return readFileSync(path, "utf8").trim();
   };
   const directory = (path: string) => {
-    const result = realpathSync.native(path);
+    let result: string;
+    try { result = realpathSync.native(path); } catch (error) { seen(path); throw error; }
     for (let at = resolve(path);; at = dirname(at)) {
       if (checkedDirectories.has(at)) break;
       if (!stamp(at).isDirectory()) throw new Error("unsupported Git metadata directory");
@@ -112,18 +144,18 @@ function discoverProjectRoot(physical: string): ProjectDiscovery {
   };
   for (let root = physical;; root = dirname(root)) {
     if (root !== physical && root.replace(/\\/g, "/").replace(/\/$/, "") === ceiling)
-      return { marker: markers.join("|"), root: physical };
+      return { root: physical };
     const pointer = join(root, ".git");
     let stat;
     try { stat = stamp(pointer); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") { if (dirname(root) === root) return { marker: markers.join("|"), root: physical }; continue; }
-      return { marker: markers.join("|"), root: null };
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") { if (dirname(root) === root) return { root: physical }; continue; }
+      return { root: null };
     }
     try {
       if (stat.isDirectory()) {
         const gitDir = directory(pointer), layout = repository(gitDir);
-        return { marker: markers.join("|"), root: layout === "bare" ? physical : root, fallback: layout === "unusual" };
+        return { root: layout === "bare" ? physical : root, fallback: layout === "unusual" };
       }
       const match = /^gitdir:\s+([^\r\n]+)$/.exec(text(pointer));
       if (!match) throw new Error("invalid Git directory pointer");
@@ -135,17 +167,18 @@ function discoverProjectRoot(physical: string): ProjectDiscovery {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         // Separate Git directories/submodules retain the existing Git fallback.
         repository(gitDir);
-        return { marker: markers.join("|"), root: null, fallback: true };
+        return { root: null, fallback: true };
       }
       if (!commonPointer || /[\r\n]/.test(commonPointer)) throw new Error("invalid Git common directory pointer");
       const common = directory(resolve(gitDir, commonPointer)), layout = repository(common);
-      if (layout !== "ordinary" || basename(common).toLowerCase() !== ".git") return { marker: markers.join("|"), root: null, fallback: true };
+      if (layout !== "ordinary" || basename(common).toLowerCase() !== ".git") return { root: null, fallback: true };
       const entry = relative(join(common, "worktrees"), gitDir);
       if (!entry || entry === ".." || entry.startsWith("..\\") || entry.startsWith("../") || /[\\/]/.test(entry)) throw new Error("Git worktree pointer is outside its common directory");
       const backPointer = text(join(gitDir, "gitdir"));
+      if (backPointer && !/[\r\n]/.test(backPointer)) seen(resolve(gitDir, backPointer));
       if (!backPointer || /[\r\n]/.test(backPointer) || !samePath(realpathSync.native(resolve(gitDir, backPointer)), realpathSync.native(pointer))) throw new Error("Git worktree pointer does not identify this checkout");
-      return { marker: markers.join("|"), root: dirname(common) };
-    } catch { return { marker: markers.join("|"), root: null }; }
+      return { root: dirname(common) };
+    } catch { return { root: null }; }
   }
 }
 

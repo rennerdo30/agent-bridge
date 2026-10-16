@@ -29,6 +29,10 @@ export function provisionMobile(options: {
   const push = options.push ? new MobilePush(store, options.push.provider, options.push.encryptionKey, options.push.projectId, options.push.environment) : new MobilePush(store);
   const gateway = new MobileGateway(store, source, push, undefined, ready), desktopAdmin = new MobileDesktopAdmin(store, source, options.desktopOrigin, ready);
   let hintPoll: Promise<void> | undefined;
+  // Incremental hint poll (AB-434): a question is offered to push again only when it was asked anew or the subscribed
+  // devices changed. The persisted per-device dedupe in MobilePush stays the authority; this only skips repeat work.
+  const hinted = new Map<string, string>();
+  const questions = async () => source.questionView ? source.questionView() : (await source.snapshot()).questions;
   return { gateway, desktopAdmin, close: () => {
     if (closing) return closing;
     closed = true; gateway.deactivate();
@@ -43,12 +47,19 @@ export function provisionMobile(options: {
     if (hintPoll) return hintPoll;
     hintPoll = (async () => {
       if (!push.configured || !ready()) return;
-      const view = await source.snapshot();
-      for (const question of view.questions.filter(q => q.status === "open")) {
+      // No subscribed device: nothing can be hinted, so read no source at all.
+      const subscribers = push.subscriptionState();
+      if (!subscribers) { hinted.clear(); return; }
+      const open = (await questions()).filter(q => q.status === "open");
+      for (const id of hinted.keys()) if (!open.some(q => q.id === id)) hinted.delete(id);
+      for (const question of open) {
+        const state = JSON.stringify([question.askedAt, subscribers]);
+        if (hinted.get(question.id) === state) continue;
         await push.notify(question, async () => {
           if (!ready()) return undefined;
-          return (await source.snapshot()).questions.find(q => q.id === question.id);
+          return (await questions()).find(q => q.id === question.id);
         });
+        hinted.set(question.id, state);
       }
     })().finally(() => { hintPoll = undefined; }); return hintPoll;
   } };

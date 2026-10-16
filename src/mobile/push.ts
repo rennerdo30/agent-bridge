@@ -30,6 +30,17 @@ export class MobilePush {
     this.store.put("push", device.id, { iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64"), ciphertext: ciphertext.toString("base64") } satisfies Subscription);
     return { state: "registered" };
   }
+  /** Registry-only identity of every device a hint could reach (device, revision, grants, current registration); "" when none. */
+  subscriptionState(): string {
+    if (!this.configured) return "";
+    const parts: unknown[] = [];
+    for (const device of this.store.list<Device>("device")) {
+      if (device.revoked) continue;
+      const subscription = this.store.get<Subscription>("push", device.id);
+      if (subscription) parts.push([device.id, device.revision, device.grants, subscription.ciphertext]);
+    }
+    return parts.length ? JSON.stringify(parts) : "";
+  }
   remove(deviceId: string, reason: PushRevocationReason = "unsubscribe"): void { this.store.archivePush(deviceId, reason); }
   async notify(question: Question, current: () => Promise<Question | undefined>): Promise<{ state: string }[]> {
     if (!this.configured || question.pcId !== this.store.pcId) return [];

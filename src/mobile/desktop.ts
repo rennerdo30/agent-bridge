@@ -30,19 +30,41 @@ export async function readMobileDesktopBody(stream: AsyncIterable<Uint8Array | s
 export class MobileDesktopAdmin {
   isReady(): boolean { return this.ready(); }
   private readonly csrf = secret();
+  /** Last source view for the claim review catalog. Pairing state itself is read from the registry on every request (AB-434). */
+  private catalogView?: { at: number; view: SourceView; folders?: ReadonlyMap<string, string> };
+  private refreshing?: Promise<NonNullable<MobileDesktopAdmin["catalogView"]>>;
+  static readonly CATALOG_MS = 10_000;
   constructor(private readonly store: MobileStore, private readonly source: MobileSource, readonly localOrigin: string, private readonly ready: () => boolean = () => true) {
     const origin = new URL(localOrigin);
     if (origin.origin !== localOrigin || !["localhost", "127.0.0.1"].includes(origin.hostname) || origin.protocol !== "http:") throw new Error("Exact loopback desktop origin required");
+  }
+  /** One source snapshot at a time, shared by every waiting request. */
+  private refreshCatalog(): Promise<NonNullable<MobileDesktopAdmin["catalogView"]>> {
+    if (this.refreshing) return this.refreshing;
+    const work = (async () => {
+      const view = await this.source.snapshot();
+      return this.catalogView = { at: Date.now(), view, folders: this.source.projectFolders?.() };
+    })();
+    this.refreshing = work;
+    work.then(() => { if (this.refreshing === work) this.refreshing = undefined; }, () => { if (this.refreshing === work) this.refreshing = undefined; });
+    return work;
+  }
+  /** The cached catalog, refreshed in the background once stale; only the first request waits for a snapshot. */
+  private async catalogFor(): Promise<NonNullable<MobileDesktopAdmin["catalogView"]>> {
+    const cached = this.catalogView;
+    if (!cached) return this.refreshCatalog();
+    if (Date.now() - cached.at >= MobileDesktopAdmin.CATALOG_MS) this.refreshCatalog().catch(() => { /* Keep serving the last catalog. */ });
+    return cached;
   }
   async handle(method: string, path: string, headers: Record<string, string | undefined>, body?: string): Promise<{ status: number; body?: unknown }> {
     if (!this.ready()) throw new MobileFault(503, "source_unavailable");
     if (headers["sec-fetch-site"] === "cross-site" || headers.origin && headers.origin !== this.localOrigin) throw new MobileFault(403, "desktop_origin");
     if (method === "GET" && path === "/api/mobile/phones") {
-      const view = await this.source.snapshot();
+      const { view, folders } = await this.catalogFor();
       if (!this.ready()) throw new MobileFault(503, "source_unavailable");
       const devices = this.store.list<Device>("device").map(({ grants, revision, ...device }) => ({ ...device, access: access(grants) }));
       return { status: 200, body: { csrfToken: this.csrf, devices, pending: this.store.pending(),
-        catalog: catalog(this.store.pcId, view, this.source.projectFolders?.()), gatewayOrigins: this.store.origins, fingerprints: this.store.pins?.map(shortPin) ?? [] } };
+        catalog: catalog(this.store.pcId, view, folders), gatewayOrigins: this.store.origins, fingerprints: this.store.pins?.map(shortPin) ?? [] } };
     }
     if (headers.origin !== this.localOrigin || !equal(headers["x-mobile-admin-csrf"] ?? "", this.csrf)) throw new MobileFault(403, "desktop_csrf");
     const key = z.string().uuid().parse(headers["idempotency-key"]);
@@ -60,13 +82,20 @@ export class MobileDesktopAdmin {
     const confirm = /^\/api\/mobile\/claims\/([\w-]+)$/.exec(path);
     if (method === "POST" && confirm) {
       const parsed = z.object({ comparisonCode: z.string().regex(/^\d{6}$/), allow: z.boolean(), grants: grantsSchema }).strict().parse(args);
-      const view = await this.source.snapshot();
-      if (!this.ready()) throw new MobileFault(503, "source_unavailable");
       // Remote reads remain unsupported: this local adapter cannot prove existing paired-PC trust.
       for (const grant of parsed.grants) {
-        if (grant.scope === "all" && (grant.projectIds.length || grant.sessionIds.length || grant.jobIds.length) || grant.scope === "project" && !grant.projectIds.length) throw new MobileFault(403, "unsupported_grant");
-        if (grant.pcId !== this.store.pcId || grant.sessionIds.some(id => !view.sessions.some(s => s.id === id)) || grant.jobIds.some(id => !view.jobs.some(j => j.id === id)) || grant.projectIds.some(id => ![...view.questions, ...view.sessions, ...view.jobs].some(q => q.projectId === id))) throw new MobileFault(403, "unsupported_grant");
+        if (grant.scope === "all" && (grant.projectIds.length || grant.sessionIds.length || grant.jobIds.length) || grant.scope === "project" && !grant.projectIds.length || grant.pcId !== this.store.pcId) throw new MobileFault(403, "unsupported_grant");
       }
+      const known = (view: SourceView) => parsed.grants.every(grant => grant.sessionIds.every(id => view.sessions.some(s => s.id === id)) && grant.jobIds.every(id => view.jobs.some(j => j.id === id)) &&
+        grant.projectIds.every(id => [...view.questions, ...view.sessions, ...view.jobs].some(q => q.projectId === id)));
+      // A fresh catalog (the one the owner just reviewed) needs no new snapshot; anything it does not know is checked against a new one.
+      const cached = this.catalogView, recent = cached && Date.now() - cached.at < MobileDesktopAdmin.CATALOG_MS ? cached.view : undefined;
+      if (!recent || !known(recent)) {
+        const { view } = await this.refreshCatalog();
+        if (!this.ready()) throw new MobileFault(503, "source_unavailable");
+        if (!known(view)) throw new MobileFault(403, "unsupported_grant");
+      }
+      if (!this.ready()) throw new MobileFault(503, "source_unavailable");
       this.store.mutate("desktop-owner", method + path, key, digest("admin", JSON.stringify(parsed)), () => {
         this.store.confirm(confirm[1]!, parsed.comparisonCode, parsed.allow, parsed.grants as Grant[]); return { response: { state: "recorded" }, replay: { state: "recorded" } };
       });
