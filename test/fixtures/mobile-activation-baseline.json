@@ -1,7 +1,7 @@
 {
   "base": "0fed680017e823197b1fb3344598632f5cd219ed",
   "uiSha256": "876fbc073c419e55a05c806b75c4993d254510c444cbd81d70098efbd22fb98c",
-  "pageSha256": "0e31d1c546434753d2264791401950b58dadb2961af29377f5e9845370536d63",
+  "pageSha256": "668c9fd947ec754dcd8887e18d235f361239073558920e49f6e8a89afbf3514b",
   "updates": {
     "PR-20": {
       "base": "0761d56fe4c36e505550f9b889841fdf8e82c80a",
@@ -31,6 +31,11 @@
       "base": "4ae6bc26",
       "reason": "AB-417: the desktop dashboard approval card shows a permission request's security-relevant flags (the first line of [markers] and +args that approval questions now carry, e.g. [sandbox OFF], [escalated: ...], [workdir: ...]) as an escaped badge row above the command, and the command below without that line; it adds the approvalFlags helper and three CSS rules (.ap-flags, .ap-flag, .ap-args) using existing tokens. A command without a marker line renders exactly as before. Page re-pinned on main 4ae6bc26 (after AB-401). The mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged.",
       "commit": "43d2699c"
+    },
+    "AB-417-guard": {
+      "base": "20f6b69f",
+      "reason": "AB-417 second review: approvalFlags in the desktop dashboard script returns no marker row when the first line contains a raw control, format, line or paragraph separator character or a look-alike bracket (one escaped regex test before the existing parse); the bridge always escapes these in its own header, so genuine marker rows render as before. Page re-pinned. The mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged.",
+      "commit": "cdd6e5a9"
     }
   }
 }
