@@ -10,7 +10,7 @@ import { drainScanResponsive } from "./responsive-scan.js";
 import { pidAlive } from "./delegate.js";
 import { writtenBeforeBoot } from "./boot-time.js";
 import type { Job } from "../mcp/jobs.js";
-import { readRecoveryHeader, recoveryHeaderLacksSeparator, type RecoveryHeader } from "./job-recovery-feed.js";
+import { readRecoveryHeader, type RecoveryHeader } from "./job-recovery-feed.js";
 import { readPendingRunnerSpec, readRunnerStateRecord } from "./runner-store.js";
 import { safeFile } from "./transcripts/common.js";
 import { RUNS_DIR_NAME, type RunMeta } from "./runfeed.js";
@@ -52,13 +52,13 @@ export async function recoverJobRecordAsync(home: string, ref: string,
   // label-only first observation must preserve the local manager's own facts.
   if (!recovery.history && !recovery.launch && labelOnly(recovery, recoveryContext(home, recovery).sessionId))
     return refuse({ reason: "recovery_context_unavailable", stage: "finish" });
-  const payload = needsHeader(recovery) && recovery.run ? await readRecoveryHeader(recovery.run.file) : { prompt: "", header: "" };
+  let noPromptSection = false;
+  const payload = needsHeader(recovery) && recovery.run ? await readRecoveryHeader(recovery.run.file, () => { noPromptSection = true; }) : { prompt: "", header: "" };
   if (!payload) {
-    // Read whole and unchanged without a prompt separator: a label-only log has no prompt to recover, so, as
-    // before AB-439, the local manager keeps its own facts (a live local job may have a native session).
-    // Every other failed read stays a refusal.
-    if (recovery.run && await recoveryHeaderLacksSeparator(recovery.run.file))
-      return refuse({ reason: "recovery_context_unavailable", stage: "header_format" });
+    // This read reached the end of an unchanged file without a prompt separator: a label-only log has no prompt
+    // to recover, so, as before AB-439, the local manager keeps its own facts (a live local job may have a native
+    // session). Every other failed read stays a refusal.
+    if (noPromptSection) return refuse({ reason: "recovery_context_unavailable", stage: "header_format" });
     return refuse({ reason: "recovery_header_unavailable", stage: "header_read" });
   }
   // A handoff or new native turn can update authority while asynchronous IO yields.
