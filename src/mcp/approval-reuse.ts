@@ -1,6 +1,8 @@
-import { isClaudeReadOnly } from "../core/delegate.js";
+import { currentDelegateDepth, isClaudeReadOnly } from "../core/delegate.js";
 import type { ClaudePermissionMode } from "../core/config.js";
+import { MAX_DELEGATE_DEPTH_LIMIT } from "../core/constants.js";
 import { requestIdentity, type PermissionRequest } from "../core/relay.js";
+import { mcpToolOf, isOwnServerCall, shortServer } from "../core/tool-allow.js";
 import type { ApprovalOrigin, Job } from "./jobs.js";
 
 /**
@@ -16,7 +18,10 @@ import type { ApprovalOrigin, Job } from "./jobs.js";
  * - a command grant (anything but an MCP tool) is kept and reused only while the job's settings are read-only
  *   (see readOnlyJob), checked when it is granted and again when it is reused. What a command runs can change
  *   only through files; a read-only job changes files only through an approval it asks for, so any allowed file
- *   change, other command or request without an exact identity ends the job's command grants. Nothing on this path
+ *   change, other command, request without an exact identity or MCP call to a server other than the Pair Desk
+ *   (allowed in any way) ends the job's command grants. A call to the job's own agent-bridge server other than a
+ *   read or status tool (spawn_*, ask_*, message_subagent, decide, ...) ends them and blocks new ones for the rest
+ *   of the turn: a child job may change the job's files. Nothing on this path
  *   runs Git or reads the job's files: job-controlled repositories can run code through Git (core.fsmonitor,
  *   filters) and hide files from it;
  * - a deny is never reused, and any later deny of the same request revokes its grant.
@@ -71,9 +76,40 @@ export function isCommandRequest(r: Pick<PermissionRequest, "tool">): boolean {
   return !r.tool.startsWith("mcp:");
 }
 
-/** The settings a grant was made under; any change of them starts with no grants. */
-export function approvalScope(parts: { access?: string; sandbox?: string; permission: string; supervisor: string }): string {
-  return JSON.stringify([parts.access ?? "default", parts.sandbox ?? "", parts.permission, parts.supervisor]);
+/** The settings a grant was made under (the Codex reviewer included); any change of them starts with no grants. */
+export function approvalScope(parts: { access?: string; sandbox?: string; permission: string; reviewer?: string; supervisor: string }): string {
+  return JSON.stringify([parts.access ?? "default", parts.sandbox ?? "", parts.permission, parts.reviewer ?? "", parts.supervisor]);
+}
+
+/** Whether an MCP server (as a request names it) is the Pair Desk server, which writes only to the desk. */
+export function isDeskServer(server: string): boolean {
+  return shortServer(server) === "pair-desk";
+}
+
+/** Tools of the job's own agent-bridge server that only read or report status: they cannot reach the job's files. */
+const OWN_READ_TOOLS: ReadonlySet<string> = new Set(["send", "report_progress", "peers", "health", "search_history", "get_conversation",
+  "inbox", "wait_for_message", "decisions", "list_models", "usage_limits", "network_status", "resource_slots"]);
+
+/**
+ * What an allowed MCP call means for the job's command grants (AB-402): "keep" for a Pair Desk call or a read or
+ * status tool of the job's own agent-bridge server, "block" for any other own-server call (spawn_*, ask_*,
+ * message_subagent, decide: a child job may change files; the grants end and none are kept for the rest of the
+ * turn), "drop" for any other MCP call (its server may write files). Null for a request that is no MCP call.
+ */
+export function mcpCallEffect(r: Pick<PermissionRequest, "tool" | "detail">): "keep" | "drop" | "block" | null {
+  const call = mcpToolOf(r);
+  if (!call) return null;
+  if (isOwnServerCall(r)) return call.tool && OWN_READ_TOOLS.has(call.tool) ? "keep" : "block";
+  return isDeskServer(call.server) ? "keep" : "drop";
+}
+
+/**
+ * Whether a job started from this process can start or continue subagents of its own: its bridge server registers
+ * spawn_*, ask_*, message_subagent and decide while the job's depth (this process's + 1) is below the limit
+ * (server.ts). Such a job may change files through a child job that it approves itself.
+ */
+export function jobCanSpawn(maxDelegateDepth: number, env: NodeJS.ProcessEnv = process.env): boolean {
+  return currentDelegateDepth(env) + 1 < Math.min(maxDelegateDepth, MAX_DELEGATE_DEPTH_LIMIT);
 }
 
 /** An allow pattern that cannot reach the job's files: the Pair Desk server writes only to the desk. */
@@ -84,10 +120,15 @@ function deskOnlyPattern(pattern: string): boolean {
 
 /**
  * Whether the job's settings let it change files only through an approval it asks for (AB-402), from its target,
- * effective permission (DelegationTarget.permission) and the patterns of MCP tools it may call without asking.
- * Read-only:
+ * effective permission (DelegationTarget.permission), the patterns of MCP tools it may call without asking, the MCP
+ * servers already allowed for the rest of the job, and whether it can start subagents. Read-only:
+ * - The job cannot start or continue subagents (canSpawn false: its delegate depth reached the limit). A job with
+ *   spawn_* or message_subagent may start a child job with edit access in the same folder and answer that child's
+ *   approvals itself.
+ * - No MCP server other than the Pair Desk is in allowedServers (one "allow" of a server covers the rest of the job).
  * - Codex: the effective sandbox is "read-only" (access read or ask, or sandbox "read-only", or the configured
- *   codexSandbox when neither is given). workspace-write and danger-full-access are not.
+ *   codexSandbox when neither is given) and the approvals reviewer is "user" (auto_review lets a reviewer model
+ *   approve requests). workspace-write and danger-full-access are not.
  * - Claude: the permission mode is default, manual or plan (the bridge denies Write, Edit, MultiEdit,
  *   NotebookEdit, Bash and PowerShell in these). acceptEdits, auto, dontAsk and bypassPermissions are not.
  * - opencode: the effective permission is "read-only" (edit and bash need a permission request, which is asked or
@@ -104,12 +145,17 @@ export function readOnlyJob(job: {
   permission: string;
   permissionProfile?: string;
   bypassPermissions?: boolean;
+  approvalsReviewer?: string;
   allowPatterns: readonly string[];
+  allowedServers: readonly string[];
+  canSpawn: boolean;
 }): boolean {
+  if (job.canSpawn) return false;
   if (!job.allowPatterns.every(deskOnlyPattern)) return false;
+  if (!job.allowedServers.every((tool) => tool.startsWith("mcp:") && isDeskServer(tool.slice("mcp:".length)))) return false;
   const lookOrAsk = job.permission === "read" || job.permission === "ask";
   switch (job.target) {
-    case "codex": return job.permission === "read-only";
+    case "codex": return job.permission === "read-only" && job.approvalsReviewer === "user";
     case "claude": return isClaudeReadOnly(job.permission as ClaudePermissionMode);
     case "opencode": return job.permission === "read-only";
     case "antigravity": return job.bypassPermissions === undefined && lookOrAsk;

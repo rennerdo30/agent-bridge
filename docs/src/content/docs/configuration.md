@@ -69,9 +69,17 @@ Limits that keep it safe:
   reused only while the job cannot change files without asking. The job's settings are
   checked when the grant is made (both when the question is asked and when it is answered)
   and again at each reuse; if either is not read-only, the command is asked. Read-only means:
+  - The job cannot start or continue subagents of its own: its delegation depth reached
+    `maxDelegateDepth`, so its bridge server has no `spawn_*`, `ask_*`, `message_subagent`
+    or `decide`. A job that has them could start a child job with edit access in the same
+    folder and answer that child's approvals itself.
+  - No MCP server other than the Pair Desk was allowed for the rest of the job (one "allow"
+    of a server covers its later calls, also in follow-ups).
   - Codex: the effective sandbox is `read-only` (`access` `read` or `ask`, `sandbox:
-    "read-only"`, or `codexSandbox` when neither is given). `workspace-write` and
-    `danger-full-access` are not, so Codex `edit` jobs and worktree edit jobs are not.
+    "read-only"`, or `codexSandbox` when neither is given) and the approvals reviewer is
+    `user` (`approvals_reviewer` or `codexApprovalsReviewer`; `auto_review` lets a reviewer
+    model approve requests). `workspace-write` and `danger-full-access` are not, so Codex
+    `edit` jobs and worktree edit jobs are not.
   - Claude: permission mode `default`, `manual` or `plan` (agent-bridge denies `Write`,
     `Edit`, `MultiEdit`, `NotebookEdit`, `Bash` and `PowerShell` in these). `acceptEdits`,
     `auto`, `dontAsk` and `bypassPermissions` are not.
@@ -84,8 +92,14 @@ Limits that keep it safe:
     `pair-desk:worker`). Any other pattern could let the job write files without asking.
   - Anything else, including an unknown agent, permission or pattern, is not read-only.
 - **A read-only job changes files only through what it is allowed**, so an allowed file
-  change request (dropped already when it is asked), an allowed different command or an
-  allowed request without an exact identity ends the job's command grants.
+  change request (dropped already when it is asked), an allowed different command, an
+  allowed request without an exact identity or any allowed MCP call to a server other than
+  the Pair Desk (whether through an earlier "allow" of its server, an allow pattern, a
+  question or a reused grant) ends the job's command grants. A call to the job's own
+  agent-bridge server other than a read or status tool (`send`, `report_progress`, `peers`,
+  `health`, `search_history`, `get_conversation`, `inbox`, `wait_for_message`, `decisions`,
+  `list_models`, `usage_limits`, `network_status`, `resource_slots`), such as `spawn_*`,
+  `ask_*`, `message_subagent` or `decide`, ends them and keeps none for the rest of the turn.
 - **No Git, no file reads**: the approval path runs no Git command and reads none of the
   job's files. A job-controlled repository could run code through Git (`core.fsmonitor`,
   filters) and hide files from it (`.git/info/exclude`, `assume-unchanged`).
@@ -94,7 +108,8 @@ Limits that keep it safe:
 - **No grant at all** is kept or reused when the job store exists but cannot be read or does
   not have the job: its supervisor is then unknown.
 - A grant never widens and never crosses jobs: it ends with the job's turn, when the job's
-  access, sandbox or permission settings change, and when its supervisor changes. The
+  access, sandbox, permission settings or Codex approvals reviewer change, and when its
+  supervisor changes. The
   supervisor is read from the job store, so a `handoff_subagents` from another process ends
   the grants at once.
 - A deny is never reused (the job asks again) and revokes a grant of the same request, also
