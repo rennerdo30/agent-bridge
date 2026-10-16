@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Updater: a running Claude Code session no longer makes `update` fail** with "Immutable plugin version differs". Claude Code writes `.in_use/<pid>` markers into the installed version folder; the immutable-version comparison now ignores that top-level folder, so an identical build is recognized as already installed. A real content difference is still refused.
+- **Updater: Muse now actually updates.** `muse plugins update` only re-reads the source Muse recorded at install time, which could be Muse's own cached copy of an old version, so Muse stayed on 0.30.16. The updater now copies the Muse bundle to the same durable version folder as the other clients (`~/.agent-bridge/plugin-versions/muse/<version>`) and runs `muse plugins install` from there, then `inspect`. A disabled plugin stays disabled; capability approval stays with the owner.
+- **Updater: a file lock during publication is retried for about 11 s** (10 attempts with growing waits, was 5 attempts in 0.5 s). A virus scanner checking the freshly written files could make the Antigravity update fail with EPERM; nothing was lost, but the update had to be re-run.
+
 ## 0.30.22
 
 - **Requires Node.js 24 or newer** (owner decision 2026-10-16; Node 24 is the current LTS). The MCP server, its worker and the CLI (including hooks) check the version before anything else and refuse to start on Node 22 or older, printing what to install. CI and diagnostic workflows test Node 24 only; bundles target Node 24.

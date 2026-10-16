@@ -42,6 +42,25 @@ function previous(client: PluginClient) {
   return { home, base, selector, before: readFileSync(selector, "utf8") };
 }
 
+describe("host session markers in an installed version", () => {
+  it("treats a version folder with Claude Code's .in_use markers as the same build, and still refuses a real difference", () => {
+    const base = join(root, "cache"), target = publishPlugin(source, base, "0.1.0");
+    mkdirSync(join(target, ".in_use"), { recursive: true });
+    writeFileSync(join(target, ".in_use", "47776"), "");
+    expect(publishPlugin(source, base, "0.1.0")).toBe(target);
+    expect(readdirSync(join(target, ".in_use"))).toEqual(["47776"]);
+    writeFileSync(join(target, "dist", "worker.mjs"), "changed payload");
+    expect(() => publishPlugin(source, base, "0.1.0")).toThrow("Immutable plugin version differs");
+  });
+
+  it("only ignores the marker folder at the top level", () => {
+    const base = join(root, "cache"), target = publishPlugin(source, base, "0.1.0");
+    mkdirSync(join(target, "dist", ".in_use"), { recursive: true });
+    writeFileSync(join(target, "dist", ".in_use", "1"), "");
+    expect(() => publishPlugin(source, base, "0.1.0")).toThrow("Immutable plugin version differs");
+  });
+});
+
 describe("shared immutable plugin promotion", () => {
   it.each(clients)("retries a transient Windows EPERM for %s before activating", (client) => {
     const { home, base, selector, before } = previous(client);
@@ -77,7 +96,8 @@ describe("shared immutable plugin promotion", () => {
     expect(message).toContain("EPERM");
     expect((thrown as Error).cause).toBe(failure);
     expect(rename).toHaveBeenCalledTimes(PLUGIN_PROMOTION_MAX_ATTEMPTS);
-    expect(waits).toEqual([50, 100, 150, 200]);
+    // Linear backoff between attempts: no wait after the last one.
+    expect(waits).toEqual(Array.from({ length: PLUGIN_PROMOTION_MAX_ATTEMPTS - 1 }, (_, i) => PLUGIN_PROMOTION_RETRY_DELAY_MS * (i + 1)));
     expect(stages(base)).toHaveLength(1);
     expect(payload(retained)).toBe("new plugin payload");
     expect(existsSync(join(base, "0.1.1"))).toBe(false);
@@ -137,7 +157,7 @@ describe("shared immutable plugin promotion", () => {
     expect(error.message).toContain("EPERM");
     expect(error.cause).toBe(failure);
     expect(rename).toHaveBeenCalledTimes(1);
-    expect(sleep).toHaveBeenCalledExactlyOnceWith(50);
+    expect(sleep).toHaveBeenCalledExactlyOnceWith(PLUGIN_PROMOTION_RETRY_DELAY_MS);
     expect(payload(target)).toBe("backoff winner payload");
     expect(payload(retained)).toBe("new plugin payload");
     expect(readFileSync(selector, "utf8")).toBe(before);

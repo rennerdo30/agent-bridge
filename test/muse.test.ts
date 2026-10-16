@@ -150,7 +150,7 @@ describe("Muse delegation", () => {
     expect(planFor("muse", "install")).toEqual([{ kind: "muse", action: "install" }]);
     expect(describeStep({ kind: "muse", action: "install" })).toContain("approve");
     expect(musePluginArgs("install", "/src/muse")).toEqual([["plugins", "install", "/src/muse"], ["plugins", "approve", "agent-bridge"]]);
-    expect(musePluginArgs("update", "/src/muse")).toEqual([["plugins", "update", "agent-bridge"], ["plugins", "inspect", "agent-bridge"]]);
+    expect(musePluginArgs("update", "/src/muse")).toEqual([["plugins", "install", "/src/muse"], ["plugins", "inspect", "agent-bridge"]]);
     expect(musePluginArgs("uninstall", "/src/muse")).toEqual([["plugins", "remove", "agent-bridge"]]);
     expect(historyFiltersSchema.parse({ agent: "muse" }).agent).toBe("muse");
   });
