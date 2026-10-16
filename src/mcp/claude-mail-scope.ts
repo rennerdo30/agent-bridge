@@ -18,6 +18,8 @@ export const isClaudeScopedTool = (name: string): boolean => (CLAUDE_SCOPED_TOOL
 export const CLAUDE_CHILD_STATUS_TOOLS = ["health", "decisions", "network_status", "resource_slots", "usage_limits", "list_models"] as const;
 const GRANT_MS = 10_000;
 const MAX_GRANTS = 128;
+// Children cannot exhaust the shared map: the parent always keeps this headroom.
+const PARENT_RESERVED_GRANTS = 16;
 interface Grant { tool: string; sessionId: string; agentId?: string; expires: number }
 
 /** Ephemeral capabilities issued only through the authenticated host-mod endpoint.
@@ -35,7 +37,7 @@ export class ClaudeMailScopes {
     }
     const now = this.now();
     for (const [token, grant] of this.grants) if (grant.expires <= now) this.grants.delete(token);
-    if (this.grants.size >= MAX_GRANTS) throw new BridgeError("unauthorized", "Claude tool scope capacity reached; retry later.");
+    if (this.grants.size >= (agentId === undefined ? MAX_GRANTS : MAX_GRANTS - PARENT_RESERVED_GRANTS)) throw new BridgeError("unauthorized", "Claude tool scope capacity reached; retry later.");
     const token = randomBytes(24).toString("hex");
     this.grants.set(token, { tool, sessionId, agentId, expires: now + GRANT_MS });
     return token;
@@ -45,7 +47,11 @@ export class ClaudeMailScopes {
     const grant = typeof token === "string" ? this.grants.get(token) : undefined;
     if (typeof token === "string") this.grants.delete(token); // one attempt, even for a mismatched call
     if (!grant || grant.expires <= this.now() || grant.tool !== tool || grant.sessionId !== sessionId) {
-      throw new BridgeError("unauthorized", "Missing, expired or ambiguous Claude tool scope; no tool action taken. Use the current host mod.");
+      // A genuine parent grant that only outlived its window (e.g. a slow permission prompt)
+      // is marked so the caller may treat it as unscoped; that is safe only with no live child.
+      const expiredParent = !!grant && grant.agentId === undefined && grant.tool === tool && grant.sessionId === sessionId;
+      throw new BridgeError("unauthorized", "Missing, expired or ambiguous Claude tool scope; no tool action taken. Use the current host mod.",
+        expiredParent ? { expiredParent: true } : undefined);
     }
     return grant;
   }

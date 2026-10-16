@@ -138,7 +138,20 @@ any model-supplied `_bridge_scope` argument. If no capability can be obtained
 unscoped without the argument and the server decides by the rules above. A
 child call (`agentId` set) is denied instead: a child never needs an unscoped call,
 and before its SubagentStart route is live an unscoped call would count as the
-parent.
+parent. A parent call retries the fetch once before going on unscoped, because
+an unscoped parent call is refused while a child is live.
+
+A parent grant that only expired (for example while a permission prompt was
+open) is treated like an unscoped call: it runs only while no child is live.
+Forged, replayed, wrong-tool, wrong-session and child grants are never
+downgraded. Child grants can fill at most 112 of the 128 grant slots, so
+children cannot exhaust parent capacity.
+
+## Not covered
+
+Native children inside delegated `spawn_claude` jobs share the job's MCP
+connection, which has no bridge node and no scope gate. Such a child acts with
+the job's authority (follow-up AB-413).
 
 The server strips the argument before logging or forwarding to broker or
 storage. Tokens never appear in bridge logs, tool results or persistent bridge

@@ -46,7 +46,9 @@ export const register: Register = on => {
     // Native lifecycle hooks call MCP directly. A model must never impersonate a hook,
     // including a child's forged SubagentStop that would remove the live-child gate.
     if (tool === 'hook_event') return { deny: 'hook_event is reserved for native lifecycle hooks.' }
-    const token = await Promise.race([scope($, tool, e.agentId).catch(() => null), $.clock.sleep(TIMEOUT_MS).then(() => null)])
+    const fetchScope = () => Promise.race([scope($, tool, e.agentId).catch(() => null), $.clock.sleep(TIMEOUT_MS).then(() => null)])
+    // A parent without a token is refused while a child is live: retry once (slow event loop).
+    const token = await fetchScope() ?? (e.agentId === undefined ? await fetchScope() : null)
     // A child call never legitimately needs unscoped tools: it could act as the parent.
     if (token === null && e.agentId !== undefined) return { deny: 'Bridge tool scope for this native child could not be obtained; no action taken.' }
     return next(withScope(e as unknown as Record<string, unknown>, token) as unknown as typeof e)

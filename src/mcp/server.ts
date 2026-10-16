@@ -688,25 +688,35 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       if (mailScopes) {
         // A replaced server that is called is the one the session uses: take it back first.
         if (node!.wasReplaced) await node!.reclaim().catch((err) => log.warn("could not take the bridge back", { err: (err as Error).message }));
+        // A broker without native child routes (older release) cannot have a live child.
+        const liveChildren = () => node!.nativeChildren().catch(err => {
+          if (isUnsupportedOperation(err, "nativeChildren")) return [];
+          throw err;
+        });
         try {
+          let unscoped = scopeToken === undefined;
           if (scopeToken !== undefined) {
             // A presented capability is always validated: forged, replayed or wrong-tool fails.
-            const scope = mailScopes.take(scopeToken, name, node!.currentSessionId);
-            if (childId !== undefined && childId !== scope.agentId) throw new BridgeError("unauthorized", "Claimed native_child conflicts with authenticated host scope; no action taken.");
-            childId = scope.agentId;
-            authenticatedScope = true;
-          } else if (childId === undefined) {
-            // A broker without native child routes (older release) cannot have a live child.
-            const children = await node!.nativeChildren().catch(err => {
-              if (isUnsupportedOperation(err, "nativeChildren")) return [];
-              throw err;
-            });
+            try {
+              const scope = mailScopes.take(scopeToken, name, node!.currentSessionId);
+              if (childId !== undefined && childId !== scope.agentId) throw new BridgeError("unauthorized", "Claimed native_child conflicts with authenticated host scope; no action taken.");
+              childId = scope.agentId;
+              authenticatedScope = true;
+            } catch (err) {
+              // A parent grant that expired during a slow permission prompt carries no more
+              // authority than an unscoped call, which is the parent only while no child is live.
+              if (!(err instanceof BridgeError && err.details?.expiredParent === true && childId === undefined)) throw err;
+              unscoped = true;
+            }
+          }
+          if (unscoped && childId === undefined) {
+            const children = await liveChildren();
             // Unscoped while a child is live: the caller is ambiguous. Give a read-only
             // status, never parent message bodies, history, receipts or wait registration.
             if (children.length) return isClaudeMailTool(name)
               ? text(["Ambiguous caller while native children are live. Mail remains queued for parent hooks; use an explicit native_child inbox for child mail.",
                 ...children.map(child => `Native child address: ${child.address}`)].join("\n"))
-              : text("Ambiguous caller while native children are live. Use the current host mod to authenticate this tool call; no action taken.", true);
+              : text("Ambiguous caller while native children are live: the host tool scope could not be obtained or expired. No action taken; retry the call, or wait until the native child finishes.", true);
           }
         } catch (err) { return text(describeError(err), true); }
       }

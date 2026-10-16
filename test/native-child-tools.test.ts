@@ -31,7 +31,8 @@ beforeEach(async () => {
 afterEach(async () => { await env.cleanup(); vi.restoreAllMocks(); });
 
 /** Exercise the real mod's filter and flat event, with a synthetic endpoint. No live registration files. */
-async function hostMod(fails = false) {
+async function hostMod(fails: boolean | number = false) {
+  let fetches = 0;
   const modulePath = "../plugins/claude/hooks/mail-scope.ts";
   const { register } = await import(modulePath);
   let filter: string[] = [], middleware: any;
@@ -39,7 +40,8 @@ async function hostMod(fails = false) {
   const engine = { session: { id: async () => "parent-session" }, env: { get: async () => env.home },
     fs: { read: async () => JSON.stringify({ port: 1234, secret: "synthetic-test-only" }) },
     http: { fetch: async (url: string) => {
-      if (fails) throw new Error("endpoint unavailable");
+      // A number fails only that many first fetches (transient endpoint stall).
+      if (fails === true || typeof fails === "number" && fetches++ < fails) throw new Error("endpoint unavailable");
       const u = new URL(url);
       return { ok: true, text: JSON.stringify({ token: scope(u.searchParams.get("tool")!, u.searchParams.get("agent_id") ?? undefined) }) };
     } }, clock: { sleep: async () => new Promise(() => {}) } };
@@ -222,6 +224,49 @@ it("a failed endpoint denies child non-mail calls even before SubagentStart; par
   await childStart();
   expect((await host("decide", { topic: "x", text: "x" })).isError).toBe(true);
   expect(decide).toHaveBeenCalledOnce();
+});
+
+it("a parent retries a failed scope fetch once while a child is live; a child does not", async () => {
+  await childStart();
+  const decide = vi.spyOn(ctx.node!, "decide").mockResolvedValue({ decision: {} as any, deliveredTo: [] });
+  expect((await (await hostMod(1))("decide", { topic: "x", text: "x" })).isError).not.toBe(true);
+  expect(decide).toHaveBeenCalledOnce();
+  expect(await (await hostMod(1))("send", { to: "target", message: "x" }, agentId)).toEqual({ deny: expect.any(String) });
+  expect((await (await hostMod(2))("decide", { topic: "x", text: "x" })).isError).toBe(true);
+  expect(decide).toHaveBeenCalledOnce();
+});
+
+it("an expired parent grant falls back to the unscoped path only while no child is live", async () => {
+  let now = 0; ctx.claudeMailScopes = new ClaudeMailScopes(() => now);
+  // Re-register so the guard uses the clock-controlled scopes.
+  handlers = new Map(); specs = new Map();
+  registerTools({ registerTool: (name: string, spec: any, fn: any) => {
+    specs.set(name, spec); handlers.set(name, (a, extra) => fn(schema(spec).parse(a), extra));
+  } } as any, ctx, [...CODING_AGENTS]);
+  const decide = vi.spyOn(ctx.node!, "decide").mockResolvedValue({ decision: {} as any, deliveredTo: [] });
+  const args = { topic: "x", text: "x" };
+  const slowPrompt = scope("decide"); now = 60_000;
+  expect((await call("decide", { ...args, _bridge_scope: slowPrompt })).isError).not.toBe(true);
+  expect(decide).toHaveBeenCalledOnce();
+  await childStart();
+  const whileChild = scope("decide"); now = 120_000;
+  const refused = await call("decide", { ...args, _bridge_scope: whileChild });
+  expect(refused.isError).toBe(true); expect(JSON.stringify(refused)).toContain("Ambiguous caller");
+  await ctx.node!.nativeChild({ action: "end", agentId });
+  // Expired child or wrong-tool grants never become parent calls.
+  const childGrant = ctx.claudeMailScopes.issue("decide", "parent-session", agentId);
+  const wrongTool = scope("send"); now = 180_000;
+  expect((await call("decide", { ...args, _bridge_scope: childGrant })).isError).toBe(true);
+  expect((await call("decide", { ...args, _bridge_scope: wrongTool })).isError).toBe(true);
+  expect(decide).toHaveBeenCalledOnce();
+});
+
+it("children cannot exhaust the scope map; the parent keeps headroom", () => {
+  const scopes = new ClaudeMailScopes(() => 0);
+  let issued = 0;
+  while (issued < 200) { try { scopes.issue("peers", "parent-session", agentId); issued++; } catch { break; } }
+  expect(issued).toBeLessThan(128);
+  expect(() => scopes.issue("decide", "parent-session")).not.toThrow();
 });
 
 it("an older broker without nativeChildren retains unscoped parent non-mail behavior", async () => {
