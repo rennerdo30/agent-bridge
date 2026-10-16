@@ -223,9 +223,12 @@ async function runDelegateInner(
     if (isFileChangeRequest(r) && dropFileSensitiveGrants(job)) dlog.info("file change requested; command grants dropped", { job: job.name });
     const identity = approvalIdentity(r);
     if (!identity) return ask();
-    // The supervisor comes from the durable store: a handoff from another process ends the grants.
+    // The supervisor comes from the durable store: a handoff from another process ends the grants. A store that
+    // cannot be read, or that lacks the job, means the supervisor is unknown: ask, and keep no grant.
+    const supervision = jobSupervision(rc.home, job, dlog);
+    if (supervision === null) return ask();
     const scope = approvalScope({ access: a.access, sandbox: a.sandbox, permission: profile.permission(cfg, a),
-      supervisor: JSON.stringify([jobSupervision(rc.home, job, dlog), rc.me()]) });
+      supervisor: JSON.stringify([supervision, rc.me()]) });
     const sensitive = isFileSensitive(r);
     const dirs = [workdir, ...(r.cwd ? [r.cwd] : [])];
     let tree = sensitive ? await treeState(dirs, dlog) : undefined;
@@ -235,7 +238,8 @@ async function runDelegateInner(
       dropFileSensitiveGrants(job);
     } else if (grant) {
       grant.reuses++;
-      const line = `Approval for ${job.name} reused: ${r.tool}: ${r.detail.slice(0, 200)} is identical to approval ${grant.approvalId}, allowed by ${grant.by} earlier in this job (jobs.reuseIdenticalApprovals).`;
+      const line = `Approval for ${job.name} reused: ${r.tool}: ${r.detail.slice(0, 200)} is identical to approval ${grant.approvalId}, allowed by ${grant.by} earlier in this job (jobs.reuseIdenticalApprovals).` +
+        (grant.tree !== undefined ? " Unchanged since then: HEAD, branch and non-ignored files of the job folder and the command's folder; ignored files (node_modules, .env, generated config), other writable folders and scripts outside them are not checked." : "");
       dlog.info("identical approval reused", { job: job.name, tool: r.tool, approval: grant.approvalId });
       reuseFeed.report?.(line);
       try { await appendContextEvent(rc.home, { kind: "approval", agent: target, project: workdir, job: job.name, session: job.sessionId ?? undefined, payload: { event: "reused", approval: grant.approvalId, by: grant.by, tool: r.tool, command: r.detail } }); }

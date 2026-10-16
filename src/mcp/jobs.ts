@@ -274,11 +274,17 @@ export function denyPendingApprovals(job: Job, reason = "job finished"): void {
 }
 
 /**
- * Who supervises the job, read from the durable job store when it has the job (a handoff_subagents from another
- * process updates only the store), else from memory (AB-402). Any handoff changes it.
+ * Who supervises the job, read from the durable job store (a handoff_subagents from another process updates only the
+ * store), or from memory when there is no store (AB-402). Any handoff changes it. Null when the store exists but cannot
+ * be read or does not have the job: then no grant is reused or kept, since a handoff may be what is missing.
  */
-export function jobSupervision(home: string | undefined, job: Job, log?: Logger): string {
-  const durable = home ? readStoredJob(join(home, JOBS_FILE), job.id, job.name, log) : undefined;
+export function jobSupervision(home: string | undefined, job: Job, log?: Logger): string | null {
+  let durable: StoredJob | undefined;
+  if (home && existsSync(join(home, JOBS_FILE))) {
+    try { durable = findStoredJob(join(home, JOBS_FILE), job.id, job.name); }
+    catch (err) { log?.warn("could not read the job store; approvals are not reused", { job: job.name, err: String(err) }); return null; }
+    if (!durable) return null;
+  }
   const source: Pick<Job, "supervisor" | "owner" | "rootName" | "rootSession" | "ownershipHistory"> = durable ?? job;
   const history = Array.isArray(source.ownershipHistory) ? source.ownershipHistory : [];
   const last = history.at(-1) as { id?: unknown } | undefined;
@@ -2924,19 +2930,24 @@ function readStoredJob(path: string, id: string, name: string, log?: Logger): St
 /** Private immutable selection for authority checks. Detach any fields exposed to
  * runtime/public jobs; never mutate these stat-validated cache records. */
 function readStoredJobSnapshot(path: string, id: string, name: string, log?: Logger): StoredJob | undefined {
-  try {
-    if (indexedJobProjectionCurrent(path)) {
-      const selection = { ids: new Set([id]), names: new Set([name]) };
-      const active = readIndexedJobs(path, { ...selection, active: true }).jobs.find(isStoredJob);
-      if (active) return active;
-      return readIndexedJobs(path, selection).jobs.find(record => isStoredJob(record) && record.status !== "running") as StoredJob | undefined;
-    }
-    const current = activeJobSnapshot(path);
-    for (const record of current.values()) if (record.id === id || record.name === name) return record;
-    for (const record of readArchivedJobSnapshot(path, { ids: new Set([id]), names: new Set([name]) }).jobs) {
-      if (isStoredJob(record) && record.status !== "running" && !current.has(record.id) && (record.id === id || record.name === name)) return record;
-    }
-  } catch (err) { log?.warn("could not look up stored job", { path, err: String(err) }); }
+  try { return findStoredJob(path, id, name); }
+  catch (err) { log?.warn("could not look up stored job", { path, err: String(err) }); }
+  return undefined;
+}
+
+/** readStoredJobSnapshot that throws when the store cannot be read, so a caller can tell that from a missing job. */
+function findStoredJob(path: string, id: string, name: string): StoredJob | undefined {
+  if (indexedJobProjectionCurrent(path)) {
+    const selection = { ids: new Set([id]), names: new Set([name]) };
+    const active = readIndexedJobs(path, { ...selection, active: true }).jobs.find(isStoredJob);
+    if (active) return active;
+    return readIndexedJobs(path, selection).jobs.find(record => isStoredJob(record) && record.status !== "running") as StoredJob | undefined;
+  }
+  const current = activeJobSnapshot(path);
+  for (const record of current.values()) if (record.id === id || record.name === name) return record;
+  for (const record of readArchivedJobSnapshot(path, { ids: new Set([id]), names: new Set([name]) }).jobs) {
+    if (isStoredJob(record) && record.status !== "running" && !current.has(record.id) && (record.id === id || record.name === name)) return record;
+  }
   return undefined;
 }
 
