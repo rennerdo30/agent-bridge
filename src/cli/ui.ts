@@ -11,7 +11,7 @@ import { recoverJobRecord } from "../core/job-recovery.js";
 import { handoffSchema } from "../core/job-handoff.js";
 import { currentDashboardKey, loadDashboardKey } from "./dashboard-key.js";
 import { UI_RECOVERY_PAGE } from "./ui-recovery.js";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { MobileDesktopAdmin } from "../mobile/desktop.js";
 import { readMobileDesktopBody } from "../mobile/desktop.js";
@@ -19,7 +19,8 @@ import { MobileFault } from "../mobile/store.js";
 import { MOBILE_DESKTOP_PAGE } from "../mobile/desktop-page.js";
 import type { AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { ARCHIVE_DB_NAME } from "../core/sqlite-maintenance.js";
 import { BridgeClient } from "../core/client.js";
 import { ConnectionActivity } from "../core/connection-activity.js";
 import { DEFAULT_CODEX_SUBAGENTS, MAX_CODEX_SUBAGENTS, APP_VERSION, MAX_BODY_CHARS, PROTOCOL_VERSION } from "../core/constants.js";
@@ -99,9 +100,26 @@ interface MessageRow {
   reply_to: string | null;
 }
 
-/** Recent messages (one row per message, recipients joined), newest first; not the control messages to job runners. Read-only access. */
+/** Recent messages (one row per message, recipients joined), newest first; not the control messages to job runners. Read-only access.
+ * Every dashboard refresh asked for them: the answer is reused until a message database or its WAL changes. */
 export function recentMessages(dbPath: string): MessageRow[] {
-  return searchMessages(dbPath, { limit: MAX_MESSAGES });
+  const signature = messageFilesSignature(dbPath);
+  if (recentCache?.dbPath !== dbPath || recentCache.signature !== signature) {
+    recentCache = { dbPath, signature, rows: searchMessages(dbPath, { limit: MAX_MESSAGES }) };
+  }
+  return recentCache.rows.map((row) => ({ ...row }));
+}
+let recentCache: { dbPath: string; signature: string; rows: MessageRow[] } | undefined;
+function messageFilesSignature(dbPath: string): string {
+  const files = [dbPath, `${dbPath}-wal`, join(dirname(dbPath), ARCHIVE_DB_NAME), join(dirname(dbPath), `${ARCHIVE_DB_NAME}-wal`)];
+  return files.map((file) => {
+    try {
+      const st = statSync(file, { bigint: true });
+      // Opening a database creates an empty WAL: missing and empty mean the same content.
+      if (file.endsWith("-wal") && st.size === 0n) return "-";
+      return `${st.ino}:${st.size}:${st.mtimeNs}`;
+    } catch { return "-"; }
+  }).join("|");
 }
 
 async function brokerPeers(pipe: string, token: string, log: Logger): Promise<{ brokerPid: number | null; peers: PeerInfo[]; brokerState: "running" | "offline" | "slow" | "unavailable"; health: import("../core/health.js").BrokerHealth | null }> {

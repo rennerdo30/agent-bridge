@@ -186,7 +186,12 @@ function* listRunsSteps(home: string, now: number, names?: Set<string>, responsi
   const runs: RunSummary[] = [];
   // One history.db connection for the whole listing, opened only when some summary must be parsed.
   const history = historyReader(home);
-  try { for (const log of yield* readRunLogsSteps(home, names, responsive)) {
+  try {
+  const logs = yield* readRunLogsSteps(home, names, responsive);
+  // Room for every run of this listing: a cap below the listing size evicts entries the next refresh needs,
+  // so with more runs than the cap every refresh re-read every preview (thousands with packed runs).
+  const cap = Math.max(RUN_SUMMARY_CACHE_MIN, logs.length * 2);
+  for (const log of logs) {
     yield;
     try {
       const signature = `${log.signature}:${JSON.stringify(log.meta)}`;
@@ -198,7 +203,7 @@ function* listRunsSteps(home: string, now: number, names?: Set<string>, responsi
         const preview = history.read(() => readRunLogPreview(log.file, log.packed ? undefined : log.signature)).value;
         cached = { signature, summary: summarizeRun(`${log.name}.log`, preview, log.updatedAt, log.updatedAt, log.meta) };
         runSummaries.delete(log.file); runSummaries.set(log.file, cached);
-        if (runSummaries.size > 2048) runSummaries.delete(runSummaries.keys().next().value!);
+        while (runSummaries.size > cap) runSummaries.delete(runSummaries.keys().next().value!);
       }
       // A silent log alone is not an interruption: a fresh job can wait for admission, a queue or a long model step.
       // Its runner heartbeat (every 15 s) proves it is still at work.
@@ -263,6 +268,7 @@ function* listRunsSteps(home: string, now: number, names?: Set<string>, responsi
 }
 
 const runSummaries = new Map<string, { signature: string; summary: RunSummary }>();
+export const RUN_SUMMARY_CACHE_MIN = 2048;
 
 export function readMeta(file: string): RunMeta {
   try {
