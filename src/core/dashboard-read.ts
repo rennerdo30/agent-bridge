@@ -193,7 +193,9 @@ function* listRunsSteps(home: string, now: number, names?: Set<string>, responsi
       let cached = runSummaries.get(log.file);
       if (cached?.signature !== signature) {
         // Parse once while fresh; derive interrupted/ETA state on every poll, even for unchanged logs.
-        const preview = history.read(() => readRunLogPreview(log.file, log.signature)).value;
+        // A packed run's signature names the original log, not its retained copy: checking it against the copy
+        // always failed, so every packed run was re-read on each refresh and then dropped (thousands of opens).
+        const preview = history.read(() => readRunLogPreview(log.file, log.packed ? undefined : log.signature)).value;
         cached = { signature, summary: summarizeRun(`${log.name}.log`, preview, log.updatedAt, log.updatedAt, log.meta) };
         runSummaries.delete(log.file); runSummaries.set(log.file, cached);
         if (runSummaries.size > 2048) runSummaries.delete(runSummaries.keys().next().value!);

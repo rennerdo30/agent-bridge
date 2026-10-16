@@ -27,7 +27,10 @@ function files(dir: string): string[] {
 
 export interface RunLogRecord { name: string; file: string; updatedAt: number; size: number; signature: string; archived: boolean; meta: RunMeta; metadataFile?: string;
   /** Routing scans only: the metadata file's mtime from the scan's own lstat, so callers need no extra stat. */
-  metadataUpdatedAt?: number }
+  metadataUpdatedAt?: number;
+  /** A packed finished run (AB-208): `file` is its retained, immutable copy, while `signature` is the identity of the
+   * original log before packing, so it never matches the copy's own stat. */
+  packed?: true }
 const runLogSnapshots = new Map<string, { signature: string; records: RunLogRecord[] }>();
 const historyJobSnapshots = new Map<string, { signature: string; jobs: Map<string, Record<string, unknown>> }>();
 
