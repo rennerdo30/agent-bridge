@@ -36,6 +36,17 @@ it("still shows a silent run as interrupted when no runner reports in", () => {
   expect(listRuns(env.home, now).find(run => run.name === name)?.status).toBe("interrupted");
 });
 
+it("rechecks an interrupted run's runner once a minute, not on every poll", () => {
+  const now = Date.now();
+  const name = silentRun("codex-job-5ca1ab1e", now);
+  const status = (at: number) => listRuns(env.home, at).find(run => run.name === name)?.status;
+  expect(status(now)).toBe("interrupted");
+  // The runner reports in again (after a sleep, say) without writing to its log.
+  writeRunnerStateRecord(env.home, "5ca1ab1e", { pid: process.pid, peer: "codex-job-5ca1ab1e", status: "running", updatedAt: now + 50_000 });
+  expect(status(now + 55_000)).toBe("interrupted");
+  expect(status(now + 61_000)).toBe("running");
+});
+
 it("shows a silent run as interrupted when its runner heartbeat is old", () => {
   const now = Date.now();
   const name = silentRun("codex-job-12345678", now);
