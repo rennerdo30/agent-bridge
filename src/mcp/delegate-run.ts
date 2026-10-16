@@ -27,7 +27,7 @@ import { changedFiles, createWorktree, finishWorktree, git, trustArgs, gitChange
 import { formatSiblingMessages, formatUsage } from "./format.js";
 import { SiblingLink } from "./siblings.js";
 import { approvalOrigin, denyPendingApprovals, jobSupervision, waitForApproval, type ApprovalOutcome, type Job, type RunResult } from "./jobs.js";
-import { approvalIdentity, approvalScope, dropFileSensitiveGrants, isFileChangeRequest, isFileSensitive, recordGrant, reusableGrant, treeState } from "./approval-reuse.js";
+import { approvalIdentity, approvalScope, dropCommandGrants, isCommandRequest, isFileChangeRequest, readOnlyJob, recordGrant, reusableGrant } from "./approval-reuse.js";
 import { DELEGATION_TARGETS, supportsAsk, usageProbeFor, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
 import { checkUsagePreflight, confirmUsageAdmission, currentUsage, usageAdmissionText, usageRefused } from "../core/usage.js";
 import { JOB_SETTING_KEYS } from "./job-settings.js";
@@ -215,31 +215,38 @@ async function runDelegateInner(
   };
   // AB-402: an identical request the supervisor or the owner already allowed in this job, under the same access,
   // sandbox, permission settings and supervisor, reuses that grant. Denials and automatic allows are never reused.
+  // A command grant is kept and reused only while the job's settings are read-only (readOnlyJob). Nothing here runs
+  // Git or reads the job's files.
   const reuseFeed: { report?: (line: string) => void } = {};
+  const jobReadOnly = () => readOnlyJob({ target, permission: profile.permission(cfg, a), permissionProfile: a.permission_profile,
+    bypassPermissions: a.bypass_permissions, allowPatterns: autoApprove });
   const askOnce = async (r: PermissionRequest, ask: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome & { reusedFrom?: string }> => {
     // A runner spec written by an older release has no jobs section: the default (on) applies.
     if (!job || !(cfg.jobs?.reuseIdenticalApprovals ?? DEFAULT_CONFIG.jobs.reuseIdenticalApprovals)) return ask();
-    // A file change ends every command grant: an allowed script may be what changed.
-    if (isFileChangeRequest(r) && dropFileSensitiveGrants(job)) dlog.info("file change requested; command grants dropped", { job: job.name });
+    const command = isCommandRequest(r);
+    // A read-only job changes files only through what it is allowed: an allowed file change, other command or request
+    // without an exact identity ends every command grant (an allowed script may be what changed).
+    const ended = (answer: ApprovalOutcome, why: string) => {
+      if (answer.allow && dropCommandGrants(job)) dlog.info(`${why} was allowed; command grants dropped`, { job: job.name });
+      return answer;
+    };
+    if (isFileChangeRequest(r) && dropCommandGrants(job)) dlog.info("file change requested; command grants dropped", { job: job.name });
     const identity = approvalIdentity(r);
-    if (!identity) return ask();
+    if (!identity) return ended(await ask(), "a request without an exact identity");
     // The supervisor comes from the durable store: a handoff from another process ends the grants. A store that
     // cannot be read, or that lacks the job, means the supervisor is unknown: ask, and keep no grant.
     const supervision = jobSupervision(rc.home, job, dlog);
-    if (supervision === null) return ask();
+    if (supervision === null) return command ? ended(await ask(), "a command") : ask();
     const scope = approvalScope({ access: a.access, sandbox: a.sandbox, permission: profile.permission(cfg, a),
       supervisor: JSON.stringify([supervision, rc.me()]) });
-    const sensitive = isFileSensitive(r);
-    const dirs = [workdir, ...(r.cwd ? [r.cwd] : [])];
-    let tree = sensitive ? await treeState(dirs, dlog) : undefined;
     const grant = reusableGrant(job, scope, identity);
-    if (grant && sensitive && (tree === null || tree !== grant.tree)) {
-      dlog.info("files changed since an approval was granted; command grants dropped", { job: job.name, approval: grant.approvalId });
-      dropFileSensitiveGrants(job);
+    if (grant?.command && !jobReadOnly()) {
+      dlog.info("job is not read-only; command grants dropped", { job: job.name, approval: grant.approvalId });
+      dropCommandGrants(job);
     } else if (grant) {
       grant.reuses++;
       const line = `Approval for ${job.name} reused: ${r.tool}: ${r.detail.slice(0, 200)} is identical to approval ${grant.approvalId}, allowed by ${grant.by} earlier in this job (jobs.reuseIdenticalApprovals).` +
-        (grant.tree !== undefined ? " Unchanged since then: HEAD, branch and non-ignored files of the job folder and the command's folder; ignored files (node_modules, .env, generated config), other writable folders and scripts outside them are not checked." : "");
+        (grant.command ? " Commands are reused only in read-only jobs and only until a file change or another command is allowed." : "");
       dlog.info("identical approval reused", { job: job.name, tool: r.tool, approval: grant.approvalId });
       reuseFeed.report?.(line);
       try { await appendContextEvent(rc.home, { kind: "approval", agent: target, project: workdir, job: job.name, session: job.sessionId ?? undefined, payload: { event: "reused", approval: grant.approvalId, by: grant.by, tool: r.tool, command: r.detail } }); }
@@ -251,10 +258,11 @@ async function runDelegateInner(
       catch (err) { noteFailed(err); }
       return { allow: true, reason: "allow", reusedFrom: grant.approvalId };
     }
-    // The Git state is taken before the question: a change while it waits ends the grant too.
-    if (sensitive && tree === undefined) tree = await treeState(dirs, dlog);
+    // Read-only is checked when the question is asked and again with the answer: a command grant needs both.
+    const readOnlyAsked = command && jobReadOnly();
     const answer = await ask();
-    recordGrant(job, scope, identity, answer, approvalOrigin(answer), tree);
+    if (command) ended(answer, "a command");
+    recordGrant(job, scope, identity, answer, approvalOrigin(answer), command, readOnlyAsked && jobReadOnly());
     return answer;
   };
   // Native permission dialogs keep their existing eligibility; the dashboard can answer the same wait.

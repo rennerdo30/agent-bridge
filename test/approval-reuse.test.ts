@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import * as childProcess from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,29 +11,34 @@ import { nullLogger } from "../src/core/logger.js";
 import { opencodePermissionRequest } from "../src/core/opencode-served.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import { answerPendingApproval, listPendingApprovals, requestIdentity, type PermissionDecision, type PermissionRequest } from "../src/core/relay.js";
-import { approvalIdentity, approvalReuseLimits, treeState } from "../src/mcp/approval-reuse.js";
+import { approvalIdentity, readOnlyJob } from "../src/mcp/approval-reuse.js";
+import * as worktree from "../src/core/worktree.js";
 import { runDelegate, type DelegateArgs, type RunContext } from "../src/mcp/delegate-run.js";
 import { tagApprovalOrigin, waitForApproval, type Job } from "../src/mcp/jobs.js";
 import { until } from "./helpers.js";
 import { DELEGATION_TARGETS } from "../src/mcp/targets.js";
 import { closeMetadataDb } from "../src/core/metadata-db.js";
 
+// Every process start and Git call is counted: the approval path must run none (AB-402).
+vi.mock("node:child_process", async (original) => {
+  const real = await original<typeof import("node:child_process")>();
+  return { ...real, spawn: vi.fn(real.spawn), spawnSync: vi.fn(real.spawnSync), execFile: vi.fn(real.execFile), execFileSync: vi.fn(real.execFileSync), exec: vi.fn(real.exec), execSync: vi.fn(real.execSync), fork: vi.fn(real.fork) };
+});
+vi.mock("../src/core/worktree.js", async (original) => {
+  const real = await original<typeof import("../src/core/worktree.js")>();
+  return { ...real, git: vi.fn(real.git) };
+});
+
 /** AB-402: an approval identical to one the supervisor already granted in the same job is reused, never widened. */
 let home: string;
-/** The job's working folder: a Git repository, so command grants can be tied to its file state. */
+/** The job's working folder (not a Git repository: the approval path never looks at Git). */
 let repo: string;
-const gitInit = (dir: string) => execFileSync("git", ["init", "-q"], { cwd: dir, timeout: 30_000, windowsHide: true, stdio: "ignore" });
-/** Test commits use an identity from the environment only; no Git configuration is written. */
-const gitEnv = { ...process.env, GIT_AUTHOR_NAME: "test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "test", GIT_COMMITTER_EMAIL: "test@example.invalid" };
-const git = (dir: string, ...args: string[]) => execFileSync("git", args, { cwd: dir, timeout: 30_000, windowsHide: true, env: gitEnv, encoding: "utf8" }).trim();
-const commitAll = (dir: string, message: string) => { git(dir, "add", "-A"); git(dir, "commit", "-q", "--no-gpg-sign", "-m", message); };
 beforeEach(() => {
   const root = process.env.AGENT_BRIDGE_TEST_ROOT!;
   mkdirSync(root, { recursive: true });
   home = mkdtempSync(join(root, "reuse-"));
   repo = join(home, "repo");
   mkdirSync(repo);
-  gitInit(repo);
 });
 afterEach(() => { vi.restoreAllMocks(); closeMetadataDb(home); rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
 
@@ -63,14 +68,15 @@ const command = (line: string): PermissionRequest => codexCommand({ command: lin
 const hook = (agent: "claude" | "codex", tool: string, input: Record<string, unknown>): PermissionRequest =>
   hookRequest(agent, { tool_name: tool, tool_input: input, cwd: repo });
 
-/** One turn of the job in which the subagent asks for each request in order; returns the decisions. */
+/** One turn of the job in which the subagent asks for each request in order; returns the decisions. Command grants
+ * are reused only in read-only jobs, so the default is a Codex job with read access (its sandbox is read-only). */
 async function turn(rc: RunContext, j: Job, requests: PermissionRequest[], args: Partial<DelegateArgs> = {}): Promise<boolean[]> {
   const decisions: boolean[] = [];
   vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
     for (const request of requests) decisions.push((await req.approve!(request)).allow);
     return { sessionId: "saved", text: "done", isError: false, details: {} };
   });
-  await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit", ...args }, j.controller.signal, undefined, true, j);
+  await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read", ...args }, j.controller.signal, undefined, true, j);
   return decisions;
 }
 
@@ -103,7 +109,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
       expect(await req.approve!(command("npm test"))).toEqual({ allow: true });
       return { sessionId: "saved", text: "done", isError: false, details: {} };
     });
-    const result = await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
+    const result = await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
     expect(rc.jobs!.askParent).toHaveBeenCalledTimes(1);
     expect(listPendingApprovals(home)).toEqual([]);
     expect(vi.mocked(rc.jobs!.fromSubagent).mock.calls.some(([, body]) => body.includes(`reused`) && body.includes(approval))).toBe(true);
@@ -125,7 +131,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
       }
       return { sessionId: "saved", text: "done", isError: false, details: {} };
     });
-    await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
+    await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
     expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
   });
 
@@ -186,7 +192,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
       expect((await third).allow).toBe(false);
       return { sessionId: "saved", text: "done", isError: false, details: {} };
     });
-    await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
+    await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
     expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
   });
 
@@ -217,7 +223,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
       await req.approve!(command("npm test"));
       return { sessionId: "saved", text: "done", isError: false, details: {} };
     });
-    await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
+    await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
     expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
   });
 
@@ -234,7 +240,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
         expect((await req.approve!(command("npm test"))).allow).toBe(true);
         return { sessionId: "saved", text: "done", isError: false, details: {} };
       });
-      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
+      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
     }
 
     it("keeps reusing while the store names the same supervisor", async () => {
@@ -266,7 +272,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
         expect((await req.approve!(command("npm test"))).allow).toBe(true);
         return { sessionId: "saved", text: "done", isError: false, details: {} };
       });
-      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
+      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
       expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
     });
 
@@ -313,15 +319,18 @@ describe("identical approval reuse within a job (AB-402)", () => {
       expect(await req.approve!(command("npm test"))).toEqual({ allow: true });
       return { sessionId: "saved", text: "done", isError: false, details: {} };
     });
-    const result = await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, false, j);
+    const result = await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, false, j);
     expect(rc.askUser).toHaveBeenCalledOnce();
     expect(rc.jobs!.askParent).not.toHaveBeenCalled();
     expect(result.text).toMatch(/allowed \(reused approval [0-9a-f-]{36}\): command npm test/);
   });
 
   describe("hidden request fields (H1)", () => {
+    // The variants are denied: an allowed other command would end the grant (read-only rule), a denied one does not,
+    // so the final request shows the grant survived every variant (a variant taken as identical would have been
+    // reused, or its deny would have revoked the grant).
     it("asks again when a Claude Bash request differs only in a field the question does not show", async () => {
-      const rc = context(Array.from({ length: 4 }, () => allowed()));
+      const rc = context([allowed(), ...Array.from({ length: 3 }, () => denied())]);
       const j = job();
       const bash = (input: Record<string, unknown>) => hook("claude", "Bash", { command: "npm test", ...input });
       await turn(rc, j, [bash({}), bash({ dangerouslyDisableSandbox: true }), bash({ run_in_background: true }), bash({ timeout: 600_000 }), bash({})]);
@@ -330,7 +339,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
     });
 
     it("asks again when a Codex hook request differs in its folder or escalation fields", async () => {
-      const rc = context(Array.from({ length: 4 }, () => allowed()));
+      const rc = context([allowed(), ...Array.from({ length: 3 }, () => denied())]);
       const j = job();
       const shell = (input: Record<string, unknown>) => hook("codex", "Bash", { command: "npm test", ...input });
       await turn(rc, j, [shell({ workdir: "a" }), shell({ workdir: "b" }), shell({ workdir: "a", sandbox_permissions: "require_escalated", justification: "network" }),
@@ -341,8 +350,7 @@ describe("identical approval reuse within a job (AB-402)", () => {
     it("asks again when a Codex command runs in another folder, through another shell, or with other approval context (M1)", async () => {
       const other = join(home, "other");
       mkdirSync(other);
-      gitInit(other);
-      const rc = context(Array.from({ length: 5 }, () => allowed()));
+      const rc = context([allowed(), ...Array.from({ length: 4 }, () => denied())]);
       const j = job();
       await turn(rc, j, [
         codexCommand({ command: "bash -lc 'npm test'", cwd: repo }),
@@ -376,116 +384,151 @@ describe("identical approval reuse within a job (AB-402)", () => {
       expect(rc.jobs!.askParent).toHaveBeenCalledTimes(5);
     });
 
-    it("drops a command grant once the job's files change, and after any file change request", async () => {
-      writeFileSync(join(repo, "deploy.sh"), "echo one\n");
-      const rc = context(Array.from({ length: 4 }, () => allowed()));
+    it("drops the command grants after an allowed file change request or another allowed command", async () => {
+      const rc = context(Array.from({ length: 6 }, () => allowed()));
       const j = job();
       vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
         const ask = async (r: PermissionRequest) => expect((await req.approve!(r)).allow).toBe(true);
         await ask(command("./deploy.sh"));
         await ask(command("./deploy.sh"));
         expect(rc.jobs!.askParent).toHaveBeenCalledTimes(1);
-        // The job edits the script it was allowed to run: the grant ends.
-        writeFileSync(join(repo, "deploy.sh"), "echo two\n");
-        await ask(command("./deploy.sh"));
-        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
-        await ask(command("./deploy.sh"));
-        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
         // A file change request ends command grants even before anything is written.
         await ask(hook("claude", "Edit", { file_path: join(repo, "deploy.sh"), old_string: "two", new_string: "three" }));
         await ask(command("./deploy.sh"));
-        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(4);
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
+        await ask(command("./deploy.sh"));
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
+        // Another allowed command may have written files: it ends the earlier command grants.
+        await ask(command("cp other.sh deploy.sh"));
+        await ask(command("./deploy.sh"));
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(5);
         return { sessionId: "saved", text: "done", isError: false, details: {} };
       });
-      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
-      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(4);
+      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(5);
     });
+  });
 
-    /** A grant for ./deploy.sh, reused once, then `change` runs and the same command is asked again or reused. */
-    async function afterChange(change: () => void): Promise<number> {
-      const rc = context(Array.from({ length: 3 }, () => allowed()));
-      const j = job();
-      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
-        expect((await req.approve!(command("./deploy.sh"))).allow).toBe(true);
-        expect((await req.approve!(command("./deploy.sh"))).allow).toBe(true);
+  describe("command grants only in read-only jobs", () => {
+    it("reuses a command grant in a read-only job (Codex read access and an explicit read-only sandbox)", async () => {
+      for (const args of [{ access: "read" as const }, { access: "ask" as const, sandbox: "read-only" }, { access: "edit" as const, sandbox: "read-only" }]) {
+        const rc = context([allowed(), allowed()]);
+        expect(await turn(rc, job(), [command("npm test"), command("npm test")], args)).toEqual([true, true]);
         expect(rc.jobs!.askParent).toHaveBeenCalledTimes(1);
-        change();
-        expect((await req.approve!(command("./deploy.sh"))).allow).toBe(true);
-        return { sessionId: "saved", text: "done", isError: false, details: {} };
-      });
-      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
-      return vi.mocked(rc.jobs!.askParent).mock.calls.length;
-    }
-
-    it("asks again when the script is edited and committed, leaving a clean tree (M1: HEAD changed)", async () => {
-      writeFileSync(join(repo, "deploy.sh"), "echo one\n");
-      commitAll(repo, "one");
-      expect(await afterChange(() => {
-        writeFileSync(join(repo, "deploy.sh"), "echo two\n");
-        commitAll(repo, "two");
-        expect(git(repo, "status", "--porcelain")).toBe("");
-      })).toBe(2);
+      }
     });
 
-    it("asks again after a branch switch (M1: symbolic ref changed)", async () => {
-      writeFileSync(join(repo, "deploy.sh"), "echo one\n");
-      commitAll(repo, "one");
-      expect(await afterChange(() => git(repo, "checkout", "-q", "-b", "other"))).toBe(2);
+    it("never reuses a command in a workspace-write, full-access or edit job", async () => {
+      for (const args of [{ access: "edit" as const }, { access: "read" as const, sandbox: "workspace-write" }, { access: "read" as const, sandbox: "danger-full-access" }]) {
+        const rc = context([allowed(), allowed()]);
+        const j = job();
+        expect(await turn(rc, j, [command("npm test"), command("npm test")], args)).toEqual([true, true]);
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
+        expect(j.approvalGrants?.grants ?? []).toEqual([]);
+      }
     });
 
-    it("still reuses while HEAD, the branch and the files stay the same", async () => {
-      writeFileSync(join(repo, "deploy.sh"), "echo one\n");
-      commitAll(repo, "one");
-      expect(await afterChange(() => {})).toBe(1);
-    });
-
-    it("keeps no command grant in a repository with submodules", async () => {
-      writeFileSync(join(repo, ".gitmodules"), "[submodule \"lib\"]\n\tpath = lib\n\turl = ../lib\n");
+    it("never reuses a command when an auto-approved pattern names a server other than the Pair Desk", async () => {
       const rc = context([allowed(), allowed()]);
-      await turn(rc, job(), [command("npm test"), command("npm test")]);
+      await turn(rc, job(), [command("npm test"), command("npm test")], { allow_tools: ["files.write_file"] });
       expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
     });
 
-    it("keeps no command grant when a changed file is over the size cap (L1: fail closed)", async () => {
-      const cap = approvalReuseLimits.maxFileBytes;
-      // A small stand-in for a file over 64 MiB: lower the cap instead of writing a large file.
-      approvalReuseLimits.maxFileBytes = 8;
-      try {
-        writeFileSync(join(repo, "big.bin"), "0123456789abcdef");
-        expect(await treeState([repo], nullLogger)).toBeNull();
-        const rc = context([allowed(), allowed()]);
-        await turn(rc, job(), [command("npm test"), command("npm test")]);
+    it("asks when the job's access changes from read to edit between the grant and the reuse", async () => {
+      const rc = context([allowed(), allowed(), allowed()]);
+      // No access argument: the sandbox comes from the configuration, which changes while the job runs.
+      rc.cfg = { ...rc.cfg, codexSandbox: "read-only" };
+      const j = job();
+      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+        expect((await req.approve!(command("npm test"))).allow).toBe(true);
+        rc.cfg.codexSandbox = "workspace-write";
+        expect((await req.approve!(command("npm test"))).allow).toBe(true);
         expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
-      } finally { approvalReuseLimits.maxFileBytes = cap; }
-      expect(await treeState([repo], nullLogger)).not.toBeNull();
+        // Back to read-only: the grant made while it could write was not kept.
+        rc.cfg.codexSandbox = "read-only";
+        expect((await req.approve!(command("npm test"))).allow).toBe(true);
+        return { sessionId: "saved", text: "done", isError: false, details: {} };
+      });
+      await runDelegate(rc, "codex", { title: "reuse", prompt: "task" }, j.controller.signal, undefined, true, j);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
     });
 
-    it("hashes the same repository once, however its folder is spelled (L1)", async () => {
-      writeFileSync(join(repo, "a.txt"), "a\n");
-      mkdirSync(join(repo, "sub"));
-      const once = await treeState([repo], nullLogger);
-      expect(once).not.toBeNull();
-      const slashes = repo.replace(/\\/g, "/") + "/";
-      const spellings = [repo, slashes, join(repo, "sub"), ...(process.platform === "win32" ? [repo.toUpperCase(), repo.toLowerCase()] : [])];
-      expect(await treeState(spellings, nullLogger)).toBe(once);
-      // A second repository does count.
-      const other = join(home, "other");
-      mkdirSync(other);
-      gitInit(other);
-      expect(await treeState([repo, other], nullLogger)).not.toBe(once);
+    it("keeps no command grant when the job's access changes while the question waits", async () => {
+      const rc = context([]);
+      rc.cfg = { ...rc.cfg, codexSandbox: "read-only" };
+      rc.jobs!.askParent = vi.fn(async () => { rc.cfg.codexSandbox = "workspace-write"; return allowed(); });
+      const j = job();
+      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+        expect((await req.approve!(command("npm test"))).allow).toBe(true);
+        expect(j.approvalGrants?.grants ?? []).toEqual([]);
+        return { sessionId: "saved", text: "done", isError: false, details: {} };
+      });
+      await runDelegate(rc, "codex", { title: "reuse", prompt: "task" }, j.controller.signal, undefined, true, j);
     });
 
-    it("keeps no command grant for a folder outside a Git repository", async () => {
-      const plain = mkdtempSync(join(process.env.AGENT_BRIDGE_TEST_ROOT!, "plain-"));
-      try {
-        const rc = context([allowed(), allowed()]);
-        rc.cwd = () => plain;
-        const j = job();
-        const request = { ...command("npm test"), cwd: plain };
-        await turn(rc, j, [request, request]);
-        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
-      } finally { rmSync(plain, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+    it("reuses an identical MCP tool call in an edit job, and a command does not end it", async () => {
+      const rc = context([allowed(), allowed()]);
+      const j = job();
+      const mcp = hook("claude", "mcp__other__lookup", { query: "x" });
+      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+        expect((await req.approve!(mcp)).allow).toBe(true);
+        expect((await req.approve!(command("npm test"))).allow).toBe(true);
+        // Isolate the grant store from the per-server allow that covers the rest of the run.
+        j.allowedServers?.clear();
+        expect((await req.approve!(mcp)).allow).toBe(true);
+        return { sessionId: "saved", text: "done", isError: false, details: {} };
+      });
+      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(rc.jobs!.fromSubagent).mock.calls.some(([, body]) => body.includes("reused") && body.includes("mcp:other"))).toBe(true);
     });
+
+    it("runs no Git command and starts no process on the approval path", async () => {
+      const spawned = [childProcess.spawn, childProcess.spawnSync, childProcess.execFile, childProcess.execFileSync, childProcess.exec, childProcess.execSync, childProcess.fork, worktree.git].map((fn) => vi.mocked(fn));
+      const rc = context(Array.from({ length: 4 }, () => allowed()));
+      const j = job();
+      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+        for (const fn of spawned) fn.mockClear();
+        for (const r of [command("npm test"), command("npm test"), hook("claude", "mcp__other__lookup", {}), hook("claude", "Edit", { file_path: join(repo, "a.ts"), old_string: "a", new_string: "b" }), command("npm test")]) {
+          expect((await req.approve!(r)).allow).toBe(true);
+        }
+        expect(spawned.map((fn) => fn.mock.calls.length)).toEqual(spawned.map(() => 0));
+        return { sessionId: "saved", text: "done", isError: false, details: {} };
+      });
+      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(4);
+    });
+  });
+});
+
+describe("readOnlyJob", () => {
+  const ro = (target: string, permission: string, more: Partial<Parameters<typeof readOnlyJob>[0]> = {}) => readOnlyJob({ target, permission, allowPatterns: [], ...more });
+  it("counts only settings in which the job writes nothing without asking", () => {
+    expect(ro("codex", "read-only")).toBe(true);
+    expect(ro("codex", "workspace-write")).toBe(false);
+    expect(ro("codex", "danger-full-access")).toBe(false);
+    for (const mode of ["default", "manual", "plan"]) expect(ro("claude", mode)).toBe(true);
+    for (const mode of ["acceptEdits", "auto", "dontAsk", "bypassPermissions"]) expect(ro("claude", mode)).toBe(false);
+    expect(ro("opencode", "read-only")).toBe(true);
+    expect(ro("opencode", "auto-approve")).toBe(false);
+    for (const target of ["antigravity", "muse"]) {
+      expect(ro(target, "read")).toBe(true);
+      expect(ro(target, "ask")).toBe(true);
+      expect(ro(target, "edit")).toBe(false);
+    }
+    expect(ro("antigravity", "native", { bypassPermissions: false })).toBe(false);
+    expect(ro("antigravity", "read", { bypassPermissions: false })).toBe(false);
+    // A Muse profile may be named "read": a profile is never read-only.
+    expect(ro("muse", "read", { permissionProfile: "read" })).toBe(false);
+  });
+  it("fails closed for unknown targets, permissions and allow patterns", () => {
+    expect(ro("other", "read-only")).toBe(false);
+    expect(ro("codex", "")).toBe(false);
+    expect(ro("claude", "something-new")).toBe(false);
+    expect(ro("codex", "read-only", { allowPatterns: ["pair-desk:worker", "pair-desk.get_*", "pair-desk"] })).toBe(true);
+    expect(ro("codex", "read-only", { allowPatterns: ["pair-desk.get_*", "files.*"] })).toBe(false);
+    expect(ro("codex", "read-only", { allowPatterns: ["*"] })).toBe(false);
+    expect(ro("codex", "read-only", { allowPatterns: ["pair-desk-evil.write"] })).toBe(false);
   });
 });
 
