@@ -230,11 +230,14 @@ describe("AB-399 session liveness", () => {
 
   it("retires on PID reuse before a broker restart, using the recorded CLI start rather than the reconnect", async () => {
     hosts.set(CLI, "alive");
-    // The CLI started an hour ago; this broker first sees the session now (after its own restart).
-    const restarted = await session({ id: "restarted", name: "restarted", agent: "claude", agentPid: CLI, agentStartedAt: identityStartedAt(clock - 60 * 60_000) });
+    // Linux identities count ticks since boot, and CI machines boot minutes before the job: keep both starts after boot.
+    const bootMs = process.platform === "linux" ? Number(/^btime (\d+)$/m.exec(readFileSync("/proc/stat", "utf8"))![1]) * 1000 : clock - 2 * 60 * 60_000;
+    const span = clock - bootMs;
+    // The CLI started well before; this broker first sees the session now (after its own restart).
+    const restarted = await session({ id: "restarted", name: "restarted", agent: "claude", agentPid: CLI, agentStartedAt: identityStartedAt(bootMs + span / 4) });
     const { client } = await sender();
-    // The PID now belongs to a process started half an hour ago: after the CLI, before this broker's first hello.
-    reader.mockResolvedValue(new Map([[CLI, identityStartedAt(clock - 30 * 60_000)]]));
+    // The PID now belongs to a later process: after the CLI, before this broker's first hello.
+    reader.mockResolvedValue(new Map([[CLI, identityStartedAt(bootMs + span / 2)]]));
     await broker.sweepPeerLiveness();
     if (baselineFirst) {
       // Without exact start ticks the recorded identity may be in another time zone, so only the broker's own
