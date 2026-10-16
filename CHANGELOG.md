@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.30.27
 
 - **Claude Code: agent-bridge hooks run again.** Since 0.30.22 the Claude plugin's `hooks/hooks.json` named two hooks modules (`wake.ts` and `mail-scope.ts`); Claude Code loads one per plugin and refuses a second, so none of the plugin's hooks ran: sessions showed no busy/idle (grey in the dashboard), peer mail was not delivered through hooks and native subagents were not registered. One entry module (`hooks/index.ts`) now registers both mods.
 
