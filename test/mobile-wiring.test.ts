@@ -120,7 +120,16 @@ describe("unprepared host compatibility", () => {
     // Reviewed Muse quota/chat additions leave mobile routes and startup pinned.
     const withoutMuse = ui.replace('    readUsage("muse", cfg.museBin, home, log, cfg.museModel),\n', '')
       .replace('["claude", "codex", "opencode", "antigravity", "muse"].includes(local.agent)', '["claude", "codex", "opencode", "antigravity"].includes(local.agent)');
-    expect(sha(withoutMuse)).toBe(baseline.uiSha256);
+    // Reviewed recent-messages cache (0.30.26) reads no mobile state and leaves startup unchanged.
+    const recentStart = withoutMuse.indexOf("export function recentMessages(dbPath: string): MessageRow[] {\n  const signature");
+    const recentEnd = withoutMuse.indexOf("\n}\n", withoutMuse.indexOf("function messageFilesSignature(dbPath: string): string {"));
+    expect(recentStart, "recent-messages cache moved; review it against the pin").toBeGreaterThan(0);
+    const withoutRecentCache = (withoutMuse.slice(0, recentStart) + "export function recentMessages(dbPath: string): MessageRow[] {\n  return searchMessages(dbPath, { limit: MAX_MESSAGES });" + withoutMuse.slice(recentEnd))
+      .replace("/** Recent messages (one row per message, recipients joined), newest first; not the control messages to job runners. Read-only access.\n * Every dashboard refresh asked for them: the answer is reused until a message database or its WAL changes. */",
+        "/** Recent messages (one row per message, recipients joined), newest first; not the control messages to job runners. Read-only access. */")
+      .replace('import { existsSync, readFileSync, statSync } from "node:fs";', 'import { existsSync, readFileSync } from "node:fs";')
+      .replace('import { dirname, join } from "node:path";\nimport { ARCHIVE_DB_NAME } from "../core/sqlite-maintenance.js";', 'import { join } from "node:path";');
+    expect(sha(withoutRecentCache)).toBe(baseline.uiSha256);
   });
   it("does not open mobile stores, install timers/listeners or initialize a question service without preparation", async () => {
     const home = fixtureHome(), messages = new MessageStore(join(home, "bridge.db"), nullLogger), broker = new Broker("fixture-unused-pipe", messages, nullLogger, "fixture-token");
