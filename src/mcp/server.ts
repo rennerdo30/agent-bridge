@@ -1,6 +1,7 @@
 import { describeResourceSlots, formatResourceSlots, ResourceSlots } from "../core/resource-slots.js";
 import { bundleDirectory } from "../core/bundle-directory.js";
-import { MAX_HOLD_REASON_CHARS, setJobOutcome, deriveJobOutcome } from "../core/job-outcomes.js";
+import { MAX_HOLD_REASON_CHARS, setJobOutcome, deriveJobOutcome, readResultDelivery } from "../core/job-outcomes.js";
+import { readJobReport, resultDeliveryLabel } from "./final-result.js";
 import { closeJobWorktree } from "../core/job-close.js";
 import { readWorktreeState } from "../core/worktree-state.js";
 import { readOutcomeDecision } from "../core/job-outcomes.js";
@@ -52,7 +53,7 @@ import { formatInboxMessages, formatProjectRoute, formatReplyRestrictions, forma
 import { CodexWaker, type Activity } from "./codex-wake.js";
 import { reportModActivity } from "./hook-ownership.js";
 import { codexCallIdentity, codexMainThreadAdmission, type CodexCallIdentity } from "./codex-lineage.js";
-import { buildHookResponse, confirmAntigravityStopDelivery, confirmNativeChildDelivery, discardFinishedNotes, releaseAntigravityStopDelivery, type HookEvent } from "./hooks.js";
+import { buildHookResponse, completionAwaitingReceipt, confirmAntigravityStopDelivery, confirmNativeChildDelivery, discardFinishedNotes, releaseAntigravityStopDelivery, type HookEvent } from "./hooks.js";
 import { ACCESS_LEVELS, DELEGATION_TARGETS, nativeSubagentsSchema, usageProbeFor, type Access } from "./targets.js";
 import { askUserViaElicitation } from "./permissions.js";
 import { answerPendingApproval, listPendingApprovals, type PermissionDecision, type PermissionRequest } from "../core/relay.js";
@@ -400,7 +401,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
 
   const channelInFlight = new Set<string>();
   const pushChannel = async (m: BridgeMessage) => {
-    if (!channel || !node || m.hop >= cfg.maxHops || ctx.jobs?.isNote(m) || isQuietMessage(m)) return;
+    if (!channel || !node || completionAwaitingReceipt(ctx, m.id) || m.hop >= cfg.maxHops || ctx.jobs?.isNote(m) || isQuietMessage(m)) return;
     // Messages excluded from waking use hooks even during an active turn, avoiding a channel/hook race.
     if (!shouldWakeClaudeMessage(node, cfg, m)) return;
     if (!node.get(m.id) || channelInFlight.has(m.id)) return;
@@ -935,10 +936,19 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       description:
         "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity, Muse): name, agent type, busy/idle, uptime, working directory and session id. " +
         "Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
-      inputSchema: { native_child: z.string().optional().describe("Native Claude agent_id issued by its start hook; scopes this call to the child") },
+      inputSchema: { native_child: z.string().optional().describe("Native Claude agent_id issued by its start hook; scopes this call to the child"),
+        job: z.string().optional().describe("Return this supervisor's stored job report and receipt for one exact job name") },
       annotations: { readOnlyHint: true },
     },
-    guarded("peers", async () => {
+    guarded("peers", async (a: { job?: string }) => {
+      if (a.job) {
+        const job = await findJob(a.job);
+        if (!job || job.name !== a.job) return text("No job with that name is owned by this session.", true);
+        const report = job.report ?? (job.status === "running" ? null : readJobReport(ctx.home, job));
+        const receipt = report ? readResultDelivery(ctx.home, job) : null;
+        return text(JSON.stringify({ job: job.name, status: job.status, resultStored: typeof report === "string",
+          delivery: report ? resultDeliveryLabel({ report }, receipt?.status === "read") : null, receipt, report: report ?? null }));
+      }
       if (!node && ctx.parent) {
         const siblings = await ctx.parent.siblings.peers();
         // A runner already alive during an upgrade may still serve the earlier parent-link API.
@@ -1015,7 +1025,11 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       const recent = ctx.jobs?.recent() ?? [];
       if (recent.length) {
         lines.push(t("peers.recent"));
-        for (const j of recent) lines.push(t("peers.recentJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), status: j.status, ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }));
+        for (const j of recent) {
+          // The report text lives only in memory; the stored flag survives a restart.
+          const delivery = j.report || j.resultStored ? "result stored; query peers(job=...) for delivery receipt" : null;
+          lines.push(t("peers.recentJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), status: j.status + (delivery ? `; ${delivery}` : ""), ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }));
+        }
       }
       lines.push(...waits.pending(n).map(resumeWaitHint));
       for (const j of [...jobs, ...waiting, ...recent]) if (j.remote) lines.push(`Remote job ${j.name}: ${j.remote.host}/${j.remote.name}`);
@@ -1224,7 +1238,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         return text(msgs.length ? formatInboxMessages(msgs) : t("inbox.empty"));
       }
       const n = requireNode();
-      const msgs = n.unread().filter((m) => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
+      const msgs = n.unread().filter((m) => !completionAwaitingReceipt(ctx, m.id) && ((a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m))).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
       const children = await nativeChildSummary(n);
       if (msgs.length === 0) return text([t("inbox.empty"), ...children].join("\n"));
       if (a.mark_read !== false) n.markRead(msgs.map((m) => m.id));
@@ -1282,7 +1296,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       }, mode);
       const filters = record.filters;
       if (mode === "notify") {
-        const existing = n.unread().find((m) => matchesNotificationWait(filters, m));
+        const existing = n.unread().find((m) => !completionAwaitingReceipt(ctx, m.id) && matchesNotificationWait(filters, m));
         // An active channel may already be pushing this mail; leave acknowledgment to it to avoid two copies.
         if (existing && !ctx.channelActive()) {
           n.markRead([existing.id]);
@@ -1301,7 +1315,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
             return text(`Read receipt for ${filters.read_receipt_of}: ` + receipts.map((r) => `${r.recipient} consumed at ${new Date(r.readAt!).toISOString()}`).join(", ") + ". This confirms bridge consumption, not completed work.");
           }
         } else {
-          const m = await n.waitForMessage(timeout, (x) => matchesWait(filters, x), extra.signal);
+          const m = await n.waitForMessage(timeout, (x) => !completionAwaitingReceipt(ctx, x.id) && matchesWait(filters, x), extra.signal);
           if (m) {
             n.markRead([m.id]);
             waits.remove(record.id);
