@@ -151,6 +151,8 @@ interface Conn {
   registered?: boolean;
   /** Last cheap signal-0 probe of the session's CLI process (see hostExited). */
   hostProbe?: { at: number; exited: boolean };
+  /** The broker's own first identity reading of the session's CLI (POSIX without exact start ticks). */
+  hostBaseline?: string;
 }
 
 /**
@@ -162,8 +164,12 @@ interface Conn {
 const RETIRABLE_AGENTS: ReadonlySet<string> = new Set(["claude", "codex"]);
 /** Reuse of a signal-0 probe within one burst of view/send work (peers decorates every member). */
 const HOST_PROBE_MS = 1_000;
-/** Background creation-identity check of connected sessions (one batch query, never on a request). */
-const LIVENESS_SWEEP_MS = 60_000;
+/**
+ * Background creation-identity check of connected sessions (one batch query, never on a request). It only catches
+ * PID reuse (ESRCH is checked inline) and current servers already exit on parent loss (watchParent), so it runs at
+ * watchParent's identity cadence: on Windows each sweep starts one PowerShell process.
+ */
+const LIVENESS_SWEEP_MS = 10 * 60_000;
 /** Coarse start-time resolution (ps lstart has seconds) must never read as a later start. */
 const PID_REUSE_SLACK_MS = 2_000;
 const MAX_AGENT_HOSTS = 4_096;
@@ -1248,7 +1254,8 @@ export class Broker {
   setIdentityReader(reader: (pids: number[]) => Promise<Map<number, string>>): void { this.identityReader = reader; }
 
   private freezeAgentHost(peer: PeerInfo): void {
-    if (peer.jobAgent) return;
+    // Only retirable sessions need a frozen host; others would only cycle the bounded map.
+    if (peer.jobAgent || peer.subagent || !RETIRABLE_AGENTS.has(peer.agent)) return;
     const known = this.agentHosts.get(peer.id);
     if (known) { peer.agentPid = known.agentPid; peer.agentStartedAt = known.agentStartedAt; return; }
     if (this.agentHosts.size >= MAX_AGENT_HOSTS) this.agentHosts.delete(this.agentHosts.keys().next().value!);
@@ -1361,8 +1368,13 @@ export class Broker {
    */
   sweepPeerLiveness(): Promise<void> {
     if (this.livenessSweep) return this.livenessSweep;
-    const targets = [...this.conns].filter(conn => this.retirable(conn));
-    if (!targets.length || this.closing) return Promise.resolve();
+    // A host already gone (ESRCH) is retired inline; only hosts that still answer signal 0 need an identity read.
+    const targets = [...this.conns].filter(conn => this.retirable(conn) && !this.hostExited(conn));
+    if (!targets.length || this.closing) {
+      // No reader process while nothing needs one; liveConns starts the timer again for a new retirable session.
+      if (!targets.length && this.livenessTimer) { clearInterval(this.livenessTimer); this.livenessTimer = null; }
+      return Promise.resolve();
+    }
     const sweep = (async () => {
       let identities: Map<number, string>;
       try { identities = await this.identityReader(targets.map(conn => conn.peer!.agentPid!)); }
@@ -1372,8 +1384,17 @@ export class Broker {
         if (this.closing || !peer || !this.conns.has(conn) || !this.retirable(conn)) continue;
         const current = identities.get(peer.agentPid!);
         if (!current || current === peer.agentStartedAt) continue;
-        // After a broker restart the first hello here is the reconnect, so the recorded CLI start is the better bound.
-        const since = identityStartMs(peer.agentStartedAt!) ?? this.agentHosts.get(peer.id)?.firstHelloAt ?? peer.startedAt;
+        let since: number;
+        if (process.platform === "win32" || process.platform === "linux") {
+          // After a broker restart the first hello here is the reconnect, so the recorded CLI start is the better bound.
+          since = identityStartMs(peer.agentStartedAt!) ?? this.agentHosts.get(peer.id)?.firstHelloAt ?? peer.startedAt;
+        } else {
+          // ps lstart is local time in the printing process's zone, and the server's TZ may differ from the
+          // broker's: compare only with the broker's own first reading of this host.
+          const baseline = conn.hostBaseline ??= current;
+          if (current === baseline) continue;
+          since = identityStartMs(baseline) ?? this.agentHosts.get(peer.id)?.firstHelloAt ?? peer.startedAt;
+        }
         if (provenStartedAfter(current, since + PID_REUSE_SLACK_MS)) this.retire(conn, "pid_reused");
       }
     })().finally(() => { if (this.livenessSweep === sweep) this.livenessSweep = undefined; });

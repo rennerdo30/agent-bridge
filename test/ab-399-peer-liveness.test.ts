@@ -122,6 +122,17 @@ async function session(peer: Partial<PeerInfo> & { id: string; name: string; age
 }
 
 const sender = () => session({ id: "sender", name: "sender", agent: "codex", startedAt: clock + 1 });
+/** POSIX without exact start ticks compares only the broker's own readings: the first sweep records the baseline. */
+const baselineFirst = process.platform !== "win32" && process.platform !== "linux";
+/** A sweep that finds `identity` on the CLI PID, after a baseline sweep of the original CLI where one is needed. */
+async function sweepFinding(identity: string): Promise<void> {
+  if (baselineFirst) {
+    reader.mockResolvedValue(new Map([[CLI, identityStartedAt(clock - 2 * 60 * 60_000)]]));
+    await broker.sweepPeerLiveness();
+  }
+  reader.mockResolvedValue(new Map([[CLI, identity]]));
+  await broker.sweepPeerLiveness();
+}
 const names = async (client: BridgeClient) => (await client.request("peers", {})).map(p => p.name).sort();
 /** Past the cached signal-0 probe of one request burst. */
 const later = () => { clock += 5_000; };
@@ -199,8 +210,7 @@ describe("AB-399 session liveness", () => {
     hosts.set(CLI, "alive");
     const reused = await session({ id: "reused", name: "reused", agent: "claude", agentPid: CLI, agentStartedAt: "original-identity" });
     const { client } = await sender();
-    reader.mockResolvedValue(new Map([[CLI, identityStartedAt(clock + 60_000)]]));
-    await broker.sweepPeerLiveness();
+    await sweepFinding(identityStartedAt(clock + 60_000));
     expect(await names(client)).toEqual(["sender"]);
     await vi.waitFor(() => expect(reused.events).toContainEqual(["retired", { reason: "pid_reused", agentPid: CLI }]));
   });
@@ -226,8 +236,35 @@ describe("AB-399 session liveness", () => {
     // The PID now belongs to a process started half an hour ago: after the CLI, before this broker's first hello.
     reader.mockResolvedValue(new Map([[CLI, identityStartedAt(clock - 30 * 60_000)]]));
     await broker.sweepPeerLiveness();
+    if (baselineFirst) {
+      // Without exact start ticks the recorded identity may be in another time zone, so only the broker's own
+      // readings count: reuse before its first reading is left to the server's own parent watch (fails safe).
+      expect(await names(client)).toEqual(["restarted", "sender"]);
+      expect(restarted.events.map(([ev]) => ev)).not.toContain("retired");
+      return;
+    }
     expect(await names(client)).toEqual(["sender"]);
     await vi.waitFor(() => expect(restarted.events).toContainEqual(["retired", { reason: "pid_reused", agentPid: CLI }]));
+  });
+
+  it("reads only hosts that still answer signal 0, and stops the sweep timer when none are left", async () => {
+    hosts.set(CLI, "alive"); hosts.set(OTHER_CLI, "alive");
+    await session({ id: "live-host", name: "live-host", agent: "claude", agentPid: CLI, agentStartedAt: "live-identity" });
+    await session({ id: "gone-host", name: "gone-host", agent: "codex", agentPid: OTHER_CLI, agentStartedAt: "gone-identity" });
+    const { client } = await sender();
+    later(); await client.request("peers", {});
+    const timer = () => (broker as unknown as { livenessTimer: unknown }).livenessTimer;
+    expect(timer()).not.toBeNull();
+    hosts.set(OTHER_CLI, "ESRCH");
+    later();
+    await broker.sweepPeerLiveness();
+    expect(reader).toHaveBeenCalledTimes(1);
+    expect(reader.mock.calls[0]![0]).toEqual([CLI]);
+    hosts.set(CLI, "ESRCH");
+    later();
+    await broker.sweepPeerLiveness();
+    expect(reader).toHaveBeenCalledTimes(1);
+    expect(timer()).toBeNull();
   });
 
   it("refuses a dead-CLI server before session recovery, replacement or mail claims", async () => {
@@ -376,8 +413,7 @@ describe("AB-399 nodes that ignore the retired event", () => {
     hosts.set(CLI, "alive");
     const first = await session({ id: "reused-legacy", name: "reused-legacy", agent: "codex", agentPid: CLI, agentStartedAt: "original-identity" });
     const { client } = await sender();
-    reader.mockResolvedValue(new Map([[CLI, identityStartedAt(clock + 60_000)]]));
-    await broker.sweepPeerLiveness();
+    await sweepFinding(identityStartedAt(clock + 60_000));
     await vi.waitFor(() => expect(first.events).toContainEqual(["retired", { reason: "pid_reused", agentPid: CLI }]));
     const run = await oldNodeHellos({ id: "reused-legacy", name: "reused-legacy", agent: "codex", agentPid: CLI, agentStartedAt: "original-identity" }, 10 * 60_000, 200);
     expect(run.elapsed).toBeGreaterThanOrEqual(10 * 60_000);
