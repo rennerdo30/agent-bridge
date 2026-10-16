@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.30.30
+
+- **Muse stays usable after an update.** Reinstalling the Muse plugin left it disabled with its hooks and MCP server unapproved, so Muse denied every shell and write tool ("agent-bridge permission gate unavailable") until `muse plugins enable` and `approve` were run by hand. An update now re-enables and re-approves the plugin when it was enabled before; a plugin you disabled stays disabled.
+
 ## 0.30.29
 
 - **Broker no longer stalls on job-mail routing.** Routing re-reads the job listing once per job. The listing (about 28 MB on a home with ~1,700 jobs, one with a 6 MB delivery) did not fit the 8 MB archive cache, so every pass decoded every job once per job on the main thread (over a full core, pings timing out). Whole snapshots now have a 64 MB budget; the dashboard's job listing is reused across refreshes too.
