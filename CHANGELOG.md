@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.30.25
 
 - **Dashboard: fast again with many archived runs.** A packed (archived) run's index entry keeps the identity of the original log, but its file is the retained copy in `cold/`. The preview read compared the two, which always failed, so on every refresh each packed run was opened again and then left out of the list: with ~1,700 packed runs every dashboard request took about 9 s and the broker used a full core. Packed runs now skip that comparison (their copy is immutable), are cached after the first read and appear in the run list again.
 - **Updater: the Muse note now says to enable a disabled plugin before approving it.** On a disabled plugin `muse plugins approve agent-bridge` reports "no runtime capabilities match".
