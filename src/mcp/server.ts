@@ -82,6 +82,7 @@ import { guardServerErrors } from "./job-runner-errors.js";
 import { NODE_STOP_MS, runShutdownSteps, SHUTDOWN_DEADLINE_MS, shouldYieldTo, watchParent, type ShutdownStep } from "./server-lifecycle.js";
 import { parentProcessIdentity } from "../core/process-identity.js";
 import { ClaudeMailScopes, CLAUDE_CHILD_STATUS_TOOLS, isClaudeMailTool } from "./claude-mail-scope.js";
+import { boundMcpText, MCP_TEXT_LIMIT, pageMcpLines, takeMcpEntries } from "./output-bounds.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
 
@@ -94,6 +95,7 @@ const CODEX_SANDBOX_META = "codex/sandbox-state-meta";
 const MAX_TITLE_CHARS = 80;
 /** The tools a delegated subagent's server offers (see registerTools). */
 const SUBAGENT_TOOLS = new Set(["health", "peers", "send", "report_progress", "hook_event", "search_history", "get_conversation"]);
+const BOUNDED_LIST_TOOLS = new Set(["peers", "inbox", "decisions", "search_history", "list_models", "usage_limits", "network_status", "resource_slots", "get_conversation"]);
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 /** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
 const STAND_IN_RECHECK_MS = 30_000;
@@ -736,7 +738,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
             if (name === "decisions") {
               const decisions = await node.decisions({ query: a.query as string | undefined, history: a.history as boolean | undefined,
                 scope: { project: ctx.cwd() }, session: child.address });
-              return text(JSON.stringify(decisions.filter(d => decisionApplies(d, { id: child.address, name: child.address, sessionId: child.address, cwd: ctx.cwd() }))));
+              return text(boundMcpText(JSON.stringify(decisions.filter(d => decisionApplies(d, { id: child.address, name: child.address, sessionId: child.address, cwd: ctx.cwd() })))));
             }
             if (name === "network_status") {
               const status = await node.networkStatus();
@@ -750,7 +752,9 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
               finally { slots.close(); }
             }
             // Model catalogues and account quota summaries are shared read-only status.
-            return await fn(args, extra);
+            const result = await fn(args, extra);
+            for (const item of result.content) if (item.type === "text") item.text = boundMcpText(item.text);
+            return result;
           }
           if (name === "send" && a.message_kind !== undefined) throw new BridgeError("unauthorized", "Native child send does not support parent message_kind routing.");
           if (name === "send" && a.mode !== undefined) {
@@ -765,16 +769,27 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           const identity = `Your native child bridge address is ${child.address}. Parent: ${child.parent}.`;
           if (name === "peers") {
             const jobs = (await node.projectJobs()).filter(j => j.owner === child.parent && j.supervisor === node.currentSessionId);
-            return text([identity, ...jobs.map(j => `${j.name} (${j.agent}, ${j.status})`), `Explicit send_to grants: ${child.sendTo.join(", ") || "none"}`].join("\n"));
+            const visible = jobs.filter(j => (!a.project || ctx.cwd().toLowerCase().includes(String(a.project).toLowerCase())) &&
+              (!a.agent || j.agent === a.agent) && (!a.status || j.status === a.status) &&
+              (!a.name || String(j.name).toLowerCase().includes(String(a.name).toLowerCase())));
+            const full = [identity, ...visible.map(j => `${j.name} (${j.agent}, ${j.status})`), `Explicit send_to grants: ${child.sendTo.join(", ") || "none"}`].join("\n");
+            if (full.length <= MCP_TEXT_LIMIT && a.limit === undefined && a.offset === undefined) return text(full);
+            const page = pageMcpLines(visible.map(j => `${j.name} (${j.agent}, ${j.status})`),
+              { offset: a.offset as number | undefined, limit: a.limit as number | undefined });
+            return text(boundMcpText([identity, ...page.entries, `Jobs: ${visible.length}; next offset: ${page.nextOffset ?? "none"}.`,
+              `Explicit send_to grants: ${child.sendTo.join(", ") || "none"}`].join("\n")));
           }
           if (name === "search_history") {
             // Only the child's own mail: its address pins the session filter, and messages only.
             const result = await node.searchHistory({ query: String(a.query), limit: a.limit as number | undefined,
               filters: { ...(a.filters as HistorySearch["filters"]), session: child.address, kind: "message" } });
-            return text(`${identity}\n${JSON.stringify(result)}`);
+            return text(boundMcpText(`${identity}\n${JSON.stringify(result)}`));
           }
           if (name === "inbox") {
-            const messages = (await node.nativeChildPending(childId)).filter(m => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, typeof a.limit === "number" ? a.limit : HOOK_MAX_MESSAGES);
+            const pending = (await node.nativeChildPending(childId)).filter(m => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, typeof a.limit === "number" ? a.limit : HOOK_MAX_MESSAGES);
+            const fit = takeMcpEntries(pending, ms => `${identity}\n\n${formatMessages(ms)}`);
+            if (fit.oversizedFirst) return text(boundMcpText(`${identity}\n\n${formatMessages(pending.slice(0, 1))}\nMessage remains unread because it exceeds the MCP frame. Use search_history to locate its retained conversation.`));
+            const messages = fit.entries;
             if (a.mark_read !== false && messages.length) await node.nativeChildAck(childId, messages.map(m => m.id));
             return text(`${identity}\n\n${messages.length ? formatMessages(messages) : "No unread native child mail."}`);
           }
@@ -800,6 +815,9 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           const report = modeReport("auto");
           result.content.unshift({ type: "text", text: formatModeReport(report) });
           result.structuredContent = { ...result.structuredContent, mode: report };
+        }
+        if (BOUNDED_LIST_TOOLS.has(name)) for (const item of result.content) {
+          if (item.type === "text") item.text = boundMcpText(item.text);
         }
         return result;
       } catch (err) {
@@ -937,10 +955,21 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         "List the open agent sessions on this machine (Claude Code, Codex, opencode, Antigravity, Muse): name, agent type, busy/idle, uptime, working directory and session id. " +
         "Also shows your own name and settings, your running subagents and the latest unread file-transfer progress on request. Delegated jobs see their parent and siblings (job name, title, agent and status). Use it to pick whom to message.",
       inputSchema: { native_child: z.string().optional().describe("Native Claude agent_id issued by its start hook; scopes this call to the child"),
-        job: z.string().optional().describe("Return this supervisor's stored job report and receipt for one exact job name") },
+        job: z.string().optional().describe("Return this supervisor's stored job report and receipt for one exact job name"),
+        agent: z.enum(CODING_AGENTS as unknown as [string, ...string[]]).optional(),
+        project: z.string().max(256).optional().describe("Project folder substring"),
+        status: z.string().max(64).optional().describe("Peer activity or job status"),
+        name: z.string().max(256).optional().describe("Case-insensitive name or title substring"),
+        limit: z.number().int().min(1).max(500).optional(),
+        offset: z.number().int().nonnegative().optional() },
       annotations: { readOnlyHint: true },
     },
-    guarded("peers", async (a: { job?: string }) => {
+    guarded("peers", async (a: { job?: string; agent?: string; project?: string; status?: string; name?: string; limit?: number; offset?: number }) => {
+      const matches = (entry: { name?: string; title?: string; agent?: string; status?: string; activity?: string | null; cwd?: string; workdir?: string | null; projectRoot?: string; args?: unknown }) =>
+        (!a.agent || entry.agent === a.agent) &&
+        (!a.project || (entry.cwd ?? entry.workdir ?? entry.projectRoot ?? "").toLowerCase().includes(a.project.toLowerCase())) &&
+        (!a.status || (entry.status ?? entry.activity ?? "").toLowerCase() === a.status.toLowerCase()) &&
+        (!a.name || `${entry.name ?? ""} ${entry.title ?? ""} ${isRecord(entry.args) ? entry.args.title ?? "" : ""}`.toLowerCase().includes(a.name.toLowerCase()));
       if (a.job) {
         const job = await findJob(a.job);
         if (!job || job.name !== a.job) return text("No job with that name is owned by this session.", true);
@@ -950,13 +979,14 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           delivery: report ? resultDeliveryLabel({ report }, receipt?.status === "read") : null, receipt, report: report ?? null }));
       }
       if (!node && ctx.parent) {
-        const siblings = await ctx.parent.siblings.peers();
+        const allSiblings = await ctx.parent.siblings.peers();
+        const siblings = allSiblings.filter(matches);
         // A runner already alive during an upgrade may still serve the earlier parent-link API.
         const policy = await ctx.parent.siblings.policy?.().catch((err: unknown) => {
           if (String(err).includes("not found")) return undefined;
           throw err;
         });
-        return text([
+        const siblingLines = [
           ...await probeBrokerHealth(resolvePipePath(home), log).then(h => h ? [formatHealth(h)] : []).catch(() => []),
           `You are a delegated job of ${ctx.parent.name}. Use send(to="${ctx.parent.name}", message=...) to message your parent.`,
           siblings.length ? "Sibling and explicitly granted jobs:" : "No sibling jobs are available right now.",
@@ -965,7 +995,11 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           ...(ctx.jobs?.list().map((j) => `Your child: ${j.name}${j.args?.title ? ` "${j.args.title}"` : ""} (${j.agent}, ${j.status})`) ?? []),
           ...(policy ? [`Sibling threads allow ${policy.maxHops} messages, including the first message. Incoming messages show replies remaining before you compose.`,
             `Explicit send_to grants: ${policy.sendTo.length ? policy.sendTo.join(", ") : "none"}. Only these exact external session or job names are allowed. External jobs need their own reciprocal grant to reply.`] : []),
-        ].join("\n"));
+        ];
+        if (siblingLines.join("\n").length <= MCP_TEXT_LIMIT && a.limit === undefined && a.offset === undefined) return text(siblingLines.join("\n"));
+        const page = pageMcpLines(siblings.map(s => `- ${s.name}${s.title ? ` "${s.title}"` : ""} (${s.agent}, ${s.status})`), { offset: a.offset, limit: a.limit ?? 100 });
+        return text(boundMcpText([`Sibling jobs: ${allSiblings.length} total, ${siblings.length} match.`, ...page.entries,
+          `Returned ${page.entries.length}; next offset: ${page.nextOffset ?? "none"}.`].join("\n")));
       }
       const n = requireNode();
       const peers = await n.peers();
@@ -973,9 +1007,11 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       await n.refreshPending();
       const shared = await n.projectJobs();
       // Job runners are this or another session's subagents, not sessions (an older broker still lists them).
-      const others = peers.filter((p) => p.id !== n.id && !p.id.startsWith("job:"));
+      const allOthers = peers.filter((p) => p.id !== n.id && !p.id.startsWith("job:"));
+      const others = allOthers.filter(matches);
+      const versionLines = formatVersionSkew(peers);
       const lines = [
-        ...formatVersionSkew(peers),
+        ...versionLines,
         t("peers.self", {
           name: n.name,
           broker: n.isBroker ? t("common.yes") : t("common.no"),
@@ -992,10 +1028,11 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       if (quietCount) lines.push(`${quietCount} retained quiet message(s), available with inbox(include_quiet=true) or history; excluded from actionable unread mail.`);
       const load = await n.brokerLoad().catch(() => null); // Earlier brokers do not expose the additive load probe.
       if (load && load.connectedJobs > load.testedJobs) lines.push(`Broker load warning: ${load.connectedJobs} jobs are connected; the load check covered ${load.testedJobs}. Queue additional work to stay within the measured load.`);
-      const groupPeers = peers.filter((p) => p.projectGroup && !p.host);
+      const groupPeers = peers.filter((p) => p.projectGroup && !p.host && matches(p));
       if (groupPeers.length) lines.push("Local project groups:", ...groupPeers.map((p) => `- ${p.projectAddress}: ${p.name} (${p.projectMain ? "main" : "secondary"}${p.unavailable ? ", unavailable" : ""})`));
       for (const p of groupPeers.filter((p) => p.projectMain && p.projectRoute)) lines.push(formatProjectRoute(p.projectRoute!));
-      if (shared.length) lines.push("Project jobs (shared local authority):", ...shared.map((j) => `- ${j.name} (${j.agent}, ${j.status}; primary ${j.owner})${isRecord(j.args) && j.args.title ? ` \"${j.args.title}\"` : ""}`));
+      const visibleShared = shared.filter(matches);
+      if (visibleShared.length) lines.push("Project jobs (shared local authority):", ...visibleShared.map((j) => `- ${j.name} (${j.agent}, ${j.status}; primary ${j.owner})${isRecord(j.args) && j.args.title ? ` \"${j.args.title}\"` : ""}`));
       const transferNotes = new Map<string, BridgeMessage>();
       for (const message of n.unread()) {
         if (message.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX)) transferNotes.set(message.conversationId, message);
@@ -1010,19 +1047,22 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         try { slotLines = formatResourceSlots(slots.snapshot(), cfg.resourceSlots); } finally { slots.close(); }
         if (slotLines.length) lines.push("Resource slots (holders, then the queue in order):", ...slotLines);
       } catch { /* Slot state is advisory in peers; the slot CLI reports its own errors. */ }
-      const jobs = ctx.jobs?.list() ?? [];
+      const allJobs = ctx.jobs?.list() ?? [];
+      const jobs = allJobs.filter(matches);
       if (jobs.length) {
         lines.push(t("peers.jobs", { count: jobs.length }));
         for (const j of jobs) {
           lines.push(t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.etaAt !== undefined ? t("peers.eta", { minutes: Math.max(0, Math.ceil((j.etaAt - Date.now()) / 60_000)) }) + " · " : "") + (j.progress ?? "starting") }));
         }
       }
-      const waiting = ctx.jobs?.waiting() ?? [];
+      const allWaiting = ctx.jobs?.waiting() ?? [];
+      const waiting = allWaiting.filter(matches);
       if (waiting.length) {
         lines.push(t("peers.waiting", { count: waiting.length, max: ctx.jobs!.limit }));
         for (const j of waiting) lines.push(t("peers.waitingJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), messages: j.queue.length }));
       }
-      const recent = ctx.jobs?.recent() ?? [];
+      const allRecent = ctx.jobs?.recent() ?? [];
+      const recent = allRecent.filter(matches);
       if (recent.length) {
         lines.push(t("peers.recent"));
         for (const j of recent) {
@@ -1033,7 +1073,17 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       }
       lines.push(...waits.pending(n).map(resumeWaitHint));
       for (const j of [...jobs, ...waiting, ...recent]) if (j.remote) lines.push(`Remote job ${j.name}: ${j.remote.host}/${j.remote.name}`);
-      return text(lines.join("\n"));
+      if (lines.join("\n").length <= MCP_TEXT_LIMIT && a.limit === undefined && a.offset === undefined) return text(lines.join("\n"));
+      const counts = `Counts: ${allOthers.length} live peers, ${groupPeers.length} local group entries, ${shared.length} project jobs, ${allJobs.length} own jobs, ${allWaiting.length} waiting, ${allRecent.length} recent.`;
+      const summary = [lines[versionLines.length] ?? "", counts,
+        ...jobs.filter(j => j.status === "running").map(j => `- ${j.name} (${j.agent}, ${j.status})`),
+        ...others.map(p => formatPeer(p)),
+        ...jobs.filter(j => j.status !== "running").map(j => `- ${j.name} (${j.agent}, ${j.status})`),
+        ...visibleShared.map(j => `- ${j.name} (${j.agent}, ${j.status}; primary ${j.owner})`),
+        ...waiting.map(j => `- ${j.name} (${j.agent}, waiting)`),
+        ...recent.map(j => `- ${j.name} (${j.agent}, ${j.status})`)];
+      const page = pageMcpLines(summary, { offset: a.offset, limit: a.limit ?? 100 });
+      return text(boundMcpText([...page.entries, `Returned ${page.entries.length} of ${summary.length} summary lines; next offset: ${page.nextOffset ?? "none"}. Use peers(limit=..., offset=...) or filters for more.`].join("\n")));
     }),
   );
 
@@ -1233,13 +1283,19 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     },
     guarded("inbox", async (a: { mark_read?: boolean; limit?: number; include_quiet?: boolean }) => {
       if (ctx.childInbox) {
-        const msgs = ctx.childInbox.unread().filter((m) => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
+        const pending = ctx.childInbox.unread().filter((m) => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
+        const fit = takeMcpEntries(pending, formatInboxMessages);
+        if (fit.oversizedFirst) return text(boundMcpText(`${formatInboxMessages(pending.slice(0, 1))}\nMessage remains unread because it exceeds the MCP frame. Use search_history to locate its retained conversation.`));
+        const msgs = fit.entries;
         if (a.mark_read !== false) ctx.childInbox.markRead(msgs.map((m) => m.id));
         return text(msgs.length ? formatInboxMessages(msgs) : t("inbox.empty"));
       }
       const n = requireNode();
-      const msgs = n.unread().filter((m) => !completionAwaitingReceipt(ctx, m.id) && ((a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m))).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
+      const pending = n.unread().filter((m) => !completionAwaitingReceipt(ctx, m.id) && ((a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m))).slice(0, a.limit ?? HOOK_MAX_MESSAGES);
       const children = await nativeChildSummary(n);
+      const fit = takeMcpEntries(pending, ms => [formatInboxMessages(ms), ...children].join("\n"));
+      if (fit.oversizedFirst) return text(boundMcpText(`${formatInboxMessages(pending.slice(0, 1))}\nMessage remains unread because it exceeds the MCP frame. Use search_history to locate its retained conversation.`));
+      const msgs = fit.entries;
       if (msgs.length === 0) return text([t("inbox.empty"), ...children].join("\n"));
       if (a.mark_read !== false) n.markRead(msgs.map((m) => m.id));
       return text([formatInboxMessages(msgs), ...children].join("\n"));
