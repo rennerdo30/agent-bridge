@@ -57,9 +57,13 @@ describe("MCP tool allow-list", () => {
       ];
       for (const request of requests) {
         expect(isAutoApproved(request, [`pair-desk.${tool.split("_")[0]}_*`])).toBe(true);
-        expect(isAutoApproved(request, ["pair-desk:worker"])).toBe(true);
+        // Creating issues is not part of the worker preset (AB-403); it needs its own grant.
+        const worker = tool !== "create_issue";
+        expect(isAutoApproved(request, ["pair-desk:worker"])).toBe(worker);
+        expect(isAutoApproved(request, ["pair-desk.create_issue"])).toBe(tool === "create_issue");
         expect(isAutoApproved(request, ["pair-desk.get_*", "pair-desk.list_*"])).toBe(false);
-        expect(approvalHint(request)).toContain("pair-desk:worker");
+        if (worker) expect(approvalHint(request)).toContain("pair-desk:worker");
+        else expect(approvalHint(request)).not.toContain("pair-desk:worker");
       }
     }
   });

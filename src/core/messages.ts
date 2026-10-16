@@ -17,6 +17,7 @@ export const en = {
   "jobs.accessRead": "It runs read-only: it can look but not change files or commit. To let it edit, start it with access=\"edit\" (or worktree=true).",
   "jobs.accessEdit": "It may change files.",
   "jobs.accessAsk": "It asks the user before changing files or running commands.",
+  "jobs.accessDeskDefault": "Pair Desk worker writes (comments, progress, plans, steps, issue edits) are still allowed without asking, by the default allow_tools; start it with allow_tools=[] to turn that off.",
   "jobs.started": "Subagent {name} started. Keep working; its result will arrive as a message from \"{name}\" (or call wait_for_message with from=\"{name}\").",
   "jobs.limit": "Too many subagents running (maximum {max}). Wait for one to finish or cancel one; if your user wants more at once, max_subagents raises the limit.",
   "jobs.cancelled": "Cancelled subagent {name}.",
