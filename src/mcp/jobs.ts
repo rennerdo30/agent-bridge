@@ -709,7 +709,8 @@ export class JobManager {
     }
     for (const saved of stored) {
       // A turn whose executor is proven gone never reverts to "running" from its stale durable record.
-      const s = saved.status === "running" && !saved.host && this.deadExecutorTurns.get(saved.id) === inlineTurn(saved) ? { ...saved, status: "interrupted" as const } : saved;
+      const s = saved.status === "running" && !saved.host && this.deadExecutorTurns.get(saved.id) === inlineTurn(saved) ? { ...saved, status: "interrupted" as const }
+        : this.running.has(saved.id) || this.foreground.has(saved.id) ? saved : settleStalePause(saved, this.node.name);
       if (!this.own.has(s.id) && !this.canRestoreSaved(s)) continue;
       const directlyOwned = this.lineage ? s.parentJob === this.lineage.parentJob : this.isMine(s.owner) && !s.parentJob;
       let job = this.history.get(s.id);
@@ -949,11 +950,8 @@ export class JobManager {
       }
       const hosted = (s.status === "running" || s.status === "paused" && s.pausePending) && Boolean(s.host);
       const mine = this.isMine(s.owner);
-      // An inline turn's pause was pending when its executor ended: no runner can finish it, so it is simply paused.
-      const pauseSettled = s.status === "paused" && s.pausePending === true && !s.host && !(s.executionPid && s.executionPid !== process.pid && pidAlive(s.executionPid));
       const job: Job = {
-        ...s,
-        ...(pauseSettled ? { pausePending: false } : {}),
+        ...settleStalePause(s, this.node.name),
         recoveredRecord: cloneJson(s) as unknown as Record<string, unknown>,
         status: s.status === "running" && !(hosted && !mine) ? "interrupted" : s.status,
         controller: new AbortController(),
@@ -1616,8 +1614,9 @@ export class JobManager {
 
   private refreshControlTurn(job: Job): void {
     if (!this.storePath) return;
-    const saved = readStoredJob(this.storePath, job.id, job.name, this.log);
-    if (!saved) return;
+    const stored = readStoredJob(this.storePath, job.id, job.name, this.log);
+    if (!stored) return;
+    const saved = this.running.has(job.id) || this.foreground.has(job.id) ? stored : settleStalePause(stored, this.node.name);
     if (saved.startedAt > job.startedAt || !this.running.has(job.id) && !this.foreground.has(job.id)) {
       if (saved.startedAt > job.startedAt) job.controller = new AbortController();
       Object.assign(job, saved, { sessionId: saved.sessionId ?? job.sessionId, workdir: saved.workdir ?? job.workdir, worktree: saved.worktree ?? job.worktree });
@@ -2207,23 +2206,26 @@ export class JobManager {
   }
 
   private startPaused(job: Job): void {
-    // Recorded while it waits, so a restart keeps its resume (and its place in the slot queue).
+    if (!job.waitingForStart && (!job.resume || !job.sessionId)) throw new Error(`${job.name} has no retained session to resume.`);
+    // Recorded (and saved before any ownership refresh re-reads the store) while it waits, so a restart keeps
+    // its resume, its single resume note and its place in the slot queue.
     job.resumeRequested = true;
+    if (!job.waitingForStart) {
+      const note = pausedNote(job);
+      if (job.queue[0] !== note) job.queue.unshift(note);
+    }
+    this.persist();
     if (job.waitingForStart) {
       const run = this.pendingRuns.get(job.id);
       if (run && this.canStart()) { this.pendingRuns.delete(job.id); this.launch(job, run); return; }
       // Without its prepared run (a restart dropped it), the slot loop rebuilds it from the saved prompt.
       this.waitForSlot(job);
-      this.persist();
       this.startWaiting();
       return;
     }
-    if (!job.resume || !job.sessionId) { job.resumeRequested = false; throw new Error(`${job.name} has no retained session to resume.`); }
-    const note = pausedNote(job);
-    if (job.queue[0] !== note) job.queue.unshift(note);
-    if (!this.canStart()) { this.waitForSlot(job); this.persist(); return; }
+    if (!this.canStart()) { this.waitForSlot(job); return; }
     let run: Run;
-    try { run = job.resume(usageContinuationMessage(job), job.sessionId, job.workdir, job.worktree); }
+    try { run = job.resume!(usageContinuationMessage(job), job.sessionId!, job.workdir, job.worktree); }
     catch (error) { job.resumeRequested = false; this.failContinuation(job, error); throw error; }
     this.launch(job, run);
   }
@@ -2774,4 +2776,16 @@ export function acquireLock(path: string, waitMs = LOCK_WAIT_MS, nonBlockingReco
 /** The single note a resumed job gets ahead of its queued messages. */
 function pausedNote(job: Pick<Job, "pauseReason">): string {
   return `You were paused (${job.pauseReason ?? "supervisor request"}); continue exactly where you stopped.`;
+}
+
+/**
+ * An inline turn whose pause was still pending when its executing process ended: no runner can finish that
+ * turn, so the job is simply paused (and resumable) from now on (AB-398 M1).
+ */
+function settleStalePause<T extends Pick<Job, "status" | "pausePending" | "host" | "executionPid" | "executionOwner">>(saved: T, me: string): T {
+  if (saved.status !== "paused" || saved.pausePending !== true || saved.host) return saved;
+  // Another live executor may still finish its turn; this session's own record of its pid means a restarted executor.
+  if (saved.executionOwner && saved.executionOwner !== me) return saved;
+  if (saved.executionPid && saved.executionPid !== process.pid && pidAlive(saved.executionPid)) return saved;
+  return { ...saved, pausePending: false };
 }
