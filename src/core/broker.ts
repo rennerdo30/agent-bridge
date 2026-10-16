@@ -9,7 +9,7 @@ import { recordStorePeer, refreshStorePeerIdentities, validStoreCapabilities } f
 import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { readMusePrivateJson, readMusePrivateJsonAsync, writeMusePrivateJsonAsync } from "./muse-context.js";
-import { ownProcessIdentity, processIdentity } from "./process-identity.js";
+import { ownProcessIdentity, processIdentity, isProcessIdentityAlive } from "./process-identity.js";
 import { isPluginCacheCwd } from "./session-visibility.js";
 import { createServer, type Server, type Socket } from "node:net";
 import {
@@ -1173,7 +1173,42 @@ export class Broker {
     return publicPeer;
   }
 
-  private localPeers(): PeerInfo[] { return [...this.conns].flatMap((c) => c.peer ? [c.peer] : []); }
+  private readonly peerLiveness = new Map<string, { live: boolean; expiresAt: number }>();
+
+  /** A connected MCP server may outlive its CLI parent. The retained DB name is history,
+   * while the socket stops representing a live session once its process identity is gone. */
+  private liveConns(): Conn[] {
+    return [...this.conns].filter((conn) => {
+      const peer = conn.peer;
+      if (!peer || conn.socket.destroyed) return false;
+      if (peer.jobAgent || !peer.agentStartedAt || !peer.agentPid) return true;
+      // A live socket with a non-existent claimed server PID is an unverifiable
+      // synthetic/legacy registration. Do not evict it based on a different PID.
+      try { process.kill(peer.pid, 0); }
+      catch { return true; }
+      const key = `${peer.agentPid}:${peer.agentStartedAt}`;
+      let state = this.peerLiveness.get(key);
+      // The cheap PID probe runs on each view/send. The identity probe is cached to
+      // avoid starting a PowerShell process on every broker request on Windows.
+      let exited = false;
+      try { process.kill(peer.agentPid, 0); }
+      catch (error) { exited = (error as NodeJS.ErrnoException).code === "ESRCH"; }
+      if (exited) state = { live: false, expiresAt: this.now() + 60_000 };
+      else if (!state || state.expiresAt <= this.now()) {
+        const observed = peer.agentStartedAt ? isProcessIdentityAlive(peer.agentPid, peer.agentStartedAt) : undefined;
+        state = { live: observed !== false, expiresAt: this.now() + 60_000 };
+      }
+      if (this.peerLiveness.size >= 256) this.peerLiveness.delete(this.peerLiveness.keys().next().value!);
+      this.peerLiveness.set(key, state);
+      if (!state.live) {
+        this.log.info("retiring session with exited CLI", { name: peer.name, agentPid: peer.agentPid });
+        conn.socket.end();
+      }
+      return state.live;
+    });
+  }
+
+  private localPeers(): PeerInfo[] { return this.liveConns().map((c) => c.peer!); }
 
   private projectPeer(peer: PeerInfo): PeerInfo {
     const decorated = this.groups.decorate(peer), key = decorated.projectGroup;
@@ -1243,7 +1278,7 @@ export class Broker {
   /** Project local runner lineage from durable jobs; do not alter broker routing identities. */
   private dashboardPeers(): PeerInfo[] {
     const jobs = this.storedJobs();
-    return [...this.conns].flatMap((c) => {
+    return this.liveConns().flatMap((c) => {
       const peer = c.peer;
       if (!peer) return [];
       const job = jobs.find((j) => j.name === peer.name || `job:${j.id}` === peer.id);
@@ -1254,7 +1289,7 @@ export class Broker {
   }
 
   private connByName(name: string): Conn | undefined {
-    for (const c of this.conns) if (c.peer?.name === name) return c;
+    for (const c of this.liveConns()) if (c.peer?.name === name) return c;
     return undefined;
   }
 
@@ -1939,7 +1974,7 @@ export class Broker {
   private recipientConn(name: string): Conn | undefined {
     const exact = this.connByName(name);
     if (exact) return exact;
-    const matches = [...this.conns].filter((c) => c.peer && this.store.namesFor(c.peer).includes(name));
+    const matches = this.liveConns().filter((c) => c.peer && this.store.namesFor(c.peer).includes(name));
     return matches.length === 1 ? matches[0] : undefined;
   }
 
@@ -2001,7 +2036,7 @@ export class Broker {
 
   /** Turns a sender-supplied target into live connections and/or offline queue keys. */
   private resolveTargets(to: string, sender: PeerInfo): { live: Conn[]; queued: string[]; skipped?: string[] } {
-    const all = [...this.conns].filter((c) => c.peer && c.peer.id !== sender.id);
+    const all = this.liveConns().filter((c) => c.peer && c.peer.id !== sender.id);
     // Broadcasts and agent kinds address sessions; job runners only get mail sent to them by name.
     const others = all.filter((c) => !c.peer!.jobAgent);
     if (to.startsWith("project:")) {
