@@ -2,7 +2,17 @@ import type { Register } from 'claude-code'
 
 type Engine = Parameters<Parameters<Parameters<Register>[0]>[2]>[0]
 const PREFIX = 'mcp__plugin_agent-bridge_bridge__'
-const TOOLS = ['inbox', 'wait_for_message', 'get_conversation', 'search_history']
+// Kept in sync with CLAUDE_SCOPED_TOOLS; this mod ships independently of src/.
+const TOOLS = [
+  'inbox', 'wait_for_message', 'get_conversation', 'search_history',
+  'health', 'ask_owner', 'withdraw_owner_question', 'decide', 'decisions',
+  'project_main', 'coordinator_availability', 'peers', 'send', 'send_status', 'native_child_grant',
+  'network_status', 'resource_slots', 'send_files', 'fetch_files', 'cancel_transfer',
+  'max_subagents', 'auto_wake', 'usage_limits', 'list_models', 'dashboard', 'set_job_outcome',
+  'handoff_subagents', 'message_subagent', 'cancel_subagent', 'report_progress',
+  ...['claude', 'codex', 'opencode', 'antigravity', 'muse'].flatMap(agent => [`ask_${agent}`, `spawn_${agent}`]),
+  'hook_event',
+]
 const TIMEOUT_MS = 1_500
 
 /** Only the host mod can reach this authenticated endpoint. Never show or retain grants. */
@@ -31,11 +41,16 @@ export const register: Register = on => {
   on('tool.call', { tool: TOOLS.map(tool => `${PREFIX}${tool}`) }, async ($, e, next) => {
     // agentId is pinned by Claude Code: changing it in next(e) is refused by the host.
     // No inference from the last hook or active child. Without a capability a parent call goes
-    // on unscoped; the server then serves parent mail only while no native child is live.
+    // on unscoped; the server admits parent tools only while no native child is live.
     const tool = e.tool.slice(PREFIX.length)
-    const token = await Promise.race([scope($, tool, e.agentId).catch(() => null), $.clock.sleep(TIMEOUT_MS).then(() => null)])
-    // A child call never legitimately needs unscoped mail: it could only reach parent mail.
-    if (token === null && e.agentId !== undefined) return { deny: 'Bridge mail scope for this native child could not be obtained; child mail remains queued for hooks.' }
+    // Native lifecycle hooks call MCP directly. A model must never impersonate a hook,
+    // including a child's forged SubagentStop that would remove the live-child gate.
+    if (tool === 'hook_event') return { deny: 'hook_event is reserved for native lifecycle hooks.' }
+    const fetchScope = () => Promise.race([scope($, tool, e.agentId).catch(() => null), $.clock.sleep(TIMEOUT_MS).then(() => null)])
+    // A parent without a token is refused while a child is live: retry once (slow event loop).
+    const token = await fetchScope() ?? (e.agentId === undefined ? await fetchScope() : null)
+    // A child call never legitimately needs unscoped tools: it could act as the parent.
+    if (token === null && e.agentId !== undefined) return { deny: 'Bridge tool scope for this native child could not be obtained; no action taken.' }
     return next(withScope(e as unknown as Record<string, unknown>, token) as unknown as typeof e)
   })
 }
