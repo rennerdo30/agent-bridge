@@ -26,8 +26,10 @@ vi.mock("../src/core/process-identity.js", async (importOriginal) => {
     processIdentity: (pid: number) => (own(pid) ? ownId() : real.processIdentity(pid)),
     readProcessIdentity: async (pid: number) => (own(pid) ? ownId() ?? null : real.readProcessIdentity(pid)),
     isProcessIdentityAlive: (pid: number, identity: string) => (own(pid) ? (probe.cold ? undefined : identity === SYN) : real.isProcessIdentityAlive(pid, identity)),
-    recordedOwnerLiveness: (pid: number, identity?: string) => (own(pid) ? (probe.cold ? undefined : !identity || identity === SYN) : real.recordedOwnerLiveness(pid, identity)),
-    recordedOwnerAlive: (pid: number, identity?: string) => (own(pid) ? !identity || probe.cold || identity === SYN : real.recordedOwnerAlive(pid, identity)),
+    recordedOwnerLiveness: (pid: number, identity: string | undefined, recordedAt: number) =>
+      (own(pid) ? (probe.cold ? undefined : !identity || identity === SYN) : real.recordedOwnerLiveness(pid, identity, recordedAt)),
+    recordedOwnerAlive: (pid: number, identity: string | undefined, recordedAt: number) =>
+      (own(pid) ? !identity || probe.cold || identity === SYN : real.recordedOwnerAlive(pid, identity, recordedAt)),
     ownProcessIdentity: async () => {
       probe.asyncCalls++;
       if (probe.cold && probe.failures > 0) { probe.failures--; return undefined; }
