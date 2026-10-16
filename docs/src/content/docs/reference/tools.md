@@ -4,7 +4,7 @@ title: MCP tools reference
 
 Generated from [src/mcp/server.ts](https://github.com/rennerdo30/agent-bridge/blob/main/src/mcp/server.ts). Each registered tool has one row below. Availability depends on the calling agent, enabled targets and whether the caller is a delegated job. opencode prefixes tool names with `bridge_`.
 
-The `ask_*` and `spawn_*` tools are expanded for each supported CLI; a session may offer only the other enabled targets. Delegated jobs receive a restricted tool set and explicit messaging grants. `report_progress` is for delegated jobs; `hook_event` is internal and must never be called by an agent.
+The `ask_*` and `spawn_*` tools are expanded for each supported CLI; a session may offer only the other enabled targets. Delegated jobs receive a restricted tool set and explicit messaging grants. `report_progress` and `checklist` are for delegated jobs; `hook_event` is internal and must never be called by an agent.
 
 | Tool | Parameters | Behavior |
 | --- | --- | --- |
@@ -44,8 +44,11 @@ The `ask_*` and `spawn_*` tools are expanded for each supported CLI; a session m
 | `set_job_outcome` | `job`, `state`, `reason?` | Record that your finished job is held with a reason or discarded. With jobCloseCleanup enabled, discarded local worktree jobs push their commits and reap only a proven clean checkout. Held jobs and local branches are retained. Only its owning supervisor can set it. |
 | `handoff_subagents` | `to`, `jobs?`, `note?`, `switch_project_main?` | Transfer your running and finished local jobs, including nested jobs, to an exact live local Claude Code, Codex, opencode, Antigravity or Muse session. The target becomes their supervisor and receives a waking inheritance message. Remote jobs and paired-PC targets are rejected without moving anything. |
 | `message_subagent` | `job`, `message?`, `title?`, `effort?`, `model?`, `access?`, `sandbox?`, `terminal_sandbox?`, `bypass_permissions?`, `native_subagents?`, `approvals_reviewer?`, `permission_mode?`, `auto_approve?`, `permission_profile?` | Send a follow-up to a subagent started with ask_* or spawn_* (running or finished), like messaging a native subagent. Use it to answer a subagent's question promptly. It continues in its own session with its full context, in the same folder or worktree. While it is still running it gets the message live, at its next step (after its current tool call), and answers right away, like a native subagent: use that to ask how far it is or to redirect it. The answer arrives as a message from the job. Plain messages never answer pending approvals; use decide or the dashboard. Without a message it is told to continue where it stopped: use that to recover a failed or interrupted subagent. If all subagent slots are taken, a finished subagent's continuation is queued and starts by itself when one frees up (cancel_subagent drops it). |
+| `job_checklist` | `job`, `get?`, `add?`, `edit?`, `require?`, `unrequire?`, `close?`, `approve?`, `reject?`, `note?` | Read or change the checklist of one of your subagent jobs (see the checklist argument of spawn_*/ask_*). Without changes it returns the list. Use it to answer a job's checklist proposals (approve or reject; until then they stay proposed), to react to a blocked item, or to change the plan mid-run: add items, edit text, require or unrequire, close items that no longer apply. A running job sees the change at its next step. The job itself only ticks items (a required one is skipped only with a note) and proposes new ones; blocked items and proposals reach you like a job question. Required items still open when it finishes mark its result incomplete. Changes in one call apply together or not at all; nothing is deleted (closed and rejected items stay in the record). Only the job's supervisor can call it. |
+| `project_checklist` | `get?`, `set?`, `add?`, `remove?` | Read or change this project's checklist: the definition of done added to every job started in this project (unless the spawn passes checklist "none"). Use it for steps every job must do, such as running the focused tests or updating the changelog. set replaces the list, add appends, remove takes items out (kept in the record). Its required items count like the supervisor's: still open when a job finishes, they mark the result incomplete. Only the project main or the owner changes it; any session can read it. Jobs that already started keep their own copy. |
 | `cancel_subagent` | `job` | Stop a background subagent started with spawn_*, or drop a queued continuation (message_subagent while all slots were taken). Pass its job name (e.g. codex-job-1a2b3c4d). |
 | `report_progress` | `percent`, `eta_minutes?`, `note?` | Tell your supervisor, which gave you your current task, how far you are: the percent of the whole task done and a few words on the current step. Call it when you start, after each milestone, and at least every few minutes. Give eta_minutes when you can estimate minutes until completion and update it as you go. It does not interrupt your work. |
+| `checklist` | `update?`, `propose?` | Delegated jobs only. Your to-do list for the task your supervisor gave you, kept by the bridge. Without arguments it shows the list. Tick items as you work: update=[{ id, status, note }] with status in_progress, done, blocked or skipped; a required item can be skipped only with a note saying why. Marking an item blocked notifies your supervisor; other ticks are quiet. When something is missing, propose it: propose=[{ text, why }]. It joins only when your supervisor approves; you cannot add, delete or un-require items yourself. Required items still open when you finish mark your result incomplete. |
 | `hook_event` | `event`, `session_id`, `stop_hook_active`, `cwd`, `agent_id`, `prompt`, `prompt_id`, `transcript_path` | Internal endpoint for agent-bridge's own hooks. Do not call this tool. |
 
 ## Delegation options
@@ -57,6 +60,7 @@ Peer names default to `<agent>-<project folder>` (for example `codex-showcase`),
 - `native_subagents` sets the Codex child-thread budget (default 6, range 0–32; 0 disables). This differs from bridge delegation depth and concurrency.
 - `send_to` grants messaging to exact local sessions or jobs outside the default sibling scope.
 - `access` is `read` (default), `ask` or `edit`. Whatever the access, Pair Desk worker writes (comments, progress, plans, steps, issue edits) are allowed without asking by default, because a job without `allow_tools` gets `jobs.defaultAllowTools` (default `["pair-desk:worker"]`). Pass `allow_tools: []` for a job that may not write to the desk without asking; creating issues, status, build and handoff writes are never part of the default.
+- `checklist` gives the job a to-do list kept by the bridge: `[{ text, required? }]` (required unless `required: false`, at most 50 items of 300 characters). The project checklist (`project_checklist`) is added first; `[]` keeps only it and `"none"` leaves both out. The job sees the list with ids in its brief, ticks items with its `checklist` tool, skips a required item only with a note, and proposes new items, which join only when you approve them with `job_checklist`. Blocked items and proposals reach you like a job question; other ticks are quiet. `peers` shows "checklist N/M done", `peers(job=...)` and the dashboard show the list, and the final report ends with the checklist and "incomplete: N required items open" when required items are still open (reported, not blocked). Checklists are local-only for now: a `host=...` job refuses a non-empty checklist and gets no project checklist.
 - `allow_tools` replaces that default with your own list (include `"pair-desk:worker"` to keep it; add `"pair-desk.create_issue"` to let the job create issues). The default and its scope come from the home config of the session that spawns the job; on a paired PC, from the receiving PC's config section for the target agent. See [delegation](../../concepts/delegation/).
 - Tool descriptions (including the defaults they name) reflect the configuration when the session started; a later config change applies to new jobs but the descriptions update only after the session restarts.
 - `timeout_sec` defaults to 60 minutes for `ask_*`; background jobs default to the 24-hour ceiling. A timeout reports the session ID so a caller can continue retained context.
@@ -381,6 +385,35 @@ percent: z.number().min(0).max(100).describe("Percent of the whole task done, 0-
 eta_minutes: z.number().min(0).max(1440).optional().describe("Estimated minutes until done, 0-1440; update as your estimate changes")
 note: z.string().max(200).optional().describe('The current step in a few words, e.g. "tests pass, updating docs"')
 ```
+
+### job_checklist
+
+```ts
+job: z.string().min(1).max(80).describe('Job name, e.g. "codex-job-1a2b3c4d" (see peers)')
+get: z.boolean().optional()
+add: z.array(checklistItemSchema).min(1).max(50).optional()
+edit: z.array(z.object({ id: z.string().regex(/^c\d{1,4}$/), text: z.string().min(1).max(300).optional(), required: z.boolean().optional() })).min(1).max(50).optional()
+require / unrequire / close / approve / reject: z.array(z.string().regex(/^c\d{1,4}$/)).min(1).max(50).optional()
+note: z.string().max(500).optional()
+```
+
+### project_checklist
+
+```ts
+get: z.boolean().optional()
+set: z.array(checklistItemSchema).max(30).optional()
+add: z.array(checklistItemSchema).min(1).max(30).optional()
+remove: z.array(z.string().regex(/^p\d{1,4}$/)).min(1).max(30).optional()
+```
+
+### checklist
+
+```ts
+update: z.array(z.object({ id: z.string().regex(/^c\d{1,4}$/), status: z.enum(["in_progress", "done", "blocked", "skipped"]), note: z.string().max(500).optional() })).max(50).optional()
+propose: z.array(z.object({ text: z.string().min(1).max(300), why: z.string().max(500).optional() })).max(10).optional()
+```
+
+`checklistItemSchema` is `{ text: z.string().min(1).max(300), required: z.boolean().optional() }`; the same shape is the `checklist` argument of `ask_*` / `spawn_*` (or the literal `"none"`).
 
 ### hook_event
 

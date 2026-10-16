@@ -36,6 +36,10 @@
       "base": "20f6b69f",
       "reason": "AB-417 second review: approvalFlags in the desktop dashboard script returns no marker row when the first line contains a raw control, format, line or paragraph separator character or a look-alike bracket (one escaped regex test before the existing parse); the bridge always escapes these in its own header, so genuine marker rows render as before. Page re-pinned. The mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged.",
       "commit": "cdd6e5a9"
+    },
+    "AB-428": {
+      "base": "26eec067",
+      "reason": "AB-428: the desktop dashboard script shows a job checklist: buildModel sets g.checklist from the newest run (dashboard-read attaches the bridge checklist to it), runChips adds an escaped \"checklist N/M\" chip with the summary as title, and renderConversation fills a new hidden-by-default #cList element (escaped id, status, text and note per item; cleared in the other views). Five CSS rules (.clist) use existing tokens. Page re-pinned from 3f257b19 to 0eb9a5b7. ui.ts (uiSha256), the mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged."
     }
   }
 }
