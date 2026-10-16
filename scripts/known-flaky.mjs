@@ -1,20 +1,24 @@
-import { appendFileSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Known-flaky list (owner rule 2026-10-16): listed tests are reported in a separate,
 // non-blocking CI lane and skipped in the normal lanes. Everything else still blocks.
-// Each entry names one test file plus ONE selector:
-//   test:      the exact Vitest full name ("describe > nested describe > test name");
-//   pattern:   an anchored regular expression (^...$) over that full name;
-//   wholeFile: true, which lists every test in the file (only when explicitly wanted).
+// Each entry names one test file and the exact Vitest full name of ONE test
+// ("describe > nested describe > test name"). Patterns and whole files are not allowed,
+// so an entry can never cover a test it does not name (owner: never hide a new failure).
 // The list is applied by scripts/known-flaky-runner.mjs (vitest.config.ts `runner`).
 
 export const KNOWN_FLAKY_PATH = "test/known-flaky.json";
 export const RECHECK_MAX_DAYS = 7;
 export const MODES = ["exclude", "only", "off"];
+/** String form of the runner's name filter: if the filter is ever turned into a string, everything runs (fails open). */
+export const MATCH_EVERYTHING_SOURCE = "(?:)";
+/** Subdirectory of AGENT_BRIDGE_CI_RESULTS_DIR where the runner records what it skipped. */
+export const SKIPS_DIR = "known-flaky-skips";
 
-const ENTRY_KEYS = new Set(["file", "test", "pattern", "wholeFile", "issue", "owner", "added", "recheckBy", "seen"]);
+const ENTRY_KEYS = new Set(["file", "test", "issue", "owner", "added", "recheckBy", "seen"]);
+const FORBIDDEN_SELECTORS = ["pattern", "wholeFile"];
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const DAY_MS = 86_400_000;
 
@@ -39,8 +43,7 @@ function parseDate(text) {
 }
 
 export function describeEntry(entry) {
-  const selector = entry?.wholeFile === true ? "(whole file)" : entry?.test ?? (entry?.pattern !== undefined ? `/${entry.pattern}/` : "(no selector)");
-  return `${entry?.file ?? "(no file)"} > ${selector}`;
+  return `${entry?.file ?? "(no file)"} > ${entry?.test ?? "(no test name)"}`;
 }
 
 /**
@@ -60,25 +63,18 @@ export function validateKnownFlaky(doc, { root = process.cwd(), today } = {}) {
   doc.entries.forEach((entry, index) => {
     const at = `Entry ${index + 1} (${describeEntry(entry)})`;
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) { problems.push(`${at}: must be an object`); return; }
-    for (const key of Object.keys(entry)) if (!ENTRY_KEYS.has(key)) problems.push(`${at}: unknown field "${key}"`);
+    for (const key of Object.keys(entry)) {
+      if (FORBIDDEN_SELECTORS.includes(key)) problems.push(`${at}: "${key}" is not allowed; only exact test names are allowed (use "test")`);
+      else if (!ENTRY_KEYS.has(key)) problems.push(`${at}: unknown field "${key}"`);
+    }
     if (typeof entry.file !== "string" || !/^test\/[^\\]+\.test\.ts$/.test(entry.file)) {
       problems.push(`${at}: "file" must be a repository-relative test path such as test/example.test.ts`);
     } else if (!existsSync(resolve(root, entry.file))) {
       problems.push(`${at}: file ${entry.file} does not exist; remove the entry or fix the path`);
     }
-    const selectors = ["test", "pattern", "wholeFile"].filter(key => entry[key] !== undefined);
-    if (selectors.length !== 1) problems.push(`${at}: needs exactly one of "test", "pattern" or "wholeFile"`);
-    if (entry.test !== undefined && (typeof entry.test !== "string" || entry.test.trim() !== entry.test || entry.test === "")) {
+    if (typeof entry.test !== "string" || entry.test.trim() !== entry.test || entry.test === "") {
       problems.push(`${at}: "test" must be the exact, non-empty full test name`);
     }
-    if (entry.pattern !== undefined) {
-      if (typeof entry.pattern !== "string" || !entry.pattern.startsWith("^") || !entry.pattern.endsWith("$")) {
-        problems.push(`${at}: "pattern" must be a string anchored with ^ and $ so it cannot match other tests by accident`);
-      } else {
-        try { new RegExp(entry.pattern); } catch (error) { problems.push(`${at}: "pattern" is not a valid regular expression: ${error.message}`); }
-      }
-    }
-    if (entry.wholeFile !== undefined && entry.wholeFile !== true) problems.push(`${at}: "wholeFile" may only be true`);
     if (typeof entry.issue !== "string" || !/^AB-\d+$/.test(entry.issue)) problems.push(`${at}: "issue" must be a Pair Desk issue such as AB-410`);
     if (typeof entry.owner !== "string" || entry.owner.trim() === "") problems.push(`${at}: "owner" (who re-checks it) is required`);
     if (entry.seen !== undefined && typeof entry.seen !== "string") problems.push(`${at}: "seen" must be a string`);
@@ -97,7 +93,7 @@ export function validateKnownFlaky(doc, { root = process.cwd(), today } = {}) {
         problems.push(`${at}: "recheckBy" ${entry.recheckBy} is more than ${RECHECK_MAX_DAYS} days away; entries are re-checked weekly`);
       }
     }
-    const key = JSON.stringify([entry.file, entry.test ?? null, entry.pattern ?? null, entry.wholeFile ?? null]);
+    const key = JSON.stringify([entry.file, entry.test ?? null]);
     if (seen.has(key)) problems.push(`${at}: duplicate entry`);
     seen.add(key);
   });
@@ -109,20 +105,138 @@ export function knownFlakyEntries(root = process.cwd()) {
   const doc = readKnownFlaky(root);
   const problems = validateKnownFlaky(doc, { root });
   if (problems.length) throw new Error(`Invalid ${KNOWN_FLAKY_PATH}:\n${problems.join("\n")}`);
-  return doc.entries.map(entry => ({ ...entry, regex: entry.pattern === undefined ? undefined : new RegExp(entry.pattern) }));
+  return doc.entries;
 }
 
-/** `file` is repository-relative with forward slashes; `name` is the Vitest full test name. */
+/** `file` is repository-relative with forward slashes; `name` is the Vitest full test name. Exact comparison only. */
 export function entryMatches(entry, file, name) {
-  if (entry.file !== file) return false;
-  if (entry.wholeFile === true) return true;
-  if (entry.test !== undefined) return entry.test === name;
-  const regex = entry.regex ?? new RegExp(entry.pattern);
-  return regex.test(name);
+  return entry.file === file && entry.test === name;
 }
 
 export function listedFiles(entries) {
   return [...new Set(entries.map(entry => entry.file))].sort();
+}
+
+/**
+ * The per-file name filter the runner hands to Vitest (config.testNamePattern). Vitest calls
+ * fullTestName.match(filter), which uses Symbol.match, so the comparison stays exact. Every
+ * decision is recorded for verifyFileDecisions. Its string form (toString, source) matches
+ * everything: if anything turns the filter into a string or RegExp, every test runs.
+ * Returns undefined when the file needs no filter (the user's own pattern applies unchanged).
+ */
+export function createFileFilter(entries, file, mode, user) {
+  const listedNames = new Set(entries.filter(entry => entry.file === file).map(entry => entry.test));
+  if (mode === "off" || (mode === "exclude" && listedNames.size === 0)) return undefined;
+  const decisions = [];
+  const matcher = {
+    [Symbol.match]: name => {
+      const userAllows = !user || name.match(user) !== null;
+      const listed = listedNames.has(name);
+      const run = userAllows && (mode === "only" ? listed : !listed);
+      decisions.push({ name, userAllows, listed, run });
+      return run ? [name] : null;
+    },
+    source: MATCH_EVERYTHING_SOURCE,
+    toString: () => MATCH_EVERYTHING_SOURCE,
+  };
+  return { file, mode, user, listedNames, decisions, matcher };
+}
+
+const willRun = mode => mode === "run" || mode === "queued" || mode === "only";
+
+/**
+ * Checks a file filter's recorded decisions against the tests Vitest collected for that file.
+ * `tests` is [{ name, mode }] after Vitest applied its modes. Returns a list of problems:
+ * every test that will run must have been decided by this filter; every decision must belong
+ * to a test of this file; in exclude mode no listed test may run, an entry names at most one
+ * test, and the number of tests the filter skipped equals the number of listed tests it saw.
+ */
+export function verifyFileDecisions(filter, tests) {
+  const problems = [];
+  const pending = new Map();
+  for (const decision of filter.decisions) {
+    if (!pending.has(decision.name)) pending.set(decision.name, []);
+    pending.get(decision.name).push(decision);
+  }
+  const counts = new Map();
+  let expectedSkips = 0;
+  for (const test of tests) {
+    counts.set(test.name, (counts.get(test.name) ?? 0) + 1);
+    const listed = filter.listedNames.has(test.name);
+    const runs = willRun(test.mode);
+    if (filter.mode === "exclude" && listed && runs) problems.push(`listed test "${test.name}" will run in exclude mode`);
+    const decision = pending.get(test.name)?.shift();
+    if (!decision) {
+      if (runs) problems.push(`test "${test.name}" will run but the known-flaky filter never decided it`);
+      continue;
+    }
+    if (runs && !decision.run) problems.push(`test "${test.name}" will run although the known-flaky filter skipped it`);
+    if (filter.mode === "only" && !listed && runs) problems.push(`unlisted test "${test.name}" will run in only mode`);
+    const userAllows = !filter.user || test.name.match(filter.user) !== null;
+    if (filter.mode === "exclude" && listed && userAllows) expectedSkips++;
+  }
+  for (const [name, left] of pending) {
+    if (left.length) problems.push(`the filter decided "${name}" ${left.length} more time(s) than this file has such a test (applied to the wrong file?)`);
+  }
+  if (filter.mode === "exclude") {
+    for (const name of filter.listedNames) {
+      if ((counts.get(name) ?? 0) > 1) problems.push(`entry "${name}" names ${counts.get(name)} tests in this file; an entry must name exactly one test`);
+    }
+    const skipped = skippedByList(filter).length;
+    if (skipped !== expectedSkips) problems.push(`the filter skipped ${skipped} listed test(s) but ${expectedSkips} listed test(s) were collected`);
+  }
+  return problems;
+}
+
+/** Names the filter skipped because they are listed (exclude mode). */
+export function skippedByList(filter) {
+  return filter.decisions.filter(decision => decision.userAllows && decision.listed && !decision.run).map(decision => decision.name);
+}
+
+/** Written by the runner per file and lane (under AGENT_BRIDGE_CI_RESULTS_DIR) for `known-flaky.mjs skips`. */
+export function writeSkipRecord(dir, lane, file, skipped) {
+  const target = join(dir, SKIPS_DIR, lane);
+  mkdirSync(target, { recursive: true });
+  writeFileSync(join(target, `${file.replace(/[^A-Za-z0-9._-]/g, "_")}.json`), JSON.stringify({ lane, file, skipped }) + "\n");
+}
+
+/**
+ * Per lane in `dir` (ci-reporter diagnostics plus the runner's skip records): N, the tests the
+ * runner skipped because they are listed, must equal the collected tests that match an entry,
+ * and each of those must be reported as skipped. A lane without diagnostics did not finish
+ * (its test step has already failed) and is not checked.
+ */
+export function checkSkips(entries, dir) {
+  const lanes = [];
+  const problems = [];
+  const names = existsSync(dir) ? readdirSync(dir).filter(name => name.endsWith("-diagnostics.json")).sort() : [];
+  for (const name of names) {
+    const diagnostics = JSON.parse(readFileSync(join(dir, name), "utf8"));
+    const lane = diagnostics.lane ?? name.slice(0, -"-diagnostics.json".length);
+    const listed = [];
+    for (const file of diagnostics.files ?? []) {
+      for (const test of file.tests ?? []) {
+        if (entries.some(entry => entryMatches(entry, file.file, test.name))) listed.push({ file: file.file, name: test.name, state: test.state });
+      }
+    }
+    const recordDir = join(dir, SKIPS_DIR, lane);
+    const skipped = [];
+    if (existsSync(recordDir)) {
+      for (const record of readdirSync(recordDir).filter(entry => entry.endsWith(".json")).sort()) {
+        const data = JSON.parse(readFileSync(join(recordDir, record), "utf8"));
+        for (const test of data.skipped) skipped.push({ file: data.file, name: test });
+      }
+    }
+    for (const test of listed) {
+      if (test.state !== "skipped") problems.push(`${lane}: listed test ${test.file} > ${test.name} was ${test.state}, not skipped`);
+    }
+    for (const test of skipped) {
+      if (!entries.some(entry => entryMatches(entry, test.file, test.name))) problems.push(`${lane}: the runner skipped ${test.file} > ${test.name}, which is not listed`);
+    }
+    if (skipped.length !== listed.length) problems.push(`${lane}: skipped by known-flaky: ${skipped.length}, but ${listed.length} listed test(s) were collected`);
+    lanes.push({ lane, skipped: skipped.length, expected: listed.length });
+  }
+  return { lanes, problems };
 }
 
 /** Summarise a known-flaky lane from the ci-reporter diagnostics in `dir`. Never fails on test results. */
@@ -156,6 +270,14 @@ function formatReport({ lanes, rows }, label) {
   return lines.join("\n") + "\n";
 }
 
+function formatSkips({ lanes, problems }, label) {
+  const lines = [`### Known-flaky skips (blocking lane)${label ? `: ${label}` : ""}`, ""];
+  if (!lanes.length) lines.push("No lane diagnostics were written; nothing to compare (the test steps did not finish).");
+  for (const { lane, skipped, expected } of lanes) lines.push(`- ${lane}: skipped by known-flaky: ${skipped} (listed tests collected: ${expected})`);
+  if (problems.length) lines.push("", "**Mismatch, failing this job:**", ...problems.map(problem => `- ${problem}`));
+  return lines.join("\n") + "\n";
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [command, argument] = process.argv.slice(2);
   if (command === "validate") {
@@ -171,6 +293,13 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     }
   } else if (command === "files") {
     console.log(listedFiles(knownFlakyEntries()).join(" "));
+  } else if (command === "skips") {
+    const result = checkSkips(knownFlakyEntries(), argument ?? ".agent-bridge-test/ci");
+    const text = formatSkips(result, process.env.KNOWN_FLAKY_LABEL);
+    console.log(text);
+    for (const problem of result.problems) console.log(`::error title=Known-flaky skips do not match the list::${problem}`);
+    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, text);
+    if (result.problems.length) process.exitCode = 1;
   } else if (command === "report") {
     const report = reportKnownFlaky(knownFlakyEntries(), argument ?? ".agent-bridge-test/known-flaky");
     const text = formatReport(report, process.env.KNOWN_FLAKY_LABEL);
@@ -181,7 +310,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     }
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, text);
   } else {
-    console.error("Usage: node scripts/known-flaky.mjs validate [YYYY-MM-DD] | files | report [dir]");
+    console.error("Usage: node scripts/known-flaky.mjs validate [YYYY-MM-DD] | files | skips [dir] | report [dir]");
     process.exitCode = 2;
   }
 }

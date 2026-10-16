@@ -52,11 +52,25 @@ How it works:
 
 - `vitest.config.ts` sets `runner: "./scripts/known-flaky-runner.mjs"`. Per test file it
   feeds Vitest's own name filter (the `--testNamePattern` path) with an exact comparison
-  against the list, so the decision is made at collection, in every lane, shard and
-  workflow that uses the config (Windows shards, Linux/macOS jobs, AB325, AB320, storage).
+  against the list, installed in the awaited `importFile(file, "collect")` step, so the
+  decision is made at collection for exactly that file.
+- It fails open, loudly: the filter's string form matches every test, and after collection
+  the runner checks each file (every test that will run was decided by the filter, no
+  listed test runs in `exclude` mode, an entry names exactly one test, and the number of
+  tests it skipped equals the listed tests collected). Any mismatch fails the run with
+  an error naming the file.
 - `AGENT_BRIDGE_KNOWN_FLAKY` picks the mode: unset or `exclude` skips the listed tests
   (the normal lanes; they show as skipped and the shard membership checks still pass);
-  `only` runs nothing but the listed tests; `off` ignores the list for local reproduction.
+  `only` runs nothing but the listed tests; `off` ignores the list.
+- The blocking lanes in `ci.yml` (Linux/macOS jobs, Windows shards) use `exclude`. Their
+  step "Known-flaky skips match the list" (`node scripts/known-flaky.mjs skips`) writes
+  "skipped by known-flaky: N" per lane to the job summary and fails the job unless N
+  equals the listed tests collected in that job and each of them is reported skipped.
+- The diagnostic workflows (AB325 daemon lifecycle, AB320, AB319 archive profile, storage
+  retention) set `AGENT_BRIDGE_KNOWN_FLAKY: 'off'` and keep running every selected test,
+  as before: they run in other modes (for example `AGENT_BRIDGE_DAEMON=1`) that the
+  known-flaky lane does not cover. A new workflow that runs Vitest outside `ci.yml` sets
+  `off` too, unless it has its own known-flaky lane.
 - The CI job "Known-flaky tests (non-blocking)" runs the listed tests on Windows, Linux and
   macOS with Node 22 and 24 in `only` mode, in their usual fast/integration lane with the
   usual deadlines. Its test steps continue on error; the report step writes a table to
@@ -71,12 +85,16 @@ Adding an entry (only with evidence from CI logs, never to make a new change pas
 1. Record the sighting on a Pair Desk issue (job link, lane, exact test name).
 2. Add an object to `entries`:
    - `file`: the test file, for example `test/ui.test.ts`;
-   - one selector: `test` with the exact full name as CI prints it after the file,
-     describe blocks joined by ` > ` (for example `web dashboard > saves a job's ...`);
-     or `pattern`, a regular expression anchored with `^` and `$`, for names with runtime
-     values; or `"wholeFile": true`, only when the whole file is meant;
-   - `issue` (for example `AB-410`), `owner` (the session that re-checks it), `added`
-     (today) and `recheckBy` (at most 7 days ahead), plus an optional `seen` note.
+   - `test`: the exact full name as CI prints it after the file, describe blocks joined
+     by ` > ` (for example `web dashboard > saves a job's ...`). Only exact test names
+     are allowed: `pattern` and `wholeFile` entries are rejected by the validator, and a
+     name shared by several tests in one file fails the run;
+   - `issue` (for example `AB-410`; a test with its own cause gets its own issue),
+     `owner` (the session that re-checks it), `added` (today) and `recheckBy` (at most 7
+     days ahead; spread the dates so entries do not all expire together), plus an
+     optional `seen` note.
+   Evidence means failures on `main` or on several runs; a single sighting on an
+   in-progress PR branch is not enough.
 3. `node scripts/known-flaky.mjs validate` must pass.
 
 Weekly re-check: by its `recheckBy` date the owner looks at the known-flaky lane results

@@ -2,30 +2,12 @@
   "comment": "Known-flaky tests: skipped in the normal CI lanes, run and reported in the non-blocking known-flaky lane. Each entry is re-checked weekly by its owner; see CONTRIBUTING.md \"Known-flaky tests\".",
   "entries": [
     {
-      "file": "test/broker-fairness.test.ts",
-      "test": "accepts a fresh hook connection between synchronous request starts in a burst",
-      "issue": "AB-410",
-      "owner": "claude-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
-      "seen": "Windows Node 22 (PR #89 run 38827525373)"
-    },
-    {
-      "file": "test/claude-mcp.test.ts",
-      "test": "granted plugin MCP exposure in headless Claude jobs > releases stdio and IPC but kills nothing when the root identity cannot be verified",
-      "issue": "AB-410",
-      "owner": "claude-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
-      "seen": "macOS Node 22 (PR #89 run 38827525373)"
-    },
-    {
       "file": "test/daemon-backup-drain.test.ts",
       "test": "owned automatic-backup settlement (not whole-core durability) > timeout and second observer leave the same actual capture alive; completion preserves exact accepted bytes",
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-21",
       "seen": "AB325 lifecycle Windows Node 22 and 24 (runs 38854025643, 38855920781)"
     },
     {
@@ -34,7 +16,7 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-22",
       "seen": "Windows Node 24 shard 5/6 (main run 38852705600); AB325 lifecycle Windows Node 24 (run 38848262390)"
     },
     {
@@ -52,7 +34,7 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-21",
       "seen": "AB325 lifecycle Windows Node 22 and 24 (runs 38849251200, 38849984389, 38855920781)"
     },
     {
@@ -61,7 +43,7 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-22",
       "seen": "Windows Node 22 shard 1/6 (main run 38837368512)"
     },
     {
@@ -79,7 +61,7 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-21",
       "seen": "Windows Node 24 and 22 shard 3/6 (runs 38841134793, 38850550770)"
     },
     {
@@ -88,7 +70,7 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-22",
       "seen": "Windows Node 24 and 22 shard 3/6 (main run 38837368512, run 38846662924)"
     },
     {
@@ -106,17 +88,8 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-21",
       "seen": "Windows Node 22 and 24 shard 3/6 (runs 38857072165, 38858490705)"
-    },
-    {
-      "file": "test/dashboard-responsive.test.ts",
-      "test": "serves the complete cold 307-archive/1024-log corpus while timers keep running, with exact sync parity and cursors",
-      "issue": "AB-410",
-      "owner": "claude-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
-      "seen": "macOS Node 24 (run 38839031669)"
     },
     {
       "file": "test/handoff-runner.test.ts",
@@ -124,13 +97,13 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-22",
       "seen": "Windows Node 24 shard 6/6 (main run 38852843323)"
     },
     {
       "file": "test/handoff-subagents.test.ts",
       "test": "local subagent ownership handoff > retains former-master controls and prevents the old manager overwriting ownership",
-      "issue": "AB-410",
+      "issue": "AB-421",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
       "recheckBy": "2026-10-23",
@@ -142,7 +115,7 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-21",
       "seen": "Windows Node 24 shard 5/6 (run 38846199958)"
     },
     {
@@ -151,7 +124,7 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-22",
       "seen": "Windows Node 24 and 22 shard 5/6 (main run 38852705600, run 38852829447)"
     },
     {
@@ -169,16 +142,16 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-21",
       "seen": "Windows Node 22 and 24 shard 4/6 (main run 38849169431, runs 38833198807, 38849984408)"
     },
     {
       "file": "test/job-recovery.test.ts",
       "test": "recovers a 0.29.10 backup with current handoff authority and preserves unknown data",
-      "issue": "AB-410",
+      "issue": "AB-420",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-22",
       "seen": "macOS Node 22 and 24 (runs 38845915331, 38854025601)"
     },
     {
@@ -196,17 +169,8 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-21",
       "seen": "Windows Node 22 and 24 shard 5/6 (main run 38852705600, run 38854025601)"
-    },
-    {
-      "file": "test/mcp-chat.test.ts",
-      "test": "dashboard and Codex jobs through the bundled MCP server (claude parent) > delivers a spawned Codex result to its parent and keeps the requested settings",
-      "issue": "AB-410",
-      "owner": "claude-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
-      "seen": "Ubuntu Node 22 (run 38850550770)"
     },
     {
       "file": "test/muse-job-contracts.test.ts",
@@ -214,7 +178,7 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-22",
       "seen": "Windows Node 24 and 22 shard 5/6 (main run 38837368512, run 38846199958)"
     },
     {
@@ -227,21 +191,12 @@
       "seen": "Windows Node 22 shard 5/6 (runs 38846199958, 38850550770)"
     },
     {
-      "file": "test/nested-delegation.test.ts",
-      "test": "nested delegation > spawns, approves, resumes and cancels children through the delegated MCP tools",
-      "issue": "AB-410",
-      "owner": "claude-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
-      "seen": "Windows Node 22 shard 4/6 (PR #87 run 38815894841)"
-    },
-    {
       "file": "test/project-group-takeover.test.ts",
       "test": "observes a stored final and consumption receipts on a separate read-only connection before delivery confirmation",
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-21",
       "seen": "Windows Node 24 shard 2/6 (main run 38843335834, run 38849984408)"
     },
     {
@@ -250,7 +205,7 @@
       "issue": "AB-410",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-22",
       "seen": "Windows Node 24 shard 3/6 (main run 38843335834)"
     },
     {
@@ -265,10 +220,10 @@
     {
       "file": "test/worktree.test.ts",
       "test": "cleanup > removes only finished, merged, clean job worktrees and never follows links inside them",
-      "issue": "AB-410",
+      "issue": "AB-419",
       "owner": "claude-claude-codex-comm",
       "added": "2026-10-16",
-      "recheckBy": "2026-10-23",
+      "recheckBy": "2026-10-21",
       "seen": "Windows Node 22 and 24 shard 4/6 (main run 38849169431, run 38833198807)"
     }
   ]
