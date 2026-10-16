@@ -1,3 +1,4 @@
+import "../core/node-version-guard.js";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DEFAULT_HOME, ENV } from "../core/constants.js";

@@ -75,7 +75,7 @@ for (const tag of tags) {
   const entry = join(reference, "entry.mjs");
   writeFileSync(entry, `export { MessageStore, SQLITE_STORE_VERSION } from './src/core/store.ts';\n${hasArchive ? "export { openArchive } from './src/core/sqlite-maintenance.ts';\n" : ""}`);
   const bundle = join(reference, "old-store.mjs");
-  buildSync({ entryPoints: [entry], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node22", external: ["node:*"], banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' }, logLevel: "silent" });
+  buildSync({ entryPoints: [entry], outfile: bundle, bundle: true, platform: "node", format: "esm", target: "node24", external: ["node:*"], banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' }, logLevel: "silent" });
   const released = await import(pathToFileURL(bundle).href);
   const capture = join(reference, "capture");
   mkdirSync(capture);

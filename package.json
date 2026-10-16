@@ -9,7 +9,7 @@
     "agent-bridge": "plugins/opencode/dist/cli.mjs"
   },
   "engines": {
-    "node": ">=22.16"
+    "node": ">=24"
   },
   "scripts": {
     "build": "node scripts/build.mjs",

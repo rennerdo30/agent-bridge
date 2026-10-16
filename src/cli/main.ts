@@ -1,3 +1,4 @@
+import "../core/node-version-guard.js";
 import type { InstallResult } from "./opencode-install.js";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
