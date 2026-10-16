@@ -24,17 +24,24 @@ export interface JobQuestion {
 const MAX_QUESTIONS = 50;
 const cache = new Map<string, { signature: string; questions: JobQuestion[] }>();
 
-const OPEN_QUESTIONS = `
-SELECT q.id, q.from_name AS job, q.from_agent AS agent, q.recipient, q.conversation_id, q.body, q.created_at, q.read_at
-FROM messages q
-WHERE q.from_id LIKE 'job:%' AND (q.conversation_id LIKE 'job-%:question' OR q.conversation_id LIKE 'job-%:question:fallback')
-  AND NOT EXISTS (SELECT 1 FROM messages c WHERE c.recipient = q.from_name AND c.conversation_id LIKE 'jobctl-%' AND c.created_at >= q.created_at
-    AND CASE WHEN json_valid(c.body) THEN json_extract(c.body, '$.type') END IN ('message', 'cancel'))
-  AND NOT EXISTS (SELECT 1 FROM messages r WHERE r.from_id = q.from_id AND r.created_at > q.created_at AND r.conversation_id LIKE 'job-%'
-    AND r.conversation_id NOT LIKE '%:question' AND r.conversation_id NOT LIKE '%:question:fallback'
-    AND r.conversation_id NOT LIKE '%:note' AND r.conversation_id NOT LIKE '%:ack')
-ORDER BY q.created_at DESC, q.id
-LIMIT ?`;
+// Three single passes instead of correlated subqueries, which rescanned every message once per question (about a
+// second per dashboard refresh on a 23,000-message store).
+const QUESTIONS = `
+SELECT id, from_id, from_name AS job, from_agent AS agent, recipient, conversation_id, body, created_at, read_at
+FROM messages
+WHERE from_id LIKE 'job:%' AND (conversation_id LIKE 'job-%:question' OR conversation_id LIKE 'job-%:question:fallback')`;
+/** Latest answer (message_subagent or cancel) each job got through its control conversation. */
+const ANSWERED = `
+SELECT recipient, max(created_at) AS at FROM messages
+WHERE conversation_id LIKE 'jobctl-%' AND CASE WHEN json_valid(body) THEN json_extract(body, '$.type') END IN ('message', 'cancel')
+GROUP BY recipient`;
+/** Latest report or reply of each job's own (not a question, note or ack). */
+const MOVED_ON = `
+SELECT from_id, max(created_at) AS at FROM messages
+WHERE from_id LIKE 'job:%' AND conversation_id LIKE 'job-%'
+  AND conversation_id NOT LIKE '%:question' AND conversation_id NOT LIKE '%:question:fallback'
+  AND conversation_id NOT LIKE '%:note' AND conversation_id NOT LIKE '%:ack'
+GROUP BY from_id`;
 
 /** Unanswered job questions in the broker store, newest first. Cached until the store changes. */
 export function openJobQuestions(dbPath: string): JobQuestion[] {
@@ -45,7 +52,15 @@ export function openJobQuestions(dbPath: string): JobQuestion[] {
   const db = new DatabaseSync(dbPath, { readOnly: true, timeout: 50 });
   const byId = new Map<string, JobQuestion>();
   try {
-    for (const row of db.prepare(OPEN_QUESTIONS).all(MAX_QUESTIONS)) {
+    const latest = (sql: string) => new Map(db.prepare(sql).all().map((row) => [String(Object.values(row)[0]), Number(row.at)]));
+    const answered = latest(ANSWERED), movedOn = latest(MOVED_ON);
+    const open = db.prepare(QUESTIONS).all().filter((q) => {
+      const at = Number(q.created_at);
+      // Answered at or after the question, or a later message of the job's own.
+      return !((answered.get(String(q.job)) ?? -Infinity) >= at) && !((movedOn.get(String(q.from_id)) ?? -Infinity) > at);
+    }).sort((a, b) => Number(b.created_at) - Number(a.created_at) || (String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0));
+    for (const row of open) {
+      if (byId.size >= MAX_QUESTIONS) break;
       const id = String(row.id);
       if (byId.has(id)) continue;
       byId.set(id, {
