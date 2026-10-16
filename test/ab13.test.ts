@@ -89,10 +89,13 @@ describe("MCP tool allow-list", () => {
       }
     }
     expect(isHandoffToolCall({ tool: "mcp:pair-desk", detail: `set_handoff: {"note":"see tool 'get_issue'"}` })).toBe(true);
-    // Codex's one-line sentence still names its tool; two quoted tool names, or a multi-line text, name none.
+    // Only Codex's whole one-line approval sentence names a tool in quotes; any other text names none.
     expect(mcpToolOf({ tool: "mcp:pair-desk", detail: 'Allow the server to run tool "set_build"?' })?.tool).toBe("set_build");
     expect(mcpToolOf({ tool: "mcp:pair-desk", detail: `Allow tool "set_build" like tool 'get_issue'?` })?.tool).toBeNull();
     expect(mcpToolOf({ tool: "mcp:pair-desk", detail: `Allow the server to run tool "set_build"?\nsee tool 'get_issue'` })?.tool).toBeNull();
+    expect(mcpToolOf({ tool: "mcp:pair-desk", detail: `Please accept: the server wants to run tool 'get_issue' now` })?.tool).toBeNull();
+    // Codex's review-retry text leads with the tool, so the handoff guard sees it.
+    expect(isHandoffToolCall({ tool: "mcp:pair-desk", detail: `set_handoff: refused\nAction: {}\nApprove a retry of this exact action?` })).toBe(true);
   });
 
   it("keeps the worker preset scoped to desk workers", () => {
