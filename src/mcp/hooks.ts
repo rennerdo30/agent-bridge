@@ -188,20 +188,25 @@ export interface HookDelivery { msgs: BridgeMessage[]; text: string }
  * AB-404: choose the messages a hook can hand out in full. `wrap` builds the hook output; its serialized size (the
  * hook_event tool returns JSON.stringify(output) as text) is what is bounded. Oversized messages are listed by id
  * once and stay unread; messages that do not fit after others stay unread for the next hook. Only `msgs` may be
- * marked read or held by the caller.
+ * marked read or held by the caller. `oncePrefix` is text that comes with this hook only (parent-link messages):
+ * whether a message is too large is decided without it, so a large one-time prefix defers a message instead of
+ * listing it as oversized for good.
  */
 function boundedDelivery(ctx: ServerContext, candidates: readonly BridgeMessage[], format: (msgs: BridgeMessage[]) => string,
-  wrap: (text: string) => HookOutput, options: { prefix?: string; footer?: string; pageCall?: (id: string) => string } = {}): HookDelivery {
+  wrap: (text: string) => HookOutput, options: { prefix?: string; oncePrefix?: string; footer?: string; pageCall?: (id: string) => string } = {}): HookDelivery {
   const noted = notedOversized(ctx);
   const pageCall = options.pageCall ?? ((id: string) => `inbox(id="${id}", offset=0)`);
-  const compose = (shown: BridgeMessage[], oversized: BridgeMessage[], deferred: BridgeMessage[]) => [
+  const compose = (shown: BridgeMessage[], oversized: BridgeMessage[], deferred: BridgeMessage[], once = options.oncePrefix) => [
     options.prefix ?? "",
+    once ?? "",
     shown.length ? format(shown) : "",
     ...unshownMessageNotes(oversized, deferred.length, pageCall),
     shown.length && options.footer ? options.footer : "",
   ].filter(Boolean).join("\n\n");
+  const serialized = (once?: string) => (shown: BridgeMessage[], oversized: BridgeMessage[], deferred: BridgeMessage[]) =>
+    JSON.stringify(wrap(compose(shown, oversized, deferred, once)));
   const selection = selectForDelivery(candidates.filter((m) => !noted.has(m.id)).slice(0, HOOK_MAX_MESSAGES),
-    (shown, oversized, deferred) => JSON.stringify(wrap(compose(shown, oversized, deferred))), formatMessage);
+    serialized(options.oncePrefix), formatMessage, undefined, serialized(""));
   for (const m of selection.oversized) noted.add(m.id);
   const text = selection.shown.length || selection.oversized.length ? compose(selection.shown, selection.oversized, selection.deferred) : "";
   return { msgs: selection.shown, text };
@@ -288,7 +293,7 @@ async function subagentHook(ctx: ServerContext, input: HookInput): Promise<HookO
   // at MAX_BODY_CHARS by the link. Child-job mail is local: only what is shown in full is marked read (AB-404).
   const parentText = msgs.length ? formatParentMessages(parent.name, msgs) : "";
   const wrapChild = (text: string): HookOutput => ({ decision: "block", reason: text, hookSpecificOutput: { hookEventName: input.event, additionalContext: text } });
-  const childDelivery = ctx.childInbox ? boundedDelivery(ctx, ctx.childInbox.unread(), (ms) => formatMessages(ms), wrapChild, { prefix: parentText }) : { msgs: [], text: parentText };
+  const childDelivery = ctx.childInbox ? boundedDelivery(ctx, ctx.childInbox.unread(), (ms) => formatMessages(ms), wrapChild, { oncePrefix: parentText }) : { msgs: [], text: parentText };
   ctx.childInbox?.markRead(childDelivery.msgs.map((m) => m.id));
   if (msgs.length === 0 && !childDelivery.text) {
     return {};

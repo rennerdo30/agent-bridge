@@ -88,6 +88,47 @@ import type { ProjectJobSummary } from "../core/project-job-summary.js";
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
 
 const CHANNEL_NOTIFICATION = "notifications/claude/channel";
+
+/**
+ * Push one peer message through the Claude channel. AB-404: a body too large for one result is announced by id
+ * instead and stays unread (inbox pages it); a message already announced that way is not pushed again. Only a
+ * message whose full body was pushed is marked read.
+ */
+export function channelPusher(ctx: ServerContext, enabled: () => boolean,
+  notify: (params: { content: string; meta: Record<string, string> }) => Promise<unknown>): (m: BridgeMessage) => Promise<void> {
+  const inFlight = new Set<string>();
+  return async (m) => {
+    const node = ctx.node, cfg = ctx.cfg, log = ctx.log;
+    if (!enabled() || !node || completionAwaitingReceipt(ctx, m.id) || m.hop >= cfg.maxHops || ctx.jobs?.isNote(m) || isQuietMessage(m)) return;
+    // Messages excluded from waking use hooks even during an active turn, avoiding a channel/hook race.
+    if (!shouldWakeClaudeMessage(node, cfg, m)) return;
+    if (oversizedMessageNoted(ctx, m.id)) return;
+    if (!node.get(m.id) || inFlight.has(m.id)) return;
+    inFlight.add(m.id);
+    const tooLarge = !fitsMcpResult(m.body);
+    const content = tooLarge ? unshownMessageNotes([m], 0, (id) => `inbox(id="${id}", offset=0)`).join("\n") : m.body;
+    try {
+      await notify({
+        content,
+        meta: {
+          message_id: m.id,
+          from: m.from.name,
+          agent: m.from.agent,
+          conversation_id: m.conversationId,
+          hop: String(m.hop),
+          ...(m.replyTo ? { reply_to: m.replyTo } : {}),
+        },
+      });
+      if (tooLarge) { noteOversizedMessages(ctx, [m.id]); log.debug("oversized message announced via channel; it stays unread", { id: m.id }); }
+      else { node.markRead([m.id]); log.debug("message pushed via channel", { id: m.id }); }
+    } catch (err) {
+      log.warn("channel push failed; message stays in inbox", { id: m.id, err: (err as Error).message });
+    } finally {
+      inFlight.delete(m.id);
+    }
+  };
+}
+
 /** Sent to the opencode plugin (our MCP client in --agent=opencode mode) when a message arrives. */
 export const OPENCODE_NOTIFICATION = "notifications/agent-bridge/message";
 /** Experimental Codex capability: Codex then adds the sandbox state (incl. session cwd) to each tools/call _meta. */
@@ -440,36 +481,7 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   registerTools(mcp, ctx, targets);
   if (node && ctx.jobs) attachDashboardJobControl(node, ctx.jobs, log);
 
-  const channelInFlight = new Set<string>();
-  const pushChannel = async (m: BridgeMessage) => {
-    if (!channel || !node || completionAwaitingReceipt(ctx, m.id) || m.hop >= cfg.maxHops || ctx.jobs?.isNote(m) || isQuietMessage(m)) return;
-    // Messages excluded from waking use hooks even during an active turn, avoiding a channel/hook race.
-    if (!shouldWakeClaudeMessage(node, cfg, m)) return;
-    if (!node.get(m.id) || channelInFlight.has(m.id)) return;
-    channelInFlight.add(m.id);
-    try {
-      await mcp.server.notification({
-        method: CHANNEL_NOTIFICATION,
-        params: {
-          content: m.body,
-          meta: {
-            message_id: m.id,
-            from: m.from.name,
-            agent: m.from.agent,
-            conversation_id: m.conversationId,
-            hop: String(m.hop),
-            ...(m.replyTo ? { reply_to: m.replyTo } : {}),
-          },
-        },
-      });
-      node.markRead([m.id]);
-      log.debug("message pushed via channel", { id: m.id });
-    } catch (err) {
-      log.warn("channel push failed; message stays in inbox", { id: m.id, err: (err as Error).message });
-    } finally {
-      channelInFlight.delete(m.id);
-    }
-  };
+  const pushChannel = channelPusher(ctx, () => channel, (params) => mcp.server.notification({ method: CHANNEL_NOTIFICATION, params }));
   node?.on("message", (m) => void pushChannel(m));
   node?.on("notification_waits_changed", () => { for (const m of node.unread()) void pushChannel(m); });
   if (agent === "opencode" && node) {
@@ -488,7 +500,8 @@ export async function startServer(argv: string[] = process.argv.slice(2)): Promi
   if (agent === "claude" && node) {
     // With the channel active, messages already arrive as channel events: waking too would deliver them twice.
     const shouldWake = (m: BridgeMessage) => claudeWakeCandidate(ctx, m);
-    rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"), (event) => reportModActivity(ctx, event), ctx.claudeMailScopes);
+    rewake = new RewakeEndpoint(home, node, shouldWake, log.child("rewake"), (event) => reportModActivity(ctx, event), ctx.claudeMailScopes,
+      { noted: (id) => oversizedMessageNoted(ctx, id), note: (ids) => noteOversizedMessages(ctx, ids) });
     try {
       await rewake.start();
       ctx.rewakeAvailable = true;
@@ -715,16 +728,21 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
    */
   const readMessagePage = (m: BridgeMessage, offset: number | undefined, consume: boolean,
     pageCall: (id: string, offset: number) => string, prefix?: string): { text: string; complete: boolean } => {
+    const covered = pagedReads.get(m.id) ?? 0;
+    // How far the in-order read reaches after a page [start, end): a page past the covered part does not extend it.
+    const reachedBy = (start: number, end: number) => start <= covered ? Math.max(covered, end) : covered;
     const page = messageBodyPage(m.body, offset ?? 0, (slice, start, end) => [
       prefix ?? "",
       formatMessages([{ ...m, body: slice }], { header: `[agent-bridge] Message ${m.id}, characters ${start}-${end} of ${m.body.length}.` }),
       end < m.body.length
         ? `Next page: ${pageCall(m.id, end)}. The message stays unread until all its pages have been read in order${consume ? "" : " without mark_read=false"}.`
-        : `End of message ${m.id}.`,
+        : !consume || reachedBy(start, end) >= m.body.length
+          ? `End of message ${m.id}.`
+          // The last page, but the body was not read in order from offset 0: nothing is marked read (AB-404).
+          : `This is the last page, but message ${m.id} stays unread: characters ${reachedBy(start, end)}-${start} were not read yet. Continue with ${pageCall(m.id, reachedBy(start, end))}.`,
     ].filter(Boolean).join("\n\n"));
     if (!consume) return { text: page.text, complete: false };
-    const covered = pagedReads.get(m.id) ?? 0;
-    const reached = page.start <= covered ? Math.max(covered, page.end) : covered;
+    const reached = reachedBy(page.start, page.end);
     const complete = reached >= m.body.length;
     if (complete) pagedReads.delete(m.id); else pagedReads.set(m.id, reached);
     return { text: page.text, complete };
@@ -824,11 +842,18 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           if (name === "peers") {
             // Scope unchanged: the parent's jobs supervised by this session. Slim summaries, sorted by name (AB-404).
             const inProject = projectFilter(a.project as string | undefined);
-            const jobs = (await node.projectJobSummaries()).filter(j => j.owner === child.parent && j.supervisor === node.currentSessionId);
+            // As in the main path: an older broker's full listing may be refused as too large; say so instead of failing.
+            let jobsNote: string | null = null;
+            const summaries = await node.projectJobSummaries().catch((err: unknown) => {
+              if (!(err instanceof BridgeError && err.code === "too_large")) throw err;
+              jobsNote = `Project jobs are not shown: ${describeError(err)}`;
+              return [] as ProjectJobSummary[];
+            });
+            const jobs = summaries.filter(j => j.owner === child.parent && j.supervisor === node.currentSessionId);
             const visible = jobs.filter(j => (!inProject || inProject([ctx.cwd()])) &&
               (!a.agent || j.agent === a.agent) && (!a.status || j.status.toLowerCase() === String(a.status).toLowerCase()) &&
               (!a.name || `${j.name} ${j.title ?? ""}`.toLowerCase().includes(String(a.name).toLowerCase())));
-            return text(pageListing([{ info: identity }, ...visible.map(j => ({ entry: `${j.name} (${j.agent}, ${j.status})`, category: "jobs" })),
+            return text(pageListing([{ info: identity }, ...(jobsNote ? [{ info: jobsNote }] : []), ...visible.map(j => ({ entry: `${j.name} (${j.agent}, ${j.status})`, category: "jobs" })),
               { info: `Explicit send_to grants: ${child.sendTo.join(", ") || "none"}` }],
             { offset: a.offset as number | undefined, limit: a.limit as number | undefined, hint: `Use peers(native_child="${childId}", limit=..., offset=...) with the same filters.` }).text);
           }

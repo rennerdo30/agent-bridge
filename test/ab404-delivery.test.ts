@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -9,11 +9,14 @@ import { MAX_BODY_CHARS, MAX_FRAME_BYTES } from "../src/core/constants.js";
 import { nullLogger } from "../src/core/logger.js";
 import { BridgeError, type BridgeMessage } from "../src/core/protocol.js";
 import type { BridgeNode } from "../src/core/node.js";
-import { buildHookResponse } from "../src/mcp/hooks.js";
+import { buildHookResponse, claudeWakeCandidate, noteOversizedMessages, oversizedMessageNoted } from "../src/mcp/hooks.js";
+import { reportModActivity } from "../src/mcp/hook-ownership.js";
+import { pageProjectJobSummaries } from "../src/core/project-job-summary.js";
+import { RewakeEndpoint, sessionFile, WAKE_HEADER } from "../src/mcp/rewake.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 import { JobManager } from "../src/mcp/jobs.js";
 import { mcpContentBytes, MCP_RESULT_BUDGET_BYTES } from "../src/mcp/output-bounds.js";
-import { registerTools, type ServerContext } from "../src/mcp/server.js";
+import { channelPusher, registerTools, type ServerContext } from "../src/mcp/server.js";
 import { makeEnv, until, type TestEnv } from "./helpers.js";
 
 let env: TestEnv;
@@ -95,6 +98,42 @@ describe("AB-404 peers: the real cause is a projectJobs response over the broker
     expect(failed.text).toMatch(/over the 4\D?194\D?304-byte frame limit/);
     expect(failed.text).not.toMatch(/200\D?000 characters/);
   });
+
+  it("walks every summary page in order when a page holds only a few jobs", async () => {
+    const records = Array.from({ length: 23 }, (_, i) => ({ id: `id-${i}`, name: `job-${String(22 - i).padStart(2, "0")}`, agent: "codex",
+      status: i % 3 ? "done" : "running", sessionId: `s-${i}`, args: { title: `Title ${i} ${"t".repeat(40)}` }, prompt: "p".repeat(5_000) }));
+    const node = env.node("claude-pages");
+    const offsets: number[] = [], sizes: number[] = [];
+    Object.assign(node, { withClient: async (fn: (client: unknown) => unknown) => fn({ request: async (op: string, args: { offset?: number }) => {
+      expect(op).toBe("projectJobSummaries");
+      offsets.push(args.offset ?? 0);
+      const page = pageProjectJobSummaries(records, args, 400);
+      sizes.push(page.jobs.length);
+      return page;
+    } }) });
+    const all = await node.projectJobSummaries();
+    expect(all.map((j) => j.name)).toEqual(records.map((r) => r.name).sort());
+    expect(new Set(all.map((j) => j.id)).size).toBe(records.length);
+    expect(JSON.stringify(all)).not.toContain("ppppp");
+    expect(offsets.length).toBeGreaterThan(4);
+    expect(offsets[0]).toBe(0);
+    for (let i = 1; i < offsets.length; i++) expect(offsets[i]).toBe(offsets[i - 1]! + sizes[i - 1]!);
+    expect(sizes.every((n) => n > 0)).toBe(true);
+  });
+
+  it("a native child's peers reports a refused full listing from an older broker instead of failing", async () => {
+    const parent = env.node("claude-parent");
+    await parent.setSessionId("parent-session"); await parent.start();
+    await parent.nativeChild({ action: "start", agentId: "worker" });
+    vi.spyOn(parent, "projectJobSummaries").mockRejectedValue(new BridgeError("too_large",
+      `response is 5000000 bytes, over the ${MAX_FRAME_BYTES}-byte frame limit`, { bytes: 5_000_000, limit: MAX_FRAME_BYTES, retryable: false }));
+    const call = await mcp(context(parent));
+    const peers = await call("peers", { native_child: "worker" });
+    expect(peers.isError).toBe(false);
+    expect(peers.text).toContain("Your native child bridge address is claude-parent/sub:worker.");
+    expect(peers.text).toMatch(/Project jobs are not shown: .*over the 4\D?194\D?304-byte frame limit/);
+    expect(peers.text).toContain("Explicit send_to grants:");
+  });
 });
 
 describe("AB-404 mail is marked read only when shown in full", () => {
@@ -115,9 +154,11 @@ describe("AB-404 mail is marked read only when shown in full", () => {
     expect(reader.unread().map((m) => m.id)).toEqual([bigId]);
     for (const [ids] of markRead.mock.calls) expect(ids).not.toContain(bigId);
 
-    // Jumping to a later page does not count as reading the whole message.
+    // Jumping to a later page does not count as reading the whole message, and the last page says so.
     const tail = await call("inbox", { id: bigId, offset: MAX_BODY_CHARS - 10 });
-    expect(tail.text).toContain(`End of message ${bigId}.`);
+    expect(tail.text).not.toContain(`End of message ${bigId}.`);
+    expect(tail.text).toContain(`This is the last page, but message ${bigId} stays unread: characters 0-${MAX_BODY_CHARS - 10} were not read yet.`);
+    expect(tail.text).toContain(`Continue with inbox(id="${bigId}", offset=0).`);
     expect(reader.unread().map((m) => m.id)).toEqual([bigId]);
 
     let offset = 0, pages = 0, body = "";
@@ -196,6 +237,98 @@ describe("AB-404 mail is marked read only when shown in full", () => {
     expect(await buildHookResponse(ctx, { event: "PostToolUse", sessionId: null, stopHookActive: false })).toEqual({});
     expect(await buildHookResponse(ctx, { event: "Stop", sessionId: null, stopHookActive: false })).toEqual({});
     expect(reader.unread().map((m) => m.id)).toEqual([bigId]);
+  });
+
+  it("a nested child's large parent-link text defers a normal child message instead of listing it as too large", async () => {
+    const inbox = new LocalCoordinator("nested", "root");
+    const child = (id: string, body: string): BridgeMessage => ({ id, from: { id: "job:x", name: "codex-job-x", agent: "codex" }, to: "nested",
+      body, conversationId: "c", hop: 0, createdAt: Date.now() } as BridgeMessage);
+    const jobs = new JobManager(inbox, nullLogger);
+    closers.push(async () => jobs.cancelAll());
+    let reads = 0;
+    // Parent-link mail is consumed when fetched; a child result arrives while that fetch is in flight.
+    const parent = { name: "root-session", send: vi.fn(), progress: vi.fn(), siblings: { peers: async () => [], send: vi.fn() },
+      inbox: async () => {
+        if (++reads > 1) return [];
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        inbox.deliverLocal(child("child-1", `CHILD ${"c".repeat(20_000)}`));
+        return [{ id: "p1", body: `PARENT ${"p".repeat(40_000)}` }, { id: "p2", body: `PARENT ${"q".repeat(40_000)}` }];
+      } };
+    const ctx = { agent: "codex", node: null as unknown as BridgeNode, childInbox: inbox, jobs, parent, home: env.home,
+      cfg: DEFAULT_CONFIG, log: nullLogger, cwd: () => env.home, channelActive: () => false } as unknown as ServerContext;
+    const first = JSON.stringify(await buildHookResponse(ctx, { event: "PostToolUse", sessionId: null, stopHookActive: false }));
+    expect(mcpContentBytes([first])).toBeLessThanOrEqual(MCP_RESULT_BUDGET_BYTES);
+    expect(first).toContain("PARENT pppp");
+    expect(first).not.toContain("CHILD cccc");
+    expect(first).not.toContain("too large");
+    expect(inbox.unread().map((m) => m.id)).toEqual(["child-1"]);
+    // Not listed as oversized: the next hook, without the one-time parent text, shows it in full and reads it.
+    const second = JSON.stringify(await buildHookResponse(ctx, { event: "PostToolUse", sessionId: null, stopHookActive: false }));
+    expect(second).toContain("CHILD cccc");
+    expect(second).not.toContain("too large");
+    expect(inbox.unread()).toEqual([]);
+  });
+
+  it("a mod wake-up hands out only what fits; a big message is listed once and stays unread (AB-396 path)", async () => {
+    const me = env.node("claude-modded", "claude"), peer = env.node("codex-sender", "codex");
+    await me.start(); await peer.start(); await me.setSessionId("sess-404");
+    const ctx = context(me, { rewakeAvailable: true });
+    const rewake = new RewakeEndpoint(env.home, me, (m) => claudeWakeCandidate(ctx, m), nullLogger, (event) => reportModActivity(ctx, event), undefined,
+      { noted: (id) => oversizedMessageNoted(ctx, id), note: (ids) => noteOversizedMessages(ctx, ids) });
+    await rewake.start();
+    closers.push(() => rewake.stop());
+    rewake.register("sess-404");
+    ctx.wakeDelivery = rewake.delivery();
+    const reg = JSON.parse(readFileSync(sessionFile(env.home, "sess-404"), "utf8")) as { port: number; secret: string };
+    const modPoll = async () => ((await (await fetch(`http://127.0.0.1:${reg.port}/wait?role=mod`,
+      { headers: { authorization: `Bearer ${reg.secret}` }, signal: AbortSignal.timeout(3_000) })).json()) as { text: string }).text;
+    const markRead = vi.spyOn(me, "markRead");
+
+    await peer.send({ to: me.name, body: big("MOD-BIG") });
+    await peer.send({ to: me.name, body: "mod small" });
+    await until(() => me.unread().length === 2);
+    const bigId = me.unread().find((m) => m.body.startsWith("MOD-BIG"))!.id;
+    const wake = await modPoll();
+    expect(mcpContentBytes([wake])).toBeLessThanOrEqual(MCP_RESULT_BUDGET_BYTES);
+    expect(wake.startsWith(WAKE_HEADER)).toBe(true);
+    expect(wake).toContain("mod small");
+    expect(wake).toContain(`Message ${bigId} from codex-sender (${MAX_BODY_CHARS} characters) is too large to show in one result; it stays unread.`);
+    expect(wake).not.toContain("MOD-BIG x");
+    expect(me.unread()).toHaveLength(2);
+    // The wake-up's own prompt reads only what it showed in full.
+    await buildHookResponse(ctx, { event: "UserPromptSubmit", sessionId: "sess-404", promptId: "wake-1", stopHookActive: false, prompt: wake });
+    expect(me.unread().map((m) => m.id)).toEqual([bigId]);
+    await buildHookResponse(ctx, { event: "Stop", sessionId: "sess-404", promptId: "wake-1", stopHookActive: false });
+    // Listed once: the next wake-up carries only new mail, and the big message is never marked read.
+    await peer.send({ to: me.name, body: "later small" });
+    await until(() => me.unread().length === 2);
+    const next = await modPoll();
+    expect(next).toContain("later small");
+    expect(next).not.toContain(bigId);
+    for (const [ids] of markRead.mock.calls) expect(ids).not.toContain(bigId);
+    expect(me.unread().map((m) => m.id)).toContain(bigId);
+  });
+
+  it("the channel announces a too-large message by id, leaves it unread and does not push it again", async () => {
+    const reader = env.node("claude-channel"), sender = env.node("codex-sender", "codex");
+    await reader.start(); await sender.start();
+    const ctx = context(reader, { channelActive: () => true });
+    const pushed: { content: string; meta: Record<string, string> }[] = [];
+    const push = channelPusher(ctx, () => true, async (params) => { pushed.push(params); });
+    await sender.send({ to: reader.name, body: big("CHANNEL-BIG") });
+    await sender.send({ to: reader.name, body: "channel small" });
+    await until(() => reader.unread().length === 2);
+    const bigMessage = reader.unread().find((m) => m.body.startsWith("CHANNEL-BIG"))!;
+    const small = reader.unread().find((m) => m.body === "channel small")!;
+    await push(bigMessage); await push(small);
+    expect(pushed.map((p) => p.meta.message_id)).toEqual([bigMessage.id, small.id]);
+    expect(pushed[0]!.content).toBe(`[agent-bridge] Message ${bigMessage.id} from codex-sender (${MAX_BODY_CHARS} characters) is too large to show in one result; ` +
+      `it stays unread. Read it in pages with inbox(id="${bigMessage.id}", offset=0).`);
+    expect(pushed[1]!.content).toBe("channel small");
+    expect(reader.unread().map((m) => m.id)).toEqual([bigMessage.id]);
+    await push(bigMessage);
+    expect(pushed).toHaveLength(2);
+    expect(reader.unread().map((m) => m.id)).toEqual([bigMessage.id]);
   });
 });
 

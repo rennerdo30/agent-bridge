@@ -132,6 +132,18 @@ describe("AB-404 listing pages", () => {
     expect(renders).toBeLessThan(10);
     expect(mcpContentBytes([render(selection.shown, selection.oversized, selection.deferred)])).toBeLessThanOrEqual(MCP_RESULT_BUDGET_BYTES);
   });
+
+  it("decides oversized without a one-time prefix: a message only the prefix crowds out is deferred", () => {
+    const prefix = "p".repeat(150_000), normal = `normal ${"n".repeat(40_000)}`, huge = `huge ${"h".repeat(200_000)}`;
+    const render = (withPrefix: boolean) => (shown: string[], oversized: string[], deferred: string[]) =>
+      [withPrefix ? prefix : "", ...shown, `${oversized.length}/${deferred.length}`].filter(Boolean).join("\n");
+    const crowded = selectForDelivery([normal, huge], render(true), (m) => m, MCP_RESULT_BUDGET_BYTES, render(false));
+    expect(crowded).toEqual({ shown: [], oversized: [huge], deferred: [normal] });
+    // Without the standalone rendering the prefix would make the normal message oversized for good.
+    expect(selectForDelivery([normal], render(true), (m) => m).oversized).toEqual([normal]);
+    // The next call, without the prefix, shows it.
+    expect(selectForDelivery([normal], render(false), (m) => m).shown).toEqual([normal]);
+  });
 });
 
 describe("AB-404 project filter", () => {

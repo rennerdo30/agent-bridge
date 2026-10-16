@@ -161,25 +161,32 @@ export interface DeliverySelection<T> { shown: T[]; oversized: T[]; deferred: T[
  * even alone is `oversized` (listed by id instead and left unread); it never blocks the messages after it. Once a
  * fitting message no longer fits, it and every later message are `deferred` (left unread for the next call).
  * Each message is measured once and the final rendering is checked once, so selection is linear.
+ *
+ * `standalone` renders without a one-time prefix (for example parent-link messages that come only once). Whether a
+ * message is oversized is decided with it, so a large prefix never makes a normal message count as oversized for
+ * good; a message that only the prefix pushes over the budget is deferred to the next call instead.
  */
 export function selectForDelivery<T>(messages: readonly T[], render: (shown: T[], oversized: T[], deferred: T[]) => string,
-  measure: (message: T) => string, budget = MCP_RESULT_BUDGET_BYTES): DeliverySelection<T> {
+  measure: (message: T) => string, budget = MCP_RESULT_BUDGET_BYTES,
+  standalone: (shown: T[], oversized: T[], deferred: T[]) => string = render): DeliverySelection<T> {
   const shown: T[] = [], oversized: T[] = [], deferred: T[] = [];
   let bytes = mcpContentBytes([render([], [], [...messages])]), full = false;
-  const empty = mcpContentBytes([render([], [], [])]);
+  const empty = mcpContentBytes([standalone([], [], [])]);
+  // Render a message alone only when it is near or over the budget by itself (rare), never for every message.
+  const fitsAlone = (message: T, cost: number) => empty + cost <= budget - 4_096 || mcpContentBytes([standalone([message], [], [])]) <= budget;
   for (const message of messages) {
     const cost = lineBytes(measure(message)) + 16;
     if (!full && bytes + cost <= budget) { shown.push(message); bytes += cost; continue; }
-    // Render a message alone only when it is near or over the budget by itself (rare), never for every message.
-    const alone = empty + cost <= budget - 4_096 || mcpContentBytes([render([message], [], [])]) <= budget;
-    if (alone) { deferred.push(message); full = true; }
+    if (fitsAlone(message, cost)) { deferred.push(message); full = true; }
     else oversized.push(message);
   }
   // Notes and reply hints are outside the per-message estimate: confirm, and defer from the end if needed.
   while (shown.length && !fitsMcpResult(render(shown, oversized, deferred), budget)) {
     const last = shown.pop()!;
-    // The first message does not fit even alone with the fixed notes: page it instead of deferring it forever.
-    if (shown.length) deferred.unshift(last); else oversized.unshift(last);
+    if (shown.length) { deferred.unshift(last); continue; }
+    // The first message does not fit even alone with the fixed notes: page it instead of deferring it forever,
+    // unless only the one-time prefix is in the way (the next call, without it, shows the message).
+    if (fitsMcpResult(standalone([last], oversized, deferred), budget)) deferred.unshift(last); else oversized.unshift(last);
   }
   return { shown, oversized, deferred };
 }

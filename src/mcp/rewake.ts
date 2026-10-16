@@ -8,7 +8,8 @@ import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
 import { AGENT_KINDS, BROADCAST, isQuietMessage, type BridgeMessage } from "../core/protocol.js";
 import { tokensEqual } from "../core/token.js";
-import { formatMessages } from "./format.js";
+import { formatMessage, formatMessages } from "./format.js";
+import { selectForDelivery, unshownMessageNotes } from "./output-bounds.js";
 import type { ClaudeMailScopes } from "./claude-mail-scope.js";
 
 /**
@@ -45,6 +46,12 @@ const MAX_REPEATS = 500;
 /** Ids of the agent-bridge messages in a wake-up text (or a prompt that carries one). */
 export function wakeMessageIds(text: string): string[] {
   return [...text.matchAll(/<agent-bridge-message id="([^"]+)"/g)].map((m) => m[1]!);
+}
+
+/** AB-404: messages already listed by id as too large for one result (shared with the hooks and inbox tools). */
+export interface OversizedMessages {
+  noted(id: string): boolean;
+  note(ids: readonly string[]): void;
 }
 
 export interface RewakeRegistration {
@@ -108,7 +115,11 @@ export class RewakeEndpoint {
     private readonly log: Logger,
     private readonly activity?: (event: import("./hook-ownership.js").ModActivity) => boolean,
     private readonly mailScopes?: ClaudeMailScopes,
+    private readonly oversized?: OversizedMessages,
   ) {}
+
+  /** A message that should wake the session and was not already listed as too large to show (AB-404). */
+  private readonly wakeable = (m: BridgeMessage): boolean => this.shouldWake(m) && !this.oversized?.noted(m.id);
 
   async start(): Promise<void> {
     this.server = createServer((req, res) => {
@@ -171,17 +182,26 @@ export class RewakeEndpoint {
     res.end(JSON.stringify({ text, superseded }));
   }
 
-  /** Hand the waiting messages to a wake-up; they stay unread until the session shows activity. */
+  /**
+   * Hand the waiting messages to a wake-up; they stay unread until the session shows activity. AB-404: the
+   * wake-up text is bounded like a hook result. Only messages shown in full are handed out; one too large to
+   * show is listed by id once (it stays unread and inbox pages it), and the rest wait for the next wake-up.
+   */
   private handOut(toMod = false): string {
-    const msgs = this.node.unread().filter(this.shouldWake);
+    const render = (shown: BridgeMessage[], oversized: BridgeMessage[], deferred: BridgeMessage[]) => [
+      shown.length ? formatMessages(shown, { header: WAKE_HEADER, repeat: (m) => this.repeated(m.id) }) : WAKE_HEADER,
+      ...unshownMessageNotes(oversized, deferred.length, (id) => `inbox(id="${id}", offset=0)`),
+    ].join("\n\n");
+    const { shown, oversized, deferred } = selectForDelivery(this.node.unread().filter(this.wakeable), render, formatMessage);
+    this.oversized?.note(oversized.map((m) => m.id));
     // Not marked read yet: Claude Code does not always turn a hook's wake-up into a turn. They count as
     // delivered once the session shows activity (confirmDelivery) or, for the mod, once their own prompt
     // runs or the mod acknowledges them; until then a retry or the next poll still gets them.
-    for (const m of msgs) {
+    for (const m of shown) {
       if (toMod) this.modHandedOut.set(m.id, this.turnEnds);
       else this.handedOut.add(m.id);
     }
-    return formatMessages(msgs, { header: WAKE_HEADER, repeat: (m) => this.repeated(m.id) });
+    return shown.length || oversized.length ? render(shown, oversized, deferred) : "";
   }
 
   /** The turn-end hook: wakes the session for the next message that should wake it. */
@@ -192,7 +212,7 @@ export class RewakeEndpoint {
     const ac = new AbortController();
     this.waiter = ac;
     res.on("close", () => ac.abort("closed"));
-    void this.node.waitForMessage(REWAKE_POLL_MS, this.shouldWake, ac.signal).then((first) => {
+    void this.node.waitForMessage(REWAKE_POLL_MS, this.wakeable, ac.signal).then((first) => {
       if (this.waiter === ac) this.waiter = null;
       let text = "";
       if (first && !res.destroyed) {
@@ -229,7 +249,7 @@ export class RewakeEndpoint {
     // A message nobody else waits for: take it (after a short grace, in case a new turn's hook is starting).
     const loop = () =>
       void this.node
-        .waitForMessage(REWAKE_POLL_MS, (m) => this.shouldWake(m) && !this.handedOut.has(m.id) && !this.waiter, ac.signal)
+        .waitForMessage(REWAKE_POLL_MS, (m) => this.wakeable(m) && !this.handedOut.has(m.id) && !this.waiter, ac.signal)
         .then((m) => {
           if (done) return;
           if (!m) return finish("", false);
@@ -257,11 +277,11 @@ export class RewakeEndpoint {
     const deadline = Date.now() + REWAKE_POLL_MS;
     void (async () => {
       while (!ac.signal.aborted && Date.now() < deadline) {
-        const waiting = this.node.unread().some(this.shouldWake);
+        const waiting = this.node.unread().some(this.wakeable);
         if (waiting && !this.busy) break;
         // Busy with a message already waiting: check again shortly (waitForMessage would return it at once).
         if (waiting) await new Promise<void>((r) => setTimeout(r, MOD_TICK_MS).unref());
-        else await this.node.waitForMessage(MOD_TICK_MS, this.shouldWake, ac.signal);
+        else await this.node.waitForMessage(MOD_TICK_MS, this.wakeable, ac.signal);
       }
       if (this.modWaiter === ac) this.modWaiter = null;
       if (ac.signal.aborted || Date.now() >= deadline || res.destroyed) return this.reply(res, "", ac.signal.reason === "superseded");
