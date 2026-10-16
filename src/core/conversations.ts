@@ -34,6 +34,9 @@ import { cleanupSavepoint } from "./savepoint.js";
 import { CONVERSATION_BYTES, indexedConversationText } from "./conversation-text.js";
 export { CONVERSATION_BYTES, indexedConversationText } from "./conversation-text.js";
 const JOB_SNAPSHOTS_PER_TICK = 16;
+const LATE_PROJECT_RETRY_MS = 10 * 60_000;
+const LATE_PROJECT_IDLE_MS = 60_000;
+const LATE_PROJECT_MAX_SKIPPED = 4096;
 /** Changed sources reported by the watcher are read first, several chunks each, so live lines land at once (AB-383). */
 const DIRTY_SOURCES_PER_TICK = 16;
 const DIRTY_CHUNKS_PER_SOURCE = 16;
@@ -71,6 +74,9 @@ export class ConversationIngestor {
   /** Stores seen by the last complete job pass; unchanged stores need no reread and rehash (AB-147). */
   private jobsSignature = "";
   private quietArchive = "";
+  /** Conversations whose cwd resolved to no project (a removed worktree, a plain folder), by when to retry them. */
+  private readonly noProject = new Map<string, number>();
+  private lateProjectsAt = 0;
   private jobQueue: {
     job: Record<string, any>;
     raw: Buffer;
@@ -167,7 +173,8 @@ export class ConversationIngestor {
   private advance(key: string, cursor: string): void {
     this.db
       .prepare(
-        "INSERT INTO history_cursors VALUES(?,?) ON CONFLICT(source) DO UPDATE SET cursor=excluded.cursor",
+        // An unchanged cursor is no write: idle ticks otherwise kept the WAL (and every signature over it) changing.
+        "INSERT INTO history_cursors VALUES(?,?) ON CONFLICT(source) DO UPDATE SET cursor=excluded.cursor WHERE cursor IS NOT excluded.cursor",
       )
       .run(key, cursor);
   }
@@ -301,22 +308,34 @@ export class ConversationIngestor {
         .run(docs.length === 32 ? 1 : 0, binding.session!, binding.agent!);
     }
     // Late hook/session identities and late metadata fill previously unknown project/job ownership.
+    // A cwd that resolves to no project stays '': it was selected, resolved and rewritten on every tick, which
+    // kept an idle broker busy. Such conversations are retried after LATE_PROJECT_RETRY_MS, and an empty pass
+    // waits LATE_PROJECT_IDLE_MS unless new files arrived.
+    const now = Date.now();
+    if (!files.length && now < this.lateProjectsAt) return;
+    for (const [id, retryAt] of this.noProject) if (retryAt <= now) this.noProject.delete(id);
+    let resolved = 0;
     for (const file of this.db
       .prepare(
-        `SELECT c.id,f.cwd FROM conversations c JOIN conversation_sources s ON s.conversation=c.id JOIN history_files f ON f.path=s.path WHERE c.project='' AND f.cwd<>'' LIMIT 32`,
+        `SELECT c.id,f.cwd FROM conversations c JOIN conversation_sources s ON s.conversation=c.id JOIN history_files f ON f.path=s.path WHERE c.project='' AND f.cwd<>'' AND c.id NOT IN (SELECT value FROM json_each(?)) LIMIT 32`,
       )
-      .all()) {
+      .all(JSON.stringify([...this.noProject.keys()]))) {
       const project = conversationProject(String(file.cwd));
+      if (!project) {
+        if (this.noProject.size < LATE_PROJECT_MAX_SKIPPED) this.noProject.set(String(file.id), now + LATE_PROJECT_RETRY_MS);
+        continue;
+      }
+      resolved++;
       this.db
         .prepare("UPDATE conversations SET project=? WHERE id=?")
         .run(project, file.id!);
-      if (project)
-        this.db
-          .prepare(
-            "INSERT OR IGNORE INTO conversation_projects(project) VALUES(?)",
-          )
-          .run(project);
+      this.db
+        .prepare(
+          "INSERT OR IGNORE INTO conversation_projects(project) VALUES(?)",
+        )
+        .run(project);
     }
+    this.lateProjectsAt = resolved ? 0 : now + LATE_PROJECT_IDLE_MS;
   }
   private jobs(): void {
     // A pass cut short by the queue bound continues as soon as the queue drains.

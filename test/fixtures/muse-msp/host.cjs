@@ -60,6 +60,7 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
     if (mode === 'early') { finish(); reply(m, ack); return; }
     reply(m, ack);
     notify('turn/started', { turnId: tid, commandId: m.params.commandId });
+    if (process.env.MSP_TEST_USAGE) write({ method: 'usage/changed', params: JSON.parse(process.env.MSP_TEST_USAGE) });
     if (mode === 'crash') { process.stderr.write('native host crash evidence'); process.exit(3); }
     if (mode === 'gap') return notify('view/gap', { after: 'v1', next: 'v2' });
     if (mode === 'malformed') return process.stdout.write('broken json\n');

@@ -4,7 +4,8 @@ import { childEnv, killTree, resolveCommand, opencodeV2 } from "./delegate.js";
 import type { Logger } from "./logger.js";
 import type { CodingAgent } from "./protocol.js";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { resolveHome } from "./paths.js";
 import { homedir, hostname } from "node:os";
 import { join, resolve } from "node:path";
 import { decideProviderUsage, PROVIDER_USAGE_TTL_MS, type ProviderUsageDecision, type ProviderUsageFact, type ProviderUsageScope } from "./provider-usage-policy.js";
@@ -472,6 +473,46 @@ export async function antigravityUsage(bin: string, cwd: string, log: Logger, pr
   }
 }
 
+/** Muse knows its plan usage only inside a `muse serve` that made a model call (`usage/changed`); a fresh host
+ * answers `usage/read` with nothing. Muse jobs therefore keep the last observation here (no secrets, numbers only). */
+export const MUSE_USAGE_FILE = "muse-usage.json";
+const MUSE_USAGE_STALE_MS = 6 * 60 * 60 * 1000;
+type MuseUsage = { observedAtMs: number; tier: string; window: { usedPercent: number; resetsAtMs: number; windowDurationMins: number }; weekly: { usedPercent: number; resetsAtMs: number } };
+function museUsageValue(value: unknown): MuseUsage | null {
+  const v = value as MuseUsage | null;
+  const int = (n: unknown) => Number.isSafeInteger(n) && (n as number) >= 0;
+  return v && int(v.observedAtMs) && typeof v.tier === "string" && int(v.window?.usedPercent) && int(v.window?.resetsAtMs) &&
+    int(v.window?.windowDurationMins) && v.window.windowDurationMins > 0 && int(v.weekly?.usedPercent) && int(v.weekly?.resetsAtMs)
+    ? { observedAtMs: v.observedAtMs, tier: v.tier, window: { usedPercent: v.window.usedPercent, resetsAtMs: v.window.resetsAtMs, windowDurationMins: v.window.windowDurationMins },
+      weekly: { usedPercent: v.weekly.usedPercent, resetsAtMs: v.weekly.resetsAtMs } } : null;
+}
+/** Keep the newest observation; an older one from a concurrent job never replaces it. */
+export function recordMuseUsage(home: string, value: unknown): void {
+  const usage = museUsageValue(value);
+  if (!usage) return;
+  const file = join(home, MUSE_USAGE_FILE);
+  try { if ((museUsageValue(JSON.parse(readFileSync(file, "utf8")))?.observedAtMs ?? -1) >= usage.observedAtMs) return; } catch { /* none yet */ }
+  const temp = `${file}.${process.pid}.tmp`;
+  writeFileSync(temp, JSON.stringify(usage), { mode: 0o600 });
+  renameSync(temp, file);
+}
+export function museUsage(home: string, now = Date.now()): UsageReport {
+  let usage: MuseUsage | null = null;
+  try { usage = museUsageValue(JSON.parse(readFileSync(join(home, MUSE_USAGE_FILE), "utf8"))); } catch { /* none yet */ }
+  if (!usage) return { agent: "muse", lines: ["No plan usage reported yet. Muse reports it while it works; it shows here after the next Muse job."], limits: [], maxUsedPercent: null };
+  const window = windowName(usage.window.windowDurationMins);
+  const asOf = new Date(usage.observedAtMs).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  const stale = now - usage.observedAtMs > MUSE_USAGE_STALE_MS;
+  return {
+    agent: "muse",
+    lines: [`muse${usage.tier ? ` [${usage.tier}]` : ""}: ${window} ${usage.window.usedPercent}% used${resetText(usage.window.resetsAtMs)}, weekly ${usage.weekly.usedPercent}% used${resetText(usage.weekly.resetsAtMs)}`,
+      `As of ${asOf}, the last Muse job${stale ? "; may be out of date" : ""}.`],
+    limits: [{ name: window, usedPercent: usage.window.usedPercent, resets: resetTime(usage.window.resetsAtMs) }, { name: "weekly", usedPercent: usage.weekly.usedPercent, resets: resetTime(usage.weekly.resetsAtMs) }],
+    // A past window has reset since; only the weekly figure can still hold.
+    maxUsedPercent: usage.window.resetsAtMs > now ? Math.max(usage.window.usedPercent, usage.weekly.usedPercent) : usage.weekly.resetsAtMs > now ? usage.weekly.usedPercent : null,
+  };
+}
+
 async function codexUsage(bin: string, cwd: string, log: Logger): Promise<UsageReport> {
   return formatCodexLimits(await codexAppServerCall(bin, cwd, log, "account/rateLimits/read", null));
 }
@@ -480,7 +521,7 @@ async function codexUsage(bin: string, cwd: string, log: Logger): Promise<UsageR
 export async function readUsage(agent: CodingAgent, bin: string, cwd: string, log: Logger, model: string | null = null): Promise<UsageReport> {
   try {
     if (agent === "antigravity") return await antigravityUsage(bin, cwd, log);
-    if (agent === "muse") return { agent, lines: ["Account limit availability is unknown: Muse MSP reports session usage, which does not establish account quotas. Delegated results include the run outcome."], limits: [], maxUsedPercent: null };
+    if (agent === "muse") return museUsage(resolveHome());
     if (agent === "codex") return await codexUsage(bin, cwd, log);
     if (agent === "claude") return parseClaudeUsage(await capture(bin, ["-p", "/usage"], cwd, log));
     const v2 = await opencodeV2(bin, cwd, log);
