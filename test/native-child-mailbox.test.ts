@@ -55,18 +55,25 @@ it("an unscoped native-child inbox cannot see or consume parent mail, which pare
   expect(JSON.stringify(parentHook)).toContain(message.body);
 });
 
-it.each(["wait_for_message", "get_conversation"])("legacy ambiguous %s never enters a parent mail handler", async name => {
+it.each(["wait_for_message", "get_conversation", "search_history"])("ambiguous unscoped %s with a live child never enters a parent mail handler", async name => {
   await childStart();
   const { message } = await parentMail();
   const history = vi.spyOn(ctx.node!, "getConversation");
-  const result = await call(name, name === "get_conversation" ? { id: message.conversationId } : {});
+  const search = vi.spyOn(ctx.node!, "searchHistory");
+  const wait = vi.spyOn(ctx.node!, "waitForMessage");
+  const args = name === "get_conversation" ? { id: message.conversationId } : name === "search_history" ? { query: "Private parent message" } : {};
+  const result = await call(name, args);
+  expect(JSON.stringify(result)).toContain("Ambiguous caller");
   expect(JSON.stringify(result)).not.toContain(message.body);
-  expect(history).not.toHaveBeenCalled();
+  expect(history).not.toHaveBeenCalled(); expect(search).not.toHaveBeenCalled(); expect(wait).not.toHaveBeenCalled();
   expect(ctx.node!.unread()).toContainEqual(expect.objectContaining({ id: message.id }));
 });
 
-it("legacy parents retain ordinary inbox access when no native child is live", async () => {
+it("unscoped parents retain ordinary inbox and history access when no native child is live", async () => {
   const { message } = await parentMail();
+  const search = vi.spyOn(ctx.node!, "searchHistory").mockResolvedValue({ engine: "plain", hits: [] });
+  expect((await call("search_history", { query: "parent" })).isError).not.toBe(true);
+  expect(search).toHaveBeenCalledWith({ query: "parent" });
   expect(JSON.stringify(await call("inbox"))).toContain(message.body);
   expect(ctx.node!.unread().some(m => m.id === message.id)).toBe(false);
 });
@@ -83,28 +90,42 @@ it("legacy explicitly scoped native inbox still reads only the live child's mail
   expect(await ctx.node!.nativeChildPending(agentId)).toEqual([]);
 });
 
-it.each(["inbox", "wait_for_message", "get_conversation"])("mod-capable %s refuses missing/forged identity before any parent effects", async name => {
-  ctx.claudeMailScopes!.capable = true;
-  await childStart();
+it.each(["inbox", "wait_for_message", "get_conversation", "search_history"])("%s rejects forged scopes and caller-claimed identity before any parent effects", async name => {
   const { sender, message } = await parentMail();
   const history = vi.spyOn(ctx.node!, "getConversation");
+  const search = vi.spyOn(ctx.node!, "searchHistory");
   const wait = vi.spyOn(ctx.node!, "waitForMessage");
-  const args = name === "get_conversation" ? { id: message.conversationId } : {};
-  for (const meta of [undefined, { agent_id: agentId }, { sessionId: "parent-session" }]) {
-    const result = await call(name, args, meta);
-    expect(result.isError).toBe(true);
-    expect(JSON.stringify(result)).not.toContain(message.body);
-  }
+  const args = name === "get_conversation" ? { id: message.conversationId } : name === "search_history" ? { query: "Private parent message" } : {};
+  // A presented capability is always validated, with or without a live child.
   expect((await call(name, { ...args, _bridge_scope: "forged" })).isError).toBe(true);
-  if (name === "inbox") expect((await call(name, { native_child: agentId })).isError).toBe(true);
+  await childStart();
+  expect((await call(name, { ...args, _bridge_scope: "forged" })).isError).toBe(true);
+  for (const meta of [undefined, { agent_id: agentId }, { sessionId: "parent-session" }]) {
+    expect(JSON.stringify(await call(name, args, meta))).not.toContain(message.body);
+  }
   expect(history).not.toHaveBeenCalled(); expect(wait).not.toHaveBeenCalled();
+  // A caller-claimed child id may reach only that child's own scoped history.
+  for (const [query] of search.mock.calls) expect(query.filters).toMatchObject({ session: `${ctx.node!.name}/sub:${agentId}`, kind: "message" });
   expect(ctx.observeMeta).not.toHaveBeenCalled();
   expect(ctx.node!.unread()).toContainEqual(expect.objectContaining({ id: message.id }));
   expect((await sender.messageReceipt(message.id))[0]?.readAt).toBeNull();
 });
 
-/** Real authenticated endpoint + actual host-mod middleware + registered MCP handler. */
-async function hostMod() {
+it("a replaced server takes the session back before applying mail scope rules", async () => {
+  const { message } = await parentMail();
+  let replaced = true;
+  vi.spyOn(ctx.node!, "wasReplaced", "get").mockImplementation(() => replaced);
+  const reclaim = vi.spyOn(ctx.node!, "reclaim").mockImplementation(async () => { replaced = false; });
+  expect(JSON.stringify(await call("inbox"))).toContain(message.body);
+  expect(reclaim).toHaveBeenCalledTimes(1);
+});
+
+type Shape = "nested" | "flat";
+/** Real authenticated endpoint + actual host-mod middleware + registered MCP handler.
+ * "nested" is the observed tool.call event: { tool, input, tool_use_id, agentId };
+ * "flat" is the 2.1.300 type contract's spread arguments. */
+async function hostMod(opts: { shape?: Shape; endpointFails?: boolean } = {}) {
+  const shape = opts.shape ?? "nested";
   mcpServer = new McpServer({ name: "claude-mail-fixture", version: "1" });
   registerTools(mcpServer, ctx, []);
   mcpClient = new Client({ name: "host-mod-fixture", version: "1" });
@@ -118,31 +139,71 @@ async function hostMod() {
   register(((name: string, ...rest: any[]) => hooks.set(name, rest.at(-1))) as any);
   const engine = { session: { id: async () => "parent-session" }, env: { get: async (name: string) => name === "AGENT_BRIDGE_HOME" ? env.home : "" },
     fs: { read: async (path: string) => readFileSync(path, "utf8") },
-    http: { fetch: async (url: string, init: RequestInit) => { const r = await fetch(url, init); return { ok: r.ok, text: await r.text() }; } },
+    http: { fetch: async (url: string, init: RequestInit) => {
+      if (opts.endpointFails) throw new Error("scope endpoint unavailable");
+      const r = await fetch(url, init); return { ok: r.ok, text: await r.text() };
+    } },
     // No real host timeout is needed around these bounded loopback fixture requests.
     clock: { sleep: async () => new Promise(() => {}) } };
-  await hooks.get("session.start")(engine, {}, async (e: any) => e);
-  expect(ctx.claudeMailScopes!.capable).toBe(true);
-  return (tool: string, args: Record<string, unknown> = {}, nativeId?: string) => hooks.get("tool.call")(engine,
-    { tool: `mcp__plugin_agent-bridge_bridge__${tool}`, tool_use_id: "host-call", ...args, agentId: nativeId },
-    async (e: any) => { const { tool: _tool, tool_use_id: _id, agentId: _agent, ...input } = e; return mcpClient!.callTool({ name: tool, arguments: input }); });
+  const forwarded: Record<string, unknown>[] = [];
+  const host = (tool: string, args: Record<string, unknown> = {}, nativeId?: string) => {
+    const name = `mcp__plugin_agent-bridge_bridge__${tool}`;
+    const event = shape === "nested" ? { tool: name, input: args, tool_use_id: "host-call", agentId: nativeId }
+      : { tool: name, tool_use_id: "host-call", ...args, agentId: nativeId };
+    return hooks.get("tool.call")(engine, Object.freeze(event), async (e: any) => {
+      expect(e.agentId).toBe(nativeId);
+      const { tool: _tool, tool_use_id: _id, agentId: _agent, ...flat } = e;
+      if (shape === "nested") expect(Object.keys(flat)).toEqual(["input"]);
+      const input = shape === "nested" ? e.input : flat;
+      forwarded.push(input);
+      return mcpClient!.callTool({ name: tool, arguments: input });
+    });
+  };
+  return Object.assign(host, { forwarded });
 }
 
-it("parent inbox, wait and history work end to end through current-host authentication", async () => {
-  const host = await hostMod();
+it.each(["nested", "flat"] as const)("parent inbox, wait and history work through current-host authentication (%s event, live child)", async shape => {
+  const host = await hostMod({ shape });
   await childStart();
   const first = await parentMail();
   expect(JSON.stringify(await host("inbox", { _bridge_scope: "model-forged" }))).toContain(first.message.body);
-  // markRead batches broker acknowledgements; refreshPending explicitly flushes that batch.
-  await ctx.node!.refreshPending();
+  // The mod replaced the model-supplied capability with the one it obtained.
+  expect(host.forwarded[0]!._bridge_scope).toEqual(expect.any(String));
+  expect(host.forwarded[0]!._bridge_scope).not.toBe("model-forged");
+  // markRead batches broker acknowledgements; refreshPending flushes that batch. A second call
+  // starts a fresh flush when the first joined a background refresh begun before this markRead.
+  const flushAcks = async () => { await ctx.node!.refreshPending(); await ctx.node!.refreshPending(); };
+  await flushAcks();
   expect(await first.sender.messageReceipt(first.message.id)).toContainEqual(expect.objectContaining({ recipient: ctx.node!.name, readAt: expect.any(Number) }));
   const second = await parentMail();
   expect(JSON.stringify(await host("wait_for_message"))).toContain(second.message.body);
-  await ctx.node!.refreshPending();
+  await flushAcks();
   expect(await second.sender.messageReceipt(second.message.id)).toContainEqual(expect.objectContaining({ recipient: ctx.node!.name, readAt: expect.any(Number) }));
   const history = vi.spyOn(ctx.node!, "getConversation").mockResolvedValue({ conversation: null, records: [], next: null });
   expect((await host("get_conversation", { id: "parent-history" })).isError).not.toBe(true);
   expect(history).toHaveBeenCalledWith({ id: "parent-history" });
+  const search = vi.spyOn(ctx.node!, "searchHistory").mockResolvedValue({ engine: "plain", hits: [] });
+  expect((await host("search_history", { query: "parent" })).isError).not.toBe(true);
+  expect(search).toHaveBeenCalledWith({ query: "parent" });
+});
+
+it("parent mail works on a current host with no live child", async () => {
+  const host = await hostMod();
+  const { message } = await parentMail();
+  expect(JSON.stringify(await host("inbox"))).toContain(message.body);
+});
+
+it("a failing scope endpoint passes the call through unscoped: parent works without a child, no bodies with one", async () => {
+  const host = await hostMod({ endpointFails: true });
+  const first = await parentMail();
+  expect(JSON.stringify(await host("inbox", { _bridge_scope: "model-forged" }))).toContain(first.message.body);
+  expect(host.forwarded[0]).not.toHaveProperty("_bridge_scope");
+  await childStart();
+  const second = await parentMail();
+  const result = await host("inbox");
+  expect(JSON.stringify(result)).toContain("Ambiguous caller");
+  expect(JSON.stringify(result)).not.toContain(second.message.body);
+  expect(ctx.node!.unread()).toContainEqual(expect.objectContaining({ id: second.message.id }));
 });
 
 it("host agentId scopes an unlabelled child inbox and prevents forged parent or sibling claims", async () => {
@@ -170,6 +231,30 @@ it("host agentId scopes an unlabelled child inbox and prevents forged parent or 
     expect((await host(tool, tool === "get_conversation" ? { id: message.conversationId } : {}, agentId)).isError).toBe(true);
   }
   expect(ctx.node!.unread()).toContainEqual(expect.objectContaining({ id: message.id }));
+});
+
+it("an authenticated child's search_history covers only its own mail, never parent history", async () => {
+  const host = await hostMod();
+  const { message } = await parentMail();
+  const poll = async (fn: () => Promise<boolean>) => {
+    for (const end = Date.now() + 5_000; !(await fn());) {
+      if (Date.now() > end) throw new Error("condition not met in time");
+      await new Promise(r => setTimeout(r, 50));
+    }
+  };
+  // Positive control: the parent's own search finds its message once indexed.
+  await poll(async () => JSON.stringify(await host("search_history", { query: "Private parent message" })).includes(message.id));
+  await childStart();
+  const own = (await ctx.node!.send({ to: `${ctx.node!.name}/sub:${agentId}`, body: "Private child briefing" })).messages[0]!;
+  // A child-supplied session filter naming the parent is overridden by its own address.
+  const childSearch = (query: string) => host("search_history", { query, filters: { session: ctx.node!.name } }, agentId);
+  await poll(async () => JSON.stringify(await childSearch("Private child briefing")).includes(own.id));
+  const result = await childSearch("Private parent message");
+  expect(result.isError).not.toBe(true);
+  expect(JSON.stringify(result)).not.toContain(message.id);
+  expect(JSON.stringify(result)).not.toContain(message.body);
+  const ambiguous = await call("search_history", { query: "Private parent message" });
+  expect(JSON.stringify(ambiguous)).not.toContain(message.id);
 });
 
 it("scope tokens are one-use, short-lived and bound to the session, tool and server instance", () => {

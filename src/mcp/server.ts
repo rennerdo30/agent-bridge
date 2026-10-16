@@ -673,24 +673,27 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       args = safeArgs as A;
       log.debug("tool call", { tool: name, args: args as Record<string, unknown> });
       if (ctx.admitCodex && !ctx.admitCodex(extra._meta)) return text("Native Codex child or unverified thread: use the parent session's bridge. Missing main-thread lineage may be retried once its rollout header is available.", true);
-      // Ordinary Claude MCP calls do not attest the calling loop. Current hosts use
-      // a mod-issued capability; old hosts may select only a live SubagentStart route.
+      // Ordinary Claude MCP calls do not attest the calling loop. While a native child
+      // route is live, only a mod-issued capability proves parent or child; without a
+      // live child an unscoped call can only be the parent (CLAUDE-MAIL-SCOPES.md).
       const a = args as Record<string, unknown>;
       const metaChildId = extra._meta?.agent_id ?? extra._meta?.agentId;
       let childId = metaChildId ?? a.native_child;
       let authenticatedMail = false;
       if (mailScopes && isClaudeMailTool(name)) {
+        // A replaced server that is called is the one the session uses: take it back first.
+        if (node!.wasReplaced) await node!.reclaim().catch((err) => log.warn("could not take the bridge back", { err: (err as Error).message }));
         try {
-          if (node!.wasReplaced) throw new BridgeError("unauthorized", "Claude mail connection was replaced; mail remains queued.");
-          if (mailScopes.capable || scopeToken !== undefined) {
+          if (scopeToken !== undefined) {
+            // A presented capability is always validated: forged, replayed or wrong-tool fails.
             const scope = mailScopes.take(scopeToken, name, node!.currentSessionId);
             if (childId !== undefined && childId !== scope.agentId) throw new BridgeError("unauthorized", "Claimed native_child conflicts with authenticated host scope; no mail accessed.");
             childId = scope.agentId;
             authenticatedMail = true;
           } else if (childId === undefined) {
             const children = await node!.nativeChildren();
-            // Old hosts cannot attest which loop made an ordinary MCP call. Give a
-            // read-only status, never parent message bodies, receipts or wait registration.
+            // Unscoped while a child is live: the caller is ambiguous. Give a read-only
+            // status, never parent message bodies, history, receipts or wait registration.
             if (children.length) return text(["Ambiguous caller while native children are live. Mail remains queued for parent hooks; use an explicit native_child inbox for child mail.",
               ...children.map(child => `Native child address: ${child.address}`)].join("\n"));
           }
@@ -699,7 +702,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       if (childId !== undefined) {
         try {
           if (metaChildId !== undefined && a.native_child !== undefined && metaChildId !== a.native_child) throw new BridgeError("unauthorized", "native_child conflicts with host-provided agent identity.");
-          if (ctx.agent !== "claude" || !node || node.wasReplaced || typeof childId !== "string" || !["peers", "inbox", "send"].includes(name)) throw new BridgeError("unauthorized", "Scoped native children may use peers, inbox and send only on their current Claude parent connection.");
+          if (ctx.agent !== "claude" || !node || node.wasReplaced || typeof childId !== "string" || !["peers", "inbox", "send", "search_history"].includes(name)) throw new BridgeError("unauthorized", "Scoped native children may use peers, inbox, send and search_history only on their current Claude parent connection.");
           const children = await node.nativeChildren(), child = children.find(c => c.agentId === childId);
           if (!child) throw new BridgeError("unauthorized", "No live scoped native child; wait for its SubagentStart hook.");
           if (name === "send" && a.mode !== undefined) {
@@ -715,6 +718,12 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           if (name === "peers") {
             const jobs = (await node.projectJobs()).filter(j => j.owner === child.parent && j.supervisor === node.currentSessionId);
             return text([identity, ...jobs.map(j => `${j.name} (${j.agent}, ${j.status})`), `Explicit send_to grants: ${child.sendTo.join(", ") || "none"}`].join("\n"));
+          }
+          if (name === "search_history") {
+            // Only the child's own mail: its address pins the session filter, and messages only.
+            const result = await node.searchHistory({ query: String(a.query), limit: a.limit as number | undefined,
+              filters: { ...(a.filters as HistorySearch["filters"]), session: child.address, kind: "message" } });
+            return text(`${identity}\n${JSON.stringify(result)}`);
           }
           if (name === "inbox") {
             const messages = (await node.nativeChildPending(childId)).filter(m => (a.include_quiet ?? a.mark_read === false) || !isQuietMessage(m)).slice(0, typeof a.limit === "number" ? a.limit : HOOK_MAX_MESSAGES);
@@ -774,7 +783,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     {
       title: "Search bridge and CLI history",
       description: HISTORY_SEARCH_TOOL_DESCRIPTION,
-      inputSchema: historySearchToolInput,
+      inputSchema: { ...historySearchToolInput, ...mailScopeSchema },
       annotations: { readOnlyHint: true },
     },
     guarded("search_history", async (a: HistorySearch & { answer?: boolean }) => {

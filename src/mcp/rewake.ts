@@ -95,10 +95,8 @@ export class RewakeEndpoint {
           res.writeHead(409).end(); return;
         }
         res.setHeader("cache-control", "no-store");
-        const tool = url.searchParams.get("tool");
-        if (!tool) { this.mailScopes.capable = true; res.writeHead(204).end(); return; }
         try {
-          const token = this.mailScopes.issue(tool, session, url.searchParams.get("agent_id") ?? undefined);
+          const token = this.mailScopes.issue(url.searchParams.get("tool") ?? "", session, url.searchParams.get("agent_id") ?? undefined);
           res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ token }));
         } catch { res.writeHead(403).end(); }
         return;
