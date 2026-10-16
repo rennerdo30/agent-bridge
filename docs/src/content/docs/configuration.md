@@ -52,10 +52,19 @@ Limits that keep it safe:
 - **File changes are always asked** (Claude `Write`, `Edit`, `MultiEdit`, `NotebookEdit`; Codex
   file changes; opencode edits): their paths say where, not what.
 - **A command grant ends when the job's files change**: any file change request, or any
-  change of the Git state of the job's folder and the command's folder (changed, untracked or
-  deleted files that are not ignored, compared by content) since the grant was made. Changes
-  to ignored files or to files outside these repositories are not detected, and a folder
-  outside a Git repository keeps no command grants (each command is asked).
+  change of the Git state of the job's folder and the command's folder since the grant was
+  made: `HEAD` and the current branch (so a commit or a branch switch ends it), and changed,
+  staged, untracked or deleted files that are not ignored, compared by content. Each
+  repository counts once, however its folder is spelled (drive aliases, separators).
+- **Not covered**: ignored files (`node_modules`, `.env`, generated config), the job's other
+  writable folders and scripts outside the job's and the command's folders. A change there
+  does not end a command grant; the reuse note says so.
+- **No command grant is kept** (each command is asked) for a folder outside a Git
+  repository, a repository with submodules (a `.gitmodules` file, or a gitlink whose commit
+  or content changed), an untracked nested repository, a changed file over 64 MiB or a state
+  that cannot be read completely.
+- **No grant at all** is kept or reused when the job store exists but cannot be read or does
+  not have the job: its supervisor is then unknown.
 - A grant never widens and never crosses jobs: it ends with the job's turn, when the job's
   access, sandbox or permission settings change, and when its supervisor changes. The
   supervisor is read from the job store, so a `handoff_subagents` from another process ends

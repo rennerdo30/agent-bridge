@@ -11,7 +11,7 @@ import { nullLogger } from "../src/core/logger.js";
 import { opencodePermissionRequest } from "../src/core/opencode-served.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import { answerPendingApproval, listPendingApprovals, requestIdentity, type PermissionDecision, type PermissionRequest } from "../src/core/relay.js";
-import { approvalIdentity } from "../src/mcp/approval-reuse.js";
+import { approvalIdentity, approvalReuseLimits, treeState } from "../src/mcp/approval-reuse.js";
 import { runDelegate, type DelegateArgs, type RunContext } from "../src/mcp/delegate-run.js";
 import { tagApprovalOrigin, waitForApproval, type Job } from "../src/mcp/jobs.js";
 import { until } from "./helpers.js";
@@ -23,6 +23,10 @@ let home: string;
 /** The job's working folder: a Git repository, so command grants can be tied to its file state. */
 let repo: string;
 const gitInit = (dir: string) => execFileSync("git", ["init", "-q"], { cwd: dir, timeout: 30_000, windowsHide: true, stdio: "ignore" });
+/** Test commits use an identity from the environment only; no Git configuration is written. */
+const gitEnv = { ...process.env, GIT_AUTHOR_NAME: "test", GIT_AUTHOR_EMAIL: "test@example.invalid", GIT_COMMITTER_NAME: "test", GIT_COMMITTER_EMAIL: "test@example.invalid" };
+const git = (dir: string, ...args: string[]) => execFileSync("git", args, { cwd: dir, timeout: 30_000, windowsHide: true, env: gitEnv, encoding: "utf8" }).trim();
+const commitAll = (dir: string, message: string) => { git(dir, "add", "-A"); git(dir, "commit", "-q", "--no-gpg-sign", "-m", message); };
 beforeEach(() => {
   const root = process.env.AGENT_BRIDGE_TEST_ROOT!;
   mkdirSync(root, { recursive: true });
@@ -249,6 +253,30 @@ describe("identical approval reuse within a job (AB-402)", () => {
       expect(j.owner).toBe("parent");
       expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
     });
+
+    it("asks when the store exists but cannot be read, and never falls back to the supervisor in memory (L2)", async () => {
+      const rc = context([allowed(), allowed(), allowed()]);
+      const j = { ...job(), owner: "parent" };
+      stored(j);
+      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+        expect((await req.approve!(command("npm test"))).allow).toBe(true);
+        // A read failure right after a store-only handoff must not reuse the old supervisor's grant.
+        writeFileSync(join(home, "jobs.json"), "{ not json");
+        expect((await req.approve!(command("npm test"))).allow).toBe(true);
+        expect((await req.approve!(command("npm test"))).allow).toBe(true);
+        return { sessionId: "saved", text: "done", isError: false, details: {} };
+      });
+      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
+    });
+
+    it("asks when the store does not have the job (L2)", async () => {
+      const rc = context([allowed(), allowed()]);
+      const j = { ...job(), owner: "parent" };
+      stored({ ...job("someone-else"), owner: "parent" });
+      await turn(rc, j, [command("npm test"), command("npm test")]);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("asks every time when jobs.reuseIdenticalApprovals is off", async () => {
@@ -371,6 +399,80 @@ describe("identical approval reuse within a job (AB-402)", () => {
       });
       await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
       expect(rc.jobs!.askParent).toHaveBeenCalledTimes(4);
+    });
+
+    /** A grant for ./deploy.sh, reused once, then `change` runs and the same command is asked again or reused. */
+    async function afterChange(change: () => void): Promise<number> {
+      const rc = context(Array.from({ length: 3 }, () => allowed()));
+      const j = job();
+      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+        expect((await req.approve!(command("./deploy.sh"))).allow).toBe(true);
+        expect((await req.approve!(command("./deploy.sh"))).allow).toBe(true);
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(1);
+        change();
+        expect((await req.approve!(command("./deploy.sh"))).allow).toBe(true);
+        return { sessionId: "saved", text: "done", isError: false, details: {} };
+      });
+      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
+      return vi.mocked(rc.jobs!.askParent).mock.calls.length;
+    }
+
+    it("asks again when the script is edited and committed, leaving a clean tree (M1: HEAD changed)", async () => {
+      writeFileSync(join(repo, "deploy.sh"), "echo one\n");
+      commitAll(repo, "one");
+      expect(await afterChange(() => {
+        writeFileSync(join(repo, "deploy.sh"), "echo two\n");
+        commitAll(repo, "two");
+        expect(git(repo, "status", "--porcelain")).toBe("");
+      })).toBe(2);
+    });
+
+    it("asks again after a branch switch (M1: symbolic ref changed)", async () => {
+      writeFileSync(join(repo, "deploy.sh"), "echo one\n");
+      commitAll(repo, "one");
+      expect(await afterChange(() => git(repo, "checkout", "-q", "-b", "other"))).toBe(2);
+    });
+
+    it("still reuses while HEAD, the branch and the files stay the same", async () => {
+      writeFileSync(join(repo, "deploy.sh"), "echo one\n");
+      commitAll(repo, "one");
+      expect(await afterChange(() => {})).toBe(1);
+    });
+
+    it("keeps no command grant in a repository with submodules", async () => {
+      writeFileSync(join(repo, ".gitmodules"), "[submodule \"lib\"]\n\tpath = lib\n\turl = ../lib\n");
+      const rc = context([allowed(), allowed()]);
+      await turn(rc, job(), [command("npm test"), command("npm test")]);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps no command grant when a changed file is over the size cap (L1: fail closed)", async () => {
+      const cap = approvalReuseLimits.maxFileBytes;
+      // A small stand-in for a file over 64 MiB: lower the cap instead of writing a large file.
+      approvalReuseLimits.maxFileBytes = 8;
+      try {
+        writeFileSync(join(repo, "big.bin"), "0123456789abcdef");
+        expect(await treeState([repo], nullLogger)).toBeNull();
+        const rc = context([allowed(), allowed()]);
+        await turn(rc, job(), [command("npm test"), command("npm test")]);
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
+      } finally { approvalReuseLimits.maxFileBytes = cap; }
+      expect(await treeState([repo], nullLogger)).not.toBeNull();
+    });
+
+    it("hashes the same repository once, however its folder is spelled (L1)", async () => {
+      writeFileSync(join(repo, "a.txt"), "a\n");
+      mkdirSync(join(repo, "sub"));
+      const once = await treeState([repo], nullLogger);
+      expect(once).not.toBeNull();
+      const slashes = repo.replace(/\\/g, "/") + "/";
+      const spellings = [repo, slashes, join(repo, "sub"), ...(process.platform === "win32" ? [repo.toUpperCase(), repo.toLowerCase()] : [])];
+      expect(await treeState(spellings, nullLogger)).toBe(once);
+      // A second repository does count.
+      const other = join(home, "other");
+      mkdirSync(other);
+      gitInit(other);
+      expect(await treeState([repo, other], nullLogger)).not.toBe(once);
     });
 
     it("keeps no command grant for a folder outside a Git repository", async () => {

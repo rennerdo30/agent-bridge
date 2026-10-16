@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
+import { createReadStream, existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import type { Logger } from "../core/logger.js";
+import { physicalPath } from "../core/project-identity.js";
 import { canonicalJson, requestIdentity, type PermissionRequest } from "../core/relay.js";
-import { gitChangeSnapshot } from "../core/worktree.js";
+import { git } from "../core/worktree.js";
 import type { ApprovalOrigin, Job } from "./jobs.js";
 
 /**
@@ -15,8 +19,11 @@ import type { ApprovalOrigin, Job } from "./jobs.js";
  * - a grant never crosses jobs, a change of access, sandbox or permission settings, or a change of supervisor
  *   (read from the durable job store, so a handoff ends it); it ends when the job's turn finishes;
  * - a command grant (anything but an MCP tool) is dropped as soon as the job's files change: a file change request,
- *   or any difference in the working folder's Git state (tracked and untracked, not ignored, files and their
- *   content) since the grant was made;
+ *   or any difference in the Git state of the job folder and the request's folder since the grant was made (HEAD and
+ *   the current branch, and every changed, staged, untracked or deleted file that is not ignored, with its content);
+ *   a repository with submodules, a file over 64 MiB or a state that cannot be read keeps no command grant. Ignored
+ *   files (node_modules, .env, generated config), the job's other writable folders and scripts outside these
+ *   folders are not covered;
  * - a deny is never reused, and any later deny of the same request revokes its grant.
  */
 
@@ -74,18 +81,107 @@ export function approvalScope(parts: { access?: string; sandbox?: string; permis
   return JSON.stringify([parts.access ?? "default", parts.sandbox ?? "", parts.permission, parts.supervisor]);
 }
 
+/** Above this size a file's content is not hashed and no command grant is kept (fail closed). Mutable for tests. */
+export const approvalReuseLimits = { maxFileBytes: 64 * 1024 * 1024 };
+
+/** One spelling per physical folder: subst and mapped-drive aliases, separators and (on Windows) case. */
+function folderKey(dir: string): string {
+  const key = physicalPath(resolve(dir)).replace(/\\/g, "/").replace(/\/+$/, "");
+  return process.platform === "win32" ? key.toLowerCase() : key;
+}
+
+/** The SHA-256 of a file's content, streamed; "missing" when it is gone; null when it is not a regular file or too big. */
+async function fileFingerprint(path: string): Promise<string | null> {
+  let info;
+  try { info = await stat(path); }
+  catch (err) { return (err as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : null; }
+  if (!info.isFile() || info.size > approvalReuseLimits.maxFileBytes) return null;
+  const hash = createHash("sha256");
+  let bytes = 0;
+  try {
+    for await (const chunk of createReadStream(path)) {
+      bytes += (chunk as Buffer).length;
+      // The file grew past the cap while it was read.
+      if (bytes > approvalReuseLimits.maxFileBytes) return null;
+      hash.update(chunk as Buffer);
+    }
+  } catch { return null; }
+  return hash.digest("hex");
+}
+
 /**
- * The Git state of these folders (status and content hash of every changed, untracked or deleted file that is not
- * ignored), or null when one of them is not in a Git repository or cannot be read: then a command grant is not kept.
+ * One repository's state: its HEAD commit and symbolic ref, and the status line and content hash of every changed,
+ * staged, untracked or deleted file that is not ignored. Null when it cannot be read completely: a repository with
+ * submodules (a .gitmodules file, or a gitlink whose commit or content changed), an untracked folder that holds its
+ * own repository, a file that is not regular or over the size cap.
+ */
+async function repoState(root: string, log: Logger): Promise<unknown[] | null> {
+  if (existsSync(join(root, ".gitmodules"))) return null;
+  let status: string;
+  try {
+    // A gitlink without .gitmodules shows as a submodule entry below. (`git submodule` is a shell script: not used.)
+    status = await git(["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], root, log);
+  } catch { return null; }
+  const tokens = status.split("\0");
+  if (tokens.at(-1) === "") tokens.pop();
+  let oid: string | null = null, head: string | null = null;
+  const files: [string, string, string][] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i]!;
+    if (token.startsWith("# ")) {
+      const [key, ...value] = token.slice(2).split(" ");
+      if (key === "branch.oid") oid = value.join(" ");
+      else if (key === "branch.head") head = value.join(" ");
+      continue;
+    }
+    let header: string, path: string;
+    if (token.startsWith("? ")) { header = "?"; path = token.slice(2); }
+    else {
+      // "1 XY sub mH mI mW hH hI path", "2 ... Xscore path" + NUL + origPath, "u XY sub m1 m2 m3 mW h1 h2 h3 path".
+      const fields = token[0] === "1" ? 8 : token[0] === "2" ? 9 : token[0] === "u" ? 10 : -1;
+      if (fields < 0) return null;
+      const parts = token.split(" ");
+      header = parts.slice(0, fields).join(" ");
+      path = parts.slice(fields).join(" ");
+      if (token[0] === "2") header += "\0" + (tokens[++i] ?? "");
+      // A submodule entry (sub field "S...").
+      if (parts[2]?.startsWith("S")) return null;
+    }
+    // An untracked folder listed as such holds its own repository: its content is not visible here.
+    if (path.endsWith("/")) return null;
+    const content = await fileFingerprint(join(root, path));
+    if (content === null) return null;
+    files.push([path, header, content]);
+  }
+  if (oid === null || head === null) return null;
+  files.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  return [oid, head, files];
+}
+
+/**
+ * The Git state of these folders, or null when one of them is not in a Git repository or cannot be read completely:
+ * then a command grant is not kept. Each repository counts once, however its folders are spelled (AB-402). It covers
+ * HEAD and the current branch (a commit or a branch switch changes it) and every changed, staged, untracked or deleted
+ * file that is not ignored, with its content; not ignored files (node_modules, .env, generated config) and not
+ * scripts outside these repositories.
  */
 export async function treeState(dirs: readonly string[], log: Logger): Promise<string | null> {
-  const states: unknown[] = [];
-  for (const dir of [...new Set(dirs.filter(Boolean))].sort()) {
-    const snapshot = await gitChangeSnapshot(dir, log);
-    if (!snapshot) return null;
-    states.push([dir, [...snapshot.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)]);
+  const roots = new Map<string, string>();
+  for (const dir of dirs.filter(Boolean)) {
+    let root: string;
+    try { root = await git(["rev-parse", "--show-toplevel"], physicalPath(resolve(dir)), log); }
+    catch { return null; }
+    if (!root) return null;
+    const key = folderKey(root);
+    if (!roots.has(key)) roots.set(key, physicalPath(root));
   }
-  if (!states.length) return null;
+  if (!roots.size) return null;
+  const states: unknown[] = [];
+  for (const key of [...roots.keys()].sort()) {
+    const state = await repoState(roots.get(key)!, log);
+    if (!state) return null;
+    states.push([key, state]);
+  }
   return createHash("sha256").update(canonicalJson(states)).digest("hex");
 }
 
