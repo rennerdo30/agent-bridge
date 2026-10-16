@@ -28,8 +28,12 @@ export function mcpToolOf(r: { tool: string; detail: string }): { server: string
   if (raw) return { server: raw[1]!, tool: raw[2]! };
   if (!r.tool.startsWith("mcp:")) return null;
   const server = r.tool.slice("mcp:".length);
-  const quoted = /\btool\s+["'`]([\w.-]+)["'`]/i.exec(r.detail)?.[1];
-  let tool = quoted ?? /^\s*([\w.-]+)(?:\s*:|\s*$)/.exec(r.detail)?.[1] ?? null;
+  // The "<tool>: <args>" prefix (Claude, opencode, Antigravity, Codex review retries) wins: the arguments after it
+  // are the job's own text and may quote another tool's name (AB-423). Only Codex's whole one-line approval
+  // sentence ('Allow the … server to run tool "x"?') may name the tool in quotes; any other text names none.
+  const prefixed = /^\s*([\w.-]+)(?:\s*:|\s*$)/.exec(r.detail)?.[1];
+  const sentence = prefixed ? undefined : /^Allow (?:the )?[^\r\n"'`]{0,200}?\bserver to run tool ["'`]([\w.-]+)["'`]\?$/i.exec(r.detail.trim())?.[1];
+  let tool = prefixed ?? sentence ?? null;
   // opencode prefixes the tool with its server: "pair-desk_list_projects".
   const prefixes = serverNames(server).flatMap((name) => [name, name.replace(/[^a-zA-Z0-9_-]/g, "_")]).sort((a, b) => b.length - a.length);
   for (const name of prefixes) if (tool?.startsWith(`${name}_`)) { tool = tool.slice(name.length + 1); break; }

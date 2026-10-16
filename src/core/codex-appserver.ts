@@ -175,7 +175,8 @@ export async function delegateToCodexAppServer(
     reviewInterrupted = true;
     reviewTasks.push((async () => {
       await pause;
-      const decision = await decide(tool, `${action.type === "mcpToolCall" ? `tool "${action.toolName}"\n` : ""}${reason}\nAction: ${detail}\nApprove a retry of this exact action? Codex policy still applies.`, true);
+      // An MCP tool leads with "<tool>: ", the prefix mcpToolOf reads first (AB-423), so handoff guards still apply.
+      const decision = await decide(tool, `${action.type === "mcpToolCall" ? `${action.toolName}: ` : ""}${reason}\nAction: ${detail}\nApprove a retry of this exact action? Codex policy still applies.`, true);
       reviewInputs.push(`Supervisor ${decision.allow ? "approved one retry of" : "denied"} this exact action after ${reason}.\nAction: ${detail}\n${decision.allow ? "Retry only if Codex policy permits; retain automatic review and all sandbox limits. This is not a blanket approval or a policy override." : `Supervisor reason: ${decision.message || "no reason supplied"}\nDo not retry or work around this denial. Continue with a materially safer alternative, or report the blocker.`}`);
     })());
   };
