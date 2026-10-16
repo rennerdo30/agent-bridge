@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
 import { closeMetadataDb } from "../src/core/metadata-db.js";
-import { createWorktree, finishWorktree, gitChangeSnapshot, gitStatusSnapshot } from "../src/core/worktree.js";
+import { changedFilesNote, createWorktree, finishWorktree, gitChangeSnapshot, gitStatusSnapshot, snapshotChanges } from "../src/core/worktree.js";
+import { repositoryGuards } from "../src/core/git-safety.js";
 import { cleanupWorktrees } from "../src/core/worktree-cleanup.js";
 
 /**
@@ -160,5 +161,194 @@ describe("bridge git calls in job-controlled repositories (AB-422)", () => {
     expect(await gitChangeSnapshot(repo, nullLogger)).toBeNull();
     await expect(createWorktree({ cwd: repo, home, jobId: "ab422ccc", log: nullLogger })).rejects.toThrow();
     expect(markerText()).toBe("");
+  });
+});
+
+/** A fake `git-lfs` first on PATH: clean stores `pointer:<content>`, smudge restores it, and clean runs every
+ * `lfs.extension.<n>.clean` program like the real git-lfs does. Each call is recorded as `lfs:<command>`. */
+function fakeGitLfs(): void {
+  const bin = join(root, "fakebin");
+  mkdirSync(bin, { recursive: true });
+  const script = join(bin, "git-lfs");
+  writeFileSync(script, [
+    "#!/bin/sh",
+    `node "${slash(join(evil, "marker.js"))}" "lfs:$1"`,
+    'case "$1" in',
+    "  clean)",
+    "    git config --get-regexp '^lfs\\.extension\\..*\\.clean$' | while read -r key cmd; do sh -c \"$cmd\" </dev/null; done",
+    "    printf 'pointer:'; cat ;;",
+    "  smudge) sed 's/^pointer://' ;;",
+    "  *) cat ;;",
+    "esac",
+    "",
+  ].join("\n"));
+  chmodSync(script, 0o755);
+  vi.stubEnv("PATH", `${bin}${delimiter}${process.env.PATH ?? ""}`);
+}
+
+const CANONICAL_LFS = [["filter.lfs.clean", "git-lfs clean -- %f"], ["filter.lfs.smudge", "git-lfs smudge -- %f"], ["filter.lfs.required", "true"]] as const;
+
+/** Commit `big.bin` through the LFS filter (plain git, before anything is planted). */
+function commitLfsFile(): void {
+  writeFileSync(join(repo, ".gitattributes"), "*.bin filter=lfs\n");
+  writeFileSync(join(repo, "big.bin"), "binary payload\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-q", "-m", "lfs file");
+  expect(git(repo, "cat-file", "-p", "HEAD:big.bin")).toBe("pointer:binary payload");
+  rmSync(markers, { force: true });
+}
+
+/** A repository with its own filter driver, committed into the superproject as a bare gitlink (no .gitmodules). */
+function embeddedRepository(path: string, driver: string, gitDir?: string): void {
+  mkdirSync(path, { recursive: true });
+  git(path, "init", "-q", ...(gitDir ? ["--separate-git-dir", gitDir] : []));
+  writeFileSync(join(path, ".gitattributes"), `*.txt filter=${driver}\n`);
+  writeFileSync(join(path, "s.txt"), "embedded\n");
+  git(path, "add", ".");
+  git(path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "embedded");
+  git(repo, "add", slash(path.slice(repo.length + 1)));
+  git(repo, "commit", "-q", "-m", "add gitlink");
+  git(path, "config", `filter.${driver}.clean`, planted(`${driver}-filter`));
+}
+
+describe("bridge git calls: nested repositories, target worktrees and Git LFS (AB-422 review)", () => {
+  it("neutralises a filter in an embedded repository committed as a gitlink without .gitmodules", async () => {
+    embeddedRepository(join(repo, "sub"), "embevil");
+    touch(join(repo, "sub", "s.txt"));
+    git(repo, "status", "--porcelain");
+    expect(markerText()).toMatch(/embevil-filter/);
+    rmSync(markers);
+    touch(join(repo, "sub", "s.txt"));
+    expect(await gitChangeSnapshot(repo, nullLogger)).not.toBeNull();
+    expect(markerText()).toBe("");
+  });
+
+  it("neutralises a filter in a gitlink whose .git file points outside the superproject's modules/", async () => {
+    mkdirSync(join(root, "outside"));
+    embeddedRepository(join(repo, "sub2"), "farevil", slash(join(root, "outside", "sub2.git")));
+    expect(readFileSync(join(repo, "sub2", ".git"), "utf8")).toMatch(/^gitdir: /);
+    touch(join(repo, "sub2", "s.txt"));
+    git(repo, "status", "--porcelain");
+    expect(markerText()).toMatch(/farevil-filter/);
+    rmSync(markers);
+    touch(join(repo, "sub2", "s.txt"));
+    expect(await gitChangeSnapshot(repo, nullLogger)).not.toBeNull();
+    expect(markerText()).toBe("");
+  });
+
+  it("cleanup's `git worktree remove` runs no filter from the target worktree's own config.worktree", async () => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: "ab422ddd", log: nullLogger });
+    git(repo, "config", "extensions.worktreeConfig", "true");
+    git(wt.path, "config", "--worktree", "filter.wtevil.clean", planted("worktree-filter"));
+    const common = git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir");
+    mkdirSync(join(common, "info"), { recursive: true });
+    writeFileSync(join(common, "info", "attributes"), "a.txt filter=wtevil\n");
+    // A future mtime keeps the entry racily clean, so every status in the target re-reads it through its filter.
+    const future = () => { const when = new Date(Date.now() + 86_400_000); utimesSync(join(wt.path, "a.txt"), when, when); };
+    future();
+    git(wt.path, "status", "--porcelain");
+    expect(markerText()).toMatch(/worktree-filter/);
+    rmSync(markers);
+    future();
+    const entries = await cleanupWorktrees({ cwd: repo, home, apply: true, log: nullLogger });
+    expect(markerText()).toBe("");
+    expect(entries.find((e) => e.branch === wt.branch)?.action).toBe("removed");
+  });
+
+  it("keeps a canonical repository-local Git LFS driver working (checkout smudges, WIP commits clean)", async () => {
+    fakeGitLfs();
+    for (const [key, value] of CANONICAL_LFS) git(repo, "config", key, value);
+    commitLfsFile();
+    const wt = await createWorktree({ cwd: repo, home, jobId: "ab422eee", log: nullLogger });
+    expect(readFileSync(join(wt.path, "big.bin"), "utf8")).toBe("binary payload\n");
+    expect(markerText()).toMatch(/lfs:smudge/);
+    writeFileSync(join(wt.path, "new.bin"), "job binary\n");
+    await finishWorktree(wt, "WIP: lfs work", nullLogger, true);
+    expect(git(repo, "cat-file", "-p", `${wt.branch}:new.bin`)).toBe("pointer:job binary");
+  });
+
+  it("refuses filter-capable calls while Git LFS is active and repository-local config sets an lfs.extension", async () => {
+    fakeGitLfs();
+    // The owner's global Git LFS install.
+    writeFileSync(join(home, "global.gitconfig"), `[filter "lfs"]\n\tclean = git-lfs clean -- %f\n\tsmudge = git-lfs smudge -- %f\n\trequired = true\n`);
+    commitLfsFile();
+    git(repo, "config", "lfs.extension.evil.clean", planted("lfs-extension"));
+    git(repo, "config", "lfs.extension.evil.smudge", planted("lfs-extension-smudge"));
+    git(repo, "config", "lfs.extension.evil.priority", "0");
+    touch(join(repo, "big.bin"));
+    git(repo, "status", "--porcelain");
+    expect(markerText()).toMatch(/lfs-extension/);
+    rmSync(markers);
+    touch(join(repo, "big.bin"));
+    expect(await gitChangeSnapshot(repo, nullLogger)).toBeNull();
+    await expect(createWorktree({ cwd: repo, home, jobId: "ab422fff", log: nullLogger })).rejects.toThrow(/lfs\.extension/);
+    expect(markerText()).not.toMatch(/lfs-extension/);
+  });
+
+  it.each([
+    ["http.proxy", "http://127.0.0.1:9"],
+    ["http.sslVerify", "false"],
+    ["http.https://example.test/.sslCAInfo", "/tmp/evil-ca.pem"],
+    ["http.curloptResolve", "example.test:443:127.0.0.1"],
+    ["remote.origin.proxy", "http://127.0.0.1:9"],
+  ])("refuses the base fetch when repository-local config sets %s", async (key, value) => {
+    const upstream = join(root, "upstream");
+    git(root, "clone", "-q", "--bare", repo, upstream);
+    git(repo, "remote", "add", "origin", slash(upstream));
+    git(repo, "config", key, value);
+    const wt = await createWorktree({ cwd: repo, home, jobId: "ab422aab", log: nullLogger });
+    expect(wt.baseNotes?.join("\n")).toMatch(/discovery failed|fetch failed/);
+  });
+
+  it("still fetches the base when repository-local config only tunes http.postBuffer", async () => {
+    const upstream = join(root, "upstream");
+    git(root, "clone", "-q", "--bare", repo, upstream);
+    git(repo, "remote", "add", "origin", slash(upstream));
+    git(repo, "config", "http.postBuffer", "524288000");
+    const wt = await createWorktree({ cwd: repo, home, jobId: "ab422aac", log: nullLogger });
+    expect(wt.baseNotes?.join("\n") ?? "").not.toMatch(/discovery failed|fetch failed/);
+  });
+});
+
+describe("AB-422 guard decisions", () => {
+  /** A runner that answers `git config --list` with the given entries (scope, key, value) and lists no gitlinks. */
+  const configured = (entries: [string, string, string][]) => async (args: string[]) =>
+    args[0] === "config" ? entries.map(([scope, key, value]) => `${scope}\0file:x\0${key}\n${value}\0`).join("") : "";
+
+  it("keeps the canonical local filter.lfs driver and neutralises any other value of it", async () => {
+    const canonical: [string, string, string][] = [["local", "filter.lfs.clean", "git-lfs clean -- %f"], ["local", "filter.lfs.smudge", "git-lfs smudge -- %f"],
+      ["local", "filter.lfs.process", "git-lfs filter-process"], ["local", "filter.lfs.required", "true"]];
+    expect(await repositoryGuards(["status"], root, configured(canonical))).toEqual([]);
+    for (const value of ["git-lfs.exe filter-process", "/tmp/git-lfs filter-process", "git-lfs filter-process --verbose", "evil"]) {
+      const guards = await repositoryGuards(["status"], root, configured([...canonical, ["local", "filter.lfs.process", value]]));
+      expect(guards).toContain("filter.lfs.process=");
+    }
+  });
+
+  it.each(["lfs.extension.x.clean", "lfs.customtransfer.x.path", "lfs.standalonetransferagent", "credential.helper", "core.sshCommand", "http.proxy", "remote.origin.proxy"])(
+    "refuses a filter-capable call with active Git LFS and local %s", async (key) => {
+      const entries: [string, string, string][] = [["global", "filter.lfs.process", "git-lfs filter-process"], ["local", key, "x"]];
+      await expect(repositoryGuards(["status"], root, configured(entries))).rejects.toThrow(/Git LFS is active/);
+      // Without an active LFS driver nothing reads those keys during a status.
+      if (!key.startsWith("lfs.")) expect(await repositoryGuards(["status"], root, configured([["local", key, "x"]]))).toEqual([]);
+    });
+
+  it.each(["http.proxy", "http.sslVerify", "http.https://example.test/.sslCAInfo", "http.curloptResolve", "http.extraHeader", "remote.origin.proxy"])(
+    "refuses network commands with local %s", async (key) => {
+      await expect(repositoryGuards(["fetch"], root, configured([["local", key, "x"]]))).rejects.toThrow(/refused/);
+    });
+
+  it("allows pure http transfer tuning for network commands", async () => {
+    expect(await repositoryGuards(["fetch"], root, configured([["local", "http.postbuffer", "1"], ["local", "http.https://x/.lowspeedtime", "9"]]))).toEqual([]);
+  });
+
+  it("reports an unavailable after-snapshot as unknown, never as 'No files changed'", () => {
+    const before = new Map([["a.txt", " M:1"]]);
+    expect(snapshotChanges(before, null)).toBeNull();
+    const note = changedFilesNote(snapshotChanges(before, null), "edit");
+    expect(note).toMatch(/unknown/);
+    expect(note).not.toMatch(/No files changed/);
+    expect(changedFilesNote(snapshotChanges(before, new Map(before)), "edit")).toBe("No files changed.");
+    expect(changedFilesNote([], "ask")).toBeNull();
   });
 });

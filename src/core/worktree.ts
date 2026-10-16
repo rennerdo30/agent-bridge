@@ -1,4 +1,5 @@
 import { loadConfig } from "./config.js";
+import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve, toNamespacedPath } from "node:path";
@@ -14,6 +15,8 @@ import { diffSafety, gitSafetyArgs, repositoryGuards, splitGitArgs } from "./git
  */
 const GIT = "git";
 const LONG_PATH_ARGS = ["-c", "core.longpaths=true"];
+/** Upper bound for one guard read (`ls-files -s` of a very large index); larger output is refused, never truncated. */
+const GUARD_READ_MAX_BYTES = 512 * 1024 * 1024;
 const REMOVE_RETRIES = 3;
 /** Most git commands; generous, since many parallel subagents (and virus scanners) slow the disk down. */
 const GIT_TIMEOUT_MS = 180_000;
@@ -66,7 +69,12 @@ export async function git(args: string[], cwd: string, log: Logger, timeoutMs = 
     return res.stdout;
   };
   const sub = rest[0] ?? "";
-  const guards = await repositoryGuards(sub, (read) => exec([...prefix, ...read], env, `git ${read[0]}`))
+  // Guard reads need their complete output (a gitlink listing of a large index is bigger than runProcess keeps).
+  const read = (argv: string[], dir: string | null) => new Promise<string>((done, fail) => {
+    execFile(GIT, [...prefix, ...(dir ? ["-C", dir] : []), ...argv], { cwd, env, timeout: timeoutMs, windowsHide: true, encoding: "utf8", maxBuffer: GUARD_READ_MAX_BYTES },
+      (err, stdout, stderr) => err ? fail(new Error(`git ${argv[0]} failed: ${(stderr || err.message).trim().slice(0, 500)}`)) : done(stdout));
+  });
+  const guards = await repositoryGuards(rest, cwd, read)
     .catch((err: Error) => { throw new Error(`${what} failed: ${err.message}`); });
   // A prompt can never be answered here; the owner's GIT_SSH_COMMAND and global helpers stay in effect.
   const runEnv = sub === "fetch" || sub === "ls-remote" || sub === "pull" || sub === "push" ? { ...env, GIT_TERMINAL_PROMPT: "0" } : env;
@@ -593,6 +601,18 @@ export function changedFiles(before: Map<string, string>, after: Map<string, str
   for (const [f, fp] of after) if (before.get(f) !== fp) out.add(f);
   for (const f of before.keys()) if (!after.has(f)) out.add(f);
   return [...out].sort();
+}
+
+/** The files changed since `before`, or null (unknown) when the later snapshot could not be taken (AB-422). */
+export function snapshotChanges(before: Map<string, string>, after: Map<string, string> | null): string[] | null {
+  return after ? changedFiles(before, after) : null;
+}
+
+/** The working-copy report after a job: an unknown comparison is never reported as "No files changed". */
+export function changedFilesNote(changed: string[] | null, access?: string): string | null {
+  if (changed === null) return "Files changed in your working copy: unknown. git status was refused or failed after the job (for example because repository-local git config could run programs, AB-422), so the working copy could not be compared; check it yourself.";
+  if (changed.length) return `Files changed in your working copy:\n${changed.join("\n")}`;
+  return access === "edit" ? "No files changed." : null;
 }
 
 /** Every root that can hold bridge-managed worktrees: the default and the configured worktreeRoot (AB-177).
