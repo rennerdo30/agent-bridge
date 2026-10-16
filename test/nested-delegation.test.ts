@@ -211,7 +211,7 @@ describe("nested delegation", () => {
     tracked.job.pendingApproval!("escalate");
     const top = new LocalCoordinator(ROOT_NAME, ROOT);
     // This control-only stand-in does not deliver independent-session notifications.
-    Object.assign(top, { setNotificationWaitHandlers: vi.fn(), jobAuthority: vi.fn(async () => tracked.job) });
+    Object.assign(top, { setNotificationWaitHandlers: vi.fn(), nativeChildren: vi.fn(async () => []), jobAuthority: vi.fn(async () => tracked.job) });
     const topJobs = new JobManager(top, nullLogger, join(home, "jobs.json"), 2); managers.push(topJobs);
     const client = await connect({ ...ctx, agent: "claude", node: top as unknown as BridgeNode, jobs: topJobs, childInbox: undefined, parent: null });
     expect(topJobs.find(tracked.job.name)).toBeUndefined();
@@ -225,7 +225,7 @@ describe("nested delegation", () => {
     const waiting = ctx.jobs!.askParent(tracked.job, "Need owner", 30_000);
     await until(() => listPendingApprovals(home).length === 1);
     const top = new LocalCoordinator(ROOT_NAME, ROOT);
-    Object.assign(top, { setNotificationWaitHandlers: vi.fn(), jobAuthority: vi.fn(async () => null) });
+    Object.assign(top, { setNotificationWaitHandlers: vi.fn(), nativeChildren: vi.fn(async () => []), jobAuthority: vi.fn(async () => null) });
     const topJobs = new JobManager(top, nullLogger, join(home, "jobs.json"), 2); managers.push(topJobs);
     const client = await connect({ ...ctx, agent: "claude", node: top as unknown as BridgeNode, jobs: topJobs, childInbox: undefined, parent: null });
     const approval = listPendingApprovals(home)[0]!;

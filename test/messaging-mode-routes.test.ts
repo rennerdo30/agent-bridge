@@ -27,12 +27,14 @@ const brokerOf = (node: BridgeNode): any => (node as any).broker;
 
 async function tools(node: BridgeNode, jobs?: JobManager, agent: AgentKind = "claude") {
   const server = new McpServer({ name: "mode-fixture", version: "1" });
-  registerTools(server, { node, jobs, home: env.home, cfg: DEFAULT_CONFIG, agent,
-    log: nullLogger, cwd: () => env.home, channelActive: () => false }, []);
+  const ctx: ServerContext = { node, jobs, home: env.home, cfg: DEFAULT_CONFIG, agent,
+    log: nullLogger, cwd: () => env.home, channelActive: () => false };
+  registerTools(server, ctx, []);
   const client = new Client({ name: "mode-fixture", version: "1" }), [a, b] = InMemoryTransport.createLinkedPair();
   await server.connect(a); await client.connect(b);
   closes.push(async () => { await client.close(); await server.close(); });
-  return client;
+  // While a native child is live, a Claude parent call needs the host mod's capability (AB-412).
+  return Object.assign(client, { parentScope: (tool: string) => ctx.claudeMailScopes!.issue(tool, node.currentSessionId!) });
 }
 
 async function native() {
@@ -74,7 +76,7 @@ it("one-shot native queue retains identical originals under distinct broker UUID
   const client = await tools(parent);
   for (const activity of ["idle", "busy"] as const) {
     await wire(parent).request("updatePeer", { activity });
-    const result = await client.callTool({ name: "send", arguments: { to: address, message: "same original", mode: "queue" } });
+    const result = await client.callTool({ name: "send", arguments: { to: address, message: "same original", mode: "queue", _bridge_scope: client.parentScope("send") } });
     expect(result.isError).not.toBe(true);
     expect(modeFrom(result)).toMatchObject({ requested: "queue", effective: "nativequeue", stage: "stored",
       sharedIdempotentDelivery: false, capabilities: { route: "nativequeue", receiverRole: "native_child",
@@ -198,7 +200,7 @@ it("queue rejects caller IDs, dedupe keys, generation/identity/grant DTOs before
       .rejects.toMatchObject({ code: "bad_request" });
   }
   const client = await tools(parent);
-  const refused = await client.callTool({ name: "send", arguments: { to: address, message: "caller id", mode: "queue", message_id: randomUUID() } });
+  const refused = await client.callTool({ name: "send", arguments: { to: address, message: "caller id", mode: "queue", message_id: randomUUID(), _bridge_scope: client.parentScope("send") } });
   expect(refused.isError).toBe(true); expect(modeFrom(refused).effective).toBe("refused");
   expect(await parent.nativeChildPending(childId)).toEqual([]);
 });
