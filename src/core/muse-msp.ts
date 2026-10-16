@@ -28,6 +28,8 @@ export interface MuseMspRequest extends DelegateRequest {
   requirePermissionHooks?: boolean;
   sessionConfig?: { mcpServers?: Record<string, MuseMcpServer> };
   onSpawn?: (pid: number) => void | Promise<void>;
+  /** `usage/changed` params: the plan usage the host observed. */
+  onUsage?: (usage: Record<string, unknown>) => void;
   startupTimeoutMs?: number;
   cleanupTimeoutMs?: number;
 }
@@ -190,6 +192,8 @@ async function runMuseMsp(req: MuseMspRequest & { query?: { method: "model/list"
       else { write({ id: msg.id, error: { code: -32601, message: "not supported by agent-bridge" } }); fail(error(`Muse requested unsupported interaction ${msg.method}`)); }
       return;
     }
+    // Host-level, without a sessionId: the plan usage Muse observed on this host's model calls.
+    if (msg.method === "usage/changed") { try { req.onUsage?.(p); } catch (err) { req.log.warn("Muse usage not recorded", { error: String(err) }); } return; }
     if (p.sessionId !== sessionId) return;
     switch (msg.method) {
       case "session/modelChanged": report({ model: p.modelId }); break;

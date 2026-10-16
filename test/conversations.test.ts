@@ -10,6 +10,23 @@ import { nullLogger } from "../src/core/logger.js";
 import { CLAUDE_SESSION } from "./transcript-fixtures.js";
 import { env, fixture } from "./conversation-test-fixture.js";
 
+it("does not re-resolve and rewrite a conversation whose folder is no project on every tick", () => {
+  const f = fixture(true);
+  const changes = () => Number(f.db.prepare("SELECT total_changes() AS n").get()!.n);
+  const idleWrites = () => { const start = changes(); for (let i = 0; i < 5; i++) f.ingest.tick(); return changes() - start; };
+  f.tick();
+  const baseline = idleWrites();
+  // A leftover worktree folder whose git metadata was removed: it exists but resolves to no project.
+  const plain = join(env.home, "plain-folder");
+  mkdirSync(plain);
+  writeFileSync(join(plain, ".git"), `gitdir: ${join(env.home, "removed-repo", ".git", "worktrees", "plain")}\n`);
+  const transcript = join(f.paths.claude, "projects", "project-example", "session-plain.jsonl");
+  writeFileSync(transcript, JSON.stringify({ type: "user", sessionId: "session-plain", cwd: plain, message: { content: "plain folder needle" } }) + "\n");
+  f.index.registerChanged([transcript]);
+  f.tick();
+  expect(f.db.prepare("SELECT project FROM conversations WHERE id='claude:session-plain'").get()).toEqual({ project: "" });
+  expect(idleWrites()).toBe(baseline);
+});
 it("refuses mismatched retained raw bytes during resumable import replay", () => {
   const f = fixture(true);
   f.tick();

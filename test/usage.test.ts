@@ -1,5 +1,27 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { antigravityUsage, describeOpencodeCosts, formatCodexLimits, parseAntigravityUsage, parseClaudeUsage, parseOpencodeModelCosts, parseOpencodeStats, supportsAntigravityUsage } from "../src/core/usage.js";
+import { museUsage, recordMuseUsage, antigravityUsage, describeOpencodeCosts, formatCodexLimits, parseAntigravityUsage, parseClaudeUsage, parseOpencodeModelCosts, parseOpencodeStats, supportsAntigravityUsage } from "../src/core/usage.js";
+
+describe("Muse plan usage", () => {
+  const usage = (observedAtMs: number, used: number) => ({ observedAtMs, tier: "tier-a", window: { usedPercent: used, resetsAtMs: observedAtMs + 3_600_000, windowDurationMins: 300 }, weekly: { usedPercent: 9, resetsAtMs: observedAtMs + 86_400_000 } });
+  it("shows the newest observation a Muse job recorded, and says when none exists", () => {
+    const home = mkdtempSync(join(tmpdir(), "ab-muse-usage-"));
+    try {
+      expect(museUsage(home)).toMatchObject({ agent: "muse", limits: [], maxUsedPercent: null, lines: [expect.stringContaining("after the next Muse job")] });
+      recordMuseUsage(home, usage(2_000_000, 40));
+      recordMuseUsage(home, usage(1_000_000, 90)); // an older observation from a concurrent job
+      recordMuseUsage(home, { observedAtMs: 3_000_000, tier: "tier-a" }); // malformed: ignored
+      const report = museUsage(home, 2_000_100);
+      expect(report.limits).toEqual([{ name: "5-hour window", usedPercent: 40, resets: expect.any(String) }, { name: "weekly", usedPercent: 9, resets: expect.any(String) }]);
+      expect(report.maxUsedPercent).toBe(40);
+      expect(report.lines[0]).toMatch(/^muse \[tier-a\]: 5-hour window 40% used/);
+      // After the window reset only the weekly figure still holds.
+      expect(museUsage(home, 2_000_000 + 7_200_000).maxUsedPercent).toBe(9);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+});
 
 describe("usage limits", () => {
   it("formats Codex rate limits with windows and the highest usage", () => {

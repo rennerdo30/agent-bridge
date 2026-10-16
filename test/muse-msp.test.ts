@@ -321,6 +321,13 @@ describe("Muse no-turn queries", () => {
     expect(alive(Number(readFileSync(join(f.cwd, "host.pid"), "utf8")))).toBe(false);
   });
 
+  it("hands the host-level usage/changed observation to onUsage during a turn", async () => {
+    const usage = { observedAtMs: 1_800_000_000_000, tier: "fixture-tier", window: { usedPercent: 42, resetsAtMs: 1_800_000_900_000, windowDurationMins: 300 }, weekly: { usedPercent: 7, resetsAtMs: 1_800_400_000_000 } };
+    const onUsage = vi.fn();
+    const f = fixture({ onUsage }, { MSP_TEST_USAGE: JSON.stringify(usage) });
+    await expect(delegateToMuseMsp(f.req)).resolves.toMatchObject({ isError: false });
+    expect(onUsage).toHaveBeenCalledWith(usage);
+  });
   it("preserves truthful absence from usage/read rather than fabricating quota", async () => {
     const f = fixture();
     await expect(museMspQuery({ ...f.req, method: "usage/read" })).resolves.toEqual({});

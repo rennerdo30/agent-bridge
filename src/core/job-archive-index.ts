@@ -179,6 +179,10 @@ const DECODED_CACHE_KEYS = 16;
 let decodedBytes = 0;
 let cacheBytes = 0;
 const CACHE_BUDGET = 8 * 1024 * 1024;
+// Whole snapshots get their own budget: the full metadata listing must fit. At 8 MB a home with ~1,700 jobs (one
+// with a 6 MB delivery history, ~28 MB estimated) was never cached, so every dashboard refresh and every job-mail
+// routing step decoded every job again; routing re-reads the listing per job, which kept the broker main thread busy.
+export const SNAPSHOT_CACHE_BUDGET = 64 * 1024 * 1024;
 export const archiveIndexCounters = { reads: 0, decoded: 0 };
 /** Separate from snapshot validity: WAL changes invalidate snapshots, not unchanged decoded rows. */
 export function archiveDecodedCacheUsage(): { entries: number; bytes: number; maxEntries: number; maxBytes: number } {
@@ -287,10 +291,10 @@ export function* readIndexedJobSteps(path: string, responsive = false, selection
   } catch (error) { throw archiveWriteError(error); }
   finally { db.close(); }
   if (currentDecoded) retainDecodedRows(key, currentDecoded);
-  const next = { signature, jobs, bytes: estimatedJsonBytes(jobs, CACHE_BUDGET) };
-  if (next.bytes <= CACHE_BUDGET) {
+  const next = { signature, jobs, bytes: estimatedJsonBytes(jobs, SNAPSHOT_CACHE_BUDGET) };
+  if (next.bytes <= SNAPSHOT_CACHE_BUDGET) {
     cache.set(key, next); cacheBytes += next.bytes;
-    while (cacheBytes > CACHE_BUDGET || cache.size > 256) { const first = cache.keys().next().value!; cacheBytes -= cache.get(first)!.bytes; cache.delete(first); }
+    while (cacheBytes > SNAPSHOT_CACHE_BUDGET || cache.size > 256) { const first = cache.keys().next().value!; cacheBytes -= cache.get(first)!.bytes; cache.delete(first); }
   }
   return next;
 }

@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { archiveJobs, readArchivedJobs, readArchivedJobSnapshot } from "../src/core/job-archive.js";
-import { archiveDecodedCacheUsage, archiveIndexCounters, openJobArchive, readIndexedJobs, readJobVersions } from "../src/core/job-archive-index.js";
+import { archiveDecodedCacheUsage, archiveIndexCounters, openJobArchive, readIndexedJobs, readJobVersions, SNAPSHOT_CACHE_BUDGET } from "../src/core/job-archive-index.js";
 import { migrateJobArchives } from "../src/core/job-archive-migration.js";
 import { extractBundle } from "../src/core/archive-bundle.js";
 import { writeJsonStore } from "../src/core/json-store.js";
@@ -146,7 +146,8 @@ it("bounds decoded rows independently while retaining incremental reuse across W
 
   const entries = archiveDecodedCacheUsage().entries;
   const oversized = join(env.home, "decoded-oversized", "jobs.json");
-  archiveJobs(oversized, [{ ...job, prompt: "x".repeat(limits.maxBytes) }]);
+  // Above the whole-snapshot budget too (two bytes per character), so it is decoded again on each read.
+  archiveJobs(oversized, [{ ...job, prompt: "x".repeat(SNAPSHOT_CACHE_BUDGET / 2) }]);
   readIndexedJobs(oversized);
   expect(archiveDecodedCacheUsage().entries).toBe(entries);
   before = archiveIndexCounters.decoded;

@@ -5,6 +5,8 @@ import { DelegateError, checkDepth, childEnv, runProcess, withResumeHint, type D
 import { delegateToMuseMsp } from "./muse-msp.js";
 import { MUSE_ACCESS_ENV, registerMuseContextAsync } from "./muse-context.js";
 import { progressEventHandler } from "./progress.js";
+import { resolveHome } from "./paths.js";
+import { recordMuseUsage } from "./usage.js";
 import { object, parse, TRANSCRIPT_ID } from "./transcripts/common.js";
 
 export const MUSE_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
@@ -137,6 +139,6 @@ export async function runMuse(req: DelegateRequest & { bin: string; access: "rea
   let releaseContext: (() => void) | undefined;
   let finished = false;
   try {
-    return await delegateToMuseMsp({ ...req, extraEnv, permissionProfile: req.permissionProfile ?? undefined, requirePermissionHooks: true, onSpawn: async pid => { const release = await registerMuseContextAsync(pid, env); if (finished) release(); else releaseContext = release; } });
+    return await delegateToMuseMsp({ ...req, extraEnv, permissionProfile: req.permissionProfile ?? undefined, requirePermissionHooks: true, onUsage: usage => recordMuseUsage(resolveHome(), usage), onSpawn: async pid => { const release = await registerMuseContextAsync(pid, env); if (finished) release(); else releaseContext = release; } });
   } finally { finished = true; releaseContext?.(); }
 }
