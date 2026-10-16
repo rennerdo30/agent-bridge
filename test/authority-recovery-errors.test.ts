@@ -11,6 +11,14 @@ import { nullLogger } from "../src/core/logger.js";
 import type { MessageStore } from "../src/core/store.js";
 import { retryRequest, transientRequestError } from "../src/core/request-retry.js";
 import { BridgeError } from "../src/core/protocol.js";
+import { BridgeNode } from "../src/core/node.js";
+import { DEFAULT_CONFIG } from "../src/core/config.js";
+import { JobManager } from "../src/mcp/jobs.js";
+import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
+import { registerTools } from "../src/mcp/server.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
 
 type Job = Record<string, unknown>;
@@ -249,4 +257,72 @@ it.each(["id", "name", "agent", "startedAt", "sessionId", "threadId"])("preserve
   vi.spyOn(projection, "indexedJobProjectionCurrent").mockReturnValue(true);
   vi.spyOn(projection, "readIndexedJobs").mockReturnValue({ signature: "fixture", jobs: [{ ...resolved, [key]: key === "startedAt" ? 2 : "changed" }] });
   expect(await f.broker.handlers.jobAuthority(f.conn, { job: f.job.name })).toBeNull();
+});
+
+async function callerFixture(f: ReturnType<typeof fixture>) {
+  // Only the broker transport is doubled. Run the real BridgeNode retry wrapper,
+  // JobManager.share/findAsync, registered tool guard and MCP client serialization.
+  const transport = { request: vi.fn(async (op: string, args: { job: string }) => {
+    expect(op).toBe("jobAuthority");
+    try { return await f.broker.handlers.jobAuthority(f.conn, args); }
+    catch (error) { const wire = payload(error); throw new BridgeError(wire.code, wire.message, wire.details); }
+  }) };
+  const node = Object.assign(new LocalCoordinator("owner", "fixture-session"), {
+    jobAuthority: BridgeNode.prototype.jobAuthority,
+    withClient: async (request: (client: typeof transport) => Promise<unknown>) => request(transport),
+    setNotificationWaitHandlers: vi.fn(),
+  });
+  const jobs = new JobManager(node, nullLogger);
+  const server = new McpServer({ name: "authority-fixture", version: "0" });
+  const client = new Client({ name: "authority-fixture", version: "0" });
+  registerTools(server, { agent: "codex", cfg: { ...DEFAULT_CONFIG }, node: node as unknown as BridgeNode, jobs,
+    home: env.home, cwd: () => env.home, channelActive: () => false, log: nullLogger }, []);
+  const [serverSide, clientSide] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverSide), client.connect(clientSide)]);
+  return { jobs, client, request: transport.request, close: async () => {
+    jobs.setDormant(true); jobs.cancelAll(); await client.close(); await server.close();
+  } };
+}
+
+it.each(["authority", "header", "context", "prepared"] as const)("message_subagent preserves named %s uncertainty through the real share/MCP boundary", async stage => {
+  const f = legacyFixture();
+  const reason = { authority: "authority_store_read", header: "recovery_header_unavailable",
+    context: "recovery_context_changed", prepared: "recovery_context_unavailable" }[stage];
+  let held: ReturnType<typeof deferredHeader> | undefined;
+  if (stage === "authority") failAfterAwait(f, Object.assign(new Error(`private SQL at ${env.home}`), { code: "EACCES" }));
+  else if (stage === "header") vi.spyOn(feeds, "readRecoveryHeader").mockResolvedValueOnce(undefined);
+  else if (stage === "context") held = deferredHeader();
+  else {
+    vi.spyOn(index, "waitForJobRunIndex").mockResolvedValue("indexed");
+    vi.spyOn(index, "legacyJobRunAmbiguous").mockReturnValue(false);
+    vi.spyOn(index, "indexedJobRun").mockReturnValue([]);
+  }
+  const caller = await callerFixture(f), lookup = vi.spyOn(caller.jobs, "findAsync"), follow = vi.spyOn(caller.jobs, "followUp");
+  const title = vi.spyOn(caller.jobs, "setTitle"), settings = vi.spyOn(caller.jobs, "setSettings");
+  try {
+    const pending = caller.client.callTool({ name: "message_subagent", arguments: { job: f.job.name, message: "do not submit", title: "do not rename", access: "read" } });
+    if (held) {
+      await held.ready;
+      writeFileSync(f.metadata, JSON.stringify({ job: f.job.name, session: "changed-native", by: "owner" }));
+      held.release();
+    }
+    const result = await pending, output = JSON.stringify(result);
+    expect(result.isError).toBe(true); expect(output).toContain(reason); expect(output).toContain("No control submitted.");
+    for (const forbidden of ["No subagent named", "original private fixture prompt", "private SQL", env.home, "do not submit", "changed-native"]) expect(output).not.toContain(forbidden);
+    expect(caller.request).toHaveBeenCalledTimes(1);
+    expect(lookup).not.toHaveBeenCalled(); expect(follow).not.toHaveBeenCalled();
+    expect(title).not.toHaveBeenCalled(); expect(settings).not.toHaveBeenCalled();
+  } finally { await caller.close(); }
+});
+
+it.each(["absent", "denied"] as const)("message_subagent keeps the findAsync/unknown fallback for a truly %s job", async mode => {
+  const f = legacyFixture();
+  if (mode === "denied") writeFileSync(f.registry, JSON.stringify({ version: 4, jobs: [{ ...f.job, owner: "foreign-owner" }] }));
+  const ref = mode === "absent" ? "codex-job-absent" : f.job.name;
+  const caller = await callerFixture(f), lookup = vi.spyOn(caller.jobs, "findAsync"), follow = vi.spyOn(caller.jobs, "followUp");
+  try {
+    const result = await caller.client.callTool({ name: "message_subagent", arguments: { job: ref, message: "do not submit" } });
+    expect(result.isError).toBe(true); expect(JSON.stringify(result)).toContain("No subagent named");
+    expect(lookup).toHaveBeenCalledExactlyOnceWith(ref); expect(follow).not.toHaveBeenCalled();
+  } finally { await caller.close(); }
 });
