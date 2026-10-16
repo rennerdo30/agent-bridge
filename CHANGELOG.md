@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.30.24
 
 - **Updater: Muse installs always use user scope.** Run inside a Git project (for example the agent-bridge checkout), Muse refused the 0.30.23 update with "plugin `agent-bridge` is already installed from a different source", because `muse plugins install` without `--scope` targets that project. The installer now passes `--scope user`.
 
