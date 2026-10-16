@@ -62,6 +62,11 @@ export interface BridgeConfig {
   maxDelegateDepth: number;
   /** MCP tools subagents may call without asking the parent (server.tool patterns or presets; see tool-allow.ts). */
   autoApproveTools: string[];
+  /**
+   * Spawned and asked jobs (AB-403). defaultAllowTools is the allow_tools of a job whose spawn_* / ask_* call
+   * passes none; an explicit list replaces it and an explicit [] turns it off. Home config only.
+   */
+  jobs: { defaultAllowTools: string[] };
   /** Machine-wide named resource capacities, shared by all jobs using this home directory. */
   resourceSlots: Record<string, number>;
   delivery: DeliveryMode;
@@ -127,6 +132,7 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   maxJobs: DEFAULT_MAX_JOBS,
   maxDelegateDepth: DEFAULT_MAX_DELEGATE_DEPTH,
   autoApproveTools: [],
+  jobs: { defaultAllowTools: ["pair-desk:worker"] },
   resourceSlots: {},
   delivery: "auto",
   claudeBin: DEFAULT_CLAUDE_BIN,
@@ -242,6 +248,18 @@ function toolPatterns(v: unknown): string[] | undefined {
   const list = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : null;
   if (!list || !list.every((x) => typeof x === "string")) return undefined;
   return (list as string[]).map((x) => x.trim()).filter(Boolean);
+}
+
+/** jobs.defaultAllowTools from the first source that sets it validly; [] is a valid, empty default. */
+function jobDefaultAllowTools(sources: Record<string, unknown>[], log: Logger): string[] | undefined {
+  for (const source of sources) {
+    const jobs = source.jobs;
+    if (!isRecord(jobs) || jobs.defaultAllowTools === undefined) continue;
+    const parsed = toolPatterns(jobs.defaultAllowTools);
+    if (parsed) return parsed;
+    log.warn("ignoring invalid config value", { key: "jobs.defaultAllowTools", value: String(jobs.defaultAllowTools) });
+  }
+  return undefined;
 }
 
 /** How often a running session checks config.json for changes. */
@@ -364,6 +382,8 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     maxJobs: pick("maxJobs", ENV.maxJobs, (v) => parseIntInRange(v, 1, MAX_JOBS_LIMIT)) ?? d.maxJobs,
     maxDelegateDepth: pick("maxDelegateDepth", ENV.maxDelegateDepth, (v) => parseIntInRange(v, 1, MAX_DELEGATE_DEPTH_LIMIT)) ?? d.maxDelegateDepth,
     autoApproveTools: pick("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
+    // Home config only (agent section, then top level); a project config cannot loosen approvals.
+    jobs: { defaultAllowTools: [...(jobDefaultAllowTools([section, file], log) ?? d.jobs.defaultAllowTools)] },
     // Capacities must agree across agents; per-agent sections cannot override shared resources.
     resourceSlots: resourceSlots(file.resourceSlots) ?? d.resourceSlots,
     delivery: pick("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,

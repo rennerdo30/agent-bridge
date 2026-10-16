@@ -75,11 +75,18 @@ function expand(value: string, root: string, env: NodeJS.ProcessEnv): string {
 
 /** A run-local MCP view: only granted tools are listed AND callable, even in bypass mode.
  * The upstream configuration never goes into CLI args, logs or temporary files.
+ *
+ * requiredPatterns (default: all of patterns) are the grants the caller asked for explicitly; a server they
+ * select must load or the job fails. A server selected only by the other patterns (the configured default
+ * allowance of jobs, AB-403) is optional: when it cannot start in time it is skipped with a warning.
  */
 export async function startClaudeJobMcp(options: {
-  cwd: string; patterns: readonly string[]; env: NodeJS.ProcessEnv; log: Logger; signal?: AbortSignal; timeoutMs?: number;
+  cwd: string; patterns: readonly string[]; requiredPatterns?: readonly string[]; env: NodeJS.ProcessEnv; log: Logger; signal?: AbortSignal; timeoutMs?: number;
 }) {
-  const plugins = grantedPluginServers(options.cwd, options.patterns, options.env.CLAUDE_CONFIG_DIR);
+  const required = (name: string) => !options.requiredPatterns || hasServerGrant(name, options.requiredPatterns);
+  // Required servers first, so an optional server that uses up the time limit cannot fail a required one.
+  const plugins = grantedPluginServers(options.cwd, options.patterns, options.env.CLAUDE_CONFIG_DIR)
+    .sort((a, b) => Number(required(b.name)) - Number(required(a.name)));
   const clients: Client[] = [];
   const transports: Transport[] = [];
   let http: Server | undefined;
@@ -98,8 +105,7 @@ export async function startClaudeJobMcp(options: {
   const timeout = options.timeoutMs ?? TIMEOUT_MS;
   const signal = AbortSignal.any([options.signal ?? new AbortController().signal, AbortSignal.timeout(timeout)]);
   const views: { name: string; client: Client; tools: Tool[] }[] = [];
-  try {
-    for (const plugin of plugins) {
+  const connect = async (plugin: PluginServer): Promise<void> => {
       signal.throwIfAborted();
       const cfg = plugin.config;
       if (!/^[\w-]+$/.test(plugin.name)) throw new Error("Unsupported plugin MCP server name");
@@ -140,6 +146,28 @@ export async function startClaudeJobMcp(options: {
         cursor = page.nextCursor;
       } while (cursor);
       views.push({ name: `job_${plugin.name}`, client, tools });
+  };
+  try {
+    for (const plugin of plugins) {
+      const before = { clients: clients.length, transports: transports.length };
+      try {
+        await connect(plugin);
+      } catch (error) {
+        // A cancelled job and an explicitly granted server keep failing the job (no unfiltered fallback).
+        if (required(plugin.name) || options.signal?.aborted) throw error;
+        // Default-only grant (AB-403): the job runs without this server instead of failing.
+        const failedTransports = transports.splice(before.transports);
+        const failedClients = clients.splice(before.clients);
+        const closed = await Promise.allSettled(failedTransports.map((transport) => transport.close()));
+        await Promise.allSettled(failedClients.map((client) => client.close()));
+        // A server whose process tree cannot be verified as closed must not be left behind silently.
+        const leaked = closed.find((result) => result.status === "rejected");
+        if (leaked?.status === "rejected") throw leaked.reason;
+        options.log.warn("default-granted plugin MCP server did not start; the job runs without it", {
+          // Never the error text: it may carry upstream configuration (URLs, headers).
+          server: plugin.name, reason: signal.aborted ? "timeout" : "launch failed",
+        });
+      }
     }
     const token = randomBytes(24).toString("hex");
     const config: Record<string, unknown> = {};
