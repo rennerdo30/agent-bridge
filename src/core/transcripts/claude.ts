@@ -118,8 +118,7 @@ function headSummary(id: string, file: string, st: Stats): Pick<ChildSummary, "t
 }
 
 /** The bounded scanJsonl metadata pass over the parent JSONL for legacy inline sidechains, resumed after the last whole chunk. */
-function* legacyChildren(main: string): Generator<void, Map<string, LegacyChild>> {
-  const st = fileStat(main);
+function* legacyChildren(main: string, st: Stats | null): Generator<void, Map<string, LegacyChild>> {
   if (!st) return new Map();
   const signature = statSignature(st), saved = legacyCache.get(main);
   if (saved?.signature === signature) { remember(legacyCache, main, saved); return saved.children; }
@@ -139,6 +138,8 @@ function* legacyChildren(main: string): Generator<void, Map<string, LegacyChild>
       if (r.isSidechain !== true || typeof r.agentId !== "string" || !TRANSCRIPT_ID.test(r.agentId)) continue;
       const existing = children.get(r.agentId), at = time(r.timestamp), done = object(r.message).stop_reason === "end_turn";
       if (existing) { existing.updatedAt = at; existing.done ||= done; continue; }
+      // At most MAX_NATIVE_SUBAGENTS ids are shadowed by nested files, so later new ids can never be listed.
+      if (children.size >= 2 * MAX_NATIVE_SUBAGENTS) continue;
       children.set(r.agentId, { title: preview(contentText(object(r.message).content) || `Subagent ${r.agentId}`, MAX_TITLE_CHARS), startedAt: at, updatedAt: at, done });
     }
     from = page.next;
@@ -152,7 +153,7 @@ function* legacyChildren(main: string): Generator<void, Map<string, LegacyChild>
 }
 
 /** A child file is parsed again only when its stat identity changes; an unchanged refresh only lists and stats. */
-export function* claudeSubagentSteps(session: TranscriptSession, paths: TranscriptPaths): Generator<void, NativeSubagent[]> {
+function* claudeSubagentSteps(session: TranscriptSession, paths: TranscriptPaths): Generator<void, NativeSubagent[]> {
   const main = claudeSessionFile(session, paths);
   if (!main) return [];
   const out = new Map<string, NativeSubagent>();
@@ -189,9 +190,11 @@ export function* claudeSubagentSteps(session: TranscriptSession, paths: Transcri
   // Files no longer listed leave the cache with the previous generation.
   remember(childCache, dir, current);
   // Old versions wrote sidechain records into the parent's JSONL. The store can prove there are none.
+  // Stat before the store looks: a cached fold is then never labelled newer than the bytes it read.
+  const mainStat = fileStat(main);
   if (activeByteSources()?.noInlineSidechains?.(main)) return [...out.values()];
   const nestedIds = new Set(out.keys());
-  for (const [id, child] of yield* legacyChildren(main)) {
+  for (const [id, child] of yield* legacyChildren(main, mainStat)) {
     if (nestedIds.has(id) || out.size >= MAX_NATIVE_SUBAGENTS) continue;
     out.set(id, { id, title: child.title, status: child.done ? "done" : "unknown", startedAt: child.startedAt, updatedAt: child.updatedAt });
   }

@@ -99,7 +99,7 @@ export function readJsonl(file: string, from = "0", maxBytes = MAX_TRANSCRIPT_CH
 }
 
 /** Bytes kept from just before a resume offset, to tell an append from an in-place rewrite. */
-export const JSONL_MARK_BYTES = 256;
+const JSONL_MARK_BYTES = 256;
 export interface JsonlChunk extends JsonlPage {
   /** Bytes read; a chunk that filled `maxBytes` is final for an append-only file. */
   length: number; maxBytes: number;

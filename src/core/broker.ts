@@ -1471,7 +1471,7 @@ export class Broker {
 
   /** Project local runner lineage from durable jobs; do not alter broker routing identities. */
   private dashboardPeers(): PeerInfo[] {
-    const peers = [...this.liveConns()].flatMap((c) => c.peer ? [c.peer] : []);
+    const peers = this.liveConns().flatMap((c) => c.peer ? [c.peer] : []);
     const jobs = this.peerJobs(peers);
     return peers.flatMap((peer) => {
       const job = jobs.find((j) => j.name === peer.name || `job:${j.id}` === peer.id);
