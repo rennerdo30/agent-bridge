@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { DashboardReadContext } from "../core/dashboard-read.js";
 import type { OwnerQuestion } from "../core/owner-questions.js";
 import { LocalMobileSource, type MobileQuestionStore } from "./adapter.js";
@@ -50,10 +51,12 @@ export function provisionMobile(options: {
       // No subscribed device: nothing can be hinted, so read no source at all.
       const subscribers = push.subscriptionState();
       if (!subscribers) { hinted.clear(); return; }
-      const open = (await questions()).filter(q => q.status === "open");
-      for (const id of hinted.keys()) if (!open.some(q => q.id === id)) hinted.delete(id);
+      // Only a digest is kept: the registration ciphertext never lives on in this long-lived map.
+      const subscriberDigest = createHash("sha256").update(subscribers).digest("base64url");
+      const open = (await questions()).filter(q => q.status === "open"), openIds = new Set(open.map(q => q.id));
+      for (const id of hinted.keys()) if (!openIds.has(id)) hinted.delete(id);
       for (const question of open) {
-        const state = JSON.stringify([question.askedAt, subscribers]);
+        const state = `${question.askedAt}:${subscriberDigest}`;
         if (hinted.get(question.id) === state) continue;
         await push.notify(question, async () => {
           if (!ready()) return undefined;

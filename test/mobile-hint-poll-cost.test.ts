@@ -9,7 +9,9 @@ import { MessageStore } from "../src/core/store.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import { provisionMobile } from "../src/mobile/bootstrap.js";
 import { MobileDesktopAdmin } from "../src/mobile/desktop.js";
-import { projectQuestion } from "../src/mobile/adapter.js";
+import { projectQuestion, type MobileSource } from "../src/mobile/adapter.js";
+import { MobilePush } from "../src/mobile/push.js";
+import { MobileStore, type Device } from "../src/mobile/store.js";
 import type { MobileRequest } from "../src/mobile/gateway.js";
 import type { Credentials, Grant, PairingClaim, PairingQr } from "../src/mobile/contract.js";
 import { makeEnv, type TestEnv } from "./helpers.js";
@@ -93,9 +95,11 @@ function mobileFixture() {
   const home = env.home, messages = new MessageStore(join(home, "bridge.db"), nullLogger);
   const peers: PeerInfo[] = [{ id: "main-peer", name: "main", agent: "codex", pid: 2, agentPid: null, cwd: home, sessionId: "main-session", activity: "idle", autoWake: false, startedAt: 1, projectMain: true, wakeAvailable: true, wakeOnDirect: true }];
   const service = new OwnerQuestionService(home, messages, nullLogger, () => peers, vi.fn());
-  const q = service.store.ask({ title: "Fixture scope", topic: "scope", context: "Synthetic question", options: [
+  // Each title is its own topic: the store merges asks that share one.
+  const ask = (title: string) => service.store.ask({ title, topic: title === "Fixture scope" ? "scope" : title, context: "Synthetic question", options: [
     { id: "keep", label: "Keep", consequence: "Preserves", recommended: true }, { id: "wait", label: "Wait", consequence: "Defers", recommended: false },
   ], blocking: true, blocks: "Synthetic action", meanwhile: "Read source" }, home, { session: "main", sessionId: "main-session", main: "main", mainSessionId: "main-session", agent: "codex" }).question;
+  const q = ask("Fixture scope");
   closers.push(() => { service.close(); messages.close(); });
   // Every source snapshot reads the peers first: counting them counts snapshot work.
   const snapshotPeers = vi.fn(() => peers), list = vi.spyOn(service, "list");
@@ -104,7 +108,7 @@ function mobileFixture() {
     local: { home, log: nullLogger, peers: snapshotPeers }, ownerQuestions: service, ready: () => true,
     push: { provider: { submit }, encryptionKey: new Uint8Array(32).fill(7), projectId, environment: "development" } });
   closers.push(mobile.close);
-  return { mobile, q, snapshotPeers, list, submit, projectId };
+  return { mobile, q, ask, snapshotPeers, list, submit, projectId };
 }
 async function adminHeaders(admin: MobileDesktopAdmin) {
   const csrf = ((await admin.handle("GET", "/api/mobile/phones", {})).body as { csrfToken: string }).csrfToken;
@@ -113,6 +117,17 @@ async function adminHeaders(admin: MobileDesktopAdmin) {
 async function claim(mobile: ReturnType<typeof provisionMobile>, headers: () => Record<string, string>): Promise<PairingClaim> {
   const qr = ((await mobile.desktopAdmin.handle("POST", "/api/mobile/invitations", headers(), "{}")).body as { qr: PairingQr }).qr;
   return (await mobile.gateway.handle(req("POST", "/pairing/claims", undefined, { invitationId: qr.invitationId, nonce: qr.nonce, deviceName: "Fixture phone", platform: "android" }))).body as PairingClaim;
+}
+
+/** Pairs one phone with the given grant and registers it for push; returns its credentials. */
+async function subscribe(fx: ReturnType<typeof mobileFixture>, headers: () => Record<string, string>): Promise<Credentials> {
+  const { mobile, q, projectId } = fx, pending = await claim(mobile, headers);
+  const grant: Grant = { pcId, projectIds: [projectQuestion(q, pcId).projectId], sessionIds: [], jobIds: [], capabilities: ["overview.read", "questions.read"] };
+  expect((await mobile.desktopAdmin.handle("POST", "/api/mobile/claims/" + pending.claimId, headers(), JSON.stringify({ comparisonCode: pending.comparisonCode, allow: true, grants: [grant] }))).status).toBe(200);
+  const issued = await mobile.gateway.handle(req("GET", "/pairing/claims/" + pending.claimId, undefined, undefined, { authorization: "Bearer " + pending.claimToken, "idempotency-key": randomUUID() }));
+  const c = (issued.body as { credentials: Credentials }).credentials;
+  expect((await mobile.gateway.handle(req("PUT", "/me/push", c, { expoPushToken: "ExpoPushToken[fixture-only]", platform: "android", projectId, environment: "development" }))).status).toBe(200);
+  return c;
 }
 
 describe("mobile hint poll and pairing cost", () => {
@@ -156,5 +171,54 @@ describe("mobile hint poll and pairing cost", () => {
     const again = await mobile.desktopAdmin.handle("GET", "/api/mobile/phones", {});
     expect((again.body as { pending: unknown[] }).pending).toHaveLength(1);
     await vi.waitFor(() => expect(snapshotPeers).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("incremental hint poll re-offers on real changes only", () => {
+  it("hints a question asked after the first poll", async () => {
+    const fx = mobileFixture(), headers = await adminHeaders(fx.mobile.desktopAdmin); await subscribe(fx, headers);
+    await fx.mobile.pollQuestionHints(); expect(fx.submit).toHaveBeenCalledTimes(1);
+    fx.ask("Second fixture question");
+    await fx.mobile.pollQuestionHints(); expect(fx.submit).toHaveBeenCalledTimes(2);
+    await fx.mobile.pollQuestionHints(); expect(fx.submit).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers every open question again when a device's grants or revision change", async () => {
+    const notify = vi.spyOn(MobilePush.prototype, "notify");
+    const fx = mobileFixture(), headers = await adminHeaders(fx.mobile.desktopAdmin), c = await subscribe(fx, headers);
+    await fx.mobile.pollQuestionHints(); await fx.mobile.pollQuestionHints(); expect(notify).toHaveBeenCalledTimes(1);
+    const store = fx.mobile.gateway.store, device = store.get<Device>("device", c.deviceId)!;
+    store.put("device", device.id, { ...device, revision: randomUUID(), grants: device.grants.map(g => ({ ...g, capabilities: [...g.capabilities, "chat.read" as const] })) });
+    await fx.mobile.pollQuestionHints(); expect(notify).toHaveBeenCalledTimes(2);
+    // The persisted per-device dedupe still prevents a duplicate hint for the same question.
+    expect(fx.submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("never hints a revoked device on the incremental path", async () => {
+    const fx = mobileFixture(), headers = await adminHeaders(fx.mobile.desktopAdmin);
+    const first = await subscribe(fx, headers); await subscribe(fx, headers);
+    await fx.mobile.pollQuestionHints(); expect(fx.submit).toHaveBeenCalledTimes(2);
+    fx.mobile.gateway.store.revoke(first.deviceId);
+    fx.ask("Asked after revocation");
+    await fx.mobile.pollQuestionHints(); expect(fx.submit).toHaveBeenCalledTimes(3);
+    fx.mobile.gateway.store.revoke(fx.mobile.gateway.store.list<Device>("device").find(d => !d.revoked)!.id);
+    fx.ask("Asked with no device left"); fx.list.mockClear();
+    await fx.mobile.pollQuestionHints(); expect(fx.submit).toHaveBeenCalledTimes(3); expect(fx.list).not.toHaveBeenCalled();
+  });
+});
+
+describe("desktop catalog refresh", () => {
+  it("releases a refresh whose snapshot never settles and keeps serving the last catalog", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    const store = new MobileStore(join(env.home, "mobile.db"), pcId, origin); closers.push(() => store.close());
+    const view = { sessions: [], jobs: [], questions: [], sampledAt: 0, sourceState: "ready" as const };
+    const snapshot = vi.fn<MobileSource["snapshot"]>().mockResolvedValueOnce(view).mockImplementation(() => new Promise(() => {}));
+    const source = { snapshot } as unknown as MobileSource, admin = new MobileDesktopAdmin(store, source, "http://127.0.0.1:4321");
+    expect((await admin.handle("GET", "/api/mobile/phones", {})).status).toBe(200);
+    vi.advanceTimersByTime(MobileDesktopAdmin.CATALOG_MS);
+    expect((await admin.handle("GET", "/api/mobile/phones", {})).status).toBe(200); expect(snapshot).toHaveBeenCalledTimes(2);
+    expect((await admin.handle("GET", "/api/mobile/phones", {})).status).toBe(200); expect(snapshot).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(MobileDesktopAdmin.REFRESH_TIMEOUT_MS);
+    expect((await admin.handle("GET", "/api/mobile/phones", {})).status).toBe(200); expect(snapshot).toHaveBeenCalledTimes(3);
   });
 });

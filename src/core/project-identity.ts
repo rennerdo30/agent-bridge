@@ -76,6 +76,7 @@ function discoveryCeiling(physical: string, configured: string | undefined, seen
     if (!entry) { canonicalize = false; continue; }
     if (!isAbsolute(entry)) continue;
     let candidate = entry;
+    seen(entry);
     if (canonicalize) {
       try { candidate = realpathSync.native(entry).replace(/\\/g, "/"); } catch { continue; }
     }
@@ -115,8 +116,8 @@ function walkProjectRoot(physical: string, probes: Map<string, string>): Omit<Pr
     return readFileSync(path, "utf8").trim();
   };
   const directory = (path: string) => {
-    let result: string;
-    try { result = realpathSync.native(path); } catch (error) { seen(path); throw error; }
+    seen(path);
+    const result = realpathSync.native(path);
     for (let at = resolve(path);; at = dirname(at)) {
       if (checkedDirectories.has(at)) break;
       if (!stamp(at).isDirectory()) throw new Error("unsupported Git metadata directory");

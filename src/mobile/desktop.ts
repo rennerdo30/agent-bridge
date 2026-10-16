@@ -34,6 +34,8 @@ export class MobileDesktopAdmin {
   private catalogView?: { at: number; view: SourceView; folders?: ReadonlyMap<string, string> };
   private refreshing?: Promise<NonNullable<MobileDesktopAdmin["catalogView"]>>;
   static readonly CATALOG_MS = 10_000;
+  /** A snapshot that never settles must not block later refreshes; the last catalog keeps being served. */
+  static readonly REFRESH_TIMEOUT_MS = 15_000;
   constructor(private readonly store: MobileStore, private readonly source: MobileSource, readonly localOrigin: string, private readonly ready: () => boolean = () => true) {
     const origin = new URL(localOrigin);
     if (origin.origin !== localOrigin || !["localhost", "127.0.0.1"].includes(origin.hostname) || origin.protocol !== "http:") throw new Error("Exact loopback desktop origin required");
@@ -41,12 +43,19 @@ export class MobileDesktopAdmin {
   /** One source snapshot at a time, shared by every waiting request. */
   private refreshCatalog(): Promise<NonNullable<MobileDesktopAdmin["catalogView"]>> {
     if (this.refreshing) return this.refreshing;
-    const work = (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new MobileFault(503, "source_unavailable")), MobileDesktopAdmin.REFRESH_TIMEOUT_MS); timer.unref?.();
+    });
+    const snapshot = (async () => {
       const view = await this.source.snapshot();
       return this.catalogView = { at: Date.now(), view, folders: this.source.projectFolders?.() };
     })();
+    snapshot.catch(() => { /* A late failure after the timeout is already reported. */ });
+    const work = Promise.race([snapshot, timeout]);
     this.refreshing = work;
-    work.then(() => { if (this.refreshing === work) this.refreshing = undefined; }, () => { if (this.refreshing === work) this.refreshing = undefined; });
+    const settle = () => { clearTimeout(timer); if (this.refreshing === work) this.refreshing = undefined; };
+    work.then(settle, settle);
     return work;
   }
   /** The cached catalog, refreshed in the background once stale; only the first request waits for a snapshot. */
