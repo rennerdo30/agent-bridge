@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.30.29
+
+- **Broker no longer stalls on job-mail routing.** Routing re-reads the job listing once per job. The listing (about 28 MB on a home with ~1,700 jobs, one with a 6 MB delivery) did not fit the 8 MB archive cache, so every pass decoded every job once per job on the main thread (over a full core, pings timing out). Whole snapshots now have a 64 MB budget; the dashboard's job listing is reused across refreshes too.
+- **Idle history worker.** Conversations whose folder resolves to no project (leftover worktrees) were re-resolved and rewritten on every tick; they are now retried every 10 minutes. Unchanged ingest cursors are no longer rewritten.
+- **Muse plan usage.** Muse jobs record the 5-hour and weekly usage Muse reports while working; `usage_limits` and the dashboard show it with its time instead of "availability is unknown".
+
 ## 0.30.28
 
 - **Idle broker CPU.** The history worker kept up to a whole core busy long after the import finished: every checked run log re-tagged its documents with a query that scanned the whole history store, which has no index on `run`. The lookup now uses the documents' primary-key id range (`run:<run>:`). The once-a-second storage budget check also no longer resolves two real paths per project.
