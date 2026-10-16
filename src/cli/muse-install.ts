@@ -17,15 +17,36 @@ export const publishMuseBundle = (source: string): string => publishPlugin(sourc
 /**
  * The exact Muse plugin commands for each installer action. Approval trusts the bundle's capabilities.
  * An update installs the new bundle over the old one: `muse plugins update` only re-reads the recorded source,
- * which can be Muse's own cached copy of the old version. A reinstall keeps the plugin's enabled state.
+ * which can be Muse's own cached copy of the old version. A reinstall leaves the plugin disabled and its hooks and
+ * MCP server unapproved (Muse 1.4.9), which made every Muse write fail closed after each update. An update of a
+ * plugin the owner had enabled therefore enables and approves it again, as an install does; one the owner
+ * disabled stays disabled and is only inspected.
  * The scope is always explicit: run inside a Git project, Muse 1.4.9 otherwise refuses a user-scope plugin with
  * "already installed from a different source".
  */
-export function musePluginArgs(action: Action, source: string): string[][] {
+export function musePluginArgs(action: Action, source: string, wasEnabled = false): string[][] {
   const install = ["plugins", "install", source, "--scope", "user"];
   if (action === "install") return [install, ["plugins", "approve", "agent-bridge"]];
-  if (action === "update") return [install, ["plugins", "inspect", "agent-bridge"]];
+  if (action === "update") return wasEnabled ? [install, ["plugins", "enable", "agent-bridge"], ["plugins", "approve", "agent-bridge"]] : [install, ["plugins", "inspect", "agent-bridge"]];
   return [["plugins", "remove", "agent-bridge"]];
+}
+
+/** Whether Muse lists agent-bridge as enabled (`muse plugins list --json`); false when unknown. */
+export async function museBridgeEnabled(bin = "muse"): Promise<boolean> {
+  try {
+    const target = resolveCommand(bin, ["plugins", "list", "--json"], process.env, nullLogger);
+    if (target.needsShell) return false;
+    const out = await new Promise<string>((resolve, reject) => {
+      const child = spawn(target.resolved, target.args, { stdio: ["ignore", "pipe", "ignore"], shell: false, windowsHide: true });
+      let text = "";
+      const timer = setTimeout(() => { child.kill(); reject(new Error("muse plugins list timed out")); }, 30_000);
+      child.stdout.on("data", (chunk) => { text += chunk; });
+      child.on("error", (error) => { clearTimeout(timer); reject(error); });
+      child.on("close", (code) => { clearTimeout(timer); if (code === 0) resolve(text); else reject(new Error(`muse plugins list failed with code ${code}`)); });
+    });
+    const plugins = (JSON.parse(out) as { plugins?: { record?: { id?: unknown; enabled?: unknown } }[] }).plugins ?? [];
+    return plugins.some((p) => p.record?.id === "agent-bridge" && p.record.enabled === true);
+  } catch { return false; }
 }
 
 export function runMusePluginCommand(bin: string, args: string[]): Promise<number> {
@@ -42,16 +63,20 @@ export function runMusePluginCommand(bin: string, args: string[]): Promise<numbe
 
 /** Install/update/remove the native Muse bundle through Muse's own plugin manager. */
 export async function installMusePlugin(action: Action, run: (args: string[]) => Promise<number> = (args) => runMusePluginCommand("muse", args),
-  publish: (source: string) => string = publishMuseBundle): Promise<string[]> {
+  publish: (source: string) => string = publishMuseBundle, enabled: () => Promise<boolean> = () => museBridgeEnabled()): Promise<string[]> {
   const source = museSourceDir();
   if (action !== "uninstall" && !source) throw new Error("Missing Muse plugin build");
   const bundle = action === "uninstall" ? "" : publish(source!);
+  // Read before the reinstall, which resets it.
+  const wasEnabled = action === "update" && await enabled();
   const done: string[] = action === "uninstall" ? [] : [`+ ${bundle}`];
-  for (const args of musePluginArgs(action, bundle)) {
+  for (const args of musePluginArgs(action, bundle, wasEnabled)) {
     const code = await run(args);
     if (code !== 0) throw new Error(`muse ${args.join(" ")} failed with code ${code}`);
     done.push(`muse ${args.join(" ")}`);
   }
-  if (action === "update") done.push("Changed capabilities remain modified/review_needed. Read the inspected package, then explicitly run muse plugins approve agent-bridge. A disabled plugin stays disabled and has nothing to approve until it is on: run muse plugins enable agent-bridge first, then approve. Activation is in the next new session; running sessions keep their existing package.");
+  if (action === "update") done.push(wasEnabled
+    ? "agent-bridge was enabled, so it is enabled and approved again. New Muse sessions use it; running sessions keep their existing package until restarted."
+    : "agent-bridge was not enabled, so it stays disabled. To use it, run muse plugins enable agent-bridge, then muse plugins approve agent-bridge. Activation is in the next new session.");
   return done;
 }
