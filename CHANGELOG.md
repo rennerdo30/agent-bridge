@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.30.26
 
 - **Dashboard: run summaries stay cached with more than 2,048 runs.** The cache was capped at 2,048 entries, so with more runs (2,902 here once packed runs were listed again) each refresh evicted what the next one needed and re-read every run preview: about 2.5-5 s per request and a busy broker. The cache now holds at least twice the current listing.
 - **Dashboard: recent messages are reused until a message database changes.** Every refresh re-queried the main and archive message tables.
