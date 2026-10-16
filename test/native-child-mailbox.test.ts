@@ -187,6 +187,20 @@ it("parent mail works on a current host with no live child", async () => {
   expect(JSON.stringify(await host("inbox"))).toContain(message.body);
 });
 
+it("non-mail decide/send/peers use the same real host endpoint and MCP capability schema", async () => {
+  const host = await hostMod(); await childStart();
+  const decide = vi.spyOn(ctx.node!, "decide").mockResolvedValue({ decision: {} as any, deliveredTo: [] });
+  expect((await host("decide", { topic: "rule", text: "owner choice" })).isError).not.toBe(true);
+  expect((await host("decide", { topic: "rule", text: "child choice" }, agentId)).isError).toBe(true);
+  expect(decide).toHaveBeenCalledOnce();
+  const target = env.node("granted", "codex"); await target.start();
+  await ctx.node!.nativeChild({ action: "grant", agentId, sendTo: [target.name] });
+  expect((await host("send", { to: target.name, message: "child report" }, agentId)).isError).not.toBe(true);
+  await target.refreshPending();
+  expect(target.unread()).toContainEqual(expect.objectContaining({ body: "child report", from: expect.objectContaining({ name: `${ctx.node!.name}/sub:${agentId}` }) }));
+  expect(JSON.stringify(await host("peers", {}, agentId))).toContain(`${ctx.node!.name}/sub:${agentId}`);
+});
+
 it("a model-injected input argument cannot downgrade a scoped call", async () => {
   const host = await hostMod();
   await childStart();

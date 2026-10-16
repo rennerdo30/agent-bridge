@@ -75,12 +75,12 @@ import { appendContextEvent } from "../core/context-journal.js";
 import { conversationPageSchema, type ConversationRequest } from "../core/conversation-query.js";
 import { HISTORY_SEARCH_TOOL_DESCRIPTION, historySearchToolInput, type HistorySearch } from "../core/history-query.js";
 
-import { decisionScopeSchema, MAX_DECISION_TOPIC_CHARS, MAX_DECISION_TEXT_CHARS, type DecideArgs, type DecisionsArgs } from "../core/decisions.js";
+import { decisionApplies, decisionScopeSchema, MAX_DECISION_TOPIC_CHARS, MAX_DECISION_TEXT_CHARS, type DecideArgs, type DecisionsArgs } from "../core/decisions.js";
 import { askOwnerSchema, type AskOwnerArgs } from "../core/owner-questions.js";
 import { guardServerErrors } from "./job-runner-errors.js";
 import { NODE_STOP_MS, runShutdownSteps, SHUTDOWN_DEADLINE_MS, shouldYieldTo, watchParent, type ShutdownStep } from "./server-lifecycle.js";
 import { parentProcessIdentity } from "../core/process-identity.js";
-import { ClaudeMailScopes, isClaudeMailTool } from "./claude-mail-scope.js";
+import { ClaudeMailScopes, CLAUDE_CHILD_STATUS_TOOLS, isClaudeMailTool } from "./claude-mail-scope.js";
 
 export { DELEGATED_JOB_NOTE } from "./delegate-run.js";
 
@@ -647,11 +647,16 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
   const waits = new MessageWaitStore(ctx.home);
   if (node) waits.attach(node);
   // Nested supervisors keep private child tools without independent-session bridge privileges.
-  const register = ((name: string, ...rest: unknown[]) =>
-    node || SUBAGENT_TOOLS.has(name) || (ctx.jobs && (
+  const register = ((name: string, spec: { inputSchema?: unknown }, ...rest: unknown[]) => {
+    // Add the capability centrally so SDK schema parsing cannot silently strip it
+    // from a new tool. The internal hook transport is deliberately separate.
+    if (mailScopes && name !== "hook_event") spec = { ...spec, inputSchema: spec.inputSchema instanceof z.ZodObject
+      ? spec.inputSchema.safeExtend(mailScopeSchema) : { ...spec.inputSchema as Record<string, unknown>, ...mailScopeSchema } };
+    return node || SUBAGENT_TOOLS.has(name) || (ctx.jobs && (
       name === "decide" || name === "message_subagent" || name === "cancel_subagent" || name === "inbox" || name === "wait_for_message" ||
       (currentDelegateDepth() < cfg.maxDelegateDepth && (name.startsWith("spawn_") || name.startsWith("ask_") || name === "list_models"))
-    )) ? (mcp.registerTool as (...a: unknown[]) => unknown)(name, ...rest) : undefined) as typeof mcp.registerTool;
+    )) ? (mcp.registerTool as (...a: unknown[]) => unknown)(name, spec, ...rest) : undefined;
+  }) as typeof mcp.registerTool;
   const requireNode = (): BridgeNode => {
     if (!node) throw new BridgeError("bad_request", t("err.delegatedSession"));
     discardFinishedNotes(ctx);
@@ -679,17 +684,17 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       const a = args as Record<string, unknown>;
       const metaChildId = extra._meta?.agent_id ?? extra._meta?.agentId;
       let childId = metaChildId ?? a.native_child;
-      let authenticatedMail = false;
-      if (mailScopes && isClaudeMailTool(name)) {
+      let authenticatedScope = false;
+      if (mailScopes) {
         // A replaced server that is called is the one the session uses: take it back first.
         if (node!.wasReplaced) await node!.reclaim().catch((err) => log.warn("could not take the bridge back", { err: (err as Error).message }));
         try {
           if (scopeToken !== undefined) {
             // A presented capability is always validated: forged, replayed or wrong-tool fails.
             const scope = mailScopes.take(scopeToken, name, node!.currentSessionId);
-            if (childId !== undefined && childId !== scope.agentId) throw new BridgeError("unauthorized", "Claimed native_child conflicts with authenticated host scope; no mail accessed.");
+            if (childId !== undefined && childId !== scope.agentId) throw new BridgeError("unauthorized", "Claimed native_child conflicts with authenticated host scope; no action taken.");
             childId = scope.agentId;
-            authenticatedMail = true;
+            authenticatedScope = true;
           } else if (childId === undefined) {
             // A broker without native child routes (older release) cannot have a live child.
             const children = await node!.nativeChildren().catch(err => {
@@ -698,17 +703,45 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
             });
             // Unscoped while a child is live: the caller is ambiguous. Give a read-only
             // status, never parent message bodies, history, receipts or wait registration.
-            if (children.length) return text(["Ambiguous caller while native children are live. Mail remains queued for parent hooks; use an explicit native_child inbox for child mail.",
-              ...children.map(child => `Native child address: ${child.address}`)].join("\n"));
+            if (children.length) return isClaudeMailTool(name)
+              ? text(["Ambiguous caller while native children are live. Mail remains queued for parent hooks; use an explicit native_child inbox for child mail.",
+                ...children.map(child => `Native child address: ${child.address}`)].join("\n"))
+              : text("Ambiguous caller while native children are live. Use the current host mod to authenticate this tool call; no action taken.", true);
           }
         } catch (err) { return text(describeError(err), true); }
       }
       if (childId !== undefined) {
         try {
           if (metaChildId !== undefined && a.native_child !== undefined && metaChildId !== a.native_child) throw new BridgeError("unauthorized", "native_child conflicts with host-provided agent identity.");
-          if (ctx.agent !== "claude" || !node || node.wasReplaced || typeof childId !== "string" || !["peers", "inbox", "send", "search_history"].includes(name)) throw new BridgeError("unauthorized", "Scoped native children may use peers, inbox, send and search_history only on their current Claude parent connection.");
+          const childStatus = (CLAUDE_CHILD_STATUS_TOOLS as readonly string[]).includes(name);
+          if (ctx.agent !== "claude" || !node || node.wasReplaced || typeof childId !== "string" ||
+              !["peers", "inbox", "send", "search_history"].includes(name) && !childStatus)
+            throw new BridgeError("unauthorized", `Native child refused: ${name} requires parent authority or has no child identity. Ask the parent session.`);
           const children = await node.nativeChildren(), child = children.find(c => c.agentId === childId);
           if (!child) throw new BridgeError("unauthorized", "No live scoped native child; wait for its SubagentStart hook.");
+          if (childStatus) {
+            // Never observe parent metadata or confirm delivery as a side effect of status.
+            if (name === "health") return text(JSON.stringify(await probeBrokerHealth(resolvePipePath(home), log)));
+            if (name === "decisions") {
+              const decisions = await node.decisions({ query: a.query as string | undefined, history: a.history as boolean | undefined,
+                scope: { project: ctx.cwd() }, session: child.address });
+              return text(JSON.stringify(decisions.filter(d => decisionApplies(d, { id: child.address, name: child.address, sessionId: child.address, cwd: ctx.cwd() }))));
+            }
+            if (name === "network_status") {
+              const status = await node.networkStatus();
+              return text(JSON.stringify({ enabled: status.enabled, ready: status.ready, discovered: status.discovered.length,
+                paired: status.paired.length, connected: status.paired.filter(p => p.connected).length }));
+            }
+            if (name === "resource_slots") {
+              const slots = new ResourceSlots(ctx.home);
+              try { return text(JSON.stringify(describeResourceSlots(slots.snapshot(), cfg.resourceSlots).map(s =>
+                ({ resource: s.resource, capacity: s.capacity, held: s.held.length, waiting: s.waiting.length })))); }
+              finally { slots.close(); }
+            }
+            // Model catalogues and account quota summaries are shared read-only status.
+            return await fn(args, extra);
+          }
+          if (name === "send" && a.message_kind !== undefined) throw new BridgeError("unauthorized", "Native child send does not support parent message_kind routing.");
           if (name === "send" && a.mode !== undefined) {
             if (a.mode === "auto") await confirmNativeChildDelivery(ctx, childId);
             const result = await node.sendWithMode({ mode: a.mode as SendMode, nativeChild: childId,
@@ -740,7 +773,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       }
       // Replaced by another server of this session, yet called: this is the one the session uses (see reclaim).
       if (name !== "health" && ctx.node?.wasReplaced) await ctx.node.reclaim().catch((err) => log.warn("could not take the bridge back", { err: (err as Error).message }));
-      if (!authenticatedMail) await ctx.observeMeta?.(extra._meta);
+      if (!authenticatedScope) await ctx.observeMeta?.(extra._meta);
       if (ctx.agent === "antigravity" && name !== "health" && name !== "hook_event") {
         if (name === "inbox") {
           if (a.mark_read !== false) releaseAntigravityStopDelivery(ctx);
