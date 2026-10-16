@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { loadConfig } from "../core/config.js";
+import { markerSafe } from "../core/approval-display.js";
 import { checkUsagePreflight, usageAdmissionText, usageSubmissionReceipt } from "../core/usage.js";
 import { usageProbeFor } from "../mcp/targets.js";
 import { REMOTE_JOB_USAGE_CAPABILITY } from "./remote-job-protocol.js";
@@ -329,7 +330,8 @@ export class RemoteJobs {
       if (this.approvals.has(id) || this.publishingApprovals.has(id)) continue;
       this.publishingApprovals.add(id);
       try {
-        const close = await publishApproval(this.home, { ...approval, owner, job: `${host}/${approval.job}` }, async (body) => {
+        // AB-417: the remote bridge may be older than the marker guard, so its question text gets the guard here too.
+        const close = await publishApproval(this.home, { ...approval, command: markerSafe(approval.command), owner, job: `${host}/${approval.job}` }, async (body) => {
           if (Date.now() >= approval.deadline) return false;
           try {
             await this.request(host, peer, { op: "approval", job: request.job, id: approval.id, decision: body.startsWith("allow") ? "allow" : "deny", reason: body.includes(":") ? body.slice(body.indexOf(":") + 1).trim() : undefined }, supervisor);

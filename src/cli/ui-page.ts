@@ -3136,6 +3136,8 @@ function approvalFlags(command) {
   const text = String(command || ""), nl = text.indexOf("\\n");
   const none = { flags: [], args: "", rest: text };
   if (nl < 0) return none;
+  // The bridge writes its header escaped: a raw control, format or line separator character or a look-alike bracket means it is not that header.
+  if (/[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}\\uFF3B\\uFF3D\\u27E6\\u27E7\\u2045\\u2046\\u298B-\\u2990\\u3010\\u3011\\u3014-\\u301B\\uFE39\\uFE3A\\uFE47\\uFE48\\uFE5D\\uFE5E\\u2E22-\\u2E25\\u23A1-\\u23A6]/u.test(text.slice(0, nl))) return none;
   const m = /^((?:\\[[^\\[\\]]*\\] ?)*)(\\+args: .*)?$/.exec(text.slice(0, nl));
   if (!m || !(m[1] || m[2])) return none;
   return { flags: m[1].match(/\\[[^\\[\\]]*\\]/g) || [], args: m[2] || "", rest: text.slice(nl + 1) };

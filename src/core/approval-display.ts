@@ -14,8 +14,8 @@
  * hostile path or reason cannot fake a new line, end a marker early or reorder the text. The command itself is
  * shown exactly as it will run.
  *
- * A command whose own first line could pass for that header (for example `+args: {...}` or `[sandbox ON]`) always
- * gets a bridge header line, `[command starts like a marker line]`, so the line a reader or the dashboard takes as
+ * A command whose own first line could pass for that header (any first line starting with a bracket or `+args`,
+ * for example `+args: {...}` or `[sandbox ON]`) always gets a bridge header line, `[command starts like a marker line]`, so the line a reader or the dashboard takes as
  * the header is always the bridge's and the whole command stays below it. Question texts without markers of their
  * own (MCP calls, other approvals) get the same guard through markerSafe.
  */
@@ -79,18 +79,27 @@ export function extraArgs(extra: Record<string, unknown>): string {
   return `+args: ${cut(escapedJson(extra), MAX_EXTRA_ARGS_CHARS)}`;
 }
 
-/**
- * A line a reader or the dashboard could take for a marker header: only `[...]` groups (square or look-alike
- * brackets) and an optional `+args...` tail. A superset of the line the dashboard parses (its approvalFlags).
- */
-const MARKER_LIKE_LINE = new RegExp(String.raw`^(?:[\[${LOOKALIKE_OPEN}][^\[\]${LOOKALIKE_OPEN}${LOOKALIKE_CLOSE}]*[\]${LOOKALIKE_CLOSE}]\s*)*(?:\+args:.*)?$`, "u");
+/** Whitespace and hidden characters, removed before a line is checked for a marker-like start. */
+const BLANK = new RegExp(String.raw`[\s${HIDDEN}]`, "gu");
+/** A line that starts with a square or look-alike open bracket, or with `+args` in any case. */
+const MARKER_START = new RegExp(String.raw`^(?:[\[${LOOKALIKE_OPEN}]|\+args)`, "iu");
 /** The bridge's header marker for a command whose own first line could pass for a header. */
 export const MARKER_LIKE_COMMAND = marker("command starts like a marker line");
 
-/** True when the first non-blank line of the text could be taken for a marker header line. */
+/**
+ * True when the text could start with something a reader or the dashboard takes for a marker header. Deliberately
+ * wide and simple, so it stays a superset of what the dashboard parses (its approvalFlags): it checks both the text
+ * up to the first "\n" exactly as the dashboard cuts it, and the first line that is not blank once whitespace and
+ * hidden characters are removed; either one starting, after those are removed, with `[`, a look-alike open bracket
+ * or `+args` (any case) counts. A command such as `[ -f x ] && ls` therefore gets the harmless bridge header line;
+ * the command itself is never changed.
+ */
 export function startsLikeMarkers(primary: string): boolean {
-  const first = primary.split(/\r\n|[\n\r\u2028\u2029]/).find((line) => line.trim() !== "");
-  return first !== undefined && MARKER_LIKE_LINE.test(first.trim());
+  const nl = primary.indexOf("\n");
+  const dashboardLine = nl < 0 ? primary : primary.slice(0, nl);
+  if (MARKER_START.test(dashboardLine.replace(BLANK, ""))) return true;
+  const first = primary.split(/\r\n|[\n\v\f\r\x85\u2028\u2029]/).map((line) => line.replace(BLANK, "")).find((line) => line !== "");
+  return first !== undefined && MARKER_START.test(first);
 }
 
 /**
