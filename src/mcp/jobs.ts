@@ -227,6 +227,15 @@ export const PAUSE_RACE_NOTE = "(A pause request arrived after this turn had alr
 /** The longest pause reason kept in job state, peers and the dashboard. */
 export const MAX_PAUSE_REASON_CHARS = 500;
 export const DEFAULT_PAUSE_REASON = "Paused by supervisor";
+/**
+ * A pause reason as it is stored: one line (every run of whitespace, newlines included, becomes one space),
+ * trimmed and capped, so it can never add lines to peers, sibling or dashboard text (AB-398).
+ */
+export function pauseReasonText(reason: string | undefined): string {
+  return (reason ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_PAUSE_REASON_CHARS).trim() || DEFAULT_PAUSE_REASON;
+}
+/** Appended when a pause arrived as a turn finished while follow-ups were queued: they are held, not started (AB-398). */
+export const PAUSE_HELD_NOTE = "(A pause request arrived as this turn finished; the job is paused and its queued follow-ups wait for resume_subagent.)";
 export const QUEUED_FOLLOW_UP_NOTE = "(Your queued follow-up was sent to it; its answer will arrive as another message.)";
 
 /** The message a finished turn reports: how it ended, why it failed, and what the subagent said. */
@@ -476,7 +485,7 @@ export class JobManager {
       else if (control.type === "pause") {
         // Only this executor's live turn can be paused; a pause for a turn that already ended is not replayed.
         if (job.controller.signal.aborted || job.status !== "running" && !(job.status === "paused" && job.pausePending)) return;
-        job.pauseReason = (control.reason ?? "").trim().slice(0, MAX_PAUSE_REASON_CHARS) || DEFAULT_PAUSE_REASON;
+        job.pauseReason = pauseReasonText(control.reason);
         job.pausedAt ??= Date.now();
         job.pausePending = true;
         job.status = "paused";
@@ -710,7 +719,7 @@ export class JobManager {
     for (const saved of stored) {
       // A turn whose executor is proven gone never reverts to "running" from its stale durable record.
       const s = saved.status === "running" && !saved.host && this.deadExecutorTurns.get(saved.id) === inlineTurn(saved) ? { ...saved, status: "interrupted" as const }
-        : this.running.has(saved.id) || this.foreground.has(saved.id) ? saved : settleStalePause(saved, this.node.name);
+        : this.running.has(saved.id) || this.foreground.has(saved.id) ? saved : settleStalePause(saved, this.node.name, this.deadExecutorTurns.get(saved.id) === inlineTurn(saved));
       if (!this.own.has(s.id) && !this.canRestoreSaved(s)) continue;
       const directlyOwned = this.lineage ? s.parentJob === this.lineage.parentJob : this.isMine(s.owner) && !s.parentJob;
       let job = this.history.get(s.id);
@@ -951,7 +960,7 @@ export class JobManager {
       const hosted = (s.status === "running" || s.status === "paused" && s.pausePending) && Boolean(s.host);
       const mine = this.isMine(s.owner);
       const job: Job = {
-        ...settleStalePause(s, this.node.name),
+        ...settleStalePause(s, this.node.name, this.deadExecutorTurns.get(s.id) === inlineTurn(s)),
         recoveredRecord: cloneJson(s) as unknown as Record<string, unknown>,
         status: s.status === "running" && !(hosted && !mine) ? "interrupted" : s.status,
         controller: new AbortController(),
@@ -1351,8 +1360,12 @@ export class JobManager {
         job.etaReportedAt = undefined;
         job.finishedAt = Date.now();
         const completed = (outcome?.result?.status ?? (outcome?.result && !outcome.result.isError ? "done" : "failed")) === "done";
-        // A pause that raced a completed turn never swallows its result: the run is finished, not paused (AB-398).
-        const pauseRaced = job.pausePending === true && completed;
+        // A pause that raced a completed turn never swallows its result (AB-398). Without follow-ups the run is
+        // finished, not paused; with follow-ups queued its result is still delivered, then the job is paused with
+        // the queue kept and nothing started.
+        const sessionAfter = outcome?.result?.sessionId ?? job.sessionId;
+        const holdQueued = job.pausePending === true && completed && job.queue.length > 0 && Boolean(job.resume && sessionAfter);
+        const pauseRaced = job.pausePending === true && completed && !holdQueued;
         if (pauseRaced) {
           job.pausePending = false; job.resumeRequested = false; job.pauseReason = undefined; job.pausedAt = undefined;
           this.log.info("pause arrived after the ask had finished; delivering its result", { job: job.name });
@@ -1367,6 +1380,13 @@ export class JobManager {
           job.pausePending = false;
           job.finishedAt = undefined;
           this.persist();
+          if (holdQueued) {
+            // The caller gets the result as the ask's return value; a caller in another session gets it as a report.
+            this.log.info("pause arrived as the ask finished; holding its queued follow-ups", { job: job.name, queued: job.queue.length });
+            if ((job.foregroundRecipient && job.foregroundRecipient !== this.node.name) || (job.ownershipHistory?.length && !this.isMine(job.owner))) {
+              this.post(job, jobReport(job, "done", Math.round((Date.now() - job.startedAt) / 1000), `${outcome?.result?.text ?? ""}\n\n${PAUSE_HELD_NOTE}`, null, this.bridgeHome()));
+            } else this.post(job, `Subagent ${job.name} is paused; its queued follow-ups wait for resume_subagent.`);
+          }
           if (job.resumeRequested) {
             try { this.startPaused(job); }
             catch (error) { this.post(job, `Subagent ${job.name} remains paused: ${String(error)}`); }
@@ -1616,7 +1636,7 @@ export class JobManager {
     if (!this.storePath) return;
     const stored = readStoredJob(this.storePath, job.id, job.name, this.log);
     if (!stored) return;
-    const saved = this.running.has(job.id) || this.foreground.has(job.id) ? stored : settleStalePause(stored, this.node.name);
+    const saved = this.running.has(job.id) || this.foreground.has(job.id) ? stored : settleStalePause(stored, this.node.name, this.deadExecutorTurns.get(stored.id) === inlineTurn(stored));
     if (saved.startedAt > job.startedAt || !this.running.has(job.id) && !this.foreground.has(job.id)) {
       if (saved.startedAt > job.startedAt) job.controller = new AbortController();
       Object.assign(job, saved, { sessionId: saved.sessionId ?? job.sessionId, workdir: saved.workdir ?? job.workdir, worktree: saved.worktree ?? job.worktree });
@@ -2038,7 +2058,8 @@ export class JobManager {
     job.host = null;
     if (final) {
       if (final.status === "paused") job.pausePending = true;
-      else job.pausePending = false;
+      // A finished turn keeps a pending pause: finish() delivers its report, then holds any queued follow-ups.
+      else if (final.status !== "done") job.pausePending = false;
       this.finish(job, final.status === "done" ? "done" : final.status === "cancelled" ? "cancelled" : "failed", "", final.sessionId ?? null, null, final.delivered ? null : final.report,
         final.reportId ? completionMessageId(`job:${job.id}`, final.reportId) : undefined);
       return;
@@ -2141,7 +2162,7 @@ export class JobManager {
     const job = this.controlJob(ref);
     if (!job) throw new Error(`Unknown job ${ref}.`);
     if (!this.pausable(job)) throw new Error(this.pauseRefusal(job, ref));
-    reason = reason.trim().slice(0, MAX_PAUSE_REASON_CHARS) || DEFAULT_PAUSE_REASON;
+    reason = pauseReasonText(reason);
     return this.transition(job, () => {
       this.refreshControlTurn(job);
       if (!this.pausable(job)) throw new Error(this.pauseRefusal(job, ref));
@@ -2412,14 +2433,22 @@ export class JobManager {
 
   /** `report`: null when the runner already delivered it, a text to post as it is, or undefined to compose it here. */
   private finish(job: Job, status: "done" | "failed" | "cancelled", text: string, sessionId: string | null, cause: string | null = null, report?: string | null, messageId?: string): void {
-    // A pause that raced a completed turn never swallows its report: the job is finished, not paused (AB-398).
+    // A pause that raced a completed turn never swallows its report (AB-398). With follow-ups queued, the report
+    // is delivered and the job is then paused with its queue kept: no continuation starts until resume_subagent.
+    if (job.pausePending === true && status === "done" && job.queue.length && job.resume && (sessionId ?? job.sessionId)) {
+      this.holdRacedPause(job, status, text, sessionId, cause, report, messageId);
+      return;
+    }
+    // Without follow-ups the job is finished, not paused.
     const pauseRaced = job.pausePending === true && status === "done";
     if (pauseRaced) {
       job.pausePending = false;
       job.resumeRequested = false;
+      job.pauseReason = undefined;
+      job.pausedAt = undefined;
       this.log.info("pause arrived after the turn had finished; delivering its report", { job: job.name });
       if (report === undefined) text += `\n\n${PAUSE_RACE_NOTE}`;
-      else if (report !== null) report += `\n\n${PAUSE_RACE_NOTE}`;
+      else if (report !== null && !report.includes(PAUSE_RACE_NOTE)) report += `\n\n${PAUSE_RACE_NOTE}`;
     }
     if (job.pausePending) {
       this.running.delete(job.id);
@@ -2430,6 +2459,8 @@ export class JobManager {
       job.etaAt = undefined;
       job.etaReportedAt = undefined;
       this.persist();
+      // A runner that paused after a finished turn (follow-ups held) saved its report; post it if undelivered.
+      if (typeof report === "string") this.post(job, report, null, "", messageId);
       this.startWaiting();
       if (job.resumeRequested) {
         try { this.startPaused(job); }
@@ -2463,8 +2494,11 @@ export class JobManager {
     // A local job's leftover files are listed after the report, without holding up settlement (AB-398).
     if (!job.remote && job.worktree?.path) {
       const worktree = job.worktree;
+      // Files the report already lists (a failed checkpoint names its dirty files) are not listed twice.
+      const listed = new Set((message ?? "").split(/\r?\n/).map(line => line.trim()));
       void dirtyJobFiles(worktree, this.log).then((dirty) => {
-        if (dirty.length) this.post(job, `Subagent ${job.name} ended with uncommitted files on its worktree ${worktree.path}; keep that worktree for review:\n${dirty.join("\n")}`);
+        const fresh = dirty.filter(file => !listed.has(file));
+        if (fresh.length) this.post(job, `Subagent ${job.name} ended with uncommitted files on its worktree ${worktree.path}; keep that worktree for review:\n${fresh.join("\n")}`);
       }).catch((error) => this.log.warn("could not list a job's dirty files", { job: job.name, err: String(error) }));
     }
 
@@ -2485,6 +2519,39 @@ export class JobManager {
     if (message !== null) this.post(job, message, null, "", messageId);
     // Its slot is free: the continuation waiting longest starts now.
     this.startWaiting();
+  }
+
+  /**
+   * A pause raced a finished turn while follow-ups were queued (AB-398): the turn's report is delivered, then the
+   * job is paused with its queue, session and worktree kept. No pending pause remains and nothing starts until
+   * resume_subagent (or a resume already requested during the race) continues it.
+   */
+  private holdRacedPause(job: Job, status: "done", text: string, sessionId: string | null, cause: string | null, report: string | null | undefined, messageId?: string): void {
+    this.log.info("pause arrived as the turn finished; holding its queued follow-ups", { job: job.name, queued: job.queue.length });
+    denyPendingApprovals(job);
+    this.running.delete(job.id);
+    job.sessionId = sessionId ?? job.sessionId;
+    job.status = "paused";
+    job.pausePending = false;
+    job.host = null;
+    job.etaAt = undefined;
+    job.etaReportedAt = undefined;
+    job.finishedAt = undefined;
+    this.persist();
+    const seconds = Math.round((Date.now() - job.startedAt) / 1000);
+    const message = report === undefined ? jobReport(job, status, seconds, `${text}\n\n${PAUSE_HELD_NOTE}`, cause, this.bridgeHome())
+      : report === null ? `Subagent ${job.name} is paused; its queued follow-ups wait for resume_subagent.`
+        : report.includes(PAUSE_HELD_NOTE) ? report
+          : report.includes(PAUSE_RACE_NOTE) ? report.replace(PAUSE_RACE_NOTE, PAUSE_HELD_NOTE) : `${report}\n\n${PAUSE_HELD_NOTE}`;
+    this.post(job, message, null, "", typeof report === "string" ? messageId : undefined);
+    this.startWaiting();
+    if (job.resumeRequested) {
+      try { this.startPaused(job); }
+      catch (error) {
+        this.log.warn("paused job continuation failed", { job: job.name, err: String(error) });
+        this.post(job, `Subagent ${job.name} remains paused: ${String(error)}`);
+      }
+    }
   }
 
   /**
@@ -2782,10 +2849,15 @@ function pausedNote(job: Pick<Job, "pauseReason">): string {
  * An inline turn whose pause was still pending when its executing process ended: no runner can finish that
  * turn, so the job is simply paused (and resumable) from now on (AB-398 M1).
  */
-function settleStalePause<T extends Pick<Job, "status" | "pausePending" | "host" | "executionPid" | "executionOwner">>(saved: T, me: string): T {
+function settleStalePause<T extends Pick<Job, "status" | "pausePending" | "host" | "executionPid" | "executionOwner">>(saved: T, me: string, executorGone = false): T {
   if (saved.status !== "paused" || saved.pausePending !== true || saved.host) return saved;
-  // Another live executor may still finish its turn; this session's own record of its pid means a restarted executor.
-  if (saved.executionOwner && saved.executionOwner !== me) return saved;
-  if (saved.executionPid && saved.executionPid !== process.pid && pidAlive(saved.executionPid)) return saved;
+  if (!executorGone) {
+    // A live executing process (of this or another session) may still finish its turn. Checked first, so a dead
+    // other-session executor's pending pause settles too (AB-398 N4).
+    if (saved.executionPid && saved.executionPid !== process.pid && pidAlive(saved.executionPid)) return saved;
+    // Another session without pid evidence (or one sharing this process) settles its own turn.
+    if (saved.executionOwner && saved.executionOwner !== me && (!saved.executionPid || saved.executionPid === process.pid)) return saved;
+  }
+  // This session's own record of its pid means a restarted executor.
   return { ...saved, pausePending: false };
 }

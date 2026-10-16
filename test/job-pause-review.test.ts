@@ -1,11 +1,12 @@
-import { mkdtempSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { nullLogger } from "../src/core/logger.js";
 import type { BridgeNode } from "../src/core/node.js";
-import { runnerTurnOutcome } from "../src/mcp/job-runner.js";
-import { JobManager, PAUSE_RACE_NOTE, readStore, type Job, type Run, type RunnerState, type RunResult } from "../src/mcp/jobs.js";
+import { holdsQueuedFollowUps, runnerTurnOutcome } from "../src/mcp/job-runner.js";
+import { JobManager, PAUSE_HELD_NOTE, PAUSE_RACE_NOTE, pauseReasonText, readStore, type Job, type Run, type RunnerState, type RunResult } from "../src/mcp/jobs.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 import { RemoteJobHost } from "../src/mcp/remote-job-host.js";
 
@@ -258,4 +259,144 @@ it("caps the pause reason and refuses jobs with nothing to pause", () => {
   expect(() => jobs.pause(job.name)).toThrow(`${job.name} is already paused.`);
   expect(() => jobs.pause("codex-job-missing")).toThrow("Unknown job codex-job-missing.");
   expect(() => jobs.resumePaused("codex-job-missing")).toThrow("codex-job-missing is not paused.");
+});
+
+it("delivers the report and holds queued follow-ups paused when a pause races a finished inline turn (N1)", async () => {
+  const { jobs } = fixture();
+  let finish!: (result: RunResult) => void;
+  const continued = vi.fn(async () => answer);
+  const resume = vi.fn((_message: string, _sessionId: string): Run => continued);
+  const job = jobs.start("codex", null, "racing", () => new Promise<RunResult>(resolve => { finish = resolve; }), resume);
+  jobs.note(job, { sessionId: "kept-session" });
+  expect(jobs.pause(job.name, "owner build")).toBe(true);
+  expect(jobs.followUp(job.name, "queued next step").outcome).toBe("queued");
+  // The turn had already finished when the pause landed: its result arrives anyway.
+  finish({ ...answer, text: "the real result" });
+  await flush();
+  expect(job).toMatchObject({ status: "paused", pausePending: false, pauseReason: "owner build" });
+  expect(job.queue).toContain("queued next step");
+  expect(resume).not.toHaveBeenCalled();
+  const report = bodies(jobs).find(body => body.includes("the real result"));
+  expect(report).toContain(PAUSE_HELD_NOTE);
+  expect(report).not.toContain(PAUSE_RACE_NOTE);
+  expect(jobs.resumePaused(job.name)).toEqual([job.name]);
+  await flush();
+  expect(resume).toHaveBeenCalledOnce();
+  expect(resume.mock.calls[0]?.[1]).toBe("same-native-session");
+  expect(resume.mock.calls[0]?.[0]).toContain("queued next step");
+  expect(continued).toHaveBeenCalledOnce();
+});
+
+it("holds a blocking ask's queued follow-ups paused when a pause races its completion (N1)", async () => {
+  const { jobs } = fixture();
+  const continued = vi.fn(async () => answer);
+  const resume = vi.fn((_message: string, _sessionId: string): Run => continued);
+  const tracked = jobs.track("codex", null, "ask task", resume);
+  jobs.note(tracked.job, { sessionId: "ask-session" });
+  expect(jobs.pause(tracked.job.name, "owner build")).toBe(true);
+  expect(jobs.followUp(tracked.job.name, "after the ask").outcome).toBe("queued");
+  tracked.end({ result: { ...answer, text: "ask result" } });
+  await flush();
+  expect(tracked.job).toMatchObject({ status: "paused", pausePending: false, pauseReason: "owner build" });
+  expect(tracked.job.queue).toContain("after the ask");
+  expect(resume).not.toHaveBeenCalled();
+  expect(bodies(jobs).some(body => body.includes("queued follow-ups wait for resume_subagent"))).toBe(true);
+});
+
+it("holds follow-ups queued at the session when a hosted runner finished as the pause landed (N1)", async () => {
+  const { jobs } = fixture();
+  let state: RunnerState | null = null;
+  let alive = true;
+  jobs.runners = { state: () => state, alive: () => alive, send: vi.fn(), kill: vi.fn() };
+  const resume = vi.fn((_message: string, _sessionId: string): Run => async () => answer);
+  const job = jobs.start("codex", null, "hosted", hostedRun(), resume);
+  jobs.note(job, { sessionId: "s" });
+  jobs.pause(job.name, "owner build");
+  expect(jobs.followUp(job.name, "hosted next step").outcome).toBe("queued");
+  state = { pid: 123, peer: "runner", status: "done", updatedAt: Date.now(), sessionId: "s", report: `runner result\n\n${PAUSE_RACE_NOTE}`, delivered: false };
+  alive = false;
+  jobs.list(); await flush();
+  expect(job).toMatchObject({ status: "paused", pausePending: false, pauseReason: "owner build" });
+  expect(job.queue).toContain("hosted next step");
+  expect(resume).not.toHaveBeenCalled();
+  const report = bodies(jobs).find(body => body.includes("runner result"));
+  expect(report).toContain(PAUSE_HELD_NOTE);
+  expect(report).not.toContain(PAUSE_RACE_NOTE);
+});
+
+it("posts the undelivered report of a runner that paused with held follow-ups (N1)", async () => {
+  const { jobs } = fixture();
+  let state: RunnerState | null = null;
+  let alive = true;
+  jobs.runners = { state: () => state, alive: () => alive, send: vi.fn(), kill: vi.fn() };
+  const job = jobs.start("codex", null, "hosted", hostedRun(), vi.fn());
+  jobs.pause(job.name, "owner build");
+  state = { pid: 123, peer: "runner", status: "paused", updatedAt: Date.now(), sessionId: "s", report: `runner result\n\n${PAUSE_HELD_NOTE}`, reportId: "r1", delivered: false };
+  alive = false;
+  jobs.list(); await flush();
+  expect(job).toMatchObject({ status: "paused", pausePending: false });
+  expect(bodies(jobs).filter(body => body.includes("runner result") && body.includes(PAUSE_HELD_NOTE))).toHaveLength(1);
+});
+
+it("decides when a runner holds its queued follow-ups after a raced pause (N1)", () => {
+  expect(holdsQueuedFollowUps({ pauseRaced: true, queued: 1, sessionId: "s" })).toBe(true);
+  expect(holdsQueuedFollowUps({ pauseRaced: true, queued: 0, sessionId: "s" })).toBe(false);
+  expect(holdsQueuedFollowUps({ pauseRaced: false, queued: 2, sessionId: "s" })).toBe(false);
+  expect(holdsQueuedFollowUps({ pauseRaced: true, queued: 1, sessionId: null })).toBe(false);
+});
+
+it("settles a pending pause whose other-session executor process is gone, and keeps a live one pending (N4)", async () => {
+  const dead = spawnSync(process.execPath, ["-e", ""], { timeout: 10_000 }).pid!;
+  for (const [pid, settled] of [[dead, true], [process.ppid, false]] as const) {
+    const { jobs, path } = fixture();
+    const job = jobs.start("codex", null, "inline", () => new Promise(() => {}));
+    jobs.note(job, { sessionId: "kept-session" });
+    jobs.pause(job.name, "owner build");
+    Object.assign(job, { executionOwner: "other-session", executionPid: pid });
+    (jobs as unknown as { persist(): void }).persist();
+    jobs.setDormant(true); jobs.cancelAll();
+    expect(readStore(path).find(j => j.id === job.id)).toMatchObject({ status: "paused", pausePending: true, executionOwner: "other-session" });
+    const second = manager(path);
+    second.restore(() => vi.fn());
+    expect(second.find(job.name)).toMatchObject({ status: "paused", pausePending: !settled });
+  }
+});
+
+it("stores a pause reason as one line, capped (N7)", () => {
+  const { jobs } = fixture();
+  const job = jobs.start("codex", null, "multi-line reason", abortable());
+  jobs.pause(job.name, "  owner build\n\n- injected peer line\r\n\tsecond  part  ");
+  expect(job.pauseReason).toBe("owner build - injected peer line second part");
+  expect(pauseReasonText(`a\n${"x".repeat(800)}`)).toHaveLength(500);
+  expect(pauseReasonText(" \n\t ")).toBe("Paused by supervisor");
+});
+
+it("forgets a remote pause once its turn has ended (N8)", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ab-remote-pause-prune-"));
+  const remoteJob = vi.fn(async () => ({ state: { pid: 1, peer: "pc2/codex-job-abc", status: "done" as const, updatedAt: Date.now() }, alive: false, approvals: [] }));
+  const host = new RemoteJobHost({ remoteJob } as unknown as BridgeNode, home, nullLogger);
+  const job = { id: "abc", name: "codex-job-abc", startedAt: 1, remote: { host: "pc2", name: "codex-job-abc" } } as unknown as Job;
+  host.send(job, { type: "pause", reason: "owner build" });
+  await flush();
+  host.send(job, { type: "pause", reason: "owner build" });
+  expect(remoteJob).toHaveBeenCalledTimes(2);
+  await flush();
+});
+
+it("does not list a failed job's dirty files twice when its report already names them (N8)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ab-dirty-twice-"));
+  execFileSync("git", ["init", "-q"], { cwd: dir, timeout: 30_000 });
+  writeFileSync(join(dir, "listed.txt"), "in report\n");
+  writeFileSync(join(dir, "late.txt"), "written later\n");
+  const { jobs } = fixture();
+  let fail!: () => void;
+  const job = jobs.start("codex", null, "fails", () => new Promise<RunResult>(resolve => {
+    fail = () => resolve({ ...answer, isError: true, text: "Could not make a WIP commit: busy\nDirty files left on the job worktree:\nlisted.txt" });
+  }));
+  jobs.note(job, { worktree: { path: dir, cwd: dir, repoRoot: dir, branch: "job", base: "base" } });
+  fail();
+  await vi.waitFor(() => expect(bodies(jobs).some(body => body.includes("ended with uncommitted files"))).toBe(true));
+  const listing = bodies(jobs).find(body => body.includes("ended with uncommitted files"))!;
+  expect(listing).toContain("late.txt");
+  expect(listing).not.toContain("listed.txt");
 });

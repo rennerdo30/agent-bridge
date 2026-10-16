@@ -519,7 +519,9 @@ export class Broker {
         if (a.control.type === "pause") {
           const reason: unknown = a.control.reason;
           if (reason !== undefined && typeof reason !== "string") throw new BridgeError("bad_request", "Invalid pause reason.");
-          a = { ...a, control: { type: "pause", ...(reason ? { reason: reason.slice(0, MAX_PAUSE_REASON_CHARS) } : {}) } };
+          // One line: newlines in a relayed reason could otherwise add lines to peers or sibling text.
+          const line = reason?.replace(/\s+/g, " ").trim().slice(0, MAX_PAUSE_REASON_CHARS).trim();
+          a = { ...a, control: { type: "pause", ...(line ? { reason: line } : {}) } };
         }
         if (job.host && (job.status === "running" || job.status === "paused" && job.pausePending)) {
           await this.onSend(c, { to: String(job.name), body: JSON.stringify(a.control), conversationId: `${CONTROL_CONVERSATION_PREFIX}${job.id}` });

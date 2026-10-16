@@ -347,14 +347,17 @@ async function autoCommitFiles(wt: Worktree, log: Logger, includeUntracked = fal
     const file = entry.slice(3);
     const literal = `:(literal)${file}`;
     const untracked = entry.startsWith("??");
+    // A file the job staged itself (index state A: added, not in HEAD) gets the same secret and size filter as an
+    // untracked one; a skipped one is unstaged below, never deleted from disk (AB-398 N2).
+    const added = entry[0] === "A";
     let reason: SkippedFile["reason"] | undefined;
     // Entrypoints and hashed chunks form one generated set. Exclude every change,
     // including staged additions/deletions, so a checkpoint retains the HEAD bundle.
     if (/^plugins\/[^/]+\/dist\//.test(file)) reason = "generated bundle; excluded atomically";
     else if (generatedNoise(wt.path, file)) reason = "generated noise";
     else if (untracked && !includeUntracked) reason = "untracked; not explicitly staged";
-    else if (untracked && secretLikePath(file)) reason = "possible secret; never auto-committed";
-    else if (untracked && oversized(wt.path, file)) reason = "larger than 5 MB; not auto-committed";
+    else if ((untracked || added) && secretLikePath(file)) reason = "possible secret; never auto-committed";
+    else if ((untracked || added) && oversized(wt.path, file)) reason = "larger than 5 MB; not auto-committed";
     else if (untracked || await git([...trust, "diff", "--ignore-all-space", "--ignore-cr-at-eol", "--no-ext-diff", "--no-textconv", "--no-renames", "HEAD", "--", literal], wt.path, log)) {
       // An already staged deletion has no path left in the index for `git add` to match.
       if (!entry.startsWith("D ")) included.push(literal);
@@ -371,10 +374,12 @@ async function autoCommitFiles(wt: Worktree, log: Logger, includeUntracked = fal
 }
 
 /**
- * Checkpoint subjects that may become commit metadata. Any other text (task or answer text, which may carry
- * attribution or instructions) falls back to the plain default for its mode.
+ * Checkpoint subjects that may become commit metadata: subagentCommitMessage's sanitized subject for a finished
+ * turn, "WIP: " plus that subject for a real WIP checkpoint, and the legacy WIP subject. Any other text (task or
+ * answer text, which may carry attribution or instructions) falls back to the plain default for its mode.
  */
-export const CHECKPOINT_MESSAGES = new Set(["Save worktree changes", "WIP: save job work"]);
+const SANITIZED_SUBJECT = subagentCommitMessage({ answer: "", task: "", agent: "" });
+export const CHECKPOINT_MESSAGES = new Set([SANITIZED_SUBJECT, `WIP: ${SANITIZED_SUBJECT}`, "WIP: save job work"]);
 
 /** A linked worktree keeps a `.git` file, never a directory: the disabled-hooks path below relies on that. */
 async function assertLinkedWorktree(wt: Worktree, log: Logger): Promise<void> {

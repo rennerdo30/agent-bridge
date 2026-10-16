@@ -23,7 +23,7 @@ import { approvalHint, DESK_READ_PATTERNS, isAutoApproved, isHandoffToolCall, is
 import { codexDriveMappings, codexPathReport } from "../core/codex-paths.js";
 import { displayPath, displayPathText } from "../core/display-paths.js";
 import { scanWorktreeLinks, WORKTREE_LINK_HINT, worktreeLinkWarning } from "../core/worktree-links.js";
-import { changedFiles, createWorktree, finishWorktree, git, trustArgs, gitChangeSnapshot, gitDirsOutside, handoffWarning, worktreeReport, type Worktree } from "../core/worktree.js";
+import { changedFiles, createWorktree, finishWorktree, git, trustArgs, gitChangeSnapshot, gitDirsOutside, handoffWarning, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
 import { formatSiblingMessages, formatUsage } from "./format.js";
 import { SiblingLink } from "./siblings.js";
 import { denyPendingApprovals, waitForApproval, type Job, type RunResult } from "./jobs.js";
@@ -512,7 +512,9 @@ async function runDelegateInner(
       try {
         if (linkRoot && scanWorktreeLinks(linkRoot).externalLinks.some(link => link.path === resolve(linkRoot)))
           throw new Error("the worktree root is an external link");
-        const outcome = await finishWorktree(wt, "WIP: save job work", dlog, true);
+        // A real WIP checkpoint: the turn failed, so its subject says so ("WIP: " + the sanitized subject).
+        const subject = `WIP: ${subagentCommitMessage({ answer: "", task: a.prompt, job: a._job, agent: target, model: a.model ?? defaultModel })}`;
+        const outcome = await finishWorktree(wt, subject, dlog, true);
         wt.branch = outcome.branch;
         wt.branchHead = await git([...trustArgs(wt.repoRoot, wt.path), "rev-parse", "HEAD"], wt.path, dlog);
         feed.meta({ branch: wt.branch, branchHead: wt.branchHead });
@@ -563,7 +565,11 @@ async function runDelegateInner(
     notes.push("Auto-commit skipped: the worktree root is an external link. Restore worktree isolation before running git or cleanup through it.");
   } else if (wt) {
     try {
-      const outcome = await finishWorktree(wt, "WIP: save job work", dlog, true);
+      // A finished turn keeps main's sanitized subject; a turn that did not finish (paused, cancelled or failed)
+      // is a real WIP checkpoint. finishWorktree accepts only these subjects, never arbitrary caller text.
+      const subject = subagentCommitMessage({ answer: res.text, task: a.prompt, job: a._job, agent: target, model: a.model ?? defaultModel });
+      const unfinished = res.isError || signal.aborted;
+      const outcome = await finishWorktree(wt, unfinished ? `WIP: ${subject}` : subject, dlog, true);
       wt.branch = outcome.branch;
       wt.branchHead = await git([...trustArgs(wt.repoRoot, wt.path), "rev-parse", "HEAD"], wt.path, dlog);
       feed.meta({ branch: wt.branch, branchHead: wt.branchHead });

@@ -20,7 +20,7 @@ import type { ParentRoute } from "../core/parent-link.js";
 import { isPureAcknowledgement } from "../core/job-messaging.js";
 import { resumeArgs, runDelegate, type JobSink, type RunContext } from "./delegate-run.js";
 import { CONTROL_CONVERSATION_PREFIX, JOB_PEER_PREFIX, RUNNER_HEARTBEAT_MS, writeRunnerState, type RunnerSpec } from "./job-host.js";
-import { DEFAULT_PAUSE_REASON, jobReport, MAX_PAUSE_REASON_CHARS, NOTE_CONVERSATION_SUFFIX, PAUSE_RACE_NOTE, QUEUED_FOLLOW_UP_NOTE, sessionOfError, waitForApproval, type Job, type RunnerControl, type RunnerState } from "./jobs.js";
+import { jobReport, NOTE_CONVERSATION_SUFFIX, PAUSE_HELD_NOTE, PAUSE_RACE_NOTE, pauseReasonText, QUEUED_FOLLOW_UP_NOTE, sessionOfError, waitForApproval, type Job, type RunnerControl, type RunnerState } from "./jobs.js";
 import { changedJobArgs } from "./job-settings.js";
 import { processCleanupReport, establishWindowsJobScope, type WindowsJobScope } from "../core/windows-job-scope.js";
 import type { Logger } from "../core/logger.js";
@@ -321,7 +321,7 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     } else if (c.type === "pause") {
       // A repeated pause for the same turn changes nothing.
       if (job.pausePending || closing) { node.markRead([m.id]); return; }
-      job.pauseReason = (c.reason ?? "").trim().slice(0, MAX_PAUSE_REASON_CHARS) || DEFAULT_PAUSE_REASON;
+      job.pauseReason = pauseReasonText(c.reason);
       job.pausedAt = Date.now();
       job.pausePending = true;
       job.controller.abort();
@@ -388,6 +388,10 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
       settleUsageAttempt(job, status === "done");
       save();
     }
+    // Ordering (AB-398): runDelegate above already made the job's commit or WIP checkpoint, so this cleanup runs
+    // after it. Files that still-running job processes write between that commit and their stop are never
+    // committed; the session only lists them as dirty files when it settles the turn. A paused job keeps its
+    // worktree (closeJobWorktree below is skipped while a pause is pending).
     if (scope) {
       try {
         const cleanup = await scope.cleanup();
@@ -423,6 +427,22 @@ export async function runOwnedJobRunner(spec: RunnerSpec, log: Logger, scope: Wi
     // Decided after the last await, so a pause arriving meanwhile is seen. A pause that raced a completed turn
     // never swallows its report; a pause stays a pause even when job-owned processes would not stop (AB-398).
     const outcome = runnerTurnOutcome({ status, completed, pausePending: job.pausePending === true, scoped: Boolean(scope), processesStopped });
+    if (holdsQueuedFollowUps({ pauseRaced: outcome.pauseRaced, queued: job.queue.length, sessionId: job.sessionId })) {
+      // The turn finished, but follow-ups wait: deliver its report, then hold them. The job is paused with its
+      // queue kept (the session recovers it from usageQueuedControls); no continuation starts here (AB-398).
+      log.info("pause arrived as the turn finished; holding its queued follow-ups", { sessionId: job.sessionId, queued: job.queue.length });
+      job.pausePending = false;
+      closing = true;
+      if (saveTimer) clearTimeout(saveTimer);
+      const report = jobReport(job, status, Math.round((Date.now() - job.startedAt) / 1000), `${text}\n\n${PAUSE_HELD_NOTE}`, cause, home);
+      const reportId = randomUUID();
+      // The report is saved first: if the bridge does not take it, the session posts it when it settles the pause.
+      save({ status: "paused", report, reportId, delivered: false, finishedAt: Date.now() });
+      const delivered = await post(report, null, false, `${COMPLETION_DEDUPE_PREFIX}${reportId}`);
+      save({ delivered });
+      log.info("job runner paused with held follow-ups", { delivered });
+      break;
+    }
     if (outcome.pauseRaced) {
       log.info("pause arrived after the turn had finished; delivering its report", { sessionId: job.sessionId });
       job.pausePending = false;
@@ -499,6 +519,14 @@ export async function deliverWithRetry<T>(send: () => Promise<T>, log: Logger, o
     }
   }
   return null;
+}
+
+/**
+ * A pause that raced a finished turn while follow-ups were queued holds them: the report is delivered and the job
+ * is paused with its queue kept, instead of starting the continuation and calling the job finished (AB-398 N1).
+ */
+export function holdsQueuedFollowUps(o: { pauseRaced: boolean; queued: number; sessionId: string | null | undefined }): boolean {
+  return o.pauseRaced && o.queued > 0 && Boolean(o.sessionId);
 }
 
 /**

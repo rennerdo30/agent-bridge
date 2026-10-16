@@ -101,6 +101,26 @@ describe("worktree isolation", () => {
     expect(readFileSync(join(wt.path, ".env"), "utf8")).toBe("fixture\n");
     expect(worktreeReport(wt, saved)).toContain("possible secrets");
   });
+  it.each([false, true])("keeps a secret or a file over 5 MB the job staged itself out of the checkpoint (untracked %s)", async (includeUntracked) => {
+    const wt = await createWorktree({ cwd: repo, home, jobId: `staged-filter-${includeUntracked}`, log: nullLogger });
+    writeFileSync(join(wt.path, ".env.local"), "fixture\n");
+    writeFileSync(join(wt.path, "staged-big.bin"), Buffer.alloc(5 * 1024 * 1024 + 1));
+    writeFileSync(join(wt.path, "staged-source.txt"), "kept work\n");
+    execFileSync("git", ["add", "--", ".env.local", "staged-big.bin", "staged-source.txt"], { cwd: wt.path });
+    const saved = await finishWorktree(wt, "Save worktree changes", nullLogger, includeUntracked);
+    const committed = git("ls-tree", "-r", "--name-only", wt.branch).split("\n");
+    expect(committed).toContain("staged-source.txt");
+    expect(committed).not.toContain(".env.local");
+    expect(committed).not.toContain("staged-big.bin");
+    expect(saved.skippedFiles).toContainEqual({ path: ".env.local", reason: "possible secret; never auto-committed" });
+    expect(saved.skippedFiles).toContainEqual({ path: "staged-big.bin", reason: "larger than 5 MB; not auto-committed" });
+    // Unstaged, never deleted: both files stay on disk as untracked files.
+    expect(readFileSync(join(wt.path, ".env.local"), "utf8")).toBe("fixture\n");
+    const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: wt.path, encoding: "utf8" });
+    expect(status).toContain("?? .env.local");
+    expect(status).toContain("?? staged-big.bin");
+    expect(worktreeReport(wt, saved)).toContain("possible secrets");
+  });
   it.each([
     ["MERGE_HEAD", "a merge is in progress"], ["CHERRY_PICK_HEAD", "a cherry-pick is in progress"], ["REVERT_HEAD", "a revert is in progress"],
     ["rebase-merge", "a rebase is in progress"], ["rebase-apply", "a rebase is in progress"], ["index.lock", "an index.lock is present"],
@@ -134,6 +154,14 @@ describe("worktree isolation", () => {
     writeFileSync(join(wt.path, "a.txt"), "second\n");
     await finishWorktree(wt, "Task text with Co-Authored-By: someone", nullLogger, true);
     expect(git("log", "-1", "--format=%B", wt.branch)).toBe("WIP: save job work");
+    // The sanitized subject of a finished turn, and "WIP: " plus it for a real WIP checkpoint, are kept (N3).
+    const subject = subagentCommitMessage({ answer: "done", task: "task", agent: "codex" });
+    writeFileSync(join(wt.path, "a.txt"), "third\n");
+    await finishWorktree(wt, subject, nullLogger, true);
+    expect(git("log", "-1", "--format=%B", wt.branch)).toBe(subject);
+    writeFileSync(join(wt.path, "a.txt"), "fourth\n");
+    await finishWorktree(wt, `WIP: ${subject}`, nullLogger, true);
+    expect(git("log", "-1", "--format=%B", wt.branch)).toBe(`WIP: ${subject}`);
   });
   it("autosaves tracked and explicitly staged source while preserving private build outputs", async () => {
     const wt = await createWorktree({ cwd: repo, home, jobId: "privatefiles", log: nullLogger });

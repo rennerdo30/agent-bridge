@@ -80,7 +80,7 @@ describe("delegated worktree contracts", () => {
     expect(saved.branchHead).toMatch(/^[a-f0-9]{40}$/);
     expect(result.worktree?.branch).toBe("finished-work");
     expect(result.worktree?.branchHead).toBe(saved.branchHead);
-    expect(git(result.worktree!.path, "log", "-1", "--format=%s")).toBe("WIP: save job work");
+    expect(git(result.worktree!.path, "log", "-1", "--format=%s")).toBe("Save worktree changes");
     expect(git(result.worktree!.path, "ls-tree", "-r", "--name-only", "HEAD")).toContain("result.txt");
     expect(git(result.worktree!.path, "ls-tree", "-r", "--name-only", "HEAD")).not.toContain("ignored.txt");
   });
@@ -99,7 +99,7 @@ describe("delegated worktree contracts", () => {
       throw new DelegateError("native turn failed", "failed");
     });
     await expect(runDelegate({ ...context(), cwd: () => repo }, "codex", { title: "failed", prompt: "task", access: "edit", worktree: true }, new AbortController().signal, undefined, true, job())).rejects.toThrow("native turn failed");
-    expect(git(jobWorktree, "log", "-1", "--format=%s")).toBe("WIP: save job work");
+    expect(git(jobWorktree, "log", "-1", "--format=%s")).toBe("WIP: Save worktree changes");
     expect(git(jobWorktree, "ls-tree", "-r", "--name-only", "HEAD")).toContain("partial.txt");
   });
   it("lists a failed job's files instead of committing during a merge, and never commits secrets", async () => {

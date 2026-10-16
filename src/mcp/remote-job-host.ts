@@ -29,6 +29,8 @@ export class RemoteJobHost {
         providerUsage: current && snapshot.state.providerUsage ? { ...snapshot.state.providerUsage, runId: job.usageRunId, turnStartedAt: job.startedAt } : undefined,
         usageSubmission: current && snapshot.state.usageSubmission ? { ...snapshot.state.usageSubmission, runId: job.usageRunId, turnStartedAt: job.startedAt } : undefined } };
     }
+    // The turn ended (or its runner is gone): its pause bookkeeping is no longer needed.
+    if (!snapshot.alive || snapshot.state && snapshot.state.status !== "running" && snapshot.state.status !== "paused") this.pauseSent.delete(job.id);
     const data = { fetchedAt: Date.now(), snapshot };
     this.cache.set(job.id, data);
     writeJsonStore(this.path(job), data, readJsonStore(this.path(job)));
@@ -36,6 +38,7 @@ export class RemoteJobHost {
   start(job: Job, host: string, target: CodingAgent, args: DelegateArgs): JobHostInfo {
     job.remote = { host, name: `${target}-job-${job.id}` };
     this.cache.delete(job.id);
+    this.pauseSent.delete(job.id);
     this.save(job, { state: null, alive: true, approvals: [] });
     // Internal continuation fields belong to the remote registry; only public spawn args cross the link.
     const raw = { ...args, cwd: args.cwd ?? job.workdir } as Record<string, unknown>;
