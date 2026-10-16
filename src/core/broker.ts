@@ -73,7 +73,7 @@ import { readNetworkConfig, writeNetworkConfig, type NetworkConfig } from "../ne
 import { z } from "zod";
 import { basename, dirname, join } from "node:path";
 import { ProjectGroups } from "./project-groups.js";
-import { recoverJobRecordAsync } from "./job-recovery.js";
+import { recoverJobRecordAsync, type RecoveryRefusal } from "./job-recovery.js";
 import { findHistoryJob, selectHistoryJobs } from "./run-history.js";
 import { pageProjectJobSummaries, PROJECT_JOB_SUMMARY_PAGE_MAX } from "./project-job-summary.js";
 import { collectTransfer, receiveTransfer, type TransferResult } from "../network/files.js";
@@ -1638,9 +1638,14 @@ export class Broker {
     if (active && (known?.remote || (isRecord(known?.host) && Date.now() - Number(known.host.startedAt) < 30_000))) return known;
     // A connected inline executor is the only source of its runtime controller.
     if (active && (known?.status === "running" || known?.status === "paused" && known.pausePending) && !known.host && this.connByName(String(known.executionOwner ?? known.owner))) return known;
-    const recovered = this.jobsPath ? await recoverJobRecordAsync(dirname(this.jobsPath), ref) : undefined;
+    let refusal: RecoveryRefusal | undefined;
+    const recovered = this.jobsPath ? await recoverJobRecordAsync(dirname(this.jobsPath), ref, { onUnavailable: value => { refusal = value; } }) : undefined;
     const current = this.storedJob(ref);
-    if (!recovered) return typeof current?.prompt === "string" && typeof current.owner === "string" ? current : undefined;
+    if (!recovered) {
+      if (typeof current?.prompt === "string" && typeof current.owner === "string") return current;
+      if (refusal) throw new BridgeError("job_index_preparing", `Job recovery unavailable (${refusal.reason}; ${refusal.stage}). No control submitted.`, refusal);
+      return undefined;
+    }
     if (!this.groups.canControl(peer, recovered as unknown as Record<string, unknown>, this.localPeers())) return current;
     this.recoveredJobs.set(recovered.id, recovered as unknown as Record<string, unknown>);
     this.jobsSnapshot = null; this.jobsForDispatch = null;
@@ -1662,7 +1667,16 @@ export class Broker {
       active = rows.filter(isRecord).findLast(record => record.id === job.id);
       }
     }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        // Keep raw storage errors (which may contain SQL, paths or payloads) off the wire.
+        // Only this canonical busy marker is recognized by the existing read retry policy.
+        const busy = isSqliteBusy(error) || /\bdatabase is busy\b/i.test(String((error as Error)?.message));
+        throw new BridgeError(busy ? "job_index_preparing" : "internal",
+          `Job authority unavailable (authority_store_read; authority_fence${busy ? "; SQLITE_BUSY" : ""}). No control submitted.`,
+          { reason: "authority_store_read", stage: "authority_fence" });
+      }
+    }
     this.jobsForDispatch = null;
     const current = active ?? findHistoryJob(dirname(this.jobsPath), String(job.name), job.id) ?? this.storedJob(job.id, false);
     if (!current) return undefined;
