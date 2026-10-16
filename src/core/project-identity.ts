@@ -1,45 +1,28 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, win32 } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isPluginCacheCwd } from "./session-visibility.js";
 
 const projectRoots = new Map<string, { root: string | null; expiresAt: number; marker: string }>();
 const PROJECT_ROOT_CACHE_MS = 30_000;
-let substCache: { expiresAt: number; drives: Map<string, string> } | undefined;
-
-/** Resolve SUBST mappings once per cache window. An unavailable command leaves realpath as the fallback. */
-function substDrives(): Map<string, string> {
-  if (process.platform !== "win32") return new Map();
-  if (substCache && substCache.expiresAt > Date.now()) return substCache.drives;
-  const drives = new Map<string, string>();
-  try {
-    const output = execFileSync("subst", [], { encoding: "utf8", timeout: 3_000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
-    for (const line of output.split(/\r?\n/)) {
-      const match = /^([A-Za-z]:)\\?:\s*=>\s*(.+?)\s*$/.exec(line);
-      if (match) drives.set(match[1]!.toUpperCase(), match[2]!);
+/**
+ * The physical spelling of a path. realpathSync.native already resolves Windows SUBST and mapped-drive aliases
+ * (AB-399). A path that no longer exists (a removed working folder) resolves through its nearest existing ancestor,
+ * so an alias spelling still canonicalizes without listing drive mappings or starting a process. Throws only when no
+ * ancestor resolves either.
+ */
+export function physicalPath(path: string, real: (path: string) => string = realpathSync.native): string {
+  try { return real(path); }
+  catch (error) {
+    const rest: string[] = [];
+    for (let dir = path; ;) {
+      const parent = dirname(dir);
+      if (parent === dir) throw error;
+      rest.unshift(basename(dir));
+      dir = parent;
+      try { return join(real(dir), ...rest); } catch { /* Keep walking towards the root. */ }
     }
-  } catch { /* The physical realpath probe below remains available. */ }
-  substCache = { expiresAt: Date.now() + PROJECT_ROOT_CACHE_MS, drives };
-  return drives;
-}
-
-/** Pure mapping step, with cycle protection for malformed or chained mappings. */
-export function canonicalDrivePath(path: string, mappings: () => Map<string, string> = substDrives): string {
-  const drives = mappings();
-  let result = win32.normalize(path);
-  const visited = new Set<string>();
-  for (;;) {
-    const drive = /^[A-Za-z]:/.exec(result)?.[0]?.toUpperCase();
-    if (!drive || visited.has(drive) || !drives.has(drive)) return result;
-    visited.add(drive);
-    result = win32.resolve(drives.get(drive)!, result.slice(2).replace(/^[\\/]+/, ""));
   }
-}
-
-export function physicalPath(path: string): string {
-  const candidate = process.platform === "win32" ? canonicalDrivePath(path) : path;
-  const real = realpathSync.native(candidate);
-  return process.platform === "win32" ? canonicalDrivePath(real) : real;
 }
 
 /** The common Git directory identifies linked worktrees; physical paths unify subst aliases. */
@@ -47,7 +30,7 @@ export function canonicalProjectRoot(cwd: string): string | null {
   if (isPluginCacheCwd(cwd)) return null;
   const visibleRoot = (root: string): string | null => isPluginCacheCwd(root) ? null : root;
   try {
-    const physical = physicalPath(cwd);
+    const physical = realpathSync.native(cwd);
     if (isPluginCacheCwd(physical)) return null;
     if (!statSync(physical).isDirectory()) return null;
     const cached = projectRoots.get(physical), now = Date.now(), discovery = discoverProjectRoot(physical);
