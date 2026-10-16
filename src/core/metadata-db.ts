@@ -190,7 +190,7 @@ export function metadataDb(home: string): DatabaseSync {
       physicalMetadataPath(dir);
       mkdirSync(dir, { recursive: true, mode: 0o700 });
       const backup = join(dir, `metadata-v${VERSION}-${randomUUID()}.db`);
-      snapshotMetadataTables(db,backup,["bridge_components","worktree_leases","worktree_lease_archive","bridge_metadata","bridge_read_receipts","bridge_imports"],"metadata",VERSION);
+      snapshotMetadataTables(db,backup,["bridge_components","worktree_leases","worktree_lease_archive","bridge_metadata","bridge_read_receipts","bridge_imports","job_checklist","project_checklist"],"metadata",VERSION);
      }
      db.exec("BEGIN IMMEDIATE");
      try { db.exec(SCHEMA); db.exec("COMMIT"); }

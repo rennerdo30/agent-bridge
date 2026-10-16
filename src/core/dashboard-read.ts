@@ -27,6 +27,7 @@ import { HistorySourceResolver } from "./history-sources.js";
 import { activeByteSources } from "./byte-source.js";
 import { loadConfig } from "./config.js";
 import { readSlotSnapshot, storedJobWaits, type WaitingFor } from "./job-waiting.js";
+import { readChecklists, type ChecklistItem, type ChecklistSummary } from "./checklists.js";
 const TASK_PREVIEW_CHARS = 300;
 const STALE_RUN_MS = 150_000;
 const LEGACY_JOB_START_TOLERANCE_MS = 1_000;
@@ -54,6 +55,8 @@ export interface RunSummary extends RunMeta {
   rootSession?: string;
   rootName?: string;
   host?: string;
+  /** AB-428: the job's checklist, on its newest run only. */
+  checklist?: { summary: ChecklistSummary; items: Pick<ChecklistItem, "id" | "text" | "status" | "required" | "source" | "note">[] };
 }
 
 /** Read-only projection: legacy metadata stays byte-for-byte intact. */
@@ -256,6 +259,14 @@ function* listRunsSteps(home: string, now: number, names?: Set<string>, responsi
       run.rootSession = typeof job.rootSession === "string" ? job.rootSession : undefined;
       run.parentJob = typeof job.parentJob === "string" ? job.parentJob : undefined;
     }
+  }
+  // AB-428: each job's checklist rides on its newest run (one read for the whole listing).
+  const newest = new Map<string, RunSummary>();
+  for (const run of runs) if (run.job && (!newest.has(run.job) || newest.get(run.job)!.startedAt <= run.startedAt)) newest.set(run.job, run);
+  for (const [job, checklist] of readChecklists(home, newest.keys())) {
+    newest.get(job)!.checklist = { summary: checklist.summary, items: checklist.items
+      .filter((i) => i.status !== "rejected" && i.status !== "closed")
+      .map(({ id, text, status, required, source, note }) => ({ id, text, status, required, source, note })) };
   }
   return pageRuns(runs, null, runs.length).runs;
 }
