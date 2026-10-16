@@ -1,7 +1,7 @@
 {
   "base": "0fed680017e823197b1fb3344598632f5cd219ed",
   "uiSha256": "876fbc073c419e55a05c806b75c4993d254510c444cbd81d70098efbd22fb98c",
-  "pageSha256": "d9a044934fe344c992959ae60a469b6f0d2d6463db34424c28b084ce417a6506",
+  "pageSha256": "5677a2ede7f6f615de826e0136c5cc7d75e6951903bb5841911674e42ba2283f",
   "updates": {
     "PR-20": {
       "base": "0761d56fe4c36e505550f9b889841fdf8e82c80a",
@@ -11,6 +11,11 @@
       "base": "9d604d1eb571b432f4d0b47563dcb72d20a5790c",
       "reason": "AB-383: the dashboard subscribes to GET /api/events while the tab is visible and reads the shown chat or run at once when the history store reports new lines; pushes coalesce into one render and interval polling stays as the safety net; after an error, a visible tab retries the stream (1c75687f, page re-pinned). The optional mobile page and default mobile activation behavior are unchanged.",
       "commit": "f41bf1ed8ee42f27df95f9536de7a63da6752aa4"
+    },
+    "AB-398": {
+      "base": "7f5bb53548e7f0880b286f9d1625a07cf85995e3",
+      "reason": "AB-398: the desktop dashboard script shows a paused subagent job: \"paused\" becomes a known pill status styled like interrupted, a paused group keeps its place with the working ones, shows its pause reason and time in the row and conversation note, offers a resume_subagent hint, and the counts line adds \"N paused\" (6c3430d1, page re-pinned). The mobileDashboardPage addition, the optional mobile page and default mobile activation behavior are unchanged.",
+      "commit": "6c3430d1"
     }
   }
 }

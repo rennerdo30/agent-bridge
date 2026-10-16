@@ -1,7 +1,7 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "a0c87adcecd93ba68139a2cb6ad21e823e1aae36cc64d9d6209631d3e7399314",
+    "src/core/broker.ts:constructor": "8d1ababb1ba9d360cf4d4752ddf7cc8b57ad0648428cbb38752e4514cfd41f92",
     "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
     "src/core/broker.ts:startServices": "07bc9bdb56bea9ae2c5c3f0c89639469f7fa5ccfb0d8e5bc97fc1efbfd93fe2f",
     "src/core/broker.ts:abortStartup": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
@@ -15,7 +15,7 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "e0bdfcaa546e1d956c2038f6d8ca99e089d3da08bebf59c216798a4993fda577",
+  "uiSha256": "e0c104b422af9c26940ccddf2a7310c75f54c5cd4ef4f642b7005bffc41a957c",
   "updates": {
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
@@ -267,6 +267,20 @@
       "uiSha256": "e0bdfcaa546e1d956c2038f6d8ca99e089d3da08bebf59c216798a4993fda577",
       "reason": "AB-407 (PR #86): Broker.startServices adds only `if (this.jobsPath) void startBrokerJobRunIndex(dirname(this.jobsPath)).catch(...)` (eager job run index backfill); abortStartup and close each add only `if (this.jobsPath) await stopJobRunBackfill(dirname(this.jobsPath));` before the history/archive workers close. startUi's jobOwner wraps the synchronous recoverJobRecord call so a retryable job_index_preparing becomes a JobControlError(\"timeout\") (dashboard 504/409) instead of an unhandled error. No other control-flow change; node.ts and dashboard pins, normalizer and assertions are unchanged.",
       "commit": "a9721b08"
+    },
+    "AB-398-job-pause": {
+      "base": "7f5bb535",
+      "changes": [
+        {
+          "method": "src/core/broker.ts:constructor",
+          "previous": "a0c87adcecd93ba68139a2cb6ad21e823e1aae36cc64d9d6209631d3e7399314",
+          "current": "8d1ababb1ba9d360cf4d4752ddf7cc8b57ad0648428cbb38752e4514cfd41f92"
+        }
+      ],
+      "previousUiSha256": "e0bdfcaa546e1d956c2038f6d8ca99e089d3da08bebf59c216798a4993fda577",
+      "uiSha256": "e0c104b422af9c26940ccddf2a7310c75f54c5cd4ef4f642b7005bffc41a957c",
+      "reason": "AB-398 (PR #93, commits 6c3430d1, 5b2d91b0, e8e8aade): the Broker constructor's inlineJobControl handler accepts a \"pause\" control (its optional reason must be a string and is collapsed to one line and capped at 500 characters before relaying) and routes a job that is \"paused\" with pausePending like a running one (to its runner host, or to its connected inline executor); every other handler in the constructor is unchanged. startUi's /api/state adds only status, pauseReason and pausedAt to each stored job's saved-settings entry so the desktop dashboard can show paused jobs. No mobile route, mobile startup, mobile store or mobile admin code changes, and nothing under src/mobile or apps changes; mobile behaviour is unchanged. The other twelve method pins, the UI normalizer and the assertions are unchanged.",
+      "commit": "e8e8aade"
     }
   },
   "revertedUpdates": {
