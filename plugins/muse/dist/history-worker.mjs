@@ -1,18 +1,19 @@
 import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);
 import {
+  HistoryBudgetAdmission,
   historyBudget
-} from "./chunks/chunk-2PKS7JZW.mjs";
+} from "./chunks/chunk-EBFZLA6V.mjs";
 import {
   HISTORY_TICK_MS,
   HistoryIndex
-} from "./chunks/chunk-7BODFNSS.mjs";
-import "./chunks/chunk-KLBF34ZL.mjs";
+} from "./chunks/chunk-NVTP4CEE.mjs";
+import "./chunks/chunk-GW733VSG.mjs";
 import {
   ConversationIngestor,
   ownsProjectMirrors,
   projectDatabasePath
-} from "./chunks/chunk-7EG4UVAA.mjs";
-import "./chunks/chunk-VZXYRPA6.mjs";
+} from "./chunks/chunk-P2DZNSCH.mjs";
+import "./chunks/chunk-4COWHEDK.mjs";
 import {
   HISTORY_IO_BYTES_PER_SECOND,
   copyLegacyConversationTail,
@@ -21,25 +22,25 @@ import {
   migrateHistoryStore,
   openHistoryStore,
   readHistoryMigrationProgress
-} from "./chunks/chunk-WXC7FWGX.mjs";
-import "./chunks/chunk-DODQKEUH.mjs";
-import "./chunks/chunk-HT3JXK2O.mjs";
+} from "./chunks/chunk-YXVFF2O5.mjs";
+import "./chunks/chunk-2CHOR6VR.mjs";
+import "./chunks/chunk-KFUNFWWJ.mjs";
 import {
   reconcileAskCompletions
-} from "./chunks/chunk-ZQ2B63AL.mjs";
+} from "./chunks/chunk-A7GYSLEB.mjs";
 import {
   loadConfig
-} from "./chunks/chunk-H3KBN2YN.mjs";
-import "./chunks/chunk-DXHVZRHI.mjs";
-import "./chunks/chunk-UTSHXRSC.mjs";
-import "./chunks/chunk-IYJ5P7ML.mjs";
+} from "./chunks/chunk-EZLROQZD.mjs";
+import "./chunks/chunk-SP2BKIJT.mjs";
+import "./chunks/chunk-L5DKN3HC.mjs";
 import {
   readHistoryJson
-} from "./chunks/chunk-DS664YOK.mjs";
+} from "./chunks/chunk-WT2B2FEL.mjs";
 import {
   transcriptPaths
-} from "./chunks/chunk-OX5J3NNH.mjs";
+} from "./chunks/chunk-I32N5HZ3.mjs";
 import "./chunks/chunk-HYOPFLLN.mjs";
+import "./chunks/chunk-IYJ5P7ML.mjs";
 import {
   checkpointOwnedMetadataConnections,
   closeMetadataDbs,
@@ -47,12 +48,12 @@ import {
   isRecord,
   nullLogger,
   writeJsonStore
-} from "./chunks/chunk-BPL7GJLM.mjs";
-import "./chunks/chunk-ICCAXDVG.mjs";
+} from "./chunks/chunk-RHPX4P3J.mjs";
+import "./chunks/chunk-H2PRDWOK.mjs";
 import {
   CONFIG_FILE_NAME
-} from "./chunks/chunk-O26G5HFG.mjs";
-import "./chunks/chunk-HYVC3VSW.mjs";
+} from "./chunks/chunk-JCDYJ6E4.mjs";
+import "./chunks/chunk-ARGAVNKJ.mjs";
 import "./chunks/chunk-6RNADTH4.mjs";
 
 // src/core/history-worker.ts
@@ -191,23 +192,28 @@ function reportPaused(paused2) {
 }
 reportPaused(!enabled() || Boolean(importState.error));
 var paused = () => pending || Date.now() < pauseUntil || !enabled() || storageBudgetPaused;
-async function checkStorageBudget() {
-  const config = currentConfig();
-  const mirrors = ownsProjectMirrors(workerData.home) ? db.prepare("SELECT DISTINCT project FROM conversations WHERE project != ''").all().map((row) => dirname(projectDatabasePath(String(row.project), workerData.home))) : [];
-  const budget = await historyBudget(workerData.home, config.history.budgetBytes, mirrors);
+function applyStorageBudget(budget) {
   storageBudgetPaused = budget.paused;
   if (budget.paused) {
     migrationProgress = { ...migrationProgress, paused: true, error: `History storage budget reached (${budget.bytes}/${budget.budgetBytes} bytes); import paused, sources, cursors and all archives retained. Raise history.budgetBytes to resume; never prune user data.` };
     parentPort?.postMessage({ migrationProgress });
   } else if (migrationProgress.error?.startsWith("History storage budget reached")) migrationProgress = { ...migrationProgress, error: null };
-  return budget.paused;
 }
+var budgetAdmission = new HistoryBudgetAdmission(async () => {
+  const started = performance.now();
+  const config = currentConfig();
+  const mirrors = ownsProjectMirrors(workerData.home) ? db.prepare("SELECT DISTINCT project FROM conversations WHERE project != ''").all().map((row) => dirname(projectDatabasePath(String(row.project), workerData.home))) : [];
+  const budget = await historyBudget(workerData.home, config.history.budgetBytes, mirrors);
+  parentPort?.postMessage({ historyTiming: { budgetScanMs: performance.now() - started } });
+  applyStorageBudget(budget);
+  return budget;
+});
 var checkingBudget = false;
 function budgetTick() {
-  if (!running || checkingBudget || stopped || lifecycleQuiesced) return;
+  if (checkingBudget || stopped || lifecycleQuiesced) return;
   const finish = acceptOperation();
   checkingBudget = true;
-  void checkStorageBudget().catch((error) => {
+  void budgetAdmission.refresh().catch((error) => {
     storageBudgetPaused = true;
     parentPort?.postMessage({ error: String(error) });
   }).finally(() => {
@@ -234,8 +240,19 @@ async function tick(reset = false) {
     return { work: 0, discovering: !ready };
   }
   running = true;
+  const started = performance.now();
+  const phases = {};
+  let phase = "budgetMs", phaseStarted = started;
+  const step = (next) => {
+    const now = performance.now();
+    phases[phase] = (phases[phase] ?? 0) + now - phaseStarted;
+    phase = next;
+    phaseStarted = now;
+  };
   try {
-    if (await checkStorageBudget()) return { work: 0, discovering: !ready };
+    const admitted = await budgetAdmission.admit(currentConfig().history.budgetBytes);
+    step("resetStateMs");
+    if (!admitted) return { work: 0, discovering: !ready };
     reset = requestedReset;
     requestedReset = false;
     activeReset = reset;
@@ -247,7 +264,9 @@ async function tick(reset = false) {
       saveImportState();
       migrationProgress = { ...migrationProgress, error: null };
     }
+    step("observerNotifyMs");
     reportPaused(false);
+    step("migrationMs");
     if (!ready) {
       try {
         await migrateHistoryStore(workerData.bridge, db, paused, () => stopped, (owner) => parentPort?.postMessage({ migrationLease: owner }), reset, { ioBytesPerSecond, onProgress: (progress) => {
@@ -259,7 +278,9 @@ async function tick(reset = false) {
         migrationFailure = historyMigrationFailure(db);
         throw err;
       }
+      step("indexInitMs");
       index ??= new HistoryIndex(db, workerData.home, paths, source);
+      step("ingestInitMs");
       if (!ingest) {
         ingest = new ConversationIngestor(db, workerData.home, paths, source);
         ingest.onChange = onTranscriptChange;
@@ -270,14 +291,17 @@ async function tick(reset = false) {
       }
       ready = true;
     }
+    step("admissionCheckMs");
     if (!index || !ingest) return { work: 0, discovering: true };
     if (stopped || paused()) return { work: 0, discovering: true };
+    step("legacyTailMs");
     let legacyWork = 0;
     try {
       legacyWork = copyLegacyConversationTail(source, db);
     } catch (error) {
       if (!stopped) parentPort?.postMessage({ error: `legacy history tail deferred; originals retained: ${String(error)}` });
     }
+    step("legacyConflictsMs");
     const conflicts = legacyTailConflicts(db);
     if (conflicts !== legacyConflicts) {
       legacyConflicts = conflicts;
@@ -285,8 +309,11 @@ async function tick(reset = false) {
       parentPort?.postMessage({ migrationProgress });
       if (conflicts) parentPort?.postMessage({ error: `${conflicts} legacy history tail conflict(s) retained in history.db (history_legacy_conflicts); both originals kept, finalize stays blocked` });
     }
+    step("ingestYieldMs");
     await yieldTurn(10);
+    step("ingestPressureWaitMs");
     await waitForPressureGap();
+    step("peerResetMs");
     if (stopped || paused()) return { work: legacyWork, discovering: true };
     for (const [id, peer] of [...peers].slice(0, 32)) {
       index.rememberPeer(peer);
@@ -298,17 +325,25 @@ async function tick(reset = false) {
       unappliedReset = false;
       requestedReset = false;
     }
+    step("ingestMs");
     const rawWork = ingest.tick();
+    step("indexWakeMs");
     if (transcriptsChanged) {
       transcriptsChanged = false;
       index.wake();
     }
+    step("indexYieldMs");
     await yieldTurn(10);
+    step("indexPressureWaitMs");
     await waitForPressureGap();
+    step("indexAdmissionMs");
     if (stopped || paused()) return { work: legacyWork + rawWork, discovering: true };
+    step("indexMs");
     const result = index.tick(true);
+    step("resultMs");
     return { work: legacyWork + rawWork + result.work, discovering: result.discovering || ingest.discovering };
   } catch (error) {
+    step("failureStateWriteMs");
     if (error.code === "HISTORY_IMPORT_VERIFICATION_FAILED") {
       importState = { ...importState, error: String(error) };
       saveImportState();
@@ -317,12 +352,16 @@ async function tick(reset = false) {
     }
     throw error;
   } finally {
+    step("completionMs");
     if (activeReset) {
       unappliedReset = true;
       if (lifecycleQuiesced) requestedReset = true;
     }
     activeReset = false;
     running = false;
+    budgetAdmission.complete();
+    step("timingNotifyMs");
+    parentPort?.postMessage({ historyTiming: { ...phases, totalMs: performance.now() - started } });
   }
 }
 var dueAt = 0;
@@ -359,13 +398,25 @@ function schedule(delay = HISTORY_TICK_MS) {
   retainedDueAt = null;
   if (timer) clearTimeout(timer);
   dueAt = Date.now() + delay;
+  const scheduledAt = performance.now();
   timer = setTimeout(async () => {
+    const firedAt = performance.now();
     timer = null;
+    const acceptStarted = performance.now();
     const finish = acceptOperation();
+    const acceptMs = performance.now() - acceptStarted;
     firing++;
     let next = idle.next(0, false);
     try {
+      const pressureStarted = performance.now();
       await waitForPressureGap();
+      parentPort?.postMessage({ historyTiming: {
+        scheduleWaitMs: firedAt - scheduledAt,
+        scheduleDelayMs: delay,
+        scheduleLateMs: Math.max(0, firedAt - scheduledAt - delay),
+        acceptMs,
+        schedulePressureWaitMs: performance.now() - pressureStarted
+      } });
       if (!migrationFailure && !importState.error) {
         const result = await tick();
         if (result.work || result.discovering && enabled()) next = idle.next(result.work, result.discovering);
@@ -385,7 +436,9 @@ function schedule(delay = HISTORY_TICK_MS) {
     }
     firing--;
     schedule(next);
+    const finishStarted = performance.now();
     finish();
+    parentPort?.postMessage({ historyTiming: { operationFinishCheckpointMs: performance.now() - finishStarted } });
   }, delay);
 }
 function close() {
@@ -480,7 +533,7 @@ parentPort?.on("message", async (message) => {
       stopped = true;
       releasePressure();
       if (timer) clearTimeout(timer);
-      while (running) await yieldTurn(10);
+      while (running || checkingBudget) await yieldTurn(10);
       close();
       return;
     }
