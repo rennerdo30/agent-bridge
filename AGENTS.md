@@ -14,6 +14,8 @@ Push WIP with explicit refs: `git push origin HEAD:refs/heads/<branch>`. Do not 
 
 **Generated bundles** (owner, 2026-10-16): `plugins/*/dist` is generated and committed only in the release PR (branch `release/*`), never in feature PRs. Feature PRs change `src/`, `test/`, docs and scripts only; CI builds the bundles itself before testing, and the "Bundles are committed and up to date" check runs only on release branches.
 
+**Tests** (owner, 2026-10-17): only write a test if it would actually fail when the code is broken in a way that matters. Everything else is bloat.
+
 **Merge queues** (owner, 2026-10-16): while a merge queue or combined integration branch is open, follow-up fixes go into that branch. Do not open new PRs for them.
 
 **Canonical drive paths:** `E:\` and `D:\` are the same drive: the whole drive is a subst, `E:\ = D:\`, so `E:\Development = D:\Development` and `E:\AgentData = D:\AgentData`. Always use `E:` paths in commands, configs, docs, messages, Pair Desk issues and job prompts; do not write new `D:\...` paths. When a tool reports a `D:` path, refer to it by its `E:` spelling. Comparisons and identity checks must treat both as the same location.
