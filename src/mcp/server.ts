@@ -1,4 +1,5 @@
 import { describeResourceSlots, formatResourceSlots, ResourceSlots } from "../core/resource-slots.js";
+import { readSlotSnapshot, slotWaitFor, waitingText } from "../core/job-waiting.js";
 import { bundleDirectory } from "../core/bundle-directory.js";
 import { MAX_HOLD_REASON_CHARS, setJobOutcome, deriveJobOutcome, readResultDelivery } from "../core/job-outcomes.js";
 import { readJobReport, resultDeliveryLabel } from "./final-result.js";
@@ -163,6 +164,16 @@ function noUnreadMessage(id: string): CallToolResult {
 /** The options of a job worth keeping to continue it the same way later (no prompt, no internals). */
 /** When to look again for jobs under a stand-in name (a replaced server of the session may still be leaving). */
 const STAND_IN_RECHECK_MS = 30_000;
+/** The configured default allow_tools of jobs (AB-403), for tool descriptions. */
+function defaultAllowText(cfg: BridgeConfig): string {
+  return cfg.jobs.defaultAllowTools.length ? cfg.jobs.defaultAllowTools.map((p) => `"${p}"`).join(", ") : "none";
+}
+function defaultAllowNote(cfg: BridgeConfig): string {
+  return cfg.jobs.defaultAllowTools.length
+    ? ` Without allow_tools the job gets ${defaultAllowText(cfg)} in every access mode, read and ask included${cfg.jobs.defaultAllowTools.includes("pair-desk:worker") ? " (Pair Desk reads, comments, progress, plans, steps, issue edits and review locations; it does not create issues and never writes status, builds or the handoff)" : ""}; pass allow_tools to replace it, [] for none.`
+    : "";
+}
+
 const KEPT_ARGS = ["native_subagents", "host", "model", "effort", "cwd", "timeout_sec", "worktree", "base", "access", "sandbox", "terminal_sandbox", "bypass_permissions", "approvals_reviewer", "permission_mode", "auto_approve", "permission_profile", "allow_tools", "send_to", "title", "notes"] as const;
 /** Plugin root: dist/server.mjs lives one level below it. */
 const PLUGIN_ROOT = resolve(bundleDirectory(import.meta.url), "..");
@@ -1080,7 +1091,10 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         if (!job || job.name !== a.job) return text("No job with that name is owned by this session.", true);
         const report = job.report ?? (job.status === "running" ? null : readJobReport(ctx.home, job));
         const receipt = report ? readResultDelivery(ctx.home, job) : null;
-        const result = (shown: string | null) => JSON.stringify({ job: job.name, status: job.status, resultStored: typeof report === "string",
+        // AB-401: what it is queued for on this machine (null: not queued; a running job without a wait is working or
+        // stalled). A fresh read-only snapshot: nothing is created or written in the slot database.
+        const waitingFor = ctx.jobs?.limitWait(job) ?? (job.status === "running" ? slotWaitFor(readSlotSnapshot(ctx.home, 0), job.name, cfg.resourceSlots) : null);
+        const result = (shown: string | null) => JSON.stringify({ job: job.name, status: job.status, waitingFor, resultStored: typeof report === "string",
           delivery: report ? resultDeliveryLabel({ report }, receipt?.status === "read") : null, receipt, report: shown,
           // AB-404: same shape; a report too large for one result is cut at a whole character and says so.
           ...(report && shown !== report ? { reportTruncated: { totalCharacters: report.length, shownCharacters: shown?.length ?? 0,
@@ -1133,13 +1147,16 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       for (const message of n.unread()) {
         if (message.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX)) transferNotes.set(message.conversationId, message);
       }
+      // One fresh read-only snapshot up front (AB-401): nothing is created or written in the slot database, and the
+      // slot lines and the jobs' slot waits below read the same rows on every page.
       let slotLines: string[] = [];
-      try {
-        const slots = new ResourceSlots(ctx.home);
-        try { slotLines = formatResourceSlots(slots.snapshot(), cfg.resourceSlots); } finally { slots.close(); }
-      } catch { /* Slot state is advisory in peers; the slot CLI reports its own errors. */ }
+      const slotSnapshot = readSlotSnapshot(ctx.home, 0);
+      try { slotLines = formatResourceSlots(slotSnapshot, cfg.resourceSlots); }
+      catch { /* Slot state is advisory in peers; the slot CLI reports its own errors. */ }
       const jobs = (ctx.jobs?.list() ?? []).filter(matches);
       const waiting = (ctx.jobs?.waiting() ?? []).filter(matches);
+      // AB-401: what each listed job is queued for, computed once for every page build.
+      const jobWait = new Map([...jobs, ...waiting].map((j) => [j.id, ctx.jobs?.limitWait(j) ?? (j.status === "running" ? slotWaitFor(slotSnapshot, j.name, cfg.resourceSlots) : null)]));
       const recent = (ctx.jobs?.recent() ?? []).filter(matches);
       const waitHints = waits.pending(n).map(resumeWaitHint);
       return paged((sort) => {
@@ -1175,12 +1192,16 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         if (jobs.length) {
           lines.push({ header: t("peers.jobs", { count: jobs.length }), category: "jobs" });
           for (const j of sorted(sort, jobs, (job) => job.name)) {
-            lines.push({ category: "jobs", entry: j.status === "paused" ? `- ${j.name}: paused since ${new Date(j.pausedAt ?? Date.now()).toISOString()} (${j.pauseReason ?? "supervisor request"})` : t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.etaAt !== undefined ? t("peers.eta", { minutes: Math.max(0, Math.ceil((j.etaAt - Date.now()) / 60_000)) }) + " · " : "") + (j.progress ?? "starting") }) });
+            lines.push({ category: "jobs", entry: j.status === "paused" ? `- ${j.name}: paused since ${new Date(j.pausedAt ?? Date.now()).toISOString()} (${j.pauseReason ?? "supervisor request"})` : t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.etaAt !== undefined ? t("peers.eta", { minutes: Math.max(0, Math.ceil((j.etaAt - Date.now()) / 60_000)) }) + " · " : "") + (jobWait.get(j.id) ? waitingText(jobWait.get(j.id)!) : j.progress ?? "starting") }) });
           }
         }
         if (waiting.length) {
           lines.push({ header: t("peers.waiting", { count: waiting.length, max: ctx.jobs!.limit }), category: "waiting" });
-          for (const j of sorted(sort, waiting, (job) => job.name)) lines.push({ category: "waiting", entry: t("peers.waitingJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), messages: j.queue.length }) });
+          for (const j of sorted(sort, waiting, (job) => job.name)) {
+            // AB-401: why it waits: the job limit (with place and holders), or a paused job's queued resume.
+            const wait = jobWait.get(j.id), why = j.status === "paused" ? "paused; resume queued" : wait ? waitingText(wait) : "";
+            lines.push({ category: "waiting", entry: t("peers.waitingJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), messages: j.queue.length }) + (why ? ` (${why})` : "") });
+          }
         }
         if (recent.length) {
           lines.push({ header: t("peers.recent"), category: "recent" });
@@ -1632,7 +1653,10 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         .enum(ACCESS_LEVELS as [Access, ...Access[]])
         .optional()
         .describe(
-          '"read" (default): look only. "ask": look, and every change or command the subagent wants is asked of the user in this session (opencode; Codex with its trusted hook). "edit": may change files. Combine edit with worktree=true for parallel or risky work.',
+          '"read" (default): look only. "ask": look, and every change or command the subagent wants is asked of the user in this session (opencode; Codex with its trusted hook). "edit": may change files. Combine edit with worktree=true for parallel or risky work.' +
+          (cfg.jobs.defaultAllowTools.length
+            ? ` In every mode the default allow_tools (${defaultAllowText(cfg)}) still applies without asking${cfg.jobs.defaultAllowTools.includes("pair-desk:worker") ? ", so Pair Desk worker writes (comments, progress, plans, steps, issue edits) are allowed even with read or ask" : ""}, unless you pass allow_tools=[].`
+            : ""),
         ),
       worktree: z
         .boolean()
@@ -1651,7 +1675,8 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         .max(50)
         .optional()
         .describe(
-          'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (reads only), "pair-desk:worker" (reads, comments, progress, plans, issue edits and review locations; excludes status, builds and handoff writes), or "server" for all of its tools. Add "pair-desk.set_build" separately to allow build publication.',
+          'MCP tools the subagent may call without asking you, as "server.tool" patterns with *, e.g. ["pair-desk.get_*", "pair-desk.list_*"] (reads only), "pair-desk:worker" (reads, comments, progress, plans, steps, issue edits and review locations; excludes issue creation, status, builds and handoff writes), or "server" for all of its tools. Add "pair-desk.create_issue" or "pair-desk.set_build" separately to allow issue creation or build publication. ' +
+          `Default when omitted: ${defaultAllowText(cfg)} (config jobs.defaultAllowTools). A list you pass replaces the default (include "pair-desk:worker" to keep it); [] turns it off for this job.`,
         ),
       send_to: z.array(z.string().refine(isJobSendTarget, "Use an exact local session or job name, not an agent kind, broadcast, wildcard or remote address"))
         .max(MAX_JOB_SEND_TARGETS).optional()
@@ -1699,7 +1724,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           "This is one blocking call, not a background job or a polling loop. Return its job id and result as received, including errors; do not automatically start another ask call after a timeout. " +
           `Good for quick second opinions or reviews. For longer or parallel work use spawn_${target}. ` +
           "Pass the returned session_id back to continue the same conversation. " +
-          profile.permissionNote(cfg),
+          profile.permissionNote(cfg) + defaultAllowNote(cfg),
         inputSchema: schema,
       },
       guarded(askName, async (a: DelegateArgs, extra) => {
@@ -1774,7 +1799,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
           `Start ${profile.title} as a background subagent and return immediately with a job id. Keep working meanwhile; ` +
           `the result arrives as a message from "${target}-job-<id>" (injected automatically, or use wait_for_message with from=<job name>). ` +
           `Several subagents can run in parallel (max ${cfg.maxJobs}). ` +
-          profile.permissionNote(cfg),
+          profile.permissionNote(cfg) + defaultAllowNote(cfg),
         inputSchema: { ...schema, title: schema.title.optional().describe("A short title, 3-7 words. Optional: if omitted, derived from the prompt's first nonempty line and noted in the result.") },
       },
       guarded(spawnName, async (input: Omit<DelegateArgs, "title"> & { title?: string }) => {
@@ -1795,7 +1820,9 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const access = a.access ?? (a.worktree || isBridgeWorktree(cwd, ctx.home) ? "edit" : null);
         // Exact target options (sandbox, permission_mode, auto_approve, bypass_permissions) say it themselves.
         const exact = a.sandbox !== undefined || a.permission_mode !== undefined || a.auto_approve !== undefined || a.bypass_permissions !== undefined;
-        const note = exact ? "" : `\n${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}`;
+        // Read and ask jobs still get the default desk allowance (AB-403): say so where "read-only" is said.
+        const deskDefault = access !== "edit" && a.allow_tools === undefined && cfg.jobs.defaultAllowTools.includes("pair-desk:worker") ? ` ${t("jobs.accessDeskDefault")}` : "";
+        const note = exact ? "" : `\n${access === "edit" ? t("jobs.accessEdit") : access === "ask" ? t("jobs.accessAsk") : t("jobs.accessRead")}${deskDefault}`;
         return text(`${usage?.type === "warn" ? usageAdmissionText(usage) + "\n\n" : ""}${job.waitingForStart ? `Subagent ${job.name} queued for a free slot (maximum ${jobs.limit}).` : t("jobs.started", { name: job.name })}${note}${a.worktree ? `\nBase selected at job start: ${a.base ?? "HEAD unless purely behind fetched upstream/default (offline/local fallback reported in first status)"}.` : ""}${derivedTitle ? `\nTitle derived from prompt: "${a.title}".` : ""}`);
       }),
     );

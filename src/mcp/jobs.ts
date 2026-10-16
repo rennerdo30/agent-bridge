@@ -462,6 +462,8 @@ export class JobManager {
   private readonly explicitCancellations = new WeakSet<AbortController>();
   private restoreResume: ((agent: AgentKind, args: Record<string, unknown>) => Resume | undefined) | null = null;
   private rootWaitTimer: NodeJS.Timeout | null = null;
+  /** AB-401, display only: what the last canStart() refused on (the session's own limit or the shared root budget). */
+  private admissionBlock: "session" | "root" | null = null;
   private persistTimer: NodeJS.Timeout | null = null;
   private persistReadiness: Promise<void> | null = null;
   private persistRetryMs = 25;
@@ -1104,6 +1106,24 @@ export class JobManager {
     return [...this.waitingJobs.values()];
   }
 
+  /**
+   * AB-401: a job held back by the job limit: its place in line and, when this session's own limit is the blocker,
+   * the jobs counted against it. In-memory only, no store read or process probe. Null when the limit is not what
+   * holds it: not in this session's queue, a running job (a follow-up queued while it stops), a paused job's queued
+   * resume (peers words that itself), or a deferral (job store lock, store upgrade, EBUSY) with the limit free.
+   */
+  limitWait(job: Pick<Job, "id" | "status">): import("../core/job-waiting.js").WaitingFor | null {
+    if (job.status === "running" || job.status === "paused") return null;
+    const queue = [...this.waitingJobs.values()], index = queue.findIndex((j) => j.id === job.id);
+    if (index < 0) return null;
+    // Waiters that are still running are not in line for a slot (startWaiting skips them).
+    const position = 1 + queue.slice(0, index).filter((j) => j.status !== "running").length;
+    const holders = this.runningCount() + [...this.foreground.values()].filter((j) => this.isMine(j.owner)).length;
+    if (holders >= this.maxJobs) return { kind: "job-limit", scope: "session", position, holders, capacity: this.maxJobs };
+    if (this.admissionBlock === "root") return { kind: "job-limit", scope: "root", position, holders, capacity: null };
+    return null;
+  }
+
   /** Recently finished subagents, newest first (they can still be messaged). */
   /**
    * Whether a job belongs to this session. A session briefly runs under a "-N" stand-in of its name when a
@@ -1457,10 +1477,13 @@ export class JobManager {
   canStart(): boolean {
     this.refreshOwnership();
     for (const job of [...this.running.values()]) if (job.host) this.checkHostedSafely(job, true);
-    return this.runningCount() + [...this.foreground.values()].filter((j) => this.isMine(j.owner)).length < this.maxJobs && this.withRootBudget((budget) => {
+    if (this.runningCount() + [...this.foreground.values()].filter((j) => this.isMine(j.owner)).length >= this.maxJobs) { this.admissionBlock = "session"; return false; }
+    const admitted = this.withRootBudget((budget) => {
       if (!this.lineage) budget.setLimit(this.maxJobs);
       return budget.available();
     });
+    this.admissionBlock = admitted ? null : "root";
+    return admitted;
   }
 
   private withRootBudget<T>(fn: (budget: RootConcurrency) => T): T | boolean {

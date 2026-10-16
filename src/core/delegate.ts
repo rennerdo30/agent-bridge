@@ -370,6 +370,11 @@ export function runProcess(opts: {
 export interface DelegateRequest {
   /** Claude-only native MCP exposure; other targets keep their existing approval routing. */
   claudeAllowTools?: readonly string[];
+  /**
+   * The part of claudeAllowTools the caller granted itself (AB-403). Servers selected only by the rest (the
+   * default job allowance) are skipped with a warning when they cannot start. Omitted: every grant is required.
+   */
+  claudeRequiredAllowTools?: readonly string[];
   maxDelegateDepth?: number;
   /** Maximum open native Codex child threads, excluding this job. */
   nativeSubagents?: number;
@@ -687,7 +692,7 @@ export async function delegateToClaude(
   checkDepth(req.maxDelegateDepth);
   // stream-json lets us report progress; the final "result" line matches --output-format json.
   const args = ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", req.permissionMode];
-  const mcp = await startClaudeJobMcp({ cwd: req.cwd, patterns: req.claudeAllowTools ?? [], env: childEnv(req.extraEnv), log: req.log, signal: req.signal, timeoutMs: Math.min(30_000, req.timeoutSec * 1000) });
+  const mcp = await startClaudeJobMcp({ cwd: req.cwd, patterns: req.claudeAllowTools ?? [], requiredPatterns: req.claudeRequiredAllowTools, env: childEnv(req.extraEnv), log: req.log, signal: req.signal, timeoutMs: Math.min(30_000, req.timeoutSec * 1000) });
   // Keep ambient plugin servers denied in read-only jobs. Granted tools are exposed through a separate,
   // filtered server, so whole-server denies never need to be weakened (including on resume).
   const readOnly = isClaudeReadOnly(req.permissionMode);

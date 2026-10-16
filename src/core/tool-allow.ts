@@ -38,7 +38,20 @@ export function mcpToolOf(r: { tool: string; detail: string }): { server: string
 
 const DESK_WORKER_PRESET = "pair-desk:worker";
 export const DESK_READ_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*"];
-const DESK_WORKER_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*", "pair-desk.comment", "pair-desk.progress", "pair-desk.set_plan", "pair-desk.update_step", "pair-desk.create_issue", "pair-desk.update_issue", "pair-desk.set_location"];
+/**
+ * "pair-desk:worker": reads, comments, progress, plans, steps, issue edits and review locations. Creating issues
+ * is not part of it (owner decision 2026-10-16, AB-403): grant "pair-desk.create_issue" explicitly.
+ */
+const DESK_WORKER_PATTERNS = ["pair-desk.get_*", "pair-desk.list_*", "pair-desk.comment", "pair-desk.progress", "pair-desk.set_plan", "pair-desk.update_step", "pair-desk.update_issue", "pair-desk.set_location"];
+
+/**
+ * A job's allow_tools (AB-403): an explicit list from spawn_* / ask_* replaces the configured default
+ * (jobs.defaultAllowTools, "pair-desk:worker" unless changed); an explicit [] turns it off for that job.
+ * Only bridge jobs use this; native children and the session itself never see the default.
+ */
+export function effectiveAllowTools(explicit: readonly string[] | undefined, defaults: readonly string[]): string[] {
+  return [...(explicit ?? defaults)];
+}
 
 /** Suggest explicit worker access without implying that read patterns cover desk writes. */
 export function approvalHint(r: { tool: string; detail: string }): string {
