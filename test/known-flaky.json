@@ -216,15 +216,6 @@
       "added": "2026-10-16",
       "recheckBy": "2026-10-23",
       "seen": "Windows Node 24 shard 4/6, Ubuntu Node 24 (main run 38856603889, run 38849251187); AB325 lifecycle macOS Node 24"
-    },
-    {
-      "file": "test/worktree.test.ts",
-      "test": "cleanup > removes only finished, merged, clean job worktrees and never follows links inside them",
-      "issue": "AB-419",
-      "owner": "claude-claude-codex-comm",
-      "added": "2026-10-16",
-      "recheckBy": "2026-10-21",
-      "seen": "Windows Node 22 and 24 shard 4/6 (main run 38849169431, run 38833198807)"
     }
   ]
 }
