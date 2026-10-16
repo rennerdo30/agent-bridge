@@ -16,14 +16,23 @@ import { cleanupWorktrees } from "../src/core/worktree-cleanup.js";
 const probe = vi.hoisted(() => ({ cold: false, failures: 0, asyncCalls: 0 }));
 vi.mock("../src/core/process-identity.js", async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/core/process-identity.js")>();
+  // This process's identity is fully synthetic, so no real PowerShell or ps probe of it ever runs: a slow probe
+  // on a loaded runner cannot reintroduce the flake this test pins down. Other pids still use the real readers.
+  const SYN = process.platform === "win32" ? "638000000000000000" : process.platform === "linux" ? "synthetic-boot:1" : "Thu Jan  1 00:00:00 2026";
+  const own = (pid: number) => pid === process.pid;
+  const ownId = () => (probe.cold ? undefined : SYN);
   return {
     ...real,
-    processIdentity: (pid: number) => (probe.cold && pid === process.pid ? undefined : real.processIdentity(pid)),
+    processIdentity: (pid: number) => (own(pid) ? ownId() : real.processIdentity(pid)),
+    readProcessIdentity: async (pid: number) => (own(pid) ? ownId() ?? null : real.readProcessIdentity(pid)),
+    isProcessIdentityAlive: (pid: number, identity: string) => (own(pid) ? (probe.cold ? undefined : identity === SYN) : real.isProcessIdentityAlive(pid, identity)),
+    recordedOwnerLiveness: (pid: number, identity?: string) => (own(pid) ? (probe.cold ? undefined : !identity || identity === SYN) : real.recordedOwnerLiveness(pid, identity)),
+    recordedOwnerAlive: (pid: number, identity?: string) => (own(pid) ? !identity || probe.cold || identity === SYN : real.recordedOwnerAlive(pid, identity)),
     ownProcessIdentity: async () => {
       probe.asyncCalls++;
       if (probe.cold && probe.failures > 0) { probe.failures--; return undefined; }
       probe.cold = false;
-      return real.ownProcessIdentity();
+      return SYN;
     },
   };
 });
