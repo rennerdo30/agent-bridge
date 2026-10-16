@@ -12,7 +12,7 @@ import type { BridgeNode } from "../src/core/node.js";
 import { buildHookResponse, claudeWakeCandidate, noteOversizedMessages, oversizedMessageNoted } from "../src/mcp/hooks.js";
 import { reportModActivity } from "../src/mcp/hook-ownership.js";
 import { pageProjectJobSummaries } from "../src/core/project-job-summary.js";
-import { RewakeEndpoint, sessionFile, WAKE_HEADER } from "../src/mcp/rewake.js";
+import { RewakeEndpoint, sessionFile, WAKE_HEADER, wakeMessageIds, wakeNoteIds } from "../src/mcp/rewake.js";
 import { LocalCoordinator } from "../src/mcp/local-coordinator.js";
 import { JobManager } from "../src/mcp/jobs.js";
 import { mcpContentBytes, MCP_RESULT_BUDGET_BYTES } from "../src/mcp/output-bounds.js";
@@ -352,4 +352,148 @@ describe("AB-404 native child peers keep their scope", () => {
     expect(summaries).toHaveBeenCalled();
     expect(projectJobs).not.toHaveBeenCalled();
   });
+});
+
+describe("AB-404 an oversized note counts as shown only once its wake-up is confirmed", () => {
+  /** A Claude session with a real wake endpoint; its hooks and wake-ups share one noted set. */
+  async function wakeSession(session: string) {
+    const me = env.node(`claude-${session}`, "claude"), peer = env.node(`codex-${session}`, "codex");
+    await me.start(); await peer.start(); await me.setSessionId(session);
+    const ctx = context(me, { rewakeAvailable: true });
+    const rewake = new RewakeEndpoint(env.home, me, (m) => claudeWakeCandidate(ctx, m), nullLogger, (event) => reportModActivity(ctx, event), undefined,
+      { noted: (id) => oversizedMessageNoted(ctx, id), note: (ids) => noteOversizedMessages(ctx, ids) });
+    await rewake.start();
+    closers.push(() => rewake.stop());
+    rewake.register(session);
+    ctx.wakeDelivery = rewake.delivery();
+    const reg = JSON.parse(readFileSync(sessionFile(env.home, session), "utf8")) as { port: number; secret: string };
+    const wait = async (role?: "mod" | "standby") => ((await (await fetch(`http://127.0.0.1:${reg.port}/wait${role ? `?role=${role}` : ""}`,
+      { headers: { authorization: `Bearer ${reg.secret}` }, signal: AbortSignal.timeout(30_000) })).json()) as { text: string; superseded: boolean });
+    // Each prompt is its own turn; the turn's other hooks carry its prompt id.
+    let turn = 0;
+    const hook = async (event: "UserPromptSubmit" | "PostToolUse" | "Stop" | "SessionStart", prompt?: string) => {
+      if (event === "UserPromptSubmit") turn++;
+      return JSON.stringify(await buildHookResponse(ctx, { event, sessionId: session, promptId: `turn-${turn}`, stopHookActive: false, ...(prompt ? { prompt } : {}) }));
+    };
+    const markRead = vi.spyOn(me, "markRead");
+    const neverRead = (id: string) => { for (const [ids] of markRead.mock.calls) expect(ids).not.toContain(id); expect(me.unread().map((m) => m.id)).toContain(id); };
+    const sendBig = async (tag: string) => {
+      await peer.send({ to: me.name, body: big(tag) });
+      await until(() => me.unread().some((m) => m.body.startsWith(tag)));
+      return me.unread().find((m) => m.body.startsWith(tag))!.id;
+    };
+    return { me, peer, ctx, rewake, wait, hook, neverRead, sendBig };
+  }
+  const noteOf = (id: string) => `<agent-bridge-oversized id="${id}"/> [agent-bridge] Message ${id} `;
+
+  it("the Stop-hook wake-up notes a big message only when the session shows activity", async () => {
+    const s = await wakeSession("note-primary");
+    const bigId = await s.sendBig("PRIMARY-BIG");
+    await s.peer.send({ to: s.me.name, body: "primary small" });
+    await until(() => s.me.unread().length === 2);
+    const wake = await s.wait();
+    expect(wake.text.startsWith(WAKE_HEADER)).toBe(true);
+    expect(wake.text).toContain("primary small");
+    expect(wake.text).toContain(noteOf(bigId));
+    expect(wakeMessageIds(wake.text)).not.toContain(bigId);
+    expect(wakeNoteIds(wake.text)).toEqual([bigId]);
+    // Handed out, not yet shown: nothing is noted or read.
+    expect(oversizedMessageNoted(s.ctx, bigId)).toBe(false);
+    expect(s.me.unread()).toHaveLength(2);
+    await s.hook("PostToolUse");
+    expect(oversizedMessageNoted(s.ctx, bigId)).toBe(true);
+    expect(s.me.unread().map((m) => m.id)).toEqual([bigId]);
+    s.neverRead(bigId);
+  });
+
+  it("a note-only wake-up that was not taken is retried through the standby hook", async () => {
+    const s = await wakeSession("note-retry");
+    const bigId = await s.sendBig("RETRY-BIG");
+    const wake = await s.wait();
+    expect(wake.text).toBe(`${WAKE_HEADER}\n\n${noteOf(bigId)}from codex-note-retry (${MAX_BODY_CHARS} characters) is too large to show in one result; ` +
+      `it stays unread. Read it in pages with inbox(id="${bigId}", offset=0).`);
+    expect(oversizedMessageNoted(s.ctx, bigId)).toBe(false);
+    // The confirmation window passes without activity: the standby gets the same note again.
+    const standby = s.wait("standby");
+    await new Promise((r) => setTimeout(r, 200));
+    (s.rewake as unknown as { retryWake(): void }).retryWake();
+    const retried = await standby;
+    expect(retried.text).toContain(noteOf(bigId));
+    expect(oversizedMessageNoted(s.ctx, bigId)).toBe(false);
+    await s.hook("PostToolUse");
+    expect(oversizedMessageNoted(s.ctx, bigId)).toBe(true);
+    s.neverRead(bigId);
+  });
+
+  it("a user prompt first: the lost wake-up's note comes with that prompt's hook, then not again", async () => {
+    const s = await wakeSession("note-prompt");
+    const bigId = await s.sendBig("PROMPT-BIG");
+    expect((await s.wait()).text).toContain(noteOf(bigId));
+    const prompt = await s.hook("UserPromptSubmit", "a user prompt");
+    expect(prompt).toContain(`Message ${bigId} from codex-note-prompt`);
+    expect(oversizedMessageNoted(s.ctx, bigId)).toBe(true);
+    expect(await s.hook("PostToolUse")).not.toContain(bigId);
+    s.neverRead(bigId);
+  });
+
+  it("the mod's wake-up without a turn is handed out again on the re-poll; its own prompt confirms the note", async () => {
+    const s = await wakeSession("note-mod");
+    const bigId = await s.sendBig("MOD-NOTE-BIG");
+    const first = await s.wait("mod");
+    expect(first.text).toContain(noteOf(bigId));
+    // No turn started: the mod polls again and gets the note again (it does not wait forever for a turn).
+    const again = await s.wait("mod");
+    expect(again.text).toContain(noteOf(bigId));
+    expect(oversizedMessageNoted(s.ctx, bigId)).toBe(false);
+    await s.hook("UserPromptSubmit", again.text);
+    expect(oversizedMessageNoted(s.ctx, bigId)).toBe(true);
+    s.neverRead(bigId);
+  });
+
+  it("a mod note queued behind a user's turn is not shown by the hooks; unshown after two turn ends, it is listed again", async () => {
+    const s = await wakeSession("note-queued");
+    const bigId = await s.sendBig("QUEUED-BIG");
+    expect((await s.wait("mod")).text).toContain(noteOf(bigId));
+    // The user's prompt starts a turn first: the mod's prompt is queued and carries the note.
+    expect(await s.hook("UserPromptSubmit", "user first")).not.toContain(bigId);
+    expect(await s.hook("Stop")).not.toContain(bigId);
+    expect(s.rewake.inFlight(bigId)).toBe(true);
+    expect(await s.hook("UserPromptSubmit", "user again")).not.toContain(bigId);
+    await s.hook("Stop");
+    // Its prompt never ran: the next hook lists it again, so the model learns about it.
+    expect(await s.hook("UserPromptSubmit", "third prompt")).toContain(`Message ${bigId} from codex-note-queued`);
+    expect(oversizedMessageNoted(s.ctx, bigId)).toBe(true);
+    s.neverRead(bigId);
+  });
+
+  it("SessionStart counts an oversized message already listed by id", async () => {
+    const s = await wakeSession("note-start");
+    const bigId = await s.sendBig("START-BIG");
+    expect(await s.hook("UserPromptSubmit", "a prompt")).toContain(`Message ${bigId}`);
+    expect(oversizedMessageNoted(s.ctx, bigId)).toBe(true);
+    expect(await s.hook("SessionStart")).toContain("You have 1 unread peer message(s)");
+    s.neverRead(bigId);
+  });
+
+  it("the standby does not wake again while a wake-up with a deferred message waits for confirmation", async () => {
+    const s = await wakeSession("standby-deferred");
+    await s.peer.send({ to: s.me.name, body: `FIRST ${"a".repeat(100_000)}` });
+    await s.peer.send({ to: s.me.name, body: `SECOND ${"b".repeat(100_000)}` });
+    await until(() => s.me.unread().length === 2);
+    const [firstId, secondId] = s.me.unread().map((m) => m.id);
+    const wake = await s.wait();
+    expect(wakeMessageIds(wake.text)).toEqual([firstId]);
+    expect(wake.text).toContain("1 more unread message(s) did not fit");
+    let answered: { text: string; superseded: boolean } | null = null;
+    const standby = s.wait("standby").then((r) => { answered = r; return r; });
+    // Past the standby's grace: the deferred message alone must not re-send the first one.
+    await new Promise((r) => setTimeout(r, 4_500));
+    expect(answered).toBeNull();
+    // Activity confirms the first; the tool hook shows the deferred one, and the standby is released empty.
+    expect(await s.hook("PostToolUse")).toContain("SECOND bbb");
+    const released = await standby;
+    expect(released.text).toBe("");
+    expect(s.me.unread().map((m) => m.id)).not.toContain(firstId);
+    expect(s.me.unread().map((m) => m.id)).not.toContain(secondId);
+  }, 15_000);
 });

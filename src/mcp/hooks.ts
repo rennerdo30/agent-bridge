@@ -414,7 +414,9 @@ async function runHook(ctx: ServerContext, input: HookInput, current: () => bool
         peers.length ? `Peers online:\n${peers.map((p) => formatPeer(p)).join("\n")}` : "No other agents are online right now.",
       ];
       lines.push(...new MessageWaitStore(ctx.home).pending(node).map(resumeWaitHint));
-      const unread = node.unread().filter((m) => !isQuietMessage(m) && hookDeliverable(ctx, m)).length;
+      // AB-404: oversized messages listed by id before still count: they stay unread, and after /clear or a
+      // compaction the model no longer knows about them.
+      const unread = node.unread().filter((m) => !isQuietMessage(m) && !completionAwaitingReceipt(ctx, m.id) && !ctx.wakeDelivery?.inFlight?.(m.id)).length;
       const decisions = await withinHook(node.decisions({ scope: { project: ctx.cwd() } }).catch(() => []), input.signal!);
       if (!current()) return {};
       const summary = formatDecisionSummary(decisions);
