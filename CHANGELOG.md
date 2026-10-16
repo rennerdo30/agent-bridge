@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.30.22
 
 - **Requires Node.js 24 or newer** (owner decision 2026-10-16; Node 24 is the current LTS). The MCP server, its worker and the CLI (including hooks) check the version before anything else and refuse to start on Node 22 or older, printing what to install. CI and diagnostic workflows test Node 24 only; bundles target Node 24.
 
