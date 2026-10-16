@@ -400,3 +400,27 @@ it("does not list a failed job's dirty files twice when its report already names
   expect(listing).toContain("late.txt");
   expect(listing).not.toContain("listed.txt");
 });
+
+it("compares a report's dirty files by path, also when the report adds a skip reason (N8)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ab-dirty-reason-"));
+  execFileSync("git", ["init", "-q"], { cwd: dir, timeout: 30_000 });
+  writeFileSync(join(dir, "skipped.txt"), "untracked\n");
+  writeFileSync(join(dir, "other.txt"), "also untracked\n");
+  writeFileSync(join(dir, "lined.txt"), "untracked too\n");
+  writeFileSync(join(dir, "late.txt"), "written later\n");
+  const { jobs } = fixture();
+  let fail!: () => void;
+  const job = jobs.start("codex", null, "fails", () => new Promise<RunResult>(resolve => {
+    fail = () => resolve({ ...answer, isError: true,
+      text: "Auto-commit skipped unstaged untracked files; left on disk: skipped.txt (untracked; not explicitly staged), other.txt (untracked; not explicitly staged).\n" +
+        "lined.txt (untracked; not explicitly staged)" });
+  }));
+  jobs.note(job, { worktree: { path: dir, cwd: dir, repoRoot: dir, branch: "job", base: "base" } });
+  fail();
+  await vi.waitFor(() => expect(bodies(jobs).some(body => body.includes("ended with uncommitted files"))).toBe(true));
+  const listing = bodies(jobs).find(body => body.includes("ended with uncommitted files"))!;
+  expect(listing).toContain("late.txt");
+  expect(listing).not.toContain("skipped.txt");
+  expect(listing).not.toContain("other.txt");
+  expect(listing).not.toContain("lined.txt");
+});

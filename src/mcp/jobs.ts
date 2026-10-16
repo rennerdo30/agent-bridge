@@ -2515,10 +2515,11 @@ export class JobManager {
     // A local job's leftover files are listed after the report, without holding up settlement (AB-398).
     if (!job.remote && job.worktree?.path) {
       const worktree = job.worktree;
-      // Files the report already lists (a failed checkpoint names its dirty files) are not listed twice.
-      const listed = new Set((message ?? "").split(/\r?\n/).map(line => line.trim()));
+      // Files the report already lists (a failed checkpoint names its dirty files, a skipped one adds its reason)
+      // are not listed twice: compared by path, not by whole line.
+      const listed = reportedPaths(message ?? "");
       void dirtyJobFiles(worktree, this.log).then((dirty) => {
-        const fresh = dirty.filter(file => !listed.has(file));
+        const fresh = dirty.filter(file => !listed.has(normalPath(file)));
         if (fresh.length) this.post(job, `Subagent ${job.name} ended with uncommitted files on its worktree ${worktree.path}; keep that worktree for review:\n${fresh.join("\n")}`);
       }).catch((error) => this.log.warn("could not list a job's dirty files", { job: job.name, err: String(error) }));
     }
@@ -2669,6 +2670,35 @@ async function dirtyJobFiles(worktree: Worktree, log: Logger): Promise<string[]>
     const output = await git([...trustArgs(worktree.path), "status", "--porcelain=v1", "-z", "--untracked-files=all"], worktree.path, log, 5_000);
     return output.split("\0").filter(Boolean).map(entry => entry.slice(3));
   } catch { return [`(could not inspect the dirty files in ${worktree.path}; keep this worktree for review)`]; }
+}
+
+const normalPath = (path: string): string => path.trim().replace(/\\/g, "/");
+
+/**
+ * The paths a report names: one per line ("Dirty files left on the job worktree:") or comma-separated after a
+ * label (a checkpoint's "left on disk: a (reason), b (reason)."), each with an optional list marker and an
+ * optional trailing reason such as `name (untracked; not explicitly staged)`. The dirty-files notice compares
+ * by path, so a file the report already names is not listed again.
+ */
+export function reportedPaths(report: string): Set<string> {
+  const paths = new Set<string>();
+  const add = (item: string) => {
+    const bare = item.trim().replace(/^[-*]\s+/, "");
+    if (!bare) return;
+    paths.add(normalPath(bare));
+    const reason = /^(.+?) \([^()]*\)\.?$/.exec(bare);
+    if (reason) paths.add(normalPath(reason[1]!));
+  };
+  for (const line of report.split(/\r?\n/)) {
+    add(line);
+    for (const item of line.split(", ")) {
+      add(item);
+      // The first listed item follows its label ("...; left on disk: name (reason)").
+      const label = item.lastIndexOf(": ");
+      if (label >= 0) add(item.slice(label + 2));
+    }
+  }
+  return paths;
 }
 
 /** One turn of an inline job and its executor: a later turn or another executor is a different turn. */
