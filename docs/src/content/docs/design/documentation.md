@@ -14,7 +14,7 @@ See the [Astro releases](https://github.com/withastro/astro/releases) and [Starl
 
 The existing repository SVG is copied into `src/assets/` for Starlight's logo and into `public/favicon.svg` for the default favicon path. Assets are copied before development and builds, following the Toolkit's prebuild synchronization pattern. Screenshots stay canonical in `docs/images/`, so README links keep working, and the site copies them into `public/images/`.
 
-`actions/configure-pages` supplies the origin and base path to the Astro CLI. Local builds default to `https://rennerdo30.github.io/agent-bridge/`. The workflow uses `ubuntu-latest`, matching Bifrost Proxy: this repository exposes no self-hosted docs runners. npm caching, Pages artifact upload and the deployment environment match all three projects. The site uses Node 22, which supports current Astro.
+`actions/configure-pages` supplies the origin and base path to the Astro CLI. Local builds default to `https://rennerdo30.github.io/agent-bridge/`. The workflow uses `ubuntu-latest`, matching Bifrost Proxy: this repository exposes no self-hosted docs runners. npm caching, Pages artifact upload and the deployment environment match all three projects. The site uses Node 24, which supports current Astro.
 
 Edit links point at `main/docs/`; Starlight appends the full content source path. Existing root `docs/*.md` URLs remain as small pointers to the migrated canonical pages, preserving repository links without maintaining duplicate content.
 

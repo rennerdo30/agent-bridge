@@ -38,7 +38,7 @@ if (!dist) {
     entryPoints: { server: "src/mcp/launcher.ts", worker: "src/mcp/main.ts", cli: "src/cli/main.ts", "history-worker": "src/core/history-worker.ts",
       "backup-worker": "src/core/backup-worker.ts", "outcome-worker": "src/core/outcome-worker.ts", "job-archive-worker": "src/core/job-archive-worker.ts" },
     outdir: dist, outExtension: { ".js": ".mjs" }, chunkNames: "chunks/[name]-[hash]", splitting: true, bundle: true,
-    platform: "node", format: "esm", target: "node22", external: ["node:*"], logLevel: "warning",
+    platform: "node", format: "esm", target: "node24", external: ["node:*"], logLevel: "warning",
     banner: { js: "import { createRequire as __abCreateRequire } from 'node:module'; const require = __abCreateRequire(import.meta.url);" },
   });
 }

@@ -113,4 +113,4 @@ Authenticated dashboard contracts (existing cookie and Host guards):
 
 Research: [SQLite VACUUM INTO](https://www.sqlite.org/lang_vacuum.html) documents consistent
 snapshots and interruption behavior. [Node SQLite backup API](https://nodejs.org/api/sqlite.html#sqlitebackupsource-db-path-options)
-was added in Node 22.16, the project's minimum supported runtime.
+was added in Node 22.16; the project now requires Node 24 or newer.

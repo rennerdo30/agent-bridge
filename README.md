@@ -82,7 +82,7 @@ Nested bridge delegation defaults to depth **2**, configurable up to **3**; dept
 
 ## Install
 
-Requires **Node.js 22.16+**. Install for every supported CLI it finds on your machine:
+Requires **Node.js 24+** (the current LTS); older versions refuse to start. Install for every supported CLI it finds on your machine:
 
 ```bash
 npx -y github:rennerdo30/agent-bridge install

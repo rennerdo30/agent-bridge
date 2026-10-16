@@ -11,7 +11,7 @@ const banner = { js: "import { createRequire as __abCreateRequire } from 'node:m
 for (const [entry, name] of [["scripts/performance.ts", "performance.mjs"], ["src/core/history-worker.ts", "history-worker.mjs"]]) {
   if (!existsSync(join(root, entry))) continue;
   await build({ absWorkingDir: root, entryPoints: [entry], outfile: join(output, name), bundle: true,
-    platform: "node", format: "esm", target: "node22", external: ["node:*"], banner });
+    platform: "node", format: "esm", target: "node24", external: ["node:*"], banner });
 }
 const child = spawn(process.execPath, ["--no-warnings", join(output, "performance.mjs")], { cwd: root, stdio: "inherit" });
 child.on("error", (error) => { console.error(error); process.exitCode = 1; });

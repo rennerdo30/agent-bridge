@@ -1,3 +1,4 @@
+import "../core/node-version-guard.js";
 import { startServer } from "./server.js";
 
 startServer().catch((err) => {
