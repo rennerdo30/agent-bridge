@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { extname } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { opencodePermissionText } from "./approval-display.js";
 import { checkDepthPublic, childEnvPublic, DelegateError, killTree, trackChild, resolveBinary, unwrapNpmShim, opencodeVersion, OPENCODE_READ_ONLY_TOOLS, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { createOpencodeNativeToolPlugin, OPENCODE_NATIVE_ACTION_PREFIX, OPENCODE_NATIVE_GATE_ID, opencodeNativeGateReportError, parseOpencodeVersion, unknownOpencodeVersionMessage, type OpencodeNativeAccess } from "./opencode-native-tools.js";
 import { progressEventHandler } from "./progress.js";
@@ -132,7 +133,7 @@ export function opencodePermissionRequest(p: Json, mcpServers: string[], cwd: st
   if (permission.startsWith(OPENCODE_NATIVE_ACTION_PREFIX)) return { agent: "opencode", tool: permission, ...boundedDetail(detail), cwd };
   const server = [...mcpServers].sort((a, b) => b.length - a.length).find((s) => permission.startsWith(mcpToolPrefix(s)));
   if (server) return { agent: "opencode", tool: `mcp:${server}`, ...boundedDetail(`${permission}: ${detail}`), cwd };
-  return { agent: "opencode", tool: permission, ...boundedDetail(detail), cwd };
+  return { agent: "opencode", tool: permission, ...boundedDetail(permissionText(p)), cwd };
 }
 
 function permissionDetail(p: Json): string {
@@ -140,6 +141,11 @@ function permissionDetail(p: Json): string {
   const meta = p.metadata && typeof p.metadata === "object" ? p.metadata : {};
   const cmd = typeof meta.command === "string" ? meta.command : typeof meta.filepath === "string" ? meta.filepath : "";
   return cmd || patterns || JSON.stringify(meta);
+}
+
+/** The question text for a non-MCP permission: its working folder, timeout, patterns and other metadata marked (AB-417). */
+function permissionText(p: Json): string {
+  return opencodePermissionText(p, permissionDetail(p));
 }
 
 export async function delegateToOpencodeServed(

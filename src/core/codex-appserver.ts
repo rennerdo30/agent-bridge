@@ -1,6 +1,7 @@
 import { codexSubagentConfig } from "./codex-subagents.js";
 import { spawn } from "node:child_process";
 import { APP_VERSION } from "./constants.js";
+import { codexCommandApprovalText, codexFileChangeApprovalText } from "./approval-display.js";
 import { DEFAULT_CODEX_APPROVALS_REVIEWER, type CodexApprovalsReviewer, type CodexSandbox } from "./config.js";
 import { checkDepth, childEnv, DelegateError, exitDescription, killTree, realFolder, resolveCommand, trackChild, type DelegateRequest, type DelegateResult } from "./delegate.js";
 import { progressEventHandler } from "./progress.js";
@@ -203,12 +204,12 @@ export async function delegateToCodexAppServer(
         return answer(decision, decision.allow ? { action: "accept", content } : { action: "decline", content: null }, tool);
       }
       case "item/commandExecution/requestApproval": {
-        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("command", innerCommand(String(params.command ?? params.reason ?? "a command"))) : sandboxDenial;
+        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("command", codexCommandApprovalText(params, innerCommand(String(params.command ?? params.reason ?? "a command")), cwd)) : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "command");
       }
       case "item/fileChange/requestApproval": {
         const paths = editPaths.get(params.itemId) ?? [];
-        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("edit", paths.length ? paths.join(", ") : String(params.reason ?? "file changes")) : sandboxDenial;
+        const decision: PermissionDecision = req.sandbox === "danger-full-access" ? { allow: true } : req.canApprove || req.askMode || req.sandbox === "workspace-write" ? await decide("edit", codexFileChangeApprovalText(params, paths.length ? paths.join(", ") : String(params.reason ?? "file changes"))) : sandboxDenial;
         return answer(decision, { decision: decision.allow ? "accept" : "decline" }, "edit");
       }
       case "item/permissions/requestApproval": {

@@ -1018,6 +1018,9 @@ button.ghost { min-height: 32px; }
 .ap-tool { font-size: 12px; color: var(--muted); font-family: var(--mono); }
 .ap-card .cmds { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ap-reason { margin: 0; font-size: 13.5px; color: var(--text); }
+.ap-flags { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.ap-flag { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--warn); border: 1px solid var(--warn); border-radius: 4px; padding: 1px 6px; overflow-wrap: anywhere; }
+.ap-args { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 .ap-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .ap-actions .ap-why { flex: 1 1 260px; min-width: 0; padding: 7px 10px; }
 .ap-note, .ap-done .note { font-size: 12.5px; margin: -4px 0 12px; }
@@ -3118,15 +3121,26 @@ function renderSessionQuestions() {
 }
 const approvalKind = (a) => a.kind === "job-question" ? "question" : (a.kind || "permission");
 
+// AB-417: a request's security-relevant arguments arrive as a first line of [markers] and +args before the command.
+function approvalFlags(command) {
+  const text = String(command || ""), nl = text.indexOf("\\n");
+  const none = { flags: [], args: "", rest: text };
+  if (nl < 0) return none;
+  const m = /^((?:\\[[^\\[\\]]*\\] ?)*)(\\+args: .*)?$/.exec(text.slice(0, nl));
+  if (!m || !(m[1] || m[2])) return none;
+  return { flags: m[1].match(/\\[[^\\[\\]]*\\]/g) || [], args: m[2] || "", rest: text.slice(nl + 1) };
+}
+
 function approvalCard(a) {
   if (a.kind === "question") return questionCard(a);
   if (a.kind === "job-question") return jobQuestionCard(a);
-  const left = a.deadline - Date.now(), busy = apBusy.has(a.id);
+  const left = a.deadline - Date.now(), busy = apBusy.has(a.id), fl = approvalFlags(a.command);
   return '<div class="ap-card">' +
     '<div class="ap-head">' + av(a.agent) + '<div class="grow"><b class="ell">' + esc(approvalJob(a)) + '</b><div class="small muted ell">' + esc(a.agent + " subagent of " + a.owner) + "</div></div>" +
     '<span class="ap-time" data-deadline="' + Number(a.deadline) + '">' + (left > 0 ? "auto-deny in " + mmss(left) : "expiring") + "</span></div>" +
     (a.tool ? '<div class="ap-tool">' + esc(a.tool) + "</div>" : "") +
-    (a.command ? '<pre class="cmds">' + esc(a.command) + "</pre>" : "") +
+    (fl.flags.length || fl.args ? '<div class="ap-flags">' + fl.flags.map((f) => '<span class="ap-flag">' + esc(f) + "</span>").join("") + (fl.args ? '<span class="ap-args">' + esc(fl.args) + "</span>" : "") + "</div>" : "") +
+    (fl.rest ? '<pre class="cmds">' + esc(fl.rest) + "</pre>" : "") +
     (a.reason ? '<p class="ap-reason">' + esc(a.reason) + "</p>" : "") +
     '<div class="ap-actions"><input class="ap-why" data-ap-why="' + esc(a.id) + '" placeholder="Reason for the subagent (optional)" maxlength="4000" aria-label="Reason for the subagent">' +
     '<button type="button" data-ap-act="allow" data-id="' + esc(a.id) + '"' + (busy ? " disabled" : "") + ">Allow</button>" +

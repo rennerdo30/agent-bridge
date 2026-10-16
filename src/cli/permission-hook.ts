@@ -1,4 +1,5 @@
 import { readBodyText } from "../core/http-body.js";
+import { describeToolInput } from "../core/approval-display.js";
 import { askRelay, boundedDetail, RELAY_URL_ENV, type PermissionRequest } from "../core/relay.js";
 
 /**
@@ -15,13 +16,9 @@ import { askRelay, boundedDetail, RELAY_URL_ENV, type PermissionRequest } from "
 /** Codex and Claude Code name MCP tools mcp__<server>__<tool>. */
 const MCP_TOOL = /^mcp__(.+?)__(.+)$/;
 
+/** The question text: the command or path, with security-relevant arguments marked first (AB-417). Display only. */
 function describe(toolInput: unknown): string {
-  if (toolInput && typeof toolInput === "object") {
-    const o = toolInput as Record<string, unknown>;
-    if (typeof o.command === "string") return o.command;
-    if (typeof o.file_path === "string") return o.file_path;
-  }
-  return JSON.stringify(toolInput ?? {});
+  return describeToolInput(toolInput);
 }
 
 /** The relay request for one hook input. MCP tools become "mcp:<server>" (one allow covers the server). */
