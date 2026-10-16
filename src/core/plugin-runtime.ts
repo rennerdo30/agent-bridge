@@ -27,9 +27,17 @@ export function pluginFiles(root: string, rel = ""): string[] {
   }).sort();
 }
 
+/** Top-level folders a host CLI writes into an installed version folder, never part of a release (Claude Code's
+ * `.in_use/<pid>` session markers). Ignored when comparing immutable versions, so they never read as a different build. */
+export const HOST_MARKER_DIRS = [".in_use"];
+const hostMarker = (rel: string) => HOST_MARKER_DIRS.includes(rel.replaceAll("\\", "/").split("/")[0]!);
+
 function digest(root: string): string {
   const hash = createHash("sha256");
-  for (const rel of pluginFiles(root)) hash.update(rel.replaceAll("\\", "/")).update("\0").update(readFileSync(join(root, rel))).update("\0");
+  for (const rel of pluginFiles(root)) {
+    if (hostMarker(rel)) continue;
+    hash.update(rel.replaceAll("\\", "/")).update("\0").update(readFileSync(join(root, rel))).update("\0");
+  }
   return hash.digest("hex");
 }
 
@@ -44,8 +52,9 @@ export function releaseVersion(version: string): void {
   if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error(`Expected a patch release version, got ${version}`);
 }
 
-export const PLUGIN_PROMOTION_MAX_ATTEMPTS = 5;
-export const PLUGIN_PROMOTION_RETRY_DELAY_MS = 50;
+// A virus scanner can hold a freshly written stage for several seconds: about 11 s of linear backoff in total.
+export const PLUGIN_PROMOTION_MAX_ATTEMPTS = 10;
+export const PLUGIN_PROMOTION_RETRY_DELAY_MS = 250;
 export interface PluginPromotionOptions {
   platform?: NodeJS.Platform;
   rename?: (source: string, target: string) => void;
@@ -103,7 +112,7 @@ export function publishPlugin(source: string, base: string, version = APP_VERSIO
   } catch (error) {
     const cause = failure ?? error;
     const detail = error === cause ? String(error) : `${String(error)}. Original promotion error: ${String(cause)}`;
-    throw new Error(`Plugin publication failed from ${staging} to ${target} after ${attempts} promotion attempt(s): ${detail}. No runtime was activated by this publication; active.json was not changed by it. Old version bytes are retained and the stage is kept. Close Antigravity/agy/Claude/Codex sessions using the plugin before re-running.`, { cause });
+    throw new Error(`Plugin publication failed from ${staging} to ${target} after ${attempts} promotion attempt(s): ${detail}. No runtime was activated by this publication; active.json was not changed by it. Old version bytes are retained and the stage is kept. Another process held the folder (often a virus scanner checking the new files, or an Antigravity/agy/Claude/Codex session using the plugin): wait a moment or close those sessions before re-running.`, { cause });
   }
 }
 
