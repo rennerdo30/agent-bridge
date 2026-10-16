@@ -12,7 +12,7 @@ title: "Configuration"
   "maxJobs": 8,
   "maxDelegateDepth": 2,
   "autoApproveTools": ["pair-desk.get_*", "pair-desk.list_*"],
-  "jobs": { "defaultAllowTools": ["pair-desk:worker"] },
+  "jobs": { "defaultAllowTools": ["pair-desk:worker"], "reuseIdenticalApprovals": true },
   "codexApprovalsReviewer": "auto_review",
   "codexSubagents": 6,
   "lingerSec": 300,
@@ -40,6 +40,88 @@ Tool descriptions show the value from when the session started. See
 (6 by default, integers 0–32; 0 disables). Override it with `native_subagents` on
 `spawn_codex`, `ask_codex` or `message_subagent`. This is separate from bridge job
 concurrency and delegation depth. See [native subagent settings and dashboard APIs](../codex-subagents/).
+
+`jobs.reuseIdenticalApprovals` (default `true`, home config only; a project config can change
+it in neither direction) lets a job reuse an approval that the supervisor (`decide`) or the
+owner (dashboard or a native dialog) already **allowed** in the same turn of the same job, when
+the new request is provably the same action. Its identity is the exact request as its source
+encodes it, bound to the asking agent, the tool, the folder and the text the question showed;
+nothing is normalized:
+
+- Claude and Codex `PermissionRequest` hooks: the tool name and every field of its tool input
+  (a different `dangerouslyDisableSandbox`, `run_in_background`, `timeout`, `workdir`,
+  `sandbox_permissions` or `justification` makes it a different request);
+- Codex app-server commands: the raw command line with its shell wrapper, the `cwd` Codex
+  names (else the job's folder) and every other approval field (network context, proposed
+  policy amendments, reason), without the per-request ids;
+- opencode: the whole `permission.asked` event without its per-request ids.
+
+The job gets no second question. The first reuse of each grant reaches the supervisor like a
+question would; later ones are quiet notes. All name the original approval id, and the job's
+step log, run report and approvals history (`reused` event) show them.
+
+Limits that keep it safe:
+
+- **File changes are always asked** (Claude `Write`, `Edit`, `MultiEdit`, `NotebookEdit`; Codex
+  file changes; opencode edits): their paths say where, not what.
+- **Command approvals are reused only in read-only jobs.** A command (a shell command, or any
+  tool that is not an MCP tool) runs whatever the job's files say, so its grant is kept and
+  reused only while the job cannot change files without asking. The job's settings are
+  checked when the grant is made (both when the question is asked and when it is answered)
+  and again at each reuse; if either is not read-only, the command is asked. Read-only means:
+  - The job cannot start or continue subagents of its own: its delegation depth reached
+    `maxDelegateDepth`, so its bridge server has no `spawn_*`, `ask_*`, `message_subagent`
+    or `decide`. A job that has them could start a child job with edit access in the same
+    folder and answer that child's approvals itself.
+  - No MCP server other than the Pair Desk was allowed for the rest of the job (one "allow"
+    of a server covers its later calls, also in follow-ups).
+  - Codex: the effective sandbox is `read-only` (`access` `read` or `ask`, `sandbox:
+    "read-only"`, or `codexSandbox` when neither is given) and the approvals reviewer is
+    `user` (`approvals_reviewer` or `codexApprovalsReviewer`; `auto_review` lets a reviewer
+    model approve requests). `workspace-write` and `danger-full-access` are not, so Codex
+    `edit` jobs and worktree edit jobs are not.
+  - Claude: permission mode `default`, `manual` or `plan` (agent-bridge denies `Write`,
+    `Edit`, `MultiEdit`, `NotebookEdit`, `Bash` and `PowerShell` in these). `acceptEdits`,
+    `auto`, `dontAsk` and `bypassPermissions` are not.
+  - opencode: the effective permission is read-only (`access` `read` or `ask`, or
+    `auto_approve: false`); auto-approve is not.
+  - Antigravity: `access` `read` or `ask` without `bypass_permissions`. Muse: `access` `read`
+    or `ask` without a `permission_profile`.
+  - Every auto-approved MCP pattern (`autoApproveTools`, `allow_tools` or the default
+    allowance) names only the Pair Desk server (`pair-desk`, `pair-desk.<tool>` or
+    `pair-desk:worker`). Any other pattern could let the job write files without asking.
+  - Anything else, including an unknown agent, permission or pattern, is not read-only.
+- **A read-only job changes files only through what it is allowed**, so an allowed file
+  change request (dropped already when it is asked), an allowed different command, an
+  allowed request without an exact identity or any allowed MCP call to a server other than
+  the Pair Desk (whether through an earlier "allow" of its server, an allow pattern, a
+  question or a reused grant) ends the job's command grants. A call to the job's own
+  agent-bridge server other than a read or status tool (`send`, `report_progress`, `peers`,
+  `health`, `search_history`, `get_conversation`, `inbox`, `wait_for_message`, `decisions`,
+  `list_models`, `usage_limits`, `network_status`, `resource_slots`), such as `spawn_*`,
+  `ask_*`, `message_subagent` or `decide`, ends them and keeps none for the rest of the turn.
+- **No Git, no file reads**: the approval path runs no Git command and reads none of the
+  job's files. A job-controlled repository could run code through Git (`core.fsmonitor`,
+  filters) and hide files from it (`.git/info/exclude`, `assume-unchanged`).
+- **MCP tool calls** that are identical are reused at every access level. MCP requests
+  without an exact identity (see below) are always asked.
+- **No grant at all** is kept or reused when the job store exists but cannot be read or does
+  not have the job: its supervisor is then unknown.
+- A grant never widens and never crosses jobs: it ends with the job's turn, when the job's
+  access, sandbox, permission settings or Codex approvals reviewer change, and when its
+  supervisor changes. The
+  supervisor is read from the job store, so a `handoff_subagents` from another process ends
+  the grants at once.
+- A deny is never reused (the job asks again) and revokes a grant of the same request, also
+  one allowed while the denied question waited.
+- Allows from `autoApproveTools`, `allow_tools`, a per-server MCP allow, a timeout or a paired
+  PC's supervisor (`remote supervisor`) create no grants.
+- Requests without an exact identity are always asked: Codex MCP elicitations (their text is a
+  summary), Codex automatic-review refusals and sandbox permission requests, Antigravity and
+  Muse approvals, and cut requests.
+
+Grants live in the memory of the process that runs the job (at most 64 per job). Set it to
+`false` to ask every time.
 
 The standalone broker daemon is **on by default**. When no broker is running, the
 first MCP server, CLI command or CLI dashboard starts one background broker process

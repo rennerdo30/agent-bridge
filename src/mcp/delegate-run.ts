@@ -26,7 +26,8 @@ import { scanWorktreeLinks, WORKTREE_LINK_HINT, worktreeLinkWarning } from "../c
 import { changedFiles, createWorktree, finishWorktree, git, trustArgs, gitChangeSnapshot, gitDirsOutside, handoffWarning, subagentCommitMessage, worktreeReport, type Worktree } from "../core/worktree.js";
 import { formatSiblingMessages, formatUsage } from "./format.js";
 import { SiblingLink } from "./siblings.js";
-import { denyPendingApprovals, waitForApproval, type Job, type RunResult } from "./jobs.js";
+import { approvalOrigin, denyPendingApprovals, jobSupervision, waitForApproval, type ApprovalOutcome, type Job, type RunResult } from "./jobs.js";
+import { approvalIdentity, approvalScope, dropCommandGrants, isCommandRequest, isFileChangeRequest, jobCanSpawn, mcpCallEffect, readOnlyJob, recordGrant, reusableGrant } from "./approval-reuse.js";
 import { DELEGATION_TARGETS, supportsAsk, usageProbeFor, type Access, type RelayWiring, type TargetArgs } from "./targets.js";
 import { checkUsagePreflight, confirmUsageAdmission, currentUsage, usageAdmissionText, usageRefused } from "../core/usage.js";
 import { JOB_SETTING_KEYS } from "./job-settings.js";
@@ -60,7 +61,7 @@ export interface JobSink {
   recipient?(job: Job): Promise<string>;
   persist?: () => void;
   escalateApproval?: (job: Job, body: string) => Promise<void>;
-  askParent(job: Job, question: string, timeoutMs: number, request?: PermissionRequest): Promise<{ allow: boolean; reason: string }>;
+  askParent(job: Job, question: string, timeoutMs: number, request?: PermissionRequest): Promise<ApprovalOutcome>;
   /** isAnswer: its answer to a live message (wakes the session); else a note unless it replies to something.
    * question: send with message_kind="question"; a sink may report where it was routed (AB-249). */
   fromSubagent(job: Job, body: string, replyTo: string | null, isAnswer?: boolean, forceNote?: boolean, question?: boolean): void | Promise<ParentRoute | undefined>;
@@ -212,23 +213,100 @@ async function runDelegateInner(
     await appendContextEvent(rc.home, { ...context, payload: { id, stage: "decision", decision } });
     return decision;
   };
-  // Native permission dialogs keep their existing eligibility; the dashboard can answer the same wait.
-  const askUser = rc.askUser ? async (r: PermissionRequest): Promise<PermissionDecision> => {
-    if (!job) return rc.askUser!(r);
-    if (rc.jobs && ((job.ownershipHistory?.length && job.owner !== rc.me()) || (rc.jobs.recipient && await rc.jobs.recipient(job) !== rc.me()))) {
-      const answer = await rc.jobs.askParent(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS, r);
-      return answer.allow ? { allow: true } : { allow: false, message: answer.reason };
+  // AB-402: an identical request the supervisor or the owner already allowed in this job, under the same access,
+  // sandbox, permission settings and supervisor, reuses that grant. Denials and automatic allows are never reused.
+  // A command grant is kept and reused only while the job's settings are read-only (readOnlyJob: among others, it
+  // cannot start subagents and has no MCP server but the Pair Desk allowed). Nothing here runs Git or reads the
+  // job's files.
+  const reuseFeed: { report?: (line: string) => void } = {};
+  // Set by an allowed own-server call that may start or steer a child job (spawn_*, ask_*, message_subagent,
+  // decide): no command grant is reused or kept for the rest of this turn.
+  let commandGrantsBlocked = false;
+  const codexReviewer = () => target === "codex" ? a.approvals_reviewer ?? cfg.codexApprovalsReviewer : undefined;
+  const jobReadOnly = () => !commandGrantsBlocked && readOnlyJob({ target, permission: profile.permission(cfg, a), permissionProfile: a.permission_profile,
+    bypassPermissions: a.bypass_permissions, approvalsReviewer: codexReviewer(), allowPatterns: autoApprove,
+    allowedServers: [...allowedServers], canSpawn: jobCanSpawn(cfg.maxDelegateDepth) });
+  // Every allowed MCP call, whichever path allowed it (a server allowed earlier, an allow pattern, a question or a
+  // reuse): a server other than the Pair Desk may have written files, so it ends the job's command grants; an
+  // own-server call that may start or steer a child job also blocks new ones for the rest of the turn.
+  const mcpAllowed = (r: PermissionRequest) => {
+    if (!job) return;
+    const effect = mcpCallEffect(r);
+    if (effect === "block") commandGrantsBlocked = true;
+    if ((effect === "drop" || effect === "block") && dropCommandGrants(job)) dlog.info("an MCP call that may change files was allowed; command grants dropped", { job: job.name, tool: r.tool });
+  };
+  const askOnce = async (r: PermissionRequest, ask: () => Promise<ApprovalOutcome>): Promise<ApprovalOutcome & { reusedFrom?: string }> => {
+    // A runner spec written by an older release has no jobs section: the default (on) applies.
+    if (!job || !(cfg.jobs?.reuseIdenticalApprovals ?? DEFAULT_CONFIG.jobs.reuseIdenticalApprovals)) return ask();
+    const command = isCommandRequest(r);
+    // A read-only job changes files only through what it is allowed: an allowed file change, other command or request
+    // without an exact identity ends every command grant (an allowed script may be what changed).
+    const ended = (answer: ApprovalOutcome, why: string) => {
+      if (answer.allow && dropCommandGrants(job)) dlog.info(`${why} was allowed; command grants dropped`, { job: job.name });
+      if (answer.allow) mcpAllowed(r);
+      return answer;
+    };
+    // An asked command ends the command grants when allowed; so does an allowed MCP call to a server that may write.
+    const settle = (answer: ApprovalOutcome) => {
+      if (command) return ended(answer, "a command");
+      if (answer.allow) mcpAllowed(r);
+      return answer;
+    };
+    if (isFileChangeRequest(r) && dropCommandGrants(job)) dlog.info("file change requested; command grants dropped", { job: job.name });
+    const identity = approvalIdentity(r);
+    if (!identity) return ended(await ask(), "a request without an exact identity");
+    // The supervisor comes from the durable store: a handoff from another process ends the grants. A store that
+    // cannot be read, or that lacks the job, means the supervisor is unknown: ask, and keep no grant.
+    const supervision = jobSupervision(rc.home, job, dlog);
+    if (supervision === null) return settle(await ask());
+    const scope = approvalScope({ access: a.access, sandbox: a.sandbox, permission: profile.permission(cfg, a), reviewer: codexReviewer(),
+      supervisor: JSON.stringify([supervision, rc.me()]) });
+    const grant = reusableGrant(job, scope, identity);
+    if (grant?.command && !jobReadOnly()) {
+      dlog.info("job is not read-only; command grants dropped", { job: job.name, approval: grant.approvalId });
+      dropCommandGrants(job);
+    } else if (grant) {
+      grant.reuses++;
+      const line = `Approval for ${job.name} reused: ${r.tool}: ${r.detail.slice(0, 200)} is identical to approval ${grant.approvalId}, allowed by ${grant.by} earlier in this job (jobs.reuseIdenticalApprovals).` +
+        (grant.command ? " Commands are reused only in read-only jobs that cannot spawn subagents, and only until a file change, another command, a write-capable MCP call or a spawn is allowed." : "");
+      dlog.info("identical approval reused", { job: job.name, tool: r.tool, approval: grant.approvalId });
+      reuseFeed.report?.(line);
+      try { await appendContextEvent(rc.home, { kind: "approval", agent: target, project: workdir, job: job.name, session: job.sessionId ?? undefined, payload: { event: "reused", approval: grant.approvalId, by: grant.by, tool: r.tool, command: r.detail } }); }
+      catch (err) { dlog.warn("could not journal a reused approval", { job: job.name, err: String(err) }); }
+      // The first reuse of a grant reaches the supervisor like the question would have; later ones are quiet notes.
+      const noteFailed = (err: unknown) => dlog.warn("could not report a reused approval", { job: job.name, err: String(err) });
+      const first = grant.reuses === 1;
+      try { void Promise.resolve(rc.jobs?.fromSubagent(job, line, null, first, !first)).catch(noteFailed); }
+      catch (err) { noteFailed(err); }
+      if (!grant.command) mcpAllowed(r);
+      return { allow: true, reason: "allow", reusedFrom: grant.approvalId };
     }
-    const decision = await waitForApproval(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS,
-      (body) => rc.jobs?.fromSubagent(job, body, null, true), dlog, rc.home, r, () => rc.askUser!(r));
-    return decision.allow ? { allow: true } : { allow: false, message: decision.reason.replace(/^deny:\s*/, "") };
+    // Read-only is checked when the question is asked and again with the answer: a command grant needs both.
+    const readOnlyAsked = command && jobReadOnly();
+    const answer = settle(await ask());
+    recordGrant(job, scope, identity, answer, approvalOrigin(answer), command, readOnlyAsked && jobReadOnly());
+    return answer;
+  };
+  // Native permission dialogs keep their existing eligibility; the dashboard can answer the same wait.
+  const askUserOnce = rc.askUser ? async (r: PermissionRequest): Promise<{ decision: PermissionDecision; reusedFrom?: string }> => {
+    if (!job) return { decision: await rc.askUser!(r) };
+    if (rc.jobs && ((job.ownershipHistory?.length && job.owner !== rc.me()) || (rc.jobs.recipient && await rc.jobs.recipient(job) !== rc.me()))) {
+      const answer = await askOnce(r, () => rc.jobs!.askParent(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS, r));
+      return { decision: answer.allow ? { allow: true } : { allow: false, message: answer.reason }, reusedFrom: answer.reusedFrom };
+    }
+    const answer = await askOnce(r, () => waitForApproval(job, `${r.tool}: ${r.detail}`, PARENT_APPROVAL_TIMEOUT_MS,
+      (body) => rc.jobs?.fromSubagent(job, body, null, true), dlog, rc.home, r, () => rc.askUser!(r)));
+    return { decision: answer.allow ? { allow: true } : { allow: false, message: answer.reason.replace(/^deny:\s*/, "") }, reusedFrom: answer.reusedFrom };
   } : undefined;
+  /** The run report's line for a decision: a reused one names the approval it reused (AB-402). */
+  const askedLine = (r: PermissionRequest, d: PermissionDecision, reusedFrom: string | undefined, by = "") =>
+    reusedFrom ? `allowed (reused approval ${reusedFrom}): ${r.tool} ${r.detail.slice(0, 80)}` : `${d.allow ? "allowed" : "denied"}${by}: ${r.tool} ${r.detail.slice(0, 80)}`;
   try {
-    if (access === "ask" && askUser) {
+    if (access === "ask" && askUserOnce) {
       const decide = async (r: PermissionRequest) => journalPermission(r, async () => {
         relayCalls++;
-        const d = await askUser(r);
-        asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
+        const { decision: d, reusedFrom } = await askUserOnce(r);
+        asked.push(askedLine(r, d, reusedFrom));
         return d;
       });
       relay = new PermissionRelay(decide, dlog);
@@ -262,7 +340,10 @@ async function runDelegateInner(
       asked.push(`declined (handoff tool): ${r.tool} ${r.detail.slice(0, 80)}`);
       return { allow: false, message: HANDOFF_DECLINED };
     }
-    if (!r.automaticReview && r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) return { allow: true };
+    if (!r.automaticReview && r.tool.startsWith("mcp:") && allowedServers.has(r.tool)) {
+      mcpAllowed(r);
+      return { allow: true };
+    }
     // Never decide (or pattern-match) a cut text: the owner must see everything they allow (AB-241).
     const refused = isOwnServerCall(r) ? null : unreviewable(r);
     if (refused) {
@@ -270,7 +351,10 @@ async function runDelegateInner(
       return refused;
     }
     // Its own agent-bridge tools (answering the parent, report_progress) never need a question.
-    if (!r.automaticReview && (isOwnServerCall(r) || isAutoApproved(r, autoApprove))) return { allow: true };
+    if (!r.automaticReview && (isOwnServerCall(r) || isAutoApproved(r, autoApprove))) {
+      mcpAllowed(r);
+      return { allow: true };
+    }
     let d: PermissionDecision;
     if (wiring) d = await wiring.onPermission(r);
     else if (job && (!job.foreground || job.parentJob || job.ownershipHistory?.length) && rc.jobs) {
@@ -278,15 +362,18 @@ async function runDelegateInner(
       // the user away). A blocking ask_* caller cannot answer while it waits, so that one asks the user.
       // Name the allow_tools pattern that would cover this call, so the next spawn need not ask.
       const hint = approvalHint(r);
-      const a = await rc.jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS, r);
+      const jobs = rc.jobs;
+      const a = await askOnce(r, () => jobs.askParent(job, `${r.tool.replace(/^mcp:/, "MCP server ")}: ${r.detail}${hint}`, PARENT_APPROVAL_TIMEOUT_MS, r));
       d = a.allow ? { allow: true } : { allow: false, message: `Denied by supervisor ${me}: ${a.reason || "no reason supplied"}` };
-      asked.push(`${d.allow ? "allowed" : "denied"} by ${me}: ${r.tool} ${r.detail.slice(0, 80)}`);
-    } else if (askUser) {
+      asked.push(askedLine(r, d, a.reusedFrom, ` by ${me}`));
+    } else if (askUserOnce) {
       relayCalls++;
-      d = await askUser(r);
-      asked.push(`${d.allow ? "allowed" : "denied"}: ${r.tool} ${r.detail.slice(0, 80)}`);
+      const answer = await askUserOnce(r);
+      d = answer.decision;
+      asked.push(askedLine(r, d, answer.reusedFrom));
     } else d = r.tool.startsWith("mcp:") && access === "edit" ? { allow: true } : { allow: false, message: "No one to ask in this session." };
     if (d.allow && !r.automaticReview && r.tool.startsWith("mcp:")) allowedServers.add(r.tool);
+    if (d.allow) mcpAllowed(r);
     return d;
   });
   let feed: ReturnType<typeof startRunFeed>;
@@ -321,6 +408,8 @@ async function runDelegateInner(
     await relay?.stop();
     throw err;
   }
+  // A reused approval shows in the job's step log and live progress (AB-402).
+  reuseFeed.report = (line) => feed.report(line);
   // Live link: this session's messages reach the subagent while it works, and it can answer at once.
   let link: ParentLink | null = null;
   let siblingLink: SiblingLink | null = null;

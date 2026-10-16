@@ -1,6 +1,6 @@
 import { readBodyText } from "../core/http-body.js";
 import { describeToolInput, markerSafe } from "../core/approval-display.js";
-import { askRelay, boundedDetail, RELAY_URL_ENV, type PermissionRequest } from "../core/relay.js";
+import { askRelay, boundedDetail, RELAY_URL_ENV, requestIdentity, type PermissionRequest } from "../core/relay.js";
 
 /**
  * `PermissionRequest` hook (command type) for Codex and Claude Code subagents. Reads the hook input from stdin.
@@ -17,8 +17,15 @@ import { askRelay, boundedDetail, RELAY_URL_ENV, type PermissionRequest } from "
 const MCP_TOOL = /^mcp__(.+?)__(.+)$/;
 
 /**
+ * File-change tools: an approval is never reused for them (AB-402). Their input names the change, but whether the
+ * same change is safe again depends on the file's state, so each one is asked.
+ */
+export const FILE_CHANGE_TOOLS: ReadonlySet<string> = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "apply_patch"]);
+
+/**
  * The question text: the command or path, with security-relevant arguments marked first (AB-417). An MCP tool call
- * always shows its whole input as JSON (`mcp`), since every MCP argument is part of the request. Display only.
+ * always shows its whole input as JSON (`mcp`), since every MCP argument is part of the request. The approval identity
+ * uses the full tool input independently of this display text (AB-402).
  */
 function describe(toolInput: unknown, mcp: boolean): string {
   return describeToolInput(toolInput, { mcp });
@@ -30,9 +37,12 @@ export function hookRequest(agent: string, input: Record<string, unknown>): Perm
   const cwd = typeof input.cwd === "string" ? input.cwd : undefined;
   const mcp = MCP_TOOL.exec(tool);
   const detail = describe(input.tool_input, Boolean(mcp));
+  // AB-402: the identity covers every field of the tool input (a hidden flag such as dangerouslyDisableSandbox,
+  // run_in_background, timeout, workdir or an escalation request changes it), plus the tool's own name.
+  const exact = FILE_CHANGE_TOOLS.has(tool) ? { inexact: true } : { identity: requestIdentity({ tool_name: tool, tool_input: input.tool_input ?? null }) };
   // Never cut silently: a cut request carries its original length and is refused (AB-241).
-  if (mcp) return { agent, tool: `mcp:${mcp[1]}`, ...boundedDetail(markerSafe(`${mcp[2]}: ${detail}`)), cwd };
-  return { agent, tool, ...boundedDetail(detail), cwd };
+  if (mcp) return { agent, tool: `mcp:${mcp[1]}`, ...boundedDetail(markerSafe(`${mcp[2]}: ${detail}`)), cwd, ...exact };
+  return { agent, tool, ...boundedDetail(detail), cwd, ...exact };
 }
 
 async function readStdin(): Promise<string> {

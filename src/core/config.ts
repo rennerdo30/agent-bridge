@@ -64,9 +64,10 @@ export interface BridgeConfig {
   autoApproveTools: string[];
   /**
    * Spawned and asked jobs (AB-403). defaultAllowTools is the allow_tools of a job whose spawn_* / ask_* call
-   * passes none; an explicit list replaces it and an explicit [] turns it off. Home config only.
+   * passes none; an explicit list replaces it and an explicit [] turns it off. reuseIdenticalApprovals: an approval
+   * identical to one explicitly allowed earlier in the same job is reused (AB-402). Both home config only.
    */
-  jobs: { defaultAllowTools: string[] };
+  jobs: { defaultAllowTools: string[]; reuseIdenticalApprovals: boolean };
   /** Machine-wide named resource capacities, shared by all jobs using this home directory. */
   resourceSlots: Record<string, number>;
   delivery: DeliveryMode;
@@ -132,7 +133,7 @@ export const DEFAULT_CONFIG: BridgeConfig = {
   maxJobs: DEFAULT_MAX_JOBS,
   maxDelegateDepth: DEFAULT_MAX_DELEGATE_DEPTH,
   autoApproveTools: [],
-  jobs: { defaultAllowTools: ["pair-desk:worker"] },
+  jobs: { defaultAllowTools: ["pair-desk:worker"], reuseIdenticalApprovals: true },
   resourceSlots: {},
   delivery: "auto",
   claudeBin: DEFAULT_CLAUDE_BIN,
@@ -262,6 +263,17 @@ function jobDefaultAllowTools(sources: Record<string, unknown>[], log: Logger): 
   return undefined;
 }
 
+/** jobs.reuseIdenticalApprovals from the first home source that sets it to a boolean (AB-402). */
+function jobReuseIdenticalApprovals(sources: Record<string, unknown>[], log: Logger): boolean | undefined {
+  for (const source of sources) {
+    const jobs = source.jobs;
+    if (!isRecord(jobs) || jobs.reuseIdenticalApprovals === undefined) continue;
+    if (typeof jobs.reuseIdenticalApprovals === "boolean") return jobs.reuseIdenticalApprovals;
+    log.warn("ignoring invalid config value", { key: "jobs.reuseIdenticalApprovals", value: String(jobs.reuseIdenticalApprovals) });
+  }
+  return undefined;
+}
+
 /** How often a running session checks config.json for changes. */
 const CONFIG_POLL_MS = 2_000;
 
@@ -383,7 +395,10 @@ export function loadConfig(home: string, agent: AgentKind, log: Logger, env: Nod
     maxDelegateDepth: pick("maxDelegateDepth", ENV.maxDelegateDepth, (v) => parseIntInRange(v, 1, MAX_DELEGATE_DEPTH_LIMIT)) ?? d.maxDelegateDepth,
     autoApproveTools: pick("autoApproveTools", ENV.autoApproveTools, toolPatterns) ?? d.autoApproveTools,
     // Home config only (agent section, then top level); a project config cannot loosen approvals.
-    jobs: { defaultAllowTools: [...(jobDefaultAllowTools([section, file], log) ?? d.jobs.defaultAllowTools)] },
+    jobs: {
+      defaultAllowTools: [...(jobDefaultAllowTools([section, file], log) ?? d.jobs.defaultAllowTools)],
+      reuseIdenticalApprovals: jobReuseIdenticalApprovals([section, file], log) ?? d.jobs.reuseIdenticalApprovals,
+    },
     // Capacities must agree across agents; per-agent sections cannot override shared resources.
     resourceSlots: resourceSlots(file.resourceSlots) ?? d.resourceSlots,
     delivery: pick("delivery", ENV.delivery, (v) => oneOf(v, DELIVERY_MODES)) ?? d.delivery,
