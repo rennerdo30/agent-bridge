@@ -1,7 +1,7 @@
 {
   "base": "8deb0286773a6b61243caaae237e16227dc2f591",
   "methods": {
-    "src/core/broker.ts:constructor": "ff65f7716adae2dd8c157212c26983ec4201d1813b655f0458109fa587c702d2",
+    "src/core/broker.ts:constructor": "d10591980e1ed6b0cac2a60dba2b5e2288362fc79f0a795c9457587349fd3094",
     "src/core/broker.ts:listen": "bd39e0afecb5a74d76161f26d5923f2c1e41da8cc490ed1448a9260b850ce4b0",
     "src/core/broker.ts:startServices": "07bc9bdb56bea9ae2c5c3f0c89639469f7fa5ccfb0d8e5bc97fc1efbfd93fe2f",
     "src/core/broker.ts:abortStartup": "6132967fa78fd39cff064a581f4f49bb9c1c75b644fba78b291708c58733118c",
@@ -15,7 +15,7 @@
     "src/cli/dashboard.ts:ensure": "d19ca8a9485ccc07d588997e3497bc11545e730a264e9a6f59bf1ceb0dfcda49",
     "src/cli/dashboard.ts:close": "534d315c24ff13f59aa4082abf2fb66906e6bee9b979a6348979cbaef89ec7b4"
   },
-  "uiSha256": "1c24d9cb6ac04fdfe34896b7ed2342b835a72c9f793b908563353ccc7361f817",
+  "uiSha256": "c9d9206edd58137f774ee7fcdb1d851e5151dba2d623c2257f650f1cccabc435",
   "updates": {
     "AB-280": {
       "base": "00cbe6efced0293804ae0ea50bc4a9caef1d5a7b",
@@ -293,16 +293,30 @@
       "reason": "AB-399 (PR #94): the constructor's hello handler adds only `this.afterRegistration(c)` (a deferred dead-CLI check after the hello reply); Broker.close() adds only the liveness sweep timer clear. No mobile or other control-flow change; node.ts and dashboard pins, UI hash, normalizer and assertions are unchanged.",
       "commit": "e1ba9195"
     },
+    "AB-398-job-pause": {
+      "base": "7f5bb535",
+      "changes": [
+        {
+          "method": "src/core/broker.ts:constructor",
+          "previous": "75f6b310251fc0ae44703324697cb9e7fb3db84b59981e7926700bb4dcd4b662",
+          "current": "9da0f6ef412d832c1e840d6b0d7719332cb9ce9e3aa55c12904f38688cb4b2c1"
+        }
+      ],
+      "previousUiSha256": "1c24d9cb6ac04fdfe34896b7ed2342b835a72c9f793b908563353ccc7361f817",
+      "uiSha256": "c9d9206edd58137f774ee7fcdb1d851e5151dba2d623c2257f650f1cccabc435",
+      "reason": "AB-398 (PR #93, commits 6c3430d1, 5b2d91b0, e8e8aade): the Broker constructor's inlineJobControl handler accepts a \"pause\" control (its optional reason must be a string and is collapsed to one line and capped at 500 characters before relaying) and routes a job that is \"paused\" with pausePending like a running one (to its runner host, or to its connected inline executor); every other handler in the constructor is unchanged. startUi's /api/state adds only status, pauseReason and pausedAt to each stored job's saved-settings entry so the desktop dashboard can show paused jobs. No mobile route, mobile startup, mobile store or mobile admin code changes, and nothing under src/mobile or apps changes; mobile behaviour is unchanged. The other twelve method pins, the UI normalizer and the assertions are unchanged. Re-pinned on top of AB-400 (PR #92): startUi's /api/state job map keeps AB-400's `...(j.resultStored ? { resultStored: true } : {})` next to AB-398's status, pauseReason and pausedAt; no other change. Constructor re-pinned on top of AB-399 (PR #94): the pause handling is the only delta from AB-399's constructor; close() is unchanged.",
+      "commit": "e8e8aade"
+    },
     "AB-404-project-job-summaries": {
       "base": "4bde4d8a",
       "changes": [
         {
           "method": "src/core/broker.ts:constructor",
-          "previous": "75f6b310251fc0ae44703324697cb9e7fb3db84b59981e7926700bb4dcd4b662",
-          "current": "ff65f7716adae2dd8c157212c26983ec4201d1813b655f0458109fa587c702d2"
+          "previous": "9da0f6ef412d832c1e840d6b0d7719332cb9ce9e3aa55c12904f38688cb4b2c1",
+          "current": "d10591980e1ed6b0cac2a60dba2b5e2288362fc79f0a795c9457587349fd3094"
         }
       ],
-      "reason": "AB-404 (PR #95): the broker handler table now calls a private projectJobRecords method for projectJobs (same body, moved out of the constructor) and adds the projectJobSummaries op (slim, frame-bounded pages of the same records). Re-pinned on top of AB-399 after merging main: the constructor differs from main only by that move and the new op. No mobile, startup or close control-flow change; node.ts and dashboard pins, startUi hash, normalizer and assertions are unchanged, and the other mobile-wiring tests pass unchanged.",
+      "reason": "AB-404 (PR #95): the broker handler table now calls a private projectJobRecords method for projectJobs (same body, moved out of the constructor) and adds the projectJobSummaries op (slim, frame-bounded pages of the same records). Re-pinned on top of AB-398 (PR #93) after merging main: the constructor differs from main only by that move and the new op; AB-398's pause handling in inlineJobControl is kept unchanged. No mobile, startup or close control-flow change; node.ts and dashboard pins, startUi hash, normalizer and assertions are unchanged, and the other mobile-wiring tests pass unchanged.",
       "commit": "9b7b0a43"
     }
   },

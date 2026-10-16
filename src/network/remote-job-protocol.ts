@@ -42,6 +42,7 @@ const settingsSchema = z.record(z.string(), z.unknown());
 export const remoteControlSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("message"), body: z.string().min(1).max(MAX_BODY_CHARS), cid: z.uuid() }).strict(),
   z.object({ type: z.literal("cancel") }).strict(),
+  z.object({ type: z.literal("pause"), reason: z.string().max(500).optional() }).strict(),
   z.object({ type: z.literal("attach") }).strict(),
   z.object({ type: z.literal("title"), title: z.string().min(1).max(MAX_TITLE_CHARS) }).strict(),
   z.object({ type: z.literal("effort"), effort: z.string().regex(/^[A-Za-z0-9_-]{1,20}$/) }).strict(),
@@ -67,7 +68,7 @@ const worktreeSchema = z.object({ repoRoot: z.string(), path: z.string(), cwd: z
 export const remoteJobSnapshotSchema = z.object({
   usageTurn: z.string().min(1).max(100).optional(),
   alive: z.boolean(),
-  state: z.object({ pid: z.number().int().nonnegative(), peer: z.string().regex(NETWORK_NAME_PATTERN), status: z.enum(["running", "done", "failed", "cancelled"]), updatedAt: z.number().nonnegative(),
+  state: z.object({ pid: z.number().int().nonnegative(), peer: z.string().regex(NETWORK_NAME_PATTERN), status: z.enum(["running", "paused", "done", "failed", "cancelled"]), updatedAt: z.number().nonnegative(),
     usageSubmission: z.object({ runId: z.string().min(1).max(100).optional(), turnStartedAt: z.number().int().nonnegative(),
       pending: z.array(z.object({ cid: z.string().min(1).max(100), body: z.string().max(MAX_BODY_CHARS) })),
       queued: z.array(z.object({ cid: z.string().min(1).max(100), body: z.string().max(MAX_BODY_CHARS) })),

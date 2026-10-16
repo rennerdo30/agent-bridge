@@ -151,6 +151,7 @@ it("all parent controls and unsupported child transports refuse authenticated ch
     max_subagents: { count: 2 }, auto_wake: { enabled: true },
     set_job_outcome: { job: "job", state: "discarded" }, handoff_subagents: { to: "target" },
     message_subagent: { job: "job", message: "continue" }, cancel_subagent: { job: "job" },
+    pause_subagent: { job: "job", reason: "owner build" }, resume_subagent: { job: "job" },
     send_files: { to: "target", paths: ["fixture"] }, fetch_files: { from: "target", paths: ["fixture"] },
     cancel_transfer: { id: "11111111-1111-4111-8111-111111111111" }, dashboard: {},
     send_status: { message_id: "11111111-1111-4111-8111-111111111111" },

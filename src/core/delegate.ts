@@ -447,7 +447,7 @@ export const OPENCODE_READ_ONLY_TOOLS = {
   bridge_spawn_codex: true, bridge_spawn_claude: true, bridge_ask_codex: true, bridge_ask_claude: true,
   bridge_spawn_antigravity: true, bridge_ask_antigravity: true,
   bridge_spawn_muse: true, bridge_ask_muse: true,
-  bridge_message_subagent: true, bridge_cancel_subagent: true, bridge_inbox: true, bridge_wait_for_message: true,
+  bridge_message_subagent: true, bridge_cancel_subagent: true, bridge_pause_subagent: true, bridge_resume_subagent: true, bridge_inbox: true, bridge_wait_for_message: true,
 } as const;
 
 export function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {

@@ -339,6 +339,7 @@ function instructionsFor(agent: AgentKind, targets: CodingAgent[]): string {
     `"ask_<agent>" (${targets.map((x) => `ask_${x}`).join(", ")}) runs that agent headlessly for a one-off task and returns its answer; ` +
     `"spawn_<agent>" starts it as a background subagent whose result arrives later as a message (both accept any model id via "model"). ` +
     `"message_subagent" talks to one of those subagents like a native one: a running subagent gets the message while it works and answers right away (ask how far it is, or redirect it); a finished or failed one continues in its own session with its full context. ` +
+    `"pause_subagent" interrupts one job or all your jobs at a turn boundary without ending their sessions; "resume_subagent" continues those paused sessions. ` +
     `"usage_limits" shows how much of each agent's account limits is left, so you can pick who gets large work. ` +
     `Each subagent call takes a model ("model") and a thinking level ("effort", e.g. low/medium/high/xhigh); "list_models" shows what an agent accepts. ` +
     `"max_subagents" changes how many may run at once when your user asks. ` +
@@ -703,7 +704,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
     if (mailScopes && name !== "hook_event") spec = { ...spec, inputSchema: spec.inputSchema instanceof z.ZodObject
       ? spec.inputSchema.safeExtend(mailScopeSchema) : { ...spec.inputSchema as Record<string, unknown>, ...mailScopeSchema } };
     return node || SUBAGENT_TOOLS.has(name) || (ctx.jobs && (
-      name === "decide" || name === "message_subagent" || name === "cancel_subagent" || name === "inbox" || name === "wait_for_message" ||
+      name === "decide" || name === "message_subagent" || name === "cancel_subagent" || name === "pause_subagent" || name === "resume_subagent" || name === "inbox" || name === "wait_for_message" ||
       (currentDelegateDepth() < cfg.maxDelegateDepth && (name.startsWith("spawn_") || name.startsWith("ask_") || name === "list_models"))
     )) ? (mcp.registerTool as (...a: unknown[]) => unknown)(name, spec, ...rest) : undefined;
   }) as typeof mcp.registerTool;
@@ -1102,7 +1103,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
           siblings.length ? { header: "Sibling and explicitly granted jobs:", category: "siblings" }
             : { info: filtered ? "No sibling jobs match the filters." : "No sibling jobs are available right now." },
           ...sorted(sort, siblings, (s) => s.name).map((s) => ({ category: "siblings",
-            entry: `- ${s.name}${s.title ? ` "${s.title}"` : ""} (${s.agent}, ${s.status}${s.status !== "running" ? "; finished; will not answer" : ""})` })),
+            entry: `- ${s.name}${s.title ? ` "${s.title}"` : ""} (${s.agent}, ${s.status}${s.status === "paused" ? ` since ${new Date(s.pausedAt ?? Date.now()).toISOString()}; ${s.pauseReason ?? "supervisor request"}` : s.status !== "running" ? "; finished; will not answer" : ""})` })),
           { info: "Do not wait for finished siblings to reply. Use their final report or ask your parent for an explicit continuation. Use send(to=<sibling job name>, message=...) to coordinate directly. The supervisor can inspect copies on demand or in the dashboard." },
           ...sorted(sort, children, (j) => j.name).map((j) => ({ category: "children", entry: `Your child: ${j.name}${j.args?.title ? ` "${j.args.title}"` : ""} (${j.agent}, ${j.status})` })),
           ...(policy ? [{ info: `Sibling threads allow ${policy.maxHops} messages, including the first message. Incoming messages show replies remaining before you compose.` },
@@ -1165,7 +1166,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         for (const p of groupPeers.filter((p) => p.projectMain && p.projectRoute)) lines.push({ info: formatProjectRoute(p.projectRoute!) });
         if (sharedNote) lines.push({ info: sharedNote });
         if (visibleShared.length) lines.push({ header: "Project jobs (shared local authority):", category: "shared" },
-          ...sorted(sort, visibleShared, (j) => j.name).map((j) => ({ category: "shared", entry: `- ${j.name} (${j.agent}, ${j.status}; primary ${j.owner})${j.title ? ` \"${j.title}\"` : ""}` })));
+          ...sorted(sort, visibleShared, (j) => j.name).map((j) => ({ category: "shared", entry: `- ${j.name} (${j.agent}, ${j.status}; primary ${j.owner})${j.title ? ` \"${j.title}\"` : ""}${j.status === "paused" ? `; paused since ${new Date(j.pausedAt ?? Date.now()).toISOString()} (${j.pauseReason ?? "supervisor request"})` : ""}` })));
         if (transferNotes.size) {
           lines.push({ info: "Latest unread file-transfer progress (retained notes, not live status):" });
           for (const message of transferNotes.values()) lines.push({ info: `- ${message.body}` });
@@ -1174,7 +1175,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         if (jobs.length) {
           lines.push({ header: t("peers.jobs", { count: jobs.length }), category: "jobs" });
           for (const j of sorted(sort, jobs, (job) => job.name)) {
-            lines.push({ category: "jobs", entry: t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.etaAt !== undefined ? t("peers.eta", { minutes: Math.max(0, Math.ceil((j.etaAt - Date.now()) / 60_000)) }) + " · " : "") + (j.progress ?? "starting") }) });
+            lines.push({ category: "jobs", entry: j.status === "paused" ? `- ${j.name}: paused since ${new Date(j.pausedAt ?? Date.now()).toISOString()} (${j.pauseReason ?? "supervisor request"})` : t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.etaAt !== undefined ? t("peers.eta", { minutes: Math.max(0, Math.ceil((j.etaAt - Date.now()) / 60_000)) }) + " · " : "") + (j.progress ?? "starting") }) });
           }
         }
         if (waiting.length) {
@@ -1184,6 +1185,10 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         if (recent.length) {
           lines.push({ header: t("peers.recent"), category: "recent" });
           for (const j of sorted(sort, recent, (job) => job.name)) {
+            if (j.status === "paused") {
+              lines.push({ category: "recent", entry: `- ${j.name}: paused since ${new Date(j.pausedAt ?? Date.now()).toISOString()} (${j.pauseReason ?? "supervisor request"}); resume_subagent continues its session` });
+              continue;
+            }
             // The report text lives only in memory; the stored flag survives a restart.
             const delivery = j.report || j.resultStored ? "result stored; query peers(job=...) for delivery receipt" : null;
             lines.push({ category: "recent", entry: t("peers.recentJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), status: j.status + (delivery ? `; ${delivery}` : ""), ago: formatDuration(Date.now() - (j.finishedAt ?? Date.now())), session: j.sessionId ? "can be continued" : "no session" }) });
@@ -1977,6 +1982,51 @@ ${res.text || t("delegate.empty")}`, res.isError);
         t(`followUp.${outcome}`, { name: job?.name ?? a.job, max: jobs.limit, running: jobs.runningCount(), ahead: position > 1 ? ` (${position - 1} queued before it)` : "" }) + settingsNote + approvalNote + gateNote,
         outcome === "unknown" || outcome === "no-session" || outcome === "stopping" || outcome === "cancelled-before-start",
       );
+    }),
+  );
+
+  register(
+    "pause_subagent",
+    {
+      title: "Pause subagent",
+      description: "Pause one of your subagent jobs, or all of them, at a turn boundary. The same session and queued continuations are retained.",
+      inputSchema: {
+        job: z.string().min(1).optional().describe("One job name"),
+        all: z.boolean().optional().describe("True to pause all jobs of this supervisor"),
+        reason: z.string().max(500).optional(),
+      },
+    },
+    guarded("pause_subagent", async (a: { job?: string; all?: boolean; reason?: string }) => {
+      if (Boolean(a.job) === Boolean(a.all)) throw new BridgeError("bad_request", "Supply one job or all: true.");
+      const jobs = ctx.jobs;
+      if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
+      if (a.job && !await jobs.share(a.job)) throw new BridgeError("bad_request", `Unknown or unauthorized job ${a.job}.`);
+      if (a.all) {
+        const result = jobs.pauseAll(a.reason);
+        return text(JSON.stringify(result), result.failed.length > 0 && result.paused.length === 0);
+      }
+      jobs.pause(a.job!, a.reason);
+      return text(JSON.stringify({ paused: [a.job], failed: [] }));
+    }),
+  );
+
+  register(
+    "resume_subagent",
+    {
+      title: "Resume subagent",
+      description: "Resume one paused job, or all paused jobs of this supervisor, in each job's retained session.",
+      inputSchema: { job: z.string().min(1).optional(), all: z.boolean().optional() },
+    },
+    guarded("resume_subagent", async (a: { job?: string; all?: boolean }) => {
+      if (Boolean(a.job) === Boolean(a.all)) throw new BridgeError("bad_request", "Supply one job or all: true.");
+      const jobs = ctx.jobs;
+      if (!jobs) throw new BridgeError("bad_request", t("err.delegatedSession"));
+      if (a.job && !await jobs.share(a.job)) throw new BridgeError("bad_request", `Unknown or unauthorized job ${a.job}.`);
+      if (a.all) {
+        const result = jobs.resumeAll();
+        return text(JSON.stringify(result), result.failed.length > 0 && result.resumed.length === 0);
+      }
+      return text(JSON.stringify({ resumed: jobs.resumePaused(a.job!), failed: [] }));
     }),
   );
 

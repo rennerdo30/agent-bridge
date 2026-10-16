@@ -16,6 +16,9 @@ export interface ProjectJobSummary {
   workdir?: string;
   projectRoot?: string;
   finishedAt?: number;
+  /** AB-398: shown by `peers` while the job is paused. */
+  pausedAt?: number;
+  pauseReason?: string;
   /** The job's own agent session is known, so it can be continued. */
   hasSession: boolean;
   remote?: { host: string; name: string };
@@ -52,6 +55,9 @@ export function summarizeProjectJob(job: Record<string, unknown>): ProjectJobSum
   if (workdir !== undefined) summary.workdir = workdir;
   if (projectRoot !== undefined) summary.projectRoot = projectRoot;
   if (typeof job.finishedAt === "number") summary.finishedAt = job.finishedAt;
+  const pauseReason = str(job.pauseReason);
+  if (typeof job.pausedAt === "number") summary.pausedAt = job.pausedAt;
+  if (pauseReason !== undefined) summary.pauseReason = pauseReason;
   const host = str(remote?.host), remoteName = str(remote?.name);
   if (host !== undefined && remoteName !== undefined) summary.remote = { host, name: remoteName };
   return summary;

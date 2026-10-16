@@ -273,6 +273,9 @@ export function readMeta(file: string): RunMeta {
 export interface StoredJobView {
   owner: string | null;
   next: Record<string, unknown>;
+  status?: string;
+  pauseReason?: string;
+  pausedAt?: number;
   resultStored?: boolean;
   projectRoot?: string;
   remote?: { host: string; name: string };
@@ -309,6 +312,9 @@ function* storedJobViewSteps(home: string, jobs: Map<string, Record<string, unkn
     }
     out.set(name, {
       owner: typeof owner === "string" && owner ? owner : null,
+      ...(typeof j.status === "string" ? { status: j.status } : {}),
+      ...(typeof j.pauseReason === "string" ? { pauseReason: j.pauseReason } : {}),
+      ...(typeof j.pausedAt === "number" ? { pausedAt: j.pausedAt } : {}),
       ...(j.resultStored === true || typeof j.report === "string" || typeof runner?.report === "string" ? { resultStored: true } : {}),
       ...(typeof j.projectRoot === "string" ? { projectRoot: j.projectRoot } : {}),
       next: cloneJson(Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== undefined).map((key) => [key, saved[key]]))),
@@ -354,6 +360,7 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       const names = new Set(page.runs.flatMap((run) => run.job ? [run.job] : []));
       const selected = await selectHistoryJobsResponsive(ctx.home, names);
       const jobs = Object.fromEntries([...storedJobViews(ctx.home, selected)].map(([name, job]) => [name, { next: job.next,
+        status: job.status, pauseReason: job.pauseReason, pausedAt: job.pausedAt,
         ...(job.resultStored ? { resultStored: true } : {}), ...(job.remote ? { remote: job.remote } : {}) }]));
       return reply(200, { runs: page.runs, runsNext: page.next, runsTotal: page.total, jobs });
     }
