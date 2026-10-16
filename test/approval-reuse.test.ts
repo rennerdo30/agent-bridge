@@ -11,7 +11,8 @@ import { nullLogger } from "../src/core/logger.js";
 import { opencodePermissionRequest } from "../src/core/opencode-served.js";
 import type { PeerInfo } from "../src/core/protocol.js";
 import { answerPendingApproval, listPendingApprovals, requestIdentity, type PermissionDecision, type PermissionRequest } from "../src/core/relay.js";
-import { approvalIdentity, readOnlyJob } from "../src/mcp/approval-reuse.js";
+import { approvalIdentity, jobCanSpawn, mcpCallEffect, readOnlyJob } from "../src/mcp/approval-reuse.js";
+import { DELEGATE_DEPTH_ENV } from "../src/core/delegate.js";
 import * as worktree from "../src/core/worktree.js";
 import { runDelegate, type DelegateArgs, type RunContext } from "../src/mcp/delegate-run.js";
 import { tagApprovalOrigin, waitForApproval, type Job } from "../src/mcp/jobs.js";
@@ -39,8 +40,10 @@ beforeEach(() => {
   home = mkdtempSync(join(root, "reuse-"));
   repo = join(home, "repo");
   mkdirSync(repo);
+  // This process runs at delegate depth 0, whatever session started the test run.
+  vi.stubEnv(DELEGATE_DEPTH_ENV, "0");
 });
-afterEach(() => { vi.restoreAllMocks(); closeMetadataDb(home); rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
+afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); closeMetadataDb(home); rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); });
 
 type Answer = { allow: boolean; reason: string };
 let answerCount = 0;
@@ -52,8 +55,14 @@ const allowed = (by = "MCP decide"): Answer & { approvalId: string } => {
 };
 const denied = (): Answer => tagApprovalOrigin({ allow: false, reason: "deny: not now" }, { approvalId: approvalId(), by: "MCP decide" });
 
+/**
+ * Command grants are reused only in read-only jobs, and a job that can start subagents is never read-only (its child
+ * jobs may change files): the default context sets maxDelegateDepth to 1, so a job started here (depth 1) has no
+ * spawn tools, and the Codex approvals reviewer to "user" (auto_review is not read-only either). The tests of those
+ * rules change them.
+ */
 const context = (answers: Answer[]): RunContext => ({
-  agent: "claude", cfg: { ...DEFAULT_CONFIG }, home, log: nullLogger, me: () => "parent", cwd: () => repo,
+  agent: "claude", cfg: { ...DEFAULT_CONFIG, maxDelegateDepth: 1, codexApprovalsReviewer: "user" }, home, log: nullLogger, me: () => "parent", cwd: () => repo,
   jobs: { askParent: vi.fn(async () => answers.shift() ?? denied()), fromSubagent: vi.fn(), note: vi.fn() },
 });
 const job = (id = "test"): Job => ({ id, name: `codex-job-${id}`, agent: "codex", model: null, prompt: "task", startedAt: Date.now(), controller: new AbortController(), progress: null, status: "running", sessionId: null, workdir: null, worktree: null, queue: [] });
@@ -499,10 +508,154 @@ describe("identical approval reuse within a job (AB-402)", () => {
       expect(rc.jobs!.askParent).toHaveBeenCalledTimes(4);
     });
   });
+
+  describe("jobs that can reach files without a command approval (H1, M2, M3, L4)", () => {
+    /** A command grant planted directly, so a path that cannot coexist with one can still show that it ends it. */
+    const plant = (j: Job) => {
+      j.approvalGrants ??= { jobId: j.id, scope: "planted", grants: [] };
+      j.approvalGrants.grants.push({ identity: "planted", approvalId: "planted", by: "MCP decide", at: 0, command: true, reuses: 0 });
+    };
+    const commandGrants = (j: Job) => (j.approvalGrants?.grants ?? []).filter((grant) => grant.command).length;
+    const ownCall = (tool: string) => hook("claude", `mcp__plugin_agent-bridge_bridge__${tool}`, { prompt: "x" });
+
+    it("asks every command in a job that can start subagents (its delegate depth is below the limit)", async () => {
+      for (const [max, depth] of [[2, "0"], [3, "1"]] as const) {
+        vi.stubEnv(DELEGATE_DEPTH_ENV, depth);
+        const rc = context([allowed(), allowed()]);
+        rc.cfg.maxDelegateDepth = max;
+        const j = job();
+        expect(await turn(rc, j, [command("npm test"), command("npm test")])).toEqual([true, true]);
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
+        expect(j.approvalGrants?.grants ?? []).toEqual([]);
+      }
+      // At the limit the job has no spawn tools: the command is reused.
+      vi.stubEnv(DELEGATE_DEPTH_ENV, "1");
+      const rc = context([allowed(), allowed()]);
+      rc.cfg.maxDelegateDepth = 2;
+      expect(await turn(rc, job(), [command("npm test"), command("npm test")])).toEqual([true, true]);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(1);
+    });
+
+    it("drops the command grants on an own-server spawn or steering call and keeps none for the rest of the turn", async () => {
+      const rc = context(Array.from({ length: 4 }, () => allowed()));
+      const j = job();
+      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+        const ask = async (r: PermissionRequest) => expect((await req.approve!(r)).allow).toBe(true);
+        await ask(command("npm test"));
+        // Read and status tools of its own server keep the grant.
+        await ask(ownCall("send"));
+        await ask(ownCall("report_progress"));
+        await ask(command("npm test"));
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(1);
+        // spawn_* is allowed without a question, but a child job may change files.
+        await ask(ownCall("spawn_codex"));
+        expect(commandGrants(j)).toBe(0);
+        await ask(command("npm test"));
+        await ask(command("npm test"));
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
+        expect(commandGrants(j)).toBe(0);
+        return { sessionId: "saved", text: "done", isError: false, details: {} };
+      });
+      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+      // Codex names its own server "agent-bridge": message_subagent ends the grants the same way.
+      const steer: PermissionRequest = { agent: "codex", tool: "mcp:agent-bridge", detail: 'Allow the agent-bridge MCP server to run tool "message_subagent"?' };
+      const codex = context([allowed(), allowed()]);
+      expect(await turn(codex, job("steer"), [command("npm test"), steer, command("npm test")])).toEqual([true, true, true]);
+      expect(codex.jobs!.askParent).toHaveBeenCalledTimes(2);
+    });
+
+    it("is not read-only while a server other than the Pair Desk is allowed for the rest of the job", async () => {
+      const rc = context([allowed(), allowed()]);
+      const j = job();
+      j.allowedServers = new Set(["mcp:files"]);
+      expect(await turn(rc, j, [command("npm test"), command("npm test")])).toEqual([true, true]);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
+      // The Pair Desk server writes only to the desk.
+      const desk = context([allowed(), allowed()]);
+      const k = job("desk");
+      k.allowedServers = new Set(["mcp:plugin_agent-pair-programming_pair-desk"]);
+      expect(await turn(desk, k, [command("npm test"), command("npm test")])).toEqual([true, true]);
+      expect(desk.jobs!.askParent).toHaveBeenCalledTimes(1);
+    });
+
+    it("drops the command grants on an explicitly allowed MCP call with an exact identity (M3)", async () => {
+      const rc = context(Array.from({ length: 3 }, () => allowed()));
+      const lookup = hook("claude", "mcp__other__lookup", { query: "x" });
+      expect(approvalIdentity(lookup)).not.toBeNull();
+      expect(await turn(rc, job(), [command("npm test"), command("npm test"), lookup, command("npm test")])).toEqual([true, true, true, true]);
+      expect(rc.jobs!.askParent).toHaveBeenCalledTimes(3);
+    });
+
+    it("drops the command grants on an MCP call allowed through an allowed server, a reused grant or an allow pattern (M2)", async () => {
+      const rc = context([allowed()]);
+      const j = job();
+      const lookup = hook("claude", "mcp__other__lookup", { query: "x" });
+      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+        // Asked once: the call's grant is kept and its server is allowed for the rest of the job.
+        expect((await req.approve!(lookup)).allow).toBe(true);
+        // Through the allowed server, without a question.
+        plant(j);
+        expect((await req.approve!(lookup)).allow).toBe(true);
+        expect(commandGrants(j)).toBe(0);
+        // Through the reused grant of the identical call.
+        j.allowedServers?.clear();
+        plant(j);
+        expect((await req.approve!(lookup)).allow).toBe(true);
+        expect(commandGrants(j)).toBe(0);
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(1);
+        return { sessionId: "saved", text: "done", isError: false, details: {} };
+      });
+      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "read" }, j.controller.signal, undefined, true, j);
+      // Through an allow pattern; a Pair Desk call keeps the grants.
+      const auto = context([]);
+      const k = job("auto");
+      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+        plant(k);
+        expect((await req.approve!(hook("claude", "mcp__plugin_agent-pair-programming_pair-desk__comment", { id: 1 }))).allow).toBe(true);
+        expect(commandGrants(k)).toBe(1);
+        expect((await req.approve!(hook("claude", "mcp__files__write_file", { path: "a" }))).allow).toBe(true);
+        expect(commandGrants(k)).toBe(0);
+        return { sessionId: "saved", text: "done", isError: false, details: {} };
+      });
+      await runDelegate(auto, "codex", { title: "reuse", prompt: "task", access: "read", allow_tools: ["files.write_file", "pair-desk:worker"] }, k.controller.signal, undefined, true, k);
+      expect(auto.jobs!.askParent).not.toHaveBeenCalled();
+    });
+
+    it("never reuses a command in a Codex job whose approvals reviewer is auto_review (L4)", async () => {
+      for (const [cfgReviewer, argReviewer] of [["auto_review", undefined], ["user", "auto_review"]] as const) {
+        const rc = context([allowed(), allowed()]);
+        rc.cfg.codexApprovalsReviewer = cfgReviewer;
+        const j = job();
+        expect(await turn(rc, j, [command("npm test"), command("npm test")], argReviewer ? { approvals_reviewer: argReviewer } : {})).toEqual([true, true]);
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
+        expect(j.approvalGrants?.grants ?? []).toEqual([]);
+      }
+    });
+
+    it("ends the grants when the Codex approvals reviewer changes (L4)", async () => {
+      const rc = context([allowed(), allowed()]);
+      const j = job();
+      const lookup = hook("claude", "mcp__other__lookup", { query: "x" });
+      vi.spyOn(DELEGATION_TARGETS.codex, "run").mockImplementation(async (_cfg, req) => {
+        expect((await req.approve!(lookup)).allow).toBe(true);
+        j.allowedServers?.clear();
+        expect((await req.approve!(lookup)).allow).toBe(true);
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(1);
+        // An MCP grant does not depend on read-only settings: only the reviewer in its scope ends it here.
+        rc.cfg.codexApprovalsReviewer = "auto_review";
+        j.allowedServers?.clear();
+        expect((await req.approve!(lookup)).allow).toBe(true);
+        expect(rc.jobs!.askParent).toHaveBeenCalledTimes(2);
+        return { sessionId: "saved", text: "done", isError: false, details: {} };
+      });
+      await runDelegate(rc, "codex", { title: "reuse", prompt: "task", access: "edit" }, j.controller.signal, undefined, true, j);
+    });
+  });
 });
 
 describe("readOnlyJob", () => {
-  const ro = (target: string, permission: string, more: Partial<Parameters<typeof readOnlyJob>[0]> = {}) => readOnlyJob({ target, permission, allowPatterns: [], ...more });
+  const ro = (target: string, permission: string, more: Partial<Parameters<typeof readOnlyJob>[0]> = {}) =>
+    readOnlyJob({ target, permission, approvalsReviewer: target === "codex" ? "user" : undefined, allowPatterns: [], allowedServers: [], canSpawn: false, ...more });
   it("counts only settings in which the job writes nothing without asking", () => {
     expect(ro("codex", "read-only")).toBe(true);
     expect(ro("codex", "workspace-write")).toBe(false);
@@ -529,6 +682,48 @@ describe("readOnlyJob", () => {
     expect(ro("codex", "read-only", { allowPatterns: ["pair-desk.get_*", "files.*"] })).toBe(false);
     expect(ro("codex", "read-only", { allowPatterns: ["*"] })).toBe(false);
     expect(ro("codex", "read-only", { allowPatterns: ["pair-desk-evil.write"] })).toBe(false);
+  });
+  it("is never read-only when the job can start subagents (H1)", () => {
+    for (const [target, permission] of [["codex", "read-only"], ["claude", "default"], ["opencode", "read-only"], ["antigravity", "read"], ["muse", "read"]] as const) {
+      expect(ro(target, permission)).toBe(true);
+      expect(ro(target, permission, { canSpawn: true })).toBe(false);
+    }
+  });
+  it("is never read-only with a server other than the Pair Desk allowed for the rest of the job (M2)", () => {
+    expect(ro("codex", "read-only", { allowedServers: ["mcp:pair-desk", "mcp:plugin_agent-pair-programming_pair-desk"] })).toBe(true);
+    expect(ro("codex", "read-only", { allowedServers: ["mcp:pair-desk", "mcp:files"] })).toBe(false);
+    expect(ro("codex", "read-only", { allowedServers: ["mcp:pair-desk-evil"] })).toBe(false);
+    expect(ro("codex", "read-only", { allowedServers: ["pair-desk"] })).toBe(false);
+  });
+  it("requires the Codex approvals reviewer user (L4)", () => {
+    expect(ro("codex", "read-only", { approvalsReviewer: "auto_review" })).toBe(false);
+    expect(ro("codex", "read-only", { approvalsReviewer: undefined })).toBe(false);
+  });
+});
+
+describe("jobCanSpawn", () => {
+  it("follows the depth at which the job's bridge server registers spawn_*", () => {
+    expect(jobCanSpawn(1, { [DELEGATE_DEPTH_ENV]: "0" })).toBe(false);
+    expect(jobCanSpawn(2, { [DELEGATE_DEPTH_ENV]: "0" })).toBe(true);
+    expect(jobCanSpawn(2, { [DELEGATE_DEPTH_ENV]: "1" })).toBe(false);
+    expect(jobCanSpawn(3, { [DELEGATE_DEPTH_ENV]: "1" })).toBe(true);
+    // The limit is capped like the configuration caps it.
+    expect(jobCanSpawn(99, { [DELEGATE_DEPTH_ENV]: "2" })).toBe(false);
+  });
+});
+
+describe("mcpCallEffect", () => {
+  it("keeps grants for desk calls and own read or status tools, and ends them for anything else", () => {
+    expect(mcpCallEffect({ tool: "command", detail: "npm test" })).toBeNull();
+    expect(mcpCallEffect({ tool: "mcp:plugin_agent-pair-programming_pair-desk", detail: "comment: {}" })).toBe("keep");
+    expect(mcpCallEffect({ tool: "mcp:pair-desk", detail: 'Allow the pair-desk MCP server to run tool "progress"?' })).toBe("keep");
+    expect(mcpCallEffect({ tool: "mcp:other", detail: "lookup: {}" })).toBe("drop");
+    for (const tool of ["send", "report_progress", "peers", "inbox", "wait_for_message", "usage_limits"])
+      expect(mcpCallEffect({ tool: "mcp:plugin_agent-bridge_bridge", detail: `${tool}: {}` })).toBe("keep");
+    for (const tool of ["spawn_codex", "ask_claude", "message_subagent", "decide", "cancel_subagent"])
+      expect(mcpCallEffect({ tool: "mcp:plugin_agent-bridge_bridge", detail: `${tool}: {}` })).toBe("block");
+    expect(mcpCallEffect({ tool: "mcp:agent-bridge", detail: 'Allow the agent-bridge MCP server to run tool "spawn_codex"?' })).toBe("block");
+    expect(mcpCallEffect({ tool: "mcp:bridge", detail: "bridge_message_subagent: {}" })).toBe("block");
   });
 });
 
