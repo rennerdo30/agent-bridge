@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+// This file drives the PowerShell probe (the fallback path); the native host (AB-427) must not answer instead.
+vi.mock("../src/core/windows-process-identity.js", () => ({ readNativeIdentities: () => undefined, readNativeIdentitiesSync: () => undefined }));
 // Replace only the OS query this module issues; everything else stays the real implementation.
 const query = vi.hoisted(() => ({ results: [] as Array<string | Error>, calls: 0, hold: false, syncMs: 0, releases: [] as Array<() => void> }));
 const thread = vi.hoisted(() => ({ main: true, data: {} as Record<string, unknown> }));

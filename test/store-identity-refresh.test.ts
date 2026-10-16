@@ -14,6 +14,8 @@ import { primeRunnerProcessIdentities, runnerProcessAlive } from "../src/mcp/job
 import { JobManager, type Job, type RunnerState } from "../src/mcp/jobs.js";
 import { nullLogger } from "../src/core/logger.js";
 
+// This file drives the PowerShell probe (the fallback path); the native host (AB-427) must not answer instead.
+vi.mock("../src/core/windows-process-identity.js", () => ({ readNativeIdentities: () => undefined, readNativeIdentitiesSync: () => undefined }));
 // Keep the real implementation by default, including the existing native AB-362 query checks below.
 vi.mock("node:child_process", async original => {
   const actual = await original<typeof import("node:child_process")>();
