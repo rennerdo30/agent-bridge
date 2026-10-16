@@ -58,10 +58,26 @@ describe("Muse private host context", () => {
       setTimeout(() => releases.push(registerMuseContext(pid, { AGENT_BRIDGE_INTERNAL: "1", CODEX_HOME: "owned-host" })), 50);
       return { pid, ppid: process.pid, cmdline: "muse serve" };
     });
-    const restored = { MUSE_SESSION_ID: "native-session" };
+    // A Bridge-started host carries the delegation markers (childEnv) before its handoff is registered.
+    const restored = { MUSE_SESSION_ID: "native-session", AGENT_BRIDGE_INTERNAL: "1" };
     expect(await restoreMuseContext(restored)).toBe(true);
     expect(restored).toEqual({ MUSE_SESSION_ID: "native-session", AGENT_BRIDGE_INTERNAL: "1", CODEX_HOME: "owned-host" });
   });
+  it("treats a `muse serve` another client started (no delegation markers) as an interactive owner session", async () => {
+    const lookup = vi.spyOn(procinfo, "lookup").mockImplementation(async pid => ({ pid, ppid: 1, cmdline: '"C:\\Muse\\muse-bin-1.4.10-R6427.1.exe" serve --trust-workspace' }));
+    const restored: NodeJS.ProcessEnv = {};
+    const started = Date.now();
+    expect(await restoreMuseContext(restored)).toBe(false);
+    expect(restored).toEqual({});
+    expect(Date.now() - started).toBeLessThan(2_000); // no wait for a handoff that never comes
+    expect(lookup).toHaveBeenCalledOnce();
+  });
+  it("still fails closed for a delegation-marked `muse serve` whose handoff never arrives", async () => {
+    vi.spyOn(procinfo, "lookup").mockImplementation(async pid => ({ pid, ppid: 1, cmdline: "muse serve" }));
+    const restored: NodeJS.ProcessEnv = { AGENT_BRIDGE_DELEGATE_DEPTH: "1" };
+    expect(await restoreMuseContext(restored)).toBe(false);
+    expect(restored.AGENT_BRIDGE_INTERNAL).toBe("1");
+  }, 15_000);
   it("refuses unknown sanitized ancestry even when a session ID is supplied", async () => {
     expect(await restore()).toEqual({ restored: false, env: { MUSE_SESSION_ID: "native-session", AGENT_BRIDGE_INTERNAL: "1" } });
   });
