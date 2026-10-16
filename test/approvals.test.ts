@@ -35,8 +35,9 @@ describe("Claude subagent permission prompts", () => {
       cwd: "/w",
     });
     expect(hookRequest("claude", { tool_name: "Bash", tool_input: { command: "git init x" } })).toEqual({ agent: "claude", tool: "Bash", detail: "git init x", cwd: undefined });
-    // Codex permission hooks use the same MCP tool naming convention.
-    expect(hookRequest("codex", { tool_name: "mcp__s__t", tool_input: { command: "ls" } })).toMatchObject({ tool: "mcp:s", detail: "t: ls" });
+    // Codex permission hooks use the same MCP tool naming convention. An MCP call shows its whole input as JSON,
+    // even with a `command` argument (AB-417 review): every MCP argument is part of the request.
+    expect(hookRequest("codex", { tool_name: "mcp__s__t", tool_input: { command: "ls" } })).toMatchObject({ tool: "mcp:s", detail: 't: {"command":"ls"}' });
   });
 
   it("reach the parent's decision through the relay, a denial with its reason", async () => {
