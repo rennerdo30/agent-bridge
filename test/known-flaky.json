@@ -216,6 +216,60 @@
       "added": "2026-10-16",
       "recheckBy": "2026-10-23",
       "seen": "Windows Node 24 shard 4/6, Ubuntu Node 24 (main run 38856603889, run 38849251187); AB325 lifecycle macOS Node 24"
+    },
+    {
+      "file": "test/daemon-lifecycle.test.ts",
+      "test": "standalone demand-start broker > default UI sender hosts an embedded broker and HTTP data cannot opt into the daemon",
+      "issue": "AB-410",
+      "owner": "muse-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-21",
+      "seen": "Windows Node 22 shard 5/6 (main run 38870273983): undici TimeoutError at daemon-lifecycle.test.ts:452; passed locally"
+    },
+    {
+      "file": "test/job-run-index.test.ts",
+      "test": "uses durable exact lookups after reopen while an unrelated catalog dependency remains stalled",
+      "issue": "AB-410",
+      "owner": "muse-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-21",
+      "seen": "macOS Node 22 (main run 38870273983): expected null to match object; passed locally in test/job-run-index.test.ts (49 tests in 2 files)"
+    },
+    {
+      "file": "test/broker-queue-expiry-contention.test.ts",
+      "test": "defers a combined availability/session/rename replay until final-name expiry finishes",
+      "issue": "AB-410",
+      "owner": "muse-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-22",
+      "seen": "Windows Node 24 shard 6/6 (main run 38871941394): BridgeError database is locked at src/core/client.ts:237 (AB-361 family)"
+    },
+    {
+      "file": "test/remote-jobs.test.ts",
+      "test": "remote jobs with two paired TLS brokers > starts remotely, applies follow-up settings, returns results, logs on both PCs and shows remote dashboard runs",
+      "issue": "AB-410",
+      "owner": "muse-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-22",
+      "seen": "Windows Node 24 shard 5/6 (main run 38873872600): expected false to be true at remote-jobs.test.ts:566"
+    },
+    {
+      "file": "test/jobs-archive-persist.test.ts",
+      "test": "does not republish unchanged persisted records across ten sessions; retains changed accepted bytes",
+      "issue": "AB-410",
+      "owner": "muse-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-23",
+      "seen": "Windows Node 24 shard 6/6 (main run 38873872600): test timed out in 120000ms; passed locally"
+    },
+    {
+      "file": "test/job-runner.test.ts",
+      "test": "background subagents in job runners > cancel_subagent then message_subagent continues the same worktree and archives its lease",
+      "issue": "AB-410",
+      "owner": "muse-claude-codex-comm",
+      "added": "2026-10-16",
+      "recheckBy": "2026-10-23",
+      "seen": "Windows Node 24 shard 3/6 (main run 38873872600): expected message to contain 'fake answer: finished' at job-runner.test.ts:437"
     }
   ]
 }
