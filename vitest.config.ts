@@ -21,5 +21,8 @@ export default defineConfig({
     hookTimeout: TEST_TIMEOUT_MS,
     // Never inherit the parent link of a subagent that runs the suite.
     setupFiles: ["./test/setup-env.ts"],
+    // Applies test/known-flaky.json: listed tests are skipped here and run in the
+    // non-blocking known-flaky lane (AGENT_BRIDGE_KNOWN_FLAKY=only). See CONTRIBUTING.md.
+    runner: "./scripts/known-flaky-runner.mjs",
   },
 });
