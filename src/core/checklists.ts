@@ -69,10 +69,10 @@ const prepared = new WeakSet<DatabaseSync>();
 
 const bad = (message: string): never => { throw new BridgeError("bad_request", message); };
 
-/** One line of plain text: control, line and bidi-override characters become spaces; whitespace collapses. */
+/** One line of plain text: control, format (zero-width, bidi marks and overrides, BOM) and line separator characters become spaces; whitespace collapses. */
 export function sanitizeChecklistText(value: string): string {
   // eslint-disable-next-line no-control-regex
-  return value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, " ").replace(/\s+/g, " ").trim();
+  return value.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, " ").replace(/\s+/g, " ").trim();
 }
 function cleanText(value: string, what: string, max: number, allowEmpty = false): string {
   const text = sanitizeChecklistText(String(value ?? ""));
@@ -232,6 +232,7 @@ export function superviseJobChecklist(home: string, job: string, change: Supervi
     const current = () => jobRows(db, job);
     const changeable = (i: ChecklistItem) => ACTIVE.has(i.status) || i.status === "proposed";
     for (const edit of change.edit ?? []) {
+      if (edit.text === undefined && edit.required === undefined) bad(`Edit of ${edit.id} changes nothing: give text, required or both.`);
       const [item] = requireIds(current(), [edit.id], changeable, "edited");
       set(item!.id, { ...(edit.text !== undefined ? { text: cleanText(edit.text, "A checklist item", CHECKLIST_LIMITS.text) } : {}), ...(edit.required !== undefined ? { required: edit.required ? 1 : 0 } : {}) });
     }
@@ -320,7 +321,8 @@ export function checklistBrief(items: readonly ChecklistItem[], toolAvailable: b
       "Skip a required item only with a note saying why. Marking an item blocked notifies your supervisor; other ticks are quiet. " +
       `If an item is missing, propose it: ${PROPOSE_CALL}; it joins only when your supervisor approves. You cannot add, delete or un-require items. `
     : "The checklist tool is not available in this run: report each item's state in your final message. ";
-  return `(agent-bridge checklist: your supervisor tracks this task with the checklist below. ${how}` +
+  const changes = toolAvailable ? "Your supervisor may change the list while you work: call checklist() to see changes. " : "";
+  return `(agent-bridge checklist: your supervisor tracks this task with the checklist below. ${how}${changes}` +
     `Required items still open when you finish mark your result incomplete; it is reported, not blocked.\n${formatChecklist(items)})`;
 }
 

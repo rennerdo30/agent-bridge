@@ -1,15 +1,18 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { DEFAULT_CONFIG } from "../src/core/config.js";
 import { nullLogger } from "../src/core/logger.js";
-import { closeMetadataDb } from "../src/core/metadata-db.js";
+import { closeMetadataDb, metadataDb } from "../src/core/metadata-db.js";
+import { BridgeNode } from "../src/core/node.js";
+import { loadOrCreateToken } from "../src/core/token.js";
 import { ParentLink, parentFromEnv, type ParentClient } from "../src/core/parent-link.js";
 import { CODING_AGENTS } from "../src/core/protocol.js";
 import {
   changeProjectChecklist, checklistReport, CHECKLIST_LIMITS, projectChecklistKey, readJobChecklist, readProjectChecklist,
-  seedJobChecklist,
+  sanitizeChecklistText, seedJobChecklist, superviseJobChecklist,
 } from "../src/core/checklists.js";
 import { runDelegate, type DelegateArgs, type RunContext } from "../src/mcp/delegate-run.js";
 import type { Job } from "../src/mcp/jobs.js";
@@ -32,17 +35,24 @@ const textOf = (result: any): string => result.content.map((c: { text: string })
 const job = (name = JOB): Job => ({ id: name.slice(-8), name, agent: "codex", model: null, prompt: "task", startedAt: Date.now(), controller: new AbortController(),
   progress: null, status: "running", sessionId: null, workdir: null, worktree: null, queue: [], args: { title: "Checklist fixture" } } as Job);
 
-let env: TestEnv, home: string, project: string;
+let env: TestEnv, home: string, project: string, nodes: BridgeNode[];
 beforeEach(() => {
-  env = makeEnv(); home = env.home;
+  env = makeEnv(); home = env.home; nodes = [];
   project = join(home, "repo"); mkdirSync(project, { recursive: true });
 });
-afterEach(async () => { vi.unstubAllEnvs(); vi.restoreAllMocks(); closeMetadataDb(home); await env.cleanup(); });
+afterEach(async () => { vi.unstubAllEnvs(); vi.restoreAllMocks(); await Promise.all(nodes.map(n => n.stop().catch(() => {}))); closeMetadataDb(home); await env.cleanup(); });
+
+/** A session registered on the bridge in a project folder. */
+async function session(name: string, cwd = project) {
+  const node = new BridgeNode({ pipePath: env.pipe, token: loadOrCreateToken(home), dbPath: env.db, agent: "claude", name, cwd, autoWake: false, log: nullLogger });
+  nodes.push(node);
+  await node.setSessionId(`${name}-session`); await node.start();
+  return node;
+}
 
 /** The supervisor's own MCP server, with a fake job manager owning one job. */
 async function supervisor(owned: Job = job()) {
-  const node = env.node("claude-parent");
-  await node.setSessionId("parent-session"); await node.start();
+  const node = await session("claude-parent");
   const start = vi.fn((..._args: unknown[]) => owned);
   const ctx: ServerContext = { agent: "claude", node, home, cfg: { ...DEFAULT_CONFIG }, log: nullLogger, cwd: () => project, channelActive: () => false,
     jobs: { start, persist: vi.fn(), limit: 3, list: () => [owned], waiting: () => [], recent: () => [], limitWait: () => null,
@@ -272,7 +282,7 @@ describe("AB-428 job checklists", () => {
     expect(master).toMatch(/incomplete/i);
     const project = describe(s.specs.get("project_checklist"));
     expect(project).toMatch(/definition of done added to every job/i);
-    expect(project).toMatch(/only the project main or the owner/i);
+    expect(project).toMatch(/only the project main changes it \(or the owner through the main\)/i);
     const arg = String(schema(s.specs.get("spawn_codex")).shape.checklist.description);
     expect(arg).toMatch(/only with a note/i);
     expect(arg).toMatch(/cannot add items but proposes them/i);
@@ -283,6 +293,74 @@ describe("AB-428 job checklists", () => {
     expect(instructions).toContain('give a subagent a checklist when you spawn it ("checklist" on spawn_*/ask_*)');
     expect(instructions).toContain('answer its proposals and blocked items with "job_checklist"');
     expect(instructions).toContain('tick items with "checklist" as you go, propose missing items instead of adding them, and report blocked items');
+  });
+
+  it("project_checklist writes need the registered project's main; refused for a non-main member, an unregistered session and a cwd mismatch", async () => {
+    const main = await supervisor();
+    const member = await session("claude-member");
+    const memberTools = tools({ agent: "claude", node: member, home, cfg: { ...DEFAULT_CONFIG }, log: nullLogger, cwd: () => project, channelActive: () => false });
+    expect((await main.call("project_checklist", { add: [{ text: "Main item" }] })).isError).not.toBe(true);
+    const notMain = await memberTools.call("project_checklist", { add: [{ text: "Member item" }] });
+    expect(notMain.isError).toBe(true); expect(textOf(notMain)).toMatch(/Only the project main/);
+    // A session missing from peers has no registered project: refused, even with a matching folder.
+    const missing = vi.spyOn(main.ctx.node!, "peers").mockResolvedValue([]);
+    const unregistered = await main.call("project_checklist", { add: [{ text: "Unregistered item" }] });
+    expect(unregistered.isError).toBe(true); expect(textOf(unregistered)).toMatch(/not registered/);
+    missing.mockRestore();
+    // A reported folder that is not the registered project never redirects or authorizes a write.
+    const elsewhere = join(home, "elsewhere"); mkdirSync(elsewhere);
+    const mismatched = tools({ ...main.ctx, claudeMailScopes: undefined, cwd: () => elsewhere });
+    const mismatch = await mismatched.call("project_checklist", { add: [{ text: "Mismatch item" }] });
+    expect(mismatch.isError).toBe(true); expect(textOf(mismatch)).toMatch(/differ/);
+    expect(readProjectChecklist(home, projectChecklistKey(elsewhere)!)).toEqual([]);
+    expect(readProjectChecklist(home, projectChecklistKey(project)!).map(i => i.text)).toEqual(["Main item"]);
+    // Reads use the registered project too.
+    expect(textOf(await mismatched.call("project_checklist", {}))).toContain('"Main item"');
+    // With project groups off for the project, the session registered in its folder may change it.
+    const peers = await member.peers();
+    vi.spyOn(member, "peers").mockResolvedValue(peers.map(p => ({ ...p, projectGroup: undefined, projectMain: false })));
+    expect((await memberTools.call("project_checklist", { add: [{ text: "Groups off item" }] })).isError).not.toBe(true);
+    expect(readProjectChecklist(home, projectChecklistKey(project)!).map(i => i.text)).toEqual(["Main item", "Groups off item"]);
+    expect(String(main.specs.get("project_checklist").description)).toMatch(/with project groups off for the project, the session registered in that project folder changes it/);
+  });
+
+  it("refuses an edit that changes nothing with a clear error", () => {
+    seedJobChecklist(home, JOB, [{ text: "Step" }], null, "claude-parent");
+    expect(() => superviseJobChecklist(home, JOB, { edit: [{ id: "c1" }] }, "claude-parent")).toThrow(/changes nothing: give text, required or both/);
+    expect(readJobChecklist(home, JOB)[0]).toMatchObject({ text: "Step", required: true });
+  });
+
+  it("tells non-hook agents to call checklist() for changes; job_checklist says which jobs are told", async () => {
+    const s = await supervisor();
+    expect(String(s.specs.get("job_checklist").description)).toMatch(/A running Claude or Codex job is told at its next step \(hook\); other agents see the change when they next call checklist\(\)/);
+    seedJobChecklist(home, JOB, [{ text: "Step" }], null, "claude-parent");
+    const j = jobServer(quietParent());
+    expect(textOf(await j.call("checklist", {}))).toContain("call checklist() to see changes");
+    const { prompt } = await delegatedTurn(job());
+    expect(prompt).toContain("call checklist() to see changes");
+  });
+
+  it("strips format characters (zero-width, bidi marks, BOM) from item text", () => {
+    const text = "a\u200Bb\u200Dc\u200Ed\u200Fe\u061Cf\uFEFFg\u2066h\u00ADi";
+    expect(sanitizeChecklistText(text)).not.toMatch(/\p{Cf}/u);
+    expect(sanitizeChecklistText(text)).toBe("a b c d e f g h i");
+    seedJobChecklist(home, JOB, [{ text }], null, "claude-parent");
+    expect(readJobChecklist(home, JOB)[0]!.text).not.toMatch(/\p{Cf}/u);
+  });
+
+  it("includes the checklist tables in the metadata migration snapshot", () => {
+    const store = join(home, "snapshot-home"); mkdirSync(store);
+    const old = new DatabaseSync(join(store, "bridge.db"));
+    old.exec("CREATE TABLE job_checklist(job TEXT, id TEXT, PRIMARY KEY(job, id)); INSERT INTO job_checklist VALUES ('codex-job-x', 'c1');");
+    old.exec("CREATE TABLE project_checklist(project TEXT, id TEXT, PRIMARY KEY(project, id));");
+    old.close();
+    try {
+      metadataDb(store);
+      const dir = join(store, ".migration-snapshots"), manifest = readdirSync(dir).find(f => f.endsWith(".manifest.json"))!;
+      const tables = JSON.parse(readFileSync(join(dir, manifest), "utf8")).tables as { name: string; rows: number; existed: boolean }[];
+      expect(tables).toContainEqual(expect.objectContaining({ name: "job_checklist", rows: 1, existed: true }));
+      expect(tables).toContainEqual(expect.objectContaining({ name: "project_checklist", rows: 0, existed: true }));
+    } finally { closeMetadataDb(store); }
   });
 
   it("remote jobs refuse an explicit checklist: checklists are local-only", async () => {

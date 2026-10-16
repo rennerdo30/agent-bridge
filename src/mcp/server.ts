@@ -2138,7 +2138,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       description:
         "Read or change the checklist of one of your subagent jobs (see the checklist argument of spawn_*/ask_*). Without changes it returns the list. " +
         "Use it to answer a job's checklist proposals (approve or reject; until then they stay proposed), to react to a blocked item, or to change the plan mid-run: " +
-        "add items, edit text, require or unrequire, close items that no longer apply. A running job sees the change at its next step. " +
+        "add items, edit text, require or unrequire, close items that no longer apply. A running Claude or Codex job is told at its next step (hook); other agents see the change when they next call checklist(). " +
         "The job itself only ticks items (a required one is skipped only with a note) and proposes new ones; blocked items and proposals reach you like a job question. Required items still open when it finishes mark its result incomplete. " +
         "Changes in one call apply together or not at all; nothing is deleted (closed and rejected items stay in the record). Only the job's supervisor can call it.",
       inputSchema: {
@@ -2167,7 +2167,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
       const summary = checklistSummary(items);
       return text([`${changing ? "Checklist updated" : "Checklist"} of ${job.name}: ${summaryText(summary)}${summary.requiredOpen ? `; ${summary.requiredOpen} required open` : ""}.`,
         formatChecklist(items, true),
-        changing && job.status === "running" ? "The running job sees the change at its next step." : ""].filter(Boolean).join("\n"));
+        changing && job.status === "running" ? (job.agent === "claude" || job.agent === "codex" ? "The running job is told at its next step." : "The running job sees the change when it next calls checklist().") : ""].filter(Boolean).join("\n"));
     }),
   );
 
@@ -2179,7 +2179,7 @@ ${res.text || t("delegate.empty")}`, res.isError);
         "Read or change this project's checklist: the definition of done added to every job started in this project (unless the spawn passes checklist \"none\"). " +
         "Use it for steps every job must do, such as running the focused tests or updating the changelog. set replaces the list, add appends, remove takes items out (kept in the record). " +
         "Its required items count like the supervisor's: still open when a job finishes, they mark the result incomplete. " +
-        "Only the project main or the owner changes it; any session can read it. Jobs that already started keep their own copy.",
+        "The project is the one this session is registered with on the bridge. Only the project main changes it (or the owner through the main); with project groups off for the project, the session registered in that project folder changes it. Any session can read it. Jobs that already started keep their own copy.",
       inputSchema: {
         get: z.boolean().optional().describe("Return the list (the default when nothing changes)"),
         set: z.array(checklistItemSchema).max(CHECKLIST_LIMITS.projectItems).optional().describe("Replace the whole list; [] empties it"),
@@ -2189,12 +2189,18 @@ ${res.text || t("delegate.empty")}`, res.isError);
     },
     guarded("project_checklist", async (a: { get?: boolean; set?: ChecklistInput[]; add?: ChecklistInput[]; remove?: string[] }) => {
       const n = requireNode();
-      const key = projectChecklistKey(ctx.cwd());
+      // The project is the one this session is registered with, never a folder the caller merely reports.
+      const peers = await n.peers();
+      const self = peers.find((p) => p.id === n.id);
+      if (!self) throw new BridgeError("bad_request", "This session is not registered on the bridge yet; the project checklist needs its registered project. Retry once it is connected.");
+      const key = projectChecklistKey(self.cwd);
       if (!key) throw new BridgeError("bad_request", "This session has no project folder.");
       const changing = Boolean(a.set || a.add || a.remove);
       if (changing) {
-        const self = (await n.peers()).find((p) => p.id === n.id);
-        if (self?.projectGroup && !self.projectMain) throw new BridgeError("bad_request", "Only the project main or the owner changes the project checklist. Ask the project main.");
+        if (projectChecklistKey(ctx.cwd()) !== key) throw new BridgeError("bad_request", "This session's working folder and its registered project differ; the project checklist was not changed.");
+        // A project group for this key: only its main changes the list. Groups off: the session registered in the folder does.
+        const grouped = peers.some((p) => p.projectGroup === key);
+        if (grouped && !(self.projectGroup === key && self.projectMain)) throw new BridgeError("bad_request", "Only the project main changes the project checklist (the owner through the main). Ask the project main.");
       }
       const items = changing ? changeProjectChecklist(ctx.home, key, a, n.name) : readProjectChecklist(ctx.home, key);
       return text([`Project checklist of ${key} (${items.length} item(s))${changing ? ", updated" : ""}. New jobs in this project start with it.`,
@@ -2244,7 +2250,8 @@ ${res.text || t("delegate.empty")}`, res.isError);
         const items = readJobChecklist(ctx.home, jobName);
         if (!items.length) return text("You have no checklist for this task.");
         const changed = Boolean(a.update?.length || a.propose?.length);
-        const lines = [`${changed ? "Checklist updated" : "Nothing changed"}. Progress: ${summaryText(checklistSummary(items))}.`, formatChecklist(items)];
+        const lines = [`${changed ? "Checklist updated" : "Nothing changed"}. Progress: ${summaryText(checklistSummary(items))}.`, formatChecklist(items),
+          "Your supervisor may change the list while you work: call checklist() to see changes."];
         if (blocked.length || proposed.length) {
           // Blocked items and proposals reach the supervisor like a job question (same routing and wake-up).
           const body = [`Checklist of ${jobName}:`,
