@@ -1,8 +1,13 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, it, vi } from "vitest";
-import { deliverFinalResult, readStoredFinalResult, resultDeliveryLabel, type StoredFinalResult } from "../src/mcp/final-result.js";
+import { deliverFinalResult, PERMANENT_DELIVERY_CODES, readJobReport, readStoredFinalResult, resultDeliveryLabel, type StoredFinalResult } from "../src/mcp/final-result.js";
 import { writeRunnerState } from "../src/mcp/job-host.js";
-import { JobManager, type Job, type RunnerState } from "../src/mcp/jobs.js";
+import { deliverWithRetry, inSendOrder } from "../src/mcp/job-runner.js";
+import { JobManager, readStore, type Job, type RunnerState } from "../src/mcp/jobs.js";
 import { nullLogger } from "../src/core/logger.js";
+import { BridgeError } from "../src/core/protocol.js";
+import { JOBS_FILE } from "../src/core/constants.js";
 import { makeEnv, until } from "./helpers.js";
 
 const report = "Subagent codex-job-12345678 done after 1s.\n\nFinal review";
@@ -134,5 +139,78 @@ it("clears a stored report when a new turn starts", async () => {
     expect(job).toMatchObject({ status: "running" });
     expect(job.report).toBeUndefined();
     expect(job.finishedAt).toBeUndefined();
+  } finally { jobs.cancelAll(); await env.cleanup(); }
+});
+
+it("persists and sends a cancelled turn's report even when the signal it is given is already aborted", async () => {
+  const aborted = new AbortController(); aborted.abort();
+  const persist = vi.fn();
+  const send = vi.fn().mockResolvedValue({ stored: true });
+  await deliverFinalResult(initial(), persist, send, async () => {}, aborted.signal);
+  expect(persist).toHaveBeenNthCalledWith(1, initial());
+  expect(send).toHaveBeenCalledWith(report, "turn-one");
+  expect(persist.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
+  expect(persist).toHaveBeenLastCalledWith({ ...initial(), delivered: true });
+});
+
+it("still sends best-effort with the same completion ID when durable storage stays locked", async () => {
+  const locked = Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
+  const persist = vi.fn(() => { throw locked; });
+  const send = vi.fn().mockResolvedValue({ stored: true });
+  const waits: number[] = [];
+  await deliverFinalResult(initial(), persist, send, async ms => { waits.push(ms); });
+  expect(persist).toHaveBeenCalledTimes(7);
+  expect(waits).toEqual([1_000, 2_000, 4_000, 8_000, 16_000]);
+  expect(send).toHaveBeenCalledTimes(1);
+  expect(send).toHaveBeenCalledWith(report, "turn-one");
+});
+
+it("hands a permanent refusal to the session fallback at once through the real ordered retry path", async () => {
+  const brokerSend = vi.fn<(body: string) => Promise<{ messages: { id: string }[] }>>()
+    .mockRejectedValueOnce(new BridgeError("unauthorized", "Job ownership is unavailable."))
+    .mockResolvedValue({ messages: [{ id: "later" }] });
+  const inOrder = inSendOrder((body: string, final: boolean) =>
+    deliverWithRetry(() => brokerSend(body), nullLogger, "owner", final ? 1 : 30, final ? PERMANENT_DELIVERY_CODES : undefined));
+  const wait = vi.fn(async () => {});
+  let saved = initial();
+  await deliverFinalResult(saved, state => { saved = state; }, async body => {
+    const result = await inOrder(body, true);
+    return result && { stored: result.messages.length > 0 };
+  }, wait);
+  expect(brokerSend).toHaveBeenCalledTimes(1);
+  expect(wait).not.toHaveBeenCalled();
+  expect(saved).toEqual(initial());
+  // The refused final send never blocks later mail in the same order.
+  expect(await inOrder("later note", false)).toEqual({ messages: [{ id: "later" }] });
+});
+
+it("bounds transient final-result attempts on the real retry path so the fallback starts promptly", async () => {
+  const brokerSend = vi.fn<() => Promise<{ messages: { id: string }[] }>>().mockRejectedValue(new Error("broker request timed out: send"));
+  const inOrder = inSendOrder(() => deliverWithRetry(() => brokerSend(), nullLogger, "owner", 1, PERMANENT_DELIVERY_CODES));
+  const waits: number[] = [];
+  await deliverFinalResult(initial(), () => {}, async () => {
+    const result = await inOrder();
+    return result && { stored: true };
+  }, async ms => { waits.push(ms); });
+  expect(brokerSend).toHaveBeenCalledTimes(6);
+  expect(waits).toEqual([1_000, 2_000, 4_000, 8_000, 16_000]);
+});
+
+it("keeps only the report location in jobs.json and serves the text from the message store", async () => {
+  const env = makeEnv();
+  const node = env.node("claude-report-location", "claude");
+  await node.start();
+  const store = join(env.home, JOBS_FILE);
+  const jobs = new JobManager(node, nullLogger, store);
+  try {
+    const job = jobs.start("codex", null, "review", async () => ({ sessionId: "located", text: "Located final review", isError: false, details: {} }));
+    await until(() => node.unread().some(m => m.body.includes("Located final review")));
+    const saved = readStore(store).find(j => j.id === job.id)!;
+    expect(saved).toMatchObject({ status: "done", resultStored: true, reportId: expect.any(String) });
+    expect(saved).not.toHaveProperty("report");
+    expect(JSON.parse(readFileSync(store, "utf8")).jobs.find((j: { id: string }) => j.id === job.id)).not.toHaveProperty("report");
+    expect(node.unread().find(m => m.body.includes("Located final review"))?.id).toBe(saved.reportId);
+    await until(() => readJobReport(env.home, saved) !== null);
+    expect(readJobReport(env.home, saved)).toContain("Located final review");
   } finally { jobs.cancelAll(); await env.cleanup(); }
 });

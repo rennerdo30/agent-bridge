@@ -1,10 +1,6 @@
 import { describeResourceSlots, ResourceSlots } from "../core/resource-slots.js";
 import { inspectCatalog, inspectRows, MAX_INSPECT_ROWS } from "../core/db-inspect.js";
 import { DatabaseSync } from "node:sqlite";
-import { readStore } from "../mcp/jobs.js";
-import { readStoredFinalResult, resultDeliveryLabel } from "../mcp/final-result.js";
-import { readResultDelivery } from "../core/job-outcomes.js";
-import { JOBS_FILE } from "../core/constants.js";
 import { historyReadStatus } from "../core/history-store.js";
 import { conversationPageSchema, readConversation } from "../core/conversations.js";
 import { formatReplyRestrictions } from "../mcp/format.js";
@@ -620,18 +616,6 @@ export async function startUi(opts: UiOptions): Promise<{ url: string; port: num
       return send(res, result.status, result.body);
     }
     if (req.method === "GET" && url.pathname === "/api/events") return streamHistoryChanges(historyFeed, req, res);
-    const jobResult = /^\/api\/jobs\/([\w.-]+)\/result$/.exec(url.pathname);
-    if (req.method === "GET" && jobResult) {
-      const name = jobResult[1]!;
-      const saved = readStore(join(opts.home, JOBS_FILE), opts.log, true).find(job => job.name === name);
-      const id = saved?.id ?? /-job-([0-9a-f]{8})$/.exec(name)?.[1];
-      const runner = id ? readStoredFinalResult(opts.home, id) : null;
-      const report = runner?.report ?? saved?.report;
-      if (!report) return send(res, 404, { error: "No stored result for this job." });
-      const receipt = saved ? readResultDelivery(opts.home, saved) : null;
-      return send(res, 200, { job: name, status: saved?.status ?? "done", delivery: resultDeliveryLabel({ report }, receipt?.status === "read"),
-        receipt, report });
-    }
     if (req.method === "GET" && isDashboardReadPath(url.pathname)) {
       const read = dashboardRequestSchema.safeParse({ path: url.pathname, query: Object.fromEntries(url.searchParams) });
       if (!read.success) return send(res, 400, { error: "invalid dashboard read request" });

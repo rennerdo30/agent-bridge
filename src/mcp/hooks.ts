@@ -77,8 +77,11 @@ export function completionAwaitingReceipt(ctx: ServerContext, id: string): boole
 function confirmCompletionDelivery(ctx: ServerContext, input: HookInput): void {
   const pending = completionPending.get(ctx);
   if (!pending) return;
-  if (input.event !== "Stop") return;
-  const confirmed = [...pending].filter(([, event]) => event !== "Stop" || input.stopHookActive).map(([id]) => id);
+  if (input.event !== "Stop" && input.event !== "PostToolUse" && input.event !== "UserPromptSubmit") return;
+  // A Stop hand-out blocks the stop, so the model ran again before any later PostToolUse, UserPromptSubmit or Stop.
+  // stop_hook_active is not required: opencode never sends it, and Esc during the continuation ends the turn without it.
+  // Other hand-outs (PostToolUse) still need a later Stop, the end of the model step that saw them.
+  const confirmed = [...pending].filter(([, handedAt]) => handedAt === "Stop" || input.event === "Stop").map(([id]) => id);
   if (confirmed.length) ctx.node?.markRead(confirmed);
   for (const id of confirmed) pending.delete(id);
   if (!pending.size) completionPending.delete(ctx);

@@ -1,7 +1,7 @@
 import { describeResourceSlots, formatResourceSlots, ResourceSlots } from "../core/resource-slots.js";
 import { bundleDirectory } from "../core/bundle-directory.js";
 import { MAX_HOLD_REASON_CHARS, setJobOutcome, deriveJobOutcome, readResultDelivery } from "../core/job-outcomes.js";
-import { readStoredFinalResult, resultDeliveryLabel } from "./final-result.js";
+import { readJobReport, resultDeliveryLabel } from "./final-result.js";
 import { closeJobWorktree } from "../core/job-close.js";
 import { readWorktreeState } from "../core/worktree-state.js";
 import { readOutcomeDecision } from "../core/job-outcomes.js";
@@ -901,7 +901,7 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       if (a.job) {
         const job = await findJob(a.job);
         if (!job || job.name !== a.job) return text("No job with that name is owned by this session.", true);
-        const report = job.report ?? (job.status === "running" ? null : readStoredFinalResult(ctx.home, job.id))?.report;
+        const report = job.report ?? (job.status === "running" ? null : readJobReport(ctx.home, job));
         const receipt = report ? readResultDelivery(ctx.home, job) : null;
         return text(JSON.stringify({ job: job.name, status: job.status, resultStored: typeof report === "string",
           delivery: report ? resultDeliveryLabel({ report }, receipt?.status === "read") : null, receipt, report: report ?? null }));

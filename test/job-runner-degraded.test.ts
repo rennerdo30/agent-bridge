@@ -17,7 +17,8 @@ vi.mock("../src/core/node.js", async () => {
     constructor(options: { name: string }) { super(); this.name = options.name; }
     async start() {}
     async stop() {}
-    async send() {}
+    // A broker send result always carries the stored messages (SendResult.messages is required by the protocol).
+    async send() { return { messages: [{ id: "stored" }], deliveredTo: [], queuedFor: [] }; }
   } };
 });
 const homes: string[] = [];

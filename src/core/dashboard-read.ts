@@ -309,7 +309,7 @@ function* storedJobViewSteps(home: string, jobs: Map<string, Record<string, unkn
     }
     out.set(name, {
       owner: typeof owner === "string" && owner ? owner : null,
-      ...(typeof j.report === "string" || typeof runner?.report === "string" ? { resultStored: true } : {}),
+      ...(j.resultStored === true || typeof j.report === "string" || typeof runner?.report === "string" ? { resultStored: true } : {}),
       ...(typeof j.projectRoot === "string" ? { projectRoot: j.projectRoot } : {}),
       next: cloneJson(Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== undefined).map((key) => [key, saved[key]]))),
       ...(remote && typeof remote.host === "string" && typeof remote.name === "string" ? { remote: cloneJson(remote) } : {}),
@@ -416,15 +416,14 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       const rawLimit = url.searchParams.get("limit");
       const limit = rawLimit === null ? DEFAULT_RUN_PAGE_SIZE : /^\d+$/.test(rawLimit) ? Number(rawLimit) : NaN;
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_RUN_PAGE_SIZE) return reply(400, { error: `limit must be an integer from 1 to ${MAX_RUN_PAGE_SIZE}` });
-      try {
-        const page = pageRuns(await listRunsResponsive(ctx.home), url.searchParams.get("before"), limit);
-        const names = new Set(page.runs.flatMap(run => run.job ? [run.job] : []));
-        const views = await readStoredJobsResponsive(ctx.home, names);
-        const jobs = Object.fromEntries([...views].map(([name, job]) => [name, { next: job.next,
-          ...(job.resultStored ? { resultStored: true } : {}), ...(job.remote ? { remote: job.remote } : {}) }]));
-        return reply(200, { ...page, jobs });
-      }
-      catch { return reply(400, { error: "invalid run cursor" }); }
+      const page = await listRunsResponsive(ctx.home).then(runs => pageRuns(runs, url.searchParams.get("before"), limit)).catch(() => null);
+      if (!page) return reply(400, { error: "invalid run cursor" });
+      const names = new Set(page.runs.flatMap(run => run.job ? [run.job] : []));
+      // Job settings are an optional overlay: an unreadable store never turns a valid page into a cursor error.
+      const views = await readStoredJobsResponsive(ctx.home, names).catch(() => new Map<string, StoredJobView>());
+      const jobs = Object.fromEntries([...views].map(([name, job]) => [name, { next: job.next,
+        ...(job.resultStored ? { resultStored: true } : {}), ...(job.remote ? { remote: job.remote } : {}) }]));
+      return reply(200, { ...page, jobs });
     }
     const jobChildrenMatch = /^\/api\/jobs\/([\w.-]+)\/subagents(?:\/([^/]+))?$/.exec(url.pathname);
     if (jobChildrenMatch) {

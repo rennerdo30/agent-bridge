@@ -50,7 +50,11 @@ it("keeps PostToolUse completions pending through parallel tools, inbox and wait
     ((await client.callTool({ name, arguments: args })) as { content: Array<{ type: string; text?: string }> }).content
       .map(part => part.type === "text" ? part.text : "").join("\n");
   try {
-    const first = jobs.start("codex", null, "first review", async () => ({ sessionId: "one", text: "First final review", isError: false, details: {} }));
+    // claimTurn bumps startedAt one ms past creation; a result in that same ms would fall before its own turn's receipt window.
+    const first = jobs.start("codex", null, "first review", async () => {
+      await new Promise(resolve => setTimeout(resolve, 5));
+      return { sessionId: "one", text: "First final review", isError: false, details: {} };
+    });
     await until(() => node.unread().some(m => m.body.includes("First final review")));
     const firstId = node.unread().find(m => m.body.includes("First final review"))!.id;
     expect(JSON.stringify(await buildHookResponse(ctx, { event: "PostToolUse", sessionId: null, stopHookActive: false }))).toContain("First final review");
@@ -72,4 +76,37 @@ it("keeps PostToolUse completions pending through parallel tools, inbox and wait
     expect(node.unread().some(m => m.id === firstId || m.id === secondId)).toBe(false);
     expect(JSON.parse(await call("peers", { job: first.name }))).toMatchObject({ delivery: "delivered", receipt: { status: "read" } });
   } finally { jobs.cancelAll(); await client.close(); await server.close(); await env.cleanup(); }
+});
+
+it("receipts a Stop hand-out at the next model boundary without stop_hook_active (opencode, Esc)", async () => {
+  const env = makeEnv();
+  const node = env.node("opencode-final", "opencode");
+  await node.start();
+  const jobs = new JobManager(node, nullLogger);
+  const ctx: ServerContext = {
+    agent: "opencode", cfg: { ...DEFAULT_CONFIG, lingerSec: 0 }, node, log: nullLogger,
+    home: env.home, cwd: () => env.home, channelActive: () => false, jobs,
+  };
+  const handOut = async (text: string) => {
+    jobs.start("codex", null, text, async () => ({ sessionId: text, text, isError: false, details: {} }));
+    await until(() => node.unread().some(m => m.body.includes(text)));
+    const id = node.unread().find(m => m.body.includes(text))!.id;
+    expect(JSON.stringify(await buildHookResponse(ctx, { event: "Stop", sessionId: null, stopHookActive: false }))).toContain(text);
+    expect(node.unread().some(m => m.id === id)).toBe(true);
+    return id;
+  };
+  try {
+    // The continuation's own Stop never carries stop_hook_active in opencode.
+    const first = await handOut("Opencode continuation review");
+    await buildHookResponse(ctx, { event: "Stop", sessionId: null, stopHookActive: false });
+    expect(node.unread().some(m => m.id === first)).toBe(false);
+    // The continuation called a tool.
+    const second = await handOut("Opencode tool review");
+    await buildHookResponse(ctx, { event: "PostToolUse", sessionId: null, stopHookActive: false });
+    expect(node.unread().some(m => m.id === second)).toBe(false);
+    // Esc ended the continuation; the next prompt is the later boundary.
+    const third = await handOut("Interrupted continuation review");
+    await buildHookResponse(ctx, { event: "UserPromptSubmit", sessionId: null, stopHookActive: false });
+    expect(node.unread().some(m => m.id === third)).toBe(false);
+  } finally { jobs.cancelAll(); await env.cleanup(); }
 });
