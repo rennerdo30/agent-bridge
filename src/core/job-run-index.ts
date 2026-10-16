@@ -225,11 +225,12 @@ async function indexObserved(home: string, key: string, runs: RunLogRecord[], si
   for (let at = 0; at < runs.length; at += INDEX_BATCH) {
     signal.throwIfAborted();
     const batch = runs.slice(at, at + INDEX_BATCH);
-    const canonical = batch.some(run => run.metadataFile) ? realpathSync.native(join(home, "runs")) : undefined;
     const observed = batch.map(run => {
       if (!run.metadataFile || relative(key, run.file).split(sep)[0] !== "runs") return { run };
-      const witness = metadataWitness(run.metadataFile);
-      return { run: observeRunFile(home, run.file, run.metadataFile, canonical), source: run, witness };
+      // The routing scan just validated containment and took the log's stat: read only the metadata.
+      // Every indexed lookup re-validates paths and signatures, and a change is re-read under the lock.
+      const witness = metadataWitness(run.metadataFile), { metadataUpdatedAt: _, ...scanned } = run;
+      return { run: { ...scanned, meta: usableMetadata(run.metadataFile) }, source: run, witness };
     });
     await yieldTurn();
     signal.throwIfAborted();
