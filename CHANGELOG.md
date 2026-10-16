@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Dashboard: fast again with many archived runs.** A packed (archived) run's index entry keeps the identity of the original log, but its file is the retained copy in `cold/`. The preview read compared the two, which always failed, so on every refresh each packed run was opened again and then left out of the list: with ~1,700 packed runs every dashboard request took about 9 s and the broker used a full core. Packed runs now skip that comparison (their copy is immutable), are cached after the first read and appear in the run list again.
+
 ## 0.30.24
 
 - **Updater: Muse installs always use user scope.** Run inside a Git project (for example the agent-bridge checkout), Muse refused the 0.30.23 update with "plugin `agent-bridge` is already installed from a different source", because `muse plugins install` without `--scope` targets that project. The installer now passes `--scope user`.

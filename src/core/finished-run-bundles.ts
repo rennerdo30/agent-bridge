@@ -17,7 +17,7 @@ const REVISION = ["finished-runs-revision", "revision"] as const;
 /** Runs that could not be packed: retained in place, skipped until their bytes change (AB-219). */
 const FAILURES = "finished-run-pack-failures";
 
-type PackedRun = { name: string; file: string; updatedAt: number; size: number; signature: string; archived: true; meta: Record<string, unknown>; metadataFile?: string };
+type PackedRun = { name: string; file: string; updatedAt: number; size: number; signature: string; archived: true; packed: true; meta: Record<string, unknown>; metadataFile?: string };
 const runName = (log: string) => basename(log).replace(RUN_LOG, "");
 
 function bumpRevision(db: DatabaseSync): void {
@@ -87,7 +87,7 @@ function toRecord(key: string, value: string): PackedRun | null {
  try {
   const v = JSON.parse(value) as Record<string, unknown>;
   const file = String(v.file), metadataFile = file.replace(RUN_LOG, ".json");
-  return { name: key, file, updatedAt: Number(v.updatedAt), size: Number(v.size), signature: String(v.signature), archived: true,
+  return { name: key, file, updatedAt: Number(v.updatedAt), size: Number(v.size), signature: String(v.signature), archived: true, packed: true,
    meta: isRecord(v.meta) ? v.meta : {}, metadataFile: isRecord(v.meta) && existsSync(metadataFile) ? metadataFile : undefined };
  } catch { return null; }
 }
