@@ -12,7 +12,7 @@ export const SLOT_PID_ENV = "AGENT_BRIDGE_SLOT_PID";
 export const SLOT_LEASE_MS = 6 * 60 * 60_000;
 export const SLOT_RENEW_MS = 60_000;
 const SLOT_POLL_MS = 250;
-const SLOT_DB_NAME = "resource-slots.sqlite";
+export const SLOT_DB_NAME = "resource-slots.sqlite";
 const LOCK_WAIT_MS = 3_000;
 /** Busy retries of a release, each after the full busy timeout: about 30 s in total. */
 const RELEASE_ATTEMPTS = 10;
@@ -182,14 +182,14 @@ export function resourceSlotHint(counts: Record<string, number>, cli: string | n
 }
 
 /** Holders first, then the queue in ticket order: shown by peers, the resource_slots tool and the dashboard (AB-40). */
-export function describeResourceSlots(entries: SlotEntry[], capacities: Record<string, number> = {}): { resource: string; capacity: number | null; held: SlotEntry[]; waiting: SlotEntry[] }[] {
+export function describeResourceSlots(entries: readonly SlotEntry[], capacities: Record<string, number> = {}): { resource: string; capacity: number | null; held: SlotEntry[]; waiting: SlotEntry[] }[] {
   const resources = [...new Set([...Object.keys(capacities), ...entries.map(e => e.resource)])].sort();
   return resources.map(resource => {
     const mine = entries.filter(e => e.resource === resource).sort((a, b) => a.ticket - b.ticket);
     return { resource, capacity: capacities[resource] ?? null, held: mine.filter(e => e.held), waiting: mine.filter(e => !e.held) };
   });
 }
-export function formatResourceSlots(entries: SlotEntry[], capacities: Record<string, number> = {}): string[] {
+export function formatResourceSlots(entries: readonly SlotEntry[], capacities: Record<string, number> = {}): string[] {
   return describeResourceSlots(entries, capacities).filter(r => r.held.length || r.waiting.length).map(r =>
     `- ${r.resource}${r.capacity !== null ? ` (${r.held.length}/${r.capacity})` : ""}: held by ${r.held.map(e => `${e.id} [pid ${e.pid}]`).join(", ") || "nobody"}` +
     (r.waiting.length ? `; waiting: ${r.waiting.map(e => e.id).join(", ")}` : ""));

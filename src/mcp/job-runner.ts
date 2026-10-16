@@ -111,7 +111,7 @@ export async function runJobRunner(specFile: string | undefined): Promise<number
       const stop = () => controller.abort();
       process.on("SIGTERM", stop); process.on("SIGINT", stop);
       try {
-        const release = await acquireStartup(home, controller.signal);
+        const release = await acquireStartup(home, controller.signal, spec.job.name);
         try { controller.signal.throwIfAborted(); scope = await establishWindowsJobScope(log); }
         finally { release(); }
       } finally { process.off("SIGTERM", stop); process.off("SIGINT", stop); }
