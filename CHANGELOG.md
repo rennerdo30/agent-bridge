@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.30.32
+
+- **Fewer Muse hook runs.** Every Muse hook is a new Node process. PreLLMCall, PreToolUse and PostToolUse all ran the same mail check, so each step started three (a long list of HookRun entries in T3 Code). The Muse plugin no longer registers PostToolUse and PreToolUse only gates tools; mail still reaches the model before every model call.
+
 ## 0.30.31
 
 - **Muse in T3 Code works again.** A `muse serve` that agent-bridge did not start (T3 Code and other MSP clients) was treated as a Bridge job waiting for its private handoff, so its bridge server marked itself internal and the hook denied every shell and write tool ("agent-bridge permission gate unavailable"). A serve host without Bridge's delegation markers is now an owner session; Bridge jobs still authenticate and fail closed.
