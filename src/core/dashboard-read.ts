@@ -25,6 +25,8 @@ import { dashboardRequestSchema, type DashboardReadRequest, type DashboardReadRe
 import { historyReader, readWithHistory, withImporting, type HeldHistoryConnection } from "./dashboard-history.js";
 import { HistorySourceResolver } from "./history-sources.js";
 import { activeByteSources } from "./byte-source.js";
+import { loadConfig } from "./config.js";
+import { readSlotSnapshot, storedJobWaits, type WaitingFor } from "./job-waiting.js";
 const TASK_PREVIEW_CHARS = 300;
 const STALE_RUN_MS = 150_000;
 const LEGACY_JOB_START_TOLERANCE_MS = 1_000;
@@ -279,6 +281,17 @@ export interface StoredJobView {
   resultStored?: boolean;
   projectRoot?: string;
   remote?: { host: string; name: string };
+  /** AB-401: when it started and whether its session's job limit still holds it back. */
+  startedAt?: number;
+  waitingForStart?: boolean;
+}
+
+/** AB-401: what each stored job is queued for on this machine (see job-waiting.ts); display only. */
+export function stateJobWaits(home: string, views: ReadonlyMap<string, StoredJobView>, log: Logger): Map<string, WaitingFor> {
+  try {
+    return storedJobWaits([...views].map(([name, v]) => ({ name, owner: v.owner, status: v.status, startedAt: v.startedAt, waitingForStart: v.waitingForStart })),
+      () => readSlotSnapshot(home), () => loadConfig(home, "other", log).resourceSlots);
+  } catch { return new Map(); }
 }
 
 /** Jobs from the sessions' store (`{ jobs: [...] }`; before 0.26 a bare array). Read-only and best effort. */
@@ -317,6 +330,8 @@ function* storedJobViewSteps(home: string, jobs: Map<string, Record<string, unkn
       ...(typeof j.pausedAt === "number" ? { pausedAt: j.pausedAt } : {}),
       ...(j.resultStored === true || typeof j.report === "string" || typeof runner?.report === "string" ? { resultStored: true } : {}),
       ...(typeof j.projectRoot === "string" ? { projectRoot: j.projectRoot } : {}),
+      ...(typeof j.startedAt === "number" ? { startedAt: j.startedAt } : {}),
+      ...(j.waitingForStart === true ? { waitingForStart: true } : {}),
       next: cloneJson(Object.fromEntries(JOB_SETTING_KEYS.filter((key) => saved[key] !== undefined).map((key) => [key, saved[key]]))),
       ...(remote && typeof remote.host === "string" && typeof remote.name === "string" ? { remote: cloneJson(remote) } : {}),
     });
@@ -359,9 +374,11 @@ export async function readDashboard(ctx: DashboardReadContext, request: Dashboar
       // Only settings for jobs on this bounded run page are needed by its inspector.
       const names = new Set(page.runs.flatMap((run) => run.job ? [run.job] : []));
       const selected = await selectHistoryJobsResponsive(ctx.home, names);
-      const jobs = Object.fromEntries([...storedJobViews(ctx.home, selected)].map(([name, job]) => [name, { next: job.next,
+      const views = storedJobViews(ctx.home, selected), waits = stateJobWaits(ctx.home, views, ctx.log);
+      const jobs = Object.fromEntries([...views].map(([name, job]) => [name, { next: job.next,
         status: job.status, pauseReason: job.pauseReason, pausedAt: job.pausedAt,
-        ...(job.resultStored ? { resultStored: true } : {}), ...(job.remote ? { remote: job.remote } : {}) }]));
+        ...(job.resultStored ? { resultStored: true } : {}), ...(job.remote ? { remote: job.remote } : {}),
+        ...(waits.has(name) ? { waitingFor: waits.get(name) } : {}) }]));
       return reply(200, { runs: page.runs, runsNext: page.next, runsTotal: page.total, jobs });
     }
     if (url.pathname === "/api/job-outcomes") {

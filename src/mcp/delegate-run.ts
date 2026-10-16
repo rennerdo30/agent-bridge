@@ -459,7 +459,7 @@ async function runDelegateInner(
         // Context/reader checks precede native admission. Each retry owns its
         // own permit, including callbacks that arrive after an earlier attempt.
         onProgress?.("queued: waiting for machine startup admission");
-        const release = await acquireStartup(rc.home, signal);
+        const release = await acquireStartup(rc.home, signal, job?.name ?? a._job);
         try {
           signal.throwIfAborted();
           const previous = job?.providerUsage?.turnStartedAt === job?.startedAt ? job?.providerUsage : undefined;

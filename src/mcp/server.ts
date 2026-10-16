@@ -1,4 +1,5 @@
 import { describeResourceSlots, formatResourceSlots, ResourceSlots } from "../core/resource-slots.js";
+import { readSlotSnapshot, slotWaitFor, waitingText } from "../core/job-waiting.js";
 import { bundleDirectory } from "../core/bundle-directory.js";
 import { MAX_HOLD_REASON_CHARS, setJobOutcome, deriveJobOutcome, readResultDelivery } from "../core/job-outcomes.js";
 import { readJobReport, resultDeliveryLabel } from "./final-result.js";
@@ -1090,7 +1091,10 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         if (!job || job.name !== a.job) return text("No job with that name is owned by this session.", true);
         const report = job.report ?? (job.status === "running" ? null : readJobReport(ctx.home, job));
         const receipt = report ? readResultDelivery(ctx.home, job) : null;
-        const result = (shown: string | null) => JSON.stringify({ job: job.name, status: job.status, resultStored: typeof report === "string",
+        // AB-401: what it is queued for on this machine (null: not queued; a running job without a wait is working or
+        // stalled). A fresh read-only snapshot: nothing is created or written in the slot database.
+        const waitingFor = ctx.jobs?.limitWait(job) ?? (job.status === "running" ? slotWaitFor(readSlotSnapshot(ctx.home, 0), job.name, cfg.resourceSlots) : null);
+        const result = (shown: string | null) => JSON.stringify({ job: job.name, status: job.status, waitingFor, resultStored: typeof report === "string",
           delivery: report ? resultDeliveryLabel({ report }, receipt?.status === "read") : null, receipt, report: shown,
           // AB-404: same shape; a report too large for one result is cut at a whole character and says so.
           ...(report && shown !== report ? { reportTruncated: { totalCharacters: report.length, shownCharacters: shown?.length ?? 0,
@@ -1143,13 +1147,16 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
       for (const message of n.unread()) {
         if (message.conversationId.startsWith(TRANSFER_PROGRESS_PREFIX)) transferNotes.set(message.conversationId, message);
       }
+      // One fresh read-only snapshot up front (AB-401): nothing is created or written in the slot database, and the
+      // slot lines and the jobs' slot waits below read the same rows on every page.
       let slotLines: string[] = [];
-      try {
-        const slots = new ResourceSlots(ctx.home);
-        try { slotLines = formatResourceSlots(slots.snapshot(), cfg.resourceSlots); } finally { slots.close(); }
-      } catch { /* Slot state is advisory in peers; the slot CLI reports its own errors. */ }
+      const slotSnapshot = readSlotSnapshot(ctx.home, 0);
+      try { slotLines = formatResourceSlots(slotSnapshot, cfg.resourceSlots); }
+      catch { /* Slot state is advisory in peers; the slot CLI reports its own errors. */ }
       const jobs = (ctx.jobs?.list() ?? []).filter(matches);
       const waiting = (ctx.jobs?.waiting() ?? []).filter(matches);
+      // AB-401: what each listed job is queued for, computed once for every page build.
+      const jobWait = new Map([...jobs, ...waiting].map((j) => [j.id, ctx.jobs?.limitWait(j) ?? (j.status === "running" ? slotWaitFor(slotSnapshot, j.name, cfg.resourceSlots) : null)]));
       const recent = (ctx.jobs?.recent() ?? []).filter(matches);
       const waitHints = waits.pending(n).map(resumeWaitHint);
       return paged((sort) => {
@@ -1185,12 +1192,16 @@ export function registerTools(mcp: McpServer, ctx: ServerContext, targets: Codin
         if (jobs.length) {
           lines.push({ header: t("peers.jobs", { count: jobs.length }), category: "jobs" });
           for (const j of sorted(sort, jobs, (job) => job.name)) {
-            lines.push({ category: "jobs", entry: j.status === "paused" ? `- ${j.name}: paused since ${new Date(j.pausedAt ?? Date.now()).toISOString()} (${j.pauseReason ?? "supervisor request"})` : t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.etaAt !== undefined ? t("peers.eta", { minutes: Math.max(0, Math.ceil((j.etaAt - Date.now()) / 60_000)) }) + " · " : "") + (j.progress ?? "starting") }) });
+            lines.push({ category: "jobs", entry: j.status === "paused" ? `- ${j.name}: paused since ${new Date(j.pausedAt ?? Date.now()).toISOString()} (${j.pauseReason ?? "supervisor request"})` : t("peers.job", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : " (untitled: name it with message_subagent(job, title=...))"), model: (j.model ?? "default") + (typeof j.args?.effort === "string" ? `, effort ${j.args.effort}` : ""), duration: formatDuration(Date.now() - j.startedAt), progress: (j.percent !== undefined ? `${j.percent}% (${j.progressNote || "reported"}) · ` : "") + (j.etaAt !== undefined ? t("peers.eta", { minutes: Math.max(0, Math.ceil((j.etaAt - Date.now()) / 60_000)) }) + " · " : "") + (jobWait.get(j.id) ? waitingText(jobWait.get(j.id)!) : j.progress ?? "starting") }) });
           }
         }
         if (waiting.length) {
           lines.push({ header: t("peers.waiting", { count: waiting.length, max: ctx.jobs!.limit }), category: "waiting" });
-          for (const j of sorted(sort, waiting, (job) => job.name)) lines.push({ category: "waiting", entry: t("peers.waitingJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), messages: j.queue.length }) });
+          for (const j of sorted(sort, waiting, (job) => job.name)) {
+            // AB-401: why it waits: the job limit (with place and holders), or a paused job's queued resume.
+            const wait = jobWait.get(j.id), why = j.status === "paused" ? "paused; resume queued" : wait ? waitingText(wait) : "";
+            lines.push({ category: "waiting", entry: t("peers.waitingJob", { name: j.name + (j.args?.title ? ` "${j.args.title}"` : ""), messages: j.queue.length }) + (why ? ` (${why})` : "") });
+          }
         }
         if (recent.length) {
           lines.push({ header: t("peers.recent"), category: "recent" });
