@@ -3,7 +3,7 @@ import { MAX_BODY_CHARS } from "../core/constants.js";
 import { t } from "../core/i18n.js";
 import type { Logger } from "../core/logger.js";
 import type { BridgeNode } from "../core/node.js";
-import type { BridgeMessage } from "../core/protocol.js";
+import { BridgeError, type BridgeMessage } from "../core/protocol.js";
 import { parseJobSettings } from "./job-settings.js";
 import type { JobManager } from "./jobs.js";
 
@@ -31,7 +31,7 @@ export function attachDashboardJobControl(node: BridgeNode, jobs: JobManager, lo
       log.warn("rejected unauthorized dashboard job command", { from: m.from.name, job: command.job, type: command.type });
       return;
     }
-    let result: DashboardResult;
+    let result: DashboardResult | undefined;
     if (command.type === "handoff") {
       try {
         jobs.persist();
@@ -41,16 +41,35 @@ export function attachDashboardJobControl(node: BridgeNode, jobs: JobManager, lo
       } catch (err) { result = { outcome: "rejected", text: (err as Error).message, isError: true }; }
     } else if (command.type === "message") {
       if (typeof command.body !== "string" || !command.body.trim() || command.body.length > MAX_BODY_CHARS) return;
-      const shared = await jobs.share(command.job);
-      result = !shared && typeof jobs.findAsync === "function" ? unknown(command.job) : followUp(node, jobs, command.job, command.body);
+      let shared;
+      try { shared = await jobs.share(command.job); }
+      catch (error) { result = authorityRejected(error); }
+      if (!result) result = !shared && typeof jobs.findAsync === "function" ? unknown(command.job) : followUp(node, jobs, command.job, command.body);
     } else if (command.type === "settings") {
-      const shared = await jobs.share(command.job);
-      result = !shared && typeof jobs.findAsync === "function" ? unknown(command.job) : changeSettings(node, jobs, command.job, command.settings, log);
+      let shared;
+      try { shared = await jobs.share(command.job); }
+      catch (error) { result = authorityRejected(error); }
+      if (!result) result = !shared && typeof jobs.findAsync === "function" ? unknown(command.job) : changeSettings(node, jobs, command.job, command.settings, log);
     } else {
       return;
     }
     void node.send({ to: m.from.name, replyTo: m.id, body: JSON.stringify({ type: "result", requestId: command.requestId, ...result }), conversationId: DASHBOARD_JOB_CONVERSATION }, { quiet: true }).catch((err) => log.warn("dashboard job reply failed", { err: (err as Error).message }));
   }
+}
+
+function authorityRejected(error: unknown): DashboardResult {
+  let text = "Job authority unavailable; nothing was changed.";
+  // Rebuild only fixed-source authority messages; exception text and arbitrary details stay local.
+  if (error instanceof BridgeError) {
+    const { reason, stage } = error.details ?? {};
+    if (reason === "authority_store_read" && stage === "authority_fence")
+      text = "Job authority unavailable (authority_store_read; authority_fence). No control submitted.";
+    else if (reason === "recovery_header_unavailable" && stage === "header_read")
+      text = "Job recovery unavailable (recovery_header_unavailable; header_read). No control submitted.";
+    else if (reason === "recovery_context_changed" && stage === "context_recheck")
+      text = "Job recovery unavailable (recovery_context_changed; context_recheck). No control submitted.";
+  }
+  return { outcome: "rejected", text, isError: true };
 }
 
 function followUp(node: BridgeNode, jobs: JobManager, ref: string, body: string): DashboardResult {

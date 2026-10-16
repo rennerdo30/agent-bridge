@@ -7,7 +7,7 @@ export interface RecoveryHeader { header: string; prompt: string }
 const CACHE_BYTES = 64 * 1024 * 1024;
 const CACHE_ENTRIES = 512;
 const snapshots = new Map<string, { signature: string; value: RecoveryHeader; bytes: number }>();
-const pending = new Map<string, Promise<RecoveryHeader | undefined>>();
+const pending = new Map<string, Promise<ReadOutcome>>();
 let cachedBytes = 0;
 function signature(st: Stats): string { return `${st.dev}:${st.ino}:${st.size}:${st.mtimeMs}:${st.ctimeMs}`; }
 
@@ -38,24 +38,40 @@ async function scan(file: string): Promise<{ value: RecoveryHeader; signature: s
       consume(decoder.write(buffer.subarray(0, bytesRead)));
       await yieldIO();
     }
-    if (!finished) throw new Error("Retained run feed has no complete prompt separator");
-    const value = { header, prompt: prompt.join("\n") };
     // Do not publish mixed generations if a legacy writer changed the header.
     const stable = signature(await handle.stat()) === identity && signature(await stat(file)) === identity;
     if (!stable) throw new Error("Retained run feed changed during recovery");
-    return { value, signature: identity };
+    // Read to the end of an unchanged file: this log has no prompt section, a fact rather than a failed read.
+    if (!finished) throw new NoPromptSection();
+    return { value: { header, prompt: prompt.join("\n") }, signature: identity };
   } finally { await handle.close(); }
 }
 
-/** Failed/unknown reads never populate the cache: a later request retries them. */
-export async function readRecoveryHeader(file: string): Promise<RecoveryHeader | undefined> {
+class NoPromptSection extends Error {
+  constructor() { super("Retained run feed has no complete prompt separator"); }
+}
+/** Outcome of one shared read: the header, or whether the file was read whole and unchanged without a separator. */
+interface ReadOutcome { value?: RecoveryHeader; noPromptSection?: boolean }
+
+/**
+ * Failed/unknown reads never populate the cache: a later request retries them.
+ * `onNoPromptSection` is called, for this call only, when this call's read (or the identical-version read it
+ * joined) reached the end of an unchanged file without a prompt separator: a label-only log with no prompt to
+ * recover. It is never called for IO failures, a change during the read, or a failed upfront stat (AB-439).
+ */
+export async function readRecoveryHeader(file: string, onNoPromptSection?: () => void): Promise<RecoveryHeader | undefined> {
   let identity: string;
   try { identity = signature(await stat(file)); } catch { return undefined; }
   const cached = snapshots.get(file);
   if (cached?.signature === identity) { snapshots.delete(file); snapshots.set(file, cached); return { ...cached.value }; }
-  const key = `${file}\0${identity}`, active = pending.get(key);
-  if (active) { const value = await active; return value ? { ...value } : undefined; }
-  const read = (async () => {
+  const key = `${file}\0${identity}`;
+  const settle = (outcome: ReadOutcome) => {
+    if (outcome.noPromptSection) onNoPromptSection?.();
+    return outcome.value ? { ...outcome.value } : undefined;
+  };
+  const active = pending.get(key);
+  if (active) return settle(await active);
+  const read = (async (): Promise<ReadOutcome> => {
     try {
       const result = await scan(file), bytes = Buffer.byteLength(result.value.header) + Buffer.byteLength(result.value.prompt);
       if (result.signature && bytes <= CACHE_BYTES) {
@@ -63,9 +79,10 @@ export async function readRecoveryHeader(file: string): Promise<RecoveryHeader |
         snapshots.delete(file); snapshots.set(file, { ...result, bytes }); cachedBytes += bytes;
         while (cachedBytes > CACHE_BYTES || snapshots.size > CACHE_ENTRIES) { const oldest = snapshots.keys().next().value!; cachedBytes -= snapshots.get(oldest)!.bytes; snapshots.delete(oldest); }
       }
-      return result.value;
-    } catch { return undefined; }
+      return { value: result.value };
+    } catch (error) { return { noPromptSection: error instanceof NoPromptSection }; }
     finally { pending.delete(key); }
   })();
-  pending.set(key, read); const value = await read; return value ? { ...value } : undefined;
+  pending.set(key, read);
+  return settle(await read);
 }
